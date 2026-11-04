@@ -26,6 +26,14 @@ Core API 1.0 freeze; do not treat the labels alone as proof of compatibility.
 
 `tools/check_api_stability.py` (also a test in the suite) checks that every module with public headers has a
 level, and that every override names a real one. `--table` prints how many headers each module has at each level.
+Stable headers are frozen: [`docs/design/api_frozen.txt`](../design/api_frozen.txt) records the names each one
+declares, and the same check fails when one disappears. To retire a name, deprecate it for a release, then
+remove it and list it in [`docs/design/api_removed.txt`](../design/api_removed.txt) (`<header> <name>`). New names
+need nothing; `python3 tools/check_api_stability.py --update-frozen` adds them to the baseline.
+A game built on the frozen API is checked too: `samples/frozen_api_game` (Lantern Run) is written the way a third party
+would write one, and `python3 tools/check_api_stability.py --consumer <folder>` fails if any source in the folder
+includes a header that is not `stable`. A stable header may include only stable or internal ones. The checks
+themselves are tested by `tests/check_api_freeze.py` (CTest `api_freeze_checks`).
 The [Core API inventory](core_api_inventory.md) records current ownership,
 threading and failure behavior for the engine's central public headers.
 

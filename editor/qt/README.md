@@ -52,6 +52,7 @@ sequence in the Content Browser opens it. Selecting a glTF/GLB asset enables
 the explicit Place Model action, and double-clicking the asset remains a
 shortcut; both create a real `ModelRenderer` entity in the map.
 
+The Inspector's Mesh section lists what a placed model cooks to: its primitives and vertices and a table of LODs with triangle, error and meshlet counts, computed with the cooker's own code and cached per file and write time. It says so when the file is missing, unreadable or too large.
 The Luau Script dock provides syntax-highlighted source editing, atomic saves,
 and validation through the engine's script class inspection path. Open a `.luau`
 asset by double-clicking it in the Content Browser or using Edit Source in the

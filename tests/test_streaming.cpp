@@ -266,3 +266,106 @@ AETHER_TEST(Streaming_FilesAndFloatingOrigin) {
     CHECK(origin.ToLocal(wp).x == 8.0f);
     std::filesystem::remove_all(dir);
 }
+
+namespace {
+// A manual-step executor: tasks queue until the test runs them, standing in for a worker thread.
+struct ManualExecutor {
+    std::vector<std::function<void()>> tasks;
+    WorldStreamer::Executor Get() {
+        return [this](std::function<void()> t) { tasks.push_back(std::move(t)); };
+    }
+    void RunAll() {
+        auto run = std::move(tasks);
+        tasks.clear();
+        for (auto& t : run) t();
+    }
+};
+} // namespace
+
+AETHER_TEST(Streaming_AsyncReadsApplyOnUpdate) {
+    Level level;
+    PartitionSettings s;
+    s.cell_size = 64.0f;
+    const PartitionResult p = PartitionWorld(level.world, s);
+    World game;
+    CHECK(LoadSceneFromMemory(game, p.persistent));
+    WorldStreamer streamer(game, p.index, [&](const CellCoord& c, std::vector<u8>& bytes) {
+        const auto it = p.cells.find(c);
+        if (it == p.cells.end()) return false;
+        bytes = it->second;
+        return true;
+    });
+    ManualExecutor exec;
+    streamer.SetExecutor(exec.Get());
+    streamer.Update();
+    // The read is requested but nothing is in the world until it finishes and Update applies it.
+    CHECK(streamer.State({0, 0}) == CellState::Unloaded && exec.tasks.size() == 1 && streamer.InFlight() == 1);
+    CHECK(!HasEntityAt(game, 10.0f));
+    exec.RunAll();
+    streamer.Update();
+    CHECK(streamer.State({0, 0}) == CellState::Loaded && HasEntityAt(game, 10.0f));
+    CHECK(streamer.InFlight() == 0);
+}
+
+AETHER_TEST(Streaming_AsyncDropsCellsNoLongerWanted) {
+    Level level;
+    PartitionSettings s;
+    s.cell_size = 64.0f;
+    const PartitionResult p = PartitionWorld(level.world, s);
+    World game;
+    CHECK(LoadSceneFromMemory(game, p.persistent));
+    WorldStreamer streamer(game, p.index, [&](const CellCoord& c, std::vector<u8>& bytes) {
+        const auto it = p.cells.find(c);
+        if (it == p.cells.end()) return false;
+        bytes = it->second;
+        return true;
+    });
+    ManualExecutor exec;
+    streamer.SetExecutor(exec.Get());
+    streamer.Update(); // requests cell 0
+    Entity player = kNullEntity;
+    game.ForEachArchetype([&](Archetype& a) {
+        if (a.Mask().test(GetComponentId<StreamingSource>())) player = a.EntityArray(0)[0];
+    });
+    game.GetComponent<Transform>(player)->position = Vec3(1000, 0, 0); // far from every cell
+    exec.RunAll();
+    streamer.Update();
+    CHECK(streamer.State({0, 0}) == CellState::Unloaded && streamer.LoadedCells().empty());
+    CHECK(streamer.InFlight() == 0);
+}
+
+AETHER_TEST(Streaming_AsyncEntityBudgetSpreadsApplies) {
+    Level level;
+    PartitionSettings s;
+    s.cell_size = 64.0f;
+    const PartitionResult p = PartitionWorld(level.world, s);
+    World game;
+    CHECK(LoadSceneFromMemory(game, p.persistent));
+    WorldStreamer streamer(game, p.index, [&](const CellCoord& c, std::vector<u8>& bytes) {
+        const auto it = p.cells.find(c);
+        if (it == p.cells.end()) return false;
+        bytes = it->second;
+        return true;
+    });
+    Entity player = kNullEntity;
+    game.ForEachArchetype([&](Archetype& a) {
+        if (a.Mask().test(GetComponentId<StreamingSource>())) player = a.EntityArray(0)[0];
+    });
+    game.GetComponent<Transform>(player)->position = Vec3(100, 0, 0);
+    game.GetComponent<StreamingSource>(player)->radius = 400.0f; // every cell wanted
+    ManualExecutor exec;
+    streamer.SetExecutor(exec.Get());
+    streamer.max_loads_per_update = 8;
+    streamer.max_entities_per_update = 1; // one cell's worth per Update
+    usize previous = 0;
+    bool spread = true;
+    for (int i = 0; i < 20; ++i) {
+        exec.RunAll();
+        streamer.Update();
+        const usize now = streamer.LoadedCells().size();
+        spread = spread && now - previous <= 1; // each cell holds one entity, so one cell per Update
+        previous = now;
+    }
+    CHECK(spread);
+    CHECK(streamer.LoadedCells().size() == p.index.cells.size());
+}

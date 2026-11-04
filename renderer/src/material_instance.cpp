@@ -86,7 +86,7 @@ static bool InstanceFromJsonImpl(const json& j, MaterialInstance& out, std::stri
         if (error != nullptr) *error = message;
         return false;
     };
-    if (!j.is_object() || j.value("$type", "") != "MaterialInstance") return fail("not a material instance file");
+    if (!j.is_object() || JsonString(j, "$type") != "MaterialInstance") return fail("not a material instance file");
     if (JsonVersion(j) > kInstanceVersion) return fail("saved by a newer version of the engine");
     MaterialInstance instance;
     const json parent = j.value("parent", json());
@@ -183,7 +183,7 @@ bool LoadInstanceChain(const std::string& path, const AssetReader& read, Instanc
         if (!visited.insert(at).second) return fail("MI003: the instance chain loops back to '" + at + "'");
         const std::optional<json> doc = read(at);
         if (!doc) return fail("MI004: can't read '" + at + "'");
-        const std::string type = doc->is_object() ? doc->value("$type", "") : "";
+        const std::string type = doc->is_object() ? JsonString(*doc, "$type") : "";
         std::string message;
         if (type == "Material") {
             if (!MaterialFromJson(*doc, chain.material, &message)) return fail("MI004: '" + at + "': " + message);

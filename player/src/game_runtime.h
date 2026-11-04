@@ -9,6 +9,11 @@
 #include "aether/gameplay/effect_system.h"
 #include "aether/kit/event_bus.h"
 #include "aether/sequencer/sequence_system.h"
+#include "aether/ui/draw.h"
+#include "aether/ui/input.h"
+#include "aether/ui/theme.h"
+#include "aether/ui/viewport.h"
+#include "aether/ui/widget_system.h"
 
 #include <map>
 #if AETHER_KIT_INVENTORY
@@ -37,6 +42,15 @@ struct Game::Runtime {
     std::unique_ptr<audio::AudioOutput> output; // stops its thread before audio/mixer/bank destruction
     std::map<std::pair<u32, std::string>, audio::CueHandle> sequence_audio;
     std::unique_ptr<seq::SequenceSystem> sequences;
+    // The on-screen UI. Layout and painting use the renderer's font, so this one only serves the input router's text metrics.
+    ui::BuiltinFont ui_font;
+    ui::Viewport ui_viewport;
+    std::unique_ptr<ui::UIInputRouter> ui_router;
+    std::unique_ptr<ui::UIInputBridge> ui_bridge; // arrows, d-pad, Tab, Enter / Space / A and Escape / B drive the UI
+    ui::Theme ui_theme;
+    bool ui_has_theme = false;
+    std::vector<std::string> ui_images; // the image paths layouts name; a brush's texture id is its index + 1 (0 = none)
+    std::unique_ptr<ui::UISystem> ui; // after the viewport it draws on
     std::unique_ptr<gas::AttributeSystem> attributes;
     std::unique_ptr<gas::EffectSystem> effects;
     std::unique_ptr<gas::AbilitySystem> abilities;

@@ -4,6 +4,7 @@
 #include "aether/assets/gltf_references.h"
 #include "aether/assets/image.h"
 #include "aether/assets/importer.h"
+#include "aether/cook/mesh_cook.h"
 #include "aether/cook/texture_cook.h"
 #include "aether/core/log.h"
 #include "aether/platform/filesystem.h"
@@ -280,7 +281,9 @@ CookReport Cook(const CookOptions& options) {
         }
         cooked.bytes = bytes.size();
         report.original_bytes += bytes.size();
-        writer.Add("Content/" + record.path, bytes);
+        // A texture's source goes in after it is cooked, and only if there is no cooked copy to stand in for it (strip_source_textures).
+        const bool defer_source = options.strip_source_textures && options.cook_textures && record.importer == "Texture";
+        if (!defer_source) writer.Add("Content/" + record.path, bytes);
 
         // A .gltf's buffers and images that aren't assets themselves.
         if (record.importer == "Model") {
@@ -307,6 +310,21 @@ CookReport Cook(const CookOptions& options) {
                     writer.Add("Imported/" + assets::ToString(sub.guid) + ".bin", sub.data);
                     report.original_bytes += sub.data.size();
                     sub_assets.push_back({{"guid", assets::ToString(sub.guid)}, {"key", sub.key}, {"importer", sub.importer}});
+                    if (options.cook_meshes && sub.importer == "Mesh") {
+                        assets::MeshData mesh_data;
+                        CookedMesh cooked_mesh;
+                        std::string mesh_error;
+                        if (!assets::DecodeMeshData(sub.data, mesh_data) ||
+                            !CookMesh(mesh_data, MeshCookSettings{}, cooked_mesh, &mesh_error)) {
+                            report.warnings.push_back(record.path + " (" + sub.key + "): can't cook mesh" +
+                                                      (mesh_error.empty() ? "" : ": " + mesh_error));
+                        } else {
+                            // cooked_mesh.warnings (skinned primitives) stay out of the report so strict_validation projects keep cooking.
+                            const std::vector<u8> amesh = SaveAmesh(cooked_mesh);
+                            writer.Add("Cooked/" + assets::ToString(sub.guid) + ".amesh", amesh);
+                            report.original_bytes += amesh.size();
+                        }
+                    }
                 }
             } else {
                 report.warnings.push_back("Importing " + record.path + " failed: " + output.error);
@@ -321,6 +339,7 @@ CookReport Cook(const CookOptions& options) {
             if (assets::LoadAssetMeta(database.MetaPath(guid), meta)) settings_json = meta.settings;
             TextureCookSettings tex;
             tex.quality = options.texture_quality;
+            tex.target = options.texture_target;
             const auto bool_setting = [&](const char* name, bool fallback) {
                 const auto it = settings_json.find(name);
                 if (it == settings_json.end()) return fallback;
@@ -344,6 +363,7 @@ CookReport Cook(const CookOptions& options) {
                 }
             }
             const json texture_settings = {{"quality", tex.quality},
+                                           {"target", TextureTargetName(tex.target)},
                                            {"auto_format", tex.auto_format},
                                            {"format", TextureFormatName(tex.format)},
                                            {"mips", tex.mips},
@@ -369,6 +389,7 @@ CookReport Cook(const CookOptions& options) {
                     report.warnings.push_back("Can't decode " + record.path + " to cook it");
                 }
             }
+            if (atex.empty() && defer_source) writer.Add("Content/" + record.path, bytes);
             if (!atex.empty()) {
                 cooked.cooked = "Cooked/" + assets::ToString(guid) + ".atex";
                 cooked.cooked_bytes = atex.size();

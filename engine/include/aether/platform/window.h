@@ -21,7 +21,7 @@ struct WindowDesc {
 // §24.3), the same on every platform: keys and buttons in the engine's
 // input::Key terms, mouse movement and wheel, typed characters, gamepad
 // axes, focus, resizes and the close request.
-enum class WindowEventType : u8 { Key, Char, MouseMove, Scroll, Axis, Focus, Resize, Close };
+enum class WindowEventType : u8 { Key, Char, MouseMove, Scroll, Axis, Focus, Resize, Close, Touch, TouchMove };
 
 struct WindowEvent {
     WindowEventType type = WindowEventType::Key;
@@ -30,7 +30,10 @@ struct WindowEvent {
     f32 x = 0, y = 0;                  // MouseMove: the cursor (pixels); Resize: the size; Axis: x is the value
     f32 dx = 0, dy = 0;                // MouseMove: the movement; Scroll: the wheel (dy is vertical)
     u32 codepoint = 0;                 // Char: the Unicode character typed
+    u32 pointer = 0;                   // Touch, TouchMove: the finger's id (any number, stable while it is down)
 };
+// Touch: `down` true is a finger landing at (x, y), false is it lifting (or the system cancelling it). TouchMove: a finger that is down moved to
+// (x, y). Both in window pixels. ApplyWindowEvents turns them into input::InputState pointers.
 
 // Applies a frame's window events to the raw input state: keys and buttons,
 // mouse movement and wheel (accumulated), gamepad axes; losing focus
@@ -45,6 +48,10 @@ input::Key KeyFromGlfwKey(int key);
 input::Key KeyFromGlfwMouseButton(int button);
 input::Key KeyFromGlfwGamepadButton(int button);
 input::Key KeyFromGlfwGamepadAxis(int axis);
+
+// What the mouse cursor does over a window. Hidden: invisible over the client area, free to leave. Locked: invisible and kept inside the window
+// (a first-person camera); on Win32 that is a clip to the client rectangle, on GLFW the cursor is disabled and reports unbounded movement.
+enum class CursorMode : u8 { Normal, Hidden, Locked };
 
 // A native window: Win32 on Windows, GLFW elsewhere (X11, Wayland, Cocoa).
 // It owns the OS window and its event pump, and nothing else - no
@@ -80,6 +87,9 @@ public:
     bool IsMinimized() const { return width_ == 0 || height_ == 0; }
     void SetTitle(const std::string& title);
     void RequestClose();
+    // Takes effect at once; the window remembers it (the OS releases a lock when focus is lost, and it is taken again on regaining focus).
+    void SetCursorMode(CursorMode mode);
+    CursorMode GetCursorMode() const { return cursor_mode_; }
 
     // Fired synchronously from PumpMessages when a resize is detected (e.g.
     // so the caller can resize its swap chain).
@@ -106,6 +116,7 @@ private:
     bool should_close_ = false;
     f32 last_mouse_x_ = 0, last_mouse_y_ = 0;
     bool has_mouse_ = false;
+    CursorMode cursor_mode_ = CursorMode::Normal;
     std::vector<WindowEvent> events_;
     friend struct WindowBackendAccess;
 };

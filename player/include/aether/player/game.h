@@ -16,6 +16,7 @@
 #include "aether/math/math.h"
 #include "aether/pak/vfs.h"
 #include "aether/loc/localization.h"
+#include "aether/platform/lifecycle.h"
 #include "aether/plugin/plugin.h"
 #include "aether/player/settings_apply.h"
 #include "aether/player/user_paths.h"
@@ -30,12 +31,17 @@
 #include "aether/sequencer/sequence.h"
 #include "aether/sprite2d/tilemap.h"
 
+#include <array>
 #include <filesystem>
 #include <memory>
 #include <string>
 #include <string_view>
 #include <unordered_map>
 #include <vector>
+
+namespace aether::ui {
+class Viewport;
+}
 
 // The player's game runtime (Phase 25 step 4, docs/design/PHASE_SPECS.md
 // §25.4): a cooked game, without the editor. GamePackage mounts the cooked
@@ -88,6 +94,12 @@ bool ParseGameManifest(std::string_view text, GameManifest& out, std::string* er
 
 // The preset to run with: `requested` if it names one, else the manifest's
 // default, else the first; null when there are none.
+// The size to draw a window of `window_width` x `window_height` at for a quality preset's resolution scale: each side scaled and rounded, at least
+// 1, and the scale held to 0.25 to 1 (a window is never drawn larger than it is).
+struct RenderSize {
+    u32 width = 1, height = 1;
+};
+RenderSize ScaledRenderSize(u32 window_width, u32 window_height, f32 resolution_scale);
 const QualityPreset* ChooseQuality(const GameManifest& manifest, const std::string& requested = "");
 
 // The cooked game's files: one or more mounted .apak archives (or folders,
@@ -215,6 +227,28 @@ public:
     // the first write. Call before the first scene is loaded.
     void SetUserPaths(const UserPaths& paths);
     save::SaveSystem* Saves() { return saves_.get(); }
+    // The on-screen UI (§18.4): the layouts (.aui) that WidgetComponent entities show, run by a UISystem for this scene (the active one, which
+    // the Luau `UI` table and the Blueprint UI library act on) and updated each frame. The player draws it over the scene when it has layers,
+    // in place of the built-in HUD. Null before the first scene is loaded.
+    ui::Viewport* Ui();
+
+    // The platform's events (§45.2): the host (a phone's activity, or a test through platform::MockLifecycleBackend) dispatches Suspend, Resume
+    // and MemoryPressure here. On Suspend the game stops advancing (Tick returns at once with no time passing), audio output stops, and queued
+    // saves are written before the call returns. On Resume audio restarts and the first Tick after it ignores the time that went by, so the
+    // game does not jump ahead. MemoryPressure is counted and passed to anything that subscribed (the renderer answers a Critical one
+    // by freeing its GPU textures before the next frame: models fall back to untextured white until the game is restarted, UI images reload on
+    // demand). Subscribe to react to the events yourself.
+    platform::PlatformLifecycle& Platform() { return platform_; }
+    bool Suspended() const { return platform_.Suspended(); }
+    // The UI is laid out in the swap chain's pixels and pointers arrive in window pixels. With a quality preset's resolution scale the two differ
+    // (a 1280 x 720 window drawn into 960 x 540); the host sets how many UI pixels one window pixel is (0.75 there) and pointers are scaled by it
+    // for the UI's hit tests. 1 by default.
+    void SetUiPointerScale(f32 x, f32 y) { ui_pointer_scale_x_ = x > 0.0f ? x : 1.0f, ui_pointer_scale_y_ = y > 0.0f ? y : 1.0f; }
+    u32 MemoryPressureEvents() const { return memory_pressure_events_; }
+    u32 CriticalMemoryPressureEvents() const { return critical_memory_pressure_events_; } // the renderer frees textures when this goes up
+    // The package path of an image a layout uses (a quad of the UI's draw list carries its id as `texture`, ids start at 1); empty if unknown. The
+    // renderer turns these into textures when it draws the UI.
+    std::string UiImagePath(u32 id) const;
     // The game's text (§29.2): the cooked `.astrings` tables merged, and the
     // language, which follows Settings().language both ways. Always there; made
     // the active Localization (the one Blueprints and scripts use) for this game's life.
@@ -316,6 +350,26 @@ private:
     SettingsTargets settings_targets_;
     u64 settings_observer_ = 0;
     void RefreshSaveContext();
+    void OnPlatformEvent(const platform::LifecycleMessage& message);
+    platform::PlatformLifecycle platform_;
+    bool audio_was_running_ = false; // output was on when the game was suspended
+    bool skip_next_dt_ = false;      // the first Tick after a resume
+    u32 memory_pressure_events_ = 0;
+    f32 ui_pointer_scale_x_ = 1.0f, ui_pointer_scale_y_ = 1.0f;
+    u32 critical_memory_pressure_events_ = 0;
+    // The UI's pointers and on-screen controls (§18.2): the pointers in input_state_ (the mouse, and each finger) drive the UI's widgets, and a
+    // press the UI takes is hidden from gameplay (Key::MouseLeft is released); then VirtualStick and Button::hold_key widgets write the keys
+    // they name, so on-screen controls feed the same actions as a keyboard or pad. Run at the start of each Tick, before the actions update.
+    void UpdateUiPointers(f32 dt);
+    void ApplyVirtualControls();
+    std::array<input::InputState::Pointer, input::InputState::kMaxPointers> ui_pointers_{}; // as of the last Tick
+    std::array<bool, input::InputState::kMaxPointers> ui_pointer_used_{};                   // pressed on something the UI took
+    struct HeldControl {
+        const void* widget = nullptr; // identity only: the widget may be gone
+        input::Key key_a = input::Key::None, key_b = input::Key::None;
+        bool stick = false;
+    };
+    std::vector<HeldControl> ui_held_; // controls that wrote input last Tick
 };
 
 } // namespace aether::player

@@ -1,0 +1,1 @@
+{"$type":"StateTree","$version":1,"states":[{"name":"Root"},{"name":"A","parent":"Root","transitions":[{"to":"B","when":[{"key":"k","op":">","value":1}]}],"on_enter":[{"key":"m","value":"a"}]},{"name":"B","parent":"Root","transitions":[{"to":"A"}]}]}

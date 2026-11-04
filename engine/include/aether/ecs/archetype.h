@@ -1,5 +1,10 @@
 #pragma once
 
+// @stability: internal
+//
+// World's storage. It is included by the stable world.h, so its layout is not part of the frozen API: use World's
+// methods, never Archetype or Chunk directly.
+
 #include "aether/core/base.h"
 #include "aether/ecs/component.h"
 #include "aether/ecs/entity.h"

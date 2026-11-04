@@ -113,7 +113,7 @@ jobs:
       - name: Functional tests
         run: ./build/tools/functional/aether_functional --quiet --junit functional-results.xml
       - name: Registered regression tests
-        run: ctest --test-dir build --output-on-failure --parallel 4 -R "^(fuzz_replay_.*|module_graph_catches_a_cycle|api_stability_annotations|production_gate_table|m8_gate_table)$"
+        run: ctest --test-dir build --output-on-failure --parallel 4 -R "^(fuzz_replay_.*|module_graph_catches_a_cycle|api_stability_annotations|api_freeze_checks|frozen_api_game|production_gate_table|m8_gate_table)$"
       - name: Benchmarks
         # Phase 38 steps 1 and 6: retain a provenance-tagged report artifact, and compare with the checked-in
         # baseline (bench/baseline.json) by calibration-normalized time. Comparison is advisory (continue-on-error)
@@ -195,7 +195,7 @@ jobs:
       - name: Functional tests
         run: ./build/tools/functional/aether_functional --quiet --junit functional-results.xml
       - name: Registered regression tests
-        run: ctest --test-dir build --output-on-failure --parallel 4 -R "^(fuzz_replay_.*|module_graph_catches_a_cycle|api_stability_annotations|production_gate_table|m8_gate_table)$"
+        run: ctest --test-dir build --output-on-failure --parallel 4 -R "^(fuzz_replay_.*|module_graph_catches_a_cycle|api_stability_annotations|api_freeze_checks|frozen_api_game|production_gate_table|m8_gate_table)$"
       - name: Screenshot the editor shell
         # Offscreen through MoltenVK; hosted runners may have no Metal
         # device, so this reports without failing the job.
@@ -262,7 +262,7 @@ jobs:
       - name: Functional tests
         run: .\build\tools\functional\Release\aether_functional.exe --quiet --junit functional-results.xml
       - name: Registered regression tests
-        run: ctest --test-dir build -C Release --output-on-failure --parallel 4 -R "^(fuzz_replay_.*|module_graph_catches_a_cycle|api_stability_annotations|production_gate_table|m8_gate_table)$"
+        run: ctest --test-dir build -C Release --output-on-failure --parallel 4 -R "^(fuzz_replay_.*|module_graph_catches_a_cycle|api_stability_annotations|api_freeze_checks|frozen_api_game|production_gate_table|m8_gate_table)$"
       - name: Cook and launch the AETHER-01 proof project
         shell: pwsh
         run: |
@@ -549,6 +549,38 @@ jobs:
           TSAN_OPTIONS: halt_on_error=1 second_deadlock_stack=1 suppressions=${{ github.workspace }}/tools/tsan_suppressions.txt
         run: xvfb-run -a ./build/tests/aether_tests
 
+  android:
+    # Phase 45 step 3 (first slice): the portable libraries cross-compile for arm64 Android with the NDK the runner
+    # ships. No window, Vulkan, scripting, physics or tests yet (those need the platform plugin and a device); the
+    # point is to find what in the portable code does not build for Android, and to keep it building once it does.
+    # Advisory until it has passed for a while.
+    name: Android (arm64, NDK, libraries, advisory)
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tools
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+      - name: Cache fetched dependencies
+        uses: actions/cache@v4
+        with:
+          path: build-android/_deps
+          key: deps-android-${{ hashFiles('**/CMakeLists.txt') }}
+          restore-keys: deps-android-
+      - name: Configure
+        run: >
+          cmake -S . -B build-android -G Ninja -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_LATEST_HOME/build/cmake/android.toolchain.cmake"
+          -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-28
+          -DAETHER_BUILD_TESTS=OFF -DAETHER_BUILD_MCP=OFF -DAETHER_BUILD_SANDBOX=OFF -DAETHER_BUILD_PHYSICS=OFF
+          -DAETHER_BUILD_EDITOR=OFF -DAETHER_BUILD_EDITOR_UI=OFF -DAETHER_BUILD_VULKAN=OFF
+          -DAETHER_BUILD_SCRIPTING=OFF -DAETHER_BUILD_WINDOWING=OFF -DAETHER_BUILD_BENCH=OFF
+      - name: Build the portable libraries
+        run: >
+          cmake --build build-android --parallel
+          --target aether_engine aether_net aether_nav aether_ai aether_streaming aether_gameplay aether_sprite2d
+          aether_animation aether_save aether_ui aether_audio -- -k 0
+
   clang-tidy:
     name: clang-tidy (changed files, advisory)
     runs-on: ubuntu-latest
@@ -578,7 +610,7 @@ jobs:
           -DAETHER_BUILD_PHYSICS=OFF -DAETHER_BUILD_EDITOR=OFF -DAETHER_BUILD_SANDBOX=OFF
       - name: Tidy the changed files
         run: |
-          files=$(git diff --name-only --diff-filter=d origin/${{ github.base_ref }}...HEAD -- '*.cpp' | grep -E '^(engine|gameplay|inventory|interaction|quests|save|loc)/' || true)
+          files=$(git diff --name-only --diff-filter=d origin/${{ github.base_ref }}...HEAD -- '*.cpp' | grep -E '^(engine|gameplay|inventory|interaction|quests|save|loc)/' | grep -vE '/d3d12/|^engine/src/gfx/[^/]+\.cpp$|^engine/src/platform/window\.cpp$' || true) # the D3D12 backend, the gfx/ files on top of it and the Win32 window need Windows.h: they can't be tidied on Linux
           if [ -z "$files" ]; then echo "no engine or kit sources changed"; exit 0; fi
           clang-tidy -p build $files
 

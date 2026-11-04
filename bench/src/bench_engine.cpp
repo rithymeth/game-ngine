@@ -6,6 +6,7 @@
 #include "aether/job/job_system.h"
 #include "aether/scene/components.h"
 #include "aether/scene/serialization.h"
+#include "aether/scene/test_world.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -272,4 +273,42 @@ AETHER_BENCH_SETUP(
         cook::CookedTexture texture;
         if (!cook::LoadAtex(Cook().atex, texture)) std::abort();
         cook::SaveAtex(texture);
+    });
+
+// A flythrough of the generated test world (Phase 42 step 7, CPU half): a camera crosses the world in 120 frames and
+// each frame gathers what is within view range, the work a streaming or culling pass starts from. Hitches show as
+// a long maximum against the median in the report; render hitches need hardware and are not measured here.
+namespace {
+
+struct FlyState {
+    World world;
+    scene::TestWorldStats stats;
+};
+FlyState& Fly() {
+    static FlyState s;
+    return s;
+}
+
+} // namespace
+
+AETHER_BENCH_SETUP(
+    "world/flythrough_120_frames", 3,
+    [] {
+        scene::TestWorldParams params;
+        params.blocks_x = 40;
+        params.blocks_z = 40;
+        if (!scene::GenerateTestWorld(Fly().world, params, &Fly().stats)) std::abort();
+    },
+    [] {
+        constexpr f32 kRange = 100.0f;
+        usize seen = 0;
+        for (int frame = 0; frame < 120; ++frame) {
+            const f32 t = static_cast<f32>(frame) / 119.0f;
+            const Vec3 camera(t * Fly().stats.extent_x, 5.0f, t * Fly().stats.extent_z);
+            Fly().world.ForEach<Transform>([&](Transform& tr) {
+                const f32 dx = tr.position.x - camera.x, dz = tr.position.z - camera.z;
+                if (dx * dx + dz * dz < kRange * kRange) ++seen;
+            });
+        }
+        if (seen == 0) std::abort();
     });

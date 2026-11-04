@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -44,6 +45,11 @@ struct PluginDependency {
     bool optional = false;   // used when present; no error when it's not
 };
 
+// The binary interface plugins are built against. It changes only when a plugin built for the old one could break
+// (a changed module entry point or a changed layout of what the engine hands a module), never for ordinary engine
+// releases, so "works with engine X or newer" and "fits this ABI" are separate questions.
+inline constexpr u32 kPluginAbi = 1;
+
 struct PluginDescriptor {
     std::string name;            // the folder's and file's name, an identifier
     std::string friendly_name;
@@ -52,6 +58,7 @@ struct PluginDescriptor {
     std::string category = "Other";
     std::string created_by;
     std::string engine_version;  // the oldest engine it works with; "" for any
+    u32 abi = 0;                 // the kPluginAbi it was built for; 0 for a descriptor that predates the field (accepted)
     bool enabled_by_default = false;
     bool has_content = false;    // it has a Content/ folder of assets
     std::vector<PluginDependency> dependencies;
@@ -60,8 +67,13 @@ struct PluginDescriptor {
 
 inline constexpr const char* kPluginExtension = ".aplugin";
 
-bool LoadPluginDescriptor(const std::filesystem::path& file, PluginDescriptor& out, std::string* error = nullptr);
-bool SavePluginDescriptor(const std::filesystem::path& file, const PluginDescriptor& descriptor,
+// Reads a descriptor from bytes (`source` names it in messages). A descriptor larger than kMaxPluginDescriptorBytes,
+// not an object, of the wrong type, or with an invalid plugin or module name is refused, never thrown on.
+inline constexpr usize kMaxPluginDescriptorBytes = 1024 * 1024;
+[[nodiscard]] bool LoadPluginDescriptorFromMemory(std::span<const u8> bytes, const std::string& source, PluginDescriptor& out,
+                                                  std::string* error = nullptr);
+[[nodiscard]] bool LoadPluginDescriptor(const std::filesystem::path& file, PluginDescriptor& out, std::string* error = nullptr);
+[[nodiscard]] bool SavePluginDescriptor(const std::filesystem::path& file, const PluginDescriptor& descriptor,
                           std::string* error = nullptr);
 // Valid names are identifiers: a letter, then letters, digits and '_'.
 bool IsValidPluginName(const std::string& name);
@@ -77,7 +89,7 @@ bool CreatePluginScaffold(const std::filesystem::path& parent, const std::string
 // The plugins a project gets: the engine's (EnginePluginsDir) and its own
 // (<project>/Plugins), discovered and resolved against its `plugins` list.
 class PluginManager;
-bool ResolveProjectPlugins(const std::filesystem::path& project_file, PluginManager& out, std::string* error = nullptr,
+[[nodiscard]] bool ResolveProjectPlugins(const std::filesystem::path& project_file, PluginManager& out, std::string* error = nullptr,
                            std::vector<std::string>* warnings = nullptr);
 
 // --- Modules -----------------------------------------------------------------
@@ -99,7 +111,7 @@ public:
     using Factory = std::function<std::unique_ptr<IModule>()>;
     static ModuleRegistry& Get();
     // False (and nothing registered) when the name is taken.
-    bool Register(const std::string& name, Factory factory);
+    [[nodiscard]] bool Register(const std::string& name, Factory factory);
     bool Has(const std::string& name) const;
     std::unique_ptr<IModule> Create(const std::string& name) const;
     std::vector<std::string> Names() const;
@@ -147,7 +159,7 @@ public:
     // after its dependencies. False with `error` for a missing or too-old
     // required dependency, a plugin that needs a newer engine, an unknown
     // requested plugin, or a dependency cycle. Warnings go to `warnings`.
-    bool Resolve(const std::vector<std::string>& requested, std::string* error = nullptr,
+    [[nodiscard]] bool Resolve(const std::vector<std::string>& requested, std::string* error = nullptr,
                  std::vector<std::string>* warnings = nullptr);
     // Enabled plugins in dependency order (after Resolve).
     std::vector<const PluginInfo*> Enabled() const;
@@ -184,7 +196,7 @@ private:
 namespace detail {
 struct ModuleRegistrar {
     ModuleRegistrar(const char* name, ModuleRegistry::Factory factory) {
-        ModuleRegistry::Get().Register(name, std::move(factory));
+        (void)ModuleRegistry::Get().Register(name, std::move(factory)); // a static initialiser can't report; a duplicate name keeps the first
     }
 };
 } // namespace detail
@@ -219,6 +231,7 @@ AETHER_REFLECT(aether::plugin::PluginDescriptor, 1,
     AETHER_FIELD(category, Field_EditAnywhere),
     AETHER_FIELD(created_by, Field_EditAnywhere),
     AETHER_FIELD(engine_version, Field_EditAnywhere),
+    AETHER_FIELD(abi, Field_EditAnywhere),
     AETHER_FIELD(enabled_by_default, Field_EditAnywhere),
     AETHER_FIELD(has_content, Field_EditAnywhere),
     AETHER_FIELD(dependencies, Field_EditAnywhere),

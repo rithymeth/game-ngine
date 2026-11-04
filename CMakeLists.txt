@@ -132,16 +132,53 @@ FetchContent_Declare(
     SOURCE_SUBDIR do-not-build
 )
 FetchContent_MakeAvailable(bc7enc)
+# Mobile textures: ASTC through ARM's astc-encoder (Apache-2.0), built without SIMD (the scalar path) so one binary runs on any CPU the cooker
+# runs on. Only the library is built.
+FetchContent_Declare(
+    astcenc
+    GIT_REPOSITORY https://github.com/ARM-software/astc-encoder.git
+    GIT_TAG 5.4.0
+    GIT_SHALLOW TRUE
+)
+set(ASTCENC_CLI OFF CACHE BOOL "" FORCE)
+set(ASTCENC_UNITTEST OFF CACHE BOOL "" FORCE)
+set(ASTCENC_SHAREDLIB OFF CACHE BOOL "" FORCE)
+set(ASTCENC_ISA_NONE ON CACHE BOOL "" FORCE)
+set(ASTCENC_UNIVERSAL_BUILD OFF CACHE BOOL "" FORCE) # macOS: one architecture (the universal build refuses ISA_NONE)
+set(ASTCENC_WERROR OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(astcenc)
 add_library(aether_bcenc STATIC
     ${bc7enc_SOURCE_DIR}/bc7enc.cpp
     ${bc7enc_SOURCE_DIR}/bc7decomp.cpp
     ${bc7enc_SOURCE_DIR}/rgbcx.cpp
 )
+target_link_libraries(aether_bcenc PUBLIC astcenc-none-static)
+target_include_directories(aether_bcenc SYSTEM PUBLIC ${astcenc_SOURCE_DIR}/Source)
 target_include_directories(aether_bcenc SYSTEM PUBLIC ${bc7enc_SOURCE_DIR})
 if(MSVC)
     target_compile_options(aether_bcenc PRIVATE /w)
 else()
     target_compile_options(aether_bcenc PRIVATE -w)
+endif()
+
+# Phase 39 step 5 / Phase 42 step 4: meshlets and LODs for the cooker - Arseny Kapoulkine's meshoptimizer,
+# MIT. Only the library sources are built (its own CMakeLists has demos and gltfpack), and only the cooker
+# links it.
+FetchContent_Declare(
+    meshoptimizer
+    GIT_REPOSITORY https://github.com/zeux/meshoptimizer.git
+    GIT_TAG v0.22
+    GIT_SHALLOW TRUE
+    SOURCE_SUBDIR do-not-build
+)
+FetchContent_MakeAvailable(meshoptimizer)
+file(GLOB _meshopt_sources ${meshoptimizer_SOURCE_DIR}/src/*.cpp)
+add_library(aether_meshopt STATIC ${_meshopt_sources})
+target_include_directories(aether_meshopt SYSTEM PUBLIC ${meshoptimizer_SOURCE_DIR}/src)
+if(MSVC)
+    target_compile_options(aether_meshopt PRIVATE /w)
+else()
+    target_compile_options(aether_meshopt PRIVATE -w)
 endif()
 
 set(_aether_shared_libs ${BUILD_SHARED_LIBS})
@@ -389,6 +426,11 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(recastnavigation)
 # AI and navigation (Phase 20): navmeshes, agents, behaviour trees, perception.
 add_subdirectory(nav)
+if(TARGET aether_bench)
+    # The navigation benchmarks; nav is added after bench/, so the benchmark executable picks them up here.
+    target_sources(aether_bench PRIVATE bench/src/bench_nav.cpp)
+    target_link_libraries(aether_bench PRIVATE Aether::Nav)
+endif()
 add_subdirectory(ai)
 
 if(AETHER_BUILD_SCRIPTING)
@@ -449,6 +491,7 @@ endif()
 
 add_subdirectory(samples/coin_run)
 add_subdirectory(samples/gem_hop)
+add_subdirectory(samples/frozen_api_game)
 
 # Phase 24 step 5: the portable editor shell - the editor's panels in a
 # GLFW (or Win32) window, or offscreen, drawn through the Vulkan RHI.
@@ -476,6 +519,12 @@ endif()
 
 # Phase 23: the functional test runner (headless, any platform).
 add_subdirectory(tools/functional)
+if(TARGET aether_ai AND TARGET aether_nav)
+    add_subdirectory(tools/alloc_audit)
+endif()
+if(TARGET aether_streaming AND TARGET aether_net)
+    add_subdirectory(tools/soak)
+endif()
 add_subdirectory(tools/fuzz)
 # Phase 25: the .apak archive tool and the cooker.
 add_subdirectory(tools/pak)

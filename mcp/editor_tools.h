@@ -14,6 +14,10 @@
 #include "core/command_stack.h"
 #include "core/play_session.h"
 #include "mcp_server.h"
+#include "simulation.h"
+
+#include <filesystem>
+#include <memory>
 
 namespace aether::mcp {
 
@@ -23,6 +27,11 @@ struct EditorSession {
     editor::EditorHooks hooks;
     editor::CommandStack stack;
     editor::PlaySession play;
+    // Exists from Play to Stop; runs the physics systems (see simulation.h).
+    std::unique_ptr<Simulation> sim;
+    // save_scene and load_scene stay inside this folder (relative paths resolve against it; symlinks and ".." cannot
+    // leave it). Empty means unrestricted, for embedding and tests; the server program sets it (see --scene-root).
+    std::filesystem::path scene_root;
 
     editor::CommandContext Context() { return editor::CommandContext(world, guids, &hooks); }
 };
@@ -32,6 +41,10 @@ struct EditorSession {
 // before any entity has used them. Components from other modules appear once
 // the program registers them (GetComponentId<T>()).
 void RegisterBuiltinComponents();
+
+// The file a scene tool may touch for `requested`, or an empty path with `error` set: only .json and .aesc files, and
+// (when `root` is set) only inside `root`.
+std::filesystem::path ResolveScenePath(const std::filesystem::path& root, const std::string& requested, std::string& error);
 
 // Adds the editor tools (see the .cpp for the list) to `server`, operating on
 // `session`, which must outlive the server.

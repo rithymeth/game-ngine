@@ -64,10 +64,11 @@ bool GpuEmitterRuntime::Initialize(gfx::rhi::IDevice& device, const Emitter& emi
         alive_list_ = device.CreateStorageBuffer(list_bytes, kListElementStride);
 
         const auto frame_words = PackFrameConstants(GpuFrameConstants{});
-        frame_constants_ = device.CreateConstantBuffer(frame_words.size() * sizeof(u32), frame_words.data());
+        frame_constants_ = device.CreateFrameConstantBuffer(frame_words.size() * sizeof(u32));
         std::vector<f32> module_data(module_float4s * 4, 0.0f);
         std::copy(modules.begin(), modules.end(), module_data.begin());
-        module_constants_ = device.CreateConstantBuffer(module_data.size() * sizeof(f32), module_data.data());
+        module_constants_ = device.CreateFrameConstantBuffer(module_data.size() * sizeof(f32));
+        device.UpdateFrameConstantBuffer(module_constants_, module_data.data(), module_data.size() * sizeof(f32));
 
         auto make_pipeline = [&](const char* entry, u32 sampled_textures) {
             gfx::rhi::ComputePipelineDesc desc;
@@ -99,7 +100,7 @@ void GpuEmitterRuntime::RecordInitialize(gfx::rhi::ICommandList& command_list) {
     GpuFrameConstants frame;
     frame.max_particles = max_particles_;
     const auto words = PackFrameConstants(frame);
-    device_->UpdateConstantBuffer(frame_constants_, words.data(), words.size() * sizeof(u32));
+    device_->UpdateFrameConstantBuffer(frame_constants_, words.data(), words.size() * sizeof(u32));
     BindResources(command_list, reset_pipeline_, particles_, dead_list_, alive_list_, frame_constants_, module_constants_);
     command_list.Dispatch(GroupsFor(max_particles_, shader_.thread_group_size));
     command_list.ComputeBufferBarrier(particles_);
@@ -118,12 +119,12 @@ bool GpuEmitterRuntime::RecordFrame(gfx::rhi::ICommandList& command_list, const 
         frame.depth_height = depth_height_;
     }
     const auto words = PackFrameConstants(frame);
-    device_->UpdateConstantBuffer(frame_constants_, words.data(), words.size() * sizeof(u32));
+    device_->UpdateFrameConstantBuffer(frame_constants_, words.data(), words.size() * sizeof(u32));
     const auto values = driver_.ModuleConstants();
     const usize float4s = std::max<usize>(1, (values.size() + 3) / 4);
     std::vector<f32> module_data(float4s * 4, 0.0f);
     std::copy(values.begin(), values.end(), module_data.begin());
-    device_->UpdateConstantBuffer(module_constants_, module_data.data(), module_data.size() * sizeof(f32));
+    device_->UpdateFrameConstantBuffer(module_constants_, module_data.data(), module_data.size() * sizeof(f32));
 
     BindResources(command_list, emit_pipeline_, particles_, dead_list_, alive_list_, frame_constants_, module_constants_);
     command_list.Dispatch(GroupsFor(frame.spawn_count, shader_.thread_group_size));

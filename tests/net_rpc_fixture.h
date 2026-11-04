@@ -91,6 +91,7 @@ struct RpcSim {
                 if (!replication->HandleEvent(e)) rpc->HandleEvent(e);
                 g_running = nullptr;
             }
+            rpc->Tick(net.Now());
             replication->Update(net.Now());
             for (auto& c : clients) {
                 c->host->Update(net.Now());

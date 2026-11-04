@@ -1,4 +1,5 @@
 #include "workspace/editor_workspace.h"
+#include "core/recent_projects.h"
 
 #include "ai/bt_editor.h"
 #include "ai/nav_panel.h"
