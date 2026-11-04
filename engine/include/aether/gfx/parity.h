@@ -3,6 +3,7 @@
 #include "aether/core/base.h"
 #include "aether/gfx/rhi/types.h"
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -38,10 +39,14 @@ bool Within(const ImageDiff& diff, const Tolerance& tolerance);
 std::string Describe(const ImageDiff& diff); // "max 3, mean 0.41, 12 bad pixels (first at 4,7)"
 
 // --- Scenes --------------------------------------------------------------------------------------------------------
-enum class SceneKind : u8 { Flat, Gradient, Checker };
+enum class SceneKind : u8 { Flat, Gradient, Checker, Custom };
 struct Scene {
     SceneKind kind = SceneKind::Flat;
     std::string name; // "flat", "gradient", "checker"
+    // A Custom scene brings its own shader and CPU reference (the renderer's lit-material scenes): hlsl gives the whole program
+    // (VSMain, PSMain) for a target of the size, reference gives the pixels a correct backend produces for it.
+    std::function<std::string(u32 width, u32 height)> hlsl;
+    std::function<std::vector<u8>(u32 width, u32 height)> reference;
 };
 const std::vector<Scene>& Scenes();
 
@@ -51,7 +56,12 @@ std::vector<u8> ReferenceImage(const Scene& scene, u32 width, u32 height);
 std::string SceneHlsl(const Scene& scene, u32 width, u32 height);
 
 // Draws the scene on an offscreen target and reads it back. False with a message where the device can't.
-bool RenderScene(rhi::IDevice& device, const Scene& scene, u32 width, u32 height, std::vector<u8>& pixels, std::string* error = nullptr);
+// frame_ms, when given, is the mean time of 20 further draw, submit and wait round trips of the same frame: a rough per-frame cost on this
+// device (a software driver such as lavapipe measures the CPU, not a GPU).
+bool RenderScene(rhi::IDevice& device, const Scene& scene, u32 width, u32 height, std::vector<u8>& pixels, std::string* error = nullptr,
+                 f64* frame_ms = nullptr);
+// Writes RGBA8 (rows top to bottom) as a 24-bit BMP, for screenshots. False where the file can't be written.
+bool WriteBmp(const std::string& path, const std::vector<u8>& rgba, u32 width, u32 height);
 
 // --- Running ---------------------------------------------------------------------------------------------------------
 struct BackendRun {
@@ -60,6 +70,7 @@ struct BackendRun {
     bool rendered = false;
     std::string error;
     std::vector<u8> pixels;
+    f64 frame_ms = 0.0; // see RenderScene
     ImageDiff vs_reference;
 };
 struct SceneReport {

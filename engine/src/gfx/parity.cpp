@@ -8,9 +8,11 @@
 #endif
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <exception>
+#include <fstream>
 #include <memory>
 
 namespace aether::gfx::parity {
@@ -82,6 +84,7 @@ u8 ToByte(f64 v) { return static_cast<u8>(std::lround(std::clamp(v, 0.0, 1.0) * 
 } // namespace
 
 std::vector<u8> ReferenceImage(const Scene& scene, u32 width, u32 height) {
+    if (scene.kind == SceneKind::Custom) return scene.reference ? scene.reference(width, height) : std::vector<u8>();
     std::vector<u8> out(static_cast<usize>(width) * height * 4);
     for (u32 y = 0; y < height; ++y) {
         for (u32 x = 0; x < width; ++x) {
@@ -99,6 +102,8 @@ std::vector<u8> ReferenceImage(const Scene& scene, u32 width, u32 height) {
                 p[0] = v, p[1] = v, p[2] = v, p[3] = 255;
                 break;
             }
+            case SceneKind::Custom:
+                break;
             }
         }
     }
@@ -106,6 +111,7 @@ std::vector<u8> ReferenceImage(const Scene& scene, u32 width, u32 height) {
 }
 
 std::string SceneHlsl(const Scene& scene, u32 width, u32 height) {
+    if (scene.kind == SceneKind::Custom) return scene.hlsl ? scene.hlsl(width, height) : std::string();
     // One triangle that covers the target; SV_Position is the pixel centre (x + 0.5, y + 0.5), y down, on every backend.
     std::string hlsl =
         "float4 VSMain(uint id : SV_VertexID) : SV_Position {\n"
@@ -126,8 +132,38 @@ std::string SceneHlsl(const Scene& scene, u32 width, u32 height) {
                 "    float v = ((cell.x + cell.y) % 2 == 0) ? 0.1 : 0.9;\n"
                 "    return float4(v, v, v, 1.0);\n}\n";
         break;
+    case SceneKind::Custom:
+        break;
     }
     return hlsl;
+}
+
+bool WriteBmp(const std::string& path, const std::vector<u8>& rgba, u32 width, u32 height) {
+    if (width == 0 || height == 0 || rgba.size() != static_cast<usize>(width) * height * 4) return false;
+    const u32 row = (width * 3 + 3) & ~3u;
+    const u32 data_size = row * height;
+    std::vector<u8> file(54 + data_size, 0);
+    const auto put32 = [&](usize at, u32 v) {
+        for (int i = 0; i < 4; ++i) file[at + i] = static_cast<u8>((v >> (8 * i)) & 0xFF);
+    };
+    file[0] = 'B', file[1] = 'M';
+    put32(2, 54 + data_size);
+    put32(10, 54);
+    put32(14, 40);
+    put32(18, width);
+    put32(22, height); // positive: rows bottom to top
+    file[26] = 1;
+    file[28] = 24;
+    put32(34, data_size);
+    for (u32 y = 0; y < height; ++y) {
+        const u8* src = &rgba[static_cast<usize>(height - 1 - y) * width * 4];
+        u8* dst = &file[54 + static_cast<usize>(y) * row];
+        for (u32 x = 0; x < width; ++x) dst[x * 3 + 0] = src[x * 4 + 2], dst[x * 3 + 1] = src[x * 4 + 1], dst[x * 3 + 2] = src[x * 4 + 0];
+    }
+    std::ofstream out(path, std::ios::binary);
+    if (!out) return false;
+    out.write(reinterpret_cast<const char*>(file.data()), static_cast<std::streamsize>(file.size()));
+    return static_cast<bool>(out);
 }
 
 const char* BackendName(rhi::Backend backend) { return backend == rhi::Backend::D3D12 ? "D3D12" : "Vulkan"; }
@@ -150,7 +186,7 @@ bool SceneReport::Ok(const Tolerance& tolerance) const {
 
 #if defined(AETHER_PARITY_HAS_DEVICES)
 
-bool RenderScene(rhi::IDevice& device, const Scene& scene, u32 width, u32 height, std::vector<u8>& pixels, std::string* error) {
+bool RenderScene(rhi::IDevice& device, const Scene& scene, u32 width, u32 height, std::vector<u8>& pixels, std::string* error, f64* frame_ms) {
     const auto fail = [&](const char* message) {
         if (error) *error = message;
         return false;
@@ -172,6 +208,22 @@ bool RenderScene(rhi::IDevice& device, const Scene& scene, u32 width, u32 height
     device.WaitForFence(device.Submit(*cmd, target.get()));
     if (!target->ReadBack(pixels)) return fail("the swap chain can't be read back");
     target->Present(false);
+    if (frame_ms) {
+        constexpr int kFrames = 20;
+        const auto start = std::chrono::steady_clock::now();
+        for (int i = 0; i < kFrames; ++i) {
+            target->AcquireNextImage();
+            cmd->Reset();
+            cmd->BeginRenderPass(*target, {0.0f, 0.0f, 0.0f, 1.0f});
+            cmd->BindPipeline(pipeline);
+            cmd->Draw(3);
+            cmd->EndRenderPass();
+            cmd->Close();
+            device.WaitForFence(device.Submit(*cmd, target.get()));
+            target->Present(false);
+        }
+        *frame_ms = std::chrono::duration<f64, std::milli>(std::chrono::steady_clock::now() - start).count() / kFrames;
+    }
     return true;
 }
 
@@ -196,7 +248,7 @@ SceneReport RunScene(const Scene& scene, u32 width, u32 height, const std::vecto
                 run.available = false; // listed, but no usable device on this machine (no driver)
                 if (run.error.empty()) run.error = "no device";
             } else {
-                run.rendered = RenderScene(*device, scene, width, height, run.pixels, &run.error);
+                run.rendered = RenderScene(*device, scene, width, height, run.pixels, &run.error, &run.frame_ms);
                 if (run.rendered) run.vs_reference = CompareImages(run.pixels, reference, width, height, tolerance);
             }
         }
@@ -213,7 +265,7 @@ SceneReport RunScene(const Scene& scene, u32 width, u32 height, const std::vecto
 
 #else
 
-bool RenderScene(rhi::IDevice&, const Scene&, u32, u32, std::vector<u8>&, std::string* error) {
+bool RenderScene(rhi::IDevice&, const Scene&, u32, u32, std::vector<u8>&, std::string* error, f64*) {
     if (error) *error = "this build has no RHI backend";
     return false;
 }

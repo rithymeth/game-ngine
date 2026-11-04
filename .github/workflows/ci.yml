@@ -94,6 +94,8 @@ jobs:
           AETHER_REQUIRE_VULKAN: "1"
           AETHER01_INPUT_TRACE: ${{ github.workspace }}/build/aether01-input-trace.json
           AETHER01_MOVESET_TRACE: ${{ github.workspace }}/build/aether01-moveset-trace.json
+          # The lit-material parity scenes keep their screenshots (BMP) and a timing report here.
+          AETHER_PARITY_OUT: ${{ github.workspace }}/parity-out
         run: xvfb-run -a ./build/tests/aether_tests
       - name: Vulkan resize and readback validation
         env:
@@ -117,6 +119,14 @@ jobs:
           exit "$status"
       - name: Functional tests
         run: ./build/tools/functional/aether_functional --quiet --junit functional-results.xml
+      - name: Upload the parity screenshots and timings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: parity-lavapipe
+          path: parity-out
+          retention-days: 14
+          if-no-files-found: ignore
       - name: Registered regression tests
         run: ctest --test-dir build --output-on-failure --parallel 4 -R "^(fuzz_replay_.*|module_graph_catches_a_cycle|api_stability_annotations|api_freeze_checks|api_inventory|frozen_api_game|production_gate_table|m8_gate_table)$"
 

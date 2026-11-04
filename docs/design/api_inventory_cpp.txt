@@ -1759,11 +1759,13 @@
   ImageDiff CompareImages(const std::vector<u8>&a,const std::vector<u8>&b,u32 width,u32 height,const Tolerance&tolerance)
   SceneReport RunScene(const Scene&scene,u32 width,u32 height,const std::vector<rhi::Backend>&backends,const Tolerance&tolerance)
   bool Ok(const Tolerance&tolerance)const
-  bool RenderScene(rhi::IDevice&device,const Scene&scene,u32 width,u32 height,std::vector<u8>&pixels,std::string*error=nullptr)
+  bool RenderScene(rhi::IDevice&device,const Scene&scene,u32 width,u32 height,std::vector<u8>&pixels,std::string*error=nullptr,f64*frame_ms=nullptr)
   bool Within(const ImageDiff&diff,const Tolerance&tolerance)
+  bool WriteBmp(const std::string&path,const std::vector<u8>&rgba,u32 width,u32 height)
   const char*BackendName(rhi::Backend backend)
   const std::vector<Scene>&Scenes()
   f64 BadFraction()const
+  std::function<std::string(u32 width,u32 height)>hlsl
   std::string Describe(const ImageDiff&diff)
   std::string SceneHlsl(const Scene&scene,u32 width,u32 height)
   std::vector<u8>ReferenceImage(const Scene&scene,u32 width,u32 height)
@@ -4690,6 +4692,8 @@
   void PlaceTransients()
   void SideEffect()
   void Write(ResourceId resource,Access access)
+[renderer/include/aether/renderer/lit_parity.h] experimental
+  const std::vector<gfx::parity::Scene>&LitParityScenes()
 [renderer/include/aether/renderer/material.h] experimental
   type enum class BlendMode
   type enum class Fit
