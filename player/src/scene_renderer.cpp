@@ -1548,6 +1548,12 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
             particle_lighting.sun_direction = Vec3(frame_data.sun_direction[0], frame_data.sun_direction[1], frame_data.sun_direction[2]);
             particle_lighting.sun_color = Vec3(frame_data.sun_color[0], frame_data.sun_color[1], frame_data.sun_color[2]);
             particle_lighting.sky_color = Vec3(frame_data.sky_color[0], frame_data.sky_color[1], frame_data.sky_color[2]);
+            // Lit sprites take the frame's point lights too (the scene's and the particles' own).
+            for (u32 i = 0; i < frame_data.counts[0] && i < kMaxPointLights; ++i) {
+                particle_lighting.points.push_back({Vec3(frame_data.point_position_range[i][0], frame_data.point_position_range[i][1], frame_data.point_position_range[i][2]),
+                                                    frame_data.point_position_range[i][3],
+                                                    Vec3(frame_data.point_color[i][0], frame_data.point_color[i][1], frame_data.point_color[i][2])});
+            }
         }
         if (renderer.particles) renderer.particles->SetLighting(particle_lighting);
         commands.BindPipeline(renderer.pipeline);

@@ -12,6 +12,7 @@ namespace aether::player {
 
 namespace {
 
+constexpr usize kReservedSceneLights = 4; // see AddParticleLights
 constexpr f32 kDegreesToRadians = 3.14159265358979f / 180.0f;
 
 Vec3 Normalized(const Vec3& v, const Vec3& fallback) {
@@ -143,17 +144,26 @@ void AddParticleLights(FrameData& data, std::span<const vfx::ParticleLight> ligh
         pool.push_back(c);
     }
     const usize scene_lights = pool.size();
+    std::vector<Candidate> particles;
     for (const vfx::ParticleLight& light : lights) {
         const f32 energy = light.intensity;
         if (!(light.radius > 0.0f) || !(energy > 0.0f)) continue; // (also drops NaN)
         Candidate c{distance_squared(light.position.x, light.position.y, light.position.z), {}, {}};
         Set4(c.position_range, light.position.x, light.position.y, light.position.z, light.radius);
         Set4(c.color, light.color.r * energy, light.color.g * energy, light.color.b * energy, 0.0f);
-        pool.push_back(c);
+        particles.push_back(c);
     }
-    if (pool.size() == scene_lights) return; // nothing to add: leave the scene's lights as they are
-    std::stable_sort(pool.begin(), pool.end(), [](const Candidate& a, const Candidate& b) { return a.distance_squared < b.distance_squared; });
-    if (pool.size() > kMaxPointLights) pool.resize(kMaxPointLights);
+    if (particles.empty()) return; // nothing to add: leave the scene's lights as they are
+    // The scene's lights keep up to kReservedSceneLights slots however many particle lights there are (a fire's sparks must not push out the
+    // lamps); the particles' nearest lights take the rest, and the scene's take whatever the particles leave.
+    const auto nearer = [](const Candidate& l, const Candidate& r) { return l.distance_squared < r.distance_squared; };
+    std::stable_sort(particles.begin(), particles.end(), nearer);
+    const usize reserved = std::min(scene_lights, kReservedSceneLights);
+    const usize particle_keep = std::min(particles.size(), kMaxPointLights - reserved);
+    const usize scene_keep = std::min(scene_lights, kMaxPointLights - particle_keep);
+    pool.resize(scene_keep);         // the scene's lights were gathered nearest first, so the nearest stay
+    pool.insert(pool.end(), particles.begin(), particles.begin() + static_cast<std::ptrdiff_t>(particle_keep));
+    std::stable_sort(pool.begin(), pool.end(), nearer);
     for (usize i = 0; i < pool.size(); ++i) {
         std::copy(std::begin(pool[i].position_range), std::end(pool[i].position_range), std::begin(data.point_position_range[i]));
         std::copy(std::begin(pool[i].color), std::end(pool[i].color), std::begin(data.point_color[i]));
