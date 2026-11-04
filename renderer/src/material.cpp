@@ -88,6 +88,8 @@ const Catalog& GetCatalog() {
         fixed("Material.Output", Sig("Material", "Output",
                                      {In("BaseColor", F3, {0.5f, 0.5f, 0.5f, 0}), In("Metallic", F), In("Roughness", F, {0.5f, 0, 0, 0}),
                                       In("Normal", F3, {0, 0, 1, 0}), In("Emissive", F3), In("AO", F, {1, 0, 0, 0}),
+                                      In("ClearCoat", F), In("ClearCoatRoughness", F, {0.1f, 0, 0, 0}), In("SheenColor", F3),
+                                      In("SheenRoughness", F, {0.5f, 0, 0, 0}), In("Anisotropy", F), In("AnisotropyRotation", F),
                                       In("Opacity", F, {1, 0, 0, 0}), In("OpacityMask", F, {1, 0, 0, 0}), In("WorldPositionOffset", F3)},
                                      {}));
         // Constants: config {"value": number or array}.
@@ -654,7 +656,8 @@ Analysis Analyze(const Material& m) {
             report("MT009", a.output, "OpacityMask", "Opacity Mask only matters for Masked materials.", Severity::Warning);
         }
         if (m.shading == ShadingModel::Unlit) {
-            for (const char* pin : {"Metallic", "Roughness", "Normal", "AO"}) {
+            for (const char* pin : {"Metallic", "Roughness", "Normal", "AO", "ClearCoat", "ClearCoatRoughness", "SheenColor", "SheenRoughness",
+                                    "Anisotropy", "AnisotropyRotation"}) {
                 if (used(pin)) report("MT009", a.output, pin, std::string(pin) + " is ignored by Unlit materials.", Severity::Warning);
             }
         }

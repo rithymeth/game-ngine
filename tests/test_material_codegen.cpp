@@ -281,3 +281,76 @@ AETHER_TEST(MaterialCodegen_OutputCompilesWithGlslang) {
         if (std::getenv("AETHER_DUMP_HLSL") || Contains(log, "ERROR")) std::printf("%s\n%s\n", g.hlsl.c_str(), log.c_str());
     }
 }
+
+// Phase 39.3: clear coat, sheen and anisotropy.
+AETHER_TEST(MaterialCodegen_AdvancedPbrPinsReachTheOutputs) {
+    // Unconnected, they take their defaults: no coat, no sheen, round highlights.
+    const GeneratedMaterial plain = GenerateHlsl(LitMaterial());
+    AETHER_CHECK(plain.ok);
+    for (const char* field : {"clear_coat", "clear_coat_roughness", "sheen_color", "sheen_roughness", "anisotropy", "anisotropy_rotation"}) {
+        AETHER_CHECK(Contains(plain.hlsl, std::string("o.") + field + " = "));
+        AETHER_CHECK(Contains(plain.hlsl, std::string("    float") + (std::string(field) == "sheen_color" ? "3 " : " ") + field + ";"));
+    }
+    AETHER_CHECK(Contains(plain.hlsl, "o.clear_coat = 0.0;"));
+    AETHER_CHECK(Contains(plain.hlsl, "o.clear_coat_roughness = 0.1;"));
+    AETHER_CHECK(Contains(plain.hlsl, "o.sheen_roughness = 0.5;"));
+    AETHER_CHECK(Contains(plain.hlsl, "o.anisotropy = 0.0;"));
+
+    // Connected, the graph's values are what the pass sees.
+    Material m = LitMaterial();
+    const NodeId out = 1; // LitMaterial adds the Material Output first
+    AETHER_CHECK(m.Find(out) && m.Find(out)->type == "Material.Output");
+    m.Connect(m.Add("Const.Float", {{"value", 0.75}}), "value", out, "ClearCoat");
+    m.Connect(m.Add("Const.Float3", {{"value", {0.2, 0.4, 0.6}}}), "value", out, "SheenColor");
+    m.Connect(m.Add("Const.Float", {{"value", -0.5}}), "value", out, "Anisotropy");
+    const GeneratedMaterial g = GenerateHlsl(m);
+    AETHER_CHECK(g.ok && g.analysis.Ok());
+    AETHER_CHECK(Contains(g.hlsl, "o.clear_coat = 0.75;"));
+    AETHER_CHECK(Contains(g.hlsl, "o.anisotropy = -0.5;"));
+    AETHER_CHECK(!Contains(g.hlsl, "o.sheen_color = float3(0.0, 0.0, 0.0);"));
+    AETHER_CHECK(g.permutation_key != plain.permutation_key);
+}
+
+AETHER_TEST(MaterialCodegen_UnlitIgnoresTheAdvancedPbrPins) {
+    Material m = LitMaterial();
+    m.shading = ShadingModel::Unlit;
+    m.Connect(m.Add("Const.Float", {{"value", 0.9}}), "value", 1, "ClearCoat"); // node 1 is the Material Output
+    const Analysis a = Analyze(m);
+    AETHER_CHECK(a.Ok() && a.Has("MT009"));
+    const GeneratedMaterial g = GenerateHlsl(m);
+    AETHER_CHECK(g.ok && Contains(g.hlsl, "o.clear_coat = 0.0;"));
+}
+
+AETHER_TEST(MaterialCodegen_AdvancedPbrLibraryCompilesWithGlslang) {
+    const std::string lib = AdvancedPbrHlsl();
+    AETHER_CHECK(Contains(lib, "AetherD_GGXAniso") && Contains(lib, "AetherD_Charlie") && Contains(lib, "AetherClearCoat"));
+    AETHER_CHECK(Count(lib, "#ifndef AETHER_ADVANCED_PBR_HLSL") == 1);
+    if (!GlslangAvailable()) {
+        std::printf("  (glslangValidator not found: skipping the HLSL compile check)\n");
+        return;
+    }
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "aether_advanced_pbr";
+    std::filesystem::create_directories(dir);
+    const std::filesystem::path src = dir / "pbr.hlsl", out = dir / "log.txt";
+    {
+        std::ofstream f(src);
+        f << lib
+          << "float4 main(float4 pos : SV_Position, float3 n : TEXCOORD0, float3 v : TEXCOORD1, float3 l : TEXCOORD2) : SV_Target {\n"
+             "    float3 N = normalize(n), V = normalize(v), L = normalize(l);\n"
+             "    float3 T = normalize(cross(N, float3(0, 1, 0))), B = cross(N, T), H = normalize(V + L);\n"
+             "    float NoV = saturate(dot(N, V)), NoL = saturate(dot(N, L)), NoH = saturate(dot(N, H)), LoH = saturate(dot(L, H));\n"
+             "    float3 s = AetherAnisotropicSpecular(float3(0.04, 0.04, 0.04), pos.x, pos.y, N, T, B, V, L, pos.z);\n"
+             "    s += AetherSheen(float3(1, 1, 1), pos.w, NoV, NoL, NoH);\n"
+             "    AetherCoat c = AetherClearCoat(pos.x, pos.y, NoH, LoH);\n"
+             "    return float4(s * c.attenuation + c.spec, 1.0);\n"
+             "}\n";
+    }
+    const std::string cmd = "glslangValidator -D -V -S frag -e main \"" + src.string() + "\" -o \"" + (dir / "out.spv").string() +
+                            "\" > \"" + out.string() + "\" 2>&1";
+    const bool ok = std::system(cmd.c_str()) == 0;
+    std::ifstream l(out);
+    const std::string log((std::istreambuf_iterator<char>(l)), std::istreambuf_iterator<char>());
+    if (!ok) std::printf("%s\n", log.c_str());
+    AETHER_CHECK(ok);
+    std::filesystem::remove_all(dir);
+}

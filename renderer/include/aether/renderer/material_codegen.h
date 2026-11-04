@@ -67,6 +67,13 @@ struct GeneratedMaterial {
 };
 GeneratedMaterial GenerateHlsl(const Material& material);
 
+// The advanced PBR terms (Phase 39.3) that a lighting pass calls with a material's clear_coat,
+// sheen_* and anisotropy* outputs: an anisotropic GGX distribution and visibility, the Charlie
+// sheen distribution with the Neubelt visibility, and a clear coat lobe (fixed 1.5 index of
+// refraction) that reports how much light it takes from the base layer. Plain HLSL helpers
+// prefixed "Aether", to be included once ahead of the generated material.
+const char* AdvancedPbrHlsl();
+
 // A name made safe for HLSL: letters, digits and underscores.
 std::string HlslIdentifier(const std::string& name);
 

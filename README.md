@@ -3872,7 +3872,8 @@ HLSL, like Unreal's material editor. They live in `Aether::Renderer`
   nodes and links.
 - **Node library** (`ResolveNode`, `ListNodeTypes` for the palette):
   - the Material Output node (BaseColor, Metallic, Roughness, Normal,
-    Emissive, AO, Opacity, OpacityMask, WorldPositionOffset);
+    Emissive, AO, ClearCoat, ClearCoatRoughness, SheenColor, SheenRoughness,
+    Anisotropy, AnisotropyRotation, Opacity, OpacityMask, WorldPositionOffset);
   - constants, and parameter nodes (`Param.Scalar:Roughness`);
   - Texture Sample (a texture input is required; UVs default to UV0),
     Unpack Normal;
