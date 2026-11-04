@@ -108,7 +108,7 @@ jobs:
             echo "Vulkan validation reported an error"
             exit 1
           fi
-          for test in Vulkan_OffscreenResizePreservesHandlesAndPixels Vulkan_WindowRecreationPreservesHandlesAndReadback Vulkan_TexturedQuadThroughBindlessTable; do
+          for test in Vulkan_OffscreenFrameReadsBack Vulkan_TexturedQuadThroughBindlessTable Vulkan_WindowSwapChainPresents; do
             if ! grep -Fq "[PASS] $test" build/vulkan-validation.log; then
               echo "Required Vulkan check did not pass: $test"
               exit 1
@@ -260,7 +260,7 @@ jobs:
           fi
           # Also reject a build that silently configured Vulkan out: the
           # substring filter would otherwise succeed with zero tests.
-          for test in Vulkan_OffscreenResizePreservesHandlesAndPixels Vulkan_WindowRecreationPreservesHandlesAndReadback Vulkan_TexturedQuadThroughBindlessTable; do
+          for test in Vulkan_OffscreenFrameReadsBack Vulkan_TexturedQuadThroughBindlessTable Vulkan_WindowSwapChainPresents; do
             if ! grep -Fq "[PASS] $test" build/vulkan-validation.log; then
               echo "Required Vulkan check did not pass: $test"
               exit 1
