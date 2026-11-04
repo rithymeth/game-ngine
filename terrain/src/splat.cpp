@@ -8,6 +8,28 @@
 namespace aether {
 namespace terrain {
 
+
+std::array<f32, 4> BlendTerrainLayerHeights(
+    const std::array<f32, 4>& painted_weights,
+    const std::array<f32, 4>& material_heights,
+    f32 contrast) {
+    std::array<f32, 4> result{};
+    f32 total = 0.0f;
+    const f32 strength = std::isfinite(contrast) ? std::clamp(contrast, 0.0f, 1.0f) : 0.0f;
+    for (usize i = 0; i < result.size(); ++i) {
+        const f32 weight = std::isfinite(painted_weights[i]) ? std::max(0.0f, painted_weights[i]) : 0.0f;
+        if (weight == 0.0f) continue;
+        const f32 height = std::isfinite(material_heights[i]) ? std::clamp(material_heights[i], 0.0f, 1.0f) : 0.0f;
+        // Weight remains strictly zero for unpainted layers. A positive
+        // baseline avoids losing every layer on a flat/black height map.
+        result[i] = weight * ((1.0f - strength) + strength * (0.01f + height));
+        total += result[i];
+    }
+    if (total <= 0.0f) return {1.0f, 0.0f, 0.0f, 0.0f};
+    for (f32& weight : result) weight /= total;
+    return result;
+}
+
 // --- Brush weight ---
 
 f32 BrushWeight(f32 dx, f32 dz, f32 radius, f32 strength, f32 falloff) {
