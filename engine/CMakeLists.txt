@@ -62,6 +62,7 @@ add_library(aether_engine STATIC
     src/assets/gltf_references.cpp
     src/assets/content_browser.cpp
     src/assets/vcs.cpp
+    src/gfx/parity.cpp
 )
 
 target_include_directories(aether_engine PRIVATE ${stb_SOURCE_DIR})
