@@ -218,7 +218,7 @@ AETHER_TEST(Vulkan_TexturedQuadThroughBindlessTable) {
 
     rhi::PipelineDesc desc;
     desc.hlsl_source = R"(
-struct PushConstants { uint texture_index; uint3 pad; };
+struct PushConstants { uint texture_index; uint pad0; uint pad1; uint pad2; };
 [[vk::push_constant]]
 ConstantBuffer<PushConstants> g_PC : register(b0);
 Texture2D g_Textures[32] : register(t0, space0);

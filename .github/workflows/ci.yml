@@ -54,10 +54,9 @@ jobs:
           path: build/_deps
           key: deps-linux-GCC-${{ hashFiles('**/CMakeLists.txt') }}
           restore-keys: deps-linux-GCC-
-      - name: Cache compiled objects (ccache)
-        # Compilation is ~90% of the PR gate. The key is unique per commit so every run saves
-        # its objects; restore-keys falls back to the newest cache (a PR run or master).
-        uses: actions/cache@v4
+      - name: Restore compiled objects (ccache)
+        id: ccache
+        uses: actions/cache/restore@v4
         with:
           path: ~/.cache/ccache
           key: ccache-linux-GCC-${{ github.sha }}
@@ -83,6 +82,13 @@ jobs:
         run: |
           cmake --build build --target aether_pr_gate --parallel
           ccache --show-stats
+      - name: Save compiled objects (ccache)
+        # Saved even when a later step fails, so a red run still warms the cache.
+        if: always() && steps.ccache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-linux-GCC-${{ github.sha }}
       - name: Unit tests
         env:
           AETHER_REQUIRE_VULKAN: "1"
@@ -163,9 +169,9 @@ jobs:
           path: build/_deps
           key: deps-linux-${{ matrix.name }}-${{ hashFiles('**/CMakeLists.txt') }}
           restore-keys: deps-linux-${{ matrix.name }}-
-      - name: Cache compiled objects (ccache)
-        # GCC shares its key with the pull-request gate, so master pushes warm the PR cache.
-        uses: actions/cache@v4
+      - name: Restore compiled objects (ccache)
+        id: ccache
+        uses: actions/cache/restore@v4
         with:
           path: ~/.cache/ccache
           key: ccache-linux-${{ matrix.name }}-${{ github.sha }}
@@ -200,6 +206,13 @@ jobs:
         run: |
           cmake --build build --parallel
           ccache --show-stats
+      - name: Save compiled objects (ccache)
+        # Saved even when a later step fails, so a red run still warms the cache.
+        if: always() && steps.ccache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-linux-${{ matrix.name }}-${{ github.sha }}
       - name: Install the SDK and build its template consumer
         if: github.event_name != 'pull_request' && matrix.name == 'GCC'
         run: |
