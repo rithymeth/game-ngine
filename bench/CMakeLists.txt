@@ -35,3 +35,14 @@ if(AETHER_BUILD_SCRIPTING)
     target_sources(aether_bench PRIVATE src/bench_luau.cpp)
     target_link_libraries(aether_bench PRIVATE Aether::Scripting)
 endif()
+# Phase 40 step 3: the crowd and hierarchical-pathfinder benches. src/bench_nav.cpp existed but was
+# never listed here, so it was never compiled or run -- the numbers it prints had never been taken.
+if(TARGET aether_nav)
+    target_sources(aether_bench PRIVATE src/bench_nav.cpp)
+    target_link_libraries(aether_bench PRIVATE Aether::Nav)
+endif()
+# Phase 38 step 5: the physics bench waited for a physics-ON build; this is one.
+if(TARGET aether_physics)
+    target_sources(aether_bench PRIVATE src/bench_physics.cpp)
+    target_link_libraries(aether_bench PRIVATE Aether::Physics)
+endif()
