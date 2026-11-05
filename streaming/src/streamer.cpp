@@ -116,6 +116,7 @@ bool WorldStreamer::ApplyCell(const CellCoord& cell, std::vector<u8>& bytes) {
             if (const IdComponent* id = world_.GetComponent<IdComponent>(e)) guids_->Add(id->guid, e);
     }
     events_.push_back({cell, true, added.size()});
+    if (on_cell_) on_cell_(cell, true);
     return true;
 }
 
@@ -132,6 +133,7 @@ void WorldStreamer::UnloadCell(const CellCoord& cell) {
     }
     loaded_.erase(it);
     events_.push_back({cell, false, count});
+    if (on_cell_) on_cell_(cell, false);
 }
 
 void WorldStreamer::Update() {

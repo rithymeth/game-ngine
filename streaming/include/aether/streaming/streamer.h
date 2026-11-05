@@ -47,6 +47,11 @@ public:
     // An executor that runs the task inline works (tests use one that queues and runs on demand).
     using Executor = std::function<void(std::function<void()>)>;
     void SetExecutor(Executor executor) { executor_ = std::move(executor); }
+    // A cell loaded (true) or unloaded (false), for Phase 42.5: the navmesh, audio
+    // and gameplay data follow the streamed geometry through this hook. Called on
+    // the thread that applies cells (the game thread), after the entities change.
+    using CellHook = std::function<void(const CellCoord& cell, bool loaded)>;
+    void SetCellHook(CellHook hook) { on_cell_ = std::move(hook); }
     usize max_inflight_reads = 4;
     // Budgets for applying finished cells in one Update; 0 = none. At least one cell is applied when any is ready,
     // so a single big cell cannot stall forever.
@@ -94,6 +99,7 @@ private:
 
     struct Shared; // reads in flight and finished, shared with the executor's tasks
     Executor executor_;
+    CellHook on_cell_;
     std::shared_ptr<Shared> shared_;
 };
 

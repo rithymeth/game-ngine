@@ -369,3 +369,35 @@ AETHER_TEST(Streaming_AsyncEntityBudgetSpreadsApplies) {
     CHECK(spread);
     CHECK(streamer.LoadedCells().size() == p.index.cells.size());
 }
+
+// Phase 42.5: a cell hook fires on load and unload, so the navmesh, audio and
+// gameplay data can follow the streamed geometry.
+AETHER_TEST(Streaming_CellHookFollowsLoadsAndUnloads) {
+    World src;
+    RegisterStreamingComponents();
+    src.CreateEntity(IdComponent{NewEntityGuid()}, At(32, 32));
+    PartitionSettings s;
+    s.cell_size = 64.0f;
+    PartitionResult p = PartitionWorld(src, s);
+    CHECK(p.cells.size() == 1);
+    World game;
+    const Entity player = game.CreateEntity(At(32, 32), StreamingSource{30.0f, true});
+    WorldStreamer streamer(game, p.index, [&](const CellCoord& c, std::vector<u8>& bytes) {
+        const auto it = p.cells.find(c);
+        if (it == p.cells.end()) return false;
+        bytes = it->second;
+        return true;
+    });
+    std::vector<std::pair<CellCoord, bool>> calls;
+    streamer.SetCellHook([&](const CellCoord& c, bool loaded) { calls.emplace_back(c, loaded); });
+
+    streamer.Update();
+    CHECK(streamer.State({0, 0}) == CellState::Loaded);
+    CHECK(calls.size() == 1 && calls[0].second && calls[0].first.x == 0 && calls[0].first.z == 0);
+
+    // Away from every cell: it unloads and the hook says so.
+    game.GetComponent<Transform>(player)->position = Vec3(2000, 0, 0);
+    streamer.Update();
+    CHECK(streamer.State({0, 0}) == CellState::Unloaded);
+    CHECK(calls.size() == 2 && !calls[1].second);
+}
