@@ -30,6 +30,10 @@ public:
     World& GetWorld() { return world_; }
     const World& GetWorld() const { return world_; }
     const std::filesystem::path& FilePath() const { return file_; }
+    // Phase 42.1: the scene's absolute origin. A JSON scene records it and its
+    // Transforms are local to it, so a large world round-trips to the right place.
+    void SetOrigin(const Vec3d& origin) { origin_ = origin; }
+    const Vec3d& Origin() const { return origin_; }
     GuidIndex& Guids() { return guids_; }
     const GuidIndex& Guids() const { return guids_; }
     bool IsDirty() const { return recovered_unsaved_ || commands_.IsDirty(); }
@@ -76,6 +80,7 @@ private:
 
     World world_;
     GuidIndex guids_;
+    Vec3d origin_;
     CommandStack commands_;
     CommandContext context_;
     PlaySession play_session_;

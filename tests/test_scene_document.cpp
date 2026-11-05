@@ -185,3 +185,21 @@ AETHER_TEST(SceneDocument_RejectsUnknownComponentsWithoutReplacingCurrentScene) 
     std::error_code filesystem_error;
     std::filesystem::remove(path, filesystem_error);
 }
+
+// Phase 42.1: a scene document records its origin and reads it back.
+AETHER_TEST(SceneDocument_KeepsItsOrigin) {
+    SceneDocument document;
+    document.NewScene();
+    document.CreateEntity("Far");
+    document.SetOrigin(Vec3d(100000.0, 0.0, 200000.0));
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "aether_test_doc_origin.ascene";
+    AETHER_CHECK(document.Save(path));
+
+    SceneDocument loaded;
+    AETHER_CHECK(loaded.Load(path));
+    AETHER_CHECK_NEAR(loaded.Origin().x, 100000.0, 1e-6);
+    AETHER_CHECK_NEAR(loaded.Origin().z, 200000.0, 1e-6);
+
+    std::error_code filesystem_error;
+    std::filesystem::remove(path, filesystem_error);
+}

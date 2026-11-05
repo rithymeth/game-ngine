@@ -103,13 +103,15 @@ bool SceneDocument::Load(const std::filesystem::path& file, std::string* error) 
     const std::string path = file.string();
     World candidate;
     const SceneLoadOptions editor_load_options{.reject_unknown_components = true};
+    Vec3d loaded_origin;
     const bool loaded = file.extension() == ".ascene"
-        ? LoadSceneJson(candidate, path, editor_load_options)
+        ? LoadSceneJson(candidate, path, editor_load_options, &loaded_origin)
         : LoadScene(candidate, path, editor_load_options);
     if (!loaded) {
         if (error) *error = "The scene couldn't be loaded safely. Check the Output panel for the unsupported component.";
         return false;
     }
+    origin_ = loaded_origin;
 
     GuidIndex candidate_guids;
     EnsureAllGuids(candidate, candidate_guids);
@@ -163,7 +165,8 @@ bool SceneDocument::Save(const std::filesystem::path& file, std::string* error) 
         return false;
     }
     const std::string path = target.string();
-    const bool saved = target.extension() == ".ascene" ? SaveSceneJson(world_, path) : SaveScene(world_, path);
+    const bool saved = target.extension() == ".ascene" ? SaveSceneJson(world_, path, SceneSaveOptions{origin_})
+                                                     : SaveScene(world_, path);
     if (!saved) {
         if (error) *error = "The scene couldn't be saved.";
         return false;
@@ -189,7 +192,7 @@ bool SceneDocument::SaveAutosave(const std::filesystem::path& file, std::string*
         if (error) *error = "The autosave directory couldn't be created: " + ec.message();
         return false;
     }
-    if (!SaveSceneJson(world_, file.string())) {
+    if (!SaveSceneJson(world_, file.string(), SceneSaveOptions{origin_})) {
         if (error) *error = "The scene couldn't be autosaved.";
         return false;
     }
