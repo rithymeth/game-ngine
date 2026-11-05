@@ -1,5 +1,6 @@
 #include "aether/scene/hierarchy.h"
 #include "aether/scene/serialization.h"
+#include "aether/scene/world_origin.h"
 #include "test_framework.h"
 
 #include <cmath>
@@ -110,4 +111,18 @@ AETHER_TEST(Hierarchy_ParentSurvivesSceneFiles) {
         AETHER_CHECK(Near(WorldPosition(loaded, guids, loaded_child), Vec3(2, 0, 4)));
         std::filesystem::remove(path);
     }
+}
+
+// Phase 42.1: moving the world origin shifts every f32 Transform the other way,
+// so render-facing coordinates stay small; the inverse restores them.
+AETHER_TEST(WorldOrigin_RebaseShiftsTransforms) {
+    World world;
+    const Entity a = world.CreateEntity(Transform{Vec3(10, 0, 0), Quaternion::Identity()});
+    const Entity b = world.CreateEntity(Transform{Vec3(-5, 2, 1), Quaternion::Identity()});
+    AETHER_CHECK(RebaseTransforms(world, Vec3d(100.0, 0.0, 0.0)) == 2);
+    AETHER_CHECK_NEAR(world.GetComponent<Transform>(a)->position.x, -90.0f, 1e-4);
+    AETHER_CHECK_NEAR(world.GetComponent<Transform>(b)->position.x, -105.0f, 1e-4);
+    AETHER_CHECK_NEAR(world.GetComponent<Transform>(b)->position.y, 2.0f, 1e-4);
+    ShiftTransforms(world, Vec3d(100.0, 0.0, 0.0));
+    AETHER_CHECK_NEAR(world.GetComponent<Transform>(a)->position.x, 10.0f, 1e-4);
 }
