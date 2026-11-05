@@ -45,6 +45,9 @@ struct CookOptions {
     bool strip_source_textures = false;
     // Meshes: LODs and meshlets (Cooked/<guid>.amesh), see mesh_cook.h.
     bool cook_meshes = true;
+    // Phase 42.4: also bake HLOD proxies for meshes with several primitives.
+    // Off by default; proxies add geometry to the cooked mesh.
+    bool cook_hlod = false;
     // Refuse to write an archive when scanning, importing, or cooking reports
     // any warning. Use for release candidates that require a clean content set.
     bool strict_validation = false;

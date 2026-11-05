@@ -415,3 +415,21 @@ AETHER_TEST(Cook_InvalidSourcesAreReportedByPathWithTheReason) {
     const cook::CookReport strict = cook::Cook(options);
     CHECK(!strict.ok && strict.error.find("Cook validation failed") == 0 && !stdfs::exists(options.output_dir / "Game.apak"));
 }
+
+// Phase 42.4: the cooker can bake HLOD proxies; the option must not disturb cooking.
+AETHER_TEST(Cook_HlodOptionCooks) {
+    const stdfs::path project = MakeProject("Hlod");
+    const stdfs::path out = stdfs::temp_directory_path() / "aether_cook_tests/Hlod_out";
+    stdfs::remove_all(out);
+    cook::CookOptions options;
+    options.project_file = project;
+    options.output_dir = out;
+    options.configuration = cook::BuildConfiguration::Shipping;
+    options.always_cook = {"Models/scene.gltf"};
+    options.cook_hlod = true;
+    const cook::CookReport report = cook::Cook(options);
+    CHECK(report.ok);
+    pak::PakReader reader;
+    std::string error;
+    CHECK(reader.Open((out / "Game.apak").string(), &error) && reader.Verify().empty());
+}

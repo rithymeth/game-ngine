@@ -26,7 +26,7 @@ int Usage() {
                  "usage: aether_cook <project.aproject> --out <dir> [--config debug|development|shipping]\n"
                  "                   [--always <path-or-folder/>]... [--compression auto|lz4|zstd|none]\n"
                  "                   [--no-imported] [--pak-name Game] [--strict] [--verbose]\n"
-                 "                   [--key <64 hex digits>] [--patch-of <base.apak>]\n"
+                 "                   [--hlod] [--key <64 hex digits>] [--patch-of <base.apak>]\n"
                  "                   [--dlc <Name> [--dlc-base <base.apak>]]\n");
     return 2;
 }
@@ -57,6 +57,8 @@ int main(int argc, char** argv) {
             options.include_imported = false;
         } else if (arg == "--strict") {
             options.strict_validation = true;
+        } else if (arg == "--hlod") {
+            options.cook_hlod = true;
         } else if (arg == "--pak-name" && has_value) {
             options.pak_name = argv[++i];
         } else if (arg == "--key" && has_value) {

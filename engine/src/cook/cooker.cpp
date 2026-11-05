@@ -349,8 +349,10 @@ CookReport Cook(const CookOptions& options) {
                         assets::MeshData mesh_data;
                         CookedMesh cooked_mesh;
                         std::string mesh_error;
+                        MeshCookSettings mesh_settings;
+                        mesh_settings.build_hlod = options.cook_hlod;
                         if (!assets::DecodeMeshData(sub.data, mesh_data) ||
-                            !CookMesh(mesh_data, MeshCookSettings{}, cooked_mesh, &mesh_error)) {
+                            !CookMesh(mesh_data, mesh_settings, cooked_mesh, &mesh_error)) {
                             report.warnings.push_back(record.path + " (" + sub.key + "): can't cook mesh" +
                                                       (mesh_error.empty() ? "" : ": " + mesh_error));
                         } else {
