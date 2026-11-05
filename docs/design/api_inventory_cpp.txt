@@ -3251,8 +3251,8 @@
   type struct TestWorldStats
   bool GenerateTestWorld(World&world,const TestWorldParams&params,TestWorldStats*stats=nullptr,std::string*error=nullptr)
 [engine/include/aether/scene/world_origin.h] experimental
-  usize RebaseTransforms(World&world,const Vec3d&delta)
-  usize ShiftTransforms(World&world,const Vec3d&delta)
+  usize RebaseTransforms(World&world,const Vec3d&delta,const GuidIndex*guids=nullptr)
+  usize ShiftTransforms(World&world,const Vec3d&delta,const GuidIndex*guids=nullptr)
 [engine/include/aether/testing/functional_test.h] experimental
   type class FunctionalContext
   type class FunctionalTest

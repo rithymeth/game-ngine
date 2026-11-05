@@ -3,6 +3,7 @@
 #include "aether/scene/components.h"
 #include "aether/scene/hierarchy.h"
 #include "aether/scene/serialization.h"
+#include "aether/scene/world_origin.h"
 
 #include <algorithm>
 #include <chrono>
@@ -270,18 +271,7 @@ bool FloatingOrigin::Update(World& world, const Vec3& focus, const GuidIndex* gu
     const Vec3 shift(std::round(focus.x / step) * step, 0.0f, std::round(focus.z / step) * step);
     if (shift.x == 0.0f && shift.z == 0.0f) return false;
     // Root Transforms move; children are relative to their parents.
-    world.ForEachArchetype([&](Archetype& archetype) {
-        if (!archetype.Mask().test(GetComponentId<Transform>())) return;
-        for (usize c = 0; c < archetype.ChunkCount(); ++c) {
-            Entity* es = archetype.EntityArray(c);
-            for (usize i = 0; i < archetype.ChunkEntityCount(c); ++i) {
-                const Entity e = es[i];
-                if (world.GetComponent<Parent>(e) != nullptr && (guids == nullptr || !GetParent(world, *guids, e).IsNull())) continue;
-                Transform* t = world.GetComponent<Transform>(e);
-                t->position = t->position - shift;
-            }
-        }
-    });
+    RebaseTransforms(world, Vec3d(shift.x, shift.y, shift.z), guids);
     offset.x += shift.x;
     offset.z += shift.z;
     last_shift = shift;
