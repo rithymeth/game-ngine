@@ -1131,8 +1131,21 @@ void EditorWorkspace::DrawCommandPalette() {
     if (!command_palette_open) return;
     // Built per frame: it is a filter over the tool list, which is a few dozen entries, and
     // keeping it out of Impl means the palette itself stays free of editor state.
-    CommandPalette palette(*this, impl_->asset_database);
-    palette.SetAssetOpener(impl_->asset_opener);
+    // Phase 43.5: the palette searches the same assets the content browser shows, and choosing
+    // one focuses the browser at its folder. That "opening" policy lives here, in one place,
+    // rather than in the palette -- which just hands over the path. The opener is rebuilt each
+    // frame from the live panel, so it cannot outlive it.
+    const assets::AssetDatabase* palette_assets = impl_->asset_database;
+    ContentBrowserPanel* browser = impl_->content_browser.get();
+    if (browser != nullptr && palette_assets == nullptr) palette_assets = browser->Database();
+    CommandPalette palette(*this, palette_assets);
+    if (browser != nullptr) {
+        palette.SetAssetOpener([browser](const std::string& path) {
+            browser->OpenFolder(std::filesystem::path(path).parent_path().generic_string());
+        });
+    } else {
+        palette.SetAssetOpener(impl_->asset_opener);
+    }
     palette.SetQuery(impl_->palette_query);
     bool open = command_palette_open;
     ImGui::SetNextWindowSize(ImVec2(520, 360), ImGuiCond_FirstUseEver);

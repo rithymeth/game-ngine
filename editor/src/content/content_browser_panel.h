@@ -27,6 +27,9 @@ public:
     bool Refresh();
     // The listing of the current folder (or the search), with version control states.
     const std::vector<assets::ContentEntry>& Rows() const { return rows_; }
+    // The assets the panel is showing, which is also what the command palette searches. Null
+    // before a project loads.
+    const assets::AssetDatabase* Database() const { return database_.get(); }
     // Phase 43.6: what is wrong with the assets, filled by Refresh() with the scan -- missing
     // sources and references to GUIDs that no longer exist. Empty is healthy.
     const std::vector<assets::AssetIssue>& Issues() const { return issues_; }
