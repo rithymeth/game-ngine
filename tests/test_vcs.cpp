@@ -315,3 +315,30 @@ AETHER_TEST(Vcs_StageAndCommitRecordAnEdit) {
     AETHER_CHECK(!error.empty());
     AETHER_CHECK(!QueryGitStatus(dir).files.empty()); // still staged, nothing committed
 }
+// Phase 43.7: the content browser commits its own content. Needs a repository, so the test makes
+// one and returns early when git is not installed.
+AETHER_TEST(Vcs_ContentBrowserPanelCommitsContent) {
+    const stdfs::path dir = Dir("panel_commit");
+    ProjectPaths paths;
+    std::string error;
+    CHECK(CreateProject(dir, "Game", &paths, &error));
+    const std::string quoted = "\"" + dir.string() + "\"";
+    if (std::system(("git -C " + quoted + " init -q >nul 2>&1").c_str()) != 0) return;
+    std::system(("git -C " + quoted + " config user.email t@example.com >nul 2>&1").c_str());
+    std::system(("git -C " + quoted + " config user.name t >nul 2>&1").c_str());
+    Write(paths.content / "Notes.txt", "hello");
+
+    ContentBrowserPanel panel(paths.file);
+    CHECK(panel.Vcs().available);
+    CHECK(!panel.Vcs().files.empty()); // the new file is untracked
+    CHECK(panel.Commit("first", &error));
+    CHECK(panel.Vcs().files.empty()); // committed: the badges are clean
+
+    // An empty message is refused, and nothing is committed.
+    Write(paths.content / "More.txt", "again");
+    CHECK(panel.Refresh());
+    CHECK(!panel.Vcs().files.empty());
+    CHECK(!panel.Commit("", &error));
+    CHECK(!error.empty());
+    CHECK(!panel.Vcs().files.empty());
+}

@@ -44,6 +44,11 @@ public:
     bool validation_open = false;
 
     const assets::VcsStatus& Vcs() const { return vcs_; }
+    // Phase 43.7: stage everything under Content/ and commit it, then refresh so the badges
+    // update. The error is git's own message. Needs the project to be inside a repository.
+    bool Commit(const std::string& message, std::string* error = nullptr);
+    // The message being typed into the commit box (plain UI state, like `search`).
+    std::string commit_message;
     // Uses this status instead of asking git (tests, or a host with its own source).
     void SetVcsStatus(assets::VcsStatus status);
     // How many entries of the current listing are not clean.

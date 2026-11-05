@@ -68,6 +68,20 @@ void ContentBrowserPanel::SetVcsStatus(assets::VcsStatus status) {
     Rebuild();
 }
 
+bool ContentBrowserPanel::Commit(const std::string& message, std::string* error) {
+    if (!database_) {
+        if (error != nullptr) *error = "No project is open.";
+        return false;
+    }
+    // Stage and commit from the content root: that is the folder the badges describe, and it is
+    // inside the project's repository.
+    const std::filesystem::path content = database_->ContentRoot();
+    if (!assets::GitStageAll(content, error)) return false;
+    if (!assets::GitCommit(content, message, error)) return false;
+    Refresh(); // the badges and the issue list describe the new state
+    return true;
+}
+
 void ContentBrowserPanel::OpenFolder(const std::string& folder) {
     folder_ = folder;
     Rebuild();
@@ -127,6 +141,24 @@ void ContentBrowserPanel::DrawToolbar() {
     ImGui::SameLine();
     if (vcs_.available) {
         ImGui::TextDisabled("git: %zu changed file%s", vcs_.ChangedCount(), vcs_.ChangedCount() == 1 ? "" : "s");
+        // Phase 43.7: record the editor's own edits without a terminal. The message box is plain
+        // state (see `commit_message`), so a host or a test can drive the commit directly.
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(220);
+        ImGui::InputTextWithHint("##commit_message", "Commit message", &commit_message);
+        ImGui::SameLine();
+        if (ImGui::Button("Commit") && !commit_message.empty()) {
+            std::string error;
+            if (Commit(commit_message, &error)) {
+                commit_message.clear();
+            } else {
+                operation_warning_ = error;
+            }
+        }
+        if (!operation_warning_.empty()) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s", operation_warning_.c_str());
+        }
     } else {
         ImGui::TextDisabled("not under version control");
         if (!vcs_.error.empty() && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", vcs_.error.c_str());
