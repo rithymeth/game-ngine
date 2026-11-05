@@ -92,7 +92,8 @@ bool JobSystem::TryRunOneJob(u32 thread_index) {
         return false;
     }
 
-    u32 start = steal_cursor_.fetch_add(1, std::memory_order_relaxed) % n;
+    ThreadContext& own = *thread_contexts_[thread_index];
+    u32 start = own.steal_start++ % n;
     for (u32 i = 0; i < n; ++i) {
         u32 victim = (start + i) % n;
         if (victim == thread_index) {

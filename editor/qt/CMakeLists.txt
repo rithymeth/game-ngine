@@ -70,6 +70,17 @@ if(WIN32)
         VERBATIM
         COMMENT "Deploying the Qt runtime for the default editor executable"
     )
+    # The self-test (and headless/CI runs) selects QT_QPA_PLATFORM=offscreen, but
+    # windeployqt only ships the windowed platform plugin. Deploy the offscreen
+    # one beside it so the editor can start headlessly from the build tree.
+    if(EXISTS "${_aether_qt_root}/plugins/platforms/qoffscreen.dll")
+        add_custom_command(TARGET aether_editor_qt POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${_aether_qt_root}/plugins/platforms/qoffscreen.dll"
+                    "${_aether_qt_editor_runtime_dir}/platforms/qoffscreen.dll"
+            VERBATIM
+        )
+    endif()
 
     if(AETHER_DXCOMPILER_DLL)
         add_custom_command(TARGET aether_editor_qt POST_BUILD

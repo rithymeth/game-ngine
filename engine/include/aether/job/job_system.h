@@ -76,6 +76,9 @@ private:
         WorkStealingQueue<Job*, kQueueCapacity> queue;
         std::array<Job, kJobPoolSize> job_pool;
         usize next_job_slot = 0;
+        // Owner-thread-only rotating start for victim selection, so idle workers
+        // don't all contend on one shared steal counter.
+        u32 steal_start = 0;
     };
 
     Job* AllocateJob(u32 thread_index, JobFunc fn, void* data, JobCounter& counter);
@@ -86,7 +89,6 @@ private:
     std::vector<std::unique_ptr<ThreadContext>> thread_contexts_;
     std::vector<std::thread> workers_;
     std::atomic<bool> running_{true};
-    std::atomic<u32> steal_cursor_{0};
 
     static thread_local u32 tls_thread_index_;
 };

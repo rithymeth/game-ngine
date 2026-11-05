@@ -173,16 +173,21 @@ std::vector<u8> SaveSceneToMemory(const World& world) {
 
     std::vector<EntitySlot> slots = CollectEntities(world);
     AppendU32(buffer, static_cast<u32>(slots.size()));
+    buffer.reserve(buffer.size() + slots.size() * 64); // rough per-entity estimate
 
     std::vector<u8> component_bytes;
     for (const EntitySlot& slot : slots) {
+        // The archetype's component list is fixed, and the same archetype covers
+        // whole batches of entities, so reuse it instead of re-deriving it from
+        // the mask per row.
         const std::vector<ComponentId>& ids = slot.archetype->ComponentIds();
         AppendU32(buffer, static_cast<u32>(ids.size()));
         for (ComponentId id : ids) {
             const ComponentInfo& info = GetComponentInfo(id);
-            std::string name = info.name;
-            AppendU32(buffer, static_cast<u32>(name.size()));
-            AppendBytes(buffer, name.data(), name.size());
+            const char* name = info.name;
+            const usize name_length = std::strlen(name);
+            AppendU32(buffer, static_cast<u32>(name_length));
+            AppendBytes(buffer, name, name_length);
             buffer.push_back(static_cast<u8>(info.encoding));
 
             component_bytes.clear();
@@ -251,6 +256,7 @@ bool LoadSceneFromMemory(World& world, std::span<const u8> buffer, const std::st
     }
 
     std::vector<PendingEntity> pending_entities;
+    pending_entities.reserve(entity_count);
     for (u32 e = 0; e < entity_count; ++e) {
         u32 component_count = 0;
         if (version == kLegacyVersion) {

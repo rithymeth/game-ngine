@@ -27,6 +27,8 @@ if(AETHER_BUILD_IOS_APP)
     enable_language(OBJCXX)
 endif()
 
+option(AETHER_BUILD_EVERVALE_REBOOT "Build the Evervale reboot game" OFF)
+
 # Phase 37 step 6: -Werror for the engine and the gameplay kits, off by default (the four gameplay libraries build clean with GCC under it; CI will turn it on once Clang and MSVC are checked).
 option(AETHER_WARNINGS_AS_ERRORS "Treat warnings as errors in the engine and the gameplay kits" OFF)
 function(aether_warnings_as_errors target)
@@ -741,3 +743,9 @@ foreach(_t IN LISTS _aether_pr_gate_deps)
     endif()
 endforeach()
 add_custom_target(aether_pr_gate DEPENDS ${_aether_pr_gate_deps})
+
+# Kept opt-in so engine-only builds do not pick up game content. Evervale is
+# a standalone game module and owns its own targets, tests and content copy.
+if(AETHER_BUILD_EVERVALE_REBOOT AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/games/EVERVALE-REBOOT/CMakeLists.txt")
+    add_subdirectory(games/EVERVALE-REBOOT)
+endif()
