@@ -53,10 +53,15 @@
 #include "script_editor_widget.h"
 #include "ai_debugger_widget.h"
 #include "content_browser.h"
+#include "editor_helpers.h"
 #include "hierarchy_panel.h"
 #include "output_panel.h"
 #include "aether/script/ai_api.h"
 #endif
+
+using aether::editor::qt::EulerDegreesToRotation;
+using aether::editor::qt::RotationToEulerDegrees;
+using aether::editor::qt::StablePathKey;
 
 #include <QApplication>
 #include <QAccessible>
@@ -1721,36 +1726,6 @@ QDockWidget* MakeDock(const QString& title, QWidget* content, QMainWindow& windo
     return dock;
 }
 
-// The editor displays local rotation as pitch (X), yaw (Y), roll (Z), using
-// the engine's Y-X-Z composition order. Scene data remains a normalized
-// quaternion, so editing does not change the serialized Transform format.
-aether::Vec3 RotationToEulerDegrees(aether::Quaternion rotation) {
-    rotation = rotation.Normalized();
-    const aether::f32 x = rotation.x;
-    const aether::f32 y = rotation.y;
-    const aether::f32 z = rotation.z;
-    const aether::f32 w = rotation.w;
-    const aether::f32 sin_pitch = std::clamp(2.0f * (w * x - y * z), -1.0f, 1.0f);
-    const aether::f32 pitch = std::asin(sin_pitch);
-    aether::f32 yaw;
-    aether::f32 roll;
-    if (std::fabs(sin_pitch) > 0.9999f) {
-        yaw = std::atan2(-2.0f * (x * z - w * y), 1.0f - 2.0f * (y * y + z * z));
-        roll = 0.0f;
-    } else {
-        yaw = std::atan2(2.0f * (w * y + z * x), 1.0f - 2.0f * (x * x + y * y));
-        roll = std::atan2(2.0f * (w * z + x * y), 1.0f - 2.0f * (x * x + z * z));
-    }
-    return {aether::Degrees(pitch), aether::Degrees(yaw), aether::Degrees(roll)};
-}
-
-aether::Quaternion EulerDegreesToRotation(const aether::Vec3& degrees) {
-    const aether::Quaternion pitch = aether::Quaternion::FromAxisAngle({1.0f, 0.0f, 0.0f}, aether::Radians(degrees.x));
-    const aether::Quaternion yaw = aether::Quaternion::FromAxisAngle({0.0f, 1.0f, 0.0f}, aether::Radians(degrees.y));
-    const aether::Quaternion roll = aether::Quaternion::FromAxisAngle({0.0f, 0.0f, 1.0f}, aether::Radians(degrees.z));
-    return (yaw * pitch * roll).Normalized();
-}
-
 struct CameraInspectorWidgets {
     QGroupBox* group = nullptr;
     QComboBox* projection = nullptr;
@@ -2031,22 +2006,6 @@ QWidget* MakeInspector(QScrollArea*& inspector_scroll, QStackedWidget*& inspecto
     inspector_scroll->setWidgetResizable(true);
     inspector_scroll->setWidget(inspector_stack);
     return inspector_scroll;
-}
-
-std::string StablePathKey(const std::filesystem::path& path) {
-    std::error_code ec;
-    std::filesystem::path absolute = std::filesystem::absolute(path, ec);
-    if (ec) absolute = path;
-    const std::string key = absolute.lexically_normal().generic_string();
-    aether::u64 hash = 14695981039346656037ull;
-    for (const unsigned char byte : key) hash = (hash ^ byte) * 1099511628211ull;
-    constexpr char digits[] = "0123456789abcdef";
-    std::string encoded(16, '0');
-    for (int i = 15; i >= 0; --i) {
-        encoded[static_cast<std::size_t>(i)] = digits[hash & 0xfu];
-        hash >>= 4u;
-    }
-    return encoded;
 }
 
 class EditorWindow final : public QMainWindow {
