@@ -1349,9 +1349,11 @@ int main(int argc, char** argv) {
 
             // A real menu bar, mainly so a panel a user closes (via its
             // title-bar X) can be brought back without restarting — the
-            // same "View > Panel Name" convention every docked-panel editor
-            // uses. Called before the dockspace host below so the main
+            // same "View > Panel Name" convention every editor with
+            // dockable panels uses. Drawn before the panels so the main
             // viewport's WorkPos/WorkSize already exclude this strip.
+            // (This used to say "before the dockspace host below"; there is
+            // no dockspace host — see the layout comment further up.)
             if (ImGui::BeginMainMenuBar()) {
                 if (ImGui::BeginMenu("Edit")) {
                     std::string undo_label = "Undo " + commands.UndoLabel();
