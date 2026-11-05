@@ -26,6 +26,8 @@ struct PerceivedActor {
     PerceptionSense last_sense = PerceptionSense::Sight;
     f32 strength = 1.0f;    // a noise's loudness or the damage done (1 for sight)
     f32 distance = 0.0f;    // from the perceiver, when last updated
+    f32 awareness = 0.0f;   // 0..1 evidence that it matters (Perception 2.0)
+    Vec3 velocity;          // last sensed movement, for PredictLocation
 };
 
 // An AI's senses (Phase 20 step 5, docs/design/PHASE_SPECS.md §20.5):
@@ -45,6 +47,16 @@ struct AIPerception {
     f32 forget_after = 10.0f; // seconds (0: never)
     i32 team = 0;             // 0: no team (senses everyone)
     bool detect_friends = false;
+    // Perception 2.0: graded awareness instead of an instant binary "seen".
+    // Sight adds `awareness_gain_per_second`; a noise or a hit adds a one-shot
+    // bump; with nothing sensed it decays. `IsAlerted` is awareness at or above
+    // `alert_threshold`, so an AI can be suspicious before it is alert.
+    f32 alert_threshold = 0.5f;
+    f32 awareness_gain_per_second = 2.0f;
+    f32 awareness_decay_per_second = 0.25f;
+    // A wall between the perceiver and a noise scales its loudness by this
+    // (0: walls stop sound entirely, 1: fully heard through walls).
+    f32 hearing_occlusion_scale = 0.3f;
     std::string target_key;   // an Entity key: the actor it's most aware of
     std::string location_key; // a Vector key: where that actor was last sensed
 
@@ -53,6 +65,11 @@ struct AIPerception {
     bool CanSee(const Entity& actor) const;
     bool IsAwareOf(const Entity& actor) const;
     Vec3 GetLastKnownLocation(const Entity& actor) const;
+    f32 GetAwareness(const Entity& actor) const;
+    bool IsAlerted(const Entity& actor) const;
+    // Where it expects `actor` to be `seconds` ahead, from its last sensed
+    // movement (straight extrapolation; the last known location if still).
+    Vec3 PredictLocation(const Entity& actor, f32 seconds) const;
     // What it's most aware of: the nearest it can see, else what it sensed last.
     Entity GetTarget() const;
     i32 GetKnownCount() const { return static_cast<i32>(known.size()); }
@@ -131,7 +148,7 @@ private:
         Entity victim, instigator;
         f32 amount;
     };
-    void Sense(Entity perceiver, AIPerception& p, Entity actor, const Vec3& at, PerceptionSense sense, f32 strength);
+    void Sense(Entity perceiver, AIPerception& p, Entity actor, const Vec3& at, PerceptionSense sense, f32 strength, f32 dt);
     void SyncBlackboard(Entity perceiver, const AIPerception& p);
     bool Hostile(const AIPerception& p, i32 team) const { return p.detect_friends || p.team == 0 || team == 0 || team != p.team; }
 
@@ -146,7 +163,7 @@ private:
 
 AETHER_ENUM(aether::PerceptionSense, 1, AETHER_ENUM_VALUE(Sight), AETHER_ENUM_VALUE(Hearing), AETHER_ENUM_VALUE(Damage))
 
-AETHER_REFLECT(aether::AIPerception, 1,
+AETHER_REFLECT(aether::AIPerception, 2,
     AETHER_FIELD(sight_radius, Field_EditAnywhere, {.range_min = 0.0, .range_max = 1000.0, .units = "m"}),
     AETHER_FIELD(lose_sight_radius, Field_EditAnywhere, {.tooltip = "Once seen, kept in sight out to this", .range_min = 0.0, .range_max = 1000.0, .units = "m"}),
     AETHER_FIELD(fov_degrees, Field_EditAnywhere, {.tooltip = "The whole view cone", .range_min = 0.0, .range_max = 360.0, .units = "deg"}),
@@ -155,11 +172,18 @@ AETHER_REFLECT(aether::AIPerception, 1,
     AETHER_FIELD(forget_after, Field_EditAnywhere, {.tooltip = "Seconds without sensing before forgetting (0: never)", .range_min = 0.0, .range_max = 3600.0, .units = "s"}),
     AETHER_FIELD(team, Field_EditAnywhere, {.tooltip = "0: no team"}),
     AETHER_FIELD(detect_friends, Field_EditAnywhere, {.tooltip = "Sense its own team too"}),
+    AETHER_FIELD(alert_threshold, Field_EditAnywhere, {.tooltip = "Awareness at which a target is treated as alerted", .range_min = 0.0, .range_max = 1.0}),
+    AETHER_FIELD(awareness_gain_per_second, Field_EditAnywhere, {.tooltip = "How fast sight raises awareness", .range_min = 0.0, .range_max = 100.0}),
+    AETHER_FIELD(awareness_decay_per_second, Field_EditAnywhere, {.tooltip = "How fast awareness falls when not sensed", .range_min = 0.0, .range_max = 100.0}),
+    AETHER_FIELD(hearing_occlusion_scale, Field_EditAnywhere, {.tooltip = "How much a wall muffles a noise", .range_min = 0.0, .range_max = 1.0}),
     AETHER_FIELD(target_key, Field_EditAnywhere, {.tooltip = "Blackboard Entity key for the actor it's most aware of"}),
     AETHER_FIELD(location_key, Field_EditAnywhere, {.tooltip = "Blackboard Vector key for where that actor was last sensed"}),
     AETHER_METHOD(CanSee, Fn_BlueprintCallable | Fn_Pure, {"actor"}),
     AETHER_METHOD(IsAwareOf, Fn_BlueprintCallable | Fn_Pure, {"actor"}),
     AETHER_METHOD(GetLastKnownLocation, Fn_BlueprintCallable | Fn_Pure, {"actor"}),
+    AETHER_METHOD(GetAwareness, Fn_BlueprintCallable | Fn_Pure, {"actor"}),
+    AETHER_METHOD(IsAlerted, Fn_BlueprintCallable | Fn_Pure, {"actor"}),
+    AETHER_METHOD(PredictLocation, Fn_BlueprintCallable | Fn_Pure, {"actor", "seconds"}),
     AETHER_METHOD(GetTarget, Fn_BlueprintCallable | Fn_Pure),
     AETHER_METHOD(GetKnownCount, Fn_BlueprintCallable | Fn_Pure),
     AETHER_METHOD(ForgetAll, Fn_BlueprintCallable)

@@ -389,3 +389,60 @@ AETHER_TEST(AIPerception_BlueprintNodes) {
     CHECK(std::count(printed.begin(), printed.end(), "lost") == 1);
     CHECK(std::count(printed.begin(), printed.end(), "forgot") == 2); // the thief and the drummer
 }
+
+// Perception 2.0: graded awareness instead of an instant binary "seen".
+AETHER_TEST(AIPerception_AwarenessRisesAndDecays) {
+    Scene s;
+    const Entity guard = s.Guard();
+    const Entity thief = s.Thing({0, 0, 10});
+    CHECK(!s.Of(guard).IsAlerted(thief));
+    CHECK(s.Of(guard).GetAwareness(thief) == 0.0f);
+
+    // Sight builds awareness (gain 2/s over 0.1 s steps): three steps clear the default 0.5 threshold.
+    s.Step(3);
+    CHECK(s.Of(guard).IsAlerted(thief));
+    CHECK(s.Of(guard).GetAwareness(thief) >= s.Of(guard).alert_threshold);
+
+    // Out of sight, awareness decays (0.25/s) while the actor stays known.
+    s.world.GetComponent<AIStimuliSource>(thief)->visible = false;
+    s.Step(10);
+    CHECK(s.Of(guard).IsAwareOf(thief));
+    CHECK(!s.Of(guard).IsAlerted(thief));
+    CHECK(s.Of(guard).GetAwareness(thief) < s.Of(guard).alert_threshold);
+}
+
+// Perception 2.0: a wall muffles a noise instead of the perceiver hearing it at full loudness.
+AETHER_TEST(AIPerception_SoundOcclusion) {
+    Scene s;
+    const Entity guard = s.Guard();
+    const Entity thief = s.Thing({0, 0, 0});
+    s.world.GetComponent<AIStimuliSource>(thief)->visible = false; // hearing only
+    bool blocked = true;
+    s.perception.SetLineOfSight([&](const Vec3&, const Vec3&, Entity, Entity) { return !blocked; });
+
+    // Hearing radius 20: loudness 1 is heard at 15 in the open, but the default
+    // occlusion scale (0.3) shrinks that to 6 units through the wall.
+    Perception::ReportNoise(Vec3(0, 0, 15), 1.0f, thief);
+    s.Step();
+    CHECK(!s.Of(guard).IsAwareOf(thief));
+
+    blocked = false;
+    Perception::ReportNoise(Vec3(0, 0, 15), 1.0f, thief);
+    s.Step();
+    CHECK(s.Of(guard).IsAwareOf(thief));
+}
+
+// Perception 2.0: the last sensed movement lets an AI predict where a target is heading.
+AETHER_TEST(AIPerception_PredictLocation) {
+    Scene s;
+    const Entity guard = s.Guard();
+    const Entity runner = s.Thing({0, 0, 10});
+    for (int i = 0; i < 5; ++i) {
+        s.Move(runner, Vec3(0, 0, 10.0f - static_cast<f32>(i)));
+        s.Step();
+    }
+    const Vec3 last = s.Of(guard).GetLastKnownLocation(runner);
+    const Vec3 predicted = s.Of(guard).PredictLocation(runner, 1.0f);
+    CHECK(predicted.z < last.z - 5.0f); // it moved -10 units/s, so 1 s ahead is well past the last point
+    CHECK(Near(s.Of(guard).PredictLocation(Entity{}, 1.0f), Vec3())); // unknown actor
+}

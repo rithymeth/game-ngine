@@ -33,6 +33,16 @@ Vec3 AIPerception::GetLastKnownLocation(const Entity& actor) const {
     const PerceivedActor* k = Find(actor);
     return k != nullptr ? k->location : Vec3();
 }
+f32 AIPerception::GetAwareness(const Entity& actor) const {
+    const PerceivedActor* k = Find(actor);
+    return k != nullptr ? k->awareness : 0.0f;
+}
+bool AIPerception::IsAlerted(const Entity& actor) const { return GetAwareness(actor) >= alert_threshold; }
+Vec3 AIPerception::PredictLocation(const Entity& actor, f32 seconds) const {
+    const PerceivedActor* k = Find(actor);
+    if (k == nullptr) return Vec3();
+    return k->location + k->velocity * seconds;
+}
 Entity AIPerception::GetTarget() const {
     const PerceivedActor* best = nullptr;
     for (const PerceivedActor& k : known) {
@@ -40,6 +50,8 @@ Entity AIPerception::GetTarget() const {
             best = &k;
         } else if (k.visible != best->visible) {
             if (k.visible) best = &k;
+        } else if (k.awareness != best->awareness) {
+            if (k.awareness > best->awareness) best = &k;
         } else if (k.visible ? k.distance < best->distance : k.age < best->age) {
             best = &k;
         }
@@ -98,16 +110,22 @@ void PerceptionWorld::UseNavMeshLineOfSight(const nav::NavMesh& mesh) {
 void PerceptionWorld::ReportNoise(const Vec3& location, f32 loudness, Entity instigator) { noises_.push_back({location, loudness, instigator}); }
 void PerceptionWorld::ReportDamage(Entity victim, Entity instigator, f32 amount) { damages_.push_back({victim, instigator, amount}); }
 
-void PerceptionWorld::Sense(Entity perceiver, AIPerception& p, Entity actor, const Vec3& at, PerceptionSense sense, f32 strength) {
+void PerceptionWorld::Sense(Entity perceiver, AIPerception& p, Entity actor, const Vec3& at, PerceptionSense sense, f32 strength, f32 dt) {
     auto it = std::find_if(p.known.begin(), p.known.end(), [&](const PerceivedActor& k) { return k.actor == actor; });
     if (it == p.known.end()) {
-        p.known.push_back({actor, at, 0.0f, false, sense, strength, 0.0f});
+        p.known.push_back({actor, at, 0.0f, false, sense, strength, 0.0f, 0.0f, Vec3{}});
         it = p.known.end() - 1;
     }
+    // Track the last sensed movement so PredictLocation can extrapolate.
+    if (sense == PerceptionSense::Sight && dt > 0.0f) it->velocity = (at - it->location) * (1.0f / dt);
     it->location = at;
     it->age = 0.0f;
     it->last_sense = sense;
     it->strength = strength;
+    // Perception 2.0: sight builds awareness over time; a noise or a hit is a
+    // one-shot bump. Update decays it for anything not sensed this tick.
+    const f32 evidence = sense == PerceptionSense::Sight ? p.awareness_gain_per_second * dt : strength * 0.3f;
+    it->awareness = std::min(1.0f, it->awareness + evidence);
     if (sense == PerceptionSense::Sight) it->visible = true;
     else events_.push_back({perceiver, actor, sense, true, false, at}); // sight announces only changes (in Update)
 }
@@ -178,20 +196,24 @@ void PerceptionWorld::Update(f32 dt) {
                 const f32 flat_len = flat.Length();
                 if (p.fov_degrees < 360.0f && flat_len > 1e-4f && fwd_len > 1e-4f && flat.Dot(fwd) / (flat_len * fwd_len) < half_cos) continue;
                 if (los_ && !los_(eye, aim, self, s)) continue;
-                Sense(self, p, s, t->position, PerceptionSense::Sight, 1.0f);
+                Sense(self, p, s, t->position, PerceptionSense::Sight, 1.0f, dt);
                 if (!tracked) events_.push_back({self, s, PerceptionSense::Sight, true, false, t->position});
             }
             for (const Noise& n : noises_) {
                 if (n.instigator == self || n.instigator.IsNull() || !world_.IsAlive(n.instigator) || !Hostile(p, team_of(n.instigator))) continue;
-                if ((n.location - me->position).Length() <= p.hearing_radius * n.loudness) Sense(self, p, n.instigator, n.location, PerceptionSense::Hearing, n.loudness);
+                // Perception 2.0: a wall between the perceiver and the noise
+                // muffles it by hearing_occlusion_scale (0: blocks it entirely).
+                f32 loudness = n.loudness;
+                if (los_ && !los_(me->position, n.location, self, n.instigator)) loudness *= p.hearing_occlusion_scale;
+                if ((n.location - me->position).Length() <= p.hearing_radius * loudness) Sense(self, p, n.instigator, n.location, PerceptionSense::Hearing, loudness, dt);
             }
         }
         for (const Damage& d : damages_) {
             if (d.victim != self || d.instigator.IsNull() || d.instigator == self || !world_.IsAlive(d.instigator)) continue;
             const Transform* t = world_.GetComponent<Transform>(d.instigator);
-            Sense(self, p, d.instigator, t != nullptr ? t->position : (me != nullptr ? me->position : Vec3()), PerceptionSense::Damage, d.amount);
+            Sense(self, p, d.instigator, t != nullptr ? t->position : (me != nullptr ? me->position : Vec3()), PerceptionSense::Damage, d.amount, dt);
         }
-        // Lost sight, forgotten, and distances.
+        // Lost sight, forgotten, awareness decay and distances.
         for (auto it = p.known.begin(); it != p.known.end();) {
             if (!it->visible && std::find(was_visible.begin(), was_visible.end(), it->actor) != was_visible.end())
                 events_.push_back({self, it->actor, PerceptionSense::Sight, false, false, it->location});
@@ -200,6 +222,10 @@ void PerceptionWorld::Update(f32 dt) {
                 it = p.known.erase(it);
                 continue;
             }
+            // Perception 2.0: awareness decays for anything not sensed this tick
+            // (Sense resets age to 0; it only grows for actors not sensed).
+            if (it->age > 0.0f && p.awareness_decay_per_second > 0.0f)
+                it->awareness = std::max(0.0f, it->awareness - p.awareness_decay_per_second * dt);
             it->distance = me != nullptr ? (it->location - me->position).Length() : 0.0f;
             ++it;
         }
