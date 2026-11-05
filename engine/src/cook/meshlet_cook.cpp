@@ -137,4 +137,31 @@ bool MergeMeshes(const std::vector<std::span<const Vec3>>& source_positions,
     return true;
 }
 
+std::vector<HlodCluster> ClusterForHlod(const std::vector<Vec3>& source_centers, f32 cluster_radius) {
+    std::vector<HlodCluster> clusters;
+    for (usize s = 0; s < source_centers.size(); ++s) {
+        const Vec3& center = source_centers[s];
+        HlodCluster* best = nullptr;
+        f32 best_dist = cluster_radius;
+        if (cluster_radius > 0.0f) {
+            for (HlodCluster& cluster : clusters) {
+                const f32 dist = (cluster.center - center).Length();
+                if (dist <= best_dist) {
+                    best = &cluster;
+                    best_dist = dist;
+                }
+            }
+        }
+        if (best == nullptr) {
+            clusters.push_back(HlodCluster{center, {s}});
+        } else {
+            best->sources.push_back(s);
+            Vec3 sum;
+            for (usize i : best->sources) sum = sum + source_centers[i];
+            best->center = sum * (1.0f / static_cast<f32>(best->sources.size()));
+        }
+    }
+    return clusters;
+}
+
 } // namespace aether::cook

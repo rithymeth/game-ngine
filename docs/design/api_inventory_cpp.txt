@@ -1374,6 +1374,7 @@
   type struct MeshSummaryOptions
   MeshSummary SummarizeMeshLods(const assets::GltfScene&scene,const MeshSummaryOptions&options=
 [engine/include/aether/cook/meshlet_cook.h] experimental
+  type struct HlodCluster
   type struct LodLevel
   type struct LodParams
   type struct Meshlet
@@ -1383,6 +1384,7 @@
   bool BuildMeshlets(std::span<const Vec3>positions,std::span<const u32>indices,const MeshletParams&params,MeshletMesh&out,std::string*error=nullptr)
   bool GenerateLods(std::span<const Vec3>positions,std::span<const u32>indices,const LodParams&params,std::vector<LodLevel>&out,std::string*error=nullptr)
   bool MergeMeshes(const std::vector<std::span<const Vec3>>&source_positions,const std::vector<std::span<const u32>>&source_indices,std::vector<Vec3>&out_positions,std::vector<u32>&out_indices,std::string*error=nullptr)
+  std::vector<HlodCluster>ClusterForHlod(const std::vector<Vec3>&source_centers,f32 cluster_radius)
   usize triangles()const
 [engine/include/aether/cook/package.h] experimental
   type struct PackageOptions

@@ -175,3 +175,15 @@ AETHER_TEST(MergeMeshes_ConcatenatesAndOffsetsIndices) {
     const u32 partial[2] = {0, 1};
     AETHER_CHECK(!MergeMeshes({std::span<const Vec3>(a)}, {std::span<const u32>(partial)}, out_positions, out_indices));
 }
+
+// Phase 42.4: nearby sources form one HLOD cluster, distant ones another.
+AETHER_TEST(ClusterForHlod_GroupsNearbySources) {
+    const std::vector<Vec3> centers = {{0, 0, 0}, {1, 0, 0}, {100, 0, 0}, {101, 0, 0}};
+    const std::vector<HlodCluster> clusters = ClusterForHlod(centers, 10.0f);
+    AETHER_CHECK(clusters.size() == 2);
+    AETHER_CHECK((clusters[0].sources == std::vector<usize>{0, 1}));
+    AETHER_CHECK((clusters[1].sources == std::vector<usize>{2, 3}));
+    // Radius 0 leaves every source on its own; a lone source is one cluster.
+    AETHER_CHECK(ClusterForHlod(centers, 0.0f).size() == 4);
+    AETHER_CHECK(ClusterForHlod(std::vector<Vec3>{{5, 0, 5}}, 10.0f).size() == 1);
+}

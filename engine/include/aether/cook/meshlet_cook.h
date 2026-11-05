@@ -80,4 +80,16 @@ bool MergeMeshes(const std::vector<std::span<const Vec3>>& source_positions,
                  const std::vector<std::span<const u32>>& source_indices, std::vector<Vec3>& out_positions,
                  std::vector<u32>& out_indices, std::string* error = nullptr);
 
+// One HLOD proxy: the sources it stands in for and the centre used to place it.
+struct HlodCluster {
+    Vec3 center;
+    std::vector<usize> sources; // indices into the source list
+};
+
+// Groups sources into HLOD proxies by proximity: a source joins the nearest
+// cluster whose centre is within `cluster_radius`, else starts a new one; the
+// cluster centre follows the mean of its sources. Deterministic (sources in
+// order). `cluster_radius <= 0` makes every source its own cluster.
+std::vector<HlodCluster> ClusterForHlod(const std::vector<Vec3>& source_centers, f32 cluster_radius);
+
 } // namespace aether::cook
