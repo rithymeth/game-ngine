@@ -1,7 +1,8 @@
 # Core API inventory (M8.1 draft)
 
 This is the first ownership and threading inventory for APIs used by a game or
-plugin. The current engine version is 0.27.6. The module levels in
+plugin. It was written against engine 0.27.6; `engine/include/aether/core/version.h` is the version
+it would have to be rechecked against now. The module levels in
 [api_stability.txt](../design/api_stability.txt) are still **experimental**;
 this inventory does not promote any header to a 1.0 stability guarantee.
 
