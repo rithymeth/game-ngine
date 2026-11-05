@@ -43,7 +43,13 @@ PathState& Paths() {
     static PathState s;
     if (!s.mesh.Loaded()) { // built on first use, so either benchmark can run alone
         nav::NavGeometry g;
-        g.AddPlane(Vec3(0, 0, 0), 60, 60);
+        // 480 x 480 units with 40-unit tiles: a 12 x 12 grid, and the query below
+        // crosses ~11 of those tiles. It used to be a 120 x 120 plane -- 3 x 3
+        // tiles -- where both endpoints were a single tile apart from the middle,
+        // so the "hierarchical" case was measuring much the same short path as the
+        // plain one. (Larger grids are not usable here: 2500+ tiles aborts in the
+        // bake on this machine, so this is as far as the comparison safely goes.)
+        g.AddPlane(Vec3(0, 0, 0), 240, 240);
         nav::NavMeshSettings settings;
         settings.tile_size = 40;
         nav::NavMeshData data;
@@ -85,17 +91,21 @@ AETHER_BENCH_SETUP(
     });
 
 AETHER_BENCH_SETUP(
-    "nav/path_across_100_tiles_plain", 5, [] { (void)Paths(); },
+    "nav/path_across_12_tiles_plain", 5, [] { (void)Paths(); },
     [] {
         PathState& s = Paths();
         for (int i = 0; i < 20; ++i)
-            if (!s.mesh.FindPath(Vec3(-50, 0, -50), Vec3(50, 0, 50), s.path)) std::abort();
+            if (!s.mesh.FindPath(Vec3(-230, 0, -230), Vec3(230, 0, 230), s.path)) std::abort();
     });
 
 AETHER_BENCH_SETUP(
-    "nav/path_across_100_tiles_hierarchical", 5, [] { (void)Paths(); },
+    "nav/path_across_12_tiles_hierarchical", 5, [] { (void)Paths(); },
     [] {
         PathState& s = Paths();
         for (int i = 0; i < 20; ++i)
-            if (!s.hierarchical.FindPath(Vec3(-50, 0, -50), Vec3(50, 0, 50), s.path)) std::abort();
+            if (!s.hierarchical.FindPath(Vec3(-230, 0, -230), Vec3(230, 0, 230), s.path)) std::abort();
+        // The start and goal are ~11 tiles apart, so answering through the plain
+        // path would mean the portal graph is being bypassed and the number below
+        // would not be the hierarchical path at all.
+        if (s.hierarchical.Stats().direct != 0) std::abort();
     });

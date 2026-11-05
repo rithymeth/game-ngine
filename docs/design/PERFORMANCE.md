@@ -69,3 +69,19 @@ a normalised comparison against this row reports a "100x regression" that is pur
 false positives in any run, and the reason a local Windows run cannot be compared to the Linux/GCC baseline at all.
 Re-record this row on the runner (it is the row to watch when the baseline is refreshed) rather than treating its
 ratio as a signal.
+
+## The hierarchical pathfinder benchmark measures the wrong thing
+
+`nav/path_across_*_tiles_hierarchical` used to build a 120 x 120 unit plane with 40-unit tiles -- a 3 x 3 grid --
+and query (-50,-50) to (50,50). Both endpoints land within a tile of each other, so the "hierarchical" case was
+barely longer than the plain one. It now builds a 480 x 480 plane (12 x 12 tiles) and crosses ~11 tiles, which is
+the smallest span where the portal graph is genuinely used; the benchmark aborts if `Stats().direct` is non-zero, so
+a silent fall back to the plain path cannot pass as a hierarchical measurement.
+
+Even so, the comparison is not a fair test of the hierarchy. On an **open plane** the plain path is a straight
+line -- Detour's easiest case -- while the hierarchical path pays for two `NearestPoint` calls, an A* over the portal
+graph and three leg searches. Measured here: 0.70 ms plain against 2.53 ms hierarchical, i.e. the hierarchy is
+**3.6x slower**. That is not a regression; it is the hierarchy's overhead with nothing for it to save, and it says
+nothing about the obstructed, maze-like geometry where it is meant to win. A useful hierarchical benchmark needs
+walls so plain A* has to explore, which is the change to make before drawing conclusions from this pair.
+
