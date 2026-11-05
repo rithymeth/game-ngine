@@ -66,6 +66,10 @@ CMakeUserPresets.json
 *.blend1
 games/*/Design/Meshy4K/
 games/*/Content/Generated/
+# EVERVALE-REBOOT is its own repository (it has a .git), so it is not part of this one. Without this
+# line the parent reports it as an untracked directory, and a `git add .` from here would stage it as
+# a gitlink pointing at a commit this repository does not contain.
+games/EVERVALE-REBOOT/
 
 # Misc
 imgui.ini
