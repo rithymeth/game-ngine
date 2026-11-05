@@ -35,6 +35,11 @@ Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and sche
 
 ### Phase 1 — Foundation
 
+> The phase sections below are the build log as it was written at each step. They describe what was
+> done at the time, not what is true now: markers like "(in progress)" and "still to come" were
+> accurate when the section was written and are left in place rather than quietly rewritten.
+> [The upgrade plan](docs/design/UPGRADE_PLAN.md) is the current record.
+
 - **Memory** (`engine/include/aether/memory`): `LinearAllocator` (bump-pointer
   arena), `PoolAllocator` (fixed-size free-list), `FrameAllocator`
   (double-buffered ring of linear allocators for transient per-frame data).
