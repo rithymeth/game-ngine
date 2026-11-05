@@ -45,7 +45,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install tools
         run: >
-          sudo apt-get update && sudo apt-get install -y ninja-build xvfb
+          sudo apt-get update && sudo apt-get install -y ccache ninja-build xvfb
           libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
           libvulkan-dev glslang-dev glslang-tools spirv-tools mesa-vulkan-drivers vulkan-validationlayers
       - name: Cache fetched dependencies
@@ -54,17 +54,25 @@ jobs:
           path: build/_deps
           key: deps-linux-GCC-${{ hashFiles('**/CMakeLists.txt') }}
           restore-keys: deps-linux-GCC-
+      - name: Cache compiled C++ objects
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-linux-GCC-${{ runner.arch }}-${{ hashFiles('**/CMakeLists.txt') }}
+          restore-keys: ccache-linux-GCC-${{ runner.arch }}-
       - name: Configure
         run: >
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
           -DAETHER_BUILD_PHYSICS=OFF -DAETHER_BUILD_EDITOR=OFF -DAETHER_BUILD_SANDBOX=OFF
-          -DAETHER_PLATFORM_PLUGINS=platforms/example
+          -DAETHER_PLATFORM_PLUGINS=platforms/example -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
       - name: Module graph
         run: |
           cmake --graphviz=build/graph.dot build
           python3 tools/check_module_graph.py --dot build/graph.dot
-      - name: Build
-        run: cmake --build build --parallel
+      - name: Build PR test targets
+        # The unit and functional binaries cover this gate. Players, editors,
+        # packaging tools, benchmarks and optional modules build post-merge.
+        run: cmake --build build --target aether_tests aether_functional --parallel
       - name: Unit tests
         env:
           AETHER_REQUIRE_VULKAN: "1"
