@@ -1,8 +1,8 @@
 # Aether
 
-A data-oriented, job-based game engine targeting Vulkan/DirectX 12. See
-[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) *(coming later)* for the full
-design.
+A data-oriented, job-based game engine targeting Vulkan/DirectX 12. The design
+notes live in [`docs/design/`](docs/design/) — a single `ARCHITECTURE.md` was
+planned but never written, so that link used to point at nothing.
 
 The plan for growing Aether into a full engine (editor, visual scripting /
 Blueprints, text scripting, animation, audio, runtime UI, packaging, ...) is in
