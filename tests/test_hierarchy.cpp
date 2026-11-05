@@ -117,12 +117,16 @@ AETHER_TEST(Hierarchy_ParentSurvivesSceneFiles) {
 // so render-facing coordinates stay small; the inverse restores them.
 AETHER_TEST(WorldOrigin_RebaseShiftsTransforms) {
     World world;
-    const Entity a = world.CreateEntity(Transform{Vec3(10, 0, 0), Quaternion::Identity()});
-    const Entity b = world.CreateEntity(Transform{Vec3(-5, 2, 1), Quaternion::Identity()});
+    const Entity a = world.CreateEntity(IdComponent{NewEntityGuid()}, Transform{Vec3(10, 0, 0), Quaternion::Identity()});
+    const Entity b = world.CreateEntity(IdComponent{NewEntityGuid()}, Transform{Vec3(-5, 2, 1), Quaternion::Identity()});
+    // A child's Transform is relative to its parent, so a rebase must leave it alone.
+    const Entity child = world.CreateEntity(Transform{Vec3(1, 0, 0), Quaternion::Identity()},
+                                            Parent{world.GetComponent<IdComponent>(a)->guid});
     AETHER_CHECK(RebaseTransforms(world, Vec3d(100.0, 0.0, 0.0)) == 2);
     AETHER_CHECK_NEAR(world.GetComponent<Transform>(a)->position.x, -90.0f, 1e-4);
     AETHER_CHECK_NEAR(world.GetComponent<Transform>(b)->position.x, -105.0f, 1e-4);
     AETHER_CHECK_NEAR(world.GetComponent<Transform>(b)->position.y, 2.0f, 1e-4);
+    AETHER_CHECK_NEAR(world.GetComponent<Transform>(child)->position.x, 1.0f, 1e-4);
     ShiftTransforms(world, Vec3d(100.0, 0.0, 0.0));
     AETHER_CHECK_NEAR(world.GetComponent<Transform>(a)->position.x, 10.0f, 1e-4);
 }
