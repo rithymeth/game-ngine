@@ -145,4 +145,40 @@ VcsStatus QueryGitStatus(const stdfs::path& directory) {
     return status;
 }
 
+namespace {
+
+// Runs one git command in `directory`, turning a failure into the CLI's own output. The command
+// is assembled from fixed arguments plus a quote-checked path or message -- never from arbitrary
+// input -- so it cannot smuggle shell syntax.
+bool RunGit(const stdfs::path& directory, const std::string& arguments, std::string* error) {
+    const std::string dir = directory.string();
+    if (dir.find('"') != std::string::npos) {
+        if (error != nullptr) *error = "The path has a quote in it";
+        return false;
+    }
+    std::string output;
+    int rc = 0;
+    if (!Capture("git -C \"" + dir + "\" " + arguments + " 2>&1", output, &rc) || rc != 0) {
+        if (error != nullptr) *error = output.empty() ? "git " + arguments + " failed" : output;
+        return false;
+    }
+    return true;
+}
+
+} // namespace
+
+bool GitStageAll(const stdfs::path& directory, std::string* error) { return RunGit(directory, "add -A -- .", error); }
+
+bool GitCommit(const stdfs::path& directory, const std::string& message, std::string* error) {
+    if (message.empty()) {
+        if (error != nullptr) *error = "A commit needs a message";
+        return false;
+    }
+    if (message.find('"') != std::string::npos) {
+        if (error != nullptr) *error = "The commit message has a quote in it";
+        return false;
+    }
+    return RunGit(directory, "commit -m \"" + message + "\"", error);
+}
+
 } // namespace aether::assets

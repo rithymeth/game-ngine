@@ -290,3 +290,28 @@ AETHER_TEST(Vcs_ContentBrowserPanelReportsAssetIssues) {
     imgui.Frame([&] { panel.Draw(); });
     CHECK(closed > 0 && ImGui::GetDrawData()->TotalVtxCount > closed);
 }
+
+// Phase 43.7: the write half of the git wrapper. It runs the CLI, so the test makes a real
+// repository; when git is not installed there is nothing to check and the test returns.
+AETHER_TEST(Vcs_StageAndCommitRecordAnEdit) {
+    const stdfs::path dir = Dir("commit");
+    const std::string quoted = "\"" + dir.string() + "\"";
+    if (std::system(("git -C " + quoted + " init -q >nul 2>&1").c_str()) != 0) return;
+    std::system(("git -C " + quoted + " config user.email t@example.com >nul 2>&1").c_str());
+    std::system(("git -C " + quoted + " config user.name t >nul 2>&1").c_str());
+    Write(dir / "a.txt", "hello");
+
+    std::string error;
+    AETHER_CHECK(QueryGitStatus(dir).available);
+    AETHER_CHECK(!QueryGitStatus(dir).files.empty()); // the new file is untracked
+    AETHER_CHECK(GitStageAll(dir, &error));
+    AETHER_CHECK(GitCommit(dir, "first", &error));
+    AETHER_CHECK(QueryGitStatus(dir).files.empty()); // committed: nothing changed
+
+    // A commit needs a message: refused rather than letting git open an editor.
+    Write(dir / "b.txt", "more");
+    AETHER_CHECK(GitStageAll(dir, &error));
+    AETHER_CHECK(!GitCommit(dir, "", &error));
+    AETHER_CHECK(!error.empty());
+    AETHER_CHECK(!QueryGitStatus(dir).files.empty()); // still staged, nothing committed
+}

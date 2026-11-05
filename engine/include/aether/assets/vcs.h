@@ -73,4 +73,17 @@ VcsStatus ParseGitStatus(std::string_view output);
 // says so; never throws.
 VcsStatus QueryGitStatus(const std::filesystem::path& directory);
 
+// Phase 43.7: the write half of the wrapper, so the editor can record its own edits instead of
+// sending the user to a terminal. Both run the git CLI the way QueryGitStatus does; on failure
+// `error` gets the CLI's own message, which is usually the useful one ("nothing to commit", a
+// hook's complaint, a missing identity). The path and the message are quote-checked rather than
+// escaped, so nothing here can smuggle shell syntax.
+//
+// GitStageAll stages every change under `directory` (`git add -A -- .`); there is deliberately
+// no per-path variant, because a path argument would have to survive shell quoting.
+[[nodiscard]] bool GitStageAll(const std::filesystem::path& directory, std::string* error = nullptr);
+// Commits the staged changes. An empty message is refused rather than letting git open an editor.
+[[nodiscard]] bool GitCommit(const std::filesystem::path& directory, const std::string& message,
+                             std::string* error = nullptr);
+
 } // namespace aether::assets

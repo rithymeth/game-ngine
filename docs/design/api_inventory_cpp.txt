@@ -1347,6 +1347,8 @@
   VcsState OfLocalFolder(const std::string&local_folder)const
   VcsStatus ParseGitStatus(std::string_view output)
   VcsStatus QueryGitStatus(const std::filesystem::path&directory)
+  [[nodiscard]]bool GitCommit(const std::filesystem::path&directory,const std::string&message,std::string*error=nullptr)
+  [[nodiscard]]bool GitStageAll(const std::filesystem::path&directory,std::string*error=nullptr)
   char VcsStateLetter(VcsState state)
   const char*VcsStateName(VcsState state)
   inline VcsState WorseVcsState(VcsState a,VcsState b)
