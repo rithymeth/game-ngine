@@ -40,6 +40,41 @@ struct PathState {
     nav::HierarchicalPathfinder hierarchical;
     nav::NavPath path;
 };
+
+// A serpentine of walls: the case a hierarchical pathfinder is supposed to win,
+// because one long plain search has to explore every dead end while the portal graph
+// jumps between the gaps. Same shape as the unit test, scaled up.
+struct SerpentineState {
+    nav::NavMesh mesh;
+    nav::HierarchicalPathfinder hierarchical;
+    nav::NavPath path;
+};
+SerpentineState& Serpentine() {
+    static SerpentineState s;
+    if (!s.mesh.Loaded()) {
+        nav::NavGeometry g;
+        g.AddPlane(Vec3(0, 0, 0), 600, 600);
+        for (int i = 0; i < 19; ++i) {
+            const f32 x = -540.0f + static_cast<f32>(i) * 60.0f;
+            const f32 z_center = (i % 2 == 0) ? 60.0f : -60.0f; // a gap at one end, then the other
+            g.volumes.push_back(nav::NavVolume::Box(Vec3(x, 0, z_center), Vec3(2, 2, 540)));
+        }
+        nav::NavMeshSettings settings;
+        settings.tile_size = 40;
+        nav::NavMeshData data;
+        std::string error;
+        if (!nav::BuildNavMesh(g, settings, data, &error)) {
+            std::fprintf(stderr, "serpentine bake failed: %s\n", error.c_str());
+            std::abort();
+        }
+        if (!s.mesh.Load(data) || !s.hierarchical.Build(s.mesh)) {
+            std::fprintf(stderr, "serpentine mesh setup failed\n");
+            std::abort();
+        }
+    }
+    return s;
+}
+
 PathState& Paths() {
     static PathState s;
     if (!s.mesh.Loaded()) { // built on first use, so either benchmark can run alone
@@ -137,5 +172,29 @@ AETHER_BENCH_SETUP(
             reported = true;
             std::fprintf(stderr, "  hierarchical graph: %zu portals, %zu edges, %zu nodes expanded, %zu legs\n",
                          stats.portals, stats.edges, stats.graph_nodes_expanded, stats.legs);
+        }
+    });
+
+// The case the hierarchy exists for: one long route through 19 dead ends.
+AETHER_BENCH_SETUP(
+    "nav/path_through_serpentine_plain", 5, [] { (void)Serpentine(); },
+    [] {
+        SerpentineState& s = Serpentine();
+        for (int i = 0; i < 20; ++i)
+            if (!s.mesh.FindPath(Vec3(-580, 0, 0), Vec3(580, 0, 0), s.path)) std::abort();
+    });
+
+AETHER_BENCH_SETUP(
+    "nav/path_through_serpentine_hierarchical", 5, [] { (void)Serpentine(); },
+    [] {
+        SerpentineState& s = Serpentine();
+        for (int i = 0; i < 20; ++i)
+            if (!s.hierarchical.FindPath(Vec3(-580, 0, 0), Vec3(580, 0, 0), s.path)) std::abort();
+        static bool reported = false;
+        if (!reported) {
+            reported = true;
+            const nav::HierarchicalStats& st = s.hierarchical.Stats();
+            std::fprintf(stderr, "  serpentine hierarchical: %zu portals, %zu expanded, %zu legs, direct=%zu\n",
+                         st.portals, st.graph_nodes_expanded, st.legs, st.direct);
         }
     });

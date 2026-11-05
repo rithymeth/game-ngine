@@ -111,12 +111,27 @@ route crossing ~115 tile borders produced ~115 of them.
 Waypoints that continue in the same direction (within ~2.5 degrees) are now collapsed before the legs run. A
 straight run down a corridor needs no intermediate search, and skipping a collinear point is safe because the leg
 to the next waypoint is searched properly anyway. On the 13 700-tile benchmark that took the hierarchical query from
-**585 ms to 80 ms (7.3x) with an identical path**, and the serpentine test went from more than ten legs to two
-while still producing the same route.
+**585 ms to 80 ms (7.3x) with an identical path**, and the small serpentine in the unit test went from more than ten
+legs to two while still producing the same route.
 
-It is still **4.5x slower than plain** there (80 ms against 18 ms), so the hierarchy does not yet pay for itself. But
-the measurement is now honest and the remaining cost is understood -- chiefly that a collapsed two-leg route is
-barely more constrained than one plain search, which is the design question to answer next: whether the portal graph
-should be per tile cluster (so a leg really is a local search) rather than one global graph.
+It is still **4.5x slower than plain** there (80 ms against 18 ms), so the hierarchy does not yet pay for itself.
+
+### The decisive measurement: the case it exists for
+
+`nav/path_through_serpentine_*` adds the scenario a hierarchical pathfinder is built for -- one long route through 19
+dead ends on a 1200 x 1200 plane (~10 000 tiles). Measured, 20 queries each:
+
+| | plain Detour | hierarchical | ratio |
+|---|---|---|---|
+| through the serpentine | 10.59 ms (0.53 ms/query) | 49.81 ms (2.49 ms/query) | **4.7x slower** |
+
+`Stats()` explains it: 36 180 portals, 34 769 nodes expanded, **134 legs**, `direct == 0`. The legs themselves are
+cheap -- about 0.02 ms each, roughly 28x cheaper than one plain search -- but a serpentine turns at every gap, so
+collinear collapsing barely helps and 134 of them cost more than the single plain search they replace.
+
+**Conclusion: the hierarchical pathfinder is slower than plain Detour in every scenario measured here, including the
+one it was designed for.** The break-even needs a world far larger than this branch can bake (16 384 tiles), or a
+redesign that makes the route genuinely local rather than a chain of portal-to-portal legs. Until one of those
+happens it should not be used for gameplay pathfinding; `NavMesh::FindPath` is the better choice everywhere measured.
 
 
