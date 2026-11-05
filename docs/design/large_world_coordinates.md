@@ -78,11 +78,14 @@ loss it exists to fix.
 
 ## If Option B is chosen, the work is
 
-1. **Format.** Add `origin` (three doubles) to the `.ascene` root and to the
-   `.aesc` header; bump the version and make the old version load as origin zero.
-   `SaveSceneJson`/`SaveScene` write it from a new `SceneSaveOptions::origin`;
-   the writers subtract the origin from each written `Transform` position (a
-   `Transform` special case in the component writer, both formats).
+1. **Format.** *Done for `.ascene`*: `SceneSaveOptions::origin` writes the origin
+   at the JSON root and `Transform` positions as `local + origin` (a reflected
+   `Vec3` is a three-element array). The binary `.aesc` needs nothing: it is a
+   derived format the cooker writes from a scene that is already in local
+   coordinates, so its stored positions are the small ones by construction. (A
+   tool that wrote `.aesc` straight from absolute coordinates would still need an
+   origin field; nothing does.) Old `.ascene` files have no `origin` and load
+   with origin zero.
 2. **Load.** Read the recorded origin; `SceneLoadOptions::origin` overrides it.
    Extend the loader to report the origin it used (an out-parameter), so a game
    can keep the world local and remember where it is.
