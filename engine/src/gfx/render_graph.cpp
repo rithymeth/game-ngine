@@ -126,6 +126,7 @@ bool RenderGraph::ShareHeapAllocation(ResourceHandle a, ResourceHandle b) const 
 void RenderGraph::AddPass(const char* name, SetupFunc setup, ExecuteFunc execute, QueueType queue) {
     usize index = passes_.size();
     passes_.push_back(Pass{name, std::move(execute), {}, queue, {}});
+    execution_orders_dirty_ = true;
     PassBuilder builder(*this, index);
     setup(builder);
 }
@@ -139,7 +140,7 @@ bool RenderGraph::HasComputePasses() const {
     return false;
 }
 
-std::vector<usize> RenderGraph::ComputeExecutionOrder(QueueType queue) const {
+const std::vector<usize>& RenderGraph::ComputeExecutionOrder(QueueType queue) {
     // Filters passes_ down to one queue's, in registration order. An earlier
     // version of this function attempted an actual dependency-driven
     // topological sort (edges from whichever pass most recently touched a
@@ -155,18 +156,24 @@ std::vector<usize> RenderGraph::ComputeExecutionOrder(QueueType queue) const {
     // require a backward edge) can never detect one either. It was a
     // correctly-implemented no-op. Genuine dependency-driven reordering
     // needs resource versioning; that's real future work, not this.
-    std::vector<usize> queue_passes;
-    for (usize i = 0; i < passes_.size(); ++i) {
-        if (passes_[i].queue == queue) {
-            queue_passes.push_back(i);
+    if (execution_orders_dirty_) {
+        graphics_execution_order_.clear();
+        compute_execution_order_.clear();
+        for (usize i = 0; i < passes_.size(); ++i) {
+            if (passes_[i].queue == QueueType::Graphics) {
+                graphics_execution_order_.push_back(i);
+            } else {
+                compute_execution_order_.push_back(i);
+            }
         }
+        execution_orders_dirty_ = false;
     }
-    return queue_passes;
+    return queue == QueueType::Graphics ? graphics_execution_order_ : compute_execution_order_;
 }
 
 void RenderGraph::AllocateTransientResources() {
-    std::vector<usize> graphics_order = ComputeExecutionOrder(QueueType::Graphics);
-    std::vector<usize> compute_order = ComputeExecutionOrder(QueueType::Compute);
+    const std::vector<usize>& graphics_order = ComputeExecutionOrder(QueueType::Graphics);
+    const std::vector<usize>& compute_order = ComputeExecutionOrder(QueueType::Compute);
 
     struct Candidate {
         ResourceHandle handle = kInvalidHandle;
@@ -351,8 +358,8 @@ void RenderGraph::AssignAliasingBarriers() {
         return;
     }
 
-    std::vector<usize> graphics_order = ComputeExecutionOrder(QueueType::Graphics);
-    std::vector<usize> compute_order = ComputeExecutionOrder(QueueType::Compute);
+    const std::vector<usize>& graphics_order = ComputeExecutionOrder(QueueType::Graphics);
+    const std::vector<usize>& compute_order = ComputeExecutionOrder(QueueType::Compute);
 
     auto find_first_use = [&](ResourceHandle handle) -> usize {
         for (usize global_index : graphics_order) {
@@ -403,29 +410,26 @@ void RenderGraph::ExecuteQueue(const std::vector<usize>& order, ID3D12GraphicsCo
         Pass& pass = passes_[global_index];
         AETHER_ASSERT(cmd != nullptr);
 
+        barrier_scratch_.clear();
         if (!pass.aliasing_barriers.empty()) {
-            std::vector<D3D12_RESOURCE_BARRIER> alias_barriers;
-            alias_barriers.reserve(pass.aliasing_barriers.size());
             for (const AliasingBarrier& ab : pass.aliasing_barriers) {
                 D3D12_RESOURCE_BARRIER barrier{};
                 barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_ALIASING;
                 barrier.Aliasing.pResourceBefore = ab.before;
                 barrier.Aliasing.pResourceAfter = ab.after;
-                alias_barriers.push_back(barrier);
+                barrier_scratch_.push_back(barrier);
             }
-            cmd->ResourceBarrier(static_cast<UINT>(alias_barriers.size()), alias_barriers.data());
         }
 
-        std::vector<D3D12_RESOURCE_BARRIER> barriers;
         for (const Usage& usage : pass.usages) {
             TrackedResource& tracked = resources_[usage.resource];
             if (tracked.current_state != usage.state) {
-                barriers.push_back(TransitionBarrier(tracked.resource, tracked.current_state, usage.state));
+                barrier_scratch_.push_back(TransitionBarrier(tracked.resource, tracked.current_state, usage.state));
                 tracked.current_state = usage.state;
             }
         }
-        if (!barriers.empty()) {
-            cmd->ResourceBarrier(static_cast<UINT>(barriers.size()), barriers.data());
+        if (!barrier_scratch_.empty()) {
+            cmd->ResourceBarrier(static_cast<UINT>(barrier_scratch_.size()), barrier_scratch_.data());
         }
 
         pass.execute(cmd);

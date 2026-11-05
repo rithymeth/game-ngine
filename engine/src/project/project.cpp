@@ -13,6 +13,7 @@ namespace aether {
 namespace {
 
 namespace stdfs = std::filesystem;
+constexpr usize kMaxProjectFileBytes = 16 * 1024 * 1024;
 
 void SetError(std::string* error, std::string message) {
     if (error != nullptr) {
@@ -139,8 +140,8 @@ bool SaveProject(const stdfs::path& project_file, const ProjectSettings& setting
 bool LoadProject(const stdfs::path& project_file, ProjectSettings& out, std::string* error,
                  std::vector<std::string>* warnings) {
     std::vector<u8> bytes;
-    if (!fs::ReadFileBytes(project_file.string(), bytes)) {
-        SetError(error, "Couldn't read " + project_file.string());
+    if (!fs::ReadFileBytes(project_file.string(), bytes, kMaxProjectFileBytes)) {
+        SetError(error, "Couldn't read " + project_file.string() + " or it is too large to be a project file");
         return false;
     }
     reflect::Json json = reflect::Json::parse(bytes.begin(), bytes.end(), nullptr, /*allow_exceptions=*/false);

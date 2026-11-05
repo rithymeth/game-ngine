@@ -58,28 +58,30 @@ Vec3 ApplyModifiers(f32 raw, const std::vector<InputModifier>& modifiers) {
 }
 
 void InputSystem::AddAction(InputAction action) {
-    for (InputAction& existing : actions_) {
-        if (existing.name == action.name) {
-            existing = std::move(action);
-            return;
-        }
+    if (auto it = action_indices_.find(action.name); it != action_indices_.end()) {
+        actions_[it->second] = std::move(action);
+        return;
     }
     actions_.push_back(std::move(action));
+    action_indices_.emplace(actions_.back().name, actions_.size() - 1);
 }
 
 const InputAction* InputSystem::FindAction(const std::string& name) const {
-    for (const InputAction& action : actions_) {
-        if (action.name == name) {
-            return &action;
-        }
-    }
-    return nullptr;
+    auto it = action_indices_.find(name);
+    return it != action_indices_.end() ? &actions_[it->second] : nullptr;
 }
 
 void InputSystem::AddContext(InputMappingContext context, i32 priority) {
     RemoveContext(context.name);
     ContextEntry entry{std::move(context), priority, next_order_++, {}};
     entry.states.resize(entry.context.bindings.size());
+    entry.has_chord.reserve(entry.context.bindings.size());
+    for (const InputBinding& binding : entry.context.bindings) {
+        entry.has_chord.push_back(std::any_of(binding.triggers.begin(), binding.triggers.end(),
+                                              [](const InputTrigger& trigger) {
+                                                  return trigger.type == TriggerType::Chord;
+                                              }));
+    }
     contexts_.push_back(std::move(entry));
     std::stable_sort(contexts_.begin(), contexts_.end(), [](const ContextEntry& a, const ContextEntry& b) {
         return a.priority != b.priority ? a.priority > b.priority : a.order < b.order;
@@ -182,8 +184,14 @@ ActionPhase InputSystem::EvaluateBinding(const InputBinding& binding, BindingSta
 
 void InputSystem::Update(const InputState& input, f32 dt) {
     const std::unordered_map<std::string, ActionState> previous = states_;
+    usize binding_count = 0;
+    for (const ContextEntry& entry : contexts_) {
+        binding_count += entry.context.bindings.size();
+    }
     std::unordered_map<std::string, ActionState> current;
+    current.reserve(actions_.size() + binding_count);
     std::unordered_set<std::string> evaluated;
+    evaluated.reserve(binding_count);
     for (const InputAction& action : actions_) {
         current[action.name] = ActionState{};
     }
@@ -196,11 +204,6 @@ void InputSystem::Update(const InputState& input, f32 dt) {
         auto it = previous.find(action);
         return it != previous.end() && it->second.phase == ActionPhase::Triggered;
     };
-    auto has_chord = [](const InputBinding& b) {
-        return std::any_of(b.triggers.begin(), b.triggers.end(),
-                           [](const InputTrigger& t) { return t.type == TriggerType::Chord; });
-    };
-
     std::bitset<kKeyCount> consumed;
     bool blocked = false;
     for (ContextEntry& entry : contexts_) {
@@ -211,7 +214,7 @@ void InputSystem::Update(const InputState& input, f32 dt) {
         for (int pass = 0; pass < 2; ++pass) { // bindings without chords first
             for (usize i = 0; i < entry.context.bindings.size(); ++i) {
                 const InputBinding& binding = entry.context.bindings[i];
-                if (has_chord(binding) != (pass == 1)) {
+                if (entry.has_chord[i] != (pass == 1)) {
                     continue;
                 }
                 BindingState& state = entry.states[i];
@@ -244,9 +247,6 @@ void InputSystem::Update(const InputState& input, f32 dt) {
 
     // Phase transitions -> events, in action order (declared ones first).
     std::vector<std::string> order;
-    for (const InputAction& action : actions_) {
-        order.push_back(action.name);
-    }
     std::vector<std::string> extra;
     for (const auto& [name, state] : current) {
         if (FindAction(name) == nullptr) {
@@ -260,8 +260,18 @@ void InputSystem::Update(const InputState& input, f32 dt) {
         }
     }
     std::sort(extra.begin(), extra.end());
-    order.insert(order.end(), extra.begin(), extra.end());
+    order.reserve(actions_.size() + extra.size());
+    for (const InputAction& action : actions_) {
+        order.push_back(action.name);
+    }
+    for (std::string& name : extra) {
+        order.push_back(std::move(name));
+    }
 
+    // Reuse the snapshot's storage across events. Handlers may change
+    // subscriptions while running, so refresh it for each event.
+    std::vector<Subscription> subscription_snapshot;
+    subscription_snapshot.reserve(subscriptions_.size());
     for (const std::string& name : order) {
         ActionState& now = current[name];
         auto it = previous.find(name);
@@ -269,26 +279,26 @@ void InputSystem::Update(const InputState& input, f32 dt) {
         if (now.phase == ActionPhase::Triggered) {
             now.triggered_time = before.phase == ActionPhase::Triggered ? before.triggered_time + dt : 0.0f;
         }
-        std::vector<ActionEvent> events;
-        if (before.phase == ActionPhase::None && now.phase != ActionPhase::None) {
-            events.push_back(ActionEvent::Started);
-        }
-        if (now.phase == ActionPhase::Ongoing) {
-            events.push_back(ActionEvent::Ongoing);
-        } else if (now.phase == ActionPhase::Triggered) {
-            events.push_back(ActionEvent::Triggered);
-        } else if (before.phase == ActionPhase::Triggered) {
-            events.push_back(ActionEvent::Completed);
-        } else if (before.phase == ActionPhase::Ongoing) {
-            events.push_back(ActionEvent::Canceled);
-        }
         states_[name] = now;
-        for (ActionEvent event : events) {
-            for (const Subscription& sub : std::vector<Subscription>(subscriptions_)) {
+        auto dispatch = [&](ActionEvent event) {
+            subscription_snapshot.assign(subscriptions_.begin(), subscriptions_.end());
+            for (const Subscription& sub : subscription_snapshot) {
                 if ((sub.action.empty() || sub.action == name) && sub.event == event) {
                     sub.handler(name, event, now);
                 }
             }
+        };
+        if (before.phase == ActionPhase::None && now.phase != ActionPhase::None) {
+            dispatch(ActionEvent::Started);
+        }
+        if (now.phase == ActionPhase::Ongoing) {
+            dispatch(ActionEvent::Ongoing);
+        } else if (now.phase == ActionPhase::Triggered) {
+            dispatch(ActionEvent::Triggered);
+        } else if (before.phase == ActionPhase::Triggered) {
+            dispatch(ActionEvent::Completed);
+        } else if (before.phase == ActionPhase::Ongoing) {
+            dispatch(ActionEvent::Canceled);
         }
     }
     // Actions no longer produced by anything are dropped once they're None.

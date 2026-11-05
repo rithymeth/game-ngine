@@ -6,6 +6,7 @@
 #include "aether/reflection/reflection.h"
 
 #include <array>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -121,6 +122,9 @@ public:
     u32 Version() const override { return 4; }
     nlohmann::json DefaultSettings() const override;
     ImportResult Import(const ImportContext& context) const override;
+    // Imports a self-contained glTF JSON document without filesystem access.
+    // External buffer and image URIs are refused by the memory loader.
+    ImportResult ImportFromMemory(std::span<const u8> bytes, const nlohmann::json& settings) const;
 };
 
 } // namespace aether::assets

@@ -1,6 +1,8 @@
 #include "asset_tools.h"
 
 #include "project_host.h"
+#include "editor_tools.h"
+#include "core/commands.h"
 
 #include "aether/assets/asset_database.h"
 #include "aether/assets/content_browser.h"
@@ -8,21 +10,1002 @@
 #include "aether/assets/importer.h"
 #include "aether/cook/cooker.h"
 #include "aether/project/project.h"
+#include "aether/scene/gameplay.h"
+#include "aether/platform/filesystem.h"
 #if AETHER_MCP_TEMPLATES
 #include "aether/templates/templates.h"
 #endif
 
 #include <algorithm>
+#include <atomic>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <map>
+#include <optional>
+#include <set>
 #include <sstream>
+#include <utility>
 
 namespace aether::mcp {
 
 namespace {
 
 using namespace detail;
+
+struct ContentFileState {
+    bool exists = false;
+    std::vector<u8> bytes;
+};
+
+ContentFileState CaptureContentFile(const fs::path& path) {
+    ContentFileState state;
+    std::error_code ec;
+    const fs::file_status status = fs::symlink_status(path, ec);
+    if (ec == std::errc::no_such_file_or_directory) return state;
+    if (ec) throw ToolError("Could not inspect " + path.string() + ": " + ec.message());
+    if (!fs::exists(status)) return state;
+    if (!fs::is_regular_file(status)) throw ToolError("Not a regular file: " + path.string());
+    const auto bytes = fs::file_size(path, ec);
+    if (ec) throw ToolError("Could not inspect " + path.string() + ": " + ec.message());
+    if (bytes > kMaxTextBytes) throw ToolError("Existing file is larger than 2 MB and cannot be captured for undo: " + path.string());
+    state.exists = true;
+    if (!aether::fs::ReadFileBytes(path.string(), state.bytes)) throw ToolError("Could not read " + path.string());
+    return state;
+}
+
+void RestoreContentFile(const fs::path& path, const ContentFileState& state) {
+    if (state.exists) {
+        const void* data = state.bytes.empty() ? static_cast<const void*>("") : static_cast<const void*>(state.bytes.data());
+        if (!aether::fs::WriteFileAtomic(path.string(), data, state.bytes.size())) throw ToolError("Could not restore " + path.string());
+        return;
+    }
+    std::error_code ec;
+    fs::remove(path, ec);
+    if (ec) throw ToolError("Could not remove " + path.string() + ": " + ec.message());
+}
+
+class ContentWriteCommand final : public editor::ICommand {
+public:
+    ContentWriteCommand(std::shared_ptr<AssetHost> host, fs::path project_file, fs::path file, std::string text,
+                        ContentFileState before_source, ContentFileState before_meta)
+        : host_(std::move(host)), project_file_(std::move(project_file)), file_(std::move(file)),
+          before_source_(std::move(before_source)), before_meta_(std::move(before_meta)) {
+        after_source_.exists = true;
+        after_source_.bytes.assign(text.begin(), text.end());
+    }
+
+    void Do(editor::CommandContext&) override {
+        RequireSameProject();
+        if (!executed_) {
+            try {
+                WriteSource();
+                scan_ = host_->project->database->Scan();
+                after_meta_ = CaptureContentFile(MetaFile());
+                executed_ = true;
+            } catch (...) {
+                RestoreContentFile(file_, before_source_);
+                RestoreContentFile(MetaFile(), before_meta_);
+                host_->project->database->Scan();
+                throw;
+            }
+            return;
+        }
+        Apply(after_source_, after_meta_, before_source_, before_meta_);
+    }
+
+    void Undo(editor::CommandContext&) override {
+        RequireSameProject();
+        Apply(before_source_, before_meta_, after_source_, after_meta_);
+    }
+
+    std::string Label() const override { return "Write Content File"; }
+    usize MemoryBytes() const override {
+        usize bytes = sizeof(*this) + before_source_.bytes.size() + before_meta_.bytes.size() + after_source_.bytes.size() + after_meta_.bytes.size();
+        for (const std::string& warning : scan_.warnings) bytes += warning.size();
+        return bytes;
+    }
+    const assets::ScanResult& Scan() const { return scan_; }
+
+private:
+    fs::path MetaFile() const { return fs::path(file_.string() + assets::AssetMeta::kExtension); }
+    void RequireSameProject() const {
+        if (!host_->project || host_->project->paths.file.lexically_normal() != project_file_.lexically_normal()) {
+            throw ToolError("Open the project that owns this content file before undoing or redoing this action");
+        }
+    }
+    void WriteSource() const {
+        const void* data = after_source_.bytes.empty() ? static_cast<const void*>("") : static_cast<const void*>(after_source_.bytes.data());
+        if (!aether::fs::WriteFileAtomic(file_.string(), data, after_source_.bytes.size())) throw ToolError("Could not write " + file_.string());
+    }
+    void Apply(const ContentFileState& source, const ContentFileState& meta, const ContentFileState& rollback_source,
+               const ContentFileState& rollback_meta) {
+        try {
+            RestoreContentFile(file_, source);
+            RestoreContentFile(MetaFile(), meta);
+            scan_ = host_->project->database->Scan();
+        } catch (...) {
+            RestoreContentFile(file_, rollback_source);
+            RestoreContentFile(MetaFile(), rollback_meta);
+            host_->project->database->Scan();
+            throw;
+        }
+    }
+
+    std::shared_ptr<AssetHost> host_;
+    fs::path project_file_;
+    fs::path file_;
+    ContentFileState before_source_;
+    ContentFileState before_meta_;
+    ContentFileState after_source_;
+    ContentFileState after_meta_;
+    assets::ScanResult scan_;
+    bool executed_ = false;
+};
+
+class ImportSettingsCommand final : public editor::ICommand {
+public:
+    ImportSettingsCommand(std::shared_ptr<AssetHost> host, fs::path project_file, AssetGuid guid, fs::path meta_file,
+                          std::vector<u8> before, assets::AssetMeta after, bool import_now)
+        : host_(std::move(host)), project_file_(std::move(project_file)), guid_(guid), meta_file_(std::move(meta_file)),
+          before_(std::move(before)), after_(std::move(after)), import_now_(import_now) {}
+
+    void Do(editor::CommandContext&) override {
+        RequireSameProject();
+        if (!executed_) {
+            try {
+                SaveAfter();
+                host_->project->database->Scan();
+                ImportIfRequested();
+                after_bytes_ = ReadMeta();
+                executed_ = true;
+                after_ = assets::AssetMeta{};
+            } catch (...) {
+                Restore(before_);
+                host_->project->database->Scan();
+                throw;
+            }
+            return;
+        }
+        Apply(after_bytes_, before_);
+        after_bytes_ = ReadMeta();
+    }
+
+    void Undo(editor::CommandContext&) override {
+        RequireSameProject();
+        Apply(before_, after_bytes_);
+    }
+
+    std::string Label() const override { return "Change Import Settings"; }
+    usize MemoryBytes() const override {
+        usize bytes = sizeof(*this) + before_.size() + after_bytes_.size() + import_error_.size();
+        for (const std::string& warning : warnings_) bytes += warning.size();
+        return bytes;
+    }
+    bool Imported() const { return imported_; }
+    bool FromCache() const { return from_cache_; }
+    const std::vector<std::string>& Warnings() const { return warnings_; }
+    const std::string& ImportError() const { return import_error_; }
+
+private:
+    void RequireSameProject() const {
+        if (!host_->project || host_->project->paths.file.lexically_normal() != project_file_.lexically_normal()) {
+            throw ToolError("Open the project that owns this asset before undoing or redoing this action");
+        }
+    }
+    std::vector<u8> ReadMeta() const {
+        std::vector<u8> bytes;
+        if (!aether::fs::ReadFileBytes(meta_file_.string(), bytes)) throw ToolError("Could not read " + meta_file_.string());
+        return bytes;
+    }
+    void Restore(const std::vector<u8>& bytes) const {
+        const void* data = bytes.empty() ? static_cast<const void*>("") : static_cast<const void*>(bytes.data());
+        if (!aether::fs::WriteFileAtomic(meta_file_.string(), data, bytes.size())) throw ToolError("Could not restore " + meta_file_.string());
+    }
+    void SaveAfter() const {
+        std::string error;
+        if (!assets::SaveAssetMeta(meta_file_, after_, &error)) throw ToolError(error);
+    }
+    void ImportIfRequested() {
+        if (!import_now_) return;
+        const assets::ImportOutput result = assets::ImportAsset(*host_->project->database, guid_, host_->project->importers, *host_->project->cache);
+        imported_ = result.ok;
+        from_cache_ = result.from_cache;
+        warnings_ = result.warnings;
+        import_error_ = result.error;
+    }
+    void Apply(const std::vector<u8>& target, const std::vector<u8>& rollback) {
+        try {
+            Restore(target);
+            host_->project->database->Scan();
+            ImportIfRequested();
+            if (import_now_ && !target.empty()) Restore(target);
+            host_->project->database->Scan();
+        } catch (...) {
+            Restore(rollback);
+            host_->project->database->Scan();
+            throw;
+        }
+    }
+
+    std::shared_ptr<AssetHost> host_;
+    fs::path project_file_;
+    AssetGuid guid_;
+    fs::path meta_file_;
+    std::vector<u8> before_;
+    assets::AssetMeta after_;
+    std::vector<u8> after_bytes_;
+    bool import_now_ = true;
+    bool executed_ = false;
+    bool imported_ = false;
+    bool from_cache_ = false;
+    std::vector<std::string> warnings_;
+    std::string import_error_;
+};
+
+class CreateContentFolderCommand final : public editor::ICommand {
+public:
+    CreateContentFolderCommand(std::shared_ptr<AssetHost> host, fs::path project_file, std::string parent, std::string name)
+        : host_(std::move(host)), project_file_(std::move(project_file)), parent_(std::move(parent)), name_(std::move(name)) {}
+
+    void Do(editor::CommandContext&) override {
+        RequireSameProject();
+        std::string error;
+        if (!assets::CreateContentFolder(*host_->project->database, parent_, name_, &error)) throw ToolError(error);
+    }
+
+    void Undo(editor::CommandContext&) override {
+        RequireSameProject();
+        std::error_code ec;
+        const fs::path folder = host_->project->paths.content / parent_ / name_;
+        const bool removed = fs::remove(folder, ec);
+        if (ec) throw ToolError("Could not remove " + folder.string() + ": " + ec.message());
+        if (!removed) throw ToolError("Could not undo folder creation because the folder is missing or contains files or subfolders: " + folder.string());
+    }
+
+    std::string Label() const override { return "Create Content Folder"; }
+
+private:
+    void RequireSameProject() const {
+        if (!host_->project || host_->project->paths.file.lexically_normal() != project_file_.lexically_normal()) {
+            throw ToolError("Open the project that owns this folder before undoing or redoing this action");
+        }
+    }
+
+    std::shared_ptr<AssetHost> host_;
+    fs::path project_file_;
+    std::string parent_;
+    std::string name_;
+};
+
+class DeleteContentFolderCommand final : public editor::ICommand {
+public:
+    DeleteContentFolderCommand(std::shared_ptr<AssetHost> host, fs::path project_file, fs::path content_root, std::string relative)
+        : host_(std::move(host)), project_file_(std::move(project_file)), content_root_(std::move(content_root)), relative_(std::move(relative)) {}
+
+    void Do(editor::CommandContext&) override {
+        RequireSameProject();
+        const fs::path folder = ResolveFolder(true);
+        std::error_code ec;
+        if (!fs::remove(folder, ec)) {
+            if (ec) throw ToolError("Could not delete " + folder.string() + ": " + ec.message());
+            throw ToolError("Could not delete folder because it is no longer empty: " + folder.string());
+        }
+    }
+
+    void Undo(editor::CommandContext&) override {
+        RequireSameProject();
+        const fs::path folder = ResolveFolder(false);
+        std::error_code ec;
+        const fs::file_status status = fs::symlink_status(folder, ec);
+        if (!ec && status.type() != fs::file_type::not_found) throw ToolError("Could not restore folder because its path is occupied: " + folder.string());
+        if (ec && ec != std::errc::no_such_file_or_directory) throw ToolError("Could not inspect folder restore path " + folder.string() + ": " + ec.message());
+        ec.clear();
+        fs::create_directories(folder.parent_path(), ec);
+        if (ec) throw ToolError("Could not restore folder parent " + folder.parent_path().string() + ": " + ec.message());
+        if (!fs::create_directory(folder, ec) || ec) throw ToolError("Could not restore folder " + folder.string() + ": " + ec.message());
+    }
+
+    std::string Label() const override { return "Delete Empty Content Folder"; }
+
+private:
+    fs::path ResolveFolder(bool require_existing) const {
+        std::error_code ec;
+        const fs::path root = fs::canonical(content_root_, ec);
+        if (ec) throw ToolError("Could not resolve Content/: " + ec.message());
+        const fs::path requested = content_root_ / relative_;
+        fs::path resolved;
+        if (require_existing) {
+            const fs::file_status status = fs::symlink_status(requested, ec);
+            if (ec) throw ToolError("Could not inspect " + requested.string() + ": " + ec.message());
+            if (!fs::is_directory(status) || fs::is_symlink(status)) throw ToolError("Not a Content folder: " + requested.string());
+            resolved = fs::canonical(requested, ec);
+        } else {
+            const fs::path parent = fs::weakly_canonical(requested.parent_path(), ec);
+            if (!ec) resolved = parent / requested.filename();
+        }
+        if (ec) throw ToolError("Could not resolve " + requested.string() + ": " + ec.message());
+        const fs::path relative = resolved.lexically_relative(root);
+        if (relative.empty() || relative == "." || relative.is_absolute()) throw ToolError("Folder must be inside Content/: " + relative_);
+        const auto first = relative.begin();
+        if (first == relative.end() || *first == fs::path("..")) throw ToolError("Folder must be inside Content/: " + relative_);
+        return resolved;
+    }
+
+    void RequireSameProject() const {
+        if (!host_->project || host_->project->paths.file.lexically_normal() != project_file_.lexically_normal()) {
+            throw ToolError("Open the project that owns this folder before undoing or redoing this action");
+        }
+    }
+
+    std::shared_ptr<AssetHost> host_;
+    fs::path project_file_;
+    fs::path content_root_;
+    std::string relative_;
+};
+
+class ProjectSettingsCommand final : public editor::ICommand {
+public:
+    ProjectSettingsCommand(std::shared_ptr<AssetHost> host, fs::path project_file, ProjectSettings before, ProjectSettings after)
+        : host_(std::move(host)), project_file_(std::move(project_file)), before_(std::move(before)), after_(std::move(after)) {}
+
+    void Do(editor::CommandContext&) override { Apply(after_); }
+    void Undo(editor::CommandContext&) override { Apply(before_); }
+    std::string Label() const override { return "Change Project Settings"; }
+    usize MemoryBytes() const override { return sizeof(*this) + SettingsBytes(before_) + SettingsBytes(after_); }
+
+private:
+    static usize ListBytes(const std::vector<std::string>& values) {
+        usize bytes = 0;
+        for (const std::string& value : values) bytes += value.size();
+        return bytes;
+    }
+    static usize SettingsBytes(const ProjectSettings& settings) {
+        usize bytes = settings.name.size() + settings.engine_version.size() + settings.startup_scene.size() + settings.window_title.size() +
+                      settings.default_quality.size() + ListBytes(settings.always_cook) + ListBytes(settings.plugins) + ListBytes(settings.layers);
+        bytes += settings.collision_matrix.size() * sizeof(u32);
+        for (const QualityPreset& preset : settings.quality_presets) bytes += preset.name.size();
+        return bytes;
+    }
+    void Apply(const ProjectSettings& settings) {
+        if (!host_->project || host_->project->paths.file.lexically_normal() != project_file_.lexically_normal()) {
+            throw ToolError("Open the project that owns these settings before undoing or redoing this action");
+        }
+        std::string error;
+        if (!SaveProject(project_file_, settings, &error)) throw ToolError(error);
+        host_->project->settings = settings;
+        host_->project->settings.engine_version = kEngineVersion;
+    }
+
+    std::shared_ptr<AssetHost> host_;
+    fs::path project_file_;
+    ProjectSettings before_;
+    ProjectSettings after_;
+};
+
+class MoveContentCommand final : public editor::ICommand {
+public:
+    MoveContentCommand(std::shared_ptr<AssetHost> host, fs::path project_file, std::string from, std::string to)
+        : host_(std::move(host)), project_file_(std::move(project_file)), from_(std::move(from)), to_(std::move(to)) {}
+
+    void Do(editor::CommandContext&) override { result_ = Move(from_, to_); }
+    void Undo(editor::CommandContext&) override {
+        const assets::MoveResult reversed = Move(to_, from_);
+        if (!reversed.ok) throw ToolError(reversed.error);
+    }
+    std::string Label() const override { return "Move Content Asset"; }
+    usize MemoryBytes() const override {
+        usize bytes = sizeof(*this) + from_.size() + to_.size() + result_.error.size();
+        for (const std::string& path : result_.rewritten) bytes += path.size();
+        return bytes;
+    }
+    const assets::MoveResult& Result() const { return result_; }
+
+private:
+    assets::MoveResult Move(const std::string& from, const std::string& to) {
+        if (!host_->project || host_->project->paths.file.lexically_normal() != project_file_.lexically_normal()) {
+            throw ToolError("Open the project that owns this content before undoing or redoing this action");
+        }
+        ContentPath(*host_->project, from);
+        ContentPath(*host_->project, to);
+        assets::MoveResult result = assets::MoveContent(*host_->project->database, from, to);
+        if (!result.ok) throw ToolError(result.error);
+        return result;
+    }
+
+    std::shared_ptr<AssetHost> host_;
+    fs::path project_file_;
+    std::string from_;
+    std::string to_;
+    assets::MoveResult result_;
+};
+
+class DeleteAssetCommand final : public editor::ICommand {
+public:
+    DeleteAssetCommand(std::shared_ptr<AssetHost> host, fs::path project_file, assets::AssetGuid guid, fs::path source,
+                       bool force)
+        : host_(std::move(host)), project_file_(std::move(project_file)), guid_(guid), source_(std::move(source)),
+          meta_(source_.string() + assets::AssetMeta::kExtension), force_(force) {}
+
+    ~DeleteAssetCommand() override {
+        if (!backup_dir_.empty() && !preserve_backup_) {
+            std::error_code ec;
+            fs::remove_all(backup_dir_, ec);
+        }
+    }
+
+    void Do(editor::CommandContext&) override {
+        RequireSameProject();
+        if (!backed_up_) {
+            PrepareBackup();
+            try {
+                DeleteCurrent();
+                backed_up_ = true;
+            } catch (...) {
+                try {
+                    RestorePartialDelete();
+                } catch (...) {
+                    host_->project->database->Scan();
+                    throw ToolError("Asset deletion failed and its recovery backup was retained at " + backup_dir_.string());
+                }
+                host_->project->database->Scan();
+                std::error_code ec;
+                fs::remove_all(backup_dir_, ec);
+                backup_dir_.clear();
+                throw;
+            }
+            return;
+        }
+        DeleteCurrent();
+    }
+
+    void Undo(editor::CommandContext&) override {
+        RequireSameProject();
+        std::error_code ec;
+        if (fs::exists(source_, ec) || fs::exists(meta_, ec)) {
+            throw ToolError("Could not restore deleted asset because its original path is occupied");
+        }
+        if (ec) throw ToolError("Could not check asset restore path: " + ec.message());
+        fs::create_directories(source_.parent_path(), ec);
+        if (ec) throw ToolError("Could not create " + source_.parent_path().string() + ": " + ec.message());
+        bool restored_source = false;
+        try {
+            if (had_source_) {
+                fs::copy_file(backup_source_, source_, ec);
+                if (ec) throw ToolError("Could not restore " + source_.string() + ": " + ec.message());
+                restored_source = true;
+            }
+            if (had_meta_) {
+                fs::copy_file(backup_meta_, meta_, ec);
+                if (ec) throw ToolError("Could not restore " + meta_.string() + ": " + ec.message());
+            }
+            host_->project->database->Scan();
+        } catch (...) {
+            if (restored_source) {
+                std::error_code remove_error;
+                fs::remove(source_, remove_error);
+            }
+            host_->project->database->Scan();
+            throw;
+        }
+    }
+
+    std::string Label() const override { return "Delete Content Asset"; }
+    usize MemoryBytes() const override {
+        return sizeof(*this) + project_file_.string().size() + source_.string().size() + meta_.string().size() + backup_dir_.string().size();
+    }
+
+private:
+    void RequireSameProject() const {
+        if (!host_->project || host_->project->paths.file.lexically_normal() != project_file_.lexically_normal()) {
+            throw ToolError("Open the project that owns this asset before undoing or redoing this action");
+        }
+    }
+
+    void PrepareBackup() {
+        const fs::path root = host_->project->paths.saved / ".AgentUndo";
+        std::error_code ec;
+        fs::create_directories(root, ec);
+        if (ec) throw ToolError("Could not create undo backup folder: " + ec.message());
+        const std::string token = assets::ToString(guid_) + "-" + std::to_string(++next_backup_id_);
+        backup_dir_ = root / token;
+        if (!fs::create_directory(backup_dir_, ec) || ec) throw ToolError("Could not create undo backup folder: " + ec.message());
+        backup_source_ = backup_dir_ / "source";
+        backup_meta_ = backup_dir_ / "metadata";
+        had_source_ = BackupFile(source_, backup_source_);
+        had_meta_ = BackupFile(meta_, backup_meta_);
+    }
+
+    bool BackupFile(const fs::path& source, const fs::path& backup) {
+        std::error_code ec;
+        const fs::file_status status = fs::symlink_status(source, ec);
+        if (ec == std::errc::no_such_file_or_directory) return false;
+        if (ec) throw ToolError("Could not inspect " + source.string() + ": " + ec.message());
+        if (!fs::exists(status)) return false;
+        if (!fs::is_regular_file(status)) throw ToolError("Cannot create an undo backup for non-file asset data: " + source.string());
+        fs::copy_file(source, backup, ec);
+        if (ec) throw ToolError("Could not back up " + source.string() + ": " + ec.message());
+        return true;
+    }
+
+    void DeleteCurrent() {
+        std::string error;
+        if (!host_->project->database->Delete(guid_, force_, &error)) throw ToolError(error);
+        std::error_code ec;
+        if (fs::exists(source_, ec) || fs::exists(meta_, ec) || ec) {
+            RestorePartialDelete();
+            host_->project->database->Scan();
+            throw ToolError("The asset database could not remove all files for " + source_.string());
+        }
+        host_->project->database->Scan();
+    }
+
+    void RestorePartialDelete() {
+        try {
+            const auto restore = [](const fs::path& destination, const fs::path& backup, bool existed) {
+                if (!existed) return;
+                std::error_code ec;
+                if (fs::exists(destination, ec)) return;
+                if (ec) throw ToolError("Could not inspect " + destination.string() + ": " + ec.message());
+                fs::copy_file(backup, destination, ec);
+                if (ec) throw ToolError("Could not restore " + destination.string() + ": " + ec.message());
+            };
+            restore(source_, backup_source_, had_source_);
+            restore(meta_, backup_meta_, had_meta_);
+        } catch (...) {
+            preserve_backup_ = true;
+            throw;
+        }
+    }
+
+    inline static std::atomic<std::uint64_t> next_backup_id_{0};
+    std::shared_ptr<AssetHost> host_;
+    fs::path project_file_;
+    assets::AssetGuid guid_;
+    fs::path source_;
+    fs::path meta_;
+    fs::path backup_dir_;
+    fs::path backup_source_;
+    fs::path backup_meta_;
+    bool force_ = false;
+    bool had_source_ = false;
+    bool had_meta_ = false;
+    bool backed_up_ = false;
+    bool preserve_backup_ = false;
+};
+
+class AddFilesCommand final : public editor::ICommand {
+public:
+    struct File {
+        fs::path input;
+        fs::path destination;
+        fs::path meta;
+        fs::path staged_source;
+        fs::path before_source;
+        fs::path before_meta;
+        fs::path after_meta;
+        bool had_before_source = false;
+        bool had_before_meta = false;
+        bool has_after_meta = false;
+    };
+
+    AddFilesCommand(std::shared_ptr<AssetHost> host, fs::path project_file, fs::path backup_root,
+                    std::vector<File> files, bool import_now)
+        : host_(std::move(host)), project_file_(std::move(project_file)), backup_root_(std::move(backup_root)),
+          files_(std::move(files)), import_now_(import_now) {}
+
+    ~AddFilesCommand() override {
+        if (!backup_dir_.empty() && !preserve_backup_) {
+            std::error_code ec;
+            fs::remove_all(backup_dir_, ec);
+        }
+    }
+
+    void Do(editor::CommandContext&) override {
+        RequireSameProject();
+        if (!prepared_) Prepare();
+        if (applied_) {
+            VerifyBeforeState();
+            EnsureCreatedDirectories();
+            CopyNewFiles();
+            RestoreAfterMetadata();
+            scan_ = host_->project->database->Scan();
+            return;
+        }
+        try {
+            VerifyBeforeState();
+            CaptureCreatedDirectories();
+            EnsureCreatedDirectories();
+            CopyNewFiles();
+            scan_ = host_->project->database->Scan();
+            ImportAddedAssets();
+            CaptureAfterMetadata();
+            applied_ = true;
+        } catch (...) {
+            try {
+                RestoreBeforeState();
+            } catch (...) {
+                preserve_backup_ = true;
+            }
+            host_->project->database->Scan();
+            throw;
+        }
+    }
+
+    void Undo(editor::CommandContext&) override {
+        RequireSameProject();
+        VerifyAfterState();
+        RestoreBeforeState();
+        RemoveCreatedDirectories();
+        scan_ = host_->project->database->Scan();
+    }
+
+    std::string Label() const override { return "Add Content Files"; }
+    usize MemoryBytes() const override {
+        usize bytes = sizeof(*this) + project_file_.string().size() + backup_dir_.string().size();
+        for (const File& file : files_) bytes += file.destination.string().size() + file.meta.string().size();
+        for (const std::string& error : imports_.errors) bytes += error.size();
+        return bytes;
+    }
+    const std::vector<File>& Files() const { return files_; }
+    const assets::ScanResult& Scan() const { return scan_; }
+    const assets::ImportAllResult& Imports() const { return imports_; }
+    bool Imported() const { return import_now_; }
+
+private:
+    void RequireSameProject() const {
+        if (!host_->project || host_->project->paths.file.lexically_normal() != project_file_.lexically_normal()) {
+            throw ToolError("Open the project that owns these files before undoing or redoing this action");
+        }
+    }
+
+    static bool Exists(const fs::path& path) {
+        std::error_code ec;
+        const fs::file_status status = fs::symlink_status(path, ec);
+        if (ec == std::errc::no_such_file_or_directory) return false;
+        if (ec) throw ToolError("Could not inspect " + path.string() + ": " + ec.message());
+        return fs::exists(status);
+    }
+
+    static bool CopySnapshot(const fs::path& source, const fs::path& snapshot) {
+        std::error_code ec;
+        const fs::file_status status = fs::symlink_status(source, ec);
+        if (ec == std::errc::no_such_file_or_directory) return false;
+        if (ec) throw ToolError("Could not inspect " + source.string() + ": " + ec.message());
+        if (!fs::exists(status)) return false;
+        if (!fs::is_regular_file(status)) throw ToolError("Cannot undo a non-file asset path: " + source.string());
+        fs::copy_file(source, snapshot, ec);
+        if (ec) throw ToolError("Could not back up " + source.string() + ": " + ec.message());
+        return true;
+    }
+
+    static bool MatchesSnapshot(const fs::path& path, bool should_exist, const fs::path& snapshot) {
+        const bool exists = Exists(path);
+        if (!should_exist) return !exists;
+        if (!exists) return false;
+        std::error_code ec;
+        const std::uintmax_t actual_size = fs::file_size(path, ec);
+        if (ec) return false;
+        const std::uintmax_t snapshot_size = fs::file_size(snapshot, ec);
+        if (ec || actual_size != snapshot_size) return false;
+        std::ifstream actual(path, std::ios::binary), expected(snapshot, std::ios::binary);
+        if (!actual || !expected) return false;
+        char a[64 * 1024], b[64 * 1024];
+        while (actual && expected) {
+            actual.read(a, sizeof(a));
+            expected.read(b, sizeof(b));
+            if (actual.gcount() != expected.gcount() || !std::equal(a, a + actual.gcount(), b)) return false;
+        }
+        return actual.eof() && expected.eof();
+    }
+
+    void Prepare() {
+        std::error_code ec;
+        fs::create_directories(backup_root_, ec);
+        if (ec) throw ToolError("Could not create add-files undo backup folder: " + ec.message());
+        backup_dir_ = backup_root_ / ("add-files-" + std::to_string(++next_backup_id_));
+        if (!fs::create_directory(backup_dir_, ec) || ec) throw ToolError("Could not create add-files undo backup folder: " + ec.message());
+        for (usize i = 0; i < files_.size(); ++i) {
+            File& file = files_[i];
+            const fs::path index = std::to_string(i);
+            file.staged_source = backup_dir_ / (index.string() + ".source");
+            file.before_source = backup_dir_ / (index.string() + ".before");
+            file.before_meta = backup_dir_ / (index.string() + ".before-meta");
+            file.after_meta = backup_dir_ / (index.string() + ".after-meta");
+            file.had_before_source = CopySnapshot(file.destination, file.before_source);
+            file.had_before_meta = CopySnapshot(file.meta, file.before_meta);
+            if (!CopySnapshot(file.input, file.staged_source)) throw ToolError("Not a file: " + file.input.string());
+        }
+        prepared_ = true;
+    }
+
+    void VerifyBeforeState() const {
+        for (const File& file : files_) {
+            if (!MatchesSnapshot(file.destination, file.had_before_source, file.before_source) ||
+                !MatchesSnapshot(file.meta, file.had_before_meta, file.before_meta)) {
+                throw ToolError("Cannot apply add-files action because a destination changed: " + file.destination.string());
+            }
+        }
+    }
+
+    void VerifyAfterState() const {
+        for (const File& file : files_) {
+            if (!MatchesSnapshot(file.destination, true, file.staged_source) ||
+                !MatchesSnapshot(file.meta, file.has_after_meta, file.after_meta)) {
+                throw ToolError("Cannot undo add-files action because a destination changed: " + file.destination.string());
+            }
+        }
+    }
+
+    void CopyNewFiles() {
+        for (const File& file : files_) {
+            std::error_code ec;
+            fs::create_directories(file.destination.parent_path(), ec);
+            if (ec) throw ToolError("Could not create " + file.destination.parent_path().string() + ": " + ec.message());
+            fs::copy_file(file.staged_source, file.destination, fs::copy_options::overwrite_existing, ec);
+            if (ec) throw ToolError("Could not copy staged asset to " + file.destination.string() + ": " + ec.message());
+        }
+    }
+
+    void RestoreAfterMetadata() {
+        for (const File& file : files_) {
+            std::error_code ec;
+            if (file.has_after_meta) {
+                fs::copy_file(file.after_meta, file.meta, fs::copy_options::overwrite_existing, ec);
+                if (ec) throw ToolError("Could not restore " + file.meta.string() + ": " + ec.message());
+            } else {
+                fs::remove(file.meta, ec);
+                if (ec == std::errc::no_such_file_or_directory) ec.clear();
+                if (ec) throw ToolError("Could not remove " + file.meta.string() + ": " + ec.message());
+            }
+        }
+    }
+
+    void RestoreBeforeState() {
+        for (const File& file : files_) {
+            RestoreOne(file.destination, file.before_source, file.had_before_source);
+            RestoreOne(file.meta, file.before_meta, file.had_before_meta);
+        }
+    }
+
+    void CaptureCreatedDirectories() {
+        const fs::path content = host_->project->paths.content.lexically_normal();
+        std::set<fs::path> missing;
+        for (const File& file : files_) {
+            fs::path dir = file.destination.parent_path().lexically_normal();
+            while (dir != content) {
+                const fs::path relative = dir.lexically_relative(content);
+                if (relative.empty() || relative.is_absolute() || *relative.begin() == "..") {
+                    throw ToolError("Destination is outside Content/: " + dir.string());
+                }
+                std::error_code ec;
+                const fs::file_status status = fs::symlink_status(dir, ec);
+                if (!ec && fs::exists(status)) {
+                    if (fs::is_symlink(status) || !fs::is_directory(status)) throw ToolError("Destination parent is not a regular folder: " + dir.string());
+                    break;
+                }
+                if (ec == std::errc::no_such_file_or_directory) ec.clear();
+                if (ec) throw ToolError("Could not inspect " + dir.string() + ": " + ec.message());
+                missing.insert(dir);
+                dir = dir.parent_path();
+            }
+        }
+        created_directories_.assign(missing.begin(), missing.end());
+        std::sort(created_directories_.begin(), created_directories_.end(), [](const fs::path& a, const fs::path& b) {
+            return std::distance(a.begin(), a.end()) > std::distance(b.begin(), b.end());
+        });
+    }
+
+    void EnsureCreatedDirectories() {
+        for (const fs::path& dir : created_directories_) {
+            std::error_code ec;
+            fs::create_directories(dir, ec);
+            if (ec) throw ToolError("Could not create " + dir.string() + ": " + ec.message());
+        }
+    }
+
+    void RemoveCreatedDirectories() {
+        for (const fs::path& dir : created_directories_) {
+            std::error_code ec;
+            fs::remove(dir, ec); // Keep any directory that now contains unrelated files.
+        }
+    }
+
+    static void RestoreOne(const fs::path& destination, const fs::path& snapshot, bool existed) {
+        std::error_code ec;
+        if (existed) {
+            fs::copy_file(snapshot, destination, fs::copy_options::overwrite_existing, ec);
+            if (ec) throw ToolError("Could not restore " + destination.string() + ": " + ec.message());
+        } else {
+            fs::remove(destination, ec);
+            if (ec == std::errc::no_such_file_or_directory) ec.clear();
+            if (ec) throw ToolError("Could not remove " + destination.string() + ": " + ec.message());
+        }
+    }
+
+    void ImportAddedAssets() {
+        if (!import_now_) return;
+        imports_ = {};
+        for (const File& file : files_) {
+            const std::string path = fs::relative(file.destination, host_->project->paths.content).generic_string();
+            const AssetRecord* record = host_->project->database->FindByPath(path);
+            if (record == nullptr) {
+                ++imports_.skipped;
+                continue;
+            }
+            if (host_->project->importers.Find(record->importer) == nullptr) {
+                ++imports_.skipped;
+                continue;
+            }
+            const assets::ImportOutput result = assets::ImportAsset(*host_->project->database, record->guid,
+                                                                    host_->project->importers, *host_->project->cache);
+            if (!result.ok) {
+                ++imports_.failed;
+                imports_.errors.push_back(path + ": " + result.error);
+            } else if (result.from_cache) {
+                ++imports_.from_cache;
+            } else {
+                ++imports_.imported;
+            }
+        }
+    }
+
+    void CaptureAfterMetadata() {
+        for (File& file : files_) file.has_after_meta = CopySnapshot(file.meta, file.after_meta);
+    }
+
+    inline static std::atomic<std::uint64_t> next_backup_id_{0};
+    std::shared_ptr<AssetHost> host_;
+    fs::path project_file_;
+    fs::path backup_root_;
+    fs::path backup_dir_;
+    std::vector<File> files_;
+    std::vector<fs::path> created_directories_;
+    bool import_now_ = true;
+    bool prepared_ = false;
+    bool applied_ = false;
+    bool preserve_backup_ = false;
+    assets::ScanResult scan_;
+    assets::ImportAllResult imports_;
+};
+
+class AssetImportCommand final : public editor::ICommand {
+public:
+    struct SubAsset {
+        std::string key;
+        std::string importer;
+        AssetGuid guid;
+    };
+    struct SingleResult {
+        bool ok = false;
+        bool from_cache = false;
+        usize bytes = 0;
+        std::vector<std::string> warnings;
+        std::vector<SubAsset> sub_assets;
+        std::string error;
+    };
+
+    AssetImportCommand(std::shared_ptr<AssetHost> host, fs::path project_file, std::optional<AssetGuid> guid)
+        : host_(std::move(host)), project_file_(std::move(project_file)), guid_(guid) {}
+
+    void Do(editor::CommandContext&) override {
+        RequireSameProject();
+        if (executed_) {
+            Apply(after_, before_);
+            return;
+        }
+        before_ = CaptureMetadata();
+        try {
+            if (guid_) {
+                const assets::ImportOutput output = assets::ImportAsset(*host_->project->database, *guid_,
+                                                                          host_->project->importers, *host_->project->cache);
+                single_.ok = output.ok;
+                single_.from_cache = output.from_cache;
+                single_.bytes = output.data.size();
+                single_.warnings = output.warnings;
+                single_.error = output.error;
+                for (const assets::SubAssetOutput& sub : output.sub_assets) {
+                    single_.sub_assets.push_back({sub.key, sub.importer, sub.guid});
+                }
+            } else {
+                imports_ = assets::ImportAll(*host_->project->database, host_->project->importers, *host_->project->cache);
+            }
+            after_ = CaptureCurrentMetadata(before_);
+            scan_ = host_->project->database->Scan();
+            executed_ = true;
+        } catch (...) {
+            RestoreMetadata(before_);
+            host_->project->database->Scan();
+            throw;
+        }
+    }
+
+    void Undo(editor::CommandContext&) override {
+        RequireSameProject();
+        Apply(before_, after_);
+    }
+
+    std::string Label() const override { return guid_ ? "Import Asset" : "Import Pending Assets"; }
+    usize MemoryBytes() const override {
+        usize bytes = sizeof(*this) + project_file_.string().size() + single_.error.size();
+        auto count = [&](const auto& files) {
+            for (const auto& file : files) bytes += file.state.bytes.size();
+        };
+        count(before_);
+        count(after_);
+        for (const std::string& warning : single_.warnings) bytes += warning.size();
+        for (const SubAsset& sub : single_.sub_assets) bytes += sub.key.size() + sub.importer.size();
+        for (const std::string& error : imports_.errors) bytes += error.size();
+        return bytes;
+    }
+    const SingleResult& Single() const { return single_; }
+    const assets::ImportAllResult& All() const { return imports_; }
+
+private:
+    struct MetadataFile {
+        fs::path path;
+        ContentFileState state;
+    };
+
+    std::vector<MetadataFile> CaptureMetadata() const {
+        std::vector<MetadataFile> files;
+        std::set<fs::path> seen;
+        auto capture = [&](const AssetRecord* record) {
+            if (record == nullptr || record->IsSubAsset()) return;
+            const fs::path path = host_->project->database->MetaPath(record->guid);
+            if (seen.insert(path).second) files.push_back({path, CaptureContentFile(path)});
+        };
+        if (guid_) {
+            const AssetRecord* record = host_->project->database->Find(*guid_);
+            if (record != nullptr && record->IsSubAsset()) record = host_->project->database->Find(record->parent);
+            capture(record);
+        } else {
+            for (const AssetRecord* record : host_->project->database->All()) {
+                if (record->needs_import) capture(record);
+            }
+        }
+        return files;
+    }
+
+    static void RestoreMetadata(const std::vector<MetadataFile>& files) {
+        for (const MetadataFile& file : files) RestoreContentFile(file.path, file.state);
+    }
+
+    static std::vector<MetadataFile> CaptureCurrentMetadata(const std::vector<MetadataFile>& files) {
+        std::vector<MetadataFile> current;
+        current.reserve(files.size());
+        for (const MetadataFile& file : files) current.push_back({file.path, CaptureContentFile(file.path)});
+        return current;
+    }
+
+    void RequireSameProject() const {
+        if (!host_->project || host_->project->paths.file.lexically_normal() != project_file_.lexically_normal()) {
+            throw ToolError("Open the project that owns these assets before undoing or redoing this import");
+        }
+    }
+
+    void Apply(const std::vector<MetadataFile>& target, const std::vector<MetadataFile>& rollback) {
+        try {
+            RestoreMetadata(target);
+            scan_ = host_->project->database->Scan();
+        } catch (...) {
+            RestoreMetadata(rollback);
+            host_->project->database->Scan();
+            throw;
+        }
+    }
+
+    std::shared_ptr<AssetHost> host_;
+    fs::path project_file_;
+    std::optional<AssetGuid> guid_;
+    std::vector<MetadataFile> before_;
+    std::vector<MetadataFile> after_;
+    assets::ScanResult scan_;
+    SingleResult single_;
+    assets::ImportAllResult imports_;
+    bool executed_ = false;
+};
 
 Json ProjectJson(OpenProject& p) {
     usize sources = 0;
@@ -58,18 +1041,11 @@ Json OpenProjectFile(AssetHost& host, const fs::path& file) {
     return out;
 }
 
-// A file inside Content/ for reading or writing text.
-fs::path ContentFile(OpenProject& p, const std::string& relative) {
-    const std::string rel = CleanRelative(relative);
-    if (rel.empty()) throw ToolError("\"path\" must name a file under Content/");
-    return p.paths.content / rel;
-}
-
 std::string KindOfCookFailure(const cook::CookReport& r) { return r.error.empty() ? "The cook failed" : r.error; }
 
 } // namespace
 
-void RegisterAssetTools(McpServer& server, std::shared_ptr<detail::AssetHost> host) {
+void RegisterAssetTools(McpServer& server, std::shared_ptr<detail::AssetHost> host, EditorSession& session) {
 
     server.AddTool(
         {"project_open",
@@ -137,20 +1113,89 @@ void RegisterAssetTools(McpServer& server, std::shared_ptr<detail::AssetHost> ho
                     }});
 
     server.AddTool(
+        {"validate_scene_layers",
+         "Audit the open project's collision layer table and the current scene's Layer assignments without modifying either. Reports oversized tables, empty or duplicate layer names, non-Default layer zero, out-of-range indices, and assignments to unconfigured indices. Returns at most 128 detailed issues.",
+         Schema(Json::object()),
+         [host, &session](const Json&) -> Json {
+             OpenProject& project = host->Require();
+             const std::vector<std::string>& layers = project.settings.layers;
+             Json issues = Json::array();
+             usize issue_count = 0;
+             bool truncated = false;
+             auto add_issue = [&](Json issue) {
+                 ++issue_count;
+                 if (issues.size() < 128) issues.push_back(std::move(issue));
+                 else truncated = true;
+             };
+
+             if (layers.size() > kMaxLayers) {
+                 add_issue({{"kind", "too_many_layers"}, {"configured_count", layers.size()}, {"maximum", kMaxLayers}});
+             }
+             if (!layers.empty() && layers.front() != "Default") {
+                 add_issue({{"kind", "default_layer_name"}, {"index", 0}, {"expected", "Default"}, {"actual", layers.front()}});
+             }
+             std::map<std::string, usize> first_layer;
+             for (usize i = 0; i < layers.size(); ++i) {
+                 if (layers[i].empty()) {
+                     add_issue({{"kind", "empty_layer_name"}, {"layer_index", i}});
+                     continue;
+                 }
+                 const auto [it, inserted] = first_layer.emplace(layers[i], i);
+                 if (!inserted) {
+                     add_issue({{"kind", "duplicate_layer_name"}, {"name", layers[i]},
+                                {"first_index", it->second}, {"duplicate_index", i}});
+                 }
+             }
+
+             usize assigned_entity_count = 0;
+             session.world.ForEachArchetype([&](const Archetype& archetype) {
+                 if (!archetype.Has(GetComponentId<Layer>())) return;
+                 for (usize chunk_index = 0; chunk_index < archetype.ChunkCount(); ++chunk_index) {
+                     const u32 count = archetype.ChunkEntityCount(chunk_index);
+                     const Entity* entities = archetype.EntityArray(chunk_index);
+                     const Layer* values = static_cast<const Layer*>(archetype.ComponentArray(chunk_index, GetComponentId<Layer>()));
+                     for (u32 row = 0; row < count; ++row) {
+                         ++assigned_entity_count;
+                         const Entity entity = entities[row];
+                         const IdComponent* id = session.world.GetComponent<IdComponent>(entity);
+                         const Json entity_id = id != nullptr && !id->guid.IsNull() ? Json(ToString(id->guid)) : Json(entity.index);
+                         if (values[row].index >= kMaxLayers) {
+                             add_issue({{"kind", "layer_index_out_of_range"}, {"entity", entity_id},
+                                        {"layer_index", values[row].index}, {"maximum", kMaxLayers - 1}});
+                         } else if (values[row].index >= layers.size()) {
+                             add_issue({{"kind", "unconfigured_layer"}, {"entity", entity_id},
+                                        {"layer_index", values[row].index}});
+                         } else if (layers[values[row].index].empty()) {
+                             add_issue({{"kind", "assigned_empty_layer"}, {"entity", entity_id},
+                                        {"layer_index", values[row].index}});
+                         }
+                     }
+                 }
+             });
+
+             return {{"valid", issue_count == 0}, {"entity_count", session.world.EntityCount()},
+                     {"assigned_entity_count", assigned_entity_count}, {"configured_layer_count", layers.size()},
+                     {"issue_count", issue_count}, {"issues", std::move(issues)}, {"truncated", truncated}};
+         }});
+
+    server.AddTool(
         {"project_set",
-         "Change project settings and save the .aproject: startup_scene, always_cook (asset paths or folders ending in '/'), plugins.",
+         "Change project settings and save the .aproject as one agent-attributed undoable action: startup_scene, always_cook (asset paths or folders ending in '/'), plugins.",
          Schema({{"startup_scene", {{"type", "string"}}},
                  {"always_cook", {{"type", "array"}, {"items", {{"type", "string"}}}}},
                  {"plugins", {{"type", "array"}, {"items", {{"type", "string"}}}}}}),
-         [host](const Json& args) -> Json {
+         [host, &session](const Json& args) -> Json {
              OpenProject& p = host->Require();
+             if (session.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before changing project settings");
+             const ProjectSettings before = p.settings;
              ProjectSettings next = p.settings;
              if (args.contains("startup_scene")) next.startup_scene = OptString(args, "startup_scene");
              if (args.contains("always_cook")) next.always_cook = OptStrings(args, "always_cook");
              if (args.contains("plugins")) next.plugins = OptStrings(args, "plugins");
-             std::string error;
-             if (!SaveProject(p.paths.file, next, &error)) throw ToolError(error);
-             p.settings = std::move(next);
+             auto command = std::make_unique<ProjectSettingsCommand>(host, p.paths.file, before, std::move(next));
+             command->SetAttribution("agent");
+             editor::CommandContext context = session.Context();
+             session.stack.Execute(context, std::move(command));
              return ProjectJson(p);
          }});
 
@@ -194,6 +1239,37 @@ void RegisterAssetTools(McpServer& server, std::shared_ptr<detail::AssetHost> ho
                         return RecordJson(p, FindAsset(p, RequireString(args, "asset")), true);
                     }});
 
+    server.AddTool(
+        {"asset_info_many",
+         "Return full details for 1–32 unique assets (import settings, dependencies, referencers, sub-assets and import state) in one call. Resolves every asset before building the response and caps serialized output at 6 MB.",
+         Schema({{"assets", {{"type", "array"}, {"items", {{"type", "string"}}}, {"description", "1–32 content paths or GUIDs"}}}}, {"assets"}),
+         [host](const Json& args) -> Json {
+             OpenProject& p = host->Require();
+             if (!args["assets"].is_array() || args["assets"].empty() || args["assets"].size() > 32) {
+                 throw ToolError("\"assets\" must be a non-empty array of at most 32 paths or GUIDs");
+             }
+
+             std::vector<const AssetRecord*> records;
+             records.reserve(args["assets"].size());
+             std::set<AssetGuid> seen;
+             for (const Json& value : args["assets"]) {
+                 if (!value.is_string()) throw ToolError("Each entry in \"assets\" must be a path or GUID string");
+                 const AssetRecord& record = FindAsset(p, value.get<std::string>());
+                 if (!seen.insert(record.guid).second) throw ToolError("Duplicate asset in \"assets\": " + record.path);
+                 records.push_back(&record);
+             }
+
+             Json results = Json::array();
+             std::size_t response_bytes = 0;
+             for (const AssetRecord* record : records) {
+                 Json detail = RecordJson(p, *record, true);
+                 response_bytes += detail.dump().size();
+                 if (response_bytes > 6ull * 1024 * 1024) throw ToolError("The asset information batch exceeds the 6 MB response limit");
+                 results.push_back(std::move(detail));
+             }
+             return {{"count", results.size()}, {"assets", std::move(results)}};
+         }});
+
     server.AddTool({"asset_references",
                     "The reference graph of an asset: what it uses (dependencies) or what uses it (referencers), to a depth.",
                     Schema({{"asset", {{"type", "string"}}},
@@ -216,45 +1292,112 @@ void RegisterAssetTools(McpServer& server, std::shared_ptr<detail::AssetHost> ho
                         return {{"asset", r.path}, {"direction", dir}, {"nodes", nodes}};
                     }});
 
+    server.AddTool(
+        {"asset_references_many",
+         "Query dependencies or referencers for 1–32 unique assets in one call. Uses one shared direction and depth (default dependencies and depth 4, maximum 16) and caps serialized output at 6 MB.",
+         Schema({{"assets", {{"type", "array"}, {"items", {{"type", "string"}}}, {"description", "1–32 content paths or GUIDs"}}},
+                 {"direction", {{"type", "string"}, {"description", "dependencies (default) or referencers"}}},
+                 {"max_depth", {{"type", "integer"}, {"description", "Default 4, max 16"}}}},
+                {"assets"}),
+         [host](const Json& args) -> Json {
+             OpenProject& p = host->Require();
+             if (!args["assets"].is_array() || args["assets"].empty() || args["assets"].size() > 32) {
+                 throw ToolError("\"assets\" must be a non-empty array of at most 32 paths or GUIDs");
+             }
+             const std::string direction = OptString(args, "direction", "dependencies");
+             if (direction != "dependencies" && direction != "referencers") {
+                 throw ToolError("\"direction\" must be dependencies or referencers");
+             }
+             long long depth = 4;
+             if (args.contains("max_depth") && args["max_depth"].is_number_integer()) {
+                 depth = std::clamp<long long>(args["max_depth"].get<long long>(), 1, 16);
+             }
+
+             std::vector<const AssetRecord*> records;
+             records.reserve(args["assets"].size());
+             std::set<AssetGuid> seen;
+             for (const Json& value : args["assets"]) {
+                 if (!value.is_string()) throw ToolError("Each entry in \"assets\" must be a path or GUID string");
+                 const AssetRecord& record = FindAsset(p, value.get<std::string>());
+                 if (!seen.insert(record.guid).second) throw ToolError("Duplicate asset in \"assets\": " + record.path);
+                 records.push_back(&record);
+             }
+
+             Json results = Json::array();
+             std::size_t response_bytes = 0;
+             const assets::ReferenceDirection ref_direction = direction == "referencers" ? assets::ReferenceDirection::Referencers
+                                                                                         : assets::ReferenceDirection::Dependencies;
+             for (const AssetRecord* record : records) {
+                 Json nodes = Json::array();
+                 for (const assets::ReferenceNode& node : assets::CollectReferences(*p.database, record->guid, ref_direction, static_cast<u32>(depth))) {
+                     nodes.push_back({{"path", node.path}, {"depth", node.depth}, {"repeated", node.repeated}});
+                 }
+                 Json result = {{"asset", record->path}, {"nodes", std::move(nodes)}};
+                 response_bytes += result.dump().size();
+                 if (response_bytes > 4ull * 1024 * 1024) throw ToolError("The asset references batch exceeds the 6 MB response limit");
+                 results.push_back(std::move(result));
+             }
+             Json response = {{"count", results.size()}, {"direction", direction}, {"max_depth", depth}, {"results", std::move(results)}};
+             if (response.dump(2).size() > 6ull * 1024 * 1024) throw ToolError("The asset references batch exceeds the 6 MB response limit");
+             return response;
+         }});
+
     server.AddTool({"asset_scan",
                     "Rescan Content/: new files get GUIDs, changed sources are flagged needs_import, missing ones are reported.",
                     Schema(Json::object()), [host](const Json&) -> Json { return ScanJson(host->Require().database->Scan()); }});
 
     server.AddTool(
         {"asset_add_files",
-         "Copy source files (textures, models, audio...) into Content/<folder>, then scan and import them. Files keep their names "
-         "(a glTF's .bin and textures should be added together, in the same folder). Existing files are not overwritten unless "
-         "`overwrite`.",
+         "Copy source files (textures, models, audio...) into Content/<folder> as one agent-attributed undoable action, then scan "
+         "and import only those files. Undo restores overwritten source files and .ameta sidecars. Files keep their names (a glTF's "
+         ".bin and textures should be added together, in the same folder). Existing files are not overwritten unless `overwrite`.",
          Schema({{"sources", {{"type", "array"}, {"items", {{"type", "string"}}}, {"description", "Absolute paths of files to copy in"}}},
                  {"folder", {{"type", "string"}, {"description", "Destination folder under Content/ (created if needed)"}}},
                  {"overwrite", {{"type", "boolean"}}},
                  {"import", {{"type", "boolean"}, {"description", "Import them now (default true)"}}}},
                 {"sources"}),
-         [host](const Json& args) -> Json {
+         [host, &session](const Json& args) -> Json {
              OpenProject& p = host->Require();
+             if (session.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before adding content files");
              const std::vector<std::string> sources = OptStrings(args, "sources");
              if (sources.empty()) throw ToolError("\"sources\" must be a non-empty array of file paths");
              const std::string folder = CleanRelative(OptString(args, "folder"));
+             for (const fs::path& part : fs::path(folder)) {
+                 std::string why;
+                 if (!assets::IsValidAssetName(part.string(), &why)) throw ToolError("Bad destination folder name \"" + part.string() + "\": " + why);
+             }
              const bool overwrite = OptBool(args, "overwrite", false);
-             const fs::path dest_dir = folder.empty() ? p.paths.content : p.paths.content / folder;
-             std::error_code ec;
-             fs::create_directories(dest_dir, ec);
-             Json copied = Json::array();
+             const fs::path dest_dir = ContentDirectory(p, folder);
+             std::vector<AddFilesCommand::File> files;
+             std::set<std::string> destinations;
              for (const std::string& src : sources) {
                  const fs::path from = src;
-                 if (!fs::is_regular_file(from, ec)) throw ToolError("Not a file: " + src);
+                 std::error_code ec;
+                 const fs::file_status status = fs::symlink_status(from, ec);
+                 if (ec || !fs::is_regular_file(status)) throw ToolError("Not a file: " + src);
                  std::string why;
                  if (!assets::IsValidAssetName(from.filename().string(), &why)) throw ToolError("Bad file name \"" + from.filename().string() + "\": " + why);
-                 const fs::path to = dest_dir / from.filename();
+                 const std::string rel = (folder.empty() ? "" : folder + "/") + from.filename().generic_string();
+                 const fs::path to = ContentFile(p, rel);
+                 if (!destinations.insert(rel).second) throw ToolError("Duplicate destination file: " + rel);
                  if (fs::exists(to, ec) && !overwrite) throw ToolError(to.filename().string() + " already exists in " + (folder.empty() ? "Content/" : folder) + " (pass overwrite)");
-                 fs::copy_file(from, to, fs::copy_options::overwrite_existing, ec);
-                 if (ec) throw ToolError("Could not copy " + src + ": " + ec.message());
-                 copied.push_back((folder.empty() ? "" : folder + "/") + from.filename().generic_string());
+                 if (ec) throw ToolError("Could not inspect " + to.string() + ": " + ec.message());
+                 AddFilesCommand::File file;
+                 file.input = from;
+                 file.destination = to;
+                 file.meta = fs::path(to.string() + assets::AssetMeta::kExtension);
+                 files.push_back(std::move(file));
              }
-             const assets::ScanResult scan = p.database->Scan();
-             Json out = {{"copied", copied}, {"scan", ScanJson(scan)}};
-             if (OptBool(args, "import", true)) {
-                 const assets::ImportAllResult r = assets::ImportAll(*p.database, p.importers, *p.cache);
+             auto command = std::make_unique<AddFilesCommand>(host, p.paths.file, p.paths.saved / ".AgentUndo", std::move(files), OptBool(args, "import", true));
+             command->SetAttribution("agent");
+             AddFilesCommand* command_result = command.get();
+             editor::CommandContext context = session.Context();
+             session.stack.Execute(context, std::move(command));
+             Json copied = Json::array();
+             for (const auto& file : command_result->Files()) copied.push_back(fs::relative(file.destination, p.paths.content).generic_string());
+             Json out = {{"copied", copied}, {"scan", ScanJson(command_result->Scan())}};
+             if (command_result->Imported()) {
+                 const assets::ImportAllResult& r = command_result->Imports();
                  out["import"] = {{"imported", r.imported}, {"from_cache", r.from_cache}, {"failed", r.failed}, {"skipped", r.skipped}, {"errors", r.errors}};
              }
              Json records = Json::array();
@@ -267,20 +1410,92 @@ void RegisterAssetTools(McpServer& server, std::shared_ptr<detail::AssetHost> ho
 
     server.AddTool(
         {"asset_import",
-         "Run the importers. With `asset`, (re)import that one (even if unchanged); without, import everything flagged needs_import. "
-         "Results come from the derived-data cache when the input is unchanged.",
-         Schema({{"asset", {{"type", "string"}, {"description", "Content path or GUID; omit to import all pending"}}}}),
-         [host](const Json& args) -> Json {
+         "Run the importers. With `asset`, (re)import one asset; with `assets`, import a selected array of up to 128 assets as one undoable group; "
+         "without either, import everything flagged needs_import. An asset or assets cannot be combined. Import status and sub-asset metadata "
+         "are undoable. Results come from the derived-data cache when the input is unchanged.",
+         Schema({{"asset", {{"type", "string"}, {"description", "Content path or GUID; omit to import all pending"}}},
+                 {"assets", {{"type", "array"}, {"items", {{"type", "string"}}}, {"description", "Selected content paths or GUIDs to import as one undoable group (1-128)"}}}}),
+         [host, &session](const Json& args) -> Json {
              OpenProject& p = host->Require();
-             if (!args.contains("asset")) {
-                 const assets::ImportAllResult r = assets::ImportAll(*p.database, p.importers, *p.cache);
+             if (session.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before importing assets");
+             if (args.contains("asset") && args.contains("assets")) throw ToolError("Pass either \"asset\" or \"assets\", not both");
+             if (args.contains("assets")) {
+                 if (!args["assets"].is_array() || args["assets"].empty() || args["assets"].size() > 128) {
+                     throw ToolError("\"assets\" must be a non-empty array of at most 128 asset paths or GUIDs");
+                 }
+                 std::vector<std::pair<AssetGuid, std::string>> selected;
+                 std::set<AssetGuid> seen;
+                 for (const Json& value : args["assets"]) {
+                     if (!value.is_string()) throw ToolError("Each entry in \"assets\" must be a path or GUID string");
+                     const AssetRecord* record = &FindAsset(p, value.get<std::string>());
+                     if (record->IsSubAsset()) record = p.database->Find(record->parent);
+                     if (record == nullptr || record->IsSubAsset()) throw ToolError("Could not resolve the source asset for " + value.get<std::string>());
+                     if (!seen.insert(record->guid).second) throw ToolError("Duplicate asset in \"assets\": " + record->path);
+                     selected.emplace_back(record->guid, record->path);
+                 }
+
+                 static std::atomic<std::uint64_t> next_batch_id{0};
+                 const std::string transaction_label = "Import Assets " + std::to_string(++next_batch_id);
+                 const usize undo_count_before = session.stack.UndoCount();
+                 Json results = Json::array();
+                 usize imported = 0, from_cache = 0, failed = 0;
+                 editor::CommandContext context = session.Context();
+                 session.stack.BeginTransaction(transaction_label);
+                 try {
+                     for (const auto& [guid, path] : selected) {
+                         auto command = std::make_unique<AssetImportCommand>(host, p.paths.file, guid);
+                         command->SetAttribution("agent");
+                         AssetImportCommand* command_result = command.get();
+                         session.stack.Execute(context, std::move(command));
+                         const AssetImportCommand::SingleResult& out = command_result->Single();
+                         Json row = {{"ok", out.ok}, {"asset", path}, {"from_cache", out.from_cache}, {"bytes", out.bytes}, {"warnings", out.warnings}};
+                         Json subs = Json::array();
+                         for (const AssetImportCommand::SubAsset& sub : out.sub_assets) {
+                             subs.push_back({{"key", sub.key}, {"importer", sub.importer}, {"guid", assets::ToString(sub.guid)}});
+                         }
+                         if (!subs.empty()) row["sub_assets"] = std::move(subs);
+                         if (!out.ok) row["error"] = out.error;
+                         results.push_back(std::move(row));
+                         if (out.ok) ++imported;
+                         else ++failed;
+                         if (out.from_cache) ++from_cache;
+                     }
+                     session.stack.EndTransaction();
+                 } catch (...) {
+                     session.stack.EndTransaction();
+                     if (session.stack.UndoCount() != undo_count_before || session.stack.UndoLabel() == transaction_label) {
+                         session.stack.Undo(context);
+                     }
+                     throw;
+                 }
+                 return {{"imported", imported}, {"from_cache", from_cache}, {"failed", failed}, {"skipped", 0}, {"results", results}};
+             }
+             std::optional<AssetGuid> guid;
+             std::string path;
+             if (args.contains("asset")) {
+                 const AssetRecord& record = FindAsset(p, RequireString(args, "asset"));
+                 guid = record.guid;
+                 path = record.path;
+             } else {
+                 const std::vector<const AssetRecord*> records = p.database->All();
+                 const bool has_pending = std::any_of(records.begin(), records.end(), [](const AssetRecord* record) {
+                     return record->needs_import && !record->missing;
+                 });
+                 if (!has_pending) return {{"imported", 0}, {"from_cache", 0}, {"failed", 0}, {"skipped", 0}, {"errors", Json::array()}};
+             }
+             auto command = std::make_unique<AssetImportCommand>(host, p.paths.file, guid);
+             command->SetAttribution("agent");
+             AssetImportCommand* command_result = command.get();
+             editor::CommandContext context = session.Context();
+             session.stack.Execute(context, std::move(command));
+             if (!guid) {
+                 const assets::ImportAllResult& r = command_result->All();
                  return {{"imported", r.imported}, {"from_cache", r.from_cache}, {"failed", r.failed}, {"skipped", r.skipped}, {"errors", r.errors}};
              }
-             const AssetRecord& rec = FindAsset(p, RequireString(args, "asset"));
-             assets::ImportOutput out = assets::ImportAsset(*p.database, rec.guid, p.importers, *p.cache);
-             Json j = {{"ok", out.ok}, {"asset", rec.path}, {"from_cache", out.from_cache}, {"bytes", out.data.size()}, {"warnings", out.warnings}};
+             const AssetImportCommand::SingleResult& out = command_result->Single();
+             Json j = {{"ok", out.ok}, {"asset", path}, {"from_cache", out.from_cache}, {"bytes", out.bytes}, {"warnings", out.warnings}};
              Json subs = Json::array();
-             for (const assets::SubAssetOutput& s : out.sub_assets) subs.push_back({{"key", s.key}, {"importer", s.importer}, {"guid", assets::ToString(s.guid)}});
+             for (const AssetImportCommand::SubAsset& s : out.sub_assets) subs.push_back({{"key", s.key}, {"importer", s.importer}, {"guid", assets::ToString(s.guid)}});
              if (!subs.empty()) j["sub_assets"] = subs;
              if (!out.ok) j["error"] = out.error;
              return j;
@@ -295,61 +1510,470 @@ void RegisterAssetTools(McpServer& server, std::shared_ptr<detail::AssetHost> ho
                  {"labels", {{"type", "array"}, {"items", {{"type", "string"}}}}},
                  {"import", {{"type", "boolean"}}}},
                 {"asset"}),
-         [host](const Json& args) -> Json {
+         [host, &session](const Json& args) -> Json {
              OpenProject& p = host->Require();
+             if (session.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before changing import settings");
              const AssetRecord& rec = FindAsset(p, RequireString(args, "asset"));
              if (rec.IsSubAsset()) throw ToolError("Sub-assets take their source's settings: change " + PathOf(p, rec.parent));
              const AssetGuid guid = rec.guid;
+             const fs::path meta_file = p.database->MetaPath(guid);
+             std::vector<u8> before;
+             if (!aether::fs::ReadFileBytes(meta_file.string(), before)) throw ToolError("Couldn't read " + meta_file.string());
              assets::AssetMeta meta;
              std::string error;
-             if (!assets::LoadAssetMeta(p.database->MetaPath(guid), meta, &error)) throw ToolError(error);
+             if (!assets::LoadAssetMetaFromMemory(before, meta, &error)) throw ToolError(error);
              if (args.contains("settings")) {
                  if (!args["settings"].is_object()) throw ToolError("\"settings\" must be an object");
                  meta.settings.merge_patch(args["settings"]);
              }
              if (args.contains("labels")) meta.labels = OptStrings(args, "labels");
              meta.source_hash.clear(); // never imported with these settings
-             if (!assets::SaveAssetMeta(p.database->MetaPath(guid), meta, &error)) throw ToolError(error);
-             p.database->Scan();
+             const bool import_now = OptBool(args, "import", true);
+             auto command = std::make_unique<ImportSettingsCommand>(host, p.paths.file, guid, meta_file, std::move(before), meta, import_now);
+             command->SetAttribution("agent");
+             ImportSettingsCommand* command_result = command.get();
+             editor::CommandContext context = session.Context();
+             session.stack.Execute(context, std::move(command));
              Json out = {{"settings", meta.settings}, {"labels", meta.labels}};
-             if (OptBool(args, "import", true)) {
-                 assets::ImportOutput r = assets::ImportAsset(*p.database, guid, p.importers, *p.cache);
-                 out["imported"] = r.ok;
-                 out["from_cache"] = r.from_cache;
-                 out["warnings"] = r.warnings;
-                 if (!r.ok) out["error"] = r.error;
+             if (import_now) {
+                 out["imported"] = command_result->Imported();
+                 out["from_cache"] = command_result->FromCache();
+                 out["warnings"] = command_result->Warnings();
+                 if (!command_result->Imported()) out["error"] = command_result->ImportError();
              }
              return out;
          }});
 
+    server.AddTool(
+        {"asset_set_import_settings_many",
+         "Apply import settings and/or labels to 1-64 assets as one agent-attributed undoable action. Each change has an `asset` path or GUID and optional `settings` merge and `labels` replacement. Reimport is controlled by the shared `import` flag.",
+         Schema({{"changes", {{"type", "array"},
+                               {"items", {{"type", "object"},
+                                          {"properties", {{"asset", {{"type", "string"}}},
+                                                          {"settings", {{"type", "object"}}},
+                                                          {"labels", {{"type", "array"}, {"items", {{"type", "string"}}}}}}},
+                                          {"required", Json::array({"asset"})}}},
+                               {"description", "1-64 unique assets; each change must include settings, labels, or both"}}},
+                 {"import", {{"type", "boolean"}, {"description", "Reimport each asset immediately (default true)"}}}},
+                {"changes"}),
+         [host, &session](const Json& args) -> Json {
+             OpenProject& p = host->Require();
+             if (session.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before changing import settings");
+             if (!args["changes"].is_array() || args["changes"].empty() || args["changes"].size() > 64) {
+                 throw ToolError("\"changes\" must be a non-empty array of at most 64 assets");
+             }
+
+             struct Change {
+                 assets::AssetGuid guid;
+                 std::string path;
+                 fs::path meta_file;
+                 std::vector<u8> before;
+                 assets::AssetMeta after;
+             };
+             std::vector<Change> changes;
+             std::set<std::string> selected_guids;
+             for (const Json& entry : args["changes"]) {
+                 if (!entry.is_object()) throw ToolError("Each change must be an object");
+                 const AssetRecord& record = FindAsset(p, RequireString(entry, "asset"));
+                 if (record.IsSubAsset()) throw ToolError("Sub-assets take their source's settings: change " + PathOf(p, record.parent));
+                 if (!entry.contains("settings") && !entry.contains("labels")) {
+                     throw ToolError("Each change must include \"settings\", \"labels\", or both");
+                 }
+                 if (entry.contains("settings") && !entry["settings"].is_object()) throw ToolError("\"settings\" must be an object");
+                 if (!selected_guids.insert(assets::ToString(record.guid)).second) throw ToolError("Duplicate asset in changes: " + record.path);
+
+                 Change change;
+                 change.guid = record.guid;
+                 change.path = record.path;
+                 change.meta_file = p.database->MetaPath(change.guid);
+                 if (!aether::fs::ReadFileBytes(change.meta_file.string(), change.before)) throw ToolError("Couldn't read " + change.meta_file.string());
+                 std::string error;
+                 if (!assets::LoadAssetMetaFromMemory(change.before, change.after, &error)) throw ToolError(error);
+                 if (entry.contains("settings")) change.after.settings.merge_patch(entry["settings"]);
+                 if (entry.contains("labels")) change.after.labels = OptStrings(entry, "labels");
+                 change.after.source_hash.clear(); // these changes require a reimport
+                 changes.push_back(std::move(change));
+             }
+
+             const bool import_now = OptBool(args, "import", true);
+             static std::atomic<std::uint64_t> next_batch_id{0};
+             const std::string transaction_label = "Change Import Settings for Assets " + std::to_string(++next_batch_id);
+             const usize undo_count_before = session.stack.UndoCount();
+             editor::CommandContext context = session.Context();
+             Json results = Json::array();
+             session.stack.BeginTransaction(transaction_label);
+             try {
+                 for (const Change& change : changes) {
+                     auto command = std::make_unique<ImportSettingsCommand>(host, p.paths.file, change.guid, change.meta_file,
+                                                                             change.before, change.after, import_now);
+                     command->SetAttribution("agent");
+                     ImportSettingsCommand* command_result = command.get();
+                     session.stack.Execute(context, std::move(command));
+                     Json row = {{"asset", change.path}, {"settings", change.after.settings}, {"labels", change.after.labels}};
+                     if (import_now) {
+                         row["imported"] = command_result->Imported();
+                         row["from_cache"] = command_result->FromCache();
+                         row["warnings"] = command_result->Warnings();
+                         if (!command_result->Imported()) row["error"] = command_result->ImportError();
+                     }
+                     results.push_back(std::move(row));
+                 }
+                 session.stack.EndTransaction();
+             } catch (...) {
+                 session.stack.EndTransaction();
+                 if (session.stack.UndoCount() != undo_count_before || session.stack.UndoLabel() == transaction_label) {
+                     session.stack.Undo(context);
+                 }
+                 throw;
+             }
+             return {{"updated", changes.size()}, {"results", std::move(results)}};
+         }});
+
     server.AddTool({"asset_move",
-                    "Move or rename an asset or a whole folder (both relative to Content/). GUIDs, so scene and prefab references, are "
-                    "unchanged; glTF relative URIs are rewritten.",
-                    Schema({{"from", {{"type", "string"}}}, {"to", {{"type", "string"}}}}, {"from", "to"}), [host](const Json& args) -> Json {
+                    "Move or rename an asset or a whole folder (both relative to Content/) as one agent-attributed undoable action. GUID references stay unchanged; glTF relative URIs are rewritten.",
+                    Schema({{"from", {{"type", "string"}}}, {"to", {{"type", "string"}}}}, {"from", "to"}), [host, &session](const Json& args) -> Json {
                         OpenProject& p = host->Require();
-                        const assets::MoveResult r = assets::MoveContent(*p.database, CleanRelative(RequireString(args, "from")), CleanRelative(RequireString(args, "to")));
-                        if (!r.ok) throw ToolError(r.error);
-                        return {{"moved", true}, {"rewritten", r.rewritten}};
+                        if (session.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before moving content");
+                        auto command = std::make_unique<MoveContentCommand>(host, p.paths.file,
+                            CleanRelative(RequireString(args, "from")), CleanRelative(RequireString(args, "to")));
+                        command->SetAttribution("agent");
+                        MoveContentCommand* command_result = command.get();
+                        editor::CommandContext context = session.Context();
+                        session.stack.Execute(context, std::move(command));
+                        Json out = {{"moved", true}, {"rewritten", command_result->Result().rewritten}};
+                        if (!command_result->Result().error.empty()) out["warning"] = command_result->Result().error;
+                        return out;
                     }});
 
-    server.AddTool({"asset_create_folder", "Create a folder under Content/.",
-                    Schema({{"parent", {{"type", "string"}}}, {"name", {{"type", "string"}}}}, {"name"}), [host](const Json& args) -> Json {
+    server.AddTool(
+        {"asset_move_many",
+         "Move 1-64 independent assets or folders under Content/ as one agent-attributed undoable action. Each move has `from` and `to` paths. "
+         "Overlapping source/destination paths and duplicate paths are rejected before moving anything; glTF relative URIs are rewritten.",
+         Schema({{"moves", {{"type", "array"},
+                            {"items", {{"type", "object"},
+                                       {"properties", {{"from", {{"type", "string"}}}, {"to", {{"type", "string"}}}}},
+                                       {"required", Json::array({"from", "to"})}}},
+                            {"description", "1-64 independent moves, each relative to Content/"}}}},
+                {"moves"}),
+         [host, &session](const Json& args) -> Json {
+             OpenProject& p = host->Require();
+             if (session.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before moving content");
+             if (!args["moves"].is_array() || args["moves"].empty() || args["moves"].size() > 64) {
+                 throw ToolError("\"moves\" must be a non-empty array of at most 64 moves");
+             }
+
+             struct Move { std::string from; std::string to; };
+             std::vector<Move> moves;
+             std::set<std::string> sources, destinations;
+             for (const Json& entry : args["moves"]) {
+                 if (!entry.is_object()) throw ToolError("Each move must be an object with \"from\" and \"to\" paths");
+                 Move move{CleanRelative(RequireString(entry, "from")), CleanRelative(RequireString(entry, "to"))};
+                 if (move.from.empty() || move.to.empty()) throw ToolError("Move paths must name files or folders under Content/");
+                 if (move.from == move.to) throw ToolError("A move's \"from\" and \"to\" paths must differ");
+                 if (!sources.insert(move.from).second) throw ToolError("Duplicate source path: " + move.from);
+                 if (!destinations.insert(move.to).second) throw ToolError("Duplicate destination path: " + move.to);
+                 moves.push_back(std::move(move));
+             }
+             const auto contains = [](const std::string& path, const std::string& parent) {
+                 const fs::path relative = fs::path(path).lexically_relative(fs::path(parent));
+                 if (relative.empty() || relative.is_absolute()) return false;
+                 const auto first = relative.begin();
+                 return first != relative.end() && *first != fs::path("..");
+             };
+             for (const Move& move : moves) {
+                 if (contains(move.to, move.from) || contains(move.from, move.to)) {
+                     throw ToolError("A move's source and destination cannot overlap: " + move.from + " -> " + move.to);
+                 }
+             }
+             for (usize i = 0; i < moves.size(); ++i) {
+                 for (usize j = i + 1; j < moves.size(); ++j) {
+                     const Move& a = moves[i];
+                     const Move& b = moves[j];
+                     if (contains(a.from, b.from) || contains(b.from, a.from)) {
+                         throw ToolError("Move sources overlap: " + a.from + " and " + b.from);
+                     }
+                     if (contains(a.to, b.to) || contains(b.to, a.to)) {
+                         throw ToolError("Move destinations overlap: " + a.to + " and " + b.to);
+                     }
+                     if (contains(a.to, b.from) || contains(b.from, a.to) || contains(b.to, a.from) || contains(a.from, b.to)) {
+                         throw ToolError("A move destination overlaps another move's source");
+                     }
+                 }
+             }
+
+             static std::atomic<std::uint64_t> next_batch_id{0};
+             const std::string transaction_label = "Move Content Items " + std::to_string(++next_batch_id);
+             const usize undo_count_before = session.stack.UndoCount();
+             editor::CommandContext context = session.Context();
+             Json results = Json::array();
+             session.stack.BeginTransaction(transaction_label);
+             try {
+                 for (const Move& move : moves) {
+                     auto command = std::make_unique<MoveContentCommand>(host, p.paths.file, move.from, move.to);
+                     command->SetAttribution("agent");
+                     MoveContentCommand* command_result = command.get();
+                     session.stack.Execute(context, std::move(command));
+                     const assets::MoveResult& result = command_result->Result();
+                     Json row = {{"from", move.from}, {"to", move.to}, {"rewritten", result.rewritten}};
+                     if (!result.error.empty()) row["warning"] = result.error;
+                     results.push_back(std::move(row));
+                 }
+                 session.stack.EndTransaction();
+             } catch (...) {
+                 session.stack.EndTransaction();
+                 if (session.stack.UndoCount() != undo_count_before || session.stack.UndoLabel() == transaction_label) {
+                     session.stack.Undo(context);
+                 }
+                 throw;
+             }
+             return {{"moved", moves.size()}, {"results", results}};
+         }});
+
+    server.AddTool({"asset_create_folder", "Create a folder under Content/ as one agent-attributed undoable action. Undo removes it only while it is empty.",
+                    Schema({{"parent", {{"type", "string"}}}, {"name", {{"type", "string"}}}}, {"name"}), [host, &session](const Json& args) -> Json {
                         OpenProject& p = host->Require();
-                        std::string error;
-                        if (!assets::CreateContentFolder(*p.database, CleanRelative(OptString(args, "parent")), RequireString(args, "name"), &error)) throw ToolError(error);
+                        if (session.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before creating a content folder");
+                        const std::string parent = CleanRelative(OptString(args, "parent"));
+                        const fs::path parent_path = ContentDirectory(p, parent);
+                        std::error_code ec;
+                        if (!fs::is_directory(parent_path, ec) || ec) throw ToolError("Folder parent does not exist under Content/: " + parent);
+                        const std::string name = RequireString(args, "name");
+                        auto command = std::make_unique<CreateContentFolderCommand>(host, p.paths.file, parent, name);
+                        command->SetAttribution("agent");
+                        editor::CommandContext context = session.Context();
+                        session.stack.Execute(context, std::move(command));
                         return {{"created", true}};
                     }});
 
+    server.AddTool(
+        {"asset_create_folders",
+         "Create 1-64 independent folders under existing Content/ parents as one agent-attributed undoable action. Each entry has an optional `parent` and required `name`. All entries are validated before any folder is created.",
+         Schema({{"folders", {{"type", "array"},
+                               {"items", {{"type", "object"},
+                                          {"properties", {{"parent", {{"type", "string"}}}, {"name", {{"type", "string"}}}}},
+                                          {"required", Json::array({"name"})}}},
+                               {"description", "1-64 independent folders; parent paths are relative to Content/ and must already exist"}}}},
+                {"folders"}),
+         [host, &session](const Json& args) -> Json {
+             OpenProject& p = host->Require();
+             if (session.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before creating content folders");
+             if (!args["folders"].is_array() || args["folders"].empty() || args["folders"].size() > 64) {
+                 throw ToolError("\"folders\" must be a non-empty array of at most 64 folders");
+             }
+
+             struct Folder { std::string parent; std::string name; std::string path; };
+             std::vector<Folder> folders;
+             std::set<std::string> targets;
+             for (const Json& entry : args["folders"]) {
+                 if (!entry.is_object()) throw ToolError("Each folder must be an object with an optional \"parent\" and required \"name\"");
+                 Folder folder;
+                 folder.parent = CleanRelative(OptString(entry, "parent"));
+                 folder.name = RequireString(entry, "name");
+                 std::string name_error;
+                 if (!assets::IsValidAssetName(folder.name, &name_error)) throw ToolError(name_error);
+                 folder.path = folder.parent.empty() ? folder.name : folder.parent + "/" + folder.name;
+                 if (!targets.insert(folder.path).second) throw ToolError("Duplicate folder path: " + folder.path);
+
+                 const fs::path parent_path = ContentDirectory(p, folder.parent);
+                 std::error_code ec;
+                 if (!fs::is_directory(parent_path, ec) || ec) {
+                     throw ToolError("Folder parent does not exist under Content/: " + folder.parent);
+                 }
+                 if (fs::exists(parent_path / folder.name, ec)) throw ToolError("Folder already exists: " + folder.path);
+                 if (ec) throw ToolError("Could not inspect folder path " + folder.path + ": " + ec.message());
+                 folders.push_back(std::move(folder));
+             }
+
+             static std::atomic<std::uint64_t> next_batch_id{0};
+             const std::string transaction_label = "Create Content Folders " + std::to_string(++next_batch_id);
+             const usize undo_count_before = session.stack.UndoCount();
+             editor::CommandContext context = session.Context();
+             session.stack.BeginTransaction(transaction_label);
+             try {
+                 for (const Folder& folder : folders) {
+                     auto command = std::make_unique<CreateContentFolderCommand>(host, p.paths.file, folder.parent, folder.name);
+                     command->SetAttribution("agent");
+                     session.stack.Execute(context, std::move(command));
+                 }
+                 session.stack.EndTransaction();
+             } catch (...) {
+                 session.stack.EndTransaction();
+                 if (session.stack.UndoCount() != undo_count_before || session.stack.UndoLabel() == transaction_label) {
+                     session.stack.Undo(context);
+                 }
+                 throw;
+             }
+             Json created = Json::array();
+             for (const Folder& folder : folders) created.push_back(folder.path);
+             return {{"created", folders.size()}, {"folders", std::move(created)}};
+         }});
+
+    server.AddTool(
+        {"asset_delete_folders",
+         "Delete 1-64 empty folders under Content/ as one agent-attributed undoable action. The Content/ root, non-empty folders, duplicate paths, and paths resolving outside Content/ are refused.",
+         Schema({{"folders", {{"type", "array"}, {"items", {{"type", "string"}}}, {"description", "1-64 paths relative to Content/"}}}},
+                {"folders"}),
+         [host, &session](const Json& args) -> Json {
+             OpenProject& p = host->Require();
+             if (session.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before deleting content folders");
+             if (!args["folders"].is_array() || args["folders"].empty() || args["folders"].size() > 64) {
+                 throw ToolError("\"folders\" must be a non-empty array of at most 64 paths");
+             }
+
+             std::error_code ec;
+             const fs::path content_root = fs::canonical(p.paths.content, ec);
+             if (ec) throw ToolError("Could not resolve Content/: " + ec.message());
+             struct Folder { std::string relative; fs::path canonical; };
+             std::vector<Folder> folders;
+             std::set<std::string> paths;
+             const auto is_child = [](const fs::path& child, const fs::path& parent) {
+                 const fs::path relative = child.lexically_relative(parent);
+                 if (relative.empty() || relative == "." || relative.is_absolute()) return false;
+                 const auto first = relative.begin();
+                 return first != relative.end() && *first != fs::path("..");
+             };
+             for (const Json& value : args["folders"]) {
+                 if (!value.is_string()) throw ToolError("Each folder path must be a string relative to Content/");
+                 const std::string relative = CleanRelative(value.get<std::string>());
+                 if (relative.empty()) throw ToolError("The Content/ root cannot be deleted");
+                 const fs::path requested = p.paths.content / relative;
+                 const fs::file_status status = fs::symlink_status(requested, ec);
+                 if (ec) throw ToolError("Could not inspect " + requested.string() + ": " + ec.message());
+                 if (!fs::is_directory(status) || fs::is_symlink(status)) throw ToolError("Not a real Content folder: " + relative);
+                 const fs::path canonical = fs::canonical(requested, ec);
+                 if (ec) throw ToolError("Could not resolve " + requested.string() + ": " + ec.message());
+                 if (!is_child(canonical, content_root)) throw ToolError("Folder must resolve inside Content/: " + relative);
+                 if (!paths.insert(canonical.generic_string()).second) throw ToolError("Duplicate folder path: " + relative);
+                 fs::directory_iterator entry(canonical, ec);
+                 if (ec) throw ToolError("Could not inspect folder contents " + relative + ": " + ec.message());
+                 if (entry != fs::directory_iterator()) throw ToolError("Folder is not empty: " + relative);
+                 folders.push_back({relative, canonical});
+             }
+             for (usize i = 0; i < folders.size(); ++i) {
+                 for (usize j = i + 1; j < folders.size(); ++j) {
+                     if (is_child(folders[i].canonical, folders[j].canonical) || is_child(folders[j].canonical, folders[i].canonical)) {
+                         throw ToolError("Folder paths overlap: " + folders[i].relative + " and " + folders[j].relative);
+                     }
+                 }
+             }
+
+             static std::atomic<std::uint64_t> next_batch_id{0};
+             const std::string transaction_label = "Delete Empty Content Folders " + std::to_string(++next_batch_id);
+             const usize undo_count_before = session.stack.UndoCount();
+             editor::CommandContext context = session.Context();
+             session.stack.BeginTransaction(transaction_label);
+             try {
+                 for (const Folder& folder : folders) {
+                     auto command = std::make_unique<DeleteContentFolderCommand>(host, p.paths.file, p.paths.content, folder.relative);
+                     command->SetAttribution("agent");
+                     session.stack.Execute(context, std::move(command));
+                 }
+                 session.stack.EndTransaction();
+             } catch (...) {
+                 session.stack.EndTransaction();
+                 if (session.stack.UndoCount() != undo_count_before || session.stack.UndoLabel() == transaction_label) {
+                     session.stack.Undo(context);
+                 }
+                 throw;
+             }
+             Json deleted = Json::array();
+             for (const Folder& folder : folders) deleted.push_back(folder.relative);
+             return {{"deleted", folders.size()}, {"folders", std::move(deleted)}};
+         }});
+
     server.AddTool({"asset_delete",
-                    "Delete an asset's source and .ameta (with its sub-assets). Refused while other assets reference it, unless `force`.",
-                    Schema({{"asset", {{"type", "string"}}}, {"force", {{"type", "boolean"}}}}, {"asset"}), [host](const Json& args) -> Json {
+                    "Delete an asset's source and .ameta (with its sub-assets) as one agent-attributed undoable action. Refused while other assets reference it, unless `force`.",
+                    Schema({{"asset", {{"type", "string"}}}, {"force", {{"type", "boolean"}}}}, {"asset"}), [host, &session](const Json& args) -> Json {
                         OpenProject& p = host->Require();
+                        if (session.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before deleting an asset");
                         const AssetRecord& rec = FindAsset(p, RequireString(args, "asset"));
                         const std::string path = rec.path;
-                        std::string error;
-                        if (!p.database->Delete(rec.guid, OptBool(args, "force", false), &error)) throw ToolError(error);
+                        const assets::AssetGuid guid = rec.guid;
+                        auto command = std::make_unique<DeleteAssetCommand>(host, p.paths.file, guid, p.paths.content / path,
+                                                                            OptBool(args, "force", false));
+                        command->SetAttribution("agent");
+                        editor::CommandContext context = session.Context();
+                        session.stack.Execute(context, std::move(command));
                         return {{"deleted", path}};
                     }});
+
+    server.AddTool(
+        {"asset_delete_many",
+         "Delete 1-64 assets (by Content/ path or GUID) as one agent-attributed undoable action. Assets that reference one another may be deleted together; references from outside the selection are refused unless `force` is true.",
+         Schema({{"assets", {{"type", "array"}, {"items", {{"type", "string"}}}, {"description", "1-64 asset paths or GUIDs"}}},
+                 {"force", {{"type", "boolean"}, {"description", "Also delete assets with referencers outside the selection"}}}},
+                {"assets"}),
+         [host, &session](const Json& args) -> Json {
+             OpenProject& p = host->Require();
+             if (session.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before deleting assets");
+             if (!args["assets"].is_array() || args["assets"].empty() || args["assets"].size() > 64) {
+                 throw ToolError("\"assets\" must be a non-empty array of at most 64 paths or GUIDs");
+             }
+
+             struct Target { assets::AssetGuid guid; std::string path; };
+             std::vector<Target> targets;
+             std::set<std::string> selected_guids;
+             for (const Json& value : args["assets"]) {
+                 if (!value.is_string()) throw ToolError("Each entry in \"assets\" must be a path or GUID string");
+                 const AssetRecord& record = FindAsset(p, value.get<std::string>());
+                 if (record.IsSubAsset()) throw ToolError(record.path + " is part of another asset; delete its source instead");
+                 const std::string guid = assets::ToString(record.guid);
+                 if (!selected_guids.insert(guid).second) throw ToolError("Duplicate asset in selection: " + record.path);
+                 targets.push_back({record.guid, record.path});
+             }
+
+             std::set<std::string> selected_owned_guids = selected_guids;
+             for (const Target& target : targets) {
+                 const AssetRecord* record = p.database->Find(target.guid);
+                 if (record == nullptr) throw ToolError("Asset disappeared while validating: " + target.path);
+                 for (const assets::AssetGuid& sub_asset : record->sub_assets) selected_owned_guids.insert(assets::ToString(sub_asset));
+             }
+             std::set<std::string> external_referencers;
+             const auto collect_external_referencers = [&](const assets::AssetGuid& guid) {
+                 for (const AssetRecord* referencer : p.database->Referencers(guid)) {
+                     if (!selected_owned_guids.contains(assets::ToString(referencer->guid))) external_referencers.insert(referencer->path);
+                 }
+             };
+             for (const Target& target : targets) {
+                 const AssetRecord* record = p.database->Find(target.guid);
+                 collect_external_referencers(target.guid);
+                 for (const assets::AssetGuid& sub_asset : record->sub_assets) collect_external_referencers(sub_asset);
+             }
+             const bool force = OptBool(args, "force", false);
+             if (!force && !external_referencers.empty()) {
+                 std::string message = "Selected assets are referenced by assets outside the selection:";
+                 for (const std::string& path : external_referencers) message += " " + path;
+                 throw ToolError(message + " (pass force to delete anyway)");
+             }
+
+             static std::atomic<std::uint64_t> next_batch_id{0};
+             const std::string transaction_label = "Delete Content Assets " + std::to_string(++next_batch_id);
+             const usize undo_count_before = session.stack.UndoCount();
+             editor::CommandContext context = session.Context();
+             session.stack.BeginTransaction(transaction_label);
+             try {
+                 for (const Target& target : targets) {
+                     auto command = std::make_unique<DeleteAssetCommand>(host, p.paths.file, target.guid,
+                                                                         p.paths.content / target.path, true);
+                     command->SetAttribution("agent");
+                     session.stack.Execute(context, std::move(command));
+                 }
+                 session.stack.EndTransaction();
+             } catch (...) {
+                 session.stack.EndTransaction();
+                 if (session.stack.UndoCount() != undo_count_before || session.stack.UndoLabel() == transaction_label) {
+                     session.stack.Undo(context);
+                 }
+                 throw;
+             }
+
+             Json deleted = Json::array();
+             for (const Target& target : targets) deleted.push_back(target.path);
+             Json overridden = Json::array();
+             for (const std::string& path : external_referencers) overridden.push_back(path);
+             return {{"deleted", std::move(deleted)}, {"count", targets.size()}, {"force", force},
+                     {"external_referencers", std::move(overridden)}};
+         }});
 
     server.AddTool({"content_read", "Read a text file under Content/ (scenes, prefabs, materials, .ameta, JSON assets), up to 2 MB.",
                     Schema({{"path", {{"type", "string"}, {"description", "Relative to Content/"}}}}, {"path"}), [host](const Json& args) -> Json {
@@ -367,27 +1991,153 @@ void RegisterAssetTools(McpServer& server, std::shared_ptr<detail::AssetHost> ho
                     }});
 
     server.AddTool(
-        {"content_write",
-         "Write a text file under Content/ (a scene, prefab, material or any JSON asset), creating folders; then rescan so a new "
-         "file gets a GUID. Refuses .ameta files (use asset_set_import_settings). Overwrites an existing file.",
-         Schema({{"path", {{"type", "string"}}}, {"text", {{"type", "string"}}}}, {"path", "text"}), [host](const Json& args) -> Json {
+        {"content_read_many",
+         "Read 1–64 text files under Content/ in one call. Each file is limited to 2 MB and the total batch to 1 MB so the response stays within the MCP result limit; paths are validated before reading.",
+         Schema({{"paths", {{"type", "array"}, {"items", {{"type", "string"}}}, {"description", "1–64 unique paths relative to Content/"}}}}, {"paths"}),
+         [host](const Json& args) -> Json {
              OpenProject& p = host->Require();
+             if (!args["paths"].is_array() || args["paths"].empty() || args["paths"].size() > 64) {
+                 throw ToolError("\"paths\" must be a non-empty array of at most 64 paths");
+             }
+             struct PendingRead {
+                 std::string path;
+                 fs::path file;
+             };
+             std::vector<PendingRead> pending;
+             pending.reserve(args["paths"].size());
+             std::set<std::string> seen;
+             std::uintmax_t total_bytes = 0;
+             for (const Json& value : args["paths"]) {
+                 if (!value.is_string()) throw ToolError("Each entry in \"paths\" must be a string");
+                 const std::string relative = value.get<std::string>();
+                 const std::string path = CleanRelative(relative);
+                 const fs::path file = ContentFile(p, relative);
+                 if (!seen.insert(path).second) throw ToolError("Duplicate path in \"paths\": " + path);
+                 std::error_code ec;
+                 if (!fs::is_regular_file(file, ec)) throw ToolError("No such file: " + path);
+                 const std::uintmax_t size = fs::file_size(file, ec);
+                 if (ec) throw ToolError("Could not inspect " + path + ": " + ec.message());
+                 if (size > kMaxTextBytes) throw ToolError("File is larger than 2 MB: " + path);
+                 total_bytes += size;
+                 if (total_bytes > 1024ull * 1024) throw ToolError("The total content read batch exceeds 1 MB");
+                 pending.push_back({path, file});
+             }
+
+             Json files = Json::array();
+             std::uintmax_t actual_bytes = 0;
+             for (const PendingRead& item : pending) {
+                 std::ifstream in(item.file, std::ios::binary);
+                 if (!in) throw ToolError("Could not open " + item.path);
+                 std::stringstream stream;
+                 stream << in.rdbuf();
+                 if (in.bad()) throw ToolError("Could not read " + item.path);
+                 std::string text = stream.str();
+                 if (text.size() > kMaxTextBytes) throw ToolError("File is larger than 2 MB: " + item.path);
+                 actual_bytes += text.size();
+                 if (actual_bytes > 1024ull * 1024) throw ToolError("The total content read batch exceeds 1 MB");
+                 if (text.find('\0') != std::string::npos) throw ToolError("Not a text file (contains NUL bytes): " + item.path);
+                 files.push_back({{"path", item.path}, {"bytes", text.size()}, {"text", std::move(text)}});
+             }
+             return {{"read", files.size()}, {"files", std::move(files)}};
+         }});
+
+    server.AddTool(
+        {"content_write",
+         "Write a text file under Content/ (a scene, prefab, material or any JSON asset) as one agent-attributed undoable action; "
+         "new recognized assets get a GUID. Refuses .ameta files (use asset_set_import_settings) and existing files over 2 MB. Overwrites an existing file.",
+         Schema({{"path", {{"type", "string"}}}, {"text", {{"type", "string"}}}}, {"path", "text"}), [host, &session](const Json& args) -> Json {
+             OpenProject& p = host->Require();
+             if (session.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before writing content");
              const std::string rel = RequireString(args, "path");
              const fs::path file = ContentFile(p, rel);
              if (file.extension() == assets::AssetMeta::kExtension) throw ToolError(".ameta files are managed by the asset tools");
              const std::string text = RequireString(args, "text");
              if (text.size() > kMaxTextBytes) throw ToolError("Text is larger than 2 MB");
-             std::error_code ec;
-             fs::create_directories(file.parent_path(), ec);
-             {
-                 std::ofstream out(file, std::ios::binary | std::ios::trunc);
-                 out.write(text.data(), static_cast<std::streamsize>(text.size()));
-                 if (!out) throw ToolError("Could not write " + rel);
-             }
-             const assets::ScanResult scan = p.database->Scan();
-             Json j = {{"path", CleanRelative(rel)}, {"bytes", text.size()}, {"scan", ScanJson(scan)}};
+             ContentFileState before_source = CaptureContentFile(file);
+             ContentFileState before_meta = CaptureContentFile(fs::path(file.string() + assets::AssetMeta::kExtension));
+             auto command = std::make_unique<ContentWriteCommand>(host, p.paths.file, file, text, std::move(before_source), std::move(before_meta));
+             command->SetAttribution("agent");
+             ContentWriteCommand* command_result = command.get();
+             editor::CommandContext context = session.Context();
+             session.stack.Execute(context, std::move(command));
+             Json j = {{"path", CleanRelative(rel)}, {"bytes", text.size()}, {"scan", ScanJson(command_result->Scan())}};
              if (const AssetRecord* r = p.database->FindByPath(CleanRelative(rel))) j["asset"] = RecordJson(p, *r);
              return j;
+         }});
+
+    server.AddTool(
+        {"content_write_many",
+         "Write 1–64 text files under Content/ as one agent-attributed undoable action. Validates every path and source/metadata snapshot before writing; refuses .ameta files and files or text over 2 MB.",
+         Schema({{"files", {{"type", "array"}, {"items", {{"type", "object"}, {"properties", {{"path", {{"type", "string"}}}, {"text", {{"type", "string"}}}}}, {"required", {"path", "text"}}}}},
+                 {"description", "Files to write (1–64); paths are relative to Content/"}}}, {"files"}),
+         [host, &session](const Json& args) -> Json {
+             OpenProject& p = host->Require();
+             if (session.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before writing content");
+             if (!args["files"].is_array() || args["files"].empty() || args["files"].size() > 64) {
+                 throw ToolError("\"files\" must be a non-empty array of at most 64 {path, text} entries");
+             }
+
+             struct PendingWrite {
+                 std::string path;
+                 std::string text;
+                 usize bytes = 0;
+                 fs::path file;
+                 ContentFileState before_source;
+                 ContentFileState before_meta;
+                 ContentWriteCommand* command = nullptr;
+             };
+             std::vector<PendingWrite> writes;
+             writes.reserve(args["files"].size());
+             std::set<std::string> seen;
+             usize snapshot_bytes = 0;
+             for (const Json& entry : args["files"]) {
+                 if (!entry.is_object()) throw ToolError("Each entry in \"files\" must be an object");
+                 const std::string relative = RequireString(entry, "path");
+                 const std::string path = CleanRelative(relative);
+                 const fs::path file = ContentFile(p, relative);
+                 if (file.extension() == assets::AssetMeta::kExtension) throw ToolError(".ameta files are managed by the asset tools");
+                 if (!seen.insert(path).second) throw ToolError("Duplicate path in \"files\": " + path);
+                 std::string text = RequireString(entry, "text");
+                 if (text.size() > kMaxTextBytes) throw ToolError("Text is larger than 2 MB: " + path);
+                 ContentFileState before_source = CaptureContentFile(file);
+                 ContentFileState before_meta = CaptureContentFile(fs::path(file.string() + assets::AssetMeta::kExtension));
+                 const usize bytes = text.size();
+                 snapshot_bytes += bytes + before_source.bytes.size() + before_meta.bytes.size();
+                 if (snapshot_bytes > 128ull * 1024 * 1024) {
+                     throw ToolError("The total content write batch exceeds the 128 MB undo-history limit");
+                 }
+                 writes.push_back({path, std::move(text), bytes, file, std::move(before_source), std::move(before_meta), nullptr});
+             }
+
+             static std::atomic<std::uint64_t> next_batch_id{0};
+             const std::string transaction_label = "Write Content Files " + std::to_string(++next_batch_id);
+             const usize undo_count_before = session.stack.UndoCount();
+             editor::CommandContext context = session.Context();
+             session.stack.BeginTransaction(transaction_label);
+             try {
+                 for (PendingWrite& write : writes) {
+                     auto command = std::make_unique<ContentWriteCommand>(host, p.paths.file, write.file, std::move(write.text),
+                                                                          std::move(write.before_source), std::move(write.before_meta));
+                     command->SetAttribution("agent");
+                     write.command = command.get();
+                     session.stack.Execute(context, std::move(command));
+                 }
+                 session.stack.EndTransaction();
+             } catch (...) {
+                 session.stack.EndTransaction();
+                 if (session.stack.UndoCount() != undo_count_before || session.stack.UndoLabel() == transaction_label) {
+                     session.stack.Undo(context);
+                 }
+                 throw;
+             }
+
+             Json results = Json::array();
+             for (const PendingWrite& write : writes) {
+                 Json result = {{"path", write.path}, {"bytes", write.bytes}, {"scan", ScanJson(write.command->Scan())}};
+                 if (const AssetRecord* record = p.database->FindByPath(write.path)) result["asset"] = RecordJson(p, *record);
+                 results.push_back(std::move(result));
+             }
+             return {{"written", writes.size()}, {"results", std::move(results)}};
          }});
 
     server.AddTool(

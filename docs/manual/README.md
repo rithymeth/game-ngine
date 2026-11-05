@@ -18,6 +18,8 @@ the workflow grows. The chapters describe current capabilities; build specs in
 11. [Interaction](11-interaction.md): the interaction genre kit.
 12. [Quests](12-quests.md): the quests genre kit.
 13. [Upgrading](13-upgrading.md): what to check when moving to a newer engine.
+14. [Plugin registry and marketplace format](14-plugin-marketplace.md): local packages, catalog metadata and the trust model.
+15. [Dedicated servers](15-dedicated-server.md): `aether_server`, its config and command line, packaging and checking it with `aether_netclient`.
 
 Also: [Support policy](support_policy.md), a proposal for how long versions are supported.
 

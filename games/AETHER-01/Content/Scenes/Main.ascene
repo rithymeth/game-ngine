@@ -19,7 +19,7 @@
           "mass": 70.0,
           "max_slope_degrees": 45.0,
           "radius": 0.35,
-          "run_speed": 7.0,
+          "run_speed": 8.0,
           "step_height": 0.35,
           "walk_speed": 4.0
         },
@@ -52,6 +52,14 @@
           "$v": 1,
           "model": "0900acbe-00cf-4580-aec3-4d84467359f4",
           "asset_path": "models/aether_greybox_player.gltf"
+        },
+        "Animator": {
+          "$v": 1,
+          "graph": "Characters/Kael/Kael.aanim",
+          "skeleton": "Characters/Kael/Kael_Rig.gltf",
+          "root_motion": false,
+          "speed": 1.0,
+          "paused": false
         }
       },
       "guid": "88f690e4-8827-4383-bfb5-520bc345bff0"
@@ -157,7 +165,8 @@
           "names": [
             "Environment",
             "Greybox",
-            "CryoBayFloor"
+            "CryoBayFloor",
+            "NavWalkable"
           ]
         }
       }
@@ -799,7 +808,8 @@
           "$v": 1,
           "names": [
             "ServiceRouteFloor",
-            "Greybox"
+            "Greybox",
+            "NavWalkable"
           ]
         },
         "Transform": {
@@ -934,7 +944,8 @@
           "$v": 1,
           "names": [
             "ServiceRouteFloor",
-            "Greybox"
+            "Greybox",
+            "NavWalkable"
           ]
         },
         "Transform": {
@@ -1492,7 +1503,24 @@
         "ScriptComponent": {
           "$v": 1,
           "script": "ca683da8-d13c-41f0-a529-795d7224f5f4",
-          "properties": []
+          "properties": [
+            {
+              "name": "arena_min",
+              "value": "[-4.3, -1000, -21.5]"
+            },
+            {
+              "name": "arena_max",
+              "value": "[4.3, 1000, -9]"
+            },
+            {
+              "name": "wake_min",
+              "value": "[-5.5, -10, -25.5]"
+            },
+            {
+              "name": "wake_max",
+              "value": "[5.5, 10, -13]"
+            }
+          ]
         },
         "RigidBody": {
           "$v": 1,

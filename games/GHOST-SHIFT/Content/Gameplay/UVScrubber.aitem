@@ -1,0 +1,6 @@
+{
+  "name": "UVScrubber",
+  "max_stack": 1,
+  "weight": 2.0,
+  "equip_slot": "MainHand"
+}

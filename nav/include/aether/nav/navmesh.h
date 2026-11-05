@@ -167,11 +167,28 @@ public:
     NavMesh(const NavMesh&) = delete;
     NavMesh& operator=(const NavMesh&) = delete;
 
-    bool Load(const NavMeshData& data, std::string* error = nullptr);
+    // Loads the mesh's tile grid. `load_tiles` false sets up the grid and the
+    // queries but leaves every tile unloaded, for streaming (StreamTiles).
+    bool Load(const NavMeshData& data, std::string* error = nullptr, bool load_tiles = true);
     bool Loaded() const { return mesh_ != nullptr; }
     void Unload();
     // Swaps one tile's data (a rebuilt tile); empty data removes it.
     bool ReplaceTile(const NavMeshData::Tile& tile, std::string* error = nullptr);
+
+    // Streaming (Phase 40.1): the live Detour mesh need only hold the tiles
+    // near the player. `data_` always keeps every baked tile, so tiles load and
+    // unload without rebaking.
+    // Loads the baked tiles within `radius` of `center` (horizontal distance)
+    // and unloads the rest; returns how many are loaded afterwards.
+    usize StreamTiles(const Vec3& center, f32 radius);
+    // Loads one baked tile into the live mesh (a no-op if it already is).
+    // False for a tile the grid doesn't have, or a Detour refusal.
+    bool LoadTile(i32 x, i32 z, std::string* error = nullptr);
+    // Unloads one live tile, keeping its baked data. False if it wasn't loaded.
+    bool UnloadTile(i32 x, i32 z);
+    bool IsTileLoaded(i32 x, i32 z) const;
+    // Live tiles (the streamed-in subset); Data().tiles is the whole bake.
+    usize LoadedTileCount() const { return TileCount(); }
 
     // The shortest path over the mesh (corners), from the points nearest `start` and `end`.
     bool FindPath(const Vec3& start, const Vec3& end, NavPath& out, const NavQueryFilter& filter = {}) const;

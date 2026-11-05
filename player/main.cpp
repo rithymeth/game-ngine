@@ -16,8 +16,9 @@
 // The window's title, size and vsync, and the quality preset, come from the
 // player's settings file (settings.asettings, §28.6) if it has one, else the
 // project's settings (§25.5), unless given here. Saves and settings live in
-// the player's folder: --user-dir, else AETHER_USER_DIR, else the OS's
-// per-user data folder (Saves/ and Config/ inside it). A settings file is
+// the player's folder: --user-dir, else AETHER_USER_DIR, then a platform
+// plugin's user_data_dir, then the OS's per-user data folder (Saves/ and
+// Config/ inside it). A settings file is
 // only written when this run changed something (the old
 // Saved/Config/Input.json rebinds are moved into it once).
 //
@@ -28,7 +29,15 @@
 
 #include "aether/player/bindings_migrate.h"
 #include "aether/player/game.h"
+#include "aether/platform/platform_plugin.h"
 #include "aether/player/scene_renderer.h"
+
+#if AETHER_PLAYER_NETCLIENT && AETHER_PLAYER_PHYSICS
+#include "aether/server/dedicated_server.h"
+#include "aether/net/physics_state.h"
+#include "aether/net/interpolation.h"
+#include "aether/physics/net_physics_bridge.h"
+#endif
 
 #include "aether/core/log.h"
 #include "aether/core/version.h"
@@ -49,6 +58,7 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -73,6 +83,9 @@ struct Options {
     std::string screenshot;
     std::string replay_input;          // recorded input for deterministic package verification
     bool report = false;              // print where the Player-tagged entity ended up
+    std::string server; // empty: offline single-player (the default)
+    std::string player_name = "player", password, token;
+    u32 build_id = 1;
 };
 
 void Usage() {
@@ -80,7 +93,9 @@ void Usage() {
                  "usage: aether_player [--pak <file|dir>]... [--scene <path>] [--frames <n>] [--headless]\n"
                  "                     [--backend d3d12|vulkan] [--size <w>x<h>] [--quality <preset>]\n"
                  "                     [--key <64 hex digits>] [--press <Key>]... [--screenshot <file.bmp>]\n"
-                 "                     [--report] [--user-dir <dir>] [--replay-input <file.json>]\n");
+                 "                     [--report] [--user-dir <dir>] [--replay-input <file.json>]\n"
+                 "                     [--server <ip:port>] [--name <text>] [--password <text>]\n"
+                 "                     [--token <join token>] [--build-id <n>] (opt-in UDP + Jolt)\n");
 }
 
 bool ParseArgs(int argc, char** argv, Options& o) {
@@ -109,6 +124,19 @@ bool ParseArgs(int argc, char** argv, Options& o) {
             o.user_dir = argv[++i];
         } else if (a == "--quality" && has_value) {
             o.quality = argv[++i];
+        } else if (a == "--server" && has_value) {
+            o.server = argv[++i];
+        } else if (a == "--name" && has_value) {
+            o.player_name = argv[++i];
+        } else if (a == "--password" && has_value) {
+            o.password = argv[++i];
+        } else if (a == "--token" && has_value) {
+            o.token = argv[++i];
+        } else if (a == "--build-id" && has_value) {
+            char* end = nullptr;
+            const unsigned long long id = std::strtoull(argv[++i], &end, 10);
+            if (!*argv[i] || *end != '\0' || id > std::numeric_limits<u32>::max()) return false;
+            o.build_id = static_cast<u32>(id);
         } else if (a == "--backend" && has_value) {
             o.backend = argv[++i];
         } else if (a == "--size" && has_value) {
@@ -164,7 +192,8 @@ bool SaveScreenshotBmp(const std::string& path, u32 width, u32 height, const std
 }
 
 // --pak arguments (a folder means every .apak in it), else Paks/ beside the
-// executable, else Paks/ in the working directory.
+// executable (on macOS also ../Resources/Paks, the app bundle layout), else
+// Paks/ in the working directory.
 std::vector<std::string> PaksToMount(const Options& o, const char* argv0) {
     std::vector<std::string> paks;
     for (const std::string& p : o.paks) {
@@ -179,6 +208,10 @@ std::vector<std::string> PaksToMount(const Options& o, const char* argv0) {
     std::error_code ec;
     const stdfs::path exe_dir = stdfs::absolute(argv0, ec).parent_path();
     paks = GamePackage::FindPaks(exe_dir / "Paks");
+#ifdef __APPLE__
+    // macOS app bundle: <name>.app/Contents/MacOS/<exe> with the paks in Contents/Resources/Paks.
+    if (paks.empty()) paks = GamePackage::FindPaks(exe_dir.parent_path() / "Resources" / "Paks");
+#endif
     if (paks.empty()) paks = GamePackage::FindPaks("Paks");
     return paks;
 }
@@ -232,10 +265,18 @@ int main(int argc, char** argv) {
                     cook::ConfigurationName(config), paks.size(), manifest.assets.size());
     for (const std::string& dlc : package.Dlcs()) AETHER_LOG_INFO("Player", "DLC: %s", dlc.c_str());
 
+    struct PlatformPluginSession {
+        PlatformPlugins& plugins;
+        explicit PlatformPluginSession(PlatformPlugins& value) : plugins(value) { plugins.Startup(); }
+        ~PlatformPluginSession() { plugins.Shutdown(); }
+    } platform_session(PlatformPlugins::Get());
+
     // The player's folder, settings and old rebinds, before the scene: the
     // settings decide the window and quality, the rebinds the input contexts.
     Game game(package);
-    const UserPaths user_paths = ResolveUserPaths(manifest.project, options.user_dir);
+    game.UsePlatformLifecycle(platform_session.plugins.Lifecycle());
+    const UserPaths user_paths = ResolveUserPaths(manifest.project, options.user_dir,
+                                                   platform_session.plugins.UserDataDir(""));
     game.SetUserPaths(user_paths);
     CrashConfig crash_config;
     crash_config.directory = (user_paths.root / "Crashes").string();
@@ -293,6 +334,68 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "aether_player: %s\n", error.c_str());
         return 1;
     }
+
+    // Keep the UDP client alive for the whole game session. It shares the
+    // loaded Game World, which also owns the PhysicsScene's ECS entities.
+#if AETHER_PLAYER_NETCLIENT && AETHER_PLAYER_PHYSICS
+    std::unique_ptr<server::NetClient> network_client;
+    std::unique_ptr<net::SnapshotInterpolation> render_interpolation;
+    std::chrono::steady_clock::time_point network_start;
+    if (!options.server.empty()) {
+        if (!options.replay_input.empty()) {
+            std::fprintf(stderr, "aether_player: --server cannot be combined with --replay-input\n");
+            return 2;
+        }
+        const auto address = net::Address::Parse(options.server);
+        if (!address) {
+            std::fprintf(stderr, "aether_player: --server must be an IPv4 address and port\n");
+            return 2;
+        }
+        if (!game.PhysicsQueries()) {
+            std::fprintf(stderr, "aether_player: no PhysicsScene available for multiplayer\n");
+            return 1;
+        }
+        server::NetClientConfig cfg;
+        cfg.server = *address;
+        cfg.name = options.player_name;
+        cfg.password = options.password;
+        cfg.token = options.token;
+        if (cfg.password.empty()) {
+            if (const char* value = std::getenv("AETHER_SERVER_PASSWORD")) cfg.password = value;
+        }
+        if (cfg.token.empty()) {
+            if (const char* value = std::getenv("AETHER_JOIN_TOKEN")) cfg.token = value;
+        }
+        cfg.build_id = options.build_id;
+        cfg.send_rpc = false; // no headless smoke-test Ping in the shipped game
+        cfg.duration = std::numeric_limits<f64>::max();
+        network_client = std::make_unique<server::NetClient>();
+        if (!network_client->UseWorld(game.GetWorld())) return 1;
+        network_client->OnSnapshotApplied([&game](World& world) {
+            // Only accepted snapshots enter here. Physics and Net remain
+            // independent; the shipped host owns this integration.
+            if (&world != &game.GetWorld()) return;
+            if (PhysicsScene* scene = game.PhysicsQueries())
+                ApplyAuthoritativePhysicsSnapshot<net::NetPhysicsState>(world, *scene);
+        });
+        network_start = std::chrono::steady_clock::now();
+        if (!network_client->Start(cfg, 0.0, &error)) {
+            std::fprintf(stderr, "aether_player: UDP join failed: %s\n", error.c_str());
+            return 1;
+        }
+        game.SetAuthoritativePhysicsClient(true); // no local Jolt/character stepping
+        // Existing Net interpolation buffers render poses separately from the
+        // authoritative Game World shared with Jolt and the UDP client.
+        render_interpolation = std::make_unique<net::SnapshotInterpolation>(
+            game.GetWorld(), *network_client->Replication());
+        render_interpolation->SetRenderOnly(true);
+    }
+#else
+    if (!options.server.empty()) {
+        std::fprintf(stderr, "aether_player: UDP physics client requires ServerCore and Jolt\n");
+        return 2;
+    }
+#endif
 
     try {
         struct ReplayEvent { i64 frame; input::Key key; f32 value; };
@@ -366,6 +469,15 @@ int main(int argc, char** argv) {
                     command_lists.push_back(device->CreateCommandList());
                 }
                 scene_renderer = std::make_unique<SceneRenderer>(*device, *swap_chain, package);
+#if AETHER_PLAYER_NETCLIENT && AETHER_PLAYER_PHYSICS
+                if (render_interpolation) {
+                    scene_renderer->SetRenderPoseSampler([&](Entity entity, Transform& visual) {
+                        const auto* identity = game.GetWorld().GetComponent<net::NetIdentity>(entity);
+                        return identity && !identity->locally_owned &&
+                               render_interpolation->SampleRenderTransform(identity->net_id, visual);
+                    });
+                }
+#endif
                 if (quality) scene_renderer->SetViewDistance(quality->view_distance);
                 window->on_resize = [&](u32, u32) { resized = true; };
             } else {
@@ -386,6 +498,7 @@ int main(int argc, char** argv) {
         u32 frame_slot = 0;
         bool screenshot_written = false;
         bool screenshot_failed = false;
+        bool network_failed = false;
         auto last = std::chrono::steady_clock::now();
         auto last_stats = last;
         for (i64 frame = 0; options.frames < 0 || frame < options.frames; ++frame) {
@@ -428,8 +541,22 @@ int main(int argc, char** argv) {
                 game.SetUiPointerScale(static_cast<f32>(swap_chain->Width()) / static_cast<f32>(window->Width()),
                                        static_cast<f32>(swap_chain->Height()) / static_cast<f32>(window->Height()));
             }
+#if AETHER_PLAYER_NETCLIENT && AETHER_PLAYER_PHYSICS
+            if (network_client) {
+                network_client->Tick(std::chrono::duration<f64>(now - network_start).count());
+                if (network_client->Done()) {
+                    AETHER_LOG_ERROR("Player", "UDP session ended: %s", network_client->Result().join_result.c_str());
+                    network_failed = true;
+                    break;
+                }
+            }
+#endif
             game.Tick(dt);
             if (game.ExitRequested()) break;
+#if AETHER_PLAYER_NETCLIENT && AETHER_PLAYER_PHYSICS
+            if (render_interpolation)
+                render_interpolation->Update(std::chrono::duration<f64>(now - network_start).count());
+#endif
 
             if (swap_chain) {
                 device->WaitForFence(frame_fences[frame_slot]);
@@ -485,12 +612,14 @@ int main(int argc, char** argv) {
                 if (const auto* attributes = game.GetWorld().GetComponent<gas::AttributeSet>(e)) {
                     std::printf("Player attributes: %s\n", reflect::Json({{"Health", attributes->Get("Health")},
                         {"MissionStage", attributes->Get("MissionStage")}, {"ArchiveTime", attributes->Get("ArchiveTime")},
+                        {"ArchiveComplete", attributes->Get("ArchiveComplete")},
                         {"CampaignAct", attributes->Get("CampaignAct")}, {"Ending", attributes->Get("Ending")},
                         {"Energy", attributes->Get("Energy")}, {"AnimationState", attributes->Get("AnimationState")}}).dump().c_str());
                 }
             }
         }
         game.EndPlay();
+        if (network_failed) return 1;
         if (!options.screenshot.empty() && (!screenshot_written || screenshot_failed)) return 4;
         // Settings are written only if the game changed them: a damaged file
         // isn't overwritten by a run that never touched it.

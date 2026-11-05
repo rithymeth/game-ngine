@@ -7,25 +7,6 @@
 
 namespace aether {
 
-namespace {
-
-std::vector<Entity> EntitiesWith(const World& world, ComponentId id) {
-    std::vector<Entity> result;
-    world.ForEachArchetype([&](const Archetype& archetype) {
-        if (!archetype.Mask().test(id)) {
-            return;
-        }
-        for (usize c = 0; c < archetype.ChunkCount(); ++c) {
-            const Entity* entities = archetype.EntityArray(c);
-            result.insert(result.end(), entities, entities + archetype.ChunkEntityCount(c));
-        }
-    });
-    std::sort(result.begin(), result.end(), [](Entity a, Entity b) { return a.index < b.index; });
-    return result;
-}
-
-} // namespace
-
 bool IsActiveInHierarchy(const World& world, const GuidIndex& guids, Entity entity) {
     for (int depth = 0; world.IsAlive(entity) && depth <= kMaxHierarchyDepth; ++depth) {
         if (const Active* active = world.GetComponent<Active>(entity); active != nullptr && !active->active) {
@@ -76,16 +57,28 @@ Mat4 CameraView(const World& world, const GuidIndex& guids, Entity entity) {
 Entity FindActiveCamera(const World& world, const GuidIndex& guids) {
     Entity best = kNullEntity;
     i32 best_priority = 0;
-    for (Entity entity : EntitiesWith(world, GetComponentId<Camera>())) {
-        if (!IsActiveInHierarchy(world, guids, entity)) {
-            continue;
+    const ComponentId camera_id = GetComponentId<Camera>();
+    world.ForEachArchetype([&](const Archetype& archetype) {
+        if (!archetype.Mask().test(camera_id)) {
+            return;
         }
-        const i32 priority = world.GetComponent<Camera>(entity)->priority;
-        if (best.IsNull() || priority > best_priority) {
-            best = entity;
-            best_priority = priority;
+        for (usize c = 0; c < archetype.ChunkCount(); ++c) {
+            const Entity* entities = archetype.EntityArray(c);
+            const auto* cameras = static_cast<const Camera*>(archetype.ComponentArray(c, camera_id));
+            for (u32 row = 0; row < archetype.ChunkEntityCount(c); ++row) {
+                const Entity entity = entities[row];
+                if (!IsActiveInHierarchy(world, guids, entity)) {
+                    continue;
+                }
+                const i32 priority = cameras[row].priority;
+                if (best.IsNull() || priority > best_priority ||
+                    (priority == best_priority && entity.index < best.index)) {
+                    best = entity;
+                    best_priority = priority;
+                }
+            }
         }
-    }
+    });
     return best;
 }
 
@@ -98,13 +91,11 @@ f32 CineFovDegrees(const CineCamera& camera) {
 
 usize ApplyCineCameras(World& world) {
     usize applied = 0;
-    for (Entity entity : EntitiesWith(world, GetComponentId<CineCamera>())) {
-        Camera* camera = world.GetComponent<Camera>(entity);
-        if (!camera) continue;
-        camera->projection = Projection::Perspective;
-        camera->fov_degrees = CineFovDegrees(*world.GetComponent<CineCamera>(entity));
+    world.ForEach<CineCamera, Camera>([&](const CineCamera& cine_camera, Camera& camera) {
+        camera.projection = Projection::Perspective;
+        camera.fov_degrees = CineFovDegrees(cine_camera);
         ++applied;
-    }
+    });
     return applied;
 }
 
@@ -139,11 +130,23 @@ bool RemoveTag(World& world, Entity entity, std::string_view tag) {
 
 std::vector<Entity> FindEntitiesWithTag(const World& world, std::string_view tag) {
     std::vector<Entity> result;
-    for (Entity entity : EntitiesWith(world, GetComponentId<Tags>())) {
-        if (HasTag(world, entity, tag)) {
-            result.push_back(entity);
+    result.reserve(world.EntityCount());
+    const ComponentId tags_id = GetComponentId<Tags>();
+    world.ForEachArchetype([&](const Archetype& archetype) {
+        if (!archetype.Mask().test(tags_id)) {
+            return;
         }
-    }
+        for (usize c = 0; c < archetype.ChunkCount(); ++c) {
+            const Entity* entities = archetype.EntityArray(c);
+            const auto* tags = static_cast<const Tags*>(archetype.ComponentArray(c, tags_id));
+            for (u32 row = 0; row < archetype.ChunkEntityCount(c); ++row) {
+                if (std::find(tags[row].names.begin(), tags[row].names.end(), tag) != tags[row].names.end()) {
+                    result.push_back(entities[row]);
+                }
+            }
+        }
+    });
+    std::sort(result.begin(), result.end(), [](Entity a, Entity b) { return a.index < b.index; });
     return result;
 }
 

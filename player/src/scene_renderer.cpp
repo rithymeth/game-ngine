@@ -1,5 +1,9 @@
 #include "aether/player/scene_renderer.h"
 
+#include "aether/renderer/material_codegen.h"
+#include "aether/renderer/components.h"
+#include "aether/renderer/decal.h"
+
 #include "aether/assets/gltf_loader.h"
 #include "aether/assets/image.h"
 #include "aether/core/log.h"
@@ -7,10 +11,14 @@
 #include "aether/scene/gameplay.h"
 #include "aether/scene/hierarchy.h"
 #include "frame_lights.h"
+#include "render_pose.h"
+#include "particle_pass.h"
+#include "decal_pass.h"
 #include "package_textures.h"
 #include "aether/ui/draw.h"
 #include "aether/ui/font.h"
 #include "aether/ui/viewport.h"
+#include "aether/vfx/particle_system.h"
 
 #include <nlohmann/json.hpp>
 
@@ -21,6 +29,7 @@
 #include <cmath>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 namespace aether::player {
@@ -41,7 +50,7 @@ struct DrawConstants {
     Mat4 mvp;
     f32 color[4] = {1, 1, 1, 1};
     u32 normal_matrix_packed[5]{};
-    u32 material_textures = 0x00ffffffu;
+    u32 material_textures = 0x3fffffffu; // four texture indices and the extension index (63 = none), 6 bits each
     u32 material_factors_0 = 0x3c003c00u;
     u32 material_factors_1 = 0x3c003c00u;
     f32 camera_local[3]{};
@@ -83,7 +92,8 @@ u32 PackHalfPair(f32 low, f32 high) {
 u32 PackMaterialTextures(const SampledTextureHandle& base_color, bool has_base_color,
                          const SampledTextureHandle& normal, bool has_normal,
                          const SampledTextureHandle& metallic_roughness, bool has_metallic_roughness,
-                         const SampledTextureHandle& occlusion, bool has_occlusion) {
+                         const SampledTextureHandle& occlusion, bool has_occlusion,
+                         const SampledTextureHandle& extension, bool has_extension) {
     constexpr u32 absent = 63u;
     const u32 base = has_base_color && base_color.IsValid() ? base_color.index : absent;
     const u32 normal_index = has_normal && normal.IsValid() ? normal.index : absent;
@@ -91,8 +101,9 @@ u32 PackMaterialTextures(const SampledTextureHandle& base_color, bool has_base_c
                                              ? metallic_roughness.index
                                              : absent;
     const u32 occlusion_index = has_occlusion && occlusion.IsValid() ? occlusion.index : absent;
+    const u32 extension_index = has_extension && extension.IsValid() ? extension.index : absent;
     return (base & 63u) | ((normal_index & 63u) << 6) | ((metallic_roughness_index & 63u) << 12) |
-           ((occlusion_index & 63u) << 18);
+           ((occlusion_index & 63u) << 18) | ((extension_index & 63u) << 24);
 }
 
 u32 PackMaterialOptions(assets::MaterialAlphaMode mode, f32 cutoff, const f32 emissive[3]) {
@@ -259,12 +270,106 @@ float3 SurfaceLight(float3 light_direction, float3 normal, float3 view_direction
     return (diffuse + specular) * n_dot_l;
 }
 
+// KHR_materials_clearcoat, sheen and anisotropy (Phase 39.3), read from a 2x1 texture of packed factors when the material has them
+// (assets::PackSurfaceExtension). Materials without it take the plain SurfaceLight path unchanged.
+struct SurfaceExtension {
+    float active;
+    float clear_coat;
+    float clear_coat_roughness;
+    float3 sheen_color;
+    float sheen_roughness;
+    float anisotropy;
+    float anisotropy_rotation;
+    float hair;
+    float hair_shift;
+    float hair_secondary_shift;
+    float3 hair_tint;
+};
+SurfaceExtension NoSurfaceExtension() {
+    SurfaceExtension e;
+    e.active = 0.0;
+    e.clear_coat = 0.0;
+    e.clear_coat_roughness = 0.0;
+    e.sheen_color = float3(0.0, 0.0, 0.0);
+    e.sheen_roughness = 0.0;
+    e.anisotropy = 0.0;
+    e.anisotropy_rotation = 0.0;
+    e.hair = 0.0;
+    e.hair_shift = 0.0;
+    e.hair_secondary_shift = 0.0;
+    e.hair_tint = float3(1.0, 1.0, 1.0);
+    return e;
+}
+SurfaceExtension LoadSurfaceExtension(uint index) {
+    float4 first = g_Textures[index].Load(int3(0, 0, 0));
+    float4 second = g_Textures[index].Load(int3(1, 0, 0));
+    SurfaceExtension e;
+    e.active = 1.0;
+    e.clear_coat = first.x;
+    e.clear_coat_roughness = first.y;
+    e.sheen_roughness = first.z;
+    e.anisotropy = first.w;
+    e.sheen_color = second.xyz;
+    e.anisotropy_rotation = second.w;
+    e.hair = 0.0;
+    e.hair_shift = 0.0;
+    e.hair_secondary_shift = 0.0;
+    e.hair_tint = float3(1.0, 1.0, 1.0);
+    uint extension_width, extension_height;
+    g_Textures[index].GetDimensions(extension_width, extension_height);
+    if (extension_width >= 4) { // a hair material: two more texels
+        float4 third = g_Textures[index].Load(int3(2, 0, 0));
+        float4 fourth = g_Textures[index].Load(int3(3, 0, 0));
+        e.hair = 1.0;
+        e.hair_shift = third.x - 0.5;
+        e.hair_secondary_shift = third.y - 0.5;
+        e.hair_tint = float3(third.z, third.w, fourth.x);
+    }
+    return e;
+}
+
+// SurfaceLight plus the extensions: anisotropy replaces the specular lobe, sheen adds a fibre lobe on top (and takes a little of the base's
+// energy), and the clear coat covers the lot with its own specular and attenuates what is below it. T and B are the surface tangent frame.
+float3 SurfaceLightEx(float3 light_direction, float3 normal, float3 view_direction, float3 base_color, float metallic, float roughness,
+                      float3 f0, SurfaceExtension ext, float3 T, float3 B) {
+    float3 lit = SurfaceLight(light_direction, normal, view_direction, base_color, metallic, roughness, f0);
+    if (ext.active < 0.5) return lit;
+    float3 half_vector = normalize(view_direction + light_direction);
+    float n_dot_l = saturate(dot(normal, light_direction));
+    float n_dot_v = max(saturate(dot(normal, view_direction)), 1e-4);
+    float n_dot_h = saturate(dot(normal, half_vector));
+    float l_dot_h = saturate(dot(light_direction, half_vector));
+    float v_dot_h = saturate(dot(view_direction, half_vector));
+    if (ext.hair > 0.5) {
+        // Strands run along the tangent: Kajiya-Kay diffuse and a shifted two-lobe highlight replace the surface lobes.
+        float3 strand_specular = AetherHairSpecular(float3(1.0, 1.0, 1.0), ext.hair_tint, T, normal, view_direction, light_direction,
+                                                    ext.hair_shift, ext.hair_secondary_shift, roughness);
+        lit = (AetherHairDiffuse(base_color, T, light_direction) + strand_specular * 0.5) * n_dot_l;
+    } else if (ext.anisotropy > 0.001) {
+        float3 fresnel = f0 + (1.0 - f0) * pow(1.0 - v_dot_h, 5.0);
+        float3 diffuse = (1.0 - fresnel) * (1.0 - metallic) * base_color / 3.14159265 * n_dot_l;
+        lit = diffuse + AetherAnisotropicSpecular(f0, roughness, ext.anisotropy, normal, T, B, view_direction, light_direction,
+                                                  ext.anisotropy_rotation);
+    }
+    float sheen_peak = max(ext.sheen_color.r, max(ext.sheen_color.g, ext.sheen_color.b));
+    if (sheen_peak > 0.0) {
+        lit = lit * (1.0 - 0.2 * sheen_peak) + AetherSheen(ext.sheen_color, ext.sheen_roughness, n_dot_v, n_dot_l, n_dot_h);
+    }
+    if (ext.clear_coat > 0.001) {
+        AetherCoat coat = AetherClearCoat(ext.clear_coat, max(ext.clear_coat_roughness, 0.04), n_dot_h, l_dot_h);
+        lit = lit * coat.attenuation + coat.spec * n_dot_l;
+    }
+    return lit;
+}
+
 float4 PSMain(PSInput input) : SV_TARGET {
     uint base_index = g_PC.g_MaterialTextures & 63;
     uint normal_index = (g_PC.g_MaterialTextures >> 6) & 63;
     uint metallic_roughness_index = (g_PC.g_MaterialTextures >> 12) & 63;
     uint occlusion_index = (g_PC.g_MaterialTextures >> 18) & 63;
-    float4 base_sample = base_index < 32 ? g_Textures[base_index].Sample(g_Sampler, input.uv) : float4(1, 1, 1, 1);
+    // Not a ?: — HLSL evaluates both arms, so the "no texture" index (63) would still be sampled out of bounds.
+    float4 base_sample = float4(1, 1, 1, 1);
+    if (base_index < 32) base_sample = g_Textures[base_index].Sample(g_Sampler, input.uv);
     uint alpha_mode = g_PC.g_AlphaOptions & 3;
     float surface_alpha = saturate(base_sample.a * g_PC.g_Color.a);
     if (alpha_mode == 1) {
@@ -299,6 +404,12 @@ float4 PSMain(PSInput input) : SV_TARGET {
         float occlusion_sample = g_Textures[occlusion_index].Sample(g_Sampler, input.uv).r;
         ambient_occlusion = lerp(1.0, occlusion_sample, occlusion_strength);
     }
+    SurfaceExtension surface_ext = NoSurfaceExtension();
+    uint extension_index = (g_PC.g_MaterialTextures >> 24) & 63;
+    // Not a ?: for the same reason as above.
+    if (extension_index < 32) surface_ext = LoadSurfaceExtension(extension_index);
+    float3 surface_tangent = normalize(tangent - normal * dot(normal, tangent));
+    float3 surface_bitangent = normalize(cross(normal, surface_tangent)) * input.tangent_sign;
     float3 view_local = g_PC.g_CameraLocal - input.local_position;
     float3 view_direction = normalize(ApplyModelTransform(view_local));
     float3 f0 = lerp(0.04.xxx, base_color, metallic);
@@ -316,7 +427,7 @@ float4 PSMain(PSInput input) : SV_TARGET {
     // the key light. The environment term includes reflected metal color.
     float sky_fill = 0.28 + 0.14 * saturate(normal.y);
     float3 environment = (base_color * (1.0 - metallic) * sky_fill + f0 * (0.45 + 0.25 * roughness)) * sky_tint;
-    float3 color = environment * ambient_occlusion + SurfaceLight(sun_direction, normal, view_direction, base_color, metallic, roughness, f0) * sun_radiance;
+    float3 color = environment * ambient_occlusion + SurfaceLightEx(sun_direction, normal, view_direction, base_color, metallic, roughness, f0, surface_ext, surface_tangent, surface_bitangent) * sun_radiance;
 #ifdef AETHER_FRAME_DATA
     // The world position of this pixel: the camera minus the (world-space) vector from the pixel to the camera.
     float3 world_position = g_Frame.camera_world.xyz - ApplyModelTransform(view_local);
@@ -325,7 +436,7 @@ float4 PSMain(PSInput input) : SV_TARGET {
         float distance = max(length(to_light), 1e-4);
         float falloff = saturate(1.0 - pow(distance / g_Frame.point_position_range[point_index].w, 4.0));
         falloff = falloff * falloff / (distance * distance + 1.0);
-        color += SurfaceLight(to_light / distance, normal, view_direction, base_color, metallic, roughness, f0) * g_Frame.point_color[point_index].rgb * falloff;
+        color += SurfaceLightEx(to_light / distance, normal, view_direction, base_color, metallic, roughness, f0, surface_ext, surface_tangent, surface_bitangent) * g_Frame.point_color[point_index].rgb * falloff;
     }
     for (uint spot_index = 0; spot_index < g_Frame.counts.y; ++spot_index) {
         float3 to_light = g_Frame.spot_position_range[spot_index].xyz - world_position;
@@ -335,7 +446,7 @@ float4 PSMain(PSInput input) : SV_TARGET {
                                 dot(-light_direction, g_Frame.spot_direction_outer[spot_index].xyz));
         float falloff = saturate(1.0 - pow(distance / g_Frame.spot_position_range[spot_index].w, 4.0));
         falloff = falloff * falloff / (distance * distance + 1.0);
-        color += SurfaceLight(light_direction, normal, view_direction, base_color, metallic, roughness, f0) * g_Frame.spot_color_inner[spot_index].rgb * falloff * cone;
+        color += SurfaceLightEx(light_direction, normal, view_direction, base_color, metallic, roughness, f0, surface_ext, surface_tangent, surface_bitangent) * g_Frame.spot_color_inner[spot_index].rgb * falloff * cone;
     }
 #endif
     float3 emissive = float3((g_PC.g_AlphaOptions >> 2) & 15,
@@ -473,6 +584,9 @@ struct SceneRenderer::Impl {
         bool has_normal_texture = false;
         bool has_metallic_roughness_texture = false;
         bool has_occlusion_texture = false;
+        // KHR_materials_clearcoat, sheen and anisotropy: a 2x1 texture of the packed factors (assets::PackSurfaceExtension), read by texel fetch.
+        SampledTextureHandle extension_texture;
+        bool has_extension_texture = false;
     };
     struct MaterialTextures {
         SampledTextureHandle base_color;
@@ -498,27 +612,72 @@ struct SceneRenderer::Impl {
     PipelineHandle pipeline;
     PipelineHandle transparent_pipeline;
     PipelineHandle hud_pipeline;
+    // The particle pass (M8.7), drawn after the scene's surfaces.
+    std::unique_ptr<ParticlePass> particles;
+    std::unique_ptr<DecalPass> decals;
+    vfx::ParticleRenderData particle_data;
+    // Mesh particles' geometry, flattened once from the package's models (empty: the model couldn't be loaded).
+    std::unordered_map<std::string, ParticleMesh> particle_meshes;
+    bool draw_particles = true;
     // The scene's lights, as frame constants (one buffer per frame in flight) where the device has them; else the shader's fixed light.
     static constexpr usize kFrameBuffers = 8;
     std::vector<BufferHandle> frame_buffers;
     bool legacy_hud = false; // the AETHER-01 HUD, drawn when the game has no UI of its own
     SampledTextureHandle white_texture;
+    SampledTextureHandle font_texture_handle;
     std::unique_ptr<ui::SdfFont> hud_font;
     std::unordered_map<std::string, Model> models;
     std::unordered_map<std::string, SampledTextureHandle> textures;
     u32 sampled_texture_count = 0;
     u32 seen_critical_pressure = 0;
     f32 view_distance = 0.0f;
+    std::function<bool(Entity, Transform&)> render_pose_sampler;
     Entity animated_player;
     Vec3 previous_player_position{};
     f64 previous_animation_time = 0.0;
     bool has_previous_player_position = false;
 
+    // Releases every GPU object the renderer made: pipelines, frame constants, each model's vertex/index buffers and the textures it
+    // loaded. The device retires them once any frame still drawing with them has finished, so this is safe right after the last Draw.
+    ~Impl() {
+        auto free_buffer = [this](BufferHandle& buffer) {
+            if (buffer.IsValid()) device.DestroyBuffer(buffer);
+            buffer = {};
+        };
+        std::unordered_set<u32> freed_textures;
+        auto free_texture = [&](SampledTextureHandle& texture) {
+            if (texture.IsValid() && freed_textures.insert(texture.index).second) device.DestroyTexture(texture);
+            texture = {};
+        };
+        for (auto& [path, model] : models) {
+            for (auto& primitives : model.meshes) {
+                for (Primitive& primitive : primitives) {
+                    if (primitive.frame_vertex_buffers.empty()) {
+                        free_buffer(primitive.vertices);
+                    } else {
+                        for (BufferHandle& buffer : primitive.frame_vertex_buffers) free_buffer(buffer);
+                        primitive.vertices = {};
+                    }
+                    free_buffer(primitive.indices);
+                    free_texture(primitive.extension_texture);
+                }
+            }
+        }
+        for (BufferHandle& buffer : frame_buffers) free_buffer(buffer);
+        for (auto& [path, texture] : textures) free_texture(texture);
+        free_texture(font_texture_handle);
+        free_texture(white_texture);
+        for (PipelineHandle* handle : {&pipeline, &transparent_pipeline, &hud_pipeline}) {
+            if (handle->IsValid()) device.DestroyPipeline(*handle);
+            *handle = {};
+        }
+    }
+
     Impl(IDevice& d, ISwapChain& s, const GamePackage& p) : device(d), swap_chain(s), package(p) {
         PipelineDesc desc;
-        desc.hlsl_source = kSceneShader;
+        desc.hlsl_source = SceneShaderSource(false);
         if (device.SupportsFrameConstants()) {
-            desc.hlsl_source = std::string("#define AETHER_FRAME_DATA 1\n") + kSceneShader;
+            desc.hlsl_source = SceneShaderSource(true);
             desc.frame_constants_size_bytes = sizeof(FrameData);
             for (usize i = 0; i < kFrameBuffers; ++i) frame_buffers.push_back(device.CreateFrameConstantBuffer(sizeof(FrameData)));
         }
@@ -547,6 +706,15 @@ struct SceneRenderer::Impl {
         // with the same pipeline and font.
         legacy_hud = package.Manifest().project == "AETHER-01";
 
+        particles = std::make_unique<ParticlePass>(device, swap_chain);
+        decals = std::make_unique<DecalPass>(device, swap_chain);
+        // Particle materials are textures in the package, through the same cache as the models' (0: untextured, drawn procedurally).
+        particles->SetTextureResolver([this](const std::string& material) -> u32 {
+            SampledTextureHandle texture;
+            return LoadTexture(material, texture) ? texture.index : 0u;
+        });
+        particles->SetMeshResolver([this](const std::string& path) -> const ParticleMesh* { return FindParticleMesh(path); });
+
         PipelineDesc hud_desc;
         hud_desc.hlsl_source = kHudShader;
         hud_desc.push_constant_size_bytes = sizeof(HudConstants);
@@ -574,6 +742,7 @@ struct SceneRenderer::Impl {
                     static_cast<u32>(hud_font->AtlasWidth()), static_cast<u32>(hud_font->AtlasHeight()), rgba.data());
                 if (font_texture.IsValid()) {
                     ++sampled_texture_count;
+                    font_texture_handle = font_texture;
                     hud_font->SetTexture(font_texture.index);
                 } else {
                     AETHER_LOG_WARN("PlayerRenderer", "Couldn't upload the AETHER-01 HUD font atlas");
@@ -586,6 +755,40 @@ struct SceneRenderer::Impl {
             if (legacy_hud) AETHER_LOG_WARN("PlayerRenderer", "Cooked package has no fonts/Roboto-Medium.ttf; HUD text is unavailable");
             else AETHER_LOG_INFO("PlayerRenderer", "Cooked package has no fonts/Roboto-Medium.ttf; UI text is unavailable");
         }
+    }
+
+    // The frame's decals: every enabled Decal component on an entity with a Transform, as ready-to-draw items (visible ones, in draw order).
+    std::vector<DecalPassItem> GatherDecals(const World& world, const GuidIndex& guids, const Mat4& view_projection, const Vec3& camera_position) {
+        std::vector<mat::DecalInput> inputs;
+        std::vector<const Decal*> found;
+        world.ForEachArchetype([&](const Archetype& archetype) {
+            if (!archetype.Mask().test(GetComponentId<Decal>())) return;
+            for (usize chunk = 0; chunk < archetype.ChunkCount(); ++chunk) {
+                const Entity* entities = archetype.EntityArray(chunk);
+                for (usize i = 0; i < archetype.ChunkEntityCount(chunk); ++i) {
+                    const Decal* decal = world.GetComponent<Decal>(entities[i]);
+                    if (decal == nullptr || !decal->enabled || !world.HasComponent<Transform>(entities[i])) continue;
+                    inputs.push_back({ComputeWorldTransform(world, guids, entities[i]), decal->size, decal->sort_order, static_cast<u32>(found.size())});
+                    found.push_back(decal);
+                }
+            }
+        });
+        std::vector<DecalPassItem> items;
+        if (inputs.empty()) return items;
+        std::vector<mat::DecalDraw> draws;
+        mat::BuildDecalDraws(inputs, view_projection, camera_position, draws);
+        for (const mat::DecalDraw& draw : draws) {
+            const Decal& decal = *found[draw.id];
+            DecalPassItem item;
+            item.draw = draw;
+            SampledTextureHandle texture;
+            if (!decal.texture.empty() && LoadTexture(decal.texture, texture)) item.texture = texture.index;
+            item.color[0] = DecalTint(decal.color.x), item.color[1] = DecalTint(decal.color.y), item.color[2] = DecalTint(decal.color.z);
+            item.color[3] = std::clamp(decal.opacity, 0.0f, 1.0f);
+            item.fade_start = decal.angle_fade_start, item.fade_end = decal.angle_fade_end;
+            items.push_back(item);
+        }
+        return items;
     }
 
     void DrawHud(Game& game, ICommandList& commands) {
@@ -606,10 +809,16 @@ struct SceneRenderer::Impl {
                 SampledTextureHandle texture;
                 quad.texture = LoadTexture(game.UiImagePath(quad.texture), texture) ? texture.index : 0; // 0: drawn as its tint
             }
+            AddSubtitle(game, list, width, height);
             SubmitHudQuads(commands, list, width, height);
             return;
         }
-        if (!legacy_hud) return;
+        if (!legacy_hud) {
+            ui::DrawList list;
+            AddSubtitle(game, list, width, height);
+            if (!list.quads.empty()) SubmitHudQuads(commands, list, width, height);
+            return;
+        }
 
         const auto read_attribute = [&](Entity entity, const char* name, f32 fallback) {
             if (!world.HasComponent<gas::AttributeSet>(entity)) return fallback;
@@ -888,18 +1097,57 @@ struct SceneRenderer::Impl {
                     if (i < 4) text(std::to_string(static_cast<i32>(std::round(volumes[i] * 100))) + "%",
                                     mx + 366, my + 72 + i * 42.0f, 17, cyan, 70);
                 }
+            } else if (menu_state == 3) {
+                const std::vector<Game::RebindableInput> bindings = game.RebindableInputs();
+                const i32 binding_count = static_cast<i32>(bindings.size());
+                const i32 item_count = binding_count + 2; // reset all, back
+                const i32 first = std::min(std::max(0, menu_row - 5), std::max(0, item_count - 6));
+                for (i32 visible = 0; visible < 6 && first + visible < item_count; ++visible) {
+                    const i32 index = first + visible;
+                    const f32 y = my + 66 + visible * 36.0f;
+                    if (index == menu_row) solid(mx + 20, y, 440, 32, dim);
+                    if (index < binding_count) {
+                        const Game::RebindableInput& binding = bindings[static_cast<usize>(index)];
+                        std::string label = binding.context + " / " + binding.action;
+                        if (binding.slot > 0) label += " [" + std::to_string(binding.slot + 1) + "]";
+                        text(label, mx + 30, y + 7, 14, index == menu_row ? cyan : pale, 285);
+                        std::string key = input::KeyName(binding.current_key);
+                        if (binding.current_key != binding.default_key) key += " *";
+                        text(key, mx + 330, y + 7, 14, cyan, 112);
+                    } else {
+                        const char* label = index == binding_count ? "RESET ALL TO DEFAULTS" : "BACK";
+                        text(label, mx + 30, y + 7, 14, index == menu_row ? cyan : pale, 400);
+                    }
+                }
             } else {
                 const char* rows[] = {"WASD / LEFT STICK: MOVE", "MOUSE / RIGHT STICK: LOOK", "LEFT CLICK / RT: FIRE",
                     campaign_act > 0 ? "1-5 WEAPONS / SHIFT DASH / Q PULSE" : "1 2 3 / D-PAD: WEAPONS", "R / X: RELOAD    SPACE / A: JUMP", "E / B: INTERACT    F5: CHECKPOINT"};
                 for (i32 i = 0; i < 6; ++i) text(rows[i], mx + 24, my + 73 + i * 35.0f, 15, pale, 432);
             }
-            text(settings_status == -1 ? "SETTINGS SAVE FAILED" : settings_status == -2 ? "NO CHECKPOINT YET" :
+            text(settings_status == 3 ? "PRESS A KEY OR PAD BUTTON  ·  ESC CANCEL" :
+                 settings_status == 2 ? "SHARED BINDING SAVED" :
+                 settings_status == -1 ? "SETTINGS SAVE FAILED" : settings_status == -2 ? "NO CHECKPOINT YET" :
                  settings_status == 1 ? "SETTINGS SAVED" : "SIMULATION PAUSED",
                  mx + 24, my + 310, 13, settings_status < 0 ? red : muted, 430);
-            text(menu_state == 2 ? "LEFT/RIGHT ADJUST   ESC BACK" : "ARROWS SELECT   ENTER CONFIRM   ESC BACK",
+            text(menu_state == 2 ? "LEFT/RIGHT ADJUST   ESC BACK" : menu_state == 3 ?
+                 "UP/DOWN SELECT  ENTER REBIND  DEL RESET  ESC BACK" : "ARROWS SELECT   ENTER CONFIRM   ESC BACK",
                  mx + 24, my + 344, 12, muted, 435);
         }
+        AddSubtitle(game, list, width, height);
         SubmitHudQuads(commands, list, width, height);
+    }
+
+    // The dialogue line a sequence's Subtitle track shows (Game::Subtitle, already
+    // translated and empty when the setting hides subtitles), low and centred.
+    void AddSubtitle(const Game& game, ui::DrawList& list, f32 width, f32 height) {
+        const std::string& line = game.Subtitle();
+        if (line.empty()) return;
+        const f32 box = std::min(720.0f, width - 48.0f);
+        const f32 x = (width - box) * 0.5f, y = height * 0.88f;
+        list.AddQuad({x, y, box, 54}, {0.0f, 0.0f, 0.0f, 0.72f});
+        const std::string& speaker = game.SubtitleSpeaker();
+        if (!speaker.empty()) list.AddText(*hud_font, speaker, 12, {x + 16, y + 6, box - 32, 18}, {0.18f, 0.82f, 0.95f, 1.0f});
+        list.AddText(*hud_font, line, 17, {x + 16, y + (speaker.empty() ? 16.0f : 24.0f), box - 32, 23}, {1.0f, 1.0f, 1.0f, 1.0f});
     }
 
     // Draws a UI draw list (quads in pixels, each clipped) with the HUD pipeline.
@@ -988,6 +1236,7 @@ struct SceneRenderer::Impl {
         if (!LoadPackageTexture(package, path, image, &why)) {
             AETHER_LOG_WARN("PlayerRenderer", "Couldn't load model texture '%s' (%s); using the white fallback", path.c_str(), why.c_str());
             out = white_texture;
+            textures.emplace(path, white_texture); // remembered, so a missing UI image isn't read and decoded again every frame
             return false;
         }
         out = device.CreateTexture(image.width, image.height, image.pixels.data());
@@ -1081,6 +1330,7 @@ struct SceneRenderer::Impl {
             }
         }
 
+        std::vector<SampledTextureHandle> extension_textures;
         out.meshes.resize(out.scene.meshes.size());
         for (usize mesh_index = 0; mesh_index < out.scene.meshes.size(); ++mesh_index) {
             const auto& source_mesh = out.scene.meshes[mesh_index];
@@ -1109,6 +1359,9 @@ struct SceneRenderer::Impl {
                             device.CreateVertexBuffer(vertices.data(), vertices.size() * sizeof(SceneVertex)));
                     }
                     draw.vertices = draw.frame_vertex_buffers.front();
+                    AETHER_LOG_INFO("PlayerRenderer", "Skinned primitive: %zu vertices, per-frame vertex buffers %u..%u",
+                                    vertices.size(), draw.frame_vertex_buffers.front().index,
+                                    draw.frame_vertex_buffers.back().index);
                 } else {
                     draw.vertices = device.CreateVertexBuffer(vertices.data(), vertices.size() * sizeof(SceneVertex));
                 }
@@ -1126,6 +1379,20 @@ struct SceneRenderer::Impl {
                     draw.alpha_cutoff = material.alpha_cutoff;
                     draw.alpha_mode = material.alpha_mode;
                     const usize material_index = static_cast<usize>(primitive.material_index);
+                    if (material.HasSurfaceExtension()) {
+                        if (extension_textures.size() < out.scene.materials.size()) extension_textures.resize(out.scene.materials.size());
+                        SampledTextureHandle& cached = extension_textures[material_index];
+                        if (!cached.IsValid()) {
+                            u8 texels[16] = {};
+                            assets::PackSurfaceExtension(material, texels);
+                            // A hair material adds two texels, which the shader finds by the texture's width.
+                            if (material.hair) assets::PackHairExtension(material, texels + 8);
+                            cached = device.CreateTexture(material.hair ? 4 : 2, 1, texels);
+                        }
+                        // A full bindless table leaves the material plain rather than failing the model.
+                        draw.extension_texture = cached;
+                        draw.has_extension_texture = cached.IsValid();
+                    }
                     if (material_index < material_textures.size()) {
                         const MaterialTextures& textures_for_material = material_textures[material_index];
                         draw.base_color_texture = textures_for_material.base_color;
@@ -1171,6 +1438,50 @@ struct SceneRenderer::Impl {
         return freed;
     }
 
+    // A model as one triangle list in its own space (every node's mesh with its world transform baked in), for mesh particles.
+    const ParticleMesh* FindParticleMesh(const std::string& path) {
+        auto [it, inserted] = particle_meshes.try_emplace(path);
+        if (inserted) {
+            if (const Model* model = FindModel(path)) {
+                for (const assets::GltfNodeInstance& node : model->scene.node_instances) {
+                    if (node.mesh_index >= model->scene.meshes.size()) continue;
+                    for (const assets::GltfPrimitive& primitive : model->scene.meshes[node.mesh_index].primitives) {
+                        const auto append = [&](u32 index) {
+                            const assets::GltfVertex& v = primitive.vertices[index];
+                            const Vec4 p = node.world_transform * Vec4(v.position[0], v.position[1], v.position[2], 1.0f);
+                            it->second.positions.push_back(Vec3(p.x, p.y, p.z));
+                            it->second.uvs.push_back(v.uv[0]);
+                            it->second.uvs.push_back(v.uv[1]);
+                            // The node's normal matrix (inverse transpose) baked in too, for lighting.
+                            Vec4 n = node.world_transform * Vec4(v.normal[0], v.normal[1], v.normal[2], 0.0f);
+                            Mat4 inverse;
+                            if (node.world_transform.TryInverse(inverse)) {
+                                const Vec4 c0 = inverse.cols[0], c1 = inverse.cols[1], c2 = inverse.cols[2];
+                                n = Vec4(c0.x * v.normal[0] + c0.y * v.normal[1] + c0.z * v.normal[2],
+                                         c1.x * v.normal[0] + c1.y * v.normal[1] + c1.z * v.normal[2],
+                                         c2.x * v.normal[0] + c2.y * v.normal[1] + c2.z * v.normal[2], 0.0f);
+                            }
+                            it->second.normals.push_back(Vec3(n.x, n.y, n.z).Normalized());
+                        };
+                        if (primitive.indices.empty()) {
+                            for (usize i = 0; i + 3 <= primitive.vertices.size(); ++i) append(static_cast<u32>(i));
+                        } else {
+                            for (usize i = 0; i + 3 <= primitive.indices.size(); i += 3) {
+                                if (primitive.indices[i] >= primitive.vertices.size() || primitive.indices[i + 1] >= primitive.vertices.size() ||
+                                    primitive.indices[i + 2] >= primitive.vertices.size()) {
+                                    continue;
+                                }
+                                for (usize k = 0; k < 3; ++k) append(primitive.indices[i + k]);
+                            }
+                        }
+                    }
+                }
+            }
+            if (it->second.positions.empty()) AETHER_LOG_WARN("PlayerRenderer", "Mesh particles' mesh '%s' has no triangles; not drawn", path.c_str());
+        }
+        return it->second.positions.empty() ? nullptr : &it->second;
+    }
+
     Model* FindModel(const std::string& path) {
         auto [it, inserted] = models.try_emplace(path);
         if (inserted) LoadModel(path, it->second);
@@ -1183,6 +1494,10 @@ SceneRenderer::SceneRenderer(IDevice& device, ISwapChain& swap_chain, const Game
 SceneRenderer::~SceneRenderer() = default;
 
 void SceneRenderer::SetViewDistance(f32 metres) { impl_->view_distance = metres; }
+void SceneRenderer::SetDrawParticles(bool draw) { impl_->draw_particles = draw; }
+void SceneRenderer::SetRenderPoseSampler(std::function<bool(Entity, Transform&)> sampler) {
+    impl_->render_pose_sampler = std::move(sampler);
+}
 
 void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
     struct PendingTransparentDraw {
@@ -1234,18 +1549,52 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
     BufferHandle frame_buffer; // this frame's lights, when the device has frame constants
     const Entity camera_entity = FindActiveCamera(world, guids);
     const Camera* camera = world.IsAlive(camera_entity) ? world.GetComponent<Camera>(camera_entity) : nullptr;
+    Mat4 particle_view_projection, particle_projection;
+    vfx::ParticleCamera particle_camera;
+    bool draw_particles = false;
+    Mat4 decal_view_projection;
+    Vec3 decal_camera_position;
+    bool have_camera = false;
     if (camera) {
         const f32 aspect = static_cast<f32>(renderer.swap_chain.Width()) /
                            static_cast<f32>(std::max(renderer.swap_chain.Height(), 1u));
-        const Mat4 view_projection = CameraProjection(LimitViewDistance(*camera, renderer.view_distance), aspect) * CameraView(world, guids, camera_entity);
+        const Mat4 camera_view = CameraView(world, guids, camera_entity);
+        const Mat4 projection = CameraProjection(LimitViewDistance(*camera, renderer.view_distance), aspect);
+        const Mat4 view_projection = projection * camera_view;
+        particle_view_projection = view_projection;
+        particle_projection = projection;
+        if (renderer.draw_particles && game.Particles()) {
+            particle_camera = vfx::ParticleCamera::FromView(camera_view);
+            renderer.particle_data.Clear();
+            game.Particles()->BuildRenderData(particle_camera, renderer.particle_data, &view_projection);
+            draw_particles = true;
+        }
         const Mat4 camera_transform = ComputeWorldTransform(world, guids, camera_entity);
         const Vec3 camera_position{camera_transform.cols[3].x, camera_transform.cols[3].y, camera_transform.cols[3].z};
+        decal_view_projection = view_projection;
+        decal_camera_position = camera_position;
+        have_camera = true;
+        // Mesh particles get the scene shader's sun and sky: the frame's lights where the device has frame constants, else the shader's
+        // fixed light (ParticleLighting's defaults), through the pass's push constants on every backend.
+        ParticleLighting particle_lighting;
+        particle_lighting.lit = true;
         if (!renderer.frame_buffers.empty()) {
             // The sun, sky and nearby point and spot lights of this scene (the previous use of this slot's frame has finished).
             frame_buffer = renderer.frame_buffers[frame_index % renderer.frame_buffers.size()];
-            const FrameData frame_data = BuildFrameData(world, guids, camera_position);
+            FrameData frame_data = BuildFrameData(world, guids, camera_position);
+            if (draw_particles) AddParticleLights(frame_data, renderer.particle_data.lights, camera_position);
             renderer.device.UpdateFrameConstantBuffer(frame_buffer, &frame_data, sizeof(frame_data));
+            particle_lighting.sun_direction = Vec3(frame_data.sun_direction[0], frame_data.sun_direction[1], frame_data.sun_direction[2]);
+            particle_lighting.sun_color = Vec3(frame_data.sun_color[0], frame_data.sun_color[1], frame_data.sun_color[2]);
+            particle_lighting.sky_color = Vec3(frame_data.sky_color[0], frame_data.sky_color[1], frame_data.sky_color[2]);
+            // Lit sprites take the frame's point lights too (the scene's and the particles' own).
+            for (u32 i = 0; i < frame_data.counts[0] && i < kMaxPointLights; ++i) {
+                particle_lighting.points.push_back({Vec3(frame_data.point_position_range[i][0], frame_data.point_position_range[i][1], frame_data.point_position_range[i][2]),
+                                                    frame_data.point_position_range[i][3],
+                                                    Vec3(frame_data.point_color[i][0], frame_data.point_color[i][1], frame_data.point_color[i][2])});
+            }
         }
+        if (renderer.particles) renderer.particles->SetLighting(particle_lighting);
         commands.BindPipeline(renderer.pipeline);
         if (frame_buffer.IsValid()) commands.BindFrameConstants(frame_buffer);
         commands.BindBindlessTextures();
@@ -1259,7 +1608,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                 for (usize row = 0; row < count; ++row) {
                     Impl::Model* model = renderer.FindModel(models[row].asset_path);
                     if (!model) continue;
-                    const Mat4 entity_transform = ComputeWorldTransform(world, guids, entities[row]);
+                    const Mat4 entity_transform = ComputeRenderWorldTransform(world, guids, entities[row], renderer.render_pose_sampler);
                     (void)transforms; // ComputeWorldTransform also includes any parent chain.
                     const bool is_player = std::find(player_entities.begin(), player_entities.end(), entities[row]) != player_entities.end();
                     std::string selected_clip = is_player ? locomotion_clip : "Enemy_Idle";
@@ -1402,7 +1751,8 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                                 primitive.base_color_texture, primitive.has_base_color_texture,
                                 primitive.normal_texture, primitive.has_normal_texture,
                                 primitive.metallic_roughness_texture, primitive.has_metallic_roughness_texture,
-                                primitive.occlusion_texture, primitive.has_occlusion_texture);
+                                primitive.occlusion_texture, primitive.has_occlusion_texture,
+                                primitive.extension_texture, primitive.has_extension_texture);
                             constants.material_factors_0 = PackHalfPair(primitive.metallic, primitive.roughness);
                             constants.material_factors_1 = PackHalfPair(primitive.normal_scale, primitive.occlusion_strength);
                             constants.alpha_options = PackMaterialOptions(primitive.alpha_mode, primitive.alpha_cutoff, primitive.emissive);
@@ -1432,6 +1782,13 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
             }
         });
     }
+    // Decals paint over the opaque surfaces' lit colour, before the transparent ones. The pass copies the scene depth first, so the transparent
+    // draws below rebind their own pipeline, frame constants and texture table.
+    if (have_camera && renderer.decals && renderer.decals->Valid()) {
+        const std::vector<DecalPassItem> decal_items =
+            renderer.GatherDecals(world, guids, decal_view_projection, decal_camera_position);
+        renderer.decals->Draw(commands, decal_items);
+    }
     if (!transparent_draws.empty()) {
         std::stable_sort(transparent_draws.begin(), transparent_draws.end(),
                          [](const PendingTransparentDraw& left, const PendingTransparentDraw& right) {
@@ -1450,8 +1807,19 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
             commands.DrawIndexed(draw.index_count);
         }
     }
+    // Particles after every surface (they test against its depth without writing it). Soft sprites make the pass copy the depth
+    // (ICommandList::CopySceneDepth): the transparent surfaces above don't write depth, so the copy is the opaque scene plus the mesh
+    // particles; the HUD below binds its own pipeline.
+    if (draw_particles) {
+        renderer.particles->Draw(commands, renderer.particle_data, particle_camera, particle_view_projection, particle_projection, frame_index);
+    }
     renderer.DrawHud(game, commands);
     commands.EndRenderPass();
+}
+
+// The advanced PBR library (anisotropic GGX, sheen, clear coat) goes ahead of the scene shader.
+std::string SceneShaderSource(bool with_frame_data) {
+    return std::string(with_frame_data ? "#define AETHER_FRAME_DATA 1\n" : "") + mat::AdvancedPbrHlsl() + mat::ShadingModelsHlsl() + kSceneShader;
 }
 
 } // namespace aether::player

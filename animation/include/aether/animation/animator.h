@@ -1,6 +1,7 @@
 #pragma once
 
 #include "aether/animation/anim_graph.h"
+#include "aether/animation/ik.h"
 #include "aether/ecs/world.h"
 #include "aether/job/job_system.h"
 #include "aether/reflection/reflection.h"
@@ -43,6 +44,59 @@ struct Animator {
     void JumpToSection(const std::string& section);
 };
 
+// A procedural aim pass applied after an Animator has evaluated its graph.
+// `target` is in world space when the entity has a Transform (otherwise it is
+// model space). This keeps authored graph poses intact while allowing a
+// character, turret, or NPC to follow a gameplay target.
+struct AnimationLookAt {
+    std::string bone;
+    Vec3 target{0, 0, 0};
+    Vec3 aim_axis{0, 0, 1}; // local bone axis that faces the target
+    f32 max_angle = 1.2f;   // radians from the graph pose
+    f32 weight = 1.0f;
+    bool enabled = true;
+};
+
+// One arm or leg in a procedural IK pass. Targets and poles are world space
+// when the owning entity has a Transform (otherwise they are model space).
+struct AnimationTwoBoneIKChain {
+    std::string root;
+    std::string mid;
+    std::string end;
+    Vec3 target{0, 0, 0};
+    Vec3 pole{0, 0, 0};
+    bool use_pole = true;
+    f32 weight = 1.0f;
+};
+
+// A post-graph collection of arm/leg reach constraints. One component can
+// drive both sides of a character or several limbs on a procedural NPC.
+struct AnimationTwoBoneIK {
+    std::vector<AnimationTwoBoneIKChain> chains;
+    bool enabled = true;
+};
+
+// A leg used by the post-graph ground-placement pass.
+struct AnimationFootPlacementLeg {
+    std::string hip;
+    std::string knee;
+    std::string ankle;
+    f32 foot_height = 0.1f;
+};
+
+// Keeps animated feet on uneven terrain. Ground queries come from the
+// AnimationLibrary, which lets physics, navigation, or a procedural world
+// provide terrain without coupling animation to one of those modules.
+struct AnimationFootPlacement {
+    std::string pelvis;
+    std::vector<AnimationFootPlacementLeg> legs;
+    f32 max_step_up = 0.5f;
+    f32 max_step_down = 0.5f;
+    f32 max_foot_angle = 0.8f;
+    f32 smoothing = 0.0f;
+    bool enabled = true;
+};
+
 // Registers Animator with the ECS (idempotent), so scenes load it.
 void RegisterAnimationComponents();
 
@@ -55,6 +109,9 @@ struct AnimationLibrary {
     std::function<const AnimGraph*(const std::string&)> graph;
     std::function<const Skeleton*(const std::string&)> skeleton;
     std::function<const Montage*(const std::string&)> montage;
+    // A world-space terrain trace for a foot-placement component. It must be
+    // safe to call from the animation system's update thread.
+    std::function<bool(Entity, const Vec3& from, const Vec3& to, Vec3& hit, Vec3& normal)> ground_trace;
     AnimAssets assets; // clips and blend spaces
 };
 
@@ -121,4 +178,45 @@ AETHER_REFLECT(aether::Animator, 1,
     AETHER_METHOD(PlayMontage, Fn_BlueprintCallable, {"montage", "rate"}),
     AETHER_METHOD(StopMontage, Fn_BlueprintCallable),
     AETHER_METHOD(JumpToSection, Fn_BlueprintCallable, {"section"})
+)
+
+AETHER_REFLECT(aether::AnimationLookAt, 1,
+    AETHER_FIELD(bone, Field_EditAnywhere, {.tooltip = "Bone that turns toward the target"}),
+    AETHER_FIELD(target, Field_EditAnywhere, {.tooltip = "World-space target", .units = "m"}),
+    AETHER_FIELD(aim_axis, Field_EditAnywhere, {.tooltip = "Local bone axis that faces the target"}),
+    AETHER_FIELD(max_angle, Field_EditAnywhere, {.range_min = 0.0, .range_max = 3.141592653589793, .units = "rad"}),
+    AETHER_FIELD(weight, Field_EditAnywhere, {.range_min = 0.0, .range_max = 1.0}),
+    AETHER_FIELD(enabled, Field_EditAnywhere)
+)
+
+AETHER_REFLECT(aether::AnimationTwoBoneIKChain, 1,
+    AETHER_FIELD(root, Field_EditAnywhere, {.tooltip = "Root bone, such as shoulder or hip"}),
+    AETHER_FIELD(mid, Field_EditAnywhere, {.tooltip = "Middle bone, such as elbow or knee"}),
+    AETHER_FIELD(end, Field_EditAnywhere, {.tooltip = "End bone, such as hand or ankle"}),
+    AETHER_FIELD(target, Field_EditAnywhere, {.tooltip = "World-space reach target", .units = "m"}),
+    AETHER_FIELD(pole, Field_EditAnywhere, {.tooltip = "World-space bend direction", .units = "m"}),
+    AETHER_FIELD(use_pole, Field_EditAnywhere),
+    AETHER_FIELD(weight, Field_EditAnywhere, {.range_min = 0.0, .range_max = 1.0})
+)
+
+AETHER_REFLECT(aether::AnimationTwoBoneIK, 1,
+    AETHER_FIELD(chains, Field_EditAnywhere, {.tooltip = "Arm and leg reach constraints"}),
+    AETHER_FIELD(enabled, Field_EditAnywhere)
+)
+
+AETHER_REFLECT(aether::AnimationFootPlacementLeg, 1,
+    AETHER_FIELD(hip, Field_EditAnywhere, {.tooltip = "Hip bone"}),
+    AETHER_FIELD(knee, Field_EditAnywhere, {.tooltip = "Knee bone"}),
+    AETHER_FIELD(ankle, Field_EditAnywhere, {.tooltip = "Ankle bone"}),
+    AETHER_FIELD(foot_height, Field_EditAnywhere, {.range_min = 0.0, .range_max = 1.0, .units = "m"})
+)
+
+AETHER_REFLECT(aether::AnimationFootPlacement, 1,
+    AETHER_FIELD(pelvis, Field_EditAnywhere, {.tooltip = "Pelvis bone"}),
+    AETHER_FIELD(legs, Field_EditAnywhere, {.tooltip = "Legs to place on the ground"}),
+    AETHER_FIELD(max_step_up, Field_EditAnywhere, {.range_min = 0.0, .range_max = 2.0, .units = "m"}),
+    AETHER_FIELD(max_step_down, Field_EditAnywhere, {.range_min = 0.0, .range_max = 2.0, .units = "m"}),
+    AETHER_FIELD(max_foot_angle, Field_EditAnywhere, {.range_min = 0.0, .range_max = 1.5707963267948966, .units = "rad"}),
+    AETHER_FIELD(smoothing, Field_EditAnywhere, {.range_min = 0.0, .range_max = 2.0, .units = "s"}),
+    AETHER_FIELD(enabled, Field_EditAnywhere)
 )

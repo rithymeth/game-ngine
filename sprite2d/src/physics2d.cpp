@@ -8,6 +8,55 @@ namespace aether::sprite2d {
 
 namespace {
 
+bool IsFinite(Vec2 value) {
+    return std::isfinite(value.x) && std::isfinite(value.y);
+}
+bool IsValidCollider(const Collider2D& collider, const Transform& transform) {
+    const Vec2 position{transform.position.x, transform.position.y};
+    const Vec2 center = position + collider.offset;
+    if (!IsFinite(position) || !IsFinite(collider.offset) || !IsFinite(center) ||
+        !std::isfinite(collider.friction) || collider.friction < 0.0f || collider.friction > 2.0f ||
+        !std::isfinite(collider.restitution) || collider.restitution < 0.0f || collider.restitution > 1.0f) return false;
+    if (collider.shape == Shape2D::Box)
+        return IsFinite(collider.half_extents) && collider.half_extents.x >= 0.0f && collider.half_extents.y >= 0.0f;
+    if (collider.shape == Shape2D::Circle) return std::isfinite(collider.radius) && collider.radius >= 0.0f;
+    return false;
+}
+bool IsValidRigidbody(const Rigidbody2D& body) {
+    if (body.type == BodyType2D::Static) return true;
+    if (body.type == BodyType2D::Kinematic) return IsFinite(body.velocity);
+    return body.type == BodyType2D::Dynamic && std::isfinite(body.mass) && body.mass > 0.0f &&
+           std::isfinite(body.gravity_scale) && std::isfinite(body.linear_damping) &&
+           body.linear_damping >= 0.0f && IsFinite(body.velocity);
+}
+bool TilemapGeometry(const TilemapRenderer& renderer, const Transform& transform, const Tileset& tileset,
+                     Vec2& origin, Vec2& cell_size) {
+    origin = {transform.position.x, transform.position.y};
+    if (!IsFinite(origin) || !std::isfinite(renderer.pixels_per_unit) || renderer.pixels_per_unit <= 0.0f ||
+        tileset.tile_width == 0 || tileset.tile_height == 0) return false;
+    cell_size = {static_cast<f32>(tileset.tile_width) / renderer.pixels_per_unit,
+                 static_cast<f32>(tileset.tile_height) / renderer.pixels_per_unit};
+    return IsFinite(cell_size) && cell_size.x > 0.0f && cell_size.y > 0.0f;
+}
+struct TileRange {
+    i32 first = 0;
+    i32 last = -1;
+    bool Valid() const { return first <= last; }
+};
+TileRange GetTileRange(f32 world_min, f32 world_max, f32 origin, f32 cell_size, u32 extent) {
+    if (extent == 0 || !std::isfinite(world_min) || !std::isfinite(world_max) || world_min > world_max ||
+        !std::isfinite(origin) || !std::isfinite(cell_size) || cell_size <= 0.0f) return {};
+    const f64 grid_min = (static_cast<f64>(world_min) - origin) / cell_size;
+    const f64 grid_max = (static_cast<f64>(world_max) - origin) / cell_size;
+    if (!std::isfinite(grid_min) || !std::isfinite(grid_max) || grid_max < 0.0 || grid_min > extent) return {};
+    const f64 max_index = static_cast<f64>(std::min<u64>(static_cast<u64>(extent) - 1,
+                                                         static_cast<u64>(std::numeric_limits<i32>::max() - 1)));
+    const auto clamp_index = [max_index](f64 grid) {
+        return static_cast<i32>(std::clamp(std::floor(grid), 0.0, max_index));
+    };
+    return {clamp_index(grid_min), clamp_index(grid_max)};
+}
+
 // Every live entity (ForEach hands out components, not entities).
 template <typename F>
 void EachEntity(const World& world, F&& f) {
@@ -21,15 +70,18 @@ void EachEntity(const World& world, F&& f) {
 }
 
 u64 Key(Entity e) { return (static_cast<u64>(e.generation) << 32) | e.index; }
-// The same for (a, b) and (b, a), so a pair keeps its identity whatever order the sweep finds it in.
-u64 PairKey(u64 a, u64 b, bool trigger) {
-    if (a > b) std::swap(a, b);
-    u64 h = a * 0x9E3779B97F4A7C15ull;
-    h ^= b + 0x7F4A7C15ull + (h << 6) + (h >> 2);
-    h *= 0xC2B2AE3D27D4EB4Full;
-    return (h & ~1ull) | (trigger ? 1ull : 0ull);
+bool RayHitBefore(const RayHit2D& a, const RayHit2D& b) {
+    if (a.distance != b.distance) return a.distance < b.distance;
+    if (a.tile != b.tile) return !a.tile;
+    if (a.tile) {
+        if (a.tile_y != b.tile_y) return a.tile_y < b.tile_y;
+        return a.tile_x < b.tile_x;
+    }
+    return Key(a.entity) < Key(b.entity);
 }
-
+void SortEntities(std::vector<Entity>& entities) {
+    std::sort(entities.begin(), entities.end(), [](Entity a, Entity b) { return Key(a) < Key(b); });
+}
 struct Body {
     Entity e;
     Transform* transform = nullptr;
@@ -113,10 +165,10 @@ Manifold CircleBox(const Body& circle, const Body& box, f32 margin) {
     m.hit = true;
     if (px < py) {
         m.normal = {d.x < 0.0f ? 1.0f : -1.0f, 0.0f}; // from the circle, back toward the box's centre side
-        m.depth = px + circle.radius;
+        m.depth = px + r;
     } else {
         m.normal = {0.0f, d.y < 0.0f ? 1.0f : -1.0f};
-        m.depth = py + circle.radius;
+        m.depth = py + r;
     }
     return m;
 }
@@ -167,8 +219,88 @@ bool SlabRay(Vec2 origin, Vec2 dir, Vec2 lo, Vec2 hi, f32 max_t, f32& t_out, Vec
         if (t0 > t1) return false;
     }
     t_out = t0;
+    if (t0 == 0.0f && n.Dot(n) == 0.0f) {
+        const f32 left = origin.x - lo.x, right = hi.x - origin.x;
+        const f32 bottom = origin.y - lo.y, top = hi.y - origin.y;
+        const f32 nearest = std::min({left, right, bottom, top});
+        if (nearest == left) n = {-1, 0};
+        else if (nearest == right) n = {1, 0};
+        else if (nearest == bottom) n = {0, -1};
+        else n = {0, 1};
+    }
     normal = n;
     return true;
+}
+
+bool CircleCastAabb(Vec2 origin, Vec2 dir, f32 radius, Vec2 lo, Vec2 hi, f32 max_t,
+                    f32& t_out, Vec2& normal, Vec2& point_out) {
+    f32 best = max_t;
+    bool found = false;
+    auto consider = [&](f32 t, Vec2 n, Vec2 point) {
+        if (t < 0.0f || t > best) return;
+        best = t;
+        t_out = t;
+        normal = n;
+        point_out = point;
+        found = true;
+    };
+
+    Vec2 closest{std::clamp(origin.x, lo.x, hi.x), std::clamp(origin.y, lo.y, hi.y)};
+    const Vec2 initial_delta = origin - closest;
+    if (initial_delta.Dot(initial_delta) <= radius * radius) {
+        f32 normal_length = initial_delta.Length();
+        if (normal_length > 1e-9f) {
+            normal = initial_delta * (1.0f / normal_length);
+        } else {
+            const f32 left = origin.x - lo.x, right = hi.x - origin.x;
+            const f32 bottom = origin.y - lo.y, top = hi.y - origin.y;
+            const f32 nearest = std::min({left, right, bottom, top});
+            if (nearest == left) { normal = {-1, 0}; closest.x = lo.x; }
+            else if (nearest == right) { normal = {1, 0}; closest.x = hi.x; }
+            else if (nearest == bottom) { normal = {0, -1}; closest.y = lo.y; }
+            else { normal = {0, 1}; closest.y = hi.y; }
+        }
+        t_out = 0.0f;
+        point_out = closest;
+        return true;
+    }
+
+    auto side = [&](f32 plane, f32 start, f32 speed, f32 min_tangent, f32 max_tangent,
+                    bool vertical, f32 sign) {
+        if (std::fabs(speed) < 1e-9f) return;
+        const f32 t = (plane - start) / speed;
+        if (t < 0.0f || t > best) return;
+        const Vec2 center = origin + dir * t;
+        const f32 tangent = vertical ? center.y : center.x;
+        if (tangent < min_tangent || tangent > max_tangent) return;
+        const Vec2 n = vertical ? Vec2{sign, 0} : Vec2{0, sign};
+        consider(t, n, center - n * radius);
+    };
+    if (dir.x > 0.0f) side(lo.x - radius, origin.x, dir.x, lo.y, hi.y, true, -1.0f);
+    if (dir.x < 0.0f) side(hi.x + radius, origin.x, dir.x, lo.y, hi.y, true, 1.0f);
+    if (dir.y > 0.0f) side(lo.y - radius, origin.y, dir.y, lo.x, hi.x, false, -1.0f);
+    if (dir.y < 0.0f) side(hi.y + radius, origin.y, dir.y, lo.x, hi.x, false, 1.0f);
+
+    const Vec2 corners[] = {lo, {lo.x, hi.y}, {hi.x, lo.y}, hi};
+    for (usize i = 0; i < 4; ++i) {
+        const Vec2 offset = origin - corners[i];
+        const f32 b = offset.Dot(dir);
+        const f32 c = offset.Dot(offset) - radius * radius;
+        const f32 discriminant = b * b - dir.Dot(dir) * c;
+        if (discriminant < 0.0f || dir.Dot(dir) <= 1e-18f) continue;
+        const f32 t = (-b - std::sqrt(discriminant)) / dir.Dot(dir);
+        if (t < 0.0f || t > best) continue;
+        const Vec2 center = origin + dir * t;
+        const bool in_corner_region = (i == 0 && center.x <= lo.x && center.y <= lo.y) ||
+                                      (i == 1 && center.x <= lo.x && center.y >= hi.y) ||
+                                      (i == 2 && center.x >= hi.x && center.y <= lo.y) ||
+                                      (i == 3 && center.x >= hi.x && center.y >= hi.y);
+        if (!in_corner_region) continue;
+        const Vec2 delta = center - corners[i];
+        const f32 length = delta.Length();
+        if (length > 1e-9f) consider(t, delta * (1.0f / length), corners[i]);
+    }
+    return found;
 }
 
 } // namespace
@@ -187,11 +319,18 @@ int Physics2D::WallSide(Entity e) const {
 
 void Physics2D::Step(f32 dt) {
     events_.clear();
+    if (!std::isfinite(dt) || dt <= 0.0f || !std::isfinite(settings.max_step) || settings.max_step <= 0.0f ||
+        !IsFinite(settings.gravity) || !std::isfinite(settings.slop) || settings.slop < 0.0f ||
+        !std::isfinite(settings.correction) || settings.correction < 0.0f || settings.correction > 1.0f) return;
     dt = std::min(dt, settings.max_step);
-    if (dt <= 0.0f) return;
     bool any = false;
     world_.ForEachChunk<Collider2D>([&](u32, Collider2D*) { any = true; });
     if (!any) { // nothing 2D here: skip the walk, and end what was touching
+        for (const auto& [old, ev] : last_info_) {
+            Event2D end = ev;
+            end.kind = old.trigger ? Event2D::Kind::TriggerExit : Event2D::Kind::End;
+            events_.push_back(end);
+        }
         body_count_ = 0;
         pairs_.clear();
         last_info_.clear();
@@ -213,6 +352,7 @@ void Physics2D::Step(f32 dt) {
         b.transform = world_.GetComponent<Transform>(e);
         const Collider2D* c = world_.GetComponent<Collider2D>(e);
         b.rb = world_.GetComponent<Rigidbody2D>(e);
+        if (!IsValidCollider(*c, *b.transform) || (b.rb && !IsValidRigidbody(*b.rb))) continue;
         b.shape = c->shape;
         b.half = c->half_extents;
         b.radius = c->radius;
@@ -225,8 +365,8 @@ void Physics2D::Step(f32 dt) {
         b.p = {b.transform->position.x + c->offset.x, b.transform->position.y + c->offset.y};
         if (b.rb) {
             b.v = b.rb->velocity;
-            b.dynamic = b.rb->type == BodyType2D::Dynamic && !c->trigger;
-            b.inv_mass = b.dynamic ? 1.0f / std::max(b.rb->mass, 1e-3f) : 0.0f;
+            b.dynamic = b.rb->type == BodyType2D::Dynamic;
+            b.inv_mass = b.dynamic && !c->trigger ? 1.0f / std::max(b.rb->mass, 1e-3f) : 0.0f;
         }
         bodies.push_back(b);
     }
@@ -261,9 +401,9 @@ void Physics2D::Step(f32 dt) {
             const Transform* t = world_.GetComponent<Transform>(e);
             const TilemapData* map = tiles_.tilemaps(r->tilemap.guid);
             const Tileset* ts = map ? tiles_.tilesets(map->tileset) : nullptr;
-            if (!map || !ts || r->pixels_per_unit <= 0.0f) continue;
-            maps.push_back({map, ts, {t->position.x, t->position.y},
-                            {static_cast<f32>(ts->tile_width) / r->pixels_per_unit, static_cast<f32>(ts->tile_height) / r->pixels_per_unit}});
+            Vec2 map_origin{}, cell_size{};
+            if (!map || !ts || !TilemapGeometry(*r, *t, *ts, map_origin, cell_size)) continue;
+            maps.push_back({map, ts, map_origin, cell_size});
         }
     }
     std::vector<Body> statics; // tile boxes
@@ -274,14 +414,14 @@ void Physics2D::Step(f32 dt) {
     const int dynamic_count = static_cast<int>(bodies.size());
     const auto add_tiles_for = [&](int index) {
         const Body& body = bodies[static_cast<usize>(index)];
+        if (body.layer == 0 || (body.mask & 1u) == 0) return; // tilemaps use layer 1 and accept every nonzero layer
         const Vec2 lo = body.Min(), hi = body.Max();
         for (const MapInfo& m : maps) {
-            const i32 x0 = std::max(0, static_cast<i32>(std::floor((lo.x - m.origin.x) / m.cell.x)));
-            const i32 y0 = std::max(0, static_cast<i32>(std::floor((lo.y - m.origin.y) / m.cell.y)));
-            const i32 x1 = std::min(static_cast<i32>(m.map->width) - 1, static_cast<i32>(std::floor((hi.x - m.origin.x) / m.cell.x)));
-            const i32 y1 = std::min(static_cast<i32>(m.map->height) - 1, static_cast<i32>(std::floor((hi.y - m.origin.y) / m.cell.y)));
-            for (i32 y = y0; y <= y1; ++y) {
-                for (i32 x = x0; x <= x1; ++x) {
+            const TileRange x_range = GetTileRange(lo.x, hi.x, m.origin.x, m.cell.x, m.map->width);
+            const TileRange y_range = GetTileRange(lo.y, hi.y, m.origin.y, m.cell.y, m.map->height);
+            if (!x_range.Valid() || !y_range.Valid()) continue;
+            for (i32 y = y_range.first; y <= y_range.last; ++y) {
+                for (i32 x = x_range.first; x <= x_range.last; ++x) {
                     if (!IsSolidAt(*m.map, *m.tileset, x, y)) continue;
                     Body t;
                     t.tile = true;
@@ -302,7 +442,12 @@ void Physics2D::Step(f32 dt) {
     // Body pairs by a sweep along x, and tile cells for moving bodies.
     std::vector<int> order(bodies.size());
     for (usize i = 0; i < order.size(); ++i) order[i] = static_cast<int>(i);
-    std::sort(order.begin(), order.end(), [&](int a, int b) { return bodies[static_cast<usize>(a)].Min().x < bodies[static_cast<usize>(b)].Min().x; });
+    std::sort(order.begin(), order.end(), [&](int a, int b) {
+        const Body& body_a = bodies[static_cast<usize>(a)];
+        const Body& body_b = bodies[static_cast<usize>(b)];
+        const f32 min_a = body_a.Min().x, min_b = body_b.Min().x;
+        return min_a == min_b ? Key(body_a.e) < Key(body_b.e) : min_a < min_b;
+    });
     for (usize i = 0; i < order.size(); ++i) {
         const Body& a = bodies[static_cast<usize>(order[i])];
         for (usize j = i + 1; j < order.size(); ++j) {
@@ -310,7 +455,7 @@ void Physics2D::Step(f32 dt) {
             if (b.Min().x > a.Max().x) break;
             if (b.Min().y > a.Max().y || b.Max().y < a.Min().y) continue;
             const bool a_moves = a.rb && a.rb->type != BodyType2D::Static, b_moves = b.rb && b.rb->type != BodyType2D::Static;
-            if (!a_moves && !b_moves) continue; // two static things never meet
+            if (!a_moves && !b_moves && !a.trigger && !b.trigger) continue; // static triggers still report overlaps
             if (!Allowed(a, b)) continue;
             // A moving body is `a`, so an event names it first.
             if (!a_moves) candidates.push_back({order[j], order[i]});
@@ -319,8 +464,7 @@ void Physics2D::Step(f32 dt) {
     }
     for (int i = 0; i < dynamic_count; ++i) {
         const Body& b = bodies[static_cast<usize>(i)];
-        if (b.dynamic && !b.trigger) add_tiles_for(i);
-        else if (b.trigger && b.rb && b.rb->type != BodyType2D::Static) add_tiles_for(i); // triggers see tiles as contacts too
+        if (b.rb && b.rb->type != BodyType2D::Static) add_tiles_for(i); // moving and trigger bodies detect solid tile contacts
     }
     const auto body_at = [&](int i) -> Body& {
         return i < dynamic_count ? bodies[static_cast<usize>(i)] : statics[static_cast<usize>(i - dynamic_count)];
@@ -375,8 +519,9 @@ void Physics2D::Step(f32 dt) {
     }
 
     // Contacts for events and grounding: a small margin counts resting touches.
-    std::vector<u64> now_pairs, grounded, left_wall, right_wall;
-    std::vector<std::pair<u64, Event2D>> info; // by pair key
+    std::vector<PairIdentity> now_pairs;
+    std::vector<u64> grounded, left_wall, right_wall;
+    std::vector<std::pair<PairIdentity, Event2D>> info;
     for (const Candidate& c : candidates) {
         Body& a = body_at(c.a);
         Body& b = body_at(c.b);
@@ -387,8 +532,6 @@ void Physics2D::Step(f32 dt) {
             if (b.tile && InternalFace(b, m.normal * -1.0f)) continue;
             if (a.tile && InternalFace(a, m.normal)) continue;
         }
-        const u64 ka = a.tile ? (1ull << 63) : Key(a.e); // all of the tiles are one thing to touch
-        const u64 kb = b.tile ? (1ull << 63) : Key(b.e);
         // Grounding: the contact normal (a to b) points up onto a, or down onto b... a body is grounded when
         // something is below it: for a (the lower side of the normal pointing up toward b means b is above a).
         if (!trigger_pair) {
@@ -403,15 +546,22 @@ void Physics2D::Step(f32 dt) {
                 if (m.normal.x > 0.7f) left_wall.push_back(Key(b.e));
             }
         }
-        // A pair's identity; a tile contact is its body with the cell.
-        const u64 pk = PairKey(ka, kb, trigger_pair);
-        now_pairs.push_back(pk);
+        // Store both exact entity keys and whether either side represents the aggregate tile contact.
+        // Canonical ordering keeps the pair stable when candidate order changes between frames.
+        u64 first = a.tile ? 0 : Key(a.e), second = b.tile ? 0 : Key(b.e);
+        bool first_tile = a.tile, second_tile = b.tile;
+        if (first_tile != second_tile ? first_tile : first > second) {
+            std::swap(first, second);
+            std::swap(first_tile, second_tile);
+        }
+        const PairIdentity identity{first, second, first_tile, second_tile, trigger_pair};
+        now_pairs.push_back(identity);
         Event2D ev;
         ev.kind = trigger_pair ? Event2D::Kind::TriggerEnter : Event2D::Kind::Begin;
         ev.a = a.tile ? b.e : a.e;
         ev.b = a.tile ? Entity{} : (b.tile ? Entity{} : b.e);
         ev.normal = a.tile ? m.normal * -1.0f : m.normal;
-        info.emplace_back(pk, ev);
+        info.emplace_back(identity, ev);
     }
     std::sort(now_pairs.begin(), now_pairs.end());
     now_pairs.erase(std::unique(now_pairs.begin(), now_pairs.end()), now_pairs.end());
@@ -424,7 +574,7 @@ void Physics2D::Step(f32 dt) {
     for (const auto& [old, ev] : last_info_) {
         if (std::binary_search(now_pairs.begin(), now_pairs.end(), old)) continue;
         Event2D end = ev;
-        end.kind = (old & 1) ? Event2D::Kind::TriggerExit : Event2D::Kind::End;
+        end.kind = old.trigger ? Event2D::Kind::TriggerExit : Event2D::Kind::End;
         events_.push_back(end);
     }
     std::stable_sort(info.begin(), info.end(), [](const auto& x, const auto& y) { return x.first < y.first; });
@@ -442,14 +592,15 @@ void Physics2D::Step(f32 dt) {
 
 bool Physics2D::Raycast(Vec2 origin, Vec2 dir, f32 max_distance, RayHit2D& out, u32 mask) const {
     const f32 len = dir.Length();
-    if (len < 1e-9f || max_distance <= 0.0f) return false;
+    if (!IsFinite(origin) || !IsFinite(dir) || !std::isfinite(len) || !std::isfinite(max_distance) ||
+        len < 1e-9f || max_distance < 0.0f) return false;
     dir = dir * (1.0f / len);
     f32 best = max_distance;
     bool found = false;
     EachEntity(world_, [&](Entity e) {
         const Transform* t = world_.GetComponent<Transform>(e);
         const Collider2D* c = world_.GetComponent<Collider2D>(e);
-        if (!t || !c || c->trigger || (c->layer & mask) == 0) return;
+        if (!t || !c || !IsValidCollider(*c, *t) || c->trigger || (c->layer & mask) == 0) return;
         const Vec2 center{t->position.x + c->offset.x, t->position.y + c->offset.y};
         f32 hit_t = 0;
         Vec2 n{};
@@ -461,7 +612,12 @@ bool Physics2D::Raycast(Vec2 origin, Vec2 dir, f32 max_distance, RayHit2D& out, 
             const Vec2 oc = origin - center;
             const f32 b = oc.Dot(dir), cc = oc.Dot(oc) - c->radius * c->radius;
             const f32 disc = b * b - cc;
-            if (disc >= 0.0f) {
+            if (cc <= 0.0f) {
+                hit = true;
+                hit_t = 0.0f;
+                const f32 distance = oc.Length();
+                n = distance > 1e-9f ? oc * (1.0f / distance) : Vec2{0.0f, 1.0f};
+            } else if (disc >= 0.0f) {
                 const f32 s = std::sqrt(disc);
                 f32 tt = -b - s;
                 if (tt < 0.0f) tt = -b + s;
@@ -476,46 +632,349 @@ bool Physics2D::Raycast(Vec2 origin, Vec2 dir, f32 max_distance, RayHit2D& out, 
             }
         }
         if (hit && hit_t <= best) {
-            best = hit_t;
-            found = true;
-            out = {};
-            out.entity = e;
-            out.distance = hit_t;
-            out.point = origin + dir * hit_t;
-            out.normal = n;
+            RayHit2D candidate;
+            candidate.entity = e;
+            candidate.distance = hit_t;
+            candidate.point = origin + dir * hit_t;
+            candidate.normal = n;
+            if (!found || RayHitBefore(candidate, out)) {
+                best = hit_t;
+                found = true;
+                out = candidate;
+            }
         }
     });
     if (tiles_.tilemaps && tiles_.tilesets && (mask & 1u) != 0) { // solid tiles are on layer 1
         EachEntity(world_, [&](Entity e) {
             const TilemapRenderer* r = world_.GetComponent<TilemapRenderer>(e);
             const Transform* t = world_.GetComponent<Transform>(e);
-            if (!r || !t || r->pixels_per_unit <= 0.0f) return;
+            if (!r || !t) return;
             const TilemapData* map = tiles_.tilemaps(r->tilemap.guid);
             const Tileset* ts = map ? tiles_.tilesets(map->tileset) : nullptr;
             if (!map || !ts) return;
-            const f32 cw = static_cast<f32>(ts->tile_width) / r->pixels_per_unit, ch = static_cast<f32>(ts->tile_height) / r->pixels_per_unit;
+            Vec2 map_origin{}, cell_size{};
+            if (!TilemapGeometry(*r, *t, *ts, map_origin, cell_size)) return;
+            const f32 cw = cell_size.x, ch = cell_size.y;
             const Vec2 end = origin + dir * best;
-            const i32 x0 = std::max(0, static_cast<i32>(std::floor((std::min(origin.x, end.x) - t->position.x) / cw)));
-            const i32 x1 = std::min(static_cast<i32>(map->width) - 1, static_cast<i32>(std::floor((std::max(origin.x, end.x) - t->position.x) / cw)));
-            const i32 y0 = std::max(0, static_cast<i32>(std::floor((std::min(origin.y, end.y) - t->position.y) / ch)));
-            const i32 y1 = std::min(static_cast<i32>(map->height) - 1, static_cast<i32>(std::floor((std::max(origin.y, end.y) - t->position.y) / ch)));
-            for (i32 y = y0; y <= y1; ++y) {
-                for (i32 x = x0; x <= x1; ++x) {
+            const TileRange x_range = GetTileRange(std::min(origin.x, end.x), std::max(origin.x, end.x),
+                                                   map_origin.x, cw, map->width);
+            const TileRange y_range = GetTileRange(std::min(origin.y, end.y), std::max(origin.y, end.y),
+                                                   map_origin.y, ch, map->height);
+            if (!x_range.Valid() || !y_range.Valid()) return;
+            for (i32 y = y_range.first; y <= y_range.last; ++y) {
+                for (i32 x = x_range.first; x <= x_range.last; ++x) {
                     if (!IsSolidAt(*map, *ts, x, y)) continue;
-                    const Vec2 lo{t->position.x + static_cast<f32>(x) * cw, t->position.y + static_cast<f32>(y) * ch};
+                    const Vec2 lo{map_origin.x + static_cast<f32>(x) * cw, map_origin.y + static_cast<f32>(y) * ch};
                     f32 hit_t = 0;
                     Vec2 n{};
                     if (SlabRay(origin, dir, lo, {lo.x + cw, lo.y + ch}, best, hit_t, n) && hit_t <= best) {
-                        best = hit_t;
-                        found = true;
-                        out = {};
-                        out.tile = true;
-                        out.tile_x = x;
-                        out.tile_y = y;
-                        out.distance = hit_t;
-                        out.point = origin + dir * hit_t;
-                        out.normal = n;
+                        RayHit2D candidate;
+                        candidate.tile = true;
+                        candidate.tile_x = x;
+                        candidate.tile_y = y;
+                        candidate.distance = hit_t;
+                        candidate.point = origin + dir * hit_t;
+                        candidate.normal = n;
+                        if (!found || RayHitBefore(candidate, out)) {
+                            best = hit_t;
+                            found = true;
+                            out = candidate;
+                        }
                     }
+                }
+            }
+        });
+    }
+    return found;
+}
+
+std::vector<RayHit2D> Physics2D::RaycastAll(Vec2 origin, Vec2 dir, f32 max_distance, u32 mask, usize max_hits) const {
+    std::vector<RayHit2D> hits;
+    const f32 direction_length = dir.Length();
+    if (max_hits == 0 || !IsFinite(origin) || !IsFinite(dir) || !std::isfinite(direction_length) ||
+        !std::isfinite(max_distance) || direction_length < 1e-9f || max_distance < 0.0f) return hits;
+    dir = dir * (1.0f / direction_length);
+    EachEntity(world_, [&](Entity e) {
+        const Transform* transform = world_.GetComponent<Transform>(e);
+        const Collider2D* collider = world_.GetComponent<Collider2D>(e);
+        if (!transform || !collider || !IsValidCollider(*collider, *transform) || collider->trigger ||
+            (collider->layer & mask) == 0) return;
+        const Vec2 center{transform->position.x + collider->offset.x,
+                          transform->position.y + collider->offset.y};
+        f32 t = 0.0f;
+        Vec2 normal{};
+        bool did_hit = false;
+        if (collider->shape == Shape2D::Box) {
+            did_hit = SlabRay(origin, dir,
+                              {center.x - collider->half_extents.x, center.y - collider->half_extents.y},
+                              {center.x + collider->half_extents.x, center.y + collider->half_extents.y},
+                              max_distance, t, normal);
+        } else {
+            const Vec2 offset = origin - center;
+            const f32 a = dir.Dot(dir), b = offset.Dot(dir), c = offset.Dot(offset) - collider->radius * collider->radius;
+            const f32 discriminant = b * b - a * c;
+            if (c <= 0.0f) {
+                did_hit = true;
+                t = 0.0f;
+            } else if (discriminant >= 0.0f) {
+                t = (-b - std::sqrt(discriminant)) / a;
+                did_hit = t >= 0.0f && t <= max_distance;
+            }
+            if (did_hit) {
+                Vec2 delta = origin + dir * t - center;
+                const f32 length = delta.Length();
+                normal = length > 1e-9f ? delta * (1.0f / length) : Vec2{0.0f, 1.0f};
+            }
+        }
+        if (!did_hit || t < 0.0f || t > max_distance) return;
+        RayHit2D hit;
+        hit.entity = e;
+        hit.distance = t;
+        hit.point = origin + dir * t;
+        hit.normal = normal;
+        hits.push_back(hit);
+    });
+
+    if (tiles_.tilemaps && tiles_.tilesets && (mask & 1u) != 0) {
+        const Vec2 end = origin + dir * max_distance;
+        EachEntity(world_, [&](Entity e) {
+            const TilemapRenderer* renderer = world_.GetComponent<TilemapRenderer>(e);
+            const Transform* transform = world_.GetComponent<Transform>(e);
+            if (!renderer || !transform) return;
+            const TilemapData* map = tiles_.tilemaps(renderer->tilemap.guid);
+            const Tileset* tileset = map ? tiles_.tilesets(map->tileset) : nullptr;
+            if (!map || !tileset) return;
+            Vec2 map_origin{}, cell_size{};
+            if (!TilemapGeometry(*renderer, *transform, *tileset, map_origin, cell_size)) return;
+            const f32 cell_width = cell_size.x, cell_height = cell_size.y;
+            const TileRange x_range = GetTileRange(std::min(origin.x, end.x), std::max(origin.x, end.x),
+                                                   map_origin.x, cell_width, map->width);
+            const TileRange y_range = GetTileRange(std::min(origin.y, end.y), std::max(origin.y, end.y),
+                                                   map_origin.y, cell_height, map->height);
+            if (!x_range.Valid() || !y_range.Valid()) return;
+            for (i32 y = y_range.first; y <= y_range.last; ++y) {
+                for (i32 x = x_range.first; x <= x_range.last; ++x) {
+                    if (!IsSolidAt(*map, *tileset, x, y)) continue;
+                    const Vec2 lo{map_origin.x + static_cast<f32>(x) * cell_width,
+                                  map_origin.y + static_cast<f32>(y) * cell_height};
+                    f32 t = 0.0f;
+                    Vec2 normal{};
+                    if (!SlabRay(origin, dir, lo, {lo.x + cell_width, lo.y + cell_height},
+                                 max_distance, t, normal)) continue;
+                    RayHit2D hit;
+                    hit.tile = true;
+                    hit.tile_x = x;
+                    hit.tile_y = y;
+                    hit.distance = t;
+                    hit.point = origin + dir * t;
+                    hit.normal = normal;
+                    hits.push_back(hit);
+                }
+            }
+        });
+    }
+    std::sort(hits.begin(), hits.end(), RayHitBefore);
+    if (hits.size() > max_hits) hits.resize(max_hits);
+    return hits;
+}
+
+bool Physics2D::CircleCast(Vec2 origin, Vec2 dir, f32 radius, f32 max_distance, RayHit2D& out, u32 mask) const {
+    const f32 direction_length = dir.Length();
+    if (!IsFinite(origin) || !IsFinite(dir) || !std::isfinite(radius) || !std::isfinite(max_distance) ||
+        radius < 0.0f || max_distance < 0.0f || !std::isfinite(direction_length) || direction_length < 1e-9f) return false;
+    dir = dir * (1.0f / direction_length);
+    f32 best = max_distance;
+    bool found = false;
+    auto set_hit = [&](f32 t, Vec2 point, Vec2 normal, Entity entity, bool tile, i32 tile_x, i32 tile_y) {
+        if (t < 0.0f || t > best) return;
+        RayHit2D candidate;
+        candidate.entity = entity;
+        candidate.tile = tile;
+        candidate.tile_x = tile_x;
+        candidate.tile_y = tile_y;
+        candidate.distance = t;
+        candidate.point = point;
+        candidate.normal = normal;
+        if (!found && t <= best) {
+            best = t;
+            found = true;
+            out = candidate;
+        } else if (found && RayHitBefore(candidate, out)) {
+            best = t;
+            out = candidate;
+        }
+    };
+
+    EachEntity(world_, [&](Entity e) {
+        const Transform* transform = world_.GetComponent<Transform>(e);
+        const Collider2D* collider = world_.GetComponent<Collider2D>(e);
+        if (!transform || !collider || !IsValidCollider(*collider, *transform) || collider->trigger ||
+            (collider->layer & mask) == 0) return;
+        const Vec2 center{transform->position.x + collider->offset.x,
+                          transform->position.y + collider->offset.y};
+        if (collider->shape == Shape2D::Box) {
+            f32 t = 0.0f;
+            Vec2 normal{}, point{};
+            if (CircleCastAabb(origin, dir, radius,
+                               {center.x - collider->half_extents.x, center.y - collider->half_extents.y},
+                               {center.x + collider->half_extents.x, center.y + collider->half_extents.y},
+                               best, t, normal, point)) {
+                set_hit(t, point, normal, e, false, 0, 0);
+            }
+            return;
+        }
+
+        const f32 combined_radius = radius + collider->radius;
+        const Vec2 offset = origin - center;
+        const f32 a = dir.Dot(dir), b = offset.Dot(dir), c = offset.Dot(offset) - combined_radius * combined_radius;
+        const f32 discriminant = b * b - a * c;
+        f32 t = 0.0f;
+        if (c <= 0.0f) {
+            t = 0.0f;
+        } else if (discriminant >= 0.0f) {
+            t = (-b - std::sqrt(discriminant)) / a;
+        } else {
+            return;
+        }
+        if (t < 0.0f || t > best) return;
+        const Vec2 cast_center = origin + dir * t;
+        Vec2 normal = cast_center - center;
+        const f32 normal_length = normal.Length();
+        normal = normal_length > 1e-9f ? normal * (1.0f / normal_length) : Vec2{0.0f, 1.0f};
+        set_hit(t, center + normal * collider->radius, normal, e, false, 0, 0);
+    });
+
+    if (tiles_.tilemaps && tiles_.tilesets && (mask & 1u) != 0) {
+        const Vec2 end = origin + dir * best;
+        EachEntity(world_, [&](Entity e) {
+            const TilemapRenderer* renderer = world_.GetComponent<TilemapRenderer>(e);
+            const Transform* transform = world_.GetComponent<Transform>(e);
+            if (!renderer || !transform) return;
+            const TilemapData* map = tiles_.tilemaps(renderer->tilemap.guid);
+            const Tileset* tileset = map ? tiles_.tilesets(map->tileset) : nullptr;
+            if (!map || !tileset) return;
+            Vec2 map_origin{}, cell_size{};
+            if (!TilemapGeometry(*renderer, *transform, *tileset, map_origin, cell_size)) return;
+            const f32 cell_width = cell_size.x, cell_height = cell_size.y;
+            const TileRange x_range = GetTileRange(std::min(origin.x, end.x) - radius,
+                                                   std::max(origin.x, end.x) + radius,
+                                                   map_origin.x, cell_width, map->width);
+            const TileRange y_range = GetTileRange(std::min(origin.y, end.y) - radius,
+                                                   std::max(origin.y, end.y) + radius,
+                                                   map_origin.y, cell_height, map->height);
+            if (!x_range.Valid() || !y_range.Valid()) return;
+            for (i32 y = y_range.first; y <= y_range.last; ++y) {
+                for (i32 x = x_range.first; x <= x_range.last; ++x) {
+                    if (!IsSolidAt(*map, *tileset, x, y)) continue;
+                    const Vec2 lo{map_origin.x + static_cast<f32>(x) * cell_width,
+                                  map_origin.y + static_cast<f32>(y) * cell_height};
+                    f32 t = 0.0f;
+                    Vec2 normal{}, point{};
+                    if (CircleCastAabb(origin, dir, radius, lo, {lo.x + cell_width, lo.y + cell_height},
+                                       best, t, normal, point)) {
+                        set_hit(t, point, normal, {}, true, x, y);
+                    }
+                }
+            }
+        });
+    }
+    return found;
+}
+
+bool Physics2D::BoxCast(Vec2 origin, Vec2 half, Vec2 dir, f32 max_distance, RayHit2D& out, u32 mask) const {
+    const f32 direction_length = dir.Length();
+    if (!IsFinite(origin) || !IsFinite(half) || !IsFinite(dir) || !std::isfinite(max_distance) ||
+        half.x < 0.0f || half.y < 0.0f || max_distance < 0.0f ||
+        !std::isfinite(direction_length) || direction_length < 1e-9f) return false;
+    dir = dir * (1.0f / direction_length);
+    f32 best = max_distance;
+    bool found = false;
+    auto set_hit = [&](f32 t, Vec2 point, Vec2 normal, Entity entity, bool tile, i32 tile_x, i32 tile_y) {
+        if (t < 0.0f || t > best) return;
+        RayHit2D candidate;
+        candidate.entity = entity;
+        candidate.tile = tile;
+        candidate.tile_x = tile_x;
+        candidate.tile_y = tile_y;
+        candidate.distance = t;
+        candidate.point = point;
+        candidate.normal = normal;
+        if (!found) {
+            best = t;
+            found = true;
+            out = candidate;
+        } else if (RayHitBefore(candidate, out)) {
+            best = t;
+            out = candidate;
+        }
+    };
+    auto box_hit_point = [&](Vec2 cast_center, Vec2 target_lo, Vec2 target_hi, Vec2 normal) {
+        if (normal.x < -0.5f) return Vec2{target_lo.x, std::clamp(cast_center.y, target_lo.y, target_hi.y)};
+        if (normal.x > 0.5f) return Vec2{target_hi.x, std::clamp(cast_center.y, target_lo.y, target_hi.y)};
+        if (normal.y < -0.5f) return Vec2{std::clamp(cast_center.x, target_lo.x, target_hi.x), target_lo.y};
+        if (normal.y > 0.5f) return Vec2{std::clamp(cast_center.x, target_lo.x, target_hi.x), target_hi.y};
+        return Vec2{std::clamp(cast_center.x, target_lo.x, target_hi.x),
+                    std::clamp(cast_center.y, target_lo.y, target_hi.y)};
+    };
+    auto sweep_box_target = [&](Vec2 target_lo, Vec2 target_hi, f32 t_limit, f32& t, Vec2& normal, Vec2& point) {
+        const Vec2 expanded_lo{target_lo.x - half.x, target_lo.y - half.y};
+        const Vec2 expanded_hi{target_hi.x + half.x, target_hi.y + half.y};
+        if (!SlabRay(origin, dir, expanded_lo, expanded_hi, t_limit, t, normal)) return false;
+        const Vec2 cast_center = origin + dir * t;
+        point = box_hit_point(cast_center, target_lo, target_hi, normal);
+        return true;
+    };
+
+    EachEntity(world_, [&](Entity e) {
+        const Transform* transform = world_.GetComponent<Transform>(e);
+        const Collider2D* collider = world_.GetComponent<Collider2D>(e);
+        if (!transform || !collider || !IsValidCollider(*collider, *transform) || collider->trigger ||
+            (collider->layer & mask) == 0) return;
+        const Vec2 center{transform->position.x + collider->offset.x,
+                          transform->position.y + collider->offset.y};
+        f32 t = 0.0f;
+        Vec2 normal{}, point{};
+        if (collider->shape == Shape2D::Box) {
+            if (!sweep_box_target({center.x - collider->half_extents.x, center.y - collider->half_extents.y},
+                                  {center.x + collider->half_extents.x, center.y + collider->half_extents.y},
+                                  best, t, normal, point)) return;
+        } else {
+            if (!CircleCastAabb(origin, dir, collider->radius,
+                                {center.x - half.x, center.y - half.y},
+                                {center.x + half.x, center.y + half.y}, best, t, normal, point)) return;
+            point = center + normal * collider->radius;
+        }
+        set_hit(t, point, normal, e, false, 0, 0);
+    });
+
+    if (tiles_.tilemaps && tiles_.tilesets && (mask & 1u) != 0) {
+        const Vec2 end = origin + dir * best;
+        EachEntity(world_, [&](Entity e) {
+            const TilemapRenderer* renderer = world_.GetComponent<TilemapRenderer>(e);
+            const Transform* transform = world_.GetComponent<Transform>(e);
+            if (!renderer || !transform) return;
+            const TilemapData* map = tiles_.tilemaps(renderer->tilemap.guid);
+            const Tileset* tileset = map ? tiles_.tilesets(map->tileset) : nullptr;
+            if (!map || !tileset) return;
+            Vec2 map_origin{}, cell_size{};
+            if (!TilemapGeometry(*renderer, *transform, *tileset, map_origin, cell_size)) return;
+            const f32 cell_width = cell_size.x, cell_height = cell_size.y;
+            const TileRange x_range = GetTileRange(std::min(origin.x, end.x) - half.x,
+                                                   std::max(origin.x, end.x) + half.x,
+                                                   map_origin.x, cell_width, map->width);
+            const TileRange y_range = GetTileRange(std::min(origin.y, end.y) - half.y,
+                                                   std::max(origin.y, end.y) + half.y,
+                                                   map_origin.y, cell_height, map->height);
+            if (!x_range.Valid() || !y_range.Valid()) return;
+            for (i32 y = y_range.first; y <= y_range.last; ++y) {
+                for (i32 x = x_range.first; x <= x_range.last; ++x) {
+                    if (!IsSolidAt(*map, *tileset, x, y)) continue;
+                    const Vec2 lo{map_origin.x + static_cast<f32>(x) * cell_width,
+                                  map_origin.y + static_cast<f32>(y) * cell_height};
+                    const Vec2 hi{lo.x + cell_width, lo.y + cell_height};
+                    f32 t = 0.0f;
+                    Vec2 normal{}, point{};
+                    if (sweep_box_target(lo, hi, best, t, normal, point)) set_hit(t, point, normal, {}, true, x, y);
                 }
             }
         });
@@ -525,14 +984,160 @@ bool Physics2D::Raycast(Vec2 origin, Vec2 dir, f32 max_distance, RayHit2D& out, 
 
 std::vector<Entity> Physics2D::OverlapBox(Vec2 center, Vec2 half, u32 mask) const {
     std::vector<Entity> result;
+    if (!IsFinite(center) || !IsFinite(half) || half.x < 0.0f || half.y < 0.0f) return result;
     EachEntity(world_, [&](Entity e) {
         const Transform* t = world_.GetComponent<Transform>(e);
         const Collider2D* c = world_.GetComponent<Collider2D>(e);
-        if (!t || !c || (c->layer & mask) == 0) return;
+        if (!t || !c || !IsValidCollider(*c, *t) || (c->layer & mask) == 0) return;
         const Vec2 p{t->position.x + c->offset.x, t->position.y + c->offset.y};
-        const Vec2 h = c->shape == Shape2D::Box ? c->half_extents : Vec2{c->radius, c->radius};
-        if (std::fabs(p.x - center.x) <= h.x + half.x && std::fabs(p.y - center.y) <= h.y + half.y) result.push_back(e);
+        if (c->shape == Shape2D::Circle) {
+            const Vec2 closest{std::clamp(p.x, center.x - half.x, center.x + half.x),
+                               std::clamp(p.y, center.y - half.y, center.y + half.y)};
+            const Vec2 delta = p - closest;
+            if (delta.Dot(delta) <= c->radius * c->radius) result.push_back(e);
+            return;
+        }
+        if (std::fabs(p.x - center.x) <= c->half_extents.x + half.x &&
+            std::fabs(p.y - center.y) <= c->half_extents.y + half.y) result.push_back(e);
     });
+    SortEntities(result);
+    return result;
+}
+
+std::vector<Entity> Physics2D::OverlapCircle(Vec2 center, f32 radius, u32 mask) const {
+    std::vector<Entity> result;
+    if (!IsFinite(center) || !std::isfinite(radius) || radius < 0.0f) return result;
+    const f32 radius_sq = radius * radius;
+    EachEntity(world_, [&](Entity e) {
+        const Transform* t = world_.GetComponent<Transform>(e);
+        const Collider2D* c = world_.GetComponent<Collider2D>(e);
+        if (!t || !c || !IsValidCollider(*c, *t) || (c->layer & mask) == 0) return;
+        const Vec2 p{t->position.x + c->offset.x, t->position.y + c->offset.y};
+        if (c->shape == Shape2D::Circle) {
+            const Vec2 delta = p - center;
+            const f32 combined = radius + c->radius;
+            if (delta.Dot(delta) <= combined * combined) result.push_back(e);
+        } else {
+            const Vec2 closest{std::clamp(center.x, p.x - c->half_extents.x, p.x + c->half_extents.x),
+                               std::clamp(center.y, p.y - c->half_extents.y, p.y + c->half_extents.y)};
+            const Vec2 delta = closest - center;
+            if (delta.Dot(delta) <= radius_sq) result.push_back(e);
+        }
+    });
+    SortEntities(result);
+    return result;
+}
+
+std::vector<Entity> Physics2D::OverlapOrientedBox(Vec2 center, Vec2 half, f32 radians, u32 mask) const {
+    std::vector<Entity> result;
+    if (!IsFinite(center) || !IsFinite(half) || !std::isfinite(radians) || half.x < 0.0f || half.y < 0.0f) return result;
+    const f32 c = std::cos(radians), s = std::sin(radians);
+    const Vec2 axis_x{c, s}, axis_y{-s, c};
+    EachEntity(world_, [&](Entity e) {
+        const Transform* t = world_.GetComponent<Transform>(e);
+        const Collider2D* collider = world_.GetComponent<Collider2D>(e);
+        if (!t || !collider || !IsValidCollider(*collider, *t) || (collider->layer & mask) == 0) return;
+        const Vec2 p{t->position.x + collider->offset.x, t->position.y + collider->offset.y};
+        const Vec2 delta = p - center;
+        if (collider->shape == Shape2D::Circle) {
+            const f32 local_x = delta.Dot(axis_x);
+            const f32 local_y = delta.Dot(axis_y);
+            const f32 closest_x = std::clamp(local_x, -half.x, half.x);
+            const f32 closest_y = std::clamp(local_y, -half.y, half.y);
+            const f32 dx = local_x - closest_x, dy = local_y - closest_y;
+            if (dx * dx + dy * dy <= collider->radius * collider->radius) result.push_back(e);
+            return;
+        }
+
+        const Vec2 box_half = collider->half_extents;
+        if (std::fabs(delta.x) > half.x * std::fabs(axis_x.x) + half.y * std::fabs(axis_y.x) + box_half.x ||
+            std::fabs(delta.y) > half.x * std::fabs(axis_x.y) + half.y * std::fabs(axis_y.y) + box_half.y ||
+            std::fabs(delta.Dot(axis_x)) > half.x + box_half.x * std::fabs(axis_x.x) + box_half.y * std::fabs(axis_x.y) ||
+            std::fabs(delta.Dot(axis_y)) > half.y + box_half.x * std::fabs(axis_y.x) + box_half.y * std::fabs(axis_y.y)) return;
+        result.push_back(e);
+    });
+    SortEntities(result);
+    return result;
+}
+
+std::vector<Entity> Physics2D::OverlapCapsule(Vec2 point_a, Vec2 point_b, f32 radius, u32 mask) const {
+    std::vector<Entity> result;
+    if (!IsFinite(point_a) || !IsFinite(point_b) || !std::isfinite(radius) || radius < 0.0f) return result;
+    const Vec2 segment = point_b - point_a;
+    const f32 segment_length_sq = segment.Dot(segment);
+    auto distance_sq_to_segment = [&](Vec2 point) {
+        const f32 t = segment_length_sq > 0.0f
+                          ? std::clamp((point - point_a).Dot(segment) / segment_length_sq, 0.0f, 1.0f)
+                          : 0.0f;
+        const Vec2 delta = point - (point_a + segment * t);
+        return delta.Dot(delta);
+    };
+    auto point_box_distance_sq = [](Vec2 point, Vec2 box_center, Vec2 half) {
+        const f32 dx = std::max(std::fabs(point.x - box_center.x) - half.x, 0.0f);
+        const f32 dy = std::max(std::fabs(point.y - box_center.y) - half.y, 0.0f);
+        return dx * dx + dy * dy;
+    };
+    const f32 radius_sq = radius * radius;
+    EachEntity(world_, [&](Entity e) {
+        const Transform* transform = world_.GetComponent<Transform>(e);
+        const Collider2D* collider = world_.GetComponent<Collider2D>(e);
+        if (!transform || !collider || !IsValidCollider(*collider, *transform) || (collider->layer & mask) == 0) return;
+        const Vec2 center{transform->position.x + collider->offset.x,
+                          transform->position.y + collider->offset.y};
+        if (collider->shape == Shape2D::Circle) {
+            const f32 combined_radius = radius + collider->radius;
+            if (distance_sq_to_segment(center) <= combined_radius * combined_radius) result.push_back(e);
+            return;
+        }
+
+        const Vec2 half = collider->half_extents;
+        const Vec2 lo{center.x - half.x, center.y - half.y};
+        const Vec2 hi{center.x + half.x, center.y + half.y};
+        const f32 min_x = std::min(point_a.x, point_b.x), max_x = std::max(point_a.x, point_b.x);
+        const f32 min_y = std::min(point_a.y, point_b.y), max_y = std::max(point_a.y, point_b.y);
+        bool intersects_box = max_x >= lo.x && min_x <= hi.x && max_y >= lo.y && min_y <= hi.y;
+        if (intersects_box) {
+            f32 t_min = 0.0f, t_max = 1.0f;
+            auto clip_axis = [&](f32 start, f32 delta, f32 min_value, f32 max_value) {
+                if (std::fabs(delta) < 1e-9f) return start >= min_value && start <= max_value;
+                f32 t0 = (min_value - start) / delta, t1 = (max_value - start) / delta;
+                if (t0 > t1) std::swap(t0, t1);
+                t_min = std::max(t_min, t0);
+                t_max = std::min(t_max, t1);
+                return t_min <= t_max;
+            };
+            intersects_box = clip_axis(point_a.x, segment.x, lo.x, hi.x) &&
+                             clip_axis(point_a.y, segment.y, lo.y, hi.y);
+        }
+        if (intersects_box || point_box_distance_sq(point_a, center, half) <= radius_sq ||
+            point_box_distance_sq(point_b, center, half) <= radius_sq ||
+            distance_sq_to_segment(lo) <= radius_sq || distance_sq_to_segment({lo.x, hi.y}) <= radius_sq ||
+            distance_sq_to_segment({hi.x, lo.y}) <= radius_sq || distance_sq_to_segment(hi) <= radius_sq) {
+            result.push_back(e);
+        }
+    });
+    SortEntities(result);
+    return result;
+}
+
+std::vector<Entity> Physics2D::OverlapPoint(Vec2 point, u32 mask) const {
+    std::vector<Entity> result;
+    if (!IsFinite(point)) return result;
+    EachEntity(world_, [&](Entity e) {
+        const Transform* transform = world_.GetComponent<Transform>(e);
+        const Collider2D* collider = world_.GetComponent<Collider2D>(e);
+        if (!transform || !collider || !IsValidCollider(*collider, *transform) || (collider->layer & mask) == 0) return;
+        const Vec2 center{transform->position.x + collider->offset.x,
+                          transform->position.y + collider->offset.y};
+        if (collider->shape == Shape2D::Circle) {
+            const Vec2 delta = point - center;
+            if (delta.Dot(delta) <= collider->radius * collider->radius) result.push_back(e);
+        } else if (std::fabs(point.x - center.x) <= collider->half_extents.x &&
+                   std::fabs(point.y - center.y) <= collider->half_extents.y) {
+            result.push_back(e);
+        }
+    });
+    SortEntities(result);
     return result;
 }
 

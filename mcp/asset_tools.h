@@ -15,12 +15,13 @@
 
 namespace aether::mcp {
 
+struct EditorSession;
 namespace detail {
 struct AssetHost;
 }
 
 // `host` is the open project, shared with the kit tools (see RegisterKitTools).
-void RegisterAssetTools(McpServer& server, std::shared_ptr<detail::AssetHost> host);
+void RegisterAssetTools(McpServer& server, std::shared_ptr<detail::AssetHost> host, EditorSession& session);
 // Makes the shared project holder.
 std::shared_ptr<detail::AssetHost> MakeAssetHost();
 

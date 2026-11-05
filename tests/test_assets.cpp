@@ -3,6 +3,7 @@
 #include "test_framework.h"
 
 #include <filesystem>
+#include <iterator>
 #include <string>
 
 using namespace aether;
@@ -49,6 +50,36 @@ std::string WriteTempPng(const char* filename, const u8* data, usize size) {
 }
 
 } // namespace
+
+AETHER_TEST(Assets_DecodeImageRejectsTruncatedPngWithHugeIdatLength) {
+    // Reproduce the fuzz finding: a tiny valid PNG header whose IDAT chunk
+    // advertises nearly 2 GiB must not cause stb_image to allocate it.
+    std::vector<u8> malformed(std::begin(kSolidRedPng), std::end(kSolidRedPng));
+    bool found_idat = false;
+    for (usize i = 4; i + 4 <= malformed.size(); ++i) {
+        if (malformed[i] == 'I' && malformed[i + 1] == 'D' &&
+            malformed[i + 2] == 'A' && malformed[i + 3] == 'T') {
+            malformed[i - 4] = 0x7f;
+            malformed[i - 3] = 0xff;
+            malformed[i - 2] = 0xff;
+            malformed[i - 1] = 0xff;
+            found_idat = true;
+            break;
+        }
+    }
+    AETHER_CHECK(found_idat);
+    ImageData image;
+    image.width = 7;
+    image.height = 9;
+    image.pixels = {1, 2, 3, 4};
+    AETHER_CHECK(!DecodeImageFromMemory(malformed, image));
+    AETHER_CHECK(image.width == 7 && image.height == 9 && image.pixels.size() == 4);
+
+    // The guard must not reject normal PNG decoding.
+    ImageData valid;
+    AETHER_CHECK(DecodeImageFromMemory(kSolidRedPng, valid));
+    AETHER_CHECK(valid.width == 4 && valid.height == 4);
+}
 
 AETHER_TEST(Assets_LoadImageMissingFileReturnsFalse) {
     ImageData image;

@@ -58,7 +58,7 @@ public:
     // Stops and returns to the start (the world keeps what was last applied).
     void Stop();
     // Finishes from the current position without firing intermediate Event,
-    // Audio or Animation keys. Applies the final pose, releases temporary
+    // Audio, Animation or Vfx keys. Applies the final pose, releases temporary
     // spawns/camera cuts/fade, stops active cues and montages, and calls
     // on_finished once.
     void Skip();
@@ -77,7 +77,7 @@ public:
     void Update(f32 dt);
 
     // Moves the playhead forward to `time` (clamped to the duration) in one
-    // step, firing the Event, Audio and Animation keys on the way, then applies
+    // step, firing the Event, Audio, Animation and Vfx keys on the way, then applies
     // the tracks. For rendering frame by frame: the keys of each frame fire
     // exactly once however the frames fall. Going backward fires nothing.
     void AdvanceTo(f32 time);
@@ -90,6 +90,8 @@ public:
     // releases owned world state without invoking media callbacks.
     std::function<void(const Track&, Entity entity, const AudioKey&)> on_audio;
     std::function<void(const Track&, Entity entity, const AnimKey&)> on_animation;
+    // Vfx keys, the same way (an active effect gets a synthetic Stop too).
+    std::function<void(const Track&, Entity entity, const VfxKey&)> on_vfx;
     // Spawn tracks: `on_spawn` makes the key's prefab (placed relative to
     // `parent`, null for none) and returns its root; `on_despawn` removes it.
     // The player keeps the handle, so a key is alive exactly while the
@@ -113,6 +115,13 @@ public:
     // its colour). `on_fade` is called when it changes. Stop clears it.
     const FadeState& Fade() const { return fade_; }
     std::function<void(const FadeState&)> on_fade;
+
+    // Subtitle tracks: the line on screen at the playhead (the latest-starting
+    // key whose [time, time + duration) holds it, among the unmuted Subtitle
+    // tracks, then the sequences playing inside this one), or null. Like the
+    // fade it follows the playhead; Stop and Skip clear it. The key lives in
+    // the sequence.
+    const SubtitleKey* Subtitle() const { return subtitle_; }
     static constexpr int kMaxSubsequenceDepth = 4;
 
     // What went wrong binding or applying, each reported once: a missing
@@ -129,6 +138,11 @@ private:
         Entity entity;
         f32 rate = 1.0f;
     };
+    struct ActiveVfx {
+        std::string effect;
+        Entity entity;
+        Vec3 offset;
+    };
     struct Target {
         Entity entity;
         ComponentId component = kInvalidComponentId; // Property
@@ -141,9 +155,10 @@ private:
         i32 cut_saved = 0;    // ... and the priority it had
         std::vector<std::unique_ptr<SequencePlayer>> children; // Subsequence: one per key (null when it couldn't be made)
         std::vector<char> child_active; // Subsequence: the playhead is inside this key's range
-        std::unique_ptr<Track> cleanup_track; // Audio/Animation: survives an editor edit before preview teardown
+        std::unique_ptr<Track> cleanup_track; // Audio/Animation/Vfx: survives an editor edit before preview teardown
         std::vector<ActiveAudio> active_audio; // cues and the subjects that received Play
         std::vector<ActiveAnimation> active_animation; // montages and the subjects that received Play
+        std::vector<ActiveVfx> active_vfx; // effects and the subjects that received Play
         int shown = -1;       // Visibility: the last value applied (-1 none yet)
         bool bound = false;   // resolved and usable
         bool reported = false; // its problem has been reported
@@ -160,7 +175,7 @@ private:
     void ReleaseCut(Target& target);
     void DespawnAll();
     SequencePlayer(const LevelSequence& sequence, World& world, const GuidIndex& guids, SequenceResolver resolver, std::vector<std::string> path);
-    // Fires the Event, Audio and Animation keys in (from, to] (or [from, to]
+    // Fires the Event, Audio, Animation and Vfx keys in (from, to] (or [from, to]
     // when `include_from`).
     void FireEvents(f32 from, f32 to, bool include_from);
 
@@ -171,6 +186,7 @@ private:
     std::vector<std::string> path_; // the sequences this one is nested in, outermost first, then itself (when known)
     FadeState fade_;
     FadeState pending_fade_;
+    const SubtitleKey* subtitle_ = nullptr;
     bool final_pose_ = false; // evaluating a child's first or last pose as it leaves its range: no spawns, cuts or hooks
     std::vector<Target> targets_;
     std::vector<std::string> problems_;

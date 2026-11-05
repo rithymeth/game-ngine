@@ -8,6 +8,8 @@
 #include <string>
 #include <vector>
 
+namespace aether { class PhysicsScene; }
+
 namespace aether::editor {
 
 enum class NetPlayMode : u8 { ListenServer, DedicatedServer };
@@ -20,6 +22,7 @@ struct NetPlaySettings {
     u64 seed = 1;
     bool replicate_scene = true;  // scene entities with a Transform get a NetIdentity
     bool spawn_players = true;    // a predicted "player" pawn per player
+    bool authoritative_physics = false; // opt-in Jolt simulation + accepted-snapshot reconciliation
     Vec3 spawn_origin{0, 0, 0};
     f32 spawn_spacing = 2.0f;     // along x, per player
     f64 interpolation_delay = 0.1;
@@ -60,6 +63,10 @@ public:
     World& ServerWorld();
     usize ClientCount() const { return clients_.size(); }
     World& ClientWorld(usize client);
+    // Null unless opt-in Jolt is enabled and the Physics module is available.
+    // Clients do not step Jolt: accepted snapshots update their query bodies.
+    PhysicsScene* ServerPhysicsScene() const;
+    PhysicsScene* ClientPhysicsScene(usize client) const;
     Entity ServerPawn(usize client) const;  // the server's entity for that client's player
     Entity ClientPawn(usize client) const;  // that client's own pawn (null until replicated)
     Entity ListenPawn() const { return listen_pawn_; }

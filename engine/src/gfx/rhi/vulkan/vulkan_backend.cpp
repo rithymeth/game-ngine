@@ -16,6 +16,36 @@
 #include <GLFW/glfw3.h>
 #endif
 
+#if defined(__ANDROID__)
+// Android's libvulkan.so exports only Vulkan 1.0 entry points below API 31, so the 1.2 timeline-semaphore calls are
+// looked up through vkGetDeviceProcAddr (core name first, then the VK_KHR_timeline_semaphore one) on first use.
+namespace {
+
+template <typename Fn>
+Fn AetherDeviceProc(VkDevice device, const char* core_name, const char* khr_name) {
+    PFN_vkVoidFunction fn = vkGetDeviceProcAddr(device, core_name);
+    if (!fn) fn = vkGetDeviceProcAddr(device, khr_name);
+    if (!fn) throw std::runtime_error(std::string("Vulkan driver lacks ") + core_name);
+    return reinterpret_cast<Fn>(fn);
+}
+
+VkResult AetherVkWaitSemaphores(VkDevice device, const VkSemaphoreWaitInfo* info, uint64_t timeout) {
+    static const PFN_vkWaitSemaphores fn =
+        AetherDeviceProc<PFN_vkWaitSemaphores>(device, "vkWaitSemaphores", "vkWaitSemaphoresKHR");
+    return fn(device, info, timeout);
+}
+
+VkResult AetherVkGetSemaphoreCounterValue(VkDevice device, VkSemaphore semaphore, uint64_t* value) {
+    static const PFN_vkGetSemaphoreCounterValue fn = AetherDeviceProc<PFN_vkGetSemaphoreCounterValue>(
+        device, "vkGetSemaphoreCounterValue", "vkGetSemaphoreCounterValueKHR");
+    return fn(device, semaphore, value);
+}
+
+} // namespace
+#define vkWaitSemaphores AetherVkWaitSemaphores
+#define vkGetSemaphoreCounterValue AetherVkGetSemaphoreCounterValue
+#endif
+
 namespace aether::gfx::rhi::vulkan_backend {
 
 namespace {
@@ -137,7 +167,8 @@ VkInstance CreateInstance(bool /*enable_debug_layer*/) {
     std::vector<VkExtensionProperties> available(available_count);
     vkEnumerateInstanceExtensionProperties(nullptr, &available_count, available.data());
     static const char* const kWanted[] = {"VK_KHR_surface", "VK_KHR_xcb_surface", "VK_KHR_xlib_surface",
-                                          "VK_KHR_wayland_surface", "VK_EXT_metal_surface"};
+                                          "VK_KHR_wayland_surface", "VK_EXT_metal_surface",
+                                          "VK_KHR_android_surface"};
     std::vector<const char*> extensions;
     for (const char* wanted : kWanted) {
         for (const VkExtensionProperties& ext : available) {
@@ -418,6 +449,124 @@ void VulkanDevice::DeferCommandListResources(VkCommandPool command_pool,
     }
 }
 
+void VulkanDevice::Retire(std::function<void()> release) {
+    RetiredResource entry;
+    entry.graphics_fence = next_fence_value_.load() - 1; // the latest submission: it may be the last one to use the resource
+    entry.compute_fence = next_compute_fence_value_.load() - 1;
+    entry.release = std::move(release);
+    if (IsFenceComplete(entry.graphics_fence) && IsComputeFenceComplete(entry.compute_fence)) {
+        entry.release(); // idle GPU: nothing to wait for
+        return;
+    }
+    std::lock_guard<std::mutex> lock(retire_mutex_);
+    retire_queue_.push_back(std::move(entry));
+}
+
+void VulkanDevice::DrainRetired() {
+    std::vector<RetiredResource> ready;
+    {
+        std::lock_guard<std::mutex> lock(retire_mutex_);
+        if (retire_queue_.empty()) return;
+        std::vector<RetiredResource> waiting;
+        for (RetiredResource& entry : retire_queue_) {
+            if (IsFenceComplete(entry.graphics_fence) && IsComputeFenceComplete(entry.compute_fence)) ready.push_back(std::move(entry));
+            else waiting.push_back(std::move(entry));
+        }
+        retire_queue_ = std::move(waiting);
+    }
+    for (RetiredResource& entry : ready) entry.release();
+}
+
+void VulkanDevice::FlushRetired() noexcept {
+    std::vector<RetiredResource> all;
+    {
+        std::lock_guard<std::mutex> lock(retire_mutex_);
+        all = std::move(retire_queue_);
+        retire_queue_.clear();
+    }
+    for (RetiredResource& entry : all) entry.release();
+}
+
+void VulkanDevice::ReclaimTextureSlots() {
+    DrainRetired();
+    std::lock_guard<std::mutex> lock(retire_mutex_);
+    for (u32 position : released_texture_slots_) free_texture_slots_.push_back(position);
+    released_texture_slots_.clear();
+}
+
+IDevice::ResourceStats VulkanDevice::GetResourceStats() const {
+    ResourceStats stats;
+    stats.live_buffers = live_buffers_;
+    stats.live_pipelines = live_pipelines_;
+    stats.live_compute_pipelines = live_compute_pipelines_;
+    for (const SampledTextureRecord& texture : sampled_textures_) stats.live_textures += texture.image != VK_NULL_HANDLE ? 1u : 0u;
+    stats.buffer_slots = static_cast<u32>(buffers_.size());
+    stats.pipeline_slots = static_cast<u32>(pipelines_.size());
+    stats.compute_pipeline_slots = static_cast<u32>(compute_pipelines_.size());
+    std::lock_guard<std::mutex> lock(retire_mutex_);
+    stats.pending_retire = static_cast<u32>(retire_queue_.size());
+    return stats;
+}
+
+bool VulkanDevice::DestroyBuffer(BufferHandle buffer) {
+    if (!IsBufferAlive(buffer)) {
+        AETHER_LOG_ERROR("Vulkan", "DestroyBuffer: handle %u is invalid or already destroyed", buffer.index);
+        return false;
+    }
+    const BufferRecord record = buffers_[buffer.index];
+    buffers_[buffer.index] = {};
+    free_buffer_slots_.push_back(buffer.index);
+    --live_buffers_;
+    Retire([this, record] {
+        if (record.mapped) vkUnmapMemory(device_, record.memory);
+        if (record.constants_set != VK_NULL_HANDLE) {
+            vkFreeDescriptorSets(device_, frame_constants_pool_, 1, &record.constants_set);
+            --constant_buffer_count_;
+        }
+        vkDestroyBuffer(device_, record.buffer, nullptr);
+        vkFreeMemory(device_, record.memory, nullptr);
+    });
+    DrainRetired();
+    return true;
+}
+
+bool VulkanDevice::DestroyPipeline(PipelineHandle pipeline) {
+    if (!IsPipelineAlive(pipeline)) {
+        AETHER_LOG_ERROR("Vulkan", "DestroyPipeline: handle %u is invalid or already destroyed", pipeline.index);
+        return false;
+    }
+    const PipelineRecord record = pipelines_[pipeline.index];
+    pipelines_[pipeline.index] = {};
+    free_pipeline_slots_.push_back(pipeline.index);
+    --live_pipelines_;
+    Retire([this, record] {
+        vkDestroyPipeline(device_, record.pipeline, nullptr);
+        if (record.layout != VK_NULL_HANDLE) vkDestroyPipelineLayout(device_, record.layout, nullptr);
+    });
+    DrainRetired();
+    return true;
+}
+
+bool VulkanDevice::DestroyComputePipeline(ComputePipelineHandle pipeline) {
+    if (!IsComputePipelineAlive(pipeline)) {
+        AETHER_LOG_ERROR("Vulkan", "DestroyComputePipeline: handle %u is invalid or already destroyed", pipeline.index);
+        return false;
+    }
+    const ComputePipelineRecord record = compute_pipelines_[pipeline.index];
+    compute_pipelines_[pipeline.index] = {};
+    free_compute_pipeline_slots_.push_back(pipeline.index);
+    --live_compute_pipelines_;
+    Retire([this, record] {
+        vkDestroyPipeline(device_, record.pipeline, nullptr);
+        if (record.layout != VK_NULL_HANDLE) vkDestroyPipelineLayout(device_, record.layout, nullptr);
+        if (record.storage_layout != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(device_, record.storage_layout, nullptr);
+        if (record.constant_layout != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(device_, record.constant_layout, nullptr);
+        if (record.sampled_layout != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(device_, record.sampled_layout, nullptr);
+    });
+    DrainRetired();
+    return true;
+}
+
 VkResult VulkanDevice::WaitForDeviceIdle() {
     std::unique_lock<std::mutex> graphics_lock(graphics_queue_mutex_);
     if (compute_queue_ != queue_) {
@@ -441,6 +590,18 @@ void VulkanDevice::Destroy() noexcept {
             if (resources.command_pool != VK_NULL_HANDLE) vkDestroyCommandPool(device_, resources.command_pool, nullptr);
         }
         deferred_command_list_resources_.clear();
+        // The device is idle, so everything destroyed-but-pending can go now; records the free lists emptied are skipped below, which is what
+        // keeps each native object freed exactly once.
+        if (live_buffers_ != 0 || live_pipelines_ != 0 || live_compute_pipelines_ != 0) {
+            AETHER_LOG_WARN("Vulkan", "Device torn down with live resources: %u buffers, %u pipelines, %u compute pipelines (leak?)",
+                            live_buffers_, live_pipelines_, live_compute_pipelines_);
+        }
+        {
+            u32 live_textures = 0;
+            for (const SampledTextureRecord& texture : sampled_textures_) live_textures += texture.image != VK_NULL_HANDLE ? 1u : 0u;
+            if (live_textures != 0) AETHER_LOG_WARN("Vulkan", "Device torn down with %u live textures (leak?)", live_textures);
+        }
+        FlushRetired();
         for (const PipelineRecord& record : pipelines_) {
             if (record.pipeline != VK_NULL_HANDLE) {
                 vkDestroyPipeline(device_, record.pipeline, nullptr);
@@ -464,6 +625,7 @@ void VulkanDevice::Destroy() noexcept {
         }
         for (const BufferRecord& buffer : buffers_) {
             if (buffer.mapped) vkUnmapMemory(device_, buffer.memory);
+            if (buffer.constants_set != VK_NULL_HANDLE) vkFreeDescriptorSets(device_, frame_constants_pool_, 1, &buffer.constants_set);
             if (buffer.buffer != VK_NULL_HANDLE) vkDestroyBuffer(device_, buffer.buffer, nullptr);
             if (buffer.memory != VK_NULL_HANDLE) vkFreeMemory(device_, buffer.memory, nullptr);
         }
@@ -579,12 +741,45 @@ void VulkanDevice::WaitForComputeFence(u64 fence_value) {
                          static_cast<unsigned long long>(fence_value));
         throw std::invalid_argument("Vulkan compute fence value was not submitted");
     }
-    if (IsComputeFenceComplete(fence_value)) return;
-    VkSemaphoreWaitInfo wait_info{VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO};
-    wait_info.semaphoreCount = 1;
-    wait_info.pSemaphores = &compute_timeline_semaphore_;
-    wait_info.pValues = &fence_value;
-    AETHER_VK_CHECK(vkWaitSemaphores(device_, &wait_info, UINT64_MAX));
+    if (!IsComputeFenceComplete(fence_value)) {
+        VkSemaphoreWaitInfo wait_info{VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO};
+        wait_info.semaphoreCount = 1;
+        wait_info.pSemaphores = &compute_timeline_semaphore_;
+        wait_info.pValues = &fence_value;
+        AETHER_VK_CHECK(vkWaitSemaphores(device_, &wait_info, UINT64_MAX));
+    }
+    DrainRetired();
+}
+
+void VulkanDevice::WithQueuesIdle(const std::function<void()>& operation) {
+    if (!operation) {
+        throw std::invalid_argument("Vulkan idle-queue operation must not be empty");
+    }
+
+    std::unique_lock<std::mutex> graphics_lock(graphics_queue_mutex_, std::defer_lock);
+    std::unique_lock<std::mutex> compute_lock(compute_queue_mutex_, std::defer_lock);
+    if (compute_queue_ == queue_) {
+        graphics_lock.lock();
+    } else {
+        std::lock(graphics_lock, compute_lock);
+    }
+
+    const u64 latest_graphics_fence = next_fence_value_.load(std::memory_order_acquire) - 1;
+    const u64 latest_compute_fence = next_compute_fence_value_.load(std::memory_order_acquire) - 1;
+    if (latest_graphics_fence != 0) WaitForFence(latest_graphics_fence);
+    if (latest_compute_fence != 0) WaitForComputeFence(latest_compute_fence);
+    operation();
+}
+
+void VulkanDevice::WithGraphicsQueueIdle(const std::function<void()>& operation) {
+    if (!operation) {
+        throw std::invalid_argument("Vulkan idle-graphics operation must not be empty");
+    }
+
+    std::lock_guard<std::mutex> graphics_lock(graphics_queue_mutex_);
+    const u64 latest_graphics_fence = next_fence_value_.load(std::memory_order_acquire) - 1;
+    if (latest_graphics_fence != 0) WaitForFence(latest_graphics_fence);
+    operation();
 }
 
 void VulkanDevice::WithQueuesIdle(const std::function<void()>& operation) {
@@ -871,6 +1066,18 @@ BufferRecord CreateHostVisibleBuffer(VkDevice device, VkPhysicalDevice physical_
 }
 } // namespace
 
+u32 VulkanDevice::AcquireBufferSlot(const BufferRecord& record) {
+    ++live_buffers_;
+    if (!free_buffer_slots_.empty()) {
+        const u32 slot = free_buffer_slots_.back();
+        free_buffer_slots_.pop_back();
+        buffers_[slot] = record;
+        return slot;
+    }
+    buffers_.push_back(record);
+    return static_cast<u32>(buffers_.size() - 1);
+}
+
 BufferHandle VulkanDevice::CreateBufferInternal(const void* data, u64 size_bytes) {
     // Both usages on every buffer regardless of which CreateXBuffer call
     // made it — simpler than tracking per-buffer usage flags, and harmless:
@@ -880,9 +1087,9 @@ BufferHandle VulkanDevice::CreateBufferInternal(const void* data, u64 size_bytes
     owned_record.Get() = CreateHostVisibleBuffer(device_, physical_device_, size_bytes,
                                                   VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                                                   data, true);
-    buffers_.push_back(owned_record.Get());
+    const u32 slot = AcquireBufferSlot(owned_record.Get());
     owned_record.Release();
-    return BufferHandle{static_cast<u32>(buffers_.size() - 1)};
+    return BufferHandle{slot};
 }
 
 BufferHandle VulkanDevice::CreateVertexBuffer(const void* data, u64 size_bytes) {
@@ -918,9 +1125,9 @@ BufferHandle VulkanDevice::CreateStorageBuffer(u64 size_bytes, u32 element_strid
         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         initial_data, true, queue_family_index_, compute_queue_family_index_);
     owned_record.Get().is_storage = true;
-    buffers_.push_back(owned_record.Get());
+    const u32 slot = AcquireBufferSlot(owned_record.Get());
     owned_record.Release();
-    return BufferHandle{static_cast<u32>(buffers_.size() - 1)};
+    return BufferHandle{slot};
 }
 
 BufferHandle VulkanDevice::CreateConstantBuffer(u64 size_bytes, const void* initial_data) {
@@ -932,13 +1139,13 @@ BufferHandle VulkanDevice::CreateConstantBuffer(u64 size_bytes, const void* init
     owned_record.Get() = CreateHostVisibleBuffer(device_, physical_device_, size_bytes,
         VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, initial_data, true, queue_family_index_, compute_queue_family_index_);
     owned_record.Get().is_constant = true;
-    buffers_.push_back(owned_record.Get());
+    const u32 slot = AcquireBufferSlot(owned_record.Get());
     owned_record.Release();
-    return BufferHandle{static_cast<u32>(buffers_.size() - 1)};
+    return BufferHandle{slot};
 }
 
 void VulkanDevice::UpdateConstantBuffer(BufferHandle buffer, const void* data, u64 size_bytes, u64 offset) {
-    if (!buffer.IsValid() || buffer.index >= buffers_.size() || !data || size_bytes == 0) {
+    if (!IsBufferAlive(buffer) || !data || size_bytes == 0) {
         AETHER_LOG_ERROR("Vulkan", "UpdateConstantBuffer received an invalid handle, source, or size");
         return;
     }
@@ -951,7 +1158,7 @@ void VulkanDevice::UpdateConstantBuffer(BufferHandle buffer, const void* data, u
 }
 
 void VulkanDevice::UpdateStorageBuffer(BufferHandle buffer, const void* data, u64 size_bytes, u64 offset) {
-    if (!buffer.IsValid() || buffer.index >= buffers_.size() || !data || size_bytes == 0) {
+    if (!IsBufferAlive(buffer) || !data || size_bytes == 0) {
         AETHER_LOG_ERROR("Vulkan", "UpdateStorageBuffer received an invalid handle, source, or size");
         return;
     }
@@ -965,7 +1172,17 @@ void VulkanDevice::UpdateStorageBuffer(BufferHandle buffer, const void* data, u6
 
 void VulkanDevice::UpdateVertexBuffer(BufferHandle buffer, const void* data, u64 size_bytes) {
     if (!IsVertexBuffer(buffer) || buffer.index >= buffers_.size()) {
-        AETHER_LOG_ERROR("Vulkan", "UpdateVertexBuffer received an invalid buffer handle (%u)", buffer.index);
+        if (buffer.IsValid() && buffer.index < buffers_.size()) {
+            const BufferRecord& r = buffers_[buffer.index];
+            AETHER_LOG_ERROR("Vulkan",
+                             "UpdateVertexBuffer received a handle (%u of %zu) that is not a vertex buffer "
+                             "(vertex=%d index=%d constant=%d storage=%d, %llu bytes)",
+                             buffer.index, buffers_.size(), r.is_vertex, r.is_index, r.is_constant, r.is_storage,
+                             static_cast<unsigned long long>(r.size_bytes));
+        } else {
+            AETHER_LOG_ERROR("Vulkan", "UpdateVertexBuffer received an invalid buffer handle (%u of %zu)", buffer.index,
+                             buffers_.size());
+        }
         return;
     }
     BufferRecord& record = buffers_[buffer.index];
@@ -1122,17 +1339,7 @@ SampledTextureHandle VulkanDevice::CreateTexture(u32 width, u32 height, const u8
         AETHER_LOG_ERROR("Vulkan", "CreateTexture requires non-zero dimensions and non-null RGBA8 pixel data");
         throw std::invalid_argument("CreateTexture requires non-zero dimensions and non-null RGBA8 pixel data");
     }
-    VkPhysicalDeviceProperties properties{};
-    vkGetPhysicalDeviceProperties(physical_device_, &properties);
-    if (width > properties.limits.maxImageDimension2D || height > properties.limits.maxImageDimension2D) {
-        AETHER_LOG_ERROR("Vulkan", "CreateTexture extent exceeds maxImageDimension2D (%u)",
-                         properties.limits.maxImageDimension2D);
-        throw std::invalid_argument("CreateTexture extent exceeds the Vulkan 2D image limit");
-    }
-    if (!SupportsSampledTextureUpload(physical_device_, VK_FORMAT_R8G8B8A8_UNORM)) {
-        AETHER_LOG_ERROR("Vulkan", "RGBA8 optimal images do not support sampling and transfer-destination usage");
-        return {};
-    }
+    ReclaimTextureSlots();
     if (TextureTableFull()) {
         AETHER_LOG_ERROR("Vulkan", "CreateTexture exhausted the bindless texture table (capacity=%u real textures)",
                          kMaxUserBindlessTextures);
@@ -1225,6 +1432,7 @@ SampledTextureHandle VulkanDevice::CreateCompressedTexture(CompressedTextureForm
         AETHER_LOG_ERROR("Vulkan", "CreateCompressedTexture: this device cannot sample that format");
         return {};
     }
+    ReclaimTextureSlots();
     if (TextureTableFull()) {
         AETHER_LOG_ERROR("Vulkan", "CreateCompressedTexture exhausted the bindless texture table (capacity=%u real textures)", kMaxUserBindlessTextures);
         return {};
@@ -1255,6 +1463,7 @@ SampledTextureHandle VulkanDevice::CreateR32FloatTexture(u32 width, u32 height, 
         AETHER_LOG_ERROR("Vulkan", "R32_SFLOAT images do not support sampling and transfer-destination usage");
         return {};
     }
+    ReclaimTextureSlots();
     if (TextureTableFull()) {
         AETHER_LOG_ERROR("Vulkan", "CreateR32FloatTexture exhausted the bindless texture table (capacity=%u real textures)",
                          kMaxUserBindlessTextures);
@@ -1273,6 +1482,7 @@ SampledTextureHandle VulkanDevice::CreateR32FloatTexture(u32 width, u32 height, 
 }
 
 u32 VulkanDevice::StoreTextureRecord(const SampledTextureRecord& record) {
+    ReclaimTextureSlots();
     if (!free_texture_slots_.empty()) {
         const u32 position = free_texture_slots_.back();
         free_texture_slots_.pop_back();
@@ -1283,19 +1493,69 @@ u32 VulkanDevice::StoreTextureRecord(const SampledTextureRecord& record) {
     return static_cast<u32>(sampled_textures_.size() - 1) + kFirstUserBindlessTextureIndex;
 }
 
+// Deferred, not a device stall. The bindless set has no update-after-bind, so its descriptor cannot be rewritten while a submitted command
+// buffer may still use it: the rewrite to the white fallback, the image release and the slot's return to the free list all happen at
+// retirement (at once when the GPU is idle). Until then a stale handle still samples the old image, which stays alive; after, it samples
+// white. The slot is not reusable before retirement, so a new texture can never be written under a submission still reading the old one.
 bool VulkanDevice::DestroyTexture(SampledTextureHandle texture) {
     if (!texture.IsValid() || texture.index < kFirstUserBindlessTextureIndex) return false;
     const u32 position = texture.index - kFirstUserBindlessTextureIndex;
     if (position >= sampled_textures_.size() || sampled_textures_[position].image == VK_NULL_HANDLE) return false;
-    AETHER_VK_CHECK(vkDeviceWaitIdle(device_)); // nothing in flight still reads it
     const SampledTextureRecord record = sampled_textures_[position];
-    WriteBindlessTexture(texture.index, dummy_texture_); // a stale handle samples white, not freed memory
-    vkDestroyImageView(device_, record.view, nullptr);
-    vkDestroyImage(device_, record.image, nullptr);
-    vkFreeMemory(device_, record.memory, nullptr);
     sampled_textures_[position] = {};
-    free_texture_slots_.push_back(position);
+    sampled_textures_[position].retiring = true;
+    Retire([this, record, position, index = texture.index] {
+        WriteBindlessTexture(index, dummy_texture_);
+        vkDestroyImageView(device_, record.view, nullptr);
+        vkDestroyImage(device_, record.image, nullptr);
+        vkFreeMemory(device_, record.memory, nullptr);
+        std::lock_guard<std::mutex> lock(retire_mutex_);
+        released_texture_slots_.push_back(position);
+    });
     return true;
+}
+
+SampledTextureHandle VulkanDevice::ReserveExternalBindlessSlot() {
+    ReclaimTextureSlots();
+    if (TextureTableFull()) {
+        AETHER_LOG_ERROR("Vulkan", "ReserveExternalBindlessSlot: the bindless texture table is full (capacity=%u real textures)", kMaxUserBindlessTextures);
+        return {};
+    }
+    // An empty record: the device never destroys it (the owner does) and DestroyTexture refuses it. The slot keeps the fallback view.
+    return SampledTextureHandle{StoreTextureRecord(SampledTextureRecord{})};
+}
+
+void VulkanDevice::SetExternalBindlessView(SampledTextureHandle slot, VkImageView view) {
+    if (!slot.IsValid() || slot.index < kFirstUserBindlessTextureIndex) return;
+    SampledTextureRecord record{};
+    record.view = view;
+    WriteBindlessTexture(slot.index, view != VK_NULL_HANDLE ? record : dummy_texture_);
+}
+
+void VulkanDevice::ReleaseExternalBindlessSlot(SampledTextureHandle slot) {
+    if (!slot.IsValid() || slot.index < kFirstUserBindlessTextureIndex) return;
+    const u32 position = slot.index - kFirstUserBindlessTextureIndex;
+    if (position >= sampled_textures_.size() || sampled_textures_[position].image != VK_NULL_HANDLE || sampled_textures_[position].retiring) return;
+    WriteBindlessTexture(slot.index, dummy_texture_);
+    free_texture_slots_.push_back(position);
+}
+
+// Frame constant buffers are host-visible and mapped (CreateBufferInternal) but are not vertex buffers, so this cannot
+// go through UpdateVertexBuffer, which rejects them: it used to, and the player's lights never reached the GPU. The
+// caller only rewrites a slot whose previous frame has finished (SceneRenderer keeps one per frame in flight).
+void VulkanDevice::UpdateFrameConstantBuffer(BufferHandle buffer, const void* data, u64 size_bytes) {
+    if (!IsBufferAlive(buffer) || buffers_[buffer.index].constants_set == VK_NULL_HANDLE) {
+        AETHER_LOG_ERROR("Vulkan", "UpdateFrameConstantBuffer needs a buffer made by CreateFrameConstantBuffer (%u)",
+                         buffer.index);
+        return;
+    }
+    BufferRecord& record = buffers_[buffer.index];
+    if (!data || !record.mapped || size_bytes == 0 || size_bytes > record.size_bytes) {
+        AETHER_LOG_ERROR("Vulkan", "UpdateFrameConstantBuffer: null data, unmapped buffer, or %llu bytes into %llu",
+                         static_cast<unsigned long long>(size_bytes), static_cast<unsigned long long>(record.size_bytes));
+        return;
+    }
+    std::memcpy(record.mapped, data, static_cast<usize>(size_bytes));
 }
 
 BufferHandle VulkanDevice::CreateFrameConstantBuffer(u64 size_bytes) {
@@ -1303,6 +1563,7 @@ BufferHandle VulkanDevice::CreateFrameConstantBuffer(u64 size_bytes) {
         AETHER_LOG_ERROR("Vulkan", "CreateConstantBuffer requires a non-zero size");
         throw std::invalid_argument("CreateConstantBuffer requires a non-zero size");
     }
+    DrainRetired(); // destroyed frame-constant buffers give their sets back at retirement
     if (constant_buffer_count_ >= kMaxConstantBuffers) {
         AETHER_LOG_ERROR("Vulkan", "CreateConstantBuffer: out of constant buffers (capacity=%u)", kMaxConstantBuffers);
         return {};
@@ -1428,6 +1689,7 @@ void VulkanDevice::CreateBindlessTextureInfrastructure() {
     AETHER_VK_CHECK(vkCreateDescriptorSetLayout(device_, &constants_layout_info, nullptr, &frame_constants_set_layout_));
     VkDescriptorPoolSize constants_pool_size{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kMaxConstantBuffers};
     VkDescriptorPoolCreateInfo constants_pool_info{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+    constants_pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT; // DestroyBuffer frees a buffer's set
     constants_pool_info.maxSets = kMaxConstantBuffers;
     constants_pool_info.poolSizeCount = 1;
     constants_pool_info.pPoolSizes = &constants_pool_size;
@@ -1518,9 +1780,18 @@ ComputePipelineHandle VulkanDevice::CreateComputePipeline(const ComputePipelineD
     pipeline_info.stage = stage;
     pipeline_info.layout = record.layout;
     AETHER_VK_CHECK(vkCreateComputePipelines(device_, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &record.pipeline));
-    compute_pipelines_.push_back(record);
+    ++live_compute_pipelines_;
+    u32 slot;
+    if (!free_compute_pipeline_slots_.empty()) {
+        slot = free_compute_pipeline_slots_.back();
+        free_compute_pipeline_slots_.pop_back();
+        compute_pipelines_[slot] = record;
+    } else {
+        compute_pipelines_.push_back(record);
+        slot = static_cast<u32>(compute_pipelines_.size() - 1);
+    }
     owned_record.Release();
-    return ComputePipelineHandle{static_cast<u32>(compute_pipelines_.size() - 1)};
+    return ComputePipelineHandle{slot};
 }
 
 PipelineHandle VulkanDevice::CreatePipeline(const PipelineDesc& desc, ISwapChain& swap_chain) {
@@ -1641,7 +1912,7 @@ PipelineHandle VulkanDevice::CreatePipeline(const PipelineDesc& desc, ISwapChain
     blend_attachment.blendEnable = desc.enable_blending ? VK_TRUE : VK_FALSE;
     if (desc.enable_blending) {
         blend_attachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
-        blend_attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+        blend_attachment.dstColorBlendFactor = desc.additive_blending ? VK_BLEND_FACTOR_ONE : VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
         blend_attachment.colorBlendOp = VK_BLEND_OP_ADD;
         blend_attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
         blend_attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
@@ -1685,9 +1956,18 @@ PipelineHandle VulkanDevice::CreatePipeline(const PipelineDesc& desc, ISwapChain
 
     AETHER_VK_CHECK(pipeline_result);
 
-    pipelines_.push_back(record);
+    ++live_pipelines_;
+    u32 slot;
+    if (!free_pipeline_slots_.empty()) {
+        slot = free_pipeline_slots_.back();
+        free_pipeline_slots_.pop_back();
+        pipelines_[slot] = record;
+    } else {
+        pipelines_.push_back(record);
+        slot = static_cast<u32>(pipelines_.size() - 1);
+    }
     owned_record.Release();
-    return PipelineHandle{static_cast<u32>(pipelines_.size() - 1)};
+    return PipelineHandle{slot};
 }
 
 u64 VulkanDevice::Submit(ICommandList& cmd, ISwapChain* wait_on_swap_chain) {
@@ -1754,6 +2034,7 @@ u64 VulkanDevice::Submit(ICommandList& cmd, ISwapChain* wait_on_swap_chain) {
     ++next_fence_value_;
     rhi_cmd->MarkSubmitted(fence_value);
     if (pending_graphics_wait_.valid) pending_graphics_wait_ = {};
+    DrainRetired();
     return fence_value;
 }
 
@@ -1766,12 +2047,14 @@ void VulkanDevice::WaitForFence(u64 fence_value) {
                          static_cast<unsigned long long>(fence_value));
         throw std::invalid_argument("Vulkan graphics fence value was not submitted");
     }
-    if (IsFenceComplete(fence_value)) return;
-    VkSemaphoreWaitInfo wait_info{VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO};
-    wait_info.semaphoreCount = 1;
-    wait_info.pSemaphores = &timeline_semaphore_;
-    wait_info.pValues = &fence_value;
-    AETHER_VK_CHECK(vkWaitSemaphores(device_, &wait_info, UINT64_MAX));
+    if (!IsFenceComplete(fence_value)) {
+        VkSemaphoreWaitInfo wait_info{VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO};
+        wait_info.semaphoreCount = 1;
+        wait_info.pSemaphores = &timeline_semaphore_;
+        wait_info.pValues = &fence_value;
+        AETHER_VK_CHECK(vkWaitSemaphores(device_, &wait_info, UINT64_MAX));
+    }
+    DrainRetired();
 }
 
 bool VulkanDevice::IsFenceComplete(u64 fence_value) const {
@@ -1852,6 +2135,11 @@ VulkanSwapChain::VulkanSwapChain(VulkanDevice& device, void* native_window_handl
             surface_info.hinstance = GetModuleHandleW(nullptr);
             surface_info.hwnd = static_cast<HWND>(window_);
             AETHER_VK_CHECK(vkCreateWin32SurfaceKHR(device_.Instance(), &surface_info, nullptr, &surface_));
+#elif defined(__ANDROID__)
+            // On Android the native handle is the ANativeWindow* of a SurfaceView (ANativeWindow_fromSurface).
+            VkAndroidSurfaceCreateInfoKHR surface_info{VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR};
+            surface_info.window = static_cast<ANativeWindow*>(window_);
+            AETHER_VK_CHECK(vkCreateAndroidSurfaceKHR(device_.Instance(), &surface_info, nullptr, &surface_));
 #elif defined(AETHER_HAS_GLFW)
             AETHER_VK_CHECK(
                 glfwCreateWindowSurface(device_.Instance(), static_cast<GLFWwindow*>(window_), nullptr, &surface_));
@@ -1956,9 +2244,12 @@ VulkanSwapChain::~VulkanSwapChain() {
     }
     DestroySyncObjects();
     DestroySwapchainAndImages();
+    device_.ReleaseExternalBindlessSlot(scene_depth_handle_);
     if (default_render_pass_ != VK_NULL_HANDLE) {
         vkDestroyRenderPass(device_.Handle(), default_render_pass_, nullptr);
     }
+    if (store_depth_render_pass_ != VK_NULL_HANDLE) vkDestroyRenderPass(device_.Handle(), store_depth_render_pass_, nullptr);
+    if (resume_render_pass_ != VK_NULL_HANDLE) vkDestroyRenderPass(device_.Handle(), resume_render_pass_, nullptr);
     if (surface_ != VK_NULL_HANDLE) {
         vkDestroySurfaceKHR(device_.Instance(), surface_, nullptr);
     }
@@ -2035,6 +2326,133 @@ void VulkanSwapChain::CreateDefaultRenderPass() {
     AETHER_VK_CHECK(vkCreateRenderPass(device_.Handle(), &rp_info, nullptr, &default_render_pass_));
 }
 
+// The scene-depth variants of the default render pass (same attachments, formats and subpass, so render-pass compatible with it and its
+// framebuffers and pipelines): the first one of a frame clears like the default but stores depth for CopySceneDepth; the resume one loads
+// colour (left in PRESENT_SRC by the pass before) and depth (left in DEPTH_STENCIL_ATTACHMENT_OPTIMAL by CopySceneDepth's barrier).
+VkRenderPass VulkanSwapChain::CreateRenderPassVariant(bool load_existing, bool store_depth) {
+    VkAttachmentDescription color_attachment{};
+    color_attachment.format = format_;
+    color_attachment.samples = VK_SAMPLE_COUNT_1_BIT;
+    color_attachment.loadOp = load_existing ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_CLEAR;
+    color_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    color_attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    color_attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    color_attachment.initialLayout = load_existing ? VK_IMAGE_LAYOUT_PRESENT_SRC_KHR : VK_IMAGE_LAYOUT_UNDEFINED;
+    color_attachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+    VkAttachmentDescription depth_attachment{};
+    depth_attachment.format = depth_format_;
+    depth_attachment.samples = VK_SAMPLE_COUNT_1_BIT;
+    depth_attachment.loadOp = load_existing ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_CLEAR;
+    depth_attachment.storeOp = store_depth ? VK_ATTACHMENT_STORE_OP_STORE : VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    depth_attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    depth_attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    depth_attachment.initialLayout =
+        load_existing ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED;
+    depth_attachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+    VkAttachmentDescription attachments[2] = {color_attachment, depth_attachment};
+    VkAttachmentReference color_ref{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+    VkAttachmentReference depth_ref{1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
+    VkSubpassDescription subpass{};
+    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpass.colorAttachmentCount = 1;
+    subpass.pColorAttachments = &color_ref;
+    subpass.pDepthStencilAttachment = &depth_ref;
+
+    // As the default pass's (the acquire semaphore); the resume pass also orders its colour loads after the first pass's writes. Depth
+    // is ordered by CopySceneDepth's own barrier.
+    VkSubpassDependency dependency{};
+    dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+    dependency.dstSubpass = 0;
+    dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    dependency.srcAccessMask = load_existing ? VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT : 0;
+    dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                               (load_existing ? VK_ACCESS_COLOR_ATTACHMENT_READ_BIT : 0);
+
+    VkRenderPassCreateInfo rp_info{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
+    rp_info.attachmentCount = 2;
+    rp_info.pAttachments = attachments;
+    rp_info.subpassCount = 1;
+    rp_info.pSubpasses = &subpass;
+    rp_info.dependencyCount = 1;
+    rp_info.pDependencies = &dependency;
+    VkRenderPass render_pass = VK_NULL_HANDLE;
+    AETHER_VK_CHECK(vkCreateRenderPass(device_.Handle(), &rp_info, nullptr, &render_pass));
+    return render_pass;
+}
+
+SampledTextureHandle VulkanSwapChain::SceneDepthTexture() {
+    if (scene_depth_handle_.IsValid()) return scene_depth_handle_;
+    VkFormatProperties properties{};
+    vkGetPhysicalDeviceFormatProperties(device_.PhysicalDevice(), depth_format_, &properties);
+    constexpr VkFormatFeatureFlags required =
+        VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_TRANSFER_SRC_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+    if ((properties.optimalTilingFeatures & required) != required) {
+        AETHER_LOG_WARN("Vulkan", "SceneDepthTexture: depth format %d can't be copied and sampled here; no scene depth",
+                        static_cast<int>(depth_format_));
+        return {};
+    }
+    if (device_.WaitForDeviceIdle() != VK_SUCCESS) return {};
+    const SampledTextureHandle handle = device_.ReserveExternalBindlessSlot();
+    if (!handle.IsValid()) return {};
+    try {
+        if (store_depth_render_pass_ == VK_NULL_HANDLE) store_depth_render_pass_ = CreateRenderPassVariant(false, true);
+        if (resume_render_pass_ == VK_NULL_HANDLE) resume_render_pass_ = CreateRenderPassVariant(true, false);
+        scene_depth_handle_ = handle;
+        CreateSceneDepthImage();
+    } catch (...) {
+        DestroySceneDepthImage();
+        device_.ReleaseExternalBindlessSlot(handle);
+        scene_depth_handle_ = {};
+        throw;
+    }
+    return scene_depth_handle_;
+}
+
+void VulkanSwapChain::CreateSceneDepthImage() {
+    VkImageCreateInfo image_info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+    image_info.imageType = VK_IMAGE_TYPE_2D;
+    image_info.format = depth_format_;
+    image_info.extent = {extent_.width, extent_.height, 1};
+    image_info.mipLevels = 1;
+    image_info.arrayLayers = 1;
+    image_info.samples = VK_SAMPLE_COUNT_1_BIT;
+    image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
+    image_info.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    AETHER_VK_CHECK(vkCreateImage(device_.Handle(), &image_info, nullptr, &scene_depth_image_));
+    VkMemoryRequirements mem_reqs{};
+    vkGetImageMemoryRequirements(device_.Handle(), scene_depth_image_, &mem_reqs);
+    VkMemoryAllocateInfo alloc_info{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    alloc_info.allocationSize = mem_reqs.size;
+    alloc_info.memoryTypeIndex =
+        FindMemoryType(device_.PhysicalDevice(), mem_reqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    AETHER_VK_CHECK(vkAllocateMemory(device_.Handle(), &alloc_info, nullptr, &scene_depth_memory_));
+    AETHER_VK_CHECK(vkBindImageMemory(device_.Handle(), scene_depth_image_, scene_depth_memory_, 0));
+    VkImageViewCreateInfo view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+    view_info.image = scene_depth_image_;
+    view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    view_info.format = depth_format_;
+    view_info.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1}; // depth only: a sampled view has one aspect
+    AETHER_VK_CHECK(vkCreateImageView(device_.Handle(), &view_info, nullptr, &scene_depth_view_));
+    // The image stays UNDEFINED until the first CopySceneDepth, which transitions it (its contents are fully overwritten each time), so
+    // nothing may sample it before then.
+    device_.SetExternalBindlessView(scene_depth_handle_, scene_depth_view_);
+}
+
+void VulkanSwapChain::DestroySceneDepthImage() {
+    if (scene_depth_handle_.IsValid()) device_.SetExternalBindlessView(scene_depth_handle_, VK_NULL_HANDLE);
+    if (scene_depth_view_ != VK_NULL_HANDLE) vkDestroyImageView(device_.Handle(), scene_depth_view_, nullptr);
+    if (scene_depth_image_ != VK_NULL_HANDLE) vkDestroyImage(device_.Handle(), scene_depth_image_, nullptr);
+    if (scene_depth_memory_ != VK_NULL_HANDLE) vkFreeMemory(device_.Handle(), scene_depth_memory_, nullptr);
+    scene_depth_view_ = VK_NULL_HANDLE;
+    scene_depth_image_ = VK_NULL_HANDLE;
+    scene_depth_memory_ = VK_NULL_HANDLE;
+}
+
 void VulkanSwapChain::CreateDepthResources() {
     VkImageCreateInfo image_info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
     image_info.imageType = VK_IMAGE_TYPE_2D;
@@ -2044,7 +2462,8 @@ void VulkanSwapChain::CreateDepthResources() {
     image_info.arrayLayers = 1;
     image_info.samples = VK_SAMPLE_COUNT_1_BIT;
     image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
-    image_info.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+    // TRANSFER_SRC for CopySceneDepth (harmless when it's never used).
+    image_info.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     depth_images_.resize(image_views_.size(), VK_NULL_HANDLE);
@@ -2069,9 +2488,11 @@ void VulkanSwapChain::CreateDepthResources() {
         view_info.subresourceRange = {DepthAttachmentAspect(depth_format_), 0, 1, 0, 1};
         AETHER_VK_CHECK(vkCreateImageView(device_.Handle(), &view_info, nullptr, &depth_image_views_[i]));
     }
+    if (SceneDepthEnabled()) CreateSceneDepthImage();
 }
 
 void VulkanSwapChain::DestroyDepthResources() {
+    DestroySceneDepthImage();
     for (usize i = 0; i < depth_images_.size(); ++i) {
         if (i < depth_image_views_.size() && depth_image_views_[i] != VK_NULL_HANDLE) {
             vkDestroyImageView(device_.Handle(), depth_image_views_[i], nullptr);
@@ -2642,6 +3063,7 @@ void VulkanCommandList::Reset() {
     AETHER_VK_CHECK(vkResetCommandBuffer(command_buffer_, 0));
     last_submitted_fence_ = 0;
     render_pass_active_ = false;
+    active_swap_chain_ = nullptr;
     graphics_pipeline_bound_ = false;
     graphics_bindless_enabled_ = false;
     graphics_bindless_bound_ = false;
@@ -2789,7 +3211,7 @@ void VulkanCommandList::BeginRenderPass(ISwapChain& swap_chain, const ClearColor
     clear_values[1].depthStencil.depth = 1.0f;
 
     VkRenderPassBeginInfo rp_begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
-    rp_begin.renderPass = vk_swap.DefaultRenderPass();
+    rp_begin.renderPass = vk_swap.BeginRenderPassHandle();
     rp_begin.framebuffer = vk_swap.CurrentFramebuffer();
     rp_begin.renderArea.offset = {0, 0};
     rp_begin.renderArea.extent = {vk_swap.Width(), vk_swap.Height()};
@@ -2797,7 +3219,11 @@ void VulkanCommandList::BeginRenderPass(ISwapChain& swap_chain, const ClearColor
     rp_begin.pClearValues = clear_values;
     vkCmdBeginRenderPass(command_buffer_, &rp_begin, VK_SUBPASS_CONTENTS_INLINE);
     render_pass_active_ = true;
+    active_swap_chain_ = &vk_swap;
+    SetFullViewport(vk_swap);
+}
 
+void VulkanCommandList::SetFullViewport(const VulkanSwapChain& vk_swap) {
     // Negative-height viewport (y = height, height = -height): the standard
     // trick to make Vulkan's NDC +Y point up like D3D12's, entirely on the
     // host side — callers of this abstract BeginRenderPass never need to
@@ -2824,6 +3250,11 @@ void VulkanCommandList::EndRenderPass() {
     }
     vkCmdEndRenderPass(command_buffer_);
     render_pass_active_ = false;
+    active_swap_chain_ = nullptr;
+    ResetGraphicsBindings();
+}
+
+void VulkanCommandList::ResetGraphicsBindings() {
     graphics_pipeline_bound_ = false;
     graphics_bindless_enabled_ = false;
     graphics_bindless_bound_ = false;
@@ -2851,7 +3282,7 @@ void VulkanCommandList::BindPipeline(PipelineHandle pipeline) {
         bound_pipeline_layout_ = VK_NULL_HANDLE;
         return;
     }
-    if (!pipeline.IsValid() || pipeline.index >= device_.PipelineCount()) {
+    if (!device_.IsPipelineAlive(pipeline)) {
         AETHER_LOG_ERROR("Vulkan", "BindPipeline received an invalid graphics-pipeline handle");
         graphics_pipeline_bound_ = false;
         graphics_bindless_enabled_ = false;
@@ -2890,18 +3321,19 @@ void VulkanCommandList::SetPushConstants(const void* data, u32 size_bytes) {
                         VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, size_bytes, data);
 }
 
-void VulkanCommandList::Draw(u32 vertex_count) {
+void VulkanCommandList::Draw(u32 vertex_count, u32 first_vertex) {
     if (!recording_) {
         AETHER_LOG_ERROR("Vulkan", "Draw requires a recording command list");
         return;
     }
     if (!render_pass_active_ || !graphics_pipeline_bound_ ||
-        (graphics_uses_vertex_buffer_ && (!vertex_buffer_bound_ || vertex_count > bound_vertex_count_)) ||
+        (graphics_uses_vertex_buffer_ && (!vertex_buffer_bound_ || first_vertex > bound_vertex_count_ ||
+                                          vertex_count > bound_vertex_count_ - first_vertex)) ||
         (graphics_bindless_enabled_ && !graphics_bindless_bound_)) {
         AETHER_LOG_ERROR("Vulkan", "Draw requires a valid bound graphics pipeline");
         return;
     }
-    vkCmdDraw(command_buffer_, vertex_count, 1, 0, 0);
+    vkCmdDraw(command_buffer_, vertex_count, 1, first_vertex, 0);
 }
 
 void VulkanCommandList::BindVertexBuffer(BufferHandle buffer, u32 stride_bytes) {
@@ -2959,7 +3391,7 @@ void VulkanCommandList::DrawIndexed(u32 index_count) {
 }
 
 void VulkanCommandList::BindFrameConstants(BufferHandle buffer) {
-    if (!buffer.IsValid() || device_.GetBuffer(buffer).constants_set == VK_NULL_HANDLE) {
+    if (!device_.IsBufferAlive(buffer) || device_.GetBuffer(buffer).constants_set == VK_NULL_HANDLE) {
         AETHER_LOG_ERROR("Vulkan", "BindFrameConstants needs a buffer made by CreateConstantBuffer");
         return;
     }
@@ -2971,7 +3403,7 @@ void VulkanCommandList::BindComputePipeline(ComputePipelineHandle pipeline) {
         AETHER_LOG_ERROR("Vulkan", "BindComputePipeline requires a recording command list");
         return;
     }
-    if (!compute_queue_ || !pipeline.IsValid() || pipeline.index >= device_.ComputePipelineCount()) {
+    if (!compute_queue_ || !device_.IsComputePipelineAlive(pipeline)) {
         AETHER_LOG_ERROR("Vulkan", "BindComputePipeline requires a compute command list and valid pipeline handle");
         bound_compute_pipeline_ = {};
         compute_storage_bound_.clear();
@@ -3022,12 +3454,12 @@ void VulkanCommandList::BindComputeConstantBuffer(u32 slot, BufferHandle buffer)
         AETHER_LOG_ERROR("Vulkan", "BindComputeConstantBuffer requires a recording command list");
         return;
     }
-    if (!compute_queue_ || !bound_compute_pipeline_.IsValid()) {
+    if (!compute_queue_ || !device_.IsComputePipelineAlive(bound_compute_pipeline_)) {
         AETHER_LOG_ERROR("Vulkan", "BindComputeConstantBuffer requires a bound compute pipeline");
         return;
     }
     const ComputePipelineRecord& pipeline = device_.GetComputePipeline(bound_compute_pipeline_);
-    if (slot >= pipeline.constant_buffer_count || !buffer.IsValid() || buffer.index >= device_.BufferCount() ||
+    if (slot >= pipeline.constant_buffer_count || !buffer.IsValid() || !device_.IsBufferAlive(buffer) ||
         !device_.GetBuffer(buffer).is_constant) {
         AETHER_LOG_ERROR("Vulkan", "BindComputeConstantBuffer received an invalid slot or buffer handle");
         return;
@@ -3049,12 +3481,12 @@ void VulkanCommandList::BindComputeStorageBuffer(u32 slot, BufferHandle buffer) 
         AETHER_LOG_ERROR("Vulkan", "BindComputeStorageBuffer requires a recording command list");
         return;
     }
-    if (!compute_queue_ || !bound_compute_pipeline_.IsValid()) {
+    if (!compute_queue_ || !device_.IsComputePipelineAlive(bound_compute_pipeline_)) {
         AETHER_LOG_ERROR("Vulkan", "BindComputeStorageBuffer requires a bound compute pipeline");
         return;
     }
     const ComputePipelineRecord& pipeline = device_.GetComputePipeline(bound_compute_pipeline_);
-    if (slot >= pipeline.storage_buffer_count || !buffer.IsValid() || buffer.index >= device_.BufferCount() ||
+    if (slot >= pipeline.storage_buffer_count || !buffer.IsValid() || !device_.IsBufferAlive(buffer) ||
         !device_.GetBuffer(buffer).is_storage) {
         AETHER_LOG_ERROR("Vulkan", "BindComputeStorageBuffer received an invalid slot or buffer handle");
         return;
@@ -3076,14 +3508,15 @@ void VulkanCommandList::BindComputeSampledTexture(u32 slot, SampledTextureHandle
         AETHER_LOG_ERROR("Vulkan", "BindComputeSampledTexture requires a recording command list");
         return;
     }
-    if (!compute_queue_ || !bound_compute_pipeline_.IsValid()) {
+    if (!compute_queue_ || !device_.IsComputePipelineAlive(bound_compute_pipeline_)) {
         AETHER_LOG_ERROR("Vulkan", "BindComputeSampledTexture requires a bound compute pipeline");
         return;
     }
     const ComputePipelineRecord& pipeline = device_.GetComputePipeline(bound_compute_pipeline_);
     if (slot >= pipeline.sampled_texture_count || !texture.IsValid() ||
         texture.index < kFirstUserBindlessTextureIndex ||
-        texture.index - kFirstUserBindlessTextureIndex >= device_.SampledTextureCount()) {
+        texture.index - kFirstUserBindlessTextureIndex >= device_.SampledTextureCount() ||
+        device_.GetSampledTexture(texture).view == VK_NULL_HANDLE) {
         AETHER_LOG_ERROR("Vulkan", "BindComputeSampledTexture received an invalid slot or texture handle");
         return;
     }
@@ -3106,7 +3539,7 @@ void VulkanCommandList::ComputeBufferBarrier(BufferHandle buffer) {
         AETHER_LOG_ERROR("Vulkan", "ComputeBufferBarrier requires a recording command list");
         return;
     }
-    if (!compute_queue_ || !buffer.IsValid() || buffer.index >= device_.BufferCount() ||
+    if (!compute_queue_ || !buffer.IsValid() || !device_.IsBufferAlive(buffer) ||
         !device_.GetBuffer(buffer).is_storage) {
         AETHER_LOG_ERROR("Vulkan", "ComputeBufferBarrier requires a compute command list and storage buffer");
         return;
@@ -3134,7 +3567,7 @@ void VulkanCommandList::Dispatch(u32 groups_x, u32 groups_y, u32 groups_z) {
         AETHER_LOG_ERROR("Vulkan", "Compute dispatch group counts are zero or exceed device limits");
         return;
     }
-    if (!compute_queue_ || !bound_compute_pipeline_.IsValid()) {
+    if (!compute_queue_ || !device_.IsComputePipelineAlive(bound_compute_pipeline_)) {
         AETHER_LOG_ERROR("Vulkan", "Dispatch requires a bound compute pipeline");
         return;
     }
@@ -3172,6 +3605,76 @@ void VulkanCommandList::BindBindlessTextures() {
     vkCmdBindDescriptorSets(command_buffer_, VK_PIPELINE_BIND_POINT_GRAPHICS, bound_pipeline_layout_, 0, 2, sets, 0,
                              nullptr);
     graphics_bindless_bound_ = true;
+}
+
+} // namespace aether::gfx::rhi::vulkan_backend
+
+namespace aether::gfx::rhi::vulkan_backend {
+
+bool VulkanCommandList::CopySceneDepth() {
+    if (!recording_ || !render_pass_active_ || !active_swap_chain_ || !active_swap_chain_->SceneDepthEnabled()) {
+        AETHER_LOG_ERROR("Vulkan", "CopySceneDepth requires an active render pass on a swap chain with a SceneDepthTexture");
+        return false;
+    }
+    VulkanSwapChain& swap = *active_swap_chain_;
+    vkCmdEndRenderPass(command_buffer_);
+
+    const VkImageAspectFlags depth_aspects = DepthAttachmentAspect(swap.DepthFormat());
+    VkImageMemoryBarrier to_copy[2]{};
+    to_copy[0].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    to_copy[0].srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    to_copy[0].dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    to_copy[0].oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    to_copy[0].newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    to_copy[0].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    to_copy[0].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    to_copy[0].image = swap.CurrentDepthImage();
+    to_copy[0].subresourceRange = {depth_aspects, 0, 1, 0, 1};
+    // The previous copy's readers (an earlier frame's fragment shaders) finish before this overwrites it; the old contents are dropped.
+    to_copy[1] = to_copy[0];
+    to_copy[1].srcAccessMask = 0;
+    to_copy[1].dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    to_copy[1].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    to_copy[1].newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    to_copy[1].image = swap.SceneDepthImage();
+    vkCmdPipelineBarrier(command_buffer_,
+                         VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT |
+                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 2, to_copy);
+
+    VkImageCopy region{};
+    region.srcSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1};
+    region.dstSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1};
+    region.extent = {swap.Width(), swap.Height(), 1};
+    vkCmdCopyImage(command_buffer_, swap.CurrentDepthImage(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, swap.SceneDepthImage(),
+                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+
+    VkImageMemoryBarrier after_copy[2]{};
+    after_copy[0] = to_copy[0];
+    after_copy[0].srcAccessMask = 0; // a read; only the layout change needs ordering
+    after_copy[0].dstAccessMask =
+        VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    after_copy[0].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    after_copy[0].newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    after_copy[1] = to_copy[1];
+    after_copy[1].srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    after_copy[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    after_copy[1].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    after_copy[1].newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    vkCmdPipelineBarrier(command_buffer_, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT |
+                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                         0, 0, nullptr, 0, nullptr, 2, after_copy);
+
+    VkRenderPassBeginInfo rp_begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+    rp_begin.renderPass = swap.ResumeRenderPass();
+    rp_begin.framebuffer = swap.CurrentFramebuffer();
+    rp_begin.renderArea.offset = {0, 0};
+    rp_begin.renderArea.extent = {swap.Width(), swap.Height()};
+    vkCmdBeginRenderPass(command_buffer_, &rp_begin, VK_SUBPASS_CONTENTS_INLINE);
+    ResetGraphicsBindings();
+    SetFullViewport(swap);
+    return true;
 }
 
 } // namespace aether::gfx::rhi::vulkan_backend

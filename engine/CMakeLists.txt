@@ -26,6 +26,7 @@ add_library(aether_engine STATIC
     src/cook/package.cpp
     src/plugin/plugin.cpp
     src/plugin/package.cpp
+    src/plugin/registry.cpp
     src/cook/texture_cook.cpp
     src/math/math.cpp
     src/job/job_system.cpp
@@ -61,14 +62,21 @@ add_library(aether_engine STATIC
     src/assets/gltf_references.cpp
     src/assets/content_browser.cpp
     src/assets/vcs.cpp
+    src/gfx/parity.cpp
 )
 
 target_include_directories(aether_engine PRIVATE ${stb_SOURCE_DIR})
 # PUBLIC: reflection/serialize.h exposes nlohmann::json (the in-memory form
 # of the JSON archive, and what schema migration hooks edit).
-target_link_libraries(aether_engine PUBLIC nlohmann_json::nlohmann_json)
+target_link_libraries(aether_engine PUBLIC aether-json-dependency)
 # .apak compression (Phase 25).
-target_link_libraries(aether_engine PRIVATE lz4_static libzstd_static aether_bcenc aether_meshopt)
+target_link_libraries(aether_engine PRIVATE
+    "$<BUILD_INTERFACE:lz4_static>"
+    "$<INSTALL_INTERFACE:LZ4::lz4_static>"
+    "$<BUILD_INTERFACE:libzstd_static>"
+    "$<INSTALL_INTERFACE:zstd::libzstd_static>"
+    aether_bcenc aether_meshopt
+)
 
 if(WIN32)
     target_sources(aether_engine PRIVATE
@@ -100,7 +108,9 @@ elseif(AETHER_BUILD_WINDOWING)
     set(GLFW_BUILD_WAYLAND ${AETHER_GLFW_WAYLAND} CACHE BOOL "" FORCE)
     FetchContent_MakeAvailable(glfw)
     target_sources(aether_engine PRIVATE src/platform/window_glfw.cpp)
-    target_link_libraries(aether_engine PRIVATE glfw)
+    target_link_libraries(aether_engine PRIVATE
+        "$<BUILD_INTERFACE:glfw>"
+        "$<INSTALL_INTERFACE:Aether::glfw>")
     target_compile_definitions(aether_engine PUBLIC AETHER_HAS_WINDOW PRIVATE AETHER_HAS_GLFW)
     if(AETHER_GLFW_WAYLAND)
         target_compile_definitions(aether_engine PRIVATE AETHER_GLFW_WAYLAND)
@@ -109,7 +119,18 @@ endif()
 
 if(AETHER_BUILD_VULKAN)
     target_sources(aether_engine PRIVATE src/gfx/rhi/vulkan/vulkan_backend.cpp)
-    if(NOT WIN32)
+    if(ANDROID)
+        # Android: the device factory, and glslang built from source by the root CMakeLists.txt.
+        target_sources(aether_engine PRIVATE src/gfx/rhi/device_factory.cpp src/gfx/shader_compiler_glslang.cpp)
+        # glslang is built in-tree here and is not part of the installed package, so keep it out of the export set.
+        foreach(_aether_glslang_lib IN LISTS AETHER_GLSLANG_LIBRARIES)
+            target_link_libraries(aether_engine PRIVATE "$<BUILD_INTERFACE:${_aether_glslang_lib}>")
+        endforeach()
+        target_link_libraries(aether_engine PRIVATE android)
+        target_include_directories(aether_engine PRIVATE "${AETHER_GLSLANG_SHIM_INCLUDE}")
+        set_source_files_properties(src/gfx/rhi/vulkan/vulkan_backend.cpp PROPERTIES
+                                    COMPILE_OPTIONS -Wno-missing-field-initializers)
+    elseif(NOT WIN32)
         # Off Windows: the RHI's device factory, and glslang for HLSL to
         # SPIR-V (DXC's role on Windows).
         target_sources(aether_engine PRIVATE src/gfx/rhi/device_factory.cpp src/gfx/shader_compiler_glslang.cpp)
@@ -127,7 +148,10 @@ if(AETHER_BUILD_VULKAN)
     # same NativeHandle()-based escape hatch the D3D12 backend header already
     # supports), so Vulkan-Headers' include dir must propagate to consumers.
     target_include_directories(aether_engine PUBLIC ${AETHER_VULKAN_INCLUDE_DIRS})
-    target_link_libraries(aether_engine PRIVATE ${AETHER_VULKAN_LIBRARY})
+    target_link_libraries(aether_engine PRIVATE
+        "$<BUILD_INTERFACE:${AETHER_VULKAN_LIBRARY}>"
+        "$<INSTALL_INTERFACE:Vulkan::Vulkan>")
+    target_link_libraries(aether_engine INTERFACE "$<INSTALL_INTERFACE:Vulkan::Vulkan>")
     target_compile_definitions(aether_engine PUBLIC AETHER_HAS_VULKAN)
 endif()
 

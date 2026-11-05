@@ -8,6 +8,7 @@
 #include "aether/gfx/swap_chain.h"
 #include "aether/gfx/texture.h"
 
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -59,6 +60,14 @@ public:
     ComputePipelineHandle CreateComputePipeline(const ComputePipelineDesc& desc) override;
     const PipelineRecord& GetPipeline(PipelineHandle handle) const { return pipelines_[handle.index]; }
     usize PipelineCount() const { return pipelines_.size(); }
+    bool IsPipelineAlive(PipelineHandle h) const { return h.IsValid() && h.index < pipelines_.size() && pipelines_[h.index].pso != nullptr; }
+    bool IsComputePipelineAlive(ComputePipelineHandle h) const { return h.IsValid() && h.index < compute_pipelines_.size() && compute_pipelines_[h.index].pso != nullptr; }
+    bool IsBufferAlive(BufferHandle h) const { return h.IsValid() && h.index < buffers_.size() && buffers_[h.index] != nullptr; }
+    bool DestroyBuffer(BufferHandle buffer) override;
+    bool DestroyPipeline(PipelineHandle pipeline) override;
+    bool DestroyComputePipeline(ComputePipelineHandle pipeline) override;
+    ResourceStats GetResourceStats() const override;
+    void ReleaseRetiredResources() override { DrainRetired(); }
     const ComputePipelineRecord& GetComputePipeline(ComputePipelineHandle handle) const { return compute_pipelines_[handle.index]; }
     usize ComputePipelineCount() const { return compute_pipelines_.size(); }
 
@@ -98,6 +107,12 @@ public:
     bool DestroyTexture(SampledTextureHandle texture) override;
     SampledTextureHandle CreateR32FloatTexture(u32 width, u32 height, const f32* values) override;
     DescriptorHeap& BindlessTextureHeap() { return *bindless_texture_heap_; }
+    // A bindless slot for a resource someone else owns (a swap chain's scene-depth copy, ISwapChain::SceneDepthTexture): it counts against
+    // the table, DestroyTexture refuses it, and it views the white fallback until SetExternalBindlessTexture gives it a resource (null:
+    // back to the fallback). Invalid when the table is full. Between frames only.
+    SampledTextureHandle ReserveExternalBindlessSlot();
+    void SetExternalBindlessTexture(SampledTextureHandle slot, ID3D12Resource* resource, DXGI_FORMAT srv_format);
+    void ReleaseExternalBindlessSlot(SampledTextureHandle slot);
 
     std::unique_ptr<ICommandList> CreateComputeCommandList() override;
     u64 SubmitCompute(ICommandList& cmd) override;
@@ -127,6 +142,24 @@ private:
     BufferHandle CreateBufferInternal(const void* data, u64 size_bytes, bool is_vertex,
                                       std::optional<IndexFormat> index_format = std::nullopt);
     void ReserveBufferRegistryEntry();
+    // Stores a new buffer in the first free slot (or a new one) with its per-slot flags and returns the slot.
+    u32 StoreBuffer(std::unique_ptr<gfx::Buffer> buffer, u32 storage_descriptor, bool is_constant, bool is_vertex,
+                    std::optional<IndexFormat> index_format);
+    u32 StorePipeline(PipelineRecord&& record);
+    u32 StoreComputePipeline(ComputePipelineRecord&& record);
+
+    // Retire queue: destroyed resources are kept alive by the closure until the graphics and compute fences reach the values that were the
+    // latest submitted at destruction (every submission that could use them has then completed); then the closure frees their descriptors.
+    struct RetiredResource {
+        u64 graphics_fence = 0, compute_fence = 0;
+        std::function<void()> release;
+    };
+    mutable std::mutex retire_mutex_;
+    std::vector<RetiredResource> retire_queue_;
+    void Retire(std::function<void()> release);
+    void DrainRetired();
+    std::vector<u32> free_buffer_slots_, free_pipeline_slots_, free_compute_pipeline_slots_;
+    u32 live_buffers_ = 0, live_pipelines_ = 0, live_compute_pipelines_ = 0;
 
     // Declared before device_ so deferred allocators are released only after
     // gfx::Device has made its final queue-drain attempt during destruction.
@@ -191,8 +224,17 @@ public:
     // share a writable depth attachment.
     D3D12_CPU_DESCRIPTOR_HANDLE DepthDSV(u32 index) const { return depth_dsv_heap_->CPUHandle(index); }
 
+    // Scene depth (see ISwapChain::SceneDepthTexture): the depth buffers are R32_TYPELESS (D32_FLOAT views) so CopySceneDepth can
+    // CopyResource one into scene_depth_copy_ (R32_TYPELESS, an R32_FLOAT SRV in the bindless table, kept in PIXEL_SHADER_RESOURCE).
+    SampledTextureHandle SceneDepthTexture() override;
+    bool SceneDepthEnabled() const { return scene_depth_handle_.IsValid(); }
+    ID3D12Resource* DepthResource(u32 index) const { return depth_resources_[index].Get(); }
+    ID3D12Resource* SceneDepthCopy() const { return scene_depth_copy_.Get(); }
+    ~D3D12SwapChain() override;
+
 private:
     void CreateDepthBuffer(u32 width, u32 height);
+    void CreateSceneDepthCopy();
 
     D3D12Device& device_;
     gfx::SwapChain swap_chain_;
@@ -201,6 +243,8 @@ private:
 
     std::vector<ComPtr<ID3D12Resource>> depth_resources_;
     std::unique_ptr<DescriptorHeap> depth_dsv_heap_;
+    SampledTextureHandle scene_depth_handle_{};
+    ComPtr<ID3D12Resource> scene_depth_copy_;
 };
 
 class D3D12CommandList final : public ICommandList {
@@ -218,7 +262,7 @@ public:
     void EndRenderPass() override;
     void BindPipeline(PipelineHandle pipeline) override;
     void SetPushConstants(const void* data, u32 size_bytes) override;
-    void Draw(u32 vertex_count) override;
+    void Draw(u32 vertex_count, u32 first_vertex = 0) override;
 
     void BindVertexBuffer(BufferHandle buffer, u32 stride_bytes) override;
     void BindIndexBuffer(BufferHandle buffer, IndexFormat format) override;
@@ -231,6 +275,7 @@ public:
     void Dispatch(u32 groups_x, u32 groups_y, u32 groups_z) override;
     void BindBindlessTextures() override;
     void BindFrameConstants(BufferHandle buffer) override;
+    bool CopySceneDepth() override;
 
     void* NativeHandle() const override { return cmd_.Get(); }
     bool BelongsTo(const D3D12Device& device) const { return &device_ == &device; }
@@ -253,6 +298,7 @@ private:
     bool has_closed_recording_ = false;
     u64 last_submitted_fence_ = 0;
     ID3D12Resource* active_backbuffer_ = nullptr; // set by BeginRenderPass, consumed by EndRenderPass
+    D3D12SwapChain* active_swap_chain_ = nullptr; // likewise, for CopySceneDepth
     u32 frame_constants_root_index_ = ~0u;        // of the pipeline BindPipeline last bound
     u32 compute_storage_buffer_count_ = 0;
     u32 compute_sampled_texture_count_ = 0;

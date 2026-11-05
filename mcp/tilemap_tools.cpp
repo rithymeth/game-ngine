@@ -55,7 +55,7 @@ sp::TilemapData LoadTilemapAsset(OpenProject& p, const AssetRecord& r) {
 }
 
 void SaveWithScan(OpenProject& p, const std::string& rel, const std::function<bool(const fs::path&, std::string*)>& save) {
-    const fs::path file = p.paths.content / rel;
+    const fs::path file = ContentFile(p, rel);
     std::error_code ec;
     fs::create_directories(file.parent_path(), ec);
     std::string error;
@@ -215,7 +215,7 @@ void RegisterTilemapTools(McpServer& server, std::shared_ptr<AssetHost> host) {
                  }
              }
              std::error_code ec;
-             if (fs::exists(p.paths.content / rel, ec) && !OptBool(args, "overwrite", false)) throw ToolError(rel + " already exists (pass overwrite)");
+             if (fs::exists(ContentFile(p, rel), ec) && !OptBool(args, "overwrite", false)) throw ToolError(rel + " already exists (pass overwrite)");
              SaveWithScan(p, rel, [&](const fs::path& f, std::string* e) { return sp::SaveTileset(f, t, e); });
              Json out = {{"path", rel}, {"texture", texture_path}, {"texture_size", {{"width", image.width}, {"height", image.height}}}, {"columns", t.Columns()}, {"rows", t.Rows()}, {"tile_count", t.TileCount()}};
              if (const AssetRecord* r = p.database->FindByPath(rel)) out["guid"] = assets::ToString(r->guid);
@@ -320,7 +320,7 @@ void RegisterTilemapTools(McpServer& server, std::shared_ptr<AssetHost> host) {
              }
              for (const std::string& n : names) m.AddLayer(n);
              std::error_code ec;
-             if (fs::exists(p.paths.content / rel, ec) && !OptBool(args, "overwrite", false)) throw ToolError(rel + " already exists (pass overwrite)");
+             if (fs::exists(ContentFile(p, rel), ec) && !OptBool(args, "overwrite", false)) throw ToolError(rel + " already exists (pass overwrite)");
              SaveWithScan(p, rel, [&](const fs::path& f, std::string* e) { return sp::SaveTilemap(f, m, e); });
              Json out = {{"path", rel}, {"tileset", tileset_path}, {"width", m.width}, {"height", m.height}, {"layers", names}};
              if (const AssetRecord* r = p.database->FindByPath(rel)) out["guid"] = assets::ToString(r->guid);

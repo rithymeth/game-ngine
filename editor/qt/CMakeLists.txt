@@ -17,6 +17,26 @@ target_link_libraries(aether_editor_qt PRIVATE
     aether_editor_core
     Qt6::Widgets
 )
+
+# Keep the editor's component schema set aligned with the game's selected kits.
+if(TARGET Aether::Inventory)
+    target_link_libraries(aether_editor_qt PRIVATE Aether::Inventory)
+    target_compile_definitions(aether_editor_qt PRIVATE AETHER_QT_KIT_INVENTORY=1)
+else()
+    target_compile_definitions(aether_editor_qt PRIVATE AETHER_QT_KIT_INVENTORY=0)
+endif()
+if(TARGET Aether::Interaction)
+    target_link_libraries(aether_editor_qt PRIVATE Aether::Interaction)
+    target_compile_definitions(aether_editor_qt PRIVATE AETHER_QT_KIT_INTERACTION=1)
+else()
+    target_compile_definitions(aether_editor_qt PRIVATE AETHER_QT_KIT_INTERACTION=0)
+endif()
+if(TARGET Aether::Quests)
+    target_link_libraries(aether_editor_qt PRIVATE Aether::Quests)
+    target_compile_definitions(aether_editor_qt PRIVATE AETHER_QT_KIT_QUESTS=1)
+else()
+    target_compile_definitions(aether_editor_qt PRIVATE AETHER_QT_KIT_QUESTS=0)
+endif()
 target_compile_features(aether_editor_qt PRIVATE cxx_std_17)
 target_compile_definitions(aether_editor_qt PRIVATE
     AETHER_QT_TEST_MODEL_PATH="${CMAKE_SOURCE_DIR}/assets/models/test_textured_cube.gltf"
@@ -79,7 +99,8 @@ if(WIN32)
 endif()
 
 if(AETHER_BUILD_SCRIPTING)
-    target_sources(aether_editor_qt PRIVATE script_component_editor.cpp script_editor_widget.cpp)
+    target_sources(aether_editor_qt PRIVATE script_component_editor.cpp script_editor_widget.cpp
+        ai_debugger_widget.cpp ../src/ai/ai_debugger.cpp)
     target_link_libraries(aether_editor_qt PRIVATE Aether::Scripting)
     target_compile_definitions(aether_editor_qt PRIVATE AETHER_QT_EDITOR_SCRIPTING=1)
 endif()

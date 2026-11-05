@@ -27,6 +27,11 @@ bool Fail(std::string* error, std::string message) {
     return false;
 }
 
+bool IsSymlink(const stdfs::path& path, std::error_code& ec) {
+    const stdfs::file_status status = stdfs::symlink_status(path, ec);
+    return !ec && stdfs::is_symlink(status);
+}
+
 std::vector<long> VersionParts(const std::string& v) {
     std::vector<long> parts;
     std::stringstream in(v);
@@ -72,11 +77,10 @@ bool LoadPluginDescriptorFromMemory(std::span<const u8> bytes, const std::string
 }
 
 bool LoadPluginDescriptor(const stdfs::path& file, PluginDescriptor& out, std::string* error) {
-    std::error_code size_error;
-    const auto size = stdfs::file_size(file, size_error);
-    if (!size_error && size > kMaxPluginDescriptorBytes) return Fail(error, file.string() + " is too large to be a plugin descriptor");
     std::vector<u8> bytes;
-    if (!fs::ReadFileBytes(file.string(), bytes)) return Fail(error, "Can't read " + file.string());
+    if (!fs::ReadFileBytes(file.string(), bytes, kMaxPluginDescriptorBytes)) {
+        return Fail(error, "Can't read " + file.string() + " or it is too large to be a plugin descriptor");
+    }
     return LoadPluginDescriptorFromMemory(bytes, file.string(), out, error);
 }
 
@@ -203,15 +207,22 @@ std::vector<std::string> PluginManager::Discover() {
     order_.clear();
     for (const auto& [dir, source] : search_paths_) {
         std::error_code ec;
-        if (!stdfs::is_directory(dir, ec)) continue;
+        const stdfs::file_status root_status = stdfs::symlink_status(dir, ec);
+        if (ec || stdfs::is_symlink(root_status) || !stdfs::is_directory(root_status)) continue;
         std::vector<stdfs::path> folders;
         for (stdfs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
-            if (it->is_directory(ec)) folders.push_back(it->path());
+            const stdfs::file_status status = it->symlink_status(ec);
+            if (ec) break;
+            if (!stdfs::is_symlink(status) && stdfs::is_directory(status)) folders.push_back(it->path());
         }
         std::sort(folders.begin(), folders.end());
         for (const stdfs::path& folder : folders) {
             const stdfs::path file = folder / (folder.filename().string() + kPluginExtension);
-            if (!stdfs::is_regular_file(file, ec)) continue;
+            const stdfs::file_status descriptor_status = stdfs::symlink_status(file, ec);
+            if (ec || stdfs::is_symlink(descriptor_status) || !stdfs::is_regular_file(descriptor_status)) {
+                ec.clear();
+                continue;
+            }
             PluginInfo info;
             std::string error;
             if (!LoadPluginDescriptor(file, info.descriptor, &error)) {
@@ -411,8 +422,12 @@ std::vector<std::pair<stdfs::path, std::string>> PluginManager::ContentMounts() 
     for (usize i : order_) {
         const PluginInfo& p = plugins_[i];
         std::error_code ec;
-        if (p.descriptor.has_content && stdfs::is_directory(p.dir / "Content", ec)) {
-            mounts.push_back({p.dir / "Content", "Plugins/" + p.descriptor.name + "/"});
+        const stdfs::path content_dir = p.dir / "Content";
+        const stdfs::file_status plugin_status = stdfs::symlink_status(p.dir, ec);
+        if (ec || stdfs::is_symlink(plugin_status) || !stdfs::is_directory(plugin_status)) continue;
+        const stdfs::file_status content_status = stdfs::symlink_status(content_dir, ec);
+        if (!ec && p.descriptor.has_content && !stdfs::is_symlink(content_status) && stdfs::is_directory(content_status)) {
+            mounts.push_back({content_dir, "Plugins/" + p.descriptor.name + "/"});
         }
     }
     return mounts;

@@ -39,6 +39,7 @@ struct GameSettings {
     f32 sfx = 1.0f;
     f32 voice = 1.0f;
     std::string language = "en";
+    bool subtitles = true; // accessibility: show dialogue lines (sequence Subtitle tracks)
     input::UserBindings bindings; // the player's key rebinds
 };
 
@@ -163,5 +164,6 @@ AETHER_REFLECT(aether::save::GameSettings, 1,
     AETHER_FIELD(sfx, Field_EditAnywhere, {.range_min = 0, .range_max = 1}),
     AETHER_FIELD(voice, Field_EditAnywhere, {.range_min = 0, .range_max = 1}),
     AETHER_FIELD(language, Field_EditAnywhere, {.tooltip = "A language code: en, fr, ja ..."}),
+    AETHER_FIELD(subtitles, Field_EditAnywhere, {.tooltip = "Show dialogue subtitles"}),
     AETHER_FIELD(bindings, Field_EditAnywhere)
 )

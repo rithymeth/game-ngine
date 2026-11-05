@@ -59,8 +59,11 @@ public:
     virtual void SetPushConstants(const void* data, u32 size_bytes) = 0;
 
     // Draws `vertex_count` procedural vertices (SV_VertexID/gl_VertexIndex
-    // driven, no vertex buffer) as a triangle list.
-    virtual void Draw(u32 vertex_count) = 0;
+    // driven, no vertex buffer) as a triangle list. With a bound vertex
+    // buffer, `first_vertex` starts the draw that many vertices in, so one
+    // buffer can feed several draws (e.g. one per texture, keeping a bindless
+    // index uniform across each draw); first_vertex + vertex_count must fit.
+    virtual void Draw(u32 vertex_count, u32 first_vertex = 0) = 0;
 
     // Real vertex/index buffers + bindless textures (the "Unified Cross-API
     // Renderer" follow-up) — must be called after BindPipeline, with a
@@ -95,6 +98,13 @@ public:
     // Call after BindPipeline; the binding holds for the draws that follow,
     // until the next BindPipeline. A no-op on devices without support.
     virtual void BindFrameConstants(BufferHandle /*buffer*/) {}
+
+    // Inside a BeginRenderPass pass: copies the depth drawn so far into the swap chain's SceneDepthTexture (which must already exist) and
+    // continues the same pass, colour and depth kept (Vulkan ends the render pass, copies and begins a loading one; D3D12 copies between
+    // barriers). The bound pipeline and its bindings are gone afterwards and the viewport and scissor are the full swap chain again, as after
+    // BeginRenderPass: rebind before drawing. Draws after it may read the texture; they must not write depth they then expect to read. False
+    // (nothing recorded, the pass untouched) without an active pass or a SceneDepthTexture, and on devices without support (the default).
+    virtual bool CopySceneDepth() { return false; }
 
     // Escape hatch: the backend-native command list/buffer pointer
     // (ID3D12GraphicsCommandList* for D3D12, VkCommandBuffer for Vulkan,

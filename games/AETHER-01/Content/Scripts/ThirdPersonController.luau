@@ -1,13 +1,19 @@
 -- Third person controller: put it on the character (tagged Player). The Look
 -- axis orbits the camera (the entity with a Camera component) around it, WASD or
 -- the left stick moves relative to where the camera looks, and the character
--- turns to face where it goes. Space or the A button jumps.
+-- turns to face where it goes. Space or the A button jumps; Shift or the left
+-- stick click sprints.
 local Controller = {}
 local Weapons = {
     {capacity = 30, range = 24, cooldown = 0.22, reload = 1.1, damage = 1, shield_damage = 1, cone = 0.94, knockback = 0.3},
     {capacity = 12, range = 28, cooldown = 0.16, reload = 0.9, damage = 1, shield_damage = 2, cone = 0.975, knockback = 0.15},
     {capacity = 6, range = 8, cooldown = 0.8, reload = 1.6, damage = 3, shield_damage = 1, cone = 0.82, knockback = 1.5},
 }
+
+-- The mission is the cooked Quests/FirstContact quest (Content/Gameplay/FirstContact.aquest): one
+-- objective per checkpoint stage, so MissionStage is the number of objectives done.
+local Quest = "FirstContact"
+local Objectives = {"recover_rifle", "clear_hangar", "clear_research", "defeat_warden", "access_archive"}
 
 local function BoxObstacles()
     -- Physics is optional in portable CI/player builds. This game keeps its
@@ -56,6 +62,9 @@ end
 --@range 0 30
 --@tooltip Running speed, metres per second
 Controller.speed = 6
+--@range 0 30
+--@tooltip Sprint speed (Sprint held while moving and not aiming), metres per second
+Controller.sprint_speed = 8
 --@range 0 1
 Controller.look_speed = 0.12
 --@range 1 20
@@ -82,6 +91,10 @@ function Controller:OnCreate()
     self.camera = world:EntitiesWith("Camera")[1]
     local have_character, character = pcall(function() return self.entity:Get("CharacterMovement") end)
     self.character = have_character and character or nil
+    -- Kael's move set (M8.6) is the Animator's graph (Characters/Kael/Kael.aanim); this script only feeds it.
+    local have_animator, animator = pcall(function() return self.entity:Get("Animator") end)
+    self.animator = have_animator and animator or nil
+    self.anim_health = 3
     self.fire_timer = 0
     self.scout_health = {}
     self.scout_spawn = {}
@@ -104,6 +117,8 @@ function Controller:OnCreate()
     Attributes.Define(self.entity, "Reloading", 0, 0, 1)
     Attributes.Define(self.entity, "DamageFlash", 0, 0, 1)
     Attributes.Define(self.entity, "HitConfirm", 0, 0, 1)
+    -- Firing is the cooked FireWeapon ability; its AmmoCost effect spends one round.
+    Abilities.Grant(self.entity, "FireWeapon")
     for _, enemy in ipairs(world:EntitiesWith("Tags")) do
         if enemy:Has("Tags") and enemy:Has("Transform") then
             for _, tag in ipairs(enemy:Get("Tags").names) do
@@ -157,7 +172,29 @@ function Controller:InitializeMission()
     Attributes.Define(self.entity, "SaveStatus", 0, -1, 1)
     Attributes.Define(self.entity, "ResearchClear", 0, 0, 1)
     self:LoadCheckpoint()
+    self:SyncQuest()
     self:ApplyMission()
+end
+
+-- Rebuild the quest log from the checkpoint stage (new game, restart or checkpoint load).
+function Controller:SyncQuest()
+    self.entity:Remove("QuestLog")
+    Quests.Start(self.entity, Quest)
+    for stage = 1, self.mission_stage do Quests.Progress(self.entity, Quest, Objectives[stage]) end
+end
+
+function Controller:QuestStage()
+    local stage = 0
+    while stage < #Objectives and Quests.GetProgress(self.entity, Quest, Objectives[stage + 1]) > 0 do stage += 1 end
+    return stage
+end
+
+-- Completes the objective for `stage` and moves the mission to where the quest now is.
+function Controller:CompleteObjective(stage)
+    Quests.Progress(self.entity, Quest, Objectives[stage])
+    self.mission_stage = self:QuestStage()
+    self:ApplyMission()
+    self:SaveCheckpoint()
 end
 
 function Controller:ApplyMission()
@@ -229,9 +266,7 @@ function Controller:UpdateMission()
     if self.mission_stage == 0 and Input.IsTriggered("Interact") and self.rifle ~= nil then
         local delta = self.rifle:Get("Transform").position - self.entity:Get("Transform").position
         if vector.magnitude(delta) <= 1.8 then
-            self.mission_stage = 1
-            self:ApplyMission()
-            self:SaveCheckpoint()
+            self:CompleteObjective(1)
         end
     elseif self.mission_stage == 1 then
         local scout_alive = false
@@ -241,9 +276,7 @@ function Controller:UpdateMission()
             end
         end
         if not scout_alive then
-            self.mission_stage = 2
-            self:ApplyMission()
-            self:SaveCheckpoint()
+            self:CompleteObjective(2)
         end
     elseif self.mission_stage == 2 then
         local clear = true
@@ -255,26 +288,20 @@ function Controller:UpdateMission()
         Attributes.SetBase(self.entity, "ResearchClear", clear and 1 or 0)
         if self.arena_gate ~= nil then self.arena_gate:Get("Transform").position = vector.create(0, clear and -10 or 2, -22) end
         if clear and self.entity:Get("Transform").position.z < -22 then
-            self.mission_stage = 3
-            self:ApplyMission()
-            self:SaveCheckpoint()
+            self:CompleteObjective(3)
         end
     elseif self.mission_stage == 3 then
         for _, enemy in ipairs(world:EntitiesWith("Tags")) do
             for _, tag in ipairs(enemy:Get("Tags").names) do
                 if tag == "Warden" and Attributes.Get(enemy, "Health") <= 0 then
-                    self.mission_stage = 4
-                    self:ApplyMission()
-                    self:SaveCheckpoint()
+                    self:CompleteObjective(4)
                 end
             end
         end
     elseif self.mission_stage == 4 and Input.IsTriggered("Interact") then
         local p = self.entity:Get("Transform").position
         if math.abs(p.x) <= 2 and math.abs(p.z + 40) <= 2 then
-            self.mission_stage = 5
-            self:ApplyMission()
-            self:SaveCheckpoint()
+            self:CompleteObjective(5)
         end
     end
 end
@@ -285,6 +312,32 @@ local function Quat(yaw, pitch)
         math.cos(hy) * math.sin(hp), math.sin(hy) * math.cos(hp),
         -math.sin(hy) * math.sin(hp), math.cos(hy) * math.cos(hp),
     }
+end
+
+-- Each physics step consumes the character's input, and a slow frame runs several steps: keep this frame's
+-- movement for all of them, so Kael covers the same ground at 30 Hz as at 60 or 144 Hz.
+function Controller:OnFixedUpdate(dt)
+    if self.character ~= nil and self.move_input ~= nil and not self.dead then self.character.input = self.move_input end
+end
+
+-- The animation graph's inputs: speed and grounded from the character, the rest from this frame's actions.
+function Controller:Animate(moves)
+    local a = self.animator
+    if a == nil then return end
+    local speed, grounded = 0, self.vy == 0
+    if self.character ~= nil then
+        local v = self.character.velocity
+        speed = math.sqrt(v.x * v.x + v.z * v.z)
+        grounded = self.character.grounded
+    elseif moves ~= nil then
+        speed = vector.magnitude(moves) * (self.move_speed or self.speed)
+    end
+    a:SetFloatParameter("Speed", self.dead and 0 or speed)
+    a:SetBoolParameter("Grounded", grounded)
+    a:SetBoolParameter("Dead", self.dead)
+    a:SetBoolParameter("Aiming", not self.dead and Input.IsTriggered("Aim"))
+    if self.health < self.anim_health and not self.dead then a:SetTrigger("Hit") end
+    self.anim_health = self.health
 end
 
 function Controller:OnUpdate(dt)
@@ -349,12 +402,15 @@ function Controller:OnUpdate(dt)
             self.magazines = {30, 12, 6}
             self.ammo = self.ammo_capacity
             self:SelectWeapon(1, true)
+            self:SyncQuest()
             self:ApplyMission()
         else
             if self.character ~= nil then
                 self.character.input = vector.create(0, 0, 0)
                 self.character.jump_requested = false
             end
+            self.move_input = nil
+            self:Animate(nil)
             return
         end
     end
@@ -378,21 +434,31 @@ function Controller:OnUpdate(dt)
     local sy, cy = math.sin(self.yaw), math.cos(self.yaw)
     local vx = -sy * move.y + cy * move.x
     local vz = -cy * move.y - sy * move.x
+    -- Sprint (Shift, left stick click) while moving and not aiming; the graph enters Sprint above 7 m/s.
+    local sprinting = Input.IsTriggered("Sprint") and not Input.IsTriggered("Aim") and vector.magnitude(move) > 0.5
+    local move_speed = sprinting and self.sprint_speed or self.speed
+    self.move_speed = move_speed
 
     if self.character ~= nil then
         -- The player's existing Jolt CharacterSystem consumes this input in
         -- FixedUpdate, including slopes, steps, collision and buffered jumps.
+        self.character.walk_speed = move_speed
         self.character.input = vector.create(vx, 0, vz)
+        self.move_input = self.character.input
         self.character.jump_requested = Input.IsTriggered("Jump")
+        if self.character.jump_requested and self.character.grounded and self.animator ~= nil then self.animator:SetTrigger("Jump") end
     else
         -- Preserve this template's movement when the engine is built without
         -- the optional physics module.
-        if self.vy == 0 and Input.IsTriggered("Jump") then self.vy = self.jump_speed end
+        if self.vy == 0 and Input.IsTriggered("Jump") then
+            self.vy = self.jump_speed
+            if self.animator ~= nil then self.animator:SetTrigger("Jump") end
+        end
         self.vy += self.gravity * dt
         local p = t.position
         local y = p.y + self.vy * dt
         if y <= self.floor then y = self.floor; self.vy = 0 end
-        t.position = vector.create(p.x + vx * self.speed * dt, y, p.z + vz * self.speed * dt)
+        t.position = vector.create(p.x + vx * move_speed * dt, y, p.z + vz * move_speed * dt)
         if self.mission_stage == 2 and Attributes.Get(self.entity, "ResearchClear") == 0 and t.position.z < -21 then
             t.position = vector.create(t.position.x, t.position.y, -21)
         end
@@ -410,6 +476,7 @@ function Controller:OnUpdate(dt)
         self.reloading = true
         self.reload_timer = weapon.reload
         Attributes.SetBase(self.entity, "Reloading", 1)
+        if self.animator ~= nil then self.animator:SetTrigger("Reload") end
     end
     if self.reloading then
         self.reload_timer = self.reload_timer - dt
@@ -422,9 +489,16 @@ function Controller:OnUpdate(dt)
         end
     end
 
-    if self.mission_stage >= 1 and self.mission_stage < 5 and Input.IsTriggered("Fire") and self.fire_timer == 0 and not self.reloading and self.ammo > 0 then
+    local shot = 0
+    if self.mission_stage >= 1 and self.mission_stage < 5 and Input.IsTriggered("Fire") and self.fire_timer == 0 and not self.reloading then
+        -- Fails (cannot_afford) on an empty magazine; otherwise it has paid AmmoCost and the shot ends at once.
+        shot = Abilities.TryActivate(self.entity, "FireWeapon")
+        if shot > 0 then Abilities.End(shot) end
+    end
+    if shot > 0 then
+        if self.animator ~= nil then self.animator:SetTrigger("Fire") end
         self.fire_timer = self.weapon_index == 1 and self.fire_cooldown or weapon.cooldown
-        self.ammo -= 1
+        self.ammo = Attributes.Get(self.entity, "Ammo")
         self.magazines[self.weapon_index] = self.ammo
         Attributes.SetBase(self.entity, "Ammo", self.ammo)
         local fx = -sy * math.cos(self.pitch)
@@ -511,6 +585,9 @@ function Controller:OnUpdate(dt)
             end
         end
     end
+
+    if Input.IsTriggered("Interact") and self.animator ~= nil then self.animator:SetTrigger("Interact") end
+    self:Animate(move)
 
     -- Face the way it's going.
     if vx ~= 0 or vz ~= 0 then

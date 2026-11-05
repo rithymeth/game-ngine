@@ -92,7 +92,7 @@ the status and evidence here as each increment is completed.
 | 10 | Vulkan pipeline construction cleanup | Scope-own the existing pipeline layout, shader modules, and graphics pipeline through shader compilation, pipeline creation and registry insertion, so any failure before registry ownership transfers releases completed Vulkan objects. Acceptance: engine/player/editor builds pass; injected shader/pipeline/registry failures or validation-layer evidence confirm cleanup. | **Implemented locally; failure paths unverified:** temporary shader modules and the layout/pipeline record now clean themselves up unless pipeline insertion succeeds. |
 | 11 | Vulkan compute-pipeline construction cleanup | Scope-own all three descriptor layouts, the pipeline layout, shader module, and compute pipeline until registry insertion succeeds. Cover failures at each Vulkan creation call and vector growth without changing the explicit device-owned lifetime after registration. Acceptance: engine/player/editor builds pass; injected creation/registry failures or validation-layer evidence confirm cleanup. | **Implemented locally; failure paths unverified:** a scoped compute-pipeline record now cleans every partially-created object on exceptions, including descriptor-layout creation and registry growth. The shader module remains scoped through pipeline creation. |
 | 12 | Compute-pipeline handle validation | Reject invalid and out-of-range compute-pipeline handles before backend table access. Clear the command list's prior compute binding state on rejection so a later dispatch cannot silently reuse stale pipeline bindings. Keep the handle representation and valid-handle behavior stable. Acceptance: engine/player/editor builds pass; focused invalid-handle checks cover both backends. | **Implemented locally; runtime invalid-handle behavior unverified:** D3D12 and Vulkan now range-check handles before accessing their pipeline tables and clear their compute binding state on rejection. The command-list path logs the invalid handle. |
-| 13 | Vulkan compute descriptor-pool capacity | Keep descriptor sets alive for the command buffer's recording lifetime, but grow the per-command-list pool when allocation returns `VK_ERROR_OUT_OF_POOL_MEMORY` or `VK_ERROR_FRAGMENTED_POOL`; reset every pool together when the command list is reset after its submitted work is complete. Acceptance: engine/player/editor builds pass; a recording with more than 85 compute-pipeline binds completes and re-recording after a fence resets the pool set. | **Implemented locally; high-bind-count recording unverified:** Vulkan command lists now add a pool only when the current pool cannot allocate the three descriptor sets for a compute pipeline bind, and reset all pools together on command-list reset. Pool sets remain device-owned by the command list until it is safely reset or destroyed. |
+| 13 | Vulkan compute descriptor-pool capacity | Keep descriptor sets alive for the command buffer's recording lifetime, but grow the per-command-list pool when allocation returns `VK_ERROR_OUT_OF_POOL_MEMORY` or `VK_ERROR_FRAGMENTED_POOL`; reset every pool together when the command list is reset after its submitted work is complete. Acceptance: engine/player/editor builds pass; a recording with more than 85 compute-pipeline binds completes and re-recording after a fence resets the pool set. | **Verified locally on Mesa lavapipe:** `Vulkan_ComputeDescriptorPoolsGrowAndResetAfterCompletion` records 96 compute-pipeline binds twice on the same list, submitting and waiting between recordings. Each bind requires three descriptor sets, so the first recording exceeds the original 256-set pool and the second confirms all pools reset after completion. |
 | 14 | Submission fence bookkeeping | Advance graphics and compute fence counters only after queue signaling/submission succeeds. Preserve a pending cross-queue wait until its dependent submission succeeds so retries do not lose synchronization. Acceptance: engine/player/editor builds pass; injected queue-submit/signal failures prove failed submissions do not expose a waitable fence or consume the pending dependency. | **Implemented locally; injected failure paths unverified:** D3D12 advances its fence sequence only after `ID3D12CommandQueue::Signal` succeeds. Vulkan advances each sequence and consumes its pending cross-queue wait only after `vkQueueSubmit` succeeds. |
 | 15 | D3D12 sampled-texture descriptor preflight | Check both bindless and compute descriptor capacity before creating/uploading an RGBA8 texture. Exhaustion must return an invalid handle without consuming a bindless slot or submitting upload work, matching the R32-float path's early capacity check. Acceptance: engine/player/editor builds pass; forced descriptor exhaustion confirms no upload submission and no slot loss. | **Implemented locally; forced exhaustion unverified:** `CreateTexture` now checks user-texture capacity and both descriptor heaps before opening its upload path; full heaps return an invalid handle. |
 | 16 | D3D12 sampled-texture handle resolution | Validate a sampled handle against the number of successfully registered textures and reject uninitialized descriptor-map entries. Preallocate the fixed-capacity descriptor/resource registries before any texture upload so registration does not allocate after GPU work and descriptor allocation. Acceptance: engine/player/editor builds pass; fabricated in-range handles remain invalid and failed allocations do not expose stale descriptors. | **Implemented locally; fabricated-handle runtime check unverified:** descriptor lookup now checks registered count and the invalid sentinel. Fixed-size maps and texture ownership storage are allocated when the device is initialized. |
@@ -182,6 +182,53 @@ the status and evidence here as each increment is completed.
 | 100 | Enforce Vulkan storage-buffer range limits | Cache `maxStorageBufferRange` from the selected physical device and reject storage-buffer allocations whose full descriptor range would exceed it. Acceptance: engine/player/editor builds pass; sizes at or below the device limit are accepted and larger sizes fail before allocation or descriptor binding. | **Implemented locally; limit-boundary runtime check unverified:** Vulkan storage-buffer creation now validates its size against the selected device's storage-buffer range limit. |
 | 101 | Enable Vulkan dynamic sampled-image indexing | Require `shaderSampledImageArrayDynamicIndexing` and descriptor limits for the fixed 32-image bindless table during physical-device selection, then enable the feature when creating the logical device. Acceptance: engine/player/editor builds pass; devices lacking the shader feature or descriptor capacity are skipped with a diagnostic, and scene shaders can dynamically index sampled images on selected devices. | **Implemented locally; Vulkan validation-layer and scene runtime checks unverified:** selection filters unsupported devices and logical-device creation enables the sampled-image dynamic-indexing feature. |
 | 102 | Validate Vulkan compute-pipeline descriptor counts against device limits | Cache selected-device compute per-stage resource and descriptor limits plus descriptor-set category limits. Reject compute pipeline layouts that exceed either those limits or the engine’s existing binding caps before allocating Vulkan layouts. Acceptance: Qt editor build passes; excessive layouts fail clearly before Vulkan layout/pipeline creation. | **Implemented locally; GPU runtime checks unverified:** storage buffers, uniform buffers, sampled images and combined compute-stage resources are checked against selected-device limits. |
+
+| 103 | Verify Vulkan resize, handle reuse and readback at runtime | Exercise offscreen targets with one, two and three images through shrink, growth, zero-size clamping and same-size resize; check every image's pixels, repeated readback and registry-slot reuse after destruction. Recreate a window swap chain repeatedly and present/read back after each recreation. Required Linux Vulkan lanes must fail if device/display setup is missing; a focused GCC lane must reject validation diagnostics. | **Verified locally on Mesa lavapipe/Xvfb:** both new regression cases plus the compute descriptor-pool rollover/reset regression pass; all nine Vulkan checks pass with the Khronos validation layer loaded and no validation errors, and all 27 selected CTest entries pass (1,212 unit tests and two functional scenarios). A missing driver or display now fails required-mode checks. Corrected the existing textured-quad fixture's SPIR-V push-constant padding. See the evidence below for scope limits. |
+
+### Resize/readback evidence (2026-11-04)
+
+`Vulkan_OffscreenResizePreservesHandlesAndPixels` renders 30 frames across
+one-, two- and three-image targets. It verifies the entire handle set after
+each resize, exact output dimensions, alternating red/green pixels and alpha,
+two identical readbacks per frame, and reuse of released registry slots.
+`Vulkan_WindowRecreationPreservesHandlesAndReadback` recreates a fixed-size
+window swap chain 12 times, checks its first handle stays stable, and submits
+more frames than its image count after every recreation. It checks readback
+pixels where the surface supports transfer-source usage.
+
+`Vulkan_ComputeDescriptorPoolsGrowAndResetAfterCompletion` compiles a
+one-storage-buffer shader, records 96 bind/bind/dispatch sequences, waits for
+the compute fence, then records and submits the same workload again. It
+crosses the initial 256-set Vulkan descriptor-pool capacity and verifies that
+the expanded pool set resets safely after completed GPU work.
+
+The Linux GCC, Clang and Physics unit lanes now set `AETHER_REQUIRE_VULKAN=1`:
+device creation failures and missing displays fail Vulkan tests instead of
+passing through their optional local skip paths. The sanitizer lane retains
+its deliberate no-driver behavior. The GCC validation run installs and enables
+`VK_LAYER_KHRONOS_validation` and fails on `Validation Error` or `VUID-`
+diagnostics as well as a nonzero test-runner status.
+It also requires the resize, compute descriptor-pool, recreation and textured-quad
+checks to report passes, rejecting a build that silently configured Vulkan out. The exact CI
+shell script was exercised locally: an unmatched filter fails instead of
+accepting zero tests, while the normal filter passes.
+
+The initial validation run exposed `VUID-VkGraphicsPipelineCreateInfo-layout-10069`
+in the textured-quad test: SPIR-V aligned its `uint3` padding at byte 16,
+extending the block to 28 bytes despite a declared 16-byte range. Three scalar
+padding members now match the host's four packed uints. The corrected run
+passes all nine Vulkan checks without validation diagnostics. Loader output
+confirms the validation layer was inserted. Negative probes verify that a
+missing driver fails in required mode but keeps the optional local skip,
+and that required window checks fail without a display.
+
+Local logs are in the ignored `build/upgrade-vulkan-*.log` files. This evidence
+uses GCC 14.2, RelWithDebInfo, software Vulkan and Xvfb on Linux. It does not
+cover failure injection, device loss, changing window-surface image counts,
+hardware GPU concurrency, D3D12 or Metal. The window test recreates a fixed
+surface extent; changing dimensions is exercised by the offscreen test.
+Earlier queue entries' remaining failure-recovery and platform requirements
+stay open. No performance improvement or release-readiness claim is made.
 
 ### Guardrails for this update
 

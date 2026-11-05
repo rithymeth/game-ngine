@@ -2,8 +2,14 @@
 # aether_game is its runtime (mounting the paks, loading the startup scene,
 # the frame loop); aether_player is the executable around it.
 add_library(aether_game STATIC src/game.cpp src/game_kits.cpp src/user_paths.cpp src/settings_apply.cpp src/bindings_migrate.cpp
-                               src/scene_renderer.cpp src/frame_lights.cpp src/package_textures.cpp)
+                               src/scene_renderer.cpp src/frame_lights.cpp src/package_textures.cpp
+                               src/particle_pass.cpp src/decal_pass.cpp)
 target_include_directories(aether_game PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+# game.cpp includes the complete runtime surface and can exceed MSVC's
+# default COFF section-count limit in Debug builds.
+if(MSVC)
+    target_compile_options(aether_game PRIVATE /bigobj)
+endif()
 target_link_libraries(aether_game PUBLIC Aether::Engine Aether::UI Aether::Audio Aether::Renderer)
 if(TARGET Aether::Physics)
     target_link_libraries(aether_game PRIVATE Aether::Physics)
@@ -13,12 +19,20 @@ else()
 endif()
 # Scenes' scripts and Blueprints run in the player (Phase 26 step 4); Luau
 # only when the build has it.
-target_link_libraries(aether_game PUBLIC Aether::Blueprint Aether::Sprite2D Aether::Sequencer Aether::Save Aether::Loc Aether::Gameplay)
+target_link_libraries(aether_game PUBLIC Aether::Blueprint Aether::Sprite2D Aether::Sequencer Aether::Save Aether::Loc Aether::Gameplay Aether::Animation Aether::VFX)
 if(TARGET Aether::Scripting)
     target_link_libraries(aether_game PRIVATE Aether::Scripting)
     target_compile_definitions(aether_game PRIVATE AETHER_GAME_SCRIPTING=1)
 else()
     target_compile_definitions(aether_game PRIVATE AETHER_GAME_SCRIPTING=0)
+endif()
+# AI line of sight and the navigation mesh (Nav.*, AI.CanSee) for scene scripts,
+# both from the scene's box colliders (game.cpp: so only with physics).
+if(TARGET Aether::AI AND TARGET Aether::Nav)
+    target_link_libraries(aether_game PRIVATE Aether::AI Aether::Nav)
+    target_compile_definitions(aether_game PRIVATE AETHER_GAME_AI=1)
+else()
+    target_compile_definitions(aether_game PRIVATE AETHER_GAME_AI=0)
 endif()
 # The inventory genre kit (Phase 30 step 7a), when built.
 if(TARGET Aether::Inventory)

@@ -7,6 +7,7 @@
 #include "aether/audio/audio_system.h"
 
 #include "aether/sequencer/sequence_system.h"
+#include "aether/assets/gltf_loader.h"
 
 #include "aether/core/log.h"
 #include "aether/gameplay/ability_system.h"
@@ -35,6 +36,9 @@
 #include "aether/physics/character.h"
 #include "aether/physics/physics_scene.h"
 #include "aether/physics/physics_world.h"
+#endif
+#if AETHER_GAME_SCRIPTING
+#include "aether/script/ai_api.h"
 #endif
 
 namespace aether::player {
@@ -167,6 +171,7 @@ bool GamePackage::LoadManifest(std::string* error) {
         if (d.is_discarded() || !d.is_object() || JsonString(d, "$type") != "DlcManifest") {
             return Fail(error, path + " isn't a DLC manifest");
         }
+        if (JsonVersion(d) != 1) return Fail(error, path + " has an unsupported version");
         GameManifest part;
         json as_base = {{"$type", "CookManifest"}, {"$version", 1}, {"assets", d.value("assets", json::array())}};
         if (!ParseGameManifest(as_base.dump(), part, error)) return false;
@@ -228,10 +233,18 @@ struct Game::Physics {};
 bool Game::HasPhysics() { return AETHER_GAME_PHYSICS != 0; }
 bool Game::HasScripting() { return AETHER_GAME_SCRIPTING != 0; }
 
+PhysicsScene* Game::PhysicsQueries() {
+#if AETHER_GAME_PHYSICS
+    return physics_ && physics_->scene ? physics_->scene.get() : nullptr;
+#else
+    return nullptr;
+#endif
+}
+
 Game::Game(GamePackage& package)
     : package_(package), world_(std::make_unique<World>()), settings_(std::make_unique<save::SettingsStore<save::GameSettings>>(std::filesystem::path())) {
     lifecycle_ = std::make_unique<Lifecycle>(*world_, guids_);
-    platform_.Subscribe([this](const platform::LifecycleMessage& message) { OnPlatformEvent(message); });
+    platform_listener_ = platform_lifecycle_->Subscribe([this](const platform::LifecycleMessage& message) { OnPlatformEvent(message); });
     BuildKits();
     localization_ = std::make_unique<loc::Localization>();
     localization_->MakeActive();
@@ -252,10 +265,12 @@ Game::Game(GamePackage& package)
     (void)GetComponentId<CapsuleCollider>();
     (void)GetComponentId<ConvexCollider>();
     (void)GetComponentId<MeshCollider>();
+    (void)GetComponentId<PhysicsJoint>();
 #endif
 }
 
 Game::~Game() {
+    if (platform_lifecycle_ && platform_listener_ != 0) platform_lifecycle_->Unsubscribe(platform_listener_);
     EndPlay();
     localization_.reset();
     saves_.reset(); // drains queued saves; its world context points into what's below
@@ -266,6 +281,14 @@ Game::~Game() {
         modules_.back().second->Shutdown();
         modules_.pop_back();
     }
+}
+
+void Game::UsePlatformLifecycle(platform::PlatformLifecycle& lifecycle) {
+    if (platform_lifecycle_ == &lifecycle) return;
+    if (platform_lifecycle_ && platform_listener_ != 0) platform_lifecycle_->Unsubscribe(platform_listener_);
+    platform_lifecycle_ = &lifecycle;
+    platform_listener_ = platform_lifecycle_->Subscribe([this](const platform::LifecycleMessage& message) { OnPlatformEvent(message); });
+    if (platform_lifecycle_->Suspended()) OnPlatformEvent({platform::LifecycleEvent::Suspend, platform::MemoryLevel::Moderate});
 }
 
 void Game::RefreshSaveContext() {
@@ -314,6 +337,8 @@ std::vector<std::string> Game::LoadSettings(const SettingsTargets& targets) {
 }
 
 audio::AudioSystem* Game::AudioSystem() { return runtime_ ? runtime_->audio.get() : nullptr; }
+anim::AnimationSystem* Game::Animation() { return runtime_ ? runtime_->animation.get() : nullptr; }
+vfx::ParticleWorld* Game::Particles() { return runtime_ ? runtime_->particles.get() : nullptr; }
 
 void Game::ApplyAudioSettings() {
     if (!runtime_ || !runtime_->audio) return;
@@ -398,17 +423,24 @@ bool Game::LoadStartupScene(std::string* error) {
 }
 
 bool Game::LoadScene(const std::string& path, std::string* error) {
+    // The UDP client keeps a pointer to this World. Replacing it mid-session
+    // would leave replication writing to freed ECS memory.
+    if (authoritative_physics_client_) return Fail(error, "Can't replace a scene while authoritative multiplayer is active");
     StartModules(); // their components, before the scene names them
     bp::RegisterBlueprintComponents(); // BlueprintInstance, before scene deserialization
     ui::RegisterWidgetComponents(); // WidgetComponent (§18.4)
     RegisterRenderComponents(); // lights (DirectionalLight, SkyLight, PointLight, SpotLight) and post-process volumes, so scenes can name them
     RegisterSequenceComponents(); // SequenceComponent (§27.2)
+    RegisterAnimationComponents(); // Animator (§16.5, M8.6), before scene deserialization
     RegisterAudioComponents(); // cooked AudioSource/AudioListener/ReverbZone before deserialization
     kits_.RegisterComponents(); // the gameplay kits' components: attributes, tags, items, interactables, quests (§30)
     sprite2d::RegisterSprite2DComponents(); // sprites and tilemaps (§26.6)
     sprite2d::RegisterPhysics2DComponents(); // 2D bodies and colliders
     sprite2d::RegisterPlatformerComponents();
     sprite2d::RegisterLight2DComponents();
+#if AETHER_GAME_AI
+    RegisterPerceptionComponents(); // AIPerception / AIStimuliSource, for scenes and scripts' entity:Add
+#endif
 #if AETHER_GAME_PHYSICS
     (void)GetComponentId<CharacterMovement>();
 #endif
@@ -523,6 +555,35 @@ void Game::LoadInputAssets() {
     ActivateInputContexts();
 }
 
+std::vector<Game::SequenceCue> Game::SequenceCues() const {
+    std::vector<SequenceCue> out;
+    if (!runtime_ || !runtime_->audio) return out;
+    for (const auto& [key, handle] : runtime_->sequence_audio) {
+        if (runtime_->audio->Player().IsPlaying(handle)) out.push_back({key.second, handle});
+    }
+    return out;
+}
+
+void Game::UpdateSubtitle() {
+    const seq::SubtitleKey* key = runtime_ && runtime_->sequences ? runtime_->sequences->Subtitle() : nullptr;
+    const bool enabled = settings_->Get().subtitles;
+    if (key == subtitle_key_ && enabled == subtitle_enabled_ && localization_->Language() == subtitle_language_) return;
+    if (key != subtitle_key_) {
+        if (key) AETHER_LOG_INFO("Player", "Subtitle shown: %s", key->text.c_str());
+        else AETHER_LOG_INFO("Player", "Subtitle hidden");
+    }
+    subtitle_key_ = key;
+    subtitle_enabled_ = enabled;
+    subtitle_language_ = localization_->Language();
+    if (key && enabled) {
+        subtitle_text_ = localization_->Text(key->text, key->text);
+        subtitle_speaker_ = key->speaker.empty() ? std::string() : localization_->Text(key->speaker, key->speaker);
+    } else {
+        subtitle_text_.clear();
+        subtitle_speaker_.clear();
+    }
+}
+
 void Game::LoadLocalization() {
     if (localization_loaded_) return;
     localization_loaded_ = true;
@@ -555,8 +616,87 @@ void Game::ActivateInputContexts() {
     for (const std::string& name : input_library_.ContextNames()) input_library_.Activate(input_, name, priority++, user);
 }
 
+#if AETHER_GAME_AI && AETHER_GAME_PHYSICS
+namespace {
+// Whether the segment crosses a box, using the same unrotated-box contract as
+// the games' hitscan and camera queries.
+bool SegmentHitsBox(const Vec3& from, const Vec3& to, const Vec3& center, const Vec3& half) {
+    const f32 origin[3] = {from.x, from.y, from.z}, delta[3] = {to.x - from.x, to.y - from.y, to.z - from.z};
+    const f32 mid[3] = {center.x, center.y, center.z}, size[3] = {half.x, half.y, half.z};
+    f32 first = 0.0f, last = 1.0f;
+    for (int axis = 0; axis < 3; ++axis) {
+        const f32 o = origin[axis], d = delta[axis], low = mid[axis] - size[axis], high = mid[axis] + size[axis];
+        if (std::abs(d) < 1e-5f) {
+            if (o < low || o > high) return false;
+            continue;
+        }
+        f32 a = (low - o) / d, b = (high - o) / d;
+        if (a > b) std::swap(a, b);
+        first = std::max(first, a);
+        last = std::min(last, b);
+        if (first > last) return false;
+    }
+    return true;
+}
+
+template <typename Func>
+void ForEachBox(World& world, Func&& func) {
+    const ComponentId transform = GetComponentId<Transform>(), collider = GetComponentId<BoxCollider>();
+    world.ForEachArchetype([&](Archetype& archetype) {
+        if (!archetype.Mask().test(transform) || !archetype.Mask().test(collider)) return;
+        for (usize c = 0; c < archetype.ChunkCount(); ++c) {
+            const Entity* entities = archetype.EntityArray(c);
+            for (u32 i = 0; i < archetype.ChunkEntityCount(c); ++i) {
+                const Entity e = entities[i];
+                func(e, *world.GetComponent<Transform>(e), *world.GetComponent<BoxCollider>(e));
+            }
+        }
+    });
+}
+
+// AI.CanSee's walls: every solid box collider where it is now (a gate that
+// moves away stops blocking), but the looker's and the target's.
+bool BoxLineOfSight(World& world, const Vec3& from, const Vec3& to, Entity looker, Entity target) {
+    bool clear = true;
+    ForEachBox(world, [&](Entity e, const Transform& t, const BoxCollider& box) {
+        if (!clear || e == looker || e == target || box.is_trigger) return;
+        if (SegmentHitsBox(from, to, t.position + box.center, box.half_extents)) clear = false;
+    });
+    return clear;
+}
+
+// A scene opts into a navigation mesh by tagging its floors NavWalkable. The
+// mesh is baked from every static (no RigidBody) solid box collider - the same
+// boxes the character walks on and into - so floors are walked on and walls
+// and props walked around; moving bodies (gates, enemies) stay out of it.
+std::unique_ptr<nav::NavWorld> BakeSceneNavigation(World& world, std::vector<std::string>& warnings) {
+    if (FindEntitiesWithTag(world, "NavWalkable").empty()) return nullptr;
+    nav::NavGeometry geometry;
+    ForEachBox(world, [&](Entity e, const Transform& t, const BoxCollider& box) {
+        if (box.is_trigger || world.GetComponent<RigidBody>(e) != nullptr) return;
+        geometry.AddBox(t.position + box.center, box.half_extents);
+    });
+    auto navigation = std::make_unique<nav::NavWorld>(
+        world, [](const ModelRenderer&, std::vector<Vec3>&, std::vector<u32>&) { return false; });
+    std::string error;
+    if (!navigation->Dynamic().Build(std::move(geometry), nav::NavMeshSettings{}, &error)) {
+        warnings.push_back("Navigation: the scene's mesh couldn't be baked" + (error.empty() ? "" : ": " + error));
+        return nullptr;
+    }
+    return navigation;
+}
+} // namespace
+#endif
+
 void Game::StartRuntime() {
     runtime_ = std::make_unique<Runtime>();
+#if AETHER_GAME_AI && AETHER_GAME_PHYSICS
+    runtime_->navigation = BakeSceneNavigation(*world_, warnings_);
+    runtime_->perception = std::make_unique<ai::PerceptionWorld>(*world_);
+    runtime_->perception->SetLineOfSight([world = world_.get()](const Vec3& from, const Vec3& to, Entity looker, Entity target) {
+        return BoxLineOfSight(*world, from, to, looker, target);
+    });
+#endif
     runtime_->mixer.AddDefaultBuses();
     for (const auto& asset : package_.Manifest().assets) {
         std::string extension = stdfs::path(asset.path).extension().string();
@@ -600,10 +740,8 @@ void Game::StartRuntime() {
     // a Spawn key's prefab (a GUID or a path) at its place.
     runtime_->attributes = std::make_unique<gas::AttributeSystem>(*world_); // attributes of this scene's entities
     runtime_->effects = std::make_unique<gas::EffectSystem>(*world_, *runtime_->attributes, effects_);
-    CreateInventoryRuntime();
     runtime_->abilities = std::make_unique<gas::AbilitySystem>(*world_, *runtime_->attributes, *runtime_->effects, abilities_, effects_);
-    CreateQuestsRuntime();
-    CreateInteractionRuntime();
+    CreateKitRuntime();
     runtime_->sequences = std::make_unique<seq::SequenceSystem>(
         *world_, guids_, [this](const std::string& path) { return FindSequence(path); }, lifecycle_.get());
     runtime_->sequences->SetSpawner([this](const seq::Track&, Entity parent, const seq::SpawnKey& key) -> Entity {
@@ -628,6 +766,72 @@ void Game::StartRuntime() {
         return InstantiatePrefab(*world_, guids_, guid, *data, &placed);
     });
     runtime_->sequences->MakeActive();
+    // Animation (M8.6): assets load from the package by path the first time an Animator names them.
+    anim::AnimationLibrary library;
+    library.graph = [this](const std::string& path) -> const anim::AnimGraph* {
+        auto [it, inserted] = runtime_->anim_graphs.try_emplace(path);
+        if (inserted) {
+            std::vector<u8> bytes;
+            std::string error;
+            const json j = package_.ReadContent(path, bytes, &error) ? json::parse(bytes.begin(), bytes.end(), nullptr, false) : json();
+            auto graph = std::make_unique<anim::AnimGraph>();
+            if (!j.is_discarded() && !j.is_null() && anim::AnimGraphFromJson(j, *graph, &error)) it->second = std::move(graph);
+            else warnings_.push_back("Animation: " + path + ": " + (error.empty() ? "not an animation graph" : error));
+        }
+        return it->second.get();
+    };
+    library.skeleton = [this](const std::string& path) -> const anim::Skeleton* {
+        auto [it, inserted] = runtime_->anim_rigs.try_emplace(path);
+        if (inserted) {
+            std::vector<u8> bytes;
+            std::string error;
+            assets::GltfScene scene;
+            auto rig = std::make_unique<anim::GltfCharacter>();
+            // Rigs embed their buffer (a data: URI), so the in-memory parser opens no other file.
+            if (!package_.ReadContent(path, bytes, &error)) warnings_.push_back("Animation: " + path + ": " + error);
+            else if (!assets::LoadGltfFromMemory(bytes, scene)) warnings_.push_back("Animation: " + path + " isn't a self-contained glTF (embed its buffer)");
+            else if (!anim::BuildCharacterFromGltf(scene, 0, *rig, &error)) warnings_.push_back("Animation: " + path + ": " + error);
+            else it->second = std::move(rig);
+        }
+        return it->second ? &it->second->skeleton : nullptr;
+    };
+    library.montage = [this](const std::string& path) -> const anim::Montage* {
+        auto [it, inserted] = runtime_->anim_montages.try_emplace(path);
+        if (inserted) {
+            std::vector<u8> bytes;
+            std::string error;
+            const json j = package_.ReadContent(path, bytes, &error) ? json::parse(bytes.begin(), bytes.end(), nullptr, false) : json();
+            auto montage = std::make_unique<anim::Montage>();
+            if (!j.is_discarded() && !j.is_null() && anim::MontageFromJson(j, *montage, &error)) it->second = std::move(montage);
+            else warnings_.push_back("Animation: " + path + ": " + (error.empty() ? "not a montage" : error));
+        }
+        return it->second.get();
+    };
+    // A graph's clip names are the rigs' glTF animation names ("Rig.gltf#Clip" picks one rig's).
+    library.assets.clip = [this](const std::string& name) -> const anim::AnimationClip* {
+        const usize hash = name.find('#');
+        for (const auto& [path, rig] : runtime_->anim_rigs) {
+            if (!rig || (hash != std::string::npos && name.compare(0, hash, path) != 0)) continue;
+            const std::string clip = hash == std::string::npos ? name : name.substr(hash + 1);
+            for (const anim::AnimationClip& c : rig->clips) {
+                if (c.name == clip) return &c;
+            }
+        }
+        return nullptr;
+    };
+    runtime_->animation = std::make_unique<anim::AnimationSystem>(*world_, std::move(library));
+    // Particles (M8.7): systems load from the package by path the first time a ParticleSystem names them.
+    runtime_->particles = std::make_unique<vfx::ParticleWorld>(*world_, [this](const std::string& path) -> const vfx::ParticleSystemAsset* {
+        auto [it, inserted] = runtime_->vfx_assets.try_emplace(path);
+        if (inserted) {
+            std::vector<u8> bytes;
+            std::string error;
+            auto asset = std::make_unique<vfx::ParticleSystemAsset>();
+            if (package_.ReadContent(path, bytes, &error) && vfx::LoadParticleSystem(std::string(bytes.begin(), bytes.end()), *asset, &error)) it->second = std::move(asset);
+            else warnings_.push_back("Particles: " + path + ": " + (error.empty() ? "not a particle system" : error));
+        }
+        return it->second.get();
+    }, &guids_);
     // The on-screen UI: layouts come from the package; a theme asset (.atheme), if the game ships one, styles every layout.
     runtime_->ui_router = std::make_unique<ui::UIInputRouter>(runtime_->ui_viewport, runtime_->ui_font);
     runtime_->ui_bridge = std::make_unique<ui::UIInputBridge>(*runtime_->ui_router);
@@ -703,6 +907,18 @@ std::string Game::UiImagePath(u32 id) const {
     return runtime_->ui_images[id - 1];
 }
 
+std::vector<Game::AiDebugInfo> Game::AiDebug() const {
+    std::vector<AiDebugInfo> out;
+#if AETHER_GAME_SCRIPTING
+    if (!runtime_ || !runtime_->scripts) return out;
+    for (script::AiDebugEntry& e : runtime_->scripts->AiDebug().Collect(*world_)) {
+        out.push_back({e.entity, std::move(e.state), e.has_perception, e.target, std::move(e.known), std::move(e.path), e.next_corner,
+                       e.path_complete, e.goal});
+    }
+#endif
+    return out;
+}
+
 std::vector<std::string> Game::ScriptErrors() const {
 #if AETHER_GAME_SCRIPTING
     if (runtime_ && runtime_->scripts) return runtime_->scripts->Errors();
@@ -734,7 +950,11 @@ void Game::EndPlay() {
         if (runtime_->output) runtime_->output->Stop();
         if (runtime_->audio) runtime_->audio->StopAll();
         runtime_->sequence_audio.clear();
+        runtime_->sequence_vfx.clear();
     }
+    subtitle_key_ = nullptr; // the sequences it points into go with the runtime
+    subtitle_text_.clear();
+    subtitle_speaker_.clear();
 }
 
 
@@ -819,7 +1039,7 @@ void Game::BuildFrame() {
     physics.main_thread_only = true;
     physics.run = [this](World&, const FrameContext& frame) {
 #if AETHER_GAME_PHYSICS
-        if (physics_) {
+        if (physics_ && !authoritative_physics_client_) {
             physics_->characters->Step(frame.fixed_dt);
             physics_->scene->Step(frame.fixed_dt);
         }
@@ -863,6 +1083,14 @@ void Game::BuildFrame() {
         // Menus: the keys and the pad move focus and press the focused control (only when the game has UI on screen, so a game
         // without one never sees its input used here); scripts read the clicks next frame through UI.WasClicked.
         if (runtime_ && runtime_->ui_bridge && runtime_->ui_viewport.LayerCount() > 0) runtime_->ui_bridge->Update(input_state_, frame.dt);
+#if AETHER_GAME_AI
+        // Senses before scripts decide, so AI.GetKnown / AI.GetTarget are this frame's. The runtime's own
+        // perception world (physics builds), else the active one a host supplied (a test, a tool).
+        if (runtime_) {
+            ai::PerceptionWorld* perception = runtime_->perception ? runtime_->perception.get() : ai::PerceptionWorld::Active();
+            if (perception) perception->Update(frame.dt);
+        }
+#endif
         lifecycle_->Update(frame.dt);
         if (runtime_ && runtime_->ui) runtime_->ui->Update(frame.dt); // after scripts, so what they set shows this frame
     };
@@ -877,12 +1105,20 @@ void Game::BuildFrame() {
     sequencer.run = [this](World&, const FrameContext& frame) {
         if (!runtime_ || !runtime_->sequences) return;
         runtime_->sequences->Update(frame.dt);
-        if (!runtime_->blueprints) return;
+        UpdateSubtitle();
         for (const seq::SequenceEvent& e : runtime_->sequences->Events()) {
+            if (e.kind == seq::SequenceEvent::Kind::Finished) {
+                AETHER_LOG_INFO("Player", "Sequence %s: %s", e.skipped ? "skipped" : "finished", e.name.c_str());
+            }
+        }
+        for (const seq::SequenceEvent& e : runtime_->sequences->Events()) {
+            // Audio keys play without Blueprints; markers and completion are Blueprint events.
             if (e.kind == seq::SequenceEvent::Kind::Marker) {
+                if (!runtime_->blueprints) continue;
                 const bp::VmValue args[] = {e.name, e.payload};
                 runtime_->blueprints->VM().Dispatch(e.entity, seq::SequenceSystem::kMarkerEvent, args);
             } else if (e.kind == seq::SequenceEvent::Kind::Finished) {
+                if (!runtime_->blueprints) continue;
                 const bp::VmValue args[] = {e.name};
                 runtime_->blueprints->VM().Dispatch(e.entity, seq::SequenceSystem::kFinishedEvent, args);
             }
@@ -902,7 +1138,9 @@ void Game::BuildFrame() {
                     const auto key = std::make_pair(e.entity.index, e.name);
                     auto& handle = runtime_->sequence_audio[key];
                     if (e.payload == "stop" || e.payload == "fade_out") {
-                        runtime_->audio->Player().Stop(handle, e.payload == "fade_out" ? e.fade : 0.0f);
+                        if (runtime_->audio->Player().Stop(handle, e.payload == "fade_out" ? e.fade : 0.0f)) {
+                            AETHER_LOG_INFO("Player", "Sequence cue stopped: %s", e.name.c_str());
+                        }
                     } else {
                         const auto cue = runtime_->cues.find(e.name);
                         if (cue != runtime_->cues.end()) {
@@ -912,14 +1150,118 @@ void Game::BuildFrame() {
                             params.volume_db = e.value;
                             params.fade_in = e.payload == "fade_in" ? e.fade : 0.0f;
                             handle = runtime_->audio->Player().Play(cue->second, params);
+                            AETHER_LOG_INFO("Player", "Sequence cue started: %s", e.name.c_str());
                         } else warnings_.push_back("Sequence audio cue missing: " + e.name);
                     }
                 }
             }
-            // Animation keys still require an animation host in the player.
+            else if (e.kind == seq::SequenceEvent::Kind::Animation) {
+                // Montages on the track's entity, through its Animator (applied by Player.Animation this frame).
+                Animator* animator = !e.subject.IsNull() && world_->IsAlive(e.subject) ? world_->GetComponent<Animator>(e.subject) : nullptr;
+                if (!animator) {
+                    warnings_.push_back("Sequence animation '" + e.name + "' is on an entity without an Animator");
+                } else if (e.payload == "stop") {
+                    animator->StopMontage();
+                } else {
+                    animator->PlayMontage(e.name, e.value > 0.0f ? e.value : 1.0f);
+                }
+            }
+            else if (e.kind == seq::SequenceEvent::Kind::Vfx && runtime_->particles) {
+                // Play spawns the effect on the track's entity (at its offset, following it) or at the offset in the
+                // world; Stop stops it spawning. Player.Particles steps it this frame, so it shows on the key's frame.
+                const auto key = std::make_pair(e.entity.index, e.name);
+                if (e.payload == "stop") {
+                    const auto it = runtime_->sequence_vfx.find(key);
+                    if (it == runtime_->sequence_vfx.end()) continue;
+                    if (ParticleSystem* ps = world_->IsAlive(it->second) ? world_->GetComponent<ParticleSystem>(it->second) : nullptr) ps->Deactivate();
+                    runtime_->sequence_vfx.erase(it);
+                    AETHER_LOG_INFO("Player", "Sequence vfx stopped: %s", e.name.c_str());
+                } else {
+                    if (const auto it = runtime_->sequence_vfx.find(key); it != runtime_->sequence_vfx.end() && world_->IsAlive(it->second)) {
+                        if (ParticleSystem* ps = world_->GetComponent<ParticleSystem>(it->second)) ps->Deactivate(); // a replay: the old one lives out
+                    }
+                    const bool attached = !e.subject.IsNull() && world_->IsAlive(e.subject);
+                    const Entity fx = attached ? runtime_->particles->SpawnAttached(e.name, e.subject, e.offset) : runtime_->particles->SpawnAtLocation(e.name, e.offset);
+                    if (fx.IsNull()) {
+                        warnings_.push_back("Sequence vfx '" + e.name + "' didn't start");
+                        continue;
+                    }
+                    runtime_->sequence_vfx[key] = fx;
+                    AETHER_LOG_INFO("Player", "Sequence vfx started: %s", e.name.c_str());
+                }
+            }
         }
     };
     scheduler_.Add(std::move(sequencer));
+    // Characters animate after scripts set their parameters and sequences start their montages.
+    SystemDesc animation;
+    animation.name = "Player.Animation";
+    animation.phase = SystemPhase::Update;
+    animation.after = {"Player.Sequencer"};
+    animation.main_thread_only = true;
+    animation.run = [this](World&, const FrameContext& frame) {
+        if (!runtime_ || !runtime_->animation) return;
+        anim::AnimationSystem& system = *runtime_->animation;
+        system.Update(frame.dt);
+        for (const anim::EntityAnimEvent& e : system.Events()) {
+            const anim::AnimEvent& ev = e.event;
+            if (ev.type != anim::AnimEventType::StateChanged && ev.type != anim::AnimEventType::MontageStarted &&
+                ev.type != anim::AnimEventType::MontageEnded) continue;
+            std::string who = std::to_string(e.entity.index);
+            if (const Tags* tags = world_->GetComponent<Tags>(e.entity); tags && !tags->names.empty()) who = tags->names.front();
+            if (ev.type == anim::AnimEventType::StateChanged) {
+                AETHER_LOG_INFO("Player", "Anim state: %s %s: %s -> %s", who.c_str(), ev.machine.c_str(), ev.detail.c_str(), ev.name.c_str());
+            } else if (ev.type == anim::AnimEventType::MontageStarted) {
+                AETHER_LOG_INFO("Player", "Anim montage started: %s %s", who.c_str(), ev.name.c_str());
+            } else {
+                AETHER_LOG_INFO("Player", "Anim montage ended: %s %s%s", who.c_str(), ev.name.c_str(), ev.interrupted ? " (interrupted)" : "");
+            }
+            if (runtime_->blueprints) {
+                // Animation events reach the entity's Blueprints like the editor's preview sends them.
+                const char* event = anim::AnimationSystem::BlueprintEventName(ev.type);
+                if (ev.type == anim::AnimEventType::StateChanged) {
+                    const bp::VmValue args[] = {ev.machine, ev.detail, ev.name};
+                    runtime_->blueprints->VM().Dispatch(e.entity, event, args);
+                } else if (ev.type == anim::AnimEventType::MontageStarted) {
+                    const bp::VmValue args[] = {ev.name};
+                    runtime_->blueprints->VM().Dispatch(e.entity, event, args);
+                } else {
+                    const bp::VmValue args[] = {ev.name, ev.interrupted};
+                    runtime_->blueprints->VM().Dispatch(e.entity, event, args);
+                }
+            }
+        }
+        for (; runtime_->animation_problems < system.Problems().size(); ++runtime_->animation_problems) {
+            const std::string& problem = system.Problems()[runtime_->animation_problems];
+            AETHER_LOG_WARN("Player", "Animation: %s", problem.c_str());
+            warnings_.push_back("Animation: " + problem);
+        }
+    };
+    scheduler_.Add(std::move(animation));
+    // Particles step after characters animate and sequences start or stop their effects.
+    SystemDesc particles;
+    particles.name = "Player.Particles";
+    particles.phase = SystemPhase::Update;
+    particles.after = {"Player.Animation"};
+    particles.main_thread_only = true;
+    particles.run = [this](World&, const FrameContext& frame) {
+        if (!runtime_ || !runtime_->particles) return;
+        vfx::ParticleWorld& system = *runtime_->particles;
+        system.Update(frame.dt);
+        for (const vfx::ParticleSystemFinishedEvent& e : system.Events()) {
+            AETHER_LOG_INFO("Player", "Vfx finished: %s", e.asset.c_str());
+            if (runtime_->blueprints) {
+                const bp::VmValue args[] = {e.asset};
+                runtime_->blueprints->VM().Dispatch(e.entity, vfx::ParticleWorld::kFinishedEvent, args);
+            }
+        }
+        for (; runtime_->particle_problems < system.Problems().size(); ++runtime_->particle_problems) {
+            const std::string& problem = system.Problems()[runtime_->particle_problems];
+            AETHER_LOG_WARN("Player", "Particles: %s", problem.c_str());
+            warnings_.push_back("Particles: " + problem);
+        }
+    };
+    scheduler_.Add(std::move(particles));
     SystemDesc audio;
     audio.name = "Player.Audio";
     audio.phase = SystemPhase::Update;
@@ -1095,7 +1437,7 @@ void Game::OnPlatformEvent(const platform::LifecycleMessage& message) {
 
 FrameContext Game::Tick(f32 dt) {
     if (!loop_) BuildFrame();
-    if (platform_.Suspended()) {
+    if (platform_lifecycle_->Suspended()) {
         // In the background the game stands still: no time passes and input is left alone.
         FrameContext frame = last_frame_;
         frame.dt = 0;
@@ -1138,7 +1480,32 @@ void Game::UpdateProofMenu() {
     const bool right = pressed(Key::Right) || pressed(Key::GamepadDPadRight);
     menu_previous_ = input_state_;
     const i32 previous_menu = proof_menu_;
-    if (back) {
+    const std::vector<RebindableInput> bindings = RebindableInputs();
+    if (proof_key_capture_active_) {
+        if (pressed(Key::Escape) || pressed(Key::GamepadB) || pressed(Key::GamepadStart)) {
+            proof_key_capture_.Cancel();
+            proof_key_capture_active_ = false;
+            proof_settings_status_ = 0;
+        } else {
+            Key captured = Key::None;
+            const input::KeyCapture::Result result = proof_key_capture_.Update(input_state_, captured);
+            if (result == input::KeyCapture::Result::Captured) {
+                proof_key_capture_active_ = false;
+                save::GameSettings next = settings_->Get();
+                next.bindings.Set(proof_capture_context_, proof_capture_action_, proof_capture_slot_, captured);
+                settings_->Set(next);
+                const bool saved = settings_->Save().ok;
+                const input::InputMappingContext* context = input_library_.FindContext(proof_capture_context_);
+                const bool has_conflict = context != nullptr &&
+                    !input::FindConflicts(input::ApplyUserBindings(*context, settings_->Get().bindings), captured,
+                                          proof_capture_action_, proof_capture_slot_).empty();
+                proof_settings_status_ = saved ? (has_conflict ? 2 : 1) : -1;
+            } else if (result == input::KeyCapture::Result::Canceled) {
+                proof_key_capture_active_ = false;
+                proof_settings_status_ = 0;
+            }
+        }
+    } else if (back) {
         proof_menu_ = proof_menu_ == 0 ? 1 : proof_menu_ == 1 ? 0 : 1;
         proof_menu_row_ = 0;
         proof_settings_status_ = 0;
@@ -1147,7 +1514,7 @@ void Game::UpdateProofMenu() {
         if (accept) switch (proof_menu_row_) {
         case 0: proof_menu_ = 0; break;
         case 1: proof_menu_ = 2; proof_menu_row_ = 0; break;
-        case 2: proof_menu_ = 3; break;
+        case 2: proof_menu_ = 3; proof_menu_row_ = 0; break;
         case 3:
             if (saves_ && saves_->Exists(scene_.find("Campaign") != std::string::npos ? "aether-campaign" : "first-contact")) {
                 input_state_.SetButton(Key::F5, true); proof_load_input_ = true; proof_menu_ = 0;
@@ -1166,8 +1533,61 @@ void Game::UpdateProofMenu() {
             settings_->Set(next);
             proof_settings_status_ = settings_->Save().ok ? 1 : -1;
         }
-    } else if (proof_menu_ == 3 && accept) { proof_menu_ = 1; proof_menu_row_ = 0; }
-    if (previous_menu != proof_menu_) paused_ = proof_menu_ != 0;
+    } else if (proof_menu_ == 3) {
+        const i32 binding_count = static_cast<i32>(bindings.size());
+        const i32 reset_all_row = binding_count;
+        const i32 back_row = binding_count + 1;
+        const i32 row_count = binding_count + 2;
+        if (row_count > 0) proof_menu_row_ = (proof_menu_row_ + (down ? 1 : up ? row_count - 1 : 0)) % row_count;
+        if (pressed(Key::Delete) && proof_menu_row_ < binding_count) {
+            const RebindableInput& binding = bindings[static_cast<usize>(proof_menu_row_)];
+            save::GameSettings next = settings_->Get();
+            const bool changed = next.bindings.Reset(binding.context, binding.action, binding.slot);
+            if (changed) {
+                settings_->Set(next);
+                proof_settings_status_ = settings_->Save().ok ? 1 : -1;
+            } else {
+                proof_settings_status_ = 0;
+            }
+        }
+        if (accept) {
+            if (proof_menu_row_ < binding_count) {
+                const RebindableInput& binding = bindings[static_cast<usize>(proof_menu_row_)];
+                proof_capture_context_ = binding.context;
+                proof_capture_action_ = binding.action;
+                proof_capture_slot_ = binding.slot;
+                proof_key_capture_.Begin(input_state_);
+                proof_key_capture_active_ = true;
+                proof_settings_status_ = 3;
+            } else if (proof_menu_row_ == reset_all_row) {
+                save::GameSettings next = settings_->Get();
+                if (!next.bindings.overrides.empty()) {
+                    next.bindings.ResetAll();
+                    settings_->Set(next);
+                    proof_settings_status_ = settings_->Save().ok ? 1 : 0;
+                } else {
+                    proof_settings_status_ = 0;
+                }
+            } else if (proof_menu_row_ == back_row) {
+                proof_menu_ = 1;
+                proof_menu_row_ = 0;
+                proof_settings_status_ = 0;
+            }
+        }
+    }
+    if (previous_menu != proof_menu_ && paused_ != (proof_menu_ != 0)) {
+        paused_ = proof_menu_ != 0;
+        // Pausing holds the world (and its sequences) still; device output stops too so
+        // dialogue doesn't run on ahead of its subtitles. Headless audio only renders on Tick.
+        if (paused_ && runtime_ && runtime_->output && runtime_->output->Running()) {
+            runtime_->output->Stop();
+            pause_stopped_audio_ = true;
+        } else if (!paused_ && pause_stopped_audio_) {
+            pause_stopped_audio_ = false;
+            std::string error;
+            if (runtime_ && runtime_->output && !runtime_->output->Start(480, &error)) AETHER_LOG_WARN("Player", "Audio did not restart after the pause menu: %s", error.c_str());
+        }
+    }
     if (previous_menu != 0 && proof_menu_ == 0 && !proof_load_input_ && !proof_new_input_) {
         // Consume the menu confirmation/back edge before gameplay reads it.
         // The same gamepad buttons also bind jump and interaction.
@@ -1179,10 +1599,28 @@ void Game::UpdateProofMenu() {
     if (!attributes) return;
     attributes->Define("MenuState", 0, 0, 3);
     attributes->Define("MenuRow", 0, 0, 5);
-    attributes->Define("SettingsStatus", 0, -2, 1);
+    attributes->Define("SettingsStatus", 0, -2, 3);
     attributes->SetBase("MenuState", static_cast<f32>(proof_menu_));
     attributes->SetBase("MenuRow", static_cast<f32>(proof_menu_row_));
     attributes->SetBase("SettingsStatus", static_cast<f32>(proof_settings_status_));
+}
+
+std::vector<Game::RebindableInput> Game::RebindableInputs() const {
+    std::vector<RebindableInput> out;
+    if (!settings_) return out;
+    const input::UserBindings& user = settings_->Get().bindings;
+    for (const std::string& name : input_library_.ContextNames()) {
+        const input::InputMappingContext* context = input_library_.FindContext(name);
+        if (!context) continue;
+        const input::InputMappingContext current = input::ApplyUserBindings(*context, user);
+        std::unordered_map<std::string, u32> slots;
+        for (usize i = 0; i < context->bindings.size(); ++i) {
+            const input::InputBinding& binding = context->bindings[i];
+            const u32 slot = slots[binding.action]++;
+            out.push_back({name, binding.action, slot, binding.key, current.bindings[i].key});
+        }
+    }
+    return out;
 }
 
 GameStats Game::Stats() const {

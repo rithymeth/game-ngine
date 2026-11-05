@@ -45,6 +45,15 @@ public:
     void WithGraphicsQueueIdle(const std::function<void()>& operation);
 
     void WaitForFence(u64 fence_value);
+    // The fence value of the latest submission (0 before any): once it completes, everything submitted so far has. For retiring resources.
+    u64 LastSubmittedFence() const {
+        std::lock_guard<std::mutex> submit_lock(submit_mutex_);
+        return next_fence_value_ - 1;
+    }
+    u64 LastSubmittedComputeFence() const {
+        std::lock_guard<std::mutex> submit_lock(compute_submit_mutex_);
+        return next_compute_fence_value_ - 1;
+    }
     bool IsFenceComplete(u64 fence_value) const {
         if (fence_value == 0) return true;
         std::lock_guard<std::mutex> submit_lock(submit_mutex_);

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <set>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace aether::assets {
 
@@ -15,9 +16,10 @@ std::string SettingsText(AssetDatabase& database, const AssetGuid& guid) {
 
 std::vector<AssetGuid> DependentsOf(const AssetDatabase& database, const AssetGuid& guid) {
     std::vector<AssetGuid> dependents;
+    std::unordered_set<AssetGuid> included;
     auto add_users = [&](const AssetGuid& used) {
         for (const AssetRecord* user : database.Referencers(used)) {
-            if (std::find(dependents.begin(), dependents.end(), user->guid) == dependents.end()) {
+            if (included.insert(user->guid).second) {
                 dependents.push_back(user->guid);
             }
         }
@@ -38,7 +40,10 @@ HotReloader::HotReloader(AssetDatabase& database, const ImporterRegistry& import
                          std::chrono::milliseconds debounce, std::string platform)
     : database_(database), importers_(importers), cache_(cache), platform_(std::move(platform)),
       watcher_(database.ContentRoot(), debounce) {
-    for (const AssetRecord* record : database_.All()) {
+    const std::vector<const AssetRecord*> records = database_.AllUnsorted();
+    settings_.reserve(records.size());
+    hashes_.reserve(records.size());
+    for (const AssetRecord* record : records) {
         if (!record->IsSubAsset()) {
             settings_[record->guid] = SettingsText(database_, record->guid);
             hashes_[record->guid] = record->source_hash;
@@ -57,7 +62,7 @@ std::vector<AssetChange> HotReloader::Update(FileWatcher::Clock::time_point now)
         bool missing;
     };
     std::unordered_map<AssetGuid, Before> before;
-    for (const AssetRecord* record : database_.All()) {
+    for (const AssetRecord* record : database_.AllUnsorted()) {
         if (!record->IsSubAsset()) {
             before[record->guid] = {record->path, record->missing};
         }

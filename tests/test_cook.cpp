@@ -297,6 +297,44 @@ AETHER_TEST(Cook_RepeatBuildsAreByteIdentical) {
     CHECK(read_bytes(first.pak_file) != read_bytes(third.pak_file));
 }
 
+// A fresh cook (no Intermediate/ import cache, .ameta files without sub-asset
+// GUIDs yet, as a glTF that was never imported is committed) is
+// byte-reproducible: the importer's sub-asset GUIDs are derived, not random.
+AETHER_TEST(Cook_FreshCooksFromCleanCopiesAreByteIdentical) {
+    const stdfs::path project = MakeProject("FreshSource");
+    const stdfs::path source_dir = project.parent_path();
+    // Every source gets its committed .ameta first (as in a real checkout); only
+    // the import outputs and caches are left for the fresh cooks to create.
+    CHECK(!GuidOf(source_dir / "Content", "Scenes/start.ascene").empty());
+    const auto read_bytes = [](const stdfs::path& path) {
+        std::ifstream in(path, std::ios::binary);
+        AETHER_CHECK(in.good());
+        return std::vector<char>(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    };
+    cook::CookReport reports[2];
+    for (int i = 0; i < 2; ++i) {
+        const stdfs::path copy = source_dir.parent_path() / (i == 0 ? "FreshCopyA" : "FreshCopyB");
+        stdfs::remove_all(copy);
+        stdfs::copy(source_dir, copy, stdfs::copy_options::recursive);
+        stdfs::remove_all(copy / "Intermediate");
+        CHECK(read_bytes(copy / "Content/Models/scene.gltf.ameta") ==
+              read_bytes(source_dir / "Content/Models/scene.gltf.ameta"));
+        cook::CookOptions options;
+        options.project_file = copy / project.filename();
+        options.configuration = cook::BuildConfiguration::Development;
+        options.output_dir = copy / "Build";
+        reports[i] = cook::Cook(options);
+        CHECK(reports[i].ok);
+        CHECK(reports[i].texture_cache_hits == 0);
+    }
+    CHECK(read_bytes(reports[0].pak_file) == read_bytes(reports[1].pak_file));
+    CHECK(read_bytes(reports[0].manifest_file) == read_bytes(reports[1].manifest_file));
+    // The import really produced sub-assets, and both copies agree on their GUIDs.
+    const auto meta_a = read_bytes(source_dir.parent_path() / "FreshCopyA/Content/Models/scene.gltf.ameta");
+    CHECK(std::string(meta_a.begin(), meta_a.end()).find("\"mesh:0\"") != std::string::npos);
+    CHECK(meta_a == read_bytes(source_dir.parent_path() / "FreshCopyB/Content/Models/scene.gltf.ameta"));
+}
+
 AETHER_TEST(Cook_StrictRejectsImporterWarnings) {
     const stdfs::path project = MakeProject("ImporterWarning");
     const stdfs::path meta_file = project.parent_path() / "Content/Textures/a.png.ameta";
@@ -325,4 +363,55 @@ AETHER_TEST(Cook_StrictRejectsImporterWarnings) {
     options.strict_validation = false;
     const cook::CookReport development = cook::Cook(options);
     CHECK(development.ok && stdfs::exists(development.pak_file));
+}
+
+// M8.5 importer validation: broken or incompatible sources are reported by their content path with the reason,
+// the cook neither crashes nor drops the good assets, and a strict cook refuses to write an archive.
+AETHER_TEST(Cook_InvalidSourcesAreReportedByPathWithTheReason) {
+    const stdfs::path project = MakeProject("InvalidSources");
+    const stdfs::path content = project.parent_path() / "Content";
+    WriteText(content / "Broken/not_an_image.png", "this is not a PNG");
+    WriteText(content / "Broken/truncated.png", std::string("\x89PNG\r\n\x1a\n\0\0\0\rIHDR", 16));
+    WriteText(content / "Broken/malformed.gltf", "{ \"asset\": { \"version\": \"2.0\" }, \"meshes\": [");
+    WriteText(content / "Broken/missing_buffer.gltf",
+              R"({"asset":{"version":"2.0"},"buffers":[{"uri":"gone.bin","byteLength":36}],)"
+              R"("bufferViews":[{"buffer":0,"byteLength":36}],"accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3"}],)"
+              R"("meshes":[{"primitives":[{"attributes":{"POSITION":0}}]}],"nodes":[{"mesh":0}],"scenes":[{"nodes":[0]}],"scene":0})");
+    WriteText(content / "Broken/noise.wav", std::string("RIFF\x04\0\0\0WAVE", 12)); // no fmt or data chunk
+    WriteText(content / "Prefabs/broken.aprefab", "{ not json");
+
+    ProjectSettings settings;
+    std::string error;
+    CHECK(LoadProject(project, settings, &error));
+    settings.always_cook = {"Models/", "Broken/", "Prefabs/broken.aprefab", "Textures/gone.png"};
+    CHECK(SaveProject(project, settings, &error));
+
+    cook::CookOptions options;
+    options.project_file = project;
+    options.output_dir = project.parent_path() / "Lenient";
+    const cook::CookReport lenient = cook::Cook(options);
+    CHECK(lenient.ok && stdfs::exists(lenient.pak_file));
+    const auto reported = [&](const char* path) {
+        for (const std::string& w : lenient.warnings) {
+            if (w.find(path) != std::string::npos) return true;
+        }
+        return false;
+    };
+    for (const std::string& w : lenient.warnings) std::printf("cook warning: %s\n", w.c_str());
+    CHECK(reported("Broken/not_an_image.png"));
+    CHECK(reported("Broken/truncated.png"));
+    CHECK(reported("Broken/malformed.gltf: Failed to parse"));
+    CHECK(reported("Can't read the buffer \"gone.bin\""));
+    CHECK(reported("Broken/noise.wav: the WAVE file has no fmt or data chunk"));
+    CHECK(reported("Prefabs/broken.aprefab"));
+    CHECK(reported("Textures/gone.png"));
+    // The good content still cooks.
+    pak::PakReader reader;
+    CHECK(reader.Open(lenient.pak_file.string(), &error) && reader.Verify().empty());
+    CHECK(reader.Contains("Content/Scenes/start.ascene") && reader.Contains("Content/Textures/a.png") && reader.Contains("Content/Models/scene.gltf"));
+
+    options.output_dir = project.parent_path() / "Strict";
+    options.strict_validation = true;
+    const cook::CookReport strict = cook::Cook(options);
+    CHECK(!strict.ok && strict.error.find("Cook validation failed") == 0 && !stdfs::exists(options.output_dir / "Game.apak"));
 }

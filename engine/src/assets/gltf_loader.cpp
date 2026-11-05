@@ -7,15 +7,33 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cstdarg>
+#include <cstdio>
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <limits>
 
 namespace aether::assets {
 
 namespace {
 
 using Json = nlohmann::json;
+
+// The first error of the current LoadGltf on this thread, for callers that report it (the cooker).
+thread_local std::string t_first_error;
+
+void GltfError(const char* fmt, ...) {
+    char text[1024];
+    va_list args;
+    va_start(args, fmt);
+    std::vsnprintf(text, sizeof(text), fmt, args);
+    va_end(args);
+    if (t_first_error.empty()) t_first_error = text;
+    AETHER_LOG_ERROR("glTF", "%s", text);
+}
+constexpr usize kMaxJsonBytes = 32 * 1024 * 1024;
+constexpr usize kMaxBufferBytes = 512 * 1024 * 1024;
 
 std::vector<u8> DecodeBase64(const std::string& text) {
     static const std::string kAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -26,7 +44,7 @@ std::vector<u8> DecodeBase64(const std::string& text) {
     }
 
     std::vector<u8> out;
-    int value = 0;
+    u32 value = 0;
     int bits = -8;
     for (u8 c : text) {
         if (c == '=') {
@@ -35,7 +53,7 @@ std::vector<u8> DecodeBase64(const std::string& text) {
         if (reverse[c] == -1) {
             continue; // skip whitespace/newlines
         }
-        value = (value << 6) + reverse[c];
+        value = (value << 6) + static_cast<u32>(reverse[c]);
         bits += 6;
         if (bits >= 0) {
             out.push_back(static_cast<u8>((value >> bits) & 0xFF));
@@ -82,9 +100,9 @@ std::string UriDecode(const std::string& uri) {
 }
 
 bool ResolveBufferData(const Json& buffer_json, const std::string& base_dir, bool allow_external,
-                       std::vector<u8>& out_data) {
+                       usize remaining_budget, std::vector<u8>& out_data) {
     if (!buffer_json.contains("uri")) {
-        AETHER_LOG_ERROR("glTF", "Buffer with no uri (GLB-embedded binary chunk) is not supported");
+        GltfError("Buffer with no uri (GLB-embedded binary chunk) is not supported");
         return false;
     }
     std::string uri = buffer_json["uri"].get<std::string>();
@@ -98,7 +116,19 @@ bool ResolveBufferData(const Json& buffer_json, const std::string& base_dir, boo
     }
     if (!allow_external) return false;
     std::string path = JoinPath(base_dir, UriDecode(uri));
-    return fs::ReadFileBytes(path, out_data);
+    if (!fs::ReadFileBytes(path, out_data, remaining_budget)) {
+        GltfError("Can't read the buffer \"%s\" (missing, unreadable or over the size budget)", uri.c_str());
+        return false;
+    }
+    if (buffer_json.contains("byteLength")) {
+        const usize declared_size = buffer_json["byteLength"].get<usize>();
+        if (declared_size > remaining_budget || out_data.size() != declared_size) {
+            GltfError("Referenced buffer \"%s\" is larger than its declared or allowed size", path.c_str());
+            out_data.clear();
+            return false;
+        }
+    }
+    return true;
 }
 
 usize ComponentSize(int component_type) {
@@ -137,10 +167,15 @@ struct AccessorInfo {
 
 bool ResolveAccessor(const Json& gltf, usize accessor_index, const std::vector<std::vector<u8>>& buffers,
                       AccessorInfo& out) {
-    if (accessor_index >= gltf["accessors"].size()) {
+    if (!gltf.is_object() || !gltf.contains("accessors") || !gltf["accessors"].is_array() ||
+        !gltf.contains("bufferViews") || !gltf["bufferViews"].is_array() ||
+        accessor_index >= gltf["accessors"].size()) {
         return false;
     }
     const Json& accessor = gltf["accessors"][accessor_index];
+    if (!accessor.is_object()) {
+        return false;
+    }
     out.count = accessor.value("count", static_cast<usize>(0));
     out.component_type = accessor.value("componentType", 0);
     out.normalized = accessor.value("normalized", false);
@@ -148,7 +183,7 @@ bool ResolveAccessor(const Json& gltf, usize accessor_index, const std::vector<s
     usize accessor_byte_offset = accessor.value("byteOffset", static_cast<usize>(0));
 
     if (!accessor.contains("bufferView")) {
-        AETHER_LOG_ERROR("glTF", "Accessor %zu has no bufferView (sparse-only accessors are not supported)",
+        GltfError("Accessor %zu has no bufferView (sparse-only accessors are not supported)",
                           accessor_index);
         return false;
     }
@@ -157,26 +192,49 @@ bool ResolveAccessor(const Json& gltf, usize accessor_index, const std::vector<s
         return false;
     }
     const Json& buffer_view = gltf["bufferViews"][bv_index];
+    if (!buffer_view.is_object()) {
+        return false;
+    }
     usize buffer_index = buffer_view.value("buffer", static_cast<usize>(0));
     usize bv_byte_offset = buffer_view.value("byteOffset", static_cast<usize>(0));
+    usize bv_byte_length = buffer_view.value("byteLength", static_cast<usize>(0));
 
     usize component_size = ComponentSize(out.component_type);
     usize element_size = component_size * out.num_components;
     if (component_size == 0 || out.num_components == 0) {
-        AETHER_LOG_ERROR("glTF", "Accessor %zu has an unrecognized componentType/type", accessor_index);
+        GltfError("Accessor %zu has an unrecognized componentType/type", accessor_index);
         return false;
     }
     out.stride = buffer_view.value("byteStride", element_size);
+    if (out.stride < element_size) {
+        return false;
+    }
 
     if (buffer_index >= buffers.size()) {
         return false;
     }
-    usize total_offset = bv_byte_offset + accessor_byte_offset;
-    usize required = total_offset + (out.count > 0 ? (out.count - 1) * out.stride + element_size : 0);
-    if (required > buffers[buffer_index].size()) {
-        AETHER_LOG_ERROR("glTF", "Accessor %zu reads past the end of its buffer", accessor_index);
+    constexpr usize max_size = std::numeric_limits<usize>::max();
+    usize required_size = 0;
+    if (out.count > 0) {
+        const usize preceding_elements = out.count - 1;
+        if (preceding_elements > (max_size - element_size) / out.stride) {
+            return false;
+        }
+        required_size = preceding_elements * out.stride + element_size;
+    }
+    if (accessor_byte_offset > bv_byte_length || required_size > bv_byte_length - accessor_byte_offset) {
+        GltfError("Accessor %zu reads past the end of its bufferView", accessor_index);
         return false;
     }
+    const usize buffer_size = buffers[buffer_index].size();
+    if (bv_byte_offset > buffer_size || bv_byte_length > buffer_size - bv_byte_offset) {
+        GltfError("Accessor %zu references a bufferView past the end of its buffer", accessor_index);
+        return false;
+    }
+    if (accessor_byte_offset > max_size - bv_byte_offset) {
+        return false;
+    }
+    const usize total_offset = bv_byte_offset + accessor_byte_offset;
     out.data = buffers[buffer_index].data() + total_offset;
     return true;
 }
@@ -389,12 +447,15 @@ void FlattenNodeInstances(const std::vector<GltfNode>& nodes, const std::vector<
         Mat4 parent_world;
     };
     std::vector<StackEntry> stack;
+    std::vector<bool> visited(nodes.size(), false);
     for (usize root : roots) {
         stack.push_back({root, Mat4::Identity()});
     }
     while (!stack.empty()) {
         StackEntry entry = stack.back();
         stack.pop_back();
+        if (entry.node_index >= nodes.size() || visited[entry.node_index]) continue;
+        visited[entry.node_index] = true;
         const GltfNode& node = nodes[entry.node_index];
         Mat4 world = entry.parent_world * node.LocalTransform();
         if (out_world_transforms) (*out_world_transforms)[entry.node_index] = world;
@@ -580,6 +641,10 @@ void ParseAnimations(const Json& gltf, const std::vector<std::vector<u8>>& buffe
                 continue;
             }
 
+            if (output_info.count > std::numeric_limits<usize>::max() / components) {
+                AETHER_LOG_WARN("glTF", "Skipping animation channel whose value count overflows addressable memory");
+                continue;
+            }
             channel.values.resize(output_info.count * components);
             bool valid_values = true;
             for (usize i = 0; i < output_info.count; ++i) {
@@ -674,20 +739,26 @@ static bool ParseGltfText(const std::string& text, const std::string& path, bool
     try {
         gltf = Json::parse(text);
     } catch (const Json::parse_error& e) {
-        AETHER_LOG_ERROR("glTF", "Failed to parse \"%s\": %s", path.c_str(), e.what());
+        GltfError("Failed to parse \"%s\": %s", path.c_str(), e.what());
         return false;
     }
 
     std::string base_dir = allow_external ? fs::ParentPath(path) : std::string();
 
     std::vector<std::vector<u8>> buffers;
+    usize buffer_budget = kMaxBufferBytes;
     if (gltf.contains("buffers")) {
         for (const auto& buffer_json : gltf["buffers"]) {
             std::vector<u8> data;
-            if (!ResolveBufferData(buffer_json, base_dir, allow_external, data)) {
-                AETHER_LOG_ERROR("glTF", "Failed to resolve a buffer referenced by \"%s\"", path.c_str());
+            if (!ResolveBufferData(buffer_json, base_dir, allow_external, buffer_budget, data)) {
+                GltfError("Failed to resolve a buffer referenced by \"%s\"", path.c_str());
                 return false;
             }
+            if (data.size() > buffer_budget) {
+                GltfError("Buffers in \"%s\" exceed the total glTF buffer budget", path.c_str());
+                return false;
+            }
+            buffer_budget -= data.size();
             buffers.push_back(std::move(data));
         }
     }
@@ -757,6 +828,37 @@ static bool ParseGltfText(const std::string& text, const std::string& path, bool
             if (alpha_mode == "MASK") material.alpha_mode = MaterialAlphaMode::Mask;
             else if (alpha_mode == "BLEND") material.alpha_mode = MaterialAlphaMode::Blend;
             material.alpha_cutoff = material_json.value("alphaCutoff", 0.5f);
+            if (material_json.contains("extensions") && material_json["extensions"].is_object()) {
+                const Json& extensions = material_json["extensions"];
+                const auto object_of = [&](const char* name) -> const Json* {
+                    const auto it = extensions.find(name);
+                    return it != extensions.end() && it->is_object() ? &*it : nullptr;
+                };
+                if (const Json* coat = object_of("KHR_materials_clearcoat")) {
+                    material.clear_coat = coat->value("clearcoatFactor", 0.0f);
+                    material.clear_coat_roughness = coat->value("clearcoatRoughnessFactor", 0.0f);
+                }
+                if (const Json* sheen = object_of("KHR_materials_sheen")) {
+                    if (sheen->contains("sheenColorFactor") && (*sheen)["sheenColorFactor"].is_array()) {
+                        const Json& color = (*sheen)["sheenColorFactor"];
+                        for (usize i = 0; i < 3 && i < color.size(); ++i) material.sheen_color[i] = color[i].get<f32>();
+                    }
+                    material.sheen_roughness = sheen->value("sheenRoughnessFactor", 0.0f);
+                }
+                if (const Json* hair = object_of("AETHER_materials_hair")) {
+                    material.hair = true;
+                    material.hair_shift = hair->value("hairShift", 0.0f);
+                    material.hair_secondary_shift = hair->value("hairSecondaryShift", 0.0f);
+                    if (hair->contains("hairTint") && (*hair)["hairTint"].is_array()) {
+                        const Json& tint = (*hair)["hairTint"];
+                        for (usize i = 0; i < 3 && i < tint.size(); ++i) material.hair_tint[i] = tint[i].get<f32>();
+                    }
+                }
+                if (const Json* anisotropy = object_of("KHR_materials_anisotropy")) {
+                    material.anisotropy_strength = anisotropy->value("anisotropyStrength", 0.0f);
+                    material.anisotropy_rotation = anisotropy->value("anisotropyRotation", 0.0f);
+                }
+            }
             out_scene.materials.push_back(material);
         }
     }
@@ -881,17 +983,63 @@ static bool ParseGltfText(const std::string& text, const std::string& path, bool
     return true;
 }
 
+bool GltfMaterial::HasSurfaceExtension() const {
+    return clear_coat > 0.0f || sheen_color[0] > 0.0f || sheen_color[1] > 0.0f || sheen_color[2] > 0.0f || anisotropy_strength > 0.0f || hair;
+}
+
+void PackSurfaceExtension(const GltfMaterial& material, u8 texels[8]) {
+    const auto byte = [](f32 value) {
+        // NaN fails both comparisons and packs as 0.
+        const f32 clamped = value > 0.0f ? (value < 1.0f ? value : 1.0f) : 0.0f;
+        return static_cast<u8>(clamped * 255.0f + 0.5f);
+    };
+    constexpr f32 kTwoPi = 6.28318530718f;
+    f32 turns = material.anisotropy_rotation / kTwoPi;
+    turns -= std::floor(turns); // any angle, wrapped into 0..1
+    texels[0] = byte(material.clear_coat);
+    texels[1] = byte(material.clear_coat_roughness);
+    texels[2] = byte(material.sheen_roughness);
+    texels[3] = byte(material.anisotropy_strength);
+    texels[4] = byte(material.sheen_color[0]);
+    texels[5] = byte(material.sheen_color[1]);
+    texels[6] = byte(material.sheen_color[2]);
+    texels[7] = byte(turns);
+}
+
+void PackHairExtension(const GltfMaterial& material, u8 texels[8]) {
+    const auto byte = [](f32 value) {
+        const f32 clamped = value > 0.0f ? (value < 1.0f ? value : 1.0f) : 0.0f; // NaN packs as 0
+        return static_cast<u8>(clamped * 255.0f + 0.5f);
+    };
+    texels[0] = byte(material.hair_shift + 0.5f);
+    texels[1] = byte(material.hair_secondary_shift + 0.5f);
+    texels[2] = byte(material.hair_tint[0]);
+    texels[3] = byte(material.hair_tint[1]);
+    texels[4] = byte(material.hair_tint[2]);
+    texels[5] = texels[6] = texels[7] = 0;
+}
+
+bool LoadGltf(const std::string& path, GltfScene& out_scene, std::string* error) {
+    t_first_error.clear();
+    const bool ok = LoadGltf(path, out_scene);
+    if (!ok && error != nullptr) *error = t_first_error.empty() ? "Couldn't load the glTF file" : t_first_error;
+    t_first_error.clear();
+    return ok;
+}
+
 bool LoadGltf(const std::string& path, GltfScene& out_scene) {
-    std::string text;
-    if (!fs::ReadFileText(path, text)) {
-        AETHER_LOG_ERROR("glTF", "Failed to read \"%s\"", path.c_str());
+    std::vector<u8> bytes;
+    if (!fs::ReadFileBytes(path, bytes, kMaxJsonBytes)) {
+        GltfError("Failed to read \"%s\" or file is too large", path.c_str());
         return false;
     }
+    std::string text;
+    if (!bytes.empty()) text.assign(reinterpret_cast<const char*>(bytes.data()), bytes.size());
     GltfScene scene;
     try {
         if (!ParseGltfText(text, path, true, scene)) return false;
     } catch (const std::exception& e) {
-        AETHER_LOG_ERROR("glTF", "Malformed \"%s\": %s", path.c_str(), e.what());
+        GltfError("Malformed \"%s\": %s", path.c_str(), e.what());
         return false;
     }
     out_scene = std::move(scene);
@@ -899,7 +1047,6 @@ bool LoadGltf(const std::string& path, GltfScene& out_scene) {
 }
 
 bool LoadGltfFromMemory(std::span<const u8> json, GltfScene& out_scene) {
-    constexpr usize kMaxJsonBytes = 32 * 1024 * 1024;
     if (json.empty() || json.size() > kMaxJsonBytes) return false;
     const std::string text(reinterpret_cast<const char*>(json.data()), json.size());
     GltfScene scene;

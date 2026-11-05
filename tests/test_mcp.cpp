@@ -371,7 +371,11 @@ AETHER_TEST(Mcp_SystemsRunOnlyWhilePlaying) {
     AETHER_CHECK(stepped.value["fixed_steps"] == 30);
 
     AETHER_CHECK(h.Call("step_simulation", {{"frames", 0}}).is_error);
+    AETHER_CHECK(h.Call("step_simulation", {{"frames", 10001}}).is_error);
+    AETHER_CHECK(h.Call("step_simulation", {{"frames", 1.5}}).is_error);
     AETHER_CHECK(h.Call("step_simulation", {{"dt", -1}}).is_error);
+    AETHER_CHECK(h.Call("step_simulation", {{"dt", 0}}).is_error);
+    AETHER_CHECK(h.Call("step_simulation", {{"dt", 1.01}}).is_error);
     AETHER_CHECK(h.Call("set_system_enabled", {{"system", "NoSuchSystem"}, {"enabled", false}}).is_error);
     AETHER_CHECK(!h.Call("set_system_enabled", {{"system", systems[0]["name"]}, {"enabled", false}}).is_error);
     AETHER_CHECK(h.Call("list_systems").value[0]["enabled"] == false);
@@ -508,6 +512,58 @@ AETHER_TEST(Mcp_LogRecentShowsWhatScriptsPrint) {
     stdfs::remove_all(dir);
 }
 
+// M8.8: game_ai_debug reports what scripts set with AI.SetDebugState and which agents have an AIPerception.
+AETHER_TEST(Mcp_GameAiDebugReportsStateAndPerception) {
+    if (!aether::player::Game::HasScripting()) return;
+    namespace stdfs = std::filesystem;
+    const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_ai_debug_test";
+    stdfs::remove_all(dir);
+    stdfs::create_directories(dir);
+    const std::string script_guid = assets::ToString(assets::NewAssetGuid());
+    const Json manifest = {{"$type", "CookManifest"}, {"$version", 1}, {"project", "McpAi"}, {"configuration", "Development"},
+                           {"startup_scene", "Scenes/start.ascene"}, {"fixed_timestep_hz", 60.0}, {"gravity", {0.0, -9.81, 0.0}},
+                           {"layers", {"Default"}}, {"collision_matrix", Json::array()},
+                           {"assets", Json::array({{{"guid", assets::ToString(assets::NewAssetGuid())}, {"path", "Scenes/start.ascene"}, {"importer", "Scene"}},
+                                                   {{"guid", script_guid}, {"path", "Scripts/Guard.luau"}, {"importer", "Script"}}})},
+                           {"files", Json::array()}};
+    const Json transform = {{"position", {0, 0, 0}}, {"rotation", {0, 0, 0, 1}}, {"scale", {1, 1, 1}}};
+    const Json scene = {{"$type", "Scene"}, {"$version", 1},
+                        {"entities", Json::array({{{"components", {{"EntityName", {{"value", "Guard"}}}, {"Transform", transform},
+                                                                   {"ScriptComponent", {{"script", script_guid}}}}}},
+                                                  {{"components", {{"EntityName", {{"value", "Sentinel"}}}, {"Transform", transform},
+                                                                   {"AIPerception", Json::object()}}}},
+                                                  {{"components", {{"EntityName", {{"value", "Crate"}}}, {"Transform", transform}}}}})}};
+    pak::PakWriter writer;
+    writer.Add("Manifest.json", manifest.dump());
+    writer.Add("Content/Scenes/start.ascene", scene.dump());
+    writer.Add("Content/Scripts/Guard.luau",
+               std::string("local T = {}\nfunction T:OnUpdate(dt) AI.SetDebugState(self.entity, 'patrol') end\nreturn T\n"));
+    const stdfs::path file = dir / "game.apak";
+    AETHER_CHECK(writer.Write(file.string()));
+
+    Harness h;
+    RegisterGameTools(h.server);
+    AETHER_CHECK(h.Call("game_ai_debug").is_error); // nothing loaded yet
+    AETHER_CHECK(!h.Call("game_load", {{"paks", {file.string()}}, {"user_dir", (dir / "user").string()}}).is_error);
+    AETHER_CHECK(!h.Call("game_step", {{"frames", 3}}).is_error);
+    Harness::Result r = h.Call("game_ai_debug");
+    AETHER_CHECK(!r.is_error);
+    const Json& agents = r.value["agents"];
+    AETHER_CHECK(agents.is_array() && agents.size() == 2); // the Crate is no agent
+    const auto find = [&](const std::string& name) -> Json {
+        for (const Json& a : agents) if (a.value("name", "") == name) return a;
+        return Json();
+    };
+    const Json guard = find("Guard");
+    const Json sentinel = find("Sentinel");
+    AETHER_CHECK(guard.is_object() && guard["state"] == "patrol" && !guard.contains("known") && !guard.contains("path"));
+    AETHER_CHECK(guard["entity"].is_string());
+    AETHER_CHECK(sentinel.is_object() && sentinel["state"] == "" && sentinel["target"].is_null());
+    AETHER_CHECK(sentinel["known"].is_array() && sentinel["known"].empty());
+    h.Call("game_unload");
+    stdfs::remove_all(dir);
+}
+
 #include "build_tools.h"
 #include "subprocess.h"
 
@@ -623,6 +679,48 @@ AETHER_TEST(Mcp_ToolsCanReturnImages) {
 #include "aether/assets/image.h"
 #include "aether/project/project.h"
 
+AETHER_TEST(Mcp_ContentFilesCannotTraverseSymlinks) {
+    namespace stdfs = std::filesystem;
+    const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_content_symlink_test";
+    stdfs::remove_all(dir);
+    stdfs::create_directories(dir);
+
+    ProjectPaths paths;
+    std::string error;
+    AETHER_CHECK(CreateProject(dir, "McpContentSymlinks", &paths, &error));
+    Harness h;
+    auto project = MakeAssetHost();
+    RegisterAssetTools(h.server, project, h.session);
+    AETHER_CHECK(!h.Call("project_open", {{"project_file", paths.file.string()}}).is_error);
+
+    // Assert the boundary whenever the OS permits creating symlinks.
+    const stdfs::path outside = dir / "outside";
+    stdfs::create_directories(outside);
+    {
+        std::ofstream secret(outside / "secret.txt");
+        secret << "keep me private";
+    }
+    std::error_code symlink_error;
+    stdfs::create_directory_symlink(outside, paths.content / "linked", symlink_error);
+    if (!symlink_error) {
+        AETHER_CHECK(h.Call("content_read", {{"path", "linked/secret.txt"}}).is_error);
+        AETHER_CHECK(h.Call("content_write", {{"path", "linked/secret.txt"}, {"text", "overwritten"}}).is_error);
+    }
+    symlink_error.clear();
+    stdfs::create_symlink(outside / "secret.txt", paths.content / "secret-link.txt", symlink_error);
+    if (!symlink_error) {
+        AETHER_CHECK(h.Call("content_read", {{"path", "secret-link.txt"}}).is_error);
+        AETHER_CHECK(h.Call("content_write", {{"path", "secret-link.txt"}, {"text", "overwritten"}}).is_error);
+    }
+    std::string private_text;
+    {
+        std::ifstream private_file(outside / "secret.txt");
+        std::getline(private_file, private_text);
+    }
+    AETHER_CHECK(private_text == "keep me private");
+    stdfs::remove_all(dir);
+}
+
 AETHER_TEST(Mcp_AssetToolsImportMoveAndCookAProject) {
     namespace stdfs = std::filesystem;
     const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_asset_test";
@@ -645,8 +743,8 @@ AETHER_TEST(Mcp_AssetToolsImportMoveAndCookAProject) {
 
     Harness h;
     auto project = MakeAssetHost();
-    RegisterAssetTools(h.server, project);
-    RegisterKitTools(h.server, project);
+    RegisterAssetTools(h.server, project, h.session);
+    RegisterKitTools(h.server, project, h.session);
     AETHER_CHECK(h.Call("asset_list").is_error); // no project open yet
     AETHER_CHECK(h.Call("project_open", {{"project_file", (dir / "nope.aproject").string()}}).is_error);
 
@@ -716,8 +814,8 @@ AETHER_TEST(Mcp_KitToolsValidateWriteAndCrossCheckDefinitions) {
 
     Harness h;
     auto project = MakeAssetHost();
-    RegisterAssetTools(h.server, project);
-    RegisterKitTools(h.server, project);
+    RegisterAssetTools(h.server, project, h.session);
+    RegisterKitTools(h.server, project, h.session);
     AETHER_CHECK(h.Call("kit_list").is_error); // no project open
     AETHER_CHECK(!h.Call("project_open", {{"project_file", paths.file.string()}}).is_error);
 
@@ -740,6 +838,7 @@ AETHER_TEST(Mcp_KitToolsValidateWriteAndCrossCheckDefinitions) {
 
     const Json heal = {{"name", "Heal"}, {"duration_policy", "instant"}, {"modifiers", {{{"attribute", "Health"}, {"op", "add"}, {"magnitude", 25}}}}};
     Harness::Result put = h.Call("kit_put", {{"type", "effect"}, {"path", "Gameplay/Heal"}, {"definition", heal}});
+    if (put.is_error) std::printf("  kit_put error: %s\n", put.text.c_str());
     AETHER_CHECK(!put.is_error);
     AETHER_CHECK(put.value["path"] == "Gameplay/Heal.aeffect");
     AETHER_CHECK(stdfs::exists(paths.content / "Gameplay" / "Heal.aeffect"));
@@ -813,8 +912,8 @@ AETHER_TEST(Mcp_AttributeToolsEditUndoAndCheckTheProject) {
     std::string error;
     AETHER_CHECK(CreateProject(dir, "McpAttrs", &paths, &error));
     auto project = MakeAssetHost();
-    RegisterAssetTools(h.server, project);
-    RegisterKitTools(h.server, project);
+    RegisterAssetTools(h.server, project, h.session);
+    RegisterKitTools(h.server, project, h.session);
     AETHER_CHECK(!h.Call("project_open", {{"project_file", paths.file.string()}}).is_error);
     const Json scene = {{"$type", "Scene"}, {"$version", 1},
                         {"entities", Json::array({{{"components", {{"AttributeSet", {{"attributes", {{{"name", "Health"}, {"base", 100}, {"min", 0}, {"max", 100}}}}}}}}}})}};
@@ -915,8 +1014,8 @@ AETHER_TEST(Mcp_InteractableToolsEditCheckAndDriveTheGame) {
     std::string error;
     AETHER_CHECK(CreateProject(dir, "McpInteract", &paths, &error));
     auto project = MakeAssetHost();
-    RegisterAssetTools(h.server, project);
-    RegisterKitTools(h.server, project);
+    RegisterAssetTools(h.server, project, h.session);
+    RegisterKitTools(h.server, project, h.session);
     AETHER_CHECK(!h.Call("project_open", {{"project_file", paths.file.string()}}).is_error);
     const Json project_scene = {{"$type", "Scene"}, {"$version", 1},
                                 {"entities", Json::array({{{"components", {{"Interactable", {{"prompt", "Drink"}, {"effect", "Heal"}, {"ability", "Missing"}}}}}}})}};
@@ -1025,8 +1124,8 @@ AETHER_TEST(Mcp_AudioToolsEditCheckPreviewAndDriveTheGame) {
                                                     {{"id", 2}, {"type", "Wave"}, {"sound", "Audio/a.wav"}},
                                                     {{"id", 3}, {"type", "Wave"}, {"sound", "Audio/b.wav"}}})}};
     auto auto_project = MakeAssetHost();
-    RegisterAssetTools(h.server, auto_project);
-    RegisterKitTools(h.server, auto_project);
+    RegisterAssetTools(h.server, auto_project, h.session);
+    RegisterKitTools(h.server, auto_project, h.session);
     RegisterAudioTools(h.server, auto_project);
     Json verdict = h.Call("cue_validate", {{"definition", random_cue}}).value;
     AETHER_CHECK(verdict["ok"] == true);
@@ -1181,7 +1280,7 @@ AETHER_TEST(Mcp_VfxToolsEditValidateSimulateAndCheck) {
 
     // --- the format, without a project
     auto project = MakeAssetHost();
-    RegisterAssetTools(h.server, project);
+    RegisterAssetTools(h.server, project, h.session);
     RegisterVfxTools(h.server, project);
     Json schema = h.Call("vfx_schema").value;
     AETHER_CHECK(schema["modules"]["spawn"].size() == 3);
@@ -1579,8 +1678,8 @@ AETHER_TEST(Mcp_BlueprintToolsFindValidateCompileAndRun) {
     namespace stdfs = std::filesystem;
     Harness h;
     auto project = MakeAssetHost();
-    RegisterAssetTools(h.server, project);
-    RegisterKitTools(h.server, project);
+    RegisterAssetTools(h.server, project, h.session);
+    RegisterKitTools(h.server, project, h.session);
     RegisterBlueprintTools(h.server, project);
 
     // --- the palette and a node's pins
@@ -1717,7 +1816,7 @@ AETHER_TEST(Mcp_LocToolsFormatEditGatherValidateAndRoundTrip) {
     namespace stdfs = std::filesystem;
     Harness h;
     auto project = MakeAssetHost();
-    RegisterAssetTools(h.server, project);
+    RegisterAssetTools(h.server, project, h.session);
     RegisterLocTools(h.server, project);
 
     // --- formatting and languages need no project
@@ -1870,8 +1969,8 @@ AETHER_TEST(Mcp_SequenceToolsValidateEvaluateAndPlay) {
     namespace stdfs = std::filesystem;
     Harness h;
     auto project = MakeAssetHost();
-    RegisterAssetTools(h.server, project);
-    RegisterKitTools(h.server, project);
+    RegisterAssetTools(h.server, project, h.session);
+    RegisterKitTools(h.server, project, h.session);
     RegisterSequenceTools(h.server, project);
 
     // --- the sample, validated and read without a project
@@ -2072,8 +2171,8 @@ AETHER_TEST(Mcp_TilemapToolsBuildPaintReadAndPreviewALevel) {
     namespace stdfs = std::filesystem;
     Harness h;
     auto project = MakeAssetHost();
-    RegisterAssetTools(h.server, project);
-    RegisterKitTools(h.server, project);
+    RegisterAssetTools(h.server, project, h.session);
+    RegisterKitTools(h.server, project, h.session);
     RegisterTilemapTools(h.server, project);
 
     AETHER_CHECK(h.Call("tilemap_info", {{"asset", "Levels/x.atilemap"}}).is_error); // needs a project
@@ -2648,7 +2747,7 @@ AETHER_TEST(Mcp_PrefabToolsMakeInstantiateOverrideAndApply) {
     namespace stdfs = std::filesystem;
     Harness h;
     auto project = MakeAssetHost();
-    RegisterAssetTools(h.server, project);
+    RegisterAssetTools(h.server, project, h.session);
     RegisterPrefabTools(h.server, project, h.session);
 
     AETHER_CHECK(h.Call("prefab_info", {{"prefab", "Prefabs/x.aprefab"}}).is_error); // needs a project
@@ -2712,7 +2811,7 @@ AETHER_TEST(Mcp_ProjectCreateMakesBlankAndTemplateProjects) {
     namespace stdfs = std::filesystem;
     Harness h;
     auto project = MakeAssetHost();
-    RegisterAssetTools(h.server, project);
+    RegisterAssetTools(h.server, project, h.session);
     const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_new_projects";
     stdfs::remove_all(dir);
 
@@ -2745,7 +2844,7 @@ AETHER_TEST(Mcp_ScriptToolsCheckCompleteRunSimulateAndCheckTheProject) {
     namespace stdfs = std::filesystem;
     Harness h;
     auto project = MakeAssetHost();
-    RegisterAssetTools(h.server, project);
+    RegisterAssetTools(h.server, project, h.session);
     RegisterScriptTools(h.server, project);
 
     const std::string spin =

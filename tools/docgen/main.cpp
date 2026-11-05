@@ -8,6 +8,7 @@
 // all included here; a game builds its own tool the same way, or calls
 // aether::docs::WriteApiDocs after its types are registered.
 #include "aether/docs/api_docs.h"
+#include "site.h"
 
 #include "aether/ai/bt_world.h"
 #include "aether/ai/perception.h"
@@ -73,7 +74,7 @@ void RegisterEverything() {
 }
 
 int Usage() {
-    std::fprintf(stderr, "usage: aether_docgen [--out <dir>] [--title <text>] [--with-scalars]\n");
+    std::fprintf(stderr, "usage: aether_docgen [--out <dir> | --site <dir> --docs <dir>] [--title <text>] [--with-scalars]\n");
     return 2;
 }
 
@@ -81,15 +82,32 @@ int Usage() {
 
 int main(int argc, char** argv) {
     std::string out;
+    std::string site;
+    std::string docs_directory;
     docs::ApiDocOptions options;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--out" && i + 1 < argc) out = argv[++i];
+        else if (a == "--site" && i + 1 < argc) site = argv[++i];
+        else if (a == "--docs" && i + 1 < argc) docs_directory = argv[++i];
         else if (a == "--title" && i + 1 < argc) options.title = argv[++i];
         else if (a == "--with-scalars") options.skip_scalars = false;
         else return Usage();
     }
     RegisterEverything();
+    if (!site.empty()) {
+        if (!out.empty() || docs_directory.empty()) return Usage();
+        std::string error;
+        const std::filesystem::path site_path(site);
+        if (!docs::WriteApiDocs(site_path / "api", options, &error) ||
+            !docs::WriteDocumentationSite(docs_directory, site_path, &error)) {
+            std::fprintf(stderr, "aether_docgen: %s\n", error.c_str());
+            return 1;
+        }
+        std::fprintf(stderr, "aether_docgen: wrote offline site to %s/index.html\n", site.c_str());
+        return 0;
+    }
+    if (!docs_directory.empty()) return Usage();
     if (out.empty()) {
         std::fputs(docs::GenerateApiMarkdown(options).c_str(), stdout);
         return 0;

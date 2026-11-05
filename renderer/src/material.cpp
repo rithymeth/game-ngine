@@ -36,13 +36,23 @@ bool IsIdentifier(const std::string& s) {
     return std::all_of(s.begin(), s.end(), [](char c) { return std::isalnum(static_cast<unsigned char>(c)) || c == '_'; });
 }
 
-const char* ShadingName(ShadingModel m) { return m == ShadingModel::Unlit ? "Unlit" : "DefaultLit"; }
+const char* ShadingName(ShadingModel m) {
+    switch (m) {
+    case ShadingModel::DefaultLit: return "DefaultLit";
+    case ShadingModel::Unlit: return "Unlit";
+    case ShadingModel::Subsurface: return "Subsurface";
+    case ShadingModel::Hair: return "Hair";
+    case ShadingModel::Cloth: return "Cloth";
+    }
+    return "DefaultLit";
+}
 const char* BlendName(BlendMode b) {
     switch (b) {
     case BlendMode::Opaque: return "Opaque";
     case BlendMode::Masked: return "Masked";
     case BlendMode::Translucent: return "Translucent";
     case BlendMode::Additive: return "Additive";
+    case BlendMode::Decal: return "Decal";
     }
     return "Opaque";
 }
@@ -88,6 +98,10 @@ const Catalog& GetCatalog() {
         fixed("Material.Output", Sig("Material", "Output",
                                      {In("BaseColor", F3, {0.5f, 0.5f, 0.5f, 0}), In("Metallic", F), In("Roughness", F, {0.5f, 0, 0, 0}),
                                       In("Normal", F3, {0, 0, 1, 0}), In("Emissive", F3), In("AO", F, {1, 0, 0, 0}),
+                                      In("ClearCoat", F), In("ClearCoatRoughness", F, {0.1f, 0, 0, 0}), In("SheenColor", F3),
+                                      In("SheenRoughness", F, {0.5f, 0, 0, 0}), In("Anisotropy", F), In("AnisotropyRotation", F),
+                                      In("SubsurfaceColor", F3), In("Thickness", F), In("HairShift", F), In("HairSecondaryShift", F, {-0.1f, 0, 0, 0}),
+                                      In("HairTint", F3, {1, 1, 1, 0}), In("Fuzz", F),
                                       In("Opacity", F, {1, 0, 0, 0}), In("OpacityMask", F, {1, 0, 0, 0}), In("WorldPositionOffset", F3)},
                                      {}));
         // Constants: config {"value": number or array}.
@@ -648,13 +662,28 @@ Analysis Analyze(const Material& m) {
     if (a.output != 0) {
         auto used = [&](const char* pin) { return incoming.count({a.output, pin}) != 0; };
         if (used("Opacity") && (m.blend == BlendMode::Opaque || m.blend == BlendMode::Masked)) {
-            report("MT009", a.output, "Opacity", "Opacity only matters for Translucent and Additive materials.", Severity::Warning);
+            report("MT009", a.output, "Opacity", "Opacity only matters for Translucent, Additive and Decal materials.", Severity::Warning);
         }
         if (used("OpacityMask") && m.blend != BlendMode::Masked) {
             report("MT009", a.output, "OpacityMask", "Opacity Mask only matters for Masked materials.", Severity::Warning);
         }
+        // The pins only one shading model reads.
+        const struct {
+            const char* pin;
+            ShadingModel model;
+            const char* name;
+        } model_pins[] = {{"SubsurfaceColor", ShadingModel::Subsurface, "Subsurface"}, {"Thickness", ShadingModel::Subsurface, "Subsurface"},
+                          {"HairShift", ShadingModel::Hair, "Hair"}, {"HairSecondaryShift", ShadingModel::Hair, "Hair"},
+                          {"HairTint", ShadingModel::Hair, "Hair"}, {"Fuzz", ShadingModel::Cloth, "Cloth"}};
+        for (const auto& mp : model_pins) {
+            if (used(mp.pin) && m.shading != mp.model && m.shading != ShadingModel::Unlit) {
+                report("MT009", a.output, mp.pin, std::string(mp.pin) + " only matters for " + mp.name + " materials.", Severity::Warning);
+            }
+        }
         if (m.shading == ShadingModel::Unlit) {
-            for (const char* pin : {"Metallic", "Roughness", "Normal", "AO"}) {
+            for (const char* pin : {"Metallic", "Roughness", "Normal", "AO", "ClearCoat", "ClearCoatRoughness", "SheenColor", "SheenRoughness",
+                                    "Anisotropy", "AnisotropyRotation", "SubsurfaceColor", "Thickness", "HairShift", "HairSecondaryShift", "HairTint",
+                                    "Fuzz"}) {
                 if (used(pin)) report("MT009", a.output, pin, std::string(pin) + " is ignored by Unlit materials.", Severity::Warning);
             }
         }
@@ -712,11 +741,14 @@ static bool MaterialFromJsonImpl(const json& j, Material& out, std::string* erro
     m.is_function = type == "MaterialFunction";
     m.description = j.value("description", "");
     const std::string shading = j.value("shading", "DefaultLit");
-    if (shading == "Unlit") m.shading = ShadingModel::Unlit;
-    else if (shading != "DefaultLit") return fail("unknown shading model '" + shading + "'");
+    bool shading_known = false;
+    for (ShadingModel s : {ShadingModel::DefaultLit, ShadingModel::Unlit, ShadingModel::Subsurface, ShadingModel::Hair, ShadingModel::Cloth}) {
+        if (shading == ShadingName(s)) m.shading = s, shading_known = true;
+    }
+    if (!shading_known) return fail("unknown shading model '" + shading + "'");
     const std::string blend = j.value("blend", "Opaque");
     bool known = false;
-    for (BlendMode b : {BlendMode::Opaque, BlendMode::Masked, BlendMode::Translucent, BlendMode::Additive}) {
+    for (BlendMode b : {BlendMode::Opaque, BlendMode::Masked, BlendMode::Translucent, BlendMode::Additive, BlendMode::Decal}) {
         if (blend == BlendName(b)) m.blend = b, known = true;
     }
     if (!known) return fail("unknown blend mode '" + blend + "'");

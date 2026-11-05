@@ -115,6 +115,35 @@ AETHER_TEST(NavCrowd_WalksToAPoint) {
     CHECK(Near(s.Pos(e).y, 0.0f, 0.25f));
 }
 
+AETHER_TEST(NavCrowd_DrivesOptInAnimationParametersFromActualVelocity) {
+    Scene s;
+    CHECK(s.Bake());
+    Animator animator;
+    NavAnimation link;
+    link.speed_scale = 2.0f;
+    const Entity e = s.world.CreateEntity(At({-5, 0, 0}), NavAgent{}, animator, link);
+    s.Of(e).MoveTo(Vec3(5, 0, 0));
+    s.Run(kDt);
+    const Animator& moving = *s.world.GetComponent<Animator>(e);
+    bool has_speed = false, has_moving = false;
+    for (const AnimatorCommand& command : moving.commands) {
+        has_speed = has_speed || (command.kind == AnimatorCommand::Kind::SetFloat && command.name == "Speed" && command.value > 0.0f);
+        has_moving = has_moving || (command.kind == AnimatorCommand::Kind::SetBool && command.name == "Moving" && command.value == 1.0f);
+    }
+    CHECK(has_speed && has_moving);
+
+    Animator* stopped = s.world.GetComponent<Animator>(e);
+    stopped->commands.clear();
+    s.Of(e).Stop();
+    s.Run(kDt);
+    bool zero_speed = false, not_moving = false;
+    for (const AnimatorCommand& command : stopped->commands) {
+        zero_speed = zero_speed || (command.kind == AnimatorCommand::Kind::SetFloat && command.name == "Speed" && command.value == 0.0f);
+        not_moving = not_moving || (command.kind == AnimatorCommand::Kind::SetBool && command.name == "Moving" && command.value == 0.0f);
+    }
+    CHECK(zero_speed && not_moving);
+}
+
 AETHER_TEST(NavCrowd_GoesAroundWalls) {
     Scene s;
     s.world.CreateEntity(At({0, 0, 0}), Model("wall"));

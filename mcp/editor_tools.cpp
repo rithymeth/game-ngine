@@ -1,8 +1,10 @@
 #include "editor_tools.h"
 
 #include "aether/reflection/serialize.h"
+#include "aether/reflection/any.h"
 #include "aether/gameplay/attribute_set.h"
 #include "aether/gameplay/gameplay_tag.h"
+#include "aether/scene/gameplay.h"
 #if AETHER_MCP_INTERACTION
 #include "aether/interaction/interactable.h"
 #endif
@@ -12,8 +14,19 @@
 #include "core/commands.h"
 
 #include <algorithm>
+#include <atomic>
+#include <cctype>
+#include <cmath>
+#include <cstdint>
+#include <exception>
+#include <functional>
+#include <limits>
+#include <map>
 #include <new>
+#include <optional>
 #include <set>
+#include <tuple>
+#include <unordered_map>
 
 namespace aether::mcp {
 
@@ -210,6 +223,38 @@ Json Schema(Json properties, std::vector<std::string> required = {}) {
 
 const Json kGuidProp = {{"type", "string"}, {"description", "Entity GUID, as returned by list_entities"}};
 
+void RemapEntityGuidValues(const reflect::TypeInfo& type, Json& value,
+                           const std::unordered_map<EntityGuid, EntityGuid>& guid_remap) {
+    if (&type == &reflect::Reflect<EntityGuid>()) {
+        if (!value.is_string()) return;
+        EntityGuid referenced;
+        if (!ParseEntityGuid(value.get<std::string>(), referenced)) return;
+        const auto remapped = guid_remap.find(referenced);
+        if (remapped != guid_remap.end()) value = ToString(remapped->second);
+        return;
+    }
+
+    if (type.kind == reflect::TypeKind::Array) {
+        if (type.element == nullptr || !value.is_array()) return;
+        for (Json& element : value) RemapEntityGuidValues(*type.element, element, guid_remap);
+        return;
+    }
+    if (type.kind != reflect::TypeKind::Struct) return;
+
+    if (type.serialize_as_array && value.is_array()) {
+        const usize count = std::min<usize>(type.fields.size(), value.size());
+        for (usize index = 0; index < count; ++index) {
+            RemapEntityGuidValues(*type.fields[index].type, value[index], guid_remap);
+        }
+    } else if (value.is_object()) {
+        for (const reflect::FieldInfo& field : type.fields) {
+            if (field.HasFlag(reflect::Field_Transient)) continue;
+            auto member = value.find(field.name);
+            if (member != value.end()) RemapEntityGuidValues(*field.type, *member, guid_remap);
+        }
+    }
+}
+
 } // namespace
 
 void RegisterAttributeTools(McpServer& server, EditorSession& s);
@@ -253,14 +298,19 @@ std::filesystem::path ResolveScenePath(const std::filesystem::path& root, const 
 }
 
 void RegisterEditorTools(McpServer& server, EditorSession& s) {
+    // This session is controlled through MCP, so all its scene history entries
+    // are attributable to an agent. The stack preserves this across undo/redo.
+    s.stack.SetAttribution("agent");
     server.AddTool({"editor_state",
                     "Summary of the editor session: entity count, undo/redo availability, unsaved changes, play state.",
                     Schema(Json::object()), [&s](const Json&) -> Json {
                         return {{"entities", s.world.EntityCount()},
                                 {"can_undo", s.stack.CanUndo()},
                                 {"undo_label", s.stack.UndoLabel()},
+                                {"undo_attribution", s.stack.UndoAttribution()},
                                 {"can_redo", s.stack.CanRedo()},
                                 {"redo_label", s.stack.RedoLabel()},
+                                {"redo_attribution", s.stack.RedoAttribution()},
                                 {"dirty", s.stack.IsDirty()},
                                 {"play_state", PlayStateName(s.play.GetState())}};
                     }});
@@ -283,28 +333,1364 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                     }});
 
     server.AddTool({"list_entities",
-                    "List entities in the scene (GUID and component names). Optionally only those with a given component.",
-                    Schema({{"component", {{"type", "string"}, {"description", "Only entities having this component"}}}}),
+                    "List a page of scene entities (GUID, name when present, entity index, hierarchy depth, component names, parent GUID, effective collision layer index, local active state, and active/layer/parent override presence). Optionally filter by component, component groups that must all/any match or must not match, exact entity name, case-insensitive ASCII name substring, one parent, any of several parents, exclusion of several parents, descendants of one or several entities with exact or ranged relative-depth bounds (depth 0 includes a listed entity), entities beneath all of several ancestors with exact or ranged relative-depth bounds (depth 0 includes the entity itself), exclusion of descendants of several entities with exact or ranged relative-depth bounds (depth 0 can exclude a listed entity), relative depth below descendant_of (depth 0 includes the selected entity), root status or hierarchy depth, layer index, local active value, active/layer/parent override presence, a single exact tag, or tag groups that must all/any/none match; supplied filters combine with AND. Results are ordered by entity index and include total match count, has_more, and a continuation cursor. The cursor is not a scene snapshot; entities created in a reused index at or before it are skipped.",
+                    Schema({{"component", {{"type", "string"}, {"description", "Only entities having this component"}}},
+                            {"components_all", {{"type", "array"}, {"items", {{"type", "string"}}}, {"maxItems", 32},
+                                                 {"description", "Only entities that have every listed component"}}},
+                            {"components_any", {{"type", "array"}, {"items", {{"type", "string"}}}, {"maxItems", 32},
+                                                 {"description", "Only entities that have at least one listed component"}}},
+                            {"components_none", {{"type", "array"}, {"items", {{"type", "string"}}}, {"maxItems", 32},
+                                                 {"description", "Exclude entities that have any listed component"}}},
+                            {"name", {{"type", "string"}, {"description", "Only entities whose name exactly matches"}}},
+                            {"name_contains", {{"type", "string"}, {"description", "Only entities whose name contains this case-insensitive ASCII substring; must not be empty"}}},
+                            {"parent", kGuidProp},
+                            {"parent_any", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 32},
+                                              {"description", "Only entities whose direct parent is one of these existing entity GUIDs"}}},
+                            {"parent_none", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 32},
+                                               {"description", "Exclude entities whose direct parent is one of these existing entity GUIDs"}}},
+                            {"descendant_of", {{"type", "string"}, {"description", "Only descendants of this existing entity; the entity itself is excluded unless a relative-depth filter includes depth 0"}}},
+                            {"descendant_depth", {{"type", "integer"}, {"minimum", 0}, {"maximum", kMaxHierarchyDepth},
+                                                    {"description", "Only entities at this exact relative depth below descendant_of; depth 0 is the selected entity and immediate children are depth 1"}}},
+                            {"descendant_depth_min", {{"type", "integer"}, {"minimum", 0}, {"maximum", kMaxHierarchyDepth},
+                                                       {"description", "Only descendants at this or greater relative depth below descendant_of; depth 0 includes the selected entity and immediate children are depth 1"}}},
+                            {"descendant_depth_max", {{"type", "integer"}, {"minimum", 0}, {"maximum", kMaxHierarchyDepth},
+                                                       {"description", "Only descendants at this or shallower relative depth below descendant_of; depth 0 includes the selected entity and immediate children are depth 1"}}},
+                            {"descendant_any", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 32},
+                                                 {"description", "Only entities that are descendants of any listed existing entity; listed entities are excluded unless a depth range includes 0"}}},
+                            {"descendant_any_depth", {{"type", "integer"}, {"minimum", 0}, {"maximum", kMaxHierarchyDepth},
+                                                        {"description", "With descendant_any, require a matching ancestor at this exact relative depth; 0 includes the listed entity itself"}}},
+                            {"descendant_any_depth_min", {{"type", "integer"}, {"minimum", 0}, {"maximum", kMaxHierarchyDepth},
+                                                            {"description", "With descendant_any, require a matching ancestor at this or greater relative depth; 0 includes a listed entity itself"}}},
+                            {"descendant_any_depth_max", {{"type", "integer"}, {"minimum", 0}, {"maximum", kMaxHierarchyDepth},
+                                                            {"description", "With descendant_any, require a matching ancestor at this or shallower relative depth; 0 includes only listed entities"}}},
+                            {"descendant_all", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 32},
+                                                 {"description", "Only entities whose ancestor chain contains every listed existing entity; depth bounds can include the entity itself at depth 0"}}},
+                            {"descendant_all_depth", {{"type", "integer"}, {"minimum", 0}, {"maximum", kMaxHierarchyDepth},
+                                                        {"description", "With descendant_all, require every listed ancestor at this exact relative depth; 0 includes the entity itself"}}},
+                            {"descendant_all_depth_min", {{"type", "integer"}, {"minimum", 0}, {"maximum", kMaxHierarchyDepth},
+                                                            {"description", "With descendant_all, require every listed ancestor at this or greater relative depth; 0 includes the entity itself"}}},
+                            {"descendant_all_depth_max", {{"type", "integer"}, {"minimum", 0}, {"maximum", kMaxHierarchyDepth},
+                                                            {"description", "With descendant_all, require every listed ancestor at this or shallower relative depth; 0 includes only the entity itself"}}},
+                            {"descendant_none", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 32},
+                                                  {"description", "Exclude descendants of any listed existing entities; depth bounds can also exclude a listed entity itself at depth 0"}}},
+                            {"descendant_none_depth", {{"type", "integer"}, {"minimum", 0}, {"maximum", kMaxHierarchyDepth},
+                                                          {"description", "With descendant_none, exclude listed ancestors' descendants at this exact relative depth; 0 excludes a listed entity itself"}}},
+                            {"descendant_none_depth_min", {{"type", "integer"}, {"minimum", 0}, {"maximum", kMaxHierarchyDepth},
+                                                             {"description", "With descendant_none, exclude listed ancestors' descendants at this or greater relative depth; 0 includes a listed entity itself"}}},
+                            {"descendant_none_depth_max", {{"type", "integer"}, {"minimum", 0}, {"maximum", kMaxHierarchyDepth},
+                                                             {"description", "With descendant_none, exclude listed ancestors' descendants at this or shallower relative depth; 0 includes only listed entities"}}},
+                            {"roots_only", {{"type", "boolean"}, {"description", "Only entities without a parent; cannot be combined with parent, parent_any, descendant_of, descendant_any, or descendant_all"}}},
+                            {"parent_override", {{"type", "boolean"},
+                                                   {"description", "Filter by whether the entity has an explicit Parent component"}}},
+                            {"parent_depth", {{"type", "integer"}, {"minimum", 0}, {"maximum", kMaxHierarchyDepth},
+                                                {"description", "Only entities at this hierarchy depth; roots are depth 0"}}},
+                            {"parent_depth_min", {{"type", "integer"}, {"minimum", 0}, {"maximum", kMaxHierarchyDepth},
+                                                    {"description", "Only entities at this or greater hierarchy depth"}}},
+                            {"parent_depth_max", {{"type", "integer"}, {"minimum", 0}, {"maximum", kMaxHierarchyDepth},
+                                                    {"description", "Only entities at this or shallower hierarchy depth"}}},
+                            {"layer_index", {{"type", "integer"}, {"minimum", 0}, {"maximum", kMaxLayers - 1},
+                                             {"description", "Only entities on this collision layer; entities without Layer use index 0"}}},
+                            {"layer_override", {{"type", "boolean"},
+                                                  {"description", "Filter by whether the entity has an explicit Layer component"}}},
+                            {"active", {{"type", "boolean"},
+                                         {"description", "Filter by the entity's local active value; missing Active defaults to true, and parent state is not composed"}}},
+                            {"active_override", {{"type", "boolean"},
+                                                  {"description", "Filter by whether the entity has an explicit Active component"}}},
+                            {"offset", {{"type", "integer"}, {"minimum", 0}, {"maximum", 1000000000},
+                                         {"description", "Number of matching entities to skip (default 0)"}}},
+                            {"after_entity_index", {{"type", "integer"}, {"minimum", 0}, {"maximum", 4294967295LL},
+                                                     {"description", "Return only entities with a greater entity index; pass the prior page's next_entity_index to continue"}}},
+                            {"limit", {{"type", "integer"}, {"minimum", 1}, {"maximum", 1000},
+                                        {"description", "Maximum entities to return (default 200)"}}},
+                            {"tag", {{"type", "string"}, {"description", "Only entities with this exact case-sensitive tag (legacy single-tag filter)"}}},
+                            {"tags_all", {{"type", "array"}, {"items", {{"type", "string"}}}, {"maxItems", 32},
+                                          {"description", "Only entities that have every exact case-sensitive tag listed"}}},
+                            {"tags_any", {{"type", "array"}, {"items", {{"type", "string"}}}, {"maxItems", 32},
+                                          {"description", "Only entities that have at least one exact case-sensitive tag listed"}}},
+                            {"tags_none", {{"type", "array"}, {"items", {{"type", "string"}}}, {"maxItems", 32},
+                                           {"description", "Exclude entities that have any exact case-sensitive tag listed"}}}}),
                     [&s](const Json& args) -> Json {
                         editor::EnsureAllGuids(s.world, s.guids);
                         ComponentId filter = kInvalidComponentId;
                         if (args.contains("component")) {
                             filter = RequireComponent(args["component"].get<std::string>());
                         }
+                        EntityGuid parent_filter;
+                        if (args.contains("parent")) {
+                            const std::string parent_text = RequireString(args, "parent");
+                            if (!ParseEntityGuid(parent_text, parent_filter)) throw ToolError("Not a valid parent entity GUID: " + parent_text);
+                            if (s.guids.Find(s.world, parent_filter).IsNull()) throw ToolError("No entity with parent GUID " + ToString(parent_filter));
+                        }
+                        EntityGuid descendant_of_filter;
+                        if (args.contains("descendant_of")) {
+                            const std::string ancestor_text = RequireString(args, "descendant_of");
+                            if (!ParseEntityGuid(ancestor_text, descendant_of_filter)) throw ToolError("Not a valid ancestor entity GUID: " + ancestor_text);
+                            if (s.guids.Find(s.world, descendant_of_filter).IsNull()) throw ToolError("No entity with ancestor GUID " + ToString(descendant_of_filter));
+                        }
+                        std::vector<EntityGuid> descendant_any_filter;
+                        if (args.contains("descendant_any")) {
+                            if (!args["descendant_any"].is_array() || args["descendant_any"].empty() || args["descendant_any"].size() > 32) {
+                                throw ToolError("\"descendant_any\" must be an array of 1 to 32 entity GUIDs");
+                            }
+                            std::set<std::string> unique_ancestors;
+                            for (const Json& value : args["descendant_any"]) {
+                                if (!value.is_string()) throw ToolError("Every \"descendant_any\" entry must be an entity GUID string");
+                                EntityGuid guid;
+                                const std::string guid_text = value.get<std::string>();
+                                if (!ParseEntityGuid(guid_text, guid)) throw ToolError("Not a valid ancestor entity GUID: " + guid_text);
+                                if (!unique_ancestors.insert(ToString(guid)).second) throw ToolError("Duplicate ancestor in \"descendant_any\": " + ToString(guid));
+                                if (s.guids.Find(s.world, guid).IsNull()) throw ToolError("No entity with ancestor GUID " + ToString(guid));
+                                descendant_any_filter.push_back(guid);
+                            }
+                        }
+                        std::vector<EntityGuid> descendant_all_filter;
+                        if (args.contains("descendant_all")) {
+                            if (!args["descendant_all"].is_array() || args["descendant_all"].empty() || args["descendant_all"].size() > 32) {
+                                throw ToolError("\"descendant_all\" must be an array of 1 to 32 entity GUIDs");
+                            }
+                            std::set<std::string> unique_ancestors;
+                            for (const Json& value : args["descendant_all"]) {
+                                if (!value.is_string()) throw ToolError("Every \"descendant_all\" entry must be an entity GUID string");
+                                EntityGuid guid;
+                                const std::string guid_text = value.get<std::string>();
+                                if (!ParseEntityGuid(guid_text, guid)) throw ToolError("Not a valid ancestor entity GUID: " + guid_text);
+                                if (!unique_ancestors.insert(ToString(guid)).second) throw ToolError("Duplicate ancestor in \"descendant_all\": " + ToString(guid));
+                                if (s.guids.Find(s.world, guid).IsNull()) throw ToolError("No entity with ancestor GUID " + ToString(guid));
+                                descendant_all_filter.push_back(guid);
+                            }
+                        }
+                        std::vector<EntityGuid> descendant_none_filter;
+                        if (args.contains("descendant_none")) {
+                            if (!args["descendant_none"].is_array() || args["descendant_none"].empty() || args["descendant_none"].size() > 32) {
+                                throw ToolError("\"descendant_none\" must be an array of 1 to 32 entity GUIDs");
+                            }
+                            std::set<std::string> unique_ancestors;
+                            for (const Json& value : args["descendant_none"]) {
+                                if (!value.is_string()) throw ToolError("Every \"descendant_none\" entry must be an entity GUID string");
+                                EntityGuid guid;
+                                const std::string guid_text = value.get<std::string>();
+                                if (!ParseEntityGuid(guid_text, guid)) throw ToolError("Not a valid ancestor entity GUID: " + guid_text);
+                                if (!unique_ancestors.insert(ToString(guid)).second) throw ToolError("Duplicate ancestor in \"descendant_none\": " + ToString(guid));
+                                if (s.guids.Find(s.world, guid).IsNull()) throw ToolError("No entity with ancestor GUID " + ToString(guid));
+                                descendant_none_filter.push_back(guid);
+                            }
+                        }
+                        bool roots_only = false;
+                        if (args.contains("roots_only")) {
+                            if (!args["roots_only"].is_boolean()) throw ToolError("\"roots_only\" must be a boolean");
+                            roots_only = args["roots_only"].get<bool>();
+                        }
+                        if (args.contains("parent") && roots_only) throw ToolError("\"parent\" and \"roots_only\" cannot be combined");
+                        if (args.contains("descendant_of") && roots_only) throw ToolError("\"descendant_of\" and \"roots_only\" cannot be combined");
+                        if (!descendant_any_filter.empty() && roots_only) throw ToolError("\"descendant_any\" and \"roots_only\" cannot be combined");
+                        if (!descendant_all_filter.empty() && roots_only) throw ToolError("\"descendant_all\" and \"roots_only\" cannot be combined");
+                        if (args.contains("parent_any") && (args.contains("parent") || roots_only)) {
+                            throw ToolError("\"parent_any\" cannot be combined with \"parent\" or \"roots_only\"");
+                        }
+                        std::vector<EntityGuid> parent_any_filter;
+                        if (args.contains("parent_any")) {
+                            if (!args["parent_any"].is_array() || args["parent_any"].empty() || args["parent_any"].size() > 32) {
+                                throw ToolError("\"parent_any\" must be an array of 1 to 32 entity GUIDs");
+                            }
+                            std::set<std::string> unique_parents;
+                            for (const Json& value : args["parent_any"]) {
+                                if (!value.is_string()) throw ToolError("Every \"parent_any\" entry must be an entity GUID string");
+                                EntityGuid guid;
+                                const std::string guid_text = value.get<std::string>();
+                                if (!ParseEntityGuid(guid_text, guid)) throw ToolError("Not a valid parent entity GUID: " + guid_text);
+                                if (!unique_parents.insert(ToString(guid)).second) throw ToolError("Duplicate parent in \"parent_any\": " + ToString(guid));
+                                if (s.guids.Find(s.world, guid).IsNull()) throw ToolError("No entity with parent GUID " + ToString(guid));
+                                parent_any_filter.push_back(guid);
+                            }
+                        }
+                        std::vector<EntityGuid> parent_none_filter;
+                        if (args.contains("parent_none")) {
+                            if (!args["parent_none"].is_array() || args["parent_none"].empty() || args["parent_none"].size() > 32) {
+                                throw ToolError("\"parent_none\" must be an array of 1 to 32 entity GUIDs");
+                            }
+                            std::set<std::string> unique_parents;
+                            for (const Json& value : args["parent_none"]) {
+                                if (!value.is_string()) throw ToolError("Every \"parent_none\" entry must be an entity GUID string");
+                                EntityGuid guid;
+                                const std::string guid_text = value.get<std::string>();
+                                if (!ParseEntityGuid(guid_text, guid)) throw ToolError("Not a valid parent entity GUID: " + guid_text);
+                                if (!unique_parents.insert(ToString(guid)).second) throw ToolError("Duplicate parent in \"parent_none\": " + ToString(guid));
+                                if (s.guids.Find(s.world, guid).IsNull()) throw ToolError("No entity with parent GUID " + ToString(guid));
+                                parent_none_filter.push_back(guid);
+                            }
+                        }
+                        std::optional<bool> parent_override_filter;
+                        if (args.contains("parent_override")) {
+                            if (!args["parent_override"].is_boolean()) throw ToolError("\"parent_override\" must be a boolean");
+                            parent_override_filter = args["parent_override"].get<bool>();
+                        }
+                        auto ReadParentDepth = [&](const char* key) -> std::optional<usize> {
+                            if (!args.contains(key)) return std::nullopt;
+                            if (!args[key].is_number_integer() || args[key].is_boolean()) {
+                                throw ToolError(std::string("\"") + key + "\" must be an integer hierarchy depth");
+                            }
+                            if (args[key].is_number_unsigned()) {
+                                const u64 value = args[key].get<u64>();
+                                if (value > kMaxHierarchyDepth) throw ToolError(std::string("\"") + key + "\" exceeds the maximum hierarchy depth");
+                                return static_cast<usize>(value);
+                            }
+                            const i64 value = args[key].get<i64>();
+                            if (value < 0 || value > kMaxHierarchyDepth) {
+                                throw ToolError(std::string("\"") + key + "\" must be from 0 to the maximum hierarchy depth");
+                            }
+                            return static_cast<usize>(value);
+                        };
+                        const std::optional<usize> parent_depth_filter = ReadParentDepth("parent_depth");
+                        const std::optional<usize> parent_depth_min_filter = ReadParentDepth("parent_depth_min");
+                        const std::optional<usize> parent_depth_max_filter = ReadParentDepth("parent_depth_max");
+                        if (parent_depth_min_filter.has_value() && parent_depth_max_filter.has_value() &&
+                            *parent_depth_min_filter > *parent_depth_max_filter) {
+                            throw ToolError("\"parent_depth_min\" cannot be greater than \"parent_depth_max\"");
+                        }
+                        const std::optional<usize> descendant_depth_filter = ReadParentDepth("descendant_depth");
+                        const std::optional<usize> descendant_depth_min_filter = ReadParentDepth("descendant_depth_min");
+                        const std::optional<usize> descendant_depth_max_filter = ReadParentDepth("descendant_depth_max");
+                        if ((descendant_depth_filter.has_value() || descendant_depth_min_filter.has_value() || descendant_depth_max_filter.has_value()) && !args.contains("descendant_of")) {
+                            throw ToolError("\"descendant_depth\", \"descendant_depth_min\" and \"descendant_depth_max\" require \"descendant_of\"");
+                        }
+                        if (descendant_depth_min_filter.has_value() && descendant_depth_max_filter.has_value() &&
+                            *descendant_depth_min_filter > *descendant_depth_max_filter) {
+                            throw ToolError("\"descendant_depth_min\" cannot be greater than \"descendant_depth_max\"");
+                        }
+                        const std::optional<usize> descendant_any_depth_filter = ReadParentDepth("descendant_any_depth");
+                        const std::optional<usize> descendant_any_depth_min_filter = ReadParentDepth("descendant_any_depth_min");
+                        const std::optional<usize> descendant_any_depth_max_filter = ReadParentDepth("descendant_any_depth_max");
+                        if ((descendant_any_depth_filter.has_value() || descendant_any_depth_min_filter.has_value() || descendant_any_depth_max_filter.has_value()) && descendant_any_filter.empty()) {
+                            throw ToolError("\"descendant_any_depth\", \"descendant_any_depth_min\" and \"descendant_any_depth_max\" require \"descendant_any\"");
+                        }
+                        if (descendant_any_depth_min_filter.has_value() && descendant_any_depth_max_filter.has_value() &&
+                            *descendant_any_depth_min_filter > *descendant_any_depth_max_filter) {
+                            throw ToolError("\"descendant_any_depth_min\" cannot be greater than \"descendant_any_depth_max\"");
+                        }
+                        const std::optional<usize> descendant_all_depth_filter = ReadParentDepth("descendant_all_depth");
+                        const std::optional<usize> descendant_all_depth_min_filter = ReadParentDepth("descendant_all_depth_min");
+                        const std::optional<usize> descendant_all_depth_max_filter = ReadParentDepth("descendant_all_depth_max");
+                        if ((descendant_all_depth_filter.has_value() || descendant_all_depth_min_filter.has_value() || descendant_all_depth_max_filter.has_value()) && descendant_all_filter.empty()) {
+                            throw ToolError("\"descendant_all_depth\", \"descendant_all_depth_min\" and \"descendant_all_depth_max\" require \"descendant_all\"");
+                        }
+                        if (descendant_all_depth_min_filter.has_value() && descendant_all_depth_max_filter.has_value() &&
+                            *descendant_all_depth_min_filter > *descendant_all_depth_max_filter) {
+                            throw ToolError("\"descendant_all_depth_min\" cannot be greater than \"descendant_all_depth_max\"");
+                        }
+                        const std::optional<usize> descendant_none_depth_filter = ReadParentDepth("descendant_none_depth");
+                        const std::optional<usize> descendant_none_depth_min_filter = ReadParentDepth("descendant_none_depth_min");
+                        const std::optional<usize> descendant_none_depth_max_filter = ReadParentDepth("descendant_none_depth_max");
+                        if ((descendant_none_depth_filter.has_value() || descendant_none_depth_min_filter.has_value() || descendant_none_depth_max_filter.has_value()) && descendant_none_filter.empty()) {
+                            throw ToolError("\"descendant_none_depth\", \"descendant_none_depth_min\" and \"descendant_none_depth_max\" require \"descendant_none\"");
+                        }
+                        if (descendant_none_depth_min_filter.has_value() && descendant_none_depth_max_filter.has_value() &&
+                            *descendant_none_depth_min_filter > *descendant_none_depth_max_filter) {
+                            throw ToolError("\"descendant_none_depth_min\" cannot be greater than \"descendant_none_depth_max\"");
+                        }
+                        i64 layer_filter = -1;
+                        if (args.contains("layer_index")) {
+                            if (!args["layer_index"].is_number_integer()) throw ToolError("\"layer_index\" must be an integer from 0 to 31");
+                            if (args["layer_index"].is_number_unsigned()) {
+                                const u64 raw_layer = args["layer_index"].get<u64>();
+                                if (raw_layer >= kMaxLayers) throw ToolError("\"layer_index\" must be an integer from 0 to 31");
+                                layer_filter = static_cast<i64>(raw_layer);
+                            } else {
+                                layer_filter = args["layer_index"].get<i64>();
+                                if (layer_filter < 0 || layer_filter >= kMaxLayers) throw ToolError("\"layer_index\" must be an integer from 0 to 31");
+                            }
+                        }
+                        std::optional<bool> active_filter;
+                        if (args.contains("active")) {
+                            if (!args["active"].is_boolean()) throw ToolError("\"active\" must be a boolean");
+                            active_filter = args["active"].get<bool>();
+                        }
+                        std::optional<bool> active_override_filter;
+                        if (args.contains("active_override")) {
+                            if (!args["active_override"].is_boolean()) throw ToolError("\"active_override\" must be a boolean");
+                            active_override_filter = args["active_override"].get<bool>();
+                        }
+                        std::optional<bool> layer_override_filter;
+                        if (args.contains("layer_override")) {
+                            if (!args["layer_override"].is_boolean()) throw ToolError("\"layer_override\" must be a boolean");
+                            layer_override_filter = args["layer_override"].get<bool>();
+                        }
+                        usize offset = 0;
+                        if (args.contains("offset")) {
+                            if (!args["offset"].is_number_integer()) throw ToolError("\"offset\" must be an integer from 0 to 1000000000");
+                            if (args["offset"].is_number_unsigned()) {
+                                const u64 raw_offset = args["offset"].get<u64>();
+                                if (raw_offset > 1000000000) throw ToolError("\"offset\" must be an integer from 0 to 1000000000");
+                                offset = static_cast<usize>(raw_offset);
+                            } else {
+                                const i64 raw_offset = args["offset"].get<i64>();
+                                if (raw_offset < 0 || raw_offset > 1000000000) throw ToolError("\"offset\" must be an integer from 0 to 1000000000");
+                                offset = static_cast<usize>(raw_offset);
+                            }
+                        }
+                        usize limit = 200;
+                        if (args.contains("limit")) {
+                            if (!args["limit"].is_number_integer()) throw ToolError("\"limit\" must be an integer from 1 to 1000");
+                            if (args["limit"].is_number_unsigned()) {
+                                const u64 raw_limit = args["limit"].get<u64>();
+                                if (raw_limit == 0 || raw_limit > 1000) throw ToolError("\"limit\" must be an integer from 1 to 1000");
+                                limit = static_cast<usize>(raw_limit);
+                            } else {
+                                const i64 raw_limit = args["limit"].get<i64>();
+                                if (raw_limit < 1 || raw_limit > 1000) throw ToolError("\"limit\" must be an integer from 1 to 1000");
+                                limit = static_cast<usize>(raw_limit);
+                            }
+                        }
+                        std::optional<u32> after_entity_index;
+                        if (args.contains("after_entity_index")) {
+                            if (!args["after_entity_index"].is_number_integer()) throw ToolError("\"after_entity_index\" must be an integer from 0 to 4294967295");
+                            if (args["after_entity_index"].is_number_unsigned()) {
+                                const u64 raw_index = args["after_entity_index"].get<u64>();
+                                if (raw_index > std::numeric_limits<u32>::max()) throw ToolError("\"after_entity_index\" must be an integer from 0 to 4294967295");
+                                after_entity_index = static_cast<u32>(raw_index);
+                            } else {
+                                const i64 raw_index = args["after_entity_index"].get<i64>();
+                                if (raw_index < 0 || static_cast<u64>(raw_index) > std::numeric_limits<u32>::max()) throw ToolError("\"after_entity_index\" must be an integer from 0 to 4294967295");
+                                after_entity_index = static_cast<u32>(raw_index);
+                            }
+                        }
+                        if (after_entity_index.has_value() && offset != 0) {
+                            throw ToolError("\"offset\" must be 0 when using \"after_entity_index\"");
+                        }
+                        const std::string name_filter = args.contains("name") ? RequireString(args, "name") : std::string{};
+                        const std::string name_contains_filter = args.contains("name_contains") ? RequireString(args, "name_contains") : std::string{};
+                        if (args.contains("name_contains") && name_contains_filter.empty()) {
+                            throw ToolError("\"name_contains\" must be a non-empty string");
+                        }
+                        const std::string tag_filter = args.contains("tag") ? RequireString(args, "tag") : std::string{};
+                        auto ReadTagFilter = [&](const char* key) {
+                            std::vector<std::string> tags;
+                            if (!args.contains(key)) return tags;
+                            if (!args[key].is_array() || args[key].size() > 32) {
+                                throw ToolError(std::string("\"") + key + "\" must be an array of at most 32 strings");
+                            }
+                            std::set<std::string> unique;
+                            for (const Json& value : args[key]) {
+                                if (!value.is_string() || value.get<std::string>().empty()) {
+                                    throw ToolError(std::string("Every \"") + key + "\" entry must be a non-empty string");
+                                }
+                                if (!unique.insert(value.get<std::string>()).second) {
+                                    throw ToolError(std::string("Duplicate tag in \"") + key + "\": " + value.get<std::string>());
+                                }
+                                tags.push_back(value.get<std::string>());
+                            }
+                            return tags;
+                        };
+                        const std::vector<std::string> tags_all = ReadTagFilter("tags_all");
+                        const std::vector<std::string> tags_any = ReadTagFilter("tags_any");
+                        const std::vector<std::string> tags_none = ReadTagFilter("tags_none");
+                        auto ReadComponentFilter = [&](const char* key) {
+                            std::vector<ComponentId> components;
+                            if (!args.contains(key)) return components;
+                            if (!args[key].is_array() || args[key].size() > 32) {
+                                throw ToolError(std::string("\"") + key + "\" must be an array of at most 32 component names");
+                            }
+                            std::set<ComponentId> unique;
+                            for (const Json& value : args[key]) {
+                                if (!value.is_string() || value.get<std::string>().empty()) {
+                                    throw ToolError(std::string("Every \"") + key + "\" entry must be a non-empty component name");
+                                }
+                                const ComponentId component = RequireComponent(value.get<std::string>());
+                                if (!unique.insert(component).second) {
+                                    throw ToolError(std::string("Duplicate component in \"") + key + "\": " + value.get<std::string>());
+                                }
+                                components.push_back(component);
+                            }
+                            return components;
+                        };
+                        const std::vector<ComponentId> components_all = ReadComponentFilter("components_all");
+                        const std::vector<ComponentId> components_any = ReadComponentFilter("components_any");
+                        const std::vector<ComponentId> components_none = ReadComponentFilter("components_none");
                         Json out = Json::array();
+                        usize total_matches = 0;
                         for (Entity e : AllEntities(s)) {
+                            if (after_entity_index.has_value() && e.index <= *after_entity_index) continue;
+                            const Parent* parent = s.world.GetComponent<Parent>(e);
+                            if (args.contains("parent") && (parent == nullptr || parent->parent != parent_filter)) continue;
+                            if (!parent_any_filter.empty() && (parent == nullptr || std::find(parent_any_filter.begin(), parent_any_filter.end(), parent->parent) == parent_any_filter.end())) continue;
+                            if (!parent_none_filter.empty() && parent != nullptr && std::find(parent_none_filter.begin(), parent_none_filter.end(), parent->parent) != parent_none_filter.end()) continue;
+                            if (parent_override_filter.has_value() && (parent != nullptr) != *parent_override_filter) continue;
+                            if (roots_only && parent != nullptr && !parent->parent.IsNull()) continue;
+                            std::optional<usize> entity_depth;
+                            if (args.contains("descendant_of") || !descendant_any_filter.empty() || !descendant_all_filter.empty() || !descendant_none_filter.empty() || parent_depth_filter.has_value() || parent_depth_min_filter.has_value() || parent_depth_max_filter.has_value()) {
+                                usize depth = 0;
+                                Entity current = e;
+                                std::set<u32> visited;
+                                bool matches_descendant_of = false;
+                                std::optional<usize> descendant_depth;
+                                bool matches_descendant_any = false;
+                                bool matches_descendant_any_depth = false;
+                                bool excluded_descendant = false;
+                                std::set<EntityGuid> matched_descendant_all;
+                                if (args.contains("descendant_of")) {
+                                    const IdComponent* entity_id = s.world.GetComponent<IdComponent>(e);
+                                    if (entity_id != nullptr && entity_id->guid == descendant_of_filter) {
+                                        const bool has_relative_depth_filter = descendant_depth_filter.has_value() ||
+                                            descendant_depth_min_filter.has_value() || descendant_depth_max_filter.has_value();
+                                        const bool exact_matches = !descendant_depth_filter.has_value() || *descendant_depth_filter == 0;
+                                        const bool minimum_matches = !descendant_depth_min_filter.has_value() || *descendant_depth_min_filter == 0;
+                                        if (has_relative_depth_filter && exact_matches && minimum_matches) {
+                                            matches_descendant_of = true;
+                                            descendant_depth = 0;
+                                        }
+                                    }
+                                }
+                                if (!descendant_any_filter.empty()) {
+                                    const IdComponent* entity_id = s.world.GetComponent<IdComponent>(e);
+                                    if (entity_id != nullptr && std::find(descendant_any_filter.begin(), descendant_any_filter.end(), entity_id->guid) != descendant_any_filter.end()) {
+                                        const bool has_relative_depth_filter = descendant_any_depth_filter.has_value() || descendant_any_depth_min_filter.has_value() || descendant_any_depth_max_filter.has_value();
+                                        const bool exact_matches = !descendant_any_depth_filter.has_value() || *descendant_any_depth_filter == 0;
+                                        const bool minimum_matches = !descendant_any_depth_min_filter.has_value() || *descendant_any_depth_min_filter == 0;
+                                        if (has_relative_depth_filter && exact_matches && minimum_matches) {
+                                            matches_descendant_any = true;
+                                            matches_descendant_any_depth = true;
+                                        }
+                                    }
+                                }
+                                if (!descendant_none_filter.empty() &&
+                                    (descendant_none_depth_filter.has_value() || descendant_none_depth_min_filter.has_value() || descendant_none_depth_max_filter.has_value())) {
+                                    const IdComponent* entity_id = s.world.GetComponent<IdComponent>(e);
+                                    const bool is_listed_entity = entity_id != nullptr &&
+                                        std::find(descendant_none_filter.begin(), descendant_none_filter.end(), entity_id->guid) != descendant_none_filter.end();
+                                    const bool exact_matches = !descendant_none_depth_filter.has_value() || *descendant_none_depth_filter == 0;
+                                    const bool minimum_matches = !descendant_none_depth_min_filter.has_value() || *descendant_none_depth_min_filter == 0;
+                                    if (is_listed_entity && exact_matches && minimum_matches) excluded_descendant = true;
+                                }
+                                if (!descendant_all_filter.empty()) {
+                                    const IdComponent* entity_id = s.world.GetComponent<IdComponent>(e);
+                                    if (entity_id != nullptr && std::find(descendant_all_filter.begin(), descendant_all_filter.end(), entity_id->guid) != descendant_all_filter.end()) {
+                                        const bool has_relative_depth_filter = descendant_all_depth_filter.has_value() || descendant_all_depth_min_filter.has_value() || descendant_all_depth_max_filter.has_value();
+                                        const bool exact_matches = !descendant_all_depth_filter.has_value() || *descendant_all_depth_filter == 0;
+                                        const bool minimum_matches = !descendant_all_depth_min_filter.has_value() || *descendant_all_depth_min_filter == 0;
+                                        if (has_relative_depth_filter && exact_matches && minimum_matches) matched_descendant_all.insert(entity_id->guid);
+                                    }
+                                }
+                                while (true) {
+                                    if (!visited.insert(current.index).second) throw ToolError("Cannot filter by ancestry or parent depth: hierarchy contains a cycle");
+                                    const Parent* current_parent = s.world.GetComponent<Parent>(current);
+                                    if (current_parent == nullptr || current_parent->parent.IsNull()) break;
+                                    if (depth >= kMaxHierarchyDepth) throw ToolError("Cannot filter by ancestry or parent depth: hierarchy exceeds the maximum depth");
+                                    if (args.contains("descendant_of") && current_parent->parent == descendant_of_filter) {
+                                        matches_descendant_of = true;
+                                        descendant_depth = depth + 1;
+                                    }
+                                    if (!descendant_any_filter.empty() && std::find(descendant_any_filter.begin(), descendant_any_filter.end(), current_parent->parent) != descendant_any_filter.end()) {
+                                        matches_descendant_any = true;
+                                        const usize relative_depth = depth + 1;
+                                        const bool meets_exact = !descendant_any_depth_filter.has_value() || relative_depth == *descendant_any_depth_filter;
+                                        const bool meets_min = !descendant_any_depth_min_filter.has_value() || relative_depth >= *descendant_any_depth_min_filter;
+                                        const bool meets_max = !descendant_any_depth_max_filter.has_value() || relative_depth <= *descendant_any_depth_max_filter;
+                                        if (meets_exact && meets_min && meets_max) matches_descendant_any_depth = true;
+                                    }
+                                    if (!descendant_all_filter.empty() && std::find(descendant_all_filter.begin(), descendant_all_filter.end(), current_parent->parent) != descendant_all_filter.end()) {
+                                        const usize relative_depth = depth + 1;
+                                        const bool meets_exact = !descendant_all_depth_filter.has_value() || relative_depth == *descendant_all_depth_filter;
+                                        const bool meets_min = !descendant_all_depth_min_filter.has_value() || relative_depth >= *descendant_all_depth_min_filter;
+                                        const bool meets_max = !descendant_all_depth_max_filter.has_value() || relative_depth <= *descendant_all_depth_max_filter;
+                                        if (meets_exact && meets_min && meets_max) matched_descendant_all.insert(current_parent->parent);
+                                    }
+                                    if (!descendant_none_filter.empty() && std::find(descendant_none_filter.begin(), descendant_none_filter.end(), current_parent->parent) != descendant_none_filter.end()) {
+                                        const usize relative_depth = depth + 1;
+                                        const bool meets_exact = !descendant_none_depth_filter.has_value() || relative_depth == *descendant_none_depth_filter;
+                                        const bool meets_min = !descendant_none_depth_min_filter.has_value() || relative_depth >= *descendant_none_depth_min_filter;
+                                        const bool meets_max = !descendant_none_depth_max_filter.has_value() || relative_depth <= *descendant_none_depth_max_filter;
+                                        if (meets_exact && meets_min && meets_max) excluded_descendant = true;
+                                    }
+                                    current = s.guids.Find(s.world, current_parent->parent);
+                                    if (current.IsNull()) throw ToolError("Cannot filter by ancestry or parent depth: hierarchy references a missing parent");
+                                    ++depth;
+                                }
+                                entity_depth = depth;
+                                if (args.contains("descendant_of") && !matches_descendant_of) continue;
+                                if (!descendant_any_filter.empty() && !matches_descendant_any) continue;
+                                if ((descendant_any_depth_filter.has_value() || descendant_any_depth_min_filter.has_value() || descendant_any_depth_max_filter.has_value()) && !matches_descendant_any_depth) continue;
+                                if (!descendant_all_filter.empty() && matched_descendant_all.size() != descendant_all_filter.size()) continue;
+                                if (excluded_descendant) continue;
+                                if (descendant_depth_filter.has_value() && (!descendant_depth.has_value() || *descendant_depth != *descendant_depth_filter)) continue;
+                                if (parent_depth_filter.has_value() && depth != *parent_depth_filter) continue;
+                                if (parent_depth_min_filter.has_value() && depth < *parent_depth_min_filter) continue;
+                                if (parent_depth_max_filter.has_value() && depth > *parent_depth_max_filter) continue;
+                                if (descendant_depth_min_filter.has_value() && (!descendant_depth.has_value() || *descendant_depth < *descendant_depth_min_filter)) continue;
+                                if (descendant_depth_max_filter.has_value() && (!descendant_depth.has_value() || *descendant_depth > *descendant_depth_max_filter)) continue;
+                            }
+                            const Layer* layer_override = s.world.GetComponent<Layer>(e);
+                            if (layer_override_filter.has_value() && (layer_override != nullptr) != *layer_override_filter) continue;
+                            const u8 entity_layer = LayerOf(s.world, e);
+                            if (layer_filter >= 0 && entity_layer != static_cast<u8>(layer_filter)) continue;
+                            const Active* active = s.world.GetComponent<Active>(e);
+                            const bool entity_active = active == nullptr || active->active;
+                            if (active_filter.has_value() && entity_active != *active_filter) continue;
+                            if (active_override_filter.has_value() && (active != nullptr) != *active_override_filter) continue;
                             if (filter != kInvalidComponentId && !s.world.HasComponentRaw(e, filter)) {
                                 continue;
                             }
+                            bool has_all_components = true;
+                            for (const ComponentId component : components_all) {
+                                has_all_components = has_all_components && s.world.HasComponentRaw(e, component);
+                            }
+                            if (!has_all_components) continue;
+                            if (!components_any.empty()) {
+                                bool has_any_component = false;
+                                for (const ComponentId component : components_any) {
+                                    has_any_component = has_any_component || s.world.HasComponentRaw(e, component);
+                                }
+                                if (!has_any_component) continue;
+                            }
+                            bool has_excluded_component = false;
+                            for (const ComponentId component : components_none) {
+                                has_excluded_component = has_excluded_component || s.world.HasComponentRaw(e, component);
+                            }
+                            if (has_excluded_component) continue;
+                            if (args.contains("name")) {
+                                const EntityName* name = s.world.GetComponent<EntityName>(e);
+                                if (name == nullptr || name->value != name_filter) continue;
+                            }
+                            if (args.contains("name_contains")) {
+                                const EntityName* name = s.world.GetComponent<EntityName>(e);
+                                if (name == nullptr || std::search(name->value.begin(), name->value.end(),
+                                        name_contains_filter.begin(), name_contains_filter.end(),
+                                        [](unsigned char lhs, unsigned char rhs) {
+                                            const unsigned char folded_lhs = lhs >= 'A' && lhs <= 'Z' ? static_cast<unsigned char>(lhs + ('a' - 'A')) : lhs;
+                                            const unsigned char folded_rhs = rhs >= 'A' && rhs <= 'Z' ? static_cast<unsigned char>(rhs + ('a' - 'A')) : rhs;
+                                            return folded_lhs == folded_rhs;
+                                        }) == name->value.end()) {
+                                    continue;
+                                }
+                            }
+                            if (args.contains("tag") && !HasTag(s.world, e, tag_filter)) continue;
+                            bool has_all_tags = true;
+                            for (const std::string& tag : tags_all) has_all_tags = has_all_tags && HasTag(s.world, e, tag);
+                            if (!has_all_tags) continue;
+                            if (!tags_any.empty()) {
+                                bool has_any_tag = false;
+                                for (const std::string& tag : tags_any) has_any_tag = has_any_tag || HasTag(s.world, e, tag);
+                                if (!has_any_tag) continue;
+                            }
+                            bool has_excluded_tag = false;
+                            for (const std::string& tag : tags_none) has_excluded_tag = has_excluded_tag || HasTag(s.world, e, tag);
+                            if (has_excluded_tag) continue;
+                            const usize match_index = total_matches++;
+                            if (match_index < offset || out.size() >= limit) continue;
+                            if (!entity_depth.has_value()) {
+                                usize depth = 0;
+                                Entity current = e;
+                                std::set<u32> visited;
+                                while (true) {
+                                    if (!visited.insert(current.index).second) throw ToolError("Cannot report parent depth: hierarchy contains a cycle");
+                                    const Parent* current_parent = s.world.GetComponent<Parent>(current);
+                                    if (current_parent == nullptr || current_parent->parent.IsNull()) break;
+                                    if (depth >= kMaxHierarchyDepth) throw ToolError("Cannot report parent depth: hierarchy exceeds the maximum depth");
+                                    current = s.guids.Find(s.world, current_parent->parent);
+                                    if (current.IsNull()) throw ToolError("Cannot report parent depth: hierarchy references a missing parent");
+                                    ++depth;
+                                }
+                                entity_depth = depth;
+                            }
                             const IdComponent* id = s.world.GetComponent<IdComponent>(e);
-                            out.push_back({{"entity", id ? ToString(id->guid) : ""},
-                                           {"components", ComponentNamesOf(s, e)}});
+                            const EntityName* name = s.world.GetComponent<EntityName>(e);
+                            Json row = {{"entity", id ? ToString(id->guid) : ""},
+                                        {"name", name != nullptr ? Json(name->value) : Json(nullptr)},
+                                        {"components", ComponentNamesOf(s, e)},
+                                        {"entity_index", e.index},
+                                        {"layer_index", entity_layer}, {"active", entity_active},
+                                        {"has_active_override", active != nullptr},
+                                        {"has_layer_override", layer_override != nullptr},
+                                        {"has_parent_override", parent != nullptr}};
+                            row["parent_depth"] = *entity_depth;
+                            if (parent != nullptr && !parent->parent.IsNull()) row["parent"] = ToString(parent->parent);
+                            out.push_back(std::move(row));
                         }
-                        return {{"count", out.size()}, {"entities", out}};
+                        const Json next_entity_index = out.empty() ? Json(nullptr) : out.back()["entity_index"];
+                        return {{"count", out.size()}, {"total_matches", total_matches}, {"offset", offset},
+                                {"limit", limit}, {"has_more", total_matches > offset + out.size()},
+                                {"next_entity_index", next_entity_index}, {"entities", out}};
                     }});
 
     server.AddTool({"get_entity", "Every component of one entity, as JSON.", Schema({{"entity", kGuidProp}}, {"entity"}),
                     [&s](const Json& args) -> Json { return EntityJson(s, RequireEntity(s, args)); }});
+
+    server.AddTool(
+        {"get_entities_many",
+         "Get every reflected component value for 1–64 unique scene entities in one response. The complete GUID selection is validated before any entity data is returned.",
+         Schema({{"entities", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 64},
+                               {"description", "1–64 unique scene entity GUIDs, returned in this order"}}}},
+                {"entities"}),
+         [&s](const Json& args) -> Json {
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be a non-empty array of at most 64 entity GUIDs");
+             }
+             std::vector<std::pair<EntityGuid, Entity>> entities;
+             entities.reserve(args["entities"].size());
+             std::set<EntityGuid> seen;
+             for (const Json& value : args["entities"]) {
+                 if (!value.is_string()) throw ToolError("Every entry in \"entities\" must be an entity GUID string");
+                 const std::string guid_text = value.get<std::string>();
+                 EntityGuid guid;
+                 if (!ParseEntityGuid(guid_text, guid)) throw ToolError("Not a valid entity GUID: " + guid_text);
+                 if (!seen.insert(guid).second) throw ToolError("Duplicate entity in \"entities\": " + ToString(guid));
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 if (entity.IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+                 entities.emplace_back(guid, entity);
+             }
+
+             Json results = Json::array();
+             for (const auto& [guid, entity] : entities) {
+                 Json result = EntityJson(s, entity);
+                 result["entity"] = ToString(guid);
+                 results.push_back(std::move(result));
+             }
+             return {{"count", results.size()}, {"entities", std::move(results)}};
+         }});
+
+    server.AddTool(
+        {"get_entities_metadata_many",
+         "Get compact editor metadata for 1–64 unique scene entities in request order: optional name and parent, local active value (defaults to true), whether Active and Layer overrides exist, layer index, and tags. The full entity selection is validated before any results are returned.",
+         Schema({{"entities", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 64},
+                               {"description", "1–64 unique scene entity GUIDs, returned in this order"}}}},
+                {"entities"}),
+         [&s](const Json& args) -> Json {
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be a non-empty array of at most 64 entity GUIDs");
+             }
+             std::vector<std::pair<EntityGuid, Entity>> entities;
+             entities.reserve(args["entities"].size());
+             std::set<EntityGuid> seen;
+             for (const Json& value : args["entities"]) {
+                 if (!value.is_string()) throw ToolError("Every entry in \"entities\" must be an entity GUID string");
+                 const std::string guid_text = value.get<std::string>();
+                 EntityGuid guid;
+                 if (!ParseEntityGuid(guid_text, guid)) throw ToolError("Not a valid entity GUID: " + guid_text);
+                 if (!seen.insert(guid).second) throw ToolError("Duplicate entity in \"entities\": " + ToString(guid));
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 if (entity.IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+                 entities.emplace_back(guid, entity);
+             }
+
+             Json results = Json::array();
+             for (const auto& [guid, entity] : entities) {
+                 const EntityName* name = s.world.GetComponent<EntityName>(entity);
+                 const Active* active = s.world.GetComponent<Active>(entity);
+                 const Layer* layer = s.world.GetComponent<Layer>(entity);
+                 const Tags* tags = s.world.GetComponent<Tags>(entity);
+                 const Parent* parent = s.world.GetComponent<Parent>(entity);
+                 Json tag_names = Json::array();
+                 if (tags != nullptr) {
+                     for (const std::string& tag : tags->names) tag_names.push_back(tag);
+                 }
+                 Json result = {{"entity", ToString(guid)},
+                                {"name", name != nullptr ? Json(name->value) : Json(nullptr)},
+                                {"active", active == nullptr || active->active},
+                                {"has_active_override", active != nullptr},
+                                {"layer", layer != nullptr ? layer->index : 0},
+                                {"has_layer_override", layer != nullptr},
+                                {"tags", std::move(tag_names)}};
+                 if (parent != nullptr && !parent->parent.IsNull()) result["parent"] = ToString(parent->parent);
+                 else result["parent"] = nullptr;
+                 results.push_back(std::move(result));
+             }
+             return {{"count", results.size()}, {"entities", std::move(results)}};
+         }});
+
+    server.AddTool(
+        {"get_components_many",
+         "Get selected reflected components from 1–64 entity/component pairs in one response. The full request is validated before returning values; absent components are reported with present=false.",
+         Schema({{"components", {{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
+                                 {"items", {{"type", "object"},
+                                            {"properties", {{"entity", kGuidProp},
+                                                             {"component", {{"type", "string"}}}}},
+                                            {"required", {"entity", "component"}}, {"additionalProperties", false}}},
+                                 {"description", "1–64 unique entity/component pairs"}}}},
+                {"components"}),
+         [&s](const Json& args) -> Json {
+             if (!args["components"].is_array() || args["components"].empty() || args["components"].size() > 64) {
+                 throw ToolError("\"components\" must be a non-empty array of at most 64 entity/component pairs");
+             }
+             struct ComponentRequest {
+                 EntityGuid guid;
+                 Entity entity;
+                 ComponentId component;
+             };
+             std::vector<ComponentRequest> requests;
+             requests.reserve(args["components"].size());
+             std::set<std::pair<EntityGuid, ComponentId>> seen;
+             for (const Json& value : args["components"]) {
+                 if (!value.is_object() || !value.contains("entity") || !value["entity"].is_string() ||
+                     !value.contains("component") || !value["component"].is_string()) {
+                     throw ToolError("Each entry in \"components\" must contain string entity and component fields");
+                 }
+                 EntityGuid guid;
+                 const std::string guid_text = value["entity"].get<std::string>();
+                 if (!ParseEntityGuid(guid_text, guid)) throw ToolError("Not a valid entity GUID: " + guid_text);
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 if (entity.IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+                 const ComponentId component = RequireComponent(value["component"].get<std::string>());
+                 if (!seen.emplace(guid, component).second) {
+                     throw ToolError("Duplicate entity/component pair: " + ToString(guid) + " / " + ComponentName(component));
+                 }
+                 requests.push_back({guid, entity, component});
+             }
+
+             Json results = Json::array();
+             for (const ComponentRequest& request : requests) {
+                 Json result = {{"entity", ToString(request.guid)}, {"component", ComponentName(request.component)}};
+                 if (s.world.HasComponentRaw(request.entity, request.component)) {
+                     result["present"] = true;
+                     result["value"] = ComponentJson(s, request.entity, request.component);
+                 } else {
+                     result["present"] = false;
+                 }
+                 results.push_back(std::move(result));
+             }
+             return {{"count", results.size()}, {"components", std::move(results)}};
+         }});
+
+    server.AddTool(
+        {"compare_entity_components_many",
+         "Compare selected component presence across 1–64 unique entities and 1–32 unique reflected component types. Returns a boolean presence matrix and classifies each requested component as common, mixed, or absent across the selection.",
+         Schema({{"entities", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 64}}},
+                 {"components", {{"type", "array"}, {"items", {{"type", "string"}}}, {"minItems", 1},
+                                 {"maxItems", 32}}}},
+                {"entities", "components"}),
+         [&s](const Json& args) -> Json {
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be a non-empty array of at most 64 entity GUIDs");
+             }
+             if (!args["components"].is_array() || args["components"].empty() || args["components"].size() > 32) {
+                 throw ToolError("\"components\" must be a non-empty array of at most 32 component names");
+             }
+             std::vector<std::pair<EntityGuid, Entity>> entities;
+             entities.reserve(args["entities"].size());
+             std::set<EntityGuid> seen_entities;
+             for (const Json& value : args["entities"]) {
+                 if (!value.is_string()) throw ToolError("Every entry in \"entities\" must be an entity GUID string");
+                 const std::string guid_text = value.get<std::string>();
+                 EntityGuid guid;
+                 if (!ParseEntityGuid(guid_text, guid)) throw ToolError("Not a valid entity GUID: " + guid_text);
+                 if (!seen_entities.insert(guid).second) throw ToolError("Duplicate entity in \"entities\": " + ToString(guid));
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 if (entity.IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+                 entities.emplace_back(guid, entity);
+             }
+             std::vector<ComponentId> component_ids;
+             component_ids.reserve(args["components"].size());
+             std::set<ComponentId> seen_components;
+             for (const Json& value : args["components"]) {
+                 if (!value.is_string() || value.get<std::string>().empty()) {
+                     throw ToolError("Every entry in \"components\" must be a non-empty component name");
+                 }
+                 const ComponentId component = RequireComponent(value.get<std::string>());
+                 if (!seen_components.insert(component).second) {
+                     throw ToolError("Duplicate component in \"components\": " + ComponentName(component));
+                 }
+                 component_ids.push_back(component);
+             }
+
+             Json rows = Json::array();
+             std::vector<usize> present_counts(component_ids.size(), 0);
+             for (const auto& [guid, entity] : entities) {
+                 Json presence = Json::object();
+                 for (usize i = 0; i < component_ids.size(); ++i) {
+                     const bool present = s.world.HasComponentRaw(entity, component_ids[i]);
+                     presence[ComponentName(component_ids[i])] = present;
+                     if (present) ++present_counts[i];
+                 }
+                 rows.push_back({{"entity", ToString(guid)}, {"components", std::move(presence)}});
+             }
+             Json common = Json::array();
+             Json mixed = Json::array();
+             Json absent = Json::array();
+             for (usize i = 0; i < component_ids.size(); ++i) {
+                 const std::string name = ComponentName(component_ids[i]);
+                 if (present_counts[i] == entities.size()) common.push_back(name);
+                 else if (present_counts[i] == 0) absent.push_back(name);
+                 else mixed.push_back({{"component", name}, {"present_count", present_counts[i]},
+                                       {"entity_count", entities.size()}});
+             }
+             return {{"entity_count", entities.size()}, {"rows", std::move(rows)},
+                     {"common_components", std::move(common)}, {"mixed_components", std::move(mixed)},
+                     {"absent_components", std::move(absent)}};
+         }});
+
+    server.AddTool(
+        {"summarize_entity_components_many",
+         "Summarize reflected component usage across 1–64 unique scene entities. Returns deterministic per-component present and missing counts, plus the exact component types shared by every selected entity.",
+         Schema({{"entities", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 64},
+                               {"description", "1–64 unique scene entity GUIDs"}}}},
+                {"entities"}),
+         [&s](const Json& args) -> Json {
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be a non-empty array of at most 64 entity GUIDs");
+             }
+             std::vector<Entity> entities;
+             entities.reserve(args["entities"].size());
+             std::set<EntityGuid> seen;
+             for (const Json& value : args["entities"]) {
+                 if (!value.is_string()) throw ToolError("Every entry in \"entities\" must be an entity GUID string");
+                 const std::string guid_text = value.get<std::string>();
+                 EntityGuid guid;
+                 if (!ParseEntityGuid(guid_text, guid)) throw ToolError("Not a valid entity GUID: " + guid_text);
+                 if (!seen.insert(guid).second) throw ToolError("Duplicate entity in \"entities\": " + ToString(guid));
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 if (entity.IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+                 entities.push_back(entity);
+             }
+
+             std::vector<std::pair<std::string, usize>> counts;
+             for (ComponentId id = 0; id < RegisteredComponentCount(); ++id) {
+                 if (GetComponentInfo(id).reflected == nullptr) continue;
+                 usize present = 0;
+                 for (const Entity entity : entities) present += s.world.HasComponentRaw(entity, id) ? 1 : 0;
+                 counts.emplace_back(ComponentName(id), present);
+             }
+             std::sort(counts.begin(), counts.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+
+             Json components = Json::array();
+             Json common = Json::array();
+             for (const auto& [name, present] : counts) {
+                 if (present == 0) continue;
+                 components.push_back({{"component", name}, {"present_count", present},
+                                       {"missing_count", entities.size() - present}});
+                 if (present == entities.size()) common.push_back(name);
+             }
+             const usize used_component_count = components.size();
+             return {{"entity_count", entities.size()}, {"used_component_count", used_component_count},
+                     {"components", std::move(components)}, {"common_components", std::move(common)}};
+         }});
+
+    server.AddTool(
+        {"get_entities_descendants_many",
+         "Get descendants for 1–64 unique scene entities. Each requested root returns its descendants in deterministic parent-first order with parent GUID and depth relative to that root. The complete root selection is validated first; the query is limited to 64 returned descendant entries total and rejects cycles, excessive depth, or descendants without GUIDs.",
+         Schema({{"entities", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 64},
+                               {"description", "1–64 unique root entity GUIDs"}}}},
+                {"entities"}),
+         [&s](const Json& args) -> Json {
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be a non-empty array of at most 64 entity GUIDs");
+             }
+             std::vector<EntityGuid> roots;
+             roots.reserve(args["entities"].size());
+             std::set<EntityGuid> seen_roots;
+             for (const Json& value : args["entities"]) {
+                 if (!value.is_string()) throw ToolError("Every entry in \"entities\" must be an entity GUID string");
+                 const std::string guid_text = value.get<std::string>();
+                 EntityGuid guid;
+                 if (!ParseEntityGuid(guid_text, guid)) throw ToolError("Not a valid entity GUID: " + guid_text);
+                 if (!seen_roots.insert(guid).second) throw ToolError("Duplicate root in \"entities\": " + ToString(guid));
+                 if (s.guids.Find(s.world, guid).IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+                 roots.push_back(guid);
+             }
+
+             std::map<EntityGuid, std::vector<EntityGuid>> children_by_parent;
+             std::set<EntityGuid> parents_with_unguided_children;
+             for (const Entity entity : AllEntities(s)) {
+                 const Parent* parent = s.world.GetComponent<Parent>(entity);
+                 if (parent == nullptr || parent->parent.IsNull()) continue;
+                 const IdComponent* child_id = s.world.GetComponent<IdComponent>(entity);
+                 if (child_id == nullptr || child_id->guid.IsNull()) {
+                     parents_with_unguided_children.insert(parent->parent);
+                     continue;
+                 }
+                 children_by_parent[parent->parent].push_back(child_id->guid);
+             }
+             for (auto& [parent, children] : children_by_parent) {
+                 (void)parent;
+                 std::sort(children.begin(), children.end());
+             }
+
+             Json results = Json::array();
+             usize total_descendants = 0;
+             for (const EntityGuid root : roots) {
+                 Json descendants = Json::array();
+                 std::set<EntityGuid> path{root};
+                 std::function<void(EntityGuid, int)> append_children = [&](EntityGuid parent_guid, int depth) {
+                     if (depth >= kMaxHierarchyDepth) {
+                         throw ToolError("Descendant query encountered a hierarchy cycle or excessive depth");
+                     }
+                     if (parents_with_unguided_children.contains(parent_guid)) {
+                         throw ToolError("Cannot query descendants because a child entity has no GUID");
+                     }
+                     const auto children = children_by_parent.find(parent_guid);
+                     if (children == children_by_parent.end()) return;
+                     for (const EntityGuid child_guid : children->second) {
+                         if (!path.insert(child_guid).second) {
+                             throw ToolError("Descendant query encountered a hierarchy cycle at " + ToString(child_guid));
+                         }
+                         if (++total_descendants > 64) {
+                             throw ToolError("Descendant query would return more than 64 entries");
+                         }
+                         descendants.push_back({{"entity", ToString(child_guid)},
+                                                {"parent", ToString(parent_guid)},
+                                                {"depth", depth}});
+                         if (s.guids.Find(s.world, child_guid).IsNull()) {
+                             throw ToolError("Hierarchy child has no matching scene entity: " + ToString(child_guid));
+                         }
+                         append_children(child_guid, depth + 1);
+                         path.erase(child_guid);
+                     }
+                 };
+                 append_children(root, 1);
+                 results.push_back({{"root", ToString(root)}, {"count", descendants.size()},
+                                    {"descendants", std::move(descendants)}});
+             }
+             return {{"count", total_descendants}, {"roots", std::move(results)}};
+         }});
+
+    server.AddTool(
+        {"get_entities_ancestors_many",
+         "Get the ancestor chain for 1–64 unique scene entities. Each root returns its ancestors nearest-parent first with their own parent GUID and distance from the root. The complete root selection is validated first; rejects missing parent entities, cycles and excessive depth, with a 64-ancestor total response cap.",
+         Schema({{"entities", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 64},
+                               {"description", "1–64 unique entity GUIDs whose ancestor chains are requested"}}}},
+                {"entities"}),
+         [&s](const Json& args) -> Json {
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be a non-empty array of at most 64 entity GUIDs");
+             }
+             std::vector<std::pair<EntityGuid, Entity>> roots;
+             roots.reserve(args["entities"].size());
+             std::set<EntityGuid> seen;
+             for (const Json& value : args["entities"]) {
+                 if (!value.is_string()) throw ToolError("Every entry in \"entities\" must be an entity GUID string");
+                 const std::string guid_text = value.get<std::string>();
+                 EntityGuid guid;
+                 if (!ParseEntityGuid(guid_text, guid)) throw ToolError("Not a valid entity GUID: " + guid_text);
+                 if (!seen.insert(guid).second) throw ToolError("Duplicate entity in \"entities\": " + ToString(guid));
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 if (entity.IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+                 roots.emplace_back(guid, entity);
+             }
+
+             Json results = Json::array();
+             usize total_ancestors = 0;
+             for (const auto& [root_guid, root_entity] : roots) {
+                 Json ancestors = Json::array();
+                 std::set<EntityGuid> path{root_guid};
+                 Entity current = root_entity;
+                 for (int depth = 1;; ++depth) {
+                     const Parent* relation = s.world.GetComponent<Parent>(current);
+                     if (relation == nullptr || relation->parent.IsNull()) break;
+                     if (depth >= kMaxHierarchyDepth) {
+                         throw ToolError("Ancestor query encountered a hierarchy cycle or excessive depth");
+                     }
+                     const EntityGuid parent_guid = relation->parent;
+                     if (!path.insert(parent_guid).second) {
+                         throw ToolError("Ancestor query encountered a hierarchy cycle at " + ToString(parent_guid));
+                     }
+                     const Entity parent = s.guids.Find(s.world, parent_guid);
+                     if (parent.IsNull()) {
+                         throw ToolError("Hierarchy parent does not exist: " + ToString(parent_guid));
+                     }
+                     const IdComponent* parent_id = s.world.GetComponent<IdComponent>(parent);
+                     if (parent_id == nullptr || parent_id->guid != parent_guid) {
+                         throw ToolError("Hierarchy parent has inconsistent GUID: " + ToString(parent_guid));
+                     }
+                     if (++total_ancestors > 64) throw ToolError("Ancestor query would return more than 64 entries");
+                     const Parent* parent_relation = s.world.GetComponent<Parent>(parent);
+                     Json result = {{"entity", ToString(parent_guid)}, {"depth", depth}};
+                     if (parent_relation != nullptr && !parent_relation->parent.IsNull()) {
+                         result["parent"] = ToString(parent_relation->parent);
+                     }
+                     ancestors.push_back(std::move(result));
+                     current = parent;
+                 }
+                 results.push_back({{"root", ToString(root_guid)}, {"count", ancestors.size()},
+                                    {"ancestors", std::move(ancestors)}});
+             }
+             return {{"count", total_ancestors}, {"roots", std::move(results)}};
+         }});
+
+    server.AddTool(
+        {"validate_scene_hierarchy",
+         "Audit the complete scene hierarchy without modifying it. Reports entities without GUIDs, duplicate GUIDs, missing or ambiguous parent targets, hierarchy cycles, and parent chains beyond the supported depth. Returns at most 128 detailed issues with total issue count and a truncation flag.",
+         Schema(Json::object()),
+         [&s](const Json&) -> Json {
+             std::map<EntityGuid, std::vector<Entity>> entities_by_guid;
+             Json issues = Json::array();
+             usize issue_count = 0;
+             bool truncated = false;
+             auto add_issue = [&](Json issue) {
+                 ++issue_count;
+                 if (issues.size() < 128) issues.push_back(std::move(issue));
+                 else truncated = true;
+             };
+             const std::vector<Entity> all_entities = AllEntities(s);
+             for (const Entity entity : all_entities) {
+                 const IdComponent* id = s.world.GetComponent<IdComponent>(entity);
+                 if (id == nullptr || id->guid.IsNull()) {
+                     add_issue({{"kind", "missing_guid"}, {"entity_index", entity.index}});
+                     continue;
+                 }
+                 entities_by_guid[id->guid].push_back(entity);
+             }
+
+             for (const auto& [guid, entities] : entities_by_guid) {
+                 if (entities.size() > 1) {
+                     Json indices = Json::array();
+                     for (const Entity entity : entities) indices.push_back(entity.index);
+                     add_issue({{"kind", "duplicate_guid"}, {"entity", ToString(guid)},
+                                {"entity_indices", std::move(indices)}});
+                 }
+             }
+
+             for (const Entity entity : all_entities) {
+                 const Parent* parent = s.world.GetComponent<Parent>(entity);
+                 if (parent == nullptr || parent->parent.IsNull()) continue;
+                 const IdComponent* id = s.world.GetComponent<IdComponent>(entity);
+                 Json child = id != nullptr && !id->guid.IsNull() ? Json(ToString(id->guid)) : Json(entity.index);
+                 const auto target = entities_by_guid.find(parent->parent);
+                 if (target == entities_by_guid.end()) {
+                     add_issue({{"kind", "missing_parent"}, {"entity", std::move(child)},
+                                {"parent", ToString(parent->parent)}});
+                 } else if (target->second.size() > 1) {
+                     add_issue({{"kind", "ambiguous_parent"}, {"entity", std::move(child)},
+                                {"parent", ToString(parent->parent)}});
+                 }
+             }
+
+             std::set<std::vector<EntityGuid>> reported_cycles;
+             std::set<EntityGuid> excessive_depth_roots;
+             for (const auto& [start_guid, start_entities] : entities_by_guid) {
+                 if (start_entities.size() != 1) continue;
+                 std::vector<EntityGuid> path;
+                 std::map<EntityGuid, usize> path_positions;
+                 EntityGuid current_guid = start_guid;
+                 for (int depth = 0; depth <= kMaxHierarchyDepth; ++depth) {
+                     const auto cycle_start = path_positions.find(current_guid);
+                     if (cycle_start != path_positions.end()) {
+                         std::vector<EntityGuid> cycle(path.begin() + cycle_start->second, path.end());
+                         std::sort(cycle.begin(), cycle.end());
+                         if (reported_cycles.insert(cycle).second) {
+                             Json cycle_entities = Json::array();
+                             for (const EntityGuid guid : cycle) cycle_entities.push_back(ToString(guid));
+                             add_issue({{"kind", "cycle"}, {"entities", std::move(cycle_entities)}});
+                         }
+                         break;
+                     }
+                     path_positions.emplace(current_guid, path.size());
+                     path.push_back(current_guid);
+                     const auto current = entities_by_guid.find(current_guid);
+                     if (current == entities_by_guid.end() || current->second.size() != 1) break;
+                     const Parent* relation = s.world.GetComponent<Parent>(current->second.front());
+                     if (relation == nullptr || relation->parent.IsNull()) break;
+                     if (depth >= kMaxHierarchyDepth) {
+                         if (excessive_depth_roots.insert(start_guid).second) {
+                             add_issue({{"kind", "excessive_depth"}, {"entity", ToString(start_guid)},
+                                        {"max_depth", kMaxHierarchyDepth}});
+                         }
+                         break;
+                     }
+                     const auto parent = entities_by_guid.find(relation->parent);
+                     if (parent == entities_by_guid.end() || parent->second.size() != 1) break;
+                     current_guid = relation->parent;
+                 }
+             }
+
+             return {{"valid", issue_count == 0}, {"entity_count", all_entities.size()},
+                     {"issue_count", issue_count}, {"issues", std::move(issues)}, {"truncated", truncated}};
+         }});
+
+    server.AddTool(
+        {"validate_scene_transforms",
+         "Audit derived scene transforms without modifying the scene. Reports non-finite local position, rotation or scale values, non-finite composed world matrices, hierarchy cycles, and parent chains beyond the supported depth. Entities without Transform use identity locally. Returns at most 128 detailed issues with total issue count and a truncation flag.",
+         Schema(Json::object()),
+         [&s](const Json&) -> Json {
+             const std::vector<Entity> entities = AllEntities(s);
+             std::map<u32, usize> slots;
+             for (usize i = 0; i < entities.size(); ++i) slots.emplace(entities[i].index, i);
+             Json issues = Json::array();
+             usize issue_count = 0;
+             bool truncated = false;
+             auto add_issue = [&](Json issue) {
+                 ++issue_count;
+                 if (issues.size() < 128) issues.push_back(std::move(issue));
+                 else truncated = true;
+             };
+             auto entity_label = [&](Entity entity) -> Json {
+                 const IdComponent* id = s.world.GetComponent<IdComponent>(entity);
+                 return id != nullptr && !id->guid.IsNull() ? Json(ToString(id->guid)) : Json(entity.index);
+             };
+             auto finite_transform = [](const Transform& transform) {
+                 return std::isfinite(transform.position.x) && std::isfinite(transform.position.y) &&
+                        std::isfinite(transform.position.z) && std::isfinite(transform.rotation.x) &&
+                        std::isfinite(transform.rotation.y) && std::isfinite(transform.rotation.z) &&
+                        std::isfinite(transform.rotation.w) && std::isfinite(transform.scale.x) &&
+                        std::isfinite(transform.scale.y) && std::isfinite(transform.scale.z);
+             };
+             auto finite_matrix = [](const Mat4& matrix) {
+                 for (const Vec4& column : matrix.cols) {
+                     if (!std::isfinite(column.x) || !std::isfinite(column.y) || !std::isfinite(column.z) ||
+                         !std::isfinite(column.w)) return false;
+                 }
+                 return true;
+             };
+             std::vector<u8> state(entities.size(), 0);
+             std::vector<Mat4> world_matrices(entities.size(), Mat4::Identity());
+             std::function<Mat4(usize, int)> compute_world = [&](usize slot, int depth) -> Mat4 {
+                 const Entity entity = entities[slot];
+                 if (state[slot] == 2) return world_matrices[slot];
+                 if (state[slot] == 1) {
+                     add_issue({{"kind", "hierarchy_cycle"}, {"entity", entity_label(entity)}});
+                     return Mat4::Identity();
+                 }
+                 if (depth >= kMaxHierarchyDepth) {
+                     add_issue({{"kind", "excessive_depth"}, {"entity", entity_label(entity)},
+                                {"max_depth", kMaxHierarchyDepth}});
+                     return Mat4::Identity();
+                 }
+                 state[slot] = 1;
+                 Mat4 local = Mat4::Identity();
+                 const Transform* transform = s.world.GetComponent<Transform>(entity);
+                 if (transform != nullptr) {
+                     if (!finite_transform(*transform)) {
+                         add_issue({{"kind", "non_finite_local_transform"}, {"entity", entity_label(entity)}});
+                     }
+                     local = LocalTransformMatrix(*transform);
+                 }
+                 Mat4 parent_world = Mat4::Identity();
+                 const Entity parent = GetParent(s.world, s.guids, entity);
+                 if (!parent.IsNull()) {
+                     const auto parent_slot = slots.find(parent.index);
+                     if (parent_slot != slots.end()) parent_world = compute_world(parent_slot->second, depth + 1);
+                 }
+                 const Mat4 world = parent_world * local;
+                 if (!finite_matrix(world)) {
+                     add_issue({{"kind", "non_finite_world_transform"}, {"entity", entity_label(entity)}});
+                 }
+                 world_matrices[slot] = world;
+                 state[slot] = 2;
+                 return world;
+             };
+             for (usize i = 0; i < entities.size(); ++i) compute_world(i, 0);
+             return {{"valid", issue_count == 0}, {"entity_count", entities.size()},
+                     {"issue_count", issue_count}, {"issues", std::move(issues)}, {"truncated", truncated}};
+         }});
+
+    server.AddTool(
+        {"validate_scene_components",
+         "Audit scene component persistence and reflection without modifying the scene. Reports components without serializer/deserializer support, unsafe unreflected raw components, and exceptions during reflected JSON conversion or component serialization. Returns at most 128 detailed issues with total issue count and a truncation flag.",
+         Schema(Json::object()),
+         [&s](const Json&) -> Json {
+             Json issues = Json::array();
+             usize issue_count = 0;
+             usize component_count = 0;
+             bool truncated = false;
+             auto add_issue = [&](Json issue) {
+                 ++issue_count;
+                 if (issues.size() < 128) issues.push_back(std::move(issue));
+                 else truncated = true;
+             };
+             for (const Entity entity : AllEntities(s)) {
+                 const IdComponent* id = s.world.GetComponent<IdComponent>(entity);
+                 const Json entity_id = id != nullptr && !id->guid.IsNull() ? Json(ToString(id->guid)) : Json(entity.index);
+                 for (ComponentId component = 0; component < RegisteredComponentCount(); ++component) {
+                     if (!s.world.HasComponentRaw(entity, component)) continue;
+                     ++component_count;
+                     const ComponentInfo& info = GetComponentInfo(component);
+                     const std::string name = ComponentName(component);
+                     const void* value = s.world.GetComponentRaw(entity, component);
+                     if (info.serialize == nullptr) {
+                         add_issue({{"kind", "missing_serializer"}, {"entity", entity_id}, {"component", name}});
+                     }
+                     if (info.deserialize == nullptr) {
+                         add_issue({{"kind", "missing_deserializer"}, {"entity", entity_id}, {"component", name}});
+                     }
+                     if (info.reflected == nullptr && info.encoding == ComponentEncoding::Raw && !info.trivially_copyable) {
+                         add_issue({{"kind", "unsafe_unreflected_raw_component"},
+                                    {"entity", entity_id}, {"component", name}});
+                     }
+                     if (info.reflected != nullptr) {
+                         try {
+                             (void)reflect::ToJson(*info.reflected, value);
+                         } catch (const std::exception& error) {
+                             add_issue({{"kind", "reflection_error"}, {"entity", entity_id},
+                                        {"component", name}, {"error", error.what()}});
+                         } catch (...) {
+                             add_issue({{"kind", "reflection_error"}, {"entity", entity_id},
+                                        {"component", name}, {"error", "unknown exception"}});
+                         }
+                     }
+                     if (info.serialize != nullptr) {
+                         try {
+                             std::vector<u8> bytes;
+                             info.serialize(value, bytes);
+                         } catch (const std::exception& error) {
+                             add_issue({{"kind", "serialization_error"}, {"entity", entity_id},
+                                        {"component", name}, {"error", error.what()}});
+                         } catch (...) {
+                             add_issue({{"kind", "serialization_error"}, {"entity", entity_id},
+                                        {"component", name}, {"error", "unknown exception"}});
+                         }
+                     }
+                 }
+             }
+             return {{"valid", issue_count == 0}, {"entity_count", s.world.EntityCount()},
+                     {"component_count", component_count}, {"issue_count", issue_count},
+                     {"issues", std::move(issues)}, {"truncated", truncated}};
+         }});
+
+    server.AddTool(
+        {"validate_scene_tags",
+         "Audit Tags components across the current scene without modifying it. Reports empty tag names and duplicate exact, case-sensitive names on an entity, with entity identifiers and tag positions. Returns at most 128 detailed issues with total issue count and a truncation flag.",
+         Schema(Json::object()),
+         [&s](const Json&) -> Json {
+             Json issues = Json::array();
+             usize issue_count = 0;
+             usize entities_with_tags = 0;
+             usize tag_count = 0;
+             bool truncated = false;
+             auto add_issue = [&](Json issue) {
+                 ++issue_count;
+                 if (issues.size() < 128) issues.push_back(std::move(issue));
+                 else truncated = true;
+             };
+             for (const Entity entity : AllEntities(s)) {
+                 const Tags* tags = s.world.GetComponent<Tags>(entity);
+                 if (tags == nullptr) continue;
+                 ++entities_with_tags;
+                 const IdComponent* id = s.world.GetComponent<IdComponent>(entity);
+                 const Json entity_id = id != nullptr && !id->guid.IsNull() ? Json(ToString(id->guid)) : Json(entity.index);
+                 std::map<std::string, usize> first_tag;
+                 for (usize i = 0; i < tags->names.size(); ++i) {
+                     ++tag_count;
+                     const std::string& name = tags->names[i];
+                     if (name.empty()) {
+                         add_issue({{"kind", "empty_tag_name"}, {"entity", entity_id}, {"tag_index", i}});
+                         continue;
+                     }
+                     const auto [it, inserted] = first_tag.emplace(name, i);
+                     if (!inserted) {
+                         add_issue({{"kind", "duplicate_tag"}, {"entity", entity_id}, {"tag", name},
+                                    {"first_index", it->second}, {"duplicate_index", i}});
+                     }
+                 }
+             }
+             return {{"valid", issue_count == 0}, {"entity_count", s.world.EntityCount()},
+                     {"entities_with_tags", entities_with_tags}, {"tag_count", tag_count},
+                     {"issue_count", issue_count}, {"issues", std::move(issues)}, {"truncated", truncated}};
+         }});
+
+    server.AddTool(
+        {"validate_scene_names",
+         "Audit EntityName components in the current scene without modifying it. Reports empty names, names containing only ASCII whitespace, and names with leading or trailing ASCII whitespace. Duplicate entity names are allowed. Returns at most 128 detailed issues with total issue count and a truncation flag.",
+         Schema(Json::object()),
+         [&s](const Json&) -> Json {
+             Json issues = Json::array();
+             usize issue_count = 0;
+             usize named_entity_count = 0;
+             bool truncated = false;
+             auto add_issue = [&](Json issue) {
+                 ++issue_count;
+                 if (issues.size() < 128) issues.push_back(std::move(issue));
+                 else truncated = true;
+             };
+             for (const Entity entity : AllEntities(s)) {
+                 const EntityName* name = s.world.GetComponent<EntityName>(entity);
+                 if (name == nullptr) continue;
+                 ++named_entity_count;
+                 const IdComponent* id = s.world.GetComponent<IdComponent>(entity);
+                 const Json entity_id = id != nullptr && !id->guid.IsNull() ? Json(ToString(id->guid)) : Json(entity.index);
+                 if (name->value.empty()) {
+                     add_issue({{"kind", "empty_name"}, {"entity", entity_id}});
+                     continue;
+                 }
+                 const bool whitespace_only = std::all_of(name->value.begin(), name->value.end(), [](unsigned char ch) {
+                     return std::isspace(ch) != 0;
+                 });
+                 if (whitespace_only) {
+                     add_issue({{"kind", "whitespace_only_name"}, {"entity", entity_id}});
+                     continue;
+                 }
+                 const bool leading = std::isspace(static_cast<unsigned char>(name->value.front())) != 0;
+                 const bool trailing = std::isspace(static_cast<unsigned char>(name->value.back())) != 0;
+                 if (leading || trailing) {
+                     add_issue({{"kind", "name_has_edge_whitespace"}, {"entity", entity_id},
+                                {"leading", leading}, {"trailing", trailing}});
+                 }
+             }
+             return {{"valid", issue_count == 0}, {"entity_count", s.world.EntityCount()},
+                     {"named_entity_count", named_entity_count}, {"issue_count", issue_count},
+                     {"issues", std::move(issues)}, {"truncated", truncated}};
+         }});
+
+    server.AddTool(
+        {"get_entities_world_transforms_many",
+         "Get derived world transforms for 1–64 unique scene entities in request order. Returns each world matrix as four column vectors plus world position and world-scale magnitudes (the lengths of the three basis columns). Parent transforms are composed through the hierarchy. Rejects missing Transform components, non-finite results, hierarchy cycles and excessive depth.",
+         Schema({{"entities", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 64},
+                               {"description", "1–64 unique scene entity GUIDs, returned in this order"}}}},
+                {"entities"}),
+         [&s](const Json& args) -> Json {
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be a non-empty array of at most 64 entity GUIDs");
+             }
+             std::vector<std::pair<EntityGuid, Entity>> entities;
+             entities.reserve(args["entities"].size());
+             std::set<EntityGuid> seen;
+             for (const Json& value : args["entities"]) {
+                 if (!value.is_string()) throw ToolError("Every entry in \"entities\" must be an entity GUID string");
+                 const std::string guid_text = value.get<std::string>();
+                 EntityGuid guid;
+                 if (!ParseEntityGuid(guid_text, guid)) throw ToolError("Not a valid entity GUID: " + guid_text);
+                 if (!seen.insert(guid).second) throw ToolError("Duplicate entity in \"entities\": " + ToString(guid));
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 if (entity.IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+                 if (s.world.GetComponent<Transform>(entity) == nullptr) {
+                     throw ToolError("Entity " + ToString(guid) + " doesn't have Transform");
+                 }
+                 entities.emplace_back(guid, entity);
+             }
+
+             std::map<EntityGuid, Mat4> world_cache;
+             std::function<Mat4(Entity, int)> compute_world = [&](Entity entity, int depth) -> Mat4 {
+                 if (entity.IsNull()) return Mat4::Identity();
+                 if (depth >= kMaxHierarchyDepth) throw ToolError("World-transform query encountered a hierarchy cycle or excessive depth");
+                 const IdComponent* id = s.world.GetComponent<IdComponent>(entity);
+                 if (id != nullptr) {
+                     const auto cached = world_cache.find(id->guid);
+                     if (cached != world_cache.end()) return cached->second;
+                 }
+                 const Transform* transform = s.world.GetComponent<Transform>(entity);
+                 const Entity parent = GetParent(s.world, s.guids, entity);
+                 const Mat4 parent_world = parent.IsNull() ? Mat4::Identity() : compute_world(parent, depth + 1);
+                 const Mat4 local = transform == nullptr ? Mat4::Identity() : LocalTransformMatrix(*transform);
+                 const Mat4 world = parent_world * local;
+                 if (id != nullptr) world_cache.emplace(id->guid, world);
+                 return world;
+             };
+
+             Json results = Json::array();
+             for (const auto& [guid, entity] : entities) {
+                 const Mat4 world = compute_world(entity, 0);
+                 Json columns = Json::array();
+                 f32 scale[3]{};
+                 for (int axis = 0; axis < 3; ++axis) {
+                     const Vec4& column = world.cols[axis];
+                     const Vec3 basis{column.x, column.y, column.z};
+                     scale[axis] = basis.Length();
+                     if (!std::isfinite(column.x) || !std::isfinite(column.y) || !std::isfinite(column.z) ||
+                         !std::isfinite(column.w) || !std::isfinite(scale[axis])) {
+                         throw ToolError("World transform has a non-finite basis for entity " + ToString(guid));
+                     }
+                     columns.push_back(Json::array({column.x, column.y, column.z, column.w}));
+                 }
+                 const Vec4& position = world.cols[3];
+                 if (!std::isfinite(position.x) || !std::isfinite(position.y) || !std::isfinite(position.z) ||
+                     !std::isfinite(position.w)) {
+                     throw ToolError("World transform has a non-finite position for entity " + ToString(guid));
+                 }
+                 columns.push_back(Json::array({position.x, position.y, position.z, position.w}));
+                 Json result = {{"entity", ToString(guid)},
+                                {"world_position", {position.x, position.y, position.z}},
+                                {"world_scale", {scale[0], scale[1], scale[2]}},
+                                {"world_matrix_columns", std::move(columns)}};
+                 const Parent* parent = s.world.GetComponent<Parent>(entity);
+                 if (parent != nullptr && !parent->parent.IsNull()) result["parent"] = ToString(parent->parent);
+                 results.push_back(std::move(result));
+             }
+             return {{"count", results.size()}, {"entities", std::move(results)}};
+         }});
 
     server.AddTool(
         {"create_entity",
@@ -361,6 +1747,398 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
              return out;
          }});
 
+    server.AddTool(
+        {"create_entities",
+         "Create 1–64 scene entities as one undoable action. Each entry may specify component values and either a current-scene parent GUID or a zero-based parent_index referring to another entry in this batch; all values and hierarchy links are validated before creation.",
+         Schema({{"entities", {{"type", "array"},
+                               {"items", {{"type", "object"},
+                                          {"properties", {{"components", {{"type", "object"}, {"description", "Component names mapped to field values"}}},
+                                                          {"parent", {{"type", Json::array({"string", "null"})}, {"description", "Optional current-scene parent GUID"}}},
+                                                          {"parent_index", {{"type", "integer"}, {"minimum", 0}, {"maximum", 63}, {"description", "Optional index of another entity entry in this batch"}}}}}}},
+                               {"description", "1–64 entity definitions"}}}},
+                {"entities"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before creating entities");
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be a non-empty array of at most 64 definitions");
+             }
+
+             struct EntitySpec {
+                 EntityGuid parent;
+                 std::optional<usize> parent_index;
+                 EntityGuid guid;
+                 std::vector<std::pair<ComponentId, Json>> components;
+             };
+             std::vector<EntitySpec> specs;
+             specs.reserve(args["entities"].size());
+             const ComponentId id_component = GetComponentId<IdComponent>();
+             for (usize index = 0; index < args["entities"].size(); ++index) {
+                 const Json& entry = args["entities"][index];
+                 if (!entry.is_object()) throw ToolError("Each entry in \"entities\" must be an object");
+                 EntitySpec spec;
+                 if (entry.contains("parent") && entry.contains("parent_index")) {
+                     throw ToolError("Specify either \"parent\" or \"parent_index\", not both");
+                 }
+                 if (entry.contains("parent") && !entry["parent"].is_null()) {
+                     spec.parent = RequireGuid(entry, "parent");
+                     RequireEntity(s, entry, "parent");
+                 }
+                 if (entry.contains("parent_index")) {
+                     const Json& parent_index = entry["parent_index"];
+                     if (!parent_index.is_number_integer() || parent_index.is_boolean()) {
+                         throw ToolError("\"parent_index\" must be an integer referring to another entry in \"entities\"");
+                     }
+                     const i64 raw_parent_index = parent_index.get<i64>();
+                     if (raw_parent_index < 0 || static_cast<usize>(raw_parent_index) >= args["entities"].size()) {
+                         throw ToolError("\"parent_index\" must refer to an entry in \"entities\"");
+                     }
+                     if (static_cast<usize>(raw_parent_index) == index) throw ToolError("An entity cannot parent itself");
+                     spec.parent_index = static_cast<usize>(raw_parent_index);
+                 }
+                 if (entry.contains("components")) {
+                     if (!entry["components"].is_object()) throw ToolError("\"components\" must be an object");
+                     for (const auto& [name, value] : entry["components"].items()) {
+                         const ComponentId id = RequireComponent(name);
+                         if (id == id_component) continue;
+                         const ComponentInfo& info = GetComponentInfo(id);
+                         if (info.reflected == nullptr) throw ToolError("Cannot initialize unreflected component " + ComponentName(id));
+                         reflect::Any sample = reflect::Any::DefaultOf(*info.reflected);
+                         if (!sample.HasValue()) throw ToolError("Cannot default-construct component " + ComponentName(id));
+                         reflect::LoadReport report;
+                         if (!reflect::FromJson(*info.reflected, sample.Data(), value, &report)) {
+                             throw ToolError("Value does not match the shape of " + ComponentName(id));
+                         }
+                         spec.components.emplace_back(id, value);
+                     }
+                 }
+                 specs.push_back(std::move(spec));
+             }
+
+             std::vector<std::vector<usize>> children(specs.size());
+             std::vector<usize> indegree(specs.size(), 0);
+             for (usize index = 0; index < specs.size(); ++index) {
+                 if (specs[index].parent_index) {
+                     children[*specs[index].parent_index].push_back(index);
+                     indegree[index] = 1;
+                 }
+             }
+             std::vector<usize> creation_order;
+             creation_order.reserve(specs.size());
+             for (usize index = 0; index < specs.size(); ++index) {
+                 if (indegree[index] == 0) creation_order.push_back(index);
+             }
+             for (usize cursor = 0; cursor < creation_order.size(); ++cursor) {
+                 for (const usize child : children[creation_order[cursor]]) {
+                     if (--indegree[child] == 0) creation_order.push_back(child);
+                 }
+             }
+             if (creation_order.size() != specs.size()) throw ToolError("The requested parent_index links contain a cycle");
+             for (EntitySpec& spec : specs) spec.guid = NewEntityGuid();
+             for (EntitySpec& spec : specs) {
+                 if (spec.parent_index) spec.parent = specs[*spec.parent_index].guid;
+             }
+
+             static std::atomic<std::uint64_t> next_batch_id{0};
+             const std::string transaction_label = "Create Entities " + std::to_string(++next_batch_id);
+             const usize undo_count_before = s.stack.UndoCount();
+             editor::CommandContext ctx = s.Context();
+             std::vector<Json> result_rows(specs.size());
+             s.stack.BeginTransaction(transaction_label);
+             try {
+                 for (const usize spec_index : creation_order) {
+                     const EntitySpec& spec = specs[spec_index];
+                     const EntityGuid guid = spec.guid;
+                     Entity entity = s.world.CreateEntity(IdComponent{guid});
+                     s.guids.Add(guid, entity);
+                     try {
+                         Json warnings = Json::array();
+                         for (const auto& [id, value] : spec.components) {
+                             s.world.AddComponentRaw(entity, id);
+                             reflect::LoadReport report;
+                             const ComponentInfo& info = GetComponentInfo(id);
+                             if (!reflect::FromJson(*info.reflected, s.world.GetComponentRaw(entity, id), value, &report)) {
+                                 throw ToolError("Could not initialize " + ComponentName(id));
+                             }
+                             for (const std::string& warning : report.warnings) warnings.push_back(warning);
+                         }
+                         if (!spec.parent.IsNull()) s.world.AddComponent(entity, Parent{spec.parent});
+                         Json row = EntityJson(s, entity);
+                         if (!warnings.empty()) row["warnings"] = std::move(warnings);
+                         result_rows[spec_index] = std::move(row);
+                         auto command = editor::CreateEntityCommand::FromExisting(ctx, entity);
+                         command->SetAttribution("agent");
+                         s.stack.Record(std::move(command));
+                     } catch (...) {
+                         s.guids.Remove(guid);
+                         s.world.DestroyEntity(entity);
+                         throw;
+                     }
+                 }
+                 s.stack.EndTransaction();
+             } catch (...) {
+                 s.stack.EndTransaction();
+                 if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                 throw;
+             }
+             Json results = Json::array();
+             for (Json& row : result_rows) results.push_back(std::move(row));
+             return {{"created", results.size()}, {"entities", std::move(results)}};
+         }});
+
+    server.AddTool(
+        {"duplicate_entity",
+         "Duplicate one entity with its reflected component values. The new entity keeps the source's parent unless `parent` is supplied; "
+         "set `parent` to null to detach it. `name` can override the copied name. Children are not duplicated, and entity GUID references in "
+         "component values are copied as-is. Undoable.",
+         Schema({{"entity", kGuidProp}, {"name", {{"type", "string"}, {"description", "Optional name for the duplicate"}}},
+                 {"parent", {{"type", Json::array({"string", "null"})}, {"description", "Parent entity GUID, or null to make the duplicate a root"}}}},
+                {"entity"}),
+         [&s](const Json& args) -> Json {
+             const Entity source = RequireEntity(s, args);
+             const IdComponent* source_id = s.world.GetComponent<IdComponent>(source);
+             if (source_id == nullptr || source_id->guid.IsNull()) throw ToolError("The source entity has no GUID");
+
+             const ComponentId id_component = GetComponentId<IdComponent>();
+             const ComponentId parent_component = GetComponentId<Parent>();
+             std::vector<std::pair<ComponentId, Json>> values;
+             for (ComponentId id = 0; id < RegisteredComponentCount(); ++id) {
+                 if (!s.world.HasComponentRaw(source, id) || id == id_component || id == parent_component) continue;
+                 const ComponentInfo& info = GetComponentInfo(id);
+                 if (info.reflected == nullptr) throw ToolError("Cannot duplicate an entity with unreflected component " + ComponentName(id));
+                 values.emplace_back(id, reflect::ToJson(*info.reflected, s.world.GetComponentRaw(source, id)));
+             }
+
+             EntityGuid parent;
+             if (args.contains("parent")) {
+                 if (!args["parent"].is_null()) {
+                     parent = RequireGuid(args, "parent");
+                     RequireEntity(s, args, "parent");
+                 }
+             } else if (const Parent* source_parent = s.world.GetComponent<Parent>(source)) {
+                 parent = source_parent->parent;
+             }
+
+             const EntityGuid guid = NewEntityGuid();
+             Entity duplicate = s.world.CreateEntity(IdComponent{guid});
+             s.guids.Add(guid, duplicate);
+             Json warnings = Json::array();
+             Json out;
+             try {
+                 for (const auto& [id, value] : values) {
+                     s.world.AddComponentRaw(duplicate, id);
+                     reflect::LoadReport report;
+                     const ComponentInfo& info = GetComponentInfo(id);
+                     if (!reflect::FromJson(*info.reflected, s.world.GetComponentRaw(duplicate, id), value, &report)) {
+                         throw ToolError("Could not copy " + ComponentName(id));
+                     }
+                     for (const std::string& warning : report.warnings) warnings.push_back(warning);
+                 }
+                 if (args.contains("name")) {
+                     const std::string name = RequireString(args, "name");
+                     EntityName* component = s.world.GetComponent<EntityName>(duplicate);
+                     if (component == nullptr) {
+                         s.world.AddComponent<EntityName>(duplicate);
+                         component = s.world.GetComponent<EntityName>(duplicate);
+                     }
+                     component->value = name;
+                 }
+                 if (!parent.IsNull()) s.world.AddComponent(duplicate, Parent{parent});
+                 out = EntityJson(s, duplicate);
+                 if (!warnings.empty()) out["warnings"] = std::move(warnings);
+             } catch (...) {
+                 s.guids.Remove(guid);
+                 s.world.DestroyEntity(duplicate);
+                 throw;
+             }
+             editor::CommandContext ctx = s.Context();
+             s.stack.Record(editor::CreateEntityCommand::FromExisting(ctx, duplicate));
+             return out;
+         }});
+
+    server.AddTool(
+        {"duplicate_entities",
+         "Duplicate up to 64 unique entities as one undoable action. Each duplicate copies reflected components and keeps its source's parent. Set include_children to true to expand each selection to its descendants; this also preserves parent links inside the duplicated group. Otherwise, set preserve_hierarchy to true to preserve links only among explicitly selected entities. Set remap_internal_references to true to redirect reflected EntityGuid references between duplicated entities to their copies; external references stay unchanged.",
+         Schema({{"entities", {{"type", "array"}, {"items", {{"type", "string"}}}, {"description", "1–64 unique entity GUIDs"}}},
+                 {"preserve_hierarchy", {{"type", "boolean"}, {"description", "When true, preserve parent links whose parent is also in the selection; defaults to false"}}},
+                 {"include_children", {{"type", "boolean"}, {"description", "When true, include all descendants of the selected entities; defaults to false and still enforces a 64-entity total limit"}}},
+                 {"remap_internal_references", {{"type", "boolean"}, {"description", "When true, remap reflected EntityGuid references to duplicated entities; defaults to false"}}}},
+                {"entities"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before duplicating entities");
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be a non-empty array of at most 64 GUIDs");
+             }
+             if (args.contains("preserve_hierarchy") && !args["preserve_hierarchy"].is_boolean()) {
+                 throw ToolError("\"preserve_hierarchy\" must be true or false");
+             }
+             if (args.contains("include_children") && !args["include_children"].is_boolean()) {
+                 throw ToolError("\"include_children\" must be true or false");
+             }
+             if (args.contains("remap_internal_references") && !args["remap_internal_references"].is_boolean()) {
+                 throw ToolError("\"remap_internal_references\" must be true or false");
+             }
+             const bool include_children = args.value("include_children", false);
+             const bool preserve_hierarchy = args.value("preserve_hierarchy", false) || include_children;
+             const bool remap_internal_references = args.value("remap_internal_references", false);
+
+             struct DuplicateSpec {
+                 EntityGuid source_guid;
+                 EntityGuid parent;
+                 EntityGuid duplicate_guid;
+                 std::vector<std::pair<ComponentId, Json>> components;
+             };
+             std::vector<DuplicateSpec> specs;
+             specs.reserve(args["entities"].size());
+             std::set<EntityGuid> seen;
+             std::vector<EntityGuid> source_guids;
+             source_guids.reserve(args["entities"].size());
+             for (const Json& value : args["entities"]) {
+                 if (!value.is_string()) throw ToolError("Each entry in \"entities\" must be an entity GUID string");
+                 const Entity source = RequireEntity(s, Json{{"entity", value}});
+                 const IdComponent* source_id = s.world.GetComponent<IdComponent>(source);
+                 if (source_id == nullptr || source_id->guid.IsNull()) throw ToolError("The source entity has no GUID");
+                 if (!seen.insert(source_id->guid).second) throw ToolError("Duplicate entity in \"entities\": " + ToString(source_id->guid));
+                 source_guids.push_back(source_id->guid);
+             }
+
+             if (include_children) {
+                 std::map<EntityGuid, std::vector<EntityGuid>> children_by_parent;
+                 std::set<EntityGuid> parents_with_unguided_children;
+                 for (const Entity entity : AllEntities(s)) {
+                     const Parent* parent = s.world.GetComponent<Parent>(entity);
+                     if (parent == nullptr || parent->parent.IsNull()) continue;
+                     const IdComponent* child_id = s.world.GetComponent<IdComponent>(entity);
+                     if (child_id == nullptr || child_id->guid.IsNull()) {
+                         parents_with_unguided_children.insert(parent->parent);
+                         continue;
+                     }
+                     children_by_parent[parent->parent].push_back(child_id->guid);
+                 }
+                 for (usize cursor = 0; cursor < source_guids.size(); ++cursor) {
+                     const EntityGuid parent_guid = source_guids[cursor];
+                     if (parents_with_unguided_children.contains(parent_guid)) {
+                         throw ToolError("Cannot include descendants because a child entity has no GUID");
+                     }
+                     const auto descendants = children_by_parent.find(parent_guid);
+                     if (descendants == children_by_parent.end()) continue;
+                     for (const EntityGuid child_guid : descendants->second) {
+                         if (!seen.insert(child_guid).second) continue;
+                         if (source_guids.size() >= 64) {
+                             throw ToolError("Including descendants would duplicate more than 64 entities");
+                         }
+                         source_guids.push_back(child_guid);
+                     }
+                 }
+             }
+
+             const ComponentId id_component = GetComponentId<IdComponent>();
+             const ComponentId parent_component = GetComponentId<Parent>();
+             for (const EntityGuid source_guid : source_guids) {
+                 const Entity source = s.guids.Find(s.world, source_guid);
+                 if (source.IsNull()) throw ToolError("The source entity no longer exists: " + ToString(source_guid));
+                 const IdComponent* source_id = s.world.GetComponent<IdComponent>(source);
+                 if (source_id == nullptr || source_id->guid.IsNull()) throw ToolError("The source entity has no GUID");
+
+                 DuplicateSpec spec;
+                 spec.source_guid = source_id->guid;
+                 if (const Parent* source_parent = s.world.GetComponent<Parent>(source)) spec.parent = source_parent->parent;
+                 for (ComponentId id = 0; id < RegisteredComponentCount(); ++id) {
+                     if (!s.world.HasComponentRaw(source, id) || id == id_component || id == parent_component) continue;
+                     const ComponentInfo& info = GetComponentInfo(id);
+                     if (info.reflected == nullptr) throw ToolError("Cannot duplicate an entity with unreflected component " + ComponentName(id));
+                     spec.components.emplace_back(id, reflect::ToJson(*info.reflected, s.world.GetComponentRaw(source, id)));
+                 }
+                 specs.push_back(std::move(spec));
+             }
+
+             std::vector<std::optional<usize>> parent_indices(specs.size());
+             std::vector<std::vector<usize>> children(specs.size());
+             std::vector<usize> indegree(specs.size(), 0);
+             if (preserve_hierarchy) {
+                 for (usize child_index = 0; child_index < specs.size(); ++child_index) {
+                     if (specs[child_index].parent.IsNull()) continue;
+                     const auto parent = std::find_if(specs.begin(), specs.end(), [&](const DuplicateSpec& candidate) {
+                         return candidate.source_guid == specs[child_index].parent;
+                     });
+                     if (parent == specs.end()) continue;
+                     const usize parent_index = static_cast<usize>(std::distance(specs.begin(), parent));
+                     parent_indices[child_index] = parent_index;
+                     children[parent_index].push_back(child_index);
+                     indegree[child_index] = 1;
+                 }
+             }
+
+             std::vector<usize> creation_order;
+             creation_order.reserve(specs.size());
+             for (usize index = 0; index < specs.size(); ++index) {
+                 if (indegree[index] == 0) creation_order.push_back(index);
+             }
+             for (usize cursor = 0; cursor < creation_order.size(); ++cursor) {
+                 for (const usize child_index : children[creation_order[cursor]]) {
+                     if (--indegree[child_index] == 0) creation_order.push_back(child_index);
+                 }
+             }
+             if (creation_order.size() != specs.size()) throw ToolError("The selected entities contain a cycle in their parent links");
+
+             std::unordered_map<EntityGuid, EntityGuid> guid_remap;
+             guid_remap.reserve(specs.size());
+             for (DuplicateSpec& spec : specs) {
+                 spec.duplicate_guid = NewEntityGuid();
+                 guid_remap.emplace(spec.source_guid, spec.duplicate_guid);
+             }
+             for (usize index = 0; index < specs.size(); ++index) {
+                 if (parent_indices[index]) specs[index].parent = specs[*parent_indices[index]].duplicate_guid;
+             }
+
+             static std::atomic<std::uint64_t> next_batch_id{0};
+             const std::string transaction_label = "Duplicate Entities " + std::to_string(++next_batch_id);
+             const usize undo_count_before = s.stack.UndoCount();
+             editor::CommandContext ctx = s.Context();
+             std::vector<Json> result_rows(specs.size());
+             s.stack.BeginTransaction(transaction_label);
+             try {
+                 for (const usize spec_index : creation_order) {
+                     const DuplicateSpec& spec = specs[spec_index];
+                     const EntityGuid guid = spec.duplicate_guid;
+                     Entity duplicate = s.world.CreateEntity(IdComponent{guid});
+                     s.guids.Add(guid, duplicate);
+                     try {
+                         Json warnings = Json::array();
+                         for (const auto& [id, source_value] : spec.components) {
+                             s.world.AddComponentRaw(duplicate, id);
+                             reflect::LoadReport report;
+                             const ComponentInfo& info = GetComponentInfo(id);
+                             Json value = source_value;
+                             if (remap_internal_references) RemapEntityGuidValues(*info.reflected, value, guid_remap);
+                             if (!reflect::FromJson(*info.reflected, s.world.GetComponentRaw(duplicate, id), value, &report)) {
+                                 throw ToolError("Could not copy " + ComponentName(id));
+                             }
+                             for (const std::string& warning : report.warnings) warnings.push_back(warning);
+                         }
+                         if (!spec.parent.IsNull()) s.world.AddComponent(duplicate, Parent{spec.parent});
+                         Json row = {{"source", ToString(spec.source_guid)}, {"entity", EntityJson(s, duplicate)}};
+                         if (!warnings.empty()) row["warnings"] = std::move(warnings);
+                         result_rows[spec_index] = std::move(row);
+                         auto command = editor::CreateEntityCommand::FromExisting(ctx, duplicate);
+                         command->SetAttribution("agent");
+                         s.stack.Record(std::move(command));
+                     } catch (...) {
+                         s.guids.Remove(guid);
+                         s.world.DestroyEntity(duplicate);
+                         throw;
+                     }
+                 }
+                 s.stack.EndTransaction();
+             } catch (...) {
+                 s.stack.EndTransaction();
+                 if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                 throw;
+             }
+             Json results = Json::array();
+             for (Json& row : result_rows) results.push_back(std::move(row));
+             return {{"duplicated", results.size()}, {"results", std::move(results)}};
+         }});
+
     server.AddTool({"destroy_entity", "Delete an entity. Undoable.", Schema({{"entity", kGuidProp}}, {"entity"}),
                     [&s](const Json& args) -> Json {
                         EntityGuid guid = RequireGuid(args, "entity");
@@ -369,6 +2147,91 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                         s.stack.Execute(ctx, std::make_unique<editor::DestroyEntityCommand>(guid));
                         return {{"destroyed", ToString(guid)}};
                     }});
+
+    server.AddTool(
+        {"destroy_entities",
+         "Delete up to 64 unique scene entities as one undoable action. Children and entity GUID references are left unchanged by default. Set include_children to true to also delete descendants; the batch deletes children before parents so undo restores parents first.",
+         Schema({{"entities", {{"type", "array"}, {"items", {{"type", "string"}}}, {"description", "1–64 unique entity GUIDs"}}},
+                 {"include_children", {{"type", "boolean"}, {"description", "When true, also delete descendants; defaults to false and enforces a 64-entity total limit"}}}},
+                {"entities"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before deleting entities");
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be a non-empty array of at most 64 GUIDs");
+             }
+             if (args.contains("include_children") && !args["include_children"].is_boolean()) {
+                 throw ToolError("\"include_children\" must be true or false");
+             }
+             const bool include_children = args.value("include_children", false);
+
+             std::vector<EntityGuid> guids;
+             guids.reserve(args["entities"].size());
+             std::set<EntityGuid> seen;
+             for (const Json& value : args["entities"]) {
+                 if (!value.is_string()) throw ToolError("Each entry in \"entities\" must be an entity GUID string");
+                 const EntityGuid guid = RequireGuid(Json{{"entity", value}}, "entity");
+                 RequireEntity(s, Json{{"entity", value}});
+                 if (!seen.insert(guid).second) throw ToolError("Duplicate entity in \"entities\": " + ToString(guid));
+                 guids.push_back(guid);
+             }
+
+             if (include_children) {
+                 std::map<EntityGuid, std::vector<EntityGuid>> children_by_parent;
+                 std::set<EntityGuid> parents_with_unguided_children;
+                 for (const Entity entity : AllEntities(s)) {
+                     const Parent* parent = s.world.GetComponent<Parent>(entity);
+                     if (parent == nullptr || parent->parent.IsNull()) continue;
+                     const IdComponent* child_id = s.world.GetComponent<IdComponent>(entity);
+                     if (child_id == nullptr || child_id->guid.IsNull()) {
+                         parents_with_unguided_children.insert(parent->parent);
+                         continue;
+                     }
+                     children_by_parent[parent->parent].push_back(child_id->guid);
+                 }
+
+                 const std::vector<EntityGuid> roots = guids;
+                 guids.clear();
+                 std::set<EntityGuid> visited;
+                 std::set<EntityGuid> visiting;
+                 std::function<void(EntityGuid)> append_postorder = [&](EntityGuid guid) {
+                     if (visited.count(guid)) return;
+                     if (!visiting.insert(guid).second) throw ToolError("The selected hierarchy contains a parent cycle");
+                     if (parents_with_unguided_children.count(guid)) {
+                         throw ToolError("Cannot include descendants because a child entity has no GUID");
+                     }
+                     const auto descendants = children_by_parent.find(guid);
+                     if (descendants != children_by_parent.end()) {
+                         for (const EntityGuid child : descendants->second) append_postorder(child);
+                     }
+                     visiting.erase(guid);
+                     visited.insert(guid);
+                     if (guids.size() >= 64) throw ToolError("Including descendants would delete more than 64 entities");
+                     guids.push_back(guid);
+                 };
+                 for (const EntityGuid root : roots) append_postorder(root);
+             }
+
+             static std::atomic<std::uint64_t> next_batch_id{0};
+             const std::string transaction_label = "Delete Entities " + std::to_string(++next_batch_id);
+             const usize undo_count_before = s.stack.UndoCount();
+             editor::CommandContext ctx = s.Context();
+             s.stack.BeginTransaction(transaction_label);
+             try {
+                 for (const EntityGuid guid : guids) {
+                     auto command = std::make_unique<editor::DestroyEntityCommand>(guid);
+                     command->SetAttribution("agent");
+                     s.stack.Execute(ctx, std::move(command));
+                 }
+                 s.stack.EndTransaction();
+             } catch (...) {
+                 s.stack.EndTransaction();
+                 if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                 throw;
+             }
+             Json deleted = Json::array();
+             for (const EntityGuid guid : guids) deleted.push_back(ToString(guid));
+             return {{"destroyed", deleted.size()}, {"entities", std::move(deleted)}};
+         }});
 
     server.AddTool({"add_component",
                     "Add a component to an entity (default values, or the given partial field values). Undoable.",
@@ -407,6 +2270,119 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                         return out;
                     }});
 
+    server.AddTool(
+        {"add_components_many",
+         "Add components to 1–64 unique entities as one undoable action. Each edit maps component names to optional initial field objects; all entities, component presence and field values are validated before any component is added.",
+         Schema({{"edits", {{"type", "array"},
+                             {"items", {{"type", "object"},
+                                        {"properties", {{"entity", kGuidProp},
+                                                        {"components", {{"type", "object"},
+                                                                         {"description", "Component names mapped to optional initial field objects"}}}}},
+                                        {"required", Json::array({"entity", "components"})}}},
+                             {"description", "1–64 unique entities and the components to add"}}}},
+                {"edits"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before adding components");
+             if (!args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
+                 throw ToolError("\"edits\" must be a non-empty array of at most 64 entity edits");
+             }
+
+             struct ComponentAddition {
+                 ComponentId id;
+                 std::vector<u8> defaults;
+                 std::vector<u8> initialized;
+                 Json warnings = Json::array();
+             };
+             struct EntityAddition {
+                 EntityGuid guid;
+                 std::vector<ComponentAddition> components;
+             };
+             std::vector<EntityAddition> additions;
+             additions.reserve(args["edits"].size());
+             std::set<EntityGuid> seen_entities;
+             const ComponentId id_component = GetComponentId<IdComponent>();
+             for (const Json& edit : args["edits"]) {
+                 if (!edit.is_object()) throw ToolError("Each entry in \"edits\" must be an object");
+                 const EntityGuid guid = RequireGuid(edit, "entity");
+                 const Entity entity = RequireEntity(s, edit);
+                 if (!seen_entities.insert(guid).second) throw ToolError("Duplicate entity in \"edits\": " + ToString(guid));
+                 if (!edit.contains("components") || !edit["components"].is_object() || edit["components"].empty()) {
+                     throw ToolError("Each edit must include a non-empty \"components\" object");
+                 }
+
+                 EntityAddition entity_addition;
+                 entity_addition.guid = guid;
+                 entity_addition.components.reserve(edit["components"].size());
+                 for (const auto& [name, value] : edit["components"].items()) {
+                     if (!value.is_object()) throw ToolError("Each component initializer must be a field object");
+                     const ComponentId id = RequireComponent(name);
+                     if (id == id_component) throw ToolError("An entity's identity cannot be added");
+                     if (s.world.HasComponentRaw(entity, id)) {
+                         throw ToolError("Entity " + ToString(guid) + " already has " + ComponentName(id));
+                     }
+                     const ComponentInfo& info = GetComponentInfo(id);
+                     reflect::Any sample = reflect::Any::DefaultOf(*info.reflected);
+                     if (!sample.HasValue()) throw ToolError("Cannot default-construct component " + ComponentName(id));
+                     reflect::LoadReport report;
+                     if (!reflect::FromJson(*info.reflected, sample.Data(), value, &report)) {
+                         throw ToolError("Value does not match the shape of " + ComponentName(id));
+                     }
+
+                     ComponentAddition component_addition;
+                     component_addition.id = id;
+                     info.serialize(sample.Data(), component_addition.initialized);
+                     reflect::Any defaults = reflect::Any::DefaultOf(*info.reflected);
+                     if (!defaults.HasValue()) throw ToolError("Cannot default-construct component " + ComponentName(id));
+                     info.serialize(defaults.Data(), component_addition.defaults);
+                     for (const std::string& warning : report.warnings) component_addition.warnings.push_back(warning);
+                     entity_addition.components.push_back(std::move(component_addition));
+                 }
+                 additions.push_back(std::move(entity_addition));
+             }
+
+             static std::atomic<std::uint64_t> next_batch_id{0};
+             const std::string transaction_label = "Add Components " + std::to_string(++next_batch_id);
+             const usize undo_count_before = s.stack.UndoCount();
+             editor::CommandContext ctx = s.Context();
+             s.stack.BeginTransaction(transaction_label);
+             try {
+                 for (const EntityAddition& entity_addition : additions) {
+                     for (const ComponentAddition& component_addition : entity_addition.components) {
+                         auto add = std::make_unique<editor::AddComponentCommand>(entity_addition.guid, component_addition.id);
+                         add->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(add));
+                         if (!component_addition.initialized.empty() && component_addition.initialized != component_addition.defaults) {
+                             auto initialize = std::make_unique<SetComponentCommand>(entity_addition.guid, component_addition.id,
+                                                                                    component_addition.defaults, component_addition.initialized);
+                             initialize->SetAttribution("agent");
+                             s.stack.Execute(ctx, std::move(initialize));
+                         }
+                     }
+                 }
+                 s.stack.EndTransaction();
+             } catch (...) {
+                 s.stack.EndTransaction();
+                 if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                 throw;
+             }
+
+             Json results = Json::array();
+             for (const EntityAddition& entity_addition : additions) {
+                 Json components = Json::object();
+                 Json warnings = Json::object();
+                 const Entity entity = s.guids.Find(s.world, entity_addition.guid);
+                 for (const ComponentAddition& component_addition : entity_addition.components) {
+                     const std::string name = ComponentName(component_addition.id);
+                     components[name] = ComponentJson(s, entity, component_addition.id);
+                     if (!component_addition.warnings.empty()) warnings[name] = component_addition.warnings;
+                 }
+                 Json row = {{"entity", ToString(entity_addition.guid)}, {"components", std::move(components)}};
+                 if (!warnings.empty()) row["warnings"] = std::move(warnings);
+                 results.push_back(std::move(row));
+             }
+             return {{"added", additions.size()}, {"edits", std::move(results)}};
+         }});
+
     server.AddTool({"remove_component", "Remove a component from an entity. Undoable.",
                     Schema({{"entity", kGuidProp}, {"component", {{"type", "string"}}}}, {"entity", "component"}),
                     [&s](const Json& args) -> Json {
@@ -423,6 +2399,4532 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                         s.stack.Execute(ctx, std::make_unique<editor::RemoveComponentCommand>(guid, id));
                         return {{"removed", ComponentName(id)}};
                     }});
+
+    server.AddTool(
+        {"remove_components_many",
+         "Remove 1–64 components from scene entities as one undoable action. The complete entity/component selection is validated before any removal.",
+         Schema({{"removals", {{"type", "array"},
+                                {"items", {{"type", "object"},
+                                           {"properties", {{"entity", kGuidProp}, {"component", {{"type", "string"}}}}},
+                                           {"required", Json::array({"entity", "component"})}}},
+                                {"description", "1–64 entity/component pairs"}}}},
+                {"removals"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before removing components");
+             if (!args["removals"].is_array() || args["removals"].empty() || args["removals"].size() > 64) {
+                 throw ToolError("\"removals\" must be a non-empty array of at most 64 component removals");
+             }
+
+             struct Removal {
+                 EntityGuid entity;
+                 ComponentId component;
+                 std::string component_name;
+             };
+             std::vector<Removal> removals;
+             removals.reserve(args["removals"].size());
+             std::set<std::pair<EntityGuid, ComponentId>> seen;
+             const ComponentId id_component = GetComponentId<IdComponent>();
+             for (const Json& entry : args["removals"]) {
+                 if (!entry.is_object()) throw ToolError("Each entry in \"removals\" must be an object");
+                 const EntityGuid guid = RequireGuid(entry, "entity");
+                 const Entity entity = RequireEntity(s, entry);
+                 const ComponentId id = RequireComponent(RequireString(entry, "component"));
+                 if (id == id_component) throw ToolError("An entity's identity can't be removed");
+                 if (!s.world.HasComponentRaw(entity, id)) {
+                     throw ToolError("Entity " + ToString(guid) + " doesn't have " + ComponentName(id));
+                 }
+                 if (!seen.emplace(guid, id).second) {
+                     throw ToolError("Duplicate component removal for entity " + ToString(guid) + " and " + ComponentName(id));
+                 }
+                 removals.push_back({guid, id, ComponentName(id)});
+             }
+
+             static std::atomic<std::uint64_t> next_batch_id{0};
+             const std::string transaction_label = "Remove Components " + std::to_string(++next_batch_id);
+             const usize undo_count_before = s.stack.UndoCount();
+             editor::CommandContext ctx = s.Context();
+             s.stack.BeginTransaction(transaction_label);
+             try {
+                 for (const Removal& removal : removals) {
+                     auto command = std::make_unique<editor::RemoveComponentCommand>(removal.entity, removal.component);
+                     command->SetAttribution("agent");
+                     s.stack.Execute(ctx, std::move(command));
+                 }
+                 s.stack.EndTransaction();
+             } catch (...) {
+                 s.stack.EndTransaction();
+                 if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                 throw;
+             }
+
+             Json removed = Json::array();
+             for (const Removal& removal : removals) {
+                 removed.push_back({{"entity", ToString(removal.entity)}, {"component", removal.component_name}});
+             }
+             return {{"removed", removed.size()}, {"components", std::move(removed)}};
+         }});
+
+    server.AddTool(
+        {"rename_entities_shared_many",
+         "Set one shared name on 1–64 unique scene entities as one undoable action. Entities without an EntityName component receive one. Validate the complete selection and name before applying changes.",
+         Schema({{"entities", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 64},
+                               {"description", "1–64 unique entity GUIDs"}}},
+                 {"name", {{"type", "string"}, {"description", "Shared entity name"}}}},
+                {"entities", "name"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before renaming entities");
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be a non-empty array of at most 64 entity GUIDs");
+             }
+             const std::string name = RequireString(args, "name");
+             struct Rename {
+                 EntityGuid guid;
+                 bool add_component = false;
+                 bool changed = false;
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+                 Json warnings = Json::array();
+             };
+             std::vector<Rename> renames;
+             renames.reserve(args["entities"].size());
+             std::set<EntityGuid> seen;
+             const ComponentId name_component = GetComponentId<EntityName>();
+             const ComponentInfo& info = GetComponentInfo(name_component);
+             const Json component_value = {{"value", name}};
+             for (const Json& value : args["entities"]) {
+                 if (!value.is_string()) throw ToolError("Every entry in \"entities\" must be an entity GUID string");
+                 EntityGuid guid;
+                 const std::string guid_text = value.get<std::string>();
+                 if (!ParseEntityGuid(guid_text, guid)) throw ToolError("Not a valid entity GUID: " + guid_text);
+                 if (!seen.insert(guid).second) throw ToolError("Duplicate entity in \"entities\": " + ToString(guid));
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 if (entity.IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+                 Rename rename;
+                 rename.guid = guid;
+                 const EntityName* current = s.world.GetComponent<EntityName>(entity);
+                 if (current != nullptr) {
+                     rename.changed = current->value != name;
+                     if (rename.changed) {
+                         rename.after = PatchedBytes(s, entity, name_component, component_value, rename.before, rename.warnings);
+                         if (!rename.warnings.empty()) throw ToolError("Invalid EntityName value for entity " + ToString(guid));
+                     }
+                 } else {
+                     reflect::Any sample = reflect::Any::DefaultOf(*info.reflected);
+                     if (!sample.HasValue()) throw ToolError("Cannot default-construct EntityName");
+                     reflect::LoadReport report;
+                     if (!reflect::FromJson(*info.reflected, sample.Data(), component_value, &report)) {
+                         throw ToolError("Name does not match the EntityName component");
+                     }
+                     info.serialize(sample.Data(), rename.after);
+                     reflect::Any defaults = reflect::Any::DefaultOf(*info.reflected);
+                     if (!defaults.HasValue()) throw ToolError("Cannot default-construct EntityName");
+                     info.serialize(defaults.Data(), rename.before);
+                     rename.add_component = true;
+                     rename.changed = true;
+                     for (const std::string& warning : report.warnings) rename.warnings.push_back(warning);
+                 }
+                 renames.push_back(std::move(rename));
+             }
+
+             const usize changed_count = std::count_if(renames.begin(), renames.end(), [](const Rename& rename) { return rename.changed; });
+             if (changed_count > 0) {
+                 static std::atomic<std::uint64_t> next_batch_id{0};
+                 const std::string transaction_label = "Rename Entities " + std::to_string(++next_batch_id);
+                 const usize undo_count_before = s.stack.UndoCount();
+                 editor::CommandContext ctx = s.Context();
+                 s.stack.BeginTransaction(transaction_label);
+                 try {
+                     for (const Rename& rename : renames) {
+                         if (!rename.changed) continue;
+                         if (rename.add_component) {
+                             auto add = std::make_unique<editor::AddComponentCommand>(rename.guid, name_component);
+                             add->SetAttribution("agent");
+                             s.stack.Execute(ctx, std::move(add));
+                         }
+                         auto set = std::make_unique<SetComponentCommand>(rename.guid, name_component, rename.before, rename.after);
+                         set->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(set));
+                     }
+                     s.stack.EndTransaction();
+                 } catch (...) {
+                     s.stack.EndTransaction();
+                     if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                     throw;
+                 }
+             }
+
+             Json results = Json::array();
+             for (const Rename& rename : renames) {
+                 Json row = {{"entity", ToString(rename.guid)}, {"name", name}, {"changed", rename.changed}};
+                 if (!rename.warnings.empty()) row["warnings"] = rename.warnings;
+                 results.push_back(std::move(row));
+             }
+             return {{"renamed", changed_count}, {"entities", std::move(results)}};
+         }});
+
+    server.AddTool(
+        {"rename_entities",
+         "Rename 1–64 unique scene entities as one undoable action. Entities without an EntityName component receive one; all IDs and names are validated before any rename is applied.",
+         Schema({{"renames", {{"type", "array"},
+                               {"items", {{"type", "object"},
+                                          {"properties", {{"entity", kGuidProp}, {"name", {{"type", "string"}}}}},
+                                          {"required", Json::array({"entity", "name"})}}},
+                               {"description", "1–64 unique entity GUID and name pairs"}}}},
+                {"renames"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before renaming entities");
+             if (!args["renames"].is_array() || args["renames"].empty() || args["renames"].size() > 64) {
+                 throw ToolError("\"renames\" must be a non-empty array of at most 64 entity renames");
+             }
+
+             struct Rename {
+                 EntityGuid guid;
+                 std::string name;
+                 bool add_component = false;
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+                 Json warnings = Json::array();
+             };
+             std::vector<Rename> renames;
+             renames.reserve(args["renames"].size());
+             std::set<EntityGuid> seen;
+             const ComponentId name_component = GetComponentId<EntityName>();
+             for (const Json& entry : args["renames"]) {
+                 if (!entry.is_object()) throw ToolError("Each entry in \"renames\" must be an object");
+                 const EntityGuid guid = RequireGuid(entry, "entity");
+                 const Entity entity = RequireEntity(s, entry);
+                 if (!seen.insert(guid).second) throw ToolError("Duplicate entity in \"renames\": " + ToString(guid));
+                 Rename rename;
+                 rename.guid = guid;
+                 rename.name = RequireString(entry, "name");
+                 const Json value = {{"value", rename.name}};
+                 if (s.world.HasComponentRaw(entity, name_component)) {
+                     rename.after = PatchedBytes(s, entity, name_component, value, rename.before, rename.warnings);
+                 } else {
+                     const ComponentInfo& info = GetComponentInfo(name_component);
+                     reflect::Any sample = reflect::Any::DefaultOf(*info.reflected);
+                     if (!sample.HasValue()) throw ToolError("Cannot default-construct EntityName");
+                     reflect::LoadReport report;
+                     if (!reflect::FromJson(*info.reflected, sample.Data(), value, &report)) {
+                         throw ToolError("Name does not match the EntityName component");
+                     }
+                     info.serialize(sample.Data(), rename.after);
+                     reflect::Any defaults = reflect::Any::DefaultOf(*info.reflected);
+                     if (!defaults.HasValue()) throw ToolError("Cannot default-construct EntityName");
+                     info.serialize(defaults.Data(), rename.before);
+                     rename.add_component = true;
+                     for (const std::string& warning : report.warnings) rename.warnings.push_back(warning);
+                 }
+                 renames.push_back(std::move(rename));
+             }
+
+             static std::atomic<std::uint64_t> next_batch_id{0};
+             const std::string transaction_label = "Rename Entities " + std::to_string(++next_batch_id);
+             const usize undo_count_before = s.stack.UndoCount();
+             editor::CommandContext ctx = s.Context();
+             s.stack.BeginTransaction(transaction_label);
+             try {
+                 for (const Rename& rename : renames) {
+                     if (rename.add_component) {
+                         auto add = std::make_unique<editor::AddComponentCommand>(rename.guid, name_component);
+                         add->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(add));
+                     }
+                     auto set = std::make_unique<SetComponentCommand>(rename.guid, name_component, rename.before, rename.after);
+                     set->SetAttribution("agent");
+                     s.stack.Execute(ctx, std::move(set));
+                 }
+                 s.stack.EndTransaction();
+             } catch (...) {
+                 s.stack.EndTransaction();
+                 if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                 throw;
+             }
+
+             Json results = Json::array();
+             for (const Rename& rename : renames) {
+                 Json row = {{"entity", ToString(rename.guid)}, {"name", rename.name}};
+                 if (!rename.warnings.empty()) row["warnings"] = rename.warnings;
+                 results.push_back(std::move(row));
+             }
+             return {{"renamed", renames.size()}, {"entities", std::move(results)}};
+         }});
+
+    server.AddTool(
+        {"set_entities_tags_many",
+         "Set the same complete tag list on 1–64 unique scene entities as one undoable action. This replaces each entity's existing tags and adds Tags components when needed. Tag names must be non-empty and unique. Validate the complete selection and tag list before applying changes.",
+         Schema({{"entities", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 64},
+                               {"description", "1–64 unique entity GUIDs"}}},
+                 {"tags", {{"type", "array"}, {"items", {{"type", "string"}}},
+                           {"description", "Shared complete list of non-empty, unique tag names"}}}},
+                {"entities", "tags"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before editing entity tags");
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be a non-empty array of at most 64 entity GUIDs");
+             }
+             if (!args["tags"].is_array()) throw ToolError("\"tags\" must be an array of strings");
+             std::set<std::string> unique_tags;
+             for (const Json& tag : args["tags"]) {
+                 if (!tag.is_string() || tag.get<std::string>().empty()) throw ToolError("Tags must be non-empty strings");
+                 if (!unique_tags.insert(tag.get<std::string>()).second) throw ToolError("Duplicate tag: " + tag.get<std::string>());
+             }
+
+             struct TagEdit {
+                 EntityGuid guid;
+                 bool add_component = false;
+                 bool changed = false;
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+             };
+             std::vector<TagEdit> edits;
+             edits.reserve(args["entities"].size());
+             std::set<EntityGuid> seen;
+             const ComponentId tags_component = GetComponentId<Tags>();
+             const ComponentInfo& info = GetComponentInfo(tags_component);
+             const Json component_value = {{"names", args["tags"]}};
+             for (const Json& value : args["entities"]) {
+                 if (!value.is_string()) throw ToolError("Every entry in \"entities\" must be an entity GUID string");
+                 EntityGuid guid;
+                 const std::string guid_text = value.get<std::string>();
+                 if (!ParseEntityGuid(guid_text, guid)) throw ToolError("Not a valid entity GUID: " + guid_text);
+                 if (!seen.insert(guid).second) throw ToolError("Duplicate entity in \"entities\": " + ToString(guid));
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 if (entity.IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+
+                 TagEdit edit;
+                 edit.guid = guid;
+                 if (s.world.HasComponentRaw(entity, tags_component)) {
+                     const Json current = ComponentJson(s, entity, tags_component).value("names", Json::array());
+                     if (!current.is_array()) throw ToolError("Invalid Tags value for entity " + ToString(guid));
+                     edit.changed = current != args["tags"];
+                     if (edit.changed) {
+                         Json warnings = Json::array();
+                         edit.after = PatchedBytes(s, entity, tags_component, component_value, edit.before, warnings);
+                         if (!warnings.empty()) throw ToolError("Invalid Tags value for entity " + ToString(guid));
+                     }
+                 } else {
+                     reflect::Any sample = reflect::Any::DefaultOf(*info.reflected);
+                     if (!sample.HasValue()) throw ToolError("Cannot default-construct Tags");
+                     reflect::LoadReport report;
+                     if (!reflect::FromJson(*info.reflected, sample.Data(), component_value, &report)) {
+                         throw ToolError("Invalid tag list");
+                     }
+                     info.serialize(sample.Data(), edit.after);
+                     reflect::Any defaults = reflect::Any::DefaultOf(*info.reflected);
+                     if (!defaults.HasValue()) throw ToolError("Cannot default-construct Tags");
+                     info.serialize(defaults.Data(), edit.before);
+                     edit.add_component = true;
+                     edit.changed = true;
+                 }
+                 edits.push_back(std::move(edit));
+             }
+
+             const usize changed_count = std::count_if(edits.begin(), edits.end(), [](const TagEdit& edit) { return edit.changed; });
+             if (changed_count > 0) {
+                 static std::atomic<std::uint64_t> next_batch_id{0};
+                 const std::string transaction_label = "Set Entity Tags " + std::to_string(++next_batch_id);
+                 const usize undo_count_before = s.stack.UndoCount();
+                 editor::CommandContext ctx = s.Context();
+                 s.stack.BeginTransaction(transaction_label);
+                 try {
+                     for (const TagEdit& edit : edits) {
+                         if (!edit.changed) continue;
+                         if (edit.add_component) {
+                             auto add = std::make_unique<editor::AddComponentCommand>(edit.guid, tags_component);
+                             add->SetAttribution("agent");
+                             s.stack.Execute(ctx, std::move(add));
+                         }
+                         auto set = std::make_unique<SetComponentCommand>(edit.guid, tags_component, edit.before, edit.after);
+                         set->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(set));
+                     }
+                     s.stack.EndTransaction();
+                 } catch (...) {
+                     s.stack.EndTransaction();
+                     if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                     throw;
+                 }
+             }
+
+             Json results = Json::array();
+             for (const TagEdit& edit : edits) {
+                 results.push_back({{"entity", ToString(edit.guid)}, {"tags", args["tags"]}, {"changed", edit.changed}});
+             }
+             return {{"updated", changed_count}, {"entities", std::move(results)}};
+         }});
+
+    server.AddTool(
+        {"set_entity_tags_many",
+         "Set the complete tag list for 1–64 unique scene entities as one undoable action. This replaces each entity's existing tags; entities without a Tags component receive one. Validate every GUID and tag list before applying changes.",
+         Schema({{"edits", {{"type", "array"},
+                             {"items", {{"type", "object"},
+                                        {"properties", {{"entity", kGuidProp},
+                                                        {"tags", {{"type", "array"}, {"items", {{"type", "string"}}}}}}},
+                                        {"required", Json::array({"entity", "tags"})}}},
+                             {"description", "1–64 unique entity GUID and complete tag-list pairs"}}}},
+                {"edits"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before editing entity tags");
+             if (!args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
+                 throw ToolError("\"edits\" must be a non-empty array of at most 64 entity tag edits");
+             }
+
+             struct TagEdit {
+                 EntityGuid guid;
+                 Json tags;
+                 bool add_component = false;
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+             };
+             std::vector<TagEdit> edits;
+             edits.reserve(args["edits"].size());
+             std::set<EntityGuid> seen_entities;
+             std::set<std::string> seen_tags;
+             const ComponentId tags_component = GetComponentId<Tags>();
+             for (const Json& entry : args["edits"]) {
+                 if (!entry.is_object()) throw ToolError("Each entry in \"edits\" must be an object");
+                 const EntityGuid guid = RequireGuid(entry, "entity");
+                 const Entity entity = RequireEntity(s, entry);
+                 if (!seen_entities.insert(guid).second) throw ToolError("Duplicate entity in \"edits\": " + ToString(guid));
+                 if (!entry.contains("tags") || !entry["tags"].is_array()) throw ToolError("Each edit must include a \"tags\" array");
+                 seen_tags.clear();
+                 for (const Json& tag : entry["tags"]) {
+                     if (!tag.is_string()) throw ToolError("Each tag must be a string");
+                     if (!seen_tags.insert(tag.get<std::string>()).second) throw ToolError("Duplicate tag in entity " + ToString(guid));
+                 }
+
+                 TagEdit edit;
+                 edit.guid = guid;
+                 edit.tags = entry["tags"];
+                 const Json value = {{"names", edit.tags}};
+                 if (s.world.HasComponentRaw(entity, tags_component)) {
+                     Json warnings = Json::array();
+                     edit.after = PatchedBytes(s, entity, tags_component, value, edit.before, warnings);
+                     if (!warnings.empty()) throw ToolError("Invalid Tags value for entity " + ToString(guid));
+                 } else {
+                     const ComponentInfo& info = GetComponentInfo(tags_component);
+                     reflect::Any sample = reflect::Any::DefaultOf(*info.reflected);
+                     if (!sample.HasValue()) throw ToolError("Cannot default-construct Tags");
+                     reflect::LoadReport report;
+                     if (!reflect::FromJson(*info.reflected, sample.Data(), value, &report)) {
+                         throw ToolError("Invalid tag list for entity " + ToString(guid));
+                     }
+                     info.serialize(sample.Data(), edit.after);
+                     reflect::Any defaults = reflect::Any::DefaultOf(*info.reflected);
+                     if (!defaults.HasValue()) throw ToolError("Cannot default-construct Tags");
+                     info.serialize(defaults.Data(), edit.before);
+                     edit.add_component = true;
+                 }
+                 edits.push_back(std::move(edit));
+             }
+
+             static std::atomic<std::uint64_t> next_batch_id{0};
+             const std::string transaction_label = "Set Entity Tags " + std::to_string(++next_batch_id);
+             const usize undo_count_before = s.stack.UndoCount();
+             editor::CommandContext ctx = s.Context();
+             s.stack.BeginTransaction(transaction_label);
+             try {
+                 for (const TagEdit& edit : edits) {
+                     if (edit.add_component) {
+                         auto add = std::make_unique<editor::AddComponentCommand>(edit.guid, tags_component);
+                         add->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(add));
+                     }
+                     auto set = std::make_unique<SetComponentCommand>(edit.guid, tags_component, edit.before, edit.after);
+                     set->SetAttribution("agent");
+                     s.stack.Execute(ctx, std::move(set));
+                 }
+                 s.stack.EndTransaction();
+             } catch (...) {
+                 s.stack.EndTransaction();
+                 if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                 throw;
+             }
+
+             Json results = Json::array();
+             for (const TagEdit& edit : edits) results.push_back({{"entity", ToString(edit.guid)}, {"tags", edit.tags}});
+             return {{"updated", edits.size()}, {"entities", std::move(results)}};
+         }});
+
+    server.AddTool(
+        {"modify_entities_tags_shared_many",
+         "Add and/or remove the same tags on 1–64 unique scene entities as one undoable action. Existing tag order is preserved; adding an existing tag or removing an absent tag is a no-op. Tag names must be non-empty, and a tag cannot be both added and removed. Validate the complete selection before applying changes.",
+         Schema({{"entities", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 64},
+                               {"description", "1–64 unique entity GUIDs"}}},
+                 {"add", {{"type", "array"}, {"items", {{"type", "string"}}}, {"description", "Shared tags to add"}}},
+                 {"remove", {{"type", "array"}, {"items", {{"type", "string"}}}, {"description", "Shared tags to remove"}}}},
+                {"entities"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before editing entity tags");
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be a non-empty array of at most 64 entity GUIDs");
+             }
+             std::vector<std::string> additions;
+             std::vector<std::string> removals;
+             std::set<std::string> unique_additions;
+             std::set<std::string> unique_removals;
+             for (const auto& [field, destination, unique] : {std::tuple<const char*, std::vector<std::string>*, std::set<std::string>*>("add", &additions, &unique_additions),
+                                                              std::tuple<const char*, std::vector<std::string>*, std::set<std::string>*>("remove", &removals, &unique_removals)}) {
+                 if (!args.contains(field)) continue;
+                 if (!args[field].is_array()) throw ToolError("\"" + std::string(field) + "\" must be an array of strings");
+                 for (const Json& tag : args[field]) {
+                     if (!tag.is_string() || tag.get<std::string>().empty()) throw ToolError("Tags must be non-empty strings");
+                     if (!unique->insert(tag.get<std::string>()).second) throw ToolError("Duplicate tag in \"" + std::string(field) + "\": " + tag.get<std::string>());
+                     destination->push_back(tag.get<std::string>());
+                 }
+             }
+             if (additions.empty() && removals.empty()) throw ToolError("At least one tag must be added or removed");
+             for (const std::string& tag : additions) {
+                 if (unique_removals.contains(tag)) throw ToolError("A tag cannot be both added and removed: " + tag);
+             }
+
+             struct TagPatch {
+                 EntityGuid guid;
+                 Json tags;
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+                 bool add_component = false;
+                 bool changed = false;
+             };
+             std::vector<TagPatch> patches;
+             patches.reserve(args["entities"].size());
+             std::set<EntityGuid> seen;
+             const ComponentId tags_component = GetComponentId<Tags>();
+             const ComponentInfo& info = GetComponentInfo(tags_component);
+             for (const Json& value : args["entities"]) {
+                 if (!value.is_string()) throw ToolError("Every entry in \"entities\" must be an entity GUID string");
+                 EntityGuid guid;
+                 const std::string guid_text = value.get<std::string>();
+                 if (!ParseEntityGuid(guid_text, guid)) throw ToolError("Not a valid entity GUID: " + guid_text);
+                 if (!seen.insert(guid).second) throw ToolError("Duplicate entity in \"entities\": " + ToString(guid));
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 if (entity.IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+
+                 TagPatch patch;
+                 patch.guid = guid;
+                 Json names = Json::array();
+                 if (s.world.HasComponentRaw(entity, tags_component)) {
+                     names = ComponentJson(s, entity, tags_component).value("names", Json::array());
+                     if (!names.is_array()) throw ToolError("Invalid Tags value for entity " + ToString(guid));
+                 }
+                 std::vector<std::string> updated;
+                 std::set<std::string> existing;
+                 for (const Json& current : names) {
+                     if (!current.is_string()) throw ToolError("Invalid Tags value for entity " + ToString(guid));
+                     const std::string tag = current.get<std::string>();
+                     if (unique_removals.contains(tag)) continue;
+                     updated.push_back(tag);
+                     existing.insert(tag);
+                 }
+                 for (const std::string& tag : additions) {
+                     if (existing.insert(tag).second) updated.push_back(tag);
+                 }
+                 patch.tags = updated;
+                 if (s.world.HasComponentRaw(entity, tags_component)) {
+                     Json warnings = Json::array();
+                     patch.after = PatchedBytes(s, entity, tags_component, Json{{"names", patch.tags}}, patch.before, warnings);
+                     if (!warnings.empty()) throw ToolError("Invalid Tags value for entity " + ToString(guid));
+                     patch.changed = patch.before != patch.after;
+                 } else if (!updated.empty()) {
+                     reflect::Any sample = reflect::Any::DefaultOf(*info.reflected);
+                     if (!sample.HasValue()) throw ToolError("Cannot default-construct Tags");
+                     reflect::LoadReport report;
+                     if (!reflect::FromJson(*info.reflected, sample.Data(), Json{{"names", patch.tags}}, &report)) {
+                         throw ToolError("Invalid tag list for entity " + ToString(guid));
+                     }
+                     info.serialize(sample.Data(), patch.after);
+                     reflect::Any defaults = reflect::Any::DefaultOf(*info.reflected);
+                     if (!defaults.HasValue()) throw ToolError("Cannot default-construct Tags");
+                     info.serialize(defaults.Data(), patch.before);
+                     patch.add_component = true;
+                     patch.changed = true;
+                 }
+                 patches.push_back(std::move(patch));
+             }
+
+             const usize changed_count = std::count_if(patches.begin(), patches.end(), [](const TagPatch& patch) { return patch.changed; });
+             if (changed_count > 0) {
+                 static std::atomic<std::uint64_t> next_batch_id{0};
+                 const std::string transaction_label = "Modify Entity Tags " + std::to_string(++next_batch_id);
+                 const usize undo_count_before = s.stack.UndoCount();
+                 editor::CommandContext ctx = s.Context();
+                 s.stack.BeginTransaction(transaction_label);
+                 try {
+                     for (const TagPatch& patch : patches) {
+                         if (!patch.changed) continue;
+                         if (patch.add_component) {
+                             auto add = std::make_unique<editor::AddComponentCommand>(patch.guid, tags_component);
+                             add->SetAttribution("agent");
+                             s.stack.Execute(ctx, std::move(add));
+                         }
+                         auto set = std::make_unique<SetComponentCommand>(patch.guid, tags_component, patch.before, patch.after);
+                         set->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(set));
+                     }
+                     s.stack.EndTransaction();
+                 } catch (...) {
+                     s.stack.EndTransaction();
+                     if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                     throw;
+                 }
+             }
+
+             Json results = Json::array();
+             for (const TagPatch& patch : patches) {
+                 results.push_back({{"entity", ToString(patch.guid)}, {"tags", patch.tags}, {"changed", patch.changed}});
+             }
+             return {{"updated", changed_count}, {"entities", std::move(results)}};
+         }});
+
+    server.AddTool(
+        {"modify_entity_tags_many",
+         "Add and/or remove tags on 1–64 unique scene entities as one undoable action. Existing tag order is preserved; adding an existing tag or removing an absent tag is a no-op. Validate every GUID and tag list before applying changes.",
+         Schema({{"edits", {{"type", "array"},
+                             {"items", {{"type", "object"},
+                                        {"properties", {{"entity", kGuidProp},
+                                                        {"add", {{"type", "array"}, {"items", {{"type", "string"}}}}},
+                                                        {"remove", {{"type", "array"}, {"items", {{"type", "string"}}}}}}},
+                                        {"required", Json::array({"entity"})}}},
+                             {"description", "1–64 unique entity GUIDs and optional tag arrays to add/remove"}}}},
+                {"edits"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before editing entity tags");
+             if (!args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
+                 throw ToolError("\"edits\" must be a non-empty array of at most 64 entity tag edits");
+             }
+
+             struct TagPatch {
+                 EntityGuid guid;
+                 Json tags;
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+                 bool add_component = false;
+                 bool changed = false;
+             };
+             std::vector<TagPatch> patches;
+             patches.reserve(args["edits"].size());
+             std::set<EntityGuid> seen_entities;
+             const ComponentId tags_component = GetComponentId<Tags>();
+             for (const Json& entry : args["edits"]) {
+                 if (!entry.is_object()) throw ToolError("Each entry in \"edits\" must be an object");
+                 const EntityGuid guid = RequireGuid(entry, "entity");
+                 const Entity entity = RequireEntity(s, entry);
+                 if (!seen_entities.insert(guid).second) throw ToolError("Duplicate entity in \"edits\": " + ToString(guid));
+
+                 std::vector<std::string> additions;
+                 std::vector<std::string> removals;
+                 std::set<std::string> unique_additions;
+                 std::set<std::string> unique_removals;
+                 for (const auto& [field, destination, unique] : {std::tuple<const char*, std::vector<std::string>*, std::set<std::string>*>("add", &additions, &unique_additions),
+                                                                  std::tuple<const char*, std::vector<std::string>*, std::set<std::string>*>("remove", &removals, &unique_removals)}) {
+                     if (!entry.contains(field)) continue;
+                     if (!entry[field].is_array()) throw ToolError("\"" + std::string(field) + "\" must be an array of strings");
+                     for (const Json& tag : entry[field]) {
+                         if (!tag.is_string() || tag.get<std::string>().empty()) throw ToolError("Tags must be non-empty strings");
+                         if (!unique->insert(tag.get<std::string>()).second) throw ToolError("Duplicate tag in \"" + std::string(field) + "\" for entity " + ToString(guid));
+                         destination->push_back(tag.get<std::string>());
+                     }
+                 }
+                 if (additions.empty() && removals.empty()) throw ToolError("Each edit must add or remove at least one tag");
+                 for (const std::string& tag : additions) {
+                     if (unique_removals.contains(tag)) throw ToolError("A tag cannot be both added and removed for entity " + ToString(guid) + ": " + tag);
+                 }
+
+                 TagPatch patch;
+                 patch.guid = guid;
+                 Json names = Json::array();
+                 if (s.world.HasComponentRaw(entity, tags_component)) {
+                     names = ComponentJson(s, entity, tags_component).value("names", Json::array());
+                     if (!names.is_array()) throw ToolError("Invalid Tags value for entity " + ToString(guid));
+                 }
+                 std::vector<std::string> updated;
+                 std::set<std::string> existing;
+                 for (const Json& current : names) {
+                     if (!current.is_string()) throw ToolError("Invalid Tags value for entity " + ToString(guid));
+                     const std::string value = current.get<std::string>();
+                     if (unique_removals.contains(value)) continue;
+                     updated.push_back(value);
+                     existing.insert(value);
+                 }
+                 for (const std::string& tag : additions) {
+                     if (existing.insert(tag).second) updated.push_back(tag);
+                 }
+                 patch.tags = updated;
+                 if (s.world.HasComponentRaw(entity, tags_component)) {
+                     Json warnings = Json::array();
+                     patch.after = PatchedBytes(s, entity, tags_component, Json{{"names", patch.tags}}, patch.before, warnings);
+                     if (!warnings.empty()) throw ToolError("Invalid Tags value for entity " + ToString(guid));
+                     patch.changed = patch.before != patch.after;
+                 } else if (!updated.empty()) {
+                     const ComponentInfo& info = GetComponentInfo(tags_component);
+                     reflect::Any sample = reflect::Any::DefaultOf(*info.reflected);
+                     if (!sample.HasValue()) throw ToolError("Cannot default-construct Tags");
+                     reflect::LoadReport report;
+                     if (!reflect::FromJson(*info.reflected, sample.Data(), Json{{"names", patch.tags}}, &report)) {
+                         throw ToolError("Invalid tag list for entity " + ToString(guid));
+                     }
+                     info.serialize(sample.Data(), patch.after);
+                     reflect::Any defaults = reflect::Any::DefaultOf(*info.reflected);
+                     if (!defaults.HasValue()) throw ToolError("Cannot default-construct Tags");
+                     info.serialize(defaults.Data(), patch.before);
+                     patch.add_component = true;
+                     patch.changed = true;
+                 }
+                 patches.push_back(std::move(patch));
+             }
+
+             static std::atomic<std::uint64_t> next_batch_id{0};
+             const std::string transaction_label = "Modify Entity Tags " + std::to_string(++next_batch_id);
+             const usize undo_count_before = s.stack.UndoCount();
+             editor::CommandContext ctx = s.Context();
+             bool any_changed = false;
+             for (const TagPatch& patch : patches) any_changed = any_changed || patch.changed;
+             if (any_changed) {
+                 s.stack.BeginTransaction(transaction_label);
+                 try {
+                     for (const TagPatch& patch : patches) {
+                         if (!patch.changed) continue;
+                         if (patch.add_component) {
+                             auto add = std::make_unique<editor::AddComponentCommand>(patch.guid, tags_component);
+                             add->SetAttribution("agent");
+                             s.stack.Execute(ctx, std::move(add));
+                         }
+                         auto set = std::make_unique<SetComponentCommand>(patch.guid, tags_component, patch.before, patch.after);
+                         set->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(set));
+                     }
+                     s.stack.EndTransaction();
+                 } catch (...) {
+                     s.stack.EndTransaction();
+                     if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                     throw;
+                 }
+             }
+
+             Json results = Json::array();
+             for (const TagPatch& patch : patches) results.push_back({{"entity", ToString(patch.guid)}, {"tags", patch.tags}, {"changed", patch.changed}});
+             return {{"updated", std::count_if(patches.begin(), patches.end(), [](const TagPatch& patch) { return patch.changed; })},
+                     {"entities", std::move(results)}};
+         }});
+
+    server.AddTool(
+        {"set_entities_layer_many",
+         "Set one shared collision-layer index on 1–64 unique scene entities as one undoable action. Layer indices are 0–31; entities without a Layer component receive one. Validate the complete selection and index before applying changes.",
+         Schema({{"entities", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 64},
+                               {"description", "1–64 unique entity GUIDs"}}},
+                 {"layer_index", {{"type", "integer"}, {"minimum", 0}, {"maximum", kMaxLayers - 1},
+                                  {"description", "Shared collision layer index"}}}},
+                {"entities", "layer_index"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before changing entity layers");
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be a non-empty array of at most 64 entity GUIDs");
+             }
+             if (!args["layer_index"].is_number_integer() || args["layer_index"].is_boolean()) {
+                 throw ToolError("\"layer_index\" must be an integer from 0 to 31");
+             }
+             const i64 raw_index = args["layer_index"].get<i64>();
+             if (raw_index < 0 || raw_index >= kMaxLayers) throw ToolError("\"layer_index\" must be an integer from 0 to 31");
+             const u8 layer_index = static_cast<u8>(raw_index);
+
+             struct LayerEdit {
+                 EntityGuid guid;
+                 bool add_component = false;
+                 bool changed = false;
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+             };
+             std::vector<LayerEdit> edits;
+             edits.reserve(args["entities"].size());
+             std::set<EntityGuid> seen;
+             const ComponentId layer_component = GetComponentId<Layer>();
+             const ComponentInfo& info = GetComponentInfo(layer_component);
+             for (const Json& value : args["entities"]) {
+                 if (!value.is_string()) throw ToolError("Every entry in \"entities\" must be an entity GUID string");
+                 EntityGuid guid;
+                 const std::string guid_text = value.get<std::string>();
+                 if (!ParseEntityGuid(guid_text, guid)) throw ToolError("Not a valid entity GUID: " + guid_text);
+                 if (!seen.insert(guid).second) throw ToolError("Duplicate entity in \"entities\": " + ToString(guid));
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 if (entity.IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+
+                 LayerEdit edit;
+                 edit.guid = guid;
+                 const Layer* current = s.world.GetComponent<Layer>(entity);
+                 edit.changed = current == nullptr || current->index != layer_index;
+                 if (current != nullptr) {
+                     if (!edit.changed) {
+                         info.serialize(current, edit.before);
+                         edit.after = edit.before;
+                     } else {
+                         const Json value_json = {{"index", raw_index}};
+                         Json warnings = Json::array();
+                         edit.after = PatchedBytes(s, entity, layer_component, value_json, edit.before, warnings);
+                         if (!warnings.empty()) throw ToolError("Invalid Layer value for entity " + ToString(guid));
+                     }
+                 } else {
+                     reflect::Any sample = reflect::Any::DefaultOf(*info.reflected);
+                     if (!sample.HasValue()) throw ToolError("Cannot default-construct Layer");
+                     reflect::LoadReport report;
+                     if (!reflect::FromJson(*info.reflected, sample.Data(), Json{{"index", raw_index}}, &report)) {
+                         throw ToolError("Invalid layer index for entity " + ToString(guid));
+                     }
+                     info.serialize(sample.Data(), edit.after);
+                     reflect::Any defaults = reflect::Any::DefaultOf(*info.reflected);
+                     if (!defaults.HasValue()) throw ToolError("Cannot default-construct Layer");
+                     info.serialize(defaults.Data(), edit.before);
+                     edit.add_component = true;
+                 }
+                 edits.push_back(std::move(edit));
+             }
+
+             if (std::any_of(edits.begin(), edits.end(), [](const LayerEdit& edit) { return edit.changed; })) {
+                 static std::atomic<std::uint64_t> next_batch_id{0};
+                 const std::string transaction_label = "Set Entity Layers " + std::to_string(++next_batch_id);
+                 const usize undo_count_before = s.stack.UndoCount();
+                 editor::CommandContext ctx = s.Context();
+                 s.stack.BeginTransaction(transaction_label);
+                 try {
+                     for (const LayerEdit& edit : edits) {
+                         if (!edit.changed) continue;
+                         if (edit.add_component) {
+                             auto add = std::make_unique<editor::AddComponentCommand>(edit.guid, layer_component);
+                             add->SetAttribution("agent");
+                             s.stack.Execute(ctx, std::move(add));
+                         }
+                         auto set = std::make_unique<SetComponentCommand>(edit.guid, layer_component, edit.before, edit.after);
+                         set->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(set));
+                     }
+                     s.stack.EndTransaction();
+                 } catch (...) {
+                     s.stack.EndTransaction();
+                     if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                     throw;
+                 }
+             }
+
+             Json results = Json::array();
+             for (const LayerEdit& edit : edits) {
+                 results.push_back({{"entity", ToString(edit.guid)}, {"layer_index", layer_index}, {"changed", edit.changed}});
+             }
+             return {{"updated", std::count_if(edits.begin(), edits.end(), [](const LayerEdit& edit) { return edit.changed; })},
+                     {"entities", std::move(results)}};
+         }});
+
+    server.AddTool(
+        {"set_entity_layers_many",
+         "Set the collision layer index on 1–64 unique scene entities as one undoable action. Layer indices are 0–31; entities without a Layer component receive one. All IDs and indices are validated before applying changes.",
+         Schema({{"edits", {{"type", "array"},
+                             {"items", {{"type", "object"},
+                                        {"properties", {{"entity", kGuidProp}, {"layer_index", {{"type", "integer"}, {"minimum", 0}, {"maximum", kMaxLayers - 1}}}}},
+                                        {"required", Json::array({"entity", "layer_index"})}}},
+                             {"description", "1–64 unique entity GUID and layer-index pairs"}}}},
+                {"edits"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before changing entity layers");
+             if (!args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
+                 throw ToolError("\"edits\" must be a non-empty array of at most 64 entity layer edits");
+             }
+
+             struct LayerEdit {
+                 EntityGuid guid;
+                 u8 index;
+                 bool add_component = false;
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+             };
+             std::vector<LayerEdit> edits;
+             edits.reserve(args["edits"].size());
+             std::set<EntityGuid> seen;
+             const ComponentId layer_component = GetComponentId<Layer>();
+             for (const Json& entry : args["edits"]) {
+                 if (!entry.is_object()) throw ToolError("Each entry in \"edits\" must be an object");
+                 const EntityGuid guid = RequireGuid(entry, "entity");
+                 const Entity entity = RequireEntity(s, entry);
+                 if (!seen.insert(guid).second) throw ToolError("Duplicate entity in \"edits\": " + ToString(guid));
+                 if (!entry.contains("layer_index") || !entry["layer_index"].is_number_integer() || entry["layer_index"].is_boolean()) {
+                     throw ToolError("\"layer_index\" must be an integer from 0 to 31");
+                 }
+                 const i64 raw_index = entry["layer_index"].get<i64>();
+                 if (raw_index < 0 || raw_index >= kMaxLayers) throw ToolError("\"layer_index\" must be an integer from 0 to 31");
+
+                 LayerEdit edit;
+                 edit.guid = guid;
+                 edit.index = static_cast<u8>(raw_index);
+                 const Json value = {{"index", raw_index}};
+                 if (s.world.HasComponentRaw(entity, layer_component)) {
+                     Json warnings = Json::array();
+                     edit.after = PatchedBytes(s, entity, layer_component, value, edit.before, warnings);
+                     if (!warnings.empty()) throw ToolError("Invalid Layer value for entity " + ToString(guid));
+                 } else {
+                     const ComponentInfo& info = GetComponentInfo(layer_component);
+                     reflect::Any sample = reflect::Any::DefaultOf(*info.reflected);
+                     if (!sample.HasValue()) throw ToolError("Cannot default-construct Layer");
+                     reflect::LoadReport report;
+                     if (!reflect::FromJson(*info.reflected, sample.Data(), value, &report)) {
+                         throw ToolError("Invalid layer index for entity " + ToString(guid));
+                     }
+                     info.serialize(sample.Data(), edit.after);
+                     reflect::Any defaults = reflect::Any::DefaultOf(*info.reflected);
+                     if (!defaults.HasValue()) throw ToolError("Cannot default-construct Layer");
+                     info.serialize(defaults.Data(), edit.before);
+                     edit.add_component = true;
+                 }
+                 edits.push_back(std::move(edit));
+             }
+
+             static std::atomic<std::uint64_t> next_batch_id{0};
+             const std::string transaction_label = "Set Entity Layers " + std::to_string(++next_batch_id);
+             const usize undo_count_before = s.stack.UndoCount();
+             editor::CommandContext ctx = s.Context();
+             s.stack.BeginTransaction(transaction_label);
+             try {
+                 for (const LayerEdit& edit : edits) {
+                     if (edit.add_component) {
+                         auto add = std::make_unique<editor::AddComponentCommand>(edit.guid, layer_component);
+                         add->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(add));
+                     }
+                     auto set = std::make_unique<SetComponentCommand>(edit.guid, layer_component, edit.before, edit.after);
+                     set->SetAttribution("agent");
+                     s.stack.Execute(ctx, std::move(set));
+                 }
+                 s.stack.EndTransaction();
+             } catch (...) {
+                 s.stack.EndTransaction();
+                 if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                 throw;
+             }
+
+             Json results = Json::array();
+             for (const LayerEdit& edit : edits) results.push_back({{"entity", ToString(edit.guid)}, {"layer_index", edit.index}});
+             return {{"updated", edits.size()}, {"entities", std::move(results)}};
+         }});
+
+    server.AddTool(
+        {"rotate_entities_world_shared_many",
+         "Apply one shared world-space quaternion delta to 1–64 unique scene entities as one undoable action. Each entity must have Transform; position and scale are preserved. The delta is a finite, non-zero quaternion [x, y, z, w], normalized and left-multiplied with each entity's current world orientation. Selected ancestors are resolved against their final orientations.",
+         Schema({{"entities", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 64},
+                               {"description", "1–64 unique entity GUIDs"}}},
+                 {"delta", {{"type", "array"}, {"items", {{"type", "number"}}}, {"minItems", 4}, {"maxItems", 4},
+                            {"description", "Shared world-space rotation delta quaternion [x, y, z, w]"}}}},
+                {"entities", "delta"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before changing entity transforms");
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be a non-empty array of at most 64 entity GUIDs");
+             }
+             if (!args["delta"].is_array() || args["delta"].size() != 4) throw ToolError("\"delta\" must be [x, y, z, w]");
+             for (const Json& value : args["delta"]) {
+                 if (!value.is_number() || !std::isfinite(value.get<double>())) throw ToolError("World rotation delta values must be finite numbers");
+             }
+             Quaternion delta{args["delta"][0].get<f32>(), args["delta"][1].get<f32>(),
+                              args["delta"][2].get<f32>(), args["delta"][3].get<f32>()};
+             if (!std::isfinite(delta.x) || !std::isfinite(delta.y) || !std::isfinite(delta.z) || !std::isfinite(delta.w)) {
+                 throw ToolError("World rotation delta values must fit finite engine coordinates");
+             }
+             const f32 delta_length_sq = delta.LengthSq();
+             if (!std::isfinite(delta_length_sq) || delta_length_sq <= 1.0e-12f) {
+                 throw ToolError("World rotation delta quaternion must be non-zero");
+             }
+             delta = delta.Normalized();
+
+             struct RotationEdit {
+                 EntityGuid guid;
+                 Entity entity;
+                 Quaternion world_rotation;
+                 Quaternion local_rotation;
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+                 bool changed = false;
+             };
+             std::vector<RotationEdit> edits;
+             edits.reserve(args["entities"].size());
+             std::map<EntityGuid, usize> edit_indices;
+             const ComponentId transform_component = GetComponentId<Transform>();
+             const ComponentInfo& info = GetComponentInfo(transform_component);
+             for (const Json& value : args["entities"]) {
+                 if (!value.is_string()) throw ToolError("Every entry in \"entities\" must be an entity GUID string");
+                 const std::string text = value.get<std::string>();
+                 EntityGuid guid;
+                 if (!ParseEntityGuid(text, guid)) throw ToolError("Not a valid entity GUID: " + text);
+                 if (edit_indices.contains(guid)) throw ToolError("Duplicate entity in \"entities\": " + ToString(guid));
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 if (entity.IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+                 if (s.world.GetComponent<Transform>(entity) == nullptr) {
+                     throw ToolError("Entity " + ToString(guid) + " doesn't have Transform");
+                 }
+                 edit_indices.emplace(guid, edits.size());
+                 RotationEdit edit;
+                 edit.guid = guid;
+                 edit.entity = entity;
+                 edits.push_back(std::move(edit));
+             }
+
+             std::function<Quaternion(Entity, int)> compute_current_world_rotation = [&](Entity entity, int depth) -> Quaternion {
+                 if (entity.IsNull()) return Quaternion::Identity();
+                 if (depth >= kMaxHierarchyDepth) throw ToolError("World-rotation batch encountered a hierarchy cycle or excessive depth");
+                 const Transform* current = s.world.GetComponent<Transform>(entity);
+                 if (current == nullptr) return Quaternion::Identity();
+                 Quaternion parent_rotation = Quaternion::Identity();
+                 const Entity parent = GetParent(s.world, s.guids, entity);
+                 if (!parent.IsNull()) parent_rotation = compute_current_world_rotation(parent, depth + 1);
+                 const Quaternion& local = current->rotation;
+                 if (!std::isfinite(local.x) || !std::isfinite(local.y) || !std::isfinite(local.z) || !std::isfinite(local.w)) {
+                     throw ToolError("Entity hierarchy has a non-finite rotation");
+                 }
+                 const f32 local_length_sq = local.LengthSq();
+                 if (!std::isfinite(local_length_sq) || local_length_sq <= 1.0e-12f) {
+                     throw ToolError("Entity hierarchy has a zero rotation quaternion");
+                 }
+                 return (parent_rotation * local.Normalized()).Normalized();
+             };
+             for (RotationEdit& edit : edits) {
+                 const Quaternion current_world_rotation = compute_current_world_rotation(edit.entity, 0);
+                 edit.world_rotation = (delta * current_world_rotation).Normalized();
+                 if (!std::isfinite(edit.world_rotation.x) || !std::isfinite(edit.world_rotation.y) ||
+                     !std::isfinite(edit.world_rotation.z) || !std::isfinite(edit.world_rotation.w)) {
+                     throw ToolError("World rotation delta would produce a non-finite orientation for entity " + ToString(edit.guid));
+                 }
+             }
+
+             std::function<Quaternion(Entity, int)> compute_final_world_rotation = [&](Entity entity, int depth) -> Quaternion {
+                 if (entity.IsNull()) return Quaternion::Identity();
+                 if (depth >= kMaxHierarchyDepth) throw ToolError("World-rotation batch encountered a hierarchy cycle or excessive depth");
+                 const Transform* current = s.world.GetComponent<Transform>(entity);
+                 if (current == nullptr) return Quaternion::Identity();
+                 Quaternion parent_rotation = Quaternion::Identity();
+                 const Entity parent = GetParent(s.world, s.guids, entity);
+                 if (!parent.IsNull()) parent_rotation = compute_final_world_rotation(parent, depth + 1);
+                 const IdComponent* id = s.world.GetComponent<IdComponent>(entity);
+                 if (id != nullptr) {
+                     const auto selected = edit_indices.find(id->guid);
+                     if (selected != edit_indices.end()) {
+                         const Quaternion inverse_parent{-parent_rotation.x, -parent_rotation.y, -parent_rotation.z, parent_rotation.w};
+                         RotationEdit& edit = edits[selected->second];
+                         edit.local_rotation = (inverse_parent * edit.world_rotation).Normalized();
+                         if (!std::isfinite(edit.local_rotation.x) || !std::isfinite(edit.local_rotation.y) ||
+                             !std::isfinite(edit.local_rotation.z) || !std::isfinite(edit.local_rotation.w)) {
+                             throw ToolError("World rotation would produce a non-finite local rotation for entity " + ToString(id->guid));
+                         }
+                         return edit.world_rotation;
+                     }
+                 }
+                 const Quaternion& local = current->rotation;
+                 if (!std::isfinite(local.x) || !std::isfinite(local.y) || !std::isfinite(local.z) || !std::isfinite(local.w)) {
+                     throw ToolError("Ancestor entity has a non-finite rotation");
+                 }
+                 const f32 local_length_sq = local.LengthSq();
+                 if (!std::isfinite(local_length_sq) || local_length_sq <= 1.0e-12f) {
+                     throw ToolError("Ancestor entity has a zero rotation quaternion");
+                 }
+                 return (parent_rotation * local.Normalized()).Normalized();
+             };
+             for (const RotationEdit& edit : edits) (void)compute_final_world_rotation(edit.entity, 0);
+             for (RotationEdit& edit : edits) {
+                 const Transform* current = s.world.GetComponent<Transform>(edit.entity);
+                 Transform updated = *current;
+                 updated.rotation = edit.local_rotation;
+                 info.serialize(current, edit.before);
+                 info.serialize(&updated, edit.after);
+                 edit.changed = edit.before != edit.after;
+             }
+
+             const bool any_changed = std::any_of(edits.begin(), edits.end(), [](const RotationEdit& edit) { return edit.changed; });
+             if (any_changed) {
+                 static std::atomic<std::uint64_t> next_batch_id{0};
+                 const std::string transaction_label = "Rotate Entities In World " + std::to_string(++next_batch_id);
+                 const usize undo_count_before = s.stack.UndoCount();
+                 editor::CommandContext ctx = s.Context();
+                 s.stack.BeginTransaction(transaction_label);
+                 try {
+                     for (const RotationEdit& edit : edits) {
+                         if (!edit.changed) continue;
+                         auto command = std::make_unique<SetComponentCommand>(edit.guid, transform_component, edit.before, edit.after);
+                         command->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(command));
+                     }
+                     s.stack.EndTransaction();
+                 } catch (...) {
+                     s.stack.EndTransaction();
+                     if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                     throw;
+                 }
+             }
+
+             Json results = Json::array();
+             for (const RotationEdit& edit : edits) {
+                 results.push_back({{"entity", ToString(edit.guid)},
+                                    {"delta", {delta.x, delta.y, delta.z, delta.w}},
+                                    {"world_rotation", {edit.world_rotation.x, edit.world_rotation.y, edit.world_rotation.z, edit.world_rotation.w}},
+                                    {"local_rotation", {edit.local_rotation.x, edit.local_rotation.y, edit.local_rotation.z, edit.local_rotation.w}},
+                                    {"changed", edit.changed}});
+             }
+             return {{"updated", std::count_if(edits.begin(), edits.end(), [](const RotationEdit& edit) { return edit.changed; })},
+                     {"entities", std::move(results)}};
+         }});
+    server.AddTool(
+        {"rotate_entities_world_many",
+         "Apply per-entity world-space quaternion deltas to 1–64 unique scene entities as one undoable action. Each entity must have Transform; position and scale are preserved. Deltas are finite, non-zero quaternions [x, y, z, w], normalized and left-multiplied with each entity's current world orientation. The complete selection is validated before changes, and selected ancestors are resolved against their final orientations.",
+         Schema({{"edits", {{"type", "array"},
+                             {"items", {{"type", "object"},
+                                        {"properties", {{"entity", kGuidProp},
+                                                        {"delta", {{"type", "array"}, {"items", {{"type", "number"}}},
+                                                                    {"minItems", 4}, {"maxItems", 4}}}}},
+                                        {"required", Json::array({"entity", "delta"})}}},
+                             {"minItems", 1}, {"maxItems", 64},
+                             {"description", "1–64 unique entity GUID and world rotation-delta pairs"}}}},
+                {"edits"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before changing entity transforms");
+             if (!args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
+                 throw ToolError("\"edits\" must be a non-empty array of at most 64 entity rotation changes");
+             }
+
+             struct RotationEdit {
+                 EntityGuid guid;
+                 Entity entity;
+                 Quaternion delta;
+                 Quaternion world_rotation;
+                 Quaternion local_rotation;
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+                 bool changed = false;
+             };
+             std::vector<RotationEdit> edits;
+             edits.reserve(args["edits"].size());
+             std::map<EntityGuid, usize> edit_indices;
+             const ComponentId transform_component = GetComponentId<Transform>();
+             const ComponentInfo& info = GetComponentInfo(transform_component);
+             for (const Json& entry : args["edits"]) {
+                 if (!entry.is_object()) throw ToolError("Each entry in \"edits\" must be an object");
+                 const EntityGuid guid = RequireGuid(entry, "entity");
+                 if (edit_indices.contains(guid)) throw ToolError("Duplicate entity in \"edits\": " + ToString(guid));
+                 if (!entry.contains("delta") || !entry["delta"].is_array() || entry["delta"].size() != 4) {
+                     throw ToolError("Each \"delta\" must be [x, y, z, w]");
+                 }
+                 for (const Json& value : entry["delta"]) {
+                     if (!value.is_number() || !std::isfinite(value.get<double>())) {
+                         throw ToolError("World rotation deltas must be finite numbers");
+                     }
+                 }
+                 Quaternion delta{entry["delta"][0].get<f32>(), entry["delta"][1].get<f32>(),
+                                  entry["delta"][2].get<f32>(), entry["delta"][3].get<f32>()};
+                 if (!std::isfinite(delta.x) || !std::isfinite(delta.y) ||
+                     !std::isfinite(delta.z) || !std::isfinite(delta.w)) {
+                     throw ToolError("World rotation delta values must fit finite engine coordinates");
+                 }
+                 const f32 delta_length_sq = delta.LengthSq();
+                 if (!std::isfinite(delta_length_sq) || delta_length_sq <= 1.0e-12f) {
+                     throw ToolError("World rotation delta quaternion must be non-zero");
+                 }
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 if (entity.IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+                 if (s.world.GetComponent<Transform>(entity) == nullptr) {
+                     throw ToolError("Entity " + ToString(guid) + " doesn't have Transform");
+                 }
+                 edit_indices.emplace(guid, edits.size());
+                 RotationEdit edit;
+                 edit.guid = guid;
+                 edit.entity = entity;
+                 edit.delta = delta.Normalized();
+                 edits.push_back(std::move(edit));
+             }
+
+             std::function<Quaternion(Entity, int)> compute_current_world_rotation = [&](Entity entity, int depth) -> Quaternion {
+                 if (entity.IsNull()) return Quaternion::Identity();
+                 if (depth >= kMaxHierarchyDepth) throw ToolError("World-rotation batch encountered a hierarchy cycle or excessive depth");
+                 const Transform* current = s.world.GetComponent<Transform>(entity);
+                 if (current == nullptr) return Quaternion::Identity();
+                 Quaternion parent_rotation = Quaternion::Identity();
+                 const Entity parent = GetParent(s.world, s.guids, entity);
+                 if (!parent.IsNull()) parent_rotation = compute_current_world_rotation(parent, depth + 1);
+                 const Quaternion& local = current->rotation;
+                 if (!std::isfinite(local.x) || !std::isfinite(local.y) || !std::isfinite(local.z) || !std::isfinite(local.w)) {
+                     throw ToolError("Entity hierarchy has a non-finite rotation");
+                 }
+                 const f32 local_length_sq = local.LengthSq();
+                 if (!std::isfinite(local_length_sq) || local_length_sq <= 1.0e-12f) {
+                     throw ToolError("Entity hierarchy has a zero rotation quaternion");
+                 }
+                 return (parent_rotation * local.Normalized()).Normalized();
+             };
+             for (RotationEdit& edit : edits) {
+                 const Quaternion current_world_rotation = compute_current_world_rotation(edit.entity, 0);
+                 edit.world_rotation = (edit.delta * current_world_rotation).Normalized();
+                 if (!std::isfinite(edit.world_rotation.x) || !std::isfinite(edit.world_rotation.y) ||
+                     !std::isfinite(edit.world_rotation.z) || !std::isfinite(edit.world_rotation.w)) {
+                     throw ToolError("World rotation delta would produce a non-finite orientation for entity " + ToString(edit.guid));
+                 }
+             }
+
+             std::function<Quaternion(Entity, int)> compute_final_world_rotation = [&](Entity entity, int depth) -> Quaternion {
+                 if (entity.IsNull()) return Quaternion::Identity();
+                 if (depth >= kMaxHierarchyDepth) throw ToolError("World-rotation batch encountered a hierarchy cycle or excessive depth");
+                 const Transform* current = s.world.GetComponent<Transform>(entity);
+                 if (current == nullptr) return Quaternion::Identity();
+                 Quaternion parent_rotation = Quaternion::Identity();
+                 const Entity parent = GetParent(s.world, s.guids, entity);
+                 if (!parent.IsNull()) parent_rotation = compute_final_world_rotation(parent, depth + 1);
+                 const IdComponent* id = s.world.GetComponent<IdComponent>(entity);
+                 if (id != nullptr) {
+                     const auto selected = edit_indices.find(id->guid);
+                     if (selected != edit_indices.end()) {
+                         const Quaternion inverse_parent{-parent_rotation.x, -parent_rotation.y, -parent_rotation.z, parent_rotation.w};
+                         RotationEdit& edit = edits[selected->second];
+                         edit.local_rotation = (inverse_parent * edit.world_rotation).Normalized();
+                         if (!std::isfinite(edit.local_rotation.x) || !std::isfinite(edit.local_rotation.y) ||
+                             !std::isfinite(edit.local_rotation.z) || !std::isfinite(edit.local_rotation.w)) {
+                             throw ToolError("World rotation would produce a non-finite local rotation for entity " + ToString(id->guid));
+                         }
+                         return edit.world_rotation;
+                     }
+                 }
+                 const Quaternion& local = current->rotation;
+                 if (!std::isfinite(local.x) || !std::isfinite(local.y) || !std::isfinite(local.z) || !std::isfinite(local.w)) {
+                     throw ToolError("Ancestor entity has a non-finite rotation");
+                 }
+                 const f32 local_length_sq = local.LengthSq();
+                 if (!std::isfinite(local_length_sq) || local_length_sq <= 1.0e-12f) {
+                     throw ToolError("Ancestor entity has a zero rotation quaternion");
+                 }
+                 return (parent_rotation * local.Normalized()).Normalized();
+             };
+             for (const RotationEdit& edit : edits) (void)compute_final_world_rotation(edit.entity, 0);
+             for (RotationEdit& edit : edits) {
+                 const Transform* current = s.world.GetComponent<Transform>(edit.entity);
+                 Transform updated = *current;
+                 updated.rotation = edit.local_rotation;
+                 info.serialize(current, edit.before);
+                 info.serialize(&updated, edit.after);
+                 edit.changed = edit.before != edit.after;
+             }
+
+             const bool any_changed = std::any_of(edits.begin(), edits.end(), [](const RotationEdit& edit) { return edit.changed; });
+             if (any_changed) {
+                 static std::atomic<std::uint64_t> next_batch_id{0};
+                 const std::string transaction_label = "Rotate Entities In World " + std::to_string(++next_batch_id);
+                 const usize undo_count_before = s.stack.UndoCount();
+                 editor::CommandContext ctx = s.Context();
+                 s.stack.BeginTransaction(transaction_label);
+                 try {
+                     for (const RotationEdit& edit : edits) {
+                         if (!edit.changed) continue;
+                         auto command = std::make_unique<SetComponentCommand>(edit.guid, transform_component, edit.before, edit.after);
+                         command->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(command));
+                     }
+                     s.stack.EndTransaction();
+                 } catch (...) {
+                     s.stack.EndTransaction();
+                     if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                     throw;
+                 }
+             }
+
+             Json results = Json::array();
+             for (const RotationEdit& edit : edits) {
+                 results.push_back({{"entity", ToString(edit.guid)},
+                                    {"delta", {edit.delta.x, edit.delta.y, edit.delta.z, edit.delta.w}},
+                                    {"world_rotation", {edit.world_rotation.x, edit.world_rotation.y, edit.world_rotation.z, edit.world_rotation.w}},
+                                    {"local_rotation", {edit.local_rotation.x, edit.local_rotation.y, edit.local_rotation.z, edit.local_rotation.w}},
+                                    {"changed", edit.changed}});
+             }
+             return {{"updated", std::count_if(edits.begin(), edits.end(), [](const RotationEdit& edit) { return edit.changed; })},
+                     {"entities", std::move(results)}};
+         }});
+    server.AddTool(
+        {"rotate_entities_local_many",
+         "Apply a per-entity local-space rotation delta to 1–64 unique scene entities as one undoable action. Each entity must have Transform; position and scale are preserved. Deltas are quaternions [x, y, z, w], composed as current rotation × delta and normalized. Validate the full selection before applying any changes.",
+         Schema({{"edits", {{"type", "array"},
+                             {"items", {{"type", "object"},
+                                        {"properties", {{"entity", kGuidProp},
+                                                        {"delta", {{"type", "array"}, {"items", {{"type", "number"}}},
+                                                                    {"minItems", 4}, {"maxItems", 4}}}}},
+                                        {"required", Json::array({"entity", "delta"})}}},
+                             {"minItems", 1}, {"maxItems", 64},
+                             {"description", "1–64 unique entity GUID and local rotation-delta pairs"}}}},
+                {"edits"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before changing entity transforms");
+             if (!args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
+                 throw ToolError("\"edits\" must be a non-empty array of at most 64 entity rotation changes");
+             }
+
+             struct RotationEdit {
+                 EntityGuid guid;
+                 Quaternion rotation;
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+                 bool changed = false;
+             };
+             std::vector<RotationEdit> edits;
+             edits.reserve(args["edits"].size());
+             std::set<EntityGuid> seen;
+             const ComponentId transform_component = GetComponentId<Transform>();
+             const ComponentInfo& info = GetComponentInfo(transform_component);
+             for (const Json& entry : args["edits"]) {
+                 if (!entry.is_object()) throw ToolError("Each entry in \"edits\" must be an object");
+                 const EntityGuid guid = RequireGuid(entry, "entity");
+                 if (!seen.insert(guid).second) throw ToolError("Duplicate entity in \"edits\": " + ToString(guid));
+                 if (!entry.contains("delta") || !entry["delta"].is_array() || entry["delta"].size() != 4) {
+                     throw ToolError("Each \"delta\" must be [x, y, z, w]");
+                 }
+                 for (const Json& value : entry["delta"]) {
+                     if (!value.is_number() || !std::isfinite(value.get<double>())) {
+                         throw ToolError("Rotation deltas must be finite numbers");
+                     }
+                 }
+                 Quaternion delta{entry["delta"][0].get<f32>(), entry["delta"][1].get<f32>(),
+                                  entry["delta"][2].get<f32>(), entry["delta"][3].get<f32>()};
+                 if (!std::isfinite(delta.x) || !std::isfinite(delta.y) || !std::isfinite(delta.z) || !std::isfinite(delta.w)) {
+                     throw ToolError("Rotation delta values must fit finite engine coordinates");
+                 }
+                 const f32 delta_length_sq = delta.LengthSq();
+                 if (!std::isfinite(delta_length_sq) || delta_length_sq <= 1.0e-12f) {
+                     throw ToolError("Rotation delta quaternion must be non-zero");
+                 }
+                 delta = delta.Normalized();
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 if (entity.IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+                 const Transform* current = s.world.GetComponent<Transform>(entity);
+                 if (current == nullptr) throw ToolError("Entity " + ToString(guid) + " doesn't have Transform");
+                 const Quaternion& current_rotation = current->rotation;
+                 if (!std::isfinite(current_rotation.x) || !std::isfinite(current_rotation.y) ||
+                     !std::isfinite(current_rotation.z) || !std::isfinite(current_rotation.w)) {
+                     throw ToolError("Entity " + ToString(guid) + " has a non-finite rotation");
+                 }
+                 const f32 current_length_sq = current_rotation.LengthSq();
+                 if (!std::isfinite(current_length_sq) || current_length_sq <= 1.0e-12f) {
+                     throw ToolError("Entity " + ToString(guid) + " has a zero rotation quaternion");
+                 }
+                 RotationEdit edit;
+                 edit.guid = guid;
+                 edit.rotation = (current_rotation.Normalized() * delta).Normalized();
+                 if (!std::isfinite(edit.rotation.x) || !std::isfinite(edit.rotation.y) ||
+                     !std::isfinite(edit.rotation.z) || !std::isfinite(edit.rotation.w)) {
+                     throw ToolError("Rotation delta would produce a non-finite rotation for entity " + ToString(guid));
+                 }
+                 Transform updated = *current;
+                 updated.rotation = edit.rotation;
+                 info.serialize(current, edit.before);
+                 info.serialize(&updated, edit.after);
+                 edit.changed = edit.before != edit.after;
+                 edits.push_back(std::move(edit));
+             }
+
+             const bool any_changed = std::any_of(edits.begin(), edits.end(), [](const RotationEdit& edit) { return edit.changed; });
+             if (any_changed) {
+                 static std::atomic<std::uint64_t> next_batch_id{0};
+                 const std::string transaction_label = "Rotate Entities Locally " + std::to_string(++next_batch_id);
+                 const usize undo_count_before = s.stack.UndoCount();
+                 editor::CommandContext ctx = s.Context();
+                 s.stack.BeginTransaction(transaction_label);
+                 try {
+                     for (const RotationEdit& edit : edits) {
+                         if (!edit.changed) continue;
+                         auto command = std::make_unique<SetComponentCommand>(edit.guid, transform_component, edit.before, edit.after);
+                         command->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(command));
+                     }
+                     s.stack.EndTransaction();
+                 } catch (...) {
+                     s.stack.EndTransaction();
+                     if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                     throw;
+                 }
+             }
+
+             Json results = Json::array();
+             for (const RotationEdit& edit : edits) {
+                 results.push_back({{"entity", ToString(edit.guid)},
+                                    {"rotation", {edit.rotation.x, edit.rotation.y, edit.rotation.z, edit.rotation.w}},
+                                    {"changed", edit.changed}});
+             }
+             return {{"updated", std::count_if(edits.begin(), edits.end(), [](const RotationEdit& edit) { return edit.changed; })},
+                     {"entities", std::move(results)}};
+         }});
+
+    server.AddTool(
+        {"set_entities_local_rotations_many",
+         "Set local rotations individually for 1–64 unique scene entities as one undoable action. Each entity must have Transform; position and scale are preserved. Validate each finite, non-zero quaternion and normalize it before applying any changes.",
+         Schema({{"edits", {{"type", "array"},
+                             {"items", {{"type", "object"},
+                                        {"properties", {{"entity", kGuidProp},
+                                                        {"rotation", {{"type", "array"}, {"items", {{"type", "number"}}},
+                                                                       {"minItems", 4}, {"maxItems", 4}}}}},
+                                        {"required", Json::array({"entity", "rotation"})}}},
+                             {"minItems", 1}, {"maxItems", 64},
+                             {"description", "1–64 unique entity GUID and local-quaternion pairs"}}}},
+                {"edits"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before changing entity transforms");
+             if (!args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
+                 throw ToolError("\"edits\" must be a non-empty array of at most 64 entity rotation changes");
+             }
+
+             struct RotationEdit {
+                 EntityGuid guid;
+                 Quaternion rotation;
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+                 bool changed = false;
+             };
+             std::vector<RotationEdit> edits;
+             edits.reserve(args["edits"].size());
+             std::set<EntityGuid> seen;
+             const ComponentId transform_component = GetComponentId<Transform>();
+             const ComponentInfo& info = GetComponentInfo(transform_component);
+             for (const Json& entry : args["edits"]) {
+                 if (!entry.is_object()) throw ToolError("Each entry in \"edits\" must be an object");
+                 const EntityGuid guid = RequireGuid(entry, "entity");
+                 if (!seen.insert(guid).second) throw ToolError("Duplicate entity in \"edits\": " + ToString(guid));
+                 if (!entry.contains("rotation") || !entry["rotation"].is_array() || entry["rotation"].size() != 4) {
+                     throw ToolError("Each \"rotation\" must be [x, y, z, w]");
+                 }
+                 for (const Json& value : entry["rotation"]) {
+                     if (!value.is_number() || !std::isfinite(value.get<double>())) {
+                         throw ToolError("Rotation values must be finite numbers");
+                     }
+                 }
+                 Quaternion rotation{entry["rotation"][0].get<f32>(), entry["rotation"][1].get<f32>(),
+                                     entry["rotation"][2].get<f32>(), entry["rotation"][3].get<f32>()};
+                 if (!std::isfinite(rotation.x) || !std::isfinite(rotation.y) || !std::isfinite(rotation.z) || !std::isfinite(rotation.w)) {
+                     throw ToolError("Rotation values must fit finite engine coordinates");
+                 }
+                 const f32 length_sq = rotation.LengthSq();
+                 if (!std::isfinite(length_sq) || length_sq <= 1.0e-12f) throw ToolError("Rotation quaternion must be non-zero");
+                 rotation = rotation.Normalized();
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 if (entity.IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+                 const Transform* current = s.world.GetComponent<Transform>(entity);
+                 if (current == nullptr) throw ToolError("Entity " + ToString(guid) + " doesn't have Transform");
+                 RotationEdit edit;
+                 edit.guid = guid;
+                 edit.rotation = rotation;
+                 Transform updated = *current;
+                 updated.rotation = rotation;
+                 info.serialize(current, edit.before);
+                 info.serialize(&updated, edit.after);
+                 edit.changed = edit.before != edit.after;
+                 edits.push_back(std::move(edit));
+             }
+
+             const bool any_changed = std::any_of(edits.begin(), edits.end(), [](const RotationEdit& edit) { return edit.changed; });
+             if (any_changed) {
+                 static std::atomic<std::uint64_t> next_batch_id{0};
+                 const std::string transaction_label = "Set Entity Rotations " + std::to_string(++next_batch_id);
+                 const usize undo_count_before = s.stack.UndoCount();
+                 editor::CommandContext ctx = s.Context();
+                 s.stack.BeginTransaction(transaction_label);
+                 try {
+                     for (const RotationEdit& edit : edits) {
+                         if (!edit.changed) continue;
+                         auto command = std::make_unique<SetComponentCommand>(edit.guid, transform_component, edit.before, edit.after);
+                         command->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(command));
+                     }
+                     s.stack.EndTransaction();
+                 } catch (...) {
+                     s.stack.EndTransaction();
+                     if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                     throw;
+                 }
+             }
+
+             Json results = Json::array();
+             for (const RotationEdit& edit : edits) {
+                 results.push_back({{"entity", ToString(edit.guid)},
+                                    {"rotation", {edit.rotation.x, edit.rotation.y, edit.rotation.z, edit.rotation.w}},
+                                    {"changed", edit.changed}});
+             }
+             return {{"updated", std::count_if(edits.begin(), edits.end(), [](const RotationEdit& edit) { return edit.changed; })},
+                     {"entities", std::move(results)}};
+         }});
+
+    server.AddTool(
+        {"set_entities_local_scale_many",
+         "Set the local scale of 1–64 unique scene entities to one shared vector [x, y, z] as one undoable action. Each entity must have Transform; position and rotation are preserved. Validate the complete selection and finite scale values before applying changes.",
+         Schema({{"entities", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 64},
+                               {"description", "1–64 unique entity GUIDs"}}},
+                 {"scale", {{"type", "array"}, {"items", {{"type", "number"}}}, {"minItems", 3}, {"maxItems", 3},
+                             {"description", "Shared local scale [x, y, z]"}}}},
+                {"entities", "scale"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before changing entity transforms");
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be a non-empty array of at most 64 entity GUIDs");
+             }
+             if (!args["scale"].is_array() || args["scale"].size() != 3) throw ToolError("\"scale\" must be [x, y, z]");
+             for (const Json& value : args["scale"]) {
+                 if (!value.is_number() || !std::isfinite(value.get<double>())) throw ToolError("Scale values must be finite numbers");
+             }
+             const Vec3 scale{args["scale"][0].get<f32>(), args["scale"][1].get<f32>(), args["scale"][2].get<f32>()};
+             if (!std::isfinite(scale.x) || !std::isfinite(scale.y) || !std::isfinite(scale.z)) {
+                 throw ToolError("Scale values must fit finite engine coordinates");
+             }
+
+             struct ScaleEdit {
+                 EntityGuid guid;
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+                 bool changed = false;
+             };
+             std::vector<ScaleEdit> edits;
+             edits.reserve(args["entities"].size());
+             std::set<EntityGuid> seen;
+             const ComponentId transform_component = GetComponentId<Transform>();
+             const ComponentInfo& info = GetComponentInfo(transform_component);
+             for (const Json& value : args["entities"]) {
+                 if (!value.is_string()) throw ToolError("Every entry in \"entities\" must be an entity GUID string");
+                 EntityGuid guid;
+                 const std::string guid_text = value.get<std::string>();
+                 if (!ParseEntityGuid(guid_text, guid)) throw ToolError("Not a valid entity GUID: " + guid_text);
+                 if (!seen.insert(guid).second) throw ToolError("Duplicate entity in \"entities\": " + ToString(guid));
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 if (entity.IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+                 const Transform* current = s.world.GetComponent<Transform>(entity);
+                 if (current == nullptr) throw ToolError("Entity " + ToString(guid) + " doesn't have Transform");
+                 ScaleEdit edit;
+                 edit.guid = guid;
+                 Transform updated = *current;
+                 updated.scale = scale;
+                 info.serialize(current, edit.before);
+                 info.serialize(&updated, edit.after);
+                 edit.changed = edit.before != edit.after;
+                 edits.push_back(std::move(edit));
+             }
+
+             const bool any_changed = std::any_of(edits.begin(), edits.end(), [](const ScaleEdit& edit) { return edit.changed; });
+             if (any_changed) {
+                 static std::atomic<std::uint64_t> next_batch_id{0};
+                 const std::string transaction_label = "Set Entity Scales " + std::to_string(++next_batch_id);
+                 const usize undo_count_before = s.stack.UndoCount();
+                 editor::CommandContext ctx = s.Context();
+                 s.stack.BeginTransaction(transaction_label);
+                 try {
+                     for (const ScaleEdit& edit : edits) {
+                         if (!edit.changed) continue;
+                         auto command = std::make_unique<SetComponentCommand>(edit.guid, transform_component, edit.before, edit.after);
+                         command->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(command));
+                     }
+                     s.stack.EndTransaction();
+                 } catch (...) {
+                     s.stack.EndTransaction();
+                     if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                     throw;
+                 }
+             }
+
+             Json results = Json::array();
+             for (const ScaleEdit& edit : edits) {
+                 results.push_back({{"entity", ToString(edit.guid)}, {"scale", {scale.x, scale.y, scale.z}}, {"changed", edit.changed}});
+             }
+             return {{"updated", std::count_if(edits.begin(), edits.end(), [](const ScaleEdit& edit) { return edit.changed; })},
+                     {"entities", std::move(results)}};
+         }});
+
+    server.AddTool(
+        {"set_entities_local_scales_many",
+         "Set local scales individually for 1–64 unique scene entities as one undoable action. Each entity must have Transform; position and rotation are preserved. Validate the complete selection and finite scale values before applying changes.",
+         Schema({{"edits", {{"type", "array"},
+                             {"items", {{"type", "object"},
+                                        {"properties", {{"entity", kGuidProp},
+                                                        {"scale", {{"type", "array"}, {"items", {{"type", "number"}}},
+                                                                    {"minItems", 3}, {"maxItems", 3}}}}},
+                                        {"required", Json::array({"entity", "scale"})}}},
+                             {"minItems", 1}, {"maxItems", 64},
+                             {"description", "1–64 unique entity GUID and local-scale pairs"}}}},
+                {"edits"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before changing entity transforms");
+             if (!args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
+                 throw ToolError("\"edits\" must be a non-empty array of at most 64 entity scale changes");
+             }
+
+             struct ScaleEdit {
+                 EntityGuid guid;
+                 Vec3 scale;
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+                 bool changed = false;
+             };
+             std::vector<ScaleEdit> edits;
+             edits.reserve(args["edits"].size());
+             std::set<EntityGuid> seen;
+             const ComponentId transform_component = GetComponentId<Transform>();
+             const ComponentInfo& info = GetComponentInfo(transform_component);
+             for (const Json& entry : args["edits"]) {
+                 if (!entry.is_object()) throw ToolError("Each entry in \"edits\" must be an object");
+                 const EntityGuid guid = RequireGuid(entry, "entity");
+                 if (!seen.insert(guid).second) throw ToolError("Duplicate entity in \"edits\": " + ToString(guid));
+                 if (!entry.contains("scale") || !entry["scale"].is_array() || entry["scale"].size() != 3) {
+                     throw ToolError("Each \"scale\" must be [x, y, z]");
+                 }
+                 for (const Json& value : entry["scale"]) {
+                     if (!value.is_number() || !std::isfinite(value.get<double>())) {
+                         throw ToolError("Scale values must be finite numbers");
+                     }
+                 }
+                 const Vec3 scale{entry["scale"][0].get<f32>(), entry["scale"][1].get<f32>(), entry["scale"][2].get<f32>()};
+                 if (!std::isfinite(scale.x) || !std::isfinite(scale.y) || !std::isfinite(scale.z)) {
+                     throw ToolError("Scale values must fit finite engine coordinates");
+                 }
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 if (entity.IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+                 const Transform* current = s.world.GetComponent<Transform>(entity);
+                 if (current == nullptr) throw ToolError("Entity " + ToString(guid) + " doesn't have Transform");
+                 ScaleEdit edit;
+                 edit.guid = guid;
+                 edit.scale = scale;
+                 Transform updated = *current;
+                 updated.scale = scale;
+                 info.serialize(current, edit.before);
+                 info.serialize(&updated, edit.after);
+                 edit.changed = edit.before != edit.after;
+                 edits.push_back(std::move(edit));
+             }
+
+             const bool any_changed = std::any_of(edits.begin(), edits.end(), [](const ScaleEdit& edit) { return edit.changed; });
+             if (any_changed) {
+                 static std::atomic<std::uint64_t> next_batch_id{0};
+                 const std::string transaction_label = "Set Entity Scales " + std::to_string(++next_batch_id);
+                 const usize undo_count_before = s.stack.UndoCount();
+                 editor::CommandContext ctx = s.Context();
+                 s.stack.BeginTransaction(transaction_label);
+                 try {
+                     for (const ScaleEdit& edit : edits) {
+                         if (!edit.changed) continue;
+                         auto command = std::make_unique<SetComponentCommand>(edit.guid, transform_component, edit.before, edit.after);
+                         command->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(command));
+                     }
+                     s.stack.EndTransaction();
+                 } catch (...) {
+                     s.stack.EndTransaction();
+                     if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                     throw;
+                 }
+             }
+
+             Json results = Json::array();
+             for (const ScaleEdit& edit : edits) {
+                 results.push_back({{"entity", ToString(edit.guid)}, {"scale", {edit.scale.x, edit.scale.y, edit.scale.z}}, {"changed", edit.changed}});
+             }
+             return {{"updated", std::count_if(edits.begin(), edits.end(), [](const ScaleEdit& edit) { return edit.changed; })},
+                     {"entities", std::move(results)}};
+         }});
+
+    server.AddTool(
+        {"set_entities_local_rotation_many",
+         "Set the local rotation of 1–64 unique scene entities to one shared quaternion [x, y, z, w] as one undoable action. Each entity must have Transform; position and scale are preserved. The quaternion must be finite and non-zero, and is normalized before use.",
+         Schema({{"entities", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 64},
+                               {"description", "1–64 unique entity GUIDs"}}},
+                 {"rotation", {{"type", "array"}, {"items", {{"type", "number"}}}, {"minItems", 4}, {"maxItems", 4},
+                               {"description", "Shared local rotation quaternion [x, y, z, w]"}}}},
+                {"entities", "rotation"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before changing entity transforms");
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be a non-empty array of at most 64 entity GUIDs");
+             }
+             if (!args["rotation"].is_array() || args["rotation"].size() != 4) throw ToolError("\"rotation\" must be [x, y, z, w]");
+             for (const Json& value : args["rotation"]) {
+                 if (!value.is_number() || !std::isfinite(value.get<double>())) throw ToolError("Rotation values must be finite numbers");
+             }
+             Quaternion rotation{args["rotation"][0].get<f32>(), args["rotation"][1].get<f32>(),
+                                 args["rotation"][2].get<f32>(), args["rotation"][3].get<f32>()};
+             if (!std::isfinite(rotation.x) || !std::isfinite(rotation.y) || !std::isfinite(rotation.z) || !std::isfinite(rotation.w)) {
+                 throw ToolError("Rotation values must fit finite engine coordinates");
+             }
+             const f32 length_sq = rotation.LengthSq();
+             if (!std::isfinite(length_sq) || length_sq <= 1.0e-12f) throw ToolError("Rotation quaternion must be non-zero");
+             rotation = rotation.Normalized();
+
+             struct RotationEdit {
+                 EntityGuid guid;
+                 Quaternion rotation;
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+                 bool changed = false;
+             };
+             std::vector<RotationEdit> edits;
+             edits.reserve(args["entities"].size());
+             std::set<EntityGuid> seen;
+             const ComponentId transform_component = GetComponentId<Transform>();
+             const ComponentInfo& info = GetComponentInfo(transform_component);
+             for (const Json& value : args["entities"]) {
+                 if (!value.is_string()) throw ToolError("Every entry in \"entities\" must be an entity GUID string");
+                 const std::string text = value.get<std::string>();
+                 EntityGuid guid;
+                 if (!ParseEntityGuid(text, guid)) throw ToolError("Not a valid entity GUID: " + text);
+                 if (!seen.insert(guid).second) throw ToolError("Duplicate entity in \"entities\": " + ToString(guid));
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 if (entity.IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+                 const Transform* current = s.world.GetComponent<Transform>(entity);
+                 if (current == nullptr) throw ToolError("Entity " + ToString(guid) + " doesn't have Transform");
+                 RotationEdit edit;
+                 edit.guid = guid;
+                 edit.rotation = rotation;
+                 Transform updated = *current;
+                 updated.rotation = rotation;
+                 info.serialize(current, edit.before);
+                 info.serialize(&updated, edit.after);
+                 edit.changed = edit.before != edit.after;
+                 edits.push_back(std::move(edit));
+             }
+
+             const bool any_changed = std::any_of(edits.begin(), edits.end(), [](const RotationEdit& edit) { return edit.changed; });
+             if (any_changed) {
+                 static std::atomic<std::uint64_t> next_batch_id{0};
+                 const std::string transaction_label = "Set Entity Rotations " + std::to_string(++next_batch_id);
+                 const usize undo_count_before = s.stack.UndoCount();
+                 editor::CommandContext ctx = s.Context();
+                 s.stack.BeginTransaction(transaction_label);
+                 try {
+                     for (const RotationEdit& edit : edits) {
+                         if (!edit.changed) continue;
+                         auto command = std::make_unique<SetComponentCommand>(edit.guid, transform_component, edit.before, edit.after);
+                         command->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(command));
+                     }
+                     s.stack.EndTransaction();
+                 } catch (...) {
+                     s.stack.EndTransaction();
+                     if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                     throw;
+                 }
+             }
+
+             Json results = Json::array();
+             for (const RotationEdit& edit : edits) {
+                 results.push_back({{"entity", ToString(edit.guid)},
+                                    {"rotation", {edit.rotation.x, edit.rotation.y, edit.rotation.z, edit.rotation.w}},
+                                    {"changed", edit.changed}});
+             }
+             return {{"updated", std::count_if(edits.begin(), edits.end(), [](const RotationEdit& edit) { return edit.changed; })},
+                     {"entities", std::move(results)}};
+         }});
+
+    server.AddTool(
+        {"set_entities_world_rotation_many",
+         "Set 1–64 unique scene entities to one shared world quaternion [x, y, z, w] as one undoable action. Each entity must have Transform; position and scale are preserved. The quaternion must be finite and non-zero, and is normalized before use. World orientations compose normalized local quaternions parent-first; local rotations are resolved against final parent orientations, including selected ancestors. Cycles and hierarchy chains deeper than the supported limit are rejected.",
+         Schema({{"entities", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 64},
+                               {"description", "1–64 unique entity GUIDs"}}},
+                 {"rotation", {{"type", "array"}, {"items", {{"type", "number"}}}, {"minItems", 4}, {"maxItems", 4},
+                               {"description", "Shared world rotation quaternion [x, y, z, w]"}}}},
+                {"entities", "rotation"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before changing entity transforms");
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be a non-empty array of at most 64 entity GUIDs");
+             }
+             if (!args["rotation"].is_array() || args["rotation"].size() != 4) throw ToolError("\"rotation\" must be [x, y, z, w]");
+             for (const Json& value : args["rotation"]) {
+                 if (!value.is_number() || !std::isfinite(value.get<double>())) throw ToolError("World-rotation values must be finite numbers");
+             }
+             Quaternion world_rotation{args["rotation"][0].get<f32>(), args["rotation"][1].get<f32>(),
+                                      args["rotation"][2].get<f32>(), args["rotation"][3].get<f32>()};
+             if (!std::isfinite(world_rotation.x) || !std::isfinite(world_rotation.y) ||
+                 !std::isfinite(world_rotation.z) || !std::isfinite(world_rotation.w)) {
+                 throw ToolError("World-rotation values must fit finite engine coordinates");
+             }
+             const f32 length_sq = world_rotation.LengthSq();
+             if (!std::isfinite(length_sq) || length_sq <= 1.0e-12f) throw ToolError("World-rotation quaternion must be non-zero");
+             world_rotation = world_rotation.Normalized();
+
+             struct RotationEdit {
+                 EntityGuid guid;
+                 Entity entity;
+                 Quaternion local_rotation;
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+                 bool changed = false;
+             };
+             std::vector<RotationEdit> edits;
+             edits.reserve(args["entities"].size());
+             std::map<EntityGuid, usize> edit_indices;
+             const ComponentId transform_component = GetComponentId<Transform>();
+             const ComponentInfo& info = GetComponentInfo(transform_component);
+             for (const Json& value : args["entities"]) {
+                 if (!value.is_string()) throw ToolError("Every entry in \"entities\" must be an entity GUID string");
+                 const std::string text = value.get<std::string>();
+                 EntityGuid guid;
+                 if (!ParseEntityGuid(text, guid)) throw ToolError("Not a valid entity GUID: " + text);
+                 if (edit_indices.contains(guid)) throw ToolError("Duplicate entity in \"entities\": " + ToString(guid));
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 if (entity.IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+                 if (s.world.GetComponent<Transform>(entity) == nullptr) {
+                     throw ToolError("Entity " + ToString(guid) + " doesn't have Transform");
+                 }
+                 edit_indices.emplace(guid, edits.size());
+                 RotationEdit edit;
+                 edit.guid = guid;
+                 edit.entity = entity;
+                 edits.push_back(std::move(edit));
+             }
+
+             std::function<Quaternion(Entity, int)> compute_final_world_rotation = [&](Entity entity, int depth) -> Quaternion {
+                 if (entity.IsNull()) return Quaternion::Identity();
+                 if (depth >= kMaxHierarchyDepth) throw ToolError("World-rotation batch encountered a hierarchy cycle or excessive depth");
+                 const Transform* current = s.world.GetComponent<Transform>(entity);
+                 if (current == nullptr) return Quaternion::Identity();
+                 Quaternion parent_rotation = Quaternion::Identity();
+                 const Entity parent = GetParent(s.world, s.guids, entity);
+                 if (!parent.IsNull()) parent_rotation = compute_final_world_rotation(parent, depth + 1);
+
+                 const IdComponent* id = s.world.GetComponent<IdComponent>(entity);
+                 if (id != nullptr) {
+                     const auto selected = edit_indices.find(id->guid);
+                     if (selected != edit_indices.end()) {
+                         const Quaternion inverse_parent{-parent_rotation.x, -parent_rotation.y, -parent_rotation.z, parent_rotation.w};
+                         RotationEdit& edit = edits[selected->second];
+                         edit.local_rotation = (inverse_parent * world_rotation).Normalized();
+                         if (!std::isfinite(edit.local_rotation.x) || !std::isfinite(edit.local_rotation.y) ||
+                             !std::isfinite(edit.local_rotation.z) || !std::isfinite(edit.local_rotation.w)) {
+                             throw ToolError("World rotation would produce a non-finite local rotation for entity " + ToString(id->guid));
+                         }
+                         return world_rotation;
+                     }
+                 }
+
+                 const Quaternion& local = current->rotation;
+                 if (!std::isfinite(local.x) || !std::isfinite(local.y) || !std::isfinite(local.z) || !std::isfinite(local.w)) {
+                     throw ToolError("Ancestor entity has a non-finite rotation");
+                 }
+                 const f32 local_length_sq = local.LengthSq();
+                 if (!std::isfinite(local_length_sq) || local_length_sq <= 1.0e-12f) {
+                     throw ToolError("Ancestor entity has a zero rotation quaternion");
+                 }
+                 return (parent_rotation * local.Normalized()).Normalized();
+             };
+
+             for (const RotationEdit& edit : edits) (void)compute_final_world_rotation(edit.entity, 0);
+             for (RotationEdit& edit : edits) {
+                 const Transform* current = s.world.GetComponent<Transform>(edit.entity);
+                 Transform updated = *current;
+                 updated.rotation = edit.local_rotation;
+                 info.serialize(current, edit.before);
+                 info.serialize(&updated, edit.after);
+                 edit.changed = edit.before != edit.after;
+             }
+
+             const bool any_changed = std::any_of(edits.begin(), edits.end(), [](const RotationEdit& edit) { return edit.changed; });
+             if (any_changed) {
+                 static std::atomic<std::uint64_t> next_batch_id{0};
+                 const std::string transaction_label = "Set Entity World Rotation " + std::to_string(++next_batch_id);
+                 const usize undo_count_before = s.stack.UndoCount();
+                 editor::CommandContext ctx = s.Context();
+                 s.stack.BeginTransaction(transaction_label);
+                 try {
+                     for (const RotationEdit& edit : edits) {
+                         if (!edit.changed) continue;
+                         auto command = std::make_unique<SetComponentCommand>(edit.guid, transform_component, edit.before, edit.after);
+                         command->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(command));
+                     }
+                     s.stack.EndTransaction();
+                 } catch (...) {
+                     s.stack.EndTransaction();
+                     if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                     throw;
+                 }
+             }
+
+             Json results = Json::array();
+             for (const RotationEdit& edit : edits) {
+                 results.push_back({{"entity", ToString(edit.guid)},
+                                    {"world_rotation", {world_rotation.x, world_rotation.y, world_rotation.z, world_rotation.w}},
+                                    {"local_rotation", {edit.local_rotation.x, edit.local_rotation.y, edit.local_rotation.z, edit.local_rotation.w}},
+                                    {"changed", edit.changed}});
+             }
+             return {{"updated", std::count_if(edits.begin(), edits.end(), [](const RotationEdit& edit) { return edit.changed; })},
+                     {"entities", std::move(results)}};
+         }});
+    server.AddTool(
+        {"set_entities_world_rotations_many",
+         "Set world rotations individually for 1–64 unique scene entities as one undoable action. Each entity must have Transform; position and scale are preserved. World orientations compose normalized local quaternions parent-first; rotations are converted against final parent orientations, including parents changed in this batch. Singular quaternions, cycles and hierarchy chains deeper than the supported limit are rejected. Validate the complete selection before applying changes.",
+         Schema({{"edits", {{"type", "array"},
+                             {"items", {{"type", "object"},
+                                        {"properties", {{"entity", kGuidProp},
+                                                        {"rotation", {{"type", "array"}, {"items", {{"type", "number"}}},
+                                                                       {"minItems", 4}, {"maxItems", 4}}}}},
+                                        {"required", Json::array({"entity", "rotation"})}}},
+                             {"minItems", 1}, {"maxItems", 64},
+                             {"description", "1–64 unique entity GUID and world-quaternion pairs"}}}},
+                {"edits"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before changing entity transforms");
+             if (!args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
+                 throw ToolError("\"edits\" must be a non-empty array of at most 64 entity rotation changes");
+             }
+
+             struct RotationEdit {
+                 EntityGuid guid;
+                 Entity entity;
+                 Quaternion world_rotation;
+                 Quaternion local_rotation;
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+                 bool changed = false;
+             };
+             std::vector<RotationEdit> edits;
+             edits.reserve(args["edits"].size());
+             std::map<EntityGuid, usize> edit_indices;
+             const ComponentId transform_component = GetComponentId<Transform>();
+             const ComponentInfo& info = GetComponentInfo(transform_component);
+             for (const Json& entry : args["edits"]) {
+                 if (!entry.is_object()) throw ToolError("Each entry in \"edits\" must be an object");
+                 const EntityGuid guid = RequireGuid(entry, "entity");
+                 if (edit_indices.contains(guid)) throw ToolError("Duplicate entity in \"edits\": " + ToString(guid));
+                 if (!entry.contains("rotation") || !entry["rotation"].is_array() || entry["rotation"].size() != 4) {
+                     throw ToolError("Each \"rotation\" must be [x, y, z, w]");
+                 }
+                 for (const Json& value : entry["rotation"]) {
+                     if (!value.is_number() || !std::isfinite(value.get<double>())) {
+                         throw ToolError("World-rotation values must be finite numbers");
+                     }
+                 }
+                 Quaternion world_rotation{entry["rotation"][0].get<f32>(), entry["rotation"][1].get<f32>(),
+                                          entry["rotation"][2].get<f32>(), entry["rotation"][3].get<f32>()};
+                 if (!std::isfinite(world_rotation.x) || !std::isfinite(world_rotation.y) ||
+                     !std::isfinite(world_rotation.z) || !std::isfinite(world_rotation.w)) {
+                     throw ToolError("World-rotation values must fit finite engine coordinates");
+                 }
+                 const f32 length_sq = world_rotation.LengthSq();
+                 if (!std::isfinite(length_sq) || length_sq <= 1.0e-12f) {
+                     throw ToolError("World-rotation quaternion must be non-zero");
+                 }
+                 world_rotation = world_rotation.Normalized();
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 if (entity.IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+                 if (s.world.GetComponent<Transform>(entity) == nullptr) {
+                     throw ToolError("Entity " + ToString(guid) + " doesn't have Transform");
+                 }
+                 edit_indices.emplace(guid, edits.size());
+                 RotationEdit edit;
+                 edit.guid = guid;
+                 edit.entity = entity;
+                 edit.world_rotation = world_rotation;
+                 edits.push_back(std::move(edit));
+             }
+
+             std::function<Quaternion(Entity, int)> compute_final_world_rotation = [&](Entity entity, int depth) -> Quaternion {
+                 if (entity.IsNull()) return Quaternion::Identity();
+                 if (depth >= kMaxHierarchyDepth) throw ToolError("World-rotation batch encountered a hierarchy cycle or excessive depth");
+                 const Transform* current = s.world.GetComponent<Transform>(entity);
+                 if (current == nullptr) return Quaternion::Identity();
+                 Quaternion parent_rotation = Quaternion::Identity();
+                 const Entity parent = GetParent(s.world, s.guids, entity);
+                 if (!parent.IsNull()) parent_rotation = compute_final_world_rotation(parent, depth + 1);
+
+                 const IdComponent* id = s.world.GetComponent<IdComponent>(entity);
+                 if (id != nullptr) {
+                     const auto selected = edit_indices.find(id->guid);
+                     if (selected != edit_indices.end()) {
+                         const Quaternion inverse_parent{-parent_rotation.x, -parent_rotation.y, -parent_rotation.z, parent_rotation.w};
+                         RotationEdit& edit = edits[selected->second];
+                         edit.local_rotation = (inverse_parent * edit.world_rotation).Normalized();
+                         if (!std::isfinite(edit.local_rotation.x) || !std::isfinite(edit.local_rotation.y) ||
+                             !std::isfinite(edit.local_rotation.z) || !std::isfinite(edit.local_rotation.w)) {
+                             throw ToolError("World rotation would produce a non-finite local rotation for entity " + ToString(id->guid));
+                         }
+                         return edit.world_rotation;
+                     }
+                 }
+
+                 const Quaternion& local = current->rotation;
+                 if (!std::isfinite(local.x) || !std::isfinite(local.y) || !std::isfinite(local.z) || !std::isfinite(local.w)) {
+                     throw ToolError("Ancestor entity has a non-finite rotation");
+                 }
+                 const f32 local_length_sq = local.LengthSq();
+                 if (!std::isfinite(local_length_sq) || local_length_sq <= 1.0e-12f) {
+                     throw ToolError("Ancestor entity has a zero rotation quaternion");
+                 }
+                 return (parent_rotation * local.Normalized()).Normalized();
+             };
+
+             for (const RotationEdit& edit : edits) (void)compute_final_world_rotation(edit.entity, 0);
+             for (RotationEdit& edit : edits) {
+                 const Transform* current = s.world.GetComponent<Transform>(edit.entity);
+                 Transform updated = *current;
+                 updated.rotation = edit.local_rotation;
+                 info.serialize(current, edit.before);
+                 info.serialize(&updated, edit.after);
+                 edit.changed = edit.before != edit.after;
+             }
+
+             const bool any_changed = std::any_of(edits.begin(), edits.end(), [](const RotationEdit& edit) { return edit.changed; });
+             if (any_changed) {
+                 static std::atomic<std::uint64_t> next_batch_id{0};
+                 const std::string transaction_label = "Set Entity World Rotations " + std::to_string(++next_batch_id);
+                 const usize undo_count_before = s.stack.UndoCount();
+                 editor::CommandContext ctx = s.Context();
+                 s.stack.BeginTransaction(transaction_label);
+                 try {
+                     for (const RotationEdit& edit : edits) {
+                         if (!edit.changed) continue;
+                         auto command = std::make_unique<SetComponentCommand>(edit.guid, transform_component, edit.before, edit.after);
+                         command->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(command));
+                     }
+                     s.stack.EndTransaction();
+                 } catch (...) {
+                     s.stack.EndTransaction();
+                     if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                     throw;
+                 }
+             }
+
+             Json results = Json::array();
+             for (const RotationEdit& edit : edits) {
+                 results.push_back({{"entity", ToString(edit.guid)},
+                                    {"world_rotation", {edit.world_rotation.x, edit.world_rotation.y, edit.world_rotation.z, edit.world_rotation.w}},
+                                    {"local_rotation", {edit.local_rotation.x, edit.local_rotation.y, edit.local_rotation.z, edit.local_rotation.w}},
+                                    {"changed", edit.changed}});
+             }
+             return {{"updated", std::count_if(edits.begin(), edits.end(), [](const RotationEdit& edit) { return edit.changed; })},
+                     {"entities", std::move(results)}};
+         }});
+
+    server.AddTool(
+        {"offset_entities_world_many",
+         "Add one world-space position offset to 1–64 unique scene entities as one undoable action. Each entity must have Transform; rotation and scale are preserved. The complete selection is validated before changes. Parent transforms, including selected ancestors moved by this batch, are accounted for; singular parent transforms for non-zero offsets, cycles and hierarchy chains deeper than the supported limit are rejected.",
+         Schema({{"entities", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 64},
+                               {"description", "1–64 unique entity GUIDs"}}},
+                 {"offset", {{"type", "array"}, {"items", {{"type", "number"}}}, {"minItems", 3}, {"maxItems", 3},
+                             {"description", "Shared world-space position offset [x, y, z]"}}}},
+                {"entities", "offset"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before changing entity transforms");
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be a non-empty array of at most 64 entity GUIDs");
+             }
+             if (!args["offset"].is_array() || args["offset"].size() != 3) throw ToolError("\"offset\" must be [x, y, z]");
+             for (const Json& value : args["offset"]) {
+                 if (!value.is_number() || !std::isfinite(value.get<double>())) throw ToolError("World offset values must be finite numbers");
+             }
+             const Vec3 offset{args["offset"][0].get<f32>(), args["offset"][1].get<f32>(), args["offset"][2].get<f32>()};
+             if (!std::isfinite(offset.x) || !std::isfinite(offset.y) || !std::isfinite(offset.z)) {
+                 throw ToolError("World offset values must fit finite engine coordinates");
+             }
+             const bool zero_offset = offset.x == 0.0f && offset.y == 0.0f && offset.z == 0.0f;
+
+             struct PositionEdit {
+                 EntityGuid guid;
+                 Entity entity;
+                 Vec3 world_position;
+                 Vec3 local_position;
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+                 bool changed = false;
+             };
+             std::vector<PositionEdit> edits;
+             edits.reserve(args["entities"].size());
+             std::map<EntityGuid, usize> edit_indices;
+             const ComponentId transform_component = GetComponentId<Transform>();
+             const ComponentInfo& info = GetComponentInfo(transform_component);
+             for (const Json& value : args["entities"]) {
+                 if (!value.is_string()) throw ToolError("Every entry in \"entities\" must be an entity GUID string");
+                 const std::string text = value.get<std::string>();
+                 EntityGuid guid;
+                 if (!ParseEntityGuid(text, guid)) throw ToolError("Not a valid entity GUID: " + text);
+                 if (edit_indices.contains(guid)) throw ToolError("Duplicate entity in \"entities\": " + ToString(guid));
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 if (entity.IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+                 if (s.world.GetComponent<Transform>(entity) == nullptr) {
+                     throw ToolError("Entity " + ToString(guid) + " doesn't have Transform");
+                 }
+                 edit_indices.emplace(guid, edits.size());
+                 PositionEdit edit;
+                 edit.guid = guid;
+                 edit.entity = entity;
+                 edits.push_back(std::move(edit));
+             }
+
+             std::function<Mat4(Entity, int)> compute_original_world = [&](Entity entity, int depth) -> Mat4 {
+                 if (entity.IsNull()) return Mat4::Identity();
+                 if (depth >= kMaxHierarchyDepth) throw ToolError("World-offset batch encountered a hierarchy cycle or excessive depth");
+                 const Transform* current = s.world.GetComponent<Transform>(entity);
+                 if (current == nullptr) return Mat4::Identity();
+                 Mat4 parent_world = Mat4::Identity();
+                 const Entity parent = GetParent(s.world, s.guids, entity);
+                 if (!parent.IsNull()) parent_world = compute_original_world(parent, depth + 1);
+                 return parent_world * LocalTransformMatrix(*current);
+             };
+             for (PositionEdit& edit : edits) {
+                 const Mat4 original_world = compute_original_world(edit.entity, 0);
+                 const Vec4 original = original_world * Vec4(0.0f, 0.0f, 0.0f, 1.0f);
+                 if (!std::isfinite(original.x) || !std::isfinite(original.y) || !std::isfinite(original.z) ||
+                     !std::isfinite(original.w) || std::abs(original.w) <= 1.0e-12f) {
+                     throw ToolError("Cannot calculate a finite world position for entity " + ToString(edit.guid));
+                 }
+                 edit.world_position = Vec3(original.x / original.w, original.y / original.w, original.z / original.w) + offset;
+                 if (!std::isfinite(edit.world_position.x) || !std::isfinite(edit.world_position.y) || !std::isfinite(edit.world_position.z)) {
+                     throw ToolError("World offset would produce a non-finite position for entity " + ToString(edit.guid));
+                 }
+             }
+
+             std::function<Mat4(Entity, int)> compute_final_world = [&](Entity entity, int depth) -> Mat4 {
+                 if (entity.IsNull()) return Mat4::Identity();
+                 if (depth >= kMaxHierarchyDepth) throw ToolError("World-offset batch encountered a hierarchy cycle or excessive depth");
+                 const Transform* current = s.world.GetComponent<Transform>(entity);
+                 if (current == nullptr) return Mat4::Identity();
+                 Mat4 parent_world = Mat4::Identity();
+                 const Entity parent = GetParent(s.world, s.guids, entity);
+                 if (!parent.IsNull()) parent_world = compute_final_world(parent, depth + 1);
+                 Transform updated = *current;
+                 const IdComponent* id = s.world.GetComponent<IdComponent>(entity);
+                 if (id != nullptr) {
+                     const auto selected = edit_indices.find(id->guid);
+                     if (selected != edit_indices.end()) {
+                         PositionEdit& edit = edits[selected->second];
+                         if (zero_offset) {
+                             edit.local_position = current->position;
+                         } else {
+                             Mat4 inverse_parent;
+                             if (!parent_world.TryInverse(inverse_parent)) {
+                                 throw ToolError("Cannot offset entity " + ToString(id->guid) + " in world space because its final parent transform is singular");
+                             }
+                             const Vec4 local_homogeneous = inverse_parent * Vec4(edit.world_position.x, edit.world_position.y, edit.world_position.z, 1.0f);
+                             if (!std::isfinite(local_homogeneous.x) || !std::isfinite(local_homogeneous.y) ||
+                                 !std::isfinite(local_homogeneous.z) || !std::isfinite(local_homogeneous.w) ||
+                                 std::abs(local_homogeneous.w) <= 1.0e-12f) {
+                                 throw ToolError("Final parent transform cannot produce a finite local position for entity " + ToString(id->guid));
+                             }
+                             edit.local_position = Vec3(local_homogeneous.x / local_homogeneous.w,
+                                                        local_homogeneous.y / local_homogeneous.w,
+                                                        local_homogeneous.z / local_homogeneous.w);
+                         }
+                         if (!std::isfinite(edit.local_position.x) || !std::isfinite(edit.local_position.y) ||
+                             !std::isfinite(edit.local_position.z)) {
+                             throw ToolError("World offset would produce a non-finite local position for entity " + ToString(id->guid));
+                         }
+                         updated.position = edit.local_position;
+                     }
+                 }
+                 return parent_world * LocalTransformMatrix(updated);
+             };
+             for (const PositionEdit& edit : edits) (void)compute_final_world(edit.entity, 0);
+
+             for (PositionEdit& edit : edits) {
+                 const Transform* current = s.world.GetComponent<Transform>(edit.entity);
+                 Transform updated = *current;
+                 updated.position = edit.local_position;
+                 info.serialize(current, edit.before);
+                 info.serialize(&updated, edit.after);
+                 edit.changed = edit.before != edit.after;
+             }
+
+             const bool any_changed = std::any_of(edits.begin(), edits.end(), [](const PositionEdit& edit) { return edit.changed; });
+             if (any_changed) {
+                 static std::atomic<std::uint64_t> next_batch_id{0};
+                 const std::string transaction_label = "Offset Entity World Positions " + std::to_string(++next_batch_id);
+                 const usize undo_count_before = s.stack.UndoCount();
+                 editor::CommandContext ctx = s.Context();
+                 s.stack.BeginTransaction(transaction_label);
+                 try {
+                     for (const PositionEdit& edit : edits) {
+                         if (!edit.changed) continue;
+                         auto command = std::make_unique<SetComponentCommand>(edit.guid, transform_component, edit.before, edit.after);
+                         command->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(command));
+                     }
+                     s.stack.EndTransaction();
+                 } catch (...) {
+                     s.stack.EndTransaction();
+                     if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                     throw;
+                 }
+             }
+
+             Json results = Json::array();
+             for (const PositionEdit& edit : edits) {
+                 results.push_back({{"entity", ToString(edit.guid)},
+                                    {"world_position", {edit.world_position.x, edit.world_position.y, edit.world_position.z}},
+                                    {"local_position", {edit.local_position.x, edit.local_position.y, edit.local_position.z}},
+                                    {"changed", edit.changed}});
+             }
+             return {{"updated", std::count_if(edits.begin(), edits.end(), [](const PositionEdit& edit) { return edit.changed; })},
+                     {"entities", std::move(results)}};
+         }});
+    server.AddTool(
+        {"offset_entities_world_positions_many",
+         "Apply individual world-space position offsets to 1–64 unique scene entities as one undoable action. Each entity must have Transform; rotation and scale are preserved. Validate all finite offsets and targets before changes. Parent transforms, including selected ancestors moved by this batch, are accounted for; singular parent transforms for non-zero offsets, cycles and hierarchy chains deeper than the supported limit are rejected.",
+         Schema({{"edits", {{"type", "array"},
+                             {"items", {{"type", "object"},
+                                        {"properties", {{"entity", kGuidProp},
+                                                        {"offset", {{"type", "array"}, {"items", {{"type", "number"}}},
+                                                                     {"minItems", 3}, {"maxItems", 3}}}}},
+                                        {"required", Json::array({"entity", "offset"})}}},
+                             {"minItems", 1}, {"maxItems", 64},
+                             {"description", "1–64 unique entity GUID and world-position-offset pairs"}}}},
+                {"edits"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before changing entity transforms");
+             if (!args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
+                 throw ToolError("\"edits\" must be a non-empty array of at most 64 entity position changes");
+             }
+
+             struct PositionEdit {
+                 EntityGuid guid;
+                 Entity entity;
+                 Vec3 offset;
+                 Vec3 world_position;
+                 Vec3 local_position;
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+                 bool changed = false;
+             };
+             std::vector<PositionEdit> edits;
+             edits.reserve(args["edits"].size());
+             std::map<EntityGuid, usize> edit_indices;
+             const ComponentId transform_component = GetComponentId<Transform>();
+             const ComponentInfo& info = GetComponentInfo(transform_component);
+             for (const Json& entry : args["edits"]) {
+                 if (!entry.is_object()) throw ToolError("Each entry in \"edits\" must be an object");
+                 const EntityGuid guid = RequireGuid(entry, "entity");
+                 if (edit_indices.contains(guid)) throw ToolError("Duplicate entity in \"edits\": " + ToString(guid));
+                 if (!entry.contains("offset") || !entry["offset"].is_array() || entry["offset"].size() != 3) {
+                     throw ToolError("Each \"offset\" must be [x, y, z]");
+                 }
+                 for (const Json& value : entry["offset"]) {
+                     if (!value.is_number() || !std::isfinite(value.get<double>())) {
+                         throw ToolError("World offset values must be finite numbers");
+                     }
+                 }
+                 const Vec3 offset{entry["offset"][0].get<f32>(), entry["offset"][1].get<f32>(), entry["offset"][2].get<f32>()};
+                 if (!std::isfinite(offset.x) || !std::isfinite(offset.y) || !std::isfinite(offset.z)) {
+                     throw ToolError("World offset values must fit finite engine coordinates");
+                 }
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 if (entity.IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+                 if (s.world.GetComponent<Transform>(entity) == nullptr) {
+                     throw ToolError("Entity " + ToString(guid) + " doesn't have Transform");
+                 }
+                 edit_indices.emplace(guid, edits.size());
+                 PositionEdit edit;
+                 edit.guid = guid;
+                 edit.entity = entity;
+                 edit.offset = offset;
+                 edits.push_back(std::move(edit));
+             }
+
+             std::function<Mat4(Entity, int)> compute_original_world = [&](Entity entity, int depth) -> Mat4 {
+                 if (entity.IsNull()) return Mat4::Identity();
+                 if (depth >= kMaxHierarchyDepth) throw ToolError("World-offset batch encountered a hierarchy cycle or excessive depth");
+                 const Transform* current = s.world.GetComponent<Transform>(entity);
+                 if (current == nullptr) return Mat4::Identity();
+                 Mat4 parent_world = Mat4::Identity();
+                 const Entity parent = GetParent(s.world, s.guids, entity);
+                 if (!parent.IsNull()) parent_world = compute_original_world(parent, depth + 1);
+                 return parent_world * LocalTransformMatrix(*current);
+             };
+             for (PositionEdit& edit : edits) {
+                 const Mat4 original_world = compute_original_world(edit.entity, 0);
+                 const Vec4 original = original_world * Vec4(0.0f, 0.0f, 0.0f, 1.0f);
+                 if (!std::isfinite(original.x) || !std::isfinite(original.y) || !std::isfinite(original.z) ||
+                     !std::isfinite(original.w) || std::abs(original.w) <= 1.0e-12f) {
+                     throw ToolError("Cannot calculate a finite world position for entity " + ToString(edit.guid));
+                 }
+                 edit.world_position = Vec3(original.x / original.w, original.y / original.w, original.z / original.w) + edit.offset;
+                 if (!std::isfinite(edit.world_position.x) || !std::isfinite(edit.world_position.y) || !std::isfinite(edit.world_position.z)) {
+                     throw ToolError("World offset would produce a non-finite position for entity " + ToString(edit.guid));
+                 }
+             }
+
+             std::function<Mat4(Entity, int)> compute_final_world = [&](Entity entity, int depth) -> Mat4 {
+                 if (entity.IsNull()) return Mat4::Identity();
+                 if (depth >= kMaxHierarchyDepth) throw ToolError("World-offset batch encountered a hierarchy cycle or excessive depth");
+                 const Transform* current = s.world.GetComponent<Transform>(entity);
+                 if (current == nullptr) return Mat4::Identity();
+                 Mat4 parent_world = Mat4::Identity();
+                 const Entity parent = GetParent(s.world, s.guids, entity);
+                 if (!parent.IsNull()) parent_world = compute_final_world(parent, depth + 1);
+                 Transform updated = *current;
+                 const IdComponent* id = s.world.GetComponent<IdComponent>(entity);
+                 if (id != nullptr) {
+                     const auto selected = edit_indices.find(id->guid);
+                     if (selected != edit_indices.end()) {
+                         PositionEdit& edit = edits[selected->second];
+                         if (edit.offset.x == 0.0f && edit.offset.y == 0.0f && edit.offset.z == 0.0f) {
+                             edit.local_position = current->position;
+                         } else {
+                             Mat4 inverse_parent;
+                             if (!parent_world.TryInverse(inverse_parent)) {
+                                 throw ToolError("Cannot offset entity " + ToString(id->guid) + " in world space because its final parent transform is singular");
+                             }
+                             const Vec4 local_homogeneous = inverse_parent * Vec4(edit.world_position.x, edit.world_position.y, edit.world_position.z, 1.0f);
+                             if (!std::isfinite(local_homogeneous.x) || !std::isfinite(local_homogeneous.y) ||
+                                 !std::isfinite(local_homogeneous.z) || !std::isfinite(local_homogeneous.w) ||
+                                 std::abs(local_homogeneous.w) <= 1.0e-12f) {
+                                 throw ToolError("Final parent transform cannot produce a finite local position for entity " + ToString(id->guid));
+                             }
+                             edit.local_position = Vec3(local_homogeneous.x / local_homogeneous.w,
+                                                        local_homogeneous.y / local_homogeneous.w,
+                                                        local_homogeneous.z / local_homogeneous.w);
+                         }
+                         if (!std::isfinite(edit.local_position.x) || !std::isfinite(edit.local_position.y) ||
+                             !std::isfinite(edit.local_position.z)) {
+                             throw ToolError("World offset would produce a non-finite local position for entity " + ToString(id->guid));
+                         }
+                         updated.position = edit.local_position;
+                     }
+                 }
+                 return parent_world * LocalTransformMatrix(updated);
+             };
+             for (const PositionEdit& edit : edits) (void)compute_final_world(edit.entity, 0);
+
+             for (PositionEdit& edit : edits) {
+                 const Transform* current = s.world.GetComponent<Transform>(edit.entity);
+                 Transform updated = *current;
+                 updated.position = edit.local_position;
+                 info.serialize(current, edit.before);
+                 info.serialize(&updated, edit.after);
+                 edit.changed = edit.before != edit.after;
+             }
+
+             const bool any_changed = std::any_of(edits.begin(), edits.end(), [](const PositionEdit& edit) { return edit.changed; });
+             if (any_changed) {
+                 static std::atomic<std::uint64_t> next_batch_id{0};
+                 const std::string transaction_label = "Offset Entity World Positions " + std::to_string(++next_batch_id);
+                 const usize undo_count_before = s.stack.UndoCount();
+                 editor::CommandContext ctx = s.Context();
+                 s.stack.BeginTransaction(transaction_label);
+                 try {
+                     for (const PositionEdit& edit : edits) {
+                         if (!edit.changed) continue;
+                         auto command = std::make_unique<SetComponentCommand>(edit.guid, transform_component, edit.before, edit.after);
+                         command->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(command));
+                     }
+                     s.stack.EndTransaction();
+                 } catch (...) {
+                     s.stack.EndTransaction();
+                     if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                     throw;
+                 }
+             }
+
+             Json results = Json::array();
+             for (const PositionEdit& edit : edits) {
+                 results.push_back({{"entity", ToString(edit.guid)},
+                                    {"offset", {edit.offset.x, edit.offset.y, edit.offset.z}},
+                                    {"world_position", {edit.world_position.x, edit.world_position.y, edit.world_position.z}},
+                                    {"local_position", {edit.local_position.x, edit.local_position.y, edit.local_position.z}},
+                                    {"changed", edit.changed}});
+             }
+             return {{"updated", std::count_if(edits.begin(), edits.end(), [](const PositionEdit& edit) { return edit.changed; })},
+                     {"entities", std::move(results)}};
+         }});
+    server.AddTool(
+        {"set_entities_world_scale_many",
+         "Set 1–64 unique scene entities to one shared world scale magnitude [x, y, z] as one undoable action. World scale is measured as the lengths of the three world-transform basis columns; values must be finite and non-negative. Local scale signs are preserved. Parent transforms, including selected ancestors with final scales, are accounted for. Rejects hierarchy cycles/excessive depth and non-zero requested axes collapsed by the parent transform. Position and rotation are preserved.",
+         Schema({{"entities", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 64},
+                               {"description", "1–64 unique entity GUIDs"}}},
+                 {"scale", {{"type", "array"}, {"items", {{"type", "number"}}}, {"minItems", 3}, {"maxItems", 3},
+                             {"description", "Shared world-scale magnitudes [x, y, z]"}}}},
+                {"entities", "scale"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before changing entity transforms");
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be a non-empty array of at most 64 entity GUIDs");
+             }
+             if (!args["scale"].is_array() || args["scale"].size() != 3) throw ToolError("\"scale\" must be [x, y, z]");
+             for (const Json& value : args["scale"]) {
+                 if (!value.is_number() || !std::isfinite(value.get<double>())) throw ToolError("World-scale values must be finite numbers");
+             }
+             const Vec3 world_scale{args["scale"][0].get<f32>(), args["scale"][1].get<f32>(), args["scale"][2].get<f32>()};
+             if (!std::isfinite(world_scale.x) || !std::isfinite(world_scale.y) || !std::isfinite(world_scale.z)) {
+                 throw ToolError("World-scale values must fit finite engine coordinates");
+             }
+             if (world_scale.x < 0.0f || world_scale.y < 0.0f || world_scale.z < 0.0f) {
+                 throw ToolError("World-scale magnitudes must be non-negative");
+             }
+
+             struct ScaleEdit {
+                 EntityGuid guid;
+                 Entity entity;
+                 Vec3 local_scale;
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+                 bool changed = false;
+             };
+             std::vector<ScaleEdit> edits;
+             edits.reserve(args["entities"].size());
+             std::map<EntityGuid, usize> edit_indices;
+             const ComponentId transform_component = GetComponentId<Transform>();
+             const ComponentInfo& info = GetComponentInfo(transform_component);
+             for (const Json& value : args["entities"]) {
+                 if (!value.is_string()) throw ToolError("Every entry in \"entities\" must be an entity GUID string");
+                 const std::string text = value.get<std::string>();
+                 EntityGuid guid;
+                 if (!ParseEntityGuid(text, guid)) throw ToolError("Not a valid entity GUID: " + text);
+                 if (edit_indices.contains(guid)) throw ToolError("Duplicate entity in \"entities\": " + ToString(guid));
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 if (entity.IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+                 if (s.world.GetComponent<Transform>(entity) == nullptr) {
+                     throw ToolError("Entity " + ToString(guid) + " doesn't have Transform");
+                 }
+                 edit_indices.emplace(guid, edits.size());
+                 ScaleEdit edit;
+                 edit.guid = guid;
+                 edit.entity = entity;
+                 edits.push_back(std::move(edit));
+             }
+
+             std::function<Mat4(Entity, int)> compute_final_world = [&](Entity entity, int depth) -> Mat4 {
+                 if (entity.IsNull()) return Mat4::Identity();
+                 if (depth >= kMaxHierarchyDepth) throw ToolError("World-scale batch encountered a hierarchy cycle or excessive depth");
+                 const Transform* current = s.world.GetComponent<Transform>(entity);
+                 if (current == nullptr) return Mat4::Identity();
+                 Mat4 parent_world = Mat4::Identity();
+                 const Entity parent = GetParent(s.world, s.guids, entity);
+                 if (!parent.IsNull()) parent_world = compute_final_world(parent, depth + 1);
+                 Transform updated = *current;
+                 const IdComponent* id = s.world.GetComponent<IdComponent>(entity);
+                 if (id != nullptr) {
+                     const auto selected = edit_indices.find(id->guid);
+                     if (selected != edit_indices.end()) {
+                         if (!std::isfinite(current->scale.x) || !std::isfinite(current->scale.y) || !std::isfinite(current->scale.z)) {
+                             throw ToolError("Entity " + ToString(id->guid) + " has a non-finite local scale");
+                         }
+                         Transform unit_scale = *current;
+                         unit_scale.scale = Vec3(1.0f, 1.0f, 1.0f);
+                         const Mat4 unit_world = parent_world * LocalTransformMatrix(unit_scale);
+                         const f32 axis_lengths[3] = {
+                             Vec3(unit_world.cols[0].x, unit_world.cols[0].y, unit_world.cols[0].z).Length(),
+                             Vec3(unit_world.cols[1].x, unit_world.cols[1].y, unit_world.cols[1].z).Length(),
+                             Vec3(unit_world.cols[2].x, unit_world.cols[2].y, unit_world.cols[2].z).Length()};
+                         const f32 requested[3] = {world_scale.x, world_scale.y, world_scale.z};
+                         const f32 signs[3] = {current->scale.x < 0.0f ? -1.0f : 1.0f,
+                                               current->scale.y < 0.0f ? -1.0f : 1.0f,
+                                               current->scale.z < 0.0f ? -1.0f : 1.0f};
+                         f32 local_values[3]{};
+                         for (int axis = 0; axis < 3; ++axis) {
+                             if (!std::isfinite(axis_lengths[axis])) {
+                                 throw ToolError("Final parent transform has a non-finite world basis for entity " + ToString(id->guid));
+                             }
+                             if (axis_lengths[axis] <= 1.0e-12f) {
+                                 if (requested[axis] > 0.0f) {
+                                     throw ToolError("Cannot assign non-zero world scale on a basis collapsed by the parent transform for entity " + ToString(id->guid));
+                                 }
+                                 local_values[axis] = 0.0f;
+                             } else {
+                                 local_values[axis] = signs[axis] * requested[axis] / axis_lengths[axis];
+                                 if (!std::isfinite(local_values[axis]) || (requested[axis] > 0.0f && local_values[axis] == 0.0f)) {
+                                     throw ToolError("World scale would produce an invalid local scale for entity " + ToString(id->guid));
+                                 }
+                             }
+                         }
+                         edits[selected->second].local_scale = Vec3(local_values[0], local_values[1], local_values[2]);
+                         updated.scale = edits[selected->second].local_scale;
+                     }
+                 }
+                 return parent_world * LocalTransformMatrix(updated);
+             };
+             for (const ScaleEdit& edit : edits) (void)compute_final_world(edit.entity, 0);
+
+             for (ScaleEdit& edit : edits) {
+                 const Transform* current = s.world.GetComponent<Transform>(edit.entity);
+                 Transform updated = *current;
+                 updated.scale = edit.local_scale;
+                 info.serialize(current, edit.before);
+                 info.serialize(&updated, edit.after);
+                 edit.changed = edit.before != edit.after;
+             }
+
+             const bool any_changed = std::any_of(edits.begin(), edits.end(), [](const ScaleEdit& edit) { return edit.changed; });
+             if (any_changed) {
+                 static std::atomic<std::uint64_t> next_batch_id{0};
+                 const std::string transaction_label = "Set Entity World Scale " + std::to_string(++next_batch_id);
+                 const usize undo_count_before = s.stack.UndoCount();
+                 editor::CommandContext ctx = s.Context();
+                 s.stack.BeginTransaction(transaction_label);
+                 try {
+                     for (const ScaleEdit& edit : edits) {
+                         if (!edit.changed) continue;
+                         auto command = std::make_unique<SetComponentCommand>(edit.guid, transform_component, edit.before, edit.after);
+                         command->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(command));
+                     }
+                     s.stack.EndTransaction();
+                 } catch (...) {
+                     s.stack.EndTransaction();
+                     if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                     throw;
+                 }
+             }
+
+             Json results = Json::array();
+             for (const ScaleEdit& edit : edits) {
+                 results.push_back({{"entity", ToString(edit.guid)},
+                                    {"world_scale", {world_scale.x, world_scale.y, world_scale.z}},
+                                    {"local_scale", {edit.local_scale.x, edit.local_scale.y, edit.local_scale.z}},
+                                    {"changed", edit.changed}});
+             }
+             return {{"updated", std::count_if(edits.begin(), edits.end(), [](const ScaleEdit& edit) { return edit.changed; })},
+                     {"entities", std::move(results)}};
+         }});
+    server.AddTool(
+        {"multiply_entities_world_scale_many",
+         "Multiply the world-scale magnitudes of 1–64 unique scene entities by one shared factor [x, y, z] as one undoable action. World scale is measured as the lengths of the three world-transform basis columns; factors must be finite and non-negative. Targets are computed from each entity's original world scale, even when selected ancestors are also changed. Local mirror signs are preserved. Parent transforms, including selected ancestors with final scales, are accounted for. Rejects hierarchy cycles/excessive depth and non-zero requested axes collapsed by the parent transform. Position and rotation are preserved.",
+         Schema({{"entities", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 64},
+                               {"description", "1–64 unique entity GUIDs"}}},
+                 {"factor", {{"type", "array"}, {"items", {{"type", "number"}}}, {"minItems", 3}, {"maxItems", 3},
+                              {"description", "Shared non-negative world-scale multiplier [x, y, z]"}}}},
+                {"entities", "factor"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before changing entity transforms");
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be a non-empty array of at most 64 entity GUIDs");
+             }
+             if (!args["factor"].is_array() || args["factor"].size() != 3) throw ToolError("\"factor\" must be [x, y, z]");
+             for (const Json& value : args["factor"]) {
+                 if (!value.is_number() || !std::isfinite(value.get<double>())) throw ToolError("World-scale factors must be finite numbers");
+             }
+             const Vec3 factor{args["factor"][0].get<f32>(), args["factor"][1].get<f32>(), args["factor"][2].get<f32>()};
+             if (!std::isfinite(factor.x) || !std::isfinite(factor.y) || !std::isfinite(factor.z)) {
+                 throw ToolError("World-scale factors must fit finite engine coordinates");
+             }
+             if (factor.x < 0.0f || factor.y < 0.0f || factor.z < 0.0f) {
+                 throw ToolError("World-scale factors must be non-negative");
+             }
+
+             struct ScaleEdit {
+                 EntityGuid guid;
+                 Entity entity;
+                 Vec3 world_scale;
+                 Vec3 local_scale;
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+                 bool changed = false;
+             };
+             std::vector<ScaleEdit> edits;
+             edits.reserve(args["entities"].size());
+             std::map<EntityGuid, usize> edit_indices;
+             const ComponentId transform_component = GetComponentId<Transform>();
+             const ComponentInfo& info = GetComponentInfo(transform_component);
+             for (const Json& value : args["entities"]) {
+                 if (!value.is_string()) throw ToolError("Every entry in \"entities\" must be an entity GUID string");
+                 const std::string text = value.get<std::string>();
+                 EntityGuid guid;
+                 if (!ParseEntityGuid(text, guid)) throw ToolError("Not a valid entity GUID: " + text);
+                 if (edit_indices.contains(guid)) throw ToolError("Duplicate entity in \"entities\": " + ToString(guid));
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 if (entity.IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+                 if (s.world.GetComponent<Transform>(entity) == nullptr) {
+                     throw ToolError("Entity " + ToString(guid) + " doesn't have Transform");
+                 }
+                 edit_indices.emplace(guid, edits.size());
+                 ScaleEdit edit;
+                 edit.guid = guid;
+                 edit.entity = entity;
+                 edits.push_back(std::move(edit));
+             }
+
+             std::function<Mat4(Entity, int)> compute_original_world = [&](Entity entity, int depth) -> Mat4 {
+                 if (entity.IsNull()) return Mat4::Identity();
+                 if (depth >= kMaxHierarchyDepth) throw ToolError("World-scale batch encountered a hierarchy cycle or excessive depth");
+                 const Transform* current = s.world.GetComponent<Transform>(entity);
+                 if (current == nullptr) return Mat4::Identity();
+                 const Entity parent = GetParent(s.world, s.guids, entity);
+                 return (parent.IsNull() ? Mat4::Identity() : compute_original_world(parent, depth + 1)) * LocalTransformMatrix(*current);
+             };
+             for (ScaleEdit& edit : edits) {
+                 const Mat4 original_world = compute_original_world(edit.entity, 0);
+                 const f32 original_lengths[3] = {
+                     Vec3(original_world.cols[0].x, original_world.cols[0].y, original_world.cols[0].z).Length(),
+                     Vec3(original_world.cols[1].x, original_world.cols[1].y, original_world.cols[1].z).Length(),
+                     Vec3(original_world.cols[2].x, original_world.cols[2].y, original_world.cols[2].z).Length()};
+                 const f32 factors[3] = {factor.x, factor.y, factor.z};
+                 f32 targets[3]{};
+                 for (int axis = 0; axis < 3; ++axis) {
+                     targets[axis] = original_lengths[axis] * factors[axis];
+                     if (!std::isfinite(original_lengths[axis]) || !std::isfinite(targets[axis])) {
+                         throw ToolError("World-scale multiplication would produce a non-finite target for entity " + ToString(edit.guid));
+                     }
+                 }
+                 edit.world_scale = Vec3(targets[0], targets[1], targets[2]);
+             }
+
+             std::function<Mat4(Entity, int)> compute_final_world = [&](Entity entity, int depth) -> Mat4 {
+                 if (entity.IsNull()) return Mat4::Identity();
+                 if (depth >= kMaxHierarchyDepth) throw ToolError("World-scale batch encountered a hierarchy cycle or excessive depth");
+                 const Transform* current = s.world.GetComponent<Transform>(entity);
+                 if (current == nullptr) return Mat4::Identity();
+                 Mat4 parent_world = Mat4::Identity();
+                 const Entity parent = GetParent(s.world, s.guids, entity);
+                 if (!parent.IsNull()) parent_world = compute_final_world(parent, depth + 1);
+                 Transform updated = *current;
+                 const IdComponent* id = s.world.GetComponent<IdComponent>(entity);
+                 if (id != nullptr) {
+                     const auto selected = edit_indices.find(id->guid);
+                     if (selected != edit_indices.end()) {
+                         if (!std::isfinite(current->scale.x) || !std::isfinite(current->scale.y) || !std::isfinite(current->scale.z)) {
+                             throw ToolError("Entity " + ToString(id->guid) + " has a non-finite local scale");
+                         }
+                         Transform unit_scale = *current;
+                         unit_scale.scale = Vec3(1.0f, 1.0f, 1.0f);
+                         const Mat4 unit_world = parent_world * LocalTransformMatrix(unit_scale);
+                         const f32 axis_lengths[3] = {
+                             Vec3(unit_world.cols[0].x, unit_world.cols[0].y, unit_world.cols[0].z).Length(),
+                             Vec3(unit_world.cols[1].x, unit_world.cols[1].y, unit_world.cols[1].z).Length(),
+                             Vec3(unit_world.cols[2].x, unit_world.cols[2].y, unit_world.cols[2].z).Length()};
+                         const Vec3 requested_scale = edits[selected->second].world_scale;
+                         const f32 requested[3] = {requested_scale.x, requested_scale.y, requested_scale.z};
+                         const f32 signs[3] = {current->scale.x < 0.0f ? -1.0f : 1.0f,
+                                               current->scale.y < 0.0f ? -1.0f : 1.0f,
+                                               current->scale.z < 0.0f ? -1.0f : 1.0f};
+                         f32 local_values[3]{};
+                         for (int axis = 0; axis < 3; ++axis) {
+                             if (!std::isfinite(axis_lengths[axis])) {
+                                 throw ToolError("Final parent transform has a non-finite world basis for entity " + ToString(id->guid));
+                             }
+                             if (axis_lengths[axis] <= 1.0e-12f) {
+                                 if (requested[axis] > 0.0f) {
+                                     throw ToolError("Cannot assign non-zero world scale on a basis collapsed by the parent transform for entity " + ToString(id->guid));
+                                 }
+                                 local_values[axis] = 0.0f;
+                             } else {
+                                 local_values[axis] = signs[axis] * requested[axis] / axis_lengths[axis];
+                                 if (!std::isfinite(local_values[axis]) || (requested[axis] > 0.0f && local_values[axis] == 0.0f)) {
+                                     throw ToolError("World scale would produce an invalid local scale for entity " + ToString(id->guid));
+                                 }
+                             }
+                         }
+                         edits[selected->second].local_scale = Vec3(local_values[0], local_values[1], local_values[2]);
+                         updated.scale = edits[selected->second].local_scale;
+                     }
+                 }
+                 return parent_world * LocalTransformMatrix(updated);
+             };
+             for (const ScaleEdit& edit : edits) (void)compute_final_world(edit.entity, 0);
+
+             for (ScaleEdit& edit : edits) {
+                 const Transform* current = s.world.GetComponent<Transform>(edit.entity);
+                 Transform updated = *current;
+                 updated.scale = edit.local_scale;
+                 info.serialize(current, edit.before);
+                 info.serialize(&updated, edit.after);
+                 edit.changed = edit.before != edit.after;
+             }
+
+             const bool any_changed = std::any_of(edits.begin(), edits.end(), [](const ScaleEdit& edit) { return edit.changed; });
+             if (any_changed) {
+                 static std::atomic<std::uint64_t> next_batch_id{0};
+                 const std::string transaction_label = "Multiply Entity World Scale " + std::to_string(++next_batch_id);
+                 const usize undo_count_before = s.stack.UndoCount();
+                 editor::CommandContext ctx = s.Context();
+                 s.stack.BeginTransaction(transaction_label);
+                 try {
+                     for (const ScaleEdit& edit : edits) {
+                         if (!edit.changed) continue;
+                         auto command = std::make_unique<SetComponentCommand>(edit.guid, transform_component, edit.before, edit.after);
+                         command->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(command));
+                     }
+                     s.stack.EndTransaction();
+                 } catch (...) {
+                     s.stack.EndTransaction();
+                     if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                     throw;
+                 }
+             }
+
+             Json results = Json::array();
+             for (const ScaleEdit& edit : edits) {
+                 results.push_back({{"entity", ToString(edit.guid)},
+                                    {"factor", {factor.x, factor.y, factor.z}},
+                                    {"world_scale", {edit.world_scale.x, edit.world_scale.y, edit.world_scale.z}},
+                                    {"local_scale", {edit.local_scale.x, edit.local_scale.y, edit.local_scale.z}},
+                                    {"changed", edit.changed}});
+             }
+             return {{"updated", std::count_if(edits.begin(), edits.end(), [](const ScaleEdit& edit) { return edit.changed; })},
+                     {"entities", std::move(results)}};
+         }});
+
+    server.AddTool(
+        {"multiply_entities_world_scale_per_entity_many",
+         "Multiply the world-scale magnitudes of 1–64 unique scene entities by individual factors [x, y, z] as one undoable action. World scale is measured as the lengths of the three world-transform basis columns; factors must be finite and non-negative. Targets are computed from each entity's original world scale, even when selected ancestors are also changed. Local mirror signs are preserved. Parent transforms, including selected ancestors with final scales, are accounted for. Rejects hierarchy cycles/excessive depth and non-zero requested axes collapsed by the parent transform. Position and rotation are preserved.",
+         Schema({{"edits", {{"type", "array"},
+                             {"items", {{"type", "object"},
+                                        {"properties", {{"entity", kGuidProp},
+                                                        {"factor", {{"type", "array"}, {"items", {{"type", "number"}}},
+                                                                     {"minItems", 3}, {"maxItems", 3}}}}},
+                                        {"required", Json::array({"entity", "factor"})}}},
+                             {"minItems", 1}, {"maxItems", 64},
+                             {"description", "1–64 unique entity GUID and world-scale multiplier pairs"}}}},
+                {"edits"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before changing entity transforms");
+             if (!args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
+                 throw ToolError("\"edits\" must be a non-empty array of at most 64 entity scale changes");
+             }
+
+             struct ScaleEdit {
+                 EntityGuid guid;
+                 Entity entity;
+                 Vec3 factor;
+                 Vec3 world_scale;
+                 Vec3 local_scale;
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+                 bool changed = false;
+             };
+             std::vector<ScaleEdit> edits;
+             edits.reserve(args["edits"].size());
+             std::map<EntityGuid, usize> edit_indices;
+             const ComponentId transform_component = GetComponentId<Transform>();
+             const ComponentInfo& info = GetComponentInfo(transform_component);
+             for (const Json& entry : args["edits"]) {
+                 if (!entry.is_object()) throw ToolError("Each entry in \"edits\" must be an object");
+                 const EntityGuid guid = RequireGuid(entry, "entity");
+                 if (edit_indices.contains(guid)) throw ToolError("Duplicate entity in \"edits\": " + ToString(guid));
+                 if (!entry.contains("factor") || !entry["factor"].is_array() || entry["factor"].size() != 3) {
+                     throw ToolError("Each \"factor\" must be [x, y, z]");
+                 }
+                 for (const Json& value : entry["factor"]) {
+                     if (!value.is_number() || !std::isfinite(value.get<double>())) {
+                         throw ToolError("World-scale factors must be finite numbers");
+                     }
+                 }
+                 const Vec3 factor{entry["factor"][0].get<f32>(), entry["factor"][1].get<f32>(), entry["factor"][2].get<f32>()};
+                 if (!std::isfinite(factor.x) || !std::isfinite(factor.y) || !std::isfinite(factor.z)) {
+                     throw ToolError("World-scale factors must fit finite engine coordinates");
+                 }
+                 if (factor.x < 0.0f || factor.y < 0.0f || factor.z < 0.0f) {
+                     throw ToolError("World-scale factors must be non-negative");
+                 }
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 if (entity.IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+                 if (s.world.GetComponent<Transform>(entity) == nullptr) {
+                     throw ToolError("Entity " + ToString(guid) + " doesn't have Transform");
+                 }
+                 edit_indices.emplace(guid, edits.size());
+                 ScaleEdit edit;
+                 edit.guid = guid;
+                 edit.entity = entity;
+                 edit.factor = factor;
+                 edits.push_back(std::move(edit));
+             }
+
+             std::function<Mat4(Entity, int)> compute_original_world = [&](Entity entity, int depth) -> Mat4 {
+                 if (entity.IsNull()) return Mat4::Identity();
+                 if (depth >= kMaxHierarchyDepth) throw ToolError("World-scale batch encountered a hierarchy cycle or excessive depth");
+                 const Transform* current = s.world.GetComponent<Transform>(entity);
+                 if (current == nullptr) return Mat4::Identity();
+                 const Entity parent = GetParent(s.world, s.guids, entity);
+                 return (parent.IsNull() ? Mat4::Identity() : compute_original_world(parent, depth + 1)) * LocalTransformMatrix(*current);
+             };
+             for (ScaleEdit& edit : edits) {
+                 const Mat4 original_world = compute_original_world(edit.entity, 0);
+                 const f32 original_lengths[3] = {
+                     Vec3(original_world.cols[0].x, original_world.cols[0].y, original_world.cols[0].z).Length(),
+                     Vec3(original_world.cols[1].x, original_world.cols[1].y, original_world.cols[1].z).Length(),
+                     Vec3(original_world.cols[2].x, original_world.cols[2].y, original_world.cols[2].z).Length()};
+                 const f32 factors[3] = {edit.factor.x, edit.factor.y, edit.factor.z};
+                 f32 targets[3]{};
+                 for (int axis = 0; axis < 3; ++axis) {
+                     targets[axis] = original_lengths[axis] * factors[axis];
+                     if (!std::isfinite(original_lengths[axis]) || !std::isfinite(targets[axis])) {
+                         throw ToolError("World-scale multiplication would produce a non-finite target for entity " + ToString(edit.guid));
+                     }
+                 }
+                 edit.world_scale = Vec3(targets[0], targets[1], targets[2]);
+             }
+
+             std::function<Mat4(Entity, int)> compute_final_world = [&](Entity entity, int depth) -> Mat4 {
+                 if (entity.IsNull()) return Mat4::Identity();
+                 if (depth >= kMaxHierarchyDepth) throw ToolError("World-scale batch encountered a hierarchy cycle or excessive depth");
+                 const Transform* current = s.world.GetComponent<Transform>(entity);
+                 if (current == nullptr) return Mat4::Identity();
+                 Mat4 parent_world = Mat4::Identity();
+                 const Entity parent = GetParent(s.world, s.guids, entity);
+                 if (!parent.IsNull()) parent_world = compute_final_world(parent, depth + 1);
+                 Transform updated = *current;
+                 const IdComponent* id = s.world.GetComponent<IdComponent>(entity);
+                 if (id != nullptr) {
+                     const auto selected = edit_indices.find(id->guid);
+                     if (selected != edit_indices.end()) {
+                         if (!std::isfinite(current->scale.x) || !std::isfinite(current->scale.y) || !std::isfinite(current->scale.z)) {
+                             throw ToolError("Entity " + ToString(id->guid) + " has a non-finite local scale");
+                         }
+                         Transform unit_scale = *current;
+                         unit_scale.scale = Vec3(1.0f, 1.0f, 1.0f);
+                         const Mat4 unit_world = parent_world * LocalTransformMatrix(unit_scale);
+                         const f32 axis_lengths[3] = {
+                             Vec3(unit_world.cols[0].x, unit_world.cols[0].y, unit_world.cols[0].z).Length(),
+                             Vec3(unit_world.cols[1].x, unit_world.cols[1].y, unit_world.cols[1].z).Length(),
+                             Vec3(unit_world.cols[2].x, unit_world.cols[2].y, unit_world.cols[2].z).Length()};
+                         const Vec3 requested_scale = edits[selected->second].world_scale;
+                         const f32 requested[3] = {requested_scale.x, requested_scale.y, requested_scale.z};
+                         const f32 signs[3] = {current->scale.x < 0.0f ? -1.0f : 1.0f,
+                                               current->scale.y < 0.0f ? -1.0f : 1.0f,
+                                               current->scale.z < 0.0f ? -1.0f : 1.0f};
+                         f32 local_values[3]{};
+                         for (int axis = 0; axis < 3; ++axis) {
+                             if (!std::isfinite(axis_lengths[axis])) {
+                                 throw ToolError("Final parent transform has a non-finite world basis for entity " + ToString(id->guid));
+                             }
+                             if (axis_lengths[axis] <= 1.0e-12f) {
+                                 if (requested[axis] > 0.0f) {
+                                     throw ToolError("Cannot assign non-zero world scale on a basis collapsed by the parent transform for entity " + ToString(id->guid));
+                                 }
+                                 local_values[axis] = 0.0f;
+                             } else {
+                                 local_values[axis] = signs[axis] * requested[axis] / axis_lengths[axis];
+                                 if (!std::isfinite(local_values[axis]) || (requested[axis] > 0.0f && local_values[axis] == 0.0f)) {
+                                     throw ToolError("World scale would produce an invalid local scale for entity " + ToString(id->guid));
+                                 }
+                             }
+                         }
+                         edits[selected->second].local_scale = Vec3(local_values[0], local_values[1], local_values[2]);
+                         updated.scale = edits[selected->second].local_scale;
+                     }
+                 }
+                 return parent_world * LocalTransformMatrix(updated);
+             };
+             for (const ScaleEdit& edit : edits) (void)compute_final_world(edit.entity, 0);
+
+             for (ScaleEdit& edit : edits) {
+                 const Transform* current = s.world.GetComponent<Transform>(edit.entity);
+                 Transform updated = *current;
+                 updated.scale = edit.local_scale;
+                 info.serialize(current, edit.before);
+                 info.serialize(&updated, edit.after);
+                 edit.changed = edit.before != edit.after;
+             }
+
+             const bool any_changed = std::any_of(edits.begin(), edits.end(), [](const ScaleEdit& edit) { return edit.changed; });
+             if (any_changed) {
+                 static std::atomic<std::uint64_t> next_batch_id{0};
+                 const std::string transaction_label = "Multiply Entity World Scales " + std::to_string(++next_batch_id);
+                 const usize undo_count_before = s.stack.UndoCount();
+                 editor::CommandContext ctx = s.Context();
+                 s.stack.BeginTransaction(transaction_label);
+                 try {
+                     for (const ScaleEdit& edit : edits) {
+                         if (!edit.changed) continue;
+                         auto command = std::make_unique<SetComponentCommand>(edit.guid, transform_component, edit.before, edit.after);
+                         command->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(command));
+                     }
+                     s.stack.EndTransaction();
+                 } catch (...) {
+                     s.stack.EndTransaction();
+                     if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                     throw;
+                 }
+             }
+
+             Json results = Json::array();
+             for (const ScaleEdit& edit : edits) {
+                 results.push_back({{"entity", ToString(edit.guid)},
+                                    {"factor", {edit.factor.x, edit.factor.y, edit.factor.z}},
+                                    {"world_scale", {edit.world_scale.x, edit.world_scale.y, edit.world_scale.z}},
+                                    {"local_scale", {edit.local_scale.x, edit.local_scale.y, edit.local_scale.z}},
+                                    {"changed", edit.changed}});
+             }
+             return {{"updated", std::count_if(edits.begin(), edits.end(), [](const ScaleEdit& edit) { return edit.changed; })},
+                     {"entities", std::move(results)}};
+         }});
+    server.AddTool(
+        {"offset_entities_world_scale_many",
+         "Offset the world-scale magnitudes of 1–64 unique scene entities by one shared delta [x, y, z] as one undoable action. World scale is measured as the lengths of the three world-transform basis columns; deltas must be finite. Targets are computed from each entity's original world scale, even when selected ancestors are also changed. Local mirror signs are preserved. Parent transforms, including selected ancestors with final scales, are accounted for. Rejects hierarchy cycles/excessive depth and non-zero target axes collapsed by the parent transform. Position and rotation are preserved.",
+         Schema({{"entities", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 64},
+                               {"description", "1–64 unique entity GUIDs"}}},
+                 {"offset", {{"type", "array"}, {"items", {{"type", "number"}}}, {"minItems", 3}, {"maxItems", 3},
+                              {"description", "Shared world-scale delta [x, y, z]"}}}},
+                {"entities", "offset"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before changing entity transforms");
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be a non-empty array of at most 64 entity GUIDs");
+             }
+             if (!args["offset"].is_array() || args["offset"].size() != 3) throw ToolError("\"offset\" must be [x, y, z]");
+             for (const Json& value : args["offset"]) {
+                 if (!value.is_number() || !std::isfinite(value.get<double>())) throw ToolError("World-scale offsets must be finite numbers");
+             }
+             const Vec3 offset{args["offset"][0].get<f32>(), args["offset"][1].get<f32>(), args["offset"][2].get<f32>()};
+             if (!std::isfinite(offset.x) || !std::isfinite(offset.y) || !std::isfinite(offset.z)) {
+                 throw ToolError("World-scale offsets must fit finite engine coordinates");
+             }
+
+             struct ScaleEdit {
+                 EntityGuid guid;
+                 Entity entity;
+                 Vec3 world_scale;
+                 Vec3 local_scale;
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+                 bool changed = false;
+             };
+             std::vector<ScaleEdit> edits;
+             edits.reserve(args["entities"].size());
+             std::map<EntityGuid, usize> edit_indices;
+             const ComponentId transform_component = GetComponentId<Transform>();
+             const ComponentInfo& info = GetComponentInfo(transform_component);
+             for (const Json& value : args["entities"]) {
+                 if (!value.is_string()) throw ToolError("Every entry in \"entities\" must be an entity GUID string");
+                 const std::string text = value.get<std::string>();
+                 EntityGuid guid;
+                 if (!ParseEntityGuid(text, guid)) throw ToolError("Not a valid entity GUID: " + text);
+                 if (edit_indices.contains(guid)) throw ToolError("Duplicate entity in \"entities\": " + ToString(guid));
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 if (entity.IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+                 if (s.world.GetComponent<Transform>(entity) == nullptr) {
+                     throw ToolError("Entity " + ToString(guid) + " doesn't have Transform");
+                 }
+                 edit_indices.emplace(guid, edits.size());
+                 ScaleEdit edit;
+                 edit.guid = guid;
+                 edit.entity = entity;
+                 edits.push_back(std::move(edit));
+             }
+
+             std::function<Mat4(Entity, int)> compute_original_world = [&](Entity entity, int depth) -> Mat4 {
+                 if (entity.IsNull()) return Mat4::Identity();
+                 if (depth >= kMaxHierarchyDepth) throw ToolError("World-scale batch encountered a hierarchy cycle or excessive depth");
+                 const Transform* current = s.world.GetComponent<Transform>(entity);
+                 if (current == nullptr) return Mat4::Identity();
+                 const Entity parent = GetParent(s.world, s.guids, entity);
+                 return (parent.IsNull() ? Mat4::Identity() : compute_original_world(parent, depth + 1)) * LocalTransformMatrix(*current);
+             };
+             for (ScaleEdit& edit : edits) {
+                 const Mat4 original_world = compute_original_world(edit.entity, 0);
+                 const f32 original_lengths[3] = {
+                     Vec3(original_world.cols[0].x, original_world.cols[0].y, original_world.cols[0].z).Length(),
+                     Vec3(original_world.cols[1].x, original_world.cols[1].y, original_world.cols[1].z).Length(),
+                     Vec3(original_world.cols[2].x, original_world.cols[2].y, original_world.cols[2].z).Length()};
+                 const f32 offsets[3] = {offset.x, offset.y, offset.z};
+                 f32 targets[3]{};
+                 for (int axis = 0; axis < 3; ++axis) {
+                     targets[axis] = original_lengths[axis] + offsets[axis];
+                     if (!std::isfinite(original_lengths[axis]) || !std::isfinite(targets[axis]) || targets[axis] < 0.0f) {
+                         throw ToolError("World-scale offset would produce a negative or non-finite target for entity " + ToString(edit.guid));
+                     }
+                 }
+                 edit.world_scale = Vec3(targets[0], targets[1], targets[2]);
+             }
+
+             std::function<Mat4(Entity, int)> compute_final_world = [&](Entity entity, int depth) -> Mat4 {
+                 if (entity.IsNull()) return Mat4::Identity();
+                 if (depth >= kMaxHierarchyDepth) throw ToolError("World-scale batch encountered a hierarchy cycle or excessive depth");
+                 const Transform* current = s.world.GetComponent<Transform>(entity);
+                 if (current == nullptr) return Mat4::Identity();
+                 Mat4 parent_world = Mat4::Identity();
+                 const Entity parent = GetParent(s.world, s.guids, entity);
+                 if (!parent.IsNull()) parent_world = compute_final_world(parent, depth + 1);
+                 Transform updated = *current;
+                 const IdComponent* id = s.world.GetComponent<IdComponent>(entity);
+                 if (id != nullptr) {
+                     const auto selected = edit_indices.find(id->guid);
+                     if (selected != edit_indices.end()) {
+                         if (!std::isfinite(current->scale.x) || !std::isfinite(current->scale.y) || !std::isfinite(current->scale.z)) {
+                             throw ToolError("Entity " + ToString(id->guid) + " has a non-finite local scale");
+                         }
+                         Transform unit_scale = *current;
+                         unit_scale.scale = Vec3(1.0f, 1.0f, 1.0f);
+                         const Mat4 unit_world = parent_world * LocalTransformMatrix(unit_scale);
+                         const f32 axis_lengths[3] = {
+                             Vec3(unit_world.cols[0].x, unit_world.cols[0].y, unit_world.cols[0].z).Length(),
+                             Vec3(unit_world.cols[1].x, unit_world.cols[1].y, unit_world.cols[1].z).Length(),
+                             Vec3(unit_world.cols[2].x, unit_world.cols[2].y, unit_world.cols[2].z).Length()};
+                         const Vec3 requested_scale = edits[selected->second].world_scale;
+                         const f32 requested[3] = {requested_scale.x, requested_scale.y, requested_scale.z};
+                         const f32 signs[3] = {current->scale.x < 0.0f ? -1.0f : 1.0f,
+                                               current->scale.y < 0.0f ? -1.0f : 1.0f,
+                                               current->scale.z < 0.0f ? -1.0f : 1.0f};
+                         f32 local_values[3]{};
+                         for (int axis = 0; axis < 3; ++axis) {
+                             if (!std::isfinite(axis_lengths[axis])) {
+                                 throw ToolError("Final parent transform has a non-finite world basis for entity " + ToString(id->guid));
+                             }
+                             if (axis_lengths[axis] <= 1.0e-12f) {
+                                 if (requested[axis] > 0.0f) {
+                                     throw ToolError("Cannot assign non-zero world scale on a basis collapsed by the parent transform for entity " + ToString(id->guid));
+                                 }
+                                 local_values[axis] = 0.0f;
+                             } else {
+                                 local_values[axis] = signs[axis] * requested[axis] / axis_lengths[axis];
+                                 if (!std::isfinite(local_values[axis]) || (requested[axis] > 0.0f && local_values[axis] == 0.0f)) {
+                                     throw ToolError("World scale would produce an invalid local scale for entity " + ToString(id->guid));
+                                 }
+                             }
+                         }
+                         edits[selected->second].local_scale = Vec3(local_values[0], local_values[1], local_values[2]);
+                         updated.scale = edits[selected->second].local_scale;
+                     }
+                 }
+                 return parent_world * LocalTransformMatrix(updated);
+             };
+             for (const ScaleEdit& edit : edits) (void)compute_final_world(edit.entity, 0);
+
+             for (ScaleEdit& edit : edits) {
+                 const Transform* current = s.world.GetComponent<Transform>(edit.entity);
+                 Transform updated = *current;
+                 updated.scale = edit.local_scale;
+                 info.serialize(current, edit.before);
+                 info.serialize(&updated, edit.after);
+                 edit.changed = edit.before != edit.after;
+             }
+
+             const bool any_changed = std::any_of(edits.begin(), edits.end(), [](const ScaleEdit& edit) { return edit.changed; });
+             if (any_changed) {
+                 static std::atomic<std::uint64_t> next_batch_id{0};
+                 const std::string transaction_label = "Offset Entity World Scale " + std::to_string(++next_batch_id);
+                 const usize undo_count_before = s.stack.UndoCount();
+                 editor::CommandContext ctx = s.Context();
+                 s.stack.BeginTransaction(transaction_label);
+                 try {
+                     for (const ScaleEdit& edit : edits) {
+                         if (!edit.changed) continue;
+                         auto command = std::make_unique<SetComponentCommand>(edit.guid, transform_component, edit.before, edit.after);
+                         command->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(command));
+                     }
+                     s.stack.EndTransaction();
+                 } catch (...) {
+                     s.stack.EndTransaction();
+                     if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                     throw;
+                 }
+             }
+
+             Json results = Json::array();
+             for (const ScaleEdit& edit : edits) {
+                 results.push_back({{"entity", ToString(edit.guid)},
+                                    {"offset", {offset.x, offset.y, offset.z}},
+                                    {"world_scale", {edit.world_scale.x, edit.world_scale.y, edit.world_scale.z}},
+                                    {"local_scale", {edit.local_scale.x, edit.local_scale.y, edit.local_scale.z}},
+                                    {"changed", edit.changed}});
+             }
+             return {{"updated", std::count_if(edits.begin(), edits.end(), [](const ScaleEdit& edit) { return edit.changed; })},
+                     {"entities", std::move(results)}};
+         }});
+
+
+    server.AddTool(
+        {"offset_entities_world_scale_per_entity_many",
+         "Offset the world-scale magnitudes of 1–64 unique scene entities by individual deltas [x, y, z] as one undoable action. World scale is measured as the lengths of the three world-transform basis columns; deltas must be finite. Targets are computed from each entity's original world scale, even when selected ancestors are also changed. Local mirror signs are preserved. Parent transforms, including selected ancestors with final scales, are accounted for. Rejects hierarchy cycles/excessive depth and non-zero requested axes collapsed by the parent transform. Position and rotation are preserved.",
+         Schema({{"edits", {{"type", "array"},
+                             {"items", {{"type", "object"},
+                                        {"properties", {{"entity", kGuidProp},
+                                                        {"offset", {{"type", "array"}, {"items", {{"type", "number"}}},
+                                                                     {"minItems", 3}, {"maxItems", 3}}}}},
+                                        {"required", Json::array({"entity", "offset"})}}},
+                             {"minItems", 1}, {"maxItems", 64},
+                             {"description", "1–64 unique entity GUID and world-scale offset pairs"}}}},
+                {"edits"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before changing entity transforms");
+             if (!args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
+                 throw ToolError("\"edits\" must be a non-empty array of at most 64 entity scale changes");
+             }
+
+             struct ScaleEdit {
+                 EntityGuid guid;
+                 Entity entity;
+                 Vec3 offset;
+                 Vec3 world_scale;
+                 Vec3 local_scale;
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+                 bool changed = false;
+             };
+             std::vector<ScaleEdit> edits;
+             edits.reserve(args["edits"].size());
+             std::map<EntityGuid, usize> edit_indices;
+             const ComponentId transform_component = GetComponentId<Transform>();
+             const ComponentInfo& info = GetComponentInfo(transform_component);
+             for (const Json& entry : args["edits"]) {
+                 if (!entry.is_object()) throw ToolError("Each entry in \"edits\" must be an object");
+                 const EntityGuid guid = RequireGuid(entry, "entity");
+                 if (edit_indices.contains(guid)) throw ToolError("Duplicate entity in \"edits\": " + ToString(guid));
+                 if (!entry.contains("offset") || !entry["offset"].is_array() || entry["offset"].size() != 3) {
+                     throw ToolError("Each \"offset\" must be [x, y, z]");
+                 }
+                 for (const Json& value : entry["offset"]) {
+                     if (!value.is_number() || !std::isfinite(value.get<double>())) {
+                         throw ToolError("World-scale offsets must be finite numbers");
+                     }
+                 }
+                 const Vec3 offset{entry["offset"][0].get<f32>(), entry["offset"][1].get<f32>(), entry["offset"][2].get<f32>()};
+                 if (!std::isfinite(offset.x) || !std::isfinite(offset.y) || !std::isfinite(offset.z)) {
+                     throw ToolError("World-scale offsets must fit finite engine coordinates");
+                 }
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 if (entity.IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+                 if (s.world.GetComponent<Transform>(entity) == nullptr) {
+                     throw ToolError("Entity " + ToString(guid) + " doesn't have Transform");
+                 }
+                 edit_indices.emplace(guid, edits.size());
+                 ScaleEdit edit;
+                 edit.guid = guid;
+                 edit.entity = entity;
+                 edit.offset = offset;
+                 edits.push_back(std::move(edit));
+             }
+
+             std::function<Mat4(Entity, int)> compute_original_world = [&](Entity entity, int depth) -> Mat4 {
+                 if (entity.IsNull()) return Mat4::Identity();
+                 if (depth >= kMaxHierarchyDepth) throw ToolError("World-scale batch encountered a hierarchy cycle or excessive depth");
+                 const Transform* current = s.world.GetComponent<Transform>(entity);
+                 if (current == nullptr) return Mat4::Identity();
+                 const Entity parent = GetParent(s.world, s.guids, entity);
+                 return (parent.IsNull() ? Mat4::Identity() : compute_original_world(parent, depth + 1)) * LocalTransformMatrix(*current);
+             };
+             for (ScaleEdit& edit : edits) {
+                 const Mat4 original_world = compute_original_world(edit.entity, 0);
+                 const f32 original_lengths[3] = {
+                     Vec3(original_world.cols[0].x, original_world.cols[0].y, original_world.cols[0].z).Length(),
+                     Vec3(original_world.cols[1].x, original_world.cols[1].y, original_world.cols[1].z).Length(),
+                     Vec3(original_world.cols[2].x, original_world.cols[2].y, original_world.cols[2].z).Length()};
+                 const f32 offsets[3] = {edit.offset.x, edit.offset.y, edit.offset.z};
+                 f32 targets[3]{};
+                 for (int axis = 0; axis < 3; ++axis) {
+                     targets[axis] = original_lengths[axis] + offsets[axis];
+                     if (!std::isfinite(original_lengths[axis]) || !std::isfinite(targets[axis]) || targets[axis] < 0.0f) {
+                         throw ToolError("World-scale offset would produce a negative or non-finite target for entity " + ToString(edit.guid));
+                     }
+                 }
+                 edit.world_scale = Vec3(targets[0], targets[1], targets[2]);
+             }
+
+             std::function<Mat4(Entity, int)> compute_final_world = [&](Entity entity, int depth) -> Mat4 {
+                 if (entity.IsNull()) return Mat4::Identity();
+                 if (depth >= kMaxHierarchyDepth) throw ToolError("World-scale batch encountered a hierarchy cycle or excessive depth");
+                 const Transform* current = s.world.GetComponent<Transform>(entity);
+                 if (current == nullptr) return Mat4::Identity();
+                 Mat4 parent_world = Mat4::Identity();
+                 const Entity parent = GetParent(s.world, s.guids, entity);
+                 if (!parent.IsNull()) parent_world = compute_final_world(parent, depth + 1);
+                 Transform updated = *current;
+                 const IdComponent* id = s.world.GetComponent<IdComponent>(entity);
+                 if (id != nullptr) {
+                     const auto selected = edit_indices.find(id->guid);
+                     if (selected != edit_indices.end()) {
+                         if (!std::isfinite(current->scale.x) || !std::isfinite(current->scale.y) || !std::isfinite(current->scale.z)) {
+                             throw ToolError("Entity " + ToString(id->guid) + " has a non-finite local scale");
+                         }
+                         Transform unit_scale = *current;
+                         unit_scale.scale = Vec3(1.0f, 1.0f, 1.0f);
+                         const Mat4 unit_world = parent_world * LocalTransformMatrix(unit_scale);
+                         const f32 axis_lengths[3] = {
+                             Vec3(unit_world.cols[0].x, unit_world.cols[0].y, unit_world.cols[0].z).Length(),
+                             Vec3(unit_world.cols[1].x, unit_world.cols[1].y, unit_world.cols[1].z).Length(),
+                             Vec3(unit_world.cols[2].x, unit_world.cols[2].y, unit_world.cols[2].z).Length()};
+                         const Vec3 requested_scale = edits[selected->second].world_scale;
+                         const f32 requested[3] = {requested_scale.x, requested_scale.y, requested_scale.z};
+                         const f32 signs[3] = {current->scale.x < 0.0f ? -1.0f : 1.0f,
+                                               current->scale.y < 0.0f ? -1.0f : 1.0f,
+                                               current->scale.z < 0.0f ? -1.0f : 1.0f};
+                         f32 local_values[3]{};
+                         for (int axis = 0; axis < 3; ++axis) {
+                             if (!std::isfinite(axis_lengths[axis])) {
+                                 throw ToolError("Final parent transform has a non-finite world basis for entity " + ToString(id->guid));
+                             }
+                             if (axis_lengths[axis] <= 1.0e-12f) {
+                                 if (requested[axis] > 0.0f) {
+                                     throw ToolError("Cannot assign non-zero world scale on a basis collapsed by the parent transform for entity " + ToString(id->guid));
+                                 }
+                                 local_values[axis] = 0.0f;
+                             } else {
+                                 local_values[axis] = signs[axis] * requested[axis] / axis_lengths[axis];
+                                 if (!std::isfinite(local_values[axis]) || (requested[axis] > 0.0f && local_values[axis] == 0.0f)) {
+                                     throw ToolError("World scale would produce an invalid local scale for entity " + ToString(id->guid));
+                                 }
+                             }
+                         }
+                         edits[selected->second].local_scale = Vec3(local_values[0], local_values[1], local_values[2]);
+                         updated.scale = edits[selected->second].local_scale;
+                     }
+                 }
+                 return parent_world * LocalTransformMatrix(updated);
+             };
+             for (const ScaleEdit& edit : edits) (void)compute_final_world(edit.entity, 0);
+
+             for (ScaleEdit& edit : edits) {
+                 const Transform* current = s.world.GetComponent<Transform>(edit.entity);
+                 Transform updated = *current;
+                 updated.scale = edit.local_scale;
+                 info.serialize(current, edit.before);
+                 info.serialize(&updated, edit.after);
+                 edit.changed = edit.before != edit.after;
+             }
+
+             const bool any_changed = std::any_of(edits.begin(), edits.end(), [](const ScaleEdit& edit) { return edit.changed; });
+             if (any_changed) {
+                 static std::atomic<std::uint64_t> next_batch_id{0};
+                 const std::string transaction_label = "Offset Entity World Scales " + std::to_string(++next_batch_id);
+                 const usize undo_count_before = s.stack.UndoCount();
+                 editor::CommandContext ctx = s.Context();
+                 s.stack.BeginTransaction(transaction_label);
+                 try {
+                     for (const ScaleEdit& edit : edits) {
+                         if (!edit.changed) continue;
+                         auto command = std::make_unique<SetComponentCommand>(edit.guid, transform_component, edit.before, edit.after);
+                         command->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(command));
+                     }
+                     s.stack.EndTransaction();
+                 } catch (...) {
+                     s.stack.EndTransaction();
+                     if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                     throw;
+                 }
+             }
+
+             Json results = Json::array();
+             for (const ScaleEdit& edit : edits) {
+                 results.push_back({{"entity", ToString(edit.guid)},
+                                    {"offset", {edit.offset.x, edit.offset.y, edit.offset.z}},
+                                    {"world_scale", {edit.world_scale.x, edit.world_scale.y, edit.world_scale.z}},
+                                    {"local_scale", {edit.local_scale.x, edit.local_scale.y, edit.local_scale.z}},
+                                    {"changed", edit.changed}});
+             }
+             return {{"updated", std::count_if(edits.begin(), edits.end(), [](const ScaleEdit& edit) { return edit.changed; })},
+                     {"entities", std::move(results)}};
+         }});
+
+    server.AddTool(
+        {"set_entities_world_scales_many",
+         "Set per-entity world scale magnitudes for 1–64 unique scene entities as one undoable action. World scale is measured as the lengths of the three world-transform basis columns; requested values must be finite and non-negative. Local scale signs are preserved. Parent transforms, including selected ancestors with final scales, are accounted for. Rejects hierarchy cycles/excessive depth and non-zero requested axes collapsed by the parent transform. Position and rotation are preserved.",
+         Schema({{"edits", {{"type", "array"},
+                             {"items", {{"type", "object"},
+                                        {"properties", {{"entity", kGuidProp},
+                                                        {"scale", {{"type", "array"}, {"items", {{"type", "number"}}},
+                                                                    {"minItems", 3}, {"maxItems", 3}}}}},
+                                        {"required", Json::array({"entity", "scale"})}}},
+                             {"minItems", 1}, {"maxItems", 64},
+                             {"description", "1–64 unique entity GUID and world-scale pairs"}}}},
+                {"edits"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before changing entity transforms");
+             if (!args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
+                 throw ToolError("\"edits\" must be a non-empty array of at most 64 entity scale changes");
+             }
+
+             struct ScaleEdit {
+                 EntityGuid guid;
+                 Entity entity;
+                 Vec3 world_scale;
+                 Vec3 local_scale;
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+                 bool changed = false;
+             };
+             std::vector<ScaleEdit> edits;
+             edits.reserve(args["edits"].size());
+             std::map<EntityGuid, usize> edit_indices;
+             const ComponentId transform_component = GetComponentId<Transform>();
+             const ComponentInfo& info = GetComponentInfo(transform_component);
+             for (const Json& entry : args["edits"]) {
+                 if (!entry.is_object()) throw ToolError("Each entry in \"edits\" must be an object");
+                 const EntityGuid guid = RequireGuid(entry, "entity");
+                 if (edit_indices.contains(guid)) throw ToolError("Duplicate entity in \"edits\": " + ToString(guid));
+                 if (!entry.contains("scale") || !entry["scale"].is_array() || entry["scale"].size() != 3) {
+                     throw ToolError("Each \"scale\" must be [x, y, z]");
+                 }
+                 for (const Json& value : entry["scale"]) {
+                     if (!value.is_number() || !std::isfinite(value.get<double>())) {
+                         throw ToolError("World-scale values must be finite numbers");
+                     }
+                 }
+                 const Vec3 world_scale{entry["scale"][0].get<f32>(), entry["scale"][1].get<f32>(), entry["scale"][2].get<f32>()};
+                 if (!std::isfinite(world_scale.x) || !std::isfinite(world_scale.y) || !std::isfinite(world_scale.z)) {
+                     throw ToolError("World-scale values must fit finite engine coordinates");
+                 }
+                 if (world_scale.x < 0.0f || world_scale.y < 0.0f || world_scale.z < 0.0f) {
+                     throw ToolError("World-scale magnitudes must be non-negative");
+                 }
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 if (entity.IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+                 const Transform* current = s.world.GetComponent<Transform>(entity);
+                 if (current == nullptr) throw ToolError("Entity " + ToString(guid) + " doesn't have Transform");
+                 edit_indices.emplace(guid, edits.size());
+                 ScaleEdit edit;
+                 edit.guid = guid;
+                 edit.entity = entity;
+                 edit.world_scale = world_scale;
+                 edits.push_back(std::move(edit));
+             }
+
+             std::function<Mat4(Entity, int)> compute_final_world = [&](Entity entity, int depth) -> Mat4 {
+                 if (entity.IsNull()) return Mat4::Identity();
+                 if (depth >= kMaxHierarchyDepth) throw ToolError("World-scale batch encountered a hierarchy cycle or excessive depth");
+                 const Transform* current = s.world.GetComponent<Transform>(entity);
+                 if (current == nullptr) return Mat4::Identity();
+                 Mat4 parent_world = Mat4::Identity();
+                 const Entity parent = GetParent(s.world, s.guids, entity);
+                 if (!parent.IsNull()) parent_world = compute_final_world(parent, depth + 1);
+                 Transform updated = *current;
+                 const IdComponent* id = s.world.GetComponent<IdComponent>(entity);
+                 if (id != nullptr) {
+                     const auto selected = edit_indices.find(id->guid);
+                     if (selected != edit_indices.end()) {
+                         if (!std::isfinite(current->scale.x) || !std::isfinite(current->scale.y) || !std::isfinite(current->scale.z)) {
+                             throw ToolError("Entity " + ToString(id->guid) + " has a non-finite local scale");
+                         }
+                         Transform unit_scale = *current;
+                         unit_scale.scale = Vec3(1.0f, 1.0f, 1.0f);
+                         const Mat4 unit_world = parent_world * LocalTransformMatrix(unit_scale);
+                         const f32 axis_lengths[3] = {
+                             Vec3(unit_world.cols[0].x, unit_world.cols[0].y, unit_world.cols[0].z).Length(),
+                             Vec3(unit_world.cols[1].x, unit_world.cols[1].y, unit_world.cols[1].z).Length(),
+                             Vec3(unit_world.cols[2].x, unit_world.cols[2].y, unit_world.cols[2].z).Length()};
+                         const f32 requested[3] = {edits[selected->second].world_scale.x,
+                                                   edits[selected->second].world_scale.y,
+                                                   edits[selected->second].world_scale.z};
+                         const f32 signs[3] = {current->scale.x < 0.0f ? -1.0f : 1.0f,
+                                               current->scale.y < 0.0f ? -1.0f : 1.0f,
+                                               current->scale.z < 0.0f ? -1.0f : 1.0f};
+                         f32 local_values[3]{};
+                         for (int axis = 0; axis < 3; ++axis) {
+                             if (!std::isfinite(axis_lengths[axis])) {
+                                 throw ToolError("Final parent transform has a non-finite world basis for entity " + ToString(id->guid));
+                             }
+                             if (axis_lengths[axis] <= 1.0e-12f) {
+                                 if (requested[axis] > 0.0f) {
+                                     throw ToolError("Cannot assign non-zero world scale on a basis collapsed by the parent transform for entity " + ToString(id->guid));
+                                 }
+                                 local_values[axis] = 0.0f;
+                             } else {
+                                 local_values[axis] = signs[axis] * requested[axis] / axis_lengths[axis];
+                                 if (!std::isfinite(local_values[axis]) || (requested[axis] > 0.0f && local_values[axis] == 0.0f)) {
+                                     throw ToolError("World scale would produce an invalid local scale for entity " + ToString(id->guid));
+                                 }
+                             }
+                         }
+                         ScaleEdit& edit = edits[selected->second];
+                         edit.local_scale = Vec3(local_values[0], local_values[1], local_values[2]);
+                         updated.scale = edit.local_scale;
+                     }
+                 }
+                 return parent_world * LocalTransformMatrix(updated);
+             };
+             for (const ScaleEdit& edit : edits) (void)compute_final_world(edit.entity, 0);
+
+             for (ScaleEdit& edit : edits) {
+                 const Transform* current = s.world.GetComponent<Transform>(edit.entity);
+                 Transform updated = *current;
+                 updated.scale = edit.local_scale;
+                 info.serialize(current, edit.before);
+                 info.serialize(&updated, edit.after);
+                 edit.changed = edit.before != edit.after;
+             }
+
+             const bool any_changed = std::any_of(edits.begin(), edits.end(), [](const ScaleEdit& edit) { return edit.changed; });
+             if (any_changed) {
+                 static std::atomic<std::uint64_t> next_batch_id{0};
+                 const std::string transaction_label = "Set Entity World Scales " + std::to_string(++next_batch_id);
+                 const usize undo_count_before = s.stack.UndoCount();
+                 editor::CommandContext ctx = s.Context();
+                 s.stack.BeginTransaction(transaction_label);
+                 try {
+                     for (const ScaleEdit& edit : edits) {
+                         if (!edit.changed) continue;
+                         auto command = std::make_unique<SetComponentCommand>(edit.guid, transform_component, edit.before, edit.after);
+                         command->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(command));
+                     }
+                     s.stack.EndTransaction();
+                 } catch (...) {
+                     s.stack.EndTransaction();
+                     if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                     throw;
+                 }
+             }
+
+             Json results = Json::array();
+             for (const ScaleEdit& edit : edits) {
+                 results.push_back({{"entity", ToString(edit.guid)},
+                                    {"world_scale", {edit.world_scale.x, edit.world_scale.y, edit.world_scale.z}},
+                                    {"local_scale", {edit.local_scale.x, edit.local_scale.y, edit.local_scale.z}},
+                                    {"changed", edit.changed}});
+             }
+             return {{"updated", std::count_if(edits.begin(), edits.end(), [](const ScaleEdit& edit) { return edit.changed; })},
+                     {"entities", std::move(results)}};
+         }});
+    server.AddTool(
+        {"set_entities_world_position_many",
+         "Set 1–64 unique scene entities to one shared world position as one undoable action. Each entity must have Transform; rotation and scale are preserved. Positions are converted through the final parent transforms, including parents changed in this batch. Singular parent transforms, cycles, and hierarchy chains deeper than the supported limit are rejected. Validate the complete selection before applying changes.",
+         Schema({{"entities", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 64},
+                               {"description", "1–64 unique entity GUIDs"}}},
+                 {"position", {{"type", "array"}, {"items", {{"type", "number"}}}, {"minItems", 3}, {"maxItems", 3},
+                               {"description", "Shared world position [x, y, z]"}}}},
+                {"entities", "position"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before changing entity transforms");
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be a non-empty array of at most 64 entity GUIDs");
+             }
+             if (!args["position"].is_array() || args["position"].size() != 3) throw ToolError("\"position\" must be [x, y, z]");
+             for (const Json& value : args["position"]) {
+                 if (!value.is_number() || !std::isfinite(value.get<double>())) {
+                     throw ToolError("World-position values must be finite numbers");
+                 }
+             }
+             const Vec3 world_position{args["position"][0].get<f32>(), args["position"][1].get<f32>(), args["position"][2].get<f32>()};
+             if (!std::isfinite(world_position.x) || !std::isfinite(world_position.y) || !std::isfinite(world_position.z)) {
+                 throw ToolError("World-position values must fit finite engine coordinates");
+             }
+
+             struct PositionEdit {
+                 EntityGuid guid;
+                 Entity entity;
+                 Vec3 local_position;
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+                 bool changed = false;
+             };
+             std::vector<PositionEdit> edits;
+             edits.reserve(args["entities"].size());
+             std::map<EntityGuid, usize> edit_indices;
+             const ComponentId transform_component = GetComponentId<Transform>();
+             const ComponentInfo& info = GetComponentInfo(transform_component);
+             for (const Json& value : args["entities"]) {
+                 if (!value.is_string()) throw ToolError("Every entry in \"entities\" must be an entity GUID string");
+                 const std::string text = value.get<std::string>();
+                 EntityGuid guid;
+                 if (!ParseEntityGuid(text, guid)) throw ToolError("Not a valid entity GUID: " + text);
+                 if (edit_indices.contains(guid)) throw ToolError("Duplicate entity in \"entities\": " + ToString(guid));
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 if (entity.IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+                 if (s.world.GetComponent<Transform>(entity) == nullptr) {
+                     throw ToolError("Entity " + ToString(guid) + " doesn't have Transform");
+                 }
+                 edit_indices.emplace(guid, edits.size());
+                 PositionEdit edit;
+                 edit.guid = guid;
+                 edit.entity = entity;
+                 edits.push_back(std::move(edit));
+             }
+
+             std::function<Mat4(Entity, int)> compute_final_world = [&](Entity entity, int depth) -> Mat4 {
+                 if (entity.IsNull()) return Mat4::Identity();
+                 if (depth >= kMaxHierarchyDepth) throw ToolError("World-position batch encountered a hierarchy cycle or excessive depth");
+                 const Transform* current = s.world.GetComponent<Transform>(entity);
+                 if (current == nullptr) return Mat4::Identity();
+                 Mat4 parent_world = Mat4::Identity();
+                 const Entity parent = GetParent(s.world, s.guids, entity);
+                 if (!parent.IsNull()) parent_world = compute_final_world(parent, depth + 1);
+
+                 Transform updated = *current;
+                 const IdComponent* id = s.world.GetComponent<IdComponent>(entity);
+                 if (id != nullptr) {
+                     const auto selected = edit_indices.find(id->guid);
+                     if (selected != edit_indices.end()) {
+                         Mat4 inverse_parent;
+                         if (!parent_world.TryInverse(inverse_parent)) {
+                             throw ToolError("Cannot set world position for entity " + ToString(id->guid) + " because its parent transform is singular");
+                         }
+                         const Vec4 local_homogeneous = inverse_parent * Vec4(world_position.x, world_position.y, world_position.z, 1.0f);
+                         if (!std::isfinite(local_homogeneous.x) || !std::isfinite(local_homogeneous.y) ||
+                             !std::isfinite(local_homogeneous.z) || !std::isfinite(local_homogeneous.w) ||
+                             std::abs(local_homogeneous.w) <= 1.0e-12f) {
+                             throw ToolError("Parent transform cannot produce a finite local position for entity " + ToString(id->guid));
+                         }
+                         const Vec3 local_position{local_homogeneous.x / local_homogeneous.w,
+                                                   local_homogeneous.y / local_homogeneous.w,
+                                                   local_homogeneous.z / local_homogeneous.w};
+                         if (!std::isfinite(local_position.x) || !std::isfinite(local_position.y) || !std::isfinite(local_position.z)) {
+                             throw ToolError("World position would produce a non-finite local position for entity " + ToString(id->guid));
+                         }
+                         edits[selected->second].local_position = local_position;
+                         updated.position = local_position;
+                     }
+                 }
+                 return parent_world * LocalTransformMatrix(updated);
+             };
+
+             for (const PositionEdit& edit : edits) (void)compute_final_world(edit.entity, 0);
+             for (PositionEdit& edit : edits) {
+                 const Transform* current = s.world.GetComponent<Transform>(edit.entity);
+                 Transform updated = *current;
+                 updated.position = edit.local_position;
+                 info.serialize(current, edit.before);
+                 info.serialize(&updated, edit.after);
+                 edit.changed = edit.before != edit.after;
+             }
+
+             const bool any_changed = std::any_of(edits.begin(), edits.end(), [](const PositionEdit& edit) { return edit.changed; });
+             if (any_changed) {
+                 static std::atomic<std::uint64_t> next_batch_id{0};
+                 const std::string transaction_label = "Set Entity World Position " + std::to_string(++next_batch_id);
+                 const usize undo_count_before = s.stack.UndoCount();
+                 editor::CommandContext ctx = s.Context();
+                 s.stack.BeginTransaction(transaction_label);
+                 try {
+                     for (const PositionEdit& edit : edits) {
+                         if (!edit.changed) continue;
+                         auto command = std::make_unique<SetComponentCommand>(edit.guid, transform_component, edit.before, edit.after);
+                         command->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(command));
+                     }
+                     s.stack.EndTransaction();
+                 } catch (...) {
+                     s.stack.EndTransaction();
+                     if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                     throw;
+                 }
+             }
+
+             Json results = Json::array();
+             for (const PositionEdit& edit : edits) {
+                 results.push_back({{"entity", ToString(edit.guid)},
+                                    {"world_position", {world_position.x, world_position.y, world_position.z}},
+                                    {"local_position", {edit.local_position.x, edit.local_position.y, edit.local_position.z}},
+                                    {"changed", edit.changed}});
+             }
+             return {{"updated", std::count_if(edits.begin(), edits.end(), [](const PositionEdit& edit) { return edit.changed; })},
+                     {"entities", std::move(results)}};
+         }});
+
+    server.AddTool(
+        {"set_entities_world_positions_many",
+         "Set world positions individually for 1–64 unique scene entities as one undoable action. Each entity must have Transform; rotation and scale are preserved. Child targets are converted through the live parent world transform into local positions. A singular parent transform or selecting both an entity and one of its ancestors is rejected. Validate the complete selection before applying changes.",
+         Schema({{"edits", {{"type", "array"},
+                             {"items", {{"type", "object"},
+                                        {"properties", {{"entity", kGuidProp},
+                                                        {"position", {{"type", "array"}, {"items", {{"type", "number"}}},
+                                                                       {"minItems", 3}, {"maxItems", 3}}}}},
+                                        {"required", Json::array({"entity", "position"})}}},
+                             {"minItems", 1}, {"maxItems", 64},
+                             {"description", "1–64 unique entity GUID and world-position pairs"}}}},
+                {"edits"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before changing entity transforms");
+             if (!args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
+                 throw ToolError("\"edits\" must be a non-empty array of at most 64 entity position changes");
+             }
+
+             struct PositionEdit {
+                 EntityGuid guid;
+                 Entity entity;
+                 Vec3 world_position;
+                 Vec3 local_position;
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+                 bool changed = false;
+             };
+             std::vector<PositionEdit> edits;
+             edits.reserve(args["edits"].size());
+             std::set<EntityGuid> seen;
+             const ComponentId transform_component = GetComponentId<Transform>();
+             const ComponentInfo& info = GetComponentInfo(transform_component);
+             for (const Json& entry : args["edits"]) {
+                 if (!entry.is_object()) throw ToolError("Each entry in \"edits\" must be an object");
+                 const EntityGuid guid = RequireGuid(entry, "entity");
+                 if (!seen.insert(guid).second) throw ToolError("Duplicate entity in \"edits\": " + ToString(guid));
+                 if (!entry.contains("position") || !entry["position"].is_array() || entry["position"].size() != 3) {
+                     throw ToolError("Each \"position\" must be [x, y, z]");
+                 }
+                 for (const Json& value : entry["position"]) {
+                     if (!value.is_number() || !std::isfinite(value.get<double>())) {
+                         throw ToolError("World-position values must be finite numbers");
+                     }
+                 }
+                 const Vec3 world_position{entry["position"][0].get<f32>(), entry["position"][1].get<f32>(), entry["position"][2].get<f32>()};
+                 if (!std::isfinite(world_position.x) || !std::isfinite(world_position.y) || !std::isfinite(world_position.z)) {
+                     throw ToolError("World-position values must fit finite engine coordinates");
+                 }
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 if (entity.IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+                 const Transform* current = s.world.GetComponent<Transform>(entity);
+                 if (current == nullptr) throw ToolError("Entity " + ToString(guid) + " doesn't have Transform");
+
+                 Vec3 local_position = world_position;
+                 const Entity parent = GetParent(s.world, s.guids, entity);
+                 if (!parent.IsNull()) {
+                     const Mat4 parent_world = ComputeWorldTransform(s.world, s.guids, parent);
+                     Mat4 inverse_parent;
+                     if (!parent_world.TryInverse(inverse_parent)) {
+                         throw ToolError("Cannot set world position for entity " + ToString(guid) + " because its parent transform is singular");
+                     }
+                     const Vec4 local_homogeneous = inverse_parent * Vec4(world_position.x, world_position.y, world_position.z, 1.0f);
+                     if (!std::isfinite(local_homogeneous.x) || !std::isfinite(local_homogeneous.y) ||
+                         !std::isfinite(local_homogeneous.z) || !std::isfinite(local_homogeneous.w) ||
+                         std::abs(local_homogeneous.w) <= 1.0e-12f) {
+                         throw ToolError("Parent transform cannot produce a finite local position for entity " + ToString(guid));
+                     }
+                     local_position = {local_homogeneous.x / local_homogeneous.w,
+                                       local_homogeneous.y / local_homogeneous.w,
+                                       local_homogeneous.z / local_homogeneous.w};
+                 }
+                 if (!std::isfinite(local_position.x) || !std::isfinite(local_position.y) || !std::isfinite(local_position.z)) {
+                     throw ToolError("World position would produce a non-finite local position for entity " + ToString(guid));
+                 }
+
+                 PositionEdit edit;
+                 edit.guid = guid;
+                 edit.entity = entity;
+                 edit.world_position = world_position;
+                 edit.local_position = local_position;
+                 Transform updated = *current;
+                 updated.position = local_position;
+                 info.serialize(current, edit.before);
+                 info.serialize(&updated, edit.after);
+                 edit.changed = edit.before != edit.after;
+                 edits.push_back(std::move(edit));
+             }
+
+             for (const PositionEdit& edit : edits) {
+                 Entity ancestor = GetParent(s.world, s.guids, edit.entity);
+                 for (int depth = 0; depth < kMaxHierarchyDepth && !ancestor.IsNull(); ++depth) {
+                     const IdComponent* id = s.world.GetComponent<IdComponent>(ancestor);
+                     if (id != nullptr && seen.contains(id->guid)) {
+                         throw ToolError("World-position batch cannot include both an entity and one of its ancestors");
+                     }
+                     ancestor = GetParent(s.world, s.guids, ancestor);
+                 }
+             }
+
+             const bool any_changed = std::any_of(edits.begin(), edits.end(), [](const PositionEdit& edit) { return edit.changed; });
+             if (any_changed) {
+                 static std::atomic<std::uint64_t> next_batch_id{0};
+                 const std::string transaction_label = "Set Entity World Positions " + std::to_string(++next_batch_id);
+                 const usize undo_count_before = s.stack.UndoCount();
+                 editor::CommandContext ctx = s.Context();
+                 s.stack.BeginTransaction(transaction_label);
+                 try {
+                     for (const PositionEdit& edit : edits) {
+                         if (!edit.changed) continue;
+                         auto command = std::make_unique<SetComponentCommand>(edit.guid, transform_component, edit.before, edit.after);
+                         command->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(command));
+                     }
+                     s.stack.EndTransaction();
+                 } catch (...) {
+                     s.stack.EndTransaction();
+                     if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                     throw;
+                 }
+             }
+
+             Json results = Json::array();
+             for (const PositionEdit& edit : edits) {
+                 results.push_back({{"entity", ToString(edit.guid)},
+                                    {"world_position", {edit.world_position.x, edit.world_position.y, edit.world_position.z}},
+                                    {"local_position", {edit.local_position.x, edit.local_position.y, edit.local_position.z}},
+                                    {"changed", edit.changed}});
+             }
+             return {{"updated", std::count_if(edits.begin(), edits.end(), [](const PositionEdit& edit) { return edit.changed; })},
+                     {"entities", std::move(results)}};
+         }});
+
+    server.AddTool(
+        {"set_entities_local_positions_many",
+         "Set local positions individually for 1–64 unique scene entities as one undoable action. Each entity must have Transform; rotation and scale are preserved. Validate the complete selection and finite position values before applying changes.",
+         Schema({{"edits", {{"type", "array"},
+                             {"items", {{"type", "object"},
+                                        {"properties", {{"entity", kGuidProp},
+                                                        {"position", {{"type", "array"}, {"items", {{"type", "number"}}},
+                                                                       {"minItems", 3}, {"maxItems", 3}}}}},
+                                        {"required", Json::array({"entity", "position"})}}},
+                             {"minItems", 1}, {"maxItems", 64},
+                             {"description", "1–64 unique entity GUID and local-position pairs"}}}},
+                {"edits"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before changing entity transforms");
+             if (!args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
+                 throw ToolError("\"edits\" must be a non-empty array of at most 64 entity position changes");
+             }
+
+             struct PositionEdit {
+                 EntityGuid guid;
+                 Vec3 position;
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+                 bool changed = false;
+             };
+             std::vector<PositionEdit> edits;
+             edits.reserve(args["edits"].size());
+             std::set<EntityGuid> seen;
+             const ComponentId transform_component = GetComponentId<Transform>();
+             const ComponentInfo& info = GetComponentInfo(transform_component);
+             for (const Json& entry : args["edits"]) {
+                 if (!entry.is_object()) throw ToolError("Each entry in \"edits\" must be an object");
+                 const EntityGuid guid = RequireGuid(entry, "entity");
+                 if (!seen.insert(guid).second) throw ToolError("Duplicate entity in \"edits\": " + ToString(guid));
+                 if (!entry.contains("position") || !entry["position"].is_array() || entry["position"].size() != 3) {
+                     throw ToolError("Each \"position\" must be [x, y, z]");
+                 }
+                 for (const Json& value : entry["position"]) {
+                     if (!value.is_number() || !std::isfinite(value.get<double>())) {
+                         throw ToolError("Position values must be finite numbers");
+                     }
+                 }
+                 const Vec3 position{entry["position"][0].get<f32>(), entry["position"][1].get<f32>(), entry["position"][2].get<f32>()};
+                 if (!std::isfinite(position.x) || !std::isfinite(position.y) || !std::isfinite(position.z)) {
+                     throw ToolError("Position values must fit finite engine coordinates");
+                 }
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 if (entity.IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+                 const Transform* current = s.world.GetComponent<Transform>(entity);
+                 if (current == nullptr) throw ToolError("Entity " + ToString(guid) + " doesn't have Transform");
+                 PositionEdit edit;
+                 edit.guid = guid;
+                 edit.position = position;
+                 Transform updated = *current;
+                 updated.position = position;
+                 info.serialize(current, edit.before);
+                 info.serialize(&updated, edit.after);
+                 edit.changed = edit.before != edit.after;
+                 edits.push_back(std::move(edit));
+             }
+
+             const bool any_changed = std::any_of(edits.begin(), edits.end(), [](const PositionEdit& edit) { return edit.changed; });
+             if (any_changed) {
+                 static std::atomic<std::uint64_t> next_batch_id{0};
+                 const std::string transaction_label = "Set Entity Positions " + std::to_string(++next_batch_id);
+                 const usize undo_count_before = s.stack.UndoCount();
+                 editor::CommandContext ctx = s.Context();
+                 s.stack.BeginTransaction(transaction_label);
+                 try {
+                     for (const PositionEdit& edit : edits) {
+                         if (!edit.changed) continue;
+                         auto command = std::make_unique<SetComponentCommand>(edit.guid, transform_component, edit.before, edit.after);
+                         command->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(command));
+                     }
+                     s.stack.EndTransaction();
+                 } catch (...) {
+                     s.stack.EndTransaction();
+                     if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                     throw;
+                 }
+             }
+
+             Json results = Json::array();
+             for (const PositionEdit& edit : edits) {
+                 results.push_back({{"entity", ToString(edit.guid)}, {"position", {edit.position.x, edit.position.y, edit.position.z}}, {"changed", edit.changed}});
+             }
+             return {{"updated", std::count_if(edits.begin(), edits.end(), [](const PositionEdit& edit) { return edit.changed; })},
+                     {"entities", std::move(results)}};
+         }});
+
+    server.AddTool(
+        {"set_entities_local_position_many",
+         "Set the local position of 1–64 unique scene entities to one shared absolute position as one undoable action. Each entity must have Transform; rotation and scale are preserved. Validate every target and finite engine-coordinate value before applying changes.",
+         Schema({{"entities", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 64},
+                               {"description", "1–64 unique entity GUIDs"}}},
+                 {"position", {{"type", "array"}, {"items", {{"type", "number"}}}, {"minItems", 3}, {"maxItems", 3},
+                               {"description", "Shared local-space position [x, y, z]"}}}},
+                {"entities", "position"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before changing entity transforms");
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be a non-empty array of at most 64 entity GUIDs");
+             }
+             if (!args["position"].is_array() || args["position"].size() != 3) throw ToolError("\"position\" must be [x, y, z]");
+             for (const Json& value : args["position"]) {
+                 if (!value.is_number() || !std::isfinite(value.get<double>())) throw ToolError("Position values must be finite numbers");
+             }
+             const Vec3 position{args["position"][0].get<f32>(), args["position"][1].get<f32>(), args["position"][2].get<f32>()};
+             if (!std::isfinite(position.x) || !std::isfinite(position.y) || !std::isfinite(position.z)) {
+                 throw ToolError("Position values must fit finite engine coordinates");
+             }
+
+             struct PositionEdit {
+                 EntityGuid guid;
+                 Vec3 position;
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+                 bool changed = false;
+             };
+             std::vector<PositionEdit> edits;
+             edits.reserve(args["entities"].size());
+             std::set<EntityGuid> seen;
+             const ComponentId transform_component = GetComponentId<Transform>();
+             const ComponentInfo& info = GetComponentInfo(transform_component);
+             for (const Json& value : args["entities"]) {
+                 if (!value.is_string()) throw ToolError("Every entry in \"entities\" must be an entity GUID string");
+                 const std::string text = value.get<std::string>();
+                 EntityGuid guid;
+                 if (!ParseEntityGuid(text, guid)) throw ToolError("Not a valid entity GUID: " + text);
+                 if (!seen.insert(guid).second) throw ToolError("Duplicate entity in \"entities\": " + ToString(guid));
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 if (entity.IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+                 const Transform* current = s.world.GetComponent<Transform>(entity);
+                 if (current == nullptr) throw ToolError("Entity " + ToString(guid) + " doesn't have Transform");
+                 PositionEdit edit;
+                 edit.guid = guid;
+                 edit.position = position;
+                 Transform updated = *current;
+                 updated.position = position;
+                 info.serialize(current, edit.before);
+                 info.serialize(&updated, edit.after);
+                 edit.changed = edit.before != edit.after;
+                 edits.push_back(std::move(edit));
+             }
+
+             const bool any_changed = std::any_of(edits.begin(), edits.end(), [](const PositionEdit& edit) { return edit.changed; });
+             if (any_changed) {
+                 static std::atomic<std::uint64_t> next_batch_id{0};
+                 const std::string transaction_label = "Set Entity Positions " + std::to_string(++next_batch_id);
+                 const usize undo_count_before = s.stack.UndoCount();
+                 editor::CommandContext ctx = s.Context();
+                 s.stack.BeginTransaction(transaction_label);
+                 try {
+                     for (const PositionEdit& edit : edits) {
+                         if (!edit.changed) continue;
+                         auto command = std::make_unique<SetComponentCommand>(edit.guid, transform_component, edit.before, edit.after);
+                         command->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(command));
+                     }
+                     s.stack.EndTransaction();
+                 } catch (...) {
+                     s.stack.EndTransaction();
+                     if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                     throw;
+                 }
+             }
+
+             Json results = Json::array();
+             for (const PositionEdit& edit : edits) {
+                 results.push_back({{"entity", ToString(edit.guid)}, {"position", {edit.position.x, edit.position.y, edit.position.z}}, {"changed", edit.changed}});
+             }
+             return {{"updated", std::count_if(edits.begin(), edits.end(), [](const PositionEdit& edit) { return edit.changed; })},
+                     {"entities", std::move(results)}};
+         }});
+
+    server.AddTool(
+        {"scale_entities_local_many",
+         "Multiply local scale for 1–64 unique scene entities using a per-entity component-wise factor as one undoable action. Each entity must have Transform; position and rotation are preserved. Validate the complete selection and finite resulting scales before applying changes.",
+         Schema({{"edits", {{"type", "array"},
+                             {"items", {{"type", "object"},
+                                        {"properties", {{"entity", kGuidProp},
+                                                        {"factor", {{"type", "array"}, {"items", {{"type", "number"}}},
+                                                                    {"minItems", 3}, {"maxItems", 3}}}}},
+                                        {"required", Json::array({"entity", "factor"})}}},
+                             {"minItems", 1}, {"maxItems", 64},
+                             {"description", "1–64 unique entity GUID and scale-factor pairs"}}}},
+                {"edits"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before changing entity transforms");
+             if (!args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
+                 throw ToolError("\"edits\" must be a non-empty array of at most 64 entity scale changes");
+             }
+
+             struct ScaleEdit {
+                 EntityGuid guid;
+                 Vec3 scale;
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+                 bool changed = false;
+             };
+             std::vector<ScaleEdit> edits;
+             edits.reserve(args["edits"].size());
+             std::set<EntityGuid> seen;
+             const ComponentId transform_component = GetComponentId<Transform>();
+             const ComponentInfo& info = GetComponentInfo(transform_component);
+             for (const Json& entry : args["edits"]) {
+                 if (!entry.is_object()) throw ToolError("Each entry in \"edits\" must be an object");
+                 const EntityGuid guid = RequireGuid(entry, "entity");
+                 if (!seen.insert(guid).second) throw ToolError("Duplicate entity in \"edits\": " + ToString(guid));
+                 if (!entry.contains("factor") || !entry["factor"].is_array() || entry["factor"].size() != 3) {
+                     throw ToolError("Each \"factor\" must be [x, y, z]");
+                 }
+                 for (const Json& value : entry["factor"]) {
+                     if (!value.is_number() || !std::isfinite(value.get<double>())) {
+                         throw ToolError("Scale factors must be finite numbers");
+                     }
+                 }
+                 const Vec3 factor{entry["factor"][0].get<f32>(), entry["factor"][1].get<f32>(), entry["factor"][2].get<f32>()};
+                 if (!std::isfinite(factor.x) || !std::isfinite(factor.y) || !std::isfinite(factor.z)) {
+                     throw ToolError("Scale factors must fit finite engine coordinates");
+                 }
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 if (entity.IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+                 const Transform* current = s.world.GetComponent<Transform>(entity);
+                 if (current == nullptr) throw ToolError("Entity " + ToString(guid) + " doesn't have Transform");
+                 ScaleEdit edit;
+                 edit.guid = guid;
+                 edit.scale = {current->scale.x * factor.x, current->scale.y * factor.y, current->scale.z * factor.z};
+                 if (!std::isfinite(edit.scale.x) || !std::isfinite(edit.scale.y) || !std::isfinite(edit.scale.z)) {
+                     throw ToolError("Scale factor would produce a non-finite scale for entity " + ToString(guid));
+                 }
+                 Transform updated = *current;
+                 updated.scale = edit.scale;
+                 info.serialize(current, edit.before);
+                 info.serialize(&updated, edit.after);
+                 edit.changed = edit.before != edit.after;
+                 edits.push_back(std::move(edit));
+             }
+
+             const bool any_changed = std::any_of(edits.begin(), edits.end(), [](const ScaleEdit& edit) { return edit.changed; });
+             if (any_changed) {
+                 static std::atomic<std::uint64_t> next_batch_id{0};
+                 const std::string transaction_label = "Scale Entities " + std::to_string(++next_batch_id);
+                 const usize undo_count_before = s.stack.UndoCount();
+                 editor::CommandContext ctx = s.Context();
+                 s.stack.BeginTransaction(transaction_label);
+                 try {
+                     for (const ScaleEdit& edit : edits) {
+                         if (!edit.changed) continue;
+                         auto command = std::make_unique<SetComponentCommand>(edit.guid, transform_component, edit.before, edit.after);
+                         command->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(command));
+                     }
+                     s.stack.EndTransaction();
+                 } catch (...) {
+                     s.stack.EndTransaction();
+                     if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                     throw;
+                 }
+             }
+
+             Json results = Json::array();
+             for (const ScaleEdit& edit : edits) {
+                 results.push_back({{"entity", ToString(edit.guid)}, {"scale", {edit.scale.x, edit.scale.y, edit.scale.z}}, {"changed", edit.changed}});
+             }
+             return {{"updated", std::count_if(edits.begin(), edits.end(), [](const ScaleEdit& edit) { return edit.changed; })},
+                     {"entities", std::move(results)}};
+         }});
+
+    server.AddTool(
+        {"multiply_entities_local_scale_per_entity_many",
+         "Multiply local scale for 1–64 unique scene entities using a per-entity component-wise factor as one undoable action. Each entity must have Transform; position and rotation are preserved. Validate the complete selection and finite resulting scales before applying changes.",
+         Schema({{"edits", {{"type", "array"},
+                             {"items", {{"type", "object"},
+                                        {"properties", {{"entity", kGuidProp},
+                                                        {"factor", {{"type", "array"}, {"items", {{"type", "number"}}},
+                                                                    {"minItems", 3}, {"maxItems", 3}}}}},
+                                        {"required", Json::array({"entity", "factor"})}}},
+                             {"minItems", 1}, {"maxItems", 64},
+                             {"description", "1–64 unique entity GUID and scale-factor pairs"}}}},
+                {"edits"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before changing entity transforms");
+             if (!args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
+                 throw ToolError("\"edits\" must be a non-empty array of at most 64 entity scale changes");
+             }
+
+             struct ScaleEdit {
+                 EntityGuid guid;
+                 Vec3 scale;
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+                 bool changed = false;
+             };
+             std::vector<ScaleEdit> edits;
+             edits.reserve(args["edits"].size());
+             std::set<EntityGuid> seen;
+             const ComponentId transform_component = GetComponentId<Transform>();
+             const ComponentInfo& info = GetComponentInfo(transform_component);
+             for (const Json& entry : args["edits"]) {
+                 if (!entry.is_object()) throw ToolError("Each entry in \"edits\" must be an object");
+                 const EntityGuid guid = RequireGuid(entry, "entity");
+                 if (!seen.insert(guid).second) throw ToolError("Duplicate entity in \"edits\": " + ToString(guid));
+                 if (!entry.contains("factor") || !entry["factor"].is_array() || entry["factor"].size() != 3) {
+                     throw ToolError("Each \"factor\" must be [x, y, z]");
+                 }
+                 for (const Json& value : entry["factor"]) {
+                     if (!value.is_number() || !std::isfinite(value.get<double>())) {
+                         throw ToolError("Scale factors must be finite numbers");
+                     }
+                 }
+                 const Vec3 factor{entry["factor"][0].get<f32>(), entry["factor"][1].get<f32>(), entry["factor"][2].get<f32>()};
+                 if (!std::isfinite(factor.x) || !std::isfinite(factor.y) || !std::isfinite(factor.z)) {
+                     throw ToolError("Scale factors must fit finite engine coordinates");
+                 }
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 if (entity.IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+                 const Transform* current = s.world.GetComponent<Transform>(entity);
+                 if (current == nullptr) throw ToolError("Entity " + ToString(guid) + " doesn't have Transform");
+                 ScaleEdit edit;
+                 edit.guid = guid;
+                 edit.scale = {current->scale.x * factor.x, current->scale.y * factor.y, current->scale.z * factor.z};
+                 if (!std::isfinite(edit.scale.x) || !std::isfinite(edit.scale.y) || !std::isfinite(edit.scale.z)) {
+                     throw ToolError("Scale factor would produce a non-finite scale for entity " + ToString(guid));
+                 }
+                 Transform updated = *current;
+                 updated.scale = edit.scale;
+                 info.serialize(current, edit.before);
+                 info.serialize(&updated, edit.after);
+                 edit.changed = edit.before != edit.after;
+                 edits.push_back(std::move(edit));
+             }
+
+             const bool any_changed = std::any_of(edits.begin(), edits.end(), [](const ScaleEdit& edit) { return edit.changed; });
+             if (any_changed) {
+                 static std::atomic<std::uint64_t> next_batch_id{0};
+                 const std::string transaction_label = "Scale Entities by Factors " + std::to_string(++next_batch_id);
+                 const usize undo_count_before = s.stack.UndoCount();
+                 editor::CommandContext ctx = s.Context();
+                 s.stack.BeginTransaction(transaction_label);
+                 try {
+                     for (const ScaleEdit& edit : edits) {
+                         if (!edit.changed) continue;
+                         auto command = std::make_unique<SetComponentCommand>(edit.guid, transform_component, edit.before, edit.after);
+                         command->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(command));
+                     }
+                     s.stack.EndTransaction();
+                 } catch (...) {
+                     s.stack.EndTransaction();
+                     if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                     throw;
+                 }
+             }
+
+             Json results = Json::array();
+             for (const ScaleEdit& edit : edits) {
+                 results.push_back({{"entity", ToString(edit.guid)}, {"scale", {edit.scale.x, edit.scale.y, edit.scale.z}}, {"changed", edit.changed}});
+             }
+             return {{"updated", std::count_if(edits.begin(), edits.end(), [](const ScaleEdit& edit) { return edit.changed; })},
+                     {"entities", std::move(results)}};
+         }});
+
+    server.AddTool(
+        {"multiply_entities_local_scale_many",
+         "Multiply the local scale of 1–64 unique scene entities by one shared component-wise factor as one undoable action. Each entity must have Transform; position and rotation are preserved. Validate every target and finite resulting scale before applying changes.",
+         Schema({{"entities", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 64},
+                               {"description", "1–64 unique entity GUIDs"}}},
+                 {"factor", {{"type", "array"}, {"items", {{"type", "number"}}}, {"minItems", 3}, {"maxItems", 3},
+                             {"description", "Shared component-wise scale factor [x, y, z]"}}}},
+                {"entities", "factor"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before changing entity transforms");
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be a non-empty array of at most 64 entity GUIDs");
+             }
+             if (!args["factor"].is_array() || args["factor"].size() != 3) throw ToolError("\"factor\" must be [x, y, z]");
+             for (const Json& value : args["factor"]) {
+                 if (!value.is_number() || !std::isfinite(value.get<double>())) throw ToolError("Scale factors must be finite numbers");
+             }
+             const Vec3 factor{args["factor"][0].get<f32>(), args["factor"][1].get<f32>(), args["factor"][2].get<f32>()};
+             if (!std::isfinite(factor.x) || !std::isfinite(factor.y) || !std::isfinite(factor.z)) {
+                 throw ToolError("Scale factors must fit finite engine coordinates");
+             }
+
+             struct ScaleEdit {
+                 EntityGuid guid;
+                 Vec3 scale;
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+                 bool changed = false;
+             };
+             std::vector<ScaleEdit> edits;
+             edits.reserve(args["entities"].size());
+             std::set<EntityGuid> seen;
+             const ComponentId transform_component = GetComponentId<Transform>();
+             const ComponentInfo& info = GetComponentInfo(transform_component);
+             for (const Json& value : args["entities"]) {
+                 if (!value.is_string()) throw ToolError("Every entry in \"entities\" must be an entity GUID string");
+                 const std::string text = value.get<std::string>();
+                 EntityGuid guid;
+                 if (!ParseEntityGuid(text, guid)) throw ToolError("Not a valid entity GUID: " + text);
+                 if (!seen.insert(guid).second) throw ToolError("Duplicate entity in \"entities\": " + ToString(guid));
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 if (entity.IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+                 const Transform* current = s.world.GetComponent<Transform>(entity);
+                 if (current == nullptr) throw ToolError("Entity " + ToString(guid) + " doesn't have Transform");
+                 ScaleEdit edit;
+                 edit.guid = guid;
+                 edit.scale = {current->scale.x * factor.x, current->scale.y * factor.y, current->scale.z * factor.z};
+                 if (!std::isfinite(edit.scale.x) || !std::isfinite(edit.scale.y) || !std::isfinite(edit.scale.z)) {
+                     throw ToolError("Scale factor would produce a non-finite scale for entity " + ToString(guid));
+                 }
+                 Transform updated = *current;
+                 updated.scale = edit.scale;
+                 info.serialize(current, edit.before);
+                 info.serialize(&updated, edit.after);
+                 edit.changed = edit.before != edit.after;
+                 edits.push_back(std::move(edit));
+             }
+
+             const bool any_changed = std::any_of(edits.begin(), edits.end(), [](const ScaleEdit& edit) { return edit.changed; });
+             if (any_changed) {
+                 static std::atomic<std::uint64_t> next_batch_id{0};
+                 const std::string transaction_label = "Multiply Entity Scales " + std::to_string(++next_batch_id);
+                 const usize undo_count_before = s.stack.UndoCount();
+                 editor::CommandContext ctx = s.Context();
+                 s.stack.BeginTransaction(transaction_label);
+                 try {
+                     for (const ScaleEdit& edit : edits) {
+                         if (!edit.changed) continue;
+                         auto command = std::make_unique<SetComponentCommand>(edit.guid, transform_component, edit.before, edit.after);
+                         command->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(command));
+                     }
+                     s.stack.EndTransaction();
+                 } catch (...) {
+                     s.stack.EndTransaction();
+                     if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                     throw;
+                 }
+             }
+
+             Json results = Json::array();
+             for (const ScaleEdit& edit : edits) {
+                 results.push_back({{"entity", ToString(edit.guid)}, {"scale", {edit.scale.x, edit.scale.y, edit.scale.z}}, {"changed", edit.changed}});
+             }
+             return {{"updated", std::count_if(edits.begin(), edits.end(), [](const ScaleEdit& edit) { return edit.changed; })},
+                     {"entities", std::move(results)}};
+         }});
+
+    server.AddTool(
+        {"offset_entities_local_per_entity_many",
+         "Apply a local-position offset to each of 1–64 unique scene entities as one undoable action. Each entity must have Transform; rotation and scale are preserved. Validate the complete selection and finite resulting positions before applying changes.",
+         Schema({{"edits", {{"type", "array"},
+                             {"items", {{"type", "object"},
+                                        {"properties", {{"entity", kGuidProp},
+                                                        {"offset", {{"type", "array"}, {"items", {{"type", "number"}}},
+                                                                    {"minItems", 3}, {"maxItems", 3}}}}},
+                                        {"required", Json::array({"entity", "offset"})}}},
+                             {"minItems", 1}, {"maxItems", 64},
+                             {"description", "1–64 unique entity GUID and local-offset pairs"}}}},
+                {"edits"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before changing entity transforms");
+             if (!args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
+                 throw ToolError("\"edits\" must be a non-empty array of at most 64 entity position changes");
+             }
+
+             struct PositionEdit {
+                 EntityGuid guid;
+                 Vec3 position;
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+                 bool changed = false;
+             };
+             std::vector<PositionEdit> edits;
+             edits.reserve(args["edits"].size());
+             std::set<EntityGuid> seen;
+             const ComponentId transform_component = GetComponentId<Transform>();
+             const ComponentInfo& info = GetComponentInfo(transform_component);
+             for (const Json& entry : args["edits"]) {
+                 if (!entry.is_object()) throw ToolError("Each entry in \"edits\" must be an object");
+                 const EntityGuid guid = RequireGuid(entry, "entity");
+                 if (!seen.insert(guid).second) throw ToolError("Duplicate entity in \"edits\": " + ToString(guid));
+                 if (!entry.contains("offset") || !entry["offset"].is_array() || entry["offset"].size() != 3) {
+                     throw ToolError("Each \"offset\" must be [x, y, z]");
+                 }
+                 for (const Json& value : entry["offset"]) {
+                     if (!value.is_number() || !std::isfinite(value.get<double>())) {
+                         throw ToolError("Position offsets must be finite numbers");
+                     }
+                 }
+                 const Vec3 offset{entry["offset"][0].get<f32>(), entry["offset"][1].get<f32>(), entry["offset"][2].get<f32>()};
+                 if (!std::isfinite(offset.x) || !std::isfinite(offset.y) || !std::isfinite(offset.z)) {
+                     throw ToolError("Position offsets must fit finite engine coordinates");
+                 }
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 if (entity.IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+                 const Transform* current = s.world.GetComponent<Transform>(entity);
+                 if (current == nullptr) throw ToolError("Entity " + ToString(guid) + " doesn't have Transform");
+                 PositionEdit edit;
+                 edit.guid = guid;
+                 edit.position = current->position + offset;
+                 if (!std::isfinite(edit.position.x) || !std::isfinite(edit.position.y) || !std::isfinite(edit.position.z)) {
+                     throw ToolError("Position offset would produce a non-finite position for entity " + ToString(guid));
+                 }
+                 Transform updated = *current;
+                 updated.position = edit.position;
+                 info.serialize(current, edit.before);
+                 info.serialize(&updated, edit.after);
+                 edit.changed = edit.before != edit.after;
+                 edits.push_back(std::move(edit));
+             }
+
+             const bool any_changed = std::any_of(edits.begin(), edits.end(), [](const PositionEdit& edit) { return edit.changed; });
+             if (any_changed) {
+                 static std::atomic<std::uint64_t> next_batch_id{0};
+                 const std::string transaction_label = "Offset Entity Positions " + std::to_string(++next_batch_id);
+                 const usize undo_count_before = s.stack.UndoCount();
+                 editor::CommandContext ctx = s.Context();
+                 s.stack.BeginTransaction(transaction_label);
+                 try {
+                     for (const PositionEdit& edit : edits) {
+                         if (!edit.changed) continue;
+                         auto command = std::make_unique<SetComponentCommand>(edit.guid, transform_component, edit.before, edit.after);
+                         command->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(command));
+                     }
+                     s.stack.EndTransaction();
+                 } catch (...) {
+                     s.stack.EndTransaction();
+                     if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                     throw;
+                 }
+             }
+
+             Json results = Json::array();
+             for (const PositionEdit& edit : edits) {
+                 results.push_back({{"entity", ToString(edit.guid)}, {"position", {edit.position.x, edit.position.y, edit.position.z}}, {"changed", edit.changed}});
+             }
+             return {{"updated", std::count_if(edits.begin(), edits.end(), [](const PositionEdit& edit) { return edit.changed; })},
+                     {"entities", std::move(results)}};
+         }});
+
+    server.AddTool(
+        {"offset_entities_local_many",
+         "Add one local-position offset to 1–64 unique scene entities as one undoable action. Each entity must have Transform; rotation and scale are preserved. Validate every target and resulting position before applying changes.",
+         Schema({{"entities", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 64},
+                               {"description", "1–64 unique entity GUIDs"}}},
+                 {"offset", {{"type", "array"}, {"items", {{"type", "number"}}}, {"minItems", 3}, {"maxItems", 3},
+                             {"description", "Local-space position offset [x, y, z]"}}}},
+                {"entities", "offset"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before changing entity transforms");
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be a non-empty array of at most 64 entity GUIDs");
+             }
+             if (!args["offset"].is_array() || args["offset"].size() != 3) throw ToolError("\"offset\" must be [x, y, z]");
+             for (const Json& value : args["offset"]) {
+                 if (!value.is_number() || !std::isfinite(value.get<double>())) throw ToolError("Offset values must be finite numbers");
+             }
+             const Vec3 offset{args["offset"][0].get<f32>(), args["offset"][1].get<f32>(), args["offset"][2].get<f32>()};
+             if (!std::isfinite(offset.x) || !std::isfinite(offset.y) || !std::isfinite(offset.z)) {
+                 throw ToolError("Offset values must fit finite engine coordinates");
+             }
+
+             struct PositionEdit {
+                 EntityGuid guid;
+                 Vec3 position;
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+                 bool changed = false;
+             };
+             std::vector<PositionEdit> edits;
+             edits.reserve(args["entities"].size());
+             std::set<EntityGuid> seen;
+             const ComponentId transform_component = GetComponentId<Transform>();
+             const ComponentInfo& info = GetComponentInfo(transform_component);
+             for (const Json& value : args["entities"]) {
+                 if (!value.is_string()) throw ToolError("Every entry in \"entities\" must be an entity GUID string");
+                 const std::string text = value.get<std::string>();
+                 EntityGuid guid;
+                 if (!ParseEntityGuid(text, guid)) throw ToolError("Not a valid entity GUID: " + text);
+                 if (!seen.insert(guid).second) throw ToolError("Duplicate entity in \"entities\": " + ToString(guid));
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 if (entity.IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+                 const Transform* current = s.world.GetComponent<Transform>(entity);
+                 if (current == nullptr) throw ToolError("Entity " + ToString(guid) + " doesn't have Transform");
+                 PositionEdit edit;
+                 edit.guid = guid;
+                 edit.position = current->position + offset;
+                 if (!std::isfinite(edit.position.x) || !std::isfinite(edit.position.y) || !std::isfinite(edit.position.z)) {
+                     throw ToolError("Offset would produce a non-finite position for entity " + ToString(guid));
+                 }
+                 Transform updated = *current;
+                 updated.position = edit.position;
+                 info.serialize(current, edit.before);
+                 info.serialize(&updated, edit.after);
+                 edit.changed = edit.before != edit.after;
+                 edits.push_back(std::move(edit));
+             }
+
+             bool any_changed = false;
+             for (const PositionEdit& edit : edits) any_changed = any_changed || edit.changed;
+             if (any_changed) {
+                 static std::atomic<std::uint64_t> next_batch_id{0};
+                 const std::string transaction_label = "Offset Entity Positions " + std::to_string(++next_batch_id);
+                 const usize undo_count_before = s.stack.UndoCount();
+                 editor::CommandContext ctx = s.Context();
+                 s.stack.BeginTransaction(transaction_label);
+                 try {
+                     for (const PositionEdit& edit : edits) {
+                         if (!edit.changed) continue;
+                         auto command = std::make_unique<SetComponentCommand>(edit.guid, transform_component, edit.before, edit.after);
+                         command->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(command));
+                     }
+                     s.stack.EndTransaction();
+                 } catch (...) {
+                     s.stack.EndTransaction();
+                     if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                     throw;
+                 }
+             }
+
+             Json results = Json::array();
+             for (const PositionEdit& edit : edits) {
+                 results.push_back({{"entity", ToString(edit.guid)}, {"position", {edit.position.x, edit.position.y, edit.position.z}}, {"changed", edit.changed}});
+             }
+             return {{"updated", std::count_if(edits.begin(), edits.end(), [](const PositionEdit& edit) { return edit.changed; })},
+                     {"entities", std::move(results)}};
+         }});
+
+    server.AddTool(
+        {"toggle_entities_active_many",
+         "Toggle the local active state of 1–64 unique scene entities as one undoable action. Missing Active components mean active, so those entities become inactive and receive Active{false}. Validate the complete selection before applying changes.",
+         Schema({{"entities", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 64},
+                               {"description", "1–64 unique entity GUIDs"}}}}, {"entities"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before changing entity activity");
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be a non-empty array of at most 64 entity GUIDs");
+             }
+             struct ActiveEdit {
+                 EntityGuid guid;
+                 bool active = false;
+                 bool add_component = false;
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+             };
+             std::vector<ActiveEdit> edits;
+             edits.reserve(args["entities"].size());
+             std::set<EntityGuid> seen;
+             const ComponentId active_component = GetComponentId<Active>();
+             const ComponentInfo& info = GetComponentInfo(active_component);
+             for (const Json& value : args["entities"]) {
+                 if (!value.is_string()) throw ToolError("Every entry in \"entities\" must be an entity GUID string");
+                 EntityGuid guid;
+                 const std::string guid_text = value.get<std::string>();
+                 if (!ParseEntityGuid(guid_text, guid)) throw ToolError("Not a valid entity GUID: " + guid_text);
+                 if (!seen.insert(guid).second) throw ToolError("Duplicate entity in \"entities\": " + ToString(guid));
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 if (entity.IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+                 ActiveEdit edit;
+                 edit.guid = guid;
+                 const Active* current = s.world.GetComponent<Active>(entity);
+                 edit.active = current == nullptr || !current->active;
+                 if (current != nullptr) {
+                     Json warnings = Json::array();
+                     edit.after = PatchedBytes(s, entity, active_component, Json{{"active", edit.active}}, edit.before, warnings);
+                     if (!warnings.empty()) throw ToolError("Invalid Active value for entity " + ToString(guid));
+                 } else {
+                     reflect::Any sample = reflect::Any::DefaultOf(*info.reflected);
+                     if (!sample.HasValue()) throw ToolError("Cannot default-construct Active");
+                     reflect::LoadReport report;
+                     if (!reflect::FromJson(*info.reflected, sample.Data(), Json{{"active", false}}, &report)) {
+                         throw ToolError("Invalid active state");
+                     }
+                     info.serialize(sample.Data(), edit.after);
+                     reflect::Any defaults = reflect::Any::DefaultOf(*info.reflected);
+                     if (!defaults.HasValue()) throw ToolError("Cannot default-construct Active");
+                     info.serialize(defaults.Data(), edit.before);
+                     edit.add_component = true;
+                 }
+                 edits.push_back(std::move(edit));
+             }
+
+             static std::atomic<std::uint64_t> next_batch_id{0};
+             const std::string transaction_label = "Toggle Entity Activity " + std::to_string(++next_batch_id);
+             const usize undo_count_before = s.stack.UndoCount();
+             editor::CommandContext ctx = s.Context();
+             s.stack.BeginTransaction(transaction_label);
+             try {
+                 for (const ActiveEdit& edit : edits) {
+                     if (edit.add_component) {
+                         auto add = std::make_unique<editor::AddComponentCommand>(edit.guid, active_component);
+                         add->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(add));
+                     }
+                     auto set = std::make_unique<SetComponentCommand>(edit.guid, active_component, edit.before, edit.after);
+                     set->SetAttribution("agent");
+                     s.stack.Execute(ctx, std::move(set));
+                 }
+                 s.stack.EndTransaction();
+             } catch (...) {
+                 s.stack.EndTransaction();
+                 if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                 throw;
+             }
+
+             Json results = Json::array();
+             for (const ActiveEdit& edit : edits) {
+                 results.push_back({{"entity", ToString(edit.guid)}, {"active", edit.active}});
+             }
+             return {{"toggled", edits.size()}, {"entities", std::move(results)}};
+         }});
+
+    server.AddTool(
+        {"set_entities_active_shared_many",
+         "Set the same active state on 1–64 unique scene entities as one undoable action. Missing Active components mean active; disabling an entity adds Active{false}. Validate the complete selection before applying changes.",
+         Schema({{"entities", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 64},
+                               {"description", "1–64 unique entity GUIDs"}}},
+                 {"active", {{"type", "boolean"}, {"description", "Shared active state"}}}},
+                {"entities", "active"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before changing entity activity");
+             if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                 throw ToolError("\"entities\" must be a non-empty array of at most 64 entity GUIDs");
+             }
+             if (!args["active"].is_boolean()) throw ToolError("\"active\" must be true or false");
+             const bool active = args["active"].get<bool>();
+
+             struct ActiveEdit {
+                 EntityGuid guid;
+                 bool add_component = false;
+                 bool changed = false;
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+             };
+             std::vector<ActiveEdit> edits;
+             edits.reserve(args["entities"].size());
+             std::set<EntityGuid> seen;
+             const ComponentId active_component = GetComponentId<Active>();
+             const ComponentInfo& info = GetComponentInfo(active_component);
+             for (const Json& value : args["entities"]) {
+                 if (!value.is_string()) throw ToolError("Every entry in \"entities\" must be an entity GUID string");
+                 EntityGuid guid;
+                 const std::string guid_text = value.get<std::string>();
+                 if (!ParseEntityGuid(guid_text, guid)) throw ToolError("Not a valid entity GUID: " + guid_text);
+                 if (!seen.insert(guid).second) throw ToolError("Duplicate entity in \"entities\": " + ToString(guid));
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 if (entity.IsNull()) throw ToolError("No entity with GUID " + ToString(guid));
+
+                 ActiveEdit edit;
+                 edit.guid = guid;
+                 const Active* current = s.world.GetComponent<Active>(entity);
+                 if (current != nullptr) {
+                     edit.changed = current->active != active;
+                     if (edit.changed) {
+                         Json warnings = Json::array();
+                         edit.after = PatchedBytes(s, entity, active_component, Json{{"active", active}}, edit.before, warnings);
+                         if (!warnings.empty()) throw ToolError("Invalid Active value for entity " + ToString(guid));
+                     }
+                 } else if (!active) {
+                     reflect::Any sample = reflect::Any::DefaultOf(*info.reflected);
+                     if (!sample.HasValue()) throw ToolError("Cannot default-construct Active");
+                     reflect::LoadReport report;
+                     if (!reflect::FromJson(*info.reflected, sample.Data(), Json{{"active", false}}, &report)) {
+                         throw ToolError("Invalid active state");
+                     }
+                     info.serialize(sample.Data(), edit.after);
+                     reflect::Any defaults = reflect::Any::DefaultOf(*info.reflected);
+                     if (!defaults.HasValue()) throw ToolError("Cannot default-construct Active");
+                     info.serialize(defaults.Data(), edit.before);
+                     edit.add_component = true;
+                     edit.changed = true;
+                 }
+                 edits.push_back(std::move(edit));
+             }
+
+             const usize changed_count = std::count_if(edits.begin(), edits.end(), [](const ActiveEdit& edit) { return edit.changed; });
+             if (changed_count > 0) {
+                 static std::atomic<std::uint64_t> next_batch_id{0};
+                 const std::string transaction_label = "Set Entity Activity " + std::to_string(++next_batch_id);
+                 const usize undo_count_before = s.stack.UndoCount();
+                 editor::CommandContext ctx = s.Context();
+                 s.stack.BeginTransaction(transaction_label);
+                 try {
+                     for (const ActiveEdit& edit : edits) {
+                         if (!edit.changed) continue;
+                         if (edit.add_component) {
+                             auto add = std::make_unique<editor::AddComponentCommand>(edit.guid, active_component);
+                             add->SetAttribution("agent");
+                             s.stack.Execute(ctx, std::move(add));
+                         }
+                         auto set = std::make_unique<SetComponentCommand>(edit.guid, active_component, edit.before, edit.after);
+                         set->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(set));
+                     }
+                     s.stack.EndTransaction();
+                 } catch (...) {
+                     s.stack.EndTransaction();
+                     if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                     throw;
+                 }
+             }
+
+             Json results = Json::array();
+             for (const ActiveEdit& edit : edits) {
+                 results.push_back({{"entity", ToString(edit.guid)}, {"active", active}, {"changed", edit.changed}});
+             }
+             return {{"changed", changed_count}, {"entities", std::move(results)}};
+         }});
+
+    server.AddTool(
+        {"set_entities_active_many",
+         "Set the active state of 1–64 unique scene entities as one undoable action. Missing Active components mean active; disabling an entity adds Active{false}. Validate all GUIDs and boolean values before applying changes.",
+         Schema({{"edits", {{"type", "array"},
+                             {"items", {{"type", "object"},
+                                        {"properties", {{"entity", kGuidProp}, {"active", {{"type", "boolean"}}}}},
+                                        {"required", Json::array({"entity", "active"})}}},
+                             {"description", "1–64 unique entity GUID and active-state pairs"}}}},
+                {"edits"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before changing entity activity");
+             if (!args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
+                 throw ToolError("\"edits\" must be a non-empty array of at most 64 entity activity changes");
+             }
+
+             struct ActiveEdit {
+                 EntityGuid guid;
+                 bool active;
+                 bool add_component = false;
+                 bool changed = true;
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+             };
+             std::vector<ActiveEdit> edits;
+             edits.reserve(args["edits"].size());
+             std::set<EntityGuid> seen;
+             const ComponentId active_component = GetComponentId<Active>();
+             usize change_count = 0;
+             for (const Json& entry : args["edits"]) {
+                 if (!entry.is_object()) throw ToolError("Each entry in \"edits\" must be an object");
+                 const EntityGuid guid = RequireGuid(entry, "entity");
+                 const Entity entity = RequireEntity(s, entry);
+                 if (!seen.insert(guid).second) throw ToolError("Duplicate entity in \"edits\": " + ToString(guid));
+                 if (!entry.contains("active") || !entry["active"].is_boolean()) throw ToolError("\"active\" must be true or false");
+                 ActiveEdit edit;
+                 edit.guid = guid;
+                 edit.active = entry["active"].get<bool>();
+                 if (s.world.HasComponentRaw(entity, active_component)) {
+                     Json warnings = Json::array();
+                     edit.after = PatchedBytes(s, entity, active_component, Json{{"active", edit.active}}, edit.before, warnings);
+                     const Active* current = s.world.GetComponent<Active>(entity);
+                     edit.changed = current == nullptr || current->active != edit.active;
+                 } else if (!edit.active) {
+                     const ComponentInfo& info = GetComponentInfo(active_component);
+                     reflect::Any sample = reflect::Any::DefaultOf(*info.reflected);
+                     if (!sample.HasValue()) throw ToolError("Cannot default-construct Active");
+                     reflect::LoadReport report;
+                     if (!reflect::FromJson(*info.reflected, sample.Data(), Json{{"active", false}}, &report)) {
+                         throw ToolError("Invalid active state");
+                     }
+                     info.serialize(sample.Data(), edit.after);
+                     reflect::Any defaults = reflect::Any::DefaultOf(*info.reflected);
+                     if (!defaults.HasValue()) throw ToolError("Cannot default-construct Active");
+                     info.serialize(defaults.Data(), edit.before);
+                     edit.add_component = true;
+                 } else {
+                     edit.changed = false; // no component means active by default
+                 }
+                 if (edit.changed) ++change_count;
+                 edits.push_back(std::move(edit));
+             }
+
+             if (change_count > 0) {
+                 static std::atomic<std::uint64_t> next_batch_id{0};
+                 const std::string transaction_label = "Set Entity Activity " + std::to_string(++next_batch_id);
+                 const usize undo_count_before = s.stack.UndoCount();
+                 editor::CommandContext ctx = s.Context();
+                 s.stack.BeginTransaction(transaction_label);
+                 try {
+                     for (const ActiveEdit& edit : edits) {
+                         if (!edit.changed) continue;
+                         if (edit.add_component) {
+                             auto add = std::make_unique<editor::AddComponentCommand>(edit.guid, active_component);
+                             add->SetAttribution("agent");
+                             s.stack.Execute(ctx, std::move(add));
+                         }
+                         auto set = std::make_unique<SetComponentCommand>(edit.guid, active_component, edit.before, edit.after);
+                         set->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(set));
+                     }
+                     s.stack.EndTransaction();
+                 } catch (...) {
+                     s.stack.EndTransaction();
+                     if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                     throw;
+                 }
+             }
+
+             Json results = Json::array();
+             for (const ActiveEdit& edit : edits) results.push_back({{"entity", ToString(edit.guid)}, {"active", edit.active}});
+             return {{"changed", change_count}, {"entities", std::move(results)}};
+         }});
 
     server.AddTool({"set_component",
                     "Change fields of a component the entity already has. `value` is a partial object: only the "
@@ -456,6 +6958,286 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                         return out;
                     }});
 
+    server.AddTool(
+        {"reset_components_many",
+         "Reset up to 64 unique entity/component pairs to their reflected defaults as one undoable action. Components stay attached, and the entire selection is validated before changes are applied.",
+         Schema({{"resets", {{"type", "array"},
+                              {"items", {{"type", "object"},
+                                         {"properties", {{"entity", kGuidProp},
+                                                         {"component", {{"type", "string"}}}}},
+                                         {"required", Json::array({"entity", "component"})}}},
+                              {"description", "1–64 unique entity/component pairs to reset"}}}},
+                {"resets"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before resetting components");
+             if (!args["resets"].is_array() || args["resets"].empty() || args["resets"].size() > 64) {
+                 throw ToolError("\"resets\" must be a non-empty array of at most 64 component resets");
+             }
+
+             struct Reset {
+                 EntityGuid entity;
+                 ComponentId component;
+                 std::string component_name;
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+                 bool changed = false;
+             };
+             std::vector<Reset> resets;
+             resets.reserve(args["resets"].size());
+             std::set<std::pair<EntityGuid, ComponentId>> seen;
+             const ComponentId id_component = GetComponentId<IdComponent>();
+             for (const Json& entry : args["resets"]) {
+                 if (!entry.is_object()) throw ToolError("Each entry in \"resets\" must be an object");
+                 const EntityGuid guid = RequireGuid(entry, "entity");
+                 const Entity entity = RequireEntity(s, entry);
+                 const ComponentId id = RequireComponent(RequireString(entry, "component"));
+                 if (id == id_component) throw ToolError("An entity's identity can't be reset");
+                 if (!s.world.HasComponentRaw(entity, id)) throw ToolError("Entity " + ToString(guid) + " doesn't have " + ComponentName(id));
+                 if (!seen.emplace(guid, id).second) throw ToolError("Duplicate component reset for entity " + ToString(guid) + " and " + ComponentName(id));
+
+                 const ComponentInfo& info = GetComponentInfo(id);
+                 reflect::Any defaults = reflect::Any::DefaultOf(*info.reflected);
+                 if (!defaults.HasValue()) throw ToolError("Cannot default-construct component " + ComponentName(id));
+                 Reset reset;
+                 reset.entity = guid;
+                 reset.component = id;
+                 reset.component_name = ComponentName(id);
+                 info.serialize(s.world.GetComponentRaw(entity, id), reset.before);
+                 info.serialize(defaults.Data(), reset.after);
+                 reset.changed = reset.before != reset.after;
+                 resets.push_back(std::move(reset));
+             }
+
+             bool any_changed = false;
+             for (const Reset& reset : resets) any_changed = any_changed || reset.changed;
+             if (any_changed) {
+                 static std::atomic<std::uint64_t> next_batch_id{0};
+                 const std::string transaction_label = "Reset Components " + std::to_string(++next_batch_id);
+                 const usize undo_count_before = s.stack.UndoCount();
+                 editor::CommandContext ctx = s.Context();
+                 s.stack.BeginTransaction(transaction_label);
+                 try {
+                     for (const Reset& reset : resets) {
+                         if (!reset.changed) continue;
+                         auto command = std::make_unique<SetComponentCommand>(reset.entity, reset.component, reset.before, reset.after);
+                         command->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(command));
+                     }
+                     s.stack.EndTransaction();
+                 } catch (...) {
+                     s.stack.EndTransaction();
+                     if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                     throw;
+                 }
+             }
+
+             Json results = Json::array();
+             for (const Reset& reset : resets) results.push_back({{"entity", ToString(reset.entity)}, {"component", reset.component_name}, {"changed", reset.changed}});
+             return {{"reset", std::count_if(resets.begin(), resets.end(), [](const Reset& reset) { return reset.changed; })},
+                     {"components", std::move(results)}};
+         }});
+
+    server.AddTool(
+        {"copy_components_many",
+         "Copy selected reflected component values from one source entity to 1–64 target entities as one undoable action. Source and target components must already exist; validates every selected pair before applying any changes.",
+         Schema({{"source", kGuidProp},
+                 {"targets", {{"type", "array"}, {"items", kGuidProp}, {"minItems", 1}, {"maxItems", 64},
+                              {"description", "Unique target entity GUIDs"}}},
+                 {"components", {{"type", "array"}, {"items", {{"type", "string"}}}, {"minItems", 1}, {"maxItems", 64},
+                                 {"description", "Unique reflected component names to copy from the source"}}}},
+                {"source", "targets", "components"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before copying components");
+             const Entity source = RequireEntity(s, args, "source");
+             if (!args["targets"].is_array() || args["targets"].empty() || args["targets"].size() > 64) {
+                 throw ToolError("\"targets\" must be a non-empty array of at most 64 entity GUIDs");
+             }
+             if (!args["components"].is_array() || args["components"].empty() || args["components"].size() > 64) {
+                 throw ToolError("\"components\" must be a non-empty array of at most 64 component names");
+             }
+             if (args["targets"].size() * args["components"].size() > 64) {
+                 throw ToolError("The target/component selection may contain at most 64 pairs");
+             }
+
+             struct Copy {
+                 EntityGuid target;
+                 ComponentId component;
+                 std::string component_name;
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+                 bool changed = false;
+             };
+             std::vector<Copy> copies;
+             copies.reserve(args["targets"].size() * args["components"].size());
+             std::vector<std::pair<EntityGuid, Entity>> targets;
+             targets.reserve(args["targets"].size());
+             std::set<EntityGuid> seen_targets;
+             for (const Json& value : args["targets"]) {
+                 if (!value.is_string()) throw ToolError("Every entry in \"targets\" must be an entity GUID string");
+                 EntityGuid guid;
+                 const std::string text = value.get<std::string>();
+                 if (!ParseEntityGuid(text, guid)) throw ToolError("Not a valid entity GUID: " + text);
+                 if (!seen_targets.insert(guid).second) throw ToolError("Duplicate target entity: " + ToString(guid));
+                 targets.emplace_back(guid, RequireEntity(s, Json{{"entity", ToString(guid)}}));
+             }
+
+             std::vector<std::pair<ComponentId, std::string>> components;
+             components.reserve(args["components"].size());
+             std::set<ComponentId> seen_components;
+             const ComponentId id_component = GetComponentId<IdComponent>();
+             for (const Json& value : args["components"]) {
+                 if (!value.is_string()) throw ToolError("Every entry in \"components\" must be a component name");
+                 const ComponentId id = RequireComponent(value.get<std::string>());
+                 if (id == id_component) throw ToolError("An entity's identity cannot be copied");
+                 if (!seen_components.insert(id).second) throw ToolError("Duplicate component in \"components\": " + ComponentName(id));
+                 if (!s.world.HasComponentRaw(source, id)) throw ToolError("Source entity doesn't have " + ComponentName(id));
+                 components.emplace_back(id, ComponentName(id));
+             }
+
+             for (const auto& [target_guid, target] : targets) {
+                 for (const auto& [id, name] : components) {
+                     if (!s.world.HasComponentRaw(target, id)) {
+                         throw ToolError("Target entity " + ToString(target_guid) + " doesn't have " + name + "; use add_components_many first");
+                     }
+                     const ComponentInfo& info = GetComponentInfo(id);
+                     Copy copy;
+                     copy.target = target_guid;
+                     copy.component = id;
+                     copy.component_name = name;
+                     info.serialize(s.world.GetComponentRaw(target, id), copy.before);
+                     info.serialize(s.world.GetComponentRaw(source, id), copy.after);
+                     copy.changed = copy.before != copy.after;
+                     copies.push_back(std::move(copy));
+                 }
+             }
+
+             bool any_changed = false;
+             for (const Copy& copy : copies) any_changed = any_changed || copy.changed;
+             if (any_changed) {
+                 static std::atomic<std::uint64_t> next_batch_id{0};
+                 const std::string transaction_label = "Copy Components " + std::to_string(++next_batch_id);
+                 const usize undo_count_before = s.stack.UndoCount();
+                 editor::CommandContext ctx = s.Context();
+                 s.stack.BeginTransaction(transaction_label);
+                 try {
+                     for (const Copy& copy : copies) {
+                         if (!copy.changed) continue;
+                         auto command = std::make_unique<SetComponentCommand>(copy.target, copy.component, copy.before, copy.after);
+                         command->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(command));
+                     }
+                     s.stack.EndTransaction();
+                 } catch (...) {
+                     s.stack.EndTransaction();
+                     if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                     throw;
+                 }
+             }
+
+             Json results = Json::array();
+             for (const Copy& copy : copies) {
+                 results.push_back({{"entity", ToString(copy.target)}, {"component", copy.component_name}, {"changed", copy.changed}});
+             }
+             return {{"copied", std::count_if(copies.begin(), copies.end(), [](const Copy& copy) { return copy.changed; })},
+                     {"components", std::move(results)}};
+         }});
+
+    server.AddTool(
+        {"set_components_many",
+         "Update components on 1–64 unique entities as one undoable action. Each edit maps component names to partial field objects; the complete selection and every component patch are validated before any changes are applied.",
+         Schema({{"edits", {{"type", "array"},
+                             {"items", {{"type", "object"},
+                                        {"properties", {{"entity", kGuidProp},
+                                                        {"components", {{"type", "object"},
+                                                                         {"description", "Component names mapped to partial field objects"}}}}},
+                                        {"required", Json::array({"entity", "components"})}}},
+                             {"description", "1–64 unique entities and their component patches"}}}},
+                {"edits"}),
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before editing components");
+             if (!args["edits"].is_array() || args["edits"].empty() || args["edits"].size() > 64) {
+                 throw ToolError("\"edits\" must be a non-empty array of at most 64 entity edits");
+             }
+
+             struct ComponentPatch {
+                 ComponentId id;
+                 std::vector<u8> before;
+                 std::vector<u8> after;
+                 Json warnings = Json::array();
+             };
+             struct EntityPatch {
+                 EntityGuid guid;
+                 std::vector<ComponentPatch> components;
+             };
+             std::vector<EntityPatch> patches;
+             patches.reserve(args["edits"].size());
+             std::set<EntityGuid> seen_entities;
+             const ComponentId id_component = GetComponentId<IdComponent>();
+             for (const Json& edit : args["edits"]) {
+                 if (!edit.is_object()) throw ToolError("Each entry in \"edits\" must be an object");
+                 const EntityGuid guid = RequireGuid(edit, "entity");
+                 const Entity entity = RequireEntity(s, edit);
+                 if (!seen_entities.insert(guid).second) throw ToolError("Duplicate entity in \"edits\": " + ToString(guid));
+                 if (!edit.contains("components") || !edit["components"].is_object() || edit["components"].empty()) {
+                     throw ToolError("Each edit must include a non-empty \"components\" object");
+                 }
+
+                 EntityPatch entity_patch;
+                 entity_patch.guid = guid;
+                 entity_patch.components.reserve(edit["components"].size());
+                 for (const auto& [name, value] : edit["components"].items()) {
+                     if (!value.is_object()) throw ToolError("Each component patch must be a field object");
+                     const ComponentId id = RequireComponent(name);
+                     if (id == id_component) throw ToolError("An entity's identity is read-only");
+                     if (!s.world.HasComponentRaw(entity, id)) {
+                         throw ToolError("Entity " + ToString(guid) + " doesn't have " + ComponentName(id) + "; use add_component");
+                     }
+                     ComponentPatch component_patch;
+                     component_patch.id = id;
+                     component_patch.after = PatchedBytes(s, entity, id, value, component_patch.before, component_patch.warnings);
+                     entity_patch.components.push_back(std::move(component_patch));
+                 }
+                 patches.push_back(std::move(entity_patch));
+             }
+
+             static std::atomic<std::uint64_t> next_batch_id{0};
+             const std::string transaction_label = "Set Components " + std::to_string(++next_batch_id);
+             const usize undo_count_before = s.stack.UndoCount();
+             editor::CommandContext ctx = s.Context();
+             s.stack.BeginTransaction(transaction_label);
+             try {
+                 for (const EntityPatch& entity_patch : patches) {
+                     for (const ComponentPatch& component_patch : entity_patch.components) {
+                         auto command = std::make_unique<SetComponentCommand>(entity_patch.guid, component_patch.id,
+                                                                              component_patch.before, component_patch.after);
+                         command->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(command));
+                     }
+                 }
+                 s.stack.EndTransaction();
+             } catch (...) {
+                 s.stack.EndTransaction();
+                 if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                 throw;
+             }
+
+             Json results = Json::array();
+             for (const EntityPatch& entity_patch : patches) {
+                 Json components = Json::object();
+                 Json warnings = Json::object();
+                 const Entity entity = s.guids.Find(s.world, entity_patch.guid);
+                 for (const ComponentPatch& component_patch : entity_patch.components) {
+                     const std::string name = ComponentName(component_patch.id);
+                     components[name] = ComponentJson(s, entity, component_patch.id);
+                     if (!component_patch.warnings.empty()) warnings[name] = component_patch.warnings;
+                 }
+                 Json row = {{"entity", ToString(entity_patch.guid)}, {"components", std::move(components)}};
+                 if (!warnings.empty()) row["warnings"] = std::move(warnings);
+                 results.push_back(std::move(row));
+             }
+             return {{"updated", patches.size()}, {"edits", std::move(results)}};
+         }});
+
     server.AddTool({"reparent",
                     "Make an entity a child of another (its Transform is then relative to the parent), or detach it "
                     "by omitting `parent`. Undoable.",
@@ -475,21 +7257,157 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                         return {{"entity", ToString(guid)}, {"parent", parent.IsNull() ? Json(nullptr) : Json(ToString(parent))}};
                     }});
 
+    Json reparent_many_schema = Schema(Json::object());
+    reparent_many_schema["properties"]["moves"] = {
+        {"type", "array"},
+        {"items", {{"type", "object"},
+                   {"properties", {{"entity", kGuidProp}, {"parent", {{"type", Json::array({"string", "null"})}}}}},
+                   {"required", Json::array({"entity"})}}},
+        {"description", "1–64 per-entity moves; omitted or null parent detaches that entity"}};
+    reparent_many_schema["properties"]["entities"] = {
+        {"type", "array"}, {"items", {{"type", "string"}}},
+        {"description", "1–64 entity GUIDs to reparent together; use instead of moves"}};
+    reparent_many_schema["properties"]["parent"] = {
+        {"type", Json::array({"string", "null"})},
+        {"description", "Shared parent for entities; omit or set null to detach all"}};
+
+    server.AddTool(
+        {"reparent_many",
+         "Reparent or detach up to 64 unique entities as one undoable action. Use `moves` for a different parent per entity, or `entities` with a shared optional `parent` for a selection; omit or set the shared parent to null to detach all. The final hierarchy is checked for cycles before changes are applied.",
+         reparent_many_schema,
+         [&s](const Json& args) -> Json {
+             if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before reparenting entities");
+             const bool has_moves = args.contains("moves");
+             const bool has_entities = args.contains("entities");
+             if (has_moves == has_entities) throw ToolError("Specify either \"moves\" or \"entities\" with a shared \"parent\"");
+             Json requested_moves = args.value("moves", Json::array());
+             if (has_entities) {
+                 if (!args["entities"].is_array() || args["entities"].empty() || args["entities"].size() > 64) {
+                     throw ToolError("\"entities\" must be a non-empty array of at most 64 entity GUIDs");
+                 }
+                 Json shared_parent = args.value("parent", Json(nullptr));
+                 if (!shared_parent.is_null() && !shared_parent.is_string()) {
+                     throw ToolError("\"parent\" must be an entity GUID string or null");
+                 }
+                 requested_moves = Json::array();
+                 for (const Json& entity : args["entities"]) {
+                     requested_moves.push_back({{"entity", entity}, {"parent", shared_parent}});
+                 }
+             } else if (args.contains("parent")) {
+                 throw ToolError("Use the per-entity \"parent\" inside each move, or use \"entities\" with a shared parent");
+             }
+             if (!requested_moves.is_array() || requested_moves.empty() || requested_moves.size() > 64) {
+                 throw ToolError("\"moves\" must be a non-empty array of at most 64 entity/parent pairs");
+             }
+
+             struct Move {
+                 EntityGuid entity;
+                 EntityGuid old_parent;
+                 EntityGuid parent;
+             };
+             std::vector<Move> moves;
+             moves.reserve(requested_moves.size());
+             std::set<EntityGuid> seen;
+             for (const Json& entry : requested_moves) {
+                 if (!entry.is_object()) throw ToolError("Each entry in \"moves\" must be an object");
+                 const EntityGuid entity_guid = RequireGuid(entry, "entity");
+                 const Entity entity = RequireEntity(s, entry, "entity");
+                 if (!seen.insert(entity_guid).second) throw ToolError("Duplicate entity in \"moves\": " + ToString(entity_guid));
+                 EntityGuid parent_guid;
+                 if (entry.contains("parent") && !entry["parent"].is_null()) {
+                     parent_guid = RequireGuid(entry, "parent");
+                     RequireEntity(s, entry, "parent");
+                 }
+                 const Parent* current = s.world.GetComponent<Parent>(entity);
+                 const EntityGuid old_parent = current == nullptr ? EntityGuid{} : current->parent;
+                 moves.push_back({entity_guid, old_parent, parent_guid});
+             }
+
+             auto DesiredParent = [&](const EntityGuid& guid) -> EntityGuid {
+                 for (const Move& move : moves) if (move.entity == guid) return move.parent;
+                 const Entity entity = s.guids.Find(s.world, guid);
+                 const Parent* parent = entity.IsNull() ? nullptr : s.world.GetComponent<Parent>(entity);
+                 return parent == nullptr ? EntityGuid{} : parent->parent;
+             };
+             for (const Move& move : moves) {
+                 std::set<EntityGuid> visited;
+                 EntityGuid cursor = move.entity;
+                 while (!cursor.IsNull()) {
+                     if (!visited.insert(cursor).second) throw ToolError("The requested moves would create a hierarchy cycle");
+                     cursor = DesiredParent(cursor);
+                 }
+             }
+
+             static std::atomic<std::uint64_t> next_batch_id{0};
+             const std::string transaction_label = "Reparent Entities " + std::to_string(++next_batch_id);
+             const usize undo_count_before = s.stack.UndoCount();
+             editor::CommandContext ctx = s.Context();
+             s.stack.BeginTransaction(transaction_label);
+             try {
+                 // Detach changed entities first. This permits valid batch rotations without
+                 // transient cycles, then attach children after their moved parents.
+                 for (const Move& move : moves) {
+                     if (move.old_parent.IsNull() || move.old_parent == move.parent) continue;
+                     auto command = std::make_unique<editor::ReparentCommand>(move.entity, EntityGuid{});
+                     command->SetAttribution("agent");
+                     s.stack.Execute(ctx, std::move(command));
+                 }
+
+                 std::set<EntityGuid> attached;
+                 for (const Move& move : moves) {
+                     if (move.parent.IsNull() || move.parent == move.old_parent) attached.insert(move.entity);
+                 }
+                 std::size_t remaining = 0;
+                 for (const Move& move : moves) {
+                     if (!move.parent.IsNull() && move.parent != move.old_parent) ++remaining;
+                 }
+                 while (remaining > 0) {
+                     bool progressed = false;
+                     for (const Move& move : moves) {
+                         if (move.parent.IsNull() || move.parent == move.old_parent || attached.count(move.entity)) continue;
+                         const bool parent_is_moved = seen.count(move.parent) != 0;
+                         if (parent_is_moved && !attached.count(move.parent)) continue;
+                         auto command = std::make_unique<editor::ReparentCommand>(move.entity, move.parent);
+                         command->SetAttribution("agent");
+                         s.stack.Execute(ctx, std::move(command));
+                         attached.insert(move.entity);
+                         --remaining;
+                         progressed = true;
+                     }
+                     if (!progressed) throw ToolError("Could not order the requested hierarchy changes");
+                 }
+                 s.stack.EndTransaction();
+             } catch (...) {
+                 s.stack.EndTransaction();
+                 if (s.stack.UndoCount() != undo_count_before || s.stack.UndoLabel() == transaction_label) s.stack.Undo(ctx);
+                 throw;
+             }
+
+             Json results = Json::array();
+             for (const Move& move : moves) {
+                 results.push_back({{"entity", ToString(move.entity)},
+                                    {"parent", move.parent.IsNull() ? Json(nullptr) : Json(ToString(move.parent))}});
+             }
+             return {{"reparented", moves.size()}, {"results", std::move(results)}};
+         }});
+
     server.AddTool({"undo", "Undo the last editor action.", Schema(Json::object()), [&s](const Json&) -> Json {
                         std::string label = s.stack.UndoLabel();
+                        std::string attribution = s.stack.UndoAttribution();
                         editor::CommandContext ctx = s.Context();
                         if (!s.stack.Undo(ctx)) {
                             throw ToolError("Nothing to undo");
                         }
-                        return {{"undone", label}};
+                        return {{"undone", label}, {"attribution", attribution}};
                     }});
     server.AddTool({"redo", "Redo the last undone editor action.", Schema(Json::object()), [&s](const Json&) -> Json {
                         std::string label = s.stack.RedoLabel();
+                        std::string attribution = s.stack.RedoAttribution();
                         editor::CommandContext ctx = s.Context();
                         if (!s.stack.Redo(ctx)) {
                             throw ToolError("Nothing to redo");
                         }
-                        return {{"redone", label}};
+                        return {{"redone", label}, {"attribution", attribution}};
                     }});
 
     server.AddTool({"save_scene", "Save the scene to a file: JSON (.json, human-readable) or binary (.aesc).",
@@ -588,8 +7506,10 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
     server.AddTool({"step_simulation",
                     "Advance the running simulation by a number of frames (default 1) of dt seconds (default 1/60), "
                     "running every enabled system. Works in play mode and while paused.",
-                    Schema({{"frames", {{"type", "integer"}, {"description", "Frames to run, 1-10000 (default 1)"}}},
-                            {"dt", {{"type", "number"}, {"description", "Seconds per frame (default 1/60)"}}}}),
+                    Schema({{"frames", {{"type", "integer"}, {"minimum", 1}, {"maximum", 10000},
+                                        {"description", "Frames to run, 1-10000 (default 1)"}}},
+                            {"dt", {{"type", "number"}, {"exclusiveMinimum", 0}, {"maximum", 1},
+                                     {"description", "Seconds per frame in (0, 1] (default 1/60)"}}}}),
                     [&s](const Json& args) -> Json {
                         if (!s.sim) throw ToolError("No simulation: call play first");
                         i64 frames = 1;
@@ -1267,7 +8187,7 @@ void RegisterSequenceEditorTools(McpServer& server, EditorSession& s) {
                     }});
 
     // Work undo cannot bring back: the built-in permission rule asks the person before these run (permissions.h).
-    for (const char* name : {"destroy_entity", "remove_component", "save_scene", "load_scene"}) server.MarkDestructive(name);
+    for (const char* name : {"destroy_entity", "destroy_entities", "remove_component", "remove_components_many", "save_scene", "load_scene"}) server.MarkDestructive(name);
 }
 
 } // namespace aether::mcp

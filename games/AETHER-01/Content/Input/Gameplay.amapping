@@ -178,6 +178,38 @@
       },
       {
         "$v": 1,
+        "action": "Sprint",
+        "actuation": 0.5,
+        "key": "LeftShift",
+        "modifiers": [],
+        "triggers": [
+          {
+            "$v": 1,
+            "chord_action": "",
+            "one_shot": false,
+            "time": 0.5,
+            "type": "Down"
+          }
+        ]
+      },
+      {
+        "$v": 1,
+        "action": "Sprint",
+        "actuation": 0.5,
+        "key": "GamepadLeftShoulder",
+        "modifiers": [],
+        "triggers": [
+          {
+            "$v": 1,
+            "chord_action": "",
+            "one_shot": false,
+            "time": 0.5,
+            "type": "Down"
+          }
+        ]
+      },
+      {
+        "$v": 1,
         "action": "Look",
         "actuation": 0.5,
         "key": "MouseX",
@@ -540,6 +572,96 @@
             "chord_action": "",
             "one_shot": true,
             "time": 0.5
+          }
+        ]
+      },
+      {
+        "$v": 1,
+        "action": "SkipCinematic",
+        "actuation": 0.5,
+        "key": "Enter",
+        "modifiers": [],
+        "triggers": [
+          {
+            "chord_action": "",
+            "one_shot": true,
+            "time": 0.5,
+            "type": "Pressed"
+          }
+        ]
+      },
+      {
+        "$v": 1,
+        "action": "SkipCinematic",
+        "actuation": 0.5,
+        "key": "GamepadBack",
+        "modifiers": [],
+        "triggers": [
+          {
+            "chord_action": "",
+            "one_shot": true,
+            "time": 0.5,
+            "type": "Pressed"
+          }
+        ]
+      },
+      {
+        "$v": 1,
+        "action": "Aim",
+        "actuation": 0.5,
+        "key": "MouseRight",
+        "modifiers": [],
+        "triggers": [
+          {
+            "chord_action": "",
+            "one_shot": false,
+            "time": 0.5,
+            "type": "Down"
+          }
+        ]
+      },
+      {
+        "$v": 1,
+        "action": "Aim",
+        "actuation": 0.5,
+        "key": "GamepadLeftTrigger",
+        "modifiers": [],
+        "triggers": [
+          {
+            "chord_action": "",
+            "one_shot": false,
+            "time": 0.5,
+            "type": "Down"
+          }
+        ]
+      },
+      {
+        "$v": 1,
+        "action": "Sprint",
+        "actuation": 0.5,
+        "key": "LeftShift",
+        "modifiers": [],
+        "triggers": [
+          {
+            "chord_action": "",
+            "one_shot": false,
+            "time": 0.5,
+            "type": "Down"
+          }
+        ]
+      },
+      {
+        "$v": 1,
+        "action": "Sprint",
+        "actuation": 0.5,
+        "key": "GamepadLeftThumb",
+        "modifiers": [],
+        "triggers": [
+          {
+            "chord_action": "",
+            "one_shot": false,
+            "time": 0.5,
+            "type": "Down"
           }
         ]
       }

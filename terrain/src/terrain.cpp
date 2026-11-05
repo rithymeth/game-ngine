@@ -202,7 +202,7 @@ std::vector<f32> GenerateChunkVertices(const TerrainData& data,
             const f32 ds = step * static_cast<f32>(lod_step);
             const Vec3 tangent{2.0f * ds, hx1 - hx0, 0.0f};
             const Vec3 bitan{0.0f, hz1 - hz0, 2.0f * ds};
-            const Vec3 normal = Normalize(Cross(tangent, bitan));
+            const Vec3 normal = Normalize(Cross(bitan, tangent)); // bitan x tangent: +y on flat ground
 
             const usize i = static_cast<usize>(z * lvps + x) * 8;
             vertices[i + 0] = lx;

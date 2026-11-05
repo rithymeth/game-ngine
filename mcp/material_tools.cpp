@@ -32,7 +32,7 @@ Json ReadJsonArg(AssetHost& host, const Json& args, const char* def_key, const c
     if (args.contains(file_key)) {
         const std::string name = RequireString(args, file_key);
         fs::path path(name);
-        if (!path.is_absolute()) path = host.Require().paths.content / CleanRelative(name);
+        if (!path.is_absolute()) path = ContentFile(host.Require(), name);
         std::ifstream in(path, std::ios::binary);
         if (!in) throw ToolError("Can't read " + path.string());
         std::stringstream ss;
@@ -89,12 +89,24 @@ Json PinsJson(const std::vector<mt::PinDesc>& pins) {
     return out;
 }
 
+const char* ShadingName(mt::ShadingModel shading) {
+    switch (shading) {
+    case mt::ShadingModel::DefaultLit: return "DefaultLit";
+    case mt::ShadingModel::Unlit: return "Unlit";
+    case mt::ShadingModel::Subsurface: return "Subsurface";
+    case mt::ShadingModel::Hair: return "Hair";
+    case mt::ShadingModel::Cloth: return "Cloth";
+    }
+    return "DefaultLit";
+}
+
 const char* BlendName(mt::BlendMode b) {
     switch (b) {
     case mt::BlendMode::Opaque: return "Opaque";
     case mt::BlendMode::Masked: return "Masked";
     case mt::BlendMode::Translucent: return "Translucent";
     case mt::BlendMode::Additive: return "Additive";
+    case mt::BlendMode::Decal: return "Decal";
     }
     return "Opaque";
 }
@@ -163,7 +175,7 @@ void RegisterMaterialTools(McpServer& server, std::shared_ptr<AssetHost> host) {
                      {"errors", a.errors},
                      {"diagnostics", DiagnosticsJson(a)},
                      {"types", types},
-                     {"summary", {{"function", m.is_function}, {"shading", m.shading == mt::ShadingModel::Unlit ? "Unlit" : "DefaultLit"}, {"blend", BlendName(m.blend)},
+                     {"summary", {{"function", m.is_function}, {"shading", ShadingName(m.shading)}, {"blend", BlendName(m.blend)},
                                   {"two_sided", m.two_sided}, {"nodes", m.nodes.size()}, {"links", m.links.size()}, {"parameters", params}}}};
          }});
 

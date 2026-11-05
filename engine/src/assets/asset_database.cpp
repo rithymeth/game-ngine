@@ -8,11 +8,14 @@
 #include "aether/scene/entity_guid.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstdio>
+#include <fstream>
 #include <limits>
 #include <map>
 #include <system_error>
+#include <unordered_set>
 
 namespace aether::assets {
 
@@ -26,6 +29,41 @@ using reflect::Json;
 AssetGuid NewAssetGuid() {
     EntityGuid g = NewEntityGuid();
     return AssetGuid{g.hi, g.lo};
+}
+
+AssetGuid DeriveSubAssetGuid(const AssetGuid& parent, std::string_view importer, std::string_view key) {
+    // Two FNV-1a 64 streams with different offset bases over a length-prefixed
+    // encoding (so ("ab","c") != ("a","bc")), each finished with a SplitMix64
+    // mix. Not cryptographic; only needs to be stable and well spread.
+    auto mix = [](u64 x) {
+        x ^= x >> 30;
+        x *= 0xbf58476d1ce4e5b9ull;
+        x ^= x >> 27;
+        x *= 0x94d049bb133111ebull;
+        return x ^ (x >> 31);
+    };
+    u64 a = 0xcbf29ce484222325ull;
+    u64 b = 0x84222325cbf29ce4ull;
+    auto byte = [&](unsigned char c) {
+        a = (a ^ c) * 0x100000001b3ull;
+        b = (b ^ static_cast<unsigned char>(c ^ 0x5a)) * 0x100000001b3ull;
+    };
+    auto word = [&](u64 v) {
+        for (int i = 0; i < 8; ++i) byte(static_cast<unsigned char>(v >> (8 * i)));
+    };
+    auto text = [&](std::string_view s) {
+        word(s.size());
+        for (char c : s) byte(static_cast<unsigned char>(c));
+    };
+    text("aether.subasset.v1");
+    word(parent.hi);
+    word(parent.lo);
+    text(importer);
+    text(key);
+    AssetGuid g{mix(a ^ mix(b)), mix(b + 0x9e3779b97f4a7c15ull) ^ a};
+    g.hi = (g.hi & ~0x000000000000F000ull) | 0x0000000000008000ull; // version 8
+    g.lo = (g.lo & 0x3FFFFFFFFFFFFFFFull) | 0x8000000000000000ull; // RFC variant
+    return g;
 }
 
 std::string ToString(const AssetGuid& guid) { return aether::ToString(EntityGuid{guid.hi, guid.lo}); }
@@ -67,6 +105,9 @@ bool AssetRefFromJson(const nlohmann::json& data, void* object) {
 // ---------------------------------------------------------------------------
 
 namespace {
+
+constexpr usize kMaxAssetMetaBytes = 16 * 1024 * 1024;
+constexpr usize kMaxDependencyScanBytes = 64 * 1024 * 1024;
 
 void SetError(std::string* error, std::string message) {
     if (error != nullptr) {
@@ -120,7 +161,7 @@ bool SaveAssetMeta(const stdfs::path& meta_file, const AssetMeta& meta, std::str
     }
     std::string text = json.dump(2);
     text.push_back('\n');
-    if (!fs::WriteFileBytes(meta_file.string(), text.data(), text.size())) {
+    if (!fs::WriteFileAtomic(meta_file.string(), text.data(), text.size())) {
         SetError(error, "Couldn't write " + meta_file.string());
         return false;
     }
@@ -129,14 +170,18 @@ bool SaveAssetMeta(const stdfs::path& meta_file, const AssetMeta& meta, std::str
 
 bool LoadAssetMeta(const stdfs::path& meta_file, AssetMeta& out, std::string* error) {
     std::vector<u8> bytes;
-    if (!fs::ReadFileBytes(meta_file.string(), bytes)) {
-        SetError(error, "Couldn't read " + meta_file.string());
+    if (!fs::ReadFileBytes(meta_file.string(), bytes, kMaxAssetMetaBytes)) {
+        SetError(error, "Couldn't read " + meta_file.string() + " or it is too large to be asset metadata");
         return false;
     }
     return LoadAssetMetaFromMemory(bytes, out, error);
 }
 
 bool LoadAssetMetaFromMemory(std::span<const u8> bytes, AssetMeta& out, std::string* error) {
+    if (bytes.size() > kMaxAssetMetaBytes) {
+        SetError(error, "Input is too large to be asset metadata");
+        return false;
+    }
     Json json = Json::parse(bytes.begin(), bytes.end(), nullptr, /*allow_exceptions=*/false);
     if (json.is_discarded() || !json.is_object()) {
         SetError(error, "Input isn't an asset metadata file");
@@ -194,20 +239,30 @@ std::string ImporterForExtension(const stdfs::path& file) {
         {".abp", "Blueprint"}, {".aatlas", "SpriteAtlas"}, {".atileset", "Tileset"}, {".atilemap", "Tilemap"}, {".asequence", "Sequence"}, {".astrings", "StringTable"}, {".aeffect", "GameplayEffect"}, {".aability", "GameplayAbility"}, {".aitem", "ItemDefinition"}, {".aquest", "QuestDefinition"}, {".acue", "SoundCue"}, {".wav", "Sound"},    {".ogg", "Sound"},   {".flac", "Sound"},   {".mp3", "Sound"},    {".luau", "Script"},
         {".hlsl", "Shader"},  {".ttf", "Font"},    {".otf", "Font"},
         {".aui", "UILayout"}, {".atheme", "UITheme"}, // UI layouts and themes, shown by WidgetComponent and read by path
+        {".aanim", "AnimGraph"}, {".amontage", "AnimMontage"}, {".ablend", "BlendSpace"}, // animation data, read by path (M8.6)
+        {".avfx", "ParticleSystem"}, // particle systems, read by path by the player's particle world (M8.7)
     };
     auto it = kImporters.find(ToLower(file.extension().string()));
     return it != kImporters.end() ? it->second : std::string();
 }
 
 std::string HashFile(const stdfs::path& file) {
-    std::vector<u8> bytes;
-    if (!fs::ReadFileBytes(file.string(), bytes)) {
+    std::ifstream input(file, std::ios::binary);
+    if (!input) {
         return {};
     }
     u64 hash = 0xcbf29ce484222325ull;
-    for (u8 b : bytes) {
-        hash ^= b;
-        hash *= 0x100000001b3ull;
+    std::array<u8, 64 * 1024> buffer{};
+    while (input) {
+        input.read(reinterpret_cast<char*>(buffer.data()), static_cast<std::streamsize>(buffer.size()));
+        const std::streamsize count = input.gcount();
+        for (std::streamsize i = 0; i < count; ++i) {
+            hash ^= buffer[static_cast<usize>(i)];
+            hash *= 0x100000001b3ull;
+        }
+    }
+    if (input.bad() || !input.eof()) {
+        return {};
     }
     char text[32];
     std::snprintf(text, sizeof(text), "fnv1a64:%016llx", static_cast<unsigned long long>(hash));
@@ -421,13 +476,46 @@ void AssetDatabase::RebuildDependencies() {
                     record.dependencies.push_back(it->second);
                 }
             }
+        } else if (record.importer == "ParticleSystem") {
+            // A .avfx names its renderers' materials (textures) and meshes by path, not GUID (M8.7): they ship with it.
+            std::vector<u8> source;
+            if (!fs::ReadFileBytes(Absolute(record.path).string(), source, kMaxDependencyScanBytes)) {
+                AETHER_LOG_WARN("Assets", "Skipping dependency scan for unreadable or oversized asset: %s", record.path.c_str());
+                continue;
+            }
+            const nlohmann::json document = nlohmann::json::parse(source.begin(), source.end(), nullptr, false);
+            std::vector<const nlohmann::json*> stack{&document};
+            while (!stack.empty()) {
+                const nlohmann::json& node = *stack.back();
+                stack.pop_back();
+                if (node.is_array()) {
+                    for (const nlohmann::json& child : node) stack.push_back(&child);
+                } else if (node.is_object()) {
+                    for (auto it = node.begin(); it != node.end(); ++it) {
+                        if ((it.key() == "material" || it.key() == "mesh") && it.value().is_string()) {
+                            const auto found = by_path_.find(it.value().get<std::string>());
+                            if (found != by_path_.end() && found->second != guid) record.dependencies.push_back(found->second);
+                        } else {
+                            stack.push_back(&it.value());
+                        }
+                    }
+                }
+            }
+            std::sort(record.dependencies.begin(), record.dependencies.end());
+            record.dependencies.erase(std::unique(record.dependencies.begin(), record.dependencies.end()), record.dependencies.end());
+            for (const AssetGuid& dependency : record.dependencies) referencers_[dependency].push_back(guid);
+            continue;
         } else if (record.importer != "Scene" && record.importer != "Prefab" && record.importer != "SpriteAtlas" &&
                    record.importer != "Tileset" && record.importer != "Tilemap" && record.importer != "Sequence") {
             continue;
         }
         std::vector<u8> bytes;
-        if (record.importer != "Model" && !fs::ReadFileBytes(Absolute(record.path).string(), bytes)) {
-            continue;
+        if (record.importer != "Model") {
+            const std::string source_path = Absolute(record.path).string();
+            if (!fs::ReadFileBytes(source_path, bytes, kMaxDependencyScanBytes)) {
+                AETHER_LOG_WARN("Assets", "Skipping dependency scan for unreadable or oversized asset: %s", source_path.c_str());
+                continue;
+            }
         }
         for (const AssetGuid& referenced : FindGuidStrings(bytes)) {
             // Entity GUIDs share the format; only known asset GUIDs count.
@@ -472,9 +560,14 @@ bool AssetDatabase::Delete(const AssetGuid& guid_ref, bool force, std::string* e
     }
     // Users of the asset or any of its sub-assets, from outside it.
     std::vector<const AssetRecord*> users = Referencers(guid);
+    std::unordered_set<AssetGuid> user_guids;
+    user_guids.reserve(users.size());
+    for (const AssetRecord* user : users) {
+        user_guids.insert(user->guid);
+    }
     for (const AssetGuid& sub : it->second.sub_assets) {
         for (const AssetRecord* user : Referencers(sub)) {
-            if (std::find(users.begin(), users.end(), user) == users.end()) {
+            if (user_guids.insert(user->guid).second) {
                 users.push_back(user);
             }
         }
@@ -507,15 +600,24 @@ void AssetDatabase::EraseRecord(const AssetGuid& guid_ref) {
         return;
     }
     by_path_.erase(it->second.path);
+    // Remove this record from the reverse edges of its dependencies.
+    for (const AssetGuid& dependency : it->second.dependencies) {
+        if (auto refs = referencers_.find(dependency); refs != referencers_.end()) {
+            auto& list = refs->second;
+            list.erase(std::remove(list.begin(), list.end(), guid), list.end());
+        }
+    }
+    // Remove the deleted GUID from only the records that refer to it.
+    if (auto refs = referencers_.find(guid); refs != referencers_.end()) {
+        for (const AssetGuid& referencer : refs->second) {
+            if (auto record = records_.find(referencer); record != records_.end()) {
+                auto& dependencies = record->second.dependencies;
+                dependencies.erase(std::remove(dependencies.begin(), dependencies.end(), guid), dependencies.end());
+            }
+        }
+        referencers_.erase(refs);
+    }
     records_.erase(it);
-    referencers_.erase(guid);
-    for (auto& [other, list] : referencers_) {
-        list.erase(std::remove(list.begin(), list.end(), guid), list.end());
-    }
-    for (auto& [other, record] : records_) {
-        record.dependencies.erase(std::remove(record.dependencies.begin(), record.dependencies.end(), guid),
-                                  record.dependencies.end());
-    }
 }
 
 const AssetRecord* AssetDatabase::Find(const AssetGuid& guid) const {
@@ -528,14 +630,30 @@ const AssetRecord* AssetDatabase::FindByPath(const std::string& path) const {
     return it != by_path_.end() ? Find(it->second) : nullptr;
 }
 
-std::vector<const AssetRecord*> AssetDatabase::All() const {
+std::vector<const AssetRecord*> AssetDatabase::AllUnsorted() const {
     std::vector<const AssetRecord*> all;
     all.reserve(records_.size());
     for (const auto& [guid, record] : records_) {
         all.push_back(&record);
     }
+    return all;
+}
+
+std::vector<const AssetRecord*> AssetDatabase::All() const {
+    std::vector<const AssetRecord*> all = AllUnsorted();
     std::sort(all.begin(), all.end(), [](const AssetRecord* a, const AssetRecord* b) { return a->path < b->path; });
     return all;
+}
+
+std::vector<const AssetRecord*> AssetDatabase::FindByImporter(const std::string& importer) const {
+    std::vector<const AssetRecord*> result;
+    for (const auto& [guid, record] : records_) {
+        (void)guid;
+        if (record.importer == importer) {
+            result.push_back(&record);
+        }
+    }
+    return result;
 }
 
 bool AssetDatabase::Move(const AssetGuid& guid_ref, const std::string& new_path, std::string* error) {
@@ -611,17 +729,17 @@ std::vector<AssetGuid> AssetDatabase::SetSubAssets(const AssetGuid& source_ref,
         SetError(error, "No source asset with GUID " + ToString(source));
         return {};
     }
-    for (usize i = 0; i < sub_assets.size(); ++i) {
-        const std::string& key = sub_assets[i].key;
+    std::unordered_set<std::string> seen_keys;
+    seen_keys.reserve(sub_assets.size());
+    for (const SubAssetMeta& sub : sub_assets) {
+        const std::string& key = sub.key;
         if (key.empty()) {
             SetError(error, "Sub-asset keys can't be empty");
             return {};
         }
-        for (usize k = 0; k < i; ++k) {
-            if (sub_assets[k].key == key) {
-                SetError(error, "Duplicate sub-asset key \"" + key + "\"");
-                return {};
-            }
+        if (!seen_keys.insert(key).second) {
+            SetError(error, "Duplicate sub-asset key \"" + key + "\"");
+            return {};
         }
     }
     const stdfs::path meta_file = MetaPath(source);
@@ -636,11 +754,22 @@ std::vector<AssetGuid> AssetDatabase::SetSubAssets(const AssetGuid& source_ref,
     }
     std::vector<AssetGuid> guids;
     std::vector<SubAssetMeta> updated;
+    std::unordered_set<AssetGuid> current_guids;
+    current_guids.reserve(sub_assets.size());
     for (const SubAssetMeta& wanted : sub_assets) {
         SubAssetMeta sub = wanted;
         auto found = existing.find(sub.key);
-        sub.guid = found != existing.end() ? found->second : NewAssetGuid();
+        // Persisted GUIDs are kept (scenes and prefabs reference them); new ones are
+        // derived, not random, so a fresh cook of uncommitted sub-assets is reproducible.
+        sub.guid = found != existing.end() ? found->second : DeriveSubAssetGuid(source, sub.importer, sub.key);
+        if (found == existing.end()) {
+            auto clash = records_.find(sub.guid);
+            if (clash != records_.end() && clash->second.parent != source) {
+                sub.guid = NewAssetGuid(); // astronomically unlikely clash with another asset
+            }
+        }
         guids.push_back(sub.guid);
+        current_guids.insert(sub.guid);
         updated.push_back(std::move(sub));
     }
     std::sort(updated.begin(), updated.end(), [](const SubAssetMeta& a, const SubAssetMeta& b) { return a.key < b.key; });
@@ -652,7 +781,7 @@ std::vector<AssetGuid> AssetDatabase::SetSubAssets(const AssetGuid& source_ref,
     // Update the records: drop keys no longer produced, add or refresh the rest.
     const std::vector<AssetGuid> old_subs = it->second.sub_assets;
     for (const AssetGuid& old : old_subs) {
-        if (std::find(guids.begin(), guids.end(), old) == guids.end()) {
+        if (current_guids.count(old) == 0) {
             EraseRecord(old);
         }
     }

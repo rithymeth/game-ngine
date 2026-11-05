@@ -57,6 +57,28 @@ def generate():
             "output": {"bus": "Music" if name == "ambient" else "SFX", "volume_db": -6, "spatial": False},
             "nodes": [{"id": 1, "type": "Wave", "sound": f"Audio/{name}.wav", "looping": name == "ambient"}]})
         meta(cue, "SoundCue")
+    # Placeholder dialogue for the archive reveal (Sequences/Archive.asequence): a
+    # voiced buzz with a syllable envelope per line, routed to the Voice bus.
+    for index, (f0, syllables) in enumerate([(140, 5), (165, 6), (120, 4)], 1):
+        name, duration = f"dialogue_archive_{index}", 1.8
+        samples = array.array("h")
+        for frame in range(round(RATE * duration)):
+            t = frame / RATE
+            envelope = max(0.0, math.sin(math.pi * syllables * t / duration)) ** .5 * min(1, t * 40, (duration - t) * 40)
+            value = .18 * envelope * sum(math.sin(2 * math.pi * f0 * h * t) / h for h in range(1, 6))
+            samples.append(round(max(-1, min(1, value)) * 32767))
+        if sys.byteorder != "little": samples.byteswap()
+        path = output / f"{name}.wav"
+        with wave.open(str(path), "wb") as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(RATE)
+            wav.writeframes(samples.tobytes())
+        meta(path, "Sound")
+        cue = output / f"{name}.acue"
+        write_json(cue, {"version": 1, "name": name, "root": 1, "output": {"bus": "Voice", "volume_db": -3, "spatial": False},
+            "nodes": [{"id": 1, "type": "Wave", "sound": f"Audio/{name}.wav", "looping": False}]})
+        meta(cue, "SoundCue")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,3 @@
+add_executable(aether_symbolicate main.cpp)
+target_link_libraries(aether_symbolicate PRIVATE dbghelp)
+target_compile_features(aether_symbolicate PRIVATE cxx_std_20)

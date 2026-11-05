@@ -49,8 +49,8 @@ if(TARGET aether_mcp)
     target_link_libraries(aether_tests PRIVATE aether_mcp)
 endif()
 # Phase 25 step 4: the player's runtime.
-target_sources(aether_tests PRIVATE test_player.cpp test_player_lights.cpp test_player_save.cpp test_loc_runtime.cpp test_package.cpp test_pak_patch.cpp test_plugin.cpp test_templates.cpp test_aether01.cpp)
-target_link_libraries(aether_tests PRIVATE Aether::Game Aether::Templates Aether::Blueprint)
+target_sources(aether_tests PRIVATE test_player.cpp test_player_lights.cpp test_player_particles.cpp test_player_save.cpp test_loc_runtime.cpp test_package.cpp test_pak_patch.cpp test_plugin.cpp test_templates.cpp test_aether01.cpp test_ghost_shift.cpp)
+target_link_libraries(aether_tests PRIVATE Aether::Game Aether::Templates Aether::Blueprint Aether::ServerCore)
 if(TARGET Aether::Physics)
     target_link_libraries(aether_tests PRIVATE Aether::Physics)
     target_compile_definitions(aether_tests PRIVATE AETHER_TEST_HAS_PHYSICS=1)
@@ -96,23 +96,28 @@ if(WIN32)
 endif()
 
 if(TARGET Aether::Physics)
-    target_sources(aether_tests PRIVATE test_physics.cpp test_physics_scene.cpp test_physics_events.cpp test_physics_queries.cpp test_character.cpp test_physics_debug.cpp test_animation_root_motion.cpp)
+    target_sources(aether_tests PRIVATE test_physics.cpp test_physics_scene.cpp test_physics_events.cpp test_physics_queries.cpp test_character.cpp test_physics_debug.cpp test_physics_constraints.cpp test_animation_root_motion.cpp)
     target_link_libraries(aether_tests PRIVATE Aether::Physics)
     target_compile_definitions(aether_tests PRIVATE AETHER_TEST_PLAYER_PHYSICS=1)
+endif()
+if(TARGET Aether::PhysicsNet)
+    target_sources(aether_tests PRIVATE test_physics_net.cpp)
+    target_link_libraries(aether_tests PRIVATE Aether::PhysicsNet)
+    target_compile_definitions(aether_tests PRIVATE AETHER_TEST_HAS_PHYSICS_NET=1)
 endif()
 
 if(TARGET Aether::Scripting)
     target_compile_definitions(aether_tests PRIVATE AETHER_TEST_HAS_SCRIPTING=1)
-    target_sources(aether_tests PRIVATE test_luau_host.cpp test_luau_bindings.cpp test_script_system.cpp test_script_api.cpp test_script_reload.cpp test_script_debugger.cpp test_script_dap.cpp test_nav_script.cpp test_ai_script.cpp test_net_rpc_script.cpp test_debug_draw_script.cpp)
+    target_sources(aether_tests PRIVATE test_luau_host.cpp test_luau_bindings.cpp test_script_system.cpp test_script_api.cpp test_script_reload.cpp test_script_debugger.cpp test_script_dap.cpp test_nav_script.cpp test_ai_script.cpp test_ai_nav_api.cpp test_net_rpc_script.cpp test_debug_draw_script.cpp test_api_inventory.cpp test_compat_corpus.cpp)
     target_link_libraries(aether_tests PRIVATE Aether::Scripting)
 endif()
 
-target_sources(aether_tests PRIVATE test_blueprint_graph.cpp test_blueprint_vm.cpp test_blueprint_latent.cpp test_blueprint_nodes.cpp test_blueprint_arrays.cpp test_blueprint_world.cpp test_blueprint_messages.cpp test_blueprint_macros.cpp test_blueprint_sort.cpp test_blueprint_debugger.cpp test_blueprint_samples.cpp test_renderer.cpp test_renderer_lighting.cpp test_frame_graph.cpp test_post.cpp test_material_graph.cpp test_material_codegen.cpp test_material_instance.cpp test_material_functions.cpp test_animation.cpp test_animation_blending.cpp test_anim_graph.cpp test_animator.cpp test_ik.cpp test_audio.cpp test_audio_3d.cpp test_audio_cues.cpp test_audio_system.cpp test_audio_threading.cpp test_ui_layout.cpp test_ui_input.cpp test_ui_assets.cpp test_ui_widgets.cpp test_ui_text.cpp test_ui_fallback.cpp test_ui_loc.cpp test_vfx_particles.cpp test_vfx_render.cpp test_vfx_events.cpp test_vfx_components.cpp test_vfx_gpu.cpp test_nav_mesh.cpp test_nav_dynamic.cpp test_nav_crowd.cpp test_legacy_files.cpp test_nav_hierarchical.cpp test_streaming_flythrough.cpp test_ai_behavior_tree.cpp
+target_sources(aether_tests PRIVATE test_blueprint_graph.cpp test_blueprint_vm.cpp test_blueprint_latent.cpp test_blueprint_nodes.cpp test_blueprint_arrays.cpp test_blueprint_world.cpp test_blueprint_messages.cpp test_blueprint_macros.cpp test_blueprint_sort.cpp test_blueprint_debugger.cpp test_blueprint_samples.cpp test_renderer.cpp test_renderer_lighting.cpp test_frame_graph.cpp test_post.cpp test_material_graph.cpp test_material_codegen.cpp test_material_instance.cpp test_material_functions.cpp test_animation.cpp test_animation_blending.cpp test_anim_graph.cpp test_animator.cpp test_ik.cpp test_kael_character.cpp test_audio.cpp test_audio_3d.cpp test_audio_cues.cpp test_audio_system.cpp test_audio_threading.cpp test_ui_layout.cpp test_ui_input.cpp test_ui_assets.cpp test_ui_widgets.cpp test_ui_text.cpp test_ui_fallback.cpp test_ui_loc.cpp test_vfx_particles.cpp test_vfx_render.cpp test_vfx_events.cpp test_vfx_components.cpp test_vfx_gpu.cpp test_nav_mesh.cpp test_nav_dynamic.cpp test_nav_crowd.cpp test_legacy_files.cpp test_nav_hierarchical.cpp test_streaming_flythrough.cpp test_ai_behavior_tree.cpp
     test_terrain.cpp
     test_terrain_splat.cpp
     test_terrain_renderer.cpp
     test_terrain_foliage.cpp
-    test_terrain_spline.cpp test_ai_perception.cpp test_streaming.cpp test_sprite2d.cpp test_sequence_core.cpp test_sequence_system.cpp test_cine_movie.cpp test_sequence_fade_sub.cpp test_save.cpp test_world_state.cpp test_settings.cpp test_save_games.cpp test_loc.cpp test_loc_tools.cpp test_gameplay_tags.cpp test_gameplay_attributes.cpp test_gameplay_effects.cpp test_gameplay_abilities.cpp test_gameplay_script.cpp test_api_docs.cpp test_loader_robustness.cpp test_api_stability.cpp test_manual.cpp test_net_transport.cpp test_net_replication.cpp test_net_rpc.cpp test_net_prediction.cpp test_net_session.cpp test_console.cpp test_profiler.cpp test_debug_draw.cpp test_crash.cpp test_functional.cpp test_window.cpp test_vulkan_rhi.cpp test_platform_plugin.cpp test_pak.cpp test_cook.cpp test_texture_cook.cpp)
+    test_terrain_spline.cpp test_terrain_gpu.cpp test_ai_perception.cpp test_streaming.cpp test_sprite2d.cpp test_sequence_core.cpp test_sequence_system.cpp test_cine_movie.cpp test_sequence_fade_sub.cpp test_sequence_subtitle.cpp test_sequence_vfx.cpp test_save.cpp test_world_state.cpp test_settings.cpp test_save_games.cpp test_loc.cpp test_loc_tools.cpp test_gameplay_tags.cpp test_gameplay_attributes.cpp test_gameplay_effects.cpp test_gameplay_abilities.cpp test_gameplay_script.cpp test_api_docs.cpp test_loader_robustness.cpp test_api_stability.cpp test_manual.cpp test_net_transport.cpp test_net_replication.cpp test_net_rpc.cpp test_net_prediction.cpp test_net_session.cpp test_net_production.cpp test_dedicated_server.cpp test_console.cpp test_profiler.cpp test_debug_draw.cpp test_crash.cpp test_functional.cpp test_window.cpp test_vulkan_rhi.cpp test_rhi_lifetime.cpp test_gfx_parity.cpp test_lit_parity.cpp test_scene_shader.cpp test_decal.cpp test_platform_plugin.cpp test_pak.cpp test_cook.cpp test_texture_cook.cpp)
 target_link_libraries(aether_tests PRIVATE Aether::Blueprint Aether::Renderer Aether::Animation Aether::Audio Aether::UI Aether::VFX Aether::Nav Aether::AI Aether::Terrain Aether::Streaming Aether::Sprite2D Aether::Sequencer Aether::Save Aether::Loc Aether::Gameplay Aether::Net)
 if(TARGET aether_bench_lib)
     target_sources(aether_tests PRIVATE test_bench.cpp)
@@ -143,7 +148,10 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(module_graph_catches_a_cycle PROPERTIES WILL_FAIL TRUE)
     add_test(NAME api_stability_annotations COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_api_stability.py)
     add_test(NAME api_freeze_checks COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/check_api_freeze.py)
+    add_test(NAME api_inventory COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/api_inventory.py)
     add_test(NAME production_gate_table COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/gate.py)
     add_test(NAME m8_gate_table COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/gate.py
         --table ${CMAKE_SOURCE_DIR}/docs/design/m8_gates.json)
+    # M8.10: release manifest, install, patch, rollback and build-id checks of tools/ship/aether_ship.py.
+    add_test(NAME ship_tool_tests COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/ship/test_aether_ship.py)
 endif()

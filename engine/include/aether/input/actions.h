@@ -1,5 +1,6 @@
 #pragma once
 
+#include "aether/input/haptics.h"
 #include "aether/input/keys.h"
 #include "aether/math/math.h"
 
@@ -130,6 +131,11 @@ public:
     }
     Vec3 GetAxis3D(const std::string& name) const { return GetAction(name).value; }
 
+    // A platform host can install a haptic backend; scripts and gameplay can
+    // request semantic effects through this input-system-owned output.
+    Haptics& HapticFeedback() { return haptics_; }
+    const Haptics& HapticFeedback() const { return haptics_; }
+
     // Called during Update for each event, in the order actions were added.
     using Handler = std::function<void(const std::string& action, ActionEvent event, const ActionState& state)>;
     // Returns an id for Unsubscribe. An empty action name gets every action.
@@ -152,6 +158,7 @@ private:
         i32 priority;
         u64 order;
         std::vector<BindingState> states;
+        std::vector<bool> has_chord;
     };
     struct Subscription {
         u32 id;
@@ -164,10 +171,12 @@ private:
                                 const std::function<bool(const std::string&)>& chord_triggered);
 
     std::vector<InputAction> actions_;
+    std::unordered_map<std::string, usize> action_indices_;
     std::vector<ContextEntry> contexts_; // sorted, highest priority first
     u64 next_order_ = 0;
     std::unordered_map<std::string, ActionState> states_;
     std::vector<Subscription> subscriptions_;
+    Haptics haptics_;
     u32 next_subscription_ = 1;
 };
 
