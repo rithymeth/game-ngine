@@ -43,6 +43,8 @@ struct AiDebugEntry {
     std::string state;           // from AI.SetDebugState (empty: none reported)
     bool has_perception = false; // it has an AIPerception
     Entity target;               // AIPerception::GetTarget (null if none)
+    f32 target_awareness = 0.0f; // AIPerception GetAwareness(target)
+    bool target_alerted = false; // AIPerception IsAlerted(target)
     std::vector<Entity> known;   // AIPerception::known, in its order
     std::vector<Vec3> path;      // Nav.MoveTowards' cached corners (empty: no path)
     usize next_corner = 0;       // the corner being walked to (== path.size(): arrived)

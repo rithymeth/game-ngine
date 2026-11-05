@@ -21,6 +21,8 @@ struct AiDebugRow {
     std::string state;  // AI.SetDebugState ("-" when none reported)
     std::string target; // perception target's name ("-": none, "" without AIPerception)
     usize known = 0;    // AIPerception::known count
+    f32 awareness = 0.0f; // Perception 2.0 awareness of the target (0..1)
+    bool alerted = false; // IsAlerted(target)
     std::string path;   // "none", "corner 2/5", "arrived"; " (partial)" when incomplete
 };
 
@@ -40,7 +42,8 @@ inline constexpr u32 kPathAhead = 0xFF00D0FF;   // amber
 inline constexpr u32 kNextCorner = 0xFF00FFFF;  // yellow
 inline constexpr u32 kGoal = 0xFF40FF40;        // green
 inline constexpr u32 kGoalPartial = 0xFF4080FF; // orange: path does not reach it
-inline constexpr u32 kTarget = 0xFF3030FF;      // red
+inline constexpr u32 kTarget = 0xFF3030FF;      // red: alerted, or no awareness yet
+inline constexpr u32 kTargetSuspicious = 0xFF00A5FF; // orange: aware of it, not yet alert
 } // namespace ai_debug_colors
 
 // Appends, per shown agent: path corners (walked dim, ahead bright), a line

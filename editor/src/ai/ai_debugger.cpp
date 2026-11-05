@@ -23,6 +23,8 @@ std::vector<AiDebugRow> BuildAiDebugRows(const World& world, const std::vector<s
         if (e.has_perception) {
             row.target = AiDebugEntityLabel(world, e.target);
             row.known = e.known.size();
+            row.awareness = e.target_awareness;
+            row.alerted = e.target_alerted;
         }
         if (e.path.empty()) row.path = "none";
         else if (e.next_corner >= e.path.size()) row.path = "arrived";
@@ -60,8 +62,14 @@ void BuildAiDebugOverlay(const World& world, const std::vector<script::AiDebugEn
                   e.path_complete ? ai_debug_colors::kGoal : ai_debug_colors::kGoalPartial);
         }
         if (e.has_perception && !e.target.IsNull() && self && world.IsAlive(e.target)) {
-            if (const Transform* target = world.GetComponent<Transform>(e.target))
-                out.Line(self->position + Vec3(0, 1, 0), target->position + Vec3(0, 1, 0), ai_debug_colors::kTarget);
+            if (const Transform* target = world.GetComponent<Transform>(e.target)) {
+                // Perception 2.0: orange while only suspicious, red once alerted
+                // (and red as before when awareness hasn't been established).
+                const u32 color = e.target_alerted ? ai_debug_colors::kTarget
+                                                   : (e.target_awareness > 0.0f ? ai_debug_colors::kTargetSuspicious
+                                                                               : ai_debug_colors::kTarget);
+                out.Line(self->position + Vec3(0, 1, 0), target->position + Vec3(0, 1, 0), color);
+            }
         }
     }
 }

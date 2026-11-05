@@ -94,6 +94,8 @@ std::vector<AiDebugEntry> AiDebugStore::Collect(World& world) const {
         if (const AIPerception* p = world.GetComponent<AIPerception>(e)) {
             entry.has_perception = true;
             entry.target = p->GetTarget();
+            entry.target_awareness = p->GetAwareness(entry.target);
+            entry.target_alerted = p->IsAlerted(entry.target);
             for (const PerceivedActor& k : p->known) entry.known.push_back(k.actor);
         }
         if (const CachedPath* path = FindPath(e)) {

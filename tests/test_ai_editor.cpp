@@ -554,4 +554,37 @@ AETHER_TEST(AiDebugger_BrainsAsRows) {
     CHECK(goap[0].step == 0 && goap[0].name == "gather_wood");
     CHECK(goap[1].step == 1 && goap[1].name == "make_fire");
 }
+
+// Phase 40.5/40.6: the debugger carries Perception 2.0's awareness of the target,
+// and the overlay turns the target line orange while it is only suspicious.
+AETHER_TEST(AiDebugger_AwarenessInRowsAndOverlay) {
+    World world;
+    const Entity scout = world.CreateEntity(Transform{}, EntityName{"Scout"});
+    const Entity hero = world.CreateEntity(Transform{Vec3(4, 0, 0)}, EntityName{"Hero"});
+    script::AiDebugEntry entry;
+    entry.entity = scout;
+    entry.has_perception = true;
+    entry.target = hero;
+    entry.known = {hero};
+    entry.target_awareness = 0.4f;
+    entry.target_alerted = false;
+
+    const std::vector<AiDebugRow> rows = BuildAiDebugRows(world, {entry});
+    CHECK(rows.size() == 1);
+    CHECK(std::abs(rows[0].awareness - 0.4f) < 1e-6f);
+    CHECK(!rows[0].alerted);
+
+    nav::NavDebugDraw draw;
+    AiDebugOverlayOptions options;
+    options.selected = scout;
+    BuildAiDebugOverlay(world, {entry}, options, draw);
+    CHECK(draw.lines.size() == 1);
+    CHECK(draw.lines[0].color == ai_debug_colors::kTargetSuspicious);
+
+    draw.Clear();
+    entry.target_alerted = true;
+    BuildAiDebugOverlay(world, {entry}, options, draw);
+    CHECK(draw.lines.size() == 1);
+    CHECK(draw.lines[0].color == ai_debug_colors::kTarget);
+}
 #endif
