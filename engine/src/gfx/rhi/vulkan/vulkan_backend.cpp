@@ -782,37 +782,6 @@ void VulkanDevice::WithGraphicsQueueIdle(const std::function<void()>& operation)
     operation();
 }
 
-void VulkanDevice::WithQueuesIdle(const std::function<void()>& operation) {
-    if (!operation) {
-        throw std::invalid_argument("Vulkan idle-queue operation must not be empty");
-    }
-
-    std::unique_lock<std::mutex> graphics_lock(graphics_queue_mutex_, std::defer_lock);
-    std::unique_lock<std::mutex> compute_lock(compute_queue_mutex_, std::defer_lock);
-    if (compute_queue_ == queue_) {
-        graphics_lock.lock();
-    } else {
-        std::lock(graphics_lock, compute_lock);
-    }
-
-    const u64 latest_graphics_fence = next_fence_value_.load(std::memory_order_acquire) - 1;
-    const u64 latest_compute_fence = next_compute_fence_value_.load(std::memory_order_acquire) - 1;
-    if (latest_graphics_fence != 0) WaitForFence(latest_graphics_fence);
-    if (latest_compute_fence != 0) WaitForComputeFence(latest_compute_fence);
-    operation();
-}
-
-void VulkanDevice::WithGraphicsQueueIdle(const std::function<void()>& operation) {
-    if (!operation) {
-        throw std::invalid_argument("Vulkan idle-graphics operation must not be empty");
-    }
-
-    std::lock_guard<std::mutex> graphics_lock(graphics_queue_mutex_);
-    const u64 latest_graphics_fence = next_fence_value_.load(std::memory_order_acquire) - 1;
-    if (latest_graphics_fence != 0) WaitForFence(latest_graphics_fence);
-    operation();
-}
-
 bool VulkanDevice::IsComputeFenceComplete(u64 fence_value) const {
     if (fence_value == 0) return true;
     if (fence_value >= next_compute_fence_value_) return false;
@@ -1359,19 +1328,6 @@ SampledTextureHandle VulkanDevice::CreateTexture(u32 width, u32 height, const u8
 }
 
 void VulkanDevice::WriteBindlessTexture(u32 index, const SampledTextureRecord& record) {
-    std::unique_lock<std::mutex> graphics_lock(graphics_queue_mutex_, std::defer_lock);
-    std::unique_lock<std::mutex> compute_lock(compute_queue_mutex_, std::defer_lock);
-    if (compute_queue_ == queue_) {
-        graphics_lock.lock();
-    } else {
-        std::lock(graphics_lock, compute_lock);
-    }
-
-    const u64 latest_graphics_fence = next_fence_value_.load(std::memory_order_acquire) - 1;
-    const u64 latest_compute_fence = next_compute_fence_value_.load(std::memory_order_acquire) - 1;
-    if (latest_graphics_fence != 0) WaitForFence(latest_graphics_fence);
-    if (latest_compute_fence != 0) WaitForComputeFence(latest_compute_fence);
-
     VkDescriptorImageInfo image_desc{};
     image_desc.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     image_desc.imageView = record.view;
