@@ -52,6 +52,7 @@
 #include "script_component_editor.h"
 #include "script_editor_widget.h"
 #include "ai_debugger_widget.h"
+#include "output_panel.h"
 #include "aether/script/ai_api.h"
 #endif
 
@@ -1718,38 +1719,6 @@ QDockWidget* MakeDock(const QString& title, QWidget* content, QMainWindow& windo
     return dock;
 }
 
-class EditorLogConsole final : public QPlainTextEdit {
-public:
-    EditorLogConsole() {
-        setReadOnly(true);
-        setMaximumBlockCount(1000);
-        for (const auto& line : aether::Logger::Instance().Recent()) Append(line);
-        const QPointer<EditorLogConsole> self(this);
-        sink_id_ = aether::Logger::Instance().AddSink([self](const aether::LogLine& line) {
-            if (!self) return;
-            const QString message = QString("[%1] [%2] %3")
-                .arg(QString::fromUtf8(aether::LogLevelName(line.level)))
-                .arg(QString::fromStdString(line.category))
-                .arg(QString::fromStdString(line.message));
-            QMetaObject::invokeMethod(self, [self, message] {
-                if (self) self->appendPlainText(message);
-            }, Qt::QueuedConnection);
-        });
-    }
-
-    ~EditorLogConsole() override { aether::Logger::Instance().RemoveSink(sink_id_); }
-
-private:
-    void Append(const aether::LogLine& line) {
-        appendPlainText(QString("[%1] [%2] %3")
-            .arg(QString::fromUtf8(aether::LogLevelName(line.level)))
-            .arg(QString::fromStdString(line.category))
-            .arg(QString::fromStdString(line.message)));
-    }
-
-    int sink_id_ = 0;
-};
-
 QTreeWidget* MakeHierarchy() {
     auto* tree = new QTreeWidget;
     tree->setHeaderHidden(true);
@@ -2428,7 +2397,7 @@ public:
                                                          content_welcome_panel_, welcome_open_project_button_,
                                                          welcome_new_project_button_), *this,
                                       Qt::BottomDockWidgetArea, "contentDock");
-        output_dock_ = MakeDock("OUTPUT", new EditorLogConsole, *this, Qt::BottomDockWidgetArea, "outputDock");
+        output_dock_ = MakeDock("OUTPUT", new aether::editor::qt::EditorLogConsole, *this, Qt::BottomDockWidgetArea, "outputDock");
         sequence_dock_ = MakeDock("ANIMATION · SEQUENCER", MakeSequenceEditor(), *this,
                                        Qt::BottomDockWidgetArea, "sequenceDock");
         animation_editor_widget_ = new aether::editor::qt::AnimationEditorWidget(

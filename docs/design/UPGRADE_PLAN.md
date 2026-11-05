@@ -136,7 +136,7 @@ when advisory gates become required.
 
 | Step | Work | Needs |
 |---|---|---|
-| **43.1** | Split `editor/main.cpp` (about 2200 lines) into panels under `editor/src/workspace`. Blocks the rest. | - |
+| **43.1** | *(started: the legacy ImGui editor's UI already lives partly in `editor/src/workspace/editor_workspace.*`; the Qt editor's much larger `editor/qt/main.cpp` has begun shedding panels — `EditorLogConsole` moved to `editor/qt/output_panel.*`, verified by `qt_editor_self_test`)* Split `editor/main.cpp` (about 2200 lines) into panels under `editor/src/workspace`. Blocks the rest. | - |
 | **43.2** | ImGui docking and layout presets. | 43.1 |
 | **43.3** | Gizmos (rotate/scale, snapping), multi-select, copy/paste, Simulate mode. `||` | 43.1 |
 | **43.4** | New/Open Project UI. `||` | - |
