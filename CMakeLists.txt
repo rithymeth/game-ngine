@@ -1,6 +1,31 @@
 cmake_minimum_required(VERSION 3.20)
 project(Aether VERSION 0.27.6 LANGUAGES CXX)
 
+# The engine version is written by hand in two places -- the project() line above and
+# engine/include/aether/core/version.h (which has both the integer parts and the string) -- and a
+# release needs them to agree. Nothing catches a bump that updates one and forgets the other, so
+# check at configure time rather than discovering it in a packaged build.
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/engine/include/aether/core/version.h" _aether_version_header)
+foreach(_aether_part "Major:${PROJECT_VERSION_MAJOR}" "Minor:${PROJECT_VERSION_MINOR}" "Patch:${PROJECT_VERSION_PATCH}")
+    string(REPLACE ":" ";" _aether_pair "${_aether_part}")
+    list(GET _aether_pair 0 _aether_name)
+    list(GET _aether_pair 1 _aether_value)
+    if (NOT _aether_version_header MATCHES "kEngineVersion${_aether_name} = ${_aether_value};")
+        message(FATAL_ERROR
+            "engine/include/aether/core/version.h declares a different ${_aether_name} from project(Aether VERSION "
+            "${PROJECT_VERSION}). Update both, or the packaged build and the engine will disagree about the version.")
+    endif()
+endforeach()
+if (NOT _aether_version_header MATCHES "kEngineVersion = \"${PROJECT_VERSION}\"")
+    message(FATAL_ERROR
+        "engine/include/aether/core/version.h says kEngineVersion is not \"${PROJECT_VERSION}\". Update both.")
+endif()
+unset(_aether_version_header)
+unset(_aether_part)
+unset(_aether_pair)
+unset(_aether_name)
+unset(_aether_value)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
