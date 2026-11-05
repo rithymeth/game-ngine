@@ -1,8 +1,15 @@
 # Build outputs and IDE state
 build/
 build_debug/
+# Any other local build tree (build_qt/, build-evervale/, ...): they can hold
+# tens of thousands of files and only slow every status/add down.
+build*/
 out/
 bin/
+# Tool and harness scratch directories.
+.site-uploader/
+.dsh-acl-recovery/
+__pycache__/
 Debug/
 Release/
 x64/
@@ -46,6 +53,11 @@ CMakeUserPresets.json
 */Temp/*
 */Intermediate/*
 */DerivedData/*
+# A game project's built binaries and test/QA captures (screenshots, videos,
+# animation previews) are regenerated output, not source.
+**/Binaries/
+**/QA/
+**/Intermediate/
 
 # Misc
 imgui.ini
