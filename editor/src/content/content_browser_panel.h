@@ -27,6 +27,9 @@ public:
     bool Refresh();
     // The listing of the current folder (or the search), with version control states.
     const std::vector<assets::ContentEntry>& Rows() const { return rows_; }
+    // Phase 43.6: what is wrong with the assets, filled by Refresh() with the scan -- missing
+    // sources and references to GUIDs that no longer exist. Empty is healthy.
+    const std::vector<assets::AssetIssue>& Issues() const { return issues_; }
     const std::string& Folder() const { return folder_; }
     void OpenFolder(const std::string& folder);
     void OpenParent();
@@ -61,6 +64,7 @@ private:
     std::string folder_;
     std::vector<std::string> folders_; // every folder, sorted
     std::vector<assets::ContentEntry> rows_;
+    std::vector<assets::AssetIssue> issues_; // filled by Refresh(), with the scan
     std::string error_;
     Action action_ = Action::None;
     bool action_popup_pending_ = false;

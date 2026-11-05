@@ -259,3 +259,24 @@ AETHER_TEST(Vcs_WorkspaceHasAContentBrowser) {
     for (int frame = 0; frame < 2; ++frame) imgui.Frame([&] { ws.DrawHubContents(); });
     CHECK(ImGui::GetDrawData()->TotalVtxCount > 0);
 }
+
+// Phase 43.6: the panel validates the assets as part of its scan, so it can show what is
+// wrong with them without a second pass.
+AETHER_TEST(Vcs_ContentBrowserPanelReportsAssetIssues) {
+    const stdfs::path dir = Dir("panel_validate");
+    ProjectPaths paths;
+    std::string error;
+    CHECK(CreateProject(dir, "Game", &paths, &error));
+    Write(paths.content / "Textures/brick.png", "fake png");
+    ContentBrowserPanel panel(paths.file);
+    CHECK(panel.Error().empty());
+    CHECK(panel.Issues().empty()); // a healthy project reports nothing
+
+    // A source that goes away leaves its .ameta behind; the rescan marks the record missing,
+    // and validation is what turns that into something the panel can list.
+    stdfs::remove(paths.content / "Textures/brick.png");
+    CHECK(panel.Refresh());
+    CHECK(panel.Issues().size() == 1);
+    CHECK(panel.Issues()[0].kind == assets::AssetIssueKind::MissingSource);
+    CHECK(panel.Issues()[0].path == "Textures/brick.png");
+}

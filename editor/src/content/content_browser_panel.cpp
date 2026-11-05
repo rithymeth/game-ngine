@@ -48,11 +48,15 @@ bool ContentBrowserPanel::Refresh() {
         database_.reset();
         rows_.clear();
         folders_.clear();
+        issues_.clear();
         return false;
     }
     const ProjectPaths paths = ProjectPaths::ForFile(project_file_);
     database_ = std::make_unique<assets::AssetDatabase>(paths.content);
     database_->Scan();
+    // Phase 43.6: validation runs with the scan, so the panel can show what is wrong with
+    // the assets without a second pass over them.
+    issues_ = assets::ValidateAssets(*database_);
     if (!vcs_injected_) vcs_ = assets::QueryGitStatus(paths.content);
     Rebuild();
     return true;
