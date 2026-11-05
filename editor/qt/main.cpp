@@ -52,6 +52,7 @@
 #include "script_component_editor.h"
 #include "script_editor_widget.h"
 #include "ai_debugger_widget.h"
+#include "content_browser.h"
 #include "hierarchy_panel.h"
 #include "output_panel.h"
 #include "aether/script/ai_api.h"
@@ -1787,7 +1788,7 @@ QWidget* MakeInspector(QScrollArea*& inspector_scroll, QStackedWidget*& inspecto
     auto* layout = new QVBoxLayout(body);
     layout->setContentsMargins(14, 14, 14, 14);
     layout->setSpacing(10);
-    selection_status = new QLabel("NO SELECTION · SELECT AN ENTITY");
+    selection_status = new QLabel("NO SELECTION Â· SELECT AN ENTITY");
     selection_status->setObjectName("section");
     layout->addWidget(selection_status);
     entity_name = new QLineEdit;
@@ -1844,7 +1845,7 @@ QWidget* MakeInspector(QScrollArea*& inspector_scroll, QStackedWidget*& inspecto
     layout->addLayout(transform_form);
 
     auto* rotation_header = new QHBoxLayout;
-    auto* rotation_title = new QLabel("Rotation · degrees");
+    auto* rotation_title = new QLabel("Rotation Â· degrees");
     rotation_title->setObjectName("muted");
     reset_rotation = new QPushButton("Reset Rotation");
     reset_rotation->setToolTip("Set local rotation to zero. This edit can be undone.");
@@ -1863,7 +1864,7 @@ QWidget* MakeInspector(QScrollArea*& inspector_scroll, QStackedWidget*& inspecto
         rotation[axis]->setRange(-36000.0, 36000.0);
         rotation[axis]->setDecimals(2);
         rotation[axis]->setSingleStep(1.0);
-        rotation[axis]->setSuffix("°");
+        rotation[axis]->setSuffix("Â°");
         rotation[axis]->setKeyboardTracking(false);
         rotation[axis]->setAccessibleName(QString("Local %1 rotation in degrees").arg(QChar('X' + axis)));
         rotation[axis]->setToolTip(QString("Local %1 rotation in degrees").arg(QChar('X' + axis)));
@@ -1873,10 +1874,10 @@ QWidget* MakeInspector(QScrollArea*& inspector_scroll, QStackedWidget*& inspecto
     layout->addLayout(rotation_form);
 
     auto* scale_header = new QHBoxLayout;
-    auto* scale_title = new QLabel("Scale · local multiplier");
+    auto* scale_title = new QLabel("Scale Â· local multiplier");
     scale_title->setObjectName("muted");
     reset_scale = new QPushButton("Reset Scale");
-    reset_scale->setToolTip("Restore the imported object size (1× on each axis). This edit can be undone.");
+    reset_scale->setToolTip("Restore the imported object size (1Ã— on each axis). This edit can be undone.");
     reset_scale->setEnabled(false);
     scale_header->addWidget(scale_title);
     scale_header->addStretch();
@@ -1891,7 +1892,7 @@ QWidget* MakeInspector(QScrollArea*& inspector_scroll, QStackedWidget*& inspecto
         scale[axis]->setRange(-10000.0, 10000.0);
         scale[axis]->setDecimals(3);
         scale[axis]->setSingleStep(0.1);
-        scale[axis]->setSuffix("×");
+        scale[axis]->setSuffix("Ã—");
         scale[axis]->setKeyboardTracking(false);
         scale[axis]->setAccessibleName(QString("Local scale %1").arg(QChar('X' + axis)));
         scale[axis]->setToolTip(QString("Local %1 scale multiplier; 1 preserves the imported size").arg(QChar('X' + axis)));
@@ -1921,7 +1922,7 @@ QWidget* MakeInspector(QScrollArea*& inspector_scroll, QStackedWidget*& inspecto
         spin->setKeyboardTracking(false);
         return spin;
     };
-    camera.fov = make_camera_spin("cameraFov", 1.0, 179.0, 2, 1.0, "°");
+    camera.fov = make_camera_spin("cameraFov", 1.0, 179.0, 2, 1.0, "Â°");
     camera.fov->setToolTip("Vertical field of view for perspective projection");
     camera.ortho_height = make_camera_spin("cameraOrthoHeight", 0.01, 100000.0, 2, 0.1, " m");
     camera.ortho_height->setToolTip("Vertical view height for orthographic projection");
@@ -2000,7 +2001,7 @@ QWidget* MakeInspector(QScrollArea*& inspector_scroll, QStackedWidget*& inspecto
     auto* empty_layout = new QVBoxLayout(empty);
     empty_layout->setContentsMargins(24, 30, 24, 30);
     empty_layout->addStretch(1);
-    auto* empty_icon = new QLabel("◇", empty);
+    auto* empty_icon = new QLabel("â—‡", empty);
     empty_icon->setObjectName("emptyStateIcon");
     empty_icon->setAlignment(Qt::AlignCenter);
     empty_layout->addWidget(empty_icon);
@@ -2013,7 +2014,7 @@ QWidget* MakeInspector(QScrollArea*& inspector_scroll, QStackedWidget*& inspecto
     empty_hint->setWordWrap(true);
     empty_hint->setAlignment(Qt::AlignCenter);
     empty_layout->addWidget(empty_hint);
-    empty_add_entity = new QPushButton("Create Entity…", empty);
+    empty_add_entity = new QPushButton("Create Entityâ€¦", empty);
     empty_add_entity->setObjectName("emptyStateAction");
     empty_add_entity->setAccessibleName("Create an entity");
     empty_layout->addWidget(empty_add_entity, 0, Qt::AlignHCenter);
@@ -2030,226 +2031,6 @@ QWidget* MakeInspector(QScrollArea*& inspector_scroll, QStackedWidget*& inspecto
     inspector_scroll->setWidgetResizable(true);
     inspector_scroll->setWidget(inspector_stack);
     return inspector_scroll;
-}
-
-class AssetBrowserDelegate final : public QStyledItemDelegate {
-public:
-    explicit AssetBrowserDelegate(const QFileSystemModel& model, QObject* parent = nullptr)
-        : QStyledItemDelegate(parent), model_(model) {}
-
-    void paint(QPainter* painter, const QStyleOptionViewItem& option,
-               const QModelIndex& index) const override {
-        QStyledItemDelegate::paint(painter, option, index);
-        if (!index.isValid()) return;
-
-        const QFileInfo info = model_.fileInfo(index);
-        const QRect icon_rect(option.rect.center().x() - 24, option.rect.top() + 5, 48, 48);
-        painter->save();
-        QColor icon_back("#151a21");
-        if (option.state & QStyle::State_Selected) icon_back = QColor("#244653");
-        else if (option.state & QStyle::State_MouseOver) icon_back = QColor("#202c35");
-        painter->fillRect(icon_rect, icon_back);
-        painter->setRenderHint(QPainter::Antialiasing, true);
-        painter->translate(icon_rect.topLeft());
-
-        if (info.isDir()) {
-            QPainterPath rear;
-            rear.moveTo(5, 11); rear.lineTo(20, 11); rear.lineTo(25, 16);
-            rear.lineTo(44, 16); rear.lineTo(44, 38); rear.lineTo(5, 38); rear.closeSubpath();
-            painter->setPen(QPen(QColor("#527f80"), 1.2));
-            painter->setBrush(QColor("#294b55"));
-            painter->drawPath(rear);
-
-            QPainterPath front;
-            front.moveTo(4, 19); front.lineTo(44, 19); front.lineTo(41, 41);
-            front.quadTo(40.7, 43, 38.5, 43); front.lineTo(7, 43);
-            front.quadTo(4.5, 43, 4, 40); front.closeSubpath();
-            QLinearGradient folder_fill(0, 19, 0, 43);
-            folder_fill.setColorAt(0.0, QColor("#5bd0af"));
-            folder_fill.setColorAt(1.0, QColor("#277b77"));
-            painter->setPen(QPen(QColor("#68d6b7"), 1.1));
-            painter->setBrush(folder_fill);
-            painter->drawPath(front);
-            painter->setPen(QPen(QColor(255, 255, 255, 68), 1.0));
-            painter->drawLine(QPointF(8, 23), QPointF(39, 23));
-        } else {
-            const QString extension = info.suffix().toLower();
-            QString badge = "FILE";
-            QColor accent("#8da0ae");
-            if (extension == "gltf" || extension == "glb" || extension == "fbx" || extension == "obj") {
-                badge = "3D"; accent = QColor("#55d7b5");
-            } else if (extension == "ascene" || extension == "aesc") {
-                badge = "SCN"; accent = QColor("#b9a0ff");
-            } else if (extension == "asequence" || extension == "anim") {
-                badge = "ANIM"; accent = QColor("#8bbcff");
-            } else if (extension == "amontage") {
-                badge = "MONT"; accent = QColor("#d7a2ff");
-            } else if (extension == "png" || extension == "jpg" || extension == "jpeg" ||
-                       extension == "tga" || extension == "hdr" || extension == "exr") {
-                badge = "IMG"; accent = QColor("#f4bd72");
-            } else if (extension == "lua" || extension == "luau" || extension == "cs" ||
-                       extension == "cpp" || extension == "h" || extension == "hpp") {
-                badge = "CODE"; accent = QColor("#86b9ff");
-            } else if (extension == "wav" || extension == "ogg" || extension == "mp3" || extension == "flac") {
-                badge = "SFX"; accent = QColor("#ec9bc7");
-            }
-
-            QPainterPath page;
-            page.moveTo(10, 4); page.lineTo(29, 4); page.lineTo(39, 14);
-            page.lineTo(39, 41); page.quadTo(39, 44, 36, 44); page.lineTo(11, 44);
-            page.quadTo(8, 44, 8, 41); page.lineTo(8, 7); page.quadTo(8, 4, 10, 4);
-            page.closeSubpath();
-            painter->setPen(QPen(QColor("#455967"), 1.2));
-            painter->setBrush(QColor("#202c36"));
-            painter->drawPath(page);
-            QPainterPath fold;
-            fold.moveTo(29, 4); fold.lineTo(29, 13); fold.quadTo(29, 14, 31, 14); fold.lineTo(39, 14);
-            painter->setPen(QPen(QColor("#455967"), 1.0));
-            painter->setBrush(QColor("#33434f"));
-            painter->drawPath(fold);
-            painter->setPen(QPen(accent, 2.2, Qt::SolidLine, Qt::RoundCap));
-            painter->drawLine(QPointF(14, 20), QPointF(14, 37));
-            painter->setPen(QPen(QColor("#738490"), 1.2, Qt::SolidLine, Qt::RoundCap));
-            painter->drawLine(QPointF(20, 23), QPointF(33, 23));
-            painter->drawLine(QPointF(20, 28), QPointF(33, 28));
-            painter->drawLine(QPointF(20, 33), QPointF(29, 33));
-
-            const QRectF badge_rect(22, 35, 22, 11);
-            painter->setPen(Qt::NoPen);
-            painter->setBrush(QColor("#172128"));
-            painter->drawRoundedRect(badge_rect, 3, 3);
-            painter->setPen(accent);
-            QFont badge_font = painter->font();
-            badge_font.setPointSizeF(5.8);
-            badge_font.setBold(true);
-            painter->setFont(badge_font);
-            painter->drawText(badge_rect, Qt::AlignCenter, badge);
-        }
-
-        painter->restore();
-    }
-
-private:
-    const QFileSystemModel& model_;
-};
-
-QWidget* MakeContentBrowser(QComboBox*& breadcrumb, QFileSystemModel*& asset_model, QListView*& asset_view,
-                            QPushButton*& parent_button, QPushButton*& new_folder_button,
-                            QPushButton*& place_model_button, QLineEdit*& asset_filter,
-                            QComboBox*& asset_type_filter,
-                            QLabel*& asset_context, QWidget*& welcome_panel,
-                            QPushButton*& welcome_open_project, QPushButton*& welcome_new_project) {
-    auto* root = new QWidget;
-    auto* layout = new QVBoxLayout(root);
-    layout->setContentsMargins(12, 8, 12, 12);
-    auto* navigation = new QHBoxLayout;
-    parent_button = new QPushButton("Up");
-    parent_button->setAccessibleName("Open parent folder");
-    parent_button->setToolTip("Parent folder");
-    parent_button->setFixedWidth(48);
-    new_folder_button = new QPushButton("+ Folder");
-    new_folder_button->setAccessibleName("Create a folder in Content");
-    place_model_button = new QPushButton("Place Model");
-    place_model_button->setAccessibleName("Place selected model in the World");
-    place_model_button->setObjectName("placeModelButton");
-    place_model_button->setToolTip("Add the selected glTF or GLB asset to the active scene");
-    place_model_button->setEnabled(false);
-    asset_filter = new QLineEdit;
-    asset_filter->setObjectName("contentSearch");
-    asset_filter->setAccessibleName("Search names in the current Content folder");
-    asset_filter->setPlaceholderText("Search this folder…");
-    asset_filter->setToolTip("Search file and folder names in the current Content folder. Combine with the asset type filter. Press Ctrl+F to focus search.");
-    asset_filter->setClearButtonEnabled(true);
-    asset_filter->setMaximumWidth(220);
-    auto* focus_content_search = new QAction("Focus Content Search", root);
-    focus_content_search->setShortcut(QKeySequence::Find);
-    focus_content_search->setShortcutContext(Qt::WidgetWithChildrenShortcut);
-    root->addAction(focus_content_search);
-    QObject::connect(focus_content_search, &QAction::triggered, asset_filter, [asset_filter] {
-        asset_filter->setFocus(Qt::ShortcutFocusReason);
-        asset_filter->selectAll();
-    });
-    asset_type_filter = new QComboBox(root);
-    asset_type_filter->setObjectName("contentTypeFilter");
-    asset_type_filter->setAccessibleName("Filter content by asset type");
-    asset_type_filter->setToolTip("Filter assets in the current folder by type. This combines with the name search.");
-    asset_type_filter->addItem("All Assets", QStringList{});
-    asset_type_filter->addItem("Models", QStringList{"gltf", "glb"});
-    asset_type_filter->addItem("Scenes", QStringList{"ascene", "aesc"});
-    asset_type_filter->addItem("Sequences", QStringList{"asequence"});
-    asset_type_filter->addItem("Montages", QStringList{"amontage"});
-    asset_type_filter->addItem("Projects", QStringList{"aproject"});
-    breadcrumb = new QComboBox;
-    breadcrumb->setObjectName("contentBreadcrumb");
-    breadcrumb->setToolTip("Choose a parent folder in the project Content directory");
-    breadcrumb->setMinimumContentsLength(22);
-    breadcrumb->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
-    breadcrumb->addItem("NO PROJECT  /  CONTENT");
-    breadcrumb->setEnabled(false);
-    navigation->addWidget(parent_button);
-    navigation->addWidget(breadcrumb, 1);
-    navigation->addWidget(asset_type_filter);
-    navigation->addWidget(asset_filter);
-    navigation->addWidget(new_folder_button);
-    navigation->addWidget(place_model_button);
-    layout->addLayout(navigation);
-    asset_context = new QLabel("", root);
-    asset_context->setObjectName("muted");
-    asset_context->setWordWrap(true);
-    layout->addWidget(asset_context);
-    welcome_panel = new QWidget(root);
-    welcome_panel->setObjectName("contentWelcomePanel");
-    auto* welcome_layout = new QVBoxLayout(welcome_panel);
-    welcome_layout->setContentsMargins(24, 18, 24, 18);
-    welcome_layout->addStretch();
-    auto* welcome_title = new QLabel("Start with a project", welcome_panel);
-    welcome_title->setObjectName("contentWelcomeTitle");
-    welcome_title->setAlignment(Qt::AlignCenter);
-    welcome_layout->addWidget(welcome_title);
-    auto* welcome_description = new QLabel(
-        "Create a project or open one to browse assets, place models, and edit scenes.", welcome_panel);
-    welcome_description->setObjectName("contentWelcomeDescription");
-    welcome_description->setWordWrap(true);
-    welcome_description->setAlignment(Qt::AlignCenter);
-    welcome_layout->addWidget(welcome_description);
-    auto* welcome_actions = new QHBoxLayout;
-    welcome_actions->addStretch();
-    welcome_open_project = new QPushButton("Open Project…", welcome_panel);
-    welcome_open_project->setObjectName("emptyStateAction");
-    welcome_open_project->setAccessibleName("Open an existing Aether project");
-    welcome_open_project->setToolTip("Choose an existing .aproject file");
-    welcome_new_project = new QPushButton("Create Project…", welcome_panel);
-    welcome_new_project->setAccessibleName("Create a new Aether project");
-    welcome_new_project->setToolTip("Create a project with the standard Content folders");
-    welcome_actions->addWidget(welcome_open_project);
-    welcome_actions->addWidget(welcome_new_project);
-    welcome_actions->addStretch();
-    welcome_layout->addLayout(welcome_actions);
-    welcome_layout->addStretch();
-    layout->addWidget(welcome_panel, 1);
-    asset_model = new QFileSystemModel(root);
-    asset_model->setFilter(QDir::AllEntries | QDir::NoDotAndDotDot);
-    asset_model->setRootPath(QString());
-    asset_view = new QListView(root);
-    asset_view->setAccessibleName("Project content assets");
-    asset_view->setModel(asset_model);
-    asset_view->setItemDelegate(new AssetBrowserDelegate(*asset_model, asset_view));
-    asset_view->setViewMode(QListView::IconMode);
-    asset_view->setFlow(QListView::LeftToRight);
-    asset_view->setWrapping(true);
-    asset_view->setResizeMode(QListView::Adjust);
-    asset_view->setMovement(QListView::Static);
-    asset_view->setIconSize(QSize(48, 48));
-    asset_view->setGridSize(QSize(148, 104));
-    asset_view->setSpacing(8);
-    asset_view->setUniformItemSizes(true);
-    asset_view->setWordWrap(true);
-    asset_view->setTextElideMode(Qt::ElideMiddle);
-    asset_view->setSelectionMode(QAbstractItemView::SingleSelection);
-    asset_view->setEnabled(false);
-    asset_view->setRootIndex(QModelIndex());
-    layout->addWidget(asset_view, 1);
-    return root;
 }
 
 std::string StablePathKey(const std::filesystem::path& path) {
@@ -2276,7 +2057,7 @@ public:
         if (!StartDefaultEnginePlugins(plugin_manager_, &plugin_error))
             AETHER_LOG_ERROR("Editor", "Couldn't start the engine plugins: %s", plugin_error.c_str());
         LoadRecentProjects();
-        setWindowTitle("Aether Engine · World Editor");
+        setWindowTitle("Aether Engine Â· World Editor");
         resize(1480, 900);
         setDockOptions(QMainWindow::AllowNestedDocks | QMainWindow::AllowTabbedDocks | QMainWindow::AnimatedDocks);
         BuildMenus(); BuildToolbar();
@@ -2338,7 +2119,7 @@ public:
         inspector_dock_->widget()->setMinimumWidth(240);
 
         content_dock_ = MakeDock("CONTENT BROWSER",
-                                      MakeContentBrowser(content_breadcrumb_, asset_model_, asset_view_,
+                                      aether::editor::qt::MakeContentBrowser(content_breadcrumb_, asset_model_, asset_view_,
                                                          parent_folder_button_, new_folder_button_,
                                                          place_model_button_, asset_filter_, asset_type_filter_,
                                                          asset_context_,
@@ -2346,11 +2127,11 @@ public:
                                                          welcome_new_project_button_), *this,
                                       Qt::BottomDockWidgetArea, "contentDock");
         output_dock_ = MakeDock("OUTPUT", new aether::editor::qt::EditorLogConsole, *this, Qt::BottomDockWidgetArea, "outputDock");
-        sequence_dock_ = MakeDock("ANIMATION · SEQUENCER", MakeSequenceEditor(), *this,
+        sequence_dock_ = MakeDock("ANIMATION Â· SEQUENCER", MakeSequenceEditor(), *this,
                                        Qt::BottomDockWidgetArea, "sequenceDock");
         animation_editor_widget_ = new aether::editor::qt::AnimationEditorWidget(
             [this](const QString& message) { statusBar()->showMessage(message, 5000); });
-        animation_editor_dock_ = MakeDock("ANIMATION · CLIP EDITOR", animation_editor_widget_, *this,
+        animation_editor_dock_ = MakeDock("ANIMATION Â· CLIP EDITOR", animation_editor_widget_, *this,
                                            Qt::BottomDockWidgetArea, "animationEditorDock");
         blueprint_editor_widget_ = new aether::editor::qt::BlueprintEditorWidget;
         blueprint_editor_widget_->SetBreakpointHandler([this](const std::filesystem::path& asset,
@@ -2358,20 +2139,20 @@ public:
             if (play_runtime_ && !play_runtime_->SetBreakpoint(asset, graph, node, enabled))
                 statusBar()->showMessage("Couldn't apply that breakpoint to the active Play session", 5000);
         });
-        blueprint_editor_dock_ = MakeDock("BLUEPRINT · GRAPH EDITOR", blueprint_editor_widget_, *this,
+        blueprint_editor_dock_ = MakeDock("BLUEPRINT Â· GRAPH EDITOR", blueprint_editor_widget_, *this,
                                             Qt::BottomDockWidgetArea, "blueprintEditorDock");
         material_editor_widget_ = new aether::editor::qt::MaterialEditorWidget;
-        material_editor_dock_ = MakeDock("MATERIAL · GRAPH EDITOR", material_editor_widget_, *this,
+        material_editor_dock_ = MakeDock("MATERIAL Â· GRAPH EDITOR", material_editor_widget_, *this,
                                            Qt::BottomDockWidgetArea, "materialEditorDock");
         vfx_editor_widget_ = new aether::editor::qt::VfxEditorWidget;
-        vfx_editor_dock_ = MakeDock("VFX · PARTICLE EDITOR", vfx_editor_widget_, *this,
+        vfx_editor_dock_ = MakeDock("VFX Â· PARTICLE EDITOR", vfx_editor_widget_, *this,
                                      Qt::BottomDockWidgetArea, "vfxEditorDock");
         behavior_tree_editor_widget_ = new aether::editor::qt::BehaviorTreeEditorWidget;
         behavior_tree_editor_widget_->SetDebugCommandHandler([this](aether::Entity entity, const QString& command) {
             if (play_runtime_ && !play_runtime_->ControlBehaviorTree(entity, command.toStdString()))
                 statusBar()->showMessage("The selected entity has no BehaviorTreeComponent", 4000);
         });
-        behavior_tree_editor_dock_ = MakeDock("AI · BEHAVIOR TREE", behavior_tree_editor_widget_, *this,
+        behavior_tree_editor_dock_ = MakeDock("AI Â· BEHAVIOR TREE", behavior_tree_editor_widget_, *this,
                                                 Qt::BottomDockWidgetArea, "behaviorTreeEditorDock");
         navigation_editor_widget_ = new aether::editor::qt::NavigationEditorWidget(scene_document_);
         viewport_->SetNavigationDebugSource([this] {
@@ -2387,28 +2168,28 @@ public:
             return draw;
         });
         navigation_editor_widget_->SetOverlayChangedCallback([this] { if (viewport_) viewport_->update(); });
-        navigation_editor_dock_ = MakeDock("AI · NAVIGATION", navigation_editor_widget_, *this,
+        navigation_editor_dock_ = MakeDock("AI Â· NAVIGATION", navigation_editor_widget_, *this,
                                              Qt::RightDockWidgetArea, "navigationEditorDock");
         anim_graph_editor_widget_ = new aether::editor::qt::AnimGraphEditorWidget;
-        anim_graph_editor_dock_ = MakeDock("ANIMATION · GRAPH EDITOR", anim_graph_editor_widget_, *this,
+        anim_graph_editor_dock_ = MakeDock("ANIMATION Â· GRAPH EDITOR", anim_graph_editor_widget_, *this,
                                              Qt::BottomDockWidgetArea, "animGraphEditorDock");
         blend_space_editor_widget_ = new aether::editor::qt::BlendSpaceEditorWidget;
-        blend_space_editor_dock_ = MakeDock("ANIMATION · BLEND SPACE", blend_space_editor_widget_, *this,
+        blend_space_editor_dock_ = MakeDock("ANIMATION Â· BLEND SPACE", blend_space_editor_widget_, *this,
                                               Qt::BottomDockWidgetArea, "blendSpaceEditorDock");
         montage_editor_widget_ = new aether::editor::qt::MontageEditorWidget;
-        montage_editor_dock_ = MakeDock("ANIMATION · MONTAGE", montage_editor_widget_, *this,
+        montage_editor_dock_ = MakeDock("ANIMATION Â· MONTAGE", montage_editor_widget_, *this,
                                          Qt::BottomDockWidgetArea, "montageEditorDock");
         sound_cue_editor_widget_ = new aether::editor::qt::SoundCueEditorWidget;
-        sound_cue_editor_dock_ = MakeDock("AUDIO · SOUND CUE", sound_cue_editor_widget_, *this,
+        sound_cue_editor_dock_ = MakeDock("AUDIO Â· SOUND CUE", sound_cue_editor_widget_, *this,
                                            Qt::BottomDockWidgetArea, "soundCueEditorDock");
 #if defined(AETHER_QT_EDITOR_SCRIPTING)
         script_editor_widget_ = new aether::editor::qt::ScriptEditorWidget;
-        script_editor_dock_ = MakeDock("SCRIPT · LUAU", script_editor_widget_, *this,
+        script_editor_dock_ = MakeDock("SCRIPT Â· LUAU", script_editor_widget_, *this,
                                        Qt::BottomDockWidgetArea, "scriptEditorDock");
         ai_debugger_widget_ = new aether::editor::qt::AiDebuggerWidget;
         ai_debugger_widget_->SetEntityActivatedCallback([this](aether::Entity entity) { SelectEntityInHierarchy(entity); });
         ai_debugger_widget_->SetOverlayChangedCallback([this] { if (viewport_) viewport_->update(); });
-        ai_debugger_dock_ = MakeDock("AI · DEBUGGER", ai_debugger_widget_, *this,
+        ai_debugger_dock_ = MakeDock("AI Â· DEBUGGER", ai_debugger_widget_, *this,
                                      Qt::BottomDockWidgetArea, "aiDebuggerDock");
 #endif
         tabifyDockWidget(content_dock_, output_dock_);
@@ -2497,7 +2278,7 @@ public:
         });
         QObject::connect(asset_view_, &QListView::clicked, this, [this](const QModelIndex& index) {
             UpdateSelectedContentAsset(index);
-            statusBar()->showMessage(QString("●  ASSET SELECTED     %1")
+            statusBar()->showMessage(QString("â—  ASSET SELECTED     %1")
                                          .arg(asset_model_->fileName(index)));
         });
         QObject::connect(asset_view_->selectionModel(), &QItemSelectionModel::currentChanged, this,
@@ -2509,8 +2290,8 @@ public:
             if (asset_model_->isDir(index)) SetContentDirectory(path);
             else OpenContentAsset(path);
         });
-        statusBar()->showMessage("Ready · World Editor");
-        renderer_badge_ = new QLabel("D3D12 · RHI", this);
+        statusBar()->showMessage("Ready Â· World Editor");
+        renderer_badge_ = new QLabel("D3D12 Â· RHI", this);
         renderer_badge_->setObjectName("rendererBadge");
         renderer_badge_->setToolTip("Active graphics backend");
         status_state_badge_ = new QLabel("SCENE SAVED", this);
@@ -2695,14 +2476,14 @@ public:
             mesh_inspector_.note->clear();
             return;
         }
-        mesh_inspector_.summary->setText(QString("%1 primitive(s) · %2 vertices")
+        mesh_inspector_.summary->setText(QString("%1 primitive(s) Â· %2 vertices")
                                              .arg(s.primitives).arg(static_cast<qulonglong>(s.vertices)));
         mesh_inspector_.table->setRowCount(static_cast<int>(s.lods.size()));
         for (int row = 0; row < static_cast<int>(s.lods.size()); ++row) {
             const auto& lod = s.lods[static_cast<std::size_t>(row)];
             const QStringList cells = {QString("LOD%1").arg(lod.level),
                                        QString::number(static_cast<qulonglong>(lod.triangles)),
-                                       row == 0 ? QString("—") : QString::number(static_cast<double>(lod.error), 'f', 3),
+                                       row == 0 ? QString("â€”") : QString::number(static_cast<double>(lod.error), 'f', 3),
                                        QString::number(static_cast<qulonglong>(lod.meshlets))};
             for (int col = 0; col < 4; ++col) {
                 auto* cell = new QTableWidgetItem(cells[col]);
@@ -2764,11 +2545,11 @@ public:
         passed &= require(!selected_entity_.IsNull() && inspector_name_->isEnabled() &&
                           inspector_name_->text() == QString::fromStdString(scene_document_.Name(selected_entity_)) &&
                           reset_position_button_->isEnabled() && reset_rotation_button_->isEnabled() &&
-                          inspector_status_->text() == "ENTITY · ACTIVE SELECTION",
+                          inspector_status_->text() == "ENTITY Â· ACTIVE SELECTION",
                           "Inspector should show the real name and state of the selected hierarchy entity");
         SelectHierarchyItem(nullptr);
         passed &= require(!inspector_name_->isEnabled() && inspector_name_->text().isEmpty() &&
-                          inspector_status_->text() == "NO SELECTION · SELECT AN ENTITY" &&
+                          inspector_status_->text() == "NO SELECTION Â· SELECT AN ENTITY" &&
                           !reset_position_button_->isEnabled() && !reset_rotation_button_->isEnabled() &&
                           std::all_of(position_fields_.begin(), position_fields_.end(),
                                       [](const QDoubleSpinBox* field) { return !field->isEnabled(); }) &&
@@ -3139,7 +2920,7 @@ private:
         auto* file_row = new QHBoxLayout;
         file_row->setSpacing(6);
         sequence_new_button_ = new QPushButton("New", body);
-        sequence_open_button_ = new QPushButton("Open…", body);
+        sequence_open_button_ = new QPushButton("Openâ€¦", body);
         sequence_save_button_ = new QPushButton("Save", body);
         sequence_new_button_->setToolTip("Start a new animation sequence");
         sequence_open_button_->setToolTip("Open an animation sequence asset");
@@ -3268,9 +3049,9 @@ private:
 
         auto* transport = new QHBoxLayout;
         transport->setSpacing(6);
-        sequence_play_button_ = new QPushButton("▶ Preview", body);
-        sequence_pause_button_ = new QPushButton("Ⅱ Pause", body);
-        sequence_stop_button_ = new QPushButton("■ Stop", body);
+        sequence_play_button_ = new QPushButton("â–¶ Preview", body);
+        sequence_pause_button_ = new QPushButton("â…¡ Pause", body);
+        sequence_stop_button_ = new QPushButton("â–  Stop", body);
         sequence_play_button_->setToolTip("Preview the animation in the active World");
         sequence_pause_button_->setToolTip("Pause the sequence preview");
         sequence_stop_button_->setToolTip("Stop preview and restore the edited World");
@@ -3429,7 +3210,7 @@ private:
         }
         sequence_file_ = file;
         RefreshSequenceEditor();
-        statusBar()->showMessage(QString("●  ANIMATION SAVED     %1")
+        statusBar()->showMessage(QString("â—  ANIMATION SAVED     %1")
                                      .arg(QString::fromStdWString(file.filename().wstring())));
         return true;
     }
@@ -3457,7 +3238,7 @@ private:
                 if (track.type == aether::seq::TrackType::Transform) type = "Transform";
                 else if (track.type == aether::seq::TrackType::Animation) type = "Animation";
                 else if (track.type == aether::seq::TrackType::Event) type = "Event";
-                sequence_track_list_->addItem(QString("%1  ·  %2  ·  %3 keys")
+                sequence_track_list_->addItem(QString("%1  Â·  %2  Â·  %3 keys")
                     .arg(QString::fromStdString(track.name), type).arg(key_count));
             }
             if (!sequence.tracks.empty()) sequence_track_list_->setCurrentRow(
@@ -3513,8 +3294,8 @@ private:
             sequence_event_name_->clear(); sequence_event_payload_->clear();
             for (std::size_t i = 0; i < track.events.size(); ++i) {
                 const auto& event = track.events[i];
-                auto* item = new QListWidgetItem(QString("%1 s  ·  %2%3").arg(event.time, 0, 'f', 3)
-                    .arg(QString::fromStdString(event.name), event.payload.empty() ? QString{} : "  ·  " + QString::fromStdString(event.payload)), sequence_key_list_);
+                auto* item = new QListWidgetItem(QString("%1 s  Â·  %2%3").arg(event.time, 0, 'f', 3)
+                    .arg(QString::fromStdString(event.name), event.payload.empty() ? QString{} : "  Â·  " + QString::fromStdString(event.payload)), sequence_key_list_);
                 item->setData(Qt::UserRole, static_cast<double>(event.time));
                 item->setData(Qt::UserRole + 1, static_cast<qulonglong>(i));
             }
@@ -3527,7 +3308,7 @@ private:
         for (const auto& channel : track.channels)
             for (const auto& key : channel.keys) times.insert(key.time);
         for (aether::f32 time : times) {
-            auto* item = new QListWidgetItem(QString("%1 s  ·  Position").arg(time, 0, 'f', 3), sequence_key_list_);
+            auto* item = new QListWidgetItem(QString("%1 s  Â·  Position").arg(time, 0, 'f', 3), sequence_key_list_);
             item->setData(Qt::UserRole, static_cast<double>(time));
         }
     }
@@ -3643,9 +3424,9 @@ private:
         sequence_player_ = std::make_unique<aether::seq::SequencePlayer>(
             sequence_document_.Sequence(), scene_document_.GetWorld(), scene_document_.Guids());
         sequence_player_->on_event = [this](const aether::seq::Track& track, const aether::seq::EventKey& event) {
-            QString message = QString("Sequence event · %1 · %2")
+            QString message = QString("Sequence event Â· %1 Â· %2")
                 .arg(QString::fromStdString(track.name), QString::fromStdString(event.name));
-            if (!event.payload.empty()) message += " · " + QString::fromStdString(event.payload);
+            if (!event.payload.empty()) message += " Â· " + QString::fromStdString(event.payload);
             statusBar()->showMessage(message, 3000);
         };
         sequence_player_->Bind();
@@ -3833,7 +3614,7 @@ private:
             const QSignalBlocker blocker(hierarchy_tree_);
             hierarchy_tree_->clear();
             auto* root = new QTreeWidgetItem(hierarchy_tree_,
-                {QString("%1  ·  %2 entities").arg(scene_label).arg(scene_document_.Entities().size())});
+                {QString("%1  Â·  %2 entities").arg(scene_label).arg(scene_document_.Entities().size())});
             root->setFlags(root->flags() & ~Qt::ItemIsSelectable);
             std::unordered_map<std::string, QTreeWidgetItem*> items;
             std::unordered_map<std::string, aether::Entity> item_entities;
@@ -3843,7 +3624,7 @@ private:
                 if (!id) continue;
                 const QString name = QString::fromStdString(scene_document_.Name(entity));
                 const std::string guid = aether::ToString(id->guid);
-                auto* item = new QTreeWidgetItem({"◇  " + name});
+                auto* item = new QTreeWidgetItem({"â—‡  " + name});
                 item->setData(0, Qt::UserRole, QString::fromStdString(guid));
                 items[guid] = item;
                 item_entities[guid] = entity;
@@ -3876,12 +3657,12 @@ private:
                 matching_entities = ordered_items.size();
             }
             root->setText(0, filter.isEmpty()
-                ? QString("%1  ·  %2 entities").arg(scene_label).arg(ordered_items.size())
-                : QString("%1  ·  %2 matches / %3 entities")
+                ? QString("%1  Â·  %2 entities").arg(scene_label).arg(ordered_items.size())
+                : QString("%1  Â·  %2 matches / %3 entities")
                       .arg(scene_label).arg(matching_entities).arg(ordered_items.size()));
             if (matching_entities == 0) {
                 const QString message = filter.isEmpty() ? "No entities in this world yet" :
-                    QString("No entities match “%1”").arg(filter);
+                    QString("No entities match â€œ%1â€").arg(filter);
                 auto* empty_item = new QTreeWidgetItem(root, {message});
                 empty_item->setFlags(Qt::NoItemFlags);
                 empty_item->setForeground(0, QColor("#8997a4"));
@@ -3906,7 +3687,7 @@ private:
         if (!item || !item->parent()) return;
         hierarchy_tree_->setCurrentItem(item);
         QMenu menu(this);
-        QAction* create_child = menu.addAction("Create Child Entity…");
+        QAction* create_child = menu.addAction("Create Child Entityâ€¦");
         QAction* move_to_root = menu.addAction("Move to World Root");
         move_to_root->setEnabled(!scene_document_.ParentOf(selected_entity_).IsNull());
         const QAction* choice = menu.exec(hierarchy_tree_->viewport()->mapToGlobal(point));
@@ -3968,7 +3749,7 @@ private:
             inspector_scroll_->verticalScrollBar()->setValue(0);
             inspector_name_->clear();
             inspector_name_->setEnabled(false);
-            inspector_status_->setText("NO SELECTION · SELECT AN ENTITY");
+            inspector_status_->setText("NO SELECTION Â· SELECT AN ENTITY");
             physics_component_panel_->SetEntity(aether::kNullEntity);
 #if defined(AETHER_QT_EDITOR_SCRIPTING)
             script_component_editor_->SetEntity(aether::kNullEntity);
@@ -4013,7 +3794,7 @@ private:
 #endif
         inspector_stack_->setCurrentIndex(1);
         inspector_scroll_->verticalScrollBar()->setValue(0);
-        inspector_status_->setText("ENTITY · ACTIVE SELECTION");
+        inspector_status_->setText("ENTITY Â· ACTIVE SELECTION");
         const QSignalBlocker name_blocker(inspector_name_);
         inspector_name_->setText(QString::fromStdString(scene_document_.Name(selected_entity_)));
         const auto* transform = scene_document_.GetWorld().GetComponent<aether::Transform>(selected_entity_);
@@ -4169,7 +3950,7 @@ private:
             ? QStringLiteral("Untitled Scene")
             : QString::fromStdWString(scene_document_.FilePath().filename().wstring());
         if (scene_document_.IsDirty()) scene_name += " *";
-        setWindowTitle(scene_name + " — " + project_name);
+        setWindowTitle(scene_name + " â€” " + project_name);
         save_scene_action_->setEnabled(editing);
         new_scene_action_->setEnabled(editing);
         open_scene_action_->setEnabled(editing);
@@ -4208,7 +3989,7 @@ private:
         pause_action_->setEnabled(playing);
         stop_action_->setEnabled(!editing);
         play_action_->setText(play_state == aether::editor::PlaySession::State::Paused ? "Resume" : "Play");
-        play_button_->setText(play_state == aether::editor::PlaySession::State::Paused ? "▶   Resume" : "▶   Play");
+        play_button_->setText(play_state == aether::editor::PlaySession::State::Paused ? "â–¶   Resume" : "â–¶   Play");
         play_button_->setEnabled(!playing);
         pause_button_->setEnabled(playing);
         stop_button_->setEnabled(!editing);
@@ -4238,7 +4019,7 @@ private:
         }
         const QString undo_label = scene_document_.CanUndo()
             ? QString::fromStdString(scene_document_.UndoLabel()) : QStringLiteral("Ready");
-        statusBar()->showMessage(QString("%1 entities   ·   %2")
+        statusBar()->showMessage(QString("%1 entities   Â·   %2")
             .arg(scene_document_.Entities().size())
             .arg(undo_label));
         UpdatePlayInputHint();
@@ -4251,13 +4032,13 @@ private:
         const bool paused = state == aether::editor::PlaySession::State::Paused;
         play_input_hint_->setVisible(playing || paused);
         if (paused) {
-            play_input_hint_->setText("Ⅱ  PLAY PAUSED");
+            play_input_hint_->setText("â…¡  PLAY PAUSED");
             play_input_hint_->setToolTip("Resume Play to send input to the game.");
         } else if (playing && viewport_ && viewport_->hasFocus()) {
-            play_input_hint_->setText("●  GAME INPUT ACTIVE");
+            play_input_hint_->setText("â—  GAME INPUT ACTIVE");
             play_input_hint_->setToolTip("Keyboard and mouse input from the 3D view drive project input actions.");
         } else if (playing) {
-            play_input_hint_->setText("○  CLICK 3D VIEW FOR GAME INPUT");
+            play_input_hint_->setText("â—‹  CLICK 3D VIEW FOR GAME INPUT");
             play_input_hint_->setToolTip("Focus the 3D view to send keyboard and mouse input to the game.");
         }
     }
@@ -4267,11 +4048,11 @@ private:
         QMessageBox dialog(this);
         dialog.setWindowTitle("Blueprint Breakpoint");
         dialog.setIcon(QMessageBox::Information);
-        dialog.setText(QString("Paused at %1 · node %2")
+        dialog.setText(QString("Paused at %1 Â· node %2")
             .arg(QString::fromStdString(stop.graph)).arg(stop.node));
         QStringList frames;
         for (const auto& frame : stop.frames) {
-            QString line = QString("%1 · node %2").arg(QString::fromStdString(frame.function)).arg(frame.node);
+            QString line = QString("%1 Â· node %2").arg(QString::fromStdString(frame.function)).arg(frame.node);
             for (const auto& value : frame.values)
                 line += QString("\n    %1 = %2").arg(QString::fromStdString(value.pin), QString::fromStdString(value.value));
             frames.push_back(line);
@@ -4533,7 +4314,7 @@ private:
         if (const auto* id = scene_document_.GetWorld().GetComponent<aether::IdComponent>(entity)) selected_guid_ = id->guid;
         RefreshHierarchy();
         UpdateSceneStatus();
-        statusBar()->showMessage(QString("●  MODEL PLACED     %1").arg(QString::fromStdWString(file.filename().wstring())));
+        statusBar()->showMessage(QString("â—  MODEL PLACED     %1").arg(QString::fromStdWString(file.filename().wstring())));
     }
 
     void ShowAddEntityMenu() {
@@ -4541,7 +4322,7 @@ private:
         auto* empty = menu.addAction("Empty Entity");
         auto* camera = menu.addAction("Camera");
         auto* cine_camera = menu.addAction("Cinematic Camera");
-        auto* model = menu.addAction("Model Asset…");
+        auto* model = menu.addAction("Model Assetâ€¦");
         model->setEnabled(!project_file_.empty());
         const QAction* choice = menu.exec(add_entity_button_->mapToGlobal(QPoint(0, add_entity_button_->height())));
         if (choice == empty) CreateEntityDialog();
@@ -4671,7 +4452,7 @@ private:
         auto* location_layout = new QHBoxLayout(location_row);
         location_layout->setContentsMargins(0, 0, 0, 0);
         auto* location = new QLineEdit(QDir::homePath(), location_row);
-        auto* browse = new QPushButton("Browse…", location_row);
+        auto* browse = new QPushButton("Browseâ€¦", location_row);
         location_layout->addWidget(location); location_layout->addWidget(browse);
         form->addRow("Project name", name);
         form->addRow("Create in", location_row);
@@ -4807,7 +4588,7 @@ private:
         viewport_->FitAll();
         SetContentDirectory(QString::fromStdWString(paths.content.wstring()));
         const QString project_name = QString::fromStdString(project_settings_.name);
-        setWindowTitle(project_name + " — Aether Engine");
+        setWindowTitle(project_name + " â€” Aether Engine");
         save_project_action_->setEnabled(true);
         new_folder_button_->setEnabled(true);
         asset_filter_->setEnabled(true);
@@ -4861,7 +4642,7 @@ private:
             const QString project_name = QString::fromStdWString(entry.stem().wstring());
             const QString parent_name = QString::fromStdWString(entry.parent_path().filename().wstring());
             const QString label = parent_name.isEmpty()
-                ? project_name : QString("%1   —   %2").arg(project_name, parent_name);
+                ? project_name : QString("%1   â€”   %2").arg(project_name, parent_name);
             QAction* action = recent_projects_menu_->addAction(label);
             action->setToolTip(QString::fromStdWString(entry.wstring()));
             QObject::connect(action, &QAction::triggered, this, [this, entry] { OpenProject(entry); });
@@ -4890,7 +4671,7 @@ private:
             if (blueprint_editor_widget_->OpenFile(std::filesystem::path(path.toStdWString()))) {
                 blueprint_editor_dock_->show();
                 blueprint_editor_dock_->raise();
-                statusBar()->showMessage("Opened Blueprint · compile and save from the graph editor", 4000);
+                statusBar()->showMessage("Opened Blueprint Â· compile and save from the graph editor", 4000);
             }
             return;
         }
@@ -4898,7 +4679,7 @@ private:
             if (material_editor_widget_->OpenFile(std::filesystem::path(path.toStdWString()))) {
                 material_editor_dock_->show();
                 material_editor_dock_->raise();
-                statusBar()->showMessage("Opened Material · edit the graph, validate, and save", 4000);
+                statusBar()->showMessage("Opened Material Â· edit the graph, validate, and save", 4000);
             }
             return;
         }
@@ -4906,7 +4687,7 @@ private:
             if (vfx_editor_widget_->OpenFile(std::filesystem::path(path.toStdWString()))) {
                 vfx_editor_dock_->show();
                 vfx_editor_dock_->raise();
-                statusBar()->showMessage("Opened Particle System · edit emitters and preview, then save", 4000);
+                statusBar()->showMessage("Opened Particle System Â· edit emitters and preview, then save", 4000);
             }
             return;
         }
@@ -4914,7 +4695,7 @@ private:
             if (anim_graph_editor_widget_->OpenFile(std::filesystem::path(path.toStdWString()))) {
                 anim_graph_editor_dock_->show();
                 anim_graph_editor_dock_->raise();
-                statusBar()->showMessage("Opened Animation Graph · connect a pose chain and set its output", 4000);
+                statusBar()->showMessage("Opened Animation Graph Â· connect a pose chain and set its output", 4000);
             }
             return;
         }
@@ -4922,7 +4703,7 @@ private:
             if (blend_space_editor_widget_->OpenFile(std::filesystem::path(path.toStdWString()))) {
                 blend_space_editor_dock_->show();
                 blend_space_editor_dock_->raise();
-                statusBar()->showMessage("Opened Blend Space · place animation clips on parameter axes", 4000);
+                statusBar()->showMessage("Opened Blend Space Â· place animation clips on parameter axes", 4000);
             }
             return;
         }
@@ -4930,7 +4711,7 @@ private:
             if (montage_editor_widget_->OpenFile(std::filesystem::path(path.toStdWString()))) {
                 montage_editor_dock_->show();
                 montage_editor_dock_->raise();
-                statusBar()->showMessage("Opened Montage · edit clip sections and transitions", 4000);
+                statusBar()->showMessage("Opened Montage Â· edit clip sections and transitions", 4000);
             }
             return;
         }
@@ -4938,7 +4719,7 @@ private:
             if (sound_cue_editor_widget_->OpenFile(std::filesystem::path(path.toStdWString()))) {
                 sound_cue_editor_dock_->show();
                 sound_cue_editor_dock_->raise();
-                statusBar()->showMessage("Opened Sound Cue · author nodes and connections, then save", 4000);
+                statusBar()->showMessage("Opened Sound Cue Â· author nodes and connections, then save", 4000);
             }
             return;
         }
@@ -4947,7 +4728,7 @@ private:
             if (script_editor_widget_->OpenFile(std::filesystem::path(path.toStdWString()))) {
                 script_editor_dock_->show();
                 script_editor_dock_->raise();
-                statusBar()->showMessage("Opened Luau source · validate before saving", 4000);
+                statusBar()->showMessage("Opened Luau source Â· validate before saving", 4000);
             }
             return;
         }
@@ -4971,17 +4752,17 @@ private:
         if (project_file_.empty()) {
             asset_context_->setText("Open or create a project to browse its Content folder.");
         } else if (is_directory) {
-            asset_context_->setText(QString("Folder · double-click to open %1").arg(asset_model_->fileName(index)));
+            asset_context_->setText(QString("Folder Â· double-click to open %1").arg(asset_model_->fileName(index)));
         } else if (index.isValid()) {
             const QString name = asset_model_->fileName(index);
             const QString suffix = asset_model_->fileInfo(index).suffix().toUpper();
             asset_context_->setText(suffix == "GLTF" || suffix == "GLB"
-                ? QString("MODEL · %1 · Select Place Model or double-click to add it to the World").arg(name)
-                : QString("%1 ASSET · %2 · Double-click to open").arg(suffix.isEmpty() ? "FILE" : suffix, name));
+                ? QString("MODEL Â· %1 Â· Select Place Model or double-click to add it to the World").arg(name)
+                : QString("%1 ASSET Â· %2 Â· Double-click to open").arg(suffix.isEmpty() ? "FILE" : suffix, name));
         } else if (asset_view_->model()->rowCount(asset_view_->rootIndex()) == 0) {
             const bool loading = asset_model_->canFetchMore(asset_view_->rootIndex());
             const bool filtered = !asset_filter_->text().trimmed().isEmpty() || asset_type_filter_->currentIndex() != 0;
-            asset_context_->setText(loading ? "Loading folder contents…" : filtered
+            asset_context_->setText(loading ? "Loading folder contentsâ€¦" : filtered
                 ? "No matching items in this folder. Clear the search or choose All Assets."
                 : "This folder is empty. Add assets to Content or create a folder.");
         } else {
@@ -4992,7 +4773,7 @@ private:
                 .arg(visible_count)
                 .arg(noun)
                 .arg(visible_count == 1 ? "" : "s");
-            asset_context_->setText(QString("%1 · Select glTF or GLB models to place them in the World; double-click folders to browse.")
+            asset_context_->setText(QString("%1 Â· Select glTF or GLB models to place them in the World; double-click folders to browse.")
                                         .arg(count));
         }
     }
@@ -5043,7 +4824,7 @@ private:
         auto* startup_layout = new QHBoxLayout(startup_row);
         startup_layout->setContentsMargins(0, 0, 0, 0);
         auto* startup = new QLineEdit(QString::fromStdString(project_settings_.startup_scene), startup_row);
-        auto* browse = new QPushButton("Browse…", startup_row);
+        auto* browse = new QPushButton("Browseâ€¦", startup_row);
         startup_layout->addWidget(startup); startup_layout->addWidget(browse);
         auto* fixed_hz = new QDoubleSpinBox(&dialog);
         fixed_hz->setRange(10.0, 480.0); fixed_hz->setSuffix(" Hz"); fixed_hz->setValue(project_settings_.fixed_timestep_hz);
@@ -5080,7 +4861,7 @@ private:
         auto* layers_row = new QWidget(&dialog);
         auto* layers_layout = new QHBoxLayout(layers_row);
         layers_layout->setContentsMargins(0, 0, 0, 0);
-        auto* collision_matrix_button = new QPushButton("Edit Matrix…", layers_row);
+        auto* collision_matrix_button = new QPushButton("Edit Matrixâ€¦", layers_row);
         layers_layout->addWidget(layers, 1);
         layers_layout->addWidget(collision_matrix_button);
         std::vector<aether::u32> collision_matrix = project_settings_.collision_matrix;
@@ -5097,7 +4878,7 @@ private:
             const std::vector<std::string> names = parse_lines(layers);
             if (names.empty() || names.front() != "Default" || names.size() > aether::kMaxLayers) {
                 QMessageBox::warning(&dialog, "Invalid collision layers",
-                                     "Add 1–32 layer names and keep Default as the first layer before editing the matrix.");
+                                     "Add 1â€“32 layer names and keep Default as the first layer before editing the matrix.");
                 return;
             }
             std::vector<aether::u32> edited;
@@ -5146,7 +4927,7 @@ private:
         if (layer_values.empty() || layer_values.front() != "Default" || layer_values.size() > aether::kMaxLayers ||
             unique_layers.size() != layer_values.size()) {
             QMessageBox::warning(this, "Invalid collision layers",
-                                 "Use 1–32 unique layer names and keep Default as the first layer.");
+                                 "Use 1â€“32 unique layer names and keep Default as the first layer.");
             return;
         }
         aether::ProjectSettings candidate = project_settings_;
@@ -5169,7 +4950,7 @@ private:
             QMessageBox::critical(this, "Couldn't save project settings", QString::fromStdString(error));
             return;
         }
-        statusBar()->showMessage("●  PROJECT SETTINGS SAVED");
+        statusBar()->showMessage("â—  PROJECT SETTINGS SAVED");
     }
 
     void RefreshContentBreadcrumb() {
@@ -5244,7 +5025,7 @@ private:
             QMessageBox::warning(this, "Couldn't create folder", "A folder with that name may already exist.");
             return;
         }
-        statusBar()->showMessage(QString("●  CONTENT FOLDER CREATED     %1").arg(name));
+        statusBar()->showMessage(QString("â—  CONTENT FOLDER CREATED     %1").arg(name));
     }
 
     void ShowCommandPalette() {
@@ -5260,7 +5041,7 @@ private:
         layout->addWidget(title);
         auto* query = new QLineEdit(&dialog);
         query->setObjectName("commandSearch");
-        query->setPlaceholderText("Search commands and editor panels…");
+        query->setPlaceholderText("Search commands and editor panelsâ€¦");
         query->setClearButtonEnabled(true);
         auto* results = new QListWidget(&dialog);
         results->setAccessibleName("Command results");
@@ -5270,17 +5051,17 @@ private:
         no_results->setAlignment(Qt::AlignCenter);
         QStringList commands;
         if (new_scene_action_->isEnabled()) commands << "New Scene";
-        if (open_scene_action_->isEnabled()) commands << "Open Scene…";
+        if (open_scene_action_->isEnabled()) commands << "Open Sceneâ€¦";
         if (save_scene_action_->isEnabled()) commands << "Save Scene";
         if (undo_action_->isEnabled()) commands << "Undo";
         if (redo_action_->isEnabled()) commands << "Redo";
         if (create_entity_action_->isEnabled()) commands << "Create Entity" << "Create Camera";
-        if (place_model_action_->isEnabled()) commands << "Place Model Asset…";
+        if (place_model_action_->isEnabled()) commands << "Place Model Assetâ€¦";
         if (duplicate_entity_action_->isEnabled()) commands << "Duplicate Selected Entity";
         if (delete_entity_action_->isEnabled()) commands << "Delete Selected Entity";
-        if (new_project_action_->isEnabled()) commands << "New Project…";
-        if (open_project_action_->isEnabled()) commands << "Open Project…";
-        if (save_project_action_->isEnabled()) commands << "Project Settings…";
+        if (new_project_action_->isEnabled()) commands << "New Projectâ€¦";
+        if (open_project_action_->isEnabled()) commands << "Open Projectâ€¦";
+        if (save_project_action_->isEnabled()) commands << "Project Settingsâ€¦";
         if (play_action_->isEnabled()) commands << play_action_->text();
         if (pause_action_->isEnabled()) commands << "Pause";
         if (stop_action_->isEnabled()) commands << "Stop";
@@ -5297,7 +5078,7 @@ private:
         layout->addWidget(query);
         layout->addWidget(results, 1);
         layout->addWidget(no_results);
-        auto* keyboard_hint = new QLabel("↑ ↓  Navigate     Enter  Run     Esc  Close", &dialog);
+        auto* keyboard_hint = new QLabel("â†‘ â†“  Navigate     Enter  Run     Esc  Close", &dialog);
         keyboard_hint->setObjectName("muted");
         keyboard_hint->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
         layout->addWidget(keyboard_hint);
@@ -5318,17 +5099,17 @@ private:
         auto invoke = [this, results, &dialog] {
             auto* item = results->currentItem(); if (!item) return;
             const QString name = item->text();
-            if (name == "New Project…") { dialog.accept(); CreateProjectDialog(); return; }
-            if (name == "Open Project…") { dialog.accept(); OpenProjectDialog(); return; }
-            if (name == "Project Settings…") { dialog.accept(); ShowProjectSettingsDialog(); return; }
+            if (name == "New Projectâ€¦") { dialog.accept(); CreateProjectDialog(); return; }
+            if (name == "Open Projectâ€¦") { dialog.accept(); OpenProjectDialog(); return; }
+            if (name == "Project Settingsâ€¦") { dialog.accept(); ShowProjectSettingsDialog(); return; }
             if (name == "New Scene") { dialog.accept(); NewScene(); return; }
-            if (name == "Open Scene…") { dialog.accept(); OpenSceneDialog(); return; }
+            if (name == "Open Sceneâ€¦") { dialog.accept(); OpenSceneDialog(); return; }
             if (name == "Save Scene") { dialog.accept(); SaveActiveDocument(); return; }
             if (name == "Undo") { dialog.accept(); UndoActiveDocument(); return; }
             if (name == "Redo") { dialog.accept(); RedoActiveDocument(); return; }
             if (name == "Create Entity") { dialog.accept(); CreateEntityDialog(); return; }
             if (name == "Create Camera") { dialog.accept(); CreateCameraDialog(); return; }
-            if (name == "Place Model Asset…") { dialog.accept(); PlaceModelDialog(); return; }
+            if (name == "Place Model Assetâ€¦") { dialog.accept(); PlaceModelDialog(); return; }
             if (name == "Duplicate Selected Entity") { dialog.accept(); DuplicateSelectedEntity(); return; }
             if (name == "Delete Selected Entity") { dialog.accept(); DeleteSelectedEntity(); return; }
             if (name == "Play" || name == "Resume") { dialog.accept(); StartOrResumePlay(); return; }
@@ -5428,16 +5209,16 @@ private:
     void BuildMenus() {
         auto* file = menuBar()->addMenu("File");
         new_scene_action_ = file->addAction("New Scene");
-        open_scene_action_ = file->addAction("Open Scene…");
+        open_scene_action_ = file->addAction("Open Sceneâ€¦");
         save_scene_action_ = file->addAction("Save Scene", QKeySequence::Save);
         save_scene_action_->setToolTip("Save the active scene (Ctrl+S)");
         file->addSeparator();
-        new_project_action_ = file->addAction("New Project…");
-        open_project_action_ = file->addAction("Open Project…");
+        new_project_action_ = file->addAction("New Projectâ€¦");
+        open_project_action_ = file->addAction("Open Projectâ€¦");
         recent_projects_menu_ = file->addMenu("Recent Projects");
         RefreshRecentProjectsMenu();
         file->addSeparator();
-        save_project_action_ = file->addAction("Project Settings…");
+        save_project_action_ = file->addAction("Project Settingsâ€¦");
         save_project_action_->setEnabled(false);
         file->addSeparator();
         file->addAction("Exit", qApp, &QApplication::quit);
@@ -5456,7 +5237,7 @@ private:
         edit->addSeparator();
         create_entity_action_ = edit->addAction("Create Entity"); create_entity_action_->setShortcut(QKeySequence("Ctrl+Shift+N"));
         create_camera_action_ = edit->addAction("Create Camera");
-        place_model_action_ = edit->addAction("Place Model Asset…");
+        place_model_action_ = edit->addAction("Place Model Assetâ€¦");
         duplicate_entity_action_ = edit->addAction("Duplicate Selected Entity", QKeySequence("Ctrl+D"));
         delete_entity_action_ = edit->addAction("Delete Selected Entity"); delete_entity_action_->setShortcut(QKeySequence::Delete);
         QObject::connect(undo_action_, &QAction::triggered, this, [this] { UndoActiveDocument(); });
@@ -5517,15 +5298,15 @@ private:
         bar->addSeparator();
         auto* spacer = new QWidget; spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred); bar->addWidget(spacer);
         spacer->setMaximumWidth(180);
-        search_button_ = new QPushButton("⌕  Search  Ctrl+K");
+        search_button_ = new QPushButton("âŒ•  Search  Ctrl+K");
         search_button_->setObjectName("commandSearchButton");
         search_button_->setMinimumWidth(168);
         search_button_->setMaximumWidth(190);
         search_button_->setToolTip("Search commands and editor panels (Ctrl+K)");
         bar->addWidget(search_button_);
-        play_button_ = new QPushButton("▶   Play"); play_button_->setObjectName("play"); bar->addWidget(play_button_);
-        pause_button_ = new QPushButton("Ⅱ"); pause_button_->setToolTip("Pause Play session"); bar->addWidget(pause_button_);
-        stop_button_ = new QPushButton("■"); stop_button_->setToolTip("Stop and restore the edited scene"); bar->addWidget(stop_button_);
+        play_button_ = new QPushButton("â–¶   Play"); play_button_->setObjectName("play"); bar->addWidget(play_button_);
+        pause_button_ = new QPushButton("â…¡"); pause_button_->setToolTip("Pause Play session"); bar->addWidget(pause_button_);
+        stop_button_ = new QPushButton("â– "); stop_button_->setToolTip("Stop and restore the edited scene"); bar->addWidget(stop_button_);
         pause_button_->setAccessibleName("Pause Play session");
         stop_button_->setAccessibleName("Stop Play session");
         QObject::connect(play_button_, &QPushButton::clicked, play_action_, &QAction::trigger);
@@ -5538,14 +5319,14 @@ private:
         viewport_bar->setMovable(false);
         auto* view_title = new QLabel("SCENE VIEW");
         view_title->setObjectName("viewportTitle");
-        auto* view_hint = new QLabel("DRAG OBJECT   ·   ORBIT RMB   ·   PAN MMB   ·   ZOOM WHEEL");
+        auto* view_hint = new QLabel("DRAG OBJECT   Â·   ORBIT RMB   Â·   PAN MMB   Â·   ZOOM WHEEL");
         view_hint->setObjectName("viewportHint");
         view_hint->setAccessibleName("3D World View navigation help");
-        view_hint->setToolTip("Left-drag a selected object to move it across the view plane · Move tool: drag X/Y/Z handles or use WASD/QE · Right-drag: orbit · Middle-drag: pan · Wheel: zoom · Shift: faster");
+        view_hint->setToolTip("Left-drag a selected object to move it across the view plane Â· Move tool: drag X/Y/Z handles or use WASD/QE Â· Right-drag: orbit Â· Middle-drag: pan Â· Wheel: zoom Â· Shift: faster");
         viewport_bar->addWidget(view_title);
         viewport_bar->addSeparator();
         auto* view_button = new QToolButton(viewport_bar);
-        view_button->setText("Perspective ▾");
+        view_button->setText("Perspective â–¾");
         view_button->setObjectName("viewportViewMenu");
         view_button->setPopupMode(QToolButton::InstantPopup);
         view_button->setToolTip("Choose a perspective, orthographic, or axis-aligned scene view");
@@ -5555,7 +5336,7 @@ private:
             QAction* preset_action = view_menu->addAction(preset_name);
             QObject::connect(preset_action, &QAction::triggered, this, [this, preset_name, view_button] {
                 viewport_->SetViewPreset(preset_name);
-                view_button->setText(preset_name + " ▾");
+                view_button->setText(preset_name + " â–¾");
                 statusBar()->showMessage(QString("Scene view: %1").arg(preset_name), 2500);
             });
         }
@@ -5579,23 +5360,23 @@ private:
                 const QString mode_name = QString::fromUtf8(mode);
                 viewport_->SetToolMode(mode_name);
                 if (mode_name == "Move")
-                    statusBar()->showMessage("●  MOVE TOOL     DRAG OBJECT ACROSS VIEW PLANE · WASD/QE TO MOVE · DRAG X/Y/Z HANDLE FOR AXIS MOVE");
+                    statusBar()->showMessage("â—  MOVE TOOL     DRAG OBJECT ACROSS VIEW PLANE Â· WASD/QE TO MOVE Â· DRAG X/Y/Z HANDLE FOR AXIS MOVE");
                 else if (mode_name == "Rotate Y")
-                    statusBar()->showMessage("●  ROTATE Y TOOL     DRAG THE SELECTED ENTITY'S RING");
+                    statusBar()->showMessage("â—  ROTATE Y TOOL     DRAG THE SELECTED ENTITY'S RING");
                 else if (mode_name == "Scale")
-                    statusBar()->showMessage("●  SCALE TOOL     DRAG SELECTED OBJECT UP/DOWN TO RESIZE UNIFORMLY");
+                    statusBar()->showMessage("â—  SCALE TOOL     DRAG SELECTED OBJECT UP/DOWN TO RESIZE UNIFORMLY");
                 else
-                    statusBar()->showMessage("●  SELECT TOOL     CLICK AN ENTITY IN THE 3D VIEW");
+                    statusBar()->showMessage("â—  SELECT TOOL     CLICK AN ENTITY IN THE 3D VIEW");
             });
         }
         viewport_bar->addSeparator();
-        auto* snap = viewport_bar->addAction("⌗  Snap");
+        auto* snap = viewport_bar->addAction("âŒ—  Snap");
         snap->setCheckable(true);
-        snap->setToolTip("Move snaps to whole world units; Rotate Y snaps to 15°; Scale snaps to 0.1");
+        snap->setToolTip("Move snaps to whole world units; Rotate Y snaps to 15Â°; Scale snaps to 0.1");
         QObject::connect(snap, &QAction::toggled, this, [this](bool enabled) {
             viewport_->SetGridSnap(enabled);
         });
-        auto* grid = viewport_bar->addAction("▦  Grid");
+        auto* grid = viewport_bar->addAction("â–¦  Grid");
         grid->setCheckable(true);
         grid->setChecked(true);
         grid->setToolTip("Show or hide the adaptive scene grid and world axes");
@@ -5603,11 +5384,11 @@ private:
             viewport_->SetGridVisible(visible);
         });
         viewport_bar->addSeparator();
-        auto* focus = viewport_bar->addAction("◎  Focus");
+        auto* focus = viewport_bar->addAction("â—Ž  Focus");
         focus->setToolTip("Focus selected entity (F)");
         focus->setShortcut(QKeySequence(Qt::Key_F));
         QObject::connect(focus, &QAction::triggered, this, [this] { viewport_->FocusSelection(); });
-        auto* fit = viewport_bar->addAction("▣  Frame All");
+        auto* fit = viewport_bar->addAction("â–£  Frame All");
         fit->setToolTip("Frame all scene entities (Home)");
         fit->setShortcut(QKeySequence(Qt::Key_Home));
         QObject::connect(fit, &QAction::triggered, this, [this] { viewport_->FitAll(); });
