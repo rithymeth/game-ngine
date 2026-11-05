@@ -39,6 +39,9 @@ public:
 
     const ComponentMask& Mask() const { return mask_; }
     bool Has(ComponentId id) const { return mask_.test(id); }
+    // The archetype's component ids, sorted ascending. Callers that walk every
+    // entity's components (the scene serializer) can reuse this instead of
+    // rebuilding it from the mask per entity.
     const std::vector<ComponentId>& ComponentIds() const { return component_ids_; }
 
     usize ChunkCount() const { return chunks_.size(); }

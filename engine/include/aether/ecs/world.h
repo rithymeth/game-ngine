@@ -298,19 +298,34 @@ private:
     }
 
     Archetype& GetOrCreateArchetype(ComponentMask mask) {
+        // Structural edits usually repeat the same signature (spawn a batch of
+        // enemies, strip a component from many entities). Cache the last lookup
+        // so that loop avoids hashing and probing the 256-bit mask each time.
+        if (last_archetype_ != nullptr && last_mask_ == mask) {
+            return *last_archetype_;
+        }
         auto it = archetypes_.find(mask);
         if (it != archetypes_.end()) {
+            last_mask_ = mask;
+            last_archetype_ = it->second.get();
             return *it->second;
         }
         auto archetype = std::make_unique<Archetype>(mask);
         Archetype& ref = *archetype;
         archetypes_.emplace(mask, std::move(archetype));
+        last_mask_ = mask;
+        last_archetype_ = &ref;
         return ref;
     }
 
     std::vector<EntityRecord> records_;
     std::vector<u32> free_indices_;
     std::unordered_map<ComponentMask, std::unique_ptr<Archetype>> archetypes_; // std::hash<bitset> keyed
+    // Single-entry cache for GetOrCreateArchetype: points at an archetype owned
+    // by archetypes_ (stable across map rehash and World move, since the
+    // Archetype objects live on the heap behind unique_ptr).
+    ComponentMask last_mask_{};
+    Archetype* last_archetype_ = nullptr;
 };
 
 } // namespace aether
