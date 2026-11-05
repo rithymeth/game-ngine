@@ -171,3 +171,24 @@ AETHER_TEST(WorldOrigin_BinaryLoadShiftsTheScene) {
     AETHER_CHECK(found);
     std::filesystem::remove(path);
 }
+
+// Phase 42.1: a JSON scene records its origin and writes absolute positions, so
+// the loader shifts them back to the small local ones.
+AETHER_TEST(WorldOrigin_JsonSceneRecordsItsOrigin) {
+    World world;
+    world.CreateEntity(Transform{Vec3(3, 0, 4), Quaternion::Identity()}); // local
+    const std::string path = (std::filesystem::temp_directory_path() / "aether_test_origin_record.ascene").string();
+    SceneSaveOptions save;
+    save.origin = Vec3d(100000.0, 0.0, 200000.0);
+    AETHER_CHECK(SaveSceneJson(world, path, save));
+    World loaded;
+    AETHER_CHECK(LoadSceneJson(loaded, path)); // no options: the recorded origin applies
+    bool found = false;
+    loaded.ForEach<Transform>([&](Transform& t) {
+        AETHER_CHECK_NEAR(t.position.x, 3.0f, 1e-2);
+        AETHER_CHECK_NEAR(t.position.z, 4.0f, 1e-2);
+        found = true;
+    });
+    AETHER_CHECK(found);
+    std::filesystem::remove(path);
+}

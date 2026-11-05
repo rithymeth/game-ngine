@@ -3235,6 +3235,7 @@
   void SetProperty(const std::string&name,const nlohmann::json&value)
 [engine/include/aether/scene/serialization.h] experimental
   type struct SceneLoadOptions
+  type struct SceneSaveOptions
   [[nodiscard]]bool LoadScene(World&world,const std::string&path)
   [[nodiscard]]bool LoadScene(World&world,const std::string&path,const SceneLoadOptions&options)
   [[nodiscard]]bool LoadSceneFromMemory(World&world,std::span<const u8>bytes,const std::string&source_name,const SceneLoadOptions&options)
@@ -3245,6 +3246,7 @@
   [[nodiscard]]bool LoadSceneJsonFromMemory(World&world,std::span<const u8>bytes,const std::string&source_name="")
   [[nodiscard]]bool SaveScene(const World&world,const std::string&path)
   [[nodiscard]]bool SaveSceneJson(const World&world,const std::string&path)
+  [[nodiscard]]bool SaveSceneJson(const World&world,const std::string&path,const SceneSaveOptions&options)
   std::vector<u8>SaveSceneToMemory(const World&world)
 [engine/include/aether/scene/test_world.h] experimental
   type struct TestWorldParams

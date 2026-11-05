@@ -359,9 +359,14 @@ bool LoadSceneFromMemory(World& world, std::span<const u8> buffer, const std::st
 }
 
 bool SaveSceneJson(const World& world, const std::string& path) {
+    return SaveSceneJson(world, path, SceneSaveOptions{});
+}
+
+bool SaveSceneJson(const World& world, const std::string& path, const SceneSaveOptions& options) {
     using reflect::Json;
     Json entities = Json::array();
     const ComponentId id_component = GetComponentId<IdComponent>();
+    const ComponentId transform_component = GetComponentId<Transform>();
     for (const EntitySlot& slot : CollectEntities(world)) {
         Json components = Json::object();
         Json guid;
@@ -380,7 +385,18 @@ bool SaveSceneJson(const World& world, const std::string& path) {
             }
             // The reflected (declared) name, even if a custom serializer
             // renamed the component for the binary format.
-            components[info.reflected->name] = reflect::ToJson(*info.reflected, ComponentPtr(slot, id));
+            Json component_json = reflect::ToJson(*info.reflected, ComponentPtr(slot, id));
+            // Phase 42.1: with an origin recorded, positions go in absolute (local +
+            // origin), so the loader's -origin shift gets the small values back.
+            // A reflected Vec3 is a three-element array.
+            if (id == transform_component && options.origin.LengthSq() > 0.0) {
+                if (Json& position = component_json["position"]; position.is_array() && position.size() == 3) {
+                    position[0] = position[0].get<double>() + options.origin.x;
+                    position[1] = position[1].get<double>() + options.origin.y;
+                    position[2] = position[2].get<double>() + options.origin.z;
+                }
+            }
+            components[info.reflected->name] = std::move(component_json);
         }
         if (!components.empty() || !guid.is_null()) {
             Json entity{{"components", std::move(components)}};
@@ -392,6 +408,8 @@ bool SaveSceneJson(const World& world, const std::string& path) {
     }
 
     Json scene = {{"$type", "Scene"}, {"$version", kJsonSceneVersion}, {"entities", std::move(entities)}};
+    if (options.origin.LengthSq() > 0.0)
+        scene["origin"] = {{"x", options.origin.x}, {"y", options.origin.y}, {"z", options.origin.z}};
     std::string text = scene.dump(2);
     text.push_back('\n');
     if (!fs::WriteFileAtomic(path, text.data(), text.size())) {
@@ -453,6 +471,15 @@ bool LoadSceneJsonFromMemoryImpl(World& world, std::span<const u8> bytes, const 
     if (JsonVersion(scene) != static_cast<int>(kJsonSceneVersion)) {
         AETHER_LOG_ERROR("Scene", "Unsupported JSON scene version in %s", path.c_str());
         return false;
+    }
+    // Phase 42.1: a recorded origin is used unless the caller supplied one.
+    Vec3d effective_origin = options.origin;
+    if (effective_origin.LengthSq() == 0.0) {
+        if (const auto origin = scene.find("origin"); origin != scene.end() && origin->is_object()) {
+            effective_origin.x = origin->value("x", 0.0);
+            effective_origin.y = origin->value("y", 0.0);
+            effective_origin.z = origin->value("z", 0.0);
+        }
     }
     auto entities = scene.find("entities");
     if (entities == scene.end() || !entities->is_array()) {
@@ -518,7 +545,7 @@ bool LoadSceneJsonFromMemoryImpl(World& world, std::span<const u8> bytes, const 
     }
 
     AETHER_LOG_INFO("Scene", "Loaded %zu entities from %s", pending_entities.size(), path.c_str());
-    if (options.origin.LengthSq() > 0.0) RebaseTransforms(world, options.origin);
+    if (effective_origin.LengthSq() > 0.0) RebaseTransforms(world, effective_origin);
     return true;
 }
 } // namespace

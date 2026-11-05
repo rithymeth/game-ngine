@@ -1,9 +1,10 @@
 # Large-world coordinates
 
-Status: **design, partially implemented** (UPGRADE_PLAN.md step 42.1). This note
-records what exists, the one convention decision the format migration is blocked
-on, and the plan for the systems that still assume "the world is near the
-origin".
+Status: **Option B started** (UPGRADE_PLAN.md step 42.1). The JSON scene format
+records an origin and stores absolute positions today; the binary format and the
+cross-system wiring below are still to do. This note records what exists, the
+convention decision behind it, and the plan for the systems that still assume
+"the world is near the origin".
 
 ## The problem
 
@@ -29,7 +30,8 @@ network layer was written with a larger range in mind.
 | `Vec3d` | `engine/include/aether/math/vec.h` | double-precision position, arithmetic and `Vec3` conversion |
 | `WorldOrigin`, `RebaseOrigin` | `engine/include/aether/math/world_origin.h` | a double-precision anchor; converts absolute `Vec3d` to origin-relative `Vec3` and back; moves the anchor only past a threshold |
 | `RebaseTransforms`, `ShiftTransforms` | `engine/include/aether/scene/world_origin.h` | shift **root** Transforms by `-delta`/`+delta`; children are relative to parents; a `Parent` whose GUID no longer resolves counts as a root |
-| `SceneLoadOptions::origin` | `engine/include/aether/scene/serialization.h` | after a load, shift root Transforms by `-origin`: a file authored at absolute coordinates comes in at small ones |
+| `SceneLoadOptions::origin` | `engine/include/aether/scene/serialization.h` | after a load, shift root Transforms by `-origin`: a file authored at absolute coordinates comes in at small ones; a JSON scene's own recorded origin is used when this is zero |
+| `SceneSaveOptions::origin` | same header | a JSON scene records the origin at its root and writes `position` as `local + origin`, so the loader's shift gets the small values back (`WorldOrigin_JsonSceneRecordsItsOrigin`) |
 | `streaming::WorldPosition` | `engine/include/aether/streaming/streamer.h` | a `{f64 x,y,z}` world position used by the streamer |
 | `streaming::FloatingOrigin` | same header | applies the shift when a focus point strays past a threshold; now calls `RebaseTransforms` so the rule has one implementation |
 

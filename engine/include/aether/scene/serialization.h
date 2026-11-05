@@ -15,7 +15,16 @@ struct SceneLoadOptions {
     bool reject_unknown_components = false;
     // Phase 42.1: the scene's absolute origin. Loaded root Transforms are shifted
     // by -origin, so a scene authored far from (0,0,0) loads into small
-    // origin-relative coordinates. Zero leaves them alone.
+    // origin-relative coordinates. Zero (the default) uses the origin recorded in
+    // a JSON scene, if it has one.
+    Vec3d origin;
+};
+
+struct SceneSaveOptions {
+    // Phase 42.1: the origin a JSON scene records. With it set, Transform
+    // positions are written as absolute (local + origin) and the origin is stored
+    // at the root, so a loader gets the small coordinates back. Zero writes
+    // positions as they are and records nothing.
     Vec3d origin;
 };
 
@@ -59,6 +68,8 @@ std::vector<u8> SaveSceneToMemory(const World& world);
 // appending to the destination world, so parse failures and strict unknown-
 // component rejection do not partially load a scene.
 [[nodiscard]] bool SaveSceneJson(const World& world, const std::string& path);
+// Phase 42.1: records an origin and writes absolute positions (see SceneSaveOptions).
+[[nodiscard]] bool SaveSceneJson(const World& world, const std::string& path, const SceneSaveOptions& options);
 [[nodiscard]] bool LoadSceneJson(World& world, const std::string& path);
 [[nodiscard]] bool LoadSceneJson(World& world, const std::string& path, const SceneLoadOptions& options);
 // The same from a JSON scene in memory (e.g. read from an .apak); `source_name` is for messages.
