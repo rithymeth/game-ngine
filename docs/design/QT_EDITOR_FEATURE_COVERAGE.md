@@ -31,7 +31,7 @@ Disabled mock controls and sample-only panels do not count as migrated.
 | Layout | Move/tab/show docks and persist window state | Qt automation pending | Functional, UI test pending |
 | Command palette | Invoke the currently migrated commands and docks | Qt automation pending | Functional, UI test pending |
 | Mesh (Inspector) | For an entity with a model: primitives and vertices, and a LOD table (triangles, error, meshlets) from the same `GenerateLods`/`BuildMeshlets` the cooker runs; cached per file and write time; says so when the file is missing, unreadable or too large; skinned primitives are listed as not included | `MeshSummary_*` unit tests (counts match the cooker's functions; skinned, empty and oversized cases) and the Qt self-test (placing the test cube shows four LOD rows, 12 triangles at LOD0) | Functional |
-| Animation Sequencer | New/open/save `.asequence`; edit name/FPS/duration; bind Transform tracks by entity GUID or author unbound Event tracks; set/update/clear position keys; add/update/remove named event keys with payloads; scrub, loop, pause, and restore scene transforms; fire crossed events during preview; undo/redo | Existing 10 SequenceEditor tests and Qt self-test save/reload/evaluation flow; dedicated event-track UI coverage pending | Functional transform and event authoring core |
+| Transform animation | New/open/save `.asequence`; edit name/FPS/duration; bind Transform tracks by entity GUID; set/update/clear position keys; scrub, loop, preview, pause, and restore the scene | Existing 10 SequenceEditor tests and Qt self-test save/reload/evaluation flow | Functional |
 
 The Qt executable supports `--self-test`. CTest registers it as
 `qt_editor_self_test`; it invokes the real window actions and validates map

@@ -44,11 +44,6 @@ public:
     // rebuilding it from the mask per entity.
     const std::vector<ComponentId>& ComponentIds() const { return component_ids_; }
 
-    // The archetype's component ids, sorted ascending. Callers that walk every
-    // entity's components (the scene serializer) can reuse this instead of
-    // rebuilding it from the mask per entity.
-    const std::vector<ComponentId>& ComponentIds() const { return component_ids_; }
-
     usize ChunkCount() const { return chunks_.size(); }
     u32 ChunkEntityCount(usize chunk_index) const { return chunks_[chunk_index]->count; }
     u32 EntitiesPerChunk() const { return capacity_; }
