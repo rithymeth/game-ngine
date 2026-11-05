@@ -1,0 +1,1 @@
+{"$type":"Prefab","$version":1,"entities":[{"id":1,"parent":0,"components":{"Transform":{"$v":2,"position":[0,0,0],"rotation":[0,0,0,1],"scale":[1,1,1]}}},{"id":2,"parent":1,"components":{"Transform":{"$v":2,"position":[1,0,0],"rotation":[0,0,0,1],"scale":[1,1,1]}}},{"id":3,"parent":1,"components":{"Transform":{"$v":2,"position":[0,0,1],"rotation":[0,0,0,1],"scale":[2,2,2]}}}]}
