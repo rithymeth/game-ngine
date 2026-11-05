@@ -194,7 +194,7 @@ AETHER_BENCH_SETUP(
         if (!reported) {
             reported = true;
             const nav::HierarchicalStats& st = s.hierarchical.Stats();
-            std::fprintf(stderr, "  serpentine hierarchical: %zu portals, %zu expanded, %zu legs, direct=%zu\n",
-                         st.portals, st.graph_nodes_expanded, st.legs, st.direct);
+            std::fprintf(stderr, "  serpentine hierarchical: %zu portals, %zu expanded, %zu legs, direct=%zu, graph=%.3f ms, legs=%.3f ms\n",
+                         st.portals, st.graph_nodes_expanded, st.legs, st.direct, st.graph_ms, st.legs_ms);
         }
     });

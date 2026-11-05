@@ -159,9 +159,25 @@ already efficient on these meshes. Any number of legs whose total span covers th
 
 **Be precise about what this does and does not rule out.** It rules out the legs. It does not rule out the *other*
 half of the cost, which this run did not isolate: the portal A* itself, which expanded 34 769 nodes over 36 180
-portals and 229 266 edges on the serpentine. A funnel over the portal corridor would remove the leg searches
-entirely and leave only that A* -- so the remaining question is whether a **coarser** graph (per-cluster portals,
-which shrinks the A* rather than the legs) plus a funnel beats one plain search. That is a different algorithm and an
-unmeasured one; this note should not be read as having settled it.
+portals and 229 266 edges on the serpentine.
+
+`HierarchicalStats` now records `graph_ms` and `legs_ms` per query, which settles it. On the serpentine, per query:
+
+| | ms | share |
+|---|---|---|
+| portal A* | **2.27** | **75%** |
+| Detour legs (134 of them) | 0.72 | 24% |
+| total | ~3.0 | |
+| plain Detour, for comparison | 0.54 | |
+
+**The A* is the cost, not the legs.** So a funnel over the portal corridor -- which removes the leg searches
+entirely -- would save at most the 0.72 ms and leave a query about four times slower than plain Detour. The funnel is
+**not** the fix on its own.
+
+What the numbers do support is the combination: a **coarser graph** (portals per cluster rather than per tile border,
+shrinking the A* by roughly the cluster area) **plus** a funnel to turn the portal sequence into a path with no
+Detour legs at all. That needs the A* to fall from 2.27 ms to well under 0.54 ms -- about a 4x reduction in nodes --
+which a clustered graph of the right size could plausibly deliver. It is a different algorithm and remains
+unmeasured; but it is now a scoped, falsifiable next step rather than a guess.
 
 

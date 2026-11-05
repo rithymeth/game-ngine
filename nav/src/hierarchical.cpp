@@ -3,6 +3,7 @@
 #include <DetourNavMesh.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <limits>
 #include <map>
@@ -122,6 +123,7 @@ bool HierarchicalPathfinder::FindPath(const Vec3& start, const Vec3& end, NavPat
     const i32 sx = TileOf(s, sz), ex = TileOf(e, ez);
     if (std::abs(static_cast<i64>(sx) - ex) <= 1 && std::abs(static_cast<i64>(sz) - ez) <= 1) return direct();
 
+    const auto graph_started = std::chrono::steady_clock::now();
     // A* over the portals, from the start's tile to the goal's. Node n = portal n; start and goal are virtual.
     const u32 n = static_cast<u32>(portals_.size());
     const u32 kGoal = n;
@@ -160,6 +162,7 @@ bool HierarchicalPathfinder::FindPath(const Vec3& start, const Vec3& end, NavPat
             }
         }
     }
+    stats_.graph_ms = std::chrono::duration<f64, std::milli>(std::chrono::steady_clock::now() - graph_started).count();
     if (!found) return mesh_->FindPath(start, end, out, filter);
 
     // The portals to pass, in order; consecutive ones across a border are the same gap, so keep one of each pair.
@@ -195,6 +198,7 @@ bool HierarchicalPathfinder::FindPath(const Vec3& start, const Vec3& end, NavPat
         }
         waypoints = std::move(reduced);
     }
+    const auto legs_started = std::chrono::steady_clock::now();
     for (const Vec3& target : waypoints) {
         NavPath leg;
         ++stats_.legs;
@@ -209,6 +213,7 @@ bool HierarchicalPathfinder::FindPath(const Vec3& start, const Vec3& end, NavPat
         }
         leg_start = leg.points.back();
     }
+    stats_.legs_ms = std::chrono::duration<f64, std::milli>(std::chrono::steady_clock::now() - legs_started).count();
     return !out.points.empty();
 }
 
