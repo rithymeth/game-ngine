@@ -96,3 +96,31 @@ AETHER_TEST(NavHierarchical_FollowsASerpentineOfWalls) {
     CHECK(hier.Length() <= plain.Length() * 1.15f); // and stays near the shortest
     CHECK(h.Stats().legs > 10);
 }
+
+// Phase 40.2: a pathfinder can be rebuilt when the mesh changes (a dynamic edit),
+// and rebuilding doesn't accumulate portals.
+AETHER_TEST(NavHierarchical_RebuildsAfterTheMeshChanges) {
+    NavGeometry g;
+    g.AddPlane(Vec3(0, 0, 0), 60, 60);
+    NavMesh mesh;
+    CHECK(Bake(g, mesh));
+    HierarchicalPathfinder h;
+    CHECK(h.Build(mesh));
+    const HierarchicalStats first = h.Stats();
+    CHECK(first.portals > 0);
+
+    // Build clears its state first, so repeating it is idempotent.
+    CHECK(h.Build(mesh));
+    CHECK(h.Stats().portals == first.portals && h.Stats().edges == first.edges);
+
+    // A wall appears; the rebuilt graph reflects the new mesh.
+    g.AddBox(Vec3(0, 1.5f, 0), Vec3(1, 1.5f, 20));
+    CHECK(Bake(g, mesh));
+    CHECK(h.Build(mesh));
+    NavPath hp;
+    CHECK(h.FindPath(Vec3(-40, 0, 0), Vec3(40, 0, 0), hp));
+    CHECK(hp.status == PathStatus::Complete);
+    bool off_line = false;
+    for (const Vec3& p : hp.points) off_line = off_line || std::fabs(p.z) > 2.0f;
+    CHECK(off_line); // it had to go around the wall
+}
