@@ -87,6 +87,20 @@ describes what is on `master`, not a promise of a version number or a date.
 - Plugin descriptors carry an ABI number; a plugin built for another ABI is refused with a clear message.
 - An offline local plugin registry stores immutable package versions and installs an exact selected version through the staged installer.
 
+## Editor
+
+- A command palette searches the workspace's tools and, once a project is open, its assets. Choosing an
+  asset focuses the content browser at it; what "opening" an asset means stays a host decision
+  (`AssetOpener`), so the palette itself is usable headless.
+- The scene document keeps a **multi-selection** — deduplicated, order-preserving, and not itself an
+  undoable edit — and copies it through a **snapshot clipboard**, so a paste still works after the
+  originals are deleted or the whole scene is replaced.
+- Gizmo **snapping** rounds translation, rotation and scale to a step. A zero step means "snapping off"
+  rather than "snap to zero", and scale never collapses to zero: a drag to almost nothing lands on one
+  step and keeps its sign.
+- The content browser can **stage and commit** the project's `Content/` from its toolbar, reporting git's
+  own message when it refuses (nothing to commit, a hook, a missing identity) rather than a generic error.
+
 ## Robustness and quality gates
 
 - Every loader reads `$type` safely, rejects files from a newer engine and fails instead of throwing on
