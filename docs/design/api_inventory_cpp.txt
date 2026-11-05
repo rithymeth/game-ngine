@@ -3020,6 +3020,9 @@
   inline void SetModelPath(ModelRenderer&renderer,const std::string&path)
 [engine/include/aether/scene/data_layers.h] experimental
   type struct DataLayer
+  ),AETHER_FIELD(active_when_layer_on,Field_EditAnywhere,
+  ),AETHER_FIELD(captured,Field_EditAnywhere,
+  AETHER_REFLECT(aether::DataLayer,1,AETHER_FIELD(layer,Field_EditAnywhere,
   bool IsDataLayerActive(const World&world,std::string_view layer)
   std::vector<std::string>DataLayerNames(const World&world)
   usize DataLayerSize(const World&world,std::string_view layer)
