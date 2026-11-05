@@ -240,4 +240,29 @@ Written down from reading `Build`, so the next attempt does not rediscover it:
 
 Only after those are in place is "A* + funnel < 0.43 ms" a meaningful target.
 
+### Tried and rejected: raycast string-pull instead of legs
+
+Before writing the funnel, the legs were replaced with something simpler and self-validating: keep the portal
+midpoints as a coarse route and string-pull them with `NavMesh::Raycast`, keeping a segment only when the ray is
+clear. No Detour searches at all, and walkable by construction rather than by assumption.
+
+It won in one case and lost badly in the other:
+
+| 20 queries | plain | hierarchical (string-pull) |
+|---|---|---|
+| walled route, 13 700 tiles | 15.19 ms | **13.84 ms** -- the first time it beat plain |
+| serpentine, 10 000 tiles | 10.92 ms | **476 ms** |
+
+The serpentine collapsed for a structural reason: the probe searches the *entire* remaining route for a clear ray,
+which is O(n^2) raycasts -- about 10 000 per query, 20.3 ms of it. A bounded probe would fix the complexity but not
+the other failure: the string-pulled serpentine path came out **shorter than the walkable route**, so it was cutting
+corners the corridor does not allow, and the `Length > 1450` assertion caught it.
+
+So: the idea is sound for short routes (the walled case is worth revisiting if the portal graph ever shrinks), but it
+is not a substitute for a funnel on long ones. Reverted; the collinear collapse is still the version to keep.
+
+**This does leave one genuinely encouraging data point.** In the walled case the hierarchy beat plain Detour with no
+tuning -- 13.84 against 15.19 ms -- which is the first measurement in this whole investigation where it came out
+ahead. The feature is not hopeless; it is wrong for the long, dead-end routes it was designed around.
+
 
