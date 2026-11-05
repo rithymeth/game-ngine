@@ -115,16 +115,6 @@ std::vector<EntitySlot> CollectEntities(const World& world) {
     return slots;
 }
 
-std::vector<ComponentId> ComponentIdsOf(const ComponentMask& mask) {
-    std::vector<ComponentId> ids;
-    for (ComponentId id = 0; id < kMaxComponentTypes; ++id) {
-        if (mask.test(id)) {
-            ids.push_back(id);
-        }
-    }
-    return ids;
-}
-
 const void* ComponentPtr(const EntitySlot& slot, ComponentId id) {
     const u8* base = static_cast<const u8*>(slot.archetype->ComponentArray(slot.chunk, id));
     return base + static_cast<usize>(slot.row) * GetComponentInfo(id).size;
@@ -179,16 +169,21 @@ std::vector<u8> SaveSceneToMemory(const World& world) {
 
     std::vector<EntitySlot> slots = CollectEntities(world);
     AppendU32(buffer, static_cast<u32>(slots.size()));
+    buffer.reserve(buffer.size() + slots.size() * 64); // rough per-entity estimate
 
     std::vector<u8> component_bytes;
     for (const EntitySlot& slot : slots) {
-        std::vector<ComponentId> ids = ComponentIdsOf(slot.archetype->Mask());
+        // The archetype's component list is fixed, and the same archetype covers
+        // whole batches of entities, so reuse it instead of re-deriving it from
+        // the mask per row.
+        const std::vector<ComponentId>& ids = slot.archetype->ComponentIds();
         AppendU32(buffer, static_cast<u32>(ids.size()));
         for (ComponentId id : ids) {
             const ComponentInfo& info = GetComponentInfo(id);
-            std::string name = info.name;
-            AppendU32(buffer, static_cast<u32>(name.size()));
-            AppendBytes(buffer, name.data(), name.size());
+            const char* name = info.name;
+            const usize name_length = std::strlen(name);
+            AppendU32(buffer, static_cast<u32>(name_length));
+            AppendBytes(buffer, name, name_length);
             buffer.push_back(static_cast<u8>(info.encoding));
 
             component_bytes.clear();
@@ -252,6 +247,7 @@ bool LoadSceneFromMemory(World& world, std::span<const u8> buffer, const std::st
     }
 
     std::vector<PendingEntity> pending_entities;
+    pending_entities.reserve(entity_count);
     for (u32 e = 0; e < entity_count; ++e) {
         u32 component_count = 0;
         if (version == kLegacyVersion) {
@@ -346,7 +342,7 @@ bool SaveSceneJson(const World& world, const std::string& path) {
     for (const EntitySlot& slot : CollectEntities(world)) {
         Json components = Json::object();
         Json guid;
-        for (ComponentId id : ComponentIdsOf(slot.archetype->Mask())) {
+        for (ComponentId id : slot.archetype->ComponentIds()) {
             const ComponentInfo& info = GetComponentInfo(id);
             if (id == id_component) {
                 // The entity's identity goes at entity level (§A.3), not

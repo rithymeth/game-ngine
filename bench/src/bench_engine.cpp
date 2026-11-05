@@ -72,20 +72,28 @@ AETHER_BENCH_SETUP(
     });
 
 // Query a component subset across two archetypes, matching half the mixed entities.
+// The body must consume the component values: a variant that only counted rows was
+// optimized into per-chunk additions and reported 0.001 ms, measuring nothing.
 AETHER_BENCH_SETUP(
     "ecs/query_50k_of_100k", 10,
     [] {
         QueryState& s = Query();
         for (int i = 0; i < 100'000; ++i) {
-            if ((i & 1) == 0) s.world.CreateEntity(Transform{}, QueryMarker{});
-            else s.world.CreateEntity(Transform{});
+            Transform t{Vec3(static_cast<f32>(i), 0, 0), Quaternion::Identity()};
+            if ((i & 1) == 0) s.world.CreateEntity(t, QueryMarker{});
+            else s.world.CreateEntity(t);
         }
     },
     [] {
         QueryState& s = Query();
         s.matches = 0;
-        s.world.ForEach<Transform, QueryMarker>([&](Transform&, QueryMarker&) { ++s.matches; });
+        f64 sum = 0.0;
+        s.world.ForEach<Transform, QueryMarker>([&](Transform& t, QueryMarker&) {
+            ++s.matches;
+            sum += static_cast<f64>(t.position.x);
+        });
         if (s.matches != 50'000) std::abort();
+        if (!(sum > 0.0)) std::abort(); // observe the data so the loop cannot be elided
     });
 
 // Creating and destroying 10k entities (structural changes, which move rows between chunks).

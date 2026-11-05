@@ -104,22 +104,6 @@ struct ComputePipelineDesc {
     u32 constant_buffer_count = 0;
 };
 
-// Compute shader pipeline with fixed storage-buffer bindings at u0..u(N-1),
-// sampled textures at t0..t(N-1) in register space2, and constant buffers at
-// b0..b(N-1) in register space1. Storage buffers with a non-zero element
-// stride are structured UAVs; stride zero is a raw ByteAddressBuffer.
-// Compute sampled-texture bindings support texture loads; sampler bindings
-// are not part of this interface yet.
-struct ComputePipelineDesc {
-    std::string hlsl_source;
-    std::string entry = "CSMain";
-    // HLSL RWStructuredBuffer or RWByteAddressBuffer resources at u0..u(N-1).
-    u32 storage_buffer_count = 0;
-    u32 sampled_texture_count = 0;
-    // HLSL constant buffers at b0..b(N-1), space1.
-    u32 constant_buffer_count = 0;
-};
-
 // Backend-agnostic device/queue/submission layer, extended with a genuinely
 // unified pipeline-creation + draw-call path (see PipelineDesc and
 // ICommandList's BeginRenderPass/BindPipeline/SetPushConstants/Draw) for the
