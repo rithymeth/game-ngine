@@ -1,8 +1,12 @@
 #pragma once
 
+#include "aether/ai/goap.h"
+#include "aether/ai/state_tree.h"
+#include "aether/ai/utility.h"
 #include "aether/nav/debug_draw.h"
 #include "aether/script/ai_api.h"
 
+#include <span>
 #include <string>
 #include <vector>
 
@@ -44,5 +48,37 @@ inline constexpr u32 kTarget = 0xFF3030FF;      // red
 // and a line from the agent to its perception target.
 void BuildAiDebugOverlay(const World& world, const std::vector<script::AiDebugEntry>& entries,
                          const AiDebugOverlayOptions& options, nav::NavDebugDraw& out);
+
+// --- Phase 40.6: the Utility / State-tree / GOAP brains (Phase 40.4) as
+// debugger rows, shaped here so the Qt dock stays a thin view and tests run
+// them headless, the same way the rows and overlay above work.
+
+// One utility action scored under a blackboard; `chosen` marks the action
+// Evaluate() would pick now.
+struct UtilityDebugRow {
+    std::string action;
+    f32 score = 0.0f;
+    bool chosen = false;
+    usize considerations = 0;
+};
+// Every action of `brain`, in the brain's order, scored against `blackboard`.
+std::vector<UtilityDebugRow> BuildUtilityDebug(const ai::UtilityBrain& brain, const ai::Blackboard& blackboard);
+
+// A state tree's active hierarchy and what its last tick did.
+struct StateTreeDebug {
+    std::vector<std::string> active_path; // outermost first; empty when not running
+    std::string leaf = "-";               // CurrentLeaf
+    i32 last_transitions = 0;
+    bool loop_limited = false;
+};
+StateTreeDebug BuildStateTreeDebug(const ai::StateTree& tree, const ai::StateTree::TickResult& last_tick);
+
+// One step of a GOAP plan, resolved to an action name.
+struct GoapDebugRow {
+    u32 step = 0;
+    usize action = 0; // index into the action list
+    std::string name;
+};
+std::vector<GoapDebugRow> BuildGoapDebug(const ai::GoapPlan& plan, std::span<const ai::GoapAction> actions);
 
 } // namespace aether::editor

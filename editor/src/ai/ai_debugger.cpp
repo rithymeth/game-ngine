@@ -66,4 +66,42 @@ void BuildAiDebugOverlay(const World& world, const std::vector<script::AiDebugEn
     }
 }
 
+std::vector<UtilityDebugRow> BuildUtilityDebug(const ai::UtilityBrain& brain, const ai::Blackboard& blackboard) {
+    std::vector<UtilityDebugRow> rows;
+    rows.reserve(brain.Actions().size());
+    for (const ai::UtilityAction& action : brain.Actions()) {
+        UtilityDebugRow row;
+        row.action = action.name;
+        row.score = action.Score(blackboard);
+        row.considerations = action.considerations.size();
+        rows.push_back(std::move(row));
+    }
+    const ai::UtilityBrain::Choice choice = brain.Evaluate(blackboard);
+    if (choice.valid && choice.index < rows.size()) rows[choice.index].chosen = true;
+    return rows;
+}
+
+StateTreeDebug BuildStateTreeDebug(const ai::StateTree& tree, const ai::StateTree::TickResult& last_tick) {
+    StateTreeDebug out;
+    out.active_path = tree.ActivePath();
+    out.leaf = tree.CurrentLeaf();
+    if (out.leaf.empty()) out.leaf = "-";
+    out.last_transitions = last_tick.transitions;
+    out.loop_limited = last_tick.loop_limited;
+    return out;
+}
+
+std::vector<GoapDebugRow> BuildGoapDebug(const ai::GoapPlan& plan, std::span<const ai::GoapAction> actions) {
+    std::vector<GoapDebugRow> rows;
+    rows.reserve(plan.steps.size());
+    for (usize i = 0; i < plan.steps.size(); ++i) {
+        GoapDebugRow row;
+        row.step = static_cast<u32>(i);
+        row.action = plan.steps[i];
+        if (plan.steps[i] < actions.size()) row.name = actions[plan.steps[i]].name;
+        rows.push_back(std::move(row));
+    }
+    return rows;
+}
+
 } // namespace aether::editor

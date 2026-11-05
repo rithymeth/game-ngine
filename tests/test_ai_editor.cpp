@@ -513,4 +513,45 @@ AETHER_TEST(AiDebugger_RowsAndOverlayFromSnapshot) {
     BuildAiDebugOverlay(world, {d}, options, draw);
     CHECK(draw.lines.empty());
 }
+
+// Phase 40.6: the Utility, state-tree and GOAP brains (Phase 40.4) as debugger rows.
+AETHER_TEST(AiDebugger_BrainsAsRows) {
+    // Utility: every action scored, and the best one marked.
+    ai::Blackboard bb;
+    CHECK(bb.Set("health", 0.2f));
+    ai::UtilityBrain brain;
+    brain.Add(ai::UtilityAction{"flee", 1.0f,
+                                {ai::Consideration{"health", "health", 0.0f, 1.0f, 0.0f, ai::ResponseCurve{ai::CurveKind::Inverse}}}});
+    brain.Add(ai::UtilityAction{"fight", 1.0f,
+                                {ai::Consideration{"health", "health", 0.0f, 1.0f, 0.0f, ai::ResponseCurve{ai::CurveKind::Linear}}}});
+    const std::vector<UtilityDebugRow> utility = BuildUtilityDebug(brain, bb);
+    CHECK(utility.size() == 2);
+    CHECK(utility[0].action == "flee" && utility[1].action == "fight");
+    CHECK(utility[0].score > utility[1].score); // inverse(0.2) beats linear(0.2)
+    CHECK(utility[0].chosen && !utility[1].chosen);
+
+    // State tree: the active hierarchy and the last tick's transitions.
+    ai::StateTree tree;
+    tree.Add(ai::TreeState{"Idle", "", {{{}, "Combat"}}});
+    tree.Add(ai::TreeState{"Combat", "", {}});
+    CHECK(tree.Start(bb));
+    const ai::StateTree::TickResult tick = tree.Tick(bb);
+    const StateTreeDebug state = BuildStateTreeDebug(tree, tick);
+    CHECK(state.leaf == "Combat");
+    CHECK(!state.active_path.empty() && state.active_path.back() == "Combat");
+    CHECK(state.last_transitions == 1);
+    CHECK(!state.loop_limited);
+
+    // GOAP: the plan's steps resolved to action names.
+    ai::GoapDomain domain;
+    const ai::FactSet has_fire = domain.Fact("has_fire");
+    std::vector<ai::GoapAction> actions = {{"gather_wood", 1.0f, 0, 0, domain.Fact("has_wood"), 0},
+                                           {"make_fire", 1.0f, domain.Fact("has_wood"), 0, has_fire, 0}};
+    const ai::GoapPlan plan = ai::PlanGoap(0, {has_fire, 0}, actions);
+    CHECK(plan.found && plan.steps.size() == 2);
+    const std::vector<GoapDebugRow> goap = BuildGoapDebug(plan, actions);
+    CHECK(goap.size() == 2);
+    CHECK(goap[0].step == 0 && goap[0].name == "gather_wood");
+    CHECK(goap[1].step == 1 && goap[1].name == "make_fire");
+}
 #endif
