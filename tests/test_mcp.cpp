@@ -776,6 +776,12 @@ AETHER_TEST(Mcp_AssetToolsImportMoveAndCookAProject) {
     AETHER_CHECK(h.Call("asset_info", {{"asset", info["guid"]}}).value["path"] == "Textures/swatch.tga");
     AETHER_CHECK(h.Call("asset_list", {{"types", {"Texture"}}, {"recursive", true}}).value["assets"].size() == 1);
 
+    // Phase 43 step 6: validation reports what is wrong and repairs nothing. A healthy
+    // project reports no issues, and the tool exists rather than erroring as unknown.
+    Json validated = h.Call("asset_validate").value;
+    AETHER_CHECK(validated["count"] == 0);
+    AETHER_CHECK(validated["issues"].is_array() && validated["issues"].empty());
+
     AETHER_CHECK(!h.Call("asset_set_import_settings", {{"asset", "Textures/swatch.tga"}, {"settings", {{"mips", false}}}}).is_error);
     AETHER_CHECK(h.Call("asset_info", {{"asset", "Textures/swatch.tga"}}).value["settings"]["mips"] == false);
 

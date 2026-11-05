@@ -1346,6 +1346,24 @@ void RegisterAssetTools(McpServer& server, std::shared_ptr<detail::AssetHost> ho
                     "Rescan Content/: new files get GUIDs, changed sources are flagged needs_import, missing ones are reported.",
                     Schema(Json::object()), [host](const Json&) -> Json { return ScanJson(host->Require().database->Scan()); }});
 
+    server.AddTool({"asset_validate",
+                    "Report what is wrong with the assets without importing or opening anything: sources that have gone, "
+                    "and references to GUIDs that no longer exist. Reports only, repairs nothing. Validates the current "
+                    "view, so run asset_scan first if files may have changed.",
+                    Schema(Json::object()), [host](const Json&) -> Json {
+                        OpenProject& p = host->Require();
+                        Json issues = Json::array();
+                        for (const assets::AssetIssue& issue : assets::ValidateAssets(*p.database)) {
+                            Json entry = {
+                                {"kind", issue.kind == assets::AssetIssueKind::MissingSource ? "missing_source" : "broken_dependency"},
+                                {"path", issue.path},
+                                {"guid", ToString(issue.guid)}};
+                            if (!issue.dependency.IsNull()) entry["dependency"] = ToString(issue.dependency);
+                            issues.push_back(std::move(entry));
+                        }
+                        return Json{{"count", issues.size()}, {"issues", std::move(issues)}};
+                    }});
+
     server.AddTool(
         {"asset_add_files",
          "Copy source files (textures, models, audio...) into Content/<folder> as one agent-attributed undoable action, then scan "
