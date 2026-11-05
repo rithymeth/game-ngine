@@ -92,4 +92,18 @@ struct HlodCluster {
 // order). `cluster_radius <= 0` makes every source its own cluster.
 std::vector<HlodCluster> ClusterForHlod(const std::vector<Vec3>& source_centers, f32 cluster_radius);
 
+// One baked HLOD proxy: the merged geometry of a cluster and its distance LOD chain.
+struct HlodProxy {
+    Vec3 center;
+    std::vector<usize> sources; // indices into the source lists, as in the cluster
+    std::vector<Vec3> positions;
+    std::vector<u32> indices;
+    std::vector<LodLevel> lods; // into `positions`
+};
+// Builds one proxy for `cluster`: merges the sources it references and generates
+// the merged mesh's LOD chain. False for an out-of-range source or a merge/LOD failure.
+bool BuildHlodProxy(const std::vector<std::span<const Vec3>>& source_positions,
+                    const std::vector<std::span<const u32>>& source_indices, const HlodCluster& cluster,
+                    const LodParams& lod_params, HlodProxy& out, std::string* error = nullptr);
+
 } // namespace aether::cook

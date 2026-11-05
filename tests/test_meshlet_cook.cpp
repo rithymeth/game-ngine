@@ -187,3 +187,24 @@ AETHER_TEST(ClusterForHlod_GroupsNearbySources) {
     AETHER_CHECK(ClusterForHlod(centers, 0.0f).size() == 4);
     AETHER_CHECK(ClusterForHlod(std::vector<Vec3>{{5, 0, 5}}, 10.0f).size() == 1);
 }
+
+// Phase 42.4: one cluster becomes one proxy - merged geometry plus its LOD chain.
+AETHER_TEST(BuildHlodProxy_MergesAndLodsACluster) {
+    const Vec3 a[3] = {{0, 0, 0}, {1, 0, 0}, {0, 1, 0}};
+    const Vec3 b[3] = {{2, 0, 0}, {3, 0, 0}, {2, 1, 0}};
+    const u32 ia[3] = {0, 1, 2};
+    const u32 ib[3] = {0, 1, 2};
+    const std::vector<std::span<const Vec3>> positions = {std::span<const Vec3>(a), std::span<const Vec3>(b)};
+    const std::vector<std::span<const u32>> indices = {std::span<const u32>(ia), std::span<const u32>(ib)};
+    const HlodCluster cluster{Vec3(1, 0, 0), {0, 1}};
+    HlodProxy proxy;
+    std::string error;
+    AETHER_CHECK(BuildHlodProxy(positions, indices, cluster, LodParams{}, proxy, &error));
+    AETHER_CHECK((proxy.sources == std::vector<usize>{0, 1}));
+    AETHER_CHECK(proxy.positions.size() == 6);
+    AETHER_CHECK(proxy.indices.size() == 6);
+    AETHER_CHECK(!proxy.lods.empty() && proxy.lods[0].triangles() == 2);
+    // A cluster that references a missing source is refused.
+    const HlodCluster bad{Vec3(), {0, 5}};
+    AETHER_CHECK(!BuildHlodProxy(positions, indices, bad, LodParams{}, proxy, &error));
+}

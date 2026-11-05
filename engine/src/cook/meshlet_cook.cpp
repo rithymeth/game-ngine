@@ -164,4 +164,25 @@ std::vector<HlodCluster> ClusterForHlod(const std::vector<Vec3>& source_centers,
     return clusters;
 }
 
+bool BuildHlodProxy(const std::vector<std::span<const Vec3>>& source_positions,
+                    const std::vector<std::span<const u32>>& source_indices, const HlodCluster& cluster,
+                    const LodParams& lod_params, HlodProxy& out, std::string* error) {
+    std::vector<std::span<const Vec3>> positions;
+    std::vector<std::span<const u32>> indices;
+    positions.reserve(cluster.sources.size());
+    indices.reserve(cluster.sources.size());
+    for (usize s : cluster.sources) {
+        if (s >= source_positions.size() || s >= source_indices.size()) {
+            if (error != nullptr) *error = "BuildHlodProxy's cluster references a missing source";
+            return false;
+        }
+        positions.push_back(source_positions[s]);
+        indices.push_back(source_indices[s]);
+    }
+    out.center = cluster.center;
+    out.sources = cluster.sources;
+    if (!MergeMeshes(positions, indices, out.positions, out.indices, error)) return false;
+    return GenerateLods(out.positions, out.indices, lod_params, out.lods, error);
+}
+
 } // namespace aether::cook
