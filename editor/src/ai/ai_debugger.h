@@ -19,6 +19,7 @@ struct AiDebugRow {
     Entity entity;
     std::string name;   // EntityName, or "#<index>"
     std::string state;  // AI.SetDebugState ("-" when none reported)
+    std::string brain;  // AI.SetBrainDebug "kind: detail" ("-" when none reported)
     std::string target; // perception target's name ("-": none, "" without AIPerception)
     usize known = 0;    // AIPerception::known count
     f32 awareness = 0.0f; // Perception 2.0 awareness of the target (0..1)

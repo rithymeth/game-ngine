@@ -191,6 +191,7 @@ AETHER_TEST(AINavApi_DebugStoreCollectsStatePerceptionAndPath) {
         AI.SetDebugState(walker, "chase")
         AI.SetDebugState(guard, "tell")
         AI.SetDebugState(guard, "idle") -- the latest wins
+        AI.SetBrainDebug(guard, "utility", "flee")
         Nav.MoveTowards(walker, vector.create(6, 0, 0), 2, 0.5)
     )");
     Report(r);
@@ -211,13 +212,15 @@ AETHER_TEST(AINavApi_DebugStoreCollectsStatePerceptionAndPath) {
         CHECK(std::abs(w->goal.x - 6.0f) < 1e-4f);
         CHECK(g->state == "idle" && g->has_perception && g->path.empty());
         CHECK(g->target == hero && g->known.size() == 1 && g->known.front() == hero);
+        CHECK(g->brain_kind == "utility" && g->brain_detail == "flee");
     }
     // nil clears a state; a destroyed entity drops out.
-    r = host.Run("AI.SetDebugState(guard, nil)");
+    r = host.Run("AI.SetDebugState(guard, nil); AI.SetBrainDebug(guard, nil)");
     CHECK(r.ok);
     world.DestroyEntity(walker);
     entries = store->Collect(world);
-    CHECK(entries.size() == 1 && entries.front().entity == guard && entries.front().state.empty());
+    CHECK(entries.size() == 1 && entries.front().entity == guard && entries.front().state.empty() &&
+          entries.front().brain_kind.empty());
     // A non-entity is a script error.
     r = host.Run("AI.SetDebugState(5, 'x')");
     CHECK(!r.ok);

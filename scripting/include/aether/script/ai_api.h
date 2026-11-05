@@ -30,6 +30,8 @@
 //       first, for free); false, nil (and no move) without a mesh, a path or a Transform
 //   AI.SetDebugState (entity, state)           -> sets the text the AI debugger shows for the
 //       entity (its decision: "idle", "tell", ...); nil or "" clears it
+//   AI.SetBrainDebug (entity, kind, detail)    -> sets what the entity's behaviour brain is
+//       and what it chose ("utility", "flee"; "state_tree", "Combat"); nil or "" clears it
 //
 // A call with a missing or wrong-typed argument raises a script error.
 
@@ -41,6 +43,8 @@ namespace aether::script {
 struct AiDebugEntry {
     Entity entity;
     std::string state;           // from AI.SetDebugState (empty: none reported)
+    std::string brain_kind;      // from AI.SetBrainDebug ("utility", "state_tree", ...)
+    std::string brain_detail;    // what that brain chose ("flee", "Combat", ...)
     bool has_perception = false; // it has an AIPerception
     Entity target;               // AIPerception::GetTarget (null if none)
     f32 target_awareness = 0.0f; // AIPerception GetAwareness(target)
@@ -67,6 +71,8 @@ public:
     };
 
     void SetState(Entity entity, std::string state);
+    // AI.SetBrainDebug: what the entity's behaviour brain is and what it chose.
+    void SetBrainDebug(Entity entity, std::string kind, std::string detail);
     const std::string* FindState(Entity entity) const;
     // Nav.MoveTowards' entry for the entity's slot (it checks the entity itself).
     CachedPath& PathSlot(Entity entity) { return paths_[entity.index]; }
@@ -85,7 +91,13 @@ private:
         Entity entity;
         std::string text;
     };
+    struct BrainDebug {
+        Entity entity;
+        std::string kind;
+        std::string detail;
+    };
     std::unordered_map<u32, State> states_;
+    std::unordered_map<u32, BrainDebug> brains_;
     std::unordered_map<u32, CachedPath> paths_;
 };
 

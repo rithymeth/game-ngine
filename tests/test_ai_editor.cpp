@@ -450,6 +450,8 @@ AETHER_TEST(AiDebugger_RowsAndOverlayFromSnapshot) {
     script::AiDebugEntry a;
     a.entity = scout;
     a.state = "chase";
+    a.brain_kind = "utility";
+    a.brain_detail = "flee";
     a.has_perception = true;
     a.target = hero;
     a.known = {hero, sentinel};
@@ -475,6 +477,7 @@ AETHER_TEST(AiDebugger_RowsAndOverlayFromSnapshot) {
     const std::vector<AiDebugRow> rows = BuildAiDebugRows(world, entries);
     CHECK(rows.size() == 3);
     CHECK(rows[0].entity == scout && rows[0].name == "Scout" && rows[0].state == "chase");
+    CHECK(rows[0].brain == "utility: flee");
     CHECK(rows[0].target == "Hero" && rows[0].known == 2 && rows[0].path == "corner 2/3 (partial)");
     CHECK(rows[1].name == "#" + std::to_string(sentinel.index) && rows[1].state == "-");
     CHECK(rows[1].target == "-" && rows[1].known == 0 && rows[1].path == "none");

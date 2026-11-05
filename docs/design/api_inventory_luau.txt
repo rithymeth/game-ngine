@@ -68,6 +68,7 @@ AI.CanSee function
 AI.GetKnown function
 AI.GetTarget function
 AI.IsSightReady function
+AI.SetBrainDebug function
 AI.SetDebugState function
 Abilities table
 Abilities.CanActivate function

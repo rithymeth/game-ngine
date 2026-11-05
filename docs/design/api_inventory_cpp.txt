@@ -5218,6 +5218,7 @@
 [scripting/include/aether/script/ai_api.h] experimental
   type class AiDebugStore
   type struct AiDebugEntry
+  type struct BrainDebug
   type struct CachedPath
   type struct State
   CachedPath&PathSlot(Entity entity)
@@ -5227,6 +5228,7 @@
   static void SetPathCacheEnabled(bool enabled)
   std::shared_ptr<AiDebugStore>InstallAiApi(LuauHost&host)
   std::vector<AiDebugEntry>Collect(World&world)const
+  void SetBrainDebug(Entity entity,std::string kind,std::string detail)
   void SetState(Entity entity,std::string state)
 [scripting/include/aether/script/completion.h] experimental
   type enum class CompletionKind

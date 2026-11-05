@@ -20,6 +20,9 @@ std::vector<AiDebugRow> BuildAiDebugRows(const World& world, const std::vector<s
         row.entity = e.entity;
         row.name = AiDebugEntityLabel(world, e.entity);
         row.state = e.state.empty() ? "-" : e.state;
+        row.brain = e.brain_kind.empty()
+                        ? "-"
+                        : (e.brain_detail.empty() ? e.brain_kind : e.brain_kind + ": " + e.brain_detail);
         if (e.has_perception) {
             row.target = AiDebugEntityLabel(world, e.target);
             row.known = e.known.size();

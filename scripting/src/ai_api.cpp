@@ -61,6 +61,17 @@ void AiDebugStore::SetState(Entity entity, std::string state) {
     if (slot.text != state) slot.text = std::move(state); // a script reports every frame: copy only on change
 }
 
+void AiDebugStore::SetBrainDebug(Entity entity, std::string kind, std::string detail) {
+    if (kind.empty()) {
+        brains_.erase(entity.index);
+        return;
+    }
+    BrainDebug& slot = brains_[entity.index];
+    slot.entity = entity;
+    slot.kind = std::move(kind);
+    slot.detail = std::move(detail);
+}
+
 const std::string* AiDebugStore::FindState(Entity entity) const {
     const auto it = states_.find(entity.index);
     return it != states_.end() && it->second.entity == entity ? &it->second.text : nullptr;
@@ -74,6 +85,7 @@ const AiDebugStore::CachedPath* AiDebugStore::FindPath(Entity entity) const {
 std::vector<AiDebugEntry> AiDebugStore::Collect(World& world) const {
     std::vector<Entity> entities;
     for (const auto& [index, s] : states_) entities.push_back(s.entity);
+    for (const auto& [index, b] : brains_) entities.push_back(b.entity);
     for (const auto& [index, p] : paths_) if (!p.points.empty()) entities.push_back(p.entity);
     const ComponentId perception = GetComponentId<AIPerception>();
     world.ForEachArchetype([&](Archetype& archetype) {
@@ -91,6 +103,10 @@ std::vector<AiDebugEntry> AiDebugStore::Collect(World& world) const {
         AiDebugEntry entry;
         entry.entity = e;
         if (const std::string* state = FindState(e)) entry.state = *state;
+        if (const auto it = brains_.find(e.index); it != brains_.end() && it->second.entity == e) {
+            entry.brain_kind = it->second.kind;
+            entry.brain_detail = it->second.detail;
+        }
         if (const AIPerception* p = world.GetComponent<AIPerception>(e)) {
             entry.has_perception = true;
             entry.target = p->GetTarget();
@@ -104,7 +120,7 @@ std::vector<AiDebugEntry> AiDebugStore::Collect(World& world) const {
             entry.path_complete = path->complete;
             entry.goal = path->goal;
         }
-        if (entry.state.empty() && !entry.has_perception && entry.path.empty()) continue;
+        if (entry.state.empty() && entry.brain_kind.empty() && !entry.has_perception && entry.path.empty()) continue;
         out.push_back(std::move(entry));
     }
     return out;
@@ -152,6 +168,12 @@ std::shared_ptr<AiDebugStore> InstallAiApi(LuauHost& host) {
     def("AI", "SetDebugState", [store](NativeCall& c) {
         if (!NeedEntity(c, 0, "AI.SetDebugState", "the entity")) return;
         store->SetState(c.EntityArg(0), c.IsString(1) ? c.String(1) : std::string());
+    });
+
+    def("AI", "SetBrainDebug", [store](NativeCall& c) {
+        if (!NeedEntity(c, 0, "AI.SetBrainDebug", "the entity")) return;
+        store->SetBrainDebug(c.EntityArg(0), c.IsString(1) ? c.String(1) : std::string(),
+                             c.IsString(2) ? c.String(2) : std::string());
     });
 
     def("Nav", "IsReady", [](NativeCall& c) { c.Return(ActiveMesh() != nullptr); });
