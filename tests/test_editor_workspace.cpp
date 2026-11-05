@@ -1,4 +1,5 @@
 #include "test_framework.h"
+#include "aether/assets/asset_database.h"
 #include "workspace/command_palette.h"
 #include "workspace/editor_workspace.h"
 
@@ -6,6 +7,8 @@
 
 #include <cctype>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <functional>
 #include <set>
 #include <string>
@@ -110,14 +113,17 @@ AETHER_TEST(Editor_CommandPaletteFiltersAndSelectsTools) {
 
     // An empty query lists every tool, in workspace order, so the palette doubles as an index.
     CHECK(palette.Results().size() == ws.ToolCount());
-    for (std::size_t i = 0; i < palette.Results().size(); ++i) CHECK(palette.Results()[i] == i);
+    for (std::size_t i = 0; i < palette.Results().size(); ++i) {
+        CHECK(palette.Results()[i].kind == PaletteKind::Tool);
+        CHECK(palette.Results()[i].tool == i);
+    }
 
     // Matching is case-insensitive and covers the category as well as the name.
     const std::string first = ws.ToolName(0);
     std::string upper = first;
     for (char& c : upper) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
     palette.SetQuery(upper);
-    CHECK(!palette.Results().empty() && palette.Results()[0] == 0);
+    CHECK(!palette.Results().empty() && palette.Results()[0].tool == 0);
 
     palette.SetQuery("this matches no tool at all");
     CHECK(palette.Results().empty());
@@ -128,7 +134,7 @@ AETHER_TEST(Editor_CommandPaletteFiltersAndSelectsTools) {
     // Choosing a result selects that tool; an out-of-range choice does nothing.
     const std::size_t target = ws.ToolCount() - 1;
     CHECK(palette.Activate(ws, target));
-    CHECK(ws.Selected() == palette.Results()[target]);
+    CHECK(ws.Selected() == palette.Results()[target].tool);
     CHECK(!palette.Activate(ws, palette.Results().size()));
 
     // And the palette draws: opening the window adds geometry to the frame. (A vertex count
@@ -140,4 +146,35 @@ AETHER_TEST(Editor_CommandPaletteFiltersAndSelectsTools) {
     ws.command_palette_open = true;
     imgui.Frame([&] { ws.DrawWindows(); });
     CHECK(ImGui::GetDrawData()->TotalVtxCount > closed);
+}
+
+// Phase 43.5: the asset half of the palette. It lists matching assets and hands the chosen
+// path to the host's opener -- what "opening" an asset means is the host's decision, so the
+// palette reports rather than acts.
+AETHER_TEST(Editor_CommandPaletteSearchesAssetsAndHandsThemToTheHost) {
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "aether_test_palette_assets";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root / "Textures");
+    { std::ofstream file(root / "Textures/brick.png"); file << "fake png"; }
+    assets::AssetDatabase assets(root);
+    CHECK(assets.Scan().assets == 1);
+
+    EditorWorkspace ws;
+    CommandPalette palette(ws, &assets);
+    std::string opened;
+    palette.SetAssetOpener([&](const std::string& path) { opened = path; });
+
+    palette.SetQuery("brick"); // matches only the asset, not any tool name
+    CHECK(palette.Results().size() == 1);
+    CHECK(palette.Results()[0].kind == PaletteKind::Asset && palette.Results()[0].path == "Textures/brick.png");
+    CHECK(palette.ActivateFirst(ws));
+    CHECK(opened == "Textures/brick.png");
+    CHECK(ws.Selected() < ws.ToolCount()); // activating an asset does not change the selected tool
+
+    // Without an opener an asset entry cannot be activated: nothing silently succeeds.
+    CommandPalette no_opener(ws, &assets);
+    no_opener.SetQuery("brick");
+    CHECK(!no_opener.ActivateFirst(ws));
+
+    std::filesystem::remove_all(root);
 }

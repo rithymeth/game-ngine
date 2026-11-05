@@ -1,5 +1,6 @@
 #include "workspace/command_palette.h"
 
+#include "aether/assets/asset_database.h"
 #include "workspace/editor_workspace.h"
 
 #include <algorithm>
@@ -19,24 +20,45 @@ bool ContainsNoCase(std::string_view haystack, std::string_view needle) {
 
 } // namespace
 
-CommandPalette::CommandPalette(const EditorWorkspace& workspace) : workspace_(&workspace) { SetQuery(std::string_view{}); }
+CommandPalette::CommandPalette(const EditorWorkspace& workspace, const assets::AssetDatabase* assets)
+    : workspace_(&workspace), assets_(assets) {
+    SetQuery(std::string_view{});
+}
 
 void CommandPalette::SetQuery(std::string_view query) {
     query_.assign(query);
     results_.clear();
     if (workspace_ == nullptr) return;
+    // Tools first, in workspace order, then assets in the database's path order: the palette's
+    // order has to be stable or the same query would list different things between frames.
     for (std::size_t tool = 0; tool < workspace_->ToolCount(); ++tool) {
-        // Match the name or the category: "anim" should find the animation tools whether or not
-        // their names contain it.
-        if (ContainsNoCase(workspace_->ToolName(tool), query_) || ContainsNoCase(workspace_->ToolCategory(tool), query_)) {
-            results_.push_back(tool);
+        if (!ContainsNoCase(workspace_->ToolName(tool), query_) && !ContainsNoCase(workspace_->ToolCategory(tool), query_)) {
+            continue;
         }
+        PaletteEntry entry;
+        entry.kind = PaletteKind::Tool;
+        entry.tool = tool;
+        results_.push_back(std::move(entry));
+    }
+    if (assets_ == nullptr) return;
+    for (const assets::AssetRecord* record : assets_->All()) {
+        if (record == nullptr || !ContainsNoCase(record->path, query_)) continue;
+        PaletteEntry entry;
+        entry.kind = PaletteKind::Asset;
+        entry.path = record->path;
+        results_.push_back(std::move(entry));
     }
 }
 
 bool CommandPalette::Activate(EditorWorkspace& workspace, std::size_t index) const {
     if (index >= results_.size()) return false;
-    workspace.Select(results_[index]);
+    const PaletteEntry& entry = results_[index];
+    if (entry.kind == PaletteKind::Tool) {
+        workspace.Select(entry.tool);
+        return true;
+    }
+    if (!opener_) return false; // nothing to do with an asset in a host that has no opener
+    opener_(entry.path);
     return true;
 }
 

@@ -1139,10 +1139,11 @@ void EditorWorkspace::DrawCommandPalette() {
             palette.SetQuery(impl_->palette_query);
         }
         for (std::size_t i = 0; i < palette.Results().size(); ++i) {
-            const std::size_t tool = palette.Results()[i];
-            ImGui::PushID(static_cast<int>(tool));
-            if (ImGui::Selectable(ToolName(tool))) {
-                palette.Activate(*this, i); // selects the tool
+            const PaletteEntry& entry = palette.Results()[i];
+            const std::string label = entry.kind == PaletteKind::Tool ? ToolName(entry.tool) : entry.path;
+            ImGui::PushID(static_cast<int>(i));
+            if (ImGui::Selectable(label.c_str())) {
+                palette.Activate(*this, i);
                 command_palette_open = false;
             }
             ImGui::PopID();
