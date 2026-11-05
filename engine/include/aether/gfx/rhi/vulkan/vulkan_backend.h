@@ -10,6 +10,8 @@
 #include <Windows.h>
 
 #define VK_USE_PLATFORM_WIN32_KHR
+#elif defined(__ANDROID__)
+#define VK_USE_PLATFORM_ANDROID_KHR // vkCreateAndroidSurfaceKHR, for an ANativeWindow
 #endif
 #include <vulkan/vulkan.h>
 
@@ -69,6 +71,7 @@ struct SampledTextureRecord {
     VkImage image = VK_NULL_HANDLE;
     VkDeviceMemory memory = VK_NULL_HANDLE;
     VkImageView view = VK_NULL_HANDLE;
+    bool retiring = false; // DestroyTexture emptied it; the slot is not reusable until the GPU is done with the old image
 };
 
 // Vulkan counterpart to d3d12_backend::D3D12Device. Notably: this
@@ -99,6 +102,9 @@ public:
     PipelineHandle CreatePipeline(const PipelineDesc& desc, ISwapChain& swap_chain) override;
     ComputePipelineHandle CreateComputePipeline(const ComputePipelineDesc& desc) override;
     const PipelineRecord& GetPipeline(PipelineHandle handle) const { return pipelines_[handle.index]; }
+    bool IsPipelineAlive(PipelineHandle h) const { return h.IsValid() && h.index < pipelines_.size() && pipelines_[h.index].pipeline != VK_NULL_HANDLE; }
+    bool IsComputePipelineAlive(ComputePipelineHandle h) const { return h.IsValid() && h.index < compute_pipelines_.size() && compute_pipelines_[h.index].pipeline != VK_NULL_HANDLE; }
+    bool IsBufferAlive(BufferHandle h) const { return h.IsValid() && h.index < buffers_.size() && buffers_[h.index].buffer != VK_NULL_HANDLE; }
     usize PipelineCount() const { return pipelines_.size(); }
     const ComputePipelineRecord& GetComputePipeline(ComputePipelineHandle handle) const { return compute_pipelines_[handle.index]; }
     usize ComputePipelineCount() const { return compute_pipelines_.size(); }
@@ -124,18 +130,29 @@ public:
     bool SupportsCompressedTexture(CompressedTextureFormat format) const override;
     SampledTextureHandle CreateCompressedTexture(CompressedTextureFormat format, u32 width, u32 height, std::span<const CompressedMip> mips) override;
     bool DestroyTexture(SampledTextureHandle texture) override;
+    bool DestroyBuffer(BufferHandle buffer) override;
+    bool DestroyPipeline(PipelineHandle pipeline) override;
+    bool DestroyComputePipeline(ComputePipelineHandle pipeline) override;
+    ResourceStats GetResourceStats() const override;
+    void ReleaseRetiredResources() override { DrainRetired(); }
 
     // Frame constants (PipelineDesc::frame_constants_size_bytes): descriptor set 2, one uniform buffer at binding 0, which is where the HLSL's
     // `register(b0, space2)` lands under DXC's default mapping (space N is set N, register bN is binding N).
     bool SupportsFrameConstants() const override { return true; }
     BufferHandle CreateFrameConstantBuffer(u64 size_bytes) override;
-    void UpdateFrameConstantBuffer(BufferHandle buffer, const void* data, u64 size_bytes) override { UpdateVertexBuffer(buffer, data, size_bytes); }
+    void UpdateFrameConstantBuffer(BufferHandle buffer, const void* data, u64 size_bytes) override;
     VkDescriptorSetLayout FrameConstantsSetLayout() const { return frame_constants_set_layout_; }
     SampledTextureHandle CreateR32FloatTexture(u32 width, u32 height, const f32* values) override;
     const SampledTextureRecord& GetSampledTexture(SampledTextureHandle handle) const {
         return sampled_textures_[handle.index - kFirstUserBindlessTextureIndex];
     }
     usize SampledTextureCount() const { return sampled_textures_.size(); }
+    // A bindless slot for an image someone else owns (a swap chain's scene-depth copy, ISwapChain::SceneDepthTexture): it counts against
+    // the table, DestroyTexture refuses it, and it samples the white fallback until SetExternalBindlessView gives it a view (null: back to
+    // the fallback). Invalid when the table is full. Only between frames (the descriptor write must not race a draw using the table).
+    SampledTextureHandle ReserveExternalBindlessSlot();
+    void SetExternalBindlessView(SampledTextureHandle slot, VkImageView view);
+    void ReleaseExternalBindlessSlot(SampledTextureHandle slot);
 
     // The device-global bindless texture table — TWO descriptor sets, not
     // one: set 0 is a SAMPLED_IMAGE array (kMaxBindlessTextures slots,
@@ -245,6 +262,22 @@ private:
     std::vector<BufferRecord> buffers_;
     std::vector<SampledTextureRecord> sampled_textures_; // position i is bindless slot i + kFirstUserBindlessTextureIndex; a freed one is empty
     std::vector<u32> free_texture_slots_;                // positions in sampled_textures_ DestroyTexture emptied, reused first
+    std::vector<u32> free_buffer_slots_, free_pipeline_slots_, free_compute_pipeline_slots_; // emptied by Destroy*, reused first
+    u32 live_buffers_ = 0, live_pipelines_ = 0, live_compute_pipelines_ = 0;
+
+    // Retire queue: native objects of destroyed resources, released once the graphics and compute timelines reach the values that were the
+    // latest submitted when the resource was destroyed (so every submission that could have used it has completed).
+    struct RetiredResource {
+        u64 graphics_fence = 0, compute_fence = 0;
+        std::function<void()> release;
+    };
+    mutable std::mutex retire_mutex_;
+    std::vector<RetiredResource> retire_queue_;
+    std::vector<u32> released_texture_slots_; // positions whose image was released, moved to free_texture_slots_ by ReclaimTextureSlots
+    void Retire(std::function<void()> release);
+    void DrainRetired();
+    void ReclaimTextureSlots();
+    void FlushRetired() noexcept; // runs everything queued; only with the device idle
     // Stores `record` in the first free position (or a new one) and returns its bindless index.
     u32 StoreTextureRecord(const SampledTextureRecord& record);
     bool TextureTableFull() const { return sampled_textures_.size() - free_texture_slots_.size() >= kMaxUserBindlessTextures; }
@@ -259,7 +292,7 @@ private:
     VkDescriptorSetLayout frame_constants_set_layout_ = VK_NULL_HANDLE;
     VkDescriptorPool frame_constants_pool_ = VK_NULL_HANDLE;
     static constexpr u32 kMaxConstantBuffers = 64;
-    u32 constant_buffer_count_ = 0;
+    std::atomic<u32> constant_buffer_count_{0};
 
     // A 1x1 white dummy image, permanently retained for slot zero and also
     // referenced by every other bindless descriptor slot before real
@@ -269,6 +302,7 @@ private:
     // actually samples.
     SampledTextureRecord dummy_texture_;
 
+    u32 AcquireBufferSlot(const BufferRecord& record);
     BufferHandle CreateBufferInternal(const void* data, u64 size_bytes);
     void CreateBindlessTextureInfrastructure();
     SampledTextureRecord UploadTextureRecord(u32 width, u32 height, const u8* rgba8_pixels);
@@ -337,6 +371,17 @@ public:
     VkRenderPass DefaultRenderPass() const { return default_render_pass_; }
     VkFramebuffer CurrentFramebuffer() const { return framebuffers_[current_image_index_]; }
 
+    // Scene depth (ISwapChain::SceneDepthTexture / ICommandList::CopySceneDepth). Once enabled, BeginRenderPass uses a variant of the
+    // default render pass that stores depth (render-pass compatible with it, so every pipeline still works), CopySceneDepth ends it, copies
+    // the current image's depth into scene_depth_image_ and continues in ResumeRenderPass (loads color and depth).
+    SampledTextureHandle SceneDepthTexture() override;
+    bool SceneDepthEnabled() const { return scene_depth_handle_.IsValid(); }
+    VkRenderPass BeginRenderPassHandle() const { return SceneDepthEnabled() ? store_depth_render_pass_ : default_render_pass_; }
+    VkRenderPass ResumeRenderPass() const { return resume_render_pass_; }
+    VkImage CurrentDepthImage() const { return depth_images_[current_image_index_]; }
+    VkImage SceneDepthImage() const { return scene_depth_image_; }
+    VkFormat DepthFormat() const { return depth_format_; }
+
 private:
     void CreateSwapchainAndImages(u32 width, u32 height);
     std::vector<VkImage> CreateOffscreenImages(u32 width, u32 height);
@@ -348,6 +393,9 @@ private:
     void DestroyFramebuffers();
     void CreateDepthResources();
     void DestroyDepthResources();
+    VkRenderPass CreateRenderPassVariant(bool load_existing, bool store_depth);
+    void CreateSceneDepthImage();
+    void DestroySceneDepthImage();
 
     VulkanDevice& device_;
     void* window_ = nullptr; // HWND or GLFWwindow*; null when offscreen
@@ -379,6 +427,15 @@ private:
     std::vector<VkDeviceMemory> depth_memories_;
     std::vector<VkImageView> depth_image_views_;
 
+    // Scene depth copy (SceneDepthTexture): one image for every swap chain image (the copy and the reads after it are ordered on the one
+    // graphics queue by CopySceneDepth's barriers), recreated with the depth buffers, keeping its bindless slot.
+    SampledTextureHandle scene_depth_handle_{};
+    VkRenderPass store_depth_render_pass_ = VK_NULL_HANDLE;
+    VkRenderPass resume_render_pass_ = VK_NULL_HANDLE;
+    VkImage scene_depth_image_ = VK_NULL_HANDLE;
+    VkDeviceMemory scene_depth_memory_ = VK_NULL_HANDLE;
+    VkImageView scene_depth_view_ = VK_NULL_HANDLE;
+
     std::vector<TextureHandle> handles_;                   // one per swapchain image
     std::vector<VkImageView> image_views_;                 // one per swapchain image
     std::vector<VkSemaphore> image_available_semaphores_;  // one per frame-in-flight slot
@@ -406,7 +463,7 @@ public:
     void EndRenderPass() override;
     void BindPipeline(PipelineHandle pipeline) override;
     void SetPushConstants(const void* data, u32 size_bytes) override;
-    void Draw(u32 vertex_count) override;
+    void Draw(u32 vertex_count, u32 first_vertex = 0) override;
 
     void BindVertexBuffer(BufferHandle buffer, u32 stride_bytes) override;
     void BindIndexBuffer(BufferHandle buffer, IndexFormat format) override;
@@ -419,6 +476,7 @@ public:
     void Dispatch(u32 groups_x, u32 groups_y, u32 groups_z) override;
     void BindBindlessTextures() override;
     void BindFrameConstants(BufferHandle buffer) override;
+    bool CopySceneDepth() override;
 
     void* NativeHandle() const override { return command_buffer_; }
     bool BelongsTo(const VulkanDevice& device) const { return &device_ == &device; }
@@ -460,6 +518,9 @@ private:
     u64 bound_index_count_ = 0;
     u32 graphics_push_constant_size_bytes_ = 0;
     bool render_pass_active_ = false;
+    VulkanSwapChain* active_swap_chain_ = nullptr; // set by BeginRenderPass, for CopySceneDepth
+    void SetFullViewport(const VulkanSwapChain& swap_chain);
+    void ResetGraphicsBindings();
 };
 
 } // namespace aether::gfx::rhi::vulkan_backend

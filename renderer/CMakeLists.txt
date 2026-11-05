@@ -14,6 +14,8 @@ add_library(aether_renderer STATIC
     src/material.cpp
     src/material_codegen.cpp
     src/material_instance.cpp
+    src/lit_parity.cpp
+    src/decal.cpp
 )
 target_include_directories(aether_renderer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(aether_renderer PUBLIC cxx_std_20)

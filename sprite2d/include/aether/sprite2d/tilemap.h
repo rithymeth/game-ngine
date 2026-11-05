@@ -52,7 +52,7 @@ struct Tileset {
 
     u32 Columns() const;
     u32 Rows() const;
-    u32 TileCount() const { return Columns() * Rows(); }
+    u32 TileCount() const;
     // {u0, v0, u1, v1} of a tile, v growing downward; false if out of range.
     bool Uv(i32 tile, f32 out[4]) const;
     bool IsSolid(i32 tile) const { return tile >= 0 && static_cast<usize>(tile) < solid.size() && solid[static_cast<usize>(tile)] != 0; }
@@ -106,6 +106,7 @@ inline void CellToLocal(i32 x, i32 y, f32 tile_units, f32& out_x, f32& out_y) {
     out_x = static_cast<f32>(x) * tile_units;
     out_y = static_cast<f32>(y) * tile_units;
 }
+// Invalid coordinates or tile sizes map to (0, 0); large coordinates saturate to i32 bounds.
 void LocalToCell(f32 local_x, f32 local_y, f32 tile_units, i32& out_x, i32& out_y);
 
 } // namespace aether::sprite2d

@@ -45,6 +45,9 @@ constexpr char kMagic[4] = {'A', 'E', 'S', 'C'};
 constexpr u32 kLegacyVersion = 1;
 constexpr u32 kVersion = 2;
 constexpr u32 kJsonSceneVersion = 1;
+constexpr usize kMaxJsonSceneBytes = 64 * 1024 * 1024;
+constexpr usize kMaxBinarySceneBytes = 256 * 1024 * 1024;
+constexpr u32 kMaxSceneEntities = 1'000'000;
 
 void AppendU32(std::vector<u8>& buffer, u32 value) {
     const u8* bytes = reinterpret_cast<const u8*>(&value);
@@ -102,6 +105,7 @@ struct EntitySlot {
 // stable enough for reproducible files).
 std::vector<EntitySlot> CollectEntities(const World& world) {
     std::vector<EntitySlot> slots;
+    slots.reserve(world.EntityCount());
     world.ForEachArchetype([&](const Archetype& archetype) {
         for (usize c = 0; c < archetype.ChunkCount(); ++c) {
             const Entity* entities = archetype.EntityArray(c);
@@ -214,8 +218,8 @@ bool LoadScene(World& world, const std::string& path) {
 
 bool LoadScene(World& world, const std::string& path, const SceneLoadOptions& options) {
     std::vector<u8> buffer;
-    if (!fs::ReadFileBytes(path, buffer)) {
-        AETHER_LOG_ERROR("Scene", "Failed to read scene file: %s", path.c_str());
+    if (!fs::ReadFileBytes(path, buffer, kMaxBinarySceneBytes)) {
+        AETHER_LOG_ERROR("Scene", "Failed to read scene file or binary scene is too large: %s", path.c_str());
         return false;
     }
     return LoadSceneFromMemory(world, buffer, path, options);
@@ -243,6 +247,11 @@ bool LoadSceneFromMemory(World& world, std::span<const u8> buffer, const std::st
     u32 entity_count = 0;
     if (!reader.ReadU32(entity_count)) {
         AETHER_LOG_ERROR("Scene", "Truncated scene file: %s", path.c_str());
+        return false;
+    }
+    const usize minimum_entity_size = version == kLegacyVersion ? sizeof(u64) : sizeof(u32);
+    if (entity_count > kMaxSceneEntities || entity_count > reader.Remaining() / minimum_entity_size) {
+        AETHER_LOG_ERROR("Scene", "Invalid or excessive entity count in scene file: %s", path.c_str());
         return false;
     }
 
@@ -292,6 +301,10 @@ bool LoadSceneFromMemory(World& world, std::span<const u8> buffer, const std::st
                 AETHER_LOG_ERROR("Scene", "Truncated scene file: %s", path.c_str());
                 return false;
             }
+            if (version != kLegacyVersion && encoding > static_cast<u8>(ComponentEncoding::Reflected)) {
+                AETHER_LOG_ERROR("Scene", "Invalid component encoding in scene file: %s", path.c_str());
+                return false;
+            }
 
             ComponentId resolved_id = FindComponentIdByName(name);
             if (resolved_id == kInvalidComponentId) {
@@ -303,6 +316,10 @@ bool LoadSceneFromMemory(World& world, std::span<const u8> buffer, const std::st
                 AETHER_LOG_WARN("Scene", "Skipping unknown component '%s' while loading %s", name.c_str(),
                                 path.c_str());
                 continue;
+            }
+            if (pending_entity.mask.test(resolved_id)) {
+                AETHER_LOG_ERROR("Scene", "Duplicate component '%s' in scene entity: %s", name.c_str(), path.c_str());
+                return false;
             }
             ComponentEncoding file_encoding = static_cast<ComponentEncoding>(encoding);
             if (version == kLegacyVersion) {
@@ -316,6 +333,10 @@ bool LoadSceneFromMemory(World& world, std::span<const u8> buffer, const std::st
             pending_entity.components.push_back({resolved_id, file_encoding, std::move(data)});
         }
         pending_entities.push_back(std::move(pending_entity));
+    }
+    if (reader.Remaining() != 0) {
+        AETHER_LOG_ERROR("Scene", "Scene file contains trailing bytes: %s", path.c_str());
+        return false;
     }
 
     // The file is fully parsed and all strict-unknown checks have passed.
@@ -371,7 +392,7 @@ bool SaveSceneJson(const World& world, const std::string& path) {
     Json scene = {{"$type", "Scene"}, {"$version", kJsonSceneVersion}, {"entities", std::move(entities)}};
     std::string text = scene.dump(2);
     text.push_back('\n');
-    if (!fs::WriteFileBytes(path, text.data(), text.size())) {
+    if (!fs::WriteFileAtomic(path, text.data(), text.size())) {
         AETHER_LOG_ERROR("Scene", "Failed to write scene file: %s", path.c_str());
         return false;
     }
@@ -385,8 +406,8 @@ bool LoadSceneJson(World& world, const std::string& path) {
 
 bool LoadSceneJson(World& world, const std::string& path, const SceneLoadOptions& options) {
     std::vector<u8> bytes;
-    if (!fs::ReadFileBytes(path, bytes)) {
-        AETHER_LOG_ERROR("Scene", "Failed to read scene file: %s", path.c_str());
+    if (!fs::ReadFileBytes(path, bytes, kMaxJsonSceneBytes)) {
+        AETHER_LOG_ERROR("Scene", "Failed to read scene file or JSON scene is too large: %s", path.c_str());
         return false;
     }
     return LoadSceneJsonFromMemory(world, bytes, path, options);
@@ -405,6 +426,10 @@ bool LoadSceneJsonFromMemory(World& world, std::span<const u8> bytes, const std:
 
 bool LoadSceneJsonFromMemory(World& world, std::span<const u8> bytes, const std::string& path,
                              const SceneLoadOptions& options) {
+    if (bytes.size() > kMaxJsonSceneBytes) {
+        AETHER_LOG_ERROR("Scene", "JSON scene is too large: %s", path.c_str());
+        return false;
+    }
     try {
         return LoadSceneJsonFromMemoryImpl(world, bytes, path, options);
     } catch (const nlohmann::json::exception& e) {
@@ -430,6 +455,10 @@ bool LoadSceneJsonFromMemoryImpl(World& world, std::span<const u8> bytes, const 
     auto entities = scene.find("entities");
     if (entities == scene.end() || !entities->is_array()) {
         AETHER_LOG_ERROR("Scene", "JSON scene has no \"entities\" array: %s", path.c_str());
+        return false;
+    }
+    if (entities->size() > kMaxSceneEntities) {
+        AETHER_LOG_ERROR("Scene", "JSON scene has too many entities: %s", path.c_str());
         return false;
     }
 

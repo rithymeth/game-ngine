@@ -32,9 +32,13 @@ bool ReadDescriptor(const pak::PakReader& reader, PluginDescriptor& out, std::st
     if (top.empty()) return Fail(error, "the package is empty");
     if (!IsValidPluginName(top)) return Fail(error, "\"" + top + "\" is not a valid plugin name");
     const std::string descriptor_path = top + "/" + top + kPluginExtension;
+    const pak::PakEntry* descriptor_entry = reader.Find(descriptor_path);
+    if (!descriptor_entry) return Fail(error, "no descriptor " + descriptor_path);
+    if (descriptor_entry->size > kMaxPluginDescriptorBytes)
+        return Fail(error, descriptor_path + " is too large to be a plugin descriptor");
     std::vector<u8> bytes;
     std::string read_error;
-    if (!reader.Read(descriptor_path, bytes, &read_error)) return Fail(error, "no descriptor " + descriptor_path + ": " + read_error);
+    if (!reader.Read(descriptor_path, bytes, &read_error)) return Fail(error, "can't read " + descriptor_path + ": " + read_error);
     if (!LoadPluginDescriptorFromMemory(bytes, descriptor_path, out, error)) return false;
     if (out.name != top) return Fail(error, "the descriptor names \"" + out.name + "\" but the folder is \"" + top + "\"");
     if (out.abi != 0 && out.abi != kPluginAbi)
@@ -97,8 +101,10 @@ bool InstallPluginPackage(const stdfs::path& package_file, const stdfs::path& pl
     if (!ReadDescriptor(reader, descriptor, error)) return false;
     if (reader.Entries().size() > kMaxPackageEntries) return Fail(error, "the package holds too many files");
     u64 total = 0;
-    for (const pak::PakEntry& e : reader.Entries()) total += e.size;
-    if (total > kMaxPackageBytes) return Fail(error, "the package unpacks to more than the limit");
+    for (const pak::PakEntry& e : reader.Entries()) {
+        if (e.size > kMaxPackageBytes - total) return Fail(error, "the package unpacks to more than the limit");
+        total += e.size;
+    }
 
     std::error_code ec;
     stdfs::create_directories(plugins_dir, ec);

@@ -24,16 +24,70 @@ and errors go to stderr.
 
 | Tool | What it does |
 | --- | --- |
-| `editor_state` | Entity count, undo/redo labels, unsaved changes, play state |
+| `editor_state` | Entity count, undo/redo labels and attribution, unsaved changes, play state |
 | `list_component_types` | Component names and their fields |
-| `list_entities` | GUIDs and component names; optional component filter |
+| `list_entities` | Paged results (default 200, max 1000) with `offset`, `after_entity_index`/`next_entity_index`, total matches, and `has_more`; includes GUIDs, names (null when unnamed), entity indices, hierarchy depth (roots are depth 0), component names, parent GUIDs, effective layer indices, local active state, and active/layer/parent-override presence; optional exact-name or case-insensitive ASCII name-substring/component/parent/parent_any/parent_none/descendant_of/descendant_depth/descendant_depth_min/descendant_depth_max/descendant_any/descendant_any_depth/descendant_any_depth_min/descendant_any_depth_max/descendant_all/descendant_all_depth/descendant_all_depth_min/descendant_all_depth_max/descendant_none/descendant_none_depth/descendant_none_depth_min/descendant_none_depth_max/parent_depth/parent_depth_min/parent_depth_max/root/layer/active/active-override/layer-override/parent-override/tag filters, `components_all`/`components_any`/`components_none` component groups, and `tags_all`/`tags_any`/`tags_none` tag groups (supplied filters combine with AND). `descendant_of` includes nested descendants but excludes the ancestor by default; `descendant_depth` selects an exact relative depth below the required `descendant_of` GUID, while `descendant_depth_min` and `descendant_depth_max` bound that distance (depth 0 includes the selected ancestor, and immediate children have depth 1); `descendant_any` accepts up to 32 ancestor GUIDs and includes nested descendants of any listed ancestor (listed entities themselves are excluded by default); `descendant_any_depth` selects an exact relative distance, while `descendant_any_depth_min` and `descendant_any_depth_max` require one listed ancestor to match within the requested range (depth 0 includes the listed entity itself; immediate children have depth 1); `descendant_all` requires every listed entity to occur in the ancestor chain; `descendant_all_depth` selects an exact relative distance, while `descendant_all_depth_min` and `descendant_all_depth_max` require every listed ancestor to match within the requested range (depth 0 includes the entity itself; immediate children have depth 1); `descendant_none` excludes nested descendants of any listed ancestor but keeps listed ancestors themselves by default; `descendant_none_depth` excludes at an exact relative distance, while `descendant_none_depth_min` and `descendant_none_depth_max` limit that exclusion to the requested distance (depth 0 can exclude a listed entity, and immediate children have depth 1). The index cursor is not a scene snapshot. |
 | `get_entity` | Every component of one entity, as JSON |
-| `create_entity` | New entity with optional components and parent (all-or-nothing) |
-| `destroy_entity` | Delete an entity |
-| `add_component` / `remove_component` | Add (with optional initial values) or remove a component |
-| `set_component` | Partial update: only the fields named change |
-| `reparent` | Parent or detach an entity; rejects cycles |
-| `undo` / `redo` | Walk the editor history |
+| `get_entities_many` | Get full reflected component values for up to 64 unique entities in selection order; validates all GUIDs before returning data |
+| `get_entities_metadata_many` | Get names, active/layer overrides, layer indices, tags, and parent links for up to 64 selected entities |
+| `get_components_many` | Read up to 64 entity/component pairs in request order; reports absent components explicitly and validates the whole request first |
+| `compare_entity_components_many` | Compare up to 64 entities across up to 32 component types; reports per-entity presence plus common, mixed, and absent types |
+| `summarize_entity_components_many` | Count each reflected component across up to 64 entities and list the types shared by all selected entities |
+| `get_entities_world_transforms_many` | Get parent-composed world position, basis-length scale magnitudes, and column-major matrices for up to 64 unique entities |
+| `get_entities_descendants_many` | List descendants for up to 64 roots in deterministic parent-first order with parent and relative-depth metadata; caps output at 64 entries |
+| `get_entities_ancestors_many` | List parent chains for up to 64 entities, nearest parent first, with distance metadata; validates parent links and caps output at 64 entries |
+| `validate_scene_hierarchy` | Audit scene-wide GUID and parent integrity, cycles, and excessive depth; returns up to 128 issues |
+| `validate_scene_transforms` | Audit finite local and derived world transforms, cycles, and excessive depth; returns up to 128 issues |
+| `validate_scene_components` | Audit component reflection and scene persistence support, reporting serialization errors and unsafe raw types |
+| `validate_scene_tags` | Audit scene tags for empty names and duplicate exact, case-sensitive names |
+| `validate_scene_names` | Audit entity names for empty values and leading or trailing ASCII whitespace; duplicate names remain allowed |
+| `validate_scene_layers` | Audit project layer names and scene assignments for duplicates, empty names, unconfigured slots, and out-of-range indices |
+| `rename_entities` | Rename up to 64 unique entities as one undoable action; creates `EntityName` when needed |
+| `rename_entities_shared_many` | Assign one shared name to up to 64 unique entities as one undoable action; creates `EntityName` when needed and reports no-op edits |
+| `set_entity_tags_many` | Replace the complete tag list on up to 64 unique entities as one undoable action; creates `Tags` when needed |
+| `set_entities_tags_many` | Replace the complete tag list on up to 64 unique entities with one shared list in one undoable action; creates `Tags` when needed and reports no-op edits |
+| `modify_entity_tags_many` | Add/remove tags on up to 64 unique entities as one undoable action; preserves tag order and reports no-op edits |
+| `modify_entities_tags_shared_many` | Add/remove the same tags on up to 64 unique entities as one undoable action; preserves tag order and reports no-op edits |
+| `set_entity_layers_many` | Set collision layer indices (0–31) on up to 64 unique entities as one undoable action; creates `Layer` when needed |
+| `set_entities_layer_many` | Set one shared collision layer index on up to 64 unique entities as one undoable action; creates `Layer` when needed and reports no-op edits |
+| `offset_entities_local_many` | Add one local-position offset to up to 64 unique entities in one undo action; preserves rotation and scale |
+| `offset_entities_world_many` | Add one world-position offset to up to 64 unique entities in one undo action; resolves selected ancestor transforms |
+| `offset_entities_world_positions_many` | Apply individual world-position offsets to up to 64 unique entities in one undo action; resolves selected ancestor transforms |
+| `offset_entities_local_per_entity_many` | Apply individual local-position offsets to up to 64 unique entities in one undo action |
+| `multiply_entities_local_scale_many` | Multiply local scale by one shared component-wise factor on up to 64 unique entities in one undo action |
+| `multiply_entities_local_scale_per_entity_many` | Multiply local scale using individual component-wise factors for up to 64 unique entities in one undo action |
+| `scale_entities_local_many` | Multiply local scale using per-entity component-wise factors for up to 64 unique entities in one undo action |
+| `set_entities_local_position_many` | Set one shared absolute local position on up to 64 unique entities in one undo action; preserves rotation and scale |
+| `set_entities_local_positions_many` | Set individual local positions on up to 64 unique entities in one undo action; preserves rotation and scale |
+| `set_entities_world_positions_many` | Set individual world positions on up to 64 unique entities in one undo action; converts through parents and rejects selected ancestor pairs |
+| `set_entities_world_position_many` | Set one shared world position on up to 64 unique entities in one undo action; resolves final parent transforms for selected hierarchies |
+| `set_entities_world_rotation_many` | Set one shared normalized world quaternion on up to 64 unique entities in one undo action; resolves final parent orientations for selected hierarchies |
+| `set_entities_world_rotations_many` | Set individual world quaternions on up to 64 unique entities in one undo action; resolves final parent orientations for selected hierarchies |
+| `set_entities_world_scales_many` | Set per-entity world-scale magnitudes on up to 64 unique entities in one undo action; uses world-basis column lengths and preserves local mirror signs |
+| `set_entities_world_scale_many` | Set one world-scale magnitude vector on up to 64 unique entities in one undo action; uses world-basis column lengths and preserves local mirror signs |
+| `multiply_entities_world_scale_many` | Multiply world-scale magnitudes by one shared factor for up to 64 unique entities in one undo action; derives each target from original world scale |
+| `multiply_entities_world_scale_per_entity_many` | Multiply world-scale magnitudes by per-entity factors for up to 64 unique entities in one undo action; derives each target from original world scale |
+| `offset_entities_world_scale_many` | Add one shared delta to world-scale magnitudes for up to 64 unique entities in one undo action; derives each target from original world scale |
+| `offset_entities_world_scale_per_entity_many` | Add per-entity deltas to world-scale magnitudes for up to 64 unique entities in one undo action; derives each target from original world scale |
+| `rotate_entities_world_many` | Apply per-entity world quaternion deltas on up to 64 unique entities in one undo action; resolves selected ancestor orientations |
+| `rotate_entities_world_shared_many` | Apply one world quaternion delta to up to 64 unique entities in one undo action; resolves selected ancestor orientations |
+| `set_entities_local_rotation_many` | Set one shared absolute local quaternion on up to 64 unique entities in one undo action; preserves position and scale |
+| `set_entities_local_scale_many` | Set one shared local scale vector on up to 64 unique entities in one undo action; preserves position and rotation |
+| `set_entities_local_scales_many` | Set individual local scales on up to 64 unique entities in one undo action; preserves position and rotation |
+| `set_entities_local_rotations_many` | Set individual local quaternions on up to 64 unique entities in one undo action; preserves position and scale |
+| `rotate_entities_local_many` | Apply per-entity local quaternion deltas to up to 64 unique entities in one undo action |
+| `set_entities_active_many` | Set active states on up to 64 unique entities as one undoable action; missing `Active` means active, disabling adds `Active` |
+| `set_entities_active_shared_many` | Set one active state on up to 64 unique entities as one undoable action; missing `Active` means active, disabling adds `Active`, and no-op edits are reported |
+| `toggle_entities_active_many` | Toggle local active state on up to 64 unique entities as one undoable action; missing `Active` means active |
+| `create_entity` / `create_entities` | Create an entity or up to 64 entities with component values, current-scene parents, or zero-based `parent_index` links within the batch; the batch validates the full hierarchy before creation and is one undo action |
+| `duplicate_entity` / `duplicate_entities` | Copy reflected component values for one entity or up to 64 unique entities as one undo action; `duplicate_entities` can preserve links within the selected group with `preserve_hierarchy: true`, duplicate selected entities and all descendants with `include_children: true`, and optionally remap internal EntityGuid references with `remap_internal_references: true` |
+| `destroy_entity` / `destroy_entities` | Delete one entity or up to 64 unique entities as one undoable action; the batch can optionally include all descendants with `include_children: true`, deletes child-first, and restores original GUIDs on undo |
+| `add_component` / `add_components_many` / `remove_component` / `remove_components_many` | Add one component or components across up to 64 unique entities as one undo action after validating all additions; remove one component or up to 64 selected entity/component pairs as one confirmed undo action |
+| `reset_components_many` | Reset up to 64 unique entity/component pairs to reflected defaults in one undo action; validates the whole selection and keeps components attached |
+| `copy_components_many` | Copy selected reflected components from one source entity to up to 64 target entities, with a 64-pair selection cap and one undo action |
+| `set_component` / `set_components_many` | Partial component update; batch applies patches to up to 64 unique entities as one undo action after validating every patch |
+| `reparent` / `reparent_many` | Parent or detach entities; `reparent_many` supports up to 64 unique per-entity moves or a selected entity list with one shared parent, in one undo action after validating the final hierarchy for cycles |
+| `undo` / `redo` | Walk the editor history and return the source (`agent`) recorded with that action |
 | `save_scene` / `load_scene` | `.json` (readable) or `.aesc` (binary); load can `replace` |. They stay inside the scene folder (the working folder, or `--scene-root`): relative paths resolve there, and absolute paths, `..` and symlinks that leave it are refused
 | `play` / `pause` / `stop` | Play-in-Editor; stop restores the scene exactly. `play` starts the simulation systems |
 | `list_systems` | The simulation systems in execution order, with enabled state (play mode) |
@@ -48,15 +102,20 @@ These use the engine's own asset database, importers and cooker, in process, on 
 
 | Tool | What it does |
 | --- | --- |
-| `project_open` / `project_info` / `project_set` | Open an `.aproject` (scans `Content/`, giving new files GUIDs); read or change startup scene, `always_cook`, plugins |
+| `project_open` / `project_info` / `project_set` | Open an `.aproject` (scans `Content/`, giving new files GUIDs); read or change startup scene, `always_cook`, plugins; setting changes are agent-attributed and undoable |
 | `project_templates` | The project templates `project_create` can start from, with what each contains. |
 | `project_create` | Makes a new project in `<parent_dir>/<name>/` (optionally from a template: a startup scene, controller script, input bindings and a Blueprint) and opens it. |
-| `asset_list` / `asset_info` / `asset_references` | Browse and search content by folder/name/type; one asset's settings, dependencies and referencers; the reference graph |
-| `asset_add_files` | Copy source files (textures, models, audio) into `Content/<folder>`, scan and import them |
-| `asset_import` | (Re)import one asset, or everything pending; served from the derived-data cache when unchanged |
-| `asset_set_import_settings` | Merge importer settings into the `.ameta` (e.g. a texture's `cook_format`) and reimport |
-| `asset_move` / `asset_create_folder` / `asset_delete` | Move/rename (GUIDs and references survive; glTF URIs rewritten), make folders, delete (refused while referenced unless `force`) |
-| `content_read` / `content_write` | Read and write text files under `Content/` (scenes, prefabs, materials, JSON assets); paths cannot leave `Content/`, `.ameta` is not writable |
+| `asset_list` / `asset_info` / `asset_info_many` / `asset_references` / `asset_references_many` | Browse and search content by folder/name/type; inspect one asset or up to 32 unique assets in one bounded response; view one or many bounded dependency/referencer graphs |
+| `asset_add_files` | Copy source files (textures, models, audio) into `Content/<folder>` as one agent-attributed undoable action; undo restores overwritten sources and `.ameta` sidecars, and import targets only the submitted files |
+| `asset_import` | (Re)import one asset, a selected `assets` array (up to 128) as one grouped undoable action, or everything pending; selected items return individual results and undo restores import metadata and sub-asset registrations (immutable derived-cache entries remain reusable) |
+| `asset_set_import_settings` | Merge importer settings into the `.ameta` (e.g. a texture's `cook_format`) as one agent-attributed undoable action; undo/redo restores metadata and reruns the selected import |
+| `asset_set_import_settings_many` | Apply settings merges and label replacements to up to 64 unique assets as one undoable action; reimport can be enabled or deferred for the whole batch |
+| `asset_move` / `asset_create_folder` / `asset_delete` | Move/rename assets or folders as agent-attributed undoable actions (GUIDs and references survive; glTF URIs rewritten), make folders as undoable actions (undo only while empty), delete with source and metadata backed up under `Saved/` for undo (refused while referenced unless `force`) |
+| `asset_move_many` | Move up to 64 independent assets or folders as one undoable action; overlapping paths are rejected before moving, with a result for each move |
+| `asset_create_folders` | Create up to 64 folders under existing Content/ parents as one undoable action; all names and paths are checked before creation |
+| `asset_delete_folders` | Delete up to 64 empty Content/ folders as one undoable action; refuses the Content/ root, non-empty folders, and paths outside the content tree |
+| `asset_delete_many` | Delete up to 64 selected assets as one undoable action; mutual references within the selection are allowed, while external referencers require `force` and are returned explicitly |
+| `content_read` / `content_read_many` / `content_write` / `content_write_many` | Read text files under `Content/`; `content_read_many` reads up to 64 unique paths with a 1 MB aggregate response cap; write/overwrite files up to 2 MB as agent-attributed undoable actions with source and GUID sidecars restored on undo/redo; `content_write_many` writes up to 64 files (128 MB total undo snapshot limit) as one undo action after validating the full batch; paths cannot leave `Content/`, `.ameta` is not writable |
 | `asset_scan` | Rescan after changing files outside the tools |
 | `asset_cook` | Cook into an `.apak` (configuration, extra roots, compression, strict, encryption, patch); returns the archive path, sizes, warnings and the cooked assets |
 
@@ -72,7 +131,8 @@ with `project_open`.
 | `kit_types` | The types, their extensions, and how many the project has |
 | `kit_schema` | One type's shape: a sample with every field set, the allowed words and cross-reference rules, the blank definition, and an example from the project |
 | `kit_validate` | Check a definition without writing it: ok, or the kit's named error (`effect.bad_duration: ...`) |
-| `kit_put` | Validate, then write normalized JSON under `Content/` (extension added) and scan it; nothing is written if it is invalid |
+| `kit_put` | Validate, then write normalized JSON under `Content/` (extension added) as one agent-attributed undoable action; undo/redo restores both the source and its GUID sidecar |
+| `kit_validate_<type>` / `kit_put_<type>` | Type-specific forms generated from the registered kit types (for example, `kit_validate_effect` and `kit_put_effect`); omit the `type` argument, and the write endpoint still validates, normalizes and creates one agent-attributed undoable action |
 | `kit_list` / `kit_get` | The project's definitions with their names and validity; read one |
 | `kit_check` | Every definition must parse and validate, names must be unique, and references must resolve: an ability's cost and cooldown effects, an item's use and equip effects, a quest's reward effects, reward items and prerequisites |
 
@@ -316,10 +376,10 @@ Prefabs are project assets, so these need `project_open`. They act on the editor
 | --- | --- |
 | `prefab_info` | Looks inside a prefab: entities, nested prefabs, the variant base, what it flattens to (or why it can't), orphaned overrides and the prefabs built on it. `scenes` also checks every scene that uses it. |
 | `prefab_make` | Captures an entity and its descendants from the editor scene as a new `.aprefab` under `Content/`. |
-| `prefab_instantiate` | Places an instance in the editor scene, at `position` or where the prefab's root is. |
+| `prefab_instantiate` | Places an instance in the editor scene, at `position` or where the prefab's root is; one undoable, agent-attributed action. |
 | `prefab_overrides` | Lists an instance's overrides and deleted entities. |
-| `prefab_revert` | Removes overrides (all, or one entity / component / field path) and re-resolves the instance. |
-| `prefab_apply` | Writes overrides into the prefab asset, saves it, and re-resolves every instance of it or of prefabs built on it in the editor scene. |
+| `prefab_revert` | Removes overrides (all, or one entity / component / field path) and re-resolves the instance; undoable and agent-attributed. |
+| `prefab_apply` | Writes overrides into the prefab asset, saves it, and re-resolves every instance of it or of prefabs built on it in the editor scene; undoable and agent-attributed. |
 
 ### Running a cooked game (`game_*`)
 
@@ -336,22 +396,119 @@ saves and localization. The game has its own world, separate from the editor's.
 | `log_recent` | The engine's last 512 log lines, including what scripts and Blueprints `print()` (categories `Script`, `Blueprint`); filter by level, category, text, time |
 | `log_clear` | Forget the recent log lines |
 | `game_spawn_entity` | Create an entity in the running game from component name -> fields (a Transform is always added), with optional tags |
+| `game_spawn_entities_many` | Create 1-64 live entities in one validated request with per-entity components and optional tags; removes entities from the request if spawning fails partway |
 | `game_add_component` | Add a component to a running entity (or merge values onto an existing one) |
+| `game_add_components_many` | Add one default component to up to 64 unique live entities; validates the whole selection first, refuses if any target already has it, and protects game-managed IdComponent |
+| `game_add_entity_components_many` | Add different default components across up to 64 entity/component pairs after validating all targets; protects IdComponent |
+| `game_upsert_entity_components_many` | Add or merge different component values across up to 64 entity/component pairs after validating the complete request; protects IdComponent |
+| `game_set_components_many` | Merge the same field patch onto one component across up to 64 unique live entities; validates all merged values before applying any update |
+| `game_set_entity_components_many` | Apply different component patches to up to 64 entity/component pairs after validating the complete request |
+| `game_set_attributes_many` | Set, adjust or define attributes across up to 64 entity/attribute pairs through gameplay rules and change events |
+| `game_reset_entity_components_many` | Reset different components on up to 64 entity/component pairs to reflected defaults, keeping them attached and reporting old/new values |
+| `game_copy_entity_components_many` | Copy components across up to 64 explicit source/target/component edits after validating the complete request |
 | `game_remove_component` | Remove a component from a running entity |
-| `game_ui` | The running game's UI: each layer's widget tree with type, name, rectangle, visibility, enabled, and the text, value or percent a widget shows; or one widget by name |
+| `game_remove_components_many` | Remove one component from up to 64 unique live entities; validates the whole selection first and protects Transform and IdComponent |
+| `game_remove_entity_components_many` | Remove different components across up to 64 entity/component pairs after validating all targets; protects Transform and IdComponent |
+| `game_ui` | The running game's UI: each layer's widget tree with type, name, rectangle, visibility, enabled, and live control state. Dropdowns include options, selected index/option and open state; virtual sticks include their current vector and active state. Or inspect one widget by name |
 | `game_ui_click` | Click a widget of the game's UI by name (hover, press, release over its middle, a frame between each) |
-| `game_lifecycle` | Send suspend, resume or memory-pressure, as a phone's OS would: the game stands still, audio stops and saves are written; resume skips the time that passed |
-| `game_input` | Hold keys/axes (`{"W": 1}`), mouse delta for one frame, or clear; `mouse` and `touches` move pointers for the game's on-screen UI (taps, drags on a virtual stick) |
+| `game_ui_set_widget` | Set text, numeric value, or checked state on a named game UI widget; supported controls invoke their change callbacks |
+| `game_ui_events` | Read UI control and animation events from the most recent game UI update, with entity, widget and value/text payloads |
+| `game_audio_events` | Read AudioSource cues that finished in the most recent game audio update, with source entity and cue path |
+| `game_sequence_events` | Read marker, audio-track, animation-track, and finished events from the most recent game sequence update |
+| `game_lifecycle` | Send suspend, resume or memory-pressure, as a phone's OS would: the game stands still, audio stops and saves are written; resume skips the time that passed. `level` is accepted only for memory-pressure and must be `moderate` or `critical` (default `moderate`). |
+| `game_input` | Hold keys/axes (`{"W": 1}`; values are limited to -1..1), mouse delta for one frame, or clear; `mouse` and `touches` move pointers for the game's on-screen UI (taps, drags on a virtual stick). Validates the complete request before applying any input; malformed `clear` and mouse-button values are rejected. |
 | `game_screenshot` | Render the current frame off screen (what the player draws: scene and HUD) and return it as a PNG image, also saved to `path`. Needs a graphics device (D3D12 or Vulkan); `width`, `height`, `backend`, `inline` |
-| `game_attributes` / `game_set_attribute` | An entity's attributes in the running game; set a base, add a delta or define one with bounds, through the game's own attribute system (events fire, bounds apply) |
-| `game_interactables` / `game_can_interact` / `game_interact` / `game_interaction_focus` / `game_set_interactable` | The interaction kit in the running game: list usable things (and why an interactor can't use each), check, use (range, tags, cooldown, effect and ability apply, OnInteract is queued for the target's script), find what would be prompted, enable/disable/reset |
-| `game_audio_state` / `game_play_sound` / `game_set_bus` / `game_stop_sounds` / `game_audio_source` | The audio kit in the running game: voices, cues playing, listener, reverb, every bus and the cue problems found; play a cue in 2D or at a location; set a bus's volume (faded) or mute; stop everything; play/stop/fade/set volume or cue on an entity's AudioSource |
-| `game_sequences` / `game_play_sequence` / `game_sequence_control` / `game_stop_sequences` | The running game's level sequences: every `SequenceComponent` with its time and state, the screen fade and problems; play a sequence by asset path; play, pause, stop, skip, set time, rate or loop on one; stop or skip them all |
+| `game_attributes` / `game_attributes_many` / `game_set_attribute` / `game_set_attributes_many` | Read one or many entities' attributes; set a base, add a delta or define one with bounds singly or in a batch through the game's own attribute system (events fire, bounds apply) |
+| `game_ability` | Inspect an entity's ability grant/active state, check activation eligibility, grant/revoke or activate an ability, and commit/end/cancel active abilities by runtime handle |
+| `game_abilities_many` | Check or control up to 64 distinct entity/ability pairs, or commit/end/cancel up to 64 distinct ability handles after validating the complete request |
+| `game_effect` | Inspect active effects, apply an effect, remove it by runtime handle, or remove effects by granted gameplay tag. Effect callbacks run on the next game step. |
+| `game_effects_many` | Apply, remove by handle, or remove by gameplay tag in up to 64 effect operations after validating every target and argument |
+| `game_inventory` | Inspect inventory slots, equipment, weight and item counts; configure capacity, add/remove items, move/split stacks, equip/unequip and use items. Item events and quest notifications run on the next game step. Available when the Inventory kit is built. |
+| `game_inventory_many` | Apply up to 64 validated inventory operations in order, including configure, add/remove, move/split, equip/unequip and use; returns each operation's result. Inventory rules may reject an operation while later operations continue. Available when the Inventory kit is built. |
+| `game_inventories_many` | Read full inventory snapshots for up to 64 distinct entities in one request, including slots, equipment, capacity and weight. Available when the Inventory kit is built. |
+| `game_inventory_counts_many` | Read item counts for up to 64 distinct entity/item pairs in one request without changing inventory state. Available when the Inventory kit is built. |
+| `game_quest` | Inspect a running entity's quest log, start/abandon/fail quests, progress a named objective or notify matching count/tag/flag objectives. Quest callbacks and rewards run on the next game step. Available when the Quests kit is built. |
+| `game_quests_many` | Apply up to 64 validated quest operations in order across entities: start/abandon/fail, progress objectives, or notify matching objectives; returns each result. Quest callbacks and rewards run on the next game step. Available when the Quests kit is built. |
+| `game_quest_states_many` | Read quest logs for up to 64 distinct entities, optionally filtered to one quest; returns each quest's state and objective progress. Available when the Quests kit is built. |
+| `game_interactables` / `game_can_interact` / `game_can_interact_many` / `game_interact` / `game_interact_many` / `game_interaction_focus` / `game_interaction_focus_many` / `game_set_interactable` / `game_set_interactables_many` | The interaction kit in the running game: list usable things (and why an interactor can't use each), check one or many pairs, use one or many targets with range/tag/cooldown/effect checks and queue OnInteract for the target's script, find what would be prompted for one or many interactors, enable/disable/reset singly or in a validated batch |
+| `game_audio_state` / `game_play_sound` / `game_play_sounds_many` / `game_set_bus` / `game_set_buses_many` / `game_stop_sounds` / `game_audio_source` / `game_audio_sources_many` | The audio kit in the running game: voices, cues playing, listener, reverb, every bus and the cue problems found; play cues in 2D or at locations singly or in a validated batch; set bus volume (faded) or mute singly or in a validated batch; stop everything; play/stop/fade/set volume or cue on an entity's AudioSource singly or in a validated batch |
+| `game_sequences` / `game_play_sequence` / `game_play_sequences_many` / `game_sequence_control` / `game_sequence_controls_many` / `game_stop_sequences` | The running game's level sequences: every `SequenceComponent` with its time and state, the screen fade and problems; play one or many sequences by asset path; play, pause, stop, skip, set time, rate or loop on one or many; stop or skip them all |
 | `game_set_paused` | Freeze or resume the simulation |
+| `game_set_layer_many` | Set a shared collision layer index (0-31) on up to 64 unique live entities; missing layers default to 0 and no-op changes are reported |
+| `game_set_layers_many` | Set per-entity collision layer indices (0-31) on up to 64 unique live entities after validating every edit |
+| `game_update_tags_many` | Add/remove shared tags on up to 64 unique live entities, preserve unmentioned tags, and report per-entity changes |
+| `game_set_tags_many` | Replace the complete tag list on up to 64 unique live entities; supports clearing tags and reports old/new lists and no-op entries |
+| `game_rename_entities_many` | Rename up to 64 unique live entities in a validated batch, adding `EntityName` when needed and returning old and new names |
+| `game_set_active_many` | Set local active state on up to 64 unique live entities through the lifecycle so enable/disable behavior runs; unchanged entities are no-ops |
+| `game_toggle_active_many` | Toggle local active state on up to 64 unique live entities through the lifecycle and return each entity's resulting local and effective active state |
 | `game_load_scene` | Switch to another cooked scene |
 | `game_systems` | The game's systems in execution order by phase (filled after the first step) |
-| `game_list_entities` / `game_get_entity` | Inspect the running world (filter by component or tag) |
+| `game_ai_debug` | Per AI entity: the state its script reports (`AI.SetDebugState`), its AIPerception target and known actors, and its `Nav.MoveTowards` path (corners, next corner, goal, complete) |
+| `game_list_entities` / `game_get_entity` | Inspect the running world (`game_list_entities` filters by exact case-sensitive `name`, case-insensitive ASCII `name_contains`, direct parent GUID, root status, collision `layer` index or exact case-sensitive `layer_name`, one component, `components_all`/`components_any`/`components_none` component groups, exact tag, `tags_all`/`tags_any`/`tags_none` exact tag groups, local `active` state, effective `active_in_hierarchy` state, or inclusive world-position bounds with `min_world_position` and/or `max_world_position` as `[x,y,z]`; supplied filters combine with AND). Position bounds match only entities with a Transform and finite world position; minimum coordinates cannot exceed corresponding maximum coordinates. Each listed row returns GUID/index handle, `entity_index`, entity generation, world-space `world_position` as `[x,y,z]` (null if non-finite), effective collision layer index (`0` when absent) and configured `layer_name` (null if unconfigured), optional name, local `active` state (true if absent), `active_in_hierarchy` (false when the entity or any ancestor is inactive), direct parent GUID or null, tags (empty array if none), and component names. `game_get_entity` returns all component values plus the same identity, name, tag, parent, activity and world-position metadata for a single entity. Results can be paged with `limit` (1-1000, default 200) and either `offset` or `after_entity_index`, which returns `next_entity_index` for the next page; `offset` must be 0 when using the cursor. `total` counts matching entities after the cursor, and the cursor is not a world snapshot. Use `#index:generation` for stale-safe handles when no GUID is present; legacy `#index` remains accepted. |
+| `game_get_hierarchy` | Return an entity and its live descendants as a tree, with stable entity-index ordering, tags and activity metadata; `max_depth` (1-64, default 8) and `max_nodes` (1-1000 including root, default 200) bound the result, and truncated branches are marked |
+| `game_get_ancestors` | Return an entity's parent chain nearest-first with identity, name, tags and activity metadata; `max_depth` (1-64, default 16) bounds the chain and the response reports whether it reached the root, was truncated, or encountered a cycle |
+| `game_get_world_transforms_many` | Read world matrices, world positions and basis-length world scales for up to 64 unique entities; rejects missing transforms, cycles, excessive depth and non-finite results |
+| `game_physics_query` | Raycast, multi-hit raycast, sphere-cast, upright or oriented capsule-cast, sphere-overlap, axis-aligned or oriented box-overlap, or upright or oriented capsule-overlap against the loaded 3D scene; multi-hit rays return distinct bodies nearest-first with a configurable 1–64 result cap; oriented shapes use quaternion rotations; oriented boxes use local half_extents; capsule height includes both caps and short capsules become spheres; supports collision-layer masks, ignored entities and trigger inclusion |
+| `game_physics_queries_many` | Run up to 64 validated 3D raycast, multi-hit raycast, sphere-cast, upright or oriented capsule-cast, sphere-overlap, axis-aligned or oriented box-overlap, or upright or oriented capsule-overlap queries in one request, each with its own filters |
+| `game_physics2d_query` | Raycast, capped nearest-first multi-hit raycast, circle cast, axis-aligned box cast, point overlap, axis-aligned or oriented box overlap, circle overlap, or capsule overlap against the loaded 2D scene; multi-hit raycasts accept `max_hits` (1–64); oriented boxes accept counter-clockwise radians; capsule queries use two segment endpoints and a radius; casts include solid-tile hit details and a collision-layer mask |
+| `game_physics2d_queries_many` | Run up to 64 validated 2D raycast, capped multi-hit raycast, circle-cast, box-cast, point-overlap, axis-aligned or oriented box-overlap, circle-overlap, or capsule-overlap queries in one request, each with its own collision-layer mask; results preserve input order and casts include solid-tile details |
+| `game_physics_events` | Read recent 2D and 3D collision or trigger transitions with entity handles and available contact details; choose `dimension` as `2d`, `3d` or `all` |
+| `game_physics2d_bodies` | Inspect and page through live 2D rigidbodies and colliders, including local positions and configuration |
+| `game_physics3d_bodies` | Inspect and page through live 3D physics bodies, transforms, collider shapes and body-creation problems |
+| `game_physics3d_state_many` | Read live 3D body activation, position, rotation and linear/angular velocity for up to 64 selected entities |
+| `game_physics3d_settings` / `game_set_physics3d_settings` | Read or update the loaded 3D physics world's global gravity vector |
+| `game_set_physics3d_velocities_many` | Partially set linear and/or angular velocity for up to 64 unique live 3D physics bodies as a validated batch |
+| `game_set_physics3d_velocities_shared_many` | Set shared linear and/or angular velocity on up to 64 unique live 3D physics bodies; validates the whole selection first and preserves unspecified velocity channels |
+| `game_apply_physics3d_forces_many` | Apply force, impulse, torque or angular impulse to up to 64 unique live dynamic 3D bodies after validating the whole batch |
+| `game_apply_physics3d_force_shared_many` | Apply one force, impulse, torque or angular impulse to up to 64 unique dynamic 3D bodies after validating the whole selection |
+| `game_set_physics3d_poses_many` | Teleport position and/or rotation for up to 64 unique 3D physics entities, updating transforms and live bodies together |
+| `game_set_physics3d_poses_shared_many` | Teleport up to 64 unique 3D physics entities to one shared position and/or rotation; validates all targets first and preserves unspecified pose channels |
+| `game_set_physics3d_bodies_many` | Partially update motion type, mass, damping, gravity, CCD and rotation locks on up to 64 3D rigidbodies as a validated batch |
+| `game_set_physics3d_bodies_shared_many` | Apply one partial motion, mass, damping, gravity, CCD or rotation-lock patch to up to 64 unique 3D rigidbodies; validates every result before applying and preserves unspecified per-entity values |
+| `game_set_physics3d_colliders_shared_many` | Apply shared center, material, trigger, report-stay and optional box/sphere/capsule geometry settings across up to 64 selected 3D collider entities |
+| `game_set_physics3d_colliders_many` | Apply per-entity 3D collider center/material/trigger settings and shape-specific box, sphere or capsule geometry updates as a validated batch |
+| `game_physics2d_state_many` | Read grounded and wall-contact state plus current velocity for up to 64 selected 2D entities |
+| `game_set_physics2d_bodies_many` | Partially update body type, mass, gravity scale and damping for up to 64 unique 2D rigidbodies; validates the full batch and preserves unspecified fields |
+| `game_set_physics2d_bodies_shared_many` | Apply one partial body-settings patch to up to 64 unique 2D rigidbodies; preserves unspecified per-entity values and validates every result first |
+| `game_physics2d_settings` / `game_set_physics2d_settings` | Inspect or partially update 2D gravity and solver settings; validates the complete resulting configuration before applying |
+| `game_set_physics2d_velocities_many` | Set velocities on up to 64 unique 2D rigidbodies as a validated batch; preserves other body settings |
+| `game_set_physics2d_velocity_shared_many` | Set one velocity on up to 64 unique 2D rigidbodies in a validated batch; preserves other body settings |
+| `game_set_physics2d_colliders_many` | Partially edit geometry, offsets, material values, trigger state and collision masks on up to 64 unique 2D colliders; validates every resulting collider before applying |
+| `game_set_physics2d_colliders_shared_many` | Apply one partial collider patch to up to 64 unique 2D colliders; preserves unspecified per-entity values and validates all resulting colliders first |
+| `game_reparent_entities_many` | Set or clear parents on up to 64 entities as a validated batch; optionally preserves world poses by updating local transforms (`preserve_world: true`), and rejects cycles, excessive depth, singular transforms, or shear before applying |
+| `game_get_component` | Read one reflected component from a live entity by component name, without returning the entity's other component values |
+| `game_get_components_many` | Read the same reflected component across up to 64 unique live entities in one response; entries identify missing components with `present: false` |
+| `game_get_entity_components_many` | Read different components across up to 64 live entity/component pairs, preserving request order and reporting missing components |
+| `game_copy_component_many` | Copy all reflected values of one component from a source entity to up to 64 unique targets that already have it; protects game-managed IdComponent |
+| `game_reset_components_many` | Reset reflected fields of one component to defaults on up to 64 unique live entities, keeping the component attached and protecting game-managed IdComponent |
 | `game_set_component` / `game_destroy_entity` | Change the live world (not undoable; gone on reload) |
+| `game_set_transforms_many` | Set partial local position, rotation and/or scale on up to 64 unique live entities; validates all edits first and normalizes quaternions |
+| `game_set_transforms_shared_many` | Set the same subset of local position, rotation and scale on up to 64 unique live entities; preserves unspecified fields and validates the batch before applying |
+| `game_offset_entities_local_many` | Add per-entity local-position offsets on up to 64 unique live entities; preserves rotation and scale and validates all resulting positions before applying |
+| `game_offset_entities_local_shared_many` | Add one shared local-position offset to up to 64 unique live entities; preserves rotation and scale and validates all resulting positions before applying |
+| `game_offset_entities_world_many` | Add per-entity world-position offsets on up to 64 unique live entities through parent transforms; preserves local rotation and scale and rejects ancestor overlap or invalid hierarchies |
+| `game_offset_entities_world_shared_many` | Add one shared world-position offset to up to 64 unique live entities through parent transforms; preserves local rotation and scale and rejects ancestor overlap or invalid hierarchies |
+| `game_scale_entities_local_many` | Multiply local scale by per-entity component factors on up to 64 unique live entities; preserves local position and rotation and validates the full batch before applying |
+| `game_scale_entities_local_shared_many` | Multiply local scale by one shared component factor on up to 64 unique live entities; preserves local position and rotation and validates the full batch before applying |
+| `game_offset_entities_local_scale_many` | Add per-entity component deltas to local scale on up to 64 unique live entities; preserves local position and rotation and validates the full batch before applying |
+| `game_offset_entities_local_scale_shared_many` | Add one shared component delta to local scale on up to 64 unique live entities; preserves local position and rotation and validates the full batch before applying |
+| `game_rotate_entities_local_many` | Apply per-entity local quaternion deltas to up to 64 unique live entities; preserves local position and scale, normalizes results, and validates the full batch before applying |
+| `game_rotate_entities_local_shared_many` | Apply one local quaternion delta to up to 64 unique live entities; preserves local position and scale and validates the full batch before applying |
+| `game_rotate_entities_world_many` | Apply per-entity world quaternion deltas to up to 64 unique live entities; preserves local position and scale, resolves parent orientations, and rejects ancestor overlap or invalid hierarchies |
+| `game_rotate_entities_world_shared_many` | Apply one world quaternion delta to up to 64 unique live entities; preserves local position and scale, resolves parent orientations, and rejects ancestor overlap or invalid hierarchies |
+| `game_set_world_transforms_many` | Set any mix of world position, rotation and scale for up to 64 entities in one validated batch, converting through parent transforms and preserving unspecified local fields |
+| `game_set_world_transforms_shared_many` | Set the same mix of world position, rotation and scale for up to 64 entities in one validated batch, converting through parent transforms and preserving unspecified local fields |
+| `game_set_world_positions_many` | Set world positions on up to 64 unique live entities through parent transforms; preserves local rotation and scale and rejects ancestor overlap, cycles, excessive depth and singular parents |
+| `game_set_world_positions_shared_many` | Set one world position on up to 64 unique live entities through parent transforms; preserves local rotation and scale and rejects ancestor overlap, cycles, excessive depth and singular parents |
+| `game_set_world_rotations_many` | Set world rotations on up to 64 unique live entities through parent orientations; preserves local position and scale, normalizes quaternions, and rejects ancestor overlap or invalid hierarchies |
+| `game_set_world_rotations_shared_many` | Set one world rotation on up to 64 unique live entities through parent orientations; preserves local position and scale, normalizes the quaternion, and rejects ancestor overlap or invalid hierarchies |
+| `game_set_world_scales_many` | Set individual world-scale magnitudes on up to 64 unique live entities through parent basis lengths; preserves local position, rotation, and mirror signs, and rejects invalid or collapsed axes |
+| `game_set_world_scale_many` | Set one shared world-scale magnitude on up to 64 unique live entities through parent basis lengths; preserves local position, rotation, and mirror signs, and rejects invalid or collapsed axes |
+| `game_scale_entities_world_shared_many` | Multiply world-scale magnitudes by one shared component factor on up to 64 unique live entities; preserves local position, rotation and mirror signs, resolving through parent transforms |
+| `game_scale_entities_world_many` | Multiply world-scale magnitudes by per-entity component factors on up to 64 unique live entities; preserves local position, rotation and mirror signs, resolving through parent transforms |
+| `game_offset_entities_world_scale_shared_many` | Add one shared delta to world-scale magnitudes on up to 64 unique live entities; preserves local position, rotation and mirror signs, and rejects negative results |
+| `game_offset_entities_world_scale_many` | Add per-entity deltas to world-scale magnitudes on up to 64 unique live entities; preserves local position, rotation and mirror signs, and rejects negative results |
+| `game_destroy_entities_many` | Destroy up to 64 unique live roots through the lifecycle; reports roots and descendants destroyed, validates the whole selection first, and rejects ancestor/descendant overlap |
 | `game_unload` | Stop and unload |
 
 The plugin modules Audio, Navigation, Networking and Physics are linked into the server so manifests
@@ -429,7 +586,7 @@ in the headless simulation; they need a full `Game`.
 ```
 
 Each tool gets `allow`, `confirm` or `deny`: the tool's own entry, else `default`, else the built-in rule (the
-destructive tools -- `destroy_entity`, `remove_component`, `save_scene`, `load_scene` -- ask first and the rest
+destructive tools -- `destroy_entity`, `destroy_entities`, `remove_component`, `remove_components_many`, `save_scene`, `load_scene` -- ask first and the rest
 run). A missing file means the built-in rule; an unreadable one is reported on stderr and the built-in rule
 applies.
 

@@ -110,6 +110,8 @@ void SequenceSystem::SkipAll() {
 void SequenceSystem::Update(f32 dt) {
     events_.clear();
     fade_ = FadeState{};
+    subtitle_ = nullptr;
+    subtitle_owner_ = kNullEntity;
     const u64 now = ++generation_;
     std::vector<Entity> entities;
     world_.ForEachArchetype([&](Archetype& archetype) {
@@ -181,6 +183,16 @@ void SequenceSystem::Update(f32 dt) {
                     ev.value = key.rate;
                     events_.push_back(std::move(ev));
                 };
+                player->on_vfx = [this, e](const Track&, Entity subject, const VfxKey& key) {
+                    SequenceEvent ev;
+                    ev.kind = SequenceEvent::Kind::Vfx;
+                    ev.entity = e;
+                    ev.name = key.effect;
+                    ev.payload = key.action == VfxAction::Play ? "play" : "stop";
+                    ev.subject = subject;
+                    ev.offset = key.offset;
+                    events_.push_back(std::move(ev));
+                };
                 player->on_spawn = [this](const Track& track, Entity parent, const SpawnKey& key) {
                     return spawner_ ? spawner_(track, parent, key) : kNullEntity;
                 };
@@ -241,6 +253,12 @@ void SequenceSystem::Update(f32 dt) {
         if (player->Fade().amount > fade_.amount) fade_ = player->Fade();
         comp.time = player->Time();
         comp.playing = player->Playing();
+        const SubtitleKey* line = player->Subtitle();
+        if (line && !subtitle_) {
+            subtitle_ = line;
+            subtitle_owner_ = e;
+        }
+        if (line ? comp.subtitle != line->text : !comp.subtitle.empty()) comp.subtitle = line ? line->text : std::string();
         if (slot.finished) {
             SequenceEvent ev;
             ev.kind = SequenceEvent::Kind::Finished;

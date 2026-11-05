@@ -11,6 +11,17 @@
 #include "aether/debug/crash.h"
 #include "aether/ecs/archetype.h"
 #include "aether/gameplay/attribute_system.h"
+#include "aether/gameplay/gameplay_kit.h"
+#include "aether/kit/kit.h"
+#if AETHER_QT_KIT_INVENTORY
+#include "aether/inventory/inventory_kit.h"
+#endif
+#if AETHER_QT_KIT_INTERACTION
+#include "aether/interaction/interaction_kit.h"
+#endif
+#if AETHER_QT_KIT_QUESTS
+#include "aether/quests/quests_kit.h"
+#endif
 #include "aether/input/keys.h"
 #include "aether/physics/character.h"
 #include "aether/physics/components.h"
@@ -40,9 +51,13 @@
 #if defined(AETHER_QT_EDITOR_SCRIPTING)
 #include "script_component_editor.h"
 #include "script_editor_widget.h"
+#include "ai_debugger_widget.h"
+#include "aether/script/ai_api.h"
 #endif
 
 #include <QApplication>
+#include <QAccessible>
+#include <QEvent>
 #include <QAbstractItemView>
 #include <QAction>
 #include <QActionGroup>
@@ -191,8 +206,26 @@ void RegisterEditorComponentSchemas() {
     aether::RegisterBehaviorTreeComponents();
     aether::RegisterAudioComponents();
     aether::bp::RegisterBlueprintComponents();
-    aether::gas::RegisterGameplayComponents();
     aether::RegisterSequenceComponents();
+
+    aether::kit::KitRegistry kits;
+    kits.Add(aether::gas::MakeGameplayKit());
+#if AETHER_QT_KIT_INVENTORY
+    kits.Add(aether::inv::MakeInventoryKit());
+#endif
+#if AETHER_QT_KIT_INTERACTION
+    kits.Add(aether::interact::MakeInteractionKit());
+#endif
+#if AETHER_QT_KIT_QUESTS
+    kits.Add(aether::quest::MakeQuestsKit());
+#endif
+    if (!kits.Resolve()) {
+        for (const std::string& error : kits.Errors())
+            AETHER_LOG_ERROR("QtEditor", "Couldn't resolve editor gameplay kits: %s", error.c_str());
+        return;
+    }
+    kits.RegisterComponents();
+
     aether::RegisterPhysicsComponentSerializers();
     (void)aether::GetComponentId<aether::RigidBody>();
     (void)aether::GetComponentId<aether::BoxCollider>();
@@ -1842,6 +1875,7 @@ QWidget* MakeInspector(QScrollArea*& inspector_scroll, QStackedWidget*& inspecto
     layout->addWidget(selection_status);
     entity_name = new QLineEdit;
     entity_name->setObjectName("entityNameField");
+    entity_name->setAccessibleName("Selected entity name");
     entity_name->setPlaceholderText("Entity name");
     entity_name->setToolTip("Rename the selected scene entity");
     entity_name->setEnabled(false);
@@ -2301,6 +2335,22 @@ QWidget* MakeContentBrowser(QComboBox*& breadcrumb, QFileSystemModel*& asset_mod
     return root;
 }
 
+std::string StablePathKey(const std::filesystem::path& path) {
+    std::error_code ec;
+    std::filesystem::path absolute = std::filesystem::absolute(path, ec);
+    if (ec) absolute = path;
+    const std::string key = absolute.lexically_normal().generic_string();
+    aether::u64 hash = 14695981039346656037ull;
+    for (const unsigned char byte : key) hash = (hash ^ byte) * 1099511628211ull;
+    constexpr char digits[] = "0123456789abcdef";
+    std::string encoded(16, '0');
+    for (int i = 15; i >= 0; --i) {
+        encoded[static_cast<std::size_t>(i)] = digits[hash & 0xfu];
+        hash >>= 4u;
+    }
+    return encoded;
+}
+
 class EditorWindow final : public QMainWindow {
 public:
     EditorWindow() {
@@ -2408,7 +2458,16 @@ public:
                                                 Qt::BottomDockWidgetArea, "behaviorTreeEditorDock");
         navigation_editor_widget_ = new aether::editor::qt::NavigationEditorWidget(scene_document_);
         viewport_->SetNavigationDebugSource([this] {
-            return navigation_editor_widget_->DebugDraw(play_runtime_ ? play_runtime_->NavigationCrowd() : nullptr);
+            aether::nav::NavDebugDraw draw = navigation_editor_widget_->DebugDraw(play_runtime_ ? play_runtime_->NavigationCrowd() : nullptr);
+#if defined(AETHER_QT_EDITOR_SCRIPTING)
+            if (play_runtime_ && ai_debugger_widget_ && !ai_debug_snapshot_.empty()) {
+                aether::editor::AiDebugOverlayOptions options;
+                options.all_agents = ai_debugger_widget_->ShowAllAgents();
+                options.selected = selected_entity_;
+                aether::editor::BuildAiDebugOverlay(scene_document_.GetWorld(), ai_debug_snapshot_, options, draw);
+            }
+#endif
+            return draw;
         });
         navigation_editor_widget_->SetOverlayChangedCallback([this] { if (viewport_) viewport_->update(); });
         navigation_editor_dock_ = MakeDock("AI · NAVIGATION", navigation_editor_widget_, *this,
@@ -2429,6 +2488,11 @@ public:
         script_editor_widget_ = new aether::editor::qt::ScriptEditorWidget;
         script_editor_dock_ = MakeDock("SCRIPT · LUAU", script_editor_widget_, *this,
                                        Qt::BottomDockWidgetArea, "scriptEditorDock");
+        ai_debugger_widget_ = new aether::editor::qt::AiDebuggerWidget;
+        ai_debugger_widget_->SetEntityActivatedCallback([this](aether::Entity entity) { SelectEntityInHierarchy(entity); });
+        ai_debugger_widget_->SetOverlayChangedCallback([this] { if (viewport_) viewport_->update(); });
+        ai_debugger_dock_ = MakeDock("AI · DEBUGGER", ai_debugger_widget_, *this,
+                                     Qt::BottomDockWidgetArea, "aiDebuggerDock");
 #endif
         tabifyDockWidget(content_dock_, output_dock_);
         tabifyDockWidget(content_dock_, sequence_dock_);
@@ -2444,6 +2508,7 @@ public:
         tabifyDockWidget(content_dock_, sound_cue_editor_dock_);
 #if defined(AETHER_QT_EDITOR_SCRIPTING)
         tabifyDockWidget(content_dock_, script_editor_dock_);
+        tabifyDockWidget(content_dock_, ai_debugger_dock_);
 #endif
         content_dock_->raise();
         resizeDocks({content_dock_}, {230}, Qt::Vertical);
@@ -2464,6 +2529,7 @@ public:
         window_menu_->addAction(sound_cue_editor_dock_->toggleViewAction());
 #if defined(AETHER_QT_EDITOR_SCRIPTING)
         window_menu_->addAction(script_editor_dock_->toggleViewAction());
+        window_menu_->addAction(ai_debugger_dock_->toggleViewAction());
 #endif
         window_menu_->addSeparator();
         QAction* reset_layout_action = window_menu_->addAction("Reset Workspace Layout");
@@ -2660,12 +2726,20 @@ public:
         connect_lens(camera_inspector_.aperture, "aperture_f");
         connect_lens(camera_inspector_.focus_distance, "focus_distance");
         scene_document_.NewScene();
+        autosave_timer_.setInterval(5 * 60 * 1000);
+        QObject::connect(&autosave_timer_, &QTimer::timeout, this, [this] { WriteSceneAutosave(); });
+        autosave_timer_.start();
         RefreshHierarchy();
         viewport_->FitAll();
         UpdateSceneStatus();
     }
 
     void OpenProjectFile(const std::filesystem::path& file) { OpenProject(file, false); }
+
+    void SetCrashRecoveryContext(std::filesystem::path directory, bool available) {
+        crash_report_directory_ = std::move(directory);
+        crash_recovery_available_ = available;
+    }
 
     // Shows what the selected entity's model cooks to: its LOD chain and meshlet counts, from the same code the
     // cooker uses. Hidden when the entity has no model. Cached per file and write time; a model that can't be read or
@@ -2730,6 +2804,45 @@ public:
             return condition;
         };
         bool passed = true;
+        const auto require_accessible_name = [&require](QWidget* widget, const char* message) {
+            if (!widget) return require(false, message);
+            QAccessibleInterface* accessible = QAccessible::queryAccessibleInterface(widget);
+            const QString name = accessible ? accessible->text(QAccessible::Name).trimmed()
+                                            : widget->accessibleName().trimmed();
+            return require(!name.isEmpty(), message);
+        };
+        passed &= require_accessible_name(viewport_, "3D viewport should expose an accessible name");
+        passed &= require_accessible_name(hierarchy_tree_, "World hierarchy should expose an accessible name");
+        passed &= require_accessible_name(hierarchy_filter_, "Hierarchy filter should expose an accessible name");
+        passed &= require_accessible_name(add_entity_button_, "Add entity control should expose an accessible name");
+        passed &= require_accessible_name(duplicate_entity_button_, "Duplicate entity control should expose an accessible name");
+        passed &= require_accessible_name(inspector_name_, "Entity name editor should expose an accessible name");
+        passed &= require_accessible_name(asset_filter_, "Content search should expose an accessible name");
+        passed &= require_accessible_name(asset_view_, "Content asset view should expose an accessible name");
+        passed &= require(hierarchy_tree_ && hierarchy_filter_ && inspector_name_ &&
+                          hierarchy_tree_->focusPolicy() != Qt::NoFocus &&
+                          hierarchy_filter_->focusPolicy() != Qt::NoFocus &&
+                          inspector_name_->focusPolicy() != Qt::NoFocus,
+                          "hierarchy, search and Inspector controls should be keyboard focusable");
+        // A modal error dialog would otherwise block the self-test forever on
+        // headless/package-validation runners. Surface the dialog as a test
+        // failure and dismiss it so the caller can report a useful log.
+        QTimer modal_dialog_guard;
+        modal_dialog_guard.setInterval(100);
+        QObject::connect(&modal_dialog_guard, &QTimer::timeout, this, [&passed] {
+            for (QWidget* widget : QApplication::topLevelWidgets()) {
+                auto* dialog = qobject_cast<QDialog*>(widget);
+                if (!dialog || !dialog->isModal() || !dialog->isVisible()) continue;
+                const auto* message_box = qobject_cast<QMessageBox*>(dialog);
+                const QString description = message_box
+                    ? message_box->text() : dialog->windowTitle();
+                AETHER_LOG_ERROR("QtEditor", "Unexpected modal dialog during self-test: %s",
+                                 description.toUtf8().constData());
+                passed = false;
+                dialog->reject();
+            }
+        });
+        modal_dialog_guard.start();
         passed &= require(scene_document_.Entities().size() == 5, "default scene should have five entities");
         passed &= require(!selected_entity_.IsNull() && inspector_name_->isEnabled() &&
                           inspector_name_->text() == QString::fromStdString(scene_document_.Name(selected_entity_)) &&
@@ -3085,6 +3198,7 @@ public:
                               "the Inspector Mesh section should list the placed cube's four LODs, 12 triangles at LOD0");
         }
         std::filesystem::remove_all(self_test_root, filesystem_error);
+        modal_dialog_guard.stop();
         if (passed) qInfo() << "Qt editor self-test passed";
         return passed;
     }
@@ -3705,13 +3819,90 @@ private:
     }
 
     bool ConfirmDiscardSceneChanges() {
-        if (!scene_document_.IsDirty()) return true;
+        if (!scene_document_.IsDirty()) {
+            RemoveSceneAutosave(AutosaveSourcePath());
+            return true;
+        }
         QMessageBox prompt(QMessageBox::Warning, "Unsaved Scene Changes",
                            "Save the scene changes before continuing?",
                            QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, this);
         const auto choice = static_cast<QMessageBox::StandardButton>(prompt.exec());
         if (choice == QMessageBox::Save) return SaveScene();
-        return choice == QMessageBox::Discard;
+        if (choice != QMessageBox::Discard) return false;
+        RemoveSceneAutosave(AutosaveSourcePath());
+        return true;
+    }
+
+    std::filesystem::path AutosaveSourcePath() const {
+        if (!scene_document_.FilePath().empty()) return scene_document_.FilePath();
+        if (project_file_.empty()) return {};
+        const auto content = aether::ProjectPaths::ForFile(project_file_).content;
+        if (!project_settings_.startup_scene.empty()) return content / project_settings_.startup_scene;
+        return content / "Scenes" / "Main.ascene";
+    }
+
+    std::filesystem::path SceneAutosavePath(const std::filesystem::path& source) const {
+        if (project_file_.empty() || source.empty()) return {};
+        return aether::ProjectPaths::ForFile(project_file_).saved / "Autosaves" /
+               ("scene-" + StablePathKey(source) + ".ascene");
+    }
+
+    void RemoveSceneAutosave(const std::filesystem::path& source) {
+        const auto autosave = SceneAutosavePath(source);
+        if (autosave.empty()) return;
+        std::error_code ec;
+        std::filesystem::remove(autosave, ec);
+    }
+
+    void WriteSceneAutosave() {
+        if (project_file_.empty()) return;
+        if (!scene_document_.IsDirty()) {
+            RemoveSceneAutosave(AutosaveSourcePath());
+            return;
+        }
+        if (scene_document_.PlayState() != aether::editor::PlaySession::State::Editing) return;
+        const auto autosave = SceneAutosavePath(AutosaveSourcePath());
+        if (autosave.empty()) return;
+        std::string error;
+        if (!scene_document_.SaveAutosave(autosave, &error))
+            AETHER_LOG_WARN("Editor", "Scene autosave failed: %s", error.c_str());
+        else
+            statusBar()->showMessage("Scene autosaved for crash recovery", 5000);
+    }
+
+    void MaybeRestoreAutosave(const std::filesystem::path& source) {
+        if (!crash_recovery_available_ || crash_report_directory_.empty() || source.empty()) return;
+        const auto autosave = SceneAutosavePath(source);
+        if (autosave.empty()) return;
+        std::error_code ec;
+        const auto autosave_time = std::filesystem::last_write_time(autosave, ec);
+        if (ec) return;
+        bool crash_after_autosave = false;
+        for (const auto& report : aether::ListCrashReports(crash_report_directory_.string(), true)) {
+            if (report.Field("context.project") != StablePathKey(project_file_)) continue;
+            const auto crash_time = std::filesystem::last_write_time(report.path, ec);
+            if (!ec && crash_time >= autosave_time) {
+                crash_after_autosave = true;
+                break;
+            }
+            ec.clear();
+        }
+        if (!crash_after_autosave) return;
+        const auto choice = QMessageBox::question(
+            this, "Recover Autosaved Scene",
+            QString("The editor crashed after the last autosave of %1. Restore that version?")
+                .arg(QString::fromStdWString(source.filename().wstring())),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
+        if (choice == QMessageBox::Yes) {
+            std::string error;
+            if (!scene_document_.LoadAutosave(autosave, source, &error)) {
+                QMessageBox::warning(this, "Couldn't restore autosave", QString::fromStdString(error));
+                return;
+            }
+            AETHER_LOG_INFO("Editor", "Recovered scene autosave for %s", source.string().c_str());
+        } else {
+            std::filesystem::remove(autosave, ec);
+        }
     }
 
     void RefreshHierarchy(bool preserveSelection = false) {
@@ -3827,11 +4018,35 @@ private:
         UpdateSceneStatus();
     }
 
+    // Selects `entity`'s outliner row (which selects it in the viewport and inspector).
+    void SelectEntityInHierarchy(aether::Entity entity) {
+        aether::World& world = scene_document_.GetWorld();
+        if (entity.IsNull() || !world.IsAlive(entity)) return;
+        const aether::IdComponent* id = world.GetComponent<aether::IdComponent>(entity);
+        if (!id) return;
+        const std::string key = aether::ToString(id->guid);
+        std::function<QTreeWidgetItem*(QTreeWidgetItem*)> find_item = [&](QTreeWidgetItem* item) -> QTreeWidgetItem* {
+            if (item->data(0, Qt::UserRole).toString().toStdString() == key) return item;
+            for (int child_index = 0; child_index < item->childCount(); ++child_index)
+                if (auto* found = find_item(item->child(child_index))) return found;
+            return nullptr;
+        };
+        for (int root_index = 0; root_index < hierarchy_tree_->topLevelItemCount(); ++root_index) {
+            if (auto* found = find_item(hierarchy_tree_->topLevelItem(root_index))) {
+                hierarchy_tree_->setCurrentItem(found);
+                return;
+            }
+        }
+    }
+
     void SelectHierarchyItem(QTreeWidgetItem* item) {
         if (!item || !item->parent()) {
             selected_entity_ = aether::kNullEntity;
             selected_guid_ = {};
             viewport_->SetSelectedGuid({});
+#if defined(AETHER_QT_EDITOR_SCRIPTING)
+            if (ai_debugger_widget_) ai_debugger_widget_->SetSelectedEntity(aether::kNullEntity);
+#endif
             inspector_stack_->setCurrentIndex(0);
             inspector_scroll_->verticalScrollBar()->setValue(0);
             inspector_name_->clear();
@@ -3872,6 +4087,9 @@ private:
         if (selected_entity_.IsNull()) return;
         selected_guid_ = guid;
         viewport_->SetSelectedGuid(guid);
+#if defined(AETHER_QT_EDITOR_SCRIPTING)
+        if (ai_debugger_widget_) ai_debugger_widget_->SetSelectedEntity(selected_entity_);
+#endif
         physics_component_panel_->SetEntity(selected_entity_);
 #if defined(AETHER_QT_EDITOR_SCRIPTING)
         script_component_editor_->SetEntity(selected_entity_);
@@ -4024,6 +4242,7 @@ private:
     }
 
     void UpdateSceneStatus() {
+        if (!scene_document_.IsDirty()) RemoveSceneAutosave(AutosaveSourcePath());
         const auto play_state = scene_document_.PlayState();
         const bool editing = play_state == aether::editor::PlaySession::State::Editing;
         const bool playing = play_state == aether::editor::PlaySession::State::Playing;
@@ -4041,6 +4260,20 @@ private:
         open_project_action_->setEnabled(editing);
         undo_action_->setEnabled(editing && scene_document_.CanUndo());
         redo_action_->setEnabled(editing && scene_document_.CanRedo());
+        if (scene_document_.CanUndo()) {
+            undo_action_->setToolTip(QString("Undo %1 (%2) (Ctrl+Z)")
+                .arg(QString::fromStdString(scene_document_.UndoLabel()),
+                     QString::fromStdString(scene_document_.UndoAttribution())));
+        } else {
+            undo_action_->setToolTip("Undo the last scene edit (Ctrl+Z)");
+        }
+        if (scene_document_.CanRedo()) {
+            redo_action_->setToolTip(QString("Redo %1 (%2) (Ctrl+Y)")
+                .arg(QString::fromStdString(scene_document_.RedoLabel()),
+                     QString::fromStdString(scene_document_.RedoAttribution())));
+        } else {
+            redo_action_->setToolTip("Redo the last undone scene edit (Ctrl+Y)");
+        }
         const bool has_selection = !selected_entity_.IsNull() && scene_document_.GetWorld().IsAlive(selected_entity_);
         physics_component_panel_->setEnabled(editing);
 #if defined(AETHER_QT_EDITOR_SCRIPTING)
@@ -4188,6 +4421,11 @@ private:
         play_runtime_.reset();
         if (behavior_tree_editor_widget_) behavior_tree_editor_widget_->SetLiveDebugSnapshots({});
         if (blueprint_editor_widget_) blueprint_editor_widget_->ClearLiveTrace();
+#if defined(AETHER_QT_EDITOR_SCRIPTING)
+        ai_debug_snapshot_.clear();
+        ai_debug_rows_clock_.invalidate();
+        if (ai_debugger_widget_) ai_debugger_widget_->Clear();
+#endif
         scene_document_.Stop();
         selected_entity_ = scene_document_.Guids().Find(scene_document_.GetWorld(), selected_guid_);
         if (selected_entity_.IsNull()) selected_guid_ = {};
@@ -4203,6 +4441,16 @@ private:
             blueprint_editor_widget_->SetLiveTraceEvents(play_runtime_->TakeBlueprintTrace());
         if (behavior_tree_editor_widget_)
             behavior_tree_editor_widget_->SetLiveDebugSnapshots(play_runtime_->BehaviorTreeDebugSnapshots());
+#if defined(AETHER_QT_EDITOR_SCRIPTING)
+        if (ai_debugger_widget_) {
+            ai_debug_snapshot_ = play_runtime_->AiDebugSnapshot();
+            if (!ai_debug_rows_clock_.isValid() || ai_debug_rows_clock_.elapsed() >= 250) { // ~4 Hz
+                ai_debug_rows_clock_.start();
+                ai_debugger_widget_->SetRows(aether::editor::BuildAiDebugRows(scene_document_.GetWorld(), ai_debug_snapshot_));
+            }
+            if (!ai_debug_snapshot_.empty()) viewport_->update();
+        }
+#endif
         if (!selected_entity_.IsNull() && scene_document_.GetWorld().IsAlive(selected_entity_)) {
             SyncInspectorPosition();
             viewport_->update();
@@ -4235,6 +4483,7 @@ private:
             QMessageBox::critical(this, "Couldn't open scene", QString::fromStdString(error));
             return false;
         }
+        MaybeRestoreAutosave(file);
         navigation_editor_widget_->ResetForScene();
         selected_guid_ = {};
         selected_entity_ = aether::kNullEntity;
@@ -4264,6 +4513,7 @@ private:
             QMessageBox::critical(this, "Couldn't save scene", QString::fromStdString(error));
             return false;
         }
+        RemoveSceneAutosave(path);
         if (!project_file_.empty()) {
             const auto content = aether::ProjectPaths::ForFile(project_file_).content;
             const auto relative = path.lexically_relative(content);
@@ -4325,8 +4575,38 @@ private:
     void PlaceModel(const std::filesystem::path& file) {
         if (project_file_.empty()) return;
         const auto content = aether::ProjectPaths::ForFile(project_file_).content;
-        const auto relative = file.lexically_relative(content);
-        if (relative.empty() || *relative.begin() == "..") {
+        std::error_code path_error;
+        const auto canonical_content = std::filesystem::canonical(content, path_error);
+        const auto canonical_file = path_error ? std::filesystem::path{} : std::filesystem::canonical(file, path_error);
+        std::filesystem::path relative;
+        bool is_inside_content = false;
+        if (!path_error && !canonical_content.empty() && !canonical_file.empty()) {
+            // lexical_relative() treats Windows short and long path spellings as
+            // different roots. Walk the canonical file's parents and compare
+            // filesystem identity so a valid asset under Content is accepted
+            // regardless of how Windows spelled the same directory.
+            std::vector<std::filesystem::path> components;
+            auto ancestor = canonical_file;
+            while (!ancestor.empty()) {
+                path_error.clear();
+                if (std::filesystem::equivalent(ancestor, canonical_content, path_error)) {
+                    is_inside_content = !path_error;
+                    break;
+                }
+                if (path_error) break;
+                const auto component = ancestor.filename();
+                const auto parent = ancestor.parent_path();
+                if (component.empty() || parent == ancestor) break;
+                components.push_back(component);
+                ancestor = parent;
+            }
+            if (is_inside_content) {
+                for (auto component = components.rbegin(); component != components.rend(); ++component) {
+                    relative /= *component;
+                }
+            }
+        }
+        if (!is_inside_content || relative.empty()) {
             QMessageBox::warning(this, "Model outside project", "Choose a model inside this project's Content folder.");
             return;
         }
@@ -4541,6 +4821,7 @@ private:
             QMessageBox::critical(this, "Couldn't prepare project folders", QString::fromStdString(error));
             return;
         }
+        aether::CrashHandler::SetContext("project", StablePathKey(file));
 
         aether::plugin::PluginManager candidate_plugins;
         if (!aether::plugin::ResolveProjectPlugins(file, candidate_plugins, &error) ||
@@ -4581,6 +4862,7 @@ private:
         plugin_manager_ = std::move(candidate_plugins);
         project_file_ = file;
         project_settings_ = std::move(settings);
+        MaybeRestoreAutosave(AutosaveSourcePath());
         blueprint_editor_widget_->ClearDocument();
         material_editor_widget_->ClearDocument();
         vfx_editor_widget_->ClearDocument();
@@ -5489,6 +5771,10 @@ private:
 #if defined(AETHER_QT_EDITOR_SCRIPTING)
     QDockWidget* script_editor_dock_ = nullptr;
     aether::editor::qt::ScriptEditorWidget* script_editor_widget_ = nullptr;
+    QDockWidget* ai_debugger_dock_ = nullptr;
+    aether::editor::qt::AiDebuggerWidget* ai_debugger_widget_ = nullptr;
+    std::vector<aether::script::AiDebugEntry> ai_debug_snapshot_; // last Play tick's AiDebugStore::Collect
+    QElapsedTimer ai_debug_rows_clock_; // throttles the dock's table (overlay follows every tick)
 #endif
     QPushButton* search_button_ = nullptr;
     QPushButton* play_button_ = nullptr;
@@ -5521,6 +5807,9 @@ private:
     RhiViewport* viewport_ = nullptr;
     aether::plugin::PluginManager plugin_manager_;
     aether::editor::SceneDocument scene_document_;
+    QTimer autosave_timer_;
+    std::filesystem::path crash_report_directory_;
+    bool crash_recovery_available_ = false;
     aether::EntityGuid selected_guid_{};
     aether::Entity selected_entity_ = aether::kNullEntity;
     QComboBox* content_breadcrumb_ = nullptr;
@@ -5609,13 +5898,43 @@ int main(int argc, char** argv) {
     std::string crash_error;
     if (!aether::CrashHandler::Install(crash_config, &crash_error))
         qWarning() << "Crash reports are unavailable:" << QString::fromStdString(crash_error);
-    EditorWindow window;
-    if (app.arguments().contains("--self-test")) {
-        const bool passed = window.RunSelfTest();
+    const auto previous_crash_reports = aether::ListCrashReports(crash_config.directory, true);
+    const QStringList arguments = app.arguments();
+    if (arguments.contains("--self-test")) {
+        int repeats = 1;
+        const int repeat_option = arguments.indexOf("--self-test-repeats");
+        if (repeat_option >= 0) {
+            bool valid_count = false;
+            if (repeat_option + 1 < arguments.size()) repeats = arguments[repeat_option + 1].toInt(&valid_count);
+            if (!valid_count || repeats < 1 || repeats > 16) {
+                qCritical() << "--self-test-repeats requires a count from 1 to 16";
+                aether::CrashHandler::Uninstall();
+                return 2;
+            }
+        }
+
+        const int baseline_widgets = QApplication::allWidgets().size();
+        bool passed = true;
+        for (int repeat = 0; repeat < repeats; ++repeat) {
+            {
+                EditorWindow window;
+                window.SetCrashRecoveryContext(crash_config.directory, !previous_crash_reports.empty());
+                if (!window.RunSelfTest()) passed = false;
+            }
+            QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+            app.processEvents();
+            const int remaining_widgets = QApplication::allWidgets().size();
+            if (remaining_widgets != baseline_widgets) {
+                qCritical() << "Editor session" << (repeat + 1) << "left" << remaining_widgets - baseline_widgets
+                            << "widget(s) alive";
+                passed = false;
+            }
+        }
         aether::CrashHandler::Uninstall();
         return passed ? 0 : 1;
     }
-    const QStringList arguments = app.arguments();
+    EditorWindow window;
+    window.SetCrashRecoveryContext(crash_config.directory, !previous_crash_reports.empty());
     const int project_option = arguments.indexOf("--project");
     if (project_option >= 0 && project_option + 1 < arguments.size())
         window.OpenProjectFile(std::filesystem::path(arguments[project_option + 1].toStdWString()));

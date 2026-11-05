@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <set>
+#include <unordered_set>
 
 namespace aether {
 
@@ -65,13 +66,13 @@ PrefabLookup PrefabLibrary::FlatLookup() {
 std::vector<assets::AssetGuid> PrefabLibrary::Dependents(const assets::AssetGuid& guid) {
     // Which prefabs refer to which (nesting or base), from their data.
     std::unordered_map<assets::AssetGuid, std::vector<assets::AssetGuid>> users;
-    std::vector<assets::AssetGuid> prefabs;
-    for (const assets::AssetRecord* record : database_.All()) {
-        if (record->importer == "Prefab" && !record->IsSubAsset()) {
-            prefabs.push_back(record->guid);
+    const std::vector<const assets::AssetRecord*> prefabs = database_.FindByImporter("Prefab");
+    users.reserve(prefabs.size());
+    for (const assets::AssetRecord* record : prefabs) {
+        if (record->IsSubAsset()) {
+            continue;
         }
-    }
-    for (const assets::AssetGuid& prefab : prefabs) {
+        const assets::AssetGuid& prefab = record->guid;
         const PrefabData* data = Get(prefab);
         if (data == nullptr) {
             continue;
@@ -85,18 +86,26 @@ std::vector<assets::AssetGuid> PrefabLibrary::Dependents(const assets::AssetGuid
             }
         }
     }
-    std::set<assets::AssetGuid> seen{guid};
-    std::vector<assets::AssetGuid> pending{guid};
+    std::unordered_set<assets::AssetGuid> seen;
+    seen.reserve(prefabs.size());
+    seen.insert(guid);
+    std::vector<assets::AssetGuid> pending;
+    pending.reserve(prefabs.size());
+    pending.push_back(guid);
     while (!pending.empty()) {
         const assets::AssetGuid next = pending.back();
         pending.pop_back();
-        for (const assets::AssetGuid& user : users[next]) {
-            if (seen.insert(user).second) {
-                pending.push_back(user);
+        if (auto it = users.find(next); it != users.end()) {
+            for (const assets::AssetGuid& user : it->second) {
+                if (seen.insert(user).second) {
+                    pending.push_back(user);
+                }
             }
         }
     }
-    return {seen.begin(), seen.end()};
+    std::vector<assets::AssetGuid> result(seen.begin(), seen.end());
+    std::sort(result.begin(), result.end());
+    return result;
 }
 
 void PrefabLibrary::Invalidate(const std::vector<assets::AssetGuid>& guids) {
@@ -138,18 +147,27 @@ std::vector<assets::AssetGuid> PrefabLibrary::Reload(const assets::AssetGuid& gu
 PropagationReport PropagatePrefabChange(World& world, GuidIndex& guids, PrefabLibrary& library,
                                         const assets::AssetGuid& changed) {
     const std::vector<assets::AssetGuid> affected = library.Dependents(changed);
-    const std::set<assets::AssetGuid> affected_set(affected.begin(), affected.end());
+    std::unordered_set<assets::AssetGuid> affected_set;
+    affected_set.reserve(affected.size());
+    affected_set.insert(affected.begin(), affected.end());
     // Resolve only instances of affected prefabs; others are skipped by
     // handing them no data.
     PrefabLookup lookup = library.Lookup();
     std::vector<Entity> roots;
+    const ComponentId prefab_instance_id = GetComponentId<PrefabInstance>();
     world.ForEachArchetype([&](const Archetype& archetype) {
-        if (!archetype.Mask().test(GetComponentId<PrefabInstance>())) {
+        if (!archetype.Mask().test(prefab_instance_id)) {
             return;
         }
         for (usize c = 0; c < archetype.ChunkCount(); ++c) {
             const Entity* entities = archetype.EntityArray(c);
-            roots.insert(roots.end(), entities, entities + archetype.ChunkEntityCount(c));
+            const auto* instances = static_cast<const PrefabInstance*>(
+                archetype.ComponentArray(c, prefab_instance_id));
+            for (u32 row = 0; row < archetype.ChunkEntityCount(c); ++row) {
+                if (affected_set.count(instances[row].source.guid) != 0) {
+                    roots.push_back(entities[row]);
+                }
+            }
         }
     });
     std::sort(roots.begin(), roots.end(), [](Entity a, Entity b) { return a.index < b.index; });
@@ -180,7 +198,9 @@ PropagationReport PropagatePrefabChange(World& world, GuidIndex& guids, PrefabLi
 std::vector<SceneImpact> CheckScenesUsingPrefab(PrefabLibrary& library, const assets::AssetGuid& prefab) {
     assets::AssetDatabase& database = library.Database();
     const std::vector<assets::AssetGuid> affected = library.Dependents(prefab);
-    const std::set<assets::AssetGuid> affected_set(affected.begin(), affected.end());
+    std::unordered_set<assets::AssetGuid> affected_set;
+    affected_set.reserve(affected.size());
+    affected_set.insert(affected.begin(), affected.end());
     std::set<std::string> scenes;
     for (const assets::AssetGuid& guid : affected) {
         for (const assets::AssetRecord* user : database.Referencers(guid)) {

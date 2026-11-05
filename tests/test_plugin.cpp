@@ -163,6 +163,54 @@ AETHER_TEST(Plugin_DiscoveryAndResolution) {
     CHECK(n.Enabled().empty());
 }
 
+AETHER_TEST(Plugin_DiscoveryAndContentMountsRejectSymlinks) {
+    const stdfs::path root = Dir("Symlinks/Search");
+    const stdfs::path outside = Dir("Symlinks/Outside");
+    std::error_code ec;
+
+    // A symlinked plugin folder could otherwise load a descriptor and content
+    // outside the configured plugin search root.
+    Install(outside, Desc("Linked"));
+    stdfs::create_directory_symlink(outside / "Linked", root / "Linked", ec);
+    const bool plugin_link_created = !ec;
+
+    // A symlinked descriptor can make a plugin folder load metadata from
+    // another location even though the plugin folder itself is ordinary.
+    PluginDescriptor external_descriptor = Desc("DescriptorLink");
+    const stdfs::path outside_descriptor = outside / "DescriptorLink.aplugin";
+    CHECK(SavePluginDescriptor(outside_descriptor, external_descriptor));
+    stdfs::create_directories(root / "DescriptorLink");
+    ec.clear();
+    stdfs::create_symlink(outside_descriptor, root / "DescriptorLink/DescriptorLink.aplugin", ec);
+    const bool descriptor_link_created = !ec;
+
+    // Content is mounted from the source tree into the cooked VFS. A symlink
+    // here must not pull arbitrary host files into that package.
+    PluginDescriptor mounted = Desc("Mounted");
+    mounted.has_content = true;
+    CHECK(SavePluginDescriptor(root / "Mounted/Mounted.aplugin", mounted));
+    ec.clear();
+    stdfs::create_directory_symlink(outside, root / "Mounted/Content", ec);
+    const bool content_link_created = !ec;
+
+    PluginManager manager;
+    manager.AddSearchPath(root, PluginSource::Project);
+    manager.Discover();
+    if (plugin_link_created) CHECK(manager.Find("Linked") == nullptr);
+    if (descriptor_link_created) CHECK(manager.Find("DescriptorLink") == nullptr);
+    if (content_link_created) {
+        CHECK(manager.Find("Mounted") != nullptr);
+        CHECK(manager.Resolve({"Mounted"}));
+        CHECK(manager.ContentMounts().empty());
+    }
+
+    // Windows may disable symlink creation on local machines. CI's Linux and
+    // macOS runners exercise these assertions when the OS permits the links.
+    (void)plugin_link_created;
+    (void)descriptor_link_created;
+    (void)content_link_created;
+}
+
 AETHER_TEST(Plugin_ModulesStartInOrderAndStop) {
     const stdfs::path root = Dir("Modules");
     Install(root, Desc("Base", {}, {{"TBase", ModuleType::Runtime, LoadingPhase::Default}}));

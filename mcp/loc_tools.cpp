@@ -68,7 +68,7 @@ std::string TargetStrings(OpenProject& p, const Json& args) {
 
 lc::StringTable LoadTable(OpenProject& p, const std::string& rel, std::vector<std::string>* errors = nullptr) {
     lc::StringTable table;
-    const fs::path file = p.paths.content / rel;
+    const fs::path file = ContentFile(p, rel);
     std::error_code ec;
     if (fs::is_regular_file(file, ec)) table.ImportCsv(ReadAll(file), errors);
     return table;
@@ -82,7 +82,7 @@ lc::StringTable LoadAllTables(OpenProject& p, std::vector<std::string>* errors =
 }
 
 void SaveTable(OpenProject& p, const std::string& rel, const lc::StringTable& table) {
-    WriteAll(p.paths.content / rel, table.ExportCsv());
+    WriteAll(ContentFile(p, rel), table.ExportCsv());
     p.database->Scan();
 }
 
@@ -269,7 +269,7 @@ void RegisterLocTools(McpServer& server, std::shared_ptr<AssetHost> host) {
              OpenProject& p = host->Require();
              lc::SyncOptions o;
              o.content_dir = p.paths.content;
-             o.strings_file = p.paths.content / TargetStrings(p, args);
+             o.strings_file = ContentFile(p, TargetStrings(p, args));
              o.source_language = SourceLanguage(args);
              if (args.contains("languages")) {
                  if (!args["languages"].is_array()) throw ToolError("\"languages\" must be an array of language tags");

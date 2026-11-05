@@ -54,8 +54,20 @@ namespace aether::sprite2d {
 class Physics2D;
 }
 
+namespace aether {
+class PhysicsScene;
+}
+
 namespace aether::audio {
 class AudioSystem;
+}
+
+namespace aether::anim {
+class AnimationSystem;
+}
+
+namespace aether::vfx {
+class ParticleWorld;
 }
 
 namespace aether::player {
@@ -161,6 +173,14 @@ struct GameStats {
 
 class Game {
 public:
+    struct RebindableInput {
+        std::string context;
+        std::string action;
+        u32 slot = 0;
+        input::Key default_key = input::Key::None;
+        input::Key current_key = input::Key::None;
+    };
+
     explicit Game(GamePackage& package);
     ~Game();
     Game(const Game&) = delete;
@@ -203,6 +223,13 @@ public:
     // PlatformerController2D entities are driven by the "Move" (x axis) and
     // "Jump" actions. Null before a scene is loaded.
     sprite2d::Physics2D* Physics2D() { return physics2d_.get(); }
+    // 3D scene queries (when the Physics module is linked); null until a
+    // scene is loaded or when this player was built without Physics.
+    PhysicsScene* PhysicsQueries();
+    // Shipped UDP clients receive authoritative Jolt state from accepted snapshots.
+    // Opt-in only: keep physics queries/bodies, but never locally step Jolt or
+    // character simulation. Single-player (including Evervale) stays unchanged.
+    void SetAuthoritativePhysicsClient(bool enabled) { authoritative_physics_client_ = enabled; }
 
     // Input (§26.4). The host (the window, or a test) sets keys, buttons and
     // mouse movement here before each Tick; the game's actions come from the
@@ -210,7 +237,28 @@ public:
     // order), and scripts read them through Input.*.
     input::InputState& Input() { return input_state_; }
     input::InputSystem& InputActions() { return input_; }
+    // Host platform code installs its device mapping here. Luau can request
+    // semantic effects with Input.PlayHaptic(...); it returns false when the
+    // host has no haptic backend.
+    input::Haptics& HapticFeedback() { return input_.HapticFeedback(); }
     const input::InputAssetLibrary& InputAssets() const { return input_library_; }
+    // Bindings in context/action order, with the player's overrides applied.
+    std::vector<RebindableInput> RebindableInputs() const;
+    // The AI debugger (M8.8): per AI entity, the state its script reports
+    // (AI.SetDebugState), what its AIPerception knows and targets, and the
+    // path Nav.MoveTowards walks it along. Empty without scripting.
+    struct AiDebugInfo {
+        Entity entity;
+        std::string state;
+        bool has_perception = false;
+        Entity target;
+        std::vector<Entity> known;
+        std::vector<Vec3> path; // corners; empty when it has no path
+        usize next_corner = 0;  // the corner it is walking to (== path.size(): arrived)
+        bool path_complete = false;
+        Vec3 goal;
+    };
+    std::vector<AiDebugInfo> AiDebug() const;
     // Script and Blueprint problems, as text.
     std::vector<std::string> ScriptErrors() const;
     std::vector<std::string> BlueprintErrors() const;
@@ -238,8 +286,11 @@ public:
     // game does not jump ahead. MemoryPressure is counted and passed to anything that subscribed (the renderer answers a Critical one
     // by freeing its GPU textures before the next frame: models fall back to untextured white until the game is restarted, UI images reload on
     // demand). Subscribe to react to the events yourself.
-    platform::PlatformLifecycle& Platform() { return platform_; }
-    bool Suspended() const { return platform_.Suspended(); }
+    // Replace the game's owned lifecycle service with the host's shared
+    // platform service. The referenced service must outlive this Game.
+    void UsePlatformLifecycle(platform::PlatformLifecycle& lifecycle);
+    platform::PlatformLifecycle& Platform() { return *platform_lifecycle_; }
+    bool Suspended() const { return platform_lifecycle_->Suspended(); }
     // The UI is laid out in the swap chain's pixels and pointers arrive in window pixels. With a quality preset's resolution scale the two differ
     // (a 1280 x 720 window drawn into 960 x 540); the host sets how many UI pixels one window pixel is (0.75 there) and pointers are scaled by it
     // for the UI's hit tests. 1 by default.
@@ -255,6 +306,12 @@ public:
     loc::Localization& Localization() { return *localization_; }
     // A cooked asset's path for the game's current language (§29.6): its variant if
     // there is one, else the asset itself.
+    // The dialogue line a playing sequence's Subtitle track shows now (§27, M8.7),
+    // translated into the current language, and its speaker; empty when there is
+    // none or Settings().subtitles is off. Updated by the sequencer each frame;
+    // each change is logged ("Subtitle shown: <key>" / "Subtitle hidden").
+    const std::string& Subtitle() const { return subtitle_text_; }
+    const std::string& SubtitleSpeaker() const { return subtitle_speaker_; }
     std::string LocalizedAsset(const std::string& path) const { return package_.LocalizedPath(path, localization_->Language()); }
     // The player's settings (always there; Load/Save are the host's to call).
     save::SettingsStore<save::GameSettings>& Settings() { return *settings_; }
@@ -267,6 +324,28 @@ public:
     // Tests/headless games render deterministically on Tick; the window host
     // starts device output explicitly. Scene replacement stops the old output.
     audio::AudioSystem* AudioSystem();
+    // The 2D cues sequences are playing now (Audio keys on tracks bound to no
+    // entity, such as dialogue): the cue asset and its handle in
+    // AudioSystem()->Player(). For tests, tools and the debugger.
+    struct SequenceCue {
+        std::string cue;
+        u32 handle = 0; // an audio::CueHandle
+    };
+    std::vector<SequenceCue> SequenceCues() const;
+    // Every Animator's graph (M8.6): parameters from scripts and Blueprints, montages
+    // from sequences' Animation tracks. Null before a scene starts. Each state
+    // change is logged ("Anim state: <entity> <machine>: <from> -> <to>"), and
+    // montages ("Anim montage started: <montage>", "... ended: <montage>").
+    anim::AnimationSystem* Animation();
+    // Every ParticleSystem component (M8.7): placed in the scene, spawned by
+    // Blueprints (Particles library) or by sequences' Vfx tracks. Particle
+    // systems (.avfx) load from the package by path on first use; the world is
+    // stepped after the characters animate, so attached effects follow them.
+    // Sequence effects are logged ("Sequence vfx started: <asset>", "...
+    // stopped: <asset>") and finished ones ("Vfx finished: <asset>"). Its
+    // BuildRenderData is the draw data for a renderer's particle pass. Null
+    // before a scene starts.
+    vfx::ParticleWorld* Particles();
     bool StartAudioOutput(std::string* error = nullptr);
 
 private:
@@ -285,9 +364,7 @@ private:
     void StartRuntime(); // scripts and Blueprints for the loaded scene
     void ApplyAudioSettings();
     void BuildKits();    // adds the kits this build has and orders them
-    void CreateInventoryRuntime();
-    void CreateQuestsRuntime();
-    void CreateInteractionRuntime();
+    void CreateKitRuntime();
     void AddInventoryStage();
     void AddInteractionStage();
     void AddQuestsStage();
@@ -309,7 +386,12 @@ private:
     GameStats stats_;
     FrameContext last_frame_;
     bool paused_ = false, exit_requested_ = false;
+    bool authoritative_physics_client_ = false;
     i32 proof_menu_ = 0, proof_menu_row_ = 0, proof_settings_status_ = 0;
+    input::KeyCapture proof_key_capture_;
+    bool proof_key_capture_active_ = false;
+    std::string proof_capture_context_, proof_capture_action_;
+    u32 proof_capture_slot_ = 0;
     input::InputState menu_previous_;
     bool proof_load_input_ = false, proof_new_input_ = false;
     struct Physics;
@@ -340,6 +422,10 @@ private:
     // Saving: the world context points into the world, guids and lifecycle
     // above, so it is cleared before any of them goes.
     std::unique_ptr<loc::Localization> localization_;
+    void UpdateSubtitle();
+    const void* subtitle_key_ = nullptr; // the seq::SubtitleKey last translated
+    std::string subtitle_language_, subtitle_text_, subtitle_speaker_;
+    bool subtitle_enabled_ = true;
     u64 localization_listener_ = 0;
     bool localization_loaded_ = false;
     std::vector<std::string> localization_warnings_;
@@ -352,7 +438,10 @@ private:
     void RefreshSaveContext();
     void OnPlatformEvent(const platform::LifecycleMessage& message);
     platform::PlatformLifecycle platform_;
+    platform::PlatformLifecycle* platform_lifecycle_ = &platform_;
+    platform::PlatformLifecycle::Handle platform_listener_ = 0;
     bool audio_was_running_ = false; // output was on when the game was suspended
+    bool pause_stopped_audio_ = false; // the pause menu stopped device output
     bool skip_next_dt_ = false;      // the first Tick after a resume
     u32 memory_pressure_events_ = 0;
     f32 ui_pointer_scale_x_ = 1.0f, ui_pointer_scale_y_ = 1.0f;

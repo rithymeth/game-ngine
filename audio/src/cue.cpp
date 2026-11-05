@@ -104,7 +104,16 @@ std::vector<CueDiagnostic> ValidateCue(const SoundCue& cue, const std::function<
     for (const CueNode& n : cue.nodes) {
         if (!seen.insert(n.id).second) add("CU002", "More than one node has id " + std::to_string(n.id) + ".", n.id);
     }
-    if (!(cue.pitch > 0.0f)) add("CU008", "The cue's pitch must be above 0.", 0);
+    if (!std::isfinite(cue.volume_db) || !std::isfinite(cue.spatial_blend) || !std::isfinite(cue.doppler) ||
+        !std::isfinite(cue.attenuation.min_distance) || !std::isfinite(cue.attenuation.max_distance) ||
+        !std::isfinite(cue.attenuation.rolloff) || !std::isfinite(cue.attenuation.lowpass_at_max_hz) ||
+        std::any_of(cue.attenuation.curve.begin(), cue.attenuation.curve.end(), [](const auto& point) {
+            return !std::isfinite(point.first) || !std::isfinite(point.second);
+        })) {
+        add("CU012", "The cue's output settings must be finite.", 0);
+    }
+    if (!std::isfinite(cue.pitch)) add("CU012", "The cue's pitch must be finite.", 0);
+    else if (!(cue.pitch > 0.0f)) add("CU008", "The cue's pitch must be above 0.", 0);
     for (const CueNode& n : cue.nodes) {
         for (u32 c : n.children) {
             if (cue.Find(c) == nullptr) add("CU003", label(n) + " is connected to node " + std::to_string(c) + ", which doesn't exist.", n.id);
@@ -123,25 +132,44 @@ std::vector<CueDiagnostic> ValidateCue(const SoundCue& cue, const std::function<
             }
             break;
         case CueNodeType::Modulator:
+            if (!std::isfinite(n.volume_min_db) || !std::isfinite(n.volume_max_db) ||
+                !std::isfinite(n.pitch_min) || !std::isfinite(n.pitch_max)) {
+                add("CU008", label(n) + ": volume and pitch ranges must be finite.", n.id);
+            }
             if (n.volume_min_db > n.volume_max_db) add("CU008", label(n) + ": the volume range's minimum is above its maximum.", n.id);
             if (n.pitch_min > n.pitch_max) add("CU008", label(n) + ": the pitch range's minimum is above its maximum.", n.id);
             if (!(n.pitch_min > 0.0f)) add("CU008", label(n) + ": pitch must be above 0.", n.id);
             break;
         case CueNodeType::Delay:
-            if (n.delay_min > n.delay_max || n.delay_min < 0.0f) add("CU008", label(n) + ": the delay range must be 0 or more, minimum first.", n.id);
+            if (!std::isfinite(n.delay_min) || !std::isfinite(n.delay_max) || n.delay_min > n.delay_max ||
+                n.delay_min < 0.0f) {
+                add("CU008", label(n) + ": the finite delay range must be 0 or more, minimum first.", n.id);
+            }
             break;
         case CueNodeType::Random: {
             f32 total = 0.0f;
             bool negative = false;
+            bool non_finite = false;
             for (usize i = 0; i < n.children.size(); ++i) {
                 const f32 w = i < n.weights.size() ? n.weights[i] : 1.0f;
+                if (!std::isfinite(w)) {
+                    non_finite = true;
+                    continue;
+                }
                 negative |= w < 0.0f;
                 total += std::max(w, 0.0f);
             }
-            if (negative) add("CU009", label(n) + " has a negative weight.", n.id);
+            if (!std::isfinite(total)) non_finite = true;
+            if (non_finite) add("CU009", label(n) + " has a non-finite weight or total weight.", n.id);
+            else if (negative) add("CU009", label(n) + " has a negative weight.", n.id);
             else if (!n.children.empty() && total <= 0.0f) add("CU009", label(n) + "'s weights are all 0, so nothing can play.", n.id);
             break;
         }
+        case CueNodeType::Mix:
+            if (std::any_of(n.input_db.begin(), n.input_db.end(), [](f32 value) { return !std::isfinite(value); })) {
+                add("CU012", label(n) + " has a non-finite input volume.", n.id);
+            }
+            break;
         case CueNodeType::Concatenator:
             for (usize i = 0; i + 1 < n.children.size(); ++i) {
                 if (AlwaysEndless(cue, n.children[i], 0)) {

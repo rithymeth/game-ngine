@@ -61,7 +61,7 @@ struct PakEntry {
 
 u32 Crc32(std::span<const u8> bytes, u32 crc = 0);
 // Normalizes an archive path: backslashes to '/', no leading "./" or '/',
-// no empty or "." segments. Empty when the path is invalid (it has "..").
+// no empty or "." segments. Empty for invalid traversal or native paths.
 std::string NormalizePath(const std::string& path);
 
 // How to compress what's added: one method, or Auto (zstd for large

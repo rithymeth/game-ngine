@@ -17,3 +17,8 @@ that wants its own types in the reference calls
 its own tool the same way. Types you document in code with tooltips, ranges
 and units (`AETHER_FIELD(speed, Field_EditAnywhere, {.tooltip = "...", .units = "m/s"})`)
 show up in the Inspector and in the reference from the same place.
+
+To generate the complete offline documentation site, including this manual and
+the API reference, run `aether_docgen --site build/docs-site --docs docs` from
+the repository root, then open `build/docs-site/index.html`. CMake users can
+build the `aether_docs_site` target instead.

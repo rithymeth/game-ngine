@@ -105,5 +105,6 @@ int main(int argc, char** argv) {
     std::printf("%llu bytes -> %llu bytes\n", static_cast<unsigned long long>(report.original_bytes),
                 static_cast<unsigned long long>(report.pak_bytes));
     std::printf("texture cache: %zu reused, %zu cooked\n", report.texture_cache_hits, report.texture_cache_misses);
+    std::printf("import cache: %zu reused, %zu imported\n", report.import_cache_hits, report.import_cache_misses);
     return 0;
 }

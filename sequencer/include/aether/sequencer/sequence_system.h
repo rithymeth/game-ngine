@@ -36,6 +36,7 @@ struct SequenceComponent {
     bool destroy_when_finished = false; // the entity goes when the sequence ends
     f32 time = 0.0f;
     bool playing = false;
+    std::string subtitle; // the localization key of the line its Subtitle tracks show now ("" for none); written by the system
     std::vector<SequenceCommand> commands; // not saved
 
     void Play();
@@ -47,6 +48,7 @@ struct SequenceComponent {
     void SetLoop(bool loop);
     bool IsPlaying() const { return playing; }
     f32 GetTime() const { return time; }
+    std::string GetSubtitle() const { return subtitle; }
 };
 
 // Blueprint function library: play a sequence without placing a component.
@@ -65,19 +67,20 @@ void RegisterSequenceComponents();
 namespace aether::seq {
 
 // What a playing sequence reported in the last Update: a Marker is an Event
-// key the playhead crossed; Audio and Animation are those keys crossed (for
-// the host to act on with its audio and animation systems); Finished is the
+// key the playhead crossed; Audio, Animation and Vfx are those keys crossed
+// (for the host to act on with its audio, animation and particle systems); Finished is the
 // sequence reaching its end or being skipped. Finished.skipped distinguishes
 // a deliberate skip from natural playback completion.
 struct SequenceEvent {
-    enum class Kind : u8 { Marker, Finished, Audio, Animation };
+    enum class Kind : u8 { Marker, Finished, Audio, Animation, Vfx };
     Kind kind = Kind::Marker;
     Entity entity;       // the SequenceComponent's entity
-    std::string name;    // Marker: the key's name; Finished: the sequence asset; Audio: the cue; Animation: the montage
-    std::string payload; // Marker: the key's payload; Audio and Animation: the action ("play", "stop", "fade_in", "fade_out")
-    Entity subject;      // Marker, Audio, Animation: the track's bound entity, if any
+    std::string name;    // Marker: the key's name; Finished: the sequence asset; Audio: the cue; Animation: the montage; Vfx: the effect
+    std::string payload; // Marker: the key's payload; Audio, Animation, Vfx: the action ("play", "stop", "fade_in", "fade_out")
+    Entity subject;      // Marker, Audio, Animation, Vfx: the track's bound entity, if any
     f32 value = 0.0f;    // Audio: volume in dB; Animation: the rate
     f32 fade = 0.0f;     // Audio: fade seconds
+    Vec3 offset{0, 0, 0}; // Vfx: where it starts, in the subject's space (the world's without one)
     bool skipped = false; // Finished: true when Skip ended the sequence
 };
 
@@ -116,6 +119,13 @@ public:
     // The strongest fade any playing sequence asks for this frame (Fade
     // tracks): amount 0 is none. Drawing it over the screen is the host's.
     const FadeState& Fade() const { return fade_; }
+    // The subtitle line on screen this frame (Subtitle tracks), or null: the
+    // one of the lowest-index entity when several sequences show one. `owner`
+    // receives that entity. Translating and drawing it is the host's.
+    const SubtitleKey* Subtitle(Entity* owner = nullptr) const {
+        if (owner) *owner = subtitle_owner_;
+        return subtitle_;
+    }
     // Missing sequences and the players' own problems, reported once each.
     const std::vector<std::string>& Problems() const { return problems_; }
     // The player behind a component's entity (null before its first Update).
@@ -150,6 +160,8 @@ private:
     std::map<u32, Slot> slots_; // by entity index
     std::vector<SequenceEvent> events_;
     FadeState fade_;
+    const SubtitleKey* subtitle_ = nullptr;
+    Entity subtitle_owner_;
     std::vector<std::string> problems_;
     std::map<std::string, bool> reported_;
     u64 generation_ = 0;
@@ -171,7 +183,8 @@ AETHER_REFLECT(aether::SequenceComponent, 1,
     AETHER_METHOD(SetRate, Fn_BlueprintCallable, {"rate"}),
     AETHER_METHOD(SetLoop, Fn_BlueprintCallable, {"loop"}),
     AETHER_METHOD(IsPlaying, Fn_BlueprintCallable | Fn_Pure),
-    AETHER_METHOD(GetTime, Fn_BlueprintCallable | Fn_Pure)
+    AETHER_METHOD(GetTime, Fn_BlueprintCallable | Fn_Pure),
+    AETHER_METHOD(GetSubtitle, Fn_BlueprintCallable | Fn_Pure)
 )
 
 AETHER_REFLECT(aether::Sequencer, 1,

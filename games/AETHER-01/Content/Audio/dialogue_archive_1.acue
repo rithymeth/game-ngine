@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "name": "dialogue_archive_1",
+  "root": 1,
+  "output": {
+    "bus": "Voice",
+    "volume_db": -3,
+    "spatial": false
+  },
+  "nodes": [
+    {
+      "id": 1,
+      "type": "Wave",
+      "sound": "Audio/dialogue_archive_1.wav",
+      "looping": false
+    }
+  ]
+}

@@ -17,6 +17,7 @@
 #include "simulation.h"
 
 #include <filesystem>
+#include <functional>
 #include <memory>
 
 namespace aether::mcp {
@@ -26,6 +27,7 @@ struct EditorSession {
     GuidIndex guids;
     editor::EditorHooks hooks;
     editor::CommandStack stack;
+    std::function<const PrefabData*(const assets::AssetGuid&)> prefab_lookup;
     editor::PlaySession play;
     // Exists from Play to Stop; runs the physics systems (see simulation.h).
     std::unique_ptr<Simulation> sim;
@@ -33,7 +35,11 @@ struct EditorSession {
     // leave it). Empty means unrestricted, for embedding and tests; the server program sets it (see --scene-root).
     std::filesystem::path scene_root;
 
-    editor::CommandContext Context() { return editor::CommandContext(world, guids, &hooks); }
+    editor::CommandContext Context() {
+        editor::CommandContext context(world, guids, &hooks);
+        context.find_prefab = prefab_lookup;
+        return context;
+    }
 };
 
 // Makes sure the engine's built-in scene components (Transform, Parent,

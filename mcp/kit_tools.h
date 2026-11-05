@@ -18,6 +18,7 @@
 
 namespace aether::mcp {
 
-void RegisterKitTools(McpServer& server, std::shared_ptr<detail::AssetHost> host);
+struct EditorSession;
+void RegisterKitTools(McpServer& server, std::shared_ptr<detail::AssetHost> host, EditorSession& session);
 
 } // namespace aether::mcp

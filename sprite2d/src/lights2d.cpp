@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace aether::sprite2d {
 
@@ -50,14 +51,48 @@ void AddBox(std::vector<Segment2D>& out, Vec2 lo, Vec2 hi) {
     out.push_back({d, a});
 }
 
+struct LightTileRange {
+    i32 first = 0;
+    i32 last = -1;
+    bool Valid() const { return first <= last; }
+};
+
+LightTileRange GetLightTileRange(f32 world_min, f32 world_max, f32 origin, f32 cell_size, u32 extent) {
+    if (extent == 0 || !std::isfinite(world_min) || !std::isfinite(world_max) || world_min > world_max ||
+        !std::isfinite(origin) || !std::isfinite(cell_size) || cell_size <= 0.0f) return {};
+    const f64 grid_min = (static_cast<f64>(world_min) - origin) / cell_size;
+    const f64 grid_max = (static_cast<f64>(world_max) - origin) / cell_size;
+    if (!std::isfinite(grid_min) || !std::isfinite(grid_max) || grid_max < 0.0 || grid_min > extent) return {};
+    const f64 max_index = static_cast<f64>(std::min<u64>(static_cast<u64>(extent) - 1,
+                                                         static_cast<u64>(std::numeric_limits<i32>::max() - 1)));
+    const auto index = [max_index](f64 value) {
+        return static_cast<i32>(std::clamp(std::floor(value), 0.0, max_index));
+    };
+    return {index(grid_min), index(grid_max)};
+}
+
+bool LightTileGeometry(const Tileset& tileset, f32 pixels_per_unit, Vec2& cell_size) {
+    if (!std::isfinite(pixels_per_unit) || pixels_per_unit <= 0.0f ||
+        tileset.tile_width == 0 || tileset.tile_height == 0) return false;
+    cell_size = {static_cast<f32>(tileset.tile_width) / pixels_per_unit,
+                 static_cast<f32>(tileset.tile_height) / pixels_per_unit};
+    return std::isfinite(cell_size.x) && std::isfinite(cell_size.y) && cell_size.x > 0.0f && cell_size.y > 0.0f;
+}
+
 } // namespace
 
 LightColor LightMap::Sample(f32 x, f32 y) const {
-    if (width == 0 || height == 0) return {};
-    const f32 fx = (x - origin.x) / cell_size - 0.5f;
-    const f32 fy = (y - origin.y) / cell_size - 0.5f;
+    if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(origin.x) || !std::isfinite(origin.y) ||
+        !std::isfinite(cell_size) || cell_size <= 0.0f || width == 0 || height == 0 ||
+        cells.size() < static_cast<u64>(width) * height) return {};
+    const f64 fx = (static_cast<f64>(x) - origin.x) / cell_size - 0.5;
+    const f64 fy = (static_cast<f64>(y) - origin.y) / cell_size - 0.5;
+    constexpr f64 min_index = static_cast<f64>(std::numeric_limits<i32>::min());
+    constexpr f64 max_index = static_cast<f64>(std::numeric_limits<i32>::max()) - 1.0;
+    if (!std::isfinite(fx) || !std::isfinite(fy) || std::floor(fx) < min_index || std::floor(fx) > max_index ||
+        std::floor(fy) < min_index || std::floor(fy) > max_index) return {};
     const i32 x0 = static_cast<i32>(std::floor(fx)), y0 = static_cast<i32>(std::floor(fy));
-    const f32 tx = fx - static_cast<f32>(x0), ty = fy - static_cast<f32>(y0);
+    const f32 tx = static_cast<f32>(fx - x0), ty = static_cast<f32>(fy - y0);
     const auto lerp = [](const LightColor& a, const LightColor& b, f32 t) {
         return LightColor{a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t};
     };
@@ -67,38 +102,49 @@ LightColor LightMap::Sample(f32 x, f32 y) const {
 }
 
 const LightColor& LightMap::At(i32 x, i32 y) const {
-    x = std::clamp(x, 0, static_cast<i32>(width) - 1);
-    y = std::clamp(y, 0, static_cast<i32>(height) - 1);
-    return cells[static_cast<usize>(y) * width + static_cast<usize>(x)];
+    static const LightColor empty{};
+    if (width == 0 || height == 0 || cells.size() < static_cast<u64>(width) * height) return empty;
+    const u32 cx = x < 0 ? 0u : std::min(static_cast<u32>(x), width - 1);
+    const u32 cy = y < 0 ? 0u : std::min(static_cast<u32>(y), height - 1);
+    return cells[static_cast<usize>(cy) * width + cx];
 }
 
 std::vector<Segment2D> GatherOccluders(const World& world, const Resolvers2D& tiles, Vec2 region_min, Vec2 region_max) {
     std::vector<Segment2D> out;
+    if (!std::isfinite(region_min.x) || !std::isfinite(region_min.y) || !std::isfinite(region_max.x) ||
+        !std::isfinite(region_max.y) || region_max.x < region_min.x || region_max.y < region_min.y) return out;
     EachEntity(world, [&](Entity e) {
         const Transform* t = world.GetComponent<Transform>(e);
         if (!t) return;
         if (const ShadowCaster2D* c = world.GetComponent<ShadowCaster2D>(e)) {
-            const Vec2 centre{t->position.x + c->offset.x, t->position.y + c->offset.y};
-            const Vec2 lo{centre.x - c->half_extents.x, centre.y - c->half_extents.y};
-            const Vec2 hi{centre.x + c->half_extents.x, centre.y + c->half_extents.y};
-            if (hi.x >= region_min.x && lo.x <= region_max.x && hi.y >= region_min.y && lo.y <= region_max.y) AddBox(out, lo, hi);
+            if (std::isfinite(t->position.x) && std::isfinite(t->position.y) &&
+                std::isfinite(c->offset.x) && std::isfinite(c->offset.y) &&
+                std::isfinite(c->half_extents.x) && c->half_extents.x >= 0.0f &&
+                std::isfinite(c->half_extents.y) && c->half_extents.y >= 0.0f) {
+                const Vec2 centre{t->position.x + c->offset.x, t->position.y + c->offset.y};
+                const Vec2 lo{centre.x - c->half_extents.x, centre.y - c->half_extents.y};
+                const Vec2 hi{centre.x + c->half_extents.x, centre.y + c->half_extents.y};
+                if (std::isfinite(lo.x) && std::isfinite(lo.y) && std::isfinite(hi.x) && std::isfinite(hi.y) &&
+                    hi.x >= region_min.x && lo.x <= region_max.x && hi.y >= region_min.y && lo.y <= region_max.y)
+                    AddBox(out, lo, hi);
+            }
         }
         const TilemapRenderer* r = world.GetComponent<TilemapRenderer>(e);
-        if (!r || !tiles.tilemaps || !tiles.tilesets || r->pixels_per_unit <= 0.0f) return;
+        if (!r || !tiles.tilemaps || !tiles.tilesets || !std::isfinite(t->position.x) || !std::isfinite(t->position.y)) return;
         const TilemapData* map = tiles.tilemaps(r->tilemap.guid);
         const Tileset* ts = map ? tiles.tilesets(map->tileset) : nullptr;
         if (!map || !ts) return;
-        const f32 cw = static_cast<f32>(ts->tile_width) / r->pixels_per_unit, ch = static_cast<f32>(ts->tile_height) / r->pixels_per_unit;
-        const i32 x0 = std::max(0, static_cast<i32>(std::floor((region_min.x - t->position.x) / cw)));
-        const i32 y0 = std::max(0, static_cast<i32>(std::floor((region_min.y - t->position.y) / ch)));
-        const i32 x1 = std::min(static_cast<i32>(map->width) - 1, static_cast<i32>(std::floor((region_max.x - t->position.x) / cw)));
-        const i32 y1 = std::min(static_cast<i32>(map->height) - 1, static_cast<i32>(std::floor((region_max.y - t->position.y) / ch)));
+        Vec2 cell;
+        if (!LightTileGeometry(*ts, r->pixels_per_unit, cell)) return;
+        const LightTileRange xr = GetLightTileRange(region_min.x, region_max.x, t->position.x, cell.x, map->width);
+        const LightTileRange yr = GetLightTileRange(region_min.y, region_max.y, t->position.y, cell.y, map->height);
+        if (!xr.Valid() || !yr.Valid()) return;
         const auto solid = [&](i32 x, i32 y) { return map->InBounds(x, y) && IsSolidAt(*map, *ts, x, y); };
-        for (i32 y = y0; y <= y1; ++y) {
-            for (i32 x = x0; x <= x1; ++x) {
+        for (i32 y = yr.first; y <= yr.last; ++y) {
+            for (i32 x = xr.first; x <= xr.last; ++x) {
                 if (!solid(x, y)) continue;
-                const f32 lx = t->position.x + static_cast<f32>(x) * cw, ly = t->position.y + static_cast<f32>(y) * ch;
-                const Vec2 bl{lx, ly}, br{lx + cw, ly}, tr{lx + cw, ly + ch}, tl{lx, ly + ch};
+                const f32 lx = t->position.x + static_cast<f32>(x) * cell.x, ly = t->position.y + static_cast<f32>(y) * cell.y;
+                const Vec2 bl{lx, ly}, br{lx + cell.x, ly}, tr{lx + cell.x, ly + cell.y}, tl{lx, ly + cell.y};
                 if (!solid(x, y - 1)) out.push_back({bl, br});
                 if (!solid(x + 1, y)) out.push_back({br, tr});
                 if (!solid(x, y + 1)) out.push_back({tr, tl});
@@ -122,42 +168,62 @@ bool Occluded(const std::vector<Segment2D>& occluders, Vec2 from, Vec2 to) {
 }
 
 LightColor LightAt(const World& world, const std::vector<Segment2D>& occluders, Vec2 point) {
-    LightColor sum;
+    f64 red = 0.0, green = 0.0, blue = 0.0;
+    if (!std::isfinite(point.x) || !std::isfinite(point.y)) return {};
     EachEntity(world, [&](Entity e) {
         const Light2D* light = world.GetComponent<Light2D>(e);
         const Transform* t = world.GetComponent<Transform>(e);
-        if (!light || !t || !light->enabled) return;
+        if (!light || !t || !light->enabled || !std::isfinite(light->intensity) || light->intensity < 0.0f ||
+            !std::isfinite(light->color.r) || !std::isfinite(light->color.g) || !std::isfinite(light->color.b)) return;
         f32 amount = light->intensity;
         if (light->type != Light2DType::Global) {
+            if (!std::isfinite(t->position.x) || !std::isfinite(t->position.y) || !std::isfinite(light->radius) ||
+                light->radius <= 0.0f || !std::isfinite(light->falloff) || light->falloff < 0.0f) return;
             const Vec2 at{t->position.x, t->position.y};
             const Vec2 d = point - at;
             const f32 dist = d.Length();
-            if (dist >= light->radius || light->radius <= 0.0f) return;
+            if (!std::isfinite(dist) || dist >= light->radius) return;
             amount *= std::pow(1.0f - dist / light->radius, light->falloff);
-            if (light->type == Light2DType::Spot && dist > 1e-5f) {
-                const f32 axis = (light->direction_degrees + AngleOf(t->rotation)) * kPi / 180.0f;
-                const f32 cos_to = d.Dot(Vec2{std::cos(axis), std::sin(axis)}) * (1.0f / dist);
-                const f32 angle = std::acos(std::clamp(cos_to, -1.0f, 1.0f)) * 180.0f / kPi;
-                amount *= 1.0f - SmoothStep(light->inner_angle, light->outer_angle, angle);
+            if (light->type == Light2DType::Spot) {
+                if (!std::isfinite(light->direction_degrees) || !std::isfinite(light->inner_angle) ||
+                    !std::isfinite(light->outer_angle) || !std::isfinite(t->rotation.z) ||
+                    !std::isfinite(t->rotation.w)) return;
+                if (dist <= 1e-5f) {
+                    // The cone direction is undefined at its origin; keep the full point-light contribution.
+                } else {
+                    const f32 axis = (light->direction_degrees + AngleOf(t->rotation)) * kPi / 180.0f;
+                    if (!std::isfinite(axis)) return;
+                    const f32 cos_to = d.Dot(Vec2{std::cos(axis), std::sin(axis)}) * (1.0f / dist);
+                    const f32 angle = std::acos(std::clamp(cos_to, -1.0f, 1.0f)) * 180.0f / kPi;
+                    amount *= 1.0f - SmoothStep(light->inner_angle, light->outer_angle, angle);
+                }
             }
-            if (amount <= 0.0f) return;
+            if (!std::isfinite(amount) || amount <= 0.0f) return;
             if (light->cast_shadows && Occluded(occluders, at, point)) return;
         }
-        sum.r += light->color.r * amount;
-        sum.g += light->color.g * amount;
-        sum.b += light->color.b * amount;
+        red += static_cast<f64>(light->color.r) * amount;
+        green += static_cast<f64>(light->color.g) * amount;
+        blue += static_cast<f64>(light->color.b) * amount;
     });
-    return sum;
+    const f64 limit = std::numeric_limits<f32>::max();
+    return {static_cast<f32>(std::clamp(red, -limit, limit)), static_cast<f32>(std::clamp(green, -limit, limit)),
+            static_cast<f32>(std::clamp(blue, -limit, limit))};
 }
 
 LightMap BuildLightMap(const World& world, const Resolvers2D& tiles, Vec2 region_min, Vec2 region_max, f32 cell_size) {
     LightMap map;
-    if (cell_size <= 0.0f || region_max.x <= region_min.x || region_max.y <= region_min.y) return map;
+    if (!std::isfinite(cell_size) || cell_size <= 0.0f || !std::isfinite(region_min.x) ||
+        !std::isfinite(region_min.y) || !std::isfinite(region_max.x) || !std::isfinite(region_max.y) ||
+        region_max.x <= region_min.x || region_max.y <= region_min.y) return map;
+    constexpr f64 max_cells = 4.0 * 1024.0 * 1024.0;
+    const f64 width = std::ceil((static_cast<f64>(region_max.x) - region_min.x) / cell_size);
+    const f64 height = std::ceil((static_cast<f64>(region_max.y) - region_min.y) / cell_size);
+    if (!std::isfinite(width) || !std::isfinite(height) || width < 1.0 || height < 1.0 ||
+        width > max_cells || height > max_cells || width * height > max_cells) return map;
     map.origin = region_min;
     map.cell_size = cell_size;
-    map.width = static_cast<u32>(std::ceil((region_max.x - region_min.x) / cell_size));
-    map.height = static_cast<u32>(std::ceil((region_max.y - region_min.y) / cell_size));
-    if (static_cast<u64>(map.width) * map.height > 4u * 1024u * 1024u) return LightMap{};
+    map.width = static_cast<u32>(width);
+    map.height = static_cast<u32>(height);
     // Occluders from a little beyond the region: a light outside still shadows it.
     f32 reach = 0.0f;
     EachEntity(world, [&](Entity e) {
@@ -171,16 +237,22 @@ LightMap BuildLightMap(const World& world, const Resolvers2D& tiles, Vec2 region
     EachEntity(world, [&](Entity e) {
         const Transform* t = world.GetComponent<Transform>(e);
         const TilemapRenderer* r = world.GetComponent<TilemapRenderer>(e);
-        if (!t || !r || !tiles.tilemaps || !tiles.tilesets || r->pixels_per_unit <= 0.0f) return;
+        if (!t || !r || !tiles.tilemaps || !tiles.tilesets || !std::isfinite(t->position.x) ||
+            !std::isfinite(t->position.y)) return;
         const TilemapData* tm = tiles.tilemaps(r->tilemap.guid);
         const Tileset* ts = tm ? tiles.tilesets(tm->tileset) : nullptr;
         if (!tm || !ts) return;
-        const f32 cw = static_cast<f32>(ts->tile_width) / r->pixels_per_unit, ch = static_cast<f32>(ts->tile_height) / r->pixels_per_unit;
+        Vec2 cell;
+        if (!LightTileGeometry(*ts, r->pixels_per_unit, cell)) return;
         for (u32 y = 0; y < map.height; ++y) {
             for (u32 x = 0; x < map.width; ++x) {
-                const f32 px = region_min.x + (static_cast<f32>(x) + 0.5f) * cell_size - t->position.x;
-                const f32 py = region_min.y + (static_cast<f32>(y) + 0.5f) * cell_size - t->position.y;
-                const i32 cx = static_cast<i32>(std::floor(px / cw)), cy = static_cast<i32>(std::floor(py / ch));
+                const f64 px = (static_cast<f64>(region_min.x) + (static_cast<f64>(x) + 0.5) * cell_size - t->position.x) / cell.x;
+                const f64 py = (static_cast<f64>(region_min.y) + (static_cast<f64>(y) + 0.5) * cell_size - t->position.y) / cell.y;
+                if (!std::isfinite(px) || !std::isfinite(py) || px < 0.0 || py < 0.0 ||
+                    px >= tm->width || py >= tm->height ||
+                    px > static_cast<f64>(std::numeric_limits<i32>::max()) ||
+                    py > static_cast<f64>(std::numeric_limits<i32>::max())) continue;
+                const i32 cx = static_cast<i32>(std::floor(px)), cy = static_cast<i32>(std::floor(py));
                 if (tm->InBounds(cx, cy) && IsSolidAt(*tm, *ts, cx, cy)) solid[static_cast<usize>(y) * map.width + x] = 1;
             }
         }
@@ -211,10 +283,14 @@ LightMap BuildLightMap(const World& world, const Resolvers2D& tiles, Vec2 region
 
 std::vector<Vec2> VisibilityPolygon(Vec2 center, f32 radius, const std::vector<Segment2D>& occluders) {
     std::vector<Vec2> polygon;
-    if (radius <= 0.0f) return polygon;
+    if (!std::isfinite(center.x) || !std::isfinite(center.y) || !std::isfinite(radius) || radius <= 0.0f) return polygon;
+    const Vec2 bounds_min{center.x - radius, center.y - radius};
+    const Vec2 bounds_max{center.x + radius, center.y + radius};
+    if (!std::isfinite(bounds_min.x) || !std::isfinite(bounds_min.y) ||
+        !std::isfinite(bounds_max.x) || !std::isfinite(bounds_max.y)) return polygon;
     // The bounds: a square round the light, so every ray ends somewhere.
     std::vector<Segment2D> segs = occluders;
-    AddBox(segs, {center.x - radius, center.y - radius}, {center.x + radius, center.y + radius});
+    AddBox(segs, bounds_min, bounds_max);
     // Rays at every endpoint, and a hair either side of it.
     std::vector<f32> angles;
     for (const Segment2D& s : segs) {

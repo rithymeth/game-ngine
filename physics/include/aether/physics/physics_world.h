@@ -70,6 +70,7 @@ public:
     PhysicsWorld& operator=(const PhysicsWorld&) = delete;
 
     void SetGravity(const Vec3& gravity);
+    const Vec3& GetGravity() const { return gravity_; }
 
     // Static box, e.g. a ground plane. `half_extents` per Jolt convention
     // (half the box's size along each axis).
@@ -95,6 +96,7 @@ public:
     // --- Queries (Phase 13 step 4) --------------------------------------------
     // Safe at any time outside Step. The nearest hit along `from` -> `to`.
     QueryHit RayCast(const Vec3& from, const Vec3& to, const QueryFilter& filter = {}) const;
+    std::vector<QueryHit> RayCastAll(const Vec3& from, const Vec3& to, const QueryFilter& filter = {}, usize max_hits = 64) const;
     // Sweeps `shape` (at `rotation`) from `from` to `to`; the first hit.
     // Starting inside something counts as a hit at distance 0.
     QueryHit ShapeCast(const JPH::Shape& shape, const Vec3& from, const Vec3& to, const Quaternion& rotation = Quaternion::Identity(),
@@ -136,6 +138,7 @@ private:
     std::unique_ptr<JPH::JobSystem> jolt_job_system_;
     std::unique_ptr<Layers> layers_;
     std::unique_ptr<JPH::PhysicsSystem> physics_system_;
+    Vec3 gravity_{0.0f, -9.81f, 0.0f};
 
     struct ContactQueue; // the Jolt listener and its buffer; defined in the .cpp
     struct PairState {

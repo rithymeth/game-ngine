@@ -1748,9 +1748,10 @@ can be added later) pulls from the mixer on its own thread.
   | CU006 | a Wave with no sound |
   | CU007 | a sound that doesn't exist |
   | CU008 | an inverted or invalid range |
-  | CU009 | negative or all-zero weights |
+  | CU009 | non-finite, negative, or all-zero weights |
   | CU010 | (warning) inputs after one that never ends |
   | CU011 | (warning) a node the output doesn't reach |
+  | CU012 | non-finite output settings or mix volumes |
 
 - **CuePlayer**: plays cues from a `SoundBank` (decoded or streamed
   sounds by name).
@@ -3722,6 +3723,13 @@ in-game overlays too.
   - The selected report shows its reason, build and process, its
     context, backtrace and log.
   - Buttons: Copy report, Dismiss, Delete and Dismiss all.
+
+- **Windows minidump symbolication**: `tools/symbolicate/aether_symbolicate`
+  reads the captured x64 thread contexts and stack memory from a `.dmp`,
+  resolves frames with DbgHelp/PDBs from a supplied directory, and writes a
+  sibling `.symbols.txt` file. It reports unresolved addresses when a matching
+  PDB is not available. The current tool supports x64 dumps; ARM64 and x86
+  dumps are reported as unsupported.
 
 ### 23.5 Functional tests
 

@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <fstream>
+#include <limits>
 
 namespace aether::sprite2d {
 
@@ -15,25 +16,41 @@ constexpr int kTilemapFormatVersion = 1;
 } // namespace
 
 u32 Tileset::Columns() const {
-    if (tile_width == 0 || texture_width < 2 * margin) return 0;
-    return (texture_width - 2 * margin + spacing) / (tile_width + spacing);
+    const u64 margins = static_cast<u64>(margin) * 2;
+    if (tile_width == 0 || texture_width < margins) return 0;
+    const u64 usable = static_cast<u64>(texture_width) - margins;
+    const u64 stride = static_cast<u64>(tile_width) + spacing;
+    return static_cast<u32>((usable + spacing) / stride);
 }
 u32 Tileset::Rows() const {
-    if (tile_height == 0 || texture_height < 2 * margin) return 0;
-    return (texture_height - 2 * margin + spacing) / (tile_height + spacing);
+    const u64 margins = static_cast<u64>(margin) * 2;
+    if (tile_height == 0 || texture_height < margins) return 0;
+    const u64 usable = static_cast<u64>(texture_height) - margins;
+    const u64 stride = static_cast<u64>(tile_height) + spacing;
+    return static_cast<u32>((usable + spacing) / stride);
+}
+
+u32 Tileset::TileCount() const {
+    const u64 count = static_cast<u64>(Columns()) * Rows();
+    // Tile ids are signed 32-bit values, so higher indices cannot be addressed.
+    return static_cast<u32>(std::min<u64>(count, static_cast<u64>(std::numeric_limits<i32>::max()) + 1));
 }
 
 bool Tileset::Uv(i32 tile, f32 out[4]) const {
     const u32 columns = Columns();
-    if (tile < 0 || columns == 0 || static_cast<u32>(tile) >= TileCount()) return false;
+    if (!out || tile < 0 || texture_width == 0 || texture_height == 0 || columns == 0 ||
+        static_cast<u32>(tile) >= TileCount()) return false;
     const u32 col = static_cast<u32>(tile) % columns;
     const u32 row = static_cast<u32>(tile) / columns;
-    const f32 x = static_cast<f32>(margin + col * (tile_width + spacing));
-    const f32 y = static_cast<f32>(margin + row * (tile_height + spacing));
-    out[0] = x / static_cast<f32>(texture_width);
-    out[1] = y / static_cast<f32>(texture_height);
-    out[2] = (x + static_cast<f32>(tile_width)) / static_cast<f32>(texture_width);
-    out[3] = (y + static_cast<f32>(tile_height)) / static_cast<f32>(texture_height);
+    const u64 x = static_cast<u64>(margin) + static_cast<u64>(col) * (static_cast<u64>(tile_width) + spacing);
+    const u64 y = static_cast<u64>(margin) + static_cast<u64>(row) * (static_cast<u64>(tile_height) + spacing);
+    const u64 right = x + tile_width;
+    const u64 bottom = y + tile_height;
+    if (right > texture_width || bottom > texture_height) return false;
+    out[0] = static_cast<f32>(x) / static_cast<f32>(texture_width);
+    out[1] = static_cast<f32>(y) / static_cast<f32>(texture_height);
+    out[2] = static_cast<f32>(right) / static_cast<f32>(texture_width);
+    out[3] = static_cast<f32>(bottom) / static_cast<f32>(texture_height);
     return true;
 }
 
@@ -160,7 +177,8 @@ void TilemapData::Resize(u32 new_width, u32 new_height) {
         std::vector<i32> cells(static_cast<usize>(new_width) * new_height, kEmpty);
         for (u32 y = 0; y < std::min(height, new_height); ++y) {
             for (u32 x = 0; x < std::min(width, new_width); ++x) {
-                cells[static_cast<usize>(y) * new_width + x] = layer.cells[static_cast<usize>(y) * width + x];
+                const u64 source = static_cast<u64>(y) * width + x;
+                if (source < layer.cells.size()) cells[static_cast<usize>(y) * new_width + x] = layer.cells[source];
             }
         }
         layer.cells = std::move(cells);
@@ -179,20 +197,31 @@ usize TilemapData::AddLayer(const std::string& name) {
 
 i32 TilemapData::Get(usize layer, i32 x, i32 y) const {
     if (layer >= layers.size() || !InBounds(x, y)) return kEmpty;
-    return layers[layer].cells[static_cast<usize>(y) * width + static_cast<usize>(x)];
+    const u64 index = static_cast<u64>(y) * width + static_cast<u32>(x);
+    if (index >= layers[layer].cells.size()) return kEmpty;
+    return layers[layer].cells[static_cast<usize>(index)];
 }
 
 bool TilemapData::Set(usize layer, i32 x, i32 y, i32 cell) {
     if (layer >= layers.size() || !InBounds(x, y)) return false;
-    layers[layer].cells[static_cast<usize>(y) * width + static_cast<usize>(x)] = cell;
+    const u64 index = static_cast<u64>(y) * width + static_cast<u32>(x);
+    if (index >= layers[layer].cells.size()) return false;
+    layers[layer].cells[static_cast<usize>(index)] = cell;
     return true;
 }
 
 usize TilemapData::Fill(usize layer, i32 x0, i32 y0, i32 x1, i32 y1, i32 cell) {
+    if (layer >= layers.size() || width == 0 || height == 0 ||
+        static_cast<u64>(layers[layer].cells.size()) < static_cast<u64>(width) * height) return 0;
+    const i64 left = std::max<i64>(std::min(x0, x1), 0);
+    const i64 right = std::min<i64>(std::max(x0, x1), static_cast<i64>(width) - 1);
+    const i64 bottom = std::max<i64>(std::min(y0, y1), 0);
+    const i64 top = std::min<i64>(std::max(y0, y1), static_cast<i64>(height) - 1);
+    if (left > right || bottom > top) return 0;
     usize n = 0;
-    for (i32 y = std::min(y0, y1); y <= std::max(y0, y1); ++y) {
-        for (i32 x = std::min(x0, x1); x <= std::max(x0, x1); ++x) {
-            if (Set(layer, x, y, cell)) ++n;
+    for (i64 y = bottom; y <= top; ++y) {
+        for (i64 x = left; x <= right; ++x) {
+            if (Set(layer, static_cast<i32>(x), static_cast<i32>(y), cell)) ++n;
         }
     }
     return n;
@@ -254,10 +283,19 @@ u8 NeighbourMask(const TilemapData& map, usize layer, i32 x, i32 y) {
     const i32 self = map.Get(layer, x, y);
     if (self == kEmpty) return 0;
     u8 mask = 0;
-    if (map.Get(layer, x, y + 1) == self) mask |= kNorth;
-    if (map.Get(layer, x + 1, y) == self) mask |= kEast;
-    if (map.Get(layer, x, y - 1) == self) mask |= kSouth;
-    if (map.Get(layer, x - 1, y) == self) mask |= kWest;
+    const auto matches = [&](i64 neighbour_x, i64 neighbour_y) {
+        if (neighbour_x < std::numeric_limits<i32>::min() ||
+            neighbour_x > std::numeric_limits<i32>::max() ||
+            neighbour_y < std::numeric_limits<i32>::min() ||
+            neighbour_y > std::numeric_limits<i32>::max()) {
+            return false;
+        }
+        return map.Get(layer, static_cast<i32>(neighbour_x), static_cast<i32>(neighbour_y)) == self;
+    };
+    if (matches(x, static_cast<i64>(y) + 1)) mask |= kNorth;
+    if (matches(static_cast<i64>(x) + 1, y)) mask |= kEast;
+    if (matches(x, static_cast<i64>(y) - 1)) mask |= kSouth;
+    if (matches(static_cast<i64>(x) - 1, y)) mask |= kWest;
     return mask;
 }
 
@@ -277,12 +315,17 @@ bool IsSolidAt(const TilemapData& map, const Tileset& tileset, i32 x, i32 y) {
 }
 
 void LocalToCell(f32 local_x, f32 local_y, f32 tile_units, i32& out_x, i32& out_y) {
-    if (tile_units <= 0.0f) {
+    if (!std::isfinite(local_x) || !std::isfinite(local_y) || !std::isfinite(tile_units) || tile_units <= 0.0f) {
         out_x = out_y = 0;
         return;
     }
-    out_x = static_cast<i32>(std::floor(local_x / tile_units));
-    out_y = static_cast<i32>(std::floor(local_y / tile_units));
+    const auto to_cell = [tile_units](f32 local) {
+        const f64 cell = std::floor(static_cast<f64>(local) / tile_units);
+        return static_cast<i32>(std::clamp(cell, static_cast<f64>(std::numeric_limits<i32>::min()),
+                                           static_cast<f64>(std::numeric_limits<i32>::max())));
+    };
+    out_x = to_cell(local_x);
+    out_y = to_cell(local_y);
 }
 
 } // namespace aether::sprite2d

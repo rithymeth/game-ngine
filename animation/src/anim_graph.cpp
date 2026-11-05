@@ -673,14 +673,18 @@ void AnimGraphInstance::EvaluateMachine(const AnimNode& node, f32 dt, f32 weight
         for (const std::string& trigger : used) values_[trigger] = 0.0f;
     }
     const bool blending = ms.blend_duration > 0.0f && ms.blend_elapsed < ms.blend_duration && ms.from >= 0;
-    f32 alpha = 1.0f;
+    f32 alpha = 1.0f, mean = 1.0f;
     if (blending) {
+        const f32 before = std::clamp(ms.blend_elapsed / ms.blend_duration, 0.0f, 1.0f);
         ms.blend_elapsed += dt;
         alpha = std::clamp(ms.blend_elapsed / ms.blend_duration, 0.0f, 1.0f);
+        // Root motion and notifies count by the crossfade's average weight over the frame, so a blend
+        // moves the character the same distance at any frame rate; the pose uses the weight at its end.
+        mean = 0.5f * (before + alpha);
     }
-    const Pose target_pose = Evaluate(m->states[static_cast<usize>(ms.current)].pose, dt, weight * alpha);
+    const Pose target_pose = Evaluate(m->states[static_cast<usize>(ms.current)].pose, dt, weight * mean);
     if (blending) {
-        const Pose source = ms.from_snapshot ? ms.snapshot : Evaluate(m->states[static_cast<usize>(ms.from)].pose, dt, weight * (1.0f - alpha));
+        const Pose source = ms.from_snapshot ? ms.snapshot : Evaluate(m->states[static_cast<usize>(ms.from)].pose, dt, weight * (1.0f - mean));
         if (source.local.size() == target_pose.local.size()) BlendPoses(source, target_pose, alpha, out);
         else out = target_pose;
         if (alpha >= 1.0f) ms.from = -1;
@@ -836,6 +840,24 @@ std::string AnimGraphInstance::CurrentState(u32 machine_node) const {
 bool AnimGraphInstance::InTransition(u32 machine_node) const {
     auto it = machines_.find(machine_node);
     return it != machines_.end() && it->second->from >= 0;
+}
+
+AnimGraphInstance::MachineBlend AnimGraphInstance::Blend(u32 machine_node) const {
+    MachineBlend b;
+    b.to = CurrentState(machine_node);
+    auto it = machines_.find(machine_node);
+    const AnimNode* n = graph_.Find(machine_node);
+    const StateMachine* m = n != nullptr ? graph_.FindMachine(n->machine) : nullptr;
+    if (it == machines_.end() || m == nullptr) return b;
+    const MachineState& ms = *it->second;
+    b.time_in_state = ms.time_in_state;
+    if (ms.from >= 0 && static_cast<usize>(ms.from) < m->states.size() && ms.blend_duration > 0.0f) {
+        const f32 alpha = std::clamp(ms.blend_elapsed / ms.blend_duration, 0.0f, 1.0f);
+        b.from = m->states[static_cast<usize>(ms.from)].name;
+        b.from_weight = 1.0f - alpha;
+        b.to_weight = alpha;
+    }
+    return b;
 }
 
 // --- Files --------------------------------------------------------------------------------------

@@ -3,6 +3,34 @@
 A working draft of the next release's notes. It is rewritten into `vX.Y.Z.md` when a version is tagged; it
 describes what is on `master`, not a promise of a version number or a date.
 
+- Added an offline documentation site generated from the manual and reflected engine API (`aether_docgen --site ...` or the CMake `aether_docs_site` target).
+
+## Vulkan regression checks
+
+- Linux Vulkan CI now requires a working device and display on its graphics lanes, and the GCC lane checks
+  Khronos validation diagnostics. Added repeated resize/readback and texture-handle reuse regressions, a
+  compute descriptor-pool rollover/reset regression, and corrected the textured-quad test's SPIR-V push-constant
+  padding. Optional local runs and the sanitizer lane can still skip unavailable Vulkan devices.
+
+## API compatibility
+
+- The 1.0 preparation freezes the public names and normalized function-like declaration signatures in selected
+  stable headers. CI checks those baselines. Other public APIs remain experimental; this is not a binary ABI or
+  semantic compatibility guarantee. See [API stability](../manual/api_stability.md).
+
+## Samples
+
+- Added Beacon Run, a third playable sample. Its fixed-step ECS simulation is portable; the Windows sample uses a
+  small Win32/GDI renderer. Collect eight beacons while avoiding patrol drones.
+
+## Release artifacts
+
+- The release workflow checks Windows editor and AETHER-01 archives against `SHA256SUMS.txt` and attaches a Sigstore
+  build-provenance attestation. When both `AETHER_WINDOWS_SIGNING_PFX_BASE64` and
+  `AETHER_WINDOWS_SIGNING_PFX_PASSWORD` are configured, the release job Authenticode-signs the packaged EXEs and DLLs
+  and verifies those signatures. Without the certificate secrets, it publishes unsigned archives and records
+  `signed: false` in `RELEASE_MANIFEST.json`.
+
 ## Agent and MCP tools
 
 - The MCP server has tools for UI layouts, themes and animations, saves and settings, world partitions,
@@ -15,9 +43,18 @@ describes what is on `master`, not a promise of a version number or a date.
 
 ## Gameplay systems
 
+- Animation: `AnimationLookAt` and `AnimationTwoBoneIK` are serializable ECS components that
+  apply aim and arm/leg IK after an animator graph evaluates. They accept world-space targets,
+  support characters and NPCs, and report invalid configured bones or chains once without
+  interrupting animation.
+- Animation: `AnimationFootPlacement` applies terrain-aware foot IK after graph evaluation. The
+  animation host supplies its world-space ground query, so projects can use physics, navigation,
+  or procedural terrain without adding a dependency to the animation module.
 - AI decisions: utility brains, state trees and a GOAP planner, with JSON save and load.
 - Navigation: a hierarchical path finder over tile borders, and 1000-agent crowd coverage. `NavMesh::FindPath`
   now reuses the path buffers you pass, so a reused `NavPath` does not allocate.
+- Navigation: `NavAnimation` is an opt-in ECS bridge that drives named animation graph speed and
+  moving parameters from an NPC's measured crowd velocity, including the transition to rest.
 - Player: data-driven UI, script UI tables, scene lights, live quality presets, touch and pointer input, on-screen
   controls and platform lifecycle events.
 
@@ -45,6 +82,7 @@ describes what is on `master`, not a promise of a version number or a date.
 - Plugins can be packed into one `.apkg`, inspected without unpacking, checked for unmet dependencies, and
   installed with a staged, all-or-nothing install.
 - Plugin descriptors carry an ABI number; a plugin built for another ABI is refused with a clear message.
+- An offline local plugin registry stores immutable package versions and installs an exact selected version through the staged installer.
 
 ## Robustness and quality gates
 

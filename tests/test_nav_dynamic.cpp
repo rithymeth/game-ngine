@@ -406,3 +406,61 @@ AETHER_TEST(NavDyn_WorldLinksAndPlacedModels) {
     other.Update(0);
     CHECK(!other.Mesh().Reachable(a, b));
 }
+
+// Phase 40.1: navmesh tiles streamed in and out. `data_` keeps the whole bake,
+// so a tile can leave the live Detour mesh and come back without rebaking.
+AETHER_TEST(NavDyn_StreamsTilesInAndOut) {
+    DynamicNavMesh dyn;
+    std::string error;
+    CHECK(dyn.Build(Floor(), Tiled(), &error));
+    NavMesh& mesh = dyn.Mesh();
+    const NavMeshData& data = mesh.Data();
+    CHECK(data.tiles.size() >= 2);                       // the tiled floor bakes several tiles
+    CHECK(mesh.LoadedTileCount() == data.tiles.size());  // an ordinary Load brings them all in
+
+    // The centre of one baked tile; a sub-tile radius keeps exactly it.
+    const auto tile_centre = [&](const NavMeshData::Tile& tile) {
+        return Vec3(data.origin.x + (static_cast<f32>(tile.x) + 0.5f) * data.tile_world_size, 0,
+                    data.origin.z + (static_cast<f32>(tile.z) + 0.5f) * data.tile_world_size);
+    };
+    const NavMeshData::Tile& first = data.tiles.front();
+    const Vec3 first_centre = tile_centre(first);
+    CHECK(mesh.StreamTiles(first_centre, data.tile_world_size * 0.25f) == 1);
+    CHECK(mesh.LoadedTileCount() == 1);
+    CHECK(mesh.IsTileLoaded(first.x, first.z));
+    for (const NavMeshData::Tile& tile : data.tiles) {
+        if (tile.x == first.x && tile.z == first.z) continue;
+        CHECK(!mesh.IsTileLoaded(tile.x, tile.z));
+    }
+
+    // The far end is off the live mesh, so no complete path reaches it.
+    const NavMeshData::Tile& last = data.tiles.back();
+    const Vec3 last_centre = tile_centre(last);
+    CHECK(PathLength(mesh, first_centre, last_centre) < 0.0f);
+
+    // Streaming everything back in restores the path.
+    CHECK(mesh.StreamTiles(first_centre, 1.0e6f) == data.tiles.size());
+    CHECK(mesh.LoadedTileCount() == data.tiles.size());
+    CHECK(PathLength(mesh, first_centre, last_centre) > 0.0f);
+
+    // Explicit per-tile load/unload keeps the baked data.
+    CHECK(mesh.UnloadTile(first.x, first.z));
+    CHECK(!mesh.IsTileLoaded(first.x, first.z));
+    CHECK(mesh.LoadTile(first.x, first.z));
+    CHECK(mesh.IsTileLoaded(first.x, first.z));
+    CHECK(!mesh.LoadTile(9999, 9999));                  // the grid has no tile there
+    CHECK(!mesh.UnloadTile(first.x + 9999, first.z));   // nothing loaded there
+
+    // A streamed setup loads no tiles until StreamTiles asks for them.
+    NavMeshData grid;
+    CHECK(BuildNavMesh(Floor(), Tiled(), grid, &error));
+    NavMesh streamed;
+    CHECK(streamed.Load(grid, &error, /*load_tiles=*/false));
+    CHECK(streamed.Loaded());
+    CHECK(streamed.LoadedTileCount() == 0);
+    const NavMeshData::Tile& grid_first = grid.tiles.front();
+    const Vec3 grid_centre(grid.origin.x + (static_cast<f32>(grid_first.x) + 0.5f) * grid.tile_world_size, 0,
+                           grid.origin.z + (static_cast<f32>(grid_first.z) + 0.5f) * grid.tile_world_size);
+    CHECK(streamed.StreamTiles(grid_centre, 1.0e6f) == grid.tiles.size());
+    CHECK(streamed.LoadedTileCount() == grid.tiles.size());
+}

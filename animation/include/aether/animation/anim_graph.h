@@ -173,6 +173,15 @@ public:
     // whether it's blending into it.
     std::string CurrentState(u32 machine_node) const;
     bool InTransition(u32 machine_node) const;
+    // The last Update's crossfade in a machine node: the state blending out
+    // ("" when none) and in, with the weights the pose used (they sum to 1),
+    // and how long the current state has run.
+    struct MachineBlend {
+        std::string from, to;
+        f32 from_weight = 0.0f, to_weight = 1.0f;
+        f32 time_in_state = 0.0f;
+    };
+    MachineBlend Blend(u32 machine_node) const;
 
     // Everything that happened during the last Update (and calls since it,
     // like PlayMontage's start): notifies, state changes, montage events.

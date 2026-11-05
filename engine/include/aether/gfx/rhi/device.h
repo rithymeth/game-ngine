@@ -70,6 +70,12 @@ struct PipelineDesc {
     // depth-tested renderer — this RHI has no automatic draw-order sorting.
     bool enable_blending = false;
 
+    // With enable_blending: additive blending (src.rgb*src.a + dst.rgb;
+    // output alpha passes through unblended) instead of the standard alpha
+    // blend above, for glows and particles. Order-independent, so draws need
+    // no sorting. Ignored when enable_blending is false.
+    bool additive_blending = false;
+
     // Allows depth-tested transparent draws to respect opaque geometry
     // without preventing later transparent surfaces from contributing.
     // Ignored when depth_test is false. True preserves every pipeline's
@@ -221,10 +227,31 @@ public:
     virtual bool SupportsCompressedTexture(CompressedTextureFormat /*format*/) const { return false; }
     virtual SampledTextureHandle CreateCompressedTexture(CompressedTextureFormat /*format*/, u32 /*width*/, u32 /*height*/, std::span<const CompressedMip> /*mips*/) { return {}; }
 
-    // Frees a texture made by CreateTexture or CreateCompressedTexture (the GPU memory and its bindless slot, which the next texture reuses).
-    // Waits for the GPU to go idle first, so call it between frames (a memory-pressure handler, a level change), not mid-frame; nothing may
-    // still draw with the handle afterwards. False for the fallback (slot 0), an invalid handle or one already freed; the default does nothing.
+    // Frees a texture made by CreateTexture or CreateCompressedTexture (the GPU memory and its bindless slot, which a later texture reuses).
+    // Does not stall: the image is released, and the slot made reusable, once the submissions made so far have completed (at once when the GPU
+    // is idle); until then the slot still shows the old image. Nothing may record a draw with the handle afterwards. False for the fallback (slot 0), an invalid handle or one already freed; the default does nothing.
     virtual bool DestroyTexture(SampledTextureHandle /*texture*/) { return false; }
+
+    // Frees a buffer (vertex, index, constant, storage or frame-constant) / graphics pipeline / compute pipeline. The handle's slot is reusable
+    // at once; the native objects are retired once every submission made so far has completed (see docs/design/RHI_RESOURCE_LIFETIME.md), so
+    // a command list already submitted may still read the resource, but nothing may record a new use of the handle afterwards. False (and no
+    // side effect, one logged error) for an invalid handle or one already destroyed. Handles carry no generation: a destroyed handle whose slot
+    // a later Create* reused names the new resource, so drop your copy when you destroy. The defaults do nothing.
+    virtual bool DestroyBuffer(BufferHandle /*buffer*/) { return false; }
+    virtual bool DestroyPipeline(PipelineHandle /*pipeline*/) { return false; }
+    virtual bool DestroyComputePipeline(ComputePipelineHandle /*pipeline*/) { return false; }
+
+    // Cheap live-object counters (no per-object tracking): what the device holds now, how many table slots exist (reuse keeps these bounded),
+    // and how many destroyed resources still wait on the GPU. All zero on a device that does not count.
+    struct ResourceStats {
+        u32 live_buffers = 0, live_pipelines = 0, live_compute_pipelines = 0, live_textures = 0;
+        u32 buffer_slots = 0, pipeline_slots = 0, compute_pipeline_slots = 0;
+        u32 pending_retire = 0;
+    };
+    virtual ResourceStats GetResourceStats() const { return {}; }
+    // Releases every destroyed resource whose GPU work has completed. Submit and the fence waits do this too; call it from a frame loop that
+    // destroys without submitting. Never blocks.
+    virtual void ReleaseRetiredResources() {}
 
     // Uploads tightly-packed RGBA8 pixel data (non-null, with non-zero
     // dimensions and a representable byte size; invalid arguments throw

@@ -16,6 +16,9 @@ to build and play **Coin Run** from a clean Windows checkout. It covers the
 prerequisites, exact build commands, controls, and a first code change. The
 sample uses software rendering, so you do not need a graphics card.
 
+Other playable samples: [Gem Hop](samples/gem_hop/README.md),
+[Beacon Run](samples/beacon_run/README.md), and the cooked [Stardust Hop](games/STARDUST-HOP/README.md).
+
 - [Aether manual](docs/manual/README.md) — projects, assets, scripting, input,
   and packaging.
 - [Current platform priorities](docs/design/PLATFORM_SUPPORT_POLICY.md) — what
@@ -2522,6 +2525,14 @@ Build spec: [`docs/design/PHASE_SPECS.md`](docs/design/PHASE_SPECS.md), Phase 11
     read actions, returning vectors for axes.
   - `Input.OnStarted` / `OnTriggered` / `OnCompleted` / `OnCanceled(action)`
     are events fired with the action's value.
+  - `Input.HasHapticOutput()` reports whether the host connected a device
+    backend. `Input.PlayHaptic(effect, intensity)` requests `selection`,
+    `impact_light`, `impact_medium`, `impact_heavy`, `success`, `warning`,
+    or `error`; intensity is optional and ranges from 0 to 1. The request
+    returns false for an unknown effect, out-of-range intensity, or missing
+    host backend.
+    C++ hosts install the platform mapping through
+    `Game::HapticFeedback().SetHandler(...)`.
   - Without a bound input system, everything reads as released.
 - **Ownership (§11.2)**: connections and timers made while an entity's
   callbacks run belong to that entity's script. They end when it's
@@ -3855,13 +3866,17 @@ HLSL, like Unreal's material editor. They live in `Aether::Renderer`
 
 **Step 1: the material model** (§15.2).
 
-- **Material**: shading model (Default Lit or Unlit), blend mode (Opaque,
-  Masked, Translucent, Additive), two-sided, the mask clip value, named
+- **Material**: shading model (Default Lit, Unlit, Subsurface, Hair or
+  Cloth; the last three add Material Output pins only they read), blend mode
+  (Opaque, Masked, Translucent, Additive, Decal), two-sided, the mask clip value, named
   parameters (scalar, vector or texture, with defaults and groups),
   nodes and links.
 - **Node library** (`ResolveNode`, `ListNodeTypes` for the palette):
   - the Material Output node (BaseColor, Metallic, Roughness, Normal,
-    Emissive, AO, Opacity, OpacityMask, WorldPositionOffset);
+    Emissive, AO, ClearCoat, ClearCoatRoughness, SheenColor, SheenRoughness,
+    Anisotropy, AnisotropyRotation, SubsurfaceColor, Thickness, HairShift,
+    HairSecondaryShift, HairTint, Fuzz, Opacity, OpacityMask,
+    WorldPositionOffset);
   - constants, and parameter nodes (`Param.Scalar:Roughness`);
   - Texture Sample (a texture input is required; UVs default to UV0),
     Unpack Normal;

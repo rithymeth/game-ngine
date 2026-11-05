@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <limits>
 #include <map>
 #include <set>
 #include <system_error>
@@ -81,6 +82,7 @@ std::vector<ContentEntry> ListContent(const AssetDatabase& database, const Conte
     const std::string folder = Normalized(query.folder);
     const std::string search = Lower(query.search);
     const bool recursive = query.recursive || !search.empty();
+    const std::unordered_set<std::string> types(query.types.begin(), query.types.end());
     std::vector<ContentEntry> folders;
     std::vector<ContentEntry> assets;
 
@@ -93,7 +95,7 @@ std::vector<ContentEntry> ListContent(const AssetDatabase& database, const Conte
             }
         }
     }
-    for (const AssetRecord* record : database.All()) {
+    for (const AssetRecord* record : database.AllUnsorted()) {
         if (record->IsSubAsset() && !query.include_sub_assets) {
             continue;
         }
@@ -105,8 +107,7 @@ std::vector<ContentEntry> ListContent(const AssetDatabase& database, const Conte
         if (recursive ? !IsInside(record_folder, folder) : record_folder != folder) {
             continue;
         }
-        if (!query.types.empty() &&
-            std::find(query.types.begin(), query.types.end(), record->importer) == query.types.end()) {
+        if (!types.empty() && types.count(record->importer) == 0) {
             continue;
         }
         std::string name = record->IsSubAsset() ? record->sub_key : stdfs::path(record->path).filename().string();
@@ -115,23 +116,53 @@ std::vector<ContentEntry> ListContent(const AssetDatabase& database, const Conte
         }
         assets.push_back({false, std::move(name), record->path, record});
     }
-    auto by_name = [](const ContentEntry& a, const ContentEntry& b) {
-        const std::string la = Lower(a.name), lb = Lower(b.name);
-        return la != lb ? la < lb : a.path < b.path;
+    auto sort_by_name = [](std::vector<ContentEntry>& entries) {
+        std::vector<std::pair<std::string, ContentEntry>> keyed;
+        keyed.reserve(entries.size());
+        for (ContentEntry& entry : entries) {
+            keyed.emplace_back(Lower(entry.name), std::move(entry));
+        }
+        std::sort(keyed.begin(), keyed.end(), [](const auto& a, const auto& b) {
+            return a.first != b.first ? a.first < b.first : a.second.path < b.second.path;
+        });
+        entries.clear();
+        entries.reserve(keyed.size());
+        for (auto& entry : keyed) {
+            entries.push_back(std::move(entry.second));
+        }
     };
-    std::sort(folders.begin(), folders.end(), by_name);
-    std::sort(assets.begin(), assets.end(), by_name);
+    sort_by_name(folders);
+    sort_by_name(assets);
     folders.insert(folders.end(), std::make_move_iterator(assets.begin()), std::make_move_iterator(assets.end()));
     return folders;
 }
 
 usize ApplyVcsStatus(std::vector<ContentEntry>& entries, const VcsStatus& status) {
+    std::unordered_map<std::string, VcsState> folder_states;
+    if (status.available) {
+        folder_states.reserve(status.files.size());
+        for (const auto& [path, state] : status.files) {
+            if (status.prefix.empty() || path.compare(0, status.prefix.size(), status.prefix) == 0) {
+                folder_states[status.prefix] = WorseVcsState(folder_states[status.prefix], state);
+            }
+            for (usize slash = path.find('/'); slash != std::string::npos; slash = path.find('/', slash + 1)) {
+                const std::string folder = path.substr(0, slash + 1);
+                VcsState& repo_folder = folder_states[folder];
+                repo_folder = WorseVcsState(repo_folder, state);
+            }
+        }
+    }
+
     usize changed = 0;
     for (ContentEntry& entry : entries) {
         entry.vcs = VcsState::Clean;
         if (!status.available) continue;
         if (entry.is_folder) {
-            entry.vcs = status.OfLocalFolder(entry.path);
+            std::string folder = status.prefix + entry.path;
+            if (!folder.empty() && folder.back() != '/') folder.push_back('/');
+            if (auto it = folder_states.find(folder); it != folder_states.end()) {
+                entry.vcs = it->second;
+            }
         } else {
             std::string source = entry.path;
             if (const usize hash = source.find('#'); hash != std::string::npos) source.resize(hash); // a sub-asset's source
@@ -207,6 +238,14 @@ MoveResult MoveContent(AssetDatabase& database, const std::string& from_path, co
     if (!is_folder && !stdfs::is_regular_file(from_abs, ec)) {
         return Fail(from + " doesn't exist");
     }
+    if (!is_folder) {
+        const std::string from_extension = Lower(stdfs::path(from).extension().string());
+        const std::string to_extension = Lower(stdfs::path(to).extension().string());
+        if (from_extension != to_extension) {
+            return Fail("Changing the extension (" + from_extension + " to " + to_extension +
+                        ") would change how it's imported");
+        }
+    }
     stdfs::path from_meta = from_abs;
     from_meta += AssetMeta::kExtension;
     stdfs::path to_meta = to_abs;
@@ -230,8 +269,8 @@ MoveResult MoveContent(AssetDatabase& database, const std::string& from_path, co
         std::vector<GltfFileReference> refs;
     };
     std::vector<GltfRefs> gltfs;
-    for (const AssetRecord* record : database.All()) {
-        if (!record->IsSubAsset() && !record->missing && record->importer == "Model") {
+    for (const AssetRecord* record : database.FindByImporter("Model")) {
+        if (!record->IsSubAsset() && !record->missing) {
             std::vector<GltfFileReference> refs = GltfFileReferences(root, record->path);
             if (!refs.empty()) {
                 gltfs.push_back({record->path, std::move(refs)});
@@ -373,9 +412,10 @@ std::vector<AssetGuid> Neighbours(const AssetDatabase& database, const AssetReco
     if (direction == ReferenceDirection::Dependencies) {
         result = record.dependencies;
     } else {
+        std::unordered_set<AssetGuid> included;
         auto add = [&](const AssetGuid& used) {
             for (const AssetRecord* user : database.Referencers(used)) {
-                if (std::find(result.begin(), result.end(), user->guid) == result.end()) {
+                if (included.insert(user->guid).second) {
                     result.push_back(user->guid);
                 }
             }
@@ -385,11 +425,20 @@ std::vector<AssetGuid> Neighbours(const AssetDatabase& database, const AssetReco
             add(sub);
         }
     }
-    std::sort(result.begin(), result.end(), [&](const AssetGuid& a, const AssetGuid& b) {
-        const AssetRecord* ra = database.Find(a);
-        const AssetRecord* rb = database.Find(b);
-        return (ra ? ra->path : std::string()) < (rb ? rb->path : std::string());
+    std::vector<std::pair<AssetGuid, std::string>> keyed;
+    keyed.reserve(result.size());
+    for (const AssetGuid& neighbour : result) {
+        const AssetRecord* record = database.Find(neighbour);
+        keyed.emplace_back(neighbour, record != nullptr ? record->path : std::string());
+    }
+    std::sort(keyed.begin(), keyed.end(), [](const auto& a, const auto& b) {
+        return a.second < b.second;
     });
+    result.clear();
+    result.reserve(keyed.size());
+    for (auto& neighbour : keyed) {
+        result.push_back(std::move(neighbour.first));
+    }
     return result;
 }
 
@@ -426,22 +475,27 @@ std::vector<ReferenceNode> CollectReferences(const AssetDatabase& database, cons
 
 Thumbnail MakeThumbnail(const std::vector<u8>& rgba, u32 width, u32 height, u32 max_size) {
     Thumbnail thumb;
-    if (width == 0 || height == 0 || max_size == 0 || rgba.size() < static_cast<usize>(width) * height * 4) {
+    if (width == 0 || height == 0 || max_size == 0) {
         return thumb;
     }
+    const u64 pixel_count = static_cast<u64>(width) * height;
+    if (pixel_count > std::numeric_limits<usize>::max() / 4 || rgba.size() < static_cast<usize>(pixel_count) * 4)
+        return thumb;
     const u32 longest = std::max(width, height);
     const u32 out_w = longest <= max_size ? width : std::max<u32>(1, static_cast<u32>(u64{width} * max_size / longest));
     const u32 out_h = longest <= max_size ? height : std::max<u32>(1, static_cast<u32>(u64{height} * max_size / longest));
+    const u64 output_pixels = static_cast<u64>(out_w) * out_h;
+    if (output_pixels > std::numeric_limits<usize>::max() / 4) return thumb;
     thumb.width = out_w;
     thumb.height = out_h;
-    thumb.rgba.resize(static_cast<usize>(out_w) * out_h * 4);
+    thumb.rgba.resize(static_cast<usize>(output_pixels) * 4);
     for (u32 y = 0; y < out_h; ++y) {
         const u32 y0 = static_cast<u32>(u64{y} * height / out_h);
         const u32 y1 = std::max(y0 + 1, static_cast<u32>(u64{y + 1} * height / out_h));
         for (u32 x = 0; x < out_w; ++x) {
             const u32 x0 = static_cast<u32>(u64{x} * width / out_w);
             const u32 x1 = std::max(x0 + 1, static_cast<u32>(u64{x + 1} * width / out_w));
-            u32 sum[4] = {0, 0, 0, 0};
+            u64 sum[4] = {0, 0, 0, 0};
             for (u32 sy = y0; sy < y1; ++sy) {
                 for (u32 sx = x0; sx < x1; ++sx) {
                     const u8* p = &rgba[(static_cast<usize>(sy) * width + sx) * 4];
@@ -450,7 +504,7 @@ Thumbnail MakeThumbnail(const std::vector<u8>& rgba, u32 width, u32 height, u32 
                     }
                 }
             }
-            const u32 count = (y1 - y0) * (x1 - x0);
+            const u64 count = static_cast<u64>(y1 - y0) * (x1 - x0);
             u8* out = &thumb.rgba[(static_cast<usize>(y) * out_w + x) * 4];
             for (int c = 0; c < 4; ++c) {
                 out[c] = static_cast<u8>((sum[c] + count / 2) / count);

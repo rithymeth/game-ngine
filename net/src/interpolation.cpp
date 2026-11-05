@@ -1,4 +1,5 @@
 #include "aether/net/interpolation.h"
+#include "aether/net/physics_state.h"
 
 #include <algorithm>
 #include <cmath>
@@ -53,6 +54,11 @@ const InterpolationBuffer* SnapshotInterpolation::Buffer(u32 net_id) const {
     return it == buffers_.end() ? nullptr : &it->second;
 }
 
+bool SnapshotInterpolation::SampleRenderTransform(u32 net_id, Transform& out) const {
+    const InterpolationBuffer* buffer = Buffer(net_id);
+    return buffer && buffer->Sample(render_time_, out);
+}
+
 void SnapshotInterpolation::Update(f64 now) {
     const ComponentId transform_id = GetComponentId<Transform>();
     if (replication_.GetStats().snapshots != seen_snapshots_) {
@@ -81,6 +87,10 @@ void SnapshotInterpolation::Update(f64 now) {
         Transform* t = world_.GetComponent<Transform>(entity);
         if (!t || !ni || ni->locally_owned) continue;
         if (render_time_ > buffer.Newest()) ++starved_;
+        // Never overwrite the authoritative simulation pose of a replicated
+        // physics prop with a delayed render pose. Jolt correction and
+        // simulation must read the latest replicated Transform instead.
+        if (render_only_ || world_.HasComponent<NetPhysicsState>(entity)) continue;
         buffer.Sample(render_time_, *t);
     }
 }

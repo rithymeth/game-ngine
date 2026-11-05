@@ -6,9 +6,11 @@
 #include <glslang/Public/ShaderLang.h>
 #include <glslang/SPIRV/GlslangToSpv.h>
 
+#include <algorithm>
 #include <cstring>
 #include <mutex>
 #include <stdexcept>
+#include <vector>
 
 // The shader compilers off Windows (Phase 24, docs/design/PHASE_SPECS.md
 // §24.3): glslang's HLSL front end compiles the same HLSL the Windows
@@ -39,6 +41,35 @@ void InitializeOnce() {
     std::call_once(once, [] { glslang::InitializeProcess(); });
 }
 
+// glslang turns `register(bN)` into Binding/DescriptorSet decorations even on a [[vk::push_constant]] block, which
+// DXC drops; the SPIR-V validator rejects them (VUID-StandaloneSpirv-DescriptorSet-06491). Remove those two
+// decorations from push-constant variables. Instruction layout: word 0 is (word count << 16) | opcode.
+void StripPushConstantBindings(std::vector<unsigned int>& words) {
+    constexpr unsigned kOpDecorate = 71, kOpVariable = 59, kPushConstant = 9, kBinding = 33, kDescriptorSet = 34;
+    constexpr size_t kHeaderWords = 5;
+    if (words.size() <= kHeaderWords) return;
+    std::vector<unsigned int> push_constant_ids;
+    for (size_t i = kHeaderWords; i < words.size();) {
+        const unsigned count = words[i] >> 16, opcode = words[i] & 0xFFFFu;
+        if (count == 0 || i + count > words.size()) return; // malformed: leave it to the driver to reject
+        if (opcode == kOpVariable && count >= 4 && words[i + 3] == kPushConstant) push_constant_ids.push_back(words[i + 2]);
+        i += count;
+    }
+    if (push_constant_ids.empty()) return;
+    std::vector<unsigned int> out(words.begin(), words.begin() + kHeaderWords);
+    out.reserve(words.size());
+    for (size_t i = kHeaderWords; i < words.size();) {
+        const unsigned count = words[i] >> 16, opcode = words[i] & 0xFFFFu;
+        const bool drop = opcode == kOpDecorate && count >= 3 &&
+                          (words[i + 2] == kBinding || words[i + 2] == kDescriptorSet) &&
+                          std::find(push_constant_ids.begin(), push_constant_ids.end(), words[i + 1]) != push_constant_ids.end();
+        if (!drop) out.insert(out.end(), words.begin() + static_cast<std::ptrdiff_t>(i),
+                              words.begin() + static_cast<std::ptrdiff_t>(i + count));
+        i += count;
+    }
+    words.swap(out);
+}
+
 } // namespace
 
 ShaderBytecode CompileHLSL(const std::string&, const char* entry_point, const char*, const char* debug_name) {
@@ -62,6 +93,11 @@ ShaderBytecode CompileHLSLToSPIRV(const std::string& source, const char* entry_p
     const int length = static_cast<int>(source.size());
     const char* name = debug_name;
     shader.setStringsWithLengthsAndNames(&text, &length, &name, 1);
+    // DXC defines __spirv__ when it targets SPIR-V and the engine's shaders guard Vulkan-only attributes with it
+    // (`#ifdef __spirv__ [[vk::push_constant]] #endif`). glslang does not, so without this those attributes vanished:
+    // the push constants became a uniform buffer at set 0 binding 0 that the pipeline layout never declares, and
+    // drivers that trust the layout (lavapipe, SwiftShader) crashed compiling the player's scene pipeline.
+    shader.setPreamble("#define __spirv__ 1\n");
     shader.setEntryPoint(entry_point);
     shader.setSourceEntryPoint(entry_point);
     shader.setEnvInput(glslang::EShSourceHlsl, stage, glslang::EShClientVulkan, 100);
@@ -89,6 +125,7 @@ ShaderBytecode CompileHLSLToSPIRV(const std::string& source, const char* entry_p
     options.disableOptimizer = true;
 #endif
     glslang::GlslangToSpv(*program.getIntermediate(stage), words, &options);
+    StripPushConstantBindings(words);
 
     ShaderBytecode bytecode;
     bytecode.data.resize(words.size() * sizeof(unsigned int));

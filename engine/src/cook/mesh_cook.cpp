@@ -2,6 +2,7 @@
 
 #include "aether/pak/pak.h"
 
+#include <cmath>
 #include <cstring>
 
 namespace aether::cook {
@@ -117,6 +118,10 @@ bool ReadMeshlets(Reader& r, MeshletMesh& m, u32 vertex_count, std::string* erro
         if (!r.F32(b.center.x) || !r.F32(b.center.y) || !r.F32(b.center.z) || !r.F32(b.radius) || !r.F32(b.cone_axis.x) ||
             !r.F32(b.cone_axis.y) || !r.F32(b.cone_axis.z) || !r.F32(b.cone_cutoff))
             return Fail(error, "truncated meshlet bounds");
+        if (!std::isfinite(b.center.x) || !std::isfinite(b.center.y) || !std::isfinite(b.center.z) ||
+            !std::isfinite(b.radius) || b.radius < 0.0f || !std::isfinite(b.cone_axis.x) ||
+            !std::isfinite(b.cone_axis.y) || !std::isfinite(b.cone_axis.z) || !std::isfinite(b.cone_cutoff))
+            return Fail(error, "invalid meshlet bounds");
     }
     for (const Meshlet& ml : m.meshlets) {
         const u64 v_end = static_cast<u64>(ml.vertex_offset) + ml.vertex_count;
@@ -226,6 +231,10 @@ bool LoadAmesh(std::span<const u8> bytes, CookedMesh& out, std::string* error) {
         if (!r.I32(p.material) || !r.F32(p.bounds_min.x) || !r.F32(p.bounds_min.y) || !r.F32(p.bounds_min.z) ||
             !r.F32(p.bounds_max.x) || !r.F32(p.bounds_max.y) || !r.F32(p.bounds_max.z) || !r.U32(vcount))
             return Fail(error, "truncated primitive");
+        if (!std::isfinite(p.bounds_min.x) || !std::isfinite(p.bounds_min.y) || !std::isfinite(p.bounds_min.z) ||
+            !std::isfinite(p.bounds_max.x) || !std::isfinite(p.bounds_max.y) || !std::isfinite(p.bounds_max.z) ||
+            p.bounds_min.x > p.bounds_max.x || p.bounds_min.y > p.bounds_max.y || p.bounds_min.z > p.bounds_max.z)
+            return Fail(error, "invalid primitive bounds");
         if (!r.Fits(vcount, sizeof(f32) * 12)) return Fail(error, "truncated vertices");
         p.vertices.resize(vcount);
         for (assets::MeshVertex& v : p.vertices) {
@@ -233,12 +242,17 @@ bool LoadAmesh(std::span<const u8> bytes, CookedMesh& out, std::string* error) {
             for (f32& f : v.normal) r.F32(f);
             for (f32& f : v.uv) r.F32(f);
             for (f32& f : v.tangent) r.F32(f);
+            for (f32 f : v.position) if (!std::isfinite(f)) return Fail(error, "non-finite vertex position");
+            for (f32 f : v.normal) if (!std::isfinite(f)) return Fail(error, "non-finite vertex normal");
+            for (f32 f : v.uv) if (!std::isfinite(f)) return Fail(error, "non-finite vertex UV");
+            for (f32 f : v.tangent) if (!std::isfinite(f)) return Fail(error, "non-finite vertex tangent");
         }
         if (!r.U32(lod_count) || !r.Fits(lod_count, 8)) return Fail(error, "truncated LOD table");
         p.lods.resize(lod_count);
         for (CookedMeshLod& l : p.lods) {
             u32 icount = 0;
-            if (!r.F32(l.error) || !r.U32(icount) || !r.Fits(icount, 4) || icount % 3 != 0) return Fail(error, "bad LOD indices");
+            if (!r.F32(l.error) || !std::isfinite(l.error) || l.error < 0.0f || !r.U32(icount) || !r.Fits(icount, 4) ||
+                icount % 3 != 0) return Fail(error, "bad LOD indices");
             l.indices.resize(icount);
             for (u32& i : l.indices) {
                 if (!r.U32(i)) return Fail(error, "truncated LOD indices");

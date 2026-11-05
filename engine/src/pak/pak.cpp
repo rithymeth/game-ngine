@@ -12,6 +12,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <random>
 
 namespace aether::pak {
@@ -21,6 +22,7 @@ namespace {
 constexpr char kMagic[4] = {'A', 'P', 'A', 'K'};
 constexpr u32 kVersion = 1;
 constexpr usize kHeaderSize = 40;
+constexpr usize kMinIndexEntrySize = 35; // length, non-empty path, and fixed metadata
 // Entries smaller than this get LZ4 under the Auto policy (fast to read,
 // and zstd's advantage is small there); larger ones get zstd.
 constexpr usize kAutoZstdThreshold = 16 * 1024;
@@ -131,19 +133,22 @@ std::vector<u8> CompressWith(Compression method, std::span<const u8> in, int zst
 }
 
 bool Decompress(Compression method, std::span<const u8> in, u64 size, std::vector<u8>& out) {
-    out.resize(static_cast<usize>(size));
+    if (size > std::numeric_limits<usize>::max()) return false;
     switch (method) {
         case Compression::None:
             if (in.size() != size) return false;
+            out.resize(static_cast<usize>(size));
             if (size) std::memcpy(out.data(), in.data(), static_cast<usize>(size));
             return true;
         case Compression::LZ4: {
             if (size > static_cast<u64>(LZ4_MAX_INPUT_SIZE) || in.size() > static_cast<usize>(LZ4_MAX_INPUT_SIZE)) return false;
+            out.resize(static_cast<usize>(size));
             const int n = LZ4_decompress_safe(reinterpret_cast<const char*>(in.data()), reinterpret_cast<char*>(out.data()),
                                               static_cast<int>(in.size()), static_cast<int>(size));
             return n >= 0 && static_cast<u64>(n) == size;
         }
         case Compression::Zstd: {
+            out.resize(static_cast<usize>(size));
             const usize n = ZSTD_decompress(out.data(), out.size(), in.data(), in.size());
             return !ZSTD_isError(n) && n == size;
         }
@@ -238,6 +243,9 @@ std::string NormalizePath(const std::string& path) {
         return true;
     };
     for (char c : path) {
+        // A colon can introduce a Windows drive or alternate data stream, and
+        // NUL would truncate paths passed to native filesystem APIs.
+        if (c == ':' || c == '\0') return {};
         if (c == '/' || c == '\\') {
             if (!flush()) return {};
         } else {
@@ -277,16 +285,28 @@ bool PakWriter::AddFile(const std::string& path, const std::string& file_on_disk
 usize PakWriter::AddDirectory(const std::string& directory, const std::string& prefix) {
     namespace sfs = std::filesystem;
     std::error_code ec;
-    if (!sfs::is_directory(directory, ec)) return 0;
+    const sfs::path root(directory);
+    const sfs::file_status root_status = sfs::symlink_status(root, ec);
+    if (ec || sfs::is_symlink(root_status) || !sfs::is_directory(root_status)) return 0;
     std::vector<sfs::path> files;
-    for (auto it = sfs::recursive_directory_iterator(directory, ec); !ec && it != sfs::recursive_directory_iterator();
+    for (auto it = sfs::recursive_directory_iterator(root, ec); !ec && it != sfs::recursive_directory_iterator();
          it.increment(ec)) {
-        if (it->is_regular_file(ec)) files.push_back(it->path());
+        const sfs::file_status status = it->symlink_status(ec);
+        if (ec) break;
+        if (sfs::is_symlink(status)) {
+            it.disable_recursion_pending();
+            continue;
+        }
+        if (sfs::is_regular_file(status)) files.push_back(it->path());
     }
     std::sort(files.begin(), files.end()); // deterministic archives
     usize added = 0;
     for (const sfs::path& f : files) {
-        const std::string rel = sfs::relative(f, directory, ec).generic_string();
+        const std::string rel = sfs::relative(f, root, ec).generic_string();
+        if (ec) {
+            ec.clear();
+            continue;
+        }
         if (AddFile(prefix.empty() ? rel : prefix + "/" + rel, f.string())) ++added;
     }
     return added;
@@ -468,6 +488,12 @@ bool PakReader::Parse(std::string* error, std::span<const PakKey> keys) {
         SetError(error, "the index lies outside the file (truncated?)");
         return false;
     }
+    // Each entry needs at least a length, one path byte, and the fixed metadata.
+    // Bound the untrusted count before reserve() can allocate from it.
+    if (count > index_size / kMinIndexEntrySize) {
+        SetError(error, "the index entry count is larger than the index can hold");
+        return false;
+    }
     index.resize(static_cast<usize>(index_size));
     if (in_memory_) {
         if (index_size) std::memcpy(index.data(), memory_.data() + index_offset, static_cast<usize>(index_size));
@@ -501,6 +527,10 @@ bool PakReader::Parse(std::string* error, std::span<const PakKey> keys) {
         e.path.assign(reinterpret_cast<const char*>(index.data() + p), len);
         p += len;
         const u8 method = index[p];
+        if (index[p + 1] != 0 || index[p + 2] != 0 || index[p + 3] != 0) {
+            SetError(error, "entry '" + e.path + "' has nonzero reserved bytes");
+            return false;
+        }
         p += 4;
         e.offset = Get(index.data() + p, 8);
         e.stored_size = Get(index.data() + p + 8, 8);
@@ -512,13 +542,25 @@ bool PakReader::Parse(std::string* error, std::span<const PakKey> keys) {
             return false;
         }
         e.compression = static_cast<Compression>(method);
+        if (e.compression == Compression::None && e.stored_size != e.size) {
+            SetError(error, "entry '" + e.path + "' has inconsistent uncompressed sizes");
+            return false;
+        }
         if (e.offset < kHeaderSize || e.offset > index_offset || e.stored_size > index_offset - e.offset ||
             e.path.empty() || NormalizePath(e.path) != e.path) {
             SetError(error, "entry '" + e.path + "' is malformed");
             return false;
         }
+        if (index_.find(e.path) != index_.end()) {
+            SetError(error, "duplicate archive entry '" + e.path + "'");
+            return false;
+        }
         index_[e.path] = entries_.size();
         entries_.push_back(std::move(e));
+    }
+    if (p != index.size()) {
+        SetError(error, "the index contains trailing bytes");
+        return false;
     }
     open_ = true;
     return true;

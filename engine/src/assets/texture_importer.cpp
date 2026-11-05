@@ -5,6 +5,7 @@
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <limits>
 
 namespace aether::assets {
 
@@ -40,7 +41,7 @@ void AppendU32(std::vector<u8>& out, u32 value) {
 }
 
 bool ReadU32(const std::vector<u8>& in, usize& offset, u32& value) {
-    if (offset + 4 > in.size()) {
+    if (offset > in.size() || in.size() - offset < 4) {
         return false;
     }
     std::memcpy(&value, in.data() + offset, 4);
@@ -67,6 +68,11 @@ ImportResult ImportDecoded(ImageData image, const nlohmann::json& settings);
 } // namespace
 
 std::vector<u8> DownsampleRGBA8(const std::vector<u8>& pixels, u32 width, u32 height, bool srgb) {
+    if (width == 0 || height == 0) return {};
+    const u64 pixel_count = static_cast<u64>(width) * height;
+    if (pixel_count > std::numeric_limits<usize>::max() / 4 || pixels.size() != static_cast<usize>(pixel_count) * 4)
+        return {};
+
     const u32 out_w = std::max<u32>(1, width / 2);
     const u32 out_h = std::max<u32>(1, height / 2);
     const auto& to_linear = SrgbToLinearTable();
@@ -119,17 +125,29 @@ bool DecodeTextureData(const std::vector<u8>& bytes, TextureData& out) {
     u32 version = 0, width = 0, height = 0, mip_count = 0, flags = 0;
     if (!ReadU32(bytes, offset, version) || version != kFormatVersion || !ReadU32(bytes, offset, width) ||
         !ReadU32(bytes, offset, height) || !ReadU32(bytes, offset, mip_count) || !ReadU32(bytes, offset, flags) ||
-        width == 0 || height == 0 || mip_count == 0 || mip_count > 32) {
+        width == 0 || height == 0 || mip_count == 0 || (flags & ~kFlagSrgb) != 0) {
         return false;
     }
+    u32 largest_dimension = std::max(width, height);
+    u32 max_mips = 1;
+    while (largest_dimension > 1) {
+        largest_dimension >>= 1;
+        ++max_mips;
+    }
+    if (mip_count > max_mips) return false;
     TextureData texture;
     texture.width = width;
     texture.height = height;
     texture.srgb = (flags & kFlagSrgb) != 0;
     for (u32 level = 0; level < mip_count; ++level) {
         u32 size = 0;
-        const usize expected = static_cast<usize>(texture.MipWidth(level)) * texture.MipHeight(level) * 4;
-        if (!ReadU32(bytes, offset, size) || size != expected || offset + size > bytes.size()) {
+        const u64 pixels = static_cast<u64>(texture.MipWidth(level)) * texture.MipHeight(level);
+        if (pixels > std::numeric_limits<usize>::max() / 4) {
+            return false;
+        }
+        const usize expected = static_cast<usize>(pixels) * 4;
+        if (!ReadU32(bytes, offset, size) || size != expected || offset > bytes.size() ||
+            size > bytes.size() - offset) {
             return false;
         }
         texture.mips.emplace_back(bytes.begin() + static_cast<std::ptrdiff_t>(offset),

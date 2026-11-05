@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(Aether LANGUAGES CXX)
+project(Aether VERSION 0.27.6 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -17,6 +17,16 @@ endif()
 
 option(AETHER_BUILD_TESTS "Build Aether unit tests" ON)
 option(AETHER_BUILD_MCP "Build the MCP (Model Context Protocol) editor server" ON)
+option(AETHER_BUILD_ANDROID_APP "Build the Android native runtime shim" OFF)
+option(AETHER_BUILD_IOS_APP "Build the iOS native runtime shell" OFF)
+
+if(AETHER_BUILD_IOS_APP)
+    if(NOT APPLE OR NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+        message(FATAL_ERROR "AETHER_BUILD_IOS_APP requires an Apple iOS toolchain")
+    endif()
+    enable_language(OBJCXX)
+endif()
+
 option(AETHER_BUILD_EVERVALE_REBOOT "Build the Evervale reboot game" OFF)
 
 # Phase 37 step 6: -Werror for the engine and the gameplay kits, off by default (the four gameplay libraries build clean with GCC under it; CI will turn it on once Clang and MSVC are checked).
@@ -38,6 +48,13 @@ if(MSVC)
     # buffers instantiate aligned_storage with an extended alignment; opt in
     # to the conforming behaviour rather than MSVC's old static_assert.
     add_compile_definitions(_ENABLE_EXTENDED_ALIGNED_STORAGE)
+    # M8.10: Release binaries with a CodeView record and a matching .pdb (the game symbols archive,
+    # tools/ship/aether_ship.py --platform windows-x64). /OPT:REF,ICF keep Release's linker defaults.
+    option(AETHER_MSVC_RELEASE_PDB "Emit .pdb files for MSVC Release builds" OFF)
+    if(AETHER_MSVC_RELEASE_PDB)
+        add_compile_options($<$<CONFIG:Release>:/Zi>)
+        add_link_options($<$<CONFIG:Release>:/DEBUG:FULL> $<$<CONFIG:Release>:/OPT:REF> $<$<CONFIG:Release>:/OPT:ICF>)
+    endif()
 else()
     add_compile_options(-Wall -Wextra)
 endif()
@@ -92,6 +109,7 @@ FetchContent_MakeAvailable(stb)
 # well-tested parser (spec-correct string escaping/unicode/number handling)
 # rather than a hand-rolled one just for this.
 set(JSON_BuildTests OFF CACHE INTERNAL "")
+set(NLOHMANN_JSON_TARGET_NAME nlohmann_json CACHE STRING "nlohmann_json target name" FORCE)
 FetchContent_Declare(
     nlohmann_json
     GIT_REPOSITORY https://github.com/nlohmann/json.git
@@ -99,6 +117,9 @@ FetchContent_Declare(
     GIT_SHALLOW TRUE
 )
 FetchContent_MakeAvailable(nlohmann_json)
+add_library(aether-json-dependency INTERFACE)
+target_link_libraries(aether-json-dependency INTERFACE nlohmann_json::nlohmann_json)
+add_library(Aether::Json ALIAS aether-json-dependency)
 
 # Phase 25: compression for .apak archives - LZ4 (fast) and zstd (small).
 # Both are BSD-licensed and built static with no command-line tools.
@@ -153,9 +174,12 @@ add_library(aether_bcenc STATIC
     ${bc7enc_SOURCE_DIR}/bc7decomp.cpp
     ${bc7enc_SOURCE_DIR}/rgbcx.cpp
 )
-target_link_libraries(aether_bcenc PUBLIC astcenc-none-static)
-target_include_directories(aether_bcenc SYSTEM PUBLIC ${astcenc_SOURCE_DIR}/Source)
-target_include_directories(aether_bcenc SYSTEM PUBLIC ${bc7enc_SOURCE_DIR})
+target_link_libraries(aether_bcenc PUBLIC
+    "$<BUILD_INTERFACE:astcenc-none-static>"
+    "$<INSTALL_INTERFACE:Aether::astcenc>"
+)
+target_include_directories(aether_bcenc SYSTEM PRIVATE ${astcenc_SOURCE_DIR}/Source)
+target_include_directories(aether_bcenc SYSTEM PRIVATE ${bc7enc_SOURCE_DIR})
 if(MSVC)
     target_compile_options(aether_bcenc PRIVATE /w)
 else()
@@ -175,7 +199,7 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(meshoptimizer)
 file(GLOB _meshopt_sources ${meshoptimizer_SOURCE_DIR}/src/*.cpp)
 add_library(aether_meshopt STATIC ${_meshopt_sources})
-target_include_directories(aether_meshopt SYSTEM PUBLIC ${meshoptimizer_SOURCE_DIR}/src)
+target_include_directories(aether_meshopt SYSTEM PRIVATE ${meshoptimizer_SOURCE_DIR}/src)
 if(MSVC)
     target_compile_options(aether_meshopt PRIVATE /w)
 else()
@@ -298,6 +322,33 @@ if(AETHER_BUILD_VULKAN AND WIN32)
             set(AETHER_BUILD_VULKAN OFF)
         endif()
     endif()
+elseif(AETHER_BUILD_VULKAN AND ANDROID)
+    # Android: the NDK sysroot carries vulkan/vulkan.h and libvulkan.so (API 24+). There is no system glslang, so
+    # it is built from source here (HLSL front end and SPIR-V back end only, no spirv-opt or tools).
+    find_library(AETHER_VULKAN_LIBRARY vulkan)
+    if(AETHER_VULKAN_LIBRARY)
+        set(AETHER_VULKAN_INCLUDE_DIRS "")
+        set(ENABLE_OPT OFF CACHE BOOL "" FORCE)
+        set(ENABLE_GLSLANG_BINARIES OFF CACHE BOOL "" FORCE)
+        set(ENABLE_SPVREMAPPER OFF CACHE BOOL "" FORCE)
+        set(GLSLANG_TESTS OFF CACHE BOOL "" FORCE)
+        set(GLSLANG_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+        set(BUILD_EXTERNAL OFF CACHE BOOL "" FORCE)
+        set(ENABLE_PCH OFF CACHE BOOL "" FORCE)
+        FetchContent_Declare(glslang GIT_REPOSITORY https://github.com/KhronosGroup/glslang.git GIT_TAG 14.3.0
+                             GIT_SHALLOW TRUE)
+        FetchContent_MakeAvailable(glslang)
+        # The engine includes <glslang/SPIRV/GlslangToSpv.h>, the installed layout; in the source tree SPIRV/ sits at
+        # the top, so give it that name under a build-tree include root.
+        set(AETHER_GLSLANG_SHIM_INCLUDE "${CMAKE_BINARY_DIR}/glslang_include")
+        file(MAKE_DIRECTORY "${AETHER_GLSLANG_SHIM_INCLUDE}/glslang")
+        file(CREATE_LINK "${glslang_SOURCE_DIR}/SPIRV" "${AETHER_GLSLANG_SHIM_INCLUDE}/glslang/SPIRV" SYMBOLIC)
+        set(AETHER_GLSLANG_LIBRARIES glslang::glslang glslang::SPIRV glslang::glslang-default-resource-limits)
+        message(STATUS "Vulkan: Android NDK loader (${AETHER_VULKAN_LIBRARY}), shaders through glslang 14.3.0 (built)")
+    else()
+        message(STATUS "Vulkan: backend off (the NDK has no libvulkan for this API level)")
+        set(AETHER_BUILD_VULKAN OFF)
+    endif()
 elseif(AETHER_BUILD_VULKAN)
     # Linux and macOS: the system Vulkan loader and headers (libvulkan-dev),
     # and glslang (glslang-dev) to compile HLSL to SPIR-V. Without either,
@@ -318,6 +369,33 @@ else()
 endif()
 
 add_subdirectory(engine)
+
+if(ANDROID AND AETHER_BUILD_ANDROID_APP)
+    add_library(aether_android SHARED platforms/android/app/src/main/cpp/native_entry.cpp
+                samples/frozen_api_game/lantern_run.cpp samples/frozen_api_game/smoke.cpp)
+    target_include_directories(aether_android PRIVATE samples/frozen_api_game)
+    # aether_game is the player runtime (mount paks, run the scene, SceneRenderer); the app uses it in scene mode.
+    target_link_libraries(aether_android PRIVATE Aether::Engine aether_game log android)
+    target_compile_features(aether_android PRIVATE cxx_std_20)
+endif()
+
+if(APPLE AND CMAKE_SYSTEM_NAME STREQUAL "iOS" AND AETHER_BUILD_IOS_APP)
+    find_library(AETHER_UIKIT_FRAMEWORK UIKit REQUIRED)
+    target_compile_definitions(aether_engine PUBLIC AETHER_PLATFORM_IOS)
+    add_executable(aether_ios MACOSX_BUNDLE platforms/ios/src/main.mm
+                   samples/frozen_api_game/lantern_run.cpp samples/frozen_api_game/smoke.cpp)
+    target_include_directories(aether_ios PRIVATE samples/frozen_api_game)
+    target_link_libraries(aether_ios PRIVATE Aether::Engine "${AETHER_UIKIT_FRAMEWORK}")
+    target_compile_features(aether_ios PRIVATE cxx_std_20)
+    set_target_properties(aether_ios PROPERTIES
+        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/platforms/ios/Info.plist"
+        OUTPUT_NAME "AetherEngine"
+        OBJCXX_STANDARD 20
+        OBJCXX_STANDARD_REQUIRED YES
+        XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED "NO"
+        XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "com.aether.engine"
+    )
+endif()
 # Platform plugins (platforms/README.md): directories listed here are built
 # and linked into the tests, the functional runner and the editor shell.
 set(AETHER_PLATFORM_PLUGINS "" CACHE STRING "Platform plugin directories (;-separated)")
@@ -411,6 +489,10 @@ if(AETHER_KIT_QUESTS)
     add_subdirectory(quests)
 endif()
 add_subdirectory(net)
+if(TARGET Aether::Physics)
+    # Physics over the network: the glue between the two (they share a layer, so neither may depend on the other).
+    add_subdirectory(physics_net)
+endif()
 
 # Recast/Detour (zlib, recastnavigation/recastnavigation) for navigation
 # meshes, pathfinding and crowds (Phase 20). Only the libraries.
@@ -492,6 +574,7 @@ endif()
 
 add_subdirectory(samples/coin_run)
 add_subdirectory(samples/gem_hop)
+add_subdirectory(samples/beacon_run)
 add_subdirectory(samples/frozen_api_game)
 
 # Phase 24 step 5: the portable editor shell - the editor's panels in a
@@ -530,8 +613,12 @@ add_subdirectory(tools/fuzz)
 # Phase 25: the .apak archive tool and the cooker.
 add_subdirectory(tools/pak)
 add_subdirectory(tools/cook)
+add_subdirectory(tools/server)
 add_subdirectory(tools/docgen)
 add_subdirectory(tools/loc)
+if(WIN32)
+    add_subdirectory(tools/symbolicate)
+endif()
 
 if(AETHER_BUILD_SANDBOX)
     add_subdirectory(sandbox)
@@ -555,7 +642,109 @@ foreach(host aether_player aether_editor_shell aether_editor aether_editor_qt ae
     endif()
 endforeach()
 
-# Kept opt-in so engine-only builds do not pick up game content.  Evervale is
+# Phase 46 step 1: installable SDK target exports and package config.
+include(cmake/AetherPackage.cmake)
+
+aether_install_target(aether-json-dependency Json
+    BUILD_INCLUDES "${nlohmann_json_SOURCE_DIR}/include"
+    INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}")
+install(DIRECTORY "${nlohmann_json_SOURCE_DIR}/include/nlohmann" DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
+get_target_property(AETHER_LZ4_OUTPUT_NAME lz4_static OUTPUT_NAME)
+if(NOT AETHER_LZ4_OUTPUT_NAME)
+    set(AETHER_LZ4_OUTPUT_NAME lz4_static)
+endif()
+set(AETHER_LZ4_INSTALL_FILENAME "${CMAKE_STATIC_LIBRARY_PREFIX}${AETHER_LZ4_OUTPUT_NAME}${CMAKE_STATIC_LIBRARY_SUFFIX}")
+install(FILES "$<TARGET_FILE:lz4_static>" DESTINATION "${CMAKE_INSTALL_LIBDIR}" RENAME "${AETHER_LZ4_INSTALL_FILENAME}")
+install(FILES
+    "${lz4_SOURCE_DIR}/lib/lz4.h"
+    "${lz4_SOURCE_DIR}/lib/lz4frame.h"
+    "${lz4_SOURCE_DIR}/lib/lz4hc.h"
+    DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
+aether_install_target(aether_engine Engine
+    BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/engine/include;${AETHER_VULKAN_INCLUDE_DIRS}"
+    INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}"
+    HEADERS "${PROJECT_SOURCE_DIR}/engine/include")
+aether_install_target(aether_blueprint Blueprint BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/blueprint/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/blueprint/include")
+aether_install_target(aether_physics Physics BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/physics/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/physics/include")
+aether_install_target(aether_templates Templates BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/templates/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/templates/include")
+aether_install_target(aether_renderer Renderer BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/renderer/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/renderer/include")
+aether_install_target(aether_animation Animation BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/animation/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/animation/include")
+aether_install_target(aether_audio Audio BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/audio/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/audio/include")
+aether_install_target(aether_ui UI BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/ui/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/ui/include")
+aether_install_target(aether_vfx VFX BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/vfx/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/vfx/include")
+aether_install_target(aether_terrain Terrain BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/terrain/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/terrain/include")
+aether_install_target(aether_streaming Streaming BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/streaming/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/streaming/include")
+aether_install_target(aether_sprite2d Sprite2D BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/sprite2d/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/sprite2d/include")
+aether_install_target(aether_sequencer Sequencer BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/sequencer/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/sequencer/include")
+aether_install_target(aether_save Save BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/save/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/save/include")
+aether_install_target(aether_loc Loc BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/loc/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/loc/include")
+aether_install_target(aether_gameplay Gameplay BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/gameplay/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/gameplay/include")
+aether_install_target(aether_bench_lib Bench BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/bench/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/bench/include")
+aether_install_target(aether_inventory Inventory BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/inventory/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/inventory/include")
+aether_install_target(aether_interaction Interaction BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/interaction/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/interaction/include")
+aether_install_target(aether_quests Quests BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/quests/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/quests/include")
+aether_install_target(aether_net Net BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/net/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/net/include")
+aether_install_target(aether_nav Nav BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/nav/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/nav/include")
+aether_install_target(aether_ai AI BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/ai/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/ai/include")
+aether_install_target(aether_scripting Scripting BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/scripting/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/scripting/include")
+aether_install_target(aether_editor_core EditorCore BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/editor/src" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/editor/src")
+aether_install_target(aether_editor_ui EditorUI BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/editor/src;${imgui_SOURCE_DIR}" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${imgui_SOURCE_DIR}")
+aether_install_target(aether_editor_vulkan EditorVulkan BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/editor/src;${imgui_SOURCE_DIR}/backends" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR};${CMAKE_INSTALL_INCLUDEDIR}/backends" HEADERS "${imgui_SOURCE_DIR}/backends")
+aether_install_target(aether_mcp MCP BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/mcp" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/mcp")
+aether_install_target(aether_game Game BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/player/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/player/include")
+aether_install_target(aether_bcenc bcenc BUILD_INCLUDES "${astcenc_SOURCE_DIR}/Source;${bc7enc_SOURCE_DIR}")
+aether_install_target(aether_meshopt meshopt BUILD_INCLUDES "${meshoptimizer_SOURCE_DIR}/src")
+aether_install_target(imgui_core imgui_core BUILD_INCLUDES "${imgui_SOURCE_DIR}" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${imgui_SOURCE_DIR}")
+if(TARGET glfw)
+    FetchContent_GetProperties(glfw SOURCE_DIR AETHER_GLFW_SOURCE_DIR)
+    aether_install_target(glfw glfw
+        BUILD_INCLUDES "${AETHER_GLFW_SOURCE_DIR}/include"
+        INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}"
+        HEADERS "${AETHER_GLFW_SOURCE_DIR}/include")
+endif()
+aether_install_target(astcenc-none-static astcenc BUILD_INCLUDES "${astcenc_SOURCE_DIR}/Source")
+
+if(TARGET Luau.Common)
+    foreach(_luau_target IN ITEMS Common Ast Bytecode Compiler VM)
+        aether_install_target(Luau.${_luau_target} Luau.${_luau_target}
+            BUILD_INCLUDES "${luau_SOURCE_DIR}/${_luau_target}/include"
+            INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}"
+            HEADERS "${luau_SOURCE_DIR}/${_luau_target}/include")
+    endforeach()
+endif()
+
+set(AETHER_PACKAGE_USE_VULKAN ${AETHER_BUILD_VULKAN})
+set(AETHER_PACKAGE_USE_GLSLANG OFF)
+if(AETHER_BUILD_VULKAN AND NOT WIN32 AND NOT ANDROID)
+    set(AETHER_PACKAGE_USE_GLSLANG ON)
+endif()
+set(AETHER_PACKAGE_USE_RECAST OFF)
+if(TARGET RecastNavigation::Recast)
+    set(AETHER_PACKAGE_USE_RECAST ON)
+endif()
+set(AETHER_PACKAGE_USE_JOLT OFF)
+if(TARGET Jolt::Jolt)
+    set(AETHER_PACKAGE_USE_JOLT ON)
+endif()
+set(AETHER_PACKAGE_USE_TRACY ${AETHER_TRACY})
+set(AETHER_PACKAGE_LZ4_FILENAME "${AETHER_LZ4_INSTALL_FILENAME}")
+aether_generate_package_config()
+
+# The pull-request gate (.github/workflows/ci.yml) runs only these: the unit and functional binaries, the frozen
+# API sample and the fuzz-corpus replays. Building this target instead of "all" skips the player, tools, benches,
+# demos and games, which the post-merge lanes still build.
+set(_aether_pr_gate_deps aether_tests aether_functional frozen_api_game)
+get_property(_aether_replays GLOBAL PROPERTY AETHER_REPLAY_TARGETS)
+list(APPEND _aether_pr_gate_deps ${_aether_replays})
+list(FILTER _aether_pr_gate_deps INCLUDE REGEX ".")
+foreach(_t IN LISTS _aether_pr_gate_deps)
+    if(NOT TARGET ${_t})
+        list(REMOVE_ITEM _aether_pr_gate_deps ${_t})
+    endif()
+endforeach()
+add_custom_target(aether_pr_gate DEPENDS ${_aether_pr_gate_deps})
+
+# Kept opt-in so engine-only builds do not pick up game content. Evervale is
 # a standalone game module and owns its own targets, tests and content copy.
 if(AETHER_BUILD_EVERVALE_REBOOT AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/games/EVERVALE-REBOOT/CMakeLists.txt")
     add_subdirectory(games/EVERVALE-REBOOT)

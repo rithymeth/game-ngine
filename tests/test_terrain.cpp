@@ -97,6 +97,29 @@ AETHER_TEST(TerrainChunks_VertexGeneration) {
     AETHER_CHECK_NEAR(std::sqrt(nx*nx + ny*ny + nz*nz), 1.0f, 1e-4f);
 }
 
+AETHER_TEST(TerrainChunks_NormalsFaceUpAndLeanAwayFromTheSlope) {
+    TerrainSettings settings;
+    settings.verts_per_chunk = 8;
+    settings.chunk_world_size = 7.0f;
+    settings.vertical_scale = 1.0f;
+    const auto centre_normal = [&](f32 slope_x) {
+        Heightmap hm = CreateProceduralHeightmap(8, 8, 1.0f, 1, 0.0f, 0.0f);
+        hm.heights.assign(64, 0.0f);
+        for (u32 z = 0; z < 8; ++z)
+            for (u32 x = 0; x < 8; ++x) hm.heights[z * 8 + x] = slope_x * static_cast<f32>(x);
+        TerrainData data;
+        InitTerrainData(data, hm, settings);
+        auto chunks = BuildChunks(data, settings);
+        auto verts = GenerateChunkVertices(data, settings, chunks[0]);
+        const usize i = (4u * 8u + 4u) * 8u; // the vertex at (4, 4) of 8 x 8
+        return Vec3(verts[i + 3], verts[i + 4], verts[i + 5]);
+    };
+    const Vec3 flat = centre_normal(0.0f);
+    AETHER_CHECK_NEAR(flat.y, 1.0f, 1e-4f); // flat ground faces up, so the sun lights it
+    const Vec3 slope = centre_normal(0.5f); // height rises towards +x: the surface leans towards -x
+    AETHER_CHECK(slope.y > 0.0f && slope.x < 0.0f);
+}
+
 AETHER_TEST(TerrainChunks_IndexGeneration) {
     Heightmap hm = CreateProceduralHeightmap(33, 33, 1.0f, 1, 0.5f, 4.0f);
     TerrainSettings settings;

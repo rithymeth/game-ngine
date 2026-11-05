@@ -84,7 +84,9 @@ public:
     Physics2DSettings settings;
 
     // Advances by `dt`: bodies are read from the world, moved, and written
-    // back (Transform x, y and Rigidbody2D::velocity).
+    // back (Transform x, y and Rigidbody2D::velocity). Non-finite or
+    // non-positive time steps, and invalid settings, leave the simulation
+    // unchanged and clear the event list.
     void Step(f32 dt);
 
     // Contact and trigger transitions of the last Step.
@@ -95,21 +97,61 @@ public:
     // Touching a wall: -1 on the left, 1 on the right, 0 none.
     int WallSide(Entity e) const;
 
-    // The nearest hit along a ray (dir needn't be normalised) within `max_distance`.
+    // The nearest hit along a ray (dir needn't be normalised) within `max_distance`;
+    // starting inside a collider reports a hit at distance zero (a box hit's
+    // normal points toward its nearest face).
     // Solid tiles count as layer 1 (bit 0 of `mask`).
     bool Raycast(Vec2 origin, Vec2 dir, f32 max_distance, RayHit2D& out, u32 mask = 0xFFFFFFFFu) const;
+    // Distinct collider and solid-tile hits along a ray, nearest first. Starting
+    // inside a collider reports distance zero; box normals point to the nearest
+    // face. `dir` needn't be normalised.
+    std::vector<RayHit2D> RaycastAll(Vec2 origin, Vec2 dir, f32 max_distance,
+                                     u32 mask = 0xFFFFFFFFu, usize max_hits = 64) const;
+    // Sweeps a circle along a ray, reporting the nearest collider or solid tile hit. A zero radius is a point cast;
+    // `dir` needn't be normalised.
+    bool CircleCast(Vec2 origin, Vec2 dir, f32 radius, f32 max_distance, RayHit2D& out,
+                    u32 mask = 0xFFFFFFFFu) const;
+    // Sweeps an axis-aligned box along a ray, reporting the nearest collider or solid tile hit. Zero half-extents are
+    // allowed for line or point casts; `dir` needn't be normalised.
+    bool BoxCast(Vec2 origin, Vec2 half_extents, Vec2 dir, f32 max_distance, RayHit2D& out,
+                 u32 mask = 0xFFFFFFFFu) const;
+    // All overlap queries return no matches for non-finite coordinates/angles or negative dimensions.
     // Entities whose colliders overlap the box.
     std::vector<Entity> OverlapBox(Vec2 center, Vec2 half_extents, u32 mask = 0xFFFFFFFFu) const;
+    // Entities whose colliders overlap a query box rotated counter-clockwise by `radians`.
+    std::vector<Entity> OverlapOrientedBox(Vec2 center, Vec2 half_extents, f32 radians,
+                                           u32 mask = 0xFFFFFFFFu) const;
+    // Entities whose colliders overlap the circle.
+    std::vector<Entity> OverlapCircle(Vec2 center, f32 radius, u32 mask = 0xFFFFFFFFu) const;
+    // Entities whose colliders overlap the capsule swept between `point_a` and `point_b`.
+    std::vector<Entity> OverlapCapsule(Vec2 point_a, Vec2 point_b, f32 radius,
+                                       u32 mask = 0xFFFFFFFFu) const;
+    // Entities whose colliders contain the point.
+    std::vector<Entity> OverlapPoint(Vec2 point, u32 mask = 0xFFFFFFFFu) const;
 
     usize BodyCount() const { return body_count_; }
 
 private:
+    struct PairIdentity {
+        u64 first = 0, second = 0;
+        bool first_tile = false, second_tile = false, trigger = false;
+
+        bool operator<(const PairIdentity& other) const {
+            if (first_tile != other.first_tile) return first_tile < other.first_tile;
+            if (first != other.first) return first < other.first;
+            if (second_tile != other.second_tile) return second_tile < other.second_tile;
+            if (second != other.second) return second < other.second;
+            return trigger < other.trigger;
+        }
+        bool operator==(const PairIdentity&) const = default;
+    };
+
     World& world_;
     Resolvers2D tiles_;
     std::vector<Event2D> events_;
     std::vector<u64> grounded_, left_wall_, right_wall_; // entity keys
-    std::vector<u64> pairs_;                             // last step's contacting pairs
-    std::vector<std::pair<u64, Event2D>> last_info_;     // and what each was
+    std::vector<PairIdentity> pairs_;                    // last step's contacting pairs
+    std::vector<std::pair<PairIdentity, Event2D>> last_info_; // and what each was
     usize body_count_ = 0;
 };
 

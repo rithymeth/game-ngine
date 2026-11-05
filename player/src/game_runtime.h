@@ -1,6 +1,8 @@
 #pragma once
 
 #include "aether/player/game.h"
+#include "aether/animation/animator.h"
+#include "aether/animation/gltf_source.h"
 #include "aether/audio/backend.h"
 #include "aether/audio/audio_system.h"
 #include "aether/blueprint/system.h"
@@ -14,6 +16,8 @@
 #include "aether/ui/theme.h"
 #include "aether/ui/viewport.h"
 #include "aether/ui/widget_system.h"
+#include "aether/vfx/emitter.h"
+#include "aether/vfx/particle_system.h"
 
 #include <map>
 #if AETHER_KIT_INVENTORY
@@ -27,6 +31,10 @@
 #endif
 #if AETHER_GAME_SCRIPTING
 #include "aether/script/script_system.h"
+#endif
+#if AETHER_GAME_AI
+#include "aether/ai/perception.h"
+#include "aether/nav/components.h"
 #endif
 
 namespace aether::player {
@@ -42,6 +50,22 @@ struct Game::Runtime {
     std::unique_ptr<audio::AudioOutput> output; // stops its thread before audio/mixer/bank destruction
     std::map<std::pair<u32, std::string>, audio::CueHandle> sequence_audio;
     std::unique_ptr<seq::SequenceSystem> sequences;
+    // Characters' animation (M8.6): graphs (.aanim), skinned glTF rigs and
+    // their clips, and montages (.amontage), read from the package by path on
+    // first use; the system runs every Animator after the sequencer.
+    std::map<std::string, std::unique_ptr<anim::AnimGraph>> anim_graphs;     // null: unreadable (warned once)
+    std::map<std::string, std::unique_ptr<anim::GltfCharacter>> anim_rigs;  // by glTF path
+    std::map<std::string, std::unique_ptr<anim::Montage>> anim_montages;
+    std::unique_ptr<anim::AnimationSystem> animation;
+    usize animation_problems = 0; // how many of animation->Problems() are already reported
+    // Particle systems (M8.7): .avfx assets read from the package by path on
+    // first use (null: unreadable, warned once), and the world that runs every
+    // ParticleSystem component. Sequence Vfx keys spawn effects into it; the
+    // effect a sequence started, by (sequence entity, asset), so its Stop finds it.
+    std::map<std::string, std::unique_ptr<vfx::ParticleSystemAsset>> vfx_assets;
+    std::unique_ptr<vfx::ParticleWorld> particles;
+    std::map<std::pair<u32, std::string>, Entity> sequence_vfx;
+    usize particle_problems = 0; // how many of particles->Problems() are already reported
     // The on-screen UI. Layout and painting use the renderer's font, so this one only serves the input router's text metrics.
     ui::BuiltinFont ui_font;
     ui::Viewport ui_viewport;
@@ -54,14 +78,14 @@ struct Game::Runtime {
     std::unique_ptr<gas::AttributeSystem> attributes;
     std::unique_ptr<gas::EffectSystem> effects;
     std::unique_ptr<gas::AbilitySystem> abilities;
-#if AETHER_KIT_INVENTORY
-    std::unique_ptr<inv::InventorySystem> inventory;
-#endif
-#if AETHER_KIT_INTERACTION
-    std::unique_ptr<interact::InteractionSystem> interaction;
-#endif
-#if AETHER_KIT_QUESTS
-    std::unique_ptr<quest::QuestSystem> quests;
+    // Declared after the services its kits reference so kit systems are destroyed first.
+    kit::KitRuntimeSet kit_runtimes;
+#if AETHER_GAME_AI
+    // The scene's navigation mesh and AI.CanSee's walls (game.cpp, BakeSceneNavigation):
+    // both from the scene's solid box colliders, so physics builds only. Active while
+    // this runtime lives; declared before the scripts that query them.
+    std::unique_ptr<nav::NavWorld> navigation;
+    std::unique_ptr<ai::PerceptionWorld> perception;
 #endif
 #if AETHER_GAME_SCRIPTING
     script::LuauHost host;

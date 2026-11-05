@@ -64,6 +64,7 @@ Vec3 Navigation::Raycast(const Vec3& from, const Vec3& to) {
 void RegisterNavAgentComponents() {
     RegisterNavComponents();
     (void)GetComponentId<NavAgent>();
+    (void)GetComponentId<NavAnimation>();
 }
 
 } // namespace aether
@@ -80,6 +81,14 @@ f32 YawOf(const Quaternion& q) {
     return std::atan2(f.x, f.z);
 }
 void FreeCrowd(dtCrowd* c) { dtFreeCrowd(c); }
+void UpdateAnimation(World& world, Entity entity, const NavAgent& agent) {
+    const NavAnimation* link = world.GetComponent<NavAnimation>(entity);
+    Animator* animator = world.GetComponent<Animator>(entity);
+    if (link == nullptr || animator == nullptr || !link->enabled) return;
+    const f32 speed = agent.status == NavMoveStatus::Moving ? agent.GetSpeed() * std::max(link->speed_scale, 0.0f) : 0.0f;
+    if (!link->speed_parameter.empty()) animator->SetFloatParameter(link->speed_parameter, speed);
+    if (!link->moving_parameter.empty()) animator->SetBoolParameter(link->moving_parameter, speed > std::max(link->moving_threshold, 0.0f));
+}
 } // namespace
 
 NavCrowd::NavCrowd(World& world, NavWorld& nav, i32 max_agents) : world_(world), nav_(nav), max_agents_(max_agents), crowd_(nullptr, FreeCrowd) {
@@ -311,13 +320,18 @@ void NavCrowd::Update(f32 dt) {
                 t->rotation = Quaternion::FromAxisAngle(Vec3(0, 1, 0), have + diff);
             }
         }
-        if (c.status != NavMoveStatus::Moving) continue;
-        c.remaining = Flat(pos, c.goal);
-        if (ag->targetState == DT_CROWDAGENT_TARGET_FAILED) {
-            Finish(a, c, false);
-        } else if (c.remaining <= std::max(c.stopping_distance, 0.05f)) {
-            Finish(a, c, true);
+        if (c.status == NavMoveStatus::Moving) {
+            c.remaining = Flat(pos, c.goal);
+            if (ag->targetState == DT_CROWDAGENT_TARGET_FAILED) {
+                Finish(a, c, false);
+            } else if (c.remaining <= std::max(c.stopping_distance, 0.05f)) {
+                Finish(a, c, true);
+            }
         }
+        if (c.status != NavMoveStatus::Moving) {
+            c.velocity = Vec3();
+        }
+        UpdateAnimation(world_, e, c);
     }
 }
 

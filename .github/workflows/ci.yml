@@ -28,15 +28,115 @@ on:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # A newer push to a pull request supersedes the older run. Runs on master are never cancelled: they are the only full verification of what
+  # was merged (the pull-request gate is a fast subset), and when several merges land close together a cancelling policy leaves most of them
+  # without a result. A run already going on master finishes; if more merges arrive meanwhile, the newest waits and the rest are skipped.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
 
 jobs:
   linux:
-    name: Linux (${{ matrix.name }})
+    name: Linux (GCC)
     runs-on: ubuntu-24.04
+    if: github.event_name == 'pull_request'
+    # The pull-request gate keeps the portable GCC path: compile, unit and
+    # functional behavior, API/format regressions, and Vulkan validation.
+    # Release packaging, alternate compilers and device jobs run after merge.
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tools
+        run: >
+          sudo apt-get update && sudo apt-get install -y ninja-build xvfb
+          libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
+          ccache libvulkan-dev glslang-dev glslang-tools spirv-tools mesa-vulkan-drivers vulkan-validationlayers
+      - name: Cache fetched dependencies
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: deps-linux-GCC-${{ hashFiles('**/CMakeLists.txt') }}
+          restore-keys: deps-linux-GCC-
+      - name: Restore compiled objects (ccache)
+        id: ccache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-linux-GCC-${{ github.sha }}
+          restore-keys: ccache-linux-GCC-
+      - name: Configure
+        env:
+          CCACHE_BASEDIR: ${{ github.workspace }}
+          CCACHE_COMPILERCHECK: content
+          CCACHE_MAXSIZE: 1G
+        run: >
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          -DAETHER_BUILD_PHYSICS=OFF -DAETHER_BUILD_EDITOR=OFF -DAETHER_BUILD_SANDBOX=OFF
+          -DAETHER_PLATFORM_PLUGINS=platforms/example
+      - name: Module graph
+        run: |
+          cmake --graphviz=build/graph.dot build
+          python3 tools/check_module_graph.py --dot build/graph.dot
+      - name: Build
+        env:
+          CCACHE_BASEDIR: ${{ github.workspace }}
+          CCACHE_MAXSIZE: 1G
+        run: |
+          cmake --build build --target aether_pr_gate --parallel
+          ccache --show-stats
+      - name: Save compiled objects (ccache)
+        # Saved even when a later step fails, so a red run still warms the cache.
+        if: always() && steps.ccache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-linux-GCC-${{ github.sha }}
+      - name: Unit tests
+        env:
+          AETHER_REQUIRE_VULKAN: "1"
+          AETHER01_INPUT_TRACE: ${{ github.workspace }}/build/aether01-input-trace.json
+          AETHER01_MOVESET_TRACE: ${{ github.workspace }}/build/aether01-moveset-trace.json
+          # The lit-material parity scenes keep their screenshots (BMP) and a timing report here.
+          AETHER_PARITY_OUT: ${{ github.workspace }}/parity-out
+        run: xvfb-run -a ./build/tests/aether_tests
+      - name: Vulkan resize and readback validation
+        env:
+          AETHER_REQUIRE_VULKAN: "1"
+          AETHER_TEST_FILTER: Vulkan_
+          VK_INSTANCE_LAYERS: VK_LAYER_KHRONOS_validation
+        run: |
+          status=0
+          xvfb-run -a ./build/tests/aether_tests > build/vulkan-validation.log 2>&1 || status=$?
+          cat build/vulkan-validation.log
+          if grep -Eq 'Validation Error|VUID-' build/vulkan-validation.log; then
+            echo "Vulkan validation reported an error"
+            exit 1
+          fi
+          for test in Vulkan_OffscreenFrameReadsBack Vulkan_TexturedQuadThroughBindlessTable Vulkan_WindowSwapChainPresents; do
+            if ! grep -Fq "[PASS] $test" build/vulkan-validation.log; then
+              echo "Required Vulkan check did not pass: $test"
+              exit 1
+            fi
+          done
+          exit "$status"
+      - name: Functional tests
+        run: ./build/tools/functional/aether_functional --quiet --junit functional-results.xml
+      - name: Upload the parity screenshots and timings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: parity-lavapipe
+          path: parity-out
+          retention-days: 14
+          if-no-files-found: ignore
+      - name: Registered regression tests
+        run: ctest --test-dir build --output-on-failure --parallel 4 -R "^(fuzz_replay_.*|module_graph_catches_a_cycle|api_stability_annotations|api_freeze_checks|api_inventory|frozen_api_game|production_gate_table|m8_gate_table)$"
+
+  linux-full:
+    name: Post-merge Linux (${{ matrix.name }})
+    runs-on: ubuntu-24.04
+    if: github.event_name != 'pull_request'
     strategy:
       fail-fast: false
       matrix:
@@ -73,23 +173,35 @@ jobs:
         # (HLSL to SPIR-V) and Mesa's lavapipe (software Vulkan) let the
         # Vulkan backend build and its tests render on a runner with no GPU.
         run: >
-          sudo apt-get update && sudo apt-get install -y ninja-build xvfb
+          sudo apt-get update && sudo apt-get install -y ninja-build ccache xvfb
           libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
-          libvulkan-dev glslang-dev glslang-tools spirv-tools mesa-vulkan-drivers
+          libvulkan-dev glslang-dev glslang-tools spirv-tools mesa-vulkan-drivers vulkan-validationlayers
       - name: Cache fetched dependencies
         uses: actions/cache@v4
         with:
           path: build/_deps
           key: deps-linux-${{ matrix.name }}-${{ hashFiles('**/CMakeLists.txt') }}
           restore-keys: deps-linux-${{ matrix.name }}-
+      - name: Restore compiled objects (ccache)
+        id: ccache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-linux-${{ matrix.name }}-${{ github.sha }}
+          restore-keys: ccache-linux-${{ matrix.name }}-
       - name: Configure
         env:
           CC: ${{ matrix.cc }}
           CXX: ${{ matrix.cxx }}
+          CCACHE_BASEDIR: ${{ github.workspace }}
+          CCACHE_COMPILERCHECK: content
+          CCACHE_MAXSIZE: 1G
         run: >
           cmake -S . -B build -G Ninja
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           -DCMAKE_BUILD_TYPE=${{ matrix.type }}
           "-DCMAKE_CXX_FLAGS=${{ matrix.flags }}"
+          "-DCMAKE_CXX_FLAGS_DEBUG=${{ matrix.name == 'ASan+UBSan' && '-O0 -g1' || '-g' }}"
           -DAETHER_BUILD_PHYSICS=${{ matrix.physics }}
           -DAETHER_BUILD_EDITOR=OFF -DAETHER_BUILD_SANDBOX=OFF
           -DAETHER_PLATFORM_PLUGINS=platforms/example
@@ -101,28 +213,97 @@ jobs:
           cmake --graphviz=build/graph.dot build
           python3 tools/check_module_graph.py --dot build/graph.dot
       - name: Build
-        run: cmake --build build --parallel
+        env:
+          CCACHE_BASEDIR: ${{ github.workspace }}
+          CCACHE_MAXSIZE: 1G
+        run: |
+          cmake --build build --parallel
+          ccache --show-stats
+      - name: Save compiled objects (ccache)
+        # Saved even when a later step fails, so a red run still warms the cache.
+        if: always() && steps.ccache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-linux-${{ matrix.name }}-${{ github.sha }}
+      - name: Install the SDK and build its template consumer
+        if: github.event_name != 'pull_request' && matrix.name == 'GCC'
+        run: |
+          cmake --install build --prefix "$GITHUB_WORKSPACE/build/sdk-install"
+          cmake -S tools/sdk-template-consumer -B build/sdk-template-consumer -G Ninja \
+            -DCMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/build/sdk-install"
+          cmake --build build/sdk-template-consumer --parallel
+          ./build/sdk-template-consumer/aether_template_sdk_consumer
+      - name: Upload the installed SDK for clean-machine validation
+        if: github.event_name != 'pull_request' && matrix.name == 'GCC'
+        uses: actions/upload-artifact@v4
+        with:
+          name: aether-sdk-linux-x64
+          path: build/sdk-install
+          if-no-files-found: error
       - name: Unit tests
         env:
+          # These lanes install lavapipe and run under Xvfb. Device/display
+          # failures must not silently skip the Vulkan regression checks.
+          # The sanitizer lane deliberately hides its driver (see below).
+          AETHER_REQUIRE_VULKAN: ${{ matrix.name != 'ASan+UBSan' && '1' || '' }}
           # Under LeakSanitizer, Mesa's lavapipe reports allocations its
           # worker threads keep after the driver is unloaded; that job hides
           # the driver, so its Vulkan device tests skip (the others run them).
           VK_DRIVER_FILES: ${{ matrix.name == 'ASan+UBSan' && '/nonexistent/icd.json' || '' }}
           VK_ICD_FILENAMES: ${{ matrix.name == 'ASan+UBSan' && '/nonexistent/icd.json' || '' }}
+          # The AETHER-01 ending test records its input; the M8.7 step replays it in the packaged player.
+          AETHER01_INPUT_TRACE: ${{ github.workspace }}/build/aether01-input-trace.json
+          # And Kael's move-set test, for the M8.6 packaged character step.
+          AETHER01_MOVESET_TRACE: ${{ github.workspace }}/build/aether01-moveset-trace.json
         run: xvfb-run -a ./build/tests/aether_tests
+      - name: Vulkan resize and readback validation
+        if: matrix.name == 'GCC'
+        env:
+          AETHER_REQUIRE_VULKAN: "1"
+          AETHER_TEST_FILTER: Vulkan_
+          VK_INSTANCE_LAYERS: VK_LAYER_KHRONOS_validation
+        run: |
+          status=0
+          xvfb-run -a ./build/tests/aether_tests > build/vulkan-validation.log 2>&1 || status=$?
+          cat build/vulkan-validation.log
+          if grep -Eq 'Validation Error|VUID-' build/vulkan-validation.log; then
+            echo "Vulkan validation reported an error"
+            exit 1
+          fi
+          # Also reject a build that silently configured Vulkan out: the
+          # substring filter would otherwise succeed with zero tests.
+          for test in Vulkan_OffscreenFrameReadsBack Vulkan_TexturedQuadThroughBindlessTable Vulkan_WindowSwapChainPresents; do
+            if ! grep -Fq "[PASS] $test" build/vulkan-validation.log; then
+              echo "Required Vulkan check did not pass: $test"
+              exit 1
+            fi
+          done
+          exit "$status"
       - name: Functional tests
         run: ./build/tools/functional/aether_functional --quiet --junit functional-results.xml
       - name: Registered regression tests
-        run: ctest --test-dir build --output-on-failure --parallel 4 -R "^(fuzz_replay_.*|module_graph_catches_a_cycle|api_stability_annotations|api_freeze_checks|frozen_api_game|production_gate_table|m8_gate_table)$"
+        run: ctest --test-dir build --output-on-failure --parallel 4 -R "^(fuzz_replay_.*|module_graph_catches_a_cycle|api_stability_annotations|api_freeze_checks|api_inventory|frozen_api_game|production_gate_table|m8_gate_table)$"
+      - name: API inventory (M8.1)
+        # The Physics lane builds every optional module, which is the configuration the Luau inventory records.
+        # A failure means the public C++ or Luau API changed without a reviewed inventory update; to accept an
+        # intended change run `python3 tools/api_inventory.py --update --tests build/tests/aether_tests` and
+        # commit docs/design/api_inventory_*.txt.
+        if: github.event_name != 'pull_request' && matrix.name == 'Physics'
+        run: python3 tools/api_inventory.py --tests ./build/tests/aether_tests
+      - name: Long-running heap soak
+        if: github.event_name != 'pull_request' && matrix.name == 'GCC'
+        env:
+          AETHER_SOAK_SCALE: "4"
+        run: ctest --test-dir build --output-on-failure -R "^soak$"
       - name: Benchmarks
         # Phase 38 steps 1 and 6: retain a provenance-tagged report artifact, and compare with the checked-in
-        # baseline (bench/baseline.json) by calibration-normalized time. Comparison is advisory (continue-on-error)
-        # until the thresholds have held for a couple of weeks; then it becomes required.
-        if: matrix.name == 'GCC'
-        continue-on-error: true
+        # baseline (bench/baseline.json) by calibration-normalized time. Required since it held with no regression
+        # on ten master runs in a row (2026-10-15 to 2026-10-22); docs/design/PERFORMANCE.md says how to refresh it.
+        if: github.event_name != 'pull_request' && matrix.name == 'GCC'
         run: ./build/bench/aether_bench --repeat 5 --json bench-report.json --baseline bench/baseline.json --tolerance 3.0
       - name: Upload the benchmark report
-        if: matrix.name == 'GCC' && always()
+        if: github.event_name != 'pull_request' && matrix.name == 'GCC' && always()
         uses: actions/upload-artifact@v4
         with:
           name: bench-report
@@ -130,28 +311,161 @@ jobs:
           if-no-files-found: error
       - name: Pack the assets
         # Phase 25: assets/ into an .apak archive and back, byte for byte.
-        if: matrix.name == 'GCC'
+        if: github.event_name != 'pull_request' && matrix.name == 'GCC'
         run: |
           ./build/tools/pak/aether_pak create assets.apak assets --prefix assets
           ./build/tools/pak/aether_pak verify assets.apak
           ./build/tools/pak/aether_pak extract assets.apak unpacked
           diff -r assets unpacked/assets
+      - name: Content pipeline evidence (M8.5)
+        # Repeat cooks are byte-identical and reuse every import and texture; editing a file the models depend on
+        # (the .bin buffer all 22 AETHER-01 models share, which is not an asset itself) re-imports exactly those models.
+        if: github.event_name != 'pull_request' && matrix.name == 'GCC'
+        run: |
+          rm -rf m85 && mkdir m85 && cp -r games/AETHER-01 m85/project && rm -rf m85/project/Intermediate
+          cook() { ./build/tools/cook/aether_cook m85/project/AETHER-01.aproject --out "m85/$1" --config development | tee "m85/$1.txt"; }
+          cook first && cook repeat
+          sha256sum m85/first/Game.apak m85/repeat/Game.apak
+          [ "$(sha256sum < m85/first/Game.apak)" = "$(sha256sum < m85/repeat/Game.apak)" ]
+          grep -E "^import cache: [0-9]+ reused, 0 imported$" m85/repeat.txt
+          grep -E "^texture cache: [0-9]+ reused, 0 cooked$" m85/repeat.txt
+          python3 -c "import struct,sys; f=open(sys.argv[1],'r+b'); x=struct.unpack('<f',f.read(4))[0]; f.seek(0); f.write(struct.pack('<f',x+0.5))" m85/project/Content/models/test_cube.bin
+          cook edited
+          models=$(grep -l '"test_cube.bin"' m85/project/Content/models/*.gltf | wc -l)
+          echo "models that reference test_cube.bin: $models"
+          grep -E "^import cache: [0-9]+ reused, $models imported$" m85/edited.txt
+          grep -E "^texture cache: [0-9]+ reused, 0 cooked$" m85/edited.txt
+          [ "$(sha256sum < m85/first/Game.apak)" != "$(sha256sum < m85/edited/Game.apak)" ]
+          # Fresh cooks: two separate clean copies (no Intermediate/ import cache) give byte-identical output.
+          for c in a b; do
+            rm -rf "m85/fresh-$c" && cp -r games/AETHER-01 "m85/fresh-$c" && rm -rf "m85/fresh-$c/Intermediate"
+            ./build/tools/cook/aether_cook "m85/fresh-$c/AETHER-01.aproject" --out "m85/fresh-$c/out" --config development > "m85/fresh-$c.txt"
+          done
+          sha256sum m85/fresh-a/out/Game.apak m85/fresh-b/out/Game.apak m85/fresh-a/out/CookManifest.json m85/fresh-b/out/CookManifest.json
+          [ "$(sha256sum < m85/fresh-a/out/Game.apak)" = "$(sha256sum < m85/fresh-b/out/Game.apak)" ]
+          [ "$(sha256sum < m85/fresh-a/out/CookManifest.json)" = "$(sha256sum < m85/fresh-b/out/CookManifest.json)" ]
+          [ "$(sha256sum < m85/first/Game.apak)" = "$(sha256sum < m85/fresh-a/out/Game.apak)" ]
+          # Toolchain and revision the hashes above belong to.
+          echo "engine revision: $(git rev-parse HEAD)"; gcc --version | head -1; cmake --version | head -1
+          # Standalone load: the first pak, copied outside the checkout with the project sources moved away, runs in
+          # the player from an empty working directory (the startup scene, its scripts and kit assets come from the pak).
+          standalone="$RUNNER_TEMP/m85-standalone" && rm -rf "$standalone" && mkdir -p "$standalone/Paks" "$standalone/cwd"
+          cp m85/first/Game.apak "$standalone/Paks/" && mv m85/project "$RUNNER_TEMP/m85-hidden-project"
+          (cd "$standalone/cwd" && "$GITHUB_WORKSPACE/build/player/aether_player" --pak "$standalone/Paks/Game.apak" \
+            --headless --frames 120 --report --user-dir "$standalone/user") 2>&1 | tee m85/standalone.txt
+          grep -F "Loaded Scenes/Main.ascene" m85/standalone.txt
+          grep -E "^\[INFO\] Player: Ran 120 frames" m85/standalone.txt
+          # (a bare "! grep" does not fail a bash -e step mid-script)
+          if grep -E "^\[(ERROR|FATAL)\]" m85/standalone.txt; then exit 1; fi
+          if grep -E "\.(aquest|aability|aeffect): " m85/standalone.txt; then exit 1; fi  # the cooked kit assets all load
+          mv "$RUNNER_TEMP/m85-hidden-project" m85/project
+      - name: Packaged cinematic play-through and skip (M8.7)
+        # The standalone pak from the step above replays the recorded AETHER-01 playthrough headless twice: to the
+        # end of the archive reveal (3 voiced lines, 3 subtitles, 'Sequence finished') and with Enter pressed during
+        # the first line ('Sequence skipped', that voice stopped and its subtitle hidden, no later line, the ending state).
+        if: github.event_name != 'pull_request' && matrix.name == 'GCC'
+        run: |
+          python3 tools/aether01_cinematic_check.py --player build/player/aether_player \
+            --pak "$RUNNER_TEMP/m85-standalone/Paks/Game.apak" --trace build/aether01-input-trace.json --work m87
+      - name: Upload the cinematic logs (M8.7)
+        if: github.event_name != 'pull_request' && matrix.name == 'GCC' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m87-cinematic-logs
+          path: m87
+          if-no-files-found: warn
+      - name: Packaged character move set (M8.6)
+        # The same standalone pak replays the Kael move-set test's input headless: the player's animation host logs
+        # each state change of Kael's Animator, and every state the game can reach (idle, aim, interact, fire,
+        # reload, jump, fall, land, walk, run, hit, death) must appear, ending back in Idle after the restart.
+        if: github.event_name != 'pull_request' && matrix.name == 'GCC'
+        run: |
+          python3 tools/aether01_character_check.py --player build/player/aether_player \
+            --pak "$RUNNER_TEMP/m85-standalone/Paks/Game.apak" --trace build/aether01-moveset-trace.json --work m86
+      - name: Upload the character logs (M8.6)
+        if: github.event_name != 'pull_request' && matrix.name == 'GCC' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m86-character-logs
+          path: m86
+          if-no-files-found: warn
+      - name: Package the dedicated server (M8.9)
+        # aether_server + aether_netclient + server.json + the cooked AETHER-01 pak as a .tar.gz with SHA256SUMS
+        # (tools/package_server.sh); the dedicated-server job below runs it on a clean container.
+        if: github.event_name != 'pull_request' && matrix.name == 'GCC'
+        run: |
+          ./build/tools/cook/aether_cook games/AETHER-01/AETHER-01.aproject --out server-cook --config development
+          tools/package_server.sh --build build --paks server-cook --out server-dist
+      - name: Upload the server package
+        if: github.event_name != 'pull_request' && matrix.name == 'GCC'
+        uses: actions/upload-artifact@v4
+        with:
+          name: aether-server-linux-x64
+          path: server-dist
+          if-no-files-found: error
+      - name: Build the AETHER-01 Linux release candidate, symbols and patch (M8.10)
+        # tools/ship/build_release.sh: strict shipping cook -> v1 package (stripped player + build-id keyed
+        # symbols archive + GAME_MANIFEST.json + SHA256SUMS.txt), a v2 package with a delta pak, and the
+        # v1 -> v2 patch. The game-ship job installs, patches and rolls them back in a bare container.
+        if: github.event_name != 'pull_request' && matrix.name == 'GCC'
+        run: |
+          version="${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || inputs.release_tag || '' }}"
+          tools/ship/build_release.sh --build build --out ship-dist ${version:+--version "$version"}
+      - name: Upload the AETHER-01 Linux release candidate
+        if: github.event_name != 'pull_request' && matrix.name == 'GCC'
+        uses: actions/upload-artifact@v4
+        with:
+          name: aether01-linux-x64-ship
+          path: ship-dist
+          if-no-files-found: error
+      - name: Play AETHER-01 through Vulkan with the validation layer
+        # The cooked game in the player under Xvfb, drawn through Vulkan on lavapipe with the Khronos validation layer:
+        # any validation error fails the step. Windows plays it on D3D12; this is the scene path on Vulkan (Linux,
+        # macOS, Android), which once compiled push constants into a uniform buffer the pipeline layout did not have.
+        # Advisory for now: the scene renders on the Android emulator (SwiftShader), but lavapipe on this runner
+        # segfaults inside its LLVM shader JIT on the scene pipeline. The step prints validation messages and a gdb
+        # backtrace so that can be pinned down; make it required once it is clean.
+        if: github.event_name != 'pull_request' && matrix.name == 'GCC'
+        continue-on-error: true
+        run: |
+          sudo apt-get install -y vulkan-validationlayers gdb
+          ./build/tools/cook/aether_cook games/AETHER-01/AETHER-01.aproject --out aether01-linux/Paks --config development
+          status=0
+          VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation xvfb-run -a ./build/player/aether_player \
+            --pak aether01-linux/Paks --frames 30 --size 640x360 --user-dir aether01-linux/user \
+            --screenshot aether01-linux.bmp > aether01-linux.log 2>&1 || status=$?
+          echo "player exit status: $status"
+          grep -E "Validation Error|VUID-" aether01-linux.log | sed 's/0x[0-9a-f]*/0x../g' | sort | uniq -c | head -20 || true
+          if [ "$status" != 0 ]; then
+            tail -20 aether01-linux.log
+            VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation xvfb-run -a gdb -q -batch -ex run -ex "thread apply all bt 12" \
+              --args ./build/player/aether_player --pak aether01-linux/Paks --frames 30 --size 640x360 \
+              --user-dir aether01-linux/user 2>&1 | grep -E "^#|^Thread|SIG" | head -80 || true
+            exit 1
+          fi
+          ! grep -q "Validation Error" aether01-linux.log
+          test -s aether01-linux.bmp
       - name: Screenshot the editor shell
         # The portable editor (editor/shell) in a real window under Xvfb,
         # drawn through Vulkan on lavapipe; the last frame is kept.
-        if: matrix.name == 'GCC'
+        if: github.event_name != 'pull_request' && matrix.name == 'GCC'
         env:
           AETHER_EDITOR_MAX_FRAMES: "30"
           AETHER_EDITOR_SCREENSHOT: ${{ github.workspace }}/editor-screenshot-linux.png
         run: |
           xvfb-run -a -s "-screen 0 1920x1080x24" ./build/editor/shell/aether_editor_shell
           test -s editor-screenshot-linux.png
+      - name: Verify and record the editor screenshot
+        if: github.event_name != 'pull_request' && matrix.name == 'GCC' && always()
+        run: python3 tools/verify_editor_capture.py editor-screenshot-linux.png --platform linux-x64 --manifest editor-capture-linux.json
       - name: Upload the editor screenshot
-        if: matrix.name == 'GCC' && always()
+        if: github.event_name != 'pull_request' && matrix.name == 'GCC' && always()
         uses: actions/upload-artifact@v4
         with:
           name: editor-screenshot-linux
-          path: editor-screenshot-linux.png
+          path: |
+            editor-screenshot-linux.png
+            editor-capture-linux.json
           if-no-files-found: ignore
       - name: Keep the functional report
         if: always()
@@ -161,9 +475,109 @@ jobs:
           path: functional-results.xml
           if-no-files-found: ignore
 
+  clean-machine-sdk:
+    name: Clean-machine SDK consumer (Linux container)
+    needs: [linux-full]
+    runs-on: ubuntu-24.04
+    if: github.event_name != 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download the installed SDK
+        uses: actions/download-artifact@v4
+        with:
+          name: aether-sdk-linux-x64
+          path: sdk-install
+      - name: Build and run the consumer in a fresh container
+        run: |
+          docker build --tag aether-sdk-clean-machine tools/sdk-clean-machine
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE/sdk-install:/opt/aether-sdk:ro" \
+            --volume "$GITHUB_WORKSPACE/tools/sdk-template-consumer:/workspace:ro" \
+            aether-sdk-clean-machine \
+            sh -euxc 'cmake -S /workspace -B /tmp/consumer -G Ninja -DCMAKE_PREFIX_PATH=/opt/aether-sdk && cmake --build /tmp/consumer --parallel && /tmp/consumer/aether_template_sdk_consumer'
+
+  dedicated-server:
+    name: Dedicated server package (Linux clean container, M8.9)
+    # The packaged server on a machine with nothing installed: a bare ubuntu:24.04 container (no compilers,
+    # Vulkan, X11 or engine checkout on its PATH) checks the archive's SHA-256, unpacks it, starts
+    # bin/aether_server on localhost with --max-runtime/--quit-when-empty, runs two bin/aether_netclient
+    # processes over real UDP plus a wrong-password one, and asserts both joined, saw replicated state and
+    # had their RPC acknowledged (tools/server_smoke.sh). LAN discovery (--discover, and one client joining by
+    # --join-first) runs first; the server writes a network profile capture. Log + capture are uploaded.
+    needs: [linux-full]
+    runs-on: ubuntu-24.04
+    if: github.event_name != 'pull_request'
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download the server package
+        uses: actions/download-artifact@v4
+        with:
+          name: aether-server-linux-x64
+          path: server-dist
+      - name: Host it in a clean container and connect two clients
+        run: |
+          mkdir -p server-run
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE/server-dist:/dist:ro" \
+            --volume "$GITHUB_WORKSPACE/tools/server_smoke.sh:/server_smoke.sh:ro" \
+            --volume "$GITHUB_WORKSPACE/server-run:/run-out" \
+            ubuntu:24.04 \
+            sh -euxc 'apt-get update -qq && apt-get install -y -qq python3 > /dev/null && \
+              status=0; bash /server_smoke.sh /dist /tmp/server 7777 || status=$?; \
+              cp -r /tmp/server/aether-server-*/logs /tmp/server/aether-server-*/*.out /run-out/ 2>/dev/null || true; exit $status'
+          # The network profile capture's summary, for the job log (the full capture is uploaded below).
+          tail -n 1 server-run/logs/profile.jsonl
+      - name: Upload the server log and network profile capture
+        # Always: logs/profile.jsonl (per-peer RTT, loss, bytes per channel, snapshot sizes, security and LAN
+        # discovery counters every 0.5 s, then a summary line) is M8.9 profiler evidence.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dedicated-server-profile
+          path: server-run
+          if-no-files-found: ignore
+
+  game-ship:
+    name: Game install, patch and rollback (Linux clean container, M8.10)
+    # The AETHER-01 Linux package on a machine with nothing installed but python3 and the player's
+    # Vulkan loader (bare ubuntu:24.04): checksums, manifest and symbol build-id checks, a headless launch
+    # outside any checkout, v1 -> v2 patch, rollback, and refused damaged/tampered patches with v1 intact
+    # (tools/ship/ship_smoke.sh). Then a dry run of the release assembly (nothing is published).
+    needs: [linux-full]
+    runs-on: ubuntu-24.04
+    if: github.event_name != 'pull_request'
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download the release candidate
+        uses: actions/download-artifact@v4
+        with:
+          name: aether01-linux-x64-ship
+          path: ship-dist
+      - name: Install, launch, patch and roll back in a clean container
+        run: |
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE/ship-dist:/dist:ro" \
+            --volume "$GITHUB_WORKSPACE/tools/ship:/ship:ro" \
+            ubuntu:24.04 \
+            sh -euxc 'apt-get update -qq && apt-get install -y -qq --no-install-recommends python3 libvulkan1 > /dev/null && \
+              bash /ship/ship_smoke.sh /dist /tmp/ship'
+      - name: Release assembly dry run (no publish)
+        run: |
+          tools/ship/assemble_release.sh ship-dist/v1 release-dry-run
+          ls -l release-dry-run
+      - name: Upload the dry-run release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: aether01-release-dry-run
+          path: release-dry-run
+          if-no-files-found: error
+
   macos:
     name: macOS (Apple Silicon, MoltenVK)
     runs-on: macos-15
+    if: github.event_name != 'pull_request'
     steps:
       - uses: actions/checkout@v4
       - name: Install tools
@@ -195,7 +609,52 @@ jobs:
       - name: Functional tests
         run: ./build/tools/functional/aether_functional --quiet --junit functional-results.xml
       - name: Registered regression tests
-        run: ctest --test-dir build --output-on-failure --parallel 4 -R "^(fuzz_replay_.*|module_graph_catches_a_cycle|api_stability_annotations|api_freeze_checks|frozen_api_game|production_gate_table|m8_gate_table)$"
+        run: ctest --test-dir build --output-on-failure --parallel 4 -R "^(fuzz_replay_.*|module_graph_catches_a_cycle|api_stability_annotations|api_freeze_checks|api_inventory|frozen_api_game|production_gate_table|m8_gate_table)$"
+      - name: Package and smoke the dedicated server (M8.9)
+        # aether_server/aether_netclient are already built; cook AETHER-01, package it as
+        # aether-server-macos-arm64.tar.gz and run the same localhost smoke as Linux (discovery, 2 clients with
+        # tokens, refusals, profile capture). A few seconds on top of the build.
+        run: |
+          ./build/tools/cook/aether_cook games/AETHER-01/AETHER-01.aproject --out server-cook --config development
+          tools/package_server.sh --build build --paks server-cook --out server-dist --platform macos-arm64
+          bash tools/server_smoke.sh server-dist server-run 7777
+      - name: Upload the server package
+        uses: actions/upload-artifact@v4
+        with:
+          name: aether-server-macos-arm64
+          path: server-dist
+          if-no-files-found: error
+      - name: Upload the server log and profile capture
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dedicated-server-profile-macos
+          path: server-run/aether-server-macos-arm64/logs
+          if-no-files-found: ignore
+      - name: Build the AETHER-01 macOS release candidate, symbols and patch (M8.10)
+        # tools/ship/build_release.sh --platform macos-arm64: strict shipping cook -> v1 .tar.gz holding
+        # AETHER-01.app (stripped player in Contents/MacOS, Homebrew's Vulkan loader + MoltenVK and its ICD
+        # manifest bundled in Contents/Frameworks / Resources/vulkan, install names rewritten to @rpath and
+        # ad-hoc re-signed, paks in Contents/Resources/Paks), a dsymutil .dSYM symbols archive keyed by the
+        # player's LC_UUID, a v2 package with a delta pak and the v1 -> v2 patch. Unsigned (no Developer ID).
+        run: |
+          version="${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || inputs.release_tag || '' }}"
+          tools/ship/build_release.sh --build build --out ship-dist --work ship-work --platform macos-arm64 \
+            ${version:+--version "$version"}
+      - name: Install, launch, patch and roll back the macOS game package (M8.10)
+        # The same smoke as Linux/Windows, natively, without the Homebrew Vulkan driver environment: SHA256SUMS,
+        # manifest, LC_UUID vs dSYM check, headless launch of the bundle executable outside the checkout
+        # (Health 3), damaged/tampered patches refused, patch -> Health 5, rollback -> Health 3, saves kept;
+        # then the release assembly dry run.
+        run: |
+          env -u VK_ICD_FILENAMES -u VK_DRIVER_FILES bash tools/ship/ship_smoke.sh ship-dist ship-run macos-arm64
+          tools/ship/assemble_release.sh ship-dist/v1 ship-release-dry-run AETHER-01-macos-arm64
+      - name: Upload the AETHER-01 macOS release candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: aether01-macos-arm64-ship
+          path: ship-dist
+          if-no-files-found: error
       - name: Screenshot the editor shell
         # Offscreen through MoltenVK; hosted runners may have no Metal
         # device, so this reports without failing the job.
@@ -205,12 +664,17 @@ jobs:
           AETHER_EDITOR_MAX_FRAMES: "10"
           AETHER_EDITOR_SCREENSHOT: ${{ github.workspace }}/editor-screenshot-macos.png
         run: ./build/editor/shell/aether_editor_shell
+      - name: Verify and record the editor screenshot
+        if: always()
+        run: python3 tools/verify_editor_capture.py editor-screenshot-macos.png --platform macos-arm64 --manifest editor-capture-macos.json --optional
       - name: Upload the editor screenshot
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: editor-screenshot-macos
-          path: editor-screenshot-macos.png
+          path: |
+            editor-screenshot-macos.png
+            editor-capture-macos.json
           if-no-files-found: ignore
       - name: Keep the functional report
         if: always()
@@ -223,6 +687,7 @@ jobs:
   windows:
     name: Windows (MSVC, D3D12 editor)
     runs-on: windows-2022
+    if: github.event_name != 'pull_request'
     steps:
       - uses: actions/checkout@v4
       - name: Install Qt 6.8.3
@@ -242,7 +707,8 @@ jobs:
       - name: Configure
         # Vulkan is off: hosted runners have no Vulkan loader to link
         # against. The D3D12 editor and the rest build as usual.
-        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DAETHER_BUILD_VULKAN=OFF -DAETHER_BUILD_QT_EDITOR=ON
+        # AETHER_MSVC_RELEASE_PDB: Release .pdb files for the game symbols archive (M8.10).
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DAETHER_BUILD_VULKAN=OFF -DAETHER_BUILD_QT_EDITOR=ON -DAETHER_MSVC_RELEASE_PDB=ON
       - name: Module graph
         # Check the Windows editor and D3D12 target set against the same
         # cross-configuration layer map enforced by the Linux GCC job.
@@ -257,12 +723,16 @@ jobs:
         env:
           AETHER01_INPUT_TRACE: ${{ github.workspace }}/build/aether01-input-trace.json
         run: .\build\tests\Release\aether_tests.exe
-      - name: Qt editor self-test
-        run: .\build\editor\Release\aether_editor.exe --self-test
+      - name: Editor session soak
+        run: .\build\editor\Release\aether_editor.exe --self-test --self-test-repeats 4
       - name: Functional tests
         run: .\build\tools\functional\Release\aether_functional.exe --quiet --junit functional-results.xml
       - name: Registered regression tests
-        run: ctest --test-dir build -C Release --output-on-failure --parallel 4 -R "^(fuzz_replay_.*|module_graph_catches_a_cycle|api_stability_annotations|api_freeze_checks|frozen_api_game|production_gate_table|m8_gate_table)$"
+        run: ctest --test-dir build -C Release --output-on-failure --parallel 4 -R "^(fuzz_replay_.*|module_graph_catches_a_cycle|api_stability_annotations|api_freeze_checks|api_inventory|frozen_api_game|production_gate_table|m8_gate_table)$"
+      - name: Long-running heap soak
+        env:
+          AETHER_SOAK_SCALE: "4"
+        run: ctest --test-dir build -C Release --output-on-failure -R "^soak$"
       - name: Cook and launch the AETHER-01 proof project
         shell: pwsh
         run: |
@@ -270,6 +740,27 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & .\build\player\Release\aether_player.exe --pak build\aether01-cooked\Game.apak --headless --frames 120 --report
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Package and smoke the dedicated server (M8.9)
+        # The MSVC aether_server/aether_netclient from the build above, with the pak cooked in the previous step:
+        # aether-server-windows-x64.zip, then the same localhost smoke as Linux under Git Bash (discovery, 2 clients
+        # with tokens, refusals, profile capture).
+        shell: bash
+        run: |
+          tools/package_server.sh --build build --paks build/aether01-cooked --out server-dist --platform windows-x64
+          bash tools/server_smoke.sh server-dist server-run 7777
+      - name: Upload the server package
+        uses: actions/upload-artifact@v4
+        with:
+          name: aether-server-windows-x64
+          path: server-dist
+          if-no-files-found: error
+      - name: Upload the server log and profile capture
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dedicated-server-profile-windows
+          path: server-run/aether-server-windows-x64/logs
+          if-no-files-found: ignore
       - name: Verify repeat cook and incremental texture cache
         shell: pwsh
         run: |
@@ -354,6 +845,34 @@ jobs:
         with:
           name: AetherEditor-windows-x64
           path: dist/AetherEditor-windows-x64.zip
+      - name: Build the AETHER-01 Windows release candidate, symbols and patch (M8.10)
+        # tools/ship/build_release.sh under Git Bash: strict shipping cook -> v1 .zip package (AETHER-01.exe +
+        # DLLs + Paks + GAME_MANIFEST.json), a symbol-store .zip of the .pdb files keyed by the exe's RSDS
+        # GUID/age (SYMBOLS.json), a v2 package with a delta pak and the v1 -> v2 patch. Named
+        # AETHER-01-windows-x64-ship* so it sits beside AETHER-01-windows-x64.zip (package_aether01.ps1).
+        shell: bash
+        env:
+          PYTHON: python
+        run: |
+          version="${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || inputs.release_tag || '' }}"
+          tools/ship/build_release.sh --build build --out ship-dist --work ship-work --platform windows-x64 \
+            --archive-name AETHER-01-windows-x64-ship ${version:+--version "$version"}
+      - name: Install, launch, patch and roll back the Windows game package (M8.10)
+        # The same smoke as the Linux game-ship job, natively: SHA256SUMS, manifest, RSDS/PDB GUID+age check,
+        # headless launch outside the checkout (Health 3), damaged/tampered patches refused with v1 intact,
+        # patch -> Health 5, rollback -> Health 3, saves kept; then the release assembly dry run.
+        shell: bash
+        env:
+          PYTHON: python
+        run: |
+          bash tools/ship/ship_smoke.sh ship-dist ship-run windows-x64 AETHER-01-windows-x64-ship
+          tools/ship/assemble_release.sh ship-dist/v1 ship-release-dry-run AETHER-01-windows-x64-ship
+      - name: Upload the AETHER-01 Windows release candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: aether01-windows-x64-ship
+          path: ship-dist
+          if-no-files-found: error
       - name: Package and validate the standalone proof game
         shell: pwsh
         run: |
@@ -420,7 +939,11 @@ jobs:
               $state = $result | Where-Object { $_ -like 'Player attributes: *' } | Select-Object -Last 1
               if (-not $state) { throw 'Missing final game state' }
               $state = $state.Substring('Player attributes: '.Length) | ConvertFrom-Json
-              if ($state.MissionStage -ne 5 -or $state.Health -le 0 -or $state.ArchiveTime -ne 8) { throw 'Packaged playthrough did not complete the archive ending' }
+              if ($state.MissionStage -ne 5 -or $state.Health -le 0 -or $state.ArchiveTime -ne 8 -or $state.ArchiveComplete -ne 1) { throw 'Packaged playthrough did not complete the archive ending' }
+              # M8.7: the reveal's dialogue voiced and subtitled (player log markers).
+              if (@($result | Select-String -SimpleMatch 'Player: Subtitle shown: dlg.archive.').Count -ne 3 -or
+                  @($result | Select-String -SimpleMatch 'Player: Sequence cue started: Audio/dialogue_archive_').Count -ne 3 -or
+                  -not ($result | Select-String -SimpleMatch 'Player: Sequence finished: Sequences/Archive.asequence')) { throw 'Packaged archive dialogue markers missing' }
             }
           } finally { Pop-Location }
           if (-not $usesWarp) {
@@ -472,12 +995,17 @@ jobs:
           ./AetherEditorLegacy.exe
           Pop-Location
           if (-not (Test-Path editor-screenshot.png)) { throw "the editor wrote no screenshot" }
+      - name: Verify and record the editor screenshot
+        if: always()
+        run: python tools/verify_editor_capture.py editor-screenshot.png --platform windows-x64 --manifest editor-capture-windows.json --optional
       - name: Upload the screenshot
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: editor-screenshot-windows
-          path: editor-screenshot.png
+          path: |
+            editor-screenshot.png
+            editor-capture-windows.json
           if-no-files-found: ignore
       - name: Keep the functional report
         if: always()
@@ -491,6 +1019,8 @@ jobs:
     name: Windows packaged editor (clean runner)
     needs: windows
     runs-on: windows-2022
+    if: github.event_name != 'pull_request'
+    timeout-minutes: 10
     steps:
       - name: Download the packaged editor
         uses: actions/download-artifact@v4
@@ -508,20 +1038,74 @@ jobs:
           if (-not (Test-Path -LiteralPath $editor -PathType Leaf)) { throw 'Packaged AetherEditor.exe is missing' }
           $originalPath = $env:PATH
           $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+          $stdout = Join-Path $env:RUNNER_TEMP 'AetherEditor-self-test.stdout.log'
+          $stderr = Join-Path $env:RUNNER_TEMP 'AetherEditor-self-test.stderr.log'
           Push-Location $emptyWorkingDirectory
+          $selfTest = $null
           try {
-            & $editor --self-test
-            if ($LASTEXITCODE -ne 0) { throw "Packaged Qt editor self-test failed with exit code $LASTEXITCODE" }
+            $selfTest = Start-Process -FilePath $editor -ArgumentList '--self-test' -PassThru `
+              -RedirectStandardOutput $stdout -RedirectStandardError $stderr -WindowStyle Hidden
+            if (-not $selfTest.WaitForExit(120000)) {
+              Stop-Process -Id $selfTest.Id -Force -ErrorAction SilentlyContinue
+              $selfTest.WaitForExit()
+              $output = Get-Content $stdout -Raw -ErrorAction SilentlyContinue
+              $errors = Get-Content $stderr -Raw -ErrorAction SilentlyContinue
+              throw "Packaged Qt editor self-test timed out after 120 seconds. stdout: $output`nstderr: $errors"
+            }
+            $selfTest.WaitForExit()
+            Get-Content $stdout -ErrorAction SilentlyContinue
+            Get-Content $stderr -ErrorAction SilentlyContinue
+            if ($selfTest.ExitCode -ne 0) { throw "Packaged Qt editor self-test failed with exit code $($selfTest.ExitCode)" }
           } finally {
+            if ($selfTest -and -not $selfTest.HasExited) { Stop-Process -Id $selfTest.Id -Force -ErrorAction SilentlyContinue }
             Pop-Location
             $env:PATH = $originalPath
           }
+
+  windows-sign-release:
+    name: Windows Authenticode release assets
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
+    needs: [windows, windows-package-validation]
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download the Windows packages
+        uses: actions/download-artifact@v4
+        with:
+          name: AetherEditor-windows-x64
+          path: release-input/editor
+      - uses: actions/download-artifact@v4
+        with:
+          name: AETHER-01-windows-x64
+          path: release-input/game
+      - uses: actions/download-artifact@v4
+        with:
+          name: Aether-release-evidence
+          path: release-input/evidence
+      - name: Sign and prepare release assets
+        shell: pwsh
+        env:
+          AETHER_WINDOWS_SIGNING_PFX_BASE64: ${{ secrets.AETHER_WINDOWS_SIGNING_PFX_BASE64 }}
+          AETHER_WINDOWS_SIGNING_PFX_PASSWORD: ${{ secrets.AETHER_WINDOWS_SIGNING_PFX_PASSWORD }}
+        run: |
+          & tools/sign_windows_release.ps1 `
+            -EditorZip release-input/editor/AetherEditor-windows-x64.zip `
+            -GameZip release-input/game/AETHER-01-windows-x64.zip `
+            -EvidenceDirectory release-input/evidence/dist `
+            -OutputDirectory dist/release-assets
+      - name: Upload release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: Aether-release-assets
+          path: dist/release-assets/*
+          if-no-files-found: error
 
   # Phase 37 step 6 (docs/design/UPGRADE_PLAN.md): extra analysis gates. They are advisory
   # (continue-on-error) until they have been clean for a while, then they become required.
   tsan:
     name: Linux (TSan, advisory)
     runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
@@ -550,36 +1134,278 @@ jobs:
         run: xvfb-run -a ./build/tests/aether_tests
 
   android:
-    # Phase 45 step 3 (first slice): the portable libraries cross-compile for arm64 Android with the NDK the runner
-    # ships. No window, Vulkan, scripting, physics or tests yet (those need the platform plugin and a device); the
-    # point is to find what in the portable code does not build for Android, and to keep it building once it does.
-    # Advisory until it has passed for a while.
-    name: Android (arm64, NDK, libraries, advisory)
+    # Phase 45 step 3: build and package the arm64 native engine core through
+    # Gradle/ExternalNativeBuild. This produces a debug-signed APK; release
+    # signing remains opt-in through repository or local secret variables.
+    # Required since it built clean on every master run; Android windowing and Vulkan are still missing.
+    name: Android (arm64, Gradle APK)
     runs-on: ubuntu-24.04
-    continue-on-error: true
+    if: github.event_name != 'pull_request'
     steps:
       - uses: actions/checkout@v4
-      - name: Install tools
-        run: sudo apt-get update && sudo apt-get install -y ninja-build
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+      - name: Accept Android SDK licenses
+        run: yes | sdkmanager --licenses
+      - name: Install Android SDK, NDK and CMake
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;28.2.13676358" "cmake;3.22.1"
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '9.1.0'
+      - name: Build debug APK
+        working-directory: platforms/android
+        run: gradle --no-daemon --stacktrace :app:assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aether-android-arm64-debug
+          path: platforms/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+  android-emulator:
+    # Runs the app on an x86_64 emulator (KVM on the Linux runner): it plays Lantern Run on start and logs
+    # "AETHER_SMOKE PASS" under the tag "Aether", then renders through the Vulkan RHI into its SurfaceView; the job
+    # checks "AETHER_RENDER PRESENTED" and that a screenshot shows the clear colour. Required.
+    name: Android (x86_64 emulator, Lantern Run)
+    runs-on: ubuntu-24.04
+    if: github.event_name != 'pull_request'
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+      - name: Accept Android SDK licenses
+        run: yes | sdkmanager --licenses
+      - name: Install Android SDK, NDK and CMake
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;28.2.13676358" "cmake;3.22.1"
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '9.1.0'
+      - name: Cook AETHER-01 on the host
+        # The scene-mode run below plays this cooked game; the APK carries it as assets/Paks/Game.apak.
+        run: |
+          sudo apt-get update && sudo apt-get install -y ninja-build
+          cmake -S . -B build-host -G Ninja -DCMAKE_BUILD_TYPE=Release -DAETHER_BUILD_TESTS=OFF \
+            -DAETHER_BUILD_EDITOR=OFF -DAETHER_BUILD_EDITOR_UI=OFF -DAETHER_BUILD_SANDBOX=OFF -DAETHER_BUILD_MCP=OFF \
+            -DAETHER_BUILD_BENCH=OFF -DAETHER_BUILD_VULKAN=OFF -DAETHER_BUILD_WINDOWING=OFF
+          cmake --build build-host --target aether_cook
+          ./build-host/tools/cook/aether_cook games/AETHER-01/AETHER-01.aproject --out game-assets/Paks --config development
+          ls -l game-assets/Paks
+      - name: Build x86_64 debug APK
+        working-directory: platforms/android
+        run: gradle --no-daemon --stacktrace :app:assembleDebug -Paether.abis=x86_64 "-Paether.assets=${{ github.workspace }}/game-assets"
+      - name: Start host memory monitor
+        # The emulator process has died mid-scene with no trace (PRs #678, #679, #687). This samples host memory and
+        # the emulator's RSS every 5 s into the workspace so a host OOM kill shows up in the artifact.
+        run: |
+          mkdir -p emulator-diagnostics
+          nohup sh -c 'while true; do date -u +%T; free -m | sed -n 2,3p; ps -C qemu-system-x86_64-headless,qemu-system-x86_64 -o pid=,rss=,vsz= 2>/dev/null; sleep 5; done' > emulator-diagnostics/host-memory.log 2>&1 &
+          echo $! > host-memory-monitor.pid
+      - name: Run on the emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          # The scene-mode run uploads the cooked game's meshes and textures through the emulator's
+          # host-side SwiftShader; with the default AVD memory the emulator process died mid-upload.
+          ram-size: 4096M
+          heap-size: 512M
+          # -show-kernel puts the guest kernel console (lowmemorykiller, panics) on the emulator's stdout in the job log.
+          # Note: on this google_apis image "-gpu guest" is not honoured (emulator 37.2.12 logs "the system image does
+          # not support guest rendering. Falling back to 'lavapipe' mode"), so Vulkan always goes through host
+          # gfxstream; with swiftshader_indirect it is host SwiftShader Vulkan instead of lavapipe.
+          emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -show-kernel
+          script: |
+            adb install -r platforms/android/app/build/outputs/apk/debug/app-debug.apk
+            adb logcat -c
+            adb shell am start -W -n com.aether.engine/.MainActivity
+            for i in $(seq 1 90); do adb logcat -d -s Aether:* | grep -q AETHER_RENDER && break; sleep 1; done
+            adb exec-out screencap > emulator-screen.raw
+            adb logcat -d -s Aether:* Vulkan:* AndroidRuntime:E DEBUG:* | tee emulator-logcat.txt
+            grep -q "AETHER_SMOKE PASS" emulator-logcat.txt
+            grep -q "AETHER_RENDER PRESENTED" emulator-logcat.txt
+            python3 tools/android/check_screen.py emulator-screen.raw
+            adb shell wm size
+            adb shell 'input swipe 160 330 160 330 6000 & sleep 3; screencap /data/local/tmp/pressed.raw; wait'
+            adb pull /data/local/tmp/pressed.raw emulator-pressed.raw
+            adb logcat -d -s Aether:* | tee emulator-input.txt
+            grep -q "AETHER_INPUT DOWN" emulator-input.txt
+            python3 tools/android/check_screen.py emulator-pressed.raw --pressed
+            adb shell input keyevent KEYCODE_HOME
+            sleep 3
+            adb shell am start -W -n com.aether.engine/.MainActivity
+            for i in $(seq 1 60); do [ "$(adb logcat -d -s Aether:* | grep -c 'AETHER_RENDER PRESENTED')" -ge 2 ] && break; sleep 1; done
+            adb logcat -d -s Aether:* | tee emulator-lifecycle.txt
+            grep -q "AETHER_USER_DATA /data/" emulator-lifecycle.txt
+            grep -q "AETHER_LIFECYCLE Suspend" emulator-lifecycle.txt
+            [ "$(grep -c 'AETHER_LIFECYCLE Resume' emulator-lifecycle.txt)" -ge 2 ]
+            [ "$(grep -c 'AETHER_RENDER PRESENTED' emulator-lifecycle.txt)" -ge 2 ]
+            adb shell dumpsys meminfo com.aether.engine > emulator-diagnostics/meminfo-before-scene.txt 2>&1 || true
+            adb shell cat /proc/meminfo > emulator-diagnostics/guest-proc-meminfo.txt 2>&1 || true
+            adb logcat -d -b crash > emulator-diagnostics/logcat-crash-before-scene.txt 2>&1 || true
+            adb shell am force-stop com.aether.engine
+            for i in $(seq 1 30); do [ -z "$(adb shell pidof com.aether.engine)" ] && break; sleep 1; done; echo "previous app pid after force-stop: '$(adb shell pidof com.aether.engine)'"
+            sleep 3
+            adb shell dumpsys meminfo > emulator-diagnostics/meminfo-system-before-scene.txt 2>&1 || true
+            adb logcat -c
+            sh -c 'adb logcat -s Aether:* AetherEngine:* AndroidRuntime:* DEBUG:* libc:* vulkan:* > emulator-scene-stream.txt 2>&1 &'
+            adb shell am start -W -n com.aether.engine/.MainActivity --es mode scene
+            timeout 150 sh -c 'until grep -q "AETHER_SCENE PRESENTED\|AETHER_SCENE FAIL" emulator-scene-stream.txt; do sleep 2; done' || { echo "no AETHER_SCENE result; device state: $(timeout 10 adb get-state 2>&1)"; cat emulator-scene-stream.txt; timeout 20 adb logcat -d -b crash > emulator-diagnostics/logcat-crash-scene.txt 2>&1; free -m; sudo dmesg | grep -i -E 'killed process|oom|out of memory' ; tail -n 40 emulator-diagnostics/host-memory.log; exit 1; }
+            timeout 20 adb exec-out screencap > emulator-scene.raw
+            cp emulator-scene-stream.txt emulator-scene.txt
+            cat emulator-scene.txt
+            grep -q "AETHER_SCENE LOADED" emulator-scene.txt
+            grep -q "AETHER_SCENE PRESENTED" emulator-scene.txt
+            python3 tools/android/check_screen.py emulator-scene.raw --scene
+      - name: Collect emulator crash diagnostics
+        if: always()
+        # The upload step cannot glob outside the workspace reliably, so the emulator's crash DBs/minidumps and the
+        # host's OOM-killer lines are copied into emulator-diagnostics/ first.
+        run: |
+          mkdir -p emulator-diagnostics
+          [ -f host-memory-monitor.pid ] && kill "$(cat host-memory-monitor.pid)" || true
+          find /tmp/android-* "${TMPDIR:-/tmp}"/android-* ~/.android ~/.config/Google 2>/dev/null \
+            \( -name 'emu-crash-*' -o -name '*.dmp' -o -name '*crash*.db' \) -print -exec cp -r {} emulator-diagnostics/ \; || true
+          free -m | tee emulator-diagnostics/host-free.txt
+          sudo dmesg -T | grep -i -E 'killed process|oom|out of memory|segfault|qemu' | tee emulator-diagnostics/host-dmesg-oom.txt || true
+          ls -la emulator-diagnostics
+          # Artifacts can't always be fetched by whoever triages, so put the crash DB's readable contents in the job log:
+          # every file in the crashpad DB, any text files whole, and the interesting strings out of each minidump
+          # (crash reason, the faulting module names such as libgfxstream_backend/liblvp/libvulkan, abort messages).
+          for db in /tmp/android-*/emu-crash-*.db "${TMPDIR:-/tmp}"/android-*/emu-crash-*.db; do
+            [ -d "$db" ] || continue
+            echo "::group::Emulator crash DB $db"
+            find "$db" -type f -printf '%TT %10s %p\n' | sort
+            find "$db" -type f \( -name '*.txt' -o -name '*.log' -o -name '*.json' -o -name '*.ini' -o -name 'settings.dat' \) \
+              -size -256k -print -exec sh -c 'echo "----- $1"; strings -n 4 "$1" | head -n 200' _ {} \; || true
+            find "$db" -type f \( -name '*.dmp' -o -path '*/pending/*' -o -path '*/completed/*' -o -path '*/new/*' \) | while read -r dmp; do
+              echo "----- minidump $dmp ($(stat -c %s "$dmp") bytes)"
+              strings -n 6 "$dmp" | grep -i -E 'gfxstream|vulkan|vk[A-Z]|lvp|lavapipe|llvm|swiftshader|vk_|abort|assert|fatal|check failed|signal|sigsegv|sigabrt|exception|\.so' \
+                | sort | uniq -c | sort -rn | head -n 150 || true
+              echo "----- last strings of $dmp"
+              strings -n 8 "$dmp" | tail -n 60 || true
+            done
+            echo "::endgroup::"
+          done
+          echo "::group::AVD config"
+          cat ~/.android/avd/*.avd/config.ini ~/.android/avd/*.avd/hardware-qemu.ini 2>/dev/null | grep -i -E 'gpu|vulkan|ram|heap|feature|renderer' || true
+          echo "::endgroup::"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: aether-android-emulator-logcat
+          path: |
+            emulator-logcat.txt
+            emulator-screen.raw
+            emulator-input.txt
+            emulator-lifecycle.txt
+            emulator-scene.txt
+            emulator-scene-stream.txt
+            emulator-scene.raw
+            emulator-pressed.raw
+            emulator-diagnostics/
+          if-no-files-found: ignore
+
+  ios:
+    # Phase 45 step 4: cross-compile and package the arm64 UIKit app shell
+    # against the engine core. Signing and device execution remain out of scope.
+    name: iOS (arm64, unsigned app)
+    runs-on: macos-15
+    if: github.event_name != 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
       - name: Cache fetched dependencies
         uses: actions/cache@v4
         with:
-          path: build-android/_deps
-          key: deps-android-${{ hashFiles('**/CMakeLists.txt') }}
-          restore-keys: deps-android-
-      - name: Configure
+          path: build-ios/_deps
+          key: deps-ios-${{ hashFiles('**/CMakeLists.txt') }}
+          restore-keys: deps-ios-
+      - name: Configure iOS arm64 app
         run: >
-          cmake -S . -B build-android -G Ninja -DCMAKE_BUILD_TYPE=Release
-          -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_LATEST_HOME/build/cmake/android.toolchain.cmake"
-          -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-28
-          -DAETHER_BUILD_TESTS=OFF -DAETHER_BUILD_MCP=OFF -DAETHER_BUILD_SANDBOX=OFF -DAETHER_BUILD_PHYSICS=OFF
-          -DAETHER_BUILD_EDITOR=OFF -DAETHER_BUILD_EDITOR_UI=OFF -DAETHER_BUILD_VULKAN=OFF
-          -DAETHER_BUILD_SCRIPTING=OFF -DAETHER_BUILD_WINDOWING=OFF -DAETHER_BUILD_BENCH=OFF
-      - name: Build the portable libraries
+          cmake -S . -B build-ios -G Xcode
+          -DCMAKE_SYSTEM_NAME=iOS
+          -DCMAKE_OSX_SYSROOT=iphoneos
+          -DCMAKE_OSX_ARCHITECTURES=arm64
+          -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0
+          -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO
+          -DAETHER_BUILD_IOS_APP=ON
+          -DAETHER_BUILD_TESTS=OFF -DAETHER_BUILD_MCP=OFF
+          -DAETHER_BUILD_SANDBOX=OFF -DAETHER_BUILD_PHYSICS=OFF
+          -DAETHER_BUILD_EDITOR=OFF -DAETHER_BUILD_EDITOR_UI=OFF
+          -DAETHER_BUILD_VULKAN=OFF -DAETHER_BUILD_SCRIPTING=OFF
+          -DAETHER_BUILD_WINDOWING=OFF -DAETHER_BUILD_BENCH=OFF
+      - name: Build unsigned iOS app
+        run: cmake --build build-ios --config Release --target aether_ios --parallel
+      - name: Package app bundle
+        run: ditto -c -k --sequesterRsrc --keepParent build-ios/Release-iphoneos/AetherEngine.app dist/AetherEngine-iphoneos-arm64.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aether-ios-iphoneos-arm64
+          path: dist/AetherEngine-iphoneos-arm64.zip
+          if-no-files-found: error
+
+  ios-simulator:
+    # Runs the app on the iOS Simulator: it plays Lantern Run on start and prints "AETHER_SMOKE PASS" to stdout.
+    # Required since it passed on every master run that got a runner.
+    name: iOS (Simulator, Lantern Run)
+    runs-on: macos-15
+    if: github.event_name != 'pull_request'
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache fetched dependencies
+        uses: actions/cache@v4
+        with:
+          path: build-ios-sim/_deps
+          key: deps-ios-sim-${{ hashFiles('**/CMakeLists.txt') }}
+          restore-keys: deps-ios-sim-
+      - name: Configure iOS Simulator app
         run: >
-          cmake --build build-android --parallel
-          --target aether_engine aether_net aether_nav aether_ai aether_streaming aether_gameplay aether_sprite2d
-          aether_animation aether_save aether_ui aether_audio -- -k 0
+          cmake -S . -B build-ios-sim -G Xcode
+          -DCMAKE_SYSTEM_NAME=iOS
+          -DCMAKE_OSX_SYSROOT=iphonesimulator
+          -DCMAKE_OSX_ARCHITECTURES=arm64
+          -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0
+          -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO
+          -DAETHER_BUILD_IOS_APP=ON
+          -DAETHER_BUILD_TESTS=OFF -DAETHER_BUILD_MCP=OFF
+          -DAETHER_BUILD_SANDBOX=OFF -DAETHER_BUILD_PHYSICS=OFF
+          -DAETHER_BUILD_EDITOR=OFF -DAETHER_BUILD_EDITOR_UI=OFF
+          -DAETHER_BUILD_VULKAN=OFF -DAETHER_BUILD_SCRIPTING=OFF
+          -DAETHER_BUILD_WINDOWING=OFF -DAETHER_BUILD_BENCH=OFF
+      - name: Build Simulator app
+        run: cmake --build build-ios-sim --config Release --target aether_ios --parallel -- -sdk iphonesimulator
+      - name: Run on the Simulator
+        run: |
+          app=build-ios-sim/Release-iphonesimulator/AetherEngine.app
+          udid=$(xcrun simctl list devices available -j | python3 -c "import json,sys; d=json.load(sys.stdin)['devices']; print(next(x['udid'] for r in d if 'iOS' in r for x in d[r] if x['name'].startswith('iPhone')))")
+          echo "device $udid"
+          xcrun simctl boot "$udid"
+          xcrun simctl bootstatus "$udid" -b
+          xcrun simctl install "$udid" "$app"
+          xcrun simctl launch --stdout="$PWD/simulator-stdout.txt" "$udid" com.aether.engine
+          for i in $(seq 1 60); do grep -q AETHER_SMOKE simulator-stdout.txt 2>/dev/null && break; sleep 1; done
+          cat simulator-stdout.txt || true
+          xcrun simctl shutdown "$udid" || true
+          grep -q "AETHER_SMOKE PASS" simulator-stdout.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: aether-ios-simulator-stdout
+          path: simulator-stdout.txt
+          if-no-files-found: ignore
 
   clang-tidy:
     name: clang-tidy (changed files, advisory)
@@ -614,11 +1440,12 @@ jobs:
           if [ -z "$files" ]; then echo "no engine or kit sources changed"; exit 0; fi
           clang-tidy -p build $files
 
-  # Phase 47 step 1 (docs/design/UPGRADE_PLAN.md): libFuzzer on the loaders, for a fixed time each. Advisory
-  # for now; the checked-in corpus also runs as a regression test (ctest fuzz_replay_*) in every job.
+  # Phase 47 steps 1-2 (docs/design/UPGRADE_PLAN.md): replay the checked-in corpus in every job and
+  # run every available libFuzzer target for a bounded budget here. Advisory while fuzz coverage grows.
   fuzz:
     name: Fuzz (Clang, advisory)
     runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
@@ -641,14 +1468,15 @@ jobs:
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DAETHER_BUILD_FUZZERS=ON
           -DAETHER_BUILD_PHYSICS=OFF -DAETHER_BUILD_EDITOR=OFF -DAETHER_BUILD_SANDBOX=OFF -DAETHER_BUILD_TESTS=OFF
       - name: Build the fuzzers
-        run: cmake --build build --target aether_fuzz_pak aether_fuzz_scene aether_fuzz_blueprint aether_fuzz_gameplay --parallel
+        run: cmake --build build --target aether_fuzz_all --parallel
       - name: Fuzz
         run: |
-          for t in pak scene blueprint gameplay; do
+          while IFS= read -r t; do
+            [ -n "$t" ] || continue
             mkdir -p work/$t
             cp -r tools/fuzz/corpus/$t/. work/$t/
-            ./build/tools/fuzz/aether_fuzz_$t -max_total_time=60 -rss_limit_mb=2048 -timeout=10 work/$t
-          done
+            ./build/tools/fuzz/aether_fuzz_$t -max_total_time=15 -rss_limit_mb=2048 -timeout=10 work/$t
+          done < build/fuzz-targets.txt
       - name: Keep any crash inputs
         if: failure()
         uses: actions/upload-artifact@v4
@@ -662,28 +1490,115 @@ jobs:
     # A pushed v* tag, or a manual run given a release_tag (which creates
     # the tag on the commit it built).
     if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
-    needs: [linux, macos, windows, windows-package-validation]
+    needs: [linux, clean-machine-sdk, dedicated-server, game-ship, macos, windows, windows-package-validation, windows-sign-release, android, android-emulator, ios, ios-simulator]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      id-token: write       # Sigstore signing for the provenance attestation
+      attestations: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          pattern: '*-windows-x64'
-          merge-multiple: true
+          name: Aether-release-assets
+          path: release-assets
+      # M8.9: the dedicated-server packages (each with its own SHA256SUMS.txt and SERVER_PACKAGE.json).
       - uses: actions/download-artifact@v4
         with:
-          name: Aether-release-evidence
-          path: release-evidence
+          name: aether-server-linux-x64
+          path: server-input/linux
+      - uses: actions/download-artifact@v4
+        with:
+          name: aether-server-windows-x64
+          path: server-input/windows
+      - uses: actions/download-artifact@v4
+        with:
+          name: aether-server-macos-arm64
+          path: server-input/macos
+      # M8.10: the AETHER-01 Linux package, its symbols and release manifest.
+      - uses: actions/download-artifact@v4
+        with:
+          name: aether01-linux-x64-ship
+          path: ship-input
+      - uses: actions/download-artifact@v4
+        with:
+          name: aether01-windows-x64-ship
+          path: ship-input-windows
+      - uses: actions/download-artifact@v4
+        with:
+          name: aether01-macos-arm64-ship
+          path: ship-input-macos
+      - name: Add the server packages to the release assets and SHA256SUMS
+        # Each archive is checked against the SHA256SUMS.txt it was packaged with, copied in, and its line
+        # appended to the release SHA256SUMS.txt (normalised to LF, no BOM). The per-package manifests ship
+        # as aether-server-<platform>.json.
+        run: |
+          tr -d '\r' < release-assets/SHA256SUMS.txt | sed '1s/^\xEF\xBB\xBF//' > sums.txt
+          for dir in server-input/*; do
+            (cd "$dir" && sha256sum -c SHA256SUMS.txt)
+            archive=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['name'])" "$dir/SERVER_PACKAGE.json")
+            cp "$dir/$archive" release-assets/
+            cp "$dir/SERVER_PACKAGE.json" "release-assets/${archive%%.*}.json"
+            (cd release-assets && sha256sum "$archive" "${archive%%.*}.json") >> sums.txt
+          done
+          mv sums.txt release-assets/SHA256SUMS.txt
+          cat release-assets/SHA256SUMS.txt
+      - name: Add the AETHER-01 Linux package, symbols and manifest (M8.10)
+        run: tools/ship/assemble_release.sh ship-input/v1 release-assets
+      - name: Add the AETHER-01 Windows package, symbols and manifest (M8.10)
+        run: tools/ship/assemble_release.sh ship-input-windows/v1 release-assets AETHER-01-windows-x64-ship
+      - name: Add the AETHER-01 macOS package, symbols and manifest (M8.10)
+        run: tools/ship/assemble_release.sh ship-input-macos/v1 release-assets AETHER-01-macos-arm64
+      - name: Check the archives against SHA256SUMS
+        run: |
+          for f in AetherEditor-windows-x64.zip AETHER-01-windows-x64.zip aether-server-linux-x64.tar.gz aether-server-windows-x64.zip aether-server-macos-arm64.tar.gz AETHER-01-linux-x64.tar.gz AETHER-01-linux-x64-symbols.tar.gz AETHER-01-linux-x64.manifest.json AETHER-01-windows-x64-ship.zip AETHER-01-windows-x64-ship-symbols.zip AETHER-01-windows-x64-ship.manifest.json AETHER-01-macos-arm64.tar.gz AETHER-01-macos-arm64-symbols.tar.gz AETHER-01-macos-arm64.manifest.json; do
+            want=$(tr -d '\r\357\273\277' < release-assets/SHA256SUMS.txt | awk -v n="$f" '$2==n {print tolower($1)}')
+            have=$(sha256sum "release-assets/$f" | cut -d' ' -f1)
+            echo "$f want=$want have=$have"
+            if [ -z "$want" ] || [ "$want" != "$have" ]; then echo "::error::$f does not match SHA256SUMS.txt"; exit 1; fi
+          done
+      # Signed build provenance (Sigstore, keyless) complements optional Windows Authenticode signing.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            release-assets/AetherEditor-windows-x64.zip
+            release-assets/AETHER-01-windows-x64.zip
+            release-assets/aether-server-linux-x64.tar.gz
+            release-assets/aether-server-windows-x64.zip
+            release-assets/aether-server-macos-arm64.tar.gz
+            release-assets/AETHER-01-linux-x64.tar.gz
+            release-assets/AETHER-01-linux-x64-symbols.tar.gz
+            release-assets/AETHER-01-linux-x64.manifest.json
+            release-assets/AETHER-01-windows-x64-ship.zip
+            release-assets/AETHER-01-windows-x64-ship-symbols.zip
+            release-assets/AETHER-01-windows-x64-ship.manifest.json
+            release-assets/AETHER-01-macos-arm64.tar.gz
+            release-assets/AETHER-01-macos-arm64-symbols.tar.gz
+            release-assets/AETHER-01-macos-arm64.manifest.json
+            release-assets/RELEASE_MANIFEST.json
+            release-assets/SHA256SUMS.txt
       - name: Publish
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            AetherEditor-windows-x64.zip
-            AETHER-01-windows-x64.zip
-            release-evidence/dist/RELEASE_MANIFEST.json
-            release-evidence/dist/SHA256SUMS.txt
+            release-assets/AetherEditor-windows-x64.zip
+            release-assets/AETHER-01-windows-x64.zip
+            release-assets/aether-server-linux-x64.tar.gz
+            release-assets/aether-server-windows-x64.zip
+            release-assets/aether-server-macos-arm64.tar.gz
+            release-assets/aether-server-*.json
+            release-assets/AETHER-01-linux-x64.tar.gz
+            release-assets/AETHER-01-linux-x64-symbols.tar.gz
+            release-assets/AETHER-01-linux-x64.manifest.json
+            release-assets/AETHER-01-windows-x64-ship.zip
+            release-assets/AETHER-01-windows-x64-ship-symbols.zip
+            release-assets/AETHER-01-windows-x64-ship.manifest.json
+            release-assets/AETHER-01-macos-arm64.tar.gz
+            release-assets/AETHER-01-macos-arm64-symbols.tar.gz
+            release-assets/AETHER-01-macos-arm64.manifest.json
+            release-assets/RELEASE_MANIFEST.json
+            release-assets/SHA256SUMS.txt
           generate_release_notes: true
           body_path: docs/releases/${{ inputs.release_tag || github.ref_name }}.md
           fail_on_unmatched_files: true

@@ -30,6 +30,29 @@ void BindResources(gfx::rhi::ICommandList& cmd, gfx::rhi::ComputePipelineHandle 
 
 } // namespace
 
+void GpuEmitterRuntime::Release() {
+    if (device_) {
+        auto free_buffer = [this](gfx::rhi::BufferHandle& buffer) {
+            if (buffer.IsValid()) device_->DestroyBuffer(buffer);
+            buffer = {};
+        };
+        auto free_pipeline = [this](gfx::rhi::ComputePipelineHandle& pipeline) {
+            if (pipeline.IsValid()) device_->DestroyComputePipeline(pipeline);
+            pipeline = {};
+        };
+        free_buffer(particles_);
+        free_buffer(dead_list_);
+        free_buffer(alive_list_);
+        free_buffer(frame_constants_);
+        free_buffer(module_constants_);
+        free_pipeline(reset_pipeline_);
+        free_pipeline(emit_pipeline_);
+        free_pipeline(update_pipeline_);
+    }
+    initialized_ = false;
+    reset_recorded_ = false;
+}
+
 bool GpuEmitterRuntime::Initialize(gfx::rhi::IDevice& device, const Emitter& emitter, u64 seed,
                                   std::string* error) {
     auto fail = [&](const std::string& message) {
@@ -85,9 +108,11 @@ bool GpuEmitterRuntime::Initialize(gfx::rhi::IDevice& device, const Emitter& emi
         if (!particles_.IsValid() || !dead_list_.IsValid() || !alive_list_.IsValid() ||
             !frame_constants_.IsValid() || !module_constants_.IsValid() ||
             !reset_pipeline_.IsValid() || !emit_pipeline_.IsValid() || !update_pipeline_.IsValid()) {
+            Release();
             return fail("RHI failed to create one or more GPU emitter resources");
         }
     } catch (const std::exception& ex) {
+        Release();
         return fail(std::string("GPU emitter resource creation failed: ") + ex.what());
     }
 

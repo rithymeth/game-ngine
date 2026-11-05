@@ -9,6 +9,7 @@
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <mutex>
 
 namespace aether::cook {
@@ -66,6 +67,12 @@ void FetchBlock(const std::vector<u8>& rgba, u32 width, u32 height, u32 bx, u32 
 }
 
 bool IsAstc(TextureFormat f) { return f == TextureFormat::ASTC_4x4 || f == TextureFormat::ASTC_6x6 || f == TextureFormat::ASTC_8x8; }
+
+bool HasValidRgbaSize(std::span<const u8> rgba, u32 width, u32 height) {
+    if (width == 0 || height == 0) return false;
+    const u64 pixel_count = static_cast<u64>(width) * height;
+    return pixel_count <= std::numeric_limits<usize>::max() / 4 && rgba.size() == static_cast<usize>(pixel_count) * 4;
+}
 
 // quality 0..4 is astc-encoder's fastest, fast, medium, thorough and exhaustive presets.
 f32 AstcPreset(u32 quality) {
@@ -223,9 +230,21 @@ u32 BlockWidth(TextureFormat f) {
 }
 
 usize MipBytes(TextureFormat f, u32 width, u32 height) {
-    if (f == TextureFormat::RGBA8) return static_cast<usize>(width) * height * 4;
-    const u32 b = BlockWidth(f);
-    return static_cast<usize>((width + b - 1) / b) * ((height + b - 1) / b) * BlockBytes(f);
+    if (width == 0 || height == 0) return 0;
+    const u64 bytes_per_pixel_or_block = f == TextureFormat::RGBA8 ? 4 : BlockBytes(f);
+    if (bytes_per_pixel_or_block == 0) return 0;
+    u64 columns = width;
+    u64 rows = height;
+    if (f != TextureFormat::RGBA8) {
+        const u32 block = BlockWidth(f);
+        columns = (columns + block - 1) / block;
+        rows = (rows + block - 1) / block;
+    }
+    if (columns > std::numeric_limits<u64>::max() / rows) return 0;
+    const u64 blocks = columns * rows;
+    if (blocks > std::numeric_limits<u64>::max() / bytes_per_pixel_or_block ||
+        blocks * bytes_per_pixel_or_block > std::numeric_limits<usize>::max()) return 0;
+    return static_cast<usize>(blocks * bytes_per_pixel_or_block);
 }
 
 TextureFormat ChooseTextureFormat(std::span<const u8> rgba, bool normal_map, TextureTarget target) {
@@ -242,6 +261,7 @@ TextureFormat ChooseTextureFormat(std::span<const u8> rgba, bool normal_map, Tex
 
 std::vector<CookedMip> GenerateMips(std::span<const u8> rgba, u32 width, u32 height, bool srgb, bool normal_map) {
     std::vector<CookedMip> mips;
+    if (!HasValidRgbaSize(rgba, width, height)) return mips;
     mips.push_back({width, height, std::vector<u8>(rgba.begin(), rgba.end())});
     const auto& to_linear = SrgbTable();
     while (mips.back().width > 1 || mips.back().height > 1) {
@@ -298,11 +318,11 @@ CookedTexture CookTexture(std::span<const u8> rgba, u32 width, u32 height, const
     texture.width = width;
     texture.height = height;
     texture.normal_map = settings.normal_map;
+    if (!HasValidRgbaSize(rgba, width, height)) return texture;
     texture.format = settings.auto_format ? ChooseTextureFormat(rgba, settings.normal_map, settings.target) : settings.format;
     // Single- and two-channel formats hold data, not colour.
     texture.srgb = settings.srgb && !settings.normal_map && texture.format != TextureFormat::BC4 &&
                    texture.format != TextureFormat::BC5;
-    if (width == 0 || height == 0 || rgba.size() < static_cast<usize>(width) * height * 4) return texture;
     std::vector<CookedMip> levels;
     if (settings.mips) {
         levels = GenerateMips(rgba, width, height, texture.srgb, settings.normal_map);
@@ -319,11 +339,16 @@ CookedTexture CookTexture(std::span<const u8> rgba, u32 width, u32 height, const
 std::vector<u8> DecodeMip(const CookedTexture& texture, usize index) {
     if (index >= texture.mips.size()) return {};
     const CookedMip& mip = texture.mips[index];
+    const u64 pixel_count = static_cast<u64>(mip.width) * mip.height;
+    if (pixel_count > std::numeric_limits<usize>::max() / 4) return {};
+    const usize expected_size = MipBytes(texture.format, mip.width, mip.height);
+    if (expected_size == 0 || mip.data.size() != expected_size) return {};
     if (texture.format == TextureFormat::RGBA8) return mip.data;
     if (IsAstc(texture.format)) return DecodeAstc(texture, mip);
     InitEncoders();
     std::vector<u8> out(static_cast<usize>(mip.width) * mip.height * 4);
-    const u32 bw = (mip.width + 3) / 4, bh = (mip.height + 3) / 4;
+    const u32 bw = static_cast<u32>((static_cast<u64>(mip.width) + 3) / 4);
+    const u32 bh = static_cast<u32>((static_cast<u64>(mip.height) + 3) / 4);
     const u32 block_bytes = BlockBytes(texture.format);
     u8 block[64];
     for (u32 by = 0; by < bh; ++by) {
@@ -400,12 +425,21 @@ bool LoadAtex(std::span<const u8> bytes, CookedTexture& out, std::string* error)
     if (Get32(bytes.data() + 4) != kVersion) return fail("unsupported .atex version");
     CookedTexture t;
     if (bytes[8] > static_cast<u8>(TextureFormat::ASTC_8x8)) return fail("unknown texture format");
+    if ((bytes[9] & ~u8{3}) != 0 || bytes[10] != 0 || bytes[11] != 0) return fail("unknown .atex header flags");
     t.format = static_cast<TextureFormat>(bytes[8]);
     t.srgb = (bytes[9] & 1) != 0;
     t.normal_map = (bytes[9] & 2) != 0;
     t.width = Get32(bytes.data() + 12);
     t.height = Get32(bytes.data() + 16);
     const u32 count = Get32(bytes.data() + 20);
+    if (t.width == 0 || t.height == 0 || count == 0) return fail("invalid .atex dimensions or mip count");
+    u32 largest_dimension = std::max(t.width, t.height);
+    u32 max_mips = 1;
+    while (largest_dimension > 1) {
+        largest_dimension >>= 1;
+        ++max_mips;
+    }
+    if (count > max_mips) return fail("too many mip levels");
     usize p = 24;
     for (u32 i = 0; i < count; ++i) {
         if (bytes.size() - p < 12) return fail("the mip chain ends early");
@@ -414,7 +448,10 @@ bool LoadAtex(std::span<const u8> bytes, CookedTexture& out, std::string* error)
         mip.height = Get32(bytes.data() + p + 4);
         const u32 size = Get32(bytes.data() + p + 8);
         p += 12;
-        if (mip.width == 0 || mip.height == 0 || size != MipBytes(t.format, mip.width, mip.height) ||
+        const u32 expected_width = std::max<u32>(1, t.width >> i);
+        const u32 expected_height = std::max<u32>(1, t.height >> i);
+        const usize expected_size = MipBytes(t.format, expected_width, expected_height);
+        if (mip.width != expected_width || mip.height != expected_height || expected_size == 0 || size != expected_size ||
             bytes.size() - p < size) {
             return fail("a mip's size doesn't match its format");
         }
@@ -422,6 +459,7 @@ bool LoadAtex(std::span<const u8> bytes, CookedTexture& out, std::string* error)
         p += size;
         t.mips.push_back(std::move(mip));
     }
+    if (p != bytes.size()) return fail("trailing bytes after the mip chain");
     out = std::move(t);
     return true;
 }

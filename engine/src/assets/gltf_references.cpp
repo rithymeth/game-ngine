@@ -11,11 +11,13 @@ namespace stdfs = std::filesystem;
 
 namespace {
 
+constexpr usize kMaxGltfReferenceJsonBytes = 32 * 1024 * 1024;
+
 bool IsDataUri(const std::string& uri) { return uri.rfind("data:", 0) == 0; }
 
 bool LoadJson(const stdfs::path& file, nlohmann::json& out) {
     std::vector<u8> bytes;
-    if (!fs::ReadFileBytes(file.string(), bytes)) {
+    if (!fs::ReadFileBytes(file.string(), bytes, kMaxGltfReferenceJsonBytes)) {
         return false;
     }
     out = nlohmann::json::parse(bytes.begin(), bytes.end(), nullptr, /*allow_exceptions=*/false);

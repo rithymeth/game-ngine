@@ -3,8 +3,12 @@
 #   aether_replay_<name>  always built: runs the checked-in corpus (tools/fuzz/corpus/<name>) as a
 #                         regression test on any compiler (ctest: fuzz_replay_<name>).
 #   aether_fuzz_<name>    with -DAETHER_BUILD_FUZZERS=ON and Clang: the libFuzzer binary (address
-#                         sanitizer on); run it as  aether_fuzz_<name> -max_total_time=60 corpus/<name>
+#                         sanitizer on); run it with a bounded -max_total_time against corpus/<name>
 option(AETHER_BUILD_FUZZERS "Build the libFuzzer fuzz targets (needs Clang)" OFF)
+
+if(AETHER_BUILD_FUZZERS AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    set_property(GLOBAL PROPERTY AETHER_FUZZ_TARGET_NAMES "")
+endif()
 
 function(aether_fuzz_target name source)
     set(libs ${ARGN})
@@ -21,6 +25,7 @@ function(aether_fuzz_target name source)
     else()
         target_compile_definitions(aether_replay_${name} PRIVATE AETHER_FUZZ_QUESTS=0)
     endif()
+    set_property(GLOBAL APPEND PROPERTY AETHER_REPLAY_TARGETS aether_replay_${name})
     add_test(NAME fuzz_replay_${name} COMMAND aether_replay_${name} ${CMAKE_CURRENT_SOURCE_DIR}/corpus/${name})
     if(AETHER_BUILD_FUZZERS AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
         add_executable(aether_fuzz_${name} ${source})
@@ -30,6 +35,7 @@ function(aether_fuzz_target name source)
         target_link_options(aether_fuzz_${name} PRIVATE -fsanitize=fuzzer,address)
         target_compile_definitions(aether_fuzz_${name} PRIVATE
             AETHER_FUZZ_INVENTORY=$<TARGET_EXISTS:aether_inventory> AETHER_FUZZ_QUESTS=$<TARGET_EXISTS:aether_quests>)
+        set_property(GLOBAL APPEND PROPERTY AETHER_FUZZ_TARGET_NAMES ${name})
     endif()
 endfunction()
 
@@ -49,6 +55,7 @@ aether_fuzz_target(net fuzz_net.cpp Aether::Net)
 aether_fuzz_target(assetmeta fuzz_assetmeta.cpp Aether::Engine)
 aether_fuzz_target(texture fuzz_texture.cpp Aether::Engine)
 aether_fuzz_target(gltf fuzz_gltf.cpp Aether::Engine)
+aether_fuzz_target(model_import fuzz_model_import.cpp Aether::Engine)
 
 # Loaders that read untrusted JSON (Phase 47 step 1, second batch).
 aether_fuzz_target(prefab fuzz_prefab.cpp Aether::Engine)
@@ -72,4 +79,15 @@ if(TARGET aether_game)
 endif()
 if(TARGET aether_save)
     aether_fuzz_target(envelope fuzz_envelope.cpp Aether::Save)
+endif()
+
+if(AETHER_BUILD_FUZZERS AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    get_property(fuzz_target_names GLOBAL PROPERTY AETHER_FUZZ_TARGET_NAMES)
+    set(fuzz_targets)
+    foreach(name IN LISTS fuzz_target_names)
+        list(APPEND fuzz_targets aether_fuzz_${name})
+    endforeach()
+    add_custom_target(aether_fuzz_all DEPENDS ${fuzz_targets})
+    string(JOIN "\n" fuzz_target_names_text ${fuzz_target_names})
+    file(WRITE "${CMAKE_BINARY_DIR}/fuzz-targets.txt" "${fuzz_target_names_text}\n")
 endif()

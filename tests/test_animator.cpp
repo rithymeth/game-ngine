@@ -3,6 +3,7 @@
 #include "aether/blueprint/compiler.h"
 #include "aether/blueprint/vm.h"
 #include "aether/scene/components.h"
+#include "aether/scene/serialization.h"
 #include "test_framework.h"
 
 #include <algorithm>
@@ -24,6 +25,15 @@ Skeleton Rig() {
     Skeleton s;
     s.bones.push_back({"root", -1, {}, Mat4::Identity()});
     s.bones.push_back({"arm", 0, {Vec3(0, 1, 0), Quaternion::Identity(), Vec3(1, 1, 1)}, Mat4::Identity()});
+    return s;
+}
+
+Skeleton FootRig() {
+    Skeleton s;
+    s.bones = {{"pelvis", -1, {Vec3(0, 1, 0), Quaternion::Identity(), Vec3(1, 1, 1)}, Mat4::Identity()},
+               {"hip", 0, {Vec3(0, 0, 0), Quaternion::Identity(), Vec3(1, 1, 1)}, Mat4::Identity()},
+               {"knee", 1, {Vec3(0, -0.45f, 0.05f), Quaternion::Identity(), Vec3(1, 1, 1)}, Mat4::Identity()},
+               {"ankle", 2, {Vec3(0, -0.45f, -0.05f), Quaternion::Identity(), Vec3(1, 1, 1)}, Mat4::Identity()}};
     return s;
 }
 // The root at x = marker; with `speed`, it also walks +Z at that many m/s.
@@ -206,7 +216,8 @@ AETHER_TEST(Animator_GraphNotifiesAreWeighted) {
             if (e.type == AnimEventType::Notify) seen = e.weight;
         }
     }
-    AETHER_CHECK(Close(seen, 0.3f)); // FootL at 0.25 s into the walk: 0.3 of the way through the blend
+    // FootL at 0.25 s into the walk, in the frame that takes the blend from 0.2 to 0.3: it counts by the frame's average (M8.6).
+    AETHER_CHECK(Close(seen, 0.25f));
     AETHER_CHECK(Count(cross.Events(), AnimEventType::StateChanged) == 0);
 }
 
@@ -432,4 +443,145 @@ AETHER_TEST(Animator_ComponentSystemAndBlueprints) {
     // At rate 2 the 1 s montage takes 0.5 s: its Hit notify, then its end.
     AETHER_CHECK(printed == (std::vector<std::string>{"Hit", "Once"}));
     AETHER_CHECK(std::string(AnimationSystem::BlueprintEventName(AnimEventType::StateChanged)) == "Event.OnAnimStateChanged");
+}
+
+AETHER_TEST(Animator_EcsLookAtRunsAfterTheGraphInEntitySpace) {
+    Assets a;
+    World world;
+    AnimationSystem system(world, a.Library());
+    Transform transform{Vec3(5, 0, 2), Quaternion::FromAxisAngle(Vec3(0, 1, 0), kPi * 0.5f)};
+    AnimationLookAt look_at;
+    look_at.bone = "arm";
+    look_at.max_angle = kPi;
+    // The arm should aim along model +X. Give the API that point in world space
+    // to verify the entity transform is removed before the IK solver runs.
+    look_at.target = transform.position + Rotate(transform.rotation, Vec3(3, 1, 0));
+    Animator animator;
+    animator.graph = "Loco";
+    animator.skeleton = "Rig";
+    const Entity entity = world.CreateEntity(transform, animator, look_at);
+
+    system.Update(0.01f);
+    const Pose* aimed_pose = system.PoseOf(entity);
+    AETHER_CHECK(aimed_pose != nullptr && system.SkinMatricesOf(entity)->size() == 2);
+    std::vector<ModelTransform> model;
+    ComputeModelTransforms(a.rig, *aimed_pose, model);
+    AETHER_CHECK((Rotate(model[1].rotation, Vec3(0, 0, 1)) - Vec3(1, 0, 0)).Length() < 1e-3f);
+
+    // Disabling the ECS component restores the graph pose on the next frame.
+    world.GetComponent<AnimationLookAt>(entity)->enabled = false;
+    system.Update(0.01f);
+    ComputeModelTransforms(a.rig, *system.PoseOf(entity), model);
+    AETHER_CHECK((Rotate(model[1].rotation, Vec3(0, 0, 1)) - Vec3(0, 0, 1)).Length() < 1e-3f);
+
+    // Bad authored data is reported once and does not break the animator.
+    AnimationLookAt* invalid = world.GetComponent<AnimationLookAt>(entity);
+    invalid->enabled = true;
+    invalid->bone = "missing";
+    system.Update(0.01f);
+    const usize problems = system.Problems().size();
+    system.Update(0.01f);
+    AETHER_CHECK(system.PoseOf(entity) != nullptr && system.Problems().size() == problems);
+    AETHER_CHECK(problems == 1 && system.Problems()[0].find("missing") != std::string::npos);
+
+    // The component is reflected and registered before scene loading, so an
+    // authored NPC or character keeps its aim constraint across save/load.
+    World persisted;
+    AnimationLookAt saved;
+    saved.bone = "head";
+    saved.target = Vec3(3, 2, 1);
+    saved.weight = 0.4f;
+    AnimationTwoBoneIK saved_reach;
+    AnimationTwoBoneIKChain& saved_chain = saved_reach.chains.emplace_back();
+    saved_chain.root = "hip";
+    saved_chain.mid = "knee";
+    saved_chain.end = "ankle";
+    saved_chain.target = Vec3(1, 0, 2);
+    saved_chain.pole = Vec3(0, 0, 1);
+    saved_chain.weight = 0.6f;
+    persisted.CreateEntity(saved, saved_reach);
+    const std::string path = "/tmp/aether_test_animation_look_at.ascene";
+    AETHER_CHECK(SaveSceneJson(persisted, path));
+    World reloaded;
+    RegisterAnimationComponents();
+    AETHER_CHECK(LoadSceneJson(reloaded, path));
+    usize constraints = 0;
+    reloaded.ForEach<AnimationLookAt, AnimationTwoBoneIK>([&](AnimationLookAt& restored, AnimationTwoBoneIK& restored_reach) {
+        ++constraints;
+        AETHER_CHECK(restored.bone == "head" && restored.target.x == 3.0f && restored.target.y == 2.0f &&
+                     restored.target.z == 1.0f && restored.weight == 0.4f);
+        AETHER_CHECK(restored_reach.chains.size() == 1 && restored_reach.chains[0].root == "hip" &&
+                     restored_reach.chains[0].mid == "knee" && restored_reach.chains[0].end == "ankle" &&
+                     restored_reach.chains[0].target.z == 2.0f && restored_reach.chains[0].weight == 0.6f);
+    });
+    AETHER_CHECK(constraints == 1);
+    std::remove(path.c_str());
+}
+
+AETHER_TEST(Animator_EcsTwoBoneIkUsesWorldTargetsAndReportsBadChains) {
+    Assets a;
+    a.rig.bones = {{"shoulder", -1, {}, Mat4::Identity()},
+                   {"elbow", 0, {Vec3(1, 0, 0), Quaternion::Identity(), Vec3(1, 1, 1)}, Mat4::Identity()},
+                   {"hand", 1, {Vec3(1, 0, 0), Quaternion::Identity(), Vec3(1, 1, 1)}, Mat4::Identity()}};
+    World world;
+    AnimationSystem system(world, a.Library());
+    Transform transform{Vec3(5, 0, 2), Quaternion::FromAxisAngle(Vec3(0, 1, 0), kPi * 0.5f)};
+    AnimationTwoBoneIK component;
+    AnimationTwoBoneIKChain& chain = component.chains.emplace_back();
+    chain.root = "shoulder";
+    chain.mid = "elbow";
+    chain.end = "hand";
+    const Vec3 target(1, 1, 0), pole(0, 0, 1);
+    chain.target = transform.position + Rotate(transform.rotation, target);
+    chain.pole = transform.position + Rotate(transform.rotation, pole);
+    Animator animator;
+    animator.graph = "Loco";
+    animator.skeleton = "Rig";
+    const Entity entity = world.CreateEntity(transform, animator, component);
+
+    system.Update(0.01f);
+    std::vector<ModelTransform> model;
+    ComputeModelTransforms(a.rig, *system.PoseOf(entity), model);
+    AETHER_CHECK((model[2].position - target).Length() < 1e-3f && system.SkinMatricesOf(entity)->size() == 3);
+
+    // An authored chain must be contiguous; invalid data is diagnosed only once.
+    AnimationTwoBoneIK* invalid = world.GetComponent<AnimationTwoBoneIK>(entity);
+    invalid->chains[0].end = "shoulder";
+    system.Update(0.01f);
+    const usize problems = system.Problems().size();
+    system.Update(0.01f);
+    AETHER_CHECK(system.PoseOf(entity) != nullptr && system.Problems().size() == problems);
+    AETHER_CHECK(problems == 1 && system.Problems()[0].find("invalid two-bone") != std::string::npos);
+}
+
+AETHER_TEST(Animator_EcsFootPlacementUsesTheGroundProvider) {
+    Assets a;
+    a.rig = FootRig();
+    // The generic idle clip writes a root marker at the origin. Keep this
+    // fixture's pelvis at its authored 1 m bind height instead.
+    a.clips["Idle"].tracks.resize(4);
+    a.clips["Idle"].tracks[0].translation.values = {Vec3(0, 1, 0), Vec3(0, 1, 0)};
+    AnimationLibrary library = a.Library();
+    library.ground_trace = [](Entity, const Vec3& from, const Vec3& to, Vec3& hit, Vec3& normal) {
+        constexpr f32 ground = -0.2f;
+        if (ground > from.y || ground < to.y) return false;
+        hit = Vec3(from.x, ground, from.z);
+        normal = Vec3(0, 1, 0);
+        return true;
+    };
+    World world;
+    AnimationSystem system(world, std::move(library));
+    AnimationFootPlacement placement;
+    placement.pelvis = "pelvis";
+    placement.legs.push_back({"hip", "knee", "ankle", 0.1f});
+    Animator animator;
+    animator.graph = "Loco";
+    animator.skeleton = "Rig";
+    const Entity entity = world.CreateEntity(Transform{Vec3(), Quaternion::Identity()}, animator, placement);
+
+    system.Update(0.016f);
+    std::vector<ModelTransform> model;
+    ComputeModelTransforms(a.rig, *system.PoseOf(entity), model);
+    AETHER_CHECK(std::fabs(model[0].position.y - 0.8f) < 1e-3f && std::fabs(model[3].position.y + 0.1f) < 1e-3f);
+    AETHER_CHECK(system.SkinMatricesOf(entity)->size() == 4 && system.Problems().empty());
 }
