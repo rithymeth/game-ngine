@@ -3332,6 +3332,18 @@
   static bool IsAbilityGranted(const Entity&owner,const std::string&ability)
   static bool RevokeAbility(const Entity&owner,const std::string&ability)
   static i32 TryActivateAbility(const Entity&owner,const std::string&ability)
+[gameplay/include/aether/gameplay/ability_prediction.h] experimental
+  type class AbilityPredictor
+  type struct Entry
+  type struct Prediction
+  type struct Stats
+  Prediction Predict(Entity owner,const std::string&ability)
+  bool Confirm(Sequence sequence)
+  bool Reject(Sequence sequence)
+  const Stats&GetStats()const
+  public:explicit AbilityPredictor(AbilitySystem&abilities)
+  usize DropPending()
+  usize Pending()const
 [gameplay/include/aether/gameplay/ability_system.h] experimental
   type class AbilitySystem
   type enum class FailReason

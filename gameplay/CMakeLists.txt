@@ -15,6 +15,7 @@ add_library(aether_gameplay STATIC
     src/effect_library.cpp
     src/gameplay_ability.cpp
     src/ability_system.cpp
+    src/ability_prediction.cpp
     src/ability_library.cpp
 )
 target_include_directories(aether_gameplay PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)

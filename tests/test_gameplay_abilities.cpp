@@ -2,6 +2,7 @@
 
 #include "aether/ecs/world.h"
 #include "aether/gameplay/ability_library.h"
+#include "aether/gameplay/ability_prediction.h"
 #include "aether/gameplay/ability_system.h"
 #include "aether/reflection/registry.h"
 #include "aether/gameplay/tag_container.h"
@@ -309,4 +310,60 @@ AETHER_TEST(Ability_PlayerLoadsAssetsAndRunsThem) {
     CHECK(!ab->IsActive(e, "Dash")); // timed out by the player's own tick
     // The gameplay Blueprint libraries are registered in a program that only links the gameplay systems.
     CHECK(reflect::TypeRegistry::Find("Effects") != nullptr && reflect::TypeRegistry::Find("Attributes") != nullptr && reflect::TypeRegistry::Find("GameplayTags") != nullptr);
+}
+
+// Phase 41.6: the client half of predicted abilities. An ability authored with
+// commit_on_activate = false runs without paying, so the client can show it immediately and let the
+// server decide whether the cost ever lands.
+AETHER_TEST(AbilityPrediction_ConfirmPaysAndRejectRollsBack) {
+    World world;
+    AttributeSystem attrs{world};
+    EffectLibrary effects;
+    EffectSystem fx{world, attrs, effects};
+    AbilityLibrary lib;
+    AbilitySystem ab{world, attrs, fx, lib, effects};
+
+    GameplayEffect cost;
+    cost.name = "ManaCost";
+    cost.modifiers = {{"Mana", GameplayEffect::Op::Add, -20}};
+    AETHER_CHECK(effects.Register(cost));
+    GameplayAbility predicted;
+    predicted.name = "Predicted";
+    predicted.cost = "ManaCost";
+    predicted.commit_on_activate = false; // the prediction contract
+    AETHER_CHECK(lib.Register(predicted));
+
+    const Entity owner = world.CreateEntity(Transform{Vec3(), Quaternion::Identity()});
+    attrs.Define(owner, "Mana", 50, 0, 100);
+    AETHER_CHECK(ab.Grant(owner, "Predicted"));
+
+    AbilityPredictor predictor{ab};
+
+    // Predicted: it runs at once, and pays nothing yet.
+    const auto first = predictor.Predict(owner, "Predicted");
+    AETHER_CHECK(first.handle != 0 && first.reason == FailReason::None && predictor.Pending() == 1);
+    AETHER_CHECK(ab.IsActive(owner, "Predicted"));
+    AETHER_CHECK(f32(attrs.Get(owner, "Mana")) > 49.0f); // still 50: nothing paid
+
+    // Confirmed: now the cost lands. A duplicate reply must not pay a second time.
+    AETHER_CHECK(predictor.Confirm(first.sequence));
+    AETHER_CHECK(f32(attrs.Get(owner, "Mana")) < 31.0f);
+    AETHER_CHECK(predictor.Pending() == 0);
+    AETHER_CHECK(!predictor.Confirm(first.sequence));
+    AETHER_CHECK(f32(attrs.Get(owner, "Mana")) < 31.0f);
+    AETHER_CHECK(ab.End(first.handle));
+
+    // Rejected: it never ran and never cost anything, so the world looks as if it never happened.
+    const auto second = predictor.Predict(owner, "Predicted");
+    AETHER_CHECK(second.handle != 0 && ab.IsActive(owner, "Predicted"));
+    AETHER_CHECK(predictor.Reject(second.sequence));
+    AETHER_CHECK(!ab.IsActive(owner, "Predicted"));
+    AETHER_CHECK(f32(attrs.Get(owner, "Mana")) < 31.0f); // unchanged by the rollback
+    AETHER_CHECK(predictor.Pending() == 0);
+    AETHER_CHECK(!predictor.Reject(second.sequence)); // already answered
+
+    // A press that cannot run locally is reported and recorded as nothing to confirm.
+    const auto failed = predictor.Predict(owner, "NoSuchAbility");
+    AETHER_CHECK(failed.handle == 0 && failed.reason == FailReason::UnknownAbility && predictor.Pending() == 0);
+    AETHER_CHECK(predictor.GetStats().local_failures == 1);
 }
