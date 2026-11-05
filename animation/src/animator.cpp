@@ -21,11 +21,31 @@ void Animator::PlayMontage(const std::string& montage, f32 rate) { commands.push
 void Animator::StopMontage() { commands.push_back({AnimatorCommand::Kind::StopMontage, {}, 0.0f}); }
 void Animator::JumpToSection(const std::string& section) { commands.push_back({AnimatorCommand::Kind::JumpToSection, section, 0.0f}); }
 
-void RegisterAnimationComponents() { (void)GetComponentId<Animator>(); }
+void RegisterAnimationComponents() {
+    (void)GetComponentId<Animator>();
+    (void)GetComponentId<AnimationLookAt>();
+    (void)GetComponentId<AnimationTwoBoneIK>();
+    (void)GetComponentId<AnimationFootPlacement>();
+}
 
 } // namespace aether
 
 namespace aether::anim {
+
+namespace {
+
+bool SameFootSettings(const FootPlacementSettings& a, const FootPlacementSettings& b) {
+    if (a.pelvis != b.pelvis || a.max_step_up != b.max_step_up || a.max_step_down != b.max_step_down ||
+        a.max_foot_angle != b.max_foot_angle || a.smoothing != b.smoothing || a.legs.size() != b.legs.size()) return false;
+    for (usize i = 0; i < a.legs.size(); ++i) {
+        const LegSetup& x = a.legs[i];
+        const LegSetup& y = b.legs[i];
+        if (x.hip != y.hip || x.knee != y.knee || x.ankle != y.ankle || x.foot_height != y.foot_height) return false;
+    }
+    return true;
+}
+
+} // namespace
 
 struct AnimationSystem::Runtime {
     Entity entity;
@@ -37,6 +57,16 @@ struct AnimationSystem::Runtime {
     std::vector<Mat4> model, skin;
     f32 dt = 0.0f;
     bool root_motion = false;
+    LookAt look_at;
+    bool apply_look_at = false;
+    std::string look_at_problem;
+    std::vector<TwoBoneIK> two_bone_ik;
+    std::vector<std::string> two_bone_problems;
+    FootPlacementSettings foot_settings;
+    std::unique_ptr<FootPlacer> foot_placer;
+    GroundTrace foot_trace;
+    bool apply_foot_placement = false;
+    std::string foot_problem;
     std::string montage_slot = "Default"; // of the last montage it played
     u64 seen = 0;
 };
@@ -102,6 +132,120 @@ void AnimationSystem::Update(f32 dt, JobSystem* jobs) {
         r.seen = now;
         r.dt = a.paused ? 0.0f : dt * std::max(a.speed, 0.0f);
         r.root_motion = a.root_motion;
+        r.apply_look_at = false;
+        r.two_bone_ik.clear();
+        r.apply_foot_placement = false;
+        if (const AnimationLookAt* constraint = world_.GetComponent<AnimationLookAt>(e);
+            constraint != nullptr && constraint->enabled && constraint->weight > 0.0f && r.skeleton != nullptr) {
+            const i32 bone = r.skeleton->Find(constraint->bone);
+            if (bone < 0) {
+                const std::string problem = "entity " + std::to_string(e.index) + ": no look-at bone named '" + constraint->bone + "'";
+                if (r.look_at_problem != problem) {
+                    problems_.push_back(problem);
+                    r.look_at_problem = problem;
+                }
+            } else {
+                r.look_at_problem.clear();
+                r.look_at.bone = bone;
+                r.look_at.aim_axis = constraint->aim_axis;
+                r.look_at.max_angle = constraint->max_angle;
+                r.look_at.weight = constraint->weight;
+                r.look_at.target = constraint->target;
+                if (const Transform* transform = world_.GetComponent<Transform>(e); transform != nullptr) {
+                    r.look_at.target = Rotate(Conjugate(transform->rotation), constraint->target - transform->position);
+                }
+                r.apply_look_at = true;
+            }
+        }
+        if (const AnimationTwoBoneIK* constraints = world_.GetComponent<AnimationTwoBoneIK>(e);
+            constraints != nullptr && constraints->enabled && r.skeleton != nullptr) {
+            const Transform* transform = world_.GetComponent<Transform>(e);
+            for (const AnimationTwoBoneIKChain& chain : constraints->chains) {
+                const i32 root = r.skeleton->Find(chain.root);
+                const i32 mid = r.skeleton->Find(chain.mid);
+                const i32 end = r.skeleton->Find(chain.end);
+                const bool is_chain = root >= 0 && mid >= 0 && end >= 0 &&
+                                      r.skeleton->bones[static_cast<usize>(mid)].parent == root &&
+                                      r.skeleton->bones[static_cast<usize>(end)].parent == mid;
+                if (!is_chain) {
+                    const std::string problem = "entity " + std::to_string(e.index) + ": invalid two-bone IK chain '" +
+                                                chain.root + "' -> '" + chain.mid + "' -> '" + chain.end + "'";
+                    if (std::find(r.two_bone_problems.begin(), r.two_bone_problems.end(), problem) == r.two_bone_problems.end()) {
+                        problems_.push_back(problem);
+                        r.two_bone_problems.push_back(problem);
+                    }
+                    continue;
+                }
+                TwoBoneIK ik;
+                ik.root = root;
+                ik.mid = mid;
+                ik.end = end;
+                ik.target = chain.target;
+                ik.pole = chain.pole;
+                ik.use_pole = chain.use_pole;
+                ik.weight = chain.weight;
+                if (transform != nullptr) {
+                    const Quaternion inverse = Conjugate(transform->rotation);
+                    ik.target = Rotate(inverse, chain.target - transform->position);
+                    ik.pole = Rotate(inverse, chain.pole - transform->position);
+                }
+                r.two_bone_ik.push_back(ik);
+            }
+        }
+        if (const AnimationFootPlacement* placement = world_.GetComponent<AnimationFootPlacement>(e);
+            placement != nullptr && placement->enabled && r.skeleton != nullptr) {
+            FootPlacementSettings settings;
+            settings.pelvis = r.skeleton->Find(placement->pelvis);
+            settings.max_step_up = placement->max_step_up;
+            settings.max_step_down = placement->max_step_down;
+            settings.max_foot_angle = placement->max_foot_angle;
+            settings.smoothing = placement->smoothing;
+            bool valid = settings.pelvis >= 0;
+            for (const AnimationFootPlacementLeg& leg : placement->legs) {
+                LegSetup resolved;
+                resolved.hip = r.skeleton->Find(leg.hip);
+                resolved.knee = r.skeleton->Find(leg.knee);
+                resolved.ankle = r.skeleton->Find(leg.ankle);
+                resolved.foot_height = leg.foot_height;
+                valid = valid && resolved.hip >= 0 && resolved.knee >= 0 && resolved.ankle >= 0;
+                settings.legs.push_back(resolved);
+            }
+            const std::string problem = "entity " + std::to_string(e.index) + ": invalid foot-placement bones";
+            if (!valid || settings.legs.empty()) {
+                if (r.foot_problem != problem) problems_.push_back(problem);
+                r.foot_problem = problem;
+            } else if (!library_.ground_trace) {
+                const std::string no_trace = "entity " + std::to_string(e.index) + ": foot placement needs an AnimationLibrary ground trace";
+                if (r.foot_problem != no_trace) problems_.push_back(no_trace);
+                r.foot_problem = no_trace;
+            } else {
+                r.foot_problem.clear();
+                if (!r.foot_placer || !SameFootSettings(r.foot_settings, settings)) {
+                    r.foot_settings = settings;
+                    r.foot_placer = std::make_unique<FootPlacer>(settings);
+                }
+                const Transform* transform = world_.GetComponent<Transform>(e);
+                const Transform local = transform != nullptr ? *transform : Transform{};
+                r.foot_trace = [this, entity = e, local, has_transform = transform != nullptr](const Vec3& from, const Vec3& to, Vec3& hit, Vec3& normal) {
+                    Vec3 query_from = from, query_to = to, world_hit, world_normal;
+                    if (has_transform) {
+                        query_from = local.position + Rotate(local.rotation, from);
+                        query_to = local.position + Rotate(local.rotation, to);
+                    }
+                    if (!library_.ground_trace(entity, query_from, query_to, world_hit, world_normal)) return false;
+                    if (has_transform) {
+                        const Quaternion inverse = Conjugate(local.rotation);
+                        hit = Rotate(inverse, world_hit - local.position);
+                        normal = Rotate(inverse, world_normal);
+                    } else {
+                        hit = world_hit;
+                        normal = world_normal;
+                    }
+                    return true;
+                };
+                r.apply_foot_placement = true;
+            }
+        }
         if (r.instance) {
             r.instance->SetRootMotion(a.root_motion);
             for (const AnimatorCommand& c : a.commands) {
@@ -133,6 +277,8 @@ void AnimationSystem::Update(f32 dt, JobSystem* jobs) {
     // Evaluate: each character's graph is independent, so they run in parallel.
     auto evaluate = [](Runtime& r) {
         r.instance->Update(r.dt, r.pose);
+        for (const TwoBoneIK& ik : r.two_bone_ik) SolveTwoBoneIK(*r.skeleton, r.pose, ik);
+        if (r.apply_look_at) SolveLookAt(*r.skeleton, r.pose, r.look_at);
         LocalToModel(*r.skeleton, r.pose, r.model);
         SkinMatrices(*r.skeleton, r.model, r.skin);
     };
@@ -151,6 +297,14 @@ void AnimationSystem::Update(f32 dt, JobSystem* jobs) {
         jobs->Wait(counter);
     } else {
         for (Runtime* r : active) evaluate(*r);
+    }
+    // Ground providers often query physics or navigation data. Keep that work
+    // on this thread; graph sampling and non-ground IK above remain parallel.
+    for (Runtime* r : active) {
+        if (!r->apply_foot_placement) continue;
+        r->foot_placer->Apply(*r->skeleton, r->pose, r->foot_trace, r->dt);
+        LocalToModel(*r->skeleton, r->pose, r->model);
+        SkinMatrices(*r->skeleton, r->model, r->skin);
     }
     for (Runtime* r : active) {
         for (const AnimEvent& ev : r->instance->Events()) events_.push_back({r->entity, ev});

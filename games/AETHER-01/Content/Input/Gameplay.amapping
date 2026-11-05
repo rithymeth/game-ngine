@@ -178,6 +178,38 @@
       },
       {
         "$v": 1,
+        "action": "Sprint",
+        "actuation": 0.5,
+        "key": "LeftShift",
+        "modifiers": [],
+        "triggers": [
+          {
+            "$v": 1,
+            "chord_action": "",
+            "one_shot": false,
+            "time": 0.5,
+            "type": "Down"
+          }
+        ]
+      },
+      {
+        "$v": 1,
+        "action": "Sprint",
+        "actuation": 0.5,
+        "key": "GamepadLeftShoulder",
+        "modifiers": [],
+        "triggers": [
+          {
+            "$v": 1,
+            "chord_action": "",
+            "one_shot": false,
+            "time": 0.5,
+            "type": "Down"
+          }
+        ]
+      },
+      {
+        "$v": 1,
         "action": "Look",
         "actuation": 0.5,
         "key": "MouseX",

@@ -19,7 +19,7 @@
           "mass": 70.0,
           "max_slope_degrees": 45.0,
           "radius": 0.35,
-          "run_speed": 7.0,
+          "run_speed": 8.0,
           "step_height": 0.35,
           "walk_speed": 4.0
         },

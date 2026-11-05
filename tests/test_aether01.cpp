@@ -864,6 +864,35 @@ AETHER_TEST(Aether01_KaelMoveSetPlaysInTheCookedGame) {
     }
 }
 
+// Sprint is a complete input-to-animation path: the cooked mapping holds the
+// modifier, the Luau controller selects CharacterMovement::run, and the graph
+// crosses its authored 7 m/s threshold into the 8 m/s Sprint clip.
+AETHER_TEST(Aether01_KaelSprintIsReachableFromInput) {
+    ProofRun run("kael-sprint");
+    AETHER_CHECK(run.game->Animation() != nullptr && run.game->Animation()->InstanceOf(run.hero) != nullptr);
+    if (!run.game->Animation() || !run.game->Animation()->InstanceOf(run.hero)) return;
+    std::vector<AnimLog> log;
+    auto frames = [&](int count) { for (int i = 0; i < count; ++i) AnimFrame(run, log); };
+    frames(10);
+    run.game->Input().SetButton(input::Key::W, true);
+    frames(45); // walk, then run at the ordinary 4 m/s movement speed
+    run.game->Input().SetButton(input::Key::LeftShift, true);
+    frames(60); // the run input raises the authored movement cap to 8 m/s
+    run.game->Input().SetButton(input::Key::LeftShift, false);
+    frames(45);
+    run.game->Input().SetButton(input::Key::W, false);
+    frames(30);
+    for (const AnimLog& change : log) std::printf("  %.3f %s -> %s\n", change.time, change.from.c_str(), change.to.c_str());
+    const auto sprint = std::find_if(log.begin(), log.end(), [](const AnimLog& change) { return change.to == "Sprint"; });
+    AETHER_CHECK(sprint != log.end());
+    if (sprint != log.end()) {
+        AETHER_CHECK(sprint->from == "Run");
+        const auto leave_sprint = std::find_if(sprint + 1, log.end(), [](const AnimLog& change) { return change.from == "Sprint"; });
+        AETHER_CHECK(leave_sprint != log.end() && leave_sprint->to == "Run");
+    }
+    AETHER_CHECK(run.game->Animation()->Problems().empty() && run.game->Warnings().empty());
+}
+
 // Walking from a standstill and stopping, at 30, 60 and 144 Hz: the same transitions at the same game times, within a
 // frame plus a physics step (the character's speed, which drives the graph, changes on the 60 Hz fixed step).
 AETHER_TEST(Aether01_KaelLocomotionTransitionsAtVariedFrameRates) {

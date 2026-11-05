@@ -12,7 +12,7 @@ add_library(aether_nav STATIC
 target_include_directories(aether_nav PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(aether_nav PUBLIC cxx_std_20)
 target_link_libraries(aether_nav
-    PUBLIC Aether::Engine
+    PUBLIC Aether::Engine Aether::Animation
     PRIVATE
         "$<BUILD_INTERFACE:RecastNavigation::Recast>"
         "$<BUILD_INTERFACE:RecastNavigation::Detour>"
