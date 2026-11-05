@@ -279,4 +279,14 @@ AETHER_TEST(Vcs_ContentBrowserPanelReportsAssetIssues) {
     CHECK(panel.Issues().size() == 1);
     CHECK(panel.Issues()[0].kind == assets::AssetIssueKind::MissingSource);
     CHECK(panel.Issues()[0].path == "Textures/brick.png");
+
+    // And the list draws: opening it adds geometry to the frame. (A vertex count cannot say
+    // the text is right, only that the window rendered something beyond the panel itself.)
+    HeadlessImGui imgui;
+    panel.validation_open = false;
+    imgui.Frame([&] { panel.Draw(); });
+    const int closed = ImGui::GetDrawData()->TotalVtxCount;
+    panel.validation_open = true;
+    imgui.Frame([&] { panel.Draw(); });
+    CHECK(closed > 0 && ImGui::GetDrawData()->TotalVtxCount > closed);
 }

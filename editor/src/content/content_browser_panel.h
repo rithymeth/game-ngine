@@ -36,6 +36,9 @@ public:
 
     std::string search;
     bool changed_only = false;
+    // Phase 43.6: the asset issue list. Like `search` and `changed_only` this is plain UI
+    // state, public so a host (or a headless test) can open it without clicking.
+    bool validation_open = false;
 
     const assets::VcsStatus& Vcs() const { return vcs_; }
     // Uses this status instead of asking git (tests, or a host with its own source).
@@ -52,6 +55,7 @@ private:
     void DrawListing();
     void DrawActionDialog();
     void DrawReferenceViewer();
+    void DrawValidation();
     void StartAction(Action action, const std::string& source = {});
     void AcceptMoveDrop(const std::string& destination_folder);
     void ApplyAction();

@@ -112,6 +112,7 @@ void ContentBrowserPanel::Draw() {
     ImGui::EndChild();
     DrawActionDialog();
     DrawReferenceViewer();
+    DrawValidation();
 }
 
 void ContentBrowserPanel::DrawToolbar() {
@@ -129,6 +130,13 @@ void ContentBrowserPanel::DrawToolbar() {
     } else {
         ImGui::TextDisabled("not under version control");
         if (!vcs_.error.empty() && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", vcs_.error.c_str());
+    }
+    // Phase 43.6: only shown when there is something to say, so a healthy project has no
+    // extra button. The list itself is a window the host can also open directly.
+    if (!issues_.empty()) {
+        ImGui::SameLine();
+        const std::string label = "Validation (" + std::to_string(issues_.size()) + ")";
+        if (ImGui::Button(label.c_str())) validation_open = true;
     }
     if (!operation_warning_.empty()) ImGui::TextColored(ImVec4(1.0f, 0.70f, 0.20f, 1.0f), "%s", operation_warning_.c_str());
 }
@@ -320,6 +328,26 @@ void ContentBrowserPanel::DrawReferenceViewer() {
     }
     ImGui::End();
     references_open_ = open;
+}
+
+void ContentBrowserPanel::DrawValidation() {
+    if (!validation_open) return;
+    bool open = validation_open;
+    if (ImGui::Begin("Asset Validation", &open)) {
+        if (issues_.empty()) {
+            ImGui::TextDisabled("No asset problems.");
+        }
+        for (const assets::AssetIssue& issue : issues_) {
+            if (issue.kind == assets::AssetIssueKind::MissingSource) {
+                ImGui::TextColored(ImVec4(1.0f, 0.62f, 0.2f, 1.0f), "missing source: %s", issue.path.c_str());
+            } else {
+                ImGui::BulletText("%s refers to %s, which is gone", issue.path.c_str(),
+                                  assets::ToString(issue.dependency).c_str());
+            }
+        }
+    }
+    ImGui::End();
+    validation_open = open;
 }
 
 } // namespace aether::editor
