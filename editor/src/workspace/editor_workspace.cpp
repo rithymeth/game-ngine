@@ -1,4 +1,6 @@
 #include "workspace/editor_workspace.h"
+
+#include "workspace/command_palette.h"
 #include "core/recent_projects.h"
 
 #include "ai/bt_editor.h"
@@ -48,6 +50,7 @@
 #include "aether/streaming/partition.h"
 
 #include <imgui.h>
+#include <misc/cpp/imgui_stdlib.h>
 
 #include <algorithm>
 #include <array>
@@ -163,6 +166,7 @@ struct EditorWorkspace::Impl {
     EditorScripts editor_scripts{extensions};
     u64 extensions_seen = 0;
     std::vector<Tool> tools;
+    std::string palette_query; // Phase 43.5: the command palette's search box
     usize selected = 0;
     std::array<char, 128> tool_filter{};
 
@@ -1118,6 +1122,35 @@ void EditorWorkspace::DrawWindows() {
         ImGui::End();
     }
     impl_->crash_dialog->Draw();
+    DrawCommandPalette();
+}
+
+void EditorWorkspace::DrawCommandPalette() {
+    if (!command_palette_open) return;
+    // Built per frame: it is a filter over the tool list, which is a few dozen entries, and
+    // keeping it out of Impl means the palette itself stays free of editor state.
+    CommandPalette palette(*this);
+    palette.SetQuery(impl_->palette_query);
+    bool open = command_palette_open;
+    ImGui::SetNextWindowSize(ImVec2(520, 360), ImGuiCond_FirstUseEver);
+    if (ImGui::Begin("Command Palette", &open)) {
+        ImGui::SetNextItemWidth(-1.0f);
+        if (ImGui::InputTextWithHint("##palette_query", "Search tools", &impl_->palette_query)) {
+            palette.SetQuery(impl_->palette_query);
+        }
+        for (std::size_t i = 0; i < palette.Results().size(); ++i) {
+            const std::size_t tool = palette.Results()[i];
+            ImGui::PushID(static_cast<int>(tool));
+            if (ImGui::Selectable(ToolName(tool))) {
+                palette.Activate(*this, i); // selects the tool
+                command_palette_open = false;
+            }
+            ImGui::PopID();
+        }
+        if (palette.Results().empty()) ImGui::TextDisabled("No matching tools.");
+    }
+    ImGui::End();
+    command_palette_open = open;
 }
 
 } // namespace aether::editor

@@ -130,4 +130,14 @@ AETHER_TEST(Editor_CommandPaletteFiltersAndSelectsTools) {
     CHECK(palette.Activate(ws, target));
     CHECK(ws.Selected() == palette.Results()[target]);
     CHECK(!palette.Activate(ws, palette.Results().size()));
+
+    // And the palette draws: opening the window adds geometry to the frame. (A vertex count
+    // cannot say the list is right, only that the window rendered.)
+    HeadlessImGui imgui;
+    ws.command_palette_open = false;
+    imgui.Frame([&] { ws.DrawWindows(); });
+    const int closed = ImGui::GetDrawData()->TotalVtxCount;
+    ws.command_palette_open = true;
+    imgui.Frame([&] { ws.DrawWindows(); });
+    CHECK(ImGui::GetDrawData()->TotalVtxCount > closed);
 }

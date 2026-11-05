@@ -89,6 +89,11 @@ public:
     // The popped-out tool windows.
     void DrawWindows();
 
+    // Phase 43.5: the command palette. Plain UI state, like a tool's window flag, so a host --
+    // or a headless test -- can open it without a keybinding. DrawWindows() draws it.
+    bool command_palette_open = false;
+    void DrawCommandPalette();
+
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
