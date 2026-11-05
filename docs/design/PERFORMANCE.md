@@ -70,23 +70,39 @@ false positives in any run, and the reason a local Windows run cannot be compare
 Re-record this row on the runner (it is the row to watch when the baseline is refreshed) rather than treating its
 ratio as a signal.
 
-## The hierarchical pathfinder benchmark measures the wrong thing
+## The hierarchical pathfinder does not scale (as measured)
 
-`nav/path_across_100_tiles_hierarchical` used to build a 120 x 120 unit plane with 40-unit tiles -- a 3 x 3 grid --
-and query (-50,-50) to (50,50). Both endpoints land within a tile of each other, so the "hierarchical" case was
-barely longer than the plain one. The pair is now `nav/path_around_wall_*`: a 480 x 480 plane (12 x 12 tiles) with a
-wall across the middle whose only gap is at the far end, which stops the plain path from being a straight line
-(Detour's easiest case). The benchmark aborts if `Stats().direct` is non-zero, so a silent fall back to the plain
-path cannot pass as a hierarchical measurement. Larger grids are not usable: the bake aborts at 2500+ tiles.
+`nav/path_across_100_tiles_hierarchical` used to build a 120 x 120 unit plane and query (-50,-50) to (50,50), with
+both endpoints a tile apart: the "hierarchical" case was measuring the same short path as the plain one, under a name
+claiming a hundred tiles.
 
-Measured on a Windows MSVC build, 20 queries each: **8.10 ms plain, 22.84 ms hierarchical**. The wall made the plain
-search 11x more expensive than on the open plane (0.70 -> 8.10 ms) and the hierarchical search 9x more expensive
-(2.53 -> 22.84), so the ratio barely moved: **the hierarchy is ~2.8x slower than plain at this scale.**
+**The tile arithmetic matters here.** A bake tile is `tile_size` cells across and a cell is `cell_size` world units,
+so `tile_size = 40` with the default 0.3 cell is a **12-unit tile**, and the bake refuses more than `1 << 14`
+(16 384) tiles. The pair is now `nav/path_around_wall_*`: a **1400 x 1400** plane -- ~13 700 tiles, close to the
+cap -- with a wall across the middle whose only gap is at the far end, and a query from (-650,-650) to (650,650)
+that crosses ~115 tiles. The benchmark aborts if `Stats().direct` is non-zero, so a silent fall back to the plain
+path cannot pass as a hierarchical measurement.
 
-That is not a bug and not a regression -- it is the shape of the algorithm. A hierarchical query answers with three
-Detour searches (start to portal, portal to portal, portal to goal) instead of one, so it only wins when one long
-search would explore far more area than the three short ones. At 12 tiles a whole search is ~12 tiles, so the three
-legs cover the same ground and the portal A* on top is pure cost. The benefit needs a world of hundreds of tiles,
-which this benchmark cannot build (see the bake limit above). Until it can, the honest reading is "not measured
-where it matters", not "the hierarchy does not help".
+Measured on a Windows MSVC build, 20 queries each, on the two plane sizes that were actually run:
+
+| | 480 x 480 plane, open, 1600 tiles | 1400 x 1400 plane, walled, ~13 700 tiles |
+|---|---|---|
+| plain Detour | 0.70 ms | 15.2 ms (24.1 ms on a second run) |
+| hierarchical | 2.53 ms | 583 ms (966 ms on a second run) |
+| ratio | 3.6x slower | **38x to 64x slower** |
+
+These are single runs on a noisy developer machine, so treat the absolute numbers loosely and the ratio as the
+signal: it went from 3.6x to several tens of times worse as the world grew.
+
+**The gap widens by an order of magnitude with scale**, which is the opposite of what the hierarchy is for. The
+likely cause is the portal graph: `FindPath` runs an A* over every portal (`portals_.size()` nodes, allocated per
+query as three `n + 1` vectors plus a priority queue) before it makes any leg search, so its cost grows with the
+size of the world rather than with the length of the path. At 13 700 tiles that graph search swamps everything.
+
+That makes this a **performance defect to investigate**, not just a benchmark artefact: a 583 ms path query is
+unusable in a game loop, and the feature currently costs more than the plain pathfinder it is meant to beat. Next
+steps, in order: print `Stats().portals` and `graph_nodes_expanded` for this query, reuse the per-query scratch
+buffers instead of allocating them each call, and look at whether the portal graph should be built per tile cluster
+rather than globally.
+
 

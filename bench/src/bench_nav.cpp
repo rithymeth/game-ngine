@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <string>
 #include <vector>
 
 using namespace aether;
@@ -43,23 +44,36 @@ PathState& Paths() {
     static PathState s;
     if (!s.mesh.Loaded()) { // built on first use, so either benchmark can run alone
         nav::NavGeometry g;
-        // 480 x 480 units with 40-unit tiles: a 12 x 12 grid, and the query below
-        // crosses ~11 of those tiles. It used to be a 120 x 120 plane -- 3 x 3
-        // tiles -- where both endpoints were a single tile apart from the middle,
-        // so the "hierarchical" case was measuring much the same short path as the
-        // plain one. (Larger grids are not usable here: 2500+ tiles aborts in the
-        // bake on this machine, so this is as far as the comparison safely goes.)
-        g.AddPlane(Vec3(0, 0, 0), 240, 240);
-        // A wall across the middle with its only gap at the far end (z in 180..240).
+        // The bake sizes tiles as tile_size cells * cell_size (40 * 0.3 = 12 world
+        // units here) and refuses more than 1 << 14 of them, so a 1400 x 1400 plane
+        // is ~13 700 tiles -- about as large as this can go, and the path below
+        // crosses ~115 of them. It used to be a 120 x 120 plane, where both
+        // endpoints were a tile apart and the "hierarchical" case measured
+        // essentially the same short path as the plain one.
+        g.AddPlane(Vec3(0, 0, 0), 700, 700);
+        // A wall across the middle with its only gap at the far end (z in 560..700).
         // Without it the plain path was a straight line -- Detour's easiest case --
-        // and the hierarchy paid for its portal A* and three leg searches with
-        // nothing to save, so it looked 3.6x slower than plain for purely overhead
-        // reasons. The wall forces the plain search to work its way along it.
-        g.AddBox(Vec3(0, 1.5f, -30), Vec3(5, 1.5f, 210));
+        // and the hierarchy paid for its portal A* and leg searches with nothing to
+        // save. The wall forces the plain search to work its way along it.
+        g.AddBox(Vec3(0, 1.5f, -70), Vec3(5, 1.5f, 630));
         nav::NavMeshSettings settings;
         settings.tile_size = 40;
         nav::NavMeshData data;
-        if (!nav::BuildNavMesh(g, settings, data) || !s.mesh.Load(data) || !s.hierarchical.Build(s.mesh)) std::abort();
+        // Say which step failed: a bare abort gave no hint when the bake started
+        // refusing larger grids (see the size note above).
+        std::string error;
+        if (!nav::BuildNavMesh(g, settings, data, &error)) {
+            std::fprintf(stderr, "nav bake failed: %s\n", error.c_str());
+            std::abort();
+        }
+        if (!s.mesh.Load(data)) {
+            std::fprintf(stderr, "nav bake produced a mesh the runtime would not load\n");
+            std::abort();
+        }
+        if (!s.hierarchical.Build(s.mesh)) {
+            std::fprintf(stderr, "hierarchical pathfinder build failed\n");
+            std::abort();
+        }
     }
     return s;
 }
@@ -101,7 +115,7 @@ AETHER_BENCH_SETUP(
     [] {
         PathState& s = Paths();
         for (int i = 0; i < 20; ++i)
-            if (!s.mesh.FindPath(Vec3(-230, 0, -230), Vec3(230, 0, 230), s.path)) std::abort();
+            if (!s.mesh.FindPath(Vec3(-650, 0, -650), Vec3(650, 0, 650), s.path)) std::abort();
     });
 
 AETHER_BENCH_SETUP(
@@ -109,7 +123,7 @@ AETHER_BENCH_SETUP(
     [] {
         PathState& s = Paths();
         for (int i = 0; i < 20; ++i)
-            if (!s.hierarchical.FindPath(Vec3(-230, 0, -230), Vec3(230, 0, 230), s.path)) std::abort();
+            if (!s.hierarchical.FindPath(Vec3(-650, 0, -650), Vec3(650, 0, 650), s.path)) std::abort();
         // The wall makes this a detour, so answering through the plain
         // path would mean the portal graph is being bypassed and the number below
         // would not be the hierarchical path at all.
