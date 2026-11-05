@@ -49,6 +49,24 @@
   usize Count()const
   void Add(const std::string&name,BlackboardType type,BlackboardValue initial=
   void Adopt(const BlackboardAsset&asset)
+[ai/include/aether/ai/brain.h] experimental
+  type class BrainRuntime
+  type enum class Kind
+  BrainRuntime&operator=(BrainRuntime&&)=default
+  BrainRuntime&operator=(const BrainRuntime&)=delete
+  BrainRuntime(BrainRuntime&&)=default
+  BrainRuntime(const BrainRuntime&)=delete
+  BtStatus Tick(BtContext&ctx,f32 dt)
+  Kind GetKind()const
+  const BehaviorTreeInstance*Tree()const
+  const StateTree*States()const
+  const UtilityBrain*Utility()const
+  const std::string&ChosenAction()const
+  explicit BrainRuntime(StateTree states)
+  explicit BrainRuntime(UtilityBrain brain)
+  explicit BrainRuntime(const BehaviorTreeAsset&tree,u64 seed=1)
+  i32 ChosenIndex()const
+  void Abort(BtContext&ctx)
 [ai/include/aether/ai/bt_runtime.h] experimental
   type class BehaviorTreeInstance
   type struct BtContext
@@ -169,34 +187,46 @@
   type struct Perception
   type struct PerceptionEvent
   ))AETHER_REFLECT(aether::Perception,1,AETHER_METHOD(ReportNoise,Fn_BlueprintCallable,
+  ),AETHER_FIELD(alert_threshold,Field_EditAnywhere,
+  ),AETHER_FIELD(awareness_decay_per_second,Field_EditAnywhere,
+  ),AETHER_FIELD(awareness_gain_per_second,Field_EditAnywhere,
   ),AETHER_FIELD(detect_friends,Field_EditAnywhere,
   ),AETHER_FIELD(eye_height,Field_EditAnywhere,
   ),AETHER_FIELD(forget_after,Field_EditAnywhere,
   ),AETHER_FIELD(fov_degrees,Field_EditAnywhere,
+  ),AETHER_FIELD(hearing_occlusion_scale,Field_EditAnywhere,
   ),AETHER_FIELD(hearing_radius,Field_EditAnywhere,
   ),AETHER_FIELD(location_key,Field_EditAnywhere,
   ),AETHER_FIELD(lose_sight_radius,Field_EditAnywhere,
+  ),AETHER_FIELD(share_awareness_scale,Field_EditAnywhere,
+  ),AETHER_FIELD(share_radius,Field_EditAnywhere,
   ),AETHER_FIELD(target_height,Field_EditAnywhere,
   ),AETHER_FIELD(target_key,Field_EditAnywhere,
   ),AETHER_FIELD(team,Field_EditAnywhere,
   ),AETHER_METHOD(CanSee,Fn_BlueprintCallable | Fn_Pure,
+  ),AETHER_METHOD(GetAwareness,Fn_BlueprintCallable | Fn_Pure,
   ),AETHER_METHOD(GetLastKnownLocation,Fn_BlueprintCallable | Fn_Pure,
   ),AETHER_METHOD(GetTarget,Fn_BlueprintCallable | Fn_Pure),AETHER_METHOD(GetKnownCount,Fn_BlueprintCallable | Fn_Pure),AETHER_METHOD(ForgetAll,Fn_BlueprintCallable))AETHER_REFLECT(aether::AIStimuliSource,1,AETHER_FIELD(visible,Field_EditAnywhere,
+  ),AETHER_METHOD(IsAlerted,Fn_BlueprintCallable | Fn_Pure,
   ),AETHER_METHOD(IsAwareOf,Fn_BlueprintCallable | Fn_Pure,
+  ),AETHER_METHOD(PredictLocation,Fn_BlueprintCallable | Fn_Pure,
   ),AETHER_METHOD(ReportDamage,Fn_BlueprintCallable,
-  AETHER_ENUM(aether::PerceptionSense,1,AETHER_ENUM_VALUE(Sight),AETHER_ENUM_VALUE(Hearing),AETHER_ENUM_VALUE(Damage))AETHER_REFLECT(aether::AIPerception,1,AETHER_FIELD(sight_radius,Field_EditAnywhere,
+  AETHER_ENUM(aether::PerceptionSense,1,AETHER_ENUM_VALUE(Sight),AETHER_ENUM_VALUE(Hearing),AETHER_ENUM_VALUE(Damage))AETHER_REFLECT(aether::AIPerception,3,AETHER_FIELD(sight_radius,Field_EditAnywhere,
   Entity GetTarget()const
   PerceptionWorld&operator=(const PerceptionWorld&)=delete
   PerceptionWorld(const PerceptionWorld&)=delete
   Vec3 GetLastKnownLocation(const Entity&actor)const
+  Vec3 PredictLocation(const Entity&actor,f32 seconds)const
   bool CanSee(const Entity&actor)const
   bool HasLineOfSight(const Vec3&from,const Vec3&to,Entity looker,Entity target)const
   bool HasLineOfSightTest()const
   bool Hostile(const AIPerception&p,i32 team)const
+  bool IsAlerted(const Entity&actor)const
   bool IsAwareOf(const Entity&actor)const
   const PerceivedActor*Find(Entity actor)const
   const std::vector<PerceptionEvent>&Events()const
   explicit PerceptionWorld(World&world)
+  f32 GetAwareness(const Entity&actor)const
   i32 GetKnownCount()const
   static PerceptionWorld*Active()
   static const char*SenseName(PerceptionSense sense)
@@ -208,7 +238,7 @@
   void RegisterPerceptionComponents()
   void ReportDamage(Entity victim,Entity instigator,f32 amount)
   void ReportNoise(const Vec3&location,f32 loudness,Entity instigator)
-  void Sense(Entity perceiver,AIPerception&p,Entity actor,const Vec3&at,PerceptionSense sense,f32 strength)
+  void Sense(Entity perceiver,AIPerception&p,Entity actor,const Vec3&at,PerceptionSense sense,f32 strength,f32 dt)
   void SetLineOfSight(LineOfSight los)
   void SyncBlackboard(Entity perceiver,const AIPerception&p)
   void Update(f32 dt)
@@ -3916,8 +3946,10 @@
   bool BuildNavMesh(const NavGeometry&geometry,const NavMeshSettings&settings,NavMeshData&out,std::string*error=nullptr,NavBuildStats*stats=nullptr)
   bool BuildNavTile(const NavGeometry&geometry,const NavMeshData&grid,i32 x,i32 z,NavMeshData::Tile&out,std::string*error=nullptr,const std::vector<NavVolume>*extra_volumes=nullptr,const std::vector<NavLink>*extra_links=nullptr)
   bool FindPath(const Vec3&start,const Vec3&end,NavPath&out,const NavQueryFilter&filter=
-  bool Load(const NavMeshData&data,std::string*error=nullptr)
+  bool IsTileLoaded(i32 x,i32 z)const
+  bool Load(const NavMeshData&data,std::string*error=nullptr,bool load_tiles=true)
   bool LoadNavMesh(const std::vector<u8>&bytes,NavMeshData&out,std::string*error=nullptr)
+  bool LoadTile(i32 x,i32 z,std::string*error=nullptr)
   bool Loaded()const
   bool NearestPoint(const Vec3&p,Vec3&out,const Vec3&extents=Vec3(2,4,2),u8*area=nullptr)const
   bool RandomPoint(u64 seed,Vec3&out,const NavQueryFilter&filter=
@@ -3925,6 +3957,7 @@
   bool Raycast(const Vec3&start,const Vec3&end,Vec3&hit,Vec3*normal=nullptr,const NavQueryFilter&filter=
   bool Reachable(const Vec3&a,const Vec3&b,const NavQueryFilter&filter=
   bool ReplaceTile(const NavMeshData::Tile&tile,std::string*error=nullptr)
+  bool UnloadTile(i32 x,i32 z)
   const NavMeshData&Data()const
   dtNavMesh*Detour()const
   dtNavMeshQuery*Query()const
@@ -3938,7 +3971,9 @@
   std::vector<NavPolygon>Polygons()const
   std::vector<std::pair<i32,i32>>NavTilesTouching(const NavMeshData&grid,const Vec3&min,const Vec3&max)
   std::vector<u8>SaveNavMesh(const NavMeshData&data)
+  usize LoadedTileCount()const
   usize PolygonCount()const
+  usize StreamTiles(const Vec3&center,f32 radius)
   usize TileCount()const
   usize TriangleCount()const
   void AddBox(const Vec3&center,const Vec3&half_extents,u8 area=kAreaWalkable)

@@ -612,6 +612,8 @@ endif()
 add_subdirectory(tools/fuzz)
 # Phase 25: the .apak archive tool and the cooker.
 add_subdirectory(tools/pak)
+# Phase 46 step 3: the .apkg plugin package CLI (package / inspect / install).
+add_subdirectory(tools/plugin)
 add_subdirectory(tools/cook)
 add_subdirectory(tools/server)
 add_subdirectory(tools/docgen)
