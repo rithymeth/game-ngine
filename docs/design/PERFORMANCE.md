@@ -194,4 +194,30 @@ is exactly the case where its own graph search becomes uniform-cost.
 So the only lever left is the one already named: fewer nodes, not faster nodes. Whether a clustered graph's
 coarser portals still yield a valid route once a funnel connects them is the open, measurable question.
 
+### The lever works: a coarser graph shrinks the A* enough to matter
+
+That lever was then measured directly, with no code change: bake the same serpentine on a coarser tile grid
+(`tile_size` 120 instead of 40, i.e. 36-unit tiles instead of 12), which gives the same geometry with far fewer
+portals.
+
+| serpentine, per query | `tile_size` 40 | `tile_size` 120 |
+|---|---|---|
+| portals | 36 180 | **4 908** (7.4x fewer) |
+| A* nodes expanded | 34 769 | **4 451** |
+| `graph_ms` | 2.27 | **0.37** |
+| `legs_ms` (134 / 75 legs) | 0.72 | 0.84 |
+| hierarchical total | ~3.0 | **1.31** |
+| plain Detour | 0.54 | **0.43** |
+
+The A* falls 6x for 7.4x fewer nodes -- the lever is real and close to linear. And the balance flips: the **legs**
+(0.84 ms) now cost more than twice the A* (0.37 ms), whereas before the A* dominated.
+
+**So the clustered-graph-plus-funnel design does have a measured path to winning**, which earlier revisions of this
+note wrongly suggested it did not: at this graph size the A* alone (0.37 ms) is already below plain Detour on the
+same mesh (0.43 ms), and a funnel replaces the 0.84 ms of leg searches with a linear walk over the portal corridor.
+The margin is thin -- roughly 0.06 ms if the funnel were free -- so what decides it is how coarse the graph can get
+before the funnel can no longer produce a valid route, and what the funnel itself costs. That is the next measurement,
+and it needs the algorithm written; unlike the previous three ideas this one is supported by numbers before it is
+built.
+
 
