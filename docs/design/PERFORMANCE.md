@@ -134,4 +134,12 @@ one it was designed for.** The break-even needs a world far larger than this bra
 redesign that makes the route genuinely local rather than a chain of portal-to-portal legs. Until one of those
 happens it should not be used for gameplay pathfinding; `NavMesh::FindPath` is the better choice everywhere measured.
 
+### Tried and rejected: merging waypoints by line of sight
+
+The 134 legs suggested merging waypoints whenever `NavMesh::Raycast` showed a clear line from the last kept waypoint
+to the next. That halved the legs (134 -> 59 on the serpentine) and made it **slower**, not faster: the serpentine
+went from ~50 ms to ~97 ms and a `legs > 2` coverage test started failing. Fewer, longer legs each cost a
+correspondingly longer Detour search, so the saved searches buy back less than the merged ones spend. Reverted; the
+collinear collapse above is the version to keep.
+
 
