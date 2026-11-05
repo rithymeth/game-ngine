@@ -14,9 +14,9 @@ class QTableWidget;
 namespace aether::editor::qt {
 
 // M8.8 AI Debugger dock: during Play-in-Editor, one row per AI agent (name,
-// reported state, perception target, known actors, path status). Rows come
-// from editor::BuildAiDebugRows; this widget only shows them. Picking a row
-// asks the editor to select that entity.
+// reported state, behaviour brain, perception target, known actors, path
+// status). Rows come from editor::BuildAiDebugRows; this widget only shows them.
+// Picking a row asks the editor to select that entity.
 class AiDebuggerWidget final : public QWidget {
 public:
     explicit AiDebuggerWidget(QWidget* parent = nullptr);

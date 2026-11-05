@@ -13,8 +13,9 @@ AiDebuggerWidget::AiDebuggerWidget(QWidget* parent) : QWidget(parent) {
     auto* root = new QVBoxLayout(this);
     root->setContentsMargins(12, 12, 12, 12);
     auto* intro = new QLabel("Live AI state during Play: what each agent's script reports (AI.SetDebugState), "
-                             "its perception target and known actors, and its Nav.MoveTowards path. Select a row "
-                             "to select the agent; the viewport draws its path, next corner, goal and target line.", this);
+                             "which behaviour brain it reports with AI.SetBrainDebug and what that chose, its "
+                             "perception target and known actors, and its Nav.MoveTowards path. Select a row to "
+                             "select the agent; the viewport draws its path, next corner, goal and target line.", this);
     intro->setWordWrap(true);
     intro->setObjectName("panelDescription");
     root->addWidget(intro);
@@ -28,8 +29,8 @@ AiDebuggerWidget::AiDebuggerWidget(QWidget* parent) : QWidget(parent) {
     options->addWidget(status_);
     root->addLayout(options);
 
-    table_ = new QTableWidget(0, 5, this);
-    table_->setHorizontalHeaderLabels({"Agent", "State", "Target", "Known", "Path"});
+    table_ = new QTableWidget(0, 6, this);
+    table_->setHorizontalHeaderLabels({"Agent", "State", "Brain", "Target", "Known", "Path"});
     table_->setSelectionBehavior(QAbstractItemView::SelectRows);
     table_->setSelectionMode(QAbstractItemView::SingleSelection);
     table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -55,9 +56,10 @@ void AiDebuggerWidget::SetRows(const std::vector<AiDebugRow>& rows) {
         const AiDebugRow& r = rows[i];
         entities_.push_back(r.entity);
         const QString cells[] = {QString::fromStdString(r.name), QString::fromStdString(r.state),
-                                 QString::fromStdString(r.target), r.target.empty() ? QString() : QString::number(r.known),
+                                 QString::fromStdString(r.brain), QString::fromStdString(r.target),
+                                 r.target.empty() ? QString() : QString::number(r.known),
                                  QString::fromStdString(r.path)};
-        for (int c = 0; c < 5; ++c) {
+        for (int c = 0; c < 6; ++c) {
             QTableWidgetItem* item = table_->item(static_cast<int>(i), c);
             if (!item) table_->setItem(static_cast<int>(i), c, item = new QTableWidgetItem);
             if (item->text() != cells[c]) item->setText(cells[c]);
