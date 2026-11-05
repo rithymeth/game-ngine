@@ -98,8 +98,11 @@ describes what is on `master`, not a promise of a version number or a date.
 
 ## Known gaps
 
-- The hierarchical path finder is slower than plain Detour on the open meshes this was tried on; its benefit on
-  very large meshes is unproven.
+- The hierarchical path finder is **slower than plain Detour everywhere it has been measured**, including the
+  dead-end serpentine it was designed for (4.7x), a 1 600-tile mesh (3.6x) and a ~13 700-tile one (4.5x; 80 ms
+  against 18 ms). It is marked experimental and nothing in the engine uses it -- build paths with
+  `NavMesh::FindPath`. See "The hierarchical pathfinder does not scale" in `docs/design/PERFORMANCE.md`; the
+  collinear-waypoint fix that made it 7.3x faster is kept, and a line-of-sight merge was tried and reverted.
 - A head-on crowd swap through a narrow middle jams.
 - Cell decode time was measured only in a Debug build.
 - The Qt editor builds only on Windows; most of the above is verified by the engine's tests, not in the editor.
