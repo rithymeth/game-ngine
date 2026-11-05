@@ -1,5 +1,6 @@
 #pragma once
 
+#include "aether/animation/animator.h"
 #include "aether/nav/components.h"
 
 #include <memory>
@@ -58,6 +59,17 @@ struct NavAgent {
     f32 GetSpeed() const { return velocity.Length(); }
     f32 GetRemainingDistance() const { return remaining; }
     Vec3 GetGoal() const { return goal; }
+};
+
+// Opt-in bridge from an NPC's measured crowd velocity to its animation graph.
+// NavCrowd writes the configured parameters after avoidance and acceleration,
+// so blend spaces reflect actual movement instead of a requested destination.
+struct NavAnimation {
+    std::string speed_parameter = "Speed";
+    std::string moving_parameter = "Moving";
+    f32 speed_scale = 1.0f;
+    f32 moving_threshold = 0.1f;
+    bool enabled = true;
 };
 
 // Blueprint function library: queries on the active navigation world.
@@ -159,6 +171,14 @@ AETHER_REFLECT(aether::NavAgent, 1,
     AETHER_METHOD(GetSpeed, Fn_BlueprintCallable | Fn_Pure),
     AETHER_METHOD(GetRemainingDistance, Fn_BlueprintCallable | Fn_Pure),
     AETHER_METHOD(GetGoal, Fn_BlueprintCallable | Fn_Pure)
+)
+
+AETHER_REFLECT(aether::NavAnimation, 1,
+    AETHER_FIELD(speed_parameter, Field_EditAnywhere, {.tooltip = "Float graph parameter driven by crowd speed"}),
+    AETHER_FIELD(moving_parameter, Field_EditAnywhere, {.tooltip = "Bool graph parameter driven by crowd movement"}),
+    AETHER_FIELD(speed_scale, Field_EditAnywhere, {.range_min = 0.0, .range_max = 10.0}),
+    AETHER_FIELD(moving_threshold, Field_EditAnywhere, {.range_min = 0.0, .range_max = 10.0, .units = "m/s"}),
+    AETHER_FIELD(enabled, Field_EditAnywhere)
 )
 
 AETHER_REFLECT(aether::Navigation, 1,

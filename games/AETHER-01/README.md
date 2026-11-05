@@ -62,6 +62,7 @@ level's unrotated box colliders; rotated/other collider shapes remain unsupporte
 ## Controls
 
 - W/A/S/D: move
+- Left Shift / Gamepad left shoulder while moving: sprint
 - Mouse: orbit camera
 - Mouse-left: fire the selected weapon
 - 1 / 2 / 3: AEGIS Rifle / ARC Pistol / VOLT Shotgun

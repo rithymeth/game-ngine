@@ -321,14 +321,41 @@
 [animation/include/aether/animation/animator.h] experimental
   type class AnimationSystem
   type enum class Kind
+  type struct AnimationFootPlacement
+  type struct AnimationFootPlacementLeg
   type struct AnimationLibrary
+  type struct AnimationLookAt
+  type struct AnimationTwoBoneIK
+  type struct AnimationTwoBoneIKChain
   type struct Animator
   type struct AnimatorCommand
   type struct EntityAnimEvent
+  ))AETHER_REFLECT(aether::AnimationFootPlacement,1,AETHER_FIELD(pelvis,Field_EditAnywhere,
+  ))AETHER_REFLECT(aether::AnimationLookAt,1,AETHER_FIELD(bone,Field_EditAnywhere,
+  ))AETHER_REFLECT(aether::AnimationTwoBoneIK,1,AETHER_FIELD(chains,Field_EditAnywhere,
+  ),AETHER_FIELD(aim_axis,Field_EditAnywhere,
+  ),AETHER_FIELD(ankle,Field_EditAnywhere,
+  ),AETHER_FIELD(enabled,Field_EditAnywhere))
+  ),AETHER_FIELD(enabled,Field_EditAnywhere))AETHER_REFLECT(aether::AnimationFootPlacementLeg,1,AETHER_FIELD(hip,Field_EditAnywhere,
+  ),AETHER_FIELD(enabled,Field_EditAnywhere))AETHER_REFLECT(aether::AnimationTwoBoneIKChain,1,AETHER_FIELD(root,Field_EditAnywhere,
+  ),AETHER_FIELD(end,Field_EditAnywhere,
+  ),AETHER_FIELD(foot_height,Field_EditAnywhere,
+  ),AETHER_FIELD(knee,Field_EditAnywhere,
+  ),AETHER_FIELD(legs,Field_EditAnywhere,
+  ),AETHER_FIELD(max_angle,Field_EditAnywhere,
+  ),AETHER_FIELD(max_foot_angle,Field_EditAnywhere,
+  ),AETHER_FIELD(max_step_down,Field_EditAnywhere,
+  ),AETHER_FIELD(max_step_up,Field_EditAnywhere,
+  ),AETHER_FIELD(mid,Field_EditAnywhere,
   ),AETHER_FIELD(paused,Field_EditAnywhere),AETHER_METHOD(SetFloatParameter,Fn_BlueprintCallable,
+  ),AETHER_FIELD(pole,Field_EditAnywhere,
   ),AETHER_FIELD(root_motion,Field_EditAnywhere,
   ),AETHER_FIELD(skeleton,Field_EditAnywhere,
+  ),AETHER_FIELD(smoothing,Field_EditAnywhere,
   ),AETHER_FIELD(speed,Field_EditAnywhere,
+  ),AETHER_FIELD(target,Field_EditAnywhere,
+  ),AETHER_FIELD(use_pole,Field_EditAnywhere),AETHER_FIELD(weight,Field_EditAnywhere,
+  ),AETHER_FIELD(weight,Field_EditAnywhere,
   ),AETHER_METHOD(PlayMontage,Fn_BlueprintCallable,
   ),AETHER_METHOD(SetBoolParameter,Fn_BlueprintCallable,
   ),AETHER_METHOD(SetIntParameter,Fn_BlueprintCallable,
@@ -345,6 +372,7 @@
   const std::vector<std::string>&Problems()const
   public:AnimationSystem(World&world,AnimationLibrary library)
   static const char*BlueprintEventName(AnimEventType type)
+  std::function<bool(Entity,const Vec3&from,const Vec3&to,Vec3&hit,Vec3&normal)>ground_trace
   usize Count()const
   void JumpToSection(const std::string&section)
   void PlayMontage(const std::string&montage,f32 rate)
@@ -3756,20 +3784,25 @@
   type struct MoveCompletedEvent
   type struct NavAgent
   type struct NavAgentCommand
+  type struct NavAnimation
   type struct Navigation
   ),AETHER_FIELD(allow_partial,Field_EditAnywhere,
   ),AETHER_FIELD(avoidance_quality,Field_EditAnywhere,
   ),AETHER_FIELD(base_offset,Field_EditAnywhere,
+  ),AETHER_FIELD(enabled,Field_EditAnywhere))AETHER_REFLECT(aether::Navigation,1,AETHER_METHOD(IsReachable,Fn_BlueprintCallable | Fn_Pure,
   ),AETHER_FIELD(goal_tolerance,Field_EditAnywhere,
   ),AETHER_FIELD(height,Field_EditAnywhere,
   ),AETHER_FIELD(max_acceleration,Field_EditAnywhere,
   ),AETHER_FIELD(max_speed,Field_EditAnywhere,
+  ),AETHER_FIELD(moving_parameter,Field_EditAnywhere,
+  ),AETHER_FIELD(moving_threshold,Field_EditAnywhere,
   ),AETHER_FIELD(separation_weight,Field_EditAnywhere,
+  ),AETHER_FIELD(speed_scale,Field_EditAnywhere,
   ),AETHER_FIELD(status,Field_ReadOnly | Field_Transient),AETHER_METHOD(MoveTo,Fn_BlueprintCallable,
   ),AETHER_FIELD(stopping_distance,Field_EditAnywhere,
   ),AETHER_FIELD(turn_speed,Field_EditAnywhere,
   ),AETHER_FIELD(update_rotation,Field_EditAnywhere,
-  ),AETHER_METHOD(IsMoving,Fn_BlueprintCallable | Fn_Pure),AETHER_METHOD(HasArrived,Fn_BlueprintCallable | Fn_Pure),AETHER_METHOD(HasFailed,Fn_BlueprintCallable | Fn_Pure),AETHER_METHOD(GetVelocity,Fn_BlueprintCallable | Fn_Pure),AETHER_METHOD(GetSpeed,Fn_BlueprintCallable | Fn_Pure),AETHER_METHOD(GetRemainingDistance,Fn_BlueprintCallable | Fn_Pure),AETHER_METHOD(GetGoal,Fn_BlueprintCallable | Fn_Pure))AETHER_REFLECT(aether::Navigation,1,AETHER_METHOD(IsReachable,Fn_BlueprintCallable | Fn_Pure,
+  ),AETHER_METHOD(IsMoving,Fn_BlueprintCallable | Fn_Pure),AETHER_METHOD(HasArrived,Fn_BlueprintCallable | Fn_Pure),AETHER_METHOD(HasFailed,Fn_BlueprintCallable | Fn_Pure),AETHER_METHOD(GetVelocity,Fn_BlueprintCallable | Fn_Pure),AETHER_METHOD(GetSpeed,Fn_BlueprintCallable | Fn_Pure),AETHER_METHOD(GetRemainingDistance,Fn_BlueprintCallable | Fn_Pure),AETHER_METHOD(GetGoal,Fn_BlueprintCallable | Fn_Pure))AETHER_REFLECT(aether::NavAnimation,1,AETHER_FIELD(speed_parameter,Field_EditAnywhere,
   ),AETHER_METHOD(IsOnNavMesh,Fn_BlueprintCallable | Fn_Pure,
   ),AETHER_METHOD(MoveToEntity,Fn_BlueprintCallable,
   ),AETHER_METHOD(PathLength,Fn_BlueprintCallable | Fn_Pure,
@@ -4229,7 +4262,7 @@
   ),AETHER_FIELD(flying,Field_EditAnywhere,
   ),AETHER_FIELD(gravity_scale,Field_EditAnywhere,
   ),AETHER_FIELD(height,Field_EditAnywhere,
-  ),AETHER_FIELD(input,Field_Transient),AETHER_FIELD(jump_requested,Field_Transient),AETHER_FIELD(velocity,Field_ReadOnly | Field_Transient),AETHER_FIELD(grounded,Field_ReadOnly | Field_Transient))
+  ),AETHER_FIELD(input,Field_Transient),AETHER_FIELD(run,Field_Transient),AETHER_FIELD(jump_requested,Field_Transient),AETHER_FIELD(velocity,Field_ReadOnly | Field_Transient),AETHER_FIELD(grounded,Field_ReadOnly | Field_Transient))
   ),AETHER_FIELD(jump_buffer,Field_EditAnywhere,
   ),AETHER_FIELD(jump_velocity,Field_EditAnywhere,
   ),AETHER_FIELD(mass,Field_EditAnywhere,
