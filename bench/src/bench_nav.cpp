@@ -50,6 +50,12 @@ PathState& Paths() {
         // plain one. (Larger grids are not usable here: 2500+ tiles aborts in the
         // bake on this machine, so this is as far as the comparison safely goes.)
         g.AddPlane(Vec3(0, 0, 0), 240, 240);
+        // A wall across the middle with its only gap at the far end (z in 180..240).
+        // Without it the plain path was a straight line -- Detour's easiest case --
+        // and the hierarchy paid for its portal A* and three leg searches with
+        // nothing to save, so it looked 3.6x slower than plain for purely overhead
+        // reasons. The wall forces the plain search to work its way along it.
+        g.AddBox(Vec3(0, 1.5f, -30), Vec3(5, 1.5f, 210));
         nav::NavMeshSettings settings;
         settings.tile_size = 40;
         nav::NavMeshData data;
@@ -91,7 +97,7 @@ AETHER_BENCH_SETUP(
     });
 
 AETHER_BENCH_SETUP(
-    "nav/path_across_12_tiles_plain", 5, [] { (void)Paths(); },
+    "nav/path_around_wall_plain", 5, [] { (void)Paths(); },
     [] {
         PathState& s = Paths();
         for (int i = 0; i < 20; ++i)
@@ -99,12 +105,12 @@ AETHER_BENCH_SETUP(
     });
 
 AETHER_BENCH_SETUP(
-    "nav/path_across_12_tiles_hierarchical", 5, [] { (void)Paths(); },
+    "nav/path_around_wall_hierarchical", 5, [] { (void)Paths(); },
     [] {
         PathState& s = Paths();
         for (int i = 0; i < 20; ++i)
             if (!s.hierarchical.FindPath(Vec3(-230, 0, -230), Vec3(230, 0, 230), s.path)) std::abort();
-        // The start and goal are ~11 tiles apart, so answering through the plain
+        // The wall makes this a detour, so answering through the plain
         // path would mean the portal graph is being bypassed and the number below
         // would not be the hierarchical path at all.
         if (s.hierarchical.Stats().direct != 0) std::abort();

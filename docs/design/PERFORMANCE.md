@@ -72,16 +72,21 @@ ratio as a signal.
 
 ## The hierarchical pathfinder benchmark measures the wrong thing
 
-`nav/path_across_*_tiles_hierarchical` used to build a 120 x 120 unit plane with 40-unit tiles -- a 3 x 3 grid --
+`nav/path_across_100_tiles_hierarchical` used to build a 120 x 120 unit plane with 40-unit tiles -- a 3 x 3 grid --
 and query (-50,-50) to (50,50). Both endpoints land within a tile of each other, so the "hierarchical" case was
-barely longer than the plain one. It now builds a 480 x 480 plane (12 x 12 tiles) and crosses ~11 tiles, which is
-the smallest span where the portal graph is genuinely used; the benchmark aborts if `Stats().direct` is non-zero, so
-a silent fall back to the plain path cannot pass as a hierarchical measurement.
+barely longer than the plain one. The pair is now `nav/path_around_wall_*`: a 480 x 480 plane (12 x 12 tiles) with a
+wall across the middle whose only gap is at the far end, which stops the plain path from being a straight line
+(Detour's easiest case). The benchmark aborts if `Stats().direct` is non-zero, so a silent fall back to the plain
+path cannot pass as a hierarchical measurement. Larger grids are not usable: the bake aborts at 2500+ tiles.
 
-Even so, the comparison is not a fair test of the hierarchy. On an **open plane** the plain path is a straight
-line -- Detour's easiest case -- while the hierarchical path pays for two `NearestPoint` calls, an A* over the portal
-graph and three leg searches. Measured here: 0.70 ms plain against 2.53 ms hierarchical, i.e. the hierarchy is
-**3.6x slower**. That is not a regression; it is the hierarchy's overhead with nothing for it to save, and it says
-nothing about the obstructed, maze-like geometry where it is meant to win. A useful hierarchical benchmark needs
-walls so plain A* has to explore, which is the change to make before drawing conclusions from this pair.
+Measured on a Windows MSVC build, 20 queries each: **8.10 ms plain, 22.84 ms hierarchical**. The wall made the plain
+search 11x more expensive than on the open plane (0.70 -> 8.10 ms) and the hierarchical search 9x more expensive
+(2.53 -> 22.84), so the ratio barely moved: **the hierarchy is ~2.8x slower than plain at this scale.**
+
+That is not a bug and not a regression -- it is the shape of the algorithm. A hierarchical query answers with three
+Detour searches (start to portal, portal to portal, portal to goal) instead of one, so it only wins when one long
+search would explore far more area than the three short ones. At 12 tiles a whole search is ~12 tiles, so the three
+legs cover the same ground and the portal A* on top is pure cost. The benefit needs a world of hundreds of tiles,
+which this benchmark cannot build (see the bake limit above). Until it can, the honest reading is "not measured
+where it matters", not "the hierarchy does not help".
 
