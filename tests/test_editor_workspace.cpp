@@ -1,8 +1,10 @@
 #include "test_framework.h"
+#include "workspace/command_palette.h"
 #include "workspace/editor_workspace.h"
 
 #include <imgui.h>
 
+#include <cctype>
 #include <cstring>
 #include <functional>
 #include <set>
@@ -98,4 +100,34 @@ AETHER_TEST(EditorWorkspace_DrawsEveryToolHeadless) {
     CHECK(!ws.IsWindowOpen(0));
     ws.Select(ws.ToolCount() + 5); // out of range: ignored
     CHECK(ws.Selected() < ws.ToolCount());
+}
+
+// Phase 43.5: the command palette's matching half. Keeping it out of the drawing code is what
+// makes it checkable -- what a query lists, and what choosing a result does.
+AETHER_TEST(Editor_CommandPaletteFiltersAndSelectsTools) {
+    EditorWorkspace ws;
+    CommandPalette palette(ws);
+
+    // An empty query lists every tool, in workspace order, so the palette doubles as an index.
+    CHECK(palette.Results().size() == ws.ToolCount());
+    for (std::size_t i = 0; i < palette.Results().size(); ++i) CHECK(palette.Results()[i] == i);
+
+    // Matching is case-insensitive and covers the category as well as the name.
+    const std::string first = ws.ToolName(0);
+    std::string upper = first;
+    for (char& c : upper) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    palette.SetQuery(upper);
+    CHECK(!palette.Results().empty() && palette.Results()[0] == 0);
+
+    palette.SetQuery("this matches no tool at all");
+    CHECK(palette.Results().empty());
+    CHECK(!palette.ActivateFirst(ws)); // nothing to choose
+
+    palette.SetQuery("");
+
+    // Choosing a result selects that tool; an out-of-range choice does nothing.
+    const std::size_t target = ws.ToolCount() - 1;
+    CHECK(palette.Activate(ws, target));
+    CHECK(ws.Selected() == palette.Results()[target]);
+    CHECK(!palette.Activate(ws, palette.Results().size()));
 }

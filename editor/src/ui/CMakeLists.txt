@@ -49,6 +49,7 @@ add_library(aether_editor_ui STATIC
     extensions.cpp
     editor_scripts.cpp
     ../workspace/editor_workspace.cpp
+    ../workspace/command_palette.cpp
     ../sprite2d/tilemap_document.cpp
     ../sprite2d/tilemap_panel.cpp
     ../sequencer/sequencer_panel.cpp
