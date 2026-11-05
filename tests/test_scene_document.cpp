@@ -1,4 +1,5 @@
 #include "core/scene_document.h"
+#include "core/snapping.h"
 #include "aether/scene/gameplay.h"
 #include "aether/scene/serialization.h"
 #include "test_framework.h"
@@ -202,4 +203,28 @@ AETHER_TEST(SceneDocument_KeepsItsOrigin) {
 
     std::error_code filesystem_error;
     std::filesystem::remove(path, filesystem_error);
+}
+
+// Phase 43.3: the gizmo's snapping rules, checked without a viewport.
+AETHER_TEST(Editor_SnappingRoundsToTheStep) {
+    // A zero step is "snapping off", not "snap to zero".
+    AETHER_CHECK_NEAR(SnapScalar(1.37f, 0.0f), 1.37f, 1e-5f);
+    AETHER_CHECK_NEAR(SnapScalar(1.37f, 0.5f), 1.5f, 1e-5f);
+    AETHER_CHECK_NEAR(SnapScalar(-1.37f, 0.5f), -1.5f, 1e-5f);
+    AETHER_CHECK_NEAR(SnapScalar(0.24f, 0.5f), 0.0f, 1e-5f);
+
+    const Vec3 moved = SnapTranslation(Vec3(1.1f, -0.6f, 2.9f), 1.0f);
+    AETHER_CHECK_NEAR(moved.x, 1.0f, 1e-5f);
+    AETHER_CHECK_NEAR(moved.y, -1.0f, 1e-5f);
+    AETHER_CHECK_NEAR(moved.z, 3.0f, 1e-5f);
+
+    AETHER_CHECK_NEAR(SnapRotationDegrees(37.0f, 15.0f), 30.0f, 1e-4f);
+    AETHER_CHECK_NEAR(SnapRotationDegrees(83.0f, 15.0f), 90.0f, 1e-4f);
+
+    // Scale snaps but never collapses: a drag to almost nothing lands on one step, keeping sign.
+    const Vec3 scaled = SnapScale(Vec3(0.1f, -0.1f, 1.9f), 0.5f);
+    AETHER_CHECK_NEAR(scaled.x, 0.5f, 1e-5f);
+    AETHER_CHECK_NEAR(scaled.y, -0.5f, 1e-5f);
+    AETHER_CHECK_NEAR(scaled.z, 2.0f, 1e-5f);
+    AETHER_CHECK_NEAR(SnapScaleAxis(0.0f, 0.5f), 0.5f, 1e-5f); // zero keeps the positive step
 }

@@ -6886,6 +6886,7 @@
 [editor/src/core/play_session.h] internal-tooling
 [editor/src/core/recent_projects.h] internal-tooling
 [editor/src/core/scene_document.h] internal-tooling
+[editor/src/core/snapping.h] internal-tooling
 [editor/src/devtools/console_panel.h] internal-tooling
 [editor/src/devtools/crash_reporter.h] internal-tooling
 [editor/src/devtools/debug_overlay.h] internal-tooling
