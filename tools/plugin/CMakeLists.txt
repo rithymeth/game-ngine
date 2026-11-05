@@ -7,3 +7,4 @@ target_link_libraries(aether_plugin PRIVATE Aether::Engine)
 # the tool runs at all. The packaging API is covered by test_plugin.
 add_test(NAME plugin_package_cli COMMAND aether_plugin)
 set_tests_properties(plugin_package_cli PROPERTIES WILL_FAIL TRUE)
+aether_test_scratch_dir(plugin_package_cli)

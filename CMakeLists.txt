@@ -589,6 +589,24 @@ add_subdirectory(plugins)
 # Phase 25 step 4: the player (the game without the editor).
 add_subdirectory(player)
 
+# Tests write scratch files under the system temp. Point AETHER_TEST_TEMP_DIR
+# (for example E:/aether-test-temp) at another drive to keep them off a small
+# system disk; the empty default is the system temp, which is what CI uses.
+set(AETHER_TEST_TEMP_DIR "" CACHE PATH "Scratch directory for tests (empty: the system temp)")
+function(aether_test_scratch_dir test_name)
+    if(NOT AETHER_TEST_TEMP_DIR)
+        return()
+    endif()
+    file(MAKE_DIRECTORY ${AETHER_TEST_TEMP_DIR})
+    get_test_property(${test_name} ENVIRONMENT_MODIFICATION existing)
+    if(existing STREQUAL "NOTFOUND")
+        set(existing "")
+    endif()
+    list(APPEND existing
+        "TMP=set:${AETHER_TEST_TEMP_DIR}" "TEMP=set:${AETHER_TEST_TEMP_DIR}" "TMPDIR=set:${AETHER_TEST_TEMP_DIR}")
+    set_tests_properties(${test_name} PROPERTIES ENVIRONMENT_MODIFICATION ${existing})
+endfunction()
+
 if(AETHER_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
@@ -598,6 +616,7 @@ if(AETHER_BUILD_TESTS)
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
             ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>;PATH=path_list_prepend:${CMAKE_BINARY_DIR}/dxc_spirv/extracted/bin/x64")
+        aether_test_scratch_dir(qt_editor_self_test)
     endif()
 endif()
 

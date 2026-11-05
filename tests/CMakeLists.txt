@@ -141,15 +141,7 @@ if(TARGET aether_inventory)
 endif()
 
 add_test(NAME aether_tests COMMAND aether_tests)
-# Tests write scratch files under the system temp. Point AETHER_TEST_TEMP_DIR (for
-# example E:/aether-test-temp) at another drive to keep them off a small system
-# disk; the empty default is the system temp, which is what CI uses.
-set(AETHER_TEST_TEMP_DIR "" CACHE PATH "Scratch directory for tests (empty: the system temp)")
-if(AETHER_TEST_TEMP_DIR)
-    file(MAKE_DIRECTORY ${AETHER_TEST_TEMP_DIR})
-    set_tests_properties(aether_tests PROPERTIES ENVIRONMENT
-        "TMP=${AETHER_TEST_TEMP_DIR}" "TEMP=${AETHER_TEST_TEMP_DIR}" "TMPDIR=${AETHER_TEST_TEMP_DIR}")
-endif()
+aether_test_scratch_dir(aether_tests)
 # The module-graph check must catch a cycle (Phase 37 step 2).
 if(Python3_Interpreter_FOUND)
     add_test(NAME module_graph_catches_a_cycle

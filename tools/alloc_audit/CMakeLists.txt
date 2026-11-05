@@ -3,3 +3,4 @@
 add_executable(aether_alloc_audit main.cpp)
 target_link_libraries(aether_alloc_audit PRIVATE Aether::Engine Aether::AI Aether::Nav)
 add_test(NAME alloc_audit COMMAND aether_alloc_audit)
+aether_test_scratch_dir(alloc_audit)

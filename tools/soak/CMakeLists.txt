@@ -4,3 +4,4 @@
 add_executable(aether_soak main.cpp)
 target_link_libraries(aether_soak PRIVATE Aether::Engine Aether::Streaming Aether::Net Aether::Audio)
 add_test(NAME soak COMMAND aether_soak)
+aether_test_scratch_dir(soak)
