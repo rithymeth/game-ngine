@@ -220,4 +220,24 @@ before the funnel can no longer produce a valid route, and what the funnel itsel
 and it needs the algorithm written; unlike the previous three ideas this one is supported by numbers before it is
 built.
 
+### What the funnel implementation has to get right
+
+Written down from reading `Build`, so the next attempt does not rediscover it:
+
+- **`Portal` only stores the edge midpoint** (`point`). A funnel needs the edge's two endpoints, so `Portal` gains
+  `left`/`right` and `Build` fills them from `tile->verts[poly.verts[j]]` and `[(j + 1) % poly.vertCount]` -- both are
+  already in hand at the point the portal is created.
+- **Their order is not the order the funnel wants.** `(a, b)` comes from the polygon winding, which is consistent per
+  polygon but not relative to the direction of travel along the route. Each portal's pair must be reordered so the
+  corridor runs left-to-right with respect to travel -- e.g. from the cross product of the two endpoints against
+  `via[i + 1] - via[i - 1]`. Getting this wrong yields paths that look plausible and cut through walls, and a
+  length-based test will not catch it; the check has to be that every output segment is walkable (`NavMesh::Raycast`
+  between consecutive path points).
+- **The leg loop is replaced, not augmented.** The A* currently returns portal indices through `from[]`; the funnel
+  consumes those same indices. Nothing else in `FindPath` changes, and the `direct()` fallback stays.
+- **The bake has to stay at the coarser tile size** for the win to exist, so the benchmark's `Serpentine()` should use
+  `tile_size` 120 when measuring, or the comparison is against the slower configuration.
+
+Only after those are in place is "A* + funnel < 0.43 ms" a meaningful target.
+
 
