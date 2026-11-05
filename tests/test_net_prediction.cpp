@@ -1,5 +1,6 @@
 #include "aether/net/interpolation.h"
 #include "aether/net/physics_state.h"
+#include "aether/net/ability_transport.h"
 #include "aether/net/prediction.h"
 #include "test_framework.h"
 
@@ -363,4 +364,106 @@ AETHER_TEST(Prediction_PhysicsPropInterpolatesVisualPoseWithoutRewindingSimulati
     sim.Step(20);
     Transform visual;
     CHECK(!viewer.interpolation->SampleRenderTransform(id, visual));
+}
+
+// Phase 41.6: the wire half of ability prediction. A fake gameplay side stands in for
+// AbilitySystem so this checks the protocol and the reconciliation, not the ability rules.
+AETHER_TEST(AbilityTransport_PredictsThenAppliesTheServersAnswer) {
+    // The two sides keep different rules on purpose: the client can predict something the server
+    // then refuses, and can refuse something itself without sending it.
+    struct Fake {
+        std::vector<std::string> refuses;
+        u32 next = 1;
+        std::vector<u32> committed, cancelled;
+        AbilityOps Ops() {
+            AbilityOps ops;
+            ops.activate = [this](u32, const std::string& ability) {
+                for (const std::string& r : refuses) {
+                    if (r == ability) return u32(0);
+                }
+                return next++;
+            };
+            ops.commit = [this](u32 handle) { committed.push_back(handle); return true; };
+            ops.cancel = [this](u32 handle) { cancelled.push_back(handle); };
+            return ops;
+        }
+    };
+
+    Fake server_fake, client_fake;
+    server_fake.refuses = {"Banned"};         // accepted by the client's prediction, refused by the server
+    client_fake.refuses = {"NoSuchAbility"};  // refused before anything is sent
+    LoopbackNetwork net(7);
+    World server_world;
+    auto server_socket = net.Open(7788);
+    auto server_host = std::make_unique<NetHost>(*server_socket);
+    server_host->Listen();
+    auto replication = std::make_unique<ReplicationServer>(server_world, *server_host);
+    AbilityServer abilities(server_world, *server_host, *replication, server_fake.Ops());
+
+    World client_world;
+    auto client_socket = net.Open();
+    auto client_host = std::make_unique<NetHost>(*client_socket);
+    const PeerId server_peer = client_host->Connect(Address::Loopback(7788), net.Now());
+    auto client_replication = std::make_unique<ReplicationClient>(client_world, *client_host, server_peer);
+    AbilityClient client(client_world, *client_host, *client_replication, server_peer, client_fake.Ops());
+
+    // The owner id is the one the SERVER assigns to the connection, which only exists once its
+    // Connected event has arrived -- it is not the id Connect() returns on the client.
+    PeerId server_side_peer = kNoPeer;
+
+    auto step = [&](int frames) {
+        for (int i = 0; i < frames; ++i) {
+            net.Advance(kStep);
+            server_host->Update(net.Now());
+            for (const NetEvent& e : server_host->TakeEvents()) {
+                if (e.type == NetEventType::Connected) server_side_peer = e.peer;
+                (void)(abilities.HandleEvent(e) || replication->HandleEvent(e));
+            }
+            replication->Update(net.Now());
+            client_host->Update(net.Now());
+            for (const NetEvent& e : client_host->TakeEvents())
+                if (!client_replication->HandleEvent(e)) client.HandleEvent(e);
+        }
+    };
+    step(600); // handshake
+    AETHER_CHECK(server_side_peer != kNoPeer);
+
+    NetIdentity ni;
+    SetNetArchetype(ni, "character");
+    ni.owner = server_side_peer;
+    const Entity server_entity = server_world.CreateEntity(ni, Transform{Vec3(), Quaternion{}}, NetMovement{});
+    step(60); // the first snapshot carrying it
+
+    // NetIdentity::net_id is "assigned by the server; 0 until then", so it is only meaningful after
+    // a step has run -- reading it straight after CreateEntity gives 0 and FindEntity(0) is null.
+    const u32 net_id = server_world.GetComponent<NetIdentity>(server_entity)->net_id;
+    AETHER_CHECK(net_id != 0);
+    const Entity local = client_replication->FindEntity(net_id);
+    AETHER_CHECK(!local.IsNull());
+    const NetIdentity* client_id = client_world.GetComponent<NetIdentity>(local);
+    AETHER_CHECK(client_id != nullptr && client_id->locally_owned);
+
+    // A predicted press runs at once and travels; the server commits its own copy, and the client
+    // commits the prediction when the answer arrives.
+    AETHER_CHECK(client.Request(local, "Fireball"));
+    AETHER_CHECK(client.Pending() == 1);
+    AETHER_CHECK(client_fake.committed.empty()); // not paid until the server agrees
+    step(60);
+    AETHER_CHECK(client.Pending() == 0);
+    AETHER_CHECK(server_fake.committed.size() == 1);
+    AETHER_CHECK(client_fake.committed.size() == 1);
+    AETHER_CHECK(client.GetStats().accepted == 1);
+
+    // An offer the server refuses rolls the prediction back and pays nothing.
+    AETHER_CHECK(client.Request(local, "Banned"));
+    step(60);
+    AETHER_CHECK(client.Pending() == 0);
+    AETHER_CHECK(client_fake.cancelled.size() == 1);
+    AETHER_CHECK(client_fake.committed.size() == 1); // unchanged
+    AETHER_CHECK(client.GetStats().refused == 1);
+
+    // A press the game refuses locally sends nothing at all.
+    AETHER_CHECK(!client.Request(local, "NoSuchAbility"));
+    AETHER_CHECK(client.GetStats().local_failures == 1);
+    AETHER_CHECK(client.Pending() == 0);
 }

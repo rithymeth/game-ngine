@@ -11,6 +11,7 @@ add_library(aether_net STATIC
     src/rpc.cpp
     src/interpolation.cpp
     src/prediction.cpp
+    src/ability_transport.cpp
     src/session.cpp
     src/net_stats.cpp
     src/siphash.cpp

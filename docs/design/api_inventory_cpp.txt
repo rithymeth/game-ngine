@@ -4028,6 +4028,22 @@
   void Bounds(Vec3&min,Vec3&max)const
   void Unload()
   ~NavMesh()
+[net/include/aether/net/ability_transport.h] experimental
+  type class AbilityClient
+  type class AbilityServer
+  type struct AbilityChannelConfig
+  type struct AbilityOps
+  type struct Entry
+  type struct Stats
+  bool HandleEvent(const NetEvent&event)
+  bool Request(Entity entity,const std::string&ability)
+  const Stats&GetStats()const
+  public:AbilityClient(World&world,NetHost&host,ReplicationClient&replication,PeerId server,AbilityOps ops,AbilityChannelConfig config=
+  public:AbilityServer(World&world,NetHost&host,ReplicationServer&replication,AbilityOps ops,AbilityChannelConfig config=
+  std::function<bool(u32 handle)>commit
+  std::function<u32(u32 net_id,const std::string&ability)>activate
+  std::function<void(u32 handle)>cancel
+  usize Pending()const
 [net/include/aether/net/connection.h] experimental
   type class Connection
   type enum class ChannelType
