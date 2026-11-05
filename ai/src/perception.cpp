@@ -231,6 +231,41 @@ void PerceptionWorld::Update(f32 dt) {
         }
         SyncBlackboard(self, p);
     }
+    // Perception 2.0: teammates within share_radius pass on what they know (a
+    // shared target is not "visible" and its awareness is scaled down).
+    for (Entity sender_entity : perceivers) {
+        const AIPerception* sender = world_.GetComponent<AIPerception>(sender_entity);
+        const Transform* sender_t = world_.GetComponent<Transform>(sender_entity);
+        if (sender == nullptr || sender_t == nullptr || sender->share_radius <= 0.0f || sender->team == 0) continue;
+        for (Entity receiver_entity : perceivers) {
+            if (receiver_entity == sender_entity) continue;
+            AIPerception& receiver = *world_.GetComponent<AIPerception>(receiver_entity);
+            if (receiver.team != sender->team) continue;
+            const Transform* receiver_t = world_.GetComponent<Transform>(receiver_entity);
+            if (receiver_t == nullptr || (receiver_t->position - sender_t->position).Length() > sender->share_radius) continue;
+            for (const PerceivedActor& known : sender->known) {
+                if (known.actor == sender_entity || known.actor == receiver_entity) continue;
+                if (!Hostile(receiver, team_of(known.actor))) continue; // only hostiles
+                const f32 shared_awareness = std::min(1.0f, known.awareness * sender->share_awareness_scale);
+                auto it = std::find_if(receiver.known.begin(), receiver.known.end(),
+                                       [&](const PerceivedActor& k) { return k.actor == known.actor; });
+                if (it == receiver.known.end()) {
+                    PerceivedActor shared = known;
+                    shared.visible = false;
+                    shared.awareness = shared_awareness;
+                    shared.age = 0.0f;
+                    shared.velocity = Vec3();
+                    receiver.known.push_back(shared);
+                } else if (it->awareness < shared_awareness) {
+                    // Keep up with the sender instead of freezing the first hint.
+                    it->awareness = shared_awareness;
+                    it->location = known.location;
+                    it->age = 0.0f;
+                    it->last_sense = known.last_sense;
+                }
+            }
+        }
+    }
     noises_.clear();
     damages_.clear();
 }

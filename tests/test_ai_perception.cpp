@@ -446,3 +446,32 @@ AETHER_TEST(AIPerception_PredictLocation) {
     CHECK(predicted.z < last.z - 5.0f); // it moved -10 units/s, so 1 s ahead is well past the last point
     CHECK(Near(s.Of(guard).PredictLocation(Entity{}, 1.0f), Vec3())); // unknown actor
 }
+
+// Perception 2.0: teammates within share_radius pass on what they know.
+AETHER_TEST(AIPerception_TeamSharesAwareness) {
+    Scene s;
+    AIPerception scout_perception;
+    scout_perception.team = 1;
+    scout_perception.share_radius = 5.0f;
+    const Entity scout = s.Guard({0, 0, 0}, scout_perception);
+    AIPerception ally_perception;
+    ally_perception.team = 1;
+    ally_perception.share_radius = 5.0f;
+    const Entity ally = s.Guard({0, 0, 2}, ally_perception, 180.0f); // facing away from the thief
+    const Entity thief = s.Thing({0, 0, 10});
+
+    s.Step(3);
+    CHECK(s.Of(scout).CanSee(thief));                                        // the scout sees it
+    CHECK(!s.Of(ally).CanSee(thief));                                        // the ally never did
+    CHECK(s.Of(ally).IsAwareOf(thief));                                      // but the scout told it
+    CHECK(s.Of(ally).GetAwareness(thief) > 0.0f);
+    CHECK(s.Of(ally).GetAwareness(thief) < s.Of(scout).GetAwareness(thief)); // scaled down
+
+    // A different team hears nothing from the pair.
+    AIPerception rival_perception;
+    rival_perception.team = 2;
+    rival_perception.share_radius = 5.0f;
+    const Entity rival = s.Guard({0, 0, -2}, rival_perception, 180.0f);
+    s.Step();
+    CHECK(!s.Of(rival).IsAwareOf(thief));
+}

@@ -57,6 +57,11 @@ struct AIPerception {
     // A wall between the perceiver and a noise scales its loudness by this
     // (0: walls stop sound entirely, 1: fully heard through walls).
     f32 hearing_occlusion_scale = 0.3f;
+    // Perception 2.0: teammates within `share_radius` pass on what they know.
+    // A shared target is not "visible" and its awareness is scaled by
+    // `share_awareness_scale` (it wasn't seen first hand). 0: sharing off.
+    f32 share_radius = 0.0f;
+    f32 share_awareness_scale = 0.5f;
     std::string target_key;   // an Entity key: the actor it's most aware of
     std::string location_key; // a Vector key: where that actor was last sensed
 
@@ -163,7 +168,7 @@ private:
 
 AETHER_ENUM(aether::PerceptionSense, 1, AETHER_ENUM_VALUE(Sight), AETHER_ENUM_VALUE(Hearing), AETHER_ENUM_VALUE(Damage))
 
-AETHER_REFLECT(aether::AIPerception, 2,
+AETHER_REFLECT(aether::AIPerception, 3,
     AETHER_FIELD(sight_radius, Field_EditAnywhere, {.range_min = 0.0, .range_max = 1000.0, .units = "m"}),
     AETHER_FIELD(lose_sight_radius, Field_EditAnywhere, {.tooltip = "Once seen, kept in sight out to this", .range_min = 0.0, .range_max = 1000.0, .units = "m"}),
     AETHER_FIELD(fov_degrees, Field_EditAnywhere, {.tooltip = "The whole view cone", .range_min = 0.0, .range_max = 360.0, .units = "deg"}),
@@ -176,6 +181,8 @@ AETHER_REFLECT(aether::AIPerception, 2,
     AETHER_FIELD(awareness_gain_per_second, Field_EditAnywhere, {.tooltip = "How fast sight raises awareness", .range_min = 0.0, .range_max = 100.0}),
     AETHER_FIELD(awareness_decay_per_second, Field_EditAnywhere, {.tooltip = "How fast awareness falls when not sensed", .range_min = 0.0, .range_max = 100.0}),
     AETHER_FIELD(hearing_occlusion_scale, Field_EditAnywhere, {.tooltip = "How much a wall muffles a noise", .range_min = 0.0, .range_max = 1.0}),
+    AETHER_FIELD(share_radius, Field_EditAnywhere, {.tooltip = "Teammates within this pass on what they know (0: off)", .range_min = 0.0, .range_max = 1000.0, .units = "m"}),
+    AETHER_FIELD(share_awareness_scale, Field_EditAnywhere, {.tooltip = "A shared target's awareness is scaled by this", .range_min = 0.0, .range_max = 1.0}),
     AETHER_FIELD(target_key, Field_EditAnywhere, {.tooltip = "Blackboard Entity key for the actor it's most aware of"}),
     AETHER_FIELD(location_key, Field_EditAnywhere, {.tooltip = "Blackboard Vector key for where that actor was last sensed"}),
     AETHER_METHOD(CanSee, Fn_BlueprintCallable | Fn_Pure, {"actor"}),
