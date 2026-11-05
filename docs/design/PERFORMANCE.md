@@ -59,3 +59,13 @@ The step is required. It reported no regression on the ten master runs from 2026
 failure now means a benchmark got more than 3x slower than its baseline after calibration. If a change makes
 something deliberately slower, or the runner hardware changes, refresh the baseline as above in the same PR and say
 why. The 3.0 tolerance is wide on purpose; tighten it once the spread between runs is measured.
+
+## One baseline row is not a measurement
+
+`ecs/query_50k_of_100k` records `min_ms`, `median_ms`, `max_ms` and `p95_ms` as the same 0.0012 ms across all five
+samples. A query over 50 000 entities cannot cost 1.2 µs (24 ps per entity); that is the clock's granularity, so the
+row captured the timer floor rather than the work. The same benchmark measures 0.106 ms on a Windows MSVC build, so
+a normalised comparison against this row reports a "100x regression" that is pure noise -- the largest of the
+false positives in any run, and the reason a local Windows run cannot be compared to the Linux/GCC baseline at all.
+Re-record this row on the runner (it is the row to watch when the baseline is refreshed) rather than treating its
+ratio as a signal.
