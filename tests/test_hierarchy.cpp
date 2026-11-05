@@ -130,3 +130,24 @@ AETHER_TEST(WorldOrigin_RebaseShiftsTransforms) {
     ShiftTransforms(world, Vec3d(100.0, 0.0, 0.0));
     AETHER_CHECK_NEAR(world.GetComponent<Transform>(a)->position.x, 10.0f, 1e-4);
 }
+
+// Phase 42.1: a scene can load at an absolute origin, so its Transforms come in
+// small (relative to that origin).
+AETHER_TEST(WorldOrigin_LoadOptionsShiftTheScene) {
+    World world;
+    world.CreateEntity(Transform{Vec3(100000, 0, 200000), Quaternion::Identity()});
+    const std::string path = (std::filesystem::temp_directory_path() / "aether_test_origin.ascene").string();
+    AETHER_CHECK(SaveSceneJson(world, path));
+    World loaded;
+    SceneLoadOptions options;
+    options.origin = Vec3d(100000.0, 0.0, 200000.0);
+    AETHER_CHECK(LoadSceneJson(loaded, path, options));
+    bool found = false;
+    loaded.ForEach<Transform>([&](Transform& t) {
+        AETHER_CHECK_NEAR(t.position.x, 0.0f, 1e-3);
+        AETHER_CHECK_NEAR(t.position.z, 0.0f, 1e-3);
+        found = true;
+    });
+    AETHER_CHECK(found);
+    std::filesystem::remove(path);
+}

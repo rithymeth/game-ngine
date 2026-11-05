@@ -1,6 +1,7 @@
 #pragma once
 
 #include "aether/ecs/world.h"
+#include "aether/math/vec.h"
 
 #include <span>
 #include <string>
@@ -12,6 +13,10 @@ struct SceneLoadOptions {
     // Editors should reject a scene they cannot fully understand so a later
     // save cannot silently discard components owned by unavailable plugins.
     bool reject_unknown_components = false;
+    // Phase 42.1: the scene's absolute origin. Loaded root Transforms are shifted
+    // by -origin, so a scene authored far from (0,0,0) loads into small
+    // origin-relative coordinates. Zero leaves them alone.
+    Vec3d origin;
 };
 
 // Binary scene files (.aesc). For each entity, every component is stored as

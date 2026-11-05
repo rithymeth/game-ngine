@@ -8,6 +8,7 @@
 #include "aether/scene/entity_guid.h"
 #include "aether/scene/gameplay.h"
 #include "aether/scene/hierarchy.h"
+#include "aether/scene/world_origin.h"
 #include "aether/scene/prefab.h"
 #include "aether/scene/script_component.h"
 
@@ -353,6 +354,7 @@ bool LoadSceneFromMemory(World& world, std::span<const u8> buffer, const std::st
     }
 
     AETHER_LOG_INFO("Scene", "Loaded %u entities from %s", entity_count, path.c_str());
+    if (options.origin.LengthSq() > 0.0) RebaseTransforms(world, options.origin);
     return true;
 }
 
@@ -516,6 +518,7 @@ bool LoadSceneJsonFromMemoryImpl(World& world, std::span<const u8> bytes, const 
     }
 
     AETHER_LOG_INFO("Scene", "Loaded %zu entities from %s", pending_entities.size(), path.c_str());
+    if (options.origin.LengthSq() > 0.0) RebaseTransforms(world, options.origin);
     return true;
 }
 } // namespace
