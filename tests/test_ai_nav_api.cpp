@@ -5,6 +5,7 @@
 #include "aether/script/luau_host.h"
 #include "test_framework.h"
 
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 
@@ -224,4 +225,52 @@ AETHER_TEST(AINavApi_DebugStoreCollectsStatePerceptionAndPath) {
     // A non-entity is a script error.
     r = host.Run("AI.SetDebugState(5, 'x')");
     CHECK(!r.ok);
+}
+
+// Perception 2.0: scripts can read graded awareness and the alert threshold.
+AETHER_TEST(AINavApi_AwarenessReachesScripts) {
+    World world;
+    GuidIndex guids;
+    LuauHost host;
+    InstallAiApi(host);
+    (void)GetComponentId<Transform>();
+    ai::PerceptionWorld perception(world);
+    const Entity guard = Actor(world, guids, Vec3(0, 0, 0));
+    const Entity hero = Actor(world, guids, Vec3(0, 0, 8));
+    AIPerception eyes;
+    eyes.fov_degrees = 360.0f;
+    eyes.alert_threshold = 0.5f;
+    eyes.awareness_gain_per_second = 4.0f;
+    world.AddComponent(guard, eyes);
+    world.AddComponent(hero, AIStimuliSource{});
+    host.BindWorld(&world, &guids);
+    host.SetGlobal("guard", EntityRef{guard});
+    host.SetGlobal("hero", EntityRef{hero});
+
+    perception.Update(0.05f); // 0.2 awareness, below the alert threshold
+    const ScriptResult low = host.Run("return AI.GetAwareness(guard, hero), AI.IsAlerted(guard, hero)");
+    Report(low);
+    CHECK(low.ok && low.values.size() == 2);
+    if (low.ok && low.values.size() == 2) {
+        CHECK(std::abs(std::get<double>(low.values[0]) - 0.2) < 1e-4);
+        CHECK(std::get<bool>(low.values[1]) == false);
+    }
+
+    perception.Update(0.1f); // 0.6, past the threshold
+    const ScriptResult high = host.Run("return AI.GetAwareness(guard, hero), AI.IsAlerted(guard, hero)");
+    Report(high);
+    CHECK(high.ok && high.values.size() == 2);
+    if (high.ok && high.values.size() == 2) {
+        CHECK(std::abs(std::get<double>(high.values[0]) - 0.6) < 1e-4);
+        CHECK(std::get<bool>(high.values[1]) == true);
+    }
+
+    // Without an AIPerception, awareness is 0 and it is not alerted.
+    const ScriptResult none = host.Run("return AI.GetAwareness(hero, guard), AI.IsAlerted(hero, guard)");
+    Report(none);
+    CHECK(none.ok && none.values.size() == 2);
+    if (none.ok && none.values.size() == 2) {
+        CHECK(std::get<double>(none.values[0]) == 0.0);
+        CHECK(std::get<bool>(none.values[1]) == false);
+    }
 }

@@ -65,8 +65,10 @@
 <builtin>.xpcall function
 AI table
 AI.CanSee function
+AI.GetAwareness function
 AI.GetKnown function
 AI.GetTarget function
+AI.IsAlerted function
 AI.IsSightReady function
 AI.SetBrainDebug function
 AI.SetDebugState function

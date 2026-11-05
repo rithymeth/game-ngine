@@ -22,6 +22,9 @@
 //       line-of-sight test (so AI.CanSee is blocked by walls); scripts fall back without one
 //   AI.GetKnown (entity)                       -> array of entities it knows (nil without AIPerception)
 //   AI.GetTarget (entity)                      -> entity it is most aware of (nil if none)
+//   AI.GetAwareness (entity, actor)            -> number: how aware it is of the actor (0..1)
+//   AI.IsAlerted (entity, actor)               -> boolean: that awareness is at or above
+//       alert_threshold, so it treats the actor as a confirmed target
 //   Nav.IsReady ()                             -> boolean: an active NavWorld has a mesh
 //   Nav.FindPath (from, to)                    -> array of vector corners and whether it is
 //       complete (true) or partial (false); nil when there's no mesh or no path

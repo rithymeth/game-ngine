@@ -164,6 +164,21 @@ std::shared_ptr<AiDebugStore> InstallAiApi(LuauHost& host) {
         const Entity t = p != nullptr ? p->GetTarget() : kNullEntity;
         c.Return(t.IsNull() ? ScriptValue{} : ScriptValue(EntityRef{t}));
     });
+    // Perception 2.0: how aware the entity is of an actor (0..1) and whether that
+    // crosses its alert threshold, so scripts can react to suspicion before it
+    // becomes a full sighting.
+    def("AI", "GetAwareness", [h](NativeCall& c) {
+        if (!NeedEntity(c, 0, "AI.GetAwareness", "the entity") || !NeedEntity(c, 1, "AI.GetAwareness", "the actor")) return;
+        World* world = h->BoundWorld();
+        const AIPerception* p = world != nullptr ? world->GetComponent<AIPerception>(c.EntityArg(0)) : nullptr;
+        c.Return(p != nullptr ? static_cast<double>(p->GetAwareness(c.EntityArg(1))) : 0.0);
+    });
+    def("AI", "IsAlerted", [h](NativeCall& c) {
+        if (!NeedEntity(c, 0, "AI.IsAlerted", "the entity") || !NeedEntity(c, 1, "AI.IsAlerted", "the actor")) return;
+        World* world = h->BoundWorld();
+        const AIPerception* p = world != nullptr ? world->GetComponent<AIPerception>(c.EntityArg(0)) : nullptr;
+        c.Return(p != nullptr && p->IsAlerted(c.EntityArg(1)));
+    });
 
     def("AI", "SetDebugState", [store](NativeCall& c) {
         if (!NeedEntity(c, 0, "AI.SetDebugState", "the entity")) return;
