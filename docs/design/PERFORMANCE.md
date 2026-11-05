@@ -180,4 +180,18 @@ Detour legs at all. That needs the A* to fall from 2.27 ms to well under 0.54 ms
 which a clustered graph of the right size could plausibly deliver. It is a different algorithm and remains
 unmeasured; but it is now a scoped, falsifiable next step rather than a guess.
 
+### Why the A* cannot be tuned: it degenerates to Dijkstra on the geometry it is for
+
+`graph_nodes_expanded` is **34 769 of 36 180 portals -- 96%**. The A* is expanding almost the entire graph, which
+means its heuristic is buying nothing there. That is not a bug in the heuristic: `h` is straight-line distance to the
+goal and it is admissible, but on a serpentine the walkable route is many times the straight line, so `h`
+underestimates by an order of magnitude and the search collapses to Dijkstra.
+
+The contrast makes the point: on the walled 13 700-tile mesh the same A* expands **1 017 of 55 330 -- 2%** -- a mild
+detour, an informative heuristic, a cheap query. A hierarchical pathfinder exists for the *serpentine* case, and that
+is exactly the case where its own graph search becomes uniform-cost.
+
+So the only lever left is the one already named: fewer nodes, not faster nodes. Whether a clustered graph's
+coarser portals still yield a valid route once a funnel connects them is the open, measurable question.
+
 
