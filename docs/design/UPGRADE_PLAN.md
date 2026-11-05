@@ -139,9 +139,9 @@ when advisory gates become required.
 | **43.1** | *(started: the legacy ImGui editor's UI already lives partly in `editor/src/workspace/editor_workspace.*`; the Qt editor's larger `editor/qt/main.cpp` shed its first panels — `EditorLogConsole` → `editor/qt/output_panel.*`, the hierarchy dock → `hierarchy_panel.*`, the content browser + its tile delegate → `content_browser.*`, the inspector (transform, camera and mesh sections) → `inspector_panel.*`, and the rotation/path helpers → `editor_helpers.*`, taking main.cpp from ~5900 to ~5340 lines. Each step is verified by `qt_editor_self_test`. Note: rewrite main.cpp only with encoding-preserving tools — its strings are UTF-8 and a `Get-Content`/`Set-Content` round trip double-encodes them.)* Split `editor/main.cpp` (about 2200 lines) into panels under `editor/src/workspace`. Blocks the rest. | - |
 | **43.2** | ImGui docking and layout presets. | 43.1 |
 | **43.3** | Gizmos (rotate/scale, snapping), multi-select, copy/paste, Simulate mode. `||` | 43.1 |
-| **43.4** | New/Open Project UI. `||` | - |
+| **43.4** | *(done: `editor/src/new_project_panel.cpp` is a New Project panel with a "Create Project" button, opened from the editor workspace's "New Project" entry; `docs/design/PHASE_SPECS.md` §26.2.)* New/Open Project UI. `||` | - |
 | **43.5** | Command palette and global search. `||` | 43.1 |
-| **43.6** | Asset reference viewer, bulk rename/move, validation (`editor/src/content`). `||` | - |
+| **43.6** | *(started: `editor/src/content/content_browser_panel.*` has the reference viewer -- `DrawReferenceViewer`, driven by `reference_guid_` and `reference_direction_` -- and bulk move/rename -- `StartAction`, `AcceptMoveDrop`, `ApplyAction`, `RebaseOpenFolder`. Asset validation, i.e. listing broken references and missing source files, is still to do.)* Asset reference viewer, bulk rename/move, validation (`editor/src/content`). `||` | - |
 | **43.7** | Source-control integration (a git CLI wrapper). `||` | - |
 | **43.8** | Task walkthrough scripts and an editor soak test. D3D12 and Metal need the Windows and macOS jobs; the portable shell runs under Xvfb here. | 43.1-43.5 |
 
