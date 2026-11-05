@@ -615,6 +615,9 @@ class MachOTests(unittest.TestCase):
         self.assertFalse(ship.is_system_dylib("/opt/homebrew/lib/libvulkan.1.dylib"))
 
 
+@unittest.skipIf(sys.platform == "win32",
+                 "macOS bundle staging: the install_name_tool fake models macOS's in-place "
+                 "install-name length limit, which does not hold for Windows-shaped paths")
 class MacPackageTests(unittest.TestCase):
     """package/install/apply/rollback/check-symbols for --platform macos-arm64 on synthetic Mach-O build output."""
 

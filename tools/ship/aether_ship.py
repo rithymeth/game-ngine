@@ -595,7 +595,11 @@ def stage_macos(a, stage: str, symdir: str, player: str) -> tuple:
                     raise ShipError(f"{os.path.basename(source)} loads {dep}, which was not found (rpaths {info['rpaths']})")
                 os.makedirs(frameworks, exist_ok=True)
                 dst = os.path.join(frameworks, fname)
-                shutil.copyfile(src, dst)
+                # A dylib already staged here (resolved through a symlink that points back
+                # at the bundle) would be copied onto itself, which shutil raises on
+                # rather than treating as a no-op.
+                if os.path.abspath(src) != os.path.abspath(dst):
+                    shutil.copyfile(src, dst)
                 os.chmod(dst, 0o755)
                 dinfo = macho_info(dst)
                 if not dinfo:
