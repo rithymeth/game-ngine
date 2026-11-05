@@ -57,6 +57,8 @@ aether_fuzz_target(assetmeta fuzz_assetmeta.cpp Aether::Engine)
 aether_fuzz_target(texture fuzz_texture.cpp Aether::Engine)
 # The cooked container (ATEX) the runtime reads from .apak, as opposed to importing a source image.
 aether_fuzz_target(atex fuzz_atex.cpp Aether::Engine)
+# The cooked mesh container (AMSH) the importer emits and the cooker reads back.
+aether_fuzz_target(mesh fuzz_mesh.cpp Aether::Engine)
 aether_fuzz_target(gltf fuzz_gltf.cpp Aether::Engine)
 aether_fuzz_target(model_import fuzz_model_import.cpp Aether::Engine)
 
