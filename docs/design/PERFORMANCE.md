@@ -265,4 +265,23 @@ is not a substitute for a funnel on long ones. Reverted; the collinear collapse 
 tuning -- 13.84 against 15.19 ms -- which is the first measurement in this whole investigation where it came out
 ahead. The feature is not hopeless; it is wrong for the long, dead-end routes it was designed around.
 
+### Kept: abandon the graph search when it degenerates
+
+The 96%-expansion finding has a cheap consequence, and it is the one change from this investigation that is worth
+keeping. `FindPath` now counts expansions against a budget of `max(512, portals / 16)` and, if the A* blows through
+it, hands the query to the plain pathfinder. A 5% expansion rate means the heuristic has stopped buying anything, so
+finishing the graph walk (and then paying for the legs) can only lose.
+
+| 20 queries | plain | before | after |
+|---|---|---|---|
+| serpentine | 11.19 ms | 65.61 ms | **15.81 ms** |
+| walled route (mild detour, unaffected) | 15.41 ms | 67.29 ms | 67.29 ms |
+
+The serpentine goes from 4.7x slower than plain to 1.4x, and `HierarchicalStats::degenerate` counts the queries that
+took the fallback so the behaviour is visible rather than implicit. All 1 432 engine tests pass.
+
+It does not make the pathfinder worth using -- it is still slower than plain Detour in every scenario measured --
+but "falls back instead of thundering ahead" is the correct behaviour for a pathfinder with a heuristic it cannot
+trust, and it costs one comparison per expansion.
+
 

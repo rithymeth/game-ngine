@@ -28,6 +28,9 @@ struct HierarchicalStats {
     usize queries = 0, direct = 0;       // queries answered by a plain FindPath (start and goal in or next to one tile)
     usize graph_nodes_expanded = 0;      // by the last query
     usize legs = 0;                      // Detour searches made by the last query
+    // Queries abandoned to the plain pathfinder because the graph A* was expanding most
+    // of the graph -- a dead-end-heavy route, where the heuristic stops buying anything.
+    usize degenerate = 0;
     // Where the last query spent its time, so the cost can be attributed rather than
     // guessed: the portal A* (which grows with the graph) against the Detour leg
     // searches (which grow with the route).

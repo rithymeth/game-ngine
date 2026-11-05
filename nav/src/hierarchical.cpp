@@ -138,12 +138,23 @@ bool HierarchicalPathfinder::FindPath(const Vec3& start, const Vec3& end, NavPat
         open.push({g[i] + Dist(portals_[i].point, e), i});
     }
     bool found = false;
+    // Bail out when the A* is exploring most of the graph. That means the heuristic has
+    // degenerated -- the walkable route is far longer than the straight line, so the
+    // search is behaving like Dijkstra -- and the plain pathfinder is cheaper than
+    // finishing the graph walk plus the legs. Measured: a mild detour expands ~2% of the
+    // portals and pays off (it beat plain Detour there), a dead-end serpentine expands
+    // ~90% and cost 4-5x more, so the fraction is the signal.
+    const usize expansion_budget = std::max<usize>(512, portals_.size() / 16);
     while (!open.empty()) {
         const u32 cur = open.top().second;
         open.pop();
         if (closed[cur]) continue;
         closed[cur] = true;
         ++stats_.graph_nodes_expanded;
+        if (stats_.graph_nodes_expanded > expansion_budget) {
+            ++stats_.degenerate;
+            return mesh_->FindPath(start, end, out, filter);
+        }
         if (cur == kGoal) {
             found = true;
             break;
