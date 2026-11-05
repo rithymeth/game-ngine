@@ -38,6 +38,17 @@ assets::MeshData MakeGridMesh(u32 n) {
     return mesh;
 }
 
+// Two patches ten units apart, for HLOD clustering.
+assets::MeshData MakeTwoPrimitives() {
+    assets::MeshData mesh = MakeGridMesh(4);
+    assets::MeshPrimitiveData second = mesh.primitives[0];
+    for (assets::MeshVertex& v : second.vertices) v.position[0] += 10.0f;
+    second.bounds_min.x += 10.0f;
+    second.bounds_max.x += 10.0f;
+    mesh.primitives.push_back(std::move(second));
+    return mesh;
+}
+
 } // namespace
 
 AETHER_TEST(MeshCook_RoundTripsAndIsDeterministic) {
@@ -113,4 +124,31 @@ AETHER_TEST(MeshCook_HandlesEmptySkinnedAndBadPrimitives) {
     std::string error;
     AETHER_CHECK(!CookMesh(broken, MeshCookSettings{}, cooked, &error));
     AETHER_CHECK(!error.empty());
+}
+
+// Phase 42.4: cooked mesh v2 carries an HLOD proxy table and round-trips it.
+AETHER_TEST(MeshCook_HlodProxiesRoundTrip) {
+    MeshCookSettings settings;
+    settings.build_hlod = true;
+    settings.hlod_cluster_radius = 1000.0f; // one cluster over both patches
+    CookedMesh cooked;
+    std::string error;
+    AETHER_CHECK(CookMesh(MakeTwoPrimitives(), settings, cooked, &error));
+    AETHER_CHECK(cooked.primitives.size() == 2);
+    AETHER_CHECK(cooked.hlod.size() == 1);
+    AETHER_CHECK(cooked.hlod[0].sources.size() == 2);
+    AETHER_CHECK(!cooked.hlod[0].vertices.empty());
+    AETHER_CHECK(!cooked.hlod[0].lods.empty());
+
+    const std::vector<u8> bytes = SaveAmesh(cooked);
+    CookedMesh loaded;
+    AETHER_CHECK(LoadAmesh(bytes, loaded, &error));
+    AETHER_CHECK(loaded.hlod.size() == 1);
+    AETHER_CHECK((loaded.hlod[0].sources == cooked.hlod[0].sources));
+    AETHER_CHECK(SaveAmesh(loaded) == bytes); // deterministic round trip
+
+    // Without build_hlod there is no proxy table.
+    CookedMesh plain;
+    AETHER_CHECK(CookMesh(MakeTwoPrimitives(), MeshCookSettings{}, plain, &error));
+    AETHER_CHECK(plain.hlod.empty());
 }

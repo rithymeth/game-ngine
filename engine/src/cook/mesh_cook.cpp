@@ -10,7 +10,9 @@ namespace aether::cook {
 namespace {
 
 constexpr char kMagic[4] = {'A', 'M', 'S', 'C'};
-constexpr u32 kVersion = 1;
+constexpr u32 kVersion = 2;
+// v1: primitives only. v2: a trailing HLOD proxy table (Phase 42.4); a v1 file
+// loads with no proxies.
 
 bool Fail(std::string* error, const std::string& message) {
     if (error) *error = message;
@@ -179,6 +181,46 @@ bool CookMesh(const assets::MeshData& mesh, const MeshCookSettings& settings, Co
         }
         out.primitives.push_back(std::move(prim));
     }
+    // Phase 42.4: merge nearby primitives into HLOD proxies (opt-in).
+    if (settings.build_hlod && out.primitives.size() >= 2) {
+        std::vector<Vec3> centers;
+        centers.reserve(out.primitives.size());
+        for (const CookedMeshPrimitive& p : out.primitives) centers.push_back((p.bounds_min + p.bounds_max) * 0.5f);
+        for (const HlodCluster& cluster : ClusterForHlod(centers, settings.hlod_cluster_radius)) {
+            if (cluster.sources.size() < 2) continue; // a lone primitive needs no proxy
+            CookedMesh::HlodProxy proxy;
+            proxy.center = cluster.center;
+            std::vector<u32> offsets;
+            offsets.reserve(cluster.sources.size());
+            for (usize s : cluster.sources) {
+                if (s >= out.primitives.size()) return Fail(error, "hlod source out of range");
+                proxy.sources.push_back(static_cast<u32>(s));
+                offsets.push_back(static_cast<u32>(proxy.vertices.size()));
+                const CookedMeshPrimitive& src = out.primitives[s];
+                proxy.vertices.insert(proxy.vertices.end(), src.vertices.begin(), src.vertices.end());
+            }
+            std::vector<u32> indices;
+            for (usize k = 0; k < cluster.sources.size(); ++k) {
+                const CookedMeshPrimitive& src = out.primitives[cluster.sources[k]];
+                if (src.lods.empty()) continue;
+                for (u32 i : src.lods[0].indices) indices.push_back(offsets[k] + i);
+            }
+            std::vector<Vec3> positions;
+            positions.reserve(proxy.vertices.size());
+            for (const assets::MeshVertex& v : proxy.vertices)
+                positions.emplace_back(v.position[0], v.position[1], v.position[2]);
+            std::vector<LodLevel> levels;
+            std::string reason;
+            if (!GenerateLods(positions, indices, settings.lods, levels, &reason)) return Fail(error, "hlod: " + reason);
+            for (LodLevel& level : levels) {
+                CookedMeshLod cl;
+                cl.indices = std::move(level.indices);
+                cl.error = level.error;
+                proxy.lods.push_back(std::move(cl));
+            }
+            out.hlod.push_back(std::move(proxy));
+        }
+    }
     return true;
 }
 
@@ -191,6 +233,27 @@ std::vector<u8> SaveAmesh(const CookedMesh& mesh) {
         w.I32(p.material);
         w.F32(p.bounds_min.x); w.F32(p.bounds_min.y); w.F32(p.bounds_min.z);
         w.F32(p.bounds_max.x); w.F32(p.bounds_max.y); w.F32(p.bounds_max.z);
+        w.U32(static_cast<u32>(p.vertices.size()));
+        for (const assets::MeshVertex& v : p.vertices) {
+            for (f32 f : v.position) w.F32(f);
+            for (f32 f : v.normal) w.F32(f);
+            for (f32 f : v.uv) w.F32(f);
+            for (f32 f : v.tangent) w.F32(f);
+        }
+        w.U32(static_cast<u32>(p.lods.size()));
+        for (const CookedMeshLod& l : p.lods) {
+            w.F32(l.error);
+            w.U32(static_cast<u32>(l.indices.size()));
+            for (u32 i : l.indices) w.U32(i);
+            WriteMeshlets(w, l.meshlets);
+        }
+    }
+    // Phase 42.4: the HLOD proxy table (v2).
+    w.U32(static_cast<u32>(mesh.hlod.size()));
+    for (const CookedMesh::HlodProxy& p : mesh.hlod) {
+        w.F32(p.center.x); w.F32(p.center.y); w.F32(p.center.z);
+        w.U32(static_cast<u32>(p.sources.size()));
+        for (u32 s : p.sources) w.U32(s);
         w.U32(static_cast<u32>(p.vertices.size()));
         for (const assets::MeshVertex& v : p.vertices) {
             for (f32 f : v.position) w.F32(f);
@@ -223,7 +286,7 @@ bool LoadAmesh(std::span<const u8> bytes, CookedMesh& out, std::string* error) {
     Reader r(body.subspan(4));
     u32 version = 0, prim_count = 0;
     if (!r.U32(version)) return Fail(error, "truncated header");
-    if (version != kVersion) return Fail(error, "unsupported version");
+    if (version != 1 && version != kVersion) return Fail(error, "unsupported version");
     if (!r.U32(prim_count) || !r.Fits(prim_count, 36)) return Fail(error, "truncated primitive table");
     out.primitives.resize(prim_count);
     for (CookedMeshPrimitive& p : out.primitives) {
@@ -259,6 +322,43 @@ bool LoadAmesh(std::span<const u8> bytes, CookedMesh& out, std::string* error) {
                 if (i >= vcount) return Fail(error, "LOD index out of range");
             }
             if (!ReadMeshlets(r, l.meshlets, vcount, error)) return false;
+        }
+    }
+    // Phase 42.4: the HLOD proxy table (v2; a v1 file simply has none).
+    if (version >= 2) {
+        u32 hlod_count = 0;
+        if (!r.U32(hlod_count) || !r.Fits(hlod_count, 24)) return Fail(error, "truncated HLOD table");
+        out.hlod.resize(hlod_count);
+        for (CookedMesh::HlodProxy& p : out.hlod) {
+            u32 source_count = 0, vcount = 0, lod_count = 0;
+            if (!r.F32(p.center.x) || !r.F32(p.center.y) || !r.F32(p.center.z) || !r.U32(source_count) ||
+                !r.Fits(source_count, 4)) return Fail(error, "truncated HLOD proxy");
+            p.sources.resize(source_count);
+            for (u32& s : p.sources) {
+                if (!r.U32(s)) return Fail(error, "truncated HLOD sources");
+                if (s >= out.primitives.size()) return Fail(error, "HLOD source out of range");
+            }
+            if (!r.U32(vcount) || !r.Fits(vcount, sizeof(f32) * 12)) return Fail(error, "truncated HLOD vertices");
+            p.vertices.resize(vcount);
+            for (assets::MeshVertex& v : p.vertices) {
+                for (f32& f : v.position) r.F32(f);
+                for (f32& f : v.normal) r.F32(f);
+                for (f32& f : v.uv) r.F32(f);
+                for (f32& f : v.tangent) r.F32(f);
+            }
+            if (!r.U32(lod_count) || !r.Fits(lod_count, 8)) return Fail(error, "truncated HLOD LOD table");
+            p.lods.resize(lod_count);
+            for (CookedMeshLod& l : p.lods) {
+                u32 icount = 0;
+                if (!r.F32(l.error) || !r.U32(icount) || !r.Fits(icount, 4) || icount % 3 != 0)
+                    return Fail(error, "bad HLOD LOD indices");
+                l.indices.resize(icount);
+                for (u32& i : l.indices) {
+                    if (!r.U32(i)) return Fail(error, "truncated HLOD LOD indices");
+                    if (i >= vcount) return Fail(error, "HLOD LOD index out of range");
+                }
+                if (!ReadMeshlets(r, l.meshlets, vcount, error)) return false;
+            }
         }
     }
     if (r.Remaining() != 0) return Fail(error, "trailing bytes");

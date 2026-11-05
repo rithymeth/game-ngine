@@ -25,6 +25,9 @@ struct MeshCookSettings {
     LodParams lods;
     bool build_lods = true;
     bool build_meshlets = true;
+    // Phase 42.4: bake HLOD proxies for groups of primitives (opt-in).
+    bool build_hlod = false;
+    f32 hlod_cluster_radius = 20.0f;
 };
 
 struct CookedMeshLod {
@@ -43,7 +46,17 @@ struct CookedMeshPrimitive {
 
 struct CookedMesh {
     std::vector<CookedMeshPrimitive> primitives;
+    // Phase 42.4: merged proxies for distant groups of primitives. Empty unless
+    // MeshCookSettings::build_hlod was set.
+    struct HlodProxy {
+        Vec3 center;
+        std::vector<u32> sources; // primitive indices
+        std::vector<assets::MeshVertex> vertices;
+        std::vector<CookedMeshLod> lods; // lods[0] is the merged source
+    };
+    std::vector<HlodProxy> hlod;
     std::vector<std::string> warnings; // not saved
+    bool has_hlod() const { return !hlod.empty(); }
 };
 
 // False (with a reason) when a primitive's indices are out of range or the settings are invalid.

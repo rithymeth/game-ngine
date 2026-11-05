@@ -1364,9 +1364,11 @@
   type struct CookedMesh
   type struct CookedMeshLod
   type struct CookedMeshPrimitive
+  type struct HlodProxy
   type struct MeshCookSettings
   [[nodiscard]]bool LoadAmesh(std::span<const u8>bytes,CookedMesh&out,std::string*error=nullptr)
   bool CookMesh(const assets::MeshData&mesh,const MeshCookSettings&settings,CookedMesh&out,std::string*error=nullptr)
+  bool has_hlod()const
   std::vector<u8>SaveAmesh(const CookedMesh&mesh)
 [engine/include/aether/cook/mesh_summary.h] experimental
   type struct MeshLodRow
