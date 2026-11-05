@@ -140,12 +140,14 @@ AETHER_TEST(MeshCook_HlodProxiesRoundTrip) {
     AETHER_CHECK(cooked.hlod[0].sources.size() == 2);
     AETHER_CHECK(!cooked.hlod[0].vertices.empty());
     AETHER_CHECK(!cooked.hlod[0].lods.empty());
+    AETHER_CHECK(!cooked.hlod[0].lods[0].meshlets.meshlets.empty()); // the proxy is drawable as meshlets
 
     const std::vector<u8> bytes = SaveAmesh(cooked);
     CookedMesh loaded;
     AETHER_CHECK(LoadAmesh(bytes, loaded, &error));
     AETHER_CHECK(loaded.hlod.size() == 1);
     AETHER_CHECK((loaded.hlod[0].sources == cooked.hlod[0].sources));
+    AETHER_CHECK(loaded.hlod[0].lods[0].meshlets.meshlets.size() == cooked.hlod[0].lods[0].meshlets.meshlets.size());
     AETHER_CHECK(SaveAmesh(loaded) == bytes); // deterministic round trip
 
     // Without build_hlod there is no proxy table.

@@ -216,6 +216,9 @@ bool CookMesh(const assets::MeshData& mesh, const MeshCookSettings& settings, Co
                 CookedMeshLod cl;
                 cl.indices = std::move(level.indices);
                 cl.error = level.error;
+                // Meshlets so the virtual-geometry path can draw the proxy too.
+                if (settings.build_meshlets && !BuildMeshlets(positions, cl.indices, settings.meshlets, cl.meshlets, &reason))
+                    return Fail(error, "hlod: " + reason);
                 proxy.lods.push_back(std::move(cl));
             }
             out.hlod.push_back(std::move(proxy));
