@@ -76,6 +76,9 @@ describes what is on `master`, not a promise of a version number or a date.
 - ASTC texture cooking and GPU compressed textures, block-compressed textures on Vulkan, `DestroyTexture`, and
   memory-pressure trimming for mobile.
 - Cooked meshes (`.amesh`) carry LODs and meshlets.
+- Asset validation reports what is wrong without importing or opening anything: sources that have gone, and
+  references to GUIDs that no longer exist (`assets::ValidateAssets`, the `asset_validate` MCP tool, and the content
+  browser's `Issues()`). It reports and repairs nothing, so a person decides what to do.
 
 ## Plugins
 
