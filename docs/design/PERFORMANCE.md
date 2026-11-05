@@ -265,6 +265,17 @@ is not a substitute for a funnel on long ones. Reverted; the collinear collapse 
 tuning -- 13.84 against 15.19 ms -- which is the first measurement in this whole investigation where it came out
 ahead. The feature is not hopeless; it is wrong for the long, dead-end routes it was designed around.
 
+**And that encouraging result was not real.** Repeat attempts with a bounded probe (eight portals ahead, so every ray
+stays short) made the walled case **4.05 ms against plain's 15.03** -- 3.7x faster, which is far too good. The
+serpentine test said why: the path came out shorter than `Length > 1450` allows, so it was cutting through walls.
+The speed was the symptom, not the achievement: a pathfinder that skips the walls is fast because it does less work,
+not because it is better.
+
+That is the trap to keep in mind with every number in this section: **`nav/path_*` benchmarks only assert that a path
+was returned, not that it is walkable.** The `Length` assertions in `test_nav_hierarchical.cpp` are what caught both
+string-pull attempts, and any future smoothing work needs a `NavMesh::Raycast` check on every output segment before
+its timings mean anything.
+
 ### Kept: abandon the graph search when it degenerates
 
 The 96%-expansion finding has a cheap consequence, and it is the one change from this investigation that is worth
