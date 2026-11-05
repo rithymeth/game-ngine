@@ -289,6 +289,13 @@ evidence it was wrong, and the only trustworthy check this investigation found. 
 exists, path correctness here is measured by path *shape* (the unit tests), not by segment raycasts, and a smoothing
 change must be judged by those tests rather than by a benchmark that only times it.
 
+**One real bug did come out of that detour and is fixed.** `NavMesh::Raycast` returned `false` -- "not blocked" --
+when Detour's raycast *failed*, most often because the ray crossed more polygons than `kMaxPathPolys` allows. That is
+a false clear, and it is what let the string-pull straighten a path through a wall: long rays came back clean. It now
+reports a failed query as blocked, which is the conservative answer for a line-of-sight test. The remaining
+unreliability is in the other direction (corner-clipping segments read as blocked), which is why the segment check is
+still not usable as a validity oracle.
+
 ### Kept: abandon the graph search when it degenerates
 
 The 96%-expansion finding has a cheap consequence, and it is the one change from this investigation that is worth

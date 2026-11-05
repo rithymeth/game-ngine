@@ -723,7 +723,16 @@ bool NavMesh::Raycast(const Vec3& start, const Vec3& end, Vec3& hit, Vec3* norma
     float t = 0.0f, n[3] = {0, 0, 0};
     dtPolyRef polys[kMaxPathPolys];
     int npolys = 0;
-    if (dtStatusFailed(query_->raycast(sref, s, ep, &filter, &t, n, polys, &npolys, kMaxPathPolys))) return false;
+    if (dtStatusFailed(query_->raycast(sref, s, ep, &filter, &t, n, polys, &npolys, kMaxPathPolys))) {
+        // A raycast that could not answer is not a clear line: most often the ray crossed
+        // more polygons than the budget allows. Report it as blocked -- the conservative
+        // answer for a line-of-sight test -- rather than as unobstructed, which would let a
+        // caller straighten a path through a wall (found while string-pulling a nav path:
+        // long rays came back "clear" and the path cut the corner of every serpentine wall).
+        hit = end;
+        if (normal != nullptr) *normal = Vec3(0, 1, 0);
+        return true;
+    }
     if (t > 1.0f) return false; // reached the end
     hit = Vec3(s[0] + (ep[0] - s[0]) * t, s[1] + (ep[1] - s[1]) * t, s[2] + (ep[2] - s[2]) * t);
     if (normal != nullptr) *normal = Vec3(n[0], n[1], n[2]);
