@@ -2523,14 +2523,21 @@
   struct AETHER_ALIGN(16)Quaternion
 [engine/include/aether/math/vec.h] stable
   type struct Vec3
+  type struct Vec3d
   #pragma once #include "" #include<cmath>#if defined(__aarch64__)|| defined(_M_ARM64)#include<sse2neon.h>#else #include<immintrin.h>#endif namespace aether
   Vec3 Cross(const Vec3&o)const
   Vec3 Normalized()const
+  Vec3 ToVec3()const
   Vec3 operator*(f32 s)const
   Vec3 operator+(const Vec3&o)const
   Vec3 operator-(const Vec3&o)const
   Vec3():x(0),y(0),z(0)
   Vec3(f32 x_,f32 y_,f32 z_):x(x_),y(y_),z(z_)
+  Vec3d operator*(f64 s)const
+  Vec3d operator+(const Vec3d&o)const
+  Vec3d operator-(const Vec3d&o)const
+  Vec3d()=default
+  Vec3d(f64 x_,f64 y_,f64 z_):x(x_),y(y_),z(z_)
   Vec4 Normalized()const
   Vec4 operator*(const Vec4&o)const
   Vec4 operator*(f32 s)const
@@ -2543,7 +2550,17 @@
   f32 Dot(const Vec4&o)const
   f32 Length()const
   f32 LengthSq()const
+  f64 Dot(const Vec3d&o)const
+  f64 Length()const
+  f64 LengthSq()const
+  static Vec3d FromVec3(const Vec3&v)
   struct AETHER_ALIGN(16)Vec4
+[engine/include/aether/math/world_origin.h] experimental
+  type struct WorldOrigin
+  Vec3 ToRelative(const Vec3d&world)const
+  Vec3d ToAbsolute(const Vec3&relative)const
+  f64 DistanceTo(const Vec3d&world)const
+  inline bool RebaseOrigin(WorldOrigin&origin,const Vec3d&world,f64 threshold)
 [engine/include/aether/memory/frame_allocator.h] stable
   type class FrameAllocator
   FrameAllocator&operator=(const FrameAllocator&)=delete

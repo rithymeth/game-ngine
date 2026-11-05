@@ -11,7 +11,7 @@ engine/include/aether/ecs/world.h: AddComponent AddComponentRaw AllocateEntityId
 engine/include/aether/math/mat4.h: AETHER_ALIGN Identity LookAtRH Mat4 PerspectiveRH Scale Translation TryInverse aether
 engine/include/aether/math/math.h: Degrees Radians aether
 engine/include/aether/math/quaternion.h: AETHER_ALIGN FromAxisAngle Identity Length LengthSq Normalized Quaternion ToMat4 aether simd
-engine/include/aether/math/vec.h: AETHER_ALIGN Cross Dot Length LengthSq Normalized Vec3 Vec4 aether simd x y z
+engine/include/aether/math/vec.h: AETHER_ALIGN Cross Dot FromVec3 Length LengthSq Normalized ToVec3 Vec3 Vec3d Vec4 aether simd x y z
 engine/include/aether/memory/frame_allocator.h: Allocate AllocateObject Current FrameAllocator Init Swap aether
 engine/include/aether/memory/linear_allocator.h: Allocate AllocateObject Base Capacity Init LinearAllocator Remaining Reset SetMemoryCategory Used aether
 engine/include/aether/memory/pool_allocator.h: Allocate BlockCount BlockSize Free FreeCount FreeNode Init PoolAllocator SetMemoryCategory aether

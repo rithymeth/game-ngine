@@ -36,6 +36,27 @@ struct Vec3 {
     }
 };
 
+// A double-precision position (Phase 42.1, large worlds): the absolute world
+// position a WorldOrigin rebases into the f32 Vec3 the rest of the engine uses.
+// Not SIMD-backed; keep it to the arithmetic a position needs.
+struct Vec3d {
+    f64 x = 0.0, y = 0.0, z = 0.0;
+
+    Vec3d() = default;
+    Vec3d(f64 x_, f64 y_, f64 z_) : x(x_), y(y_), z(z_) {}
+
+    Vec3d operator+(const Vec3d& o) const { return {x + o.x, y + o.y, z + o.z}; }
+    Vec3d operator-(const Vec3d& o) const { return {x - o.x, y - o.y, z - o.z}; }
+    Vec3d operator*(f64 s) const { return {x * s, y * s, z * s}; }
+
+    f64 Dot(const Vec3d& o) const { return x * o.x + y * o.y + z * o.z; }
+    f64 LengthSq() const { return Dot(*this); }
+    f64 Length() const { return std::sqrt(LengthSq()); }
+
+    Vec3 ToVec3() const { return {static_cast<f32>(x), static_cast<f32>(y), static_cast<f32>(z)}; }
+    static Vec3d FromVec3(const Vec3& v) { return {v.x, v.y, v.z}; }
+};
+
 // 16-byte aligned, SSE-backed 4-wide vector. Used for positions, rotations
 // (via Quaternion) and anywhere hot loops benefit from packed SIMD ops.
 struct AETHER_ALIGN(16) Vec4 {

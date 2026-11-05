@@ -1,4 +1,5 @@
 #include "aether/math/math.h"
+#include "aether/math/world_origin.h"
 #include "test_framework.h"
 
 using namespace aether;
@@ -83,4 +84,36 @@ AETHER_TEST(Quaternion_ComposedRotationIsNormalized) {
     Quaternion b = Quaternion::FromAxisAngle(Vec3(0, 1, 0), Radians(30.0f));
     Quaternion c = (a * b).Normalized();
     AETHER_CHECK_NEAR(c.Length(), 1.0f, 1e-5);
+}
+
+// Phase 42.1: a double-precision position keeps separation that f32 loses.
+AETHER_TEST(Vec3d_PrecisionBeyondFloat) {
+    const Vec3d a(100000.0, 0.0, 0.0);      // 100 km out
+    const Vec3d b(100000.001, 0.0, 0.0);    // 1 mm further
+    AETHER_CHECK((b - a).Length() > 0.0009);
+    // f32 cannot tell them apart, which is why a world origin is needed.
+    AETHER_CHECK(a.ToVec3().x == b.ToVec3().x);
+}
+
+// Phase 42.1: the origin turns absolute positions into small f32 ones and back.
+AETHER_TEST(WorldOrigin_RebasesIntoRelativeSpace) {
+    WorldOrigin origin;
+    origin.absolute = Vec3d(100000.0, 0.0, 200000.0);
+    const Vec3d world(100003.0, 1.0, 199998.0);
+
+    const Vec3 relative = origin.ToRelative(world);
+    AETHER_CHECK_NEAR(relative.x, 3.0f, 1e-4);
+    AETHER_CHECK_NEAR(relative.y, 1.0f, 1e-4);
+    AETHER_CHECK_NEAR(relative.z, -2.0f, 1e-4);
+
+    const Vec3d back = origin.ToAbsolute(relative);
+    AETHER_CHECK_NEAR(back.x, world.x, 1e-6);
+    AETHER_CHECK_NEAR(back.y, world.y, 1e-6);
+    AETHER_CHECK_NEAR(back.z, world.z, 1e-6);
+
+    // It only moves when the point strays past the threshold.
+    AETHER_CHECK(!RebaseOrigin(origin, Vec3d(100010.0, 0.0, 200000.0), 25.0));
+    AETHER_CHECK(RebaseOrigin(origin, world, 1.0));
+    AETHER_CHECK_NEAR(origin.absolute.x, world.x, 1e-9);
+    AETHER_CHECK_NEAR(origin.ToRelative(world).Length(), 0.0f, 1e-6);
 }
