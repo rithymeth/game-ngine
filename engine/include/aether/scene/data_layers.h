@@ -11,6 +11,7 @@
 // An entity without a DataLayer component belongs to no layer and is never touched.
 
 #include "aether/ecs/world.h"
+#include "aether/reflection/reflect_macros.h"
 
 #include <string>
 #include <string_view>
@@ -36,3 +37,9 @@ usize SetDataLayerActive(World& world, std::string_view layer, bool active);
 bool IsDataLayerActive(const World& world, std::string_view layer);
 
 } // namespace aether
+// Reflected so a saved scene keeps its layers; without this a save/load round trip would drop them
+// and every entity would come back in no layer.
+AETHER_REFLECT(aether::DataLayer, 1,
+    AETHER_FIELD(layer, Field_EditAnywhere, {.tooltip = "The data layer this entity belongs to; empty for none"}),
+    AETHER_FIELD(active_when_layer_on, Field_EditAnywhere, {.tooltip = "What Active returns when the layer is switched back on"}),
+    AETHER_FIELD(captured, Field_EditAnywhere, {.tooltip = "Whether the state above was recorded by a layer switch"}))

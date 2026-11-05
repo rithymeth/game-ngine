@@ -329,3 +329,33 @@ AETHER_TEST(DataLayers_SwitchAndRestore) {
     AETHER_CHECK(SetDataLayerActive(world, "Nope", false) == 0);
     AETHER_CHECK(SetDataLayerActive(world, "Nope", true) == 0);
 }
+// Phase 42.6: a saved scene keeps its data layers -- without reflection the round trip would drop
+// them and every entity would come back in no layer.
+AETHER_TEST(DataLayers_SurviveASaveAndLoad) {
+    World world;
+    const Entity props = world.CreateEntity(Transform{Vec3(), Quaternion::Identity()});
+    world.AddComponent<DataLayer>(props, DataLayer{"Props", false, true});
+
+    const std::vector<u8> bytes = SaveSceneToMemory(world);
+    AETHER_CHECK(!bytes.empty());
+
+    World loaded;
+    AETHER_CHECK(LoadSceneFromMemory(loaded, bytes, "memory"));
+    AETHER_CHECK(DataLayerNames(loaded).size() == 1 && DataLayerNames(loaded)[0] == "Props");
+    AETHER_CHECK(DataLayerSize(loaded, "Props") == 1);
+    AETHER_CHECK(DataLayerSize(loaded, "Terrain") == 0);
+
+    // The remembered state travels with it, not just the name: a layer switched off before the save
+    // still restores correctly after the load.
+    loaded.ForEachArchetype([](Archetype& archetype) {
+        if ((archetype.Mask() & ComponentMaskOf<DataLayer>()) != ComponentMaskOf<DataLayer>()) return;
+        for (usize chunk = 0; chunk < archetype.ChunkCount(); ++chunk) {
+            const u32 count = archetype.ChunkEntityCount(chunk);
+            auto* layers = static_cast<DataLayer*>(archetype.ComponentArray(chunk, GetComponentId<DataLayer>()));
+            for (u32 i = 0; i < count; ++i) {
+                AETHER_CHECK(layers[i].layer == "Props");
+                AETHER_CHECK(layers[i].captured && !layers[i].active_when_layer_on);
+            }
+        }
+    });
+}
