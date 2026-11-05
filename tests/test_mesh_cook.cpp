@@ -1,6 +1,7 @@
 #include "test_framework.h"
 
 #include "aether/cook/mesh_cook.h"
+#include "aether/pak/pak.h"
 
 #include <cmath>
 
@@ -151,4 +152,22 @@ AETHER_TEST(MeshCook_HlodProxiesRoundTrip) {
     CookedMesh plain;
     AETHER_CHECK(CookMesh(MakeTwoPrimitives(), MeshCookSettings{}, plain, &error));
     AETHER_CHECK(plain.hlod.empty());
+}
+
+// Phase 42.4/48.2: a version-1 cooked mesh (no HLOD table) still loads.
+AETHER_TEST(MeshCook_LoadsVersionOneBytes) {
+    const char magic[4] = {'A', 'M', 'S', 'C'};
+    const auto put32 = [](std::vector<u8>& out, u32 v) {
+        for (int i = 0; i < 4; ++i) out.push_back(static_cast<u8>(v >> (8 * i)));
+    };
+    std::vector<u8> bytes;
+    bytes.insert(bytes.end(), magic, magic + 4);
+    put32(bytes, 1); // version 1: no HLOD table
+    put32(bytes, 0); // no primitives
+    const std::vector<u8> body = bytes; // everything before the CRC
+    put32(bytes, pak::Crc32(body));
+    CookedMesh out;
+    AETHER_CHECK(LoadAmesh(bytes, out));
+    AETHER_CHECK(out.primitives.empty());
+    AETHER_CHECK(out.hlod.empty());
 }
