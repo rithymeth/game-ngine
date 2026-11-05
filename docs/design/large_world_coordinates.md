@@ -86,9 +86,9 @@ loss it exists to fix.
    tool that wrote `.aesc` straight from absolute coordinates would still need an
    origin field; nothing does.) Old `.ascene` files have no `origin` and load
    with origin zero.
-2. **Load.** Read the recorded origin; `SceneLoadOptions::origin` overrides it.
-   Extend the loader to report the origin it used (an out-parameter), so a game
-   can keep the world local and remember where it is.
+2. **Load.** *Done for `.ascene`*: `LoadSceneJson(..., Vec3d* used_origin)` reports
+   the origin it shifted by (the caller's, else the file's), so a game can keep
+   the world local and remember where it is (`WorldOrigin_LoaderReportsTheOrigin`).
 3. **Physics.** Jolt's broadphase and constraint tolerances are built around
    `f32`; the physics world must be fed origin-relative positions, and
    `RebaseTransforms` must run on the same frame the physics world is rebuilt

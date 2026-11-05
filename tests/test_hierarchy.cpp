@@ -192,3 +192,20 @@ AETHER_TEST(WorldOrigin_JsonSceneRecordsItsOrigin) {
     AETHER_CHECK(found);
     std::filesystem::remove(path);
 }
+
+// Phase 42.1: the loader reports the origin it used, so a game can keep the world
+// local and remember where it is.
+AETHER_TEST(WorldOrigin_LoaderReportsTheOrigin) {
+    World world;
+    world.CreateEntity(Transform{Vec3(3, 0, 4), Quaternion::Identity()});
+    const std::string path = (std::filesystem::temp_directory_path() / "aether_test_origin_report.ascene").string();
+    SceneSaveOptions save;
+    save.origin = Vec3d(100000.0, 0.0, 200000.0);
+    AETHER_CHECK(SaveSceneJson(world, path, save));
+    World loaded;
+    Vec3d used;
+    AETHER_CHECK(LoadSceneJson(loaded, path, SceneLoadOptions{}, &used));
+    AETHER_CHECK_NEAR(used.x, 100000.0, 1e-6);
+    AETHER_CHECK_NEAR(used.z, 200000.0, 1e-6);
+    std::filesystem::remove(path);
+}

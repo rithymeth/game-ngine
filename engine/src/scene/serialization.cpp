@@ -424,18 +424,18 @@ bool LoadSceneJson(World& world, const std::string& path) {
     return LoadSceneJson(world, path, SceneLoadOptions{});
 }
 
-bool LoadSceneJson(World& world, const std::string& path, const SceneLoadOptions& options) {
+bool LoadSceneJson(World& world, const std::string& path, const SceneLoadOptions& options, Vec3d* used_origin) {
     std::vector<u8> bytes;
     if (!fs::ReadFileBytes(path, bytes, kMaxJsonSceneBytes)) {
         AETHER_LOG_ERROR("Scene", "Failed to read scene file or JSON scene is too large: %s", path.c_str());
         return false;
     }
-    return LoadSceneJsonFromMemory(world, bytes, path, options);
+    return LoadSceneJsonFromMemory(world, bytes, path, options, used_origin);
 }
 
 namespace {
 bool LoadSceneJsonFromMemoryImpl(World& world, std::span<const u8> bytes, const std::string& path,
-                                 const SceneLoadOptions& options);
+                                 const SceneLoadOptions& options, Vec3d* used_origin);
 }
 
 // A scene file with a value of the wrong type (a number where a string belongs) makes nlohmann throw; a
@@ -445,13 +445,13 @@ bool LoadSceneJsonFromMemory(World& world, std::span<const u8> bytes, const std:
 }
 
 bool LoadSceneJsonFromMemory(World& world, std::span<const u8> bytes, const std::string& path,
-                             const SceneLoadOptions& options) {
+                             const SceneLoadOptions& options, Vec3d* used_origin) {
     if (bytes.size() > kMaxJsonSceneBytes) {
         AETHER_LOG_ERROR("Scene", "JSON scene is too large: %s", path.c_str());
         return false;
     }
     try {
-        return LoadSceneJsonFromMemoryImpl(world, bytes, path, options);
+        return LoadSceneJsonFromMemoryImpl(world, bytes, path, options, used_origin);
     } catch (const nlohmann::json::exception& e) {
         AETHER_LOG_ERROR("Scene", "Malformed JSON scene %s: %s", path.c_str(), e.what());
         return false;
@@ -460,7 +460,7 @@ bool LoadSceneJsonFromMemory(World& world, std::span<const u8> bytes, const std:
 
 namespace {
 bool LoadSceneJsonFromMemoryImpl(World& world, std::span<const u8> bytes, const std::string& path,
-                                 const SceneLoadOptions& options) {
+                                 const SceneLoadOptions& options, Vec3d* used_origin) {
     using reflect::Json;
     RegisterSceneComponents();
     Json scene = Json::parse(bytes.begin(), bytes.end(), nullptr, /*allow_exceptions=*/false);
@@ -481,6 +481,7 @@ bool LoadSceneJsonFromMemoryImpl(World& world, std::span<const u8> bytes, const 
             effective_origin.z = origin->value("z", 0.0);
         }
     }
+    if (used_origin != nullptr) *used_origin = effective_origin;
     auto entities = scene.find("entities");
     if (entities == scene.end() || !entities->is_array()) {
         AETHER_LOG_ERROR("Scene", "JSON scene has no \"entities\" array: %s", path.c_str());

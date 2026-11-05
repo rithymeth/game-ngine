@@ -71,10 +71,14 @@ std::vector<u8> SaveSceneToMemory(const World& world);
 // Phase 42.1: records an origin and writes absolute positions (see SceneSaveOptions).
 [[nodiscard]] bool SaveSceneJson(const World& world, const std::string& path, const SceneSaveOptions& options);
 [[nodiscard]] bool LoadSceneJson(World& world, const std::string& path);
-[[nodiscard]] bool LoadSceneJson(World& world, const std::string& path, const SceneLoadOptions& options);
+// Phase 42.1: `used_origin` (optional) receives the origin the loader shifted by —
+// the caller's, else the one the file recorded — so a game can keep the world
+// local and remember where it is.
+[[nodiscard]] bool LoadSceneJson(World& world, const std::string& path, const SceneLoadOptions& options,
+                                 Vec3d* used_origin = nullptr);
 // The same from a JSON scene in memory (e.g. read from an .apak); `source_name` is for messages.
 [[nodiscard]] bool LoadSceneJsonFromMemory(World& world, std::span<const u8> bytes, const std::string& source_name = "<memory>");
 [[nodiscard]] bool LoadSceneJsonFromMemory(World& world, std::span<const u8> bytes, const std::string& source_name,
-                             const SceneLoadOptions& options);
+                             const SceneLoadOptions& options, Vec3d* used_origin = nullptr);
 
 } // namespace aether
