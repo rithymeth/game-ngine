@@ -233,6 +233,27 @@ bool SceneDocument::IsSelected(Entity entity) const {
 }
 
 void SceneDocument::ClearSelection() { selection_.clear(); }
+bool SceneDocument::CopySelection() {
+    clipboard_.clear();
+    for (const Entity entity : selection_) {
+        if (world_.IsAlive(entity)) clipboard_.push_back(EntitySnapshot::Capture(world_, entity));
+    }
+    return !clipboard_.empty();
+}
+
+usize SceneDocument::PasteClipboard(const Vec3& offset) {
+    usize pasted = 0;
+    for (const EntitySnapshot& snapshot : clipboard_) {
+        Entity entity = snapshot.Restore(world_);
+        if (entity.IsNull()) continue;
+        RegenerateGuid(world_, entity, &guids_);
+        if (auto* name = world_.GetComponent<EntityName>(entity)) name->value += " Copy";
+        if (auto* transform = world_.GetComponent<Transform>(entity)) transform->position = transform->position + offset;
+        commands_.Record(CreateEntityCommand::FromExisting(context_, entity, "Paste " + Name(entity)));
+        ++pasted;
+    }
+    return pasted;
+}
 std::vector<Entity> SceneDocument::Entities() const {
     std::vector<Entity> entities;
     world_.ForEachArchetype([&entities](const Archetype& archetype) {

@@ -255,3 +255,32 @@ AETHER_TEST(SceneDocument_MultiSelection) {
     document.NewScene();
     AETHER_CHECK(document.Selection().empty());
 }
+// Phase 43.3: copy/paste of the selection. The clipboard holds snapshots, so it outlives the
+// scene the entities came from.
+AETHER_TEST(SceneDocument_CopyAndPasteOutlivesTheScene) {
+    SceneDocument document;
+    document.NewScene();
+    const std::vector<Entity> entities = document.Entities();
+    AETHER_CHECK(entities.size() >= 2);
+
+    document.SetSelection({entities[0], entities[1]});
+    AETHER_CHECK(document.CopySelection());
+    AETHER_CHECK(document.HasClipboard());
+
+    // Paste into the same scene: two new entities, and it is undoable.
+    const usize before = document.Entities().size();
+    AETHER_CHECK(document.PasteClipboard(Vec3(0.0f, 1.0f, 0.0f)) == 2);
+    AETHER_CHECK(document.Entities().size() == before + 2);
+    AETHER_CHECK(document.CanUndo());
+    AETHER_CHECK(document.Undo());
+    AETHER_CHECK(document.Entities().size() == before + 1); // one command per pasted entity
+    AETHER_CHECK(document.Undo());
+    AETHER_CHECK(document.Entities().size() == before);
+
+    // The clipboard does not hold handles, so replacing the scene does not empty it.
+    document.NewScene();
+    AETHER_CHECK(document.HasClipboard());
+    const usize fresh = document.Entities().size();
+    AETHER_CHECK(document.PasteClipboard() == 2);
+    AETHER_CHECK(document.Entities().size() == fresh + 2);
+}

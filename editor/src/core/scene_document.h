@@ -5,6 +5,7 @@
 #include "aether/scene/entity_guid.h"
 #include "aether/reflection/any.h"
 #include "core/command_stack.h"
+#include "core/commands.h" // EntitySnapshot, for the copy/paste clipboard
 #include "core/play_session.h"
 
 #include <filesystem>
@@ -59,6 +60,12 @@ public:
     void ToggleSelection(Entity entity); // adds it, or removes it if already selected
     bool IsSelected(Entity entity) const;
     void ClearSelection();
+    // Phase 43.3: copy/paste of the selection. The clipboard holds entity *snapshots*, not handles,
+    // so a paste still works after the originals are deleted or the scene is replaced. Paste gives
+    // each new entity a fresh GUID and records an undoable command per entity, like DuplicateEntity.
+    bool CopySelection();
+    usize PasteClipboard(const Vec3& offset = Vec3{0.0f, 0.0f, 0.0f});
+    bool HasClipboard() const { return !clipboard_.empty(); }
     std::string Name(Entity entity) const;
     bool Rename(Entity entity, const std::string& name, bool committed = true);
     Entity CreateEntity(const std::string& name, SceneEntityKind kind = SceneEntityKind::Empty,
@@ -90,6 +97,7 @@ private:
     GuidIndex guids_;
     Vec3d origin_;
     std::vector<Entity> selection_; // Phase 43.3: multi-selection, not an undoable edit
+    std::vector<EntitySnapshot> clipboard_; // Phase 43.3: snapshots, so paste outlives the originals
     CommandStack commands_;
     CommandContext context_;
     PlaySession play_session_;
