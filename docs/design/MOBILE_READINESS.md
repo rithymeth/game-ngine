@@ -333,7 +333,7 @@ compressed on a phone's GPU.
 
 `rhi::CompressedTextureFormat` gained `ASTC_4x4`, `ASTC_6x6` and `ASTC_8x8`, with `CompressedBlockWidth` and `CompressedLevelBytes` replacing the hard-coded 4x4 block maths. D3D12 reports ASTC unsupported (empty handle). Vulkan enables `textureCompressionASTC_LDR` when the GPU has it, maps the formats to `VK_FORMAT_ASTC_*_UNORM_BLOCK` and checks support per format. The player uploads ASTC-cooked colour textures compressed for stripped packages where the device supports them; otherwise it decodes to RGBA8 as before.
 
-Verified: 1023/1023 tests locally; the Vulkan code is syntax-checked only (Vulkan is not built on the dev machine), so CI's MoltenVK job is its first real run. Still open: a platform backend that produces touch events, memory-pressure texture release, a cursor mode, and Android packaging.
+Verified: the full test suite passes locally (1023 cases at the time of writing; 1441 now). The Vulkan code is syntax-checked only (Vulkan is not built on the dev machine), so CI's MoltenVK job is its first real run. Still open: a platform backend that produces touch events, memory-pressure texture release, a cursor mode, and Android packaging.
 
 ## Status: texture release, touch, cursor, quality presets (built)
 
