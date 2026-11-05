@@ -142,7 +142,7 @@ went from ~50 ms to ~97 ms and a `legs > 2` coverage test started failing. Fewer
 correspondingly longer Detour search, so the saved searches buy back less than the merged ones spend. Reverted; the
 collinear collapse above is the version to keep.
 
-### Tried and rejected: capping the leg count (which rules out the per-cluster redesign)
+### Tried and rejected: capping the leg count (rules out per-cluster legs, not per-cluster A*)
 
 If fewer legs are better in principle, the per-cluster portal graph is the obvious redesign. That was tested
 cheaply first by subsampling the waypoint list so no query makes more than 20 leg searches, which is the leg count a
@@ -153,10 +153,15 @@ now spans several portals' worth of distance, so its Detour search costs proport
 area is what the query pays for either way. The hierarchy only wins if a leg is cheap *and* numerous, or short *and*
 few -- those are the same thing -- and it cannot be both.
 
-**So the per-cluster redesign would not fix this.** The problem is not how the portals are grouped; it is that a
-chain of local searches over the same ground costs more than the one search it replaces, because Detour's own A* is
-already efficient on these meshes. Nothing short of eliminating the leg searches entirely (portal A* plus a funnel
-over the portal corridor, with no Detour legs at all) has a chance, and that is a different algorithm, not a
-tuning change.
+**So a per-cluster graph would not fix the legs.** The cost is not how the portals are grouped; it is that a chain of
+local searches over the same ground costs about what the one search it replaces costs, because Detour's own A* is
+already efficient on these meshes. Any number of legs whose total span covers the route pays roughly the route.
+
+**Be precise about what this does and does not rule out.** It rules out the legs. It does not rule out the *other*
+half of the cost, which this run did not isolate: the portal A* itself, which expanded 34 769 nodes over 36 180
+portals and 229 266 edges on the serpentine. A funnel over the portal corridor would remove the leg searches
+entirely and leave only that A* -- so the remaining question is whether a **coarser** graph (per-cluster portals,
+which shrinks the A* rather than the legs) plus a funnel beats one plain search. That is a different algorithm and an
+unmeasured one; this note should not be read as having settled it.
 
 
