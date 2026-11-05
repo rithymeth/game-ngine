@@ -152,4 +152,23 @@ private:
     std::unordered_map<std::string, AssetGuid> by_path_;
 };
 
+enum class AssetIssueKind {
+    MissingSource,    // the .ameta's source file is gone
+    BrokenDependency, // a dependency GUID no longer resolves to an asset
+};
+
+struct AssetIssue {
+    AssetIssueKind kind = AssetIssueKind::MissingSource;
+    AssetGuid guid;         // the asset that has the problem
+    std::string path;       // its path, for reporting
+    AssetGuid dependency;   // BrokenDependency: the GUID that no longer resolves
+};
+
+// Everything wrong with an asset database that can be found without importing or opening
+// anything: assets whose source has gone, and references to GUIDs that no longer exist.
+// Sorted by path, then dependency. Empty means healthy. This is what the editor's asset
+// validation reports (Phase 43 step 6); it reports rather than repairs, so a caller can
+// show the list and let a person decide.
+std::vector<AssetIssue> ValidateAssets(const AssetDatabase& database);
+
 } // namespace aether::assets

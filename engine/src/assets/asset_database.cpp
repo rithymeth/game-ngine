@@ -834,4 +834,30 @@ bool AssetDatabase::MarkImported(const AssetGuid& guid, std::string* error, u32 
     return true;
 }
 
+std::vector<AssetIssue> ValidateAssets(const AssetDatabase& database) {
+    std::vector<AssetIssue> issues;
+    // All() is sorted by path and each record's dependencies are sorted, so the result is
+    // deterministic without a final sort.
+    for (const AssetRecord* record : database.All()) {
+        if (record == nullptr) continue;
+        if (record->missing) {
+            AssetIssue issue;
+            issue.kind = AssetIssueKind::MissingSource;
+            issue.guid = record->guid;
+            issue.path = record->path;
+            issues.push_back(std::move(issue));
+        }
+        for (const AssetGuid& dependency : record->dependencies) {
+            if (database.Find(dependency) != nullptr) continue;
+            AssetIssue issue;
+            issue.kind = AssetIssueKind::BrokenDependency;
+            issue.guid = record->guid;
+            issue.path = record->path;
+            issue.dependency = dependency;
+            issues.push_back(std::move(issue));
+        }
+    }
+    return issues;
+}
+
 } // namespace aether::assets

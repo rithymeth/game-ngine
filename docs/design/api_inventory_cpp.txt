@@ -1101,6 +1101,8 @@
 [engine/include/aether/aether.h] experimental
 [engine/include/aether/assets/asset_database.h] experimental
   type class AssetDatabase
+  type enum class AssetIssueKind
+  type struct AssetIssue
   type struct AssetMeta
   type struct AssetRecord
   type struct ScanResult
@@ -1124,6 +1126,7 @@
   std::string HashFile(const std::filesystem::path&file)
   std::string ImporterForExtension(const std::filesystem::path&file)
   std::vector<AssetGuid>SetSubAssets(const AssetGuid&source,const std::vector<SubAssetMeta>&sub_assets,std::string*error=nullptr)
+  std::vector<AssetIssue>ValidateAssets(const AssetDatabase&database)
   std::vector<const AssetRecord*>All()const
   std::vector<const AssetRecord*>AllUnsorted()const
   std::vector<const AssetRecord*>FindByImporter(const std::string&importer)const

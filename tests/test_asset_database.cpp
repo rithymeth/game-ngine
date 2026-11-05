@@ -236,3 +236,27 @@ AETHER_TEST(AssetDatabase_BadMetadataIsReportedNotFatal) {
     AETHER_CHECK(nowhere.Scan().warnings.size() == 1);
     stdfs::remove_all(root);
 }
+
+// Phase 43 step 6: the editor's asset validation reports what is wrong without importing or
+// opening anything -- assets whose source has gone, and references to GUIDs that no longer
+// exist. It reports rather than repairs, so a person decides what to do.
+AETHER_TEST(AssetDatabase_ValidateReportsMissingSources) {
+    stdfs::path root = FreshContent("aether_test_content_validate");
+    Write(root / "Textures/brick.png", "fake png bytes");
+    Write(root / "Models/hero.gltf", "{}");
+    AssetDatabase db(root);
+    AETHER_CHECK(db.Scan().assets == 2);
+    AETHER_CHECK(ValidateAssets(db).empty()); // a healthy project reports nothing
+
+    // A source that goes away leaves its .ameta behind; the scan marks the record missing
+    // and validation is what turns that into something a person can act on.
+    stdfs::remove(root / "Textures/brick.png");
+    db.Scan();
+    const std::vector<AssetIssue> issues = ValidateAssets(db);
+    AETHER_CHECK(issues.size() == 1);
+    AETHER_CHECK(issues[0].kind == AssetIssueKind::MissingSource);
+    AETHER_CHECK(issues[0].path == "Textures/brick.png");
+    AETHER_CHECK(db.Find(issues[0].guid) != nullptr); // the record is still there, its source is not
+
+    stdfs::remove_all(root);
+}
