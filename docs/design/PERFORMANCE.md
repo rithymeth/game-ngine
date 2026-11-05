@@ -296,6 +296,13 @@ reports a failed query as blocked, which is the conservative answer for a line-o
 unreliability is in the other direction (corner-clipping segments read as blocked), which is why the segment check is
 still not usable as a validity oracle.
 
+**That fix has no test, and the reason is worth writing down.** Reaching the failure path needs a ray crossing more
+than 512 polygons, and no testable mesh produces one: a flat surface merges into a handful of polygons per tile
+however fine the voxels, and a surface fragmented with shallow ridges merges too -- both were tried and the raycast
+succeeded in both. There is no cheap way to make Detour's own query run out of budget, so the behaviour is covered by
+the API comment in `navmesh.h` rather than by a regression test. If the budget or the tessellation ever changes, that
+is the case to re-check first.
+
 ### Kept: abandon the graph search when it degenerates
 
 The 96%-expansion finding has a cheap consequence, and it is the one change from this investigation that is worth
