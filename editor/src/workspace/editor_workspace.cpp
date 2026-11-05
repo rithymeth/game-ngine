@@ -167,6 +167,8 @@ struct EditorWorkspace::Impl {
     u64 extensions_seen = 0;
     std::vector<Tool> tools;
     std::string palette_query; // Phase 43.5: the command palette's search box
+    const assets::AssetDatabase* asset_database = nullptr; // what the palette searches (may be null)
+    std::function<void(const std::string&)> asset_opener;  // what it does with a chosen asset
     usize selected = 0;
     std::array<char, 128> tool_filter{};
 
@@ -1129,7 +1131,8 @@ void EditorWorkspace::DrawCommandPalette() {
     if (!command_palette_open) return;
     // Built per frame: it is a filter over the tool list, which is a few dozen entries, and
     // keeping it out of Impl means the palette itself stays free of editor state.
-    CommandPalette palette(*this);
+    CommandPalette palette(*this, impl_->asset_database);
+    palette.SetAssetOpener(impl_->asset_opener);
     palette.SetQuery(impl_->palette_query);
     bool open = command_palette_open;
     ImGui::SetNextWindowSize(ImVec2(520, 360), ImGuiCond_FirstUseEver);
@@ -1152,6 +1155,12 @@ void EditorWorkspace::DrawCommandPalette() {
     }
     ImGui::End();
     command_palette_open = open;
+}
+
+void EditorWorkspace::SetAssetDatabase(const assets::AssetDatabase* database) { impl_->asset_database = database; }
+
+void EditorWorkspace::SetAssetOpener(std::function<void(const std::string&)> opener) {
+    impl_->asset_opener = std::move(opener);
 }
 
 } // namespace aether::editor

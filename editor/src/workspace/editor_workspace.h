@@ -3,6 +3,7 @@
 #include "aether/core/base.h"
 
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -27,6 +28,10 @@ class EffectSystem;
 class AbilitySystem;
 } // namespace gas
 } // namespace aether
+
+namespace aether::assets {
+class AssetDatabase;
+}
 
 namespace aether::editor {
 
@@ -93,6 +98,12 @@ public:
     // or a headless test -- can open it without a keybinding. DrawWindows() draws it.
     bool command_palette_open = false;
     void DrawCommandPalette();
+    // What the palette searches and what it does with a chosen asset. The host supplies both:
+    // the workspace does not own the asset database, and "opening" an asset is a host decision.
+    // With no database the palette lists tools only; with no opener, choosing an asset does
+    // nothing rather than pretending to succeed.
+    void SetAssetDatabase(const assets::AssetDatabase* database);
+    void SetAssetOpener(std::function<void(const std::string&)> opener);
 
 private:
     struct Impl;
