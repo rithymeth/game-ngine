@@ -174,6 +174,27 @@ bool HierarchicalPathfinder::FindPath(const Vec3& start, const Vec3& end, NavPat
     for (const Vec3& v : via)
         if (waypoints.empty() || Dist(waypoints.back(), v) > 0.05f) waypoints.push_back(v);
     waypoints.push_back(end);
+    // Collapse waypoints that continue in the same direction. Every waypoint costs
+    // a full Detour search, and a straight run of portals along one corridor needs
+    // none of them: without this a path crossing 100 tile borders made ~100 leg
+    // searches and ended up tens of times slower than the plain pathfinder it is
+    // meant to beat. Skipping a collinear point is safe because the leg to the next
+    // waypoint is searched properly anyway.
+    {
+        std::vector<Vec3> reduced;
+        reduced.reserve(waypoints.size());
+        for (usize i = 0; i < waypoints.size(); ++i) {
+            if (i + 1 < waypoints.size() && !reduced.empty()) {
+                const Vec3 in = waypoints[i] - reduced.back();
+                const Vec3 next = waypoints[i + 1] - waypoints[i];
+                const f32 dot = in.Dot(next);
+                // cos^2 > 0.998 is within ~2.5 degrees: effectively straight through.
+                if (dot > 0.0f && dot * dot > 0.998f * in.Dot(in) * next.Dot(next)) continue;
+            }
+            reduced.push_back(waypoints[i]);
+        }
+        waypoints = std::move(reduced);
+    }
     for (const Vec3& target : waypoints) {
         NavPath leg;
         ++stats_.legs;

@@ -127,5 +127,15 @@ AETHER_BENCH_SETUP(
         // The wall makes this a detour, so answering through the plain
         // path would mean the portal graph is being bypassed and the number below
         // would not be the hierarchical path at all.
-        if (s.hierarchical.Stats().direct != 0) std::abort();
+        const nav::HierarchicalStats& stats = s.hierarchical.Stats();
+        if (stats.direct != 0) std::abort();
+        // Where the time goes: a graph with one node per portal means the A* cost
+        // tracks world size rather than path length, which is what made this
+        // benchmark tens of times slower than the plain path.
+        static bool reported = false;
+        if (!reported) {
+            reported = true;
+            std::fprintf(stderr, "  hierarchical graph: %zu portals, %zu edges, %zu nodes expanded, %zu legs\n",
+                         stats.portals, stats.edges, stats.graph_nodes_expanded, stats.legs);
+        }
     });

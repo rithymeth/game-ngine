@@ -99,10 +99,24 @@ likely cause is the portal graph: `FindPath` runs an A* over every portal (`port
 query as three `n + 1` vectors plus a priority queue) before it makes any leg search, so its cost grows with the
 size of the world rather than with the length of the path. At 13 700 tiles that graph search swamps everything.
 
-That makes this a **performance defect to investigate**, not just a benchmark artefact: a 583 ms path query is
-unusable in a game loop, and the feature currently costs more than the plain pathfinder it is meant to beat. Next
-steps, in order: print `Stats().portals` and `graph_nodes_expanded` for this query, reuse the per-query scratch
-buffers instead of allocating them each call, and look at whether the portal graph should be built per tile cluster
-rather than globally.
+That made this a **performance defect, not just a benchmark artefact**: a 583 ms path query is unusable in a game
+loop, and the feature cost more than the plain pathfinder it is meant to beat.
+
+### First fix: collapse collinear waypoints
+
+Instrumenting the query gave `Stats()`: **55 330 portals, 229 266 edges, only 1 017 nodes expanded**. So the portal
+A* was not the cost. The cost was the **leg searches**: the code made one full Detour search per waypoint, and a
+route crossing ~115 tile borders produced ~115 of them.
+
+Waypoints that continue in the same direction (within ~2.5 degrees) are now collapsed before the legs run. A
+straight run down a corridor needs no intermediate search, and skipping a collinear point is safe because the leg
+to the next waypoint is searched properly anyway. On the 13 700-tile benchmark that took the hierarchical query from
+**585 ms to 80 ms (7.3x) with an identical path**, and the serpentine test went from more than ten legs to two
+while still producing the same route.
+
+It is still **4.5x slower than plain** there (80 ms against 18 ms), so the hierarchy does not yet pay for itself. But
+the measurement is now honest and the remaining cost is understood -- chiefly that a collapsed two-leg route is
+barely more constrained than one plain search, which is the design question to answer next: whether the portal graph
+should be per tile cluster (so a leg really is a local search) rather than one global graph.
 
 

@@ -94,7 +94,13 @@ AETHER_TEST(NavHierarchical_FollowsASerpentineOfWalls) {
     CHECK(plain.status == PathStatus::Complete && hier.status == PathStatus::Complete);
     CHECK(hier.Length() > 290.0f * 5.0f);          // it really snakes: many times the straight line
     CHECK(hier.Length() <= plain.Length() * 1.15f); // and stays near the shortest
-    CHECK(h.Stats().legs > 10);
+    // It went through the portal graph rather than falling back to a plain search.
+    // The leg count is no longer asserted: it used to be one Detour search per portal
+    // along the route, and collinear waypoints are now collapsed (this serpentine went
+    // from more than ten legs to two, with the same path). Path quality above is what
+    // matters -- the shape of the route is unchanged.
+    CHECK(h.Stats().direct == 0);
+    CHECK(h.Stats().legs >= 1);
 }
 
 // Phase 40.2: a pathfinder can be rebuilt when the mesh changes (a dynamic edit),
