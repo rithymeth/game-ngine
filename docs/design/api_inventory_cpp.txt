@@ -3018,6 +3018,12 @@
   AETHER_REFLECT(aether::EntityName,1,AETHER_FIELD(value,Field_EditAnywhere,
   inline bool LoadLegacyModelRenderer(void*component,const u8*data,usize size)
   inline void SetModelPath(ModelRenderer&renderer,const std::string&path)
+[engine/include/aether/scene/data_layers.h] experimental
+  type struct DataLayer
+  bool IsDataLayerActive(const World&world,std::string_view layer)
+  std::vector<std::string>DataLayerNames(const World&world)
+  usize DataLayerSize(const World&world,std::string_view layer)
+  usize SetDataLayerActive(World&world,std::string_view layer,bool active)
 [engine/include/aether/scene/entity_guid.h] experimental
   type class GuidIndex
   type struct EntityGuid

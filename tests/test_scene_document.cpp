@@ -1,4 +1,5 @@
 #include "core/scene_document.h"
+#include "aether/scene/data_layers.h"
 #include "core/snapping.h"
 #include "aether/scene/gameplay.h"
 #include "aether/scene/serialization.h"
@@ -283,4 +284,48 @@ AETHER_TEST(SceneDocument_CopyAndPasteOutlivesTheScene) {
     const usize fresh = document.Entities().size();
     AETHER_CHECK(document.PasteClipboard() == 2);
     AETHER_CHECK(document.Entities().size() == fresh + 2);
+}
+// Phase 42.6: data layers switch a named group of entities off and back on, restoring what each
+// entity had rather than turning everything on.
+AETHER_TEST(DataLayers_SwitchAndRestore) {
+    World world;
+    auto make = [&](const char* layer, bool active) {
+        const Entity e = world.CreateEntity(Transform{Vec3(), Quaternion::Identity()});
+        if (layer != nullptr) world.AddComponent<DataLayer>(e, DataLayer{layer});
+        if (!active) world.AddComponent<Active>(e, Active{false});
+        return e;
+    };
+    const Entity a = make("Props", true);
+    const Entity already_off = make("Props", false); // off before the layer is ever switched
+    const Entity c = make("Props", true);
+    const Entity terrain = make("Terrain", true);
+    const Entity loose = make(nullptr, true);
+
+    AETHER_CHECK(DataLayerNames(world).size() == 2);
+    AETHER_CHECK(DataLayerSize(world, "Props") == 3 && DataLayerSize(world, "Terrain") == 1);
+    AETHER_CHECK(DataLayerSize(world, "Nope") == 0);
+    AETHER_CHECK(!IsDataLayerActive(world, "Props")); // already_off
+    AETHER_CHECK(IsDataLayerActive(world, "Terrain"));
+    AETHER_CHECK(!IsDataLayerActive(world, "Nope")); // an empty layer is not active
+
+    // Switching the layer off takes the two that were on, and leaves the one that was already off.
+    AETHER_CHECK(SetDataLayerActive(world, "Props", false) == 2);
+    AETHER_CHECK(!IsDataLayerActive(world, "Props"));
+    AETHER_CHECK(SetDataLayerActive(world, "Props", false) == 0); // idempotent
+    // Nothing outside the layer is touched.
+    AETHER_CHECK(IsDataLayerActive(world, "Terrain"));
+    AETHER_CHECK(world.GetComponent<Active>(terrain) == nullptr || world.GetComponent<Active>(terrain)->active);
+    AETHER_CHECK(world.GetComponent<Active>(loose) == nullptr || world.GetComponent<Active>(loose)->active);
+
+
+    // Switching it back on restores the two -- and leaves the one that was already off alone.
+    AETHER_CHECK(SetDataLayerActive(world, "Props", true) == 2);
+    AETHER_CHECK(world.GetComponent<Active>(a) == nullptr || world.GetComponent<Active>(a)->active);
+    AETHER_CHECK(world.GetComponent<Active>(c) == nullptr || world.GetComponent<Active>(c)->active);
+    AETHER_CHECK(world.GetComponent<Active>(already_off) != nullptr && !world.GetComponent<Active>(already_off)->active);
+    AETHER_CHECK(!IsDataLayerActive(world, "Props")); // already_off is still off
+
+    // A layer nobody belongs to changes nothing and reports no changes.
+    AETHER_CHECK(SetDataLayerActive(world, "Nope", false) == 0);
+    AETHER_CHECK(SetDataLayerActive(world, "Nope", true) == 0);
 }
