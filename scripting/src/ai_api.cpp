@@ -36,6 +36,12 @@ const nav::NavMesh* ActiveMesh() {
     return nw != nullptr && nw->Ready() ? &nw->Mesh() : nullptr;
 }
 
+// The active mesh for the calls that load or unload tiles (Phase 40.1).
+nav::NavMesh* MutableActiveMesh() {
+    nav::NavWorld* nw = nav::NavWorld::Active();
+    return nw != nullptr && nw->Ready() ? &nw->Mesh() : nullptr;
+}
+
 bool CanSee(World& world, Entity viewer, Entity target, f64 max_distance) {
     const Transform* a = world.GetComponent<Transform>(viewer);
     const Transform* b = world.GetComponent<Transform>(target);
@@ -256,6 +262,25 @@ std::shared_ptr<AiDebugStore> InstallAiApi(LuauHost& host) {
         for (usize i = next + 1; i < points.size(); ++i) remaining += (points[i] - points[i - 1]).Length();
         c.Return(remaining <= 1e-3f && entry.complete);
         c.Return(static_cast<f64>(remaining));
+    });
+    // Phase 40.1: nav tile streaming, for large worlds. StreamTiles loads the
+    // tiles around a point and returns how many it added; the other two report
+    // what is loaded.
+    def("Nav", "StreamTiles", [](NativeCall& c) {
+        if (!NeedVector(c, 0, "Nav.StreamTiles", "the center") || !NeedNumber(c, 1, "Nav.StreamTiles", "the radius"))
+            return;
+        nav::NavMesh* mesh = MutableActiveMesh();
+        c.Return(mesh != nullptr ? static_cast<f64>(mesh->StreamTiles(c.Vector(0), static_cast<f32>(c.Number(1)))) : 0.0);
+    });
+    def("Nav", "IsTileLoaded", [](NativeCall& c) {
+        if (!NeedNumber(c, 0, "Nav.IsTileLoaded", "the tile x") || !NeedNumber(c, 1, "Nav.IsTileLoaded", "the tile z"))
+            return;
+        const nav::NavMesh* mesh = ActiveMesh();
+        c.Return(mesh != nullptr && mesh->IsTileLoaded(static_cast<i32>(c.Number(0)), static_cast<i32>(c.Number(1))));
+    });
+    def("Nav", "LoadedTileCount", [](NativeCall& c) {
+        const nav::NavMesh* mesh = ActiveMesh();
+        c.Return(mesh != nullptr ? static_cast<f64>(mesh->LoadedTileCount()) : 0.0);
     });
     return store;
 }

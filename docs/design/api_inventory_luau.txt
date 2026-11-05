@@ -155,7 +155,10 @@ Localization.SetLanguage function
 Nav table
 Nav.FindPath function
 Nav.IsReady function
+Nav.IsTileLoaded function
+Nav.LoadedTileCount function
 Nav.MoveTowards function
+Nav.StreamTiles function
 Physics table
 Physics.AddForce function
 Physics.AddImpulse function

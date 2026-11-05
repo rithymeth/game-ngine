@@ -31,6 +31,10 @@
 //   Nav.MoveTowards (entity, goal, speed, dt)  -> boolean arrived, number remaining: moves the
 //       entity's Transform along the path by speed * dt (dropping it onto the mesh's height
 //       first, for free); false, nil (and no move) without a mesh, a path or a Transform
+//   Nav.StreamTiles (center, radius)           -> number of tiles it added: loads the nav
+//       tiles around a point for large worlds (0 without a mesh)
+//   Nav.IsTileLoaded (x, z)                    -> boolean: that tile is loaded
+//   Nav.LoadedTileCount ()                     -> number of loaded tiles
 //   AI.SetDebugState (entity, state)           -> sets the text the AI debugger shows for the
 //       entity (its decision: "idle", "tell", ...); nil or "" clears it
 //   AI.SetBrainDebug (entity, kind, detail)    -> sets what the entity's behaviour brain is

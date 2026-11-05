@@ -274,3 +274,30 @@ AETHER_TEST(AINavApi_AwarenessReachesScripts) {
         CHECK(std::get<bool>(none.values[1]) == false);
     }
 }
+
+// Phase 40.1: scripts can query and stream nav tiles.
+AETHER_TEST(AINavApi_NavTileQueries) {
+    World world;
+    GuidIndex guids;
+    LuauHost host;
+    InstallAiApi(host);
+    (void)GetComponentId<Transform>();
+    ModelRenderer floor;
+    SetModelPath(floor, "floor");
+    world.CreateEntity(Transform{}, floor);
+    NavWorld nav(world, FloorWithPillar);
+    CHECK(nav.Bake({}));
+    nav.MakeActive();
+    host.BindWorld(&world, &guids);
+
+    const ScriptResult r = host.Run("return Nav.LoadedTileCount(), Nav.IsTileLoaded(999, 999)");
+    Report(r);
+    CHECK(r.ok && r.values.size() == 2);
+    if (r.ok && r.values.size() == 2) {
+        CHECK(std::get<double>(r.values[0]) == static_cast<double>(nav.Mesh().LoadedTileCount()));
+        CHECK(std::get<bool>(r.values[1]) == false); // no tile there
+    }
+    const ScriptResult s = host.Run("return Nav.StreamTiles(vector.create(0, 0, 0), 1000)");
+    Report(s);
+    CHECK(s.ok && s.values.size() == 1 && std::get<double>(s.values[0]) >= 0.0);
+}
