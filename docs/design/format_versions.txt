@@ -33,6 +33,10 @@ CookManifest         player/src/game.cpp                     1        refused   
 DlcManifest          player/src/game.cpp                     1        refused             refused
 PackageManifest      engine/src/cook/package.cpp             1        refused             refused
 #
+# A field added to a versioned JSON format without breaking older files does not bump the version. The scene (JSON)
+# format gained an optional root "origin" in Phase 42.1: its Transforms are then written as local + origin and the
+# loader shifts them back. A file without the field loads with origin zero, so version 1 still covers both.
+#
 # When a format bumps, keep a fixture of each supported older version and add a migration test next to it.
 #
 # Files from earlier tools: tests/fixtures/legacy/<baseline>/ holds real scenes, Blueprints, sequences, input assets, layouts,
