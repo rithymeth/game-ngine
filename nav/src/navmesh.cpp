@@ -541,7 +541,7 @@ void NavMesh::Unload() {
     data_ = {};
 }
 
-bool NavMesh::Load(const NavMeshData& data, std::string* error) {
+bool NavMesh::Load(const NavMeshData& data, std::string* error, bool load_tiles) {
     if (!Settle(data.settings, error) || !std::isfinite(data.tile_world_size) || data.tile_world_size <= 0.0f ||
         !std::isfinite(data.origin.x) || !std::isfinite(data.origin.y) || !std::isfinite(data.origin.z)) {
         if (error != nullptr && error->empty()) *error = "invalid navmesh tile grid";
@@ -567,10 +567,12 @@ bool NavMesh::Load(const NavMeshData& data, std::string* error) {
         return Fail(error, "Detour couldn't set up the mesh");
     }
     data_ = data;
-    for (const auto& t : data.tiles) {
-        if (!ReplaceTile(t, error)) {
-            Free();
-            return false;
+    if (load_tiles) {
+        for (const auto& t : data_.tiles) {
+            if (!ReplaceTile(t, error)) {
+                Free();
+                return false;
+            }
         }
     }
     query_ = dtAllocNavMeshQuery();
@@ -599,6 +601,54 @@ bool NavMesh::ReplaceTile(const NavMeshData::Tile& t, std::string* error) {
         return Fail(error, "Detour refused a tile");
     }
     return true;
+}
+
+bool NavMesh::IsTileLoaded(i32 x, i32 z) const {
+    return mesh_ != nullptr && mesh_->getTileRefAt(x, z, 0) != 0;
+}
+
+bool NavMesh::LoadTile(i32 x, i32 z, std::string* error) {
+    if (mesh_ == nullptr) return Fail(error, "no mesh loaded");
+    if (IsTileLoaded(x, z)) return true;
+    const NavMeshData::Tile* tile = nullptr;
+    for (const auto& t : data_.tiles) {
+        if (t.x == x && t.z == z) {
+            tile = &t;
+            break;
+        }
+    }
+    if (tile == nullptr || tile->data.empty()) return Fail(error, "the tile grid has no baked tile there");
+    auto* copy = static_cast<unsigned char*>(dtAlloc(tile->data.size(), DT_ALLOC_PERM));
+    std::memcpy(copy, tile->data.data(), tile->data.size());
+    if (dtStatusFailed(mesh_->addTile(copy, static_cast<int>(tile->data.size()), DT_TILE_FREE_DATA, 0, nullptr))) {
+        dtFree(copy);
+        return Fail(error, "Detour refused a tile");
+    }
+    return true;
+}
+
+bool NavMesh::UnloadTile(i32 x, i32 z) {
+    if (mesh_ == nullptr) return false;
+    const dtTileRef ref = mesh_->getTileRefAt(x, z, 0);
+    if (ref == 0) return false;
+    return dtStatusSucceed(mesh_->removeTile(ref, nullptr, nullptr));
+}
+
+usize NavMesh::StreamTiles(const Vec3& center, f32 radius) {
+    if (mesh_ == nullptr || !std::isfinite(radius) || radius < 0.0f) return 0;
+    const f32 r2 = radius * radius;
+    usize loaded = 0;
+    for (const auto& t : data_.tiles) {
+        const f32 cx = data_.origin.x + (static_cast<f32>(t.x) + 0.5f) * data_.tile_world_size;
+        const f32 cz = data_.origin.z + (static_cast<f32>(t.z) + 0.5f) * data_.tile_world_size;
+        const f32 dx = cx - center.x, dz = cz - center.z;
+        if (dx * dx + dz * dz <= r2) {
+            if (LoadTile(t.x, t.z)) ++loaded;
+        } else {
+            UnloadTile(t.x, t.z);
+        }
+    }
+    return loaded;
 }
 
 bool NavMesh::NearestPoint(const Vec3& p, Vec3& out, const Vec3& extents, u8* area) const {
