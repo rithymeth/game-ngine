@@ -71,4 +71,13 @@ struct LodLevel {
 bool GenerateLods(std::span<const Vec3> positions, std::span<const u32> indices, const LodParams& params,
                   std::vector<LodLevel>& out, std::string* error = nullptr);
 
+// HLOD (Phase 42.4): concatenates several indexed meshes into one proxy's geometry,
+// offsetting each source's indices into the merged vertex array. Feed the result to
+// GenerateLods for the proxy's distance LOD chain. False for mismatched
+// position/index lists, a partial triangle or an index outside its own source.
+// Deterministic (sources in order).
+bool MergeMeshes(const std::vector<std::span<const Vec3>>& source_positions,
+                 const std::vector<std::span<const u32>>& source_indices, std::vector<Vec3>& out_positions,
+                 std::vector<u32>& out_indices, std::string* error = nullptr);
+
 } // namespace aether::cook

@@ -104,4 +104,37 @@ bool GenerateLods(std::span<const Vec3> positions, std::span<const u32> indices,
     return true;
 }
 
+bool MergeMeshes(const std::vector<std::span<const Vec3>>& source_positions,
+                 const std::vector<std::span<const u32>>& source_indices, std::vector<Vec3>& out_positions,
+                 std::vector<u32>& out_indices, std::string* error) {
+    if (source_positions.size() != source_indices.size()) {
+        if (error != nullptr) *error = "MergeMeshes needs one index list per position list";
+        return false;
+    }
+    out_positions.clear();
+    out_indices.clear();
+    for (usize s = 0; s < source_positions.size(); ++s) {
+        const std::span<const Vec3> positions = source_positions[s];
+        const std::span<const u32> indices = source_indices[s];
+        if (indices.size() % 3 != 0) {
+            if (error != nullptr) *error = "MergeMeshes needs complete triangles";
+            return false;
+        }
+        if (out_positions.size() > 0xFFFFFFFFull) {
+            if (error != nullptr) *error = "MergeMeshes overflowed a 32-bit vertex index";
+            return false;
+        }
+        const u32 base = static_cast<u32>(out_positions.size());
+        for (u32 index : indices) {
+            if (index >= positions.size()) {
+                if (error != nullptr) *error = "MergeMeshes found an index outside its source positions";
+                return false;
+            }
+        }
+        out_positions.insert(out_positions.end(), positions.begin(), positions.end());
+        for (u32 index : indices) out_indices.push_back(base + index);
+    }
+    return true;
+}
+
 } // namespace aether::cook

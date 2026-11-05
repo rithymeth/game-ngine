@@ -148,3 +148,30 @@ AETHER_TEST(Lod_RejectsBadInputAndHandlesEmptyAndTinyMeshes) {
     AETHER_CHECK(GenerateLods(positions, std::vector<u32>{0, 1, 2}, LodParams{}, lods) && lods.size() == 4);
     for (const LodLevel& level : lods) AETHER_CHECK(level.triangles() == 1);
 }
+
+// Phase 42.4: an HLOD proxy's source meshes merge into one indexed mesh, whose
+// LOD chain is then built normally.
+AETHER_TEST(MergeMeshes_ConcatenatesAndOffsetsIndices) {
+    const Vec3 a[3] = {{0, 0, 0}, {1, 0, 0}, {0, 1, 0}};
+    const Vec3 b[3] = {{2, 0, 0}, {3, 0, 0}, {2, 1, 0}};
+    const u32 ia[3] = {0, 1, 2};
+    const u32 ib[3] = {0, 1, 2};
+    const std::vector<std::span<const Vec3>> positions = {std::span<const Vec3>(a), std::span<const Vec3>(b)};
+    const std::vector<std::span<const u32>> indices = {std::span<const u32>(ia), std::span<const u32>(ib)};
+
+    std::vector<Vec3> out_positions;
+    std::vector<u32> out_indices;
+    AETHER_CHECK(MergeMeshes(positions, indices, out_positions, out_indices));
+    AETHER_CHECK(out_positions.size() == 6);
+    AETHER_CHECK((out_indices == std::vector<u32>{0, 1, 2, 3, 4, 5}));
+
+    std::vector<LodLevel> lods;
+    AETHER_CHECK(GenerateLods(out_positions, out_indices, LodParams{}, lods) && !lods.empty());
+
+    // Bad input is refused: a missing index list, a bad index, a partial triangle.
+    AETHER_CHECK(!MergeMeshes({std::span<const Vec3>(a)}, {}, out_positions, out_indices));
+    const u32 bad[3] = {0, 1, 7};
+    AETHER_CHECK(!MergeMeshes({std::span<const Vec3>(a)}, {std::span<const u32>(bad)}, out_positions, out_indices));
+    const u32 partial[2] = {0, 1};
+    AETHER_CHECK(!MergeMeshes({std::span<const Vec3>(a)}, {std::span<const u32>(partial)}, out_positions, out_indices));
+}
