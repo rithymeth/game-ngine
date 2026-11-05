@@ -142,4 +142,21 @@ went from ~50 ms to ~97 ms and a `legs > 2` coverage test started failing. Fewer
 correspondingly longer Detour search, so the saved searches buy back less than the merged ones spend. Reverted; the
 collinear collapse above is the version to keep.
 
+### Tried and rejected: capping the leg count (which rules out the per-cluster redesign)
+
+If fewer legs are better in principle, the per-cluster portal graph is the obvious redesign. That was tested
+cheaply first by subsampling the waypoint list so no query makes more than 20 leg searches, which is the leg count a
+per-cluster graph would produce.
+
+It was **5x slower**: the serpentine went from ~66 ms to **288 ms** with 20 legs instead of 134. Each surviving leg
+now spans several portals' worth of distance, so its Detour search costs proportionally more, and the total search
+area is what the query pays for either way. The hierarchy only wins if a leg is cheap *and* numerous, or short *and*
+few -- those are the same thing -- and it cannot be both.
+
+**So the per-cluster redesign would not fix this.** The problem is not how the portals are grouped; it is that a
+chain of local searches over the same ground costs more than the one search it replaces, because Detour's own A* is
+already efficient on these meshes. Nothing short of eliminating the leg searches entirely (portal A* plus a funnel
+over the portal corridor, with no Detour legs at all) has a chance, and that is a different algorithm, not a
+tuning change.
+
 
