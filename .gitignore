@@ -59,6 +59,14 @@ CMakeUserPresets.json
 **/QA/
 **/Intermediate/
 
+# Large design sources and generated 3D exports. None of these are in HEAD; they
+# only bloat history (~7 GB of the pack), so keep new copies out. Keep the files
+# on disk or in an asset store, not in git.
+*.blend
+*.blend1
+games/*/Design/Meshy4K/
+games/*/Content/Generated/
+
 # Misc
 imgui.ini
 *.aesc
