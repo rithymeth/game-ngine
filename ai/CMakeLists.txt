@@ -10,6 +10,7 @@ add_library(aether_ai STATIC
     src/utility.cpp
     src/state_tree.cpp
     src/goap.cpp
+    src/brain.cpp
     src/debug_draw.cpp
 )
 target_include_directories(aether_ai PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)

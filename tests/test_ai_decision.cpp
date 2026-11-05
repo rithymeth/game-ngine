@@ -1,5 +1,6 @@
 #include "test_framework.h"
 
+#include "aether/ai/brain.h"
 #include "aether/ai/goap.h"
 #include "aether/ai/state_tree.h"
 #include "aether/ai/utility.h"
@@ -284,4 +285,46 @@ AETHER_TEST(Goap_RespectsTheNodeBudgetNegativeFactsAndBadCosts) {
     GoapDomain big;
     for (int i = 0; i < 64; ++i) AETHER_CHECK(big.Fact("x" + std::to_string(i)) != 0);
     AETHER_CHECK(big.Fact("one_too_many") == 0 && big.Count() == 64);
+}
+
+// Phase 40.4: one BrainRuntime ticks a utility brain or a state tree the same
+// way a behavior tree is ticked, so the runtime loop and debugger are uniform.
+AETHER_TEST(BrainRuntime_TicksUtilityAndStateTree) {
+    Blackboard bb;
+    AETHER_CHECK(bb.Set("health", 0.2f));
+
+    // A utility brain picks the best action each tick and remembers it.
+    UtilityBrain brain;
+    UtilityAction flee;
+    flee.name = "flee";
+    flee.considerations.push_back(Linear("health"));
+    brain.Add(flee);
+    UtilityAction fight;
+    fight.name = "fight";
+    fight.considerations.push_back(Linear("health"));
+    brain.Add(fight);
+    BrainRuntime runtime(std::move(brain));
+    AETHER_CHECK(runtime.GetKind() == BrainRuntime::Kind::Utility);
+    BtContext ctx;
+    ctx.blackboard = &bb;
+    AETHER_CHECK(runtime.Tick(ctx, 0.1f) == BtStatus::Running);
+    AETHER_CHECK(runtime.ChosenAction() == "flee"); // equal scores: the earlier action wins
+    AETHER_CHECK(runtime.Utility() != nullptr && runtime.Tree() == nullptr && runtime.States() == nullptr);
+    runtime.Abort(ctx);
+    AETHER_CHECK(runtime.ChosenAction() == "-");
+
+    // A state tree starts on its first tick and transitions on the next.
+    StateTree tree;
+    tree.Add(TreeState{"Idle", "", {{{}, "Combat"}}});
+    tree.Add(TreeState{"Combat", "", {}});
+    BrainRuntime states(std::move(tree));
+    BtContext sctx;
+    sctx.blackboard = &bb;
+    AETHER_CHECK(states.GetKind() == BrainRuntime::Kind::StateTree);
+    AETHER_CHECK(states.Tick(sctx, 0.1f) == BtStatus::Running);
+    AETHER_CHECK(states.States()->CurrentLeaf() == "Idle");
+    AETHER_CHECK(states.Tick(sctx, 0.1f) == BtStatus::Running);
+    AETHER_CHECK(states.States()->CurrentLeaf() == "Combat");
+    states.Abort(sctx);
+    AETHER_CHECK(!states.States()->Running());
 }
