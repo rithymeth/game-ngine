@@ -1,8 +1,27 @@
 # History rewrite: dropping the large binaries (runbook)
 
-Status: **not run**. This is the deliberate, one-off procedure for shrinking
-`.git`, written down because it is irreversible and should be executed with a
-backup in hand — not as a side effect of another change.
+Status: **run on 2026-11-06.** `git filter-repo --strip-blobs-bigger-than 50M`
+dropped every blob over 50 MB from all refs, one stale
+`refs/codex/turn-diffs/checkpoints/...` ref holding the old history was deleted,
+and `git gc --prune=now` packed the result:
+
+| | Before | After |
+|---|---|---|
+| Reachable blob content | 7 241 MB | **288 MB** |
+| Pack | 9.22 GiB | **2.97 GiB** |
+| `.git` on disk | 9.8 GB | **3 GB** |
+
+Every commit SHA changed (the pre-rewrite `master` was `2d65c300`, now `e1d2f5b6`);
+`master`, 582 branches and 4 tags were force-pushed, and the full CTest stayed at
+33/34 (`ship_tool_tests` is the pre-existing failure). The pre-rewrite repo is
+preserved as a mirror clone at `E:\game-ngine-backup.git` (9.23 GB) if it ever
+needs to be rolled back.
+
+GitHub may keep the unreachable objects until its own garbage collection, so the
+remote's reported size can stay large for a while even though every ref points at
+the new history.
+
+The procedure below is kept for future use.
 
 ## Why
 
