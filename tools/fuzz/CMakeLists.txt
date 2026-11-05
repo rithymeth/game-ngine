@@ -59,6 +59,10 @@ aether_fuzz_target(texture fuzz_texture.cpp Aether::Engine)
 aether_fuzz_target(atex fuzz_atex.cpp Aether::Engine)
 # The cooked mesh container (AMSH) the importer emits and the cooker reads back.
 aether_fuzz_target(mesh fuzz_mesh.cpp Aether::Engine)
+# The containers the cooker actually ships in .apak. Valid seeds for these two are
+# produced by aether_fuzz_seedgen (below) because only the cooker can build them.
+aether_fuzz_target(amesh fuzz_amesh.cpp Aether::Engine)
+aether_fuzz_target(atex_cook fuzz_atex_cook.cpp Aether::Engine)
 aether_fuzz_target(gltf fuzz_gltf.cpp Aether::Engine)
 aether_fuzz_target(model_import fuzz_model_import.cpp Aether::Engine)
 
@@ -96,3 +100,9 @@ if(AETHER_BUILD_FUZZERS AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     string(JOIN "\n" fuzz_target_names_text ${fuzz_target_names})
     file(WRITE "${CMAKE_BINARY_DIR}/fuzz-targets.txt" "${fuzz_target_names_text}\n")
 endif()
+
+# Writes the valid fixtures for corpus/amesh and corpus/atex_cook. Not a test: run
+# it after a format change and commit the seeds it prints.
+add_executable(aether_fuzz_seedgen gen_seeds.cpp)
+target_include_directories(aether_fuzz_seedgen PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(aether_fuzz_seedgen PRIVATE Aether::Engine)
