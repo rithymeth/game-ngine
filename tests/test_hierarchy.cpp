@@ -151,3 +151,23 @@ AETHER_TEST(WorldOrigin_LoadOptionsShiftTheScene) {
     AETHER_CHECK(found);
     std::filesystem::remove(path);
 }
+
+// Phase 42.1: the binary loader applies the same origin shift as the JSON one.
+AETHER_TEST(WorldOrigin_BinaryLoadShiftsTheScene) {
+    World world;
+    world.CreateEntity(Transform{Vec3(100000, 0, 200000), Quaternion::Identity()});
+    const std::string path = (std::filesystem::temp_directory_path() / "aether_test_origin.aesc").string();
+    AETHER_CHECK(SaveScene(world, path));
+    World loaded;
+    SceneLoadOptions options;
+    options.origin = Vec3d(100000.0, 0.0, 200000.0);
+    AETHER_CHECK(LoadScene(loaded, path, options));
+    bool found = false;
+    loaded.ForEach<Transform>([&](Transform& t) {
+        AETHER_CHECK_NEAR(t.position.x, 0.0f, 1e-3);
+        AETHER_CHECK_NEAR(t.position.z, 0.0f, 1e-3);
+        found = true;
+    });
+    AETHER_CHECK(found);
+    std::filesystem::remove(path);
+}
