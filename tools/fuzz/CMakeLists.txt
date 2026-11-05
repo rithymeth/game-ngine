@@ -55,6 +55,8 @@ aether_fuzz_target(gameplay fuzz_gameplay.cpp ${gameplay_libs})
 aether_fuzz_target(net fuzz_net.cpp Aether::Net)
 aether_fuzz_target(assetmeta fuzz_assetmeta.cpp Aether::Engine)
 aether_fuzz_target(texture fuzz_texture.cpp Aether::Engine)
+# The cooked container (ATEX) the runtime reads from .apak, as opposed to importing a source image.
+aether_fuzz_target(atex fuzz_atex.cpp Aether::Engine)
 aether_fuzz_target(gltf fuzz_gltf.cpp Aether::Engine)
 aether_fuzz_target(model_import fuzz_model_import.cpp Aether::Engine)
 
