@@ -217,13 +217,13 @@ bool LoadScene(World& world, const std::string& path) {
     return LoadScene(world, path, SceneLoadOptions{});
 }
 
-bool LoadScene(World& world, const std::string& path, const SceneLoadOptions& options) {
+bool LoadScene(World& world, const std::string& path, const SceneLoadOptions& options, Vec3d* used_origin) {
     std::vector<u8> buffer;
     if (!fs::ReadFileBytes(path, buffer, kMaxBinarySceneBytes)) {
         AETHER_LOG_ERROR("Scene", "Failed to read scene file or binary scene is too large: %s", path.c_str());
         return false;
     }
-    return LoadSceneFromMemory(world, buffer, path, options);
+    return LoadSceneFromMemory(world, buffer, path, options, used_origin);
 }
 
 bool LoadSceneFromMemory(World& world, std::span<const u8> buffer, const std::string& path) {
@@ -231,7 +231,9 @@ bool LoadSceneFromMemory(World& world, std::span<const u8> buffer, const std::st
 }
 
 bool LoadSceneFromMemory(World& world, std::span<const u8> buffer, const std::string& path,
-                         const SceneLoadOptions& options) {
+                         const SceneLoadOptions& options, Vec3d* used_origin) {
+    // The binary format records no origin of its own, so the caller's is the one used.
+    if (used_origin != nullptr) *used_origin = options.origin;
     RegisterSceneComponents();
     Reader reader(buffer);
     char magic[4];

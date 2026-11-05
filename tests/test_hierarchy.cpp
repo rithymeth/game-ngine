@@ -161,7 +161,10 @@ AETHER_TEST(WorldOrigin_BinaryLoadShiftsTheScene) {
     World loaded;
     SceneLoadOptions options;
     options.origin = Vec3d(100000.0, 0.0, 200000.0);
-    AETHER_CHECK(LoadScene(loaded, path, options));
+    Vec3d used;
+    AETHER_CHECK(LoadScene(loaded, path, options, &used));
+    AETHER_CHECK_NEAR(used.x, 100000.0, 1e-6);
+    AETHER_CHECK_NEAR(used.z, 200000.0, 1e-6);
     bool found = false;
     loaded.ForEach<Transform>([&](Transform& t) {
         AETHER_CHECK_NEAR(t.position.x, 0.0f, 1e-3);

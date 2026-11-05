@@ -51,14 +51,17 @@ struct SceneSaveOptions {
 // binary record stream is validated before entities are appended, so truncated
 // files and strict unknown-component rejection do not partially load a scene.
 [[nodiscard]] bool LoadScene(World& world, const std::string& path);
-[[nodiscard]] bool LoadScene(World& world, const std::string& path, const SceneLoadOptions& options);
+// Phase 42.1: `used_origin` (optional) receives the origin the loader shifted by,
+// which is the caller's for the binary format (it records no origin of its own).
+[[nodiscard]] bool LoadScene(World& world, const std::string& path, const SceneLoadOptions& options,
+                             Vec3d* used_origin = nullptr);
 
 // The same binary format, in memory: what Play-in-Editor uses to snapshot the
 // edited world and restore it on Stop. `source_name` only labels log output.
 std::vector<u8> SaveSceneToMemory(const World& world);
 [[nodiscard]] bool LoadSceneFromMemory(World& world, std::span<const u8> bytes, const std::string& source_name = "<memory>");
 [[nodiscard]] bool LoadSceneFromMemory(World& world, std::span<const u8> bytes, const std::string& source_name,
-                         const SceneLoadOptions& options);
+                         const SceneLoadOptions& options, Vec3d* used_origin = nullptr);
 
 // JSON scene files: the human-readable, diff-friendly form (see
 // docs/ROADMAP_DETAILS.md §A.3). Only reflected components can be written as
