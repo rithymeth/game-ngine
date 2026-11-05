@@ -51,6 +51,14 @@ public:
     bool LoadAutosave(const std::filesystem::path& autosave, const std::filesystem::path& source,
                       std::string* error = nullptr);
     std::vector<Entity> Entities() const;
+    // Phase 43.3: multi-selection, so a gizmo can act on several entities at once. Plain data,
+    // no undo entry of its own -- selecting is not an edit. An edit that removes an entity
+    // leaves a stale handle in the list; a consumer checks before acting on one.
+    const std::vector<Entity>& Selection() const { return selection_; }
+    void SetSelection(std::vector<Entity> entities);
+    void ToggleSelection(Entity entity); // adds it, or removes it if already selected
+    bool IsSelected(Entity entity) const;
+    void ClearSelection();
     std::string Name(Entity entity) const;
     bool Rename(Entity entity, const std::string& name, bool committed = true);
     Entity CreateEntity(const std::string& name, SceneEntityKind kind = SceneEntityKind::Empty,
@@ -81,6 +89,7 @@ private:
     World world_;
     GuidIndex guids_;
     Vec3d origin_;
+    std::vector<Entity> selection_; // Phase 43.3: multi-selection, not an undoable edit
     CommandStack commands_;
     CommandContext context_;
     PlaySession play_session_;

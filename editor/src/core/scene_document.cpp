@@ -67,6 +67,7 @@ void SceneDocument::Reset() {
     if (!play_session_.IsEditing()) play_session_.Stop(context_, commands_);
     world_ = World{};
     guids_.Clear();
+    selection_.clear(); // Phase 43.3: the selection belongs to the scene that was open
     commands_.Clear();
     file_.clear();
     recovered_unsaved_ = false;
@@ -207,6 +208,31 @@ bool SceneDocument::LoadAutosave(const std::filesystem::path& autosave, const st
     return true;
 }
 
+void SceneDocument::SetSelection(std::vector<Entity> entities) {
+    selection_ = std::move(entities);
+    // Deduplicate but keep the caller's order: the gizmo's pivot follows the first one.
+    std::vector<Entity> unique;
+    unique.reserve(selection_.size());
+    for (const Entity entity : selection_) {
+        if (std::find(unique.begin(), unique.end(), entity) == unique.end()) unique.push_back(entity);
+    }
+    selection_ = std::move(unique);
+}
+
+void SceneDocument::ToggleSelection(Entity entity) {
+    const auto at = std::find(selection_.begin(), selection_.end(), entity);
+    if (at == selection_.end()) {
+        selection_.push_back(entity);
+    } else {
+        selection_.erase(at);
+    }
+}
+
+bool SceneDocument::IsSelected(Entity entity) const {
+    return std::find(selection_.begin(), selection_.end(), entity) != selection_.end();
+}
+
+void SceneDocument::ClearSelection() { selection_.clear(); }
 std::vector<Entity> SceneDocument::Entities() const {
     std::vector<Entity> entities;
     world_.ForEachArchetype([&entities](const Archetype& archetype) {

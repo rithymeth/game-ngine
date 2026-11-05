@@ -228,3 +228,30 @@ AETHER_TEST(Editor_SnappingRoundsToTheStep) {
     AETHER_CHECK_NEAR(scaled.z, 2.0f, 1e-5f);
     AETHER_CHECK_NEAR(SnapScaleAxis(0.0f, 0.5f), 0.5f, 1e-5f); // zero keeps the positive step
 }
+// Phase 43.3: multi-selection, so a gizmo can act on several entities at once.
+AETHER_TEST(SceneDocument_MultiSelection) {
+    SceneDocument document;
+    document.NewScene();
+    const std::vector<Entity> entities = document.Entities();
+    AETHER_CHECK(entities.size() >= 3);
+    AETHER_CHECK(document.Selection().empty());
+
+    // Duplicates collapse, and the caller's order is kept: a gizmo's pivot follows the first.
+    document.SetSelection({entities[0], entities[1], entities[0]});
+    AETHER_CHECK(document.Selection().size() == 2);
+    AETHER_CHECK(document.Selection()[0] == entities[0] && document.Selection()[1] == entities[1]);
+    AETHER_CHECK(document.IsSelected(entities[1]) && !document.IsSelected(entities[2]));
+
+    document.ToggleSelection(entities[2]);
+    AETHER_CHECK(document.Selection().size() == 3);
+    document.ToggleSelection(entities[0]);
+    AETHER_CHECK(!document.IsSelected(entities[0]) && document.Selection().size() == 2);
+
+    document.ClearSelection();
+    AETHER_CHECK(document.Selection().empty());
+
+    // Opening another scene drops the selection with everything else.
+    document.SetSelection({document.Entities()[0]});
+    document.NewScene();
+    AETHER_CHECK(document.Selection().empty());
+}
