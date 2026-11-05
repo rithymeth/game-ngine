@@ -196,6 +196,13 @@ public:
     bool NearestPoint(const Vec3& p, Vec3& out, const Vec3& extents = Vec3(2, 4, 2), u8* area = nullptr) const;
     // Walks a straight line over the mesh: true when a wall (or the mesh's edge) stops it
     // before `end`, with where and the wall's normal.
+    //
+    // Conservative on failure: when the query cannot answer -- most often a ray crossing
+    // more polygons than the query budget allows -- this reports blocked (hit at `end`)
+    // rather than unobstructed. A long ray over a large mesh can therefore come back
+    // blocked even with nothing in the way; treat `false` as "definitely clear" and `true`
+    // as "blocked, or not proven clear". The opposite default would let callers straighten
+    // a path through a wall on a failed query.
     bool Raycast(const Vec3& start, const Vec3& end, Vec3& hit, Vec3* normal = nullptr, const NavQueryFilter& filter = {}) const;
     // A random point on the mesh (by area), or within `radius` of `center` over connected ground.
     bool RandomPoint(u64 seed, Vec3& out, const NavQueryFilter& filter = {}) const;
