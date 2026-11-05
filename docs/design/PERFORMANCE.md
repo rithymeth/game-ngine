@@ -273,8 +273,21 @@ not because it is better.
 
 That is the trap to keep in mind with every number in this section: **`nav/path_*` benchmarks only assert that a path
 was returned, not that it is walkable.** The `Length` assertions in `test_nav_hierarchical.cpp` are what caught both
-string-pull attempts, and any future smoothing work needs a `NavMesh::Raycast` check on every output segment before
-its timings mean anything.
+string-pull attempts.
+
+### And the obvious fix for that does not work either
+
+The natural repair -- assert walkability by raycasting every segment -- was tried in the benchmarks and **aborts on
+plain Detour's own serpentine path** (`nav path segment 3 of 12 is blocked`), for both the plain and the hierarchical
+benchmark. A check that rejects the reference implementation's output is not a check. `NavMesh::Raycast` reports
+"blocked" for segments that clip a wall corner, which Detour considers valid, so it cannot be used as a validity
+oracle without a tolerance that nobody has established.
+
+That also retroactively undermines the earlier claim that the string-pull was "walkable by construction": its
+validity rested on exactly this raycast, so it was never actually verified -- the `Length` assertion is the only
+evidence it was wrong, and the only trustworthy check this investigation found. Until a better validity oracle
+exists, path correctness here is measured by path *shape* (the unit tests), not by segment raycasts, and a smoothing
+change must be judged by those tests rather than by a benchmark that only times it.
 
 ### Kept: abandon the graph search when it degenerates
 
