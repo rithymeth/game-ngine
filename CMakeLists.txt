@@ -17,6 +17,7 @@ endif()
 
 option(AETHER_BUILD_TESTS "Build Aether unit tests" ON)
 option(AETHER_BUILD_MCP "Build the MCP (Model Context Protocol) editor server" ON)
+option(AETHER_BUILD_EVERVALE_REBOOT "Build the Evervale reboot game" OFF)
 
 # Phase 37 step 6: -Werror for the engine and the gameplay kits, off by default (the four gameplay libraries build clean with GCC under it; CI will turn it on once Clang and MSVC are checked).
 option(AETHER_WARNINGS_AS_ERRORS "Treat warnings as errors in the engine and the gameplay kits" OFF)
@@ -553,3 +554,9 @@ foreach(host aether_player aether_editor_shell aether_editor aether_editor_qt ae
         aether_link_modules(${host})
     endif()
 endforeach()
+
+# Kept opt-in so engine-only builds do not pick up game content.  Evervale is
+# a standalone game module and owns its own targets, tests and content copy.
+if(AETHER_BUILD_EVERVALE_REBOOT AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/games/EVERVALE-REBOOT/CMakeLists.txt")
+    add_subdirectory(games/EVERVALE-REBOOT)
+endif()

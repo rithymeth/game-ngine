@@ -685,9 +685,17 @@ SampledTextureHandle D3D12Device::CreateTexture(u32 width, u32 height, const u8*
             bindless_texture_heap_->Free(index);
             throw std::length_error("Cannot create texture: compute descriptor allocation failed");
         }
-        device_.Handle()->CopyDescriptorsSimple(1, compute_storage_heap_->CPUHandle(compute_index),
-                                                 bindless_texture_heap_->CPUHandle(index),
-                                                 D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+        // Write the same SRV straight into the compute heap instead of copying
+        // the bindless descriptor with CopyDescriptorsSimple, which crashes the
+        // NVIDIA driver for shader-visible source heaps (reproduced in
+        // RHI_D3D12DestroyTextureFreesTheSlotForReuse).
+        D3D12_SHADER_RESOURCE_VIEW_DESC compute_srv{};
+        compute_srv.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        compute_srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+        compute_srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        compute_srv.Texture2D.MipLevels = 1;
+        device_.Handle()->CreateShaderResourceView(texture->Handle(), &compute_srv,
+                                                   compute_storage_heap_->CPUHandle(compute_index));
     });
     const usize descriptor_slot = index - kFirstUserBindlessTextureIndex;
     sampled_descriptor_indices_[descriptor_slot] = compute_index;
@@ -853,9 +861,8 @@ SampledTextureHandle D3D12Device::CreateR32FloatTexture(u32 width, u32 height, c
             throw std::length_error("Cannot create R32F texture: compute descriptor allocation failed");
         }
         device_.Handle()->CreateShaderResourceView(texture.Get(), &srv, bindless_texture_heap_->CPUHandle(bindless_index));
-        device_.Handle()->CopyDescriptorsSimple(1, compute_storage_heap_->CPUHandle(compute_index),
-                                                 bindless_texture_heap_->CPUHandle(bindless_index),
-                                                 D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+        device_.Handle()->CreateShaderResourceView(texture.Get(), &srv,
+                                                   compute_storage_heap_->CPUHandle(compute_index));
     });
     const usize descriptor_slot = bindless_index - kFirstUserBindlessTextureIndex;
     sampled_descriptor_indices_[descriptor_slot] = compute_index;
