@@ -43,6 +43,8 @@ AETHER_TEST(DedicatedServer_ConfigJson) {
     CHECK(lan.lan_advertise && lan.lan_port == 0 && lan.profile == "x.jsonl" && lan.profile_interval == 2.0);
     CHECK(ParseServerArgs({"--no-lan-advertise"}, lan, &error) && !lan.lan_advertise);
     CHECK(!ParseServerArgs({"--profile-interval", "0"}, lan, &error));
+    CHECK(!ParseServerArgs({"--profile-interval", "-1"}, lan, &error));
+    CHECK(!ParseServerArgs({"--profile-interval", "not-a-number"}, lan, &error));
     // Errors leave the config as it was.
     ServerConfig d;
     CHECK(!ParseServerConfigJson(R"({"prot":7777})", d, &error) && error.find("prot") != std::string::npos);
