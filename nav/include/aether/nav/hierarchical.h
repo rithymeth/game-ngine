@@ -2,6 +2,16 @@
 
 // @stability: experimental
 //
+// STATUS: do not use this for gameplay pathfinding yet. Nothing in the engine does
+// (only its own tests and the benchmarks), and measurement says it should stay that
+// way: it is 3.6x slower than plain NavMesh::FindPath at 1 600 tiles, 4.5x slower at
+// ~13 700, and 4.7x slower on the dead-end serpentine it was designed for -- see
+// "The hierarchical pathfinder does not scale" in docs/design/PERFORMANCE.md. The
+// design below does what it says, but the per-border legs are so cheap and so
+// numerous that the chain of them costs more than the one plain search it replaces.
+// Making it pay needs a route that is genuinely local (per-cluster portal graphs) or
+// a world far larger than the navmesh bake can build today.
+//
 // Hierarchical pathfinding (Phase 40 step 2, docs/design/UPGRADE_PLAN.md). A coarse graph is built once over a
 // NavMesh's tile borders: a node per walkable polygon edge that crosses into the next tile, edges between the nodes
 // of one tile (straight-line cost) and across each border. A query searches that graph for the tiles to cross, then
