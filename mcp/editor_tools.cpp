@@ -396,9 +396,6 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                         if (std::find(known.begin(), known.end(), component) == known.end()) {
                             throw ToolError("Unknown component \"" + component + "\"");
                         }
-                        // A guid that names nothing must be refused here: the command resolves the entity and
-                        // then walks for the instance root, and a null entity does not survive that walk.
-                        if (s.guids.Find(s.world, guid) == kNullEntity) throw ToolError("No entity with that GUID");
                         const std::string field = args.value("field", std::string{});
                         editor::CommandContext ctx = s.Context();
                         auto command = std::make_unique<editor::RevertPrefabOverrideCommand>(

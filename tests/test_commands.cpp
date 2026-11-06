@@ -521,3 +521,20 @@ AETHER_TEST(Commands_RevertPrefabOverrideRefusesAPlainEntity) {
     AETHER_CHECK(!command.LastReport().error.empty());
     command.Undo(ctx); // and undo must not crash either
 }
+// A GUID that names nothing must be refused by the command itself, not only by whichever caller happened
+// to check first: FindInstanceRoot does not survive a null entity.
+AETHER_TEST(Commands_RevertPrefabOverrideRefusesAMissingGuid) {
+    World world;
+    GuidIndex guids;
+    CommandStack stack;
+    CommandContext ctx{world, guids};
+
+    EntityGuid missing;
+    missing.hi = 0x1234567890abcdefull;
+    missing.lo = 0x0fedcba987654321ull;
+    RevertPrefabOverrideCommand command(missing, GetComponentId<Transform>(), std::string());
+    command.Do(ctx); // must not crash
+    AETHER_CHECK(!command.LastReport().ok);
+    AETHER_CHECK(command.LastReport().error.find("GUID") != std::string::npos);
+    command.Undo(ctx); // and neither must undo
+}

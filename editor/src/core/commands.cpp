@@ -352,6 +352,13 @@ void RevertPrefabOverrideCommand::Resolve(CommandContext& ctx, Entity root) {
 
 void RevertPrefabOverrideCommand::Do(CommandContext& ctx) {
     const Entity entity = editor::Resolve(ctx, entity_);
+    // A GUID that names nothing resolves to no entity, and FindInstanceRoot does not survive being handed
+    // one -- so the command says so rather than walking with it. Every caller benefits, not just the one
+    // that happened to check first.
+    if (entity.IsNull()) {
+        last_report_ = {false, "No entity with that GUID"};
+        return;
+    }
     const Entity root = FindInstanceRoot(ctx.world, ctx.guids, entity);
     const PrefabLink* link = ctx.world.GetComponent<PrefabLink>(entity);
     PrefabInstance* instance = root.IsNull() ? nullptr : ctx.world.GetComponent<PrefabInstance>(root);
@@ -369,7 +376,11 @@ void RevertPrefabOverrideCommand::Do(CommandContext& ctx) {
 }
 
 void RevertPrefabOverrideCommand::Undo(CommandContext& ctx) {
-    const Entity root = FindInstanceRoot(ctx.world, ctx.guids, editor::Resolve(ctx, entity_));
+    const Entity entity = editor::Resolve(ctx, entity_);
+    if (entity.IsNull()) {
+        return;
+    }
+    const Entity root = FindInstanceRoot(ctx.world, ctx.guids, entity);
     if (root.IsNull()) {
         return;
     }
