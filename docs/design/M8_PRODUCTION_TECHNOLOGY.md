@@ -394,6 +394,20 @@ left needs infrastructure this milestone does not have, and saying that plainly 
 None of these needs a new engine capability, which was the milestone's premise — but all four need **machinery outside the
 engine's current test process**, which is why they are recorded as a work item rather than continued as increments.
 
+### Where the fault hook would go
+
+Located so the work item is executable rather than aspirational. In `engine/src/gfx/rhi/d3d12/d3d12_backend.cpp` the buffer
+paths all pass through **`ReserveBufferRegistryEntry()`** (three call sites) and the GPU allocations through four inline
+`CreateCommittedResource` calls; wrapping those two choke points gives every buffer and texture creation a single
+injectable step. The Vulkan backend has the equivalent pair. A hook that counts creations and fails the Nth — enabled only
+when an environment variable such as `AETHER_RHI_FAIL_AT` is set, so nothing changes in a normal run — is then between one
+and two days of work rather than an unknown.
+
+The catch, and the reason this is not simply an increment: **most of the rows it unblocks are Vulkan-only** (6, 9, 10, 11,
+50, 52, 53 are Vulkan partial-construction cleanup). The hook is portable, but on a machine without Vulkan it can only
+reach the D3D12 side — rows 55 and 61 — which is two of thirty-seven. The hook and a Vulkan-capable runner are therefore a
+single work item, not two.
+
 ## Deferred from M8
 
 These may be considered in a later feature milestone, but are not M8 scope:
