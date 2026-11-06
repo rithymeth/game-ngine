@@ -17,6 +17,12 @@ AETHER_TEST(Filesystem_WriteThenReadBytesRoundTrips) {
     std::vector<u8> read_back;
     AETHER_CHECK(fs::ReadFileBytes(path, read_back));
     AETHER_CHECK(read_back.size() == sizeof(payload));
+    // Guard before indexing: AETHER_CHECK does not abort, so a failed write or read used to turn this
+    // into a fatal signal that ended the whole binary instead of a reported failure.
+    if (read_back.size() != sizeof(payload)) {
+        std::filesystem::remove(path);
+        return;
+    }
     for (usize i = 0; i < sizeof(payload); ++i) {
         AETHER_CHECK(read_back[i] == payload[i]);
     }
