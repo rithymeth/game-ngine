@@ -204,6 +204,10 @@ struct ResolveReport {
     usize created = 0;
     usize updated = 0;
     usize destroyed = 0;
+    // The entities `created` counts, in the order they were made. A caller that has to undo an
+    // instantiation needs their identities, not just how many there were: World::DestroyEntity removes
+    // one entity and does not recurse, so a subtree cannot be removed by destroying its root alone.
+    std::vector<Entity> created_entities;
     // Overrides whose entity, component or field no longer exists in the
     // prefab. They're kept (not deleted: that would lose the user's data
     // silently) and reported, for the Messages panel.

@@ -402,3 +402,31 @@ AETHER_TEST(LevelInstance_ExpandsOnceAndReportsFailures) {
     // No loader means nothing happens rather than a crash.
     AETHER_CHECK(ExpandLevelInstances(world, guids, {}).expanded == 0);
 }
+// Phase 38.8 follow-up: the report of an instantiation names the entities it made, so an undoable
+// command can remove them. World::DestroyEntity does not recurse, so the list is what makes that possible.
+AETHER_TEST(Prefab_InstantiationReportsTheEntitiesItCreated) {
+    World source;
+    GuidIndex source_guids;
+    const Entity a = source.CreateEntity(Transform{Vec3(), Quaternion::Identity()}, IdComponent{});
+    source.CreateEntity(Transform{Vec3(), Quaternion::Identity()}, IdComponent{},
+                        Parent{source.GetComponent<IdComponent>(a)->guid});
+    source_guids.Rebuild(source);
+    const PrefabData prefab = MakePrefab(source, source_guids, a);
+    AETHER_CHECK(!prefab.entities.empty());
+
+    World world;
+    GuidIndex guids;
+    ResolveReport report;
+    const Entity root = InstantiatePrefab(world, guids, assets::AssetGuid{}, prefab, nullptr, &report);
+    AETHER_CHECK(!root.IsNull());
+    AETHER_CHECK(report.ok);
+    // The report counts the entities the resolve made; the root is InstantiatePrefab's own, added on top.
+    AETHER_CHECK(report.created_entities.size() == report.created + 1);
+    AETHER_CHECK(!report.created_entities.empty());
+    bool found_root = false;
+    for (const Entity entity : report.created_entities) {
+        found_root = found_root || entity == root;
+        AETHER_CHECK(world.IsAlive(entity));
+    }
+    AETHER_CHECK(found_root); // the root is among them, so destroying the list removes everything
+}

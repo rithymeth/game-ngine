@@ -960,6 +960,7 @@ ResolveReport ResolvePrefabInstance(World& world, GuidIndex& guids, Entity root,
             entity = world.CreateEntity(IdComponent{NewEntityGuid()});
             guids.Add(world.GetComponent<IdComponent>(entity)->guid, entity);
             ++report.created;
+            report.created_entities.push_back(entity);
         }
         resolved[entity_data.id] = entity;
         world.AddComponent<PrefabLink>(entity, PrefabLink{root_guid, entity_data.id});
@@ -1020,6 +1021,9 @@ Entity InstantiatePrefab(World& world, GuidIndex& guids, const assets::AssetGuid
         world.AddComponent<Transform>(root, *transform);
     }
     ResolveReport result = ResolvePrefabInstance(world, guids, root, prefab);
+    // The root is this function's, not the resolve's, so it is added here: a caller that wants to undo
+    // an instantiation gets every entity it made, in one list.
+    result.created_entities.push_back(root);
     if (report != nullptr) {
         *report = std::move(result);
     }
