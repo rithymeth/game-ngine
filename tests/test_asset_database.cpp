@@ -217,6 +217,44 @@ AETHER_TEST(AssetDatabase_ChangedSourcesNeedImport) {
     stdfs::remove_all(root);
 }
 
+AETHER_TEST(AssetDatabase_SavingUnchangedMetadataLeavesTheFileAlone) {
+    // A cook saves the metadata of every imported asset, with or without changes.
+    // Writing identical bytes back changes the file's modified time and, on a
+    // checkout with CRLF endings, leaves a freshly cooked project showing every
+    // sidecar as modified. A save that changes nothing must not touch the file.
+    const stdfs::path root = FreshContent("aether_test_meta_idempotent");
+    Write(root / "t.png", "x");
+    AssetDatabase db(root);
+    AETHER_CHECK(db.Scan().created_meta == 1);
+    AssetMeta meta;
+    AETHER_CHECK(LoadAssetMeta(root / "t.png.ameta", meta));
+
+    // Give the sidecar the CRLF endings a Windows checkout has. Read it back
+    // in binary: the text-mode helper would strip the CRs it is testing for.
+    const auto read_exact = [](const stdfs::path& file) {
+        std::ifstream in(file, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(in), {});
+    };
+    const std::string lf = read_exact(root / "t.png.ameta");
+    std::string crlf;
+    for (const char c : lf) {
+        if (c == '\n') crlf += '\r';
+        crlf += c;
+    }
+    Write(root / "t.png.ameta", crlf);
+    AETHER_CHECK(read_exact(root / "t.png.ameta") == crlf);
+
+    // The same metadata: the file is left exactly as it was, endings included.
+    AETHER_CHECK(SaveAssetMeta(root / "t.png.ameta", meta));
+    AETHER_CHECK(read_exact(root / "t.png.ameta") == crlf);
+
+    // Different metadata: it is written.
+    meta.labels = {"Changed"};
+    AETHER_CHECK(SaveAssetMeta(root / "t.png.ameta", meta));
+    AETHER_CHECK(read_exact(root / "t.png.ameta") != crlf);
+    stdfs::remove_all(root);
+}
+
 AETHER_TEST(AssetDatabase_BadMetadataIsReportedNotFatal) {
     stdfs::path root = FreshContent("aether_test_content_bad");
     Write(root / "ok.png", "x");

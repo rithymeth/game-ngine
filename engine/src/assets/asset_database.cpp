@@ -161,6 +161,19 @@ bool SaveAssetMeta(const stdfs::path& meta_file, const AssetMeta& meta, std::str
     }
     std::string text = json.dump(2);
     text.push_back('\n');
+    // A cook saves the metadata of every imported asset, whether or not anything
+    // about it changed. Writing identical bytes anyway changes the file's
+    // modified time and, on a checkout with CRLF endings, leaves a freshly cooked
+    // project looking modified in version control for no reason. Skip a save
+    // whose content already matches; line endings are not a change.
+    std::string existing;
+    if (fs::ReadFileText(meta_file.string(), existing)) {
+        const auto without_cr = [](std::string value) {
+            value.erase(std::remove(value.begin(), value.end(), '\r'), value.end());
+            return value;
+        };
+        if (without_cr(existing) == without_cr(text)) return true;
+    }
     if (!fs::WriteFileAtomic(meta_file.string(), text.data(), text.size())) {
         SetError(error, "Couldn't write " + meta_file.string());
         return false;

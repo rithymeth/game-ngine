@@ -6,6 +6,9 @@ describes what is on `master`, not a promise of a version number or a date.
   archive and a verified `PackageManifest.json` in one command. The engine already had the logic -- the editor's Build and
   Package window calls it -- but no command-line tool did, so every scripted release hand-assembled a package or adapted a
   script written for one specific game.
+- Fixed **cooking a project rewriting every imported asset's `.ameta` sidecar** even when nothing about it had changed. On a
+  checkout with CRLF endings that left a freshly cooked project showing the whole `Content/` folder as modified, so a cook was
+  something you had to undo in version control.
 ## Known gaps
 
 - **Built, tested and not adopted** -- check before assuming a feature is live. The repository builds infrastructure
