@@ -134,6 +134,10 @@ describes what is on `master`, not a promise of a version number or a date.
   divide by zero; movement input sanitisation turns an invalid `dt` into zero and a huge or NaN axis into no movement
   rather than trusting either. Two paths did not: the redundant-input count could truncate and desync a client, and
   fragment reassembly had no bound at all, so any connected peer could grow it without limit. Both are fixed and both
+  Worth knowing about coverage: session datagrams are already a fuzz target, and the fragment reassembly bug
+  survived it. A fuzzer feeds inputs and watches for crashes; it cannot see a buffer that grows across a session,
+  because every single input is small and harmless. Unbounded growth needs a stateful run -- which is also why the
+  soak test, not the fuzzer, is the place to look for the next one.
   have regression tests.
   instance root with whatever entity it had resolved. Both paths are for an entity that is not part of an
   instance (a plain one, or a GUID that names nothing) and both crashed the process; it now refuses and says why,
