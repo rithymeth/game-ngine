@@ -1,6 +1,8 @@
 #include "editor_tools.h"
 
 #include "aether/scene/components.h"
+#include "aether/scene/data_layers.h"
+#include "aether/scene/level_instance.h"
 #include "aether/scene/gameplay.h"
 #include "aether/scene/hierarchy.h"
 #include "aether/scene/script_component.h"
@@ -53,6 +55,8 @@ void RegisterBuiltinComponents() {
     GetComponentId<Tags>();
     GetComponentId<Layer>();
     GetComponentId<ScriptComponent>();
+    GetComponentId<DataLayer>();
+    GetComponentId<LevelInstance>();
 
     // Module components.
     RegisterAnimationComponents();

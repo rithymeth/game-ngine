@@ -1,5 +1,7 @@
 #include "editor_tools.h"
 
+#include "aether/scene/data_layers.h"
+
 #include "aether/reflection/serialize.h"
 #include "aether/reflection/any.h"
 #include "aether/gameplay/attribute_set.h"
@@ -313,6 +315,18 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                                 {"redo_attribution", s.stack.RedoAttribution()},
                                 {"dirty", s.stack.IsDirty()},
                                 {"play_state", PlayStateName(s.play.GetState())}};
+                    }});
+
+    server.AddTool({"data_layers",
+                    "The data layers in the open scene: for each, how many entities belong to it and whether it is currently on. Read-only; switching one is a scene edit and is not offered yet.",
+                    Schema(Json::object()), [&s](const Json&) -> Json {
+                        Json layers = Json::array();
+                        for (const std::string& name : DataLayerNames(s.world)) {
+                            layers.push_back({{"layer", name},
+                                              {"entities", DataLayerSize(s.world, name)},
+                                              {"active", IsDataLayerActive(s.world, name)}});
+                        }
+                        return {{"layers", layers}};
                     }});
 
     server.AddTool({"list_component_types",

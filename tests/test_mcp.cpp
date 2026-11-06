@@ -3259,3 +3259,33 @@ AETHER_TEST(Mcp_GameSpawnsEntitiesAndEditsTheirComponents) {
     h.Call("game_unload");
     stdfs::remove_all(dir);
 }
+
+// Phase 42.6: the MCP can see the scene's data layers. Switching one is a scene edit and is not
+// offered, so this is a read-only tool and needs no undo entry.
+AETHER_TEST(Mcp_DataLayersListsTheScenesLayers) {
+    Harness h;
+    const auto empty = h.Call("data_layers");
+    if (empty.is_error) {
+        std::printf("data_layers failed: %s\n", empty.text.c_str());
+        AETHER_CHECK(!empty.is_error);
+        return; // AETHER_CHECK does not abort, and indexing a null value would crash
+    }
+    AETHER_CHECK(empty.value["layers"].is_array() && empty.value["layers"].empty());
+
+    h.Create({{"DataLayer", {{"layer", "Props"}}}});
+    h.Create({{"DataLayer", {{"layer", "Props"}}}});
+    h.Create({{"DataLayer", {{"layer", "Terrain"}}}});
+
+    const auto listed = h.Call("data_layers");
+    if (listed.is_error) {
+        std::printf("data_layers failed: %s\n", listed.text.c_str());
+        AETHER_CHECK(!listed.is_error);
+        return;
+    }
+    const Json& layers = listed.value["layers"];
+    AETHER_CHECK(layers.size() == 2);
+    if (layers.size() != 2) return;
+    AETHER_CHECK(layers[0]["layer"] == "Props" && layers[0]["entities"] == 2);
+    AETHER_CHECK(layers[1]["layer"] == "Terrain" && layers[1]["entities"] == 1);
+    AETHER_CHECK(layers[0]["active"] == true);
+}
