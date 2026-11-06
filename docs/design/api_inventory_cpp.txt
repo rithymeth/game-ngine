@@ -1897,6 +1897,20 @@
   void ExecuteQueue(const std::vector<usize>&order,ID3D12GraphicsCommandList*cmd)
   void Reset()
   void Write(ResourceHandle resource,D3D12_RESOURCE_STATES state)
+[engine/include/aether/gfx/render_thread.h] experimental
+  type class RenderThread
+  RenderThread&operator=(const RenderThread&)=delete
+  RenderThread(const RenderThread&)=delete
+  Run()
+  bool OnRenderThread()const
+  bool Post(std::function<void()>work)
+  private:void Run()
+  public:RenderThread():thread_([this]
+  std::deque<std::function<void()>>queue_
+  usize Pending()const
+  void Flush()
+  void Stop()
+  ~RenderThread()
 [engine/include/aether/gfx/rhi/command_list.h] experimental
   type class ICommandList
   public:virtual ~ICommandList()=default

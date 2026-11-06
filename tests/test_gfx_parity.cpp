@@ -4,7 +4,11 @@
 #include "aether/gfx/draw_submission.h"
 
 #include "aether/math/math.h"
+
+#include <mutex>
+#include <vector>
 #include "aether/gfx/pipeline_cache.h"
+#include "aether/gfx/render_thread.h"
 #include "aether/gfx/shader_cache.h"
 
 #include <cstdio>
@@ -222,4 +226,38 @@ AETHER_TEST(Gfx_DrawSubmissionCullsAndOrdersByMaterial) {
     submission.Begin();
     AETHER_CHECK(submission.Queued() == 0 && submission.Submitted() == 0 && submission.Culled() == 0);
     AETHER_CHECK(submission.Submit(frustum, {}) == 0); // no items, and a null submitter is fine
+}
+// Phase 38 step 8: the render thread. Work posted from the game thread runs on the worker, in order, and
+// Flush is the frame boundary where the caller waits.
+AETHER_TEST(Gfx_RenderThreadRunsPostedWorkInOrder) {
+    gfx::RenderThread thread;
+    std::mutex mutex;
+    std::vector<int> ran;
+    bool ran_on_render_thread = false;
+
+    for (int i = 0; i < 8; ++i) {
+        AETHER_CHECK(thread.Post([&, i] {
+            std::lock_guard<std::mutex> lock(mutex);
+            ran.push_back(i);
+            ran_on_render_thread = thread.OnRenderThread();
+        }));
+    }
+    thread.Flush();
+
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        AETHER_CHECK(ran.size() == 8);
+        for (usize i = 0; i < ran.size(); ++i) AETHER_CHECK(ran[i] == static_cast<int>(i));
+        AETHER_CHECK(ran_on_render_thread); // the work ran on the worker, not on this thread
+    }
+    AETHER_CHECK(!thread.OnRenderThread());
+
+    // Flush twice is fine, and empty queue is fine.
+    thread.Flush();
+
+    // After Stop, posting is refused rather than queueing into nothing, and flushing is a no-op.
+    thread.Stop();
+    AETHER_CHECK(!thread.Post([] {}));
+    thread.Flush();
+    thread.Stop(); // idempotent
 }
