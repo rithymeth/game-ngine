@@ -6970,6 +6970,7 @@
 [editor/src/core/command_stack.h] internal-tooling
 [editor/src/core/commands.h] internal-tooling
 [editor/src/core/json_edit.h] internal-tooling
+[editor/src/core/package_runner.h] internal-tooling
 [editor/src/core/play_session.h] internal-tooling
 [editor/src/core/recent_projects.h] internal-tooling
 [editor/src/core/scene_document.h] internal-tooling

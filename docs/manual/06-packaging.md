@@ -54,10 +54,11 @@ and the destination. Pass `--player <aether_player>` to stage a different one,
 for example a release build from another configuration. `--strict` fails the
 cook on any warning instead of shipping past it.
 
-In the editor, **Tools > Project > Build and Package** runs the same engine call
-with a progress bar, a log, a Cancel button and Launch. A scripted or CI build
-uses `aether_package`; the two cannot drift apart, because they are one
-function.
+Both editors package with the same code. In the default Qt editor it is
+**File > Package Project**; in the legacy editor, **Tools > Project > Build and
+Package**, which adds a progress bar, a log, a Cancel button and Launch. A
+scripted or CI build uses `aether_package`; the three cannot drift apart,
+because they are one function.
 
 ## Cook and pack separately
 

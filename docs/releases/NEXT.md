@@ -29,6 +29,10 @@ describes what is on `master`, not a promise of a version number or a date.
   name in Task Manager.
 - **`aether_package` now ships with the editor package**, beside `aether_cook` and `aether_pak`. It was added for scripting a
   build and then left out of the one download that carries the other tools.
+- The **Qt editor** — the default one — can now package a project: **File > Package Project**. It could not before, because the
+  packaging window lived in the ImGui editor UI library, which the Qt editor does not link, so the only way to make a package
+  from the default editor was a terminal. The worker thread, progress and log are now `PackageRunner` in the portable editor
+  layer, which both editors draw, and the Qt editor's `--self-test` packages a project as part of its run.
 ## Known gaps
 
 - **Built, tested and not adopted** -- check before assuming a feature is live. The repository builds infrastructure

@@ -2,6 +2,7 @@
 #include "aether/assets/gltf_loader.h"
 #include "aether/assets/image.h"
 #include "aether/audio/audio_system.h"
+#include "core/package_runner.h"
 #include "aether/cook/mesh_summary.h"
 #include "aether/ai/bt_world.h"
 #include "aether/nav/debug_draw.h"
@@ -108,6 +109,8 @@ using aether::editor::qt::StablePathKey;
 #include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QPointer>
+#include <QProgressDialog>
+#include <QThread>
 #include <QMetaObject>
 #include <QMouseEvent>
 #include <QPaintEngine>
@@ -2573,6 +2576,32 @@ public:
                                   mesh_inspector_.table->item(0, 1) && mesh_inspector_.table->item(0, 1)->text() == "12",
                               "the Inspector Mesh section should list the placed cube's four LODs, 12 triangles at LOD0");
         }
+        // Build and Package, which the Qt editor has only because the packaging
+        // runner lives in the portable editor layer. This is the same class the
+        // legacy editor's window draws, so what it checks is the packaging, not a
+        // second copy of it. Skipped where no player can be found; a packaged
+        // editor ships one beside itself, so only an unusual build skips.
+        if (!aether::cook::FindPlayerExecutable().empty()) {
+            const auto packaged_scene = self_test_paths.content / "Scenes" / "Packaged.ascene";
+            std::filesystem::create_directories(packaged_scene.parent_path(), filesystem_error);
+            passed &= require(scene_document_.Save(packaged_scene, &project_error),
+                              "the scene should save before the project is packaged");
+            aether::ProjectSettings package_settings;
+            passed &= require(aether::LoadProject(self_test_paths.file, package_settings, &project_error),
+                              "the project should load before it is packaged");
+            package_settings.startup_scene = "Scenes/Packaged.ascene";
+            passed &= require(aether::SaveProject(self_test_paths.file, package_settings, &project_error),
+                              "packaging needs a startup scene to cook from");
+            aether::editor::PackageRunner package_runner(self_test_paths.file);
+            package_runner.configuration = aether::cook::BuildConfiguration::Development;
+            package_runner.output_dir = (self_test_root / "Packaged").string();
+            passed &= require(package_runner.StartPackage(), "Build and Package should start from the Qt editor");
+            package_runner.WaitForBuild();
+            passed &= require(package_runner.LastResult() == aether::editor::PackageRunner::Result::Succeeded,
+                              "Build and Package should produce a package from the Qt editor");
+            passed &= require(std::filesystem::exists(package_runner.StagedGame()),
+                              "Build and Package should leave a game executable to run");
+        }
         std::filesystem::remove_all(self_test_root, filesystem_error);
         modal_dialog_guard.stop();
         if (passed) qInfo() << "Qt editor self-test passed";
@@ -4120,6 +4149,47 @@ private:
         else Redo();
     }
 
+    // Build and Package, from the default editor. The work is PackageRunner, the
+    // same class the legacy ImGui window draws, so the two editors package the
+    // same way instead of one of them having no way to package at all.
+    void PackageProject() {
+        if (project_file_.empty()) {
+            QMessageBox::information(this, "Package Project", "Open a project first.");
+            return;
+        }
+        aether::editor::PackageRunner runner(project_file_);
+        runner.configuration = aether::cook::BuildConfiguration::Development;
+        if (!runner.StartPackage()) {
+            QMessageBox::warning(this, "Package Project", "Something is already being built.");
+            return;
+        }
+        QProgressDialog progress("Packaging...", "Cancel", 0, 100, this);
+        progress.setWindowTitle("Package Project");
+        progress.setWindowModality(Qt::ApplicationModal);
+        progress.setMinimumDuration(0);
+        progress.setAutoClose(false);
+        progress.show();
+        while (runner.Busy()) {
+            QCoreApplication::processEvents();
+            progress.setValue(static_cast<int>(runner.Progress() * 100.0f));
+            progress.setLabelText(QString::fromStdString(runner.Stage()));
+            if (progress.wasCanceled()) runner.Cancel();
+            QThread::msleep(30);
+        }
+        runner.WaitForBuild();
+        progress.close();
+        if (runner.LastResult() == aether::editor::PackageRunner::Result::Succeeded) {
+            QMessageBox::information(this, "Package Project",
+                                     "Packaged into:\n" + QString::fromStdWString(runner.OutputDir().wstring()));
+            return;
+        }
+        QString detail = QString::fromStdString(runner.Stage());
+        for (const aether::editor::PackageRunner::LogLine& line : runner.Log()) {
+            if (line.warning) detail += "\n" + QString::fromStdString(line.text);
+        }
+        QMessageBox::warning(this, "Package Project", detail);
+    }
+
     void CreateProjectDialog() {
         QDialog dialog(this);
         dialog.setWindowTitle("Create Aether Project");
@@ -4268,6 +4338,7 @@ private:
         const QString project_name = QString::fromStdString(project_settings_.name);
         setWindowTitle(project_name + " â€” Aether Engine");
         save_project_action_->setEnabled(true);
+        package_project_action_->setEnabled(true);
         new_folder_button_->setEnabled(true);
         asset_filter_->setEnabled(true);
         asset_type_filter_->setEnabled(true);
@@ -4898,11 +4969,15 @@ private:
         file->addSeparator();
         save_project_action_ = file->addAction("Project Settingsâ€¦");
         save_project_action_->setEnabled(false);
+        package_project_action_ = file->addAction("Package Project...");
+        package_project_action_->setToolTip("Cook the project and stage it with the player as a folder that runs on its own");
+        package_project_action_->setEnabled(false);
         file->addSeparator();
         file->addAction("Exit", qApp, &QApplication::quit);
         QObject::connect(new_project_action_, &QAction::triggered, this, [this] { CreateProjectDialog(); });
         QObject::connect(open_project_action_, &QAction::triggered, this, [this] { OpenProjectDialog(); });
         QObject::connect(save_project_action_, &QAction::triggered, this, [this] { ShowProjectSettingsDialog(); });
+        QObject::connect(package_project_action_, &QAction::triggered, this, [this] { PackageProject(); });
         QObject::connect(new_scene_action_, &QAction::triggered, this, [this] { NewScene(); });
         QObject::connect(open_scene_action_, &QAction::triggered, this, [this] { OpenSceneDialog(); });
         QObject::connect(save_scene_action_, &QAction::triggered, this, [this] { SaveActiveDocument(); });
@@ -5195,6 +5270,7 @@ private:
     QPushButton* welcome_open_project_button_ = nullptr;
     QPushButton* welcome_new_project_button_ = nullptr;
     QAction* save_project_action_ = nullptr;
+    QAction* package_project_action_ = nullptr;
     QAction* new_scene_action_ = nullptr;
     QAction* open_scene_action_ = nullptr;
     QAction* new_project_action_ = nullptr;
