@@ -1,5 +1,8 @@
 #include "core/commands.h"
 
+#include "aether/scene/data_layers.h"
+#include "aether/scene/gameplay.h"
+
 #include "aether/core/log.h"
 #include "aether/reflection/serialize.h"
 
@@ -375,6 +378,64 @@ usize RevertPrefabOverrideCommand::MemoryBytes() const {
         bytes += sizeof(o) + o.component.size() + o.field_path.size() + o.value.size();
     }
     return bytes;
+}
+
+// ---------------------------------------------------------------- data layers (Phase 42.6)
+
+std::unique_ptr<ICommand> SetDataLayerActiveCommand::Make(const CommandContext& ctx, std::string layer, bool active) {
+    auto command = std::make_unique<SetDataLayerActiveCommand>();
+    command->layer_ = std::move(layer);
+    command->active_ = active;
+    // Snapshot every member before anything changes, so Undo can put each one back exactly.
+    ctx.world.ForEachArchetype([&command, &ctx](Archetype& archetype) {
+        if ((archetype.Mask() & ComponentMaskOf<DataLayer>()) != ComponentMaskOf<DataLayer>()) return;
+        for (usize chunk = 0; chunk < archetype.ChunkCount(); ++chunk) {
+            const u32 count = archetype.ChunkEntityCount(chunk);
+            if (count == 0) continue;
+            Entity* entities = archetype.EntityArray(chunk);
+            auto* layers = static_cast<DataLayer*>(archetype.ComponentArray(chunk, GetComponentId<DataLayer>()));
+            for (u32 i = 0; i < count; ++i) {
+                if (layers[i].layer != command->layer_) continue;
+                SetDataLayerActiveCommand::Member member;
+                member.entity = entities[i];
+                const Active* current = ctx.world.GetComponent<Active>(entities[i]);
+                member.has_active = current != nullptr;
+                member.active = current == nullptr || current->active;
+                member.captured = layers[i].captured;
+                member.active_when_layer_on = layers[i].active_when_layer_on;
+                command->members_.push_back(member);
+            }
+        }
+    });
+    return command;
+}
+
+void SetDataLayerActiveCommand::Do(CommandContext& ctx) { SetDataLayerActive(ctx.world, layer_, active_); }
+
+void SetDataLayerActiveCommand::Undo(CommandContext& ctx) {
+    for (const Member& member : members_) {
+        if (!ctx.world.IsAlive(member.entity)) continue;
+        DataLayer* layer = ctx.world.GetComponent<DataLayer>(member.entity);
+        if (layer != nullptr) {
+            layer->captured = member.captured;
+            layer->active_when_layer_on = member.active_when_layer_on;
+        }
+        Active* current = ctx.world.GetComponent<Active>(member.entity);
+        if (!member.has_active) {
+            // It had no Active component before, so it should have none after.
+            if (current != nullptr) ctx.world.RemoveComponent<Active>(member.entity);
+            continue;
+        }
+        if (current == nullptr) {
+            ctx.world.AddComponent<Active>(member.entity, Active{member.active});
+        } else {
+            current->active = member.active;
+        }
+    }
+}
+
+std::string SetDataLayerActiveCommand::Label() const {
+    return std::string(active_ ? "Show " : "Hide ") + layer_ + " layer";
 }
 
 } // namespace aether::editor

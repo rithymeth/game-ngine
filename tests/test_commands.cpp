@@ -6,6 +6,8 @@
 #include "aether/scene/hierarchy.h"
 #include "aether/reflection/serialize.h"
 #include "core/commands.h"
+#include "aether/scene/data_layers.h"
+#include "aether/scene/gameplay.h"
 #include "test_framework.h"
 #include "ui/entity_inspector.h"
 #include "ui/reflected_inspector.h"
@@ -388,4 +390,37 @@ AETHER_TEST(EntityInspector_MarksOverriddenFields) {
     InspectResult result;
     ui.Frame([&] { result = InspectObject(reflect::Reflect<cmd_test::Vitals>(), &vitals, "vitals", options); });
     AETHER_CHECK((asked == std::vector<std::string>{"current", "name"}) && result.revert_field == nullptr);
+}
+
+// Phase 42.6: switching a data layer is one undoable edit, and undo restores each member rather than
+// turning the whole layer on -- an entity that was already off stays off.
+AETHER_TEST(Commands_SetDataLayerActiveUndoesEachMember) {
+    World world;
+    GuidIndex guids;
+    CommandStack stack;
+    CommandContext ctx{world, guids};
+
+    const Entity on = world.CreateEntity(Transform{Vec3(), Quaternion::Identity()}, IdComponent{});
+    world.AddComponent<DataLayer>(on, DataLayer{"Props"});
+    const Entity off = world.CreateEntity(Transform{Vec3(), Quaternion::Identity()}, IdComponent{});
+    world.AddComponent<DataLayer>(off, DataLayer{"Props"});
+    world.AddComponent<Active>(off, Active{false});
+    const Entity other = world.CreateEntity(Transform{Vec3(), Quaternion::Identity()}, IdComponent{});
+    world.AddComponent<DataLayer>(other, DataLayer{"Terrain"});
+
+    // Record stores an already-applied change, so the command runs first.
+    std::unique_ptr<ICommand> hide = SetDataLayerActiveCommand::Make(ctx, "Props", false);
+    hide->Do(ctx);
+    stack.Record(std::move(hide));
+    AETHER_CHECK(!IsActiveInHierarchy(world, guids, on));
+    AETHER_CHECK(!IsActiveInHierarchy(world, guids, off));
+    AETHER_CHECK(IsActiveInHierarchy(world, guids, other)); // outside the layer, untouched
+
+    AETHER_CHECK(stack.Undo(ctx));
+    AETHER_CHECK(IsActiveInHierarchy(world, guids, on));   // back on
+    AETHER_CHECK(!IsActiveInHierarchy(world, guids, off)); // still off, which is what it was
+    AETHER_CHECK(IsActiveInHierarchy(world, guids, other));
+
+    AETHER_CHECK(stack.Redo(ctx));
+    AETHER_CHECK(!IsActiveInHierarchy(world, guids, on));
 }

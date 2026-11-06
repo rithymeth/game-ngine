@@ -185,4 +185,28 @@ bool CommitFieldEdit(CommandContext& ctx, CommandStack& stack, const EntityGuid&
 // replaced (duplicates).
 usize EnsureAllGuids(World& world, GuidIndex& guids);
 
+// Phase 42.6: switching a data layer is one edit, not one edit per entity -- and undo has to put each
+// member back the way it was, including the one that was already off before the layer went off, which
+// a blanket "turn everything on" would get wrong. `Make` snapshots the members so Do and Undo are
+// symmetric and neither has to guess.
+class SetDataLayerActiveCommand final : public ICommand {
+public:
+    static std::unique_ptr<ICommand> Make(const CommandContext& ctx, std::string layer, bool active);
+    void Do(CommandContext& ctx) override;
+    void Undo(CommandContext& ctx) override;
+    std::string Label() const override;
+
+private:
+    struct Member {
+        Entity entity;
+        bool has_active = false;
+        bool active = false;
+        bool captured = false;
+        bool active_when_layer_on = true;
+    };
+    std::vector<Member> members_;
+    std::string layer_;
+    bool active_ = false;
+};
+
 } // namespace aether::editor
