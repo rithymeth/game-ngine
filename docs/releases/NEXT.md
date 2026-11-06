@@ -142,6 +142,10 @@ describes what is on `master`, not a promise of a version number or a date.
   entities and apply time per update. The two defects both lived where a peer sends bytes -- which is the rule worth
   carrying forward: read the paths that parse input from a peer, an agent or a network, and spend less time on the
   ones that parse the project.
+- The save system shows what the netcode was missing, and is worth copying: its reads are capped at the call
+  (`ReadFileBytes(file, bytes, kMaxEnvelopeBytes)`), so an oversized file cannot be loaded far enough to matter, and
+  every envelope path repeats the check. Accumulating first and checking afterwards -- which the fragment buffer did --
+  is the failure. Cap the read, not the result.
   soak test, not the fuzzer, is the place to look for the next one.
   have regression tests.
   instance root with whatever entity it had resolved. Both paths are for an entity that is not part of an
