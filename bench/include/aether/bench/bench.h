@@ -52,6 +52,18 @@ struct Regression {
 // incomplete, or non-overlapping reports.
 bool Compare(const std::string& baseline_json, const std::string& current_json, double tolerance, std::vector<Regression>& regressions, std::string* error);
 
+// How the whole run moved, for diagnosing a failed comparison. A single benchmark regressing is a code question; nearly
+// every benchmark moving the same way is the runner being slower than the one the baseline came from, which the
+// normalised comparison only partly removes.
+struct ShiftSummary {
+    int shared = 0;                 // benchmarks present in both reports
+    int slower = 0;                 // of those, the ones slower than their baseline
+    int faster = 0;                 // and the ones faster
+    double calibration_baseline = 0.0; // calibration loop, milliseconds, from each report
+    double calibration_current = 0.0;
+};
+ShiftSummary SummarizeShift(const std::string& baseline_json, const std::string& current_json);
+
 } // namespace aether::bench
 
 #define AETHER_BENCH_CONCAT2(a, b) a##b

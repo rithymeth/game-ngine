@@ -151,4 +151,31 @@ bool Compare(const std::string& baseline_json, const std::string& current_json, 
     return true;
 }
 
+// How the whole run moved, for diagnosing a failed comparison.
+ShiftSummary SummarizeShift(const std::string& baseline_json, const std::string& current_json) {
+    ShiftSummary summary;
+    const auto base = nlohmann::json::parse(baseline_json, nullptr, false);
+    const auto cur = nlohmann::json::parse(current_json, nullptr, false);
+    if (!base.is_object() || !cur.is_object() || !base.contains("results") || !cur.contains("results")) return summary;
+    summary.calibration_baseline = base.value("calibration_ms", 0.0);
+    summary.calibration_current = cur.value("calibration_ms", 0.0);
+    std::unordered_map<std::string, double> baseline_values;
+    for (const auto& item : base["results"]) {
+        if (!item.is_object() || !item.contains("name") || !item.contains("normalized")) continue;
+        const double value = item["normalized"].get<double>();
+        if (std::isfinite(value) && value > 0.0) baseline_values.emplace(item["name"].get<std::string>(), value);
+    }
+    for (const auto& item : cur["results"]) {
+        if (!item.is_object() || !item.contains("name") || !item.contains("normalized")) continue;
+        const auto found = baseline_values.find(item["name"].get<std::string>());
+        if (found == baseline_values.end()) continue;
+        const double value = item["normalized"].get<double>();
+        if (!std::isfinite(value) || value <= 0.0) continue;
+        ++summary.shared;
+        if (value > found->second) ++summary.slower;
+        else if (value < found->second) ++summary.faster;
+    }
+    return summary;
+}
+
 } // namespace aether::bench

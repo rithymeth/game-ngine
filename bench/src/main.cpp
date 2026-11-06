@@ -85,7 +85,22 @@ int main(int argc, char** argv) {
             return 2;
         }
         for (const bench::Regression& r : regressions) std::printf("REGRESSION %s: %.2fx the baseline (limit %.2fx)\n", r.name.c_str(), r.ratio, tolerance);
-        if (!regressions.empty()) return 1;
+        if (!regressions.empty()) {
+            // Say which kind of failure this is. A regression in one benchmark is a code question; the same shift
+            // across nearly every benchmark is the runner being slower than the one the baseline came from, and
+            // normalisation only partly removes that. Reading it from the report rather than guessing costs nothing
+            // and saves the next person from digging through a 22-row table.
+            const auto summary = bench::SummarizeShift(baseline, report);
+            if (summary.calibration_baseline > 0.0 && summary.calibration_current > 0.0) {
+                std::printf("calibration %.2f ms in the baseline, %.2f ms now (%.2fx)\n", summary.calibration_baseline,
+                            summary.calibration_current, summary.calibration_current / summary.calibration_baseline);
+            }
+            std::printf("%d of %d shared benchmarks slower, %d faster\n", summary.slower, summary.shared, summary.faster);
+            if (summary.shared >= 8 && summary.slower * 4 >= summary.shared * 3) {
+                std::printf("the whole run is slower, not one benchmark: check the runner before the code\n");
+            }
+            return 1;
+        }
         std::printf("no regressions against %s (tolerance %.2fx)\n", baseline_path.c_str(), tolerance);
     }
     return 0;

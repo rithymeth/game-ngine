@@ -393,3 +393,25 @@ thresholds should remain advisory until their noise and repeatability are unders
 noise measured, repeatability poor across runs, threshold still required. The options are a noise floor for
 micro-benchmarks, a per-runner baseline, or advisory status; **all three are policy decisions about the gate, not edits to
 a number**, and none of them should be made by quietly moving the baseline again.
+### The calibration loop is not a machine proxy, 7 November 2026
+
+The benchmark now prints its own diagnosis when a comparison fails: the calibration figure from each report, how many
+shared benchmarks moved each way, and a warning when nearly all of them moved together. It exists because reading that
+out of a 22-row artifact table by hand is what this round cost.
+
+Running it on this machine produced the number that matters more than any CI run:
+
+```
+calibration 1.41 ms in the baseline, 1.42 ms now (1.00x)
+22 of 22 shared benchmarks slower, 0 faster
+the whole run is slower, not one benchmark: check the runner before the code
+```
+
+**The calibration loops agree to within 1% and all 22 benchmarks are 3x to 7x slower.** So the calibration loop -- the
+thing the whole normalised comparison divides by -- does not capture the difference between these two machines at all.
+It measures a tight arithmetic loop; the benchmarks measure memory traffic, allocation and branch behaviour. Dividing one
+by the other does not cancel hardware, it hides it behind a number that looks like a correction.
+
+That is why the gate fails on a different pair of rows each run, and why refreshing the baseline fixes exactly the rows it
+was taken from and no others. A per-runner baseline or a noise floor would both help; neither fixes the underlying point
+that this normalisation cannot compare two machines.
