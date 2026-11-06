@@ -367,3 +367,29 @@ So the 30x is not a slowdown at all. It is the cost of doing the query, measured
 recorded before the benchmark became honest, and every subsequent comparison was against a number that could not be
 reached by any correct implementation. **A changed benchmark invalidates its baseline in the same way a renamed one does**,
 and that rule is the reason this cost so much: the guard landed without a baseline refresh in the same commit.
+### The benchmark gate's own noise, 7 November 2026
+
+After the baseline was refreshed from the runner, the next run still failed -- on different rows. The report artifact from
+that run is the evidence, and it says the comparison is measuring the runner, not the engine:
+
+| Row | Baseline | This run | Ratio |
+|---|---|---|---|
+| `ecs/query_50k_of_100k` (the row that started this) | 0.0210 | 0.0312 | **1.49x** -- fixed |
+| `bp/loop_arith_10k` | 0.1330 | 0.4391 | 3.30x |
+| `cook/atex_roundtrip_256` | 0.0010 | 0.0126 | 12.61x |
+
+Two things are visible in the full table. First, **every** row came in between 0.95x and 1.66x of the refreshed baseline:
+the whole run was slower, consistently. The calibration loop took 1.97 ms against 1.41 ms in the run the baseline was
+taken from, a 40% difference that normalisation only partly removes. Second, `bp/loop_arith_10k` measured 865 us with a
+min-to-p95 spread of **5 us** -- a tight, repeatable measurement of a slower run, not noise within the run. That row is
+also the one this document already recorded at 3.61x in a previous round, where it had in fact got faster.
+
+So the conclusion is not "refresh the baseline again". Each refresh moves the target to whichever conditions that run
+happened to see, and the next run drifts away from it. The gate compares two different machine states with a 3x tolerance
+and calls the difference a regression.
+
+`docs/design/M8_PRODUCTION_TECHNOLOGY.md` -- the milestone this work belongs to -- says: *"Shared-runner performance
+thresholds should remain advisory until their noise and repeatability are understood."* That is exactly the state now:
+noise measured, repeatability poor across runs, threshold still required. The options are a noise floor for
+micro-benchmarks, a per-runner baseline, or advisory status; **all three are policy decisions about the gate, not edits to
+a number**, and none of them should be made by quietly moving the baseline again.
