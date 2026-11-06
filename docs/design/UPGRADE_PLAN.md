@@ -13,7 +13,12 @@ evidence; Phase 48 release waits for M8.12 product validation on the same candid
   and the test then crashes dereferencing the empty vector it got back -- while the same test passes in the
   configured `build/`. Same source, same 52.4 MB binary, same dynamic CRT, same `%TEMP%`. **Unexplained**, and
   recorded rather than papered over; the configured build and CI are green, so this may be an artefact of a
-  second local tree rather than a defect. Worth resolving before trusting a clean clone.
+  second local tree rather than a defect. With the test's missing guard fixed it reports instead of dying after one
+  test, and the picture got **wider**: every file write in the filesystem tests fails, and
+  `Serialization_LegacyV1SceneStillLoads` -- which never touches the filesystem, it deserializes a byte vector in
+  memory -- also dies. So it is neither one test nor file I/O specifically, which points at this machine rather than
+  the repository: a hooking antivirus fails writes exactly like that. Written as a guess, not a diagnosis. Resolve it
+  before trusting a clean clone.
 - **Modules** are the top-level CMake targets: `Aether::Engine`, Blueprint, Renderer, Animation,
   Audio, UI, VFX, Terrain, Streaming, Sprite2D, Sequencer, Save, Loc, Gameplay, Inventory,
   Interaction, Quests, Net, Nav, AI, Scripting, Physics and Game. Jobs live in
