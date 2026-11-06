@@ -172,6 +172,28 @@ AETHER_TEST(StateTree_RunsTransitionsOrderedEnterAndExitEffects) {
     AETHER_CHECK(!tree.Running() && tree.CurrentLeaf().empty() && tree.Tick(bb).transitions == 0);
 }
 
+AETHER_TEST(StateTree_RejectsAMissingAncestorWithoutDereferencingIt) {
+    // Fuzz finding (CI fuzz lane, 251-byte StateTree JSON): Validate walks each state's parent chain with
+    // Find(at)->parent but only checked the DIRECT parent for existence, so a state whose grandparent was missing
+    // dereferenced a null TreeState. Order-dependent, which is why it took a fuzzer: it only crashed when the child
+    // happened to be validated before the state carrying the broken ancestor. The order below is the crashing one.
+    Blackboard bb;
+    StateTree tree;
+    tree.Add({"child", "middle", {}, {}, {}});
+    tree.Add({"middle", "absent", {}, {}, {}});
+    std::string error;
+    AETHER_CHECK(!tree.Validate(&error));
+    AETHER_CHECK(error.find("missing ancestor") != std::string::npos);
+    AETHER_CHECK(!tree.Start(bb));
+
+    // The same shape one level deeper, to show the walk does not just check the first hop.
+    StateTree deep;
+    deep.Add({"a", "b", {}, {}, {}});
+    deep.Add({"b", "c", {}, {}, {}});
+    deep.Add({"c", "gone", {}, {}, {}});
+    AETHER_CHECK(!deep.Validate(&error) && !deep.Start(bb));
+}
+
 AETHER_TEST(StateTree_StopsALoopOfAlwaysReadyTransitionsAndRejectsBadTrees) {
     Blackboard bb;
     StateTree loop;

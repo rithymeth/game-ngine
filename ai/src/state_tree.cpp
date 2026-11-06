@@ -77,7 +77,13 @@ bool StateTree::Validate(std::string* error) const {
         std::string at = s.parent;
         for (usize hops = 0; !at.empty(); ++hops) {
             if (hops > states_.size()) return fail("state '" + s.name + "' is its own ancestor");
-            at = Find(at)->parent;
+            // The direct parent is checked above, but an ancestor further up the chain belongs to another state that
+            // may not have been validated yet -- the loop visits states in order, so a broken grandparent reachable
+            // from an earlier child used to be dereferenced as a null TreeState. This was a fuzz finding: a tree
+            // whose child precedes the state with the missing ancestor crashed the engine instead of being rejected.
+            const TreeState* ancestor = Find(at);
+            if (ancestor == nullptr) return fail("state '" + s.name + "' has the missing ancestor '" + at + "'");
+            at = ancestor->parent;
         }
         for (const StateTransition& t : s.transitions) {
             if (names.count(t.target) == 0) return fail("state '" + s.name + "' goes to the missing state '" + t.target + "'");
@@ -113,8 +119,13 @@ bool StateTree::Start(Blackboard& blackboard) {
     if (!Validate()) return false;
     if (Running()) Stop(blackboard);
     const auto top = std::find_if(states_.begin(), states_.end(), [](const TreeState& s) { return s.parent.empty(); });
+    // Validate guarantees a top-level state, so this is unreachable today -- kept because the dereference below was
+    // exactly the shape the fuzz finding took elsewhere: a search result used without checking it was found.
+    if (top == states_.end()) return false;
     path_ = PathTo(DescendToLeaf(top->name));
-    for (const std::string& name : path_) Apply(Find(name)->on_enter, blackboard);
+    for (const std::string& name : path_) {
+        if (const TreeState* state = Find(name)) Apply(state->on_enter, blackboard);
+    }
     return true;
 }
 

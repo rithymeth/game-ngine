@@ -49,3 +49,10 @@ describes what is on `master`, not a promise of a version number or a date.
     GPU-driven path instead;
   - **`Aether::PhysicsNet`** (`physics_net/`) -- the host-authoritative physics-over-network glue, with its own tests,
     and linked by nothing but those tests.
+
+- Fixed a **crash loading a malformed AI state tree**, found by the fuzzer. Validating a tree walked each state's parent
+  chain with `Find(at)->parent`, but only the state's *direct* parent was checked for existence, so a tree whose grandparent
+  was missing dereferenced a null state. It was order-dependent -- it only crashed when the child happened to be validated
+  before the state carrying the broken ancestor -- which is why the fuzzer found it and the existing tests did not. The walk
+  now rejects a missing ancestor, `Start` no longer dereferences a search result without checking it, and the crashing input
+  is a regression test.
