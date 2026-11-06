@@ -19,9 +19,11 @@ evidence; Phase 48 release waits for M8.12 product validation on the same candid
   memory -- also dies. So it is neither one test nor file I/O specifically. The earlier guess that it points at this
   machine is **wrong**, and the evidence against it is on the same line: `build/` passes on the same machine at the
   specific to *where the executable sits*: the binary that passes in `build/tests` **fails when the same directory is
-  copied elsewhere and run there**. So it is not the build and not the machine; it depends on something beside the
-  executable, which makes it findable by diffing what `build/tests` contains against a copy. The guard means such a
-  failure now reports and the suite continues, which is the part worth having until then.
+  **the ancestor directory**. The same files (identical sizes, `aether_tests.exe` and `dxcompiler.dll`) give
+  `inside build/` -> pass, at the repository root -> fail, six runs out of six either way, so it is neither flaky nor
+  the binaries. Something in the test harness derives behaviour from where its ancestor tree is -- most likely the
+  repository root it walks up to find. That is the next thread: the harness path logic, not the build and not the
+  filesystem. The guard means such a failure reports and the suite continues until then.
   Audio, UI, VFX, Terrain, Streaming, Sprite2D, Sequencer, Save, Loc, Gameplay, Inventory,
   Interaction, Quests, Net, Nav, AI, Scripting, Physics and Game. Jobs live in
   `engine/include/aether/job`, the RHI in `engine/gfx` (there is no `jobs/` or `rhi/` directory).
