@@ -370,8 +370,14 @@ the other direction — the row was written before that check existed.
 sampled textures than the bindless table holds is refused rather than over-allocating, and — the part that catches leaks —
 freeing one afterwards allows exactly one more, proving a refused creation consumed no slot.
 
-**Debt count: 98 before, 70 after twelve batches.** 28 rows closed. The remaining 70 are 26 Vulkan-only rows this machine
-cannot exercise, 4 needing a validation-layer run, and 40 D3D12 checks of shapes already covered.
+**Thirteenth batch — one more by citation.** Row 54 (D3D12 RHI resource teardown ordering, "drain the queues before reverse
+member destruction") is closed by `RHI_Lifetime_TeardownWithLiveResources`, which submits a frame that is still in flight,
+destroys some resources behind it, leaves others alive, and then tears the device down — the exact sequence the row asks to
+be safe. Rows 55, 56 and 61 stay open: they are about independent drains and fence-event wait *results* on error paths, which
+that test does not force.
+
+**Debt count: 98 before, 69 after thirteen batches.** 29 rows closed. The remaining 69 are 26 Vulkan-only, 4 needing a
+validation-layer run, 37 requiring fault injection or race-safe construction, and 2 D3D12 error-path rows (55, 61).
 
 ## Deferred from M8
 
