@@ -342,3 +342,16 @@ but "falls back instead of thundering ahead" is the correct behaviour for a path
 trust, and it costs one comparison per expansion.
 
 
+
+## Baseline refresh, 7 November 2026
+
+The `Linux (GCC)` lane failed with `REGRESSION ecs/query_50k_of_100k: 30.73x the baseline (limit 3.00x)`. That row's
+baseline was 1.2 us normalised to 0.0007, which no implementation of a query over 100k entities can reach; the runner
+measured 30 us, normalised 0.021. Every other shared row came in between 0.45x and 1.01x of its baseline, so the engine
+had not slowed down -- one row's baseline was wrong.
+
+`bench/baseline.json` was regenerated from that run's own table, which is the procedure this document prescribes:
+calibration 1.412 ms, 22 rows instead of 18. The four added rows are the current navigation benchmarks, which the file
+had never carried under these names; the two it did carry (`nav/path_across_100_tiles_plain` and its hierarchical twin)
+no longer exist and had already been removed. Only `name` and `normalized` are compared, so the other fields are
+informational.

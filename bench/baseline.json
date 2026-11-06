@@ -1,184 +1,202 @@
 {
-  "calibration_ms": 1.722,
+  "calibration_ms": 1.412,
   "results": [
     {
-      "iterations": 20,
-      "max_ms": 0.1407,
-      "median_ms": 0.097,
-      "min_ms": 0.0925,
-      "name": "ecs/iterate_100k",
-      "normalized": 0.05633,
-      "p95_ms": 0.1407,
-      "samples": 5
-    },
-    {
-      "iterations": 20,
-      "max_ms": 0.0012,
-      "median_ms": 0.0012,
-      "min_ms": 0.0012,
-      "name": "ecs/query_50k_of_100k",
-      "normalized": 0.000697,
-      "p95_ms": 0.0012,
-      "samples": 5
-    },
-    {
-      "iterations": 5,
-      "max_ms": 0.6961,
-      "median_ms": 0.6301,
-      "min_ms": 0.6273,
-      "name": "ecs/create_destroy_10k",
-      "normalized": 0.365912,
-      "p95_ms": 0.6961,
-      "samples": 5
-    },
-    {
-      "iterations": 5,
-      "max_ms": 1.5996,
-      "median_ms": 1.5842,
-      "min_ms": 1.574,
-      "name": "ecs/add_remove_component_10k",
-      "normalized": 0.919977,
-      "p95_ms": 1.5996,
-      "samples": 5
-    },
-    {
-      "iterations": 20,
-      "max_ms": 0.125,
-      "median_ms": 0.1157,
-      "min_ms": 0.1146,
-      "name": "jobs/batch_1024",
-      "normalized": 0.067189,
-      "p95_ms": 0.125,
-      "samples": 5
-    },
-    {
-      "iterations": 5,
-      "max_ms": 29.7012,
-      "median_ms": 26.5757,
-      "min_ms": 26.1082,
-      "name": "scene/save_binary_10k",
-      "normalized": 15.433043,
-      "p95_ms": 29.7012,
-      "samples": 5
-    },
-    {
-      "iterations": 5,
-      "max_ms": 36.0391,
-      "median_ms": 35.6088,
-      "min_ms": 35.2799,
-      "name": "scene/load_binary_10k",
-      "normalized": 20.678746,
-      "p95_ms": 36.0391,
-      "samples": 5
-    },
-    {
-      "iterations": 3,
-      "max_ms": 40.806,
-      "median_ms": 39.3688,
-      "min_ms": 39.3143,
-      "name": "scene/save_json_10k",
-      "normalized": 22.862253,
-      "p95_ms": 40.806,
-      "samples": 5
-    },
-    {
-      "iterations": 3,
-      "max_ms": 68.7669,
-      "median_ms": 57.834,
-      "min_ms": 57.1742,
-      "name": "scene/load_json_10k",
-      "normalized": 33.585366,
-      "p95_ms": 68.7669,
-      "samples": 5
-    },
-    {
-      "iterations": 3,
-      "max_ms": 226.7629,
-      "median_ms": 226.4041,
-      "min_ms": 226.0741,
-      "name": "cook/texture_bc7_256",
-      "normalized": 131.47741,
-      "p95_ms": 226.7629,
-      "samples": 5
-    },
-    {
-      "iterations": 3,
-      "max_ms": 140.8718,
-      "median_ms": 140.3769,
-      "min_ms": 140.2251,
-      "name": "cook/texture_bc1_512_mips",
-      "normalized": 81.519686,
-      "p95_ms": 140.8718,
-      "samples": 5
-    },
-    {
       "iterations": 10,
-      "max_ms": 0.0036,
-      "median_ms": 0.0035,
-      "min_ms": 0.0035,
-      "name": "cook/atex_roundtrip_256",
-      "normalized": 0.002033,
-      "p95_ms": 0.0036,
-      "samples": 5
-    },
-    {
-      "iterations": 3,
-      "max_ms": 2.8567,
-      "median_ms": 2.0469,
-      "min_ms": 2.0324,
-      "name": "world/flythrough_120_frames",
-      "normalized": 1.188676,
-      "p95_ms": 2.8567,
-      "samples": 5
-    },
-    {
-      "iterations": 10,
-      "max_ms": 0.2972,
-      "median_ms": 0.297,
-      "min_ms": 0.2965,
+      "median_ms": 0.1873,
+      "min_ms": 0.1869,
       "name": "bp/loop_arith_10k",
-      "normalized": 0.172474,
-      "p95_ms": 0.2972,
+      "normalized": 0.133,
+      "p95_ms": 0.1881,
       "samples": 5
     },
     {
       "iterations": 20,
-      "max_ms": 0.0939,
-      "median_ms": 0.0833,
-      "min_ms": 0.0828,
+      "median_ms": 0.052,
+      "min_ms": 0.0518,
       "name": "bp/tick_1k_instances",
-      "normalized": 0.048374,
-      "p95_ms": 0.0939,
+      "normalized": 0.037,
+      "p95_ms": 0.0522,
       "samples": 5
     },
     {
       "iterations": 10,
-      "max_ms": 1.3288,
-      "median_ms": 1.3134,
-      "min_ms": 1.3097,
-      "name": "luau/call_10k",
-      "normalized": 0.762718,
-      "p95_ms": 1.3288,
-      "samples": 5
-    },
-    {
-      "iterations": 10,
-      "max_ms": 0.9398,
-      "median_ms": 0.9355,
-      "min_ms": 0.9283,
-      "name": "luau/loop_100k",
-      "normalized": 0.543264,
-      "p95_ms": 0.9398,
+      "median_ms": 0.0018,
+      "min_ms": 0.0018,
+      "name": "cook/atex_roundtrip_256",
+      "normalized": 0.001,
+      "p95_ms": 0.002,
       "samples": 5
     },
     {
       "iterations": 3,
-      "max_ms": 63.943,
-      "median_ms": 59.638,
-      "min_ms": 37.1671,
+      "median_ms": 110.6591,
+      "min_ms": 109.5648,
+      "name": "cook/texture_bc1_512_mips",
+      "normalized": 78.389,
+      "p95_ms": 112.9995,
+      "samples": 5
+    },
+    {
+      "iterations": 3,
+      "median_ms": 135.7357,
+      "min_ms": 135.3438,
+      "name": "cook/texture_bc7_256",
+      "normalized": 96.153,
+      "p95_ms": 139.0339,
+      "samples": 5
+    },
+    {
+      "iterations": 5,
+      "median_ms": 0.5888,
+      "min_ms": 0.5807,
+      "name": "ecs/add_remove_component_10k",
+      "normalized": 0.417,
+      "p95_ms": 0.6044,
+      "samples": 5
+    },
+    {
+      "iterations": 5,
+      "median_ms": 0.2663,
+      "min_ms": 0.2647,
+      "name": "ecs/create_destroy_10k",
+      "normalized": 0.189,
+      "p95_ms": 0.2727,
+      "samples": 5
+    },
+    {
+      "iterations": 20,
+      "median_ms": 0.0798,
+      "min_ms": 0.0793,
+      "name": "ecs/iterate_100k",
+      "normalized": 0.057,
+      "p95_ms": 0.0807,
+      "samples": 5
+    },
+    {
+      "iterations": 20,
+      "median_ms": 0.0302,
+      "min_ms": 0.0298,
+      "name": "ecs/query_50k_of_100k",
+      "normalized": 0.021,
+      "p95_ms": 0.031,
+      "samples": 5
+    },
+    {
+      "iterations": 20,
+      "median_ms": 0.0829,
+      "min_ms": 0.0826,
+      "name": "jobs/batch_1024",
+      "normalized": 0.059,
+      "p95_ms": 0.0888,
+      "samples": 5
+    },
+    {
+      "iterations": 10,
+      "median_ms": 0.9402,
+      "min_ms": 0.9382,
+      "name": "luau/call_10k",
+      "normalized": 0.666,
+      "p95_ms": 0.9403,
+      "samples": 5
+    },
+    {
+      "iterations": 10,
+      "median_ms": 0.6261,
+      "min_ms": 0.6256,
+      "name": "luau/loop_100k",
+      "normalized": 0.444,
+      "p95_ms": 0.6278,
+      "samples": 5
+    },
+    {
+      "iterations": 3,
+      "median_ms": 43.6514,
+      "min_ms": 27.3063,
       "name": "nav/crowd_1000_agents_30_frames",
-      "normalized": 34.632985,
-      "p95_ms": 63.943,
+      "normalized": 30.922,
+      "p95_ms": 45.4186,
+      "samples": 5
+    },
+    {
+      "iterations": 20,
+      "median_ms": 52.6259,
+      "min_ms": 52.561,
+      "name": "nav/path_around_wall_hierarchical",
+      "normalized": 37.279,
+      "p95_ms": 53.1828,
+      "samples": 5
+    },
+    {
+      "iterations": 20,
+      "median_ms": 11.8074,
+      "min_ms": 11.7424,
+      "name": "nav/path_around_wall_plain",
+      "normalized": 8.364,
+      "p95_ms": 12.0858,
+      "samples": 5
+    },
+    {
+      "iterations": 20,
+      "median_ms": 11.9901,
+      "min_ms": 11.9571,
+      "name": "nav/path_through_serpentine_hierarchical",
+      "normalized": 8.494,
+      "p95_ms": 12.1251,
+      "samples": 5
+    },
+    {
+      "iterations": 20,
+      "median_ms": 8.441,
+      "min_ms": 8.3731,
+      "name": "nav/path_through_serpentine_plain",
+      "normalized": 5.979,
+      "p95_ms": 8.8092,
+      "samples": 5
+    },
+    {
+      "iterations": 5,
+      "median_ms": 24.2189,
+      "min_ms": 23.9936,
+      "name": "scene/load_binary_10k",
+      "normalized": 17.156,
+      "p95_ms": 24.3743,
+      "samples": 5
+    },
+    {
+      "iterations": 3,
+      "median_ms": 39.612,
+      "min_ms": 39.1959,
+      "name": "scene/load_json_10k",
+      "normalized": 28.06,
+      "p95_ms": 40.5442,
+      "samples": 5
+    },
+    {
+      "iterations": 5,
+      "median_ms": 14.762,
+      "min_ms": 14.7397,
+      "name": "scene/save_binary_10k",
+      "normalized": 10.457,
+      "p95_ms": 14.8665,
+      "samples": 5
+    },
+    {
+      "iterations": 3,
+      "median_ms": 23.2099,
+      "min_ms": 23.006,
+      "name": "scene/save_json_10k",
+      "normalized": 16.442,
+      "p95_ms": 23.9439,
+      "samples": 5
+    },
+    {
+      "iterations": 3,
+      "median_ms": 1.2898,
+      "min_ms": 1.2871,
+      "name": "world/flythrough_120_frames",
+      "normalized": 0.914,
+      "p95_ms": 1.2939,
       "samples": 5
     }
   ]
