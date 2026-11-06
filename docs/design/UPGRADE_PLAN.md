@@ -35,6 +35,15 @@ evidence; Phase 48 release waits for M8.12 product validation on the same candid
   `%TEMP%` path succeeds immediately afterwards. So it is not permissions and not the test. Two fresh build trees fail it
   and the canonical one does not; that is the whole of what is known, and it also stops the ASan run from reaching
   whatever CI's ASan `Unit tests` failure actually is. **Unresolved, and worth resolving before trusting any second build
+
+  **A tag cannot publish while any job in the full matrix is red.** The release job runs only when every earlier job
+  succeeded, so a v0.28.0 tag produced no release at all -- not a partial one. The full matrix has not been green since
+  2026-11-04: the newest successful run (#1633) was a **pull-request** run, and the pull-request gate is a fast subset that
+  never executes the ASan/UBSan, physics, macOS, Android or iOS jobs. A green PR therefore says nothing about whether a tag
+  can release. Two of the three failures under the tag were the module graph and a benchmark baseline that named renamed
+  benchmarks; both are fixed. The third is `Unit tests` under ASan+UBSan, which dies with exit code 132 -- SIGILL, the
+  trap a sanitizer emits for undefined behaviour, not an ASan memory report. It cannot be reproduced on this machine (no
+  clang compiler, and MSVC has no UBSan) and the job log requires admin rights, so it needs the log to name the test.
   tree on this machine.**
   exactly what CI passing says.
   Interaction, Quests, Net, Nav, AI, Scripting, Physics and Game. Jobs live in
