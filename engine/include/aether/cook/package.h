@@ -37,6 +37,8 @@ struct PackageReport {
     // The game's name and version are now in the executable's Windows version
     // resource, so Properties and Task Manager show the game rather than nothing.
     bool version_stamped = false;
+    // The project's icon is now the executable's, when it named one.
+    bool icon_stamped = false;
 };
 
 PackageReport Package(const PackageOptions& options);

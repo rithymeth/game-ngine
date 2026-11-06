@@ -43,6 +43,9 @@ struct ProjectSettings {
     // bug report can say which build of the game it came from and two builds of
     // the same game can be told apart.
     std::string version = "0.1.0";
+    // The packaged game's icon: a .ico, relative to the project folder. Stamped
+    // into the executable at package time on Windows; empty leaves the player's.
+    std::string icon;
     std::string engine_version = kEngineVersion; // engine that last saved the project
     // Scene to open at startup, relative to Content/. Becomes an asset GUID
     // with the asset database (Phase 8).
@@ -126,6 +129,7 @@ AETHER_REFLECT(aether::QualityPreset, 1,
 AETHER_REFLECT(aether::ProjectSettings, 1,
     AETHER_FIELD(name, Field_EditAnywhere, {.category = "Project"}),
     AETHER_FIELD(version, Field_EditAnywhere, {.tooltip = "The game's own version, recorded in the package", .category = "Project"}),
+    AETHER_FIELD(icon, Field_EditAnywhere, {.tooltip = "The packaged game's icon (.ico), relative to the project folder", .category = "Project"}),
     AETHER_FIELD(engine_version, Field_ReadOnly, {.category = "Project"}),
     AETHER_FIELD(startup_scene, Field_EditAnywhere, {.tooltip = "Scene opened at startup, relative to Content/", .category = "Project"}),
     AETHER_FIELD(always_cook, Field_EditAnywhere, {.tooltip = "Content cooked even if unreferenced: asset paths, or folders ending in /", .category = "Packaging"}),

@@ -36,6 +36,8 @@ describes what is on `master`, not a promise of a version number or a date.
 - Fixed the **ASan+UBSan unit-test failure that blocked every release**: `RevertPrefabOverrideCommand` resolved its entity through
   `editor::Resolve`, which asserts the GUID names a live entity -- and that command's whole purpose is to report when it does not.
   Assertions are compiled out in the RelWithDebInfo build used locally, so it passed here and trapped in CI.
+- A project can name an **`icon`**, and packaging stamps it into the executable's Windows icon resource, so a shipped game shows
+  its own icon in Explorer, on the taskbar and in the alt-tab list instead of the default one.
 ## Known gaps
 
 - **Built, tested and not adopted** -- check before assuming a feature is live. The repository builds infrastructure

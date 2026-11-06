@@ -647,4 +647,65 @@ AETHER_TEST(Package_ThePackagedGameCarriesItsOwnVersionInformation) {
                                 reinterpret_cast<void**>(&description), &length) && description != nullptr);
     CHECK(std::wstring(description) == L"Stamped Game");
 }
+// A one-image .ico: ICONDIR, ICONDIRENTRY, BITMAPINFOHEADER, one BGRA pixel and
+// the AND mask. Small enough to keep in the test, complete enough for Windows to
+// accept it.
+std::vector<u8> MakeMinimalIcon() {
+    std::vector<u8> ico;
+    // Not named u16/u32: those are Aether's integer types and this file uses them.
+    const auto put16 = [&ico](u16 value) {
+        ico.push_back(static_cast<u8>(value & 0xFF));
+        ico.push_back(static_cast<u8>((value >> 8) & 0xFF));
+    };
+    const auto put32 = [&ico](u32 value) {
+        for (int i = 0; i < 4; ++i) ico.push_back(static_cast<u8>((value >> (8 * i)) & 0xFF));
+    };
+    put16(0); put16(1); put16(1);                        // ICONDIR: reserved, icon, one image
+    ico.push_back(1); ico.push_back(1); ico.push_back(0); ico.push_back(0); // 1x1, no palette
+    put16(1); put16(32);                                 // planes, bits per pixel
+    put32(48); put32(22);                                // bytes in image, offset of it
+    put32(40); put32(1); put32(2); put16(1); put16(32);  // BITMAPINFOHEADER (1x2: colour, then the mask)
+    put32(0); put32(0); put32(0); put32(0); put32(0); put32(0);
+    ico.push_back(0x20); ico.push_back(0x80); ico.push_back(0xFF); ico.push_back(0xFF); // BGRA
+    put32(0);                                            // AND mask
+    return ico;
+}
+
+// The icon is the other half of a shipped executable's identity: without one the
+// game shows the default application icon in Explorer, on the taskbar and in the
+// alt-tab list.
+AETHER_TEST(Package_ThePackagedGameCarriesItsOwnIcon) {
+    const stdfs::path parent = stdfs::temp_directory_path() / "aether_package_tests";
+    stdfs::remove_all(parent / "Iconed");
+    stdfs::remove_all(parent / "IconedOut");
+    stdfs::create_directories(parent);
+
+    ProjectPaths project;
+    std::string error;
+    AETHER_CHECK(templates::CreateProjectFromTemplate(parent, "Iconed", "blank", &project, &error));
+    const std::vector<u8> icon = MakeMinimalIcon();
+    std::ofstream(project.root / "icon.ico", std::ios::binary).write(reinterpret_cast<const char*>(icon.data()),
+                                                                     static_cast<std::streamsize>(icon.size()));
+    ProjectSettings settings;
+    AETHER_CHECK(LoadProject(project.file, settings, &error));
+    settings.icon = "icon.ico";
+    AETHER_CHECK(SaveProject(project.file, settings, &error));
+
+    const stdfs::path self = platform::ExecutablePath();
+    AETHER_CHECK(!self.empty());
+    cook::PackageOptions options;
+    options.cook.project_file = project.file;
+    options.output_dir = parent / "IconedOut";
+    options.player_executable = self;
+    const cook::PackageReport packaged = cook::Package(options);
+    CHECK(packaged.ok);
+    CHECK(packaged.icon_stamped);
+
+    // The compiled executable really has an icon group; resource id 1 is the one
+    // Windows picks for an application.
+    HMODULE module = LoadLibraryExW(packaged.game_executable.wstring().c_str(), nullptr, LOAD_LIBRARY_AS_DATAFILE);
+    AETHER_CHECK(module != nullptr);
+    CHECK(FindResourceW(module, MAKEINTRESOURCEW(1), reinterpret_cast<LPCWSTR>(RT_GROUP_ICON)) != nullptr);
+    FreeLibrary(module);
+}
 #endif

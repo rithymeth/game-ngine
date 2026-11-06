@@ -2899,6 +2899,7 @@
   ),AETHER_FIELD(engine_version,Field_ReadOnly,
   ),AETHER_FIELD(fixed_timestep_hz,Field_EditAnywhere,
   ),AETHER_FIELD(gravity,Field_EditAnywhere,
+  ),AETHER_FIELD(icon,Field_EditAnywhere,
   ),AETHER_FIELD(layers,Field_EditAnywhere,
   ),AETHER_FIELD(msaa_samples,Field_EditAnywhere,
   ),AETHER_FIELD(plugins,Field_EditAnywhere,

@@ -39,9 +39,10 @@ build of the engine made it.
 
 The packaged executable carries the game's own identity: `Game.exe`'s Windows
 version resource says the project's name and `version`, with the window title as
-its description. The player has no version information of its own, so without
-this a shipped game showed nothing in Properties and a file name in Task
-Manager. This is Windows-only; elsewhere the executable is a plain copy.
+its description, and its icon is the project's `icon` file. The player has
+neither of its own, so without this a shipped game showed nothing in Properties,
+a file name in Task Manager and the default application icon everywhere. This is
+Windows-only; elsewhere the executable is a plain copy.
 
 The notices and licences are staged automatically, because a package
 redistributes LZ4, zstd, Jolt, Recast, Luau and the rest whether or not anyone

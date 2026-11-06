@@ -190,6 +190,87 @@ bool StampGameVersion(const stdfs::path& exe, const std::string& description, co
     }
     return true;
 }
+
+// The icon is the other half of a shipped executable's identity: without one the
+// game shows the default application icon everywhere it appears, in Explorer, on
+// the taskbar and in the alt-tab list. Resource id 1 for the group, because
+// Windows picks the lowest-numbered icon group for an application.
+bool StampGameIcon(const stdfs::path& exe, const stdfs::path& icon_file) {
+    constexpr usize kMaxIconBytes = 16 * 1024 * 1024;
+    std::vector<u8> bytes;
+    if (!fs::ReadFileBytes(icon_file.string(), bytes, kMaxIconBytes)) return false;
+    const auto read_u16 = [&bytes](usize at) {
+        return static_cast<u16>(bytes[at] | (bytes[at + 1] << 8));
+    };
+    const auto read_u32 = [&bytes](usize at) {
+        return static_cast<u32>(bytes[at]) | (static_cast<u32>(bytes[at + 1]) << 8) |
+               (static_cast<u32>(bytes[at + 2]) << 16) | (static_cast<u32>(bytes[at + 3]) << 24);
+    };
+    // ICONDIR: reserved, type (1 = icon), count.
+    if (bytes.size() < 6 || read_u16(0) != 0 || read_u16(2) != 1) return false;
+    const u16 count = read_u16(4);
+    if (count == 0 || bytes.size() < 6 + static_cast<usize>(count) * 16) return false;
+
+    struct Image {
+        u16 width, height, colours, planes, bits;
+        u32 size, offset;
+    };
+    std::vector<Image> images;
+    images.reserve(count);
+    for (u16 i = 0; i < count; ++i) {
+        const usize entry = 6 + static_cast<usize>(i) * 16;
+        Image image{static_cast<u16>(bytes[entry] == 0 ? 256 : bytes[entry]),
+                    static_cast<u16>(bytes[entry + 1] == 0 ? 256 : bytes[entry + 1]),
+                    bytes[entry + 2],
+                    read_u16(entry + 4),
+                    read_u16(entry + 6),
+                    read_u32(entry + 8),
+                    read_u32(entry + 12)};
+        if (image.size == 0 || image.offset > bytes.size() || bytes.size() - image.offset < image.size) return false;
+        images.push_back(image);
+    }
+
+    HANDLE update = BeginUpdateResourceW(exe.wstring().c_str(), FALSE);
+    if (update == nullptr) {
+        AETHER_LOG_WARN("Package", "Can't open %s to stamp its icon: error %lu", exe.string().c_str(),
+                        static_cast<unsigned long>(GetLastError()));
+        return false;
+    }
+    // GRPICONDIR: reserved, type, count, then 14-byte entries that name the
+    // RT_ICON ids the images were added under.
+    std::vector<u8> group;
+    PushU16(group, 0);
+    PushU16(group, 1);
+    PushU16(group, count);
+    bool ok = true;
+    for (usize i = 0; i < images.size(); ++i) {
+        const Image& image = images[i];
+        const WORD id = static_cast<WORD>(i + 1);
+        if (UpdateResourceW(update, reinterpret_cast<LPWSTR>(RT_ICON), MAKEINTRESOURCEW(id), 0x0409,
+                            bytes.data() + image.offset, static_cast<DWORD>(image.size)) == FALSE) {
+            ok = false;
+            break;
+        }
+        group.push_back(static_cast<u8>(image.width == 256 ? 0 : image.width));
+        group.push_back(static_cast<u8>(image.height == 256 ? 0 : image.height));
+        group.push_back(static_cast<u8>(image.colours));
+        group.push_back(0);
+        PushU16(group, image.planes);
+        PushU16(group, image.bits);
+        PushU32(group, image.size);
+        PushU16(group, id);
+    }
+    if (ok) {
+        ok = UpdateResourceW(update, reinterpret_cast<LPWSTR>(RT_GROUP_ICON), MAKEINTRESOURCEW(1), 0x0409,
+                             group.data(), static_cast<DWORD>(group.size())) != FALSE;
+    }
+    const BOOL ended = EndUpdateResourceW(update, FALSE);
+    if (!ok || ended == FALSE) {
+        AETHER_LOG_WARN("Package", "Can't stamp the icon from %s", icon_file.string().c_str());
+        return false;
+    }
+    return true;
+}
 #endif
 
 bool FileChecksum(const stdfs::path& file, u64& bytes, u32& crc) {
@@ -402,6 +483,11 @@ PackageReport Package(const PackageOptions& options) {
     // player is not an executable at all.
     report.version_stamped = StampGameVersion(staged_player, settings.window_title.empty() ? settings.name : settings.window_title,
                                               settings.name, settings.version, report.game_executable.filename().string());
+    if (!settings.icon.empty()) {
+        // Relative to the project folder, so a project moves with its icon.
+        const stdfs::path icon = ProjectPaths::ForFile(options.cook.project_file).root / settings.icon;
+        report.icon_stamped = StampGameIcon(staged_player, icon);
+    }
 #endif
 #if defined(_WIN32)
     // The DLLs the player loads (dxcompiler.dll and the like).
