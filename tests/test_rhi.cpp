@@ -515,3 +515,67 @@ AETHER_TEST(RHI_D3D12RejectsInvalidTextureTransitionStates) {
     device->WaitForFence(fence);
     AETHER_CHECK(device->IsFenceComplete(fence));
 }
+// Rows 12, 17, 27, 28 and 34: handles are validated before the backend indexes its registries, so an invalid
+// handle is reported rather than resolved into whatever record happens to sit at that index.
+AETHER_TEST(RHI_D3D12RejectsInvalidComputeBindingHandles) {
+    auto device = CreateDevice(Backend::D3D12, /*enable_debug_layer=*/false);
+    AETHER_CHECK(device != nullptr);
+    auto compute = device->CreateComputeCommandList();
+    AETHER_CHECK(compute != nullptr);
+    compute->Reset();
+
+    // Row 12: an invalid compute-pipeline handle.
+    aether::Logger::Instance().ClearRecent();
+    compute->BindComputePipeline(ComputePipelineHandle{});
+    AETHER_CHECK(LoggedErrorContaining("valid pipeline handle"));
+
+    // Row 28: a barrier on a handle that is not a storage buffer.
+    aether::Logger::Instance().ClearRecent();
+    compute->ComputeBufferBarrier(BufferHandle{});
+    AETHER_CHECK(LoggedErrorContaining("storage buffer"));
+
+    compute->Close();
+    const u64 fence = device->SubmitCompute(*compute);
+    device->WaitForComputeFence(fence);
+    AETHER_CHECK(device->IsComputeFenceComplete(fence));
+
+    // Row 27: the same calls on a graphics list are refused for the queue, not silently recorded.
+    auto graphics = device->CreateCommandList();
+    AETHER_CHECK(graphics != nullptr);
+    graphics->Reset();
+    aether::Logger::Instance().ClearRecent();
+    graphics->BindComputePipeline(ComputePipelineHandle{});
+    AETHER_CHECK(LoggedErrorContaining("valid pipeline handle"));
+    graphics->Close();
+    const u64 graphics_fence = device->Submit(*graphics);
+    device->WaitForFence(graphics_fence);
+    AETHER_CHECK(device->IsFenceComplete(graphics_fence));
+}
+
+AETHER_TEST(RHI_D3D12RejectsInvalidIndexBufferFormatAndHandle) {
+    auto device = CreateDevice(Backend::D3D12, /*enable_debug_layer=*/false);
+    AETHER_CHECK(device != nullptr);
+    auto cmd = device->CreateCommandList();
+    AETHER_CHECK(cmd != nullptr);
+    cmd->Reset();
+
+    // Row 34: an index format outside the two declared values.
+    aether::Logger::Instance().ClearRecent();
+    cmd->BindIndexBuffer(BufferHandle{}, static_cast<IndexFormat>(0xFF));
+    AETHER_CHECK(LoggedErrorContaining("invalid format, state, or buffer handle"));
+
+    // Row 17: a valid format with an invalid buffer handle.
+    aether::Logger::Instance().ClearRecent();
+    cmd->BindIndexBuffer(BufferHandle{}, IndexFormat::UInt32);
+    AETHER_CHECK(LoggedErrorContaining("invalid format, state, or buffer handle"));
+
+    // The same for vertex buffers, which shares the binding-readiness checks (row 25's input path).
+    aether::Logger::Instance().ClearRecent();
+    cmd->BindVertexBuffer(BufferHandle{}, 32);
+    AETHER_CHECK(LoggedErrorContaining("invalid handle or a stride"));
+
+    cmd->Close();
+    const u64 fence = device->Submit(*cmd);
+    device->WaitForFence(fence);
+    AETHER_CHECK(device->IsFenceComplete(fence));
+}

@@ -316,8 +316,14 @@ D3D12 backend uses **one message for two conditions** — "no active pass" and "
 and "bad enum" — so these checks prove the call was rejected, not which clause rejected it. A distinct message per clause
 would sharpen them; that is a change to the diagnostic, not to the validation, and belongs with the same workstream.
 
-**Debt count: 98 before, 91 after three batches** (rows 4, 22, 29, 31, 32, 33, 39). The remaining 91 are 87 device-backed
-checks and 4 that need a validation-layer run; none needs a new engine capability.
+**Fourth batch — handles and queues.** `RHI_D3D12RejectsInvalidComputeBindingHandles` closes rows 12, 27 and 28: an
+invalid compute-pipeline handle and a barrier on something that is not a storage buffer are both reported, on a compute
+list and on a graphics list, and both lists still submit afterwards.
+`RHI_D3D12RejectsInvalidIndexBufferFormatAndHandle` closes rows 17 and 34: an index format outside the two declared values
+and a valid format with an invalid buffer handle are both reported, as is a vertex bind with a null handle.
+
+**Debt count: 98 before, 86 after four batches** (rows 4, 12, 17, 22, 27, 28, 29, 31, 32, 33, 34, 39). The remaining 86
+are 82 device-backed checks and 4 that need a validation-layer run; none needs a new engine capability.
 
 ## Deferred from M8
 
