@@ -17,7 +17,6 @@ evidence; Phase 48 release waits for M8.12 product validation on the same candid
   test, and the picture got **wider**: every file write in the filesystem tests fails, and
   `Serialization_LegacyV1SceneStillLoads` -- which never touches the filesystem, it deserializes a byte vector in
   memory -- also dies. So it is neither one test nor file I/O specifically. The earlier guess that it points at this
-  memory -- also dies. So it is neither one test nor file I/O specifically. The earlier guess that it points at this
   machine is **wrong**, and the evidence against it is on the same line: `build/` passes on the same machine at the
   same time. It is specific to a *second* local build tree, which nothing here explains. Resolve it before trusting a
   clean clone; the guard means a failing test now reports and the suite continues, which is the part worth having.
