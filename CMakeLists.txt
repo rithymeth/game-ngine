@@ -45,6 +45,20 @@ option(AETHER_BUILD_MCP "Build the MCP (Model Context Protocol) editor server" O
 option(AETHER_BUILD_ANDROID_APP "Build the Android native runtime shim" OFF)
 option(AETHER_BUILD_IOS_APP "Build the iOS native runtime shell" OFF)
 
+# Keep AETHER_ASSERT active in Release and RelWithDebInfo. Both define NDEBUG, which turns the assertion
+# into a no-op, so a configuration that relies on assertions traps in one build and silently continues in
+# another -- exactly how a test passed here and died in CI with "Illegal instruction" and no test name.
+# CI runs one lane with this ON so that difference is exercised instead of discovered.
+option(AETHER_ENABLE_ASSERTIONS "Keep AETHER_ASSERT active in Release and RelWithDebInfo" OFF)
+if(AETHER_ENABLE_ASSERTIONS)
+    if(MSVC)
+        add_compile_options(/UNDEBUG)
+    else()
+        add_compile_options(-UNDEBUG)
+    endif()
+    message(STATUS "Aether: assertions are enabled in this configuration")
+endif()
+
 if(AETHER_BUILD_IOS_APP)
     if(NOT APPLE OR NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         message(FATAL_ERROR "AETHER_BUILD_IOS_APP requires an Apple iOS toolchain")

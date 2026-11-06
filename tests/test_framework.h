@@ -37,6 +37,27 @@ inline const char*& CurrentTest() {
     return name;
 }
 
+// The check being evaluated right now. A check that reports can print itself, but a check that *traps*
+// (an assertion inside an expression, a null dereference) ends the run with only the test name recorded,
+// which says which test died and not which line of it. The macros below set this before evaluating.
+struct CheckSite {
+    const char* expression = nullptr;
+    const char* file = nullptr;
+    int line = 0;
+};
+
+inline CheckSite& CurrentCheck() {
+    static CheckSite site;
+    return site;
+}
+
+inline void SetCurrentCheck(const char* expression, const char* file, int line) {
+    CheckSite& site = CurrentCheck();
+    site.expression = expression;
+    site.file = file;
+    site.line = line;
+}
+
 // AETHER_TEST_FILTER=Job,Audio runs only the tests whose name contains one of the comma-separated
 // pieces (used by the thread-sanitizer job to run the threaded tests); unset runs everything.
 inline bool Selected(const std::string& name) {
@@ -76,25 +97,27 @@ inline int RunAll() {
 
 } // namespace aether::test
 
-#define AETHER_TEST(name)                                                                         \
-    static void name();                                                                           \
+#define AETHER_TEST(name)                                                                          \
+    static void name();                                                                            \
     static ::aether::test::Registrar registrar_##name(#name, name);                                \
     static void name()
 
 #define AETHER_CHECK(cond)                                                                         \
     do {                                                                                           \
+        ::aether::test::SetCurrentCheck(#cond, __FILE__, __LINE__);                                \
         if (!(cond)) {                                                                             \
             std::printf("  CHECK failed: %s (%s:%d)\n", #cond, __FILE__, __LINE__);                \
             ++::aether::test::FailureCount();                                                      \
-        }                                                                                           \
+        }                                                                                          \
     } while (0)
 
 #define AETHER_CHECK_NEAR(a, b, eps)                                                               \
     do {                                                                                           \
+        ::aether::test::SetCurrentCheck(#a " ~= " #b, __FILE__, __LINE__);                         \
         auto va = (a);                                                                             \
         auto vb = (b);                                                                             \
         if (std::fabs(static_cast<double>(va) - static_cast<double>(vb)) > (eps)) {                \
             std::printf("  CHECK_NEAR failed: %s ~= %s (%s:%d)\n", #a, #b, __FILE__, __LINE__);    \
             ++::aether::test::FailureCount();                                                      \
-        }                                                                                           \
+        }                                                                                          \
     } while (0)

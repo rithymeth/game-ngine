@@ -19,6 +19,18 @@ the whole thing before believing a change is fine.
 before any test logic executes. Clear both before debugging a red suite — otherwise you will spend turns reverting a
 change that was never the problem.
 
+**A trap in CI that does not happen locally is a configuration difference.** `RelWithDebInfo` and `Release` define
+`NDEBUG`, which turns `AETHER_ASSERT` into a no-op; the sanitizer lane builds `Debug`, where it does not. Configure a
+second tree with `-DAETHER_ENABLE_ASSERTIONS=ON` to keep assertions active in a release-like build and reproduce what
+CI sees. One required CI lane (Clang, `RelWithDebInfo`) now sets it, so the difference is exercised instead of
+discovered — the release was blocked for several rounds by a trap that only existed in the configuration nobody built
+locally.
+
+**A crash names the test and the last check that ran.** The harness installs a crash reporter: a fatal signal on Linux
+and a structured exception on Windows both print `*** <kind> in test: <name>` and
+`***   last check: <expression> (file:line)` to stderr before the process dies. Read that line before anything else —
+it exists because a CI job once exited after one test with `Illegal instruction` and nothing else.
+
 **`AETHER_TEST_FILTER` is a plain substring, not a regex.** And `AETHER_CHECK` does **not** abort, so a check followed by
 an index or a dereference traps the process instead of reporting a failure. Guard before indexing.
 

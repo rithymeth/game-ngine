@@ -147,24 +147,31 @@ jobs:
             type: RelWithDebInfo
             flags: ""
             physics: "OFF"
+            assertions: "OFF"
           - name: Clang
+            # The one release-like lane that keeps AETHER_ASSERT active. RelWithDebInfo defines NDEBUG, so
+            # without this an assertion trap exists only in Debug builds -- which is exactly how a test
+            # passed locally and died in CI with "Illegal instruction" and no test name.
             cc: clang
             cxx: clang++
             type: RelWithDebInfo
             flags: ""
             physics: "OFF"
+            assertions: "ON"
           - name: ASan+UBSan
             cc: gcc
             cxx: g++
             type: Debug
             flags: "-fsanitize=address,undefined -fno-omit-frame-pointer"
             physics: "OFF"
+            assertions: "OFF"
           - name: Physics
             cc: gcc
             cxx: g++
             type: RelWithDebInfo
             flags: ""
             physics: "ON"
+            assertions: "OFF"
     steps:
       - uses: actions/checkout@v4
       - name: Install tools
@@ -203,6 +210,7 @@ jobs:
           "-DCMAKE_CXX_FLAGS=${{ matrix.flags }}"
           "-DCMAKE_CXX_FLAGS_DEBUG=${{ matrix.name == 'ASan+UBSan' && '-O0 -g1' || '-g' }}"
           -DAETHER_BUILD_PHYSICS=${{ matrix.physics }}
+          -DAETHER_ENABLE_ASSERTIONS=${{ matrix.assertions }}
           -DAETHER_BUILD_EDITOR=OFF -DAETHER_BUILD_SANDBOX=OFF
           -DAETHER_PLATFORM_PLUGINS=platforms/example
       - name: Module graph
