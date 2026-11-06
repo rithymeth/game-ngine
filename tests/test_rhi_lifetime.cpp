@@ -623,3 +623,54 @@ void PipelineCreationRejectsUnsupportedLayout(Backend backend) {
 AETHER_TEST(RHI_Validation_PipelineCreationRejectsUnsupportedLayout_D3D12) {
     PipelineCreationRejectsUnsupportedLayout(Backend::D3D12);
 }
+// Rows 18 and 21: render-pass and pipeline binding state. Unmatched and nested pass calls are refused, and a pipeline
+// bind outside a pass or with an invalid handle is refused, with a real pipeline binding successfully as the control.
+void RenderPassAndPipelineBinding(Backend backend) {
+    auto device = MakeDevice(backend);
+    if (!device) return;
+    std::unique_ptr<ISwapChain> target = device->CreateSwapChain(nullptr, kW, kH, 2);
+    AETHER_CHECK(target != nullptr);
+    if (!target) return;
+    auto cmd = device->CreateCommandList();
+    AETHER_CHECK(cmd != nullptr);
+    if (!cmd) return;
+    target->AcquireNextImage();
+    cmd->Reset();
+
+    // Row 21: closing a pass that was never begun.
+    aether::Logger::Instance().ClearRecent();
+    cmd->EndRenderPass();
+    AETHER_CHECK(aether::test::LoggedErrorContaining("EndRenderPass requires an active render pass"));
+
+    // Row 18: binding a pipeline outside a pass.
+    aether::Logger::Instance().ClearRecent();
+    cmd->BindPipeline(PipelineHandle{});
+    AETHER_CHECK(aether::test::LoggedErrorContaining("BindPipeline requires an active render pass"));
+
+    cmd->BeginRenderPass(*target, kBlue);
+
+    // Row 21: nesting a second pass inside the first.
+    aether::Logger::Instance().ClearRecent();
+    cmd->BeginRenderPass(*target, kBlue);
+    AETHER_CHECK(aether::test::LoggedErrorContaining("non-nested"));
+
+    // Row 18: an invalid pipeline handle inside a valid pass.
+    aether::Logger::Instance().ClearRecent();
+    cmd->BindPipeline(PipelineHandle{});
+    AETHER_CHECK(aether::test::LoggedErrorContaining("invalid graphics-pipeline handle"));
+
+    // Control: a real pipeline binds without a report.
+    const PipelineHandle pipeline = MakeVertexPipeline(*device, *target);
+    AETHER_CHECK(pipeline.IsValid());
+    aether::Logger::Instance().ClearRecent();
+    cmd->BindPipeline(pipeline);
+    AETHER_CHECK(!aether::test::LoggedErrorContaining("invalid graphics-pipeline handle"));
+
+    cmd->EndRenderPass();
+    cmd->Close();
+    const u64 fence = device->Submit(*cmd, target.get());
+    device->WaitForFence(fence);
+    AETHER_CHECK(device->IsFenceComplete(fence));
+    if (pipeline.IsValid()) AETHER_CHECK(device->DestroyPipeline(pipeline));
+}
+AETHER_TEST(RHI_Validation_RenderPassAndPipelineBinding_D3D12) { RenderPassAndPipelineBinding(Backend::D3D12); }

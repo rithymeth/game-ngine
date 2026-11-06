@@ -360,8 +360,15 @@ root signature logs and **throws** `std::invalid_argument`. Both are rejections;
 what exists and says so in a comment, because the tidier contract would fail and no contract at all would miss it. Unifying
 the two behaviours is a change to the public contract of `CreatePipeline`, not a test fix.
 
-**Debt count: 98 before, 73 after ten batches.** 25 rows closed. The remaining 73 are 69 device-backed checks and 4 that
-need a validation-layer run; none needs a new engine capability.
+**Eleventh batch.** `RHI_Validation_RenderPassAndPipelineBinding_D3D12` closes rows 18 and 21: closing a pass that was never
+begun, binding a pipeline outside a pass, nesting a second pass inside the first, and binding an invalid pipeline handle
+inside a valid pass are each reported; a real pipeline then binds inside the pass without a report. Row 48 (recording-state
+enforcement) is closed by the earlier `RHI_D3D12RejectsRecordingOnAClosedCommandList`, which exercises the same clauses from
+the other direction — the row was written before that check existed.
+
+**Debt count: 98 before, 72 after eleven batches.** 26 rows closed. The remaining 72 include 26 Vulkan-only rows that this
+machine cannot exercise at all (Vulkan is not configured locally), 4 that need a validation-layer run, and 42 D3D12 checks of
+the same shapes already covered. None needs a new engine capability.
 
 ## Deferred from M8
 
