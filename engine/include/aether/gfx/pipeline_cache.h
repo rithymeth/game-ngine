@@ -11,6 +11,7 @@
 // tested without a GPU. Templates rather than a void* so a caller cannot put one backend's handle in
 // another backend's cache by mistake.
 
+#include "aether/core/profiler.h"
 #include "aether/gfx/shader_cache.h"
 
 #include <cstdint>
@@ -60,6 +61,7 @@ public:
             return found->second;
         }
         ++misses_;
+        AETHER_PROFILE_ZONE("gfx.pipeline_create");
         return entries_.emplace(key, creator_ ? creator_(key) : Handle{}).first->second;
     }
 

@@ -12,6 +12,7 @@
 // order. An item carries an opaque `user` value so the caller can find its own mesh and transform
 // without this file having to know about either.
 
+#include "aether/core/profiler.h"
 #include "aether/math/frustum.h"
 #include "aether/math/vec.h"
 
@@ -47,6 +48,7 @@ public:
     // Culls against `frustum`, orders by material then mesh (stable, so equal keys keep insertion
     // order), and calls `submit` for each visible item. Returns how many were submitted.
     usize Submit(const Frustum& frustum, const Submitter& submit) {
+        AETHER_PROFILE_ZONE("gfx.submit");
         std::vector<const DrawItem*> visible;
         visible.reserve(items_.size());
         for (const DrawItem& item : items_) {

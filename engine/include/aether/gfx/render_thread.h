@@ -11,6 +11,7 @@
 // it testable with no GPU: a test posts lambdas and checks they ran, in order, on another thread.
 
 #include "aether/core/base.h"
+#include "aether/core/profiler.h"
 
 #include <condition_variable>
 #include <deque>
@@ -87,7 +88,10 @@ private:
             std::function<void()> work = std::move(queue_.front());
             queue_.pop_front();
             lock.unlock();
-            if (work) work();
+            if (work) {
+                AETHER_PROFILE_ZONE("gfx.render_command");
+                work();
+            }
             lock.lock();
         }
     }

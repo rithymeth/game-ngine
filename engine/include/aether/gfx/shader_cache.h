@@ -10,6 +10,7 @@
 // DXC: a fake counts how many times it was asked. It also means a caller can put a disk cache or an
 // offline compile step behind the same interface.
 
+#include "aether/core/profiler.h"
 #include "aether/gfx/shader_compiler.h"
 
 #include <functional>
@@ -56,6 +57,7 @@ public:
             return found->second;
         }
         ++misses_;
+        AETHER_PROFILE_ZONE("gfx.shader_compile");
         return entries_.emplace(key, compiler_ ? compiler_(key) : ShaderBytecode{}).first->second;
     }
 
