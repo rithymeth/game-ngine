@@ -8,6 +8,12 @@ evidence; Phase 48 release waits for M8.12 product validation on the same candid
 
 ## Facts the plan rests on (checked against the repository)
 
+- A configure-and-build from an empty directory succeeds (1133 targets, exit 0, only the pre-existing warnings).
+  Its `aether_tests`, though, fails `Filesystem_WriteThenReadBytesRoundTrips` -- `fs::WriteFileBytes` returns false
+  and the test then crashes dereferencing the empty vector it got back -- while the same test passes in the
+  configured `build/`. Same source, same 52.4 MB binary, same dynamic CRT, same `%TEMP%`. **Unexplained**, and
+  recorded rather than papered over; the configured build and CI are green, so this may be an artefact of a
+  second local tree rather than a defect. Worth resolving before trusting a clean clone.
 - **Modules** are the top-level CMake targets: `Aether::Engine`, Blueprint, Renderer, Animation,
   Audio, UI, VFX, Terrain, Streaming, Sprite2D, Sequencer, Save, Loc, Gameplay, Inventory,
   Interaction, Quests, Net, Nav, AI, Scripting, Physics and Game. Jobs live in
