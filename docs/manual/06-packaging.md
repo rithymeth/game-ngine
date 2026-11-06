@@ -75,9 +75,11 @@ headless `aether_server` as a `.tar.gz` with SHA-256 checksums; see
 The player runs the existing `AudioSource`, `AudioListener` and `ReverbZone`
 components, sound cues (`.acue`) and sequence audio keys. Cue names and wave names
 are content-relative paths, such as `Audio/shot.acue` and `Audio/shot.wav`.
-WAV, Ogg Vorbis and FLAC waves are streamed from the package. Put the cue/wave
-folders and sequence folders on the project's **always cook** list: references
-stored as path strings are not GUID dependencies followed by the cooker.
+WAV, Ogg Vorbis and FLAC waves are streamed from the package. An asset named by
+a **path string** is followed by the cooker like a GUID reference: a scene that
+names a cue pulls the cue in, and the cue pulls the waves it names. The **always
+cook** list is for content nothing refers to at all -- audio a script plays by
+name, for example, which no file can point at.
 
 Windowed players start the platform audio output, with the existing null backend
 when no device is available. Headless runs render audio on the frame thread;

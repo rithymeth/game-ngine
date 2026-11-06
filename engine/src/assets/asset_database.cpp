@@ -519,7 +519,10 @@ void AssetDatabase::RebuildDependencies() {
             for (const AssetGuid& dependency : record.dependencies) referencers_[dependency].push_back(guid);
             continue;
         } else if (record.importer != "Scene" && record.importer != "Prefab" && record.importer != "SpriteAtlas" &&
-                   record.importer != "Tileset" && record.importer != "Tilemap" && record.importer != "Sequence") {
+                   record.importer != "Tileset" && record.importer != "Tilemap" && record.importer != "Sequence" &&
+                   record.importer != "SoundCue" && record.importer != "UILayout" && record.importer != "UITheme" &&
+                   record.importer != "AnimGraph" && record.importer != "AnimMontage" && record.importer != "BlendSpace" &&
+                   record.importer != "ParticleSystem") {
             continue;
         }
         std::vector<u8> bytes;
@@ -534,6 +537,28 @@ void AssetDatabase::RebuildDependencies() {
             // Entity GUIDs share the format; only known asset GUIDs count.
             if (referenced != guid && records_.count(referenced) != 0) {
                 record.dependencies.push_back(referenced);
+            }
+        }
+        // Paths written as plain strings are how several components name their
+        // asset: a sound cue on an AudioSource, a widget's UI layout, a
+        // sequence's audio key. None of them is a GUID, so a packaged game used
+        // to lose them unless the folder happened to be on the always-cook list.
+        // The source formats that carry them are JSON, so a binary scene simply
+        // fails to parse here and keeps the old behaviour.
+        const nlohmann::json document = nlohmann::json::parse(bytes.begin(), bytes.end(), nullptr, false);
+        if (!document.is_discarded()) {
+            std::vector<const nlohmann::json*> stack{&document};
+            while (!stack.empty()) {
+                const nlohmann::json& node = *stack.back();
+                stack.pop_back();
+                if (node.is_array()) {
+                    for (const nlohmann::json& child : node) stack.push_back(&child);
+                } else if (node.is_object()) {
+                    for (auto it = node.begin(); it != node.end(); ++it) stack.push_back(&it.value());
+                } else if (node.is_string()) {
+                    const auto found = by_path_.find(node.get<std::string>());
+                    if (found != by_path_.end() && found->second != guid) record.dependencies.push_back(found->second);
+                }
             }
         }
         std::sort(record.dependencies.begin(), record.dependencies.end());

@@ -18,6 +18,9 @@ describes what is on `master`, not a promise of a version number or a date.
 - Fixed a folder on the project's **always cook** list shipping only the files an importer claims. A licence, a readme or a data
   file a script opens by name beside a font or a model is not an asset, so it was left out of the package without a warning --
   STARDUST-HOP shipped `Roboto-Medium.ttf` without `LICENSE-Roboto.txt` even though `fonts/` was listed.
+- Assets named by a **path string** are now followed by the cooker the same way GUID references are: a scene that names a
+  sound cue pulls the cue in, and the cue pulls the waves it names. A folder only needs to be on the project's always cook list
+  for content nothing refers to at all.
 ## Known gaps
 
 - **Built, tested and not adopted** -- check before assuming a feature is live. The repository builds infrastructure

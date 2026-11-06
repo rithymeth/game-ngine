@@ -241,6 +241,72 @@ AETHER_TEST(Cook_AnAlwaysCookFolderShipsItsPlainFilesToo) {
     CHECK(std::string(bytes.begin(), bytes.end()) == "the cube's terms");
 }
 
+// A component that names its asset by path -- a sound cue on an AudioSource, a
+// widget's UI layout, a sequence's audio key -- used to leave that asset out of
+// the package unless its folder was on the always-cook list, because the
+// dependency scan only looked for GUID strings.
+AETHER_TEST(Cook_AnAssetNamedByPathIsCooked) {
+    const stdfs::path project = MakeProject("PathNamed");
+    json scene = {{"$type", "Scene"},
+                  {"$version", 1},
+                  {"entities", json::array({{{"components", {{"UITheme", "Textures/unused.png"}}}}})}};
+    WriteText(project.parent_path() / "Content/Scenes/path.ascene", scene.dump(2));
+    ProjectSettings settings;
+    std::string error;
+    AETHER_CHECK(LoadProject(project, settings, &error));
+    settings.startup_scene = "Scenes/path.ascene";
+    AETHER_CHECK(SaveProject(project, settings, &error));
+
+    const stdfs::path out = stdfs::temp_directory_path() / "aether_cook_tests/PathNamed_out";
+    stdfs::remove_all(out);
+    cook::CookOptions options;
+    options.project_file = project;
+    options.output_dir = out;
+    options.configuration = cook::BuildConfiguration::Shipping;
+    const cook::CookReport report = cook::Cook(options);
+    CHECK(report.ok);
+
+    bool cooked = false;
+    for (const cook::CookedAsset& asset : report.assets) cooked = cooked || asset.path == "Textures/unused.png";
+    CHECK(cooked);
+}
+
+// Two path hops chained: a scene names a cue, and the cue names its sound. Both
+// are plain strings, so both used to be invisible to the dependency scan and
+// audio only shipped when its folder was on the always-cook list.
+AETHER_TEST(Cook_ACueReachedFromAScenePullsItsSound) {
+    const stdfs::path project = MakeProject("CueChain");
+    const stdfs::path content = project.parent_path() / "Content";
+    // The sound field is a content path like any other; a texture stands in for a
+    // wave so the test needs no audio fixture to prove the resolution.
+    WriteText(content / "Audio/shot.acue",
+              R"({"name":"shot","nodes":[{"id":1,"pos":[0,0],"sound":"Textures/unused.png","type":"Wave"}],)"
+              R"("output":{},"root":1,"version":1})");
+    json scene = {{"$type", "Scene"},
+                  {"$version", 1},
+                  {"entities", json::array({{{"components", {{"AudioSource", {{"cue", "Audio/shot.acue"}}}}}}})}};
+    WriteText(content / "Scenes/audio.ascene", scene.dump(2));
+    ProjectSettings settings;
+    std::string error;
+    AETHER_CHECK(LoadProject(project, settings, &error));
+    settings.startup_scene = "Scenes/audio.ascene";
+    AETHER_CHECK(SaveProject(project, settings, &error));
+
+    const stdfs::path out = stdfs::temp_directory_path() / "aether_cook_tests/CueChain_out";
+    stdfs::remove_all(out);
+    cook::CookOptions options;
+    options.project_file = project;
+    options.output_dir = out;
+    options.configuration = cook::BuildConfiguration::Shipping;
+    const cook::CookReport report = cook::Cook(options);
+    CHECK(report.ok);
+
+    std::vector<std::string> cooked;
+    for (const cook::CookedAsset& asset : report.assets) cooked.push_back(asset.path);
+    CHECK(std::find(cooked.begin(), cooked.end(), "Audio/shot.acue") != cooked.end());
+    CHECK(std::find(cooked.begin(), cooked.end(), "Textures/unused.png") != cooked.end());
+}
+
 AETHER_TEST(Cook_MobileTargetCooksAstcAndCanStripTheSourceTextures) {
     const stdfs::path project = MakeProject("MobileCook");
     cook::CookOptions options;
