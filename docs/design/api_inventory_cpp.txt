@@ -1820,6 +1820,16 @@
   void WithGraphicsQueueIdle(const std::function<void()>&operation)
   void WithQueuesIdle(const std::function<void()>&operation)
   ~Device()
+[engine/include/aether/gfx/draw_submission.h] experimental
+  type class DrawSubmission
+  type struct DrawItem
+  public:using Submitter=std::function<void(const DrawItem&)>
+  usize Culled()const
+  usize Queued()const
+  usize Submit(const Frustum&frustum,const Submitter&submit)
+  usize Submitted()const
+  void Add(DrawItem item)
+  void Begin()
 [engine/include/aether/gfx/material.h] experimental
   type struct MaterialData
   MaterialData LoadMaterial(const assets::GltfMaterial&source,assets::AssetManager&assets,ID3D12GraphicsCommandList*upload_cmd)
