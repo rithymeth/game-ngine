@@ -171,16 +171,24 @@ Take **Option A** first, system by system, because it needs no migration and eac
    origin-relative frame; because the origin moves with the player, a body is never 10 km from the anchor. The precision
    loss the step was meant to fix does not happen, because nothing ever hands physics an absolute position. Jolt's
    `RVec3` is double-precision, so no change is needed here at all. **Do not do this step.**
-2. **Networking -- check before doing it.** The same reasoning may apply: prediction steps `Transform&` through the same
-   local frame. What actually needs the origin is the *wire format* -- a snapshot of a local position is only meaningful
-   alongside the origin it was taken against, and replication does not currently send one.
+2. **Networking -- a real gap, but not yet reachable.** Checking this found *why* nothing has bitten: `FloatingOrigin::Update`
+   (`streaming/streamer.cpp:268`) exists, is tested, and is **called by nothing at runtime**. No game rebases, so client and
+   server sit in the same local frame by default and a snapshot needs no origin to be meaningful.
+
+   The moment a game calls it, that stops being true. Replication sends entity positions with no origin (`net/src/replication.cpp`
+   has no reference to one), so a client that has rebased and a server that has not would disagree about where everything is --
+   silently, because both would be internally consistent. **When this step is taken, send the origin in the snapshot header
+   next to the sequence id and the time, and apply it on receipt.** That is a small change to a format that already carries a
+   time for the same reason.
 3. **Rendering.** The camera and the frustum need absolute positions to cull a large world; drawing still happens in
    origin-relative space, which is the point of the origin.
 4. **Audio.** Last because its precision needs are the weakest -- attenuation over a few hundred metres does not care
    about a kilometre-scale offset.
 
-Each step is: track a `Vec3d`, convert through the origin, and keep `Transform` origin-relative. The test for each is
-that a rebase leaves the world visually and physically unchanged.
+What the first two steps actually established is that **the origin machinery is complete and nothing uses it.** That is not a
+defect -- the mechanism is tested and waiting -- but it means 42.1's remaining work is adoption, and adoption starts when a
+game needs a world larger than f32 can address, not before. Building the conversion into systems that run in a single frame
+would add a cost for a precision the game does not yet need.
 
 ### What must not be skipped
 
