@@ -19,12 +19,12 @@ evidence; Phase 48 release waits for M8.12 product validation on the same candid
   memory -- also dies. So it is neither one test nor file I/O specifically. The earlier guess that it points at this
   machine is **wrong**, and the evidence against it is on the same line: `build/` passes on the same machine at the
   specific to *where the executable sits*: the binary that passes in `build/tests` **fails when the same directory is
-  **the ancestor directory**. The same files (identical sizes, `aether_tests.exe` and `dxcompiler.dll`) give
-  `inside build/` -> pass, at the repository root -> fail, six runs out of six either way, so it is neither flaky nor
-  the binaries. Something in the test harness derives behaviour from where its ancestor tree is -- most likely the
-  repository root it walks up to find. That is the next thread: the harness path logic, not the build and not the
-  filesystem. The guard means such a failure reports and the suite continues until then.
-  Audio, UI, VFX, Terrain, Streaming, Sprite2D, Sequencer, Save, Loc, Gameplay, Inventory,
+  **where the executable's parent is**. The same files give: copy inside `build/` -> pass, copy outside the
+  repository (`D:\` directly) -> pass, copy whose parent is the **repository root** -> fail, six runs out of six
+  each way. Identical sizes, so not flaky and not the binaries. The harness does no path derivation of its own, which
+  leaves whatever differs about sitting directly in that one directory -- and the one thing there is a git working
+  tree. A checkout hook or a file watcher reacting to a new executable inside the repository would look exactly like
+  this. That is the next thread, and it is one experiment: a copy in a different git working tree.
   Interaction, Quests, Net, Nav, AI, Scripting, Physics and Game. Jobs live in
   `engine/include/aether/job`, the RHI in `engine/gfx` (there is no `jobs/` or `rhi/` directory).
 - **The module link graph has no cycles today** (83 targets, 201 edges; checked with
