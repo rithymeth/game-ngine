@@ -3373,3 +3373,25 @@ AETHER_TEST(Mcp_ExpandLevelInstancePlacesTheSceneAndUndoesIt) {
 }
 // Phase 44.5: the prefab surface, which the MCP had none of. The success path is the command, covered in
 // test_commands; this covers what the tool has to get right on its own.
+
+// Phase 44.5: a schema limit that nothing checks is a promise to the caller that nothing keeps. The server
+// enforces the ranges and sizes the tool schemas declare, so a client cannot send 40 filters for a 32-item
+// list and get a silent truncation.
+AETHER_TEST(Mcp_SchemaLimitsAreEnforced) {
+    Harness h;
+    Json too_many = Json::array();
+    for (int i = 0; i < 40; ++i) too_many.push_back("Transform");
+    const auto over_items = h.Call("list_entities", {{"components_all", too_many}});
+    AETHER_CHECK(over_items.is_error);
+    AETHER_CHECK(over_items.text.find("32") != std::string::npos);
+
+    const auto over_max = h.Call("list_entities", {{"descendant_depth", 100000}});
+    AETHER_CHECK(over_max.is_error);
+    AETHER_CHECK(over_max.text.find("64") != std::string::npos);
+
+    // The limits that are in range still work.
+    Json ok_items = Json::array();
+    ok_items.push_back("Transform");
+    AETHER_CHECK(!h.Call("list_entities", {{"components_all", ok_items}}).is_error);
+    // Note: descendant_depth alone is not a valid filter, so it is not used as the in-range case.
+}

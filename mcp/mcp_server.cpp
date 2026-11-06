@@ -154,6 +154,41 @@ Json McpServer::HandleToolCall(const Json& params) {
                     const std::string expected = type->is_string() ? type->get<std::string>() : "the declared type";
                     throw RpcError{kInvalidParams, "Argument '" + it.key() + "' must be " + expected};
                 }
+                // Ranges and sizes are declared in the schemas, so they are enforced here too: a schema
+                // limit that nothing checks is a promise to the caller that nothing keeps. Individual
+                // tools still check their own bounds -- this is the layer that makes the schema honest,
+                // not a replacement for that.
+                const Json& arg = args[it.key()];
+                const auto bound = [&](const char* key, double& out) {
+                    const auto found = it.value().find(key);
+                    if (found == it.value().end() || !found->is_number()) return false;
+                    out = found->get<double>();
+                    return true;
+                };
+                if (arg.is_number()) {
+                    double limit = 0.0;
+                    if (bound("minimum", limit) && arg.get<double>() < limit) {
+                        throw RpcError{kInvalidParams, "Argument '" + it.key() + "' must be at least " + std::to_string(limit)};
+                    }
+                    if (bound("maximum", limit) && arg.get<double>() > limit) {
+                        throw RpcError{kInvalidParams, "Argument '" + it.key() + "' must be at most " + std::to_string(limit)};
+                    }
+                }
+                if (arg.is_array()) {
+                    double limit = 0.0;
+                    if (bound("minItems", limit) && arg.size() < static_cast<std::size_t>(limit)) {
+                        throw RpcError{kInvalidParams, "Argument '" + it.key() + "' needs at least " + std::to_string(limit) + " items"};
+                    }
+                    if (bound("maxItems", limit) && arg.size() > static_cast<std::size_t>(limit)) {
+                        throw RpcError{kInvalidParams, "Argument '" + it.key() + "' takes at most " + std::to_string(limit) + " items"};
+                    }
+                }
+                if (arg.is_string()) {
+                    double limit = 0.0;
+                    if (bound("maxLength", limit) && arg.get<std::string>().size() > static_cast<std::size_t>(limit)) {
+                        throw RpcError{kInvalidParams, "Argument '" + it.key() + "' is longer than " + std::to_string(limit)};
+                    }
+                }
             }
         }
     }
