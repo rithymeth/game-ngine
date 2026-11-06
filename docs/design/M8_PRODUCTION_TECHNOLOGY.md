@@ -245,6 +245,42 @@ stay open. No performance improvement or release-readiness claim is made.
 - Make no changes to game content, game scripts, levels, or campaign assets as
   part of this queue.
 
+## Next update: legibility and verification debt (engine only)
+
+The queue above closed backend validation gaps. It also exposed what makes those increments expensive
+to accept: a large share are recorded as *"implemented locally; runtime unverified"* or *"automated
+tests were not run"*, and the failure that blocked the release for several rounds was not a rendering
+defect at all — it was a test that died in CI with `Illegal instruction` and **no test name**.
+
+This queue continues the same improvement-only rules. Nothing here adds a capability; each item makes an
+existing one verifiable, or makes a failure say what it is.
+
+Evidence for the items, in the order they cost time:
+
+- A sanitizer lane exited 132 with `*** fatal signal in test: <name>` only after a crash handler was
+  added to the harness; before that it exited after one test with no name. The underlying trap was an
+  assertion compiled out locally by `NDEBUG`, so it existed **only in CI**.
+- The suite is not idempotent: stale `E:/aether-test-temp` or `%TEMP%/aether_*` state fails a run before
+  any test logic executes, and the documented remedy is to delete it by hand.
+- `check_module_graph` failed a CI lane for a tool added in an earlier increment (`aether_package` had
+  no layer), while the same gate passed locally because the local configure does not contain that
+  target. The gate is right; its blindness to local configuration is the defect.
+- Readiness rows and plan rows have repeatedly described finished work as pending, and the canonical
+  product plan of the largest game on the engine was missing from its repository. A document that is not
+  checked against the code drifts in one direction: optimistic.
+
+| Order | Increment | Scope and acceptance | Status |
+|---|---|---|---|
+| 104 | Assertions-on test configuration | A supported build configuration with `NDEBUG` undefined and assertions enabled, run by one required CI lane, so a trap cannot be CI-only or local-only. Acceptance: the configuration builds the test target and passes; the difference between it and the default configuration is documented; a deliberate `AETHER_ASSERT(false)` fails in that lane and is named. | **Planned** |
+| 105 | Name the dead test and check | Record the current check and test in the harness before each runs, print them from the crash handler, and have the runner report the last check reached when a binary dies. Acceptance: a crashing test prints test name, check name and `file:line` in both a normal and a sanitizer build; the CTest failure output contains the same names. | **Planned** |
+| 106 | Idempotent test state | Every test that touches persisted state owns a directory and removes it before and after, with no ambient temp paths. Acceptance: a clean run and a run immediately after a failed run give the same result with no manual cleanup; removing the directory by hand is no longer part of any documented workflow. | **Planned** |
+| 107 | The module-graph gate must see every target it checks | Make the gate's inputs match what CI configures, so a target that exists in CI cannot be invisible locally. Acceptance: a target missing from `docs/design/module_layers.txt` fails locally in the default configure, and the remedy is printed by the check rather than discovered in CI. | **Planned** |
+| 108 | Verification debt of increments 1–103 | For each increment recorded as implemented-but-unverified, either produce the runtime or automated evidence or restate it as an explicit known limitation with the reason it cannot be checked. Acceptance: no row in the queue above says "unverified" without a named reason and an owner action; the count of unverified rows is recorded before and after. | **Planned** |
+| 109 | Plans and checklists assert what the code does | For the game-facing documentation that drives work (readiness matrix, game checklists, product plans), record how each claim is checked — a test, a gate, or a person. Acceptance: a row that claims something is pending names the check that would prove otherwise, and a missing referenced document fails a check. | **Planned** |
+
+Order 104 and 105 first: they make 108 possible. 106 and 107 are small and independent. 109 last, because
+it is only worth writing checks for documents once the checks themselves are legible.
+
 ## Deferred from M8
 
 These may be considered in a later feature milestone, but are not M8 scope:
