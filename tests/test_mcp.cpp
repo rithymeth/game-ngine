@@ -3393,3 +3393,34 @@ AETHER_TEST(Mcp_RevertPrefabOverrideRefusesWhatItCannotDo) {
                         {{"entity", "00000000-0000-0000-0000-000000000000"}, {"component", "Transform"}})
                      .is_error);
 }
+// Phase 44.5: an agent can see what a prefab instance overrides before reverting one. The instance is added
+// directly, because the harness has no prefab asset to instantiate from.
+AETHER_TEST(Mcp_PrefabInstancesListsWhatEachOneOverrides) {
+    Harness h;
+    const auto empty = h.Call("prefab_instances");
+    if (empty.is_error) { std::printf("prefab_instances failed: %s\n", empty.text.c_str()); AETHER_CHECK(!empty.is_error); return; }
+    AETHER_CHECK(empty.value["instances"].is_array() && empty.value["instances"].empty());
+
+    World& world = h.session.world;
+    const Entity root = world.CreateEntity(Transform{Vec3(), Quaternion::Identity()}, IdComponent{NewEntityGuid()});
+    PrefabInstance instance;
+    PropertyOverride changed;
+    changed.entity = 3;
+    changed.component = "Transform";
+    changed.field_path = "position[1]";
+    changed.value = "2.5";
+    instance.overrides.push_back(changed);
+    world.AddComponent<PrefabInstance>(root, std::move(instance));
+    h.session.guids.Rebuild(world);
+
+    const auto listed = h.Call("prefab_instances");
+    if (listed.is_error) { std::printf("prefab_instances failed: %s\n", listed.text.c_str()); AETHER_CHECK(!listed.is_error); return; }
+    const Json& instances = listed.value["instances"];
+    AETHER_CHECK(instances.size() == 1);
+    if (instances.size() != 1) return;
+    AETHER_CHECK(instances[0]["overrides"].size() == 1);
+    AETHER_CHECK(instances[0]["overrides"][0]["component"] == "Transform");
+    AETHER_CHECK(instances[0]["overrides"][0]["field"] == "position[1]");
+    AETHER_CHECK(instances[0]["overrides"][0]["value"] == "2.5");
+    AETHER_CHECK(instances[0]["removed_entities"] == 0);
+}

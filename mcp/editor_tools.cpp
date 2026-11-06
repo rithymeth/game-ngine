@@ -408,6 +408,35 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                         return {{"entity", ToString(guid)}, {"component", component}, {"field", field}};
                     }});
 
+    server.AddTool({"prefab_instances",
+                    "The prefab instances in the open scene: which prefab each was made from, what it overrides, and which prefab entities it has removed. Read-only; use revert_prefab_override to drop one.",
+                    Schema(Json::object()), [&s](const Json&) -> Json {
+                        Json instances = Json::array();
+                        s.world.ForEachArchetype([&s, &instances](Archetype& archetype) {
+                            if ((archetype.Mask() & ComponentMaskOf<PrefabInstance>()) != ComponentMaskOf<PrefabInstance>()) return;
+                            for (usize chunk = 0; chunk < archetype.ChunkCount(); ++chunk) {
+                                const u32 count = archetype.ChunkEntityCount(chunk);
+                                Entity* entities = archetype.EntityArray(chunk);
+                                auto* data = static_cast<PrefabInstance*>(archetype.ComponentArray(chunk, GetComponentId<PrefabInstance>()));
+                                for (u32 i = 0; i < count; ++i) {
+                                    Json overrides = Json::array();
+                                    for (const PropertyOverride& o : data[i].overrides) {
+                                        overrides.push_back({{"entity", o.entity},
+                                                             {"component", o.component},
+                                                             {"field", o.field_path},
+                                                             {"value", o.value}});
+                                    }
+                                    Json entry = {{"overrides", overrides},
+                                                  {"removed_entities", data[i].removed_entities.size()}};
+                                    const IdComponent* id = s.world.GetComponent<IdComponent>(entities[i]);
+                                    if (id != nullptr) entry["entity"] = ToString(id->guid);
+                                    instances.push_back(entry);
+                                }
+                            }
+                        });
+                        return {{"instances", instances}};
+                    }});
+
     server.AddTool({"set_data_layer",
                     "Switch a data layer on or off as one undoable edit. Each member keeps its own state, so switching a layer back on restores what each entity had -- one that was already off stays off.",
                     Schema({{"layer", {{"type", "string"}, {"description", "The data layer to switch"}}},
