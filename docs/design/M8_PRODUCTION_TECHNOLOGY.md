@@ -309,8 +309,15 @@ rejection **and** that the command list still closes and submits afterwards — 
 damaging state. That pattern is what the remaining rows need: not new engine capability, just a consumer for a signal the
 engine already emits.
 
-**Debt count: 98 before, 96 after the first batch, 94 after the second.** Every remaining row needs either a
-device-backed test (90) or a validation-layer run (4); none needs a new engine capability.
+**Third batch, and a diagnostic weakness worth recording.** `RHI_D3D12RejectsInvalidViewportAndScissor`,
+`RHI_D3D12RejectsInvalidClearColorAndTexture` and `RHI_D3D12RejectsInvalidTextureTransitionStates` close rows 31, 32 and 33.
+Each asserts the report and then that the list still submits. One limitation is stated in the tests rather than implied: the
+D3D12 backend uses **one message for two conditions** — "no active pass" and "bad bounds" share a line, as do "bad texture"
+and "bad enum" — so these checks prove the call was rejected, not which clause rejected it. A distinct message per clause
+would sharpen them; that is a change to the diagnostic, not to the validation, and belongs with the same workstream.
+
+**Debt count: 98 before, 91 after three batches** (rows 4, 22, 29, 31, 32, 33, 39). The remaining 91 are 87 device-backed
+checks and 4 that need a validation-layer run; none needs a new engine capability.
 
 ## Deferred from M8
 

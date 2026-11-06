@@ -437,3 +437,81 @@ AETHER_TEST(RHI_D3D12RejectsRecordingOnAClosedCommandList) {
     device->WaitForComputeFence(fence);
     AETHER_CHECK(device->IsComputeFenceComplete(fence));
 }
+// Rows 31, 32 and 33: viewport/scissor bounds, clear colours and resource-state enums. Each of these
+// reports and returns, so the check is the report plus the list still submitting afterwards.
+//
+// Recording limitation, stated rather than implied: the D3D12 backend uses ONE message for "no active
+// pass" and "bad bounds", and one for "bad texture" and "bad enum", so these checks prove the call was
+// rejected and could not be reached, not which clause rejected it. A distinct message per clause would
+// make them sharper; that is a change to the diagnostic, not to the validation.
+AETHER_TEST(RHI_D3D12RejectsInvalidViewportAndScissor) {
+    auto device = CreateDevice(Backend::D3D12, /*enable_debug_layer=*/false);
+    AETHER_CHECK(device != nullptr);
+    auto cmd = device->CreateCommandList();
+    AETHER_CHECK(cmd != nullptr);
+    cmd->Reset();
+
+    const Rect scissor{0, 0, 640, 360};
+    const Viewport good{0.0f, 0.0f, 640.0f, 360.0f, 0.0f, 1.0f};
+    const auto rejects = [&](const Viewport& viewport, const Rect& rect) {
+        aether::Logger::Instance().ClearRecent();
+        cmd->SetViewportAndScissor(viewport, rect);
+        return LoggedErrorContaining("valid viewport/scissor bounds");
+    };
+    AETHER_CHECK(rejects(Viewport{0.0f, 0.0f, 0.0f, 360.0f, 0.0f, 1.0f}, scissor));  // zero width
+    AETHER_CHECK(rejects(Viewport{0.0f, 0.0f, 640.0f, -1.0f, 0.0f, 1.0f}, scissor)); // negative height
+    AETHER_CHECK(rejects(Viewport{0.0f, 0.0f, 640.0f, 360.0f, 1.0f, 0.0f}, scissor)); // depth range inverted
+    AETHER_CHECK(rejects(Viewport{0.0f, 0.0f, 640.0f, 360.0f, 0.0f, 1.5f}, scissor)); // depth above 1
+    AETHER_CHECK(rejects(good, Rect{400, 0, 100, 360}));                               // scissor right below left
+
+    cmd->Close();
+    const u64 fence = device->Submit(*cmd);
+    device->WaitForFence(fence);
+    AETHER_CHECK(device->IsFenceComplete(fence));
+}
+
+AETHER_TEST(RHI_D3D12RejectsInvalidClearColorAndTexture) {
+    auto device = CreateDevice(Backend::D3D12, /*enable_debug_layer=*/false);
+    AETHER_CHECK(device != nullptr);
+    auto cmd = device->CreateCommandList();
+    AETHER_CHECK(cmd != nullptr);
+    cmd->Reset();
+
+    const TextureHandle invalid_texture{};
+    aether::Logger::Instance().ClearRecent();
+    cmd->ClearRenderTarget(invalid_texture, ClearColor{0.0f, 0.0f, 0.0f, 1.0f});
+    AETHER_CHECK(LoggedErrorContaining("valid texture/color"));
+
+    aether::Logger::Instance().ClearRecent();
+    cmd->ClearRenderTarget(invalid_texture, ClearColor{std::nanf(""), 0.0f, 0.0f, 1.0f});
+    AETHER_CHECK(LoggedErrorContaining("valid texture/color"));
+
+    cmd->Close();
+    const u64 fence = device->Submit(*cmd);
+    device->WaitForFence(fence);
+    AETHER_CHECK(device->IsFenceComplete(fence));
+}
+
+AETHER_TEST(RHI_D3D12RejectsInvalidTextureTransitionStates) {
+    auto device = CreateDevice(Backend::D3D12, /*enable_debug_layer=*/false);
+    AETHER_CHECK(device != nullptr);
+    auto cmd = device->CreateCommandList();
+    AETHER_CHECK(cmd != nullptr);
+    cmd->Reset();
+
+    const TextureHandle invalid_texture{};
+    // An unknown state value must be rejected before it is mapped to a native state.
+    const auto unknown = static_cast<ResourceState>(0xFF);
+    aether::Logger::Instance().ClearRecent();
+    cmd->TransitionTexture(invalid_texture, ResourceState::Present, unknown);
+    AETHER_CHECK(LoggedErrorContaining("valid texture/resource states"));
+
+    aether::Logger::Instance().ClearRecent();
+    cmd->TransitionTexture(invalid_texture, unknown, ResourceState::RenderTarget);
+    AETHER_CHECK(LoggedErrorContaining("valid texture/resource states"));
+
+    cmd->Close();
+    const u64 fence = device->Submit(*cmd);
+    device->WaitForFence(fence);
+    AETHER_CHECK(device->IsFenceComplete(fence));
+}
