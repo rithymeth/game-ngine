@@ -34,6 +34,9 @@ struct ConnectionStats {
     u64 packets_sent = 0, packets_received = 0, packets_acked = 0, packets_lost = 0;
     u64 bytes_sent = 0, bytes_received = 0;
     u64 messages_resent = 0;
+    // Reassemblies abandoned because the fragments exceeded max_message: a peer sending an endless run
+    // of non-final fragments would otherwise grow the buffer without limit.
+    u64 fragments_dropped = 0;
     // Message bytes (headers and payload, resends included) per channel, for the first kStatChannels channels.
     static constexpr usize kStatChannels = 8;
     std::array<u64, kStatChannels> channel_bytes_sent{}, channel_bytes_received{};
@@ -84,7 +87,10 @@ private:
         // Receiving.
         u16 expected = 0; // reliable: the next id to deliver
         std::map<u16, std::pair<u8, std::vector<u8>>> buffer; // reliable: arrived early
-        std::vector<u8> fragments;  // reliable: a message being reassembled
+        std::vector<u8> fragments;
+        // Set when a reassembly was dropped: fragments are discarded until one says it is the last,
+        // which is where the stream becomes readable again.
+        bool discarding = false;  // reliable: a message being reassembled
         bool any_received = false;  // sequenced
         u16 last_received = 0;      // sequenced
     };

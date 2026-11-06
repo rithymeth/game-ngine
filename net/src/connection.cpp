@@ -110,6 +110,23 @@ void Connection::Deliver(u8 channel, u8 flags, u16 id, std::vector<u8> data) {
             auto [f, bytes] = std::move(it->second);
             c.buffer.erase(it);
             ++c.expected;
+            // A reassembly that overflowed is unrecoverable: its remaining fragments are still on the way,
+            // so they are discarded until one says it is the last. That is where the stream becomes
+            // readable again -- without it, the next message would be appended to the junk.
+            if (c.discarding) {
+                if ((f & 1) == 0) c.discarding = false;
+                continue;
+            }
+            // Fragments accumulate until one says it is the last, so a peer sending an endless run of
+            // non-final fragments would grow this without limit. `max_message` is the bound Send already
+            // refuses to exceed, and the reassembler needs the same one: a hostile peer can queue as much
+            // as it likes otherwise, since every fragment is acked and keeps the stream alive.
+            if (c.fragments.size() + bytes.size() > config_.max_message) {
+                c.fragments.clear();
+                c.discarding = true;
+                ++stats_.fragments_dropped;
+                return;
+            }
             c.fragments.insert(c.fragments.end(), bytes.begin(), bytes.end());
             if ((f & 1) == 0) {
                 inbox_.push_back({channel, std::move(c.fragments)});

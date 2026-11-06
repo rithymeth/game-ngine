@@ -304,3 +304,63 @@ AETHER_TEST(Net_RealUdpLocalhost) {
     const auto msg = std::find_if(got.begin(), got.end(), [](const NetEvent& e) { return e.type == NetEventType::Message; });
     CHECK(msg != got.end() && Value(msg->data) == 1234);
 }
+
+// A peer that keeps sending non-final fragments must not be able to grow the reassembly buffer without
+// limit: max_message bounds what Send will produce, and the receiver has to hold a hostile peer to the
+// same number.
+AETHER_TEST(Net_TransportRefusesAnEndlessFragmentStream) {
+    Connection conn;
+    const auto put16 = [](std::vector<u8>& out, u16 v) { out.push_back(static_cast<u8>(v)); out.push_back(static_cast<u8>(v >> 8)); };
+    const auto put32 = [](std::vector<u8>& out, u32 v) {
+        for (int i = 0; i < 4; ++i) out.push_back(static_cast<u8>(v >> (8 * i)));
+    };
+    const auto packet = [&](u16 seq, u16 id, bool more) {
+        std::vector<u8> out;
+        put16(out, seq);              // packet sequence
+        put16(out, 0);                // ack
+        put32(out, 0);                // ack bits
+        out.push_back(0);             // channel 0 is ReliableOrdered
+        out.push_back(more ? 1 : 0);  // bit 0: more fragments follow
+        put16(out, id);
+        put16(out, static_cast<u16>(Connection::kMaxFragment));
+        out.resize(out.size() + Connection::kMaxFragment, 0x5a);
+        return out;
+    };
+
+    // 256 KB of non-final fragments: one past the limit Send would ever produce.
+    const usize limit = ConnectionConfig{}.max_message;
+    const usize fragments = limit / Connection::kMaxFragment + 2;
+    for (usize i = 0; i < fragments; ++i) {
+        const std::vector<u8> p = packet(static_cast<u16>(i), static_cast<u16>(i), true);
+        conn.ReceivePacket(p, 0.0);
+    }
+    CHECK(conn.Stats().fragments_dropped >= 1);
+
+    // The stream is unreadable until a fragment says it is the last: the storm's remaining fragments are
+    // still arriving, so the first final fragment ends the discard and the next message is delivered.
+    std::vector<u8> tail;
+    put16(tail, static_cast<u16>(fragments));
+    put16(tail, 0);
+    put32(tail, 0);
+    tail.push_back(0);
+    tail.push_back(0); // final: ends the discard
+    put16(tail, static_cast<u16>(fragments));
+    put16(tail, 0);
+    conn.ReceivePacket(tail, 0.0);
+    Message none;
+    CHECK(!conn.Receive(none)); // the tail ended the discard without delivering anything
+
+    std::vector<u8> good;
+    put16(good, static_cast<u16>(fragments + 1));
+    put16(good, 0);
+    put32(good, 0);
+    good.push_back(0);
+    good.push_back(0); // final
+    put16(good, static_cast<u16>(fragments + 1));
+    put16(good, 3);
+    good.push_back(1); good.push_back(2); good.push_back(3);
+    conn.ReceivePacket(good, 0.0);
+    Message out;
+    CHECK(conn.Receive(out));
+    CHECK(out.data.size() == 3 && out.data[0] == 1 && out.data[2] == 3);
+}
