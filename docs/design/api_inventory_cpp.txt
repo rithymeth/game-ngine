@@ -1401,6 +1401,8 @@
   PackageReport Package(const PackageOptions&options)
   bool VerifyPackageManifest(const std::filesystem::path&directory,std::vector<std::string>&problems)
   std::filesystem::path FindPlayerExecutable()
+  std::filesystem::path FindThirdPartyLicenses()
+  std::filesystem::path FindThirdPartyNotices()
   std::string GameExecutableName(const std::string&project_name)
 [engine/include/aether/cook/texture_cook.h] experimental
   type enum class TextureFormat

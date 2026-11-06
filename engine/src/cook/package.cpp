@@ -125,6 +125,24 @@ stdfs::path FindPlayerExecutable() {
     return {};
 }
 
+stdfs::path FindThirdPartyNotices() {
+    std::error_code ec;
+#ifdef AETHER_NOTICES_PATH
+    const stdfs::path built = AETHER_NOTICES_PATH;
+    if (stdfs::is_regular_file(built, ec)) return built;
+#endif
+    return {};
+}
+
+stdfs::path FindThirdPartyLicenses() {
+    std::error_code ec;
+#ifdef AETHER_LICENSES_DIR
+    const stdfs::path built = AETHER_LICENSES_DIR;
+    if (stdfs::is_directory(built, ec)) return built;
+#endif
+    return {};
+}
+
 PackageReport Package(const PackageOptions& options) {
     PackageReport report;
     const auto fail = [&](const std::string& message) {
@@ -236,10 +254,59 @@ PackageReport Package(const PackageOptions& options) {
         return fail(message);
     }
 #endif
+    // A package redistributes the third-party libraries the engine links (LZ4,
+    // zstd, Jolt, Recast, Luau and the rest), so it carries their notices and
+    // licences. That used to be a manual step in one game's release script,
+    // which meant a game packaged any other way shipped them not at all.
+    const stdfs::path notices = options.notices_file.empty() ? FindThirdPartyNotices() : options.notices_file;
+    if (!notices.empty()) {
+        std::error_code copy_ec;
+        stdfs::copy_file(notices, staged_root / "THIRD_PARTY_NOTICES.md", stdfs::copy_options::overwrite_existing, copy_ec);
+        if (copy_ec) {
+            const std::string message = "Can't stage " + notices.string() + ": " + copy_ec.message();
+            cleanup_staging();
+            return fail(message);
+        }
+    }
+    const stdfs::path licenses = options.licenses_dir.empty() ? FindThirdPartyLicenses() : options.licenses_dir;
+    if (!licenses.empty()) {
+        std::error_code walk_ec;
+        for (stdfs::recursive_directory_iterator it(licenses, walk_ec), end; !walk_ec && it != end; it.increment(walk_ec)) {
+            if (!it->is_regular_file()) continue;
+            const stdfs::path to = staged_root / "licenses" / it->path().lexically_relative(licenses);
+            std::error_code copy_ec;
+            stdfs::create_directories(to.parent_path(), copy_ec);
+            if (copy_ec) {
+                cleanup_staging();
+                return fail("Can't stage the licences: " + copy_ec.message());
+            }
+            stdfs::copy_file(it->path(), to, stdfs::copy_options::overwrite_existing, copy_ec);
+            if (copy_ec) {
+                const std::string message = "Can't stage " + it->path().string() + ": " + copy_ec.message();
+                cleanup_staging();
+                return fail(message);
+            }
+        }
+        if (walk_ec) {
+            const std::string message = "Can't list " + licenses.string() + ": " + walk_ec.message();
+            cleanup_staging();
+            return fail(message);
+        }
+    }
+    // Everything the package is made of is now under the staging root, so the
+    // manifest describes what is there rather than a hand-built list that can
+    // drift from it.
     std::vector<stdfs::path> files;
-    for (const stdfs::path& copied : report.copied) files.push_back(staged_root / copied.filename());
-    files.push_back(report.cook.pak_file);
-    files.push_back(report.cook.manifest_file);
+    {
+        std::error_code walk_ec;
+        for (stdfs::recursive_directory_iterator it(staged_root, walk_ec), end; !walk_ec && it != end; it.increment(walk_ec)) {
+            if (it->is_regular_file()) files.push_back(it->path());
+        }
+        if (walk_ec) {
+            cleanup_staging();
+            return fail("Can't list the staged package: " + walk_ec.message());
+        }
+    }
     std::sort(files.begin(), files.end());
     nlohmann::json file_list = nlohmann::json::array();
     for (const stdfs::path& file : files) {
@@ -276,19 +343,37 @@ PackageReport Package(const PackageOptions& options) {
     // manifest last. On failure, restore each previous artifact in reverse order.
     struct SwapEntry {
         stdfs::path name;
+        bool is_dir = false;
         bool had_previous = false;
         bool installed = false;
     };
     std::vector<SwapEntry> swaps;
-    swaps.push_back({"Paks"});
+    swaps.push_back({"Paks", true});
     for (const stdfs::path& copied : report.copied) swaps.push_back({copied.filename()});
+    // Everything else that was staged, so publishing cannot drift from what was
+    // verified: the notices and licences are installed by being staged, not by
+    // being named again here. PackageManifest.json still goes last.
+    {
+        std::error_code walk_ec;
+        for (stdfs::directory_iterator it(staged_root, walk_ec), end; !walk_ec && it != end; it.increment(walk_ec)) {
+            const stdfs::path name = it->path().filename();
+            if (name == "Paks" || name == "PackageManifest.json") continue;
+            bool already = false;
+            for (const stdfs::path& copied : report.copied) already = already || copied.filename() == name;
+            if (!already) swaps.push_back({name, it->is_directory()});
+        }
+        if (walk_ec) {
+            cleanup_staging();
+            return fail("Can't list the staged package: " + walk_ec.message());
+        }
+    }
     swaps.push_back({"PackageManifest.json"});
     // Reject unexpected files/folders before moving any published artifact.
     // Recheck at each swap as well, since the destination may have changed.
     for (const SwapEntry& entry : swaps) {
         bool exists = false;
         std::string error;
-        if (!CheckDestination(options.output_dir / entry.name, entry.name == "Paks", exists, error)) {
+        if (!CheckDestination(options.output_dir / entry.name, entry.is_dir, exists, error)) {
             cleanup_staging();
             return fail(error);
         }
@@ -302,7 +387,7 @@ PackageReport Package(const PackageOptions& options) {
         }
         const stdfs::path destination = options.output_dir / entry.name;
         bool exists = false;
-        if (!CheckDestination(destination, entry.name == "Paks", exists, install_error)) break;
+        if (!CheckDestination(destination, entry.is_dir, exists, install_error)) break;
         entry.had_previous = exists;
         if (entry.had_previous) {
             stdfs::rename(destination, previous_root / entry.name, ec);

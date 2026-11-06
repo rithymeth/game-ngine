@@ -20,6 +20,10 @@ struct PackageOptions {
     CookOptions cook;                         // its output_dir is replaced by <output_dir>/Paks
     std::filesystem::path output_dir;
     std::filesystem::path player_executable;  // empty: FindPlayerExecutable()
+    // A package redistributes the third-party libraries the engine links, so it
+    // ships their notices and licences. Empty uses the ones this build found.
+    std::filesystem::path notices_file;       // empty: FindThirdPartyNotices()
+    std::filesystem::path licenses_dir;       // empty: FindThirdPartyLicenses()
 };
 
 struct PackageReport {
@@ -43,6 +47,12 @@ bool VerifyPackageManifest(const std::filesystem::path& directory, std::vector<s
 // aether_player beside the running executable (a packaged editor), else the
 // one this engine was built with; empty if neither exists.
 std::filesystem::path FindPlayerExecutable();
+
+// The repository's THIRD_PARTY_NOTICES.md and third_party/licenses, as this
+// build found them. Empty when the engine was built without a source tree,
+// which is why Package treats them as optional.
+std::filesystem::path FindThirdPartyNotices();
+std::filesystem::path FindThirdPartyLicenses();
 
 // The project's name made into a file name (letters, digits, '-', '_';
 // "Game" if nothing is left), with ".exe" on Windows.

@@ -283,3 +283,12 @@ target_compile_definitions(aether_engine PRIVATE AETHER_PLAYER_BUILD_PATH="$<TAR
 # Phase 26 step 1: the engine's own plugins (plugins/: physics, audio, AI,
 # networking), found by PluginManager::EnginePluginsDir().
 target_compile_definitions(aether_engine PRIVATE AETHER_ENGINE_PLUGINS_DIR="${CMAKE_SOURCE_DIR}/plugins")
+# A package carries the third-party notices and licences of what the engine
+# links, so a game built with it can be redistributed. Found at build time,
+# because a packaged game has no source tree left to look in.
+if(EXISTS "${CMAKE_SOURCE_DIR}/THIRD_PARTY_NOTICES.md")
+    target_compile_definitions(aether_engine PRIVATE AETHER_NOTICES_PATH="${CMAKE_SOURCE_DIR}/THIRD_PARTY_NOTICES.md")
+endif()
+if(IS_DIRECTORY "${CMAKE_SOURCE_DIR}/third_party/licenses")
+    target_compile_definitions(aether_engine PRIVATE AETHER_LICENSES_DIR="${CMAKE_SOURCE_DIR}/third_party/licenses")
+endif()

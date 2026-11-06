@@ -265,12 +265,33 @@ AETHER_TEST(Package_APackagedNewProjectLoadsInThePlayer) {
     CHECK(package.Manifest().startup_scene.empty() == false);
 
     // The package itself records the engine version, so a shipped folder can be
-    // identified: support and the upgrade path both start from it.
+    // identified: support and the upgrade path both start from it. And it
+    // carries the third-party notices, because a package redistributes those
+    // libraries whether or not anyone remembered to copy the licences.
+    AETHER_CHECK(!cook::FindThirdPartyNotices().empty());
+    AETHER_CHECK(!cook::FindThirdPartyLicenses().empty());
+    const stdfs::path package_root = packaged.manifest_file.parent_path();
+    CHECK(stdfs::exists(package_root / "THIRD_PARTY_NOTICES.md"));
+    CHECK(stdfs::exists(package_root / "licenses"));
     {
         std::ifstream in(packaged.manifest_file);
         const json package_manifest = json::parse(in);
         CHECK(package_manifest["engine_version"] == kEngineVersion);
         CHECK(package_manifest["project"] == "LoadTemplate");
+        bool notices_listed = false;
+        bool licences_listed = false;
+        for (const json& entry : package_manifest["files"]) {
+            const std::string path = entry.value("path", std::string());
+            notices_listed |= path == "THIRD_PARTY_NOTICES.md";
+            licences_listed |= path.rfind("licenses/", 0) == 0;
+        }
+        CHECK(notices_listed);
+        CHECK(licences_listed);
+    }
+    {
+        std::vector<std::string> problems;
+        CHECK(cook::VerifyPackageManifest(package_root, problems));
+        CHECK(problems.empty());
     }
 
     player::Game game(package);

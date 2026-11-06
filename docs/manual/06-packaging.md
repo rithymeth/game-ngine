@@ -13,6 +13,8 @@ named for the project, its DLLs and the cooked archive beside it, writes
     dist/Game/Paks/Game.apak           the cooked content
     dist/Game/Paks/CookManifest.json   what went into it
     dist/Game/PackageManifest.json     sizes, CRC-32s, and what built it
+    dist/Game/THIRD_PARTY_NOTICES.md   the libraries the engine links
+    dist/Game/licenses/                their licences
 
 Run `dist/Game/Game.exe`. Check a package at any time with
 `aether_pak verify-package dist/Game`; it compares every listed file against its
@@ -21,6 +23,11 @@ size and CRC-32 and prints what differs.
 `PackageManifest.json` records the project name, the configuration and the
 engine version, so a folder somebody ships you can be identified without running
 it -- and a bug report can start from the build that produced it.
+
+The notices and licences are staged automatically, because a package
+redistributes LZ4, zstd, Jolt, Recast, Luau and the rest whether or not anyone
+remembers to copy their terms. They are covered by the manifest like every other
+file, so a package that lost one fails verification.
 
 The player is found automatically -- beside `aether_package`, or the one the
 engine was built with -- so a build tree needs no arguments beyond the project

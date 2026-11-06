@@ -9,6 +9,9 @@ describes what is on `master`, not a promise of a version number or a date.
 - Fixed **cooking a project rewriting every imported asset's `.ameta` sidecar** even when nothing about it had changed. On a
   checkout with CRLF endings that left a freshly cooked project showing the whole `Content/` folder as modified, so a cook was
   something you had to undo in version control.
+- A package now carries the engine's **third-party notices and licences** (`THIRD_PARTY_NOTICES.md`, `licenses/`), staged
+  automatically and covered by `PackageManifest.json`. Previously shipping them was a manual step in one game's release script,
+  so a game packaged any other way redistributed LZ4, zstd, Jolt, Recast and Luau with none of their terms.
 ## Known gaps
 
 - **Built, tested and not adopted** -- check before assuming a feature is live. The repository builds infrastructure
