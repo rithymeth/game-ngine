@@ -430,3 +430,31 @@ AETHER_TEST(Prefab_InstantiationReportsTheEntitiesItCreated) {
     }
     AETHER_CHECK(found_root); // the root is among them, so destroying the list removes everything
 }
+// Phase 42.6: turning a scene on disk into prefab data, which is what a level instance places. The
+// interesting part is that a scene has as many roots as it has, and a prefab has exactly one -- so a
+// synthetic root has to stand in for the scene.
+AETHER_TEST(LevelInstance_LoadSceneAsPrefabTakesEveryRoot) {
+    World source;
+    const Entity a = source.CreateEntity(Transform{Vec3(1.0f, 0.0f, 0.0f), Quaternion::Identity()}, IdComponent{NewEntityGuid()});
+    const Entity b = source.CreateEntity(Transform{Vec3(2.0f, 0.0f, 0.0f), Quaternion::Identity()}, IdComponent{NewEntityGuid()});
+    source.CreateEntity(Transform{Vec3(3.0f, 0.0f, 0.0f), Quaternion::Identity()}, IdComponent{NewEntityGuid()},
+                        Parent{source.GetComponent<IdComponent>(b)->guid});
+    const auto path = std::filesystem::temp_directory_path() / "aether_level_instance_scene.ascene";
+    AETHER_CHECK(SaveScene(source, path.string()));
+
+    PrefabData prefab;
+    std::string error;
+    AETHER_CHECK(LoadSceneAsPrefab(path.string(), prefab, error));
+    AETHER_CHECK(error.empty());
+    // The synthetic root, both scene roots, and b's child: a prefab made from only the first root would
+    // have two entries, which is the bug this guards.
+    AETHER_CHECK(prefab.entities.size() >= 4);
+
+    // A path that is not a scene fails with a reason rather than producing empty prefab data.
+    PrefabData missing;
+    std::string missing_error;
+    AETHER_CHECK(!LoadSceneAsPrefab((std::filesystem::temp_directory_path() / "aether_no_such_scene.ascene").string(),
+                                    missing, missing_error));
+    AETHER_CHECK(!missing_error.empty());
+    AETHER_CHECK(missing.entities.empty());
+}

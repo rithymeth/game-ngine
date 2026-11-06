@@ -2,6 +2,7 @@
 
 #include "aether/scene/components.h"
 #include "aether/scene/hierarchy.h"
+#include "aether/scene/serialization.h"
 
 namespace aether {
 
@@ -55,6 +56,49 @@ LevelInstanceReport ExpandLevelInstances(World& world, GuidIndex& guids, const S
         ++report.expanded;
     }
     return report;
+}
+
+
+bool LoadSceneAsPrefab(const std::string& path, PrefabData& out, std::string& error) {
+    World temp;
+    if (!LoadScene(temp, path)) {
+        error = "could not load scene \"" + path + "\"";
+        return false;
+    }
+    GuidIndex guids;
+    guids.Rebuild(temp);
+
+    // Roots are the entities with no Parent. They are collected before anything is added, because adding
+    // an entity moves archetypes and would invalidate a walk still in progress.
+    std::vector<Entity> roots;
+    temp.ForEachArchetype([&roots](Archetype& archetype) {
+        if ((archetype.Mask() & ComponentMaskOf<Parent>()) != 0) return; // these have parents already
+        for (usize chunk = 0; chunk < archetype.ChunkCount(); ++chunk) {
+            const u32 count = archetype.ChunkEntityCount(chunk);
+            Entity* entities = archetype.EntityArray(chunk);
+            for (u32 i = 0; i < count; ++i) roots.push_back(entities[i]);
+        }
+    });
+    if (roots.empty()) {
+        error = "the scene \"" + path + "\" has no entities to place";
+        return false;
+    }
+
+    // The synthetic root: a prefab needs exactly one, so this stands in and the scene's roots hang off it.
+    const Entity synthetic = temp.CreateEntity(IdComponent{NewEntityGuid()});
+    const EntityGuid synthetic_guid = temp.GetComponent<IdComponent>(synthetic)->guid;
+    guids.Add(synthetic_guid, synthetic);
+    for (const Entity root : roots) {
+        const IdComponent* id = temp.GetComponent<IdComponent>(root);
+        if (id == nullptr) continue; // nothing to point a Parent at
+        temp.AddComponent(root, Parent{synthetic_guid});
+    }
+    out = MakePrefab(temp, guids, synthetic);
+    if (out.entities.empty()) {
+        error = "the scene \"" + path + "\" produced no prefab data";
+        return false;
+    }
+    return true;
 }
 
 } // namespace aether

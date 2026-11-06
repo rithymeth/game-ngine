@@ -40,6 +40,12 @@ struct LevelInstanceReport {
 // its instance entity. Expanding the same world twice does not duplicate anything.
 LevelInstanceReport ExpandLevelInstances(World& world, GuidIndex& guids, const SceneToPrefab& to_prefab);
 
+// The `SceneToPrefab` a caller wants for a scene on disk: loads it into a temporary world, then turns it
+// into prefab data. A prefab has one root and a scene has as many as it has, so the scene's roots are
+// parented under a synthetic one and the prefab is made from that -- which is the only glue the prefab
+// API does not already provide.
+bool LoadSceneAsPrefab(const std::string& path, PrefabData& out, std::string& error);
+
 } // namespace aether
 // Reflected so a saved scene keeps its level instances and their expanded flag; without this a load
 // would forget both and every instance would expand again.
