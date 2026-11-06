@@ -8,6 +8,8 @@
 #include <string>
 #include <vector>
 
+#include "aether/core/log.h"
+
 namespace aether::test {
 
 struct TestCase {
@@ -56,6 +58,22 @@ inline void SetCurrentCheck(const char* expression, const char* file, int line) 
     site.expression = expression;
     site.file = file;
     site.line = line;
+}
+
+// Whether an error line containing `needle` has been logged since the recent buffer was cleared.
+//
+// A validation that logs and returns has no return value to assert, and most of the RHI's input validation works
+// that way -- so the log is the only observable effect. Clear the buffer before the call under test, so an older
+// line cannot satisfy the check. Example:
+//
+//     aether::Logger::Instance().ClearRecent();
+//     command_list.Dispatch(0);
+//     AETHER_CHECK(LoggedErrorContaining("dispatch group counts"));
+inline bool LoggedErrorContaining(const char* needle) {
+    for (const auto& line : aether::Logger::Instance().Recent()) {
+        if (line.level >= aether::LogLevel::Error && line.message.find(needle) != std::string::npos) return true;
+    }
+    return false;
 }
 
 // AETHER_TEST_FILTER=Job,Audio runs only the tests whose name contains one of the comma-separated

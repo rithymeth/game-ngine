@@ -419,3 +419,61 @@ AETHER_RHI_LIFETIME_TEST(StaleHandlesDrawNothing)
 AETHER_RHI_LIFETIME_TEST(StressCreateDestroy)
 AETHER_RHI_LIFETIME_TEST(TeardownWithLiveResources)
 AETHER_RHI_LIFETIME_TEST(ParticlePassFreesOutgrownBuffers)
+
+// M8 108, rows 23, 24 and 25: the checks that need a bound graphics pipeline. Each is asserted inside a real
+// render pass on a real pipeline, and the control at the end proves the pipeline draws once its requirements
+// are satisfied -- so a validation that rejected everything could not pass this.
+void PushConstantAndBindingReadiness(Backend backend) {
+    auto device = MakeDevice(backend);
+    if (!device) return;
+    std::unique_ptr<ISwapChain> target = device->CreateSwapChain(nullptr, kW, kH, 2);
+    AETHER_CHECK(target != nullptr);
+    if (!target) return;
+    const PipelineHandle pipeline = MakeVertexPipeline(*device, *target);
+    AETHER_CHECK(pipeline.IsValid());
+    if (!pipeline.IsValid()) return;
+
+    auto cmd = device->CreateCommandList();
+    AETHER_CHECK(cmd != nullptr);
+    if (!cmd) return;
+    target->AcquireNextImage();
+    cmd->Reset();
+    cmd->BeginRenderPass(*target, kBlue);
+    cmd->BindPipeline(pipeline);
+
+    // Row 23: the pipeline declared no push-constant range, so any payload exceeds it.
+    const f32 value = 1.0f;
+    aether::Logger::Instance().ClearRecent();
+    cmd->SetPushConstants(&value, sizeof(value));
+    AETHER_CHECK(aether::test::LoggedErrorContaining("aligned push-constant range"));
+
+    // Row 24: the pipeline was not created with bindless textures.
+    aether::Logger::Instance().ClearRecent();
+    cmd->BindBindlessTextures();
+    AETHER_CHECK(aether::test::LoggedErrorContaining("bindless graphics pipeline"));
+
+    // Row 25: the pipeline takes vertex input and no vertex buffer is bound.
+    aether::Logger::Instance().ClearRecent();
+    cmd->Draw(3);
+    AETHER_CHECK(aether::test::LoggedErrorContaining("valid bound graphics pipeline"));
+
+    // Control: with the vertices bound the same draw is accepted, so the checks above are not just "Draw fails".
+    const BufferHandle vertices =
+        device->CreateVertexBuffer(reinterpret_cast<const u8*>(kTriangle), static_cast<u32>(sizeof(kTriangle)));
+    AETHER_CHECK(vertices.IsValid());
+    if (vertices.IsValid()) {
+        cmd->BindVertexBuffer(vertices, 20);
+        aether::Logger::Instance().ClearRecent();
+        cmd->Draw(3);
+        AETHER_CHECK(!aether::test::LoggedErrorContaining("valid bound graphics pipeline"));
+    }
+
+    cmd->EndRenderPass();
+    cmd->Close();
+    const u64 fence = device->Submit(*cmd, target.get());
+    device->WaitForFence(fence);
+    AETHER_CHECK(device->IsFenceComplete(fence));
+    if (vertices.IsValid()) AETHER_CHECK(device->DestroyBuffer(vertices));
+    AETHER_CHECK(device->DestroyPipeline(pipeline));
+}
+AETHER_TEST(RHI_Validation_PushConstantAndBindingReadiness_D3D12) { PushConstantAndBindingReadiness(Backend::D3D12); }

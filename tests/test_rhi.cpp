@@ -382,17 +382,6 @@ AETHER_TEST(RHI_D3D12RejectsInvalidTextureArguments) {
     AETHER_CHECK(after.IsValid());
     AETHER_CHECK(device->DestroyTexture(after));
 }
-namespace {
-// A log-and-return validation has no return value to assert: its only observable effect is the error line
-// it writes. Reading the logger's recent buffer makes those checks testable, which is what most of the
-// queue's 94 device-backed rows need. Cleared before each call so a stale line cannot satisfy the check.
-bool LoggedErrorContaining(const char* needle) {
-    for (const auto& line : aether::Logger::Instance().Recent()) {
-        if (line.level >= aether::LogLevel::Error && line.message.find(needle) != std::string::npos) return true;
-    }
-    return false;
-}
-} // namespace
 
 // Row 29: compute dispatch dimensions outside 1..65535 are rejected before native recording, and a rejected
 // dispatch leaves the list recordable and submittable.
@@ -405,11 +394,11 @@ AETHER_TEST(RHI_D3D12RejectsInvalidComputeDispatchDimensions) {
 
     aether::Logger::Instance().ClearRecent();
     cmd->Dispatch(0, 1, 1);
-    AETHER_CHECK(LoggedErrorContaining("dispatch group counts"));
+    AETHER_CHECK(aether::test::LoggedErrorContaining("dispatch group counts"));
 
     aether::Logger::Instance().ClearRecent();
     cmd->Dispatch(1, 1, 70000);
-    AETHER_CHECK(LoggedErrorContaining("dispatch group counts"));
+    AETHER_CHECK(aether::test::LoggedErrorContaining("dispatch group counts"));
 
     // The rejected calls recorded nothing bad: the list still closes and submits.
     cmd->Close();
@@ -430,7 +419,7 @@ AETHER_TEST(RHI_D3D12RejectsRecordingOnAClosedCommandList) {
 
     aether::Logger::Instance().ClearRecent();
     cmd->Dispatch(1, 1, 1);
-    AETHER_CHECK(LoggedErrorContaining("requires a recording command list"));
+    AETHER_CHECK(aether::test::LoggedErrorContaining("requires a recording command list"));
 
     // Submitting the closed list still works, so the rejected call changed nothing.
     const u64 fence = device->SubmitCompute(*cmd);
@@ -456,7 +445,7 @@ AETHER_TEST(RHI_D3D12RejectsInvalidViewportAndScissor) {
     const auto rejects = [&](const Viewport& viewport, const Rect& rect) {
         aether::Logger::Instance().ClearRecent();
         cmd->SetViewportAndScissor(viewport, rect);
-        return LoggedErrorContaining("valid viewport/scissor bounds");
+        return aether::test::LoggedErrorContaining("valid viewport/scissor bounds");
     };
     AETHER_CHECK(rejects(Viewport{0.0f, 0.0f, 0.0f, 360.0f, 0.0f, 1.0f}, scissor));  // zero width
     AETHER_CHECK(rejects(Viewport{0.0f, 0.0f, 640.0f, -1.0f, 0.0f, 1.0f}, scissor)); // negative height
@@ -480,11 +469,11 @@ AETHER_TEST(RHI_D3D12RejectsInvalidClearColorAndTexture) {
     const TextureHandle invalid_texture{};
     aether::Logger::Instance().ClearRecent();
     cmd->ClearRenderTarget(invalid_texture, ClearColor{0.0f, 0.0f, 0.0f, 1.0f});
-    AETHER_CHECK(LoggedErrorContaining("valid texture/color"));
+    AETHER_CHECK(aether::test::LoggedErrorContaining("valid texture/color"));
 
     aether::Logger::Instance().ClearRecent();
     cmd->ClearRenderTarget(invalid_texture, ClearColor{std::nanf(""), 0.0f, 0.0f, 1.0f});
-    AETHER_CHECK(LoggedErrorContaining("valid texture/color"));
+    AETHER_CHECK(aether::test::LoggedErrorContaining("valid texture/color"));
 
     cmd->Close();
     const u64 fence = device->Submit(*cmd);
@@ -504,11 +493,11 @@ AETHER_TEST(RHI_D3D12RejectsInvalidTextureTransitionStates) {
     const auto unknown = static_cast<ResourceState>(0xFF);
     aether::Logger::Instance().ClearRecent();
     cmd->TransitionTexture(invalid_texture, ResourceState::Present, unknown);
-    AETHER_CHECK(LoggedErrorContaining("valid texture/resource states"));
+    AETHER_CHECK(aether::test::LoggedErrorContaining("valid texture/resource states"));
 
     aether::Logger::Instance().ClearRecent();
     cmd->TransitionTexture(invalid_texture, unknown, ResourceState::RenderTarget);
-    AETHER_CHECK(LoggedErrorContaining("valid texture/resource states"));
+    AETHER_CHECK(aether::test::LoggedErrorContaining("valid texture/resource states"));
 
     cmd->Close();
     const u64 fence = device->Submit(*cmd);
@@ -527,12 +516,12 @@ AETHER_TEST(RHI_D3D12RejectsInvalidComputeBindingHandles) {
     // Row 12: an invalid compute-pipeline handle.
     aether::Logger::Instance().ClearRecent();
     compute->BindComputePipeline(ComputePipelineHandle{});
-    AETHER_CHECK(LoggedErrorContaining("valid pipeline handle"));
+    AETHER_CHECK(aether::test::LoggedErrorContaining("valid pipeline handle"));
 
     // Row 28: a barrier on a handle that is not a storage buffer.
     aether::Logger::Instance().ClearRecent();
     compute->ComputeBufferBarrier(BufferHandle{});
-    AETHER_CHECK(LoggedErrorContaining("storage buffer"));
+    AETHER_CHECK(aether::test::LoggedErrorContaining("storage buffer"));
 
     compute->Close();
     const u64 fence = device->SubmitCompute(*compute);
@@ -545,7 +534,7 @@ AETHER_TEST(RHI_D3D12RejectsInvalidComputeBindingHandles) {
     graphics->Reset();
     aether::Logger::Instance().ClearRecent();
     graphics->BindComputePipeline(ComputePipelineHandle{});
-    AETHER_CHECK(LoggedErrorContaining("valid pipeline handle"));
+    AETHER_CHECK(aether::test::LoggedErrorContaining("valid pipeline handle"));
     graphics->Close();
     const u64 graphics_fence = device->Submit(*graphics);
     device->WaitForFence(graphics_fence);
@@ -562,17 +551,17 @@ AETHER_TEST(RHI_D3D12RejectsInvalidIndexBufferFormatAndHandle) {
     // Row 34: an index format outside the two declared values.
     aether::Logger::Instance().ClearRecent();
     cmd->BindIndexBuffer(BufferHandle{}, static_cast<IndexFormat>(0xFF));
-    AETHER_CHECK(LoggedErrorContaining("invalid format, state, or buffer handle"));
+    AETHER_CHECK(aether::test::LoggedErrorContaining("invalid format, state, or buffer handle"));
 
     // Row 17: a valid format with an invalid buffer handle.
     aether::Logger::Instance().ClearRecent();
     cmd->BindIndexBuffer(BufferHandle{}, IndexFormat::UInt32);
-    AETHER_CHECK(LoggedErrorContaining("invalid format, state, or buffer handle"));
+    AETHER_CHECK(aether::test::LoggedErrorContaining("invalid format, state, or buffer handle"));
 
     // The same for vertex buffers, which shares the binding-readiness checks (row 25's input path).
     aether::Logger::Instance().ClearRecent();
     cmd->BindVertexBuffer(BufferHandle{}, 32);
-    AETHER_CHECK(LoggedErrorContaining("invalid handle or a stride"));
+    AETHER_CHECK(aether::test::LoggedErrorContaining("invalid handle or a stride"));
 
     cmd->Close();
     const u64 fence = device->Submit(*cmd);

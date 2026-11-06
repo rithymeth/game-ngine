@@ -322,8 +322,15 @@ list and on a graphics list, and both lists still submit afterwards.
 `RHI_D3D12RejectsInvalidIndexBufferFormatAndHandle` closes rows 17 and 34: an index format outside the two declared values
 and a valid format with an invalid buffer handle are both reported, as is a vertex bind with a null handle.
 
-**Debt count: 98 before, 86 after four batches** (rows 4, 12, 17, 22, 27, 28, 29, 31, 32, 33, 34, 39). The remaining 86
-are 82 device-backed checks and 4 that need a validation-layer run; none needs a new engine capability.
+**Fifth batch — the rows that need a real pipeline.** `RHI_Validation_PushConstantAndBindingReadiness_D3D12` closes rows
+23, 24 and 25 inside a real render pass on a real vertex pipeline: push-constant data beyond the pipeline's declared range is
+rejected, binding the bindless table to a pipeline that was not created with it is rejected, and a draw on a vertex-input
+pipeline with no vertex buffer bound is rejected. The test then binds the vertices and draws the same triangle again, with no
+error logged — so it cannot pass by having every draw fail. The log-reading helper moved into `test_framework.h` for this,
+because at this point three files needed it: a validation that logs and returns has no return value to assert.
+
+**Debt count: 98 before, 83 after five batches** (rows 4, 12, 17, 22, 23, 24, 25, 27, 28, 29, 31, 32, 33, 34, 39). The
+remaining 83 are 79 device-backed checks and 4 that need a validation-layer run; none needs a new engine capability.
 
 ## Deferred from M8
 
