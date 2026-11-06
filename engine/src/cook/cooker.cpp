@@ -122,7 +122,9 @@ usize StripEditorOnly(json& document) {
 
 std::vector<AssetGuid> CollectCookSet(const AssetDatabase& database,
                                       const std::vector<std::pair<std::string, std::string>>& roots,
-                                      std::map<AssetGuid, std::string>& reasons, std::vector<std::string>& warnings) {
+                                      const std::filesystem::path& content,
+                                      std::map<AssetGuid, std::string>& reasons, std::vector<std::string>& warnings,
+                                      std::set<std::string>& extra) {
     std::deque<AssetGuid> queue;
     const auto include = [&](const AssetGuid& guid, const std::string& reason) {
         if (guid.IsNull() || reasons.count(guid)) return;
@@ -139,7 +141,24 @@ std::vector<AssetGuid> CollectCookSet(const AssetDatabase& database,
                     ++matched;
                 }
             }
-            if (matched == 0) warnings.push_back("Nothing to cook in folder " + root);
+            // A folder on the always-cook list means the folder, not only the
+            // files an importer claims. A font's licence, a readme, or a data
+            // file a script opens by name is not an asset, and used to be left
+            // out of the package without a word.
+            std::error_code walk_ec;
+            for (std::filesystem::recursive_directory_iterator it(content / root, walk_ec), end;
+                 !walk_ec && it != end; it.increment(walk_ec)) {
+                if (!it->is_regular_file()) continue;
+                const std::string relative = it->path().lexically_relative(content).generic_string();
+                if (relative.size() > 6 && relative.compare(relative.size() - 6, 6, ".ameta") == 0) continue;
+                if (database.FindByPath(relative) != nullptr) continue; // an asset: taken above
+                extra.insert(relative);
+            }
+            if (walk_ec) {
+                warnings.push_back("Can't read the folder " + root + ": " + walk_ec.message());
+            } else if (matched == 0 && extra.empty()) {
+                warnings.push_back("Nothing to cook in folder " + root);
+            }
         } else if (const AssetRecord* record = database.FindByPath(root)) {
             if (record->missing) {
                 warnings.push_back(root + " (" + reason + ") is missing its source file");
@@ -250,7 +269,10 @@ CookReport Cook(const CookOptions& options) {
     }
 
     std::map<AssetGuid, std::string> reasons;
-    std::vector<AssetGuid> cook_set = CollectCookSet(database, roots, reasons, report.warnings);
+    // Files that are not assets but still have to ship: a model's sidecars, and
+    // anything in a folder that is on the always-cook list.
+    std::set<std::string> extra;
+    std::vector<AssetGuid> cook_set = CollectCookSet(database, roots, paths.content, reasons, report.warnings, extra);
     if (dlc && !options.dlc_base.empty()) {
         // What the base game ships already stays out of the DLC.
         pak::PakReader base;
@@ -277,7 +299,6 @@ CookReport Cook(const CookOptions& options) {
     if (options.encryption_key) writer.SetEncryption(*options.encryption_key);
     const assets::ImporterRegistry importers = assets::ImporterRegistry::WithBuiltins();
     assets::DerivedDataCache cache(paths.intermediate / "DerivedDataCache");
-    std::set<std::string> extra;
     json manifest_assets = json::array();
 
     if (!settings.quality_presets.empty() && !FindQualityPreset(settings, settings.default_quality)) {
@@ -453,7 +474,7 @@ CookReport Cook(const CookOptions& options) {
     for (const std::string& path : extra) {
         std::vector<u8> bytes;
         if (!fs::ReadFileBytes((paths.content / path).string(), bytes)) {
-            report.warnings.push_back("Can't read " + path + ", which a model refers to");
+            report.warnings.push_back("Can't read " + path + ", which has to be in the package");
             continue;
         }
         writer.Add("Content/" + path, bytes);

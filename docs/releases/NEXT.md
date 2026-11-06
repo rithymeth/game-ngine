@@ -15,6 +15,9 @@ describes what is on `master`, not a promise of a version number or a date.
 - Added **`aether_package --smoke`**, which starts the packaged game headless for a few frames before the command returns, so
   "the package built" and "the package runs" are the same answer. The smoke run uses a scratch folder outside the package, so
   what `verify-package` checks is still what is there.
+- Fixed a folder on the project's **always cook** list shipping only the files an importer claims. A licence, a readme or a data
+  file a script opens by name beside a font or a model is not an asset, so it was left out of the package without a warning --
+  STARDUST-HOP shipped `Roboto-Medium.ttf` without `LICENSE-Roboto.txt` even though `fonts/` was listed.
 ## Known gaps
 
 - **Built, tested and not adopted** -- check before assuming a feature is live. The repository builds infrastructure

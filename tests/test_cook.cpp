@@ -212,6 +212,35 @@ AETHER_TEST(Cook_CooksWhatTheGameReaches) {
 }
 
 // A mobile cook: ASTC textures, and the source images left out of the archive.
+// A folder on the always-cook list means the folder, not only the files an
+// importer claims. A font's licence, a readme, a data file a script opens by
+// name: none of those is an asset, and every one of them used to be left out of
+// the package without a word.
+AETHER_TEST(Cook_AnAlwaysCookFolderShipsItsPlainFilesToo) {
+    const stdfs::path project = MakeProject("FolderFiles");
+    const stdfs::path content = project.parent_path() / "Content";
+    WriteText(content / "Models/LICENSE-cube.txt", "the cube's terms");
+    const stdfs::path out = stdfs::temp_directory_path() / "aether_cook_tests/FolderFiles_out";
+    stdfs::remove_all(out);
+    cook::CookOptions options;
+    options.project_file = project;
+    options.output_dir = out;
+    options.configuration = cook::BuildConfiguration::Shipping;
+    const cook::CookReport report = cook::Cook(options);
+    CHECK(report.ok);
+
+    bool listed = false;
+    for (const std::string& file : report.extra_files) listed = listed || file == "Models/LICENSE-cube.txt";
+    CHECK(listed);
+
+    pak::PakReader reader;
+    std::string error;
+    CHECK(reader.Open(report.pak_file.string(), &error));
+    std::vector<u8> bytes;
+    CHECK(reader.Read("Content/Models/LICENSE-cube.txt", bytes));
+    CHECK(std::string(bytes.begin(), bytes.end()) == "the cube's terms");
+}
+
 AETHER_TEST(Cook_MobileTargetCooksAstcAndCanStripTheSourceTextures) {
     const stdfs::path project = MakeProject("MobileCook");
     cook::CookOptions options;
