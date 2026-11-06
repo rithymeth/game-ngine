@@ -1,6 +1,8 @@
 #include "aether/gfx/parity.h"
 #include "test_framework.h"
 
+#include "aether/gfx/shader_cache.h"
+
 #include <cstdio>
 
 using namespace aether;
@@ -105,4 +107,51 @@ AETHER_TEST(Parity_AvailableBackendsMatchTheReferenceAndEachOther) {
         if (report.RenderedCount() > 0) ++rendered_scenes;
     }
     if (rendered_scenes == 0) std::printf("    (no RHI backend here: install a driver, or Mesa's lavapipe, to compare backends)\n");
+}
+
+// Phase 38 step 8: the shader cache. The compiler is injected, so this needs no DXC -- the fake
+// counts how many times it was asked, which is the whole behaviour worth checking.
+AETHER_TEST(Gfx_ShaderCacheCompilesOncePerKey) {
+    usize compiles = 0;
+    gfx::ShaderCache cache([&compiles](const gfx::ShaderKey& key) {
+        ++compiles;
+        gfx::ShaderBytecode bytecode;
+        bytecode.data.assign(key.source.begin(), key.source.end()); // distinguishable per source
+        return bytecode;
+    });
+
+    const gfx::ShaderKey key{"float4 main() : SV_Target { return 0; }", "main", "ps_6_0", gfx::ShaderBackend::Vulkan};
+    const gfx::ShaderBytecode& first = cache.Get(key);
+    AETHER_CHECK(compiles == 1 && cache.Misses() == 1 && cache.Hits() == 0 && cache.Size() == 1);
+    const gfx::ShaderBytecode& second = cache.Get(key);
+    AETHER_CHECK(compiles == 1 && cache.Hits() == 1); // the same key compiles once
+    AETHER_CHECK(first.data == second.data && cache.Size() == 1);
+
+    // Every part of the key is part of the identity: change one and it is a different shader.
+    gfx::ShaderKey other = key;
+    other.entry_point = "other";
+    cache.Get(other);
+    AETHER_CHECK(compiles == 2);
+    other = key;
+    other.profile = "ps_5_0";
+    cache.Get(other);
+    AETHER_CHECK(compiles == 3);
+    other = key;
+    other.backend = gfx::ShaderBackend::D3D12;
+    cache.Get(other);
+    AETHER_CHECK(compiles == 4);
+    other = key;
+    other.source = "float4 main() : SV_Target { return 1; }";
+    cache.Get(other);
+    AETHER_CHECK(compiles == 5 && cache.Size() == 5);
+
+    // A compile that produced nothing is cached too: a broken shader stays broken, and asking again
+    // must not turn one error into a log flood.
+    const gfx::ShaderKey broken{"this is not hlsl", "main", "ps_6_0", gfx::ShaderBackend::D3D12};
+    cache.Get(broken);
+    cache.Get(broken);
+    AETHER_CHECK(compiles == 6);
+
+    cache.Clear();
+    AETHER_CHECK(cache.Size() == 0);
 }

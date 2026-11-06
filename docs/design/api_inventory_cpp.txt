@@ -2283,6 +2283,18 @@
   ~VulkanCommandList()override
   ~VulkanDevice()override
   ~VulkanSwapChain()override
+[engine/include/aether/gfx/shader_cache.h] experimental
+  type class ShaderCache
+  type enum class ShaderBackend
+  type struct ShaderKey
+  bool operator<(const ShaderKey&other)const
+  const ShaderBytecode&Get(const ShaderKey&key)
+  explicit ShaderCache(Compiler compiler):compiler_(std::move(compiler))
+  public:using Compiler=std::function<ShaderBytecode(const ShaderKey&)>
+  usize Hits()const
+  usize Misses()const
+  usize Size()const
+  void Clear()
 [engine/include/aether/gfx/shader_compiler.h] experimental
   type struct ShaderBytecode
   ShaderBytecode CompileHLSL(const std::string&source,const char*entry_point,const char*target_profile,const char*debug_name="")
