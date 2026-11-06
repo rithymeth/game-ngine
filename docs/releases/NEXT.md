@@ -57,6 +57,11 @@ describes what is on `master`, not a promise of a version number or a date.
   moving parameters from an NPC's measured crowd velocity, including the transition to rest.
 - Player: data-driven UI, script UI tables, scene lights, live quality presets, touch and pointer input, on-screen
   controls and platform lifecycle events.
+- Data layers: a `DataLayer` component names the layer an entity belongs to, and
+  `SetDataLayerActive` switches a whole layer on or off together. It reuses `Active` rather than inventing a
+  second notion of enabled, and switching a layer off records each entity's own state so switching it back
+  restores what each one had — an entity that was already off does not come back on. Layers survive save and
+  load.
 
 ## Networking
 
@@ -65,6 +70,12 @@ describes what is on `master`, not a promise of a version number or a date.
   called each frame).
 - The replication profile table is bounded (`ReplicationConfig::max_profiled_entities`); costs of despawned
   entities are folded into `NetProfile::retired_*`.
+- Predicted abilities: `AbilityPredictor` runs an ability the moment the player presses it and applies the
+  server's answer afterwards — acceptance commits the cost, refusal cancels it as if the press never
+  happened, and a reply that arrives twice cannot charge twice. It drives abilities authored with
+  `commit_on_activate = false`, which the ability system already runs without payment.
+- The wire half is `AbilityServer`/`AbilityClient` in `net/`: they move requests and replies only, taking the
+  three ability operations as callbacks so networking stays independent of the gameplay module.
 
 ## World streaming
 
