@@ -172,6 +172,9 @@ if(Python3_Interpreter_FOUND)
     add_test(NAME format_versions_table COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_format_versions.py)
     # The root README promises docs/README.md lists every doc. It listed 17 of 53 before this check.
     add_test(NAME docs_index COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_docs_index.py)
+    # The index says a document exists; this says the documents' own links resolve. A game checklist called a
+    # design document its canonical reference for weeks while the file was never in the repository.
+    add_test(NAME doc_links COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_doc_links.py)
     add_test(NAME production_gate_table COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/gate.py)
     add_test(NAME m8_gate_table COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/gate.py
         --table ${CMAKE_SOURCE_DIR}/docs/design/m8_gates.json)
