@@ -336,7 +336,14 @@ void RevertPrefabOverrideCommand::Resolve(CommandContext& ctx, Entity root) {
         last_report_ = {false, "Prefab lookup is unavailable"};
         return;
     }
-    if (const PrefabData* prefab = ctx.find_prefab(ctx.world.GetComponent<PrefabInstance>(root)->source.guid)) {
+    // A plain entity has no PrefabInstance, whatever it does have: dereferencing it here crashed the
+    // process when the command was built for an entity that is not part of an instance.
+    const PrefabInstance* instance = ctx.world.GetComponent<PrefabInstance>(root);
+    if (instance == nullptr) {
+        last_report_ = {false, "That entity does not belong to a prefab instance"};
+        return;
+    }
+    if (const PrefabData* prefab = ctx.find_prefab(instance->source.guid)) {
         last_report_ = ResolvePrefabInstance(ctx.world, ctx.guids, root, *prefab);
     } else {
         last_report_ = {false, "Prefab could not be loaded"};
@@ -347,14 +354,17 @@ void RevertPrefabOverrideCommand::Do(CommandContext& ctx) {
     const Entity entity = editor::Resolve(ctx, entity_);
     const Entity root = FindInstanceRoot(ctx.world, ctx.guids, entity);
     const PrefabLink* link = ctx.world.GetComponent<PrefabLink>(entity);
-    if (root.IsNull() || link == nullptr) {
+    PrefabInstance* instance = root.IsNull() ? nullptr : ctx.world.GetComponent<PrefabInstance>(root);
+    if (instance == nullptr || link == nullptr) {
+        // Say why rather than returning silently: the caller shows LastReport to the user, and a command
+        // that did nothing without a reason is worse than one that explains itself.
+        last_report_ = {false, "That entity does not belong to a prefab instance"};
         return;
     }
     const PrefabLocalId local_id = has_local_id_ ? local_id_ : link->local_id;
-    PrefabInstance& instance = *ctx.world.GetComponent<PrefabInstance>(root);
-    before_ = instance.overrides;
+    before_ = instance->overrides;
     const std::string component = component_ == kInvalidComponentId ? std::string() : ComponentName(component_);
-    RevertOverrides(instance, local_id, component, component_ == kInvalidComponentId ? std::string() : field_path_);
+    RevertOverrides(*instance, local_id, component, component_ == kInvalidComponentId ? std::string() : field_path_);
     Resolve(ctx, root);
 }
 
@@ -363,7 +373,11 @@ void RevertPrefabOverrideCommand::Undo(CommandContext& ctx) {
     if (root.IsNull()) {
         return;
     }
-    ctx.world.GetComponent<PrefabInstance>(root)->overrides = before_;
+    PrefabInstance* instance = ctx.world.GetComponent<PrefabInstance>(root);
+    if (instance == nullptr) {
+        return;
+    }
+    instance->overrides = before_;
     Resolve(ctx, root);
 }
 

@@ -503,3 +503,21 @@ AETHER_TEST(Commands_ExpandLevelInstanceUndoesWhatItCreated) {
     command->Undo(ctx);
     AETHER_CHECK(world.EntityCount() == before);
 }
+// A command built for an entity that is not part of a prefab instance must do nothing and say why, not
+// dereference the instance that is not there. This crashed before the guard in Resolve.
+AETHER_TEST(Commands_RevertPrefabOverrideRefusesAPlainEntity) {
+    World world;
+    GuidIndex guids;
+    CommandStack stack;
+    CommandContext ctx{world, guids};
+    const Entity plain = world.CreateEntity(Transform{Vec3(), Quaternion::Identity()}, IdComponent{NewEntityGuid()});
+    EnsureAllGuids(world, guids);
+    guids.Rebuild(world);
+
+    RevertPrefabOverrideCommand command(world.GetComponent<IdComponent>(plain)->guid,
+                                         GetComponentId<Transform>(), std::string());
+    command.Do(ctx); // must not crash
+    AETHER_CHECK(!command.LastReport().ok);
+    AETHER_CHECK(!command.LastReport().error.empty());
+    command.Undo(ctx); // and undo must not crash either
+}
