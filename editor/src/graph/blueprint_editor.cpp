@@ -284,7 +284,9 @@ NodeId BlueprintEditor::PlaceFromPalette(const std::string& type) {
     NodeId node = 0;
     bool linked = true;
     doc_.Edit("Add node", [&](bp::Blueprint& b) {
-        Graph& g = *b.FindGraph(p.graph);
+        bp::Graph* graph_ptr = b.FindGraph(p.graph);
+        if (graph_ptr == nullptr) return;
+        Graph& g = *graph_ptr;
         node = AddNode(g, type, p.x, p.y);
         if (p.from) linked = ConnectToNewNode(b, g, *p.from, node);
     });
@@ -526,7 +528,7 @@ void BlueprintEditor::DrawGraph(const std::string& name) {
             const std::string var(static_cast<const char*>(payload->Data), static_cast<usize>(payload->DataSize));
             const ImVec2 m = ImGui::GetIO().MousePos;
             doc_.Edit("Add Get " + var, [&](bp::Blueprint& b) {
-                AddNode(*b.FindGraph(name), "Var.Get:" + var, view.ScreenToCanvasX(m.x), view.ScreenToCanvasY(m.y));
+                if (bp::Graph* g = b.FindGraph(name)) AddNode(*g, "Var.Get:" + var, view.ScreenToCanvasX(m.x), view.ScreenToCanvasY(m.y));
             });
         }
         ImGui::EndDragDropTarget();
@@ -542,7 +544,7 @@ void BlueprintEditor::HandleGraphResult(const std::string& name, const GraphView
         ImGui::SetClipboardText(clipboard_.c_str());
     }
     if (r.cut) {
-        doc_.Edit("Cut", [&](bp::Blueprint& b) { DeleteNodes(*b.FindGraph(name), selected); });
+        doc_.Edit("Cut", [&](bp::Blueprint& b) { bp::Graph* g = b.FindGraph(name); if (g != nullptr) DeleteNodes(*g, selected); });
         view.selection.clear();
     }
     if (r.paste) {
@@ -564,7 +566,7 @@ void BlueprintEditor::HandleGraphResult(const std::string& name, const GraphView
         const bool only_moves = r.moved.size() + r.comments_changed.size() > 0 && !r.connect && !r.disconnect &&
                                 r.deleted.empty() && r.deleted_comment < 0;
         doc_.Edit(only_moves ? "Move" : r.connect ? "Connect" : r.disconnect ? "Break link" : "Delete",
-                  [&](bp::Blueprint& b) { errors = ApplyGraphEdits(b, *b.FindGraph(name), r); });
+                  [&](bp::Blueprint& b) { if (bp::Graph* g = b.FindGraph(name)) errors = ApplyGraphEdits(b, *g, r); });
         if (!errors.empty()) {
             status_ = errors.front();
             if (r.connect && !r.disconnect && r.moved.empty() && r.deleted.empty() && r.comments_changed.empty() &&
@@ -708,7 +710,7 @@ void BlueprintEditor::DrawGraphDetails(const std::string& name) {
     if (g->kind == GraphKind::Function) {
         bool pure = g->pure;
         if (ImGui::Checkbox("Pure", &pure)) {
-            doc_.Edit("Pure", [&](bp::Blueprint& b) { b.FindGraph(current)->pure = pure; });
+            doc_.Edit("Pure", [&](bp::Blueprint& b) { bp::Graph* g = b.FindGraph(current); if (g != nullptr) g->pure = pure; });
         }
     }
     const bool macro = g->kind == GraphKind::Macro;
@@ -816,7 +818,7 @@ void BlueprintEditor::DrawCommentDetails(const std::string& graph, int index) {
     ImGui::Text("Comment");
     const std::string key = "comment:" + graph + ":" + std::to_string(index);
     auto store = [&](const char* label) {
-        doc_.Edit(label, [&](bp::Blueprint& b) { b.FindGraph(graph)->comments[static_cast<usize>(index)] = box; }, key);
+        doc_.Edit(label, [&](bp::Blueprint& b) { bp::Graph* g = b.FindGraph(graph); if (g != nullptr) g->comments[static_cast<usize>(index)] = box; }, key);
     };
     if (ImGui::InputTextMultiline("Text", &box.text, ImVec2(-1, 60))) store("Comment text");
     ImVec4 color = ImGui::ColorConvertU32ToFloat4(box.color);
@@ -826,7 +828,9 @@ void BlueprintEditor::DrawCommentDetails(const std::string& graph, int index) {
     }
     if (ImGui::Button("Delete comment")) {
         doc_.Edit("Delete comment", [&](bp::Blueprint& b) {
-            auto& comments = b.FindGraph(graph)->comments;
+            bp::Graph* comment_graph = b.FindGraph(graph);
+            if (comment_graph == nullptr) return;
+            auto& comments = comment_graph->comments;
             comments.erase(comments.begin() + index);
         });
         views_[graph].selected_comment = -1;
