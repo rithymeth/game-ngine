@@ -335,8 +335,14 @@ before allocation, with a representable size allocated and freed as the control.
 `RHI_D3D12RejectsQueueMismatchedSubmissions` closes row 20: a compute list submitted to the graphics queue and a graphics list
 submitted to the compute queue are both refused, return no fence value, and report which kind of list they wanted.
 
-**Debt count: 98 before, 81 after six batches** (rows 4, 12, 17, 20, 22, 23, 24, 25, 27, 28, 29, 31, 32, 33, 34, 39, 41). The
-remaining 81 are 77 device-backed checks and 4 that need a validation-layer run; none needs a new engine capability.
+**Seventh batch.** `RHI_Validation_DrawBoundsAndStrideReadiness_D3D12` closes rows 36, 37 and 38: a vertex stride that
+disagrees with the pipeline's layout, one index beyond the six the index buffer holds, and one vertex beyond the three the
+vertex buffer holds are each rejected — and then both draws are issued **at exactly their capacity** and accepted. The
+off-by-one these rows exist to prevent sits precisely on that boundary, so the accepted case carries as much weight as the
+rejection.
+
+**Debt count: 98 before, 78 after seven batches.** 20 rows closed. The remaining 78 are 74 device-backed checks and 4 that
+need a validation-layer run; none needs a new engine capability.
 
 ## Deferred from M8
 

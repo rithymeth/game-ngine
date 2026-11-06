@@ -477,3 +477,68 @@ void PushConstantAndBindingReadiness(Backend backend) {
     AETHER_CHECK(device->DestroyPipeline(pipeline));
 }
 AETHER_TEST(RHI_Validation_PushConstantAndBindingReadiness_D3D12) { PushConstantAndBindingReadiness(Backend::D3D12); }
+// Rows 36, 37 and 38: draws outside the bound buffers, and a vertex stride that disagrees with the pipeline. Both
+// are rejected inside a real render pass, and the same draws succeed at their exact capacity afterwards -- the
+// classic off-by-one sits precisely on that boundary, so the control is as important as the rejection.
+void DrawBoundsAndStrideReadiness(Backend backend) {
+    auto device = MakeDevice(backend);
+    if (!device) return;
+    std::unique_ptr<ISwapChain> target = device->CreateSwapChain(nullptr, kW, kH, 2);
+    AETHER_CHECK(target != nullptr);
+    if (!target) return;
+    const PipelineHandle pipeline = MakeVertexPipeline(*device, *target);
+    AETHER_CHECK(pipeline.IsValid());
+    if (!pipeline.IsValid()) return;
+
+    // Three PositionUv vertices (20 bytes each) and six indices.
+    const BufferHandle vertices =
+        device->CreateVertexBuffer(reinterpret_cast<const u8*>(kTriangle), static_cast<u32>(sizeof(kTriangle)));
+    const u32 indices[6] = {0, 1, 2, 0, 1, 2};
+    const BufferHandle indexBuffer =
+        device->CreateIndexBuffer(reinterpret_cast<const u8*>(indices), static_cast<u32>(sizeof(indices)), IndexFormat::UInt32);
+    AETHER_CHECK(vertices.IsValid() && indexBuffer.IsValid());
+    if (!vertices.IsValid() || !indexBuffer.IsValid()) return;
+
+    auto cmd = device->CreateCommandList();
+    AETHER_CHECK(cmd != nullptr);
+    if (!cmd) return;
+    target->AcquireNextImage();
+    cmd->Reset();
+    cmd->BeginRenderPass(*target, kBlue);
+    cmd->BindPipeline(pipeline);
+
+    // Row 37: a stride that is not the layout's.
+    aether::Logger::Instance().ClearRecent();
+    cmd->BindVertexBuffer(vertices, 12);
+    AETHER_CHECK(aether::test::LoggedErrorContaining("stride that does not match"));
+    cmd->BindVertexBuffer(vertices, 20);
+    cmd->BindIndexBuffer(indexBuffer, IndexFormat::UInt32);
+
+    // Row 36: one index beyond the six the buffer holds.
+    aether::Logger::Instance().ClearRecent();
+    cmd->DrawIndexed(7);
+    AETHER_CHECK(aether::test::LoggedErrorContaining("valid bound graphics pipeline"));
+
+    // Row 38: one vertex beyond the three the buffer holds.
+    aether::Logger::Instance().ClearRecent();
+    cmd->Draw(4);
+    AETHER_CHECK(aether::test::LoggedErrorContaining("valid bound graphics pipeline"));
+
+    // Controls: exactly at capacity both draws are accepted.
+    aether::Logger::Instance().ClearRecent();
+    cmd->DrawIndexed(6);
+    AETHER_CHECK(!aether::test::LoggedErrorContaining("valid bound graphics pipeline"));
+    aether::Logger::Instance().ClearRecent();
+    cmd->Draw(3);
+    AETHER_CHECK(!aether::test::LoggedErrorContaining("valid bound graphics pipeline"));
+
+    cmd->EndRenderPass();
+    cmd->Close();
+    const u64 fence = device->Submit(*cmd, target.get());
+    device->WaitForFence(fence);
+    AETHER_CHECK(device->IsFenceComplete(fence));
+    AETHER_CHECK(device->DestroyBuffer(vertices));
+    AETHER_CHECK(device->DestroyBuffer(indexBuffer));
+    AETHER_CHECK(device->DestroyPipeline(pipeline));
+}
+AETHER_TEST(RHI_Validation_DrawBoundsAndStrideReadiness_D3D12) { DrawBoundsAndStrideReadiness(Backend::D3D12); }
