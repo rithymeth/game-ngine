@@ -358,6 +358,18 @@ The cooked game does not stream a partitioned world, so the simulation runs the 
 | `world_partition_info` | Reads a partitioned world's index and checks every cell file and the persistent scene exist; lists missing files and files not in the index. |
 | `world_stream_simulate` | Walks a streaming source along a path over the world and reports, per waypoint, the cells that loaded and unloaded, those now loaded, and the entity count. |
 
+### Data layers and level instances
+
+Both are ways of dividing a scene: a data layer groups entities so they can be shown and hidden together, and a
+level instance places one scene inside another.
+
+| Tool | What it does |
+| --- | --- |
+| `data_layers` | The scene's data layers, each with its entity count and whether it is on. Read-only. |
+| `set_data_layer` | Switch a layer on or off as one undoable edit. Each member keeps its own on/off state, so a layer switched back on restores what each entity had -- an entity that was already off stays off -- rather than turning everything on. |
+| `level_instances` | What the scene places: the scene each instance names and whether it has been expanded. Read-only. |
+| `expand_level_instance` | Load the scene a level instance names and place it as one undoable edit. The scene path resolves against the scene root through the same containment as `save_scene` and `load_scene`, so it cannot leave it. |
+
 ### Materials (`mat_*`)
 
 Materials (`.amat`), functions (`.amf`) and instances (`.amati`) have no importer, so these tools take them as JSON (`definition`, `material`, `instances`) or a file under the open project's `Content/`. Graphs are checked and compiled on the CPU only: no shader is built and nothing is drawn.
