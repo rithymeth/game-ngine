@@ -162,6 +162,47 @@ def check_includes(edges, reach):
     return problems
 
 
+# Targets declared only when an optional platform option is on. Keep this list short and justified: an entry
+# here is a target the gate cannot check on this machine.
+DECLARED_IN_OPTIONAL_CONFIGURATION = {
+    "aether_android",  # AETHER_BUILD_ANDROID_APP, OFF by default
+    "aether_ios",      # AETHER_BUILD_IOS_APP, OFF by default
+}
+DECLARED_TARGET = re.compile(r"add_(?:executable|library)\s*\(\s*(aether_[A-Za-z0-9_]+)(\s*)(\S?)")
+SKIP_DIRECTORIES = {".git", ".claude", "__pycache__"}
+
+
+def check_declared_targets(layers):
+    """Targets declared in CMakeLists but absent from the layer table.
+
+    The graph only contains what this configuration built. A target that belongs to another configuration -- or
+    to one this machine cannot configure -- is invisible to the edge checks, so a tool added without a layer
+    passes locally and fails in CI. That is exactly how `aether_package` broke two lanes while the gate reported
+    ok here. Reading the CMakeLists files makes the declaration enough, whatever was built.
+    """
+    problems = []
+    for base, dirs, files in os.walk(ROOT):
+        dirs[:] = [d for d in dirs if d not in SKIP_DIRECTORIES and not d.startswith("build")]
+        if "CMakeLists.txt" not in files:
+            continue
+        note = os.path.relpath(os.path.join(base, "CMakeLists.txt"), ROOT)
+        with open(os.path.join(base, "CMakeLists.txt"), encoding="utf-8", errors="replace") as f:
+            for number, line in enumerate(f, 1):
+                for match in DECLARED_TARGET.finditer(line):
+                    name = match.group(1)
+                    # A name built out of a variable (aether_replay_${target}) is not a target name: the real
+                    # ones are generated below it, one per configuration, and are checked where they are built.
+                    if match.group(3) == "$" or not match.group(2):
+                        continue
+                    if name in layers or name in DECLARED_IN_OPTIONAL_CONFIGURATION:
+                        continue
+                    problems.append(
+                        f"{name} is declared in {note}:{number} but isn't in the layer table "
+                        f"(add it there, or list it in DECLARED_IN_OPTIONAL_CONFIGURATION)"
+                    )
+    return problems
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dot", required=True, help="the file from cmake --graphviz")
@@ -192,6 +233,7 @@ def main():
             problems.append(f"{a} (layer {layers[a]}) links {b} (layer {layers[b]}): a target may link only to a lower layer")
     if not args.no_includes:
         problems += check_includes(edges, reachable(edges))
+    problems += check_declared_targets(layers)
     for p in problems:
         print("check_module_graph:", p)
     if problems:

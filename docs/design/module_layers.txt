@@ -82,6 +82,8 @@ aether_editor 7
 aether_editor_vulkan 7
 aether_mcp 7
 aether_package 8
+aether_symbolicate 8
+aether_template_sdk_consumer 8
 aether_player 7
 aether_replay_manifest 7
 aether_server 7
