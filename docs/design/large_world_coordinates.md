@@ -166,11 +166,14 @@ question is not which is correct but which is affordable now.
 
 Take **Option A** first, system by system, because it needs no migration and each step is independently revertible:
 
-1. **Physics.** It is where the origin matters most (a body 10 km from the anchor loses f32 precision) and it is the
-   only system that already talks to a solver with its own coordinate assumptions. `MovementStep` in `net/prediction`
-   takes `Transform&`, so networking follows whatever physics decides.
-2. **Networking.** Prediction and replication already step `Transform&`; once physics reads absolute positions, the
-   predictor has to as well or the two disagree.
+1. **Physics -- checked, and already done.** Starting this step found the opposite of what it assumed. Physics feeds Jolt
+   the *local* `Transform.position` (`physics/src/character.cpp:145`, `constraints.cpp:566`) and Jolt simulates in that
+   origin-relative frame; because the origin moves with the player, a body is never 10 km from the anchor. The precision
+   loss the step was meant to fix does not happen, because nothing ever hands physics an absolute position. Jolt's
+   `RVec3` is double-precision, so no change is needed here at all. **Do not do this step.**
+2. **Networking -- check before doing it.** The same reasoning may apply: prediction steps `Transform&` through the same
+   local frame. What actually needs the origin is the *wire format* -- a snapshot of a local position is only meaningful
+   alongside the origin it was taken against, and replication does not currently send one.
 3. **Rendering.** The camera and the frustum need absolute positions to cull a large world; drawing still happens in
    origin-relative space, which is the point of the origin.
 4. **Audio.** Last because its precision needs are the weakest -- attenuation over a few hundred metres does not care
