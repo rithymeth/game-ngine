@@ -24,7 +24,12 @@ evidence; Phase 48 release waits for M8.12 product validation on the same candid
   each way. Identical sizes, so not flaky and not the binaries. The harness does no path derivation of its own, which
   leaves whatever differs about sitting directly in that one directory -- and the one thing there is a git working
   tree. A checkout hook or a file watcher reacting to a new executable inside the repository would look exactly like
-  this. That is the next thread, and it is one experiment: a copy in a different git working tree.
+  That experiment is done: a copy in a **different** git working tree passes, and so does one with no git at all.
+  So it is not git working trees in general -- it is **this checkout**, and only for an executable sitting directly at
+  its root. Five experiments, each narrowing: it is not the build, not the binaries, not flakiness, not file I/O, not
+  the harness path logic, and not git. Something local to this one directory reacts to a new executable in it. That is
+  an environment finding, not a repository one, and a clean clone on another machine should not see it -- which is
+  exactly what CI passing says.
   Interaction, Quests, Net, Nav, AI, Scripting, Physics and Game. Jobs live in
   `engine/include/aether/job`, the RHI in `engine/gfx` (there is no `jobs/` or `rhi/` directory).
 - **The module link graph has no cycles today** (83 targets, 201 edges; checked with
