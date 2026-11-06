@@ -31,12 +31,25 @@ def main() -> int:
     parser.add_argument("--root", default=str(Path(__file__).resolve().parent.parent),
                         help="repository root (default: this script's parent's parent)")
     args = parser.parse_args()
-    seen = collect(Path(args.root))
+    root = Path(args.root)
+    seen = collect(root)
     duplicates = {name: files for name, files in seen.items() if len(files) > 1}
     for name, files in sorted(duplicates.items()):
         print(f"{name}: registered by {', '.join(files)}")
-    print(f"{len(seen)} MCP tools, {len(duplicates)} duplicate name(s)")
-    return 1 if duplicates else 0
+    # Every tool has to be named in the README, which is what an MCP client author reads. The table
+    # documents tools by family, so this is a name check rather than a structural one -- but a family
+    # added without a row is exactly how the table stopped covering all of them before.
+    readme = (root / "mcp" / "README.md")
+    undocumented: list[str] = []
+    if readme.exists():
+        text = readme.read_text(encoding="utf-8", errors="replace")
+        undocumented = sorted(name for name in seen if name not in text)
+        for name in undocumented:
+            print(f"{name}: registered but not named in mcp/README.md")
+
+    print(f"{len(seen)} MCP tools, {len(duplicates)} duplicate name(s), "
+          f"{len(undocumented)} not in the README")
+    return 1 if duplicates or undocumented else 0
 
 
 if __name__ == "__main__":

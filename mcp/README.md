@@ -273,7 +273,7 @@ schema with a working sample, validate, put, get, list; a sequence with a diagno
 | `seq_validate` | The sequencer's own diagnostics (SQ001...), a summary (effective duration, tracks by type), and, against the project: a Property track's component and field must exist (reflection), Audio cues, Spawn prefabs and Subsequence sequences must be assets, and sequences must not play themselves in a loop; with `scene`, every track's bound entity must be in that scene |
 | `seq_evaluate` | What each track is doing at given times, without playing: Transform position and rotation, Property channels, Visibility, Fade amount and colour, the camera cut in force, the spawns alive, the sub-sequences playing with their child time |
 | `seq_events` | Everything it fires or changes, in time order: events, audio and animation keys, camera cuts, spawns and despawns, sub-sequence starts and ends, fade keys; optionally a time window |
-| `sequence_component_set` / `_list` / `_remove` | Edit the `SequenceComponent` on editor entities (sequence, auto_play, loop, rate, destroy_when_finished), validated, one undoable step |
+| `sequence_component_set` / `sequence_component_list` / `sequence_component_remove` | Edit the `SequenceComponent` on editor entities (sequence, auto_play, loop, rate, destroy_when_finished), validated, one undoable step |
 
 Evaluation is a pure function of time, as in the player. The `game_*sequence*` tools above play and control
 sequences in the hosted game.
