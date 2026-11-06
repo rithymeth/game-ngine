@@ -502,6 +502,7 @@ CookReport Cook(const CookOptions& options) {
         {"$type", "CookManifest"},
         {"$version", 1},
         {"project", settings.name},
+        {"game_version", settings.version},
         {"configuration", ConfigurationName(options.configuration)},
         {"startup_scene", settings.startup_scene},
         {"engine_version", kEngineVersion},

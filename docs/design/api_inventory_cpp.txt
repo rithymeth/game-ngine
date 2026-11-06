@@ -2906,6 +2906,7 @@
   ),AETHER_FIELD(shadow_cascades,Field_EditAnywhere,
   ),AETHER_FIELD(shadow_resolution,Field_EditAnywhere,
   ),AETHER_FIELD(startup_scene,Field_EditAnywhere,
+  ),AETHER_FIELD(version,Field_EditAnywhere,
   ),AETHER_FIELD(view_distance,Field_EditAnywhere,
   ),AETHER_FIELD(vsync,Field_EditAnywhere,
   ),AETHER_FIELD(window_height,Field_EditAnywhere,

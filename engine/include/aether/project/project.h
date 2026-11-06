@@ -39,6 +39,10 @@ std::vector<QualityPreset> DefaultQualityPresets();
 
 struct ProjectSettings {
     std::string name;
+    // The game's own version, not the engine's. A shipped package records it, so a
+    // bug report can say which build of the game it came from and two builds of
+    // the same game can be told apart.
+    std::string version = "0.1.0";
     std::string engine_version = kEngineVersion; // engine that last saved the project
     // Scene to open at startup, relative to Content/. Becomes an asset GUID
     // with the asset database (Phase 8).
@@ -121,6 +125,7 @@ AETHER_REFLECT(aether::QualityPreset, 1,
 
 AETHER_REFLECT(aether::ProjectSettings, 1,
     AETHER_FIELD(name, Field_EditAnywhere, {.category = "Project"}),
+    AETHER_FIELD(version, Field_EditAnywhere, {.tooltip = "The game's own version, recorded in the package", .category = "Project"}),
     AETHER_FIELD(engine_version, Field_ReadOnly, {.category = "Project"}),
     AETHER_FIELD(startup_scene, Field_EditAnywhere, {.tooltip = "Scene opened at startup, relative to Content/", .category = "Project"}),
     AETHER_FIELD(always_cook, Field_EditAnywhere, {.tooltip = "Content cooked even if unreferenced: asset paths, or folders ending in /", .category = "Packaging"}),

@@ -248,6 +248,12 @@ AETHER_TEST(Package_APackagedNewProjectLoadsInThePlayer) {
     std::string error;
     AETHER_CHECK(templates::CreateProjectFromTemplate(parent, "LoadTemplate", "first_person", &project, &error));
 
+    // The game's own version, not the engine's: it has to survive into the package.
+    ProjectSettings settings;
+    AETHER_CHECK(LoadProject(project.file, settings, &error));
+    settings.version = "1.2.3";
+    AETHER_CHECK(SaveProject(project.file, settings, &error));
+
     const stdfs::path fake_player = parent / "load_fake_player.bin";
     std::ofstream(fake_player, std::ios::binary) << "not really a player";
     cook::PackageOptions options;
@@ -278,6 +284,7 @@ AETHER_TEST(Package_APackagedNewProjectLoadsInThePlayer) {
         const json package_manifest = json::parse(in);
         CHECK(package_manifest["engine_version"] == kEngineVersion);
         CHECK(package_manifest["project"] == "LoadTemplate");
+        CHECK(package_manifest["game_version"] == "1.2.3");
         bool notices_listed = false;
         bool licences_listed = false;
         for (const json& entry : package_manifest["files"]) {

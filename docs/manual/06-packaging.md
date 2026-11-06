@@ -30,9 +30,12 @@ The smoke run uses a scratch folder outside the package and deletes it, so what
 `verify-package` checked is still what is there. `--smoke-frames <n>` runs
 longer than the default three.
 
-`PackageManifest.json` records the project name, the configuration and the
-engine version, so a folder somebody ships you can be identified without running
-it -- and a bug report can start from the build that produced it.
+`PackageManifest.json` records the project name, the game's own version, the
+configuration and the engine version, so a folder somebody ships you can be
+identified without running it -- and a bug report can start from the build that
+produced it. The game version is the project's `version` field, separate from
+`engine_version`: one says which build of the game this is, the other which
+build of the engine made it.
 
 The notices and licences are staged automatically, because a package
 redistributes LZ4, zstd, Jolt, Recast, Luau and the rest whether or not anyone

@@ -21,6 +21,9 @@ describes what is on `master`, not a promise of a version number or a date.
 - Assets named by a **path string** are now followed by the cooker the same way GUID references are: a scene that names a
   sound cue pulls the cue in, and the cue pulls the waves it names. A folder only needs to be on the project's always cook list
   for content nothing refers to at all.
+- A project now has its own **`version`**, separate from the engine version, and a package records it as `game_version` in both
+  `CookManifest.json` and `PackageManifest.json`. Until now a shipped game could say which engine built it and not which version of
+  the game it was, so AETHER-01's release script invented one in a side file.
 ## Known gaps
 
 - **Built, tested and not adopted** -- check before assuming a feature is live. The repository builds infrastructure

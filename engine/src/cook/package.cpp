@@ -322,6 +322,7 @@ PackageReport Package(const PackageOptions& options) {
     const nlohmann::json manifest = {{"$type", "PackageManifest"},
                                      {"$version", 1},
                                      {"project", settings.name},
+                                     {"game_version", settings.version},
                                      {"configuration", ConfigurationName(options.cook.configuration)},
                                      {"engine_version", kEngineVersion},
                                      {"checksum", "crc32"},
