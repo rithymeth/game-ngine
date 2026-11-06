@@ -150,6 +150,11 @@ if(Python3_Interpreter_FOUND)
     add_test(NAME api_stability_annotations COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_api_stability.py)
     # Two MCP files registering one tool name is neither a compile error nor a test failure -- the tools
     # live in separate translation units, so only the far end of the server ever sees both.
+    add_test(NAME unlisted_sources COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_sources_listed.py)
+    add_test(NAME unlisted_sources_catch_a_miss
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_sources_listed.py
+            --root ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/unlisted_source)
+    set_tests_properties(unlisted_sources_catch_a_miss PROPERTIES WILL_FAIL TRUE)
     add_test(NAME mcp_tool_names COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_mcp_tool_names.py)
     add_test(NAME mcp_tool_names_catch_a_duplicate
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_mcp_tool_names.py
