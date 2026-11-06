@@ -37,6 +37,17 @@ def main() -> int:
             if source.name not in text:
                 missing.append(f"{module.name}/{source.relative_to(module)}")
 
+    # The same bug one directory over: a test file missing from tests/CMakeLists.txt never runs, so its tests
+    # silently do not exist. Checked the same textual way.
+    tests_dir = root / "tests"
+    tests_cmake = tests_dir / "CMakeLists.txt"
+    if tests_cmake.exists():
+        text = tests_cmake.read_text(encoding="utf-8", errors="replace")
+        for source in sorted(tests_dir.glob("test_*.cpp")):
+            checked += 1
+            if source.name not in text:
+                missing.append(f"tests/{source.name}")
+
     for path in missing:
         print(f"{path}: present but not listed in its module's CMakeLists")
     print(f"{checked} source files checked, {len(missing)} not compiled")
