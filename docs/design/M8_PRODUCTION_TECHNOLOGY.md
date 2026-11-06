@@ -301,8 +301,16 @@ when the descriptor heaps are exhausted. The test pins the behaviour that exists
 The first version of the test asserted the documented contract and died with `0xE06D7363` — which is how the mismatch
 was found, and which also demonstrated increment 105 naming the test and the check that trapped.
 
-**Debt count: 98 before, 96 after this batch.** Every remaining row needs either a device-backed test (94) or a
-validation-layer run (4); none needs a new engine capability.
+**Second batch, and the technique that unlocks the rest.** Most of the 94 are *log-and-return* validations:
+`Dispatch(0)` and recording after `Close()` write an error line and return rather than throwing, so a test that only
+called them would assert nothing. `Logger::Recent()` makes the effect observable, and
+`RHI_D3D12RejectsInvalidComputeDispatchDimensions` / `RHI_D3D12RejectsRecordingOnAClosedCommandList` check the reported
+rejection **and** that the command list still closes and submits afterwards — proving the rejection happened without
+damaging state. That pattern is what the remaining rows need: not new engine capability, just a consumer for a signal the
+engine already emits.
+
+**Debt count: 98 before, 96 after the first batch, 94 after the second.** Every remaining row needs either a
+device-backed test (90) or a validation-layer run (4); none needs a new engine capability.
 
 ## Deferred from M8
 

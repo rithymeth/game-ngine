@@ -1,4 +1,5 @@
 #include "aether/gfx/rhi/device.h"
+#include "aether/core/log.h"
 #include "test_framework.h"
 
 #include <span>
@@ -380,4 +381,59 @@ AETHER_TEST(RHI_D3D12RejectsInvalidTextureArguments) {
     const SampledTextureHandle after = device->CreateTexture(8, 8, pixels.data());
     AETHER_CHECK(after.IsValid());
     AETHER_CHECK(device->DestroyTexture(after));
+}
+namespace {
+// A log-and-return validation has no return value to assert: its only observable effect is the error line
+// it writes. Reading the logger's recent buffer makes those checks testable, which is what most of the
+// queue's 94 device-backed rows need. Cleared before each call so a stale line cannot satisfy the check.
+bool LoggedErrorContaining(const char* needle) {
+    for (const auto& line : aether::Logger::Instance().Recent()) {
+        if (line.level >= aether::LogLevel::Error && line.message.find(needle) != std::string::npos) return true;
+    }
+    return false;
+}
+} // namespace
+
+// Row 29: compute dispatch dimensions outside 1..65535 are rejected before native recording, and a rejected
+// dispatch leaves the list recordable and submittable.
+AETHER_TEST(RHI_D3D12RejectsInvalidComputeDispatchDimensions) {
+    auto device = CreateDevice(Backend::D3D12, /*enable_debug_layer=*/false);
+    AETHER_CHECK(device != nullptr);
+    auto cmd = device->CreateComputeCommandList();
+    AETHER_CHECK(cmd != nullptr);
+    cmd->Reset();
+
+    aether::Logger::Instance().ClearRecent();
+    cmd->Dispatch(0, 1, 1);
+    AETHER_CHECK(LoggedErrorContaining("dispatch group counts"));
+
+    aether::Logger::Instance().ClearRecent();
+    cmd->Dispatch(1, 1, 70000);
+    AETHER_CHECK(LoggedErrorContaining("dispatch group counts"));
+
+    // The rejected calls recorded nothing bad: the list still closes and submits.
+    cmd->Close();
+    const u64 fence = device->SubmitCompute(*cmd);
+    device->WaitForComputeFence(fence);
+    AETHER_CHECK(device->IsComputeFenceComplete(fence));
+}
+
+// Row 22: recording entry points require a recording command list; recording after Close is reported
+// instead of being silently dropped.
+AETHER_TEST(RHI_D3D12RejectsRecordingOnAClosedCommandList) {
+    auto device = CreateDevice(Backend::D3D12, /*enable_debug_layer=*/false);
+    AETHER_CHECK(device != nullptr);
+    auto cmd = device->CreateComputeCommandList();
+    AETHER_CHECK(cmd != nullptr);
+    cmd->Reset();
+    cmd->Close();
+
+    aether::Logger::Instance().ClearRecent();
+    cmd->Dispatch(1, 1, 1);
+    AETHER_CHECK(LoggedErrorContaining("requires a recording command list"));
+
+    // Submitting the closed list still works, so the rejected call changed nothing.
+    const u64 fence = device->SubmitCompute(*cmd);
+    device->WaitForComputeFence(fence);
+    AETHER_CHECK(device->IsComputeFenceComplete(fence));
 }
