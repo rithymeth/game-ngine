@@ -387,7 +387,8 @@ std::unique_ptr<ICommand> SetDataLayerActiveCommand::Make(const CommandContext& 
     command->layer_ = std::move(layer);
     command->active_ = active;
     // Snapshot every member before anything changes, so Undo can put each one back exactly.
-    ctx.world.ForEachArchetype([&command, &ctx](Archetype& archetype) {
+    bool changes = false;
+    ctx.world.ForEachArchetype([&command, &ctx, &changes, active](Archetype& archetype) {
         if ((archetype.Mask() & ComponentMaskOf<DataLayer>()) != ComponentMaskOf<DataLayer>()) return;
         for (usize chunk = 0; chunk < archetype.ChunkCount(); ++chunk) {
             const u32 count = archetype.ChunkEntityCount(chunk);
@@ -404,9 +405,13 @@ std::unique_ptr<ICommand> SetDataLayerActiveCommand::Make(const CommandContext& 
                 member.captured = layers[i].captured;
                 member.active_when_layer_on = layers[i].active_when_layer_on;
                 command->members_.push_back(member);
+                if (member.active != active) changes = true;
             }
         }
     });
+    // Nothing to do: no layer by that name, or every member is already in the wanted state. Return null
+    // so the caller does not record a history entry that changes nothing.
+    if (!changes) return nullptr;
     return command;
 }
 

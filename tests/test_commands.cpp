@@ -7,6 +7,7 @@
 #include "aether/reflection/serialize.h"
 #include "core/commands.h"
 #include "aether/scene/data_layers.h"
+#include "world/data_layer_panel.h"
 #include "aether/scene/gameplay.h"
 #include "test_framework.h"
 #include "ui/entity_inspector.h"
@@ -423,4 +424,38 @@ AETHER_TEST(Commands_SetDataLayerActiveUndoesEachMember) {
 
     AETHER_CHECK(stack.Redo(ctx));
     AETHER_CHECK(!IsActiveInHierarchy(world, guids, on));
+}
+// Phase 42.6: the panel's operation, checked without clicking anything. The checkbox is glue over
+// SetLayerActive; what it does is this, and this is recorded as one undoable edit.
+AETHER_TEST(Commands_DataLayerPanelSwitchesThroughTheStack) {
+    World world;
+    GuidIndex guids;
+    CommandStack stack;
+    CommandContext ctx{world, guids};
+
+    const Entity a = world.CreateEntity(Transform{Vec3(), Quaternion::Identity()}, IdComponent{});
+    world.AddComponent<DataLayer>(a, DataLayer{"Props"});
+    world.AddComponent<Active>(a, Active{false}); // off before the layer is switched
+    const Entity b = world.CreateEntity(Transform{Vec3(), Quaternion::Identity()}, IdComponent{});
+    world.AddComponent<DataLayer>(b, DataLayer{"Props"});
+    const Entity c = world.CreateEntity(Transform{Vec3(), Quaternion::Identity()}, IdComponent{});
+    world.AddComponent<DataLayer>(c, DataLayer{"Terrain"});
+
+    DataLayerPanel panel{world, guids, stack};
+    const std::vector<DataLayerPanel::Row> rows = panel.Rows();
+    AETHER_CHECK(rows.size() == 2);
+    AETHER_CHECK(rows[0].layer == "Props" && rows[0].entities == 2);
+    AETHER_CHECK(rows[1].layer == "Terrain" && rows[1].entities == 1);
+    AETHER_CHECK(!rows[0].active); // one member is off
+
+    AETHER_CHECK(panel.SetLayerActive("Props", false));
+    AETHER_CHECK(!IsDataLayerActive(world, "Props"));
+    AETHER_CHECK(stack.CanUndo());
+    AETHER_CHECK(!panel.SetLayerActive("Props", false)); // already off: nothing to record
+    AETHER_CHECK(!panel.SetLayerActive("Nope", false));  // no such layer
+    AETHER_CHECK(stack.Undo(ctx));
+    // `a` was off before the layer was switched, so undo leaves it off: the layer is not all-on.
+    AETHER_CHECK(!IsDataLayerActive(world, "Props"));
+    AETHER_CHECK(world.GetComponent<Active>(b) == nullptr || world.GetComponent<Active>(b)->active);
+    AETHER_CHECK(world.GetComponent<Active>(c) == nullptr || world.GetComponent<Active>(c)->active);
 }

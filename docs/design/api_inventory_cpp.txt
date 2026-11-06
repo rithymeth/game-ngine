@@ -6976,6 +6976,7 @@
 [editor/src/vfx/vfx_preview.h] internal-tooling
 [editor/src/workspace/command_palette.h] internal-tooling
 [editor/src/workspace/editor_workspace.h] internal-tooling
+[editor/src/world/data_layer_panel.h] internal-tooling
 [editor/src/world/foliage_document.h] internal-tooling
 [editor/src/world/spline_document.h] internal-tooling
 [editor/src/world/terrain_document.h] internal-tooling

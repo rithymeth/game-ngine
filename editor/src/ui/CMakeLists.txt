@@ -38,6 +38,7 @@ add_library(aether_editor_ui STATIC
     ../world/foliage_document.cpp
     ../world/spline_document.cpp
     ../world/world_panels.cpp
+    ../world/data_layer_panel.cpp
     ../net/net_play.cpp
     ../net/net_panels.cpp
     ../devtools/console_panel.cpp
