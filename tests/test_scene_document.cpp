@@ -1,5 +1,6 @@
 #include "core/scene_document.h"
 #include "aether/scene/data_layers.h"
+#include "aether/scene/level_instance.h"
 #include "core/snapping.h"
 #include "aether/scene/gameplay.h"
 #include "aether/scene/serialization.h"
@@ -358,4 +359,46 @@ AETHER_TEST(DataLayers_SurviveASaveAndLoad) {
             }
         }
     });
+}
+// Phase 42.6: level instances -- a scene placed inside another world, once, through the prefab path.
+AETHER_TEST(LevelInstance_ExpandsOnceAndReportsFailures) {
+    // The fake loader builds real prefab data from a temporary world, so the test exercises the same
+    // InstantiatePrefab path the editor will use without needing a scene file on disk.
+    auto loader = [](const std::string& scene, PrefabData& out, std::string& error) {
+        if (scene != "town") {
+            error = "no such scene";
+            return false;
+        }
+        World temp;
+        const Entity root = temp.CreateEntity(Transform{Vec3(1.0f, 0.0f, 0.0f), Quaternion::Identity()}, IdComponent{});
+        temp.CreateEntity(Transform{Vec3(2.0f, 0.0f, 0.0f), Quaternion::Identity()}, IdComponent{}, Parent{temp.GetComponent<IdComponent>(root)->guid});
+        GuidIndex temp_guids;
+        temp_guids.Rebuild(temp);
+        out = MakePrefab(temp, temp_guids, root);
+        return !out.entities.empty();
+    };
+
+    World world;
+    const Entity placement = world.CreateEntity(Transform{Vec3(10.0f, 0.0f, 0.0f), Quaternion::Identity()}, IdComponent{});
+    world.AddComponent<LevelInstance>(placement, LevelInstance{"town"});
+    const Entity broken = world.CreateEntity(Transform{Vec3(), Quaternion::Identity()}, IdComponent{});
+    world.AddComponent<LevelInstance>(broken, LevelInstance{"missing"});
+    GuidIndex guids;
+
+    const usize before = world.EntityCount();
+    LevelInstanceReport report = ExpandLevelInstances(world, guids, loader);
+    AETHER_CHECK(report.expanded == 1);
+    AETHER_CHECK(report.failed.size() == 1);
+    AETHER_CHECK(world.EntityCount() > before); // the scene's entities arrived
+
+    // The placement is marked, so expanding again duplicates nothing.
+    AETHER_CHECK(world.GetComponent<LevelInstance>(placement)->expanded);
+    AETHER_CHECK(!world.GetComponent<LevelInstance>(broken)->expanded); // it failed; retry is allowed
+    const usize after_first = world.EntityCount();
+    LevelInstanceReport again = ExpandLevelInstances(world, guids, loader);
+    AETHER_CHECK(again.expanded == 0);
+    AETHER_CHECK(world.EntityCount() == after_first);
+
+    // No loader means nothing happens rather than a crash.
+    AETHER_CHECK(ExpandLevelInstances(world, guids, {}).expanded == 0);
 }

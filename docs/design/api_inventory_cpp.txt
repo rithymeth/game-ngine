@@ -3107,6 +3107,13 @@
   Vec3 WorldPosition(const World&world,const GuidIndex&guids,Entity entity)
   bool WouldCreateCycle(const World&world,const GuidIndex&guids,Entity entity,Entity new_parent)
   std::vector<Entity>ChildrenOf(const World&world,const GuidIndex&guids,Entity entity)
+[engine/include/aether/scene/level_instance.h] experimental
+  type struct LevelInstance
+  type struct LevelInstanceReport
+  ),AETHER_FIELD(expanded,Field_EditAnywhere,
+  AETHER_REFLECT(aether::LevelInstance,1,AETHER_FIELD(scene,Field_EditAnywhere,
+  LevelInstanceReport ExpandLevelInstances(World&world,GuidIndex&guids,const SceneToPrefab&to_prefab)
+  using SceneToPrefab=std::function<bool(const std::string&scene,PrefabData&out,std::string&error)>
 [engine/include/aether/scene/lifecycle.h] experimental
   type class Lifecycle
   type struct Item
