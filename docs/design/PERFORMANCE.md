@@ -355,3 +355,15 @@ calibration 1.412 ms, 22 rows instead of 18. The four added rows are the current
 had never carried under these names; the two it did carry (`nav/path_across_100_tiles_plain` and its hierarchical twin)
 no longer exist and had already been removed. Only `name` and `normalized` are compared, so the other fields are
 informational.
+
+### Why that one row was 30x: the benchmark got honest, not slow
+
+The source of the bad baseline is now known, and it is not a mystery of calibration. That row's body **changed** in
+`bacf2dc4` ("Engine: fix D3D12 texture crash, tune ECS/job hot paths"): it gained an accumulated sum and an `abort` guard,
+with the comment *"observe the data so the loop cannot be elided"*. Before that, the loop only counted matching rows, which
+the optimiser collapsed into per-chunk arithmetic and reported at 0.001 ms -- the benchmark was measuring nothing.
+
+So the 30x is not a slowdown at all. It is the cost of doing the query, measured for the first time. The baseline was
+recorded before the benchmark became honest, and every subsequent comparison was against a number that could not be
+reached by any correct implementation. **A changed benchmark invalidates its baseline in the same way a renamed one does**,
+and that rule is the reason this cost so much: the guard landed without a baseline refresh in the same commit.
