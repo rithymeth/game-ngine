@@ -3313,3 +3313,21 @@ AETHER_TEST(Mcp_SetDataLayerSwitchesAndUndoes) {
     // A layer nobody belongs to is refused rather than recorded as an edit that changes nothing.
     AETHER_CHECK(h.Call("set_data_layer", {{"layer", "Nope"}, {"active", false}}).is_error);
 }
+// Phase 42.6 / 44.5: the MCP can see the level instances a scene places. Read-only, because expanding
+// one places a whole scene and is a scene edit.
+AETHER_TEST(Mcp_LevelInstancesListsWhatIsPlaced) {
+    Harness h;
+    const auto empty = h.Call("level_instances");
+    if (empty.is_error) { std::printf("level_instances failed: %s\n", empty.text.c_str()); AETHER_CHECK(!empty.is_error); return; }
+    AETHER_CHECK(empty.value["instances"].is_array() && empty.value["instances"].empty());
+
+    const std::string placed = h.Create({{"LevelInstance", {{"scene", "scenes/town"}, {"expanded", false}}}});
+    const auto listed = h.Call("level_instances");
+    if (listed.is_error) { std::printf("level_instances failed: %s\n", listed.text.c_str()); AETHER_CHECK(!listed.is_error); return; }
+    const Json& instances = listed.value["instances"];
+    AETHER_CHECK(instances.size() == 1);
+    if (instances.size() != 1) return;
+    AETHER_CHECK(instances[0]["scene"] == "scenes/town");
+    AETHER_CHECK(instances[0]["expanded"] == false);
+    AETHER_CHECK(instances[0]["entity"] == placed); // the guid a caller would use elsewhere
+}

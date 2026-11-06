@@ -1,6 +1,7 @@
 #include "editor_tools.h"
 
 #include "aether/scene/data_layers.h"
+#include "aether/scene/level_instance.h"
 
 #include "aether/reflection/serialize.h"
 #include "aether/reflection/any.h"
@@ -327,6 +328,27 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                                               {"active", IsDataLayerActive(s.world, name)}});
                         }
                         return {{"layers", layers}};
+                    }});
+
+    server.AddTool({"level_instances",
+                    "The level instances in the open scene: which scene each places, and whether it has been expanded yet. Read-only; expanding one places a whole scene and is a scene edit, so it is not offered here.",
+                    Schema(Json::object()), [&s](const Json&) -> Json {
+                        Json instances = Json::array();
+                        s.world.ForEachArchetype([&s, &instances](Archetype& archetype) {
+                            if ((archetype.Mask() & ComponentMaskOf<LevelInstance>()) != ComponentMaskOf<LevelInstance>()) return;
+                            for (usize chunk = 0; chunk < archetype.ChunkCount(); ++chunk) {
+                                const u32 count = archetype.ChunkEntityCount(chunk);
+                                Entity* entities = archetype.EntityArray(chunk);
+                                auto* levels = static_cast<LevelInstance*>(archetype.ComponentArray(chunk, GetComponentId<LevelInstance>()));
+                                for (u32 i = 0; i < count; ++i) {
+                                    Json entry = {{"scene", levels[i].scene}, {"expanded", levels[i].expanded}};
+                                    const IdComponent* id = s.world.GetComponent<IdComponent>(entities[i]);
+                                    if (id != nullptr) entry["entity"] = ToString(id->guid);
+                                    instances.push_back(entry);
+                                }
+                            }
+                        });
+                        return {{"instances", instances}};
                     }});
 
     server.AddTool({"set_data_layer",
