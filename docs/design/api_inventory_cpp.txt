@@ -858,9 +858,11 @@
   type struct Registrar
   type struct Regression
   type struct Result
+  type struct ShiftSummary
   #define AETHER_BENCH_CONCAT2(a,b)a##b #define AETHER_BENCH_CONCAT(a,b)AETHER_BENCH_CONCAT2(a,b)#define AETHER_BENCH(name,iterations,...)\ static::aether::bench::Registrar AETHER_BENCH_CONCAT(aether_bench_registrar_,__LINE__)(::aether::bench::Benchmark
   )#define AETHER_BENCH_SETUP(name,iterations,setup,...)\ static::aether::bench::Registrar AETHER_BENCH_CONCAT(aether_bench_registrar_,__LINE__)(::aether::bench::Benchmark
   Registrar(Benchmark b)
+  ShiftSummary SummarizeShift(const std::string&baseline_json,const std::string&current_json)
   bool Compare(const std::string&baseline_json,const std::string&current_json,double tolerance,std::vector<Regression>&regressions,std::string*error)
   double CalibrationMs()
   std::function<void()>body
