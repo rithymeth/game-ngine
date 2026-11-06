@@ -351,7 +351,11 @@ void RevertPrefabOverrideCommand::Resolve(CommandContext& ctx, Entity root) {
 }
 
 void RevertPrefabOverrideCommand::Do(CommandContext& ctx) {
-    const Entity entity = editor::Resolve(ctx, entity_);
+    // Not editor::Resolve: that asserts the GUID names a live entity, and this
+    // command's contract is the opposite -- a GUID whose entity is gone is a case
+    // it reports on. Under a build with assertions on, going through Resolve
+    // trapped here before the check below could run.
+    const Entity entity = ctx.guids.Find(ctx.world, entity_);
     // A GUID that names nothing resolves to no entity, and FindInstanceRoot does not survive being handed
     // one -- so the command says so rather than walking with it. Every caller benefits, not just the one
     // that happened to check first.
@@ -376,7 +380,8 @@ void RevertPrefabOverrideCommand::Do(CommandContext& ctx) {
 }
 
 void RevertPrefabOverrideCommand::Undo(CommandContext& ctx) {
-    const Entity entity = editor::Resolve(ctx, entity_);
+    // As in Do: a missing entity is a normal outcome here, not a broken invariant.
+    const Entity entity = ctx.guids.Find(ctx.world, entity_);
     if (entity.IsNull()) {
         return;
     }

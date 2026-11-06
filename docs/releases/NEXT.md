@@ -33,6 +33,9 @@ describes what is on `master`, not a promise of a version number or a date.
   packaging window lived in the ImGui editor UI library, which the Qt editor does not link, so the only way to make a package
   from the default editor was a terminal. The worker thread, progress and log are now `PackageRunner` in the portable editor
   layer, which both editors draw, and the Qt editor's `--self-test` packages a project as part of its run.
+- Fixed the **ASan+UBSan unit-test failure that blocked every release**: `RevertPrefabOverrideCommand` resolved its entity through
+  `editor::Resolve`, which asserts the GUID names a live entity -- and that command's whole purpose is to report when it does not.
+  Assertions are compiled out in the RelWithDebInfo build used locally, so it passed here and trapped in CI.
 ## Known gaps
 
 - **Built, tested and not adopted** -- check before assuming a feature is live. The repository builds infrastructure
