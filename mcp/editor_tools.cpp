@@ -380,63 +380,6 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                         return {{"entity", ToString(guid)}, {"expanded", true}};
                     }});
 
-    server.AddTool({"revert_prefab_override",
-                    "Drop an override on a prefab instance and re-resolve the instance from its prefab, as one undoable edit. An empty field reverts every override of that component.",
-                    Schema({{"entity", {{"type", "string"}, {"description", "The prefab instance's entity GUID"}}},
-                            {"component", {{"type", "string"}, {"description", "The component whose override to drop"}}},
-                            {"field", {{"type", "string"}, {"description", "The field path, or empty for all of them"}}}},
-                           {"entity", "component"}),
-                    [&s](const Json& args) -> Json {
-                        if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before reverting an override");
-                        const EntityGuid guid = RequireGuid(args, "entity");
-                        const std::string component = RequireString(args, "component");
-                        // FindComponentIdByName does not report an unknown name reliably, so the known list
-                        // is what says whether an agent named a component that exists.
-                        const std::vector<std::string> known = KnownComponentNames();
-                        if (std::find(known.begin(), known.end(), component) == known.end()) {
-                            throw ToolError("Unknown component \"" + component + "\"");
-                        }
-                        const std::string field = args.value("field", std::string{});
-                        editor::CommandContext ctx = s.Context();
-                        auto command = std::make_unique<editor::RevertPrefabOverrideCommand>(
-                            guid, FindComponentIdByName(component), field);
-                        command->Do(ctx);
-                        // The command refuses to act on an entity that is not part of an instance, and says
-                        // why in its report; passing that on is more useful than recording a no-op edit.
-                        if (!command->LastReport().ok) throw ToolError(command->LastReport().error);
-                        s.stack.Record(std::move(command));
-                        return {{"entity", ToString(guid)}, {"component", component}, {"field", field}};
-                    }});
-
-    server.AddTool({"prefab_instances",
-                    "The prefab instances in the open scene: which prefab each was made from, what it overrides, and which prefab entities it has removed. Read-only; use revert_prefab_override to drop one.",
-                    Schema(Json::object()), [&s](const Json&) -> Json {
-                        Json instances = Json::array();
-                        s.world.ForEachArchetype([&s, &instances](Archetype& archetype) {
-                            if ((archetype.Mask() & ComponentMaskOf<PrefabInstance>()) != ComponentMaskOf<PrefabInstance>()) return;
-                            for (usize chunk = 0; chunk < archetype.ChunkCount(); ++chunk) {
-                                const u32 count = archetype.ChunkEntityCount(chunk);
-                                Entity* entities = archetype.EntityArray(chunk);
-                                auto* data = static_cast<PrefabInstance*>(archetype.ComponentArray(chunk, GetComponentId<PrefabInstance>()));
-                                for (u32 i = 0; i < count; ++i) {
-                                    Json overrides = Json::array();
-                                    for (const PropertyOverride& o : data[i].overrides) {
-                                        overrides.push_back({{"entity", o.entity},
-                                                             {"component", o.component},
-                                                             {"field", o.field_path},
-                                                             {"value", o.value}});
-                                    }
-                                    Json entry = {{"overrides", overrides},
-                                                  {"removed_entities", data[i].removed_entities.size()}};
-                                    const IdComponent* id = s.world.GetComponent<IdComponent>(entities[i]);
-                                    if (id != nullptr) entry["entity"] = ToString(id->guid);
-                                    instances.push_back(entry);
-                                }
-                            }
-                        });
-                        return {{"instances", instances}};
-                    }});
-
     server.AddTool({"set_data_layer",
                     "Switch a data layer on or off as one undoable edit. Each member keeps its own state, so switching a layer back on restores what each entity had -- one that was already off stays off.",
                     Schema({{"layer", {{"type", "string"}, {"description", "The data layer to switch"}}},
