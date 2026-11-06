@@ -148,6 +148,13 @@ if(Python3_Interpreter_FOUND)
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_module_graph.py --dot ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/module_graph_cycle.dot --no-includes)
     set_tests_properties(module_graph_catches_a_cycle PROPERTIES WILL_FAIL TRUE)
     add_test(NAME api_stability_annotations COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_api_stability.py)
+    # Two MCP files registering one tool name is neither a compile error nor a test failure -- the tools
+    # live in separate translation units, so only the far end of the server ever sees both.
+    add_test(NAME mcp_tool_names COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_mcp_tool_names.py)
+    add_test(NAME mcp_tool_names_catch_a_duplicate
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_mcp_tool_names.py
+            --root ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/mcp_tools_duplicate)
+    set_tests_properties(mcp_tool_names_catch_a_duplicate PROPERTIES WILL_FAIL TRUE)
     add_test(NAME api_freeze_checks COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/check_api_freeze.py)
     add_test(NAME api_inventory COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/api_inventory.py)
     # Phase 48 step 2: the serialized-format table has to keep pointing at the files that implement
