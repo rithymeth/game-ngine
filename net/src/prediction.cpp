@@ -192,7 +192,10 @@ bool MovementClient::Predict(Entity entity, f32 move_x, f32 move_z, bool jump, f
 
     std::vector<u8> msg{kInputs};
     PutU32(msg, ni->net_id);
-    const usize n = std::min(config_.redundancy, c.pending.size());
+    // The count is one byte, so more than 255 inputs would truncate the count while the loop still wrote
+    // them all -- the peer would parse a different number of inputs than were sent. Clamping n fixes both
+    // the count and the loop together.
+    const usize n = std::min<usize>({config_.redundancy, c.pending.size(), 255});
     msg.push_back(static_cast<u8>(n));
     for (usize i = c.pending.size() - n; i < c.pending.size(); ++i) {
         const MovementInput& p = c.pending[i];
