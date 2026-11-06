@@ -329,6 +329,28 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                         return {{"layers", layers}};
                     }});
 
+    server.AddTool({"set_data_layer",
+                    "Switch a data layer on or off as one undoable edit. Each member keeps its own state, so switching a layer back on restores what each entity had -- one that was already off stays off.",
+                    Schema({{"layer", {{"type", "string"}, {"description", "The data layer to switch"}}},
+                            {"active", {{"type", "boolean"}, {"description", "true shows the layer, false hides it"}}}},
+                           {"layer", "active"}),
+                    [&s](const Json& args) -> Json {
+                        if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before switching data layers");
+                        const std::string layer = RequireString(args, "layer");
+                        const bool active = args.value("active", true);
+                        editor::CommandContext ctx = s.Context();
+                        std::unique_ptr<editor::ICommand> command = editor::SetDataLayerActiveCommand::Make(ctx, layer, active);
+                        // Null means there is nothing to do: no layer by that name, or every member is
+                        // already in the wanted state. Refused rather than recorded as an empty edit.
+                        if (command == nullptr) {
+                            throw ToolError("No data layer named \"" + layer + "\", or it is already " +
+                                            (active ? "shown" : "hidden"));
+                        }
+                        command->Do(ctx);
+                        s.stack.Record(std::move(command));
+                        return {{"layer", layer}, {"active", active}};
+                    }});
+
     server.AddTool({"list_component_types",
                     "Component types that can be added to entities, with their fields. Use these names in the other tools.",
                     Schema(Json::object()), [](const Json&) -> Json {

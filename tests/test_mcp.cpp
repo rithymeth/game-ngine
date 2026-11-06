@@ -3289,3 +3289,27 @@ AETHER_TEST(Mcp_DataLayersListsTheScenesLayers) {
     AETHER_CHECK(layers[1]["layer"] == "Terrain" && layers[1]["entities"] == 1);
     AETHER_CHECK(layers[0]["active"] == true);
 }
+// Phase 42.6: an agent can switch a data layer, and the switch is one undoable edit like every other
+// write tool.
+AETHER_TEST(Mcp_SetDataLayerSwitchesAndUndoes) {
+    Harness h;
+    h.Create({{"DataLayer", {{"layer", "Props"}}}});
+    h.Create({{"DataLayer", {{"layer", "Props"}}}});
+
+    const auto before = h.Call("data_layers");
+    if (before.is_error) { std::printf("data_layers failed: %s\n", before.text.c_str()); AETHER_CHECK(!before.is_error); return; }
+    AETHER_CHECK(before.value["layers"].size() == 1 && before.value["layers"][0]["active"] == true);
+
+    const auto hide = h.Call("set_data_layer", {{"layer", "Props"}, {"active", false}});
+    AETHER_CHECK(!hide.is_error);
+    const auto hidden = h.Call("data_layers");
+    AETHER_CHECK(!hidden.is_error && hidden.value["layers"][0]["active"] == false);
+
+    // One edit, so one undo brings the whole layer back.
+    AETHER_CHECK(!h.Call("undo").is_error);
+    const auto shown = h.Call("data_layers");
+    AETHER_CHECK(!shown.is_error && shown.value["layers"][0]["active"] == true);
+
+    // A layer nobody belongs to is refused rather than recorded as an edit that changes nothing.
+    AETHER_CHECK(h.Call("set_data_layer", {{"layer", "Nope"}, {"active", false}}).is_error);
+}
