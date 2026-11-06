@@ -771,7 +771,14 @@ void BlueprintEditor::DrawNodeDetails(const std::string& graph, NodeId id) {
     }
     std::string comment = n->comment;
     if (ImGui::InputText("Comment", &comment)) {
-        doc_.Edit("Node comment", [&](bp::Blueprint& b) { b.FindGraph(graph)->Find(id)->comment = comment; },
+        doc_.Edit("Node comment", [&](bp::Blueprint& b) {
+                      // The graph or node can be gone by the time the edit runs (an undo, a redo, a delete between
+                      // drawing this panel and pressing the key), and a search result used without checking it was
+                      // the shape of a crash found by the fuzzer elsewhere in the engine.
+                      bp::Graph* target = b.FindGraph(graph);
+                      if (target == nullptr) return;
+                      if (bp::Node* node = target->Find(id)) node->comment = comment;
+                  },
                   "node-comment:" + graph + ":" + std::to_string(id));
     }
     if (!sig) return;
@@ -792,7 +799,11 @@ void BlueprintEditor::DrawNodeDetails(const std::string& graph, NodeId id) {
         ImGui::SameLine(110);
         ImGui::SetNextItemWidth(-1);
         if (ValueEditor(p.name.c_str(), p.type, value)) {
-            doc_.Edit("Set " + p.name, [&](bp::Blueprint& b) { b.FindGraph(graph)->Find(id)->defaults[p.name] = bp::ValueToJson(value); },
+            doc_.Edit("Set " + p.name, [&](bp::Blueprint& b) {
+                bp::Graph* target = b.FindGraph(graph);
+                if (target == nullptr) return;
+                if (bp::Node* node = target->Find(id)) node->defaults[p.name] = bp::ValueToJson(value);
+            },
                       "pin:" + graph + ":" + std::to_string(id) + ":" + p.name);
         }
     }

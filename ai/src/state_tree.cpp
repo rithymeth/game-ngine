@@ -130,7 +130,11 @@ bool StateTree::Start(Blackboard& blackboard) {
 }
 
 void StateTree::Stop(Blackboard& blackboard) {
-    for (auto it = path_.rbegin(); it != path_.rend(); ++it) Apply(Find(*it)->on_exit, blackboard);
+    // path_ only ever holds names that validated, so the lookup should always succeed -- but a search followed by a
+    // dereference is the exact shape of the crash this file shipped, so none of these three loops trusts it.
+    for (auto it = path_.rbegin(); it != path_.rend(); ++it) {
+        if (const TreeState* state = Find(*it)) Apply(state->on_exit, blackboard);
+    }
     path_.clear();
 }
 
@@ -141,7 +145,9 @@ const std::string& StateTree::CurrentLeaf() const {
 
 bool StateTree::FireOne(Blackboard& blackboard) {
     for (auto level = path_.rbegin(); level != path_.rend(); ++level) {
-        for (const StateTransition& t : Find(*level)->transitions) {
+        const TreeState* level_state = Find(*level);
+        if (level_state == nullptr) continue;
+        for (const StateTransition& t : level_state->transitions) {
             const bool ready = std::all_of(t.conditions.begin(), t.conditions.end(), [&](const StateCondition& c) { return c.Holds(blackboard); });
             if (!ready) continue;
             const std::vector<std::string> next = PathTo(DescendToLeaf(t.target));
@@ -151,9 +157,13 @@ bool StateTree::FireOne(Blackboard& blackboard) {
             const usize reentered_from = static_cast<usize>(std::distance(path_.begin(), std::find(path_.begin(), path_.end(), t.target)));
             while (shared < path_.size() && shared < next.size() && path_[shared] == next[shared]) ++shared;
             shared = std::min(shared, reentered_from);
-            for (usize i = path_.size(); i > shared; --i) Apply(Find(path_[i - 1])->on_exit, blackboard);
+            for (usize i = path_.size(); i > shared; --i) {
+                if (const TreeState* exiting = Find(path_[i - 1])) Apply(exiting->on_exit, blackboard);
+            }
             path_ = next;
-            for (usize i = shared; i < path_.size(); ++i) Apply(Find(path_[i])->on_enter, blackboard);
+            for (usize i = shared; i < path_.size(); ++i) {
+                if (const TreeState* entering = Find(path_[i])) Apply(entering->on_enter, blackboard);
+            }
             return true;
         }
     }
