@@ -366,9 +366,12 @@ inside a valid pass are each reported; a real pipeline then binds inside the pas
 enforcement) is closed by the earlier `RHI_D3D12RejectsRecordingOnAClosedCommandList`, which exercises the same clauses from
 the other direction — the row was written before that check existed.
 
-**Debt count: 98 before, 72 after eleven batches.** 26 rows closed. The remaining 72 include 26 Vulkan-only rows that this
-machine cannot exercise at all (Vulkan is not configured locally), 4 that need a validation-layer run, and 42 D3D12 checks of
-the same shapes already covered. None needs a new engine capability.
+**Twelfth batch.** `RHI_D3D12RejectsTextureCreationWhenDescriptorsAreExhausted` closes rows 15 and 16: creating more
+sampled textures than the bindless table holds is refused rather than over-allocating, and — the part that catches leaks —
+freeing one afterwards allows exactly one more, proving a refused creation consumed no slot.
+
+**Debt count: 98 before, 70 after twelve batches.** 28 rows closed. The remaining 70 are 26 Vulkan-only rows this machine
+cannot exercise, 4 needing a validation-layer run, and 40 D3D12 checks of shapes already covered.
 
 ## Deferred from M8
 

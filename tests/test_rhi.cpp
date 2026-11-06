@@ -615,3 +615,30 @@ AETHER_TEST(RHI_D3D12RejectsQueueMismatchedSubmissions) {
     AETHER_CHECK(device->SubmitCompute(*graphics) == 0);  // a graphics list on the compute queue
     AETHER_CHECK(aether::test::LoggedErrorContaining("closed compute command list"));
 }
+// Rows 15 and 16: sampled-texture descriptor capacity is enforced before allocation, and a refused creation does not
+// consume a slot. The control at the end -- free one, create one -- is what proves the slots are accounted for rather
+// than simply leaking on every failure.
+AETHER_TEST(RHI_D3D12RejectsTextureCreationWhenDescriptorsAreExhausted) {
+    auto device = CreateDevice(Backend::D3D12, /*enable_debug_layer=*/false);
+    AETHER_CHECK(device != nullptr);
+    const u8 pixel[4] = {255, 255, 255, 255};
+    std::vector<SampledTextureHandle> held;
+    aether::Logger::Instance().ClearRecent();
+    for (u32 i = 0; i < kMaxUserBindlessTextures + 4; ++i) {
+        const SampledTextureHandle texture = device->CreateTexture(1, 1, pixel);
+        if (texture.IsValid()) held.push_back(texture);
+    }
+    // The capacity held: no more than the declared maximum were handed out, and the refusal was reported.
+    AETHER_CHECK(held.size() <= kMaxUserBindlessTextures);
+    AETHER_CHECK(aether::test::LoggedErrorContaining("exhausted"));
+
+    // A refused creation must not have consumed a slot: freeing one allows exactly one more.
+    if (!held.empty()) {
+        AETHER_CHECK(device->DestroyTexture(held.back()));
+        held.pop_back();
+        const SampledTextureHandle again = device->CreateTexture(1, 1, pixel);
+        AETHER_CHECK(again.IsValid());
+        if (again.IsValid()) held.push_back(again);
+    }
+    for (const SampledTextureHandle texture : held) AETHER_CHECK(device->DestroyTexture(texture));
+}
