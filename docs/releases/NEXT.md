@@ -12,6 +12,9 @@ describes what is on `master`, not a promise of a version number or a date.
 - A package now carries the engine's **third-party notices and licences** (`THIRD_PARTY_NOTICES.md`, `licenses/`), staged
   automatically and covered by `PackageManifest.json`. Previously shipping them was a manual step in one game's release script,
   so a game packaged any other way redistributed LZ4, zstd, Jolt, Recast and Luau with none of their terms.
+- Added **`aether_package --smoke`**, which starts the packaged game headless for a few frames before the command returns, so
+  "the package built" and "the package runs" are the same answer. The smoke run uses a scratch folder outside the package, so
+  what `verify-package` checks is still what is there.
 ## Known gaps
 
 - **Built, tested and not adopted** -- check before assuming a feature is live. The repository builds infrastructure

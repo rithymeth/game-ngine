@@ -19,10 +19,13 @@
 //   <dir>/Paks/<pak>.apak         the cooked content, with CookManifest.json
 //   <dir>/PackageManifest.json    sizes and CRC-32s, verified after staging
 #include "aether/cook/package.h"
+#include "aether/platform/process.h"
 
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <string>
+#include <vector>
 
 using namespace aether;
 
@@ -33,8 +36,30 @@ int Usage() {
                  "usage: aether_package <project.aproject> --out <dir> [--config debug|development|shipping]\n"
                  "                    [--player <aether_player>] [--strict] [--verbose]\n"
                  "                    [--always <path-or-folder/>]... [--pak-name Game]\n"
-                 "                    [--compression auto|lz4|zstd|none] [--key <64 hex digits>]\n");
+                 "                    [--compression auto|lz4|zstd|none] [--key <64 hex digits>]\n"
+                 "                    [--smoke [--smoke-frames <n>]]\n");
     return 2;
+}
+
+// The last thing anyone does by hand after packaging is start the game and see
+// whether it comes up; a package that cannot start is not a package. Runs in a
+// scratch folder outside the package, so what was verified stays what is there.
+int RunSmokeTest(const std::filesystem::path& game, int frames) {
+    std::error_code ec;
+    const std::filesystem::path scratch = std::filesystem::temp_directory_path(ec) / "aether-package-smoke";
+    std::filesystem::remove_all(scratch, ec);
+    platform::ChildProcess process;
+    std::string error;
+    const std::vector<std::string> args = {"--headless", "--frames", std::to_string(frames),
+                                          "--user-dir", (scratch / "user").string()};
+    if (!process.Start(game, args, game.parent_path(), &error)) {
+        std::fprintf(stderr, "aether_package: couldn't start the packaged game: %s\n", error.c_str());
+        return -1;
+    }
+    int code = -1;
+    process.Wait(&code);
+    std::filesystem::remove_all(scratch, ec);
+    return code;
 }
 
 } // namespace
@@ -45,6 +70,8 @@ int main(int argc, char** argv) {
     cook::PackageOptions options;
     options.cook.project_file = argv[1];
     bool verbose = false;
+    bool smoke = false;
+    int smoke_frames = 3;
 
     for (int i = 2; i < argc; ++i) {
         const std::string arg = argv[i];
@@ -76,6 +103,11 @@ int main(int argc, char** argv) {
             options.cook.encryption_key = key;
         } else if (arg == "--verbose") {
             verbose = true;
+        } else if (arg == "--smoke") {
+            smoke = true;
+        } else if (arg == "--smoke-frames" && has_value) {
+            smoke_frames = std::atoi(argv[++i]);
+            if (smoke_frames <= 0) return Usage();
         } else {
             return Usage();
         }
@@ -112,5 +144,13 @@ int main(int argc, char** argv) {
     std::printf("manifest: %s\n", report.manifest_file.string().c_str());
     std::printf("staged %zu file(s) beside the player; run %s to play\n", report.copied.size(),
                 report.game_executable.string().c_str());
+    if (smoke) {
+        const int code = RunSmokeTest(report.game_executable, smoke_frames);
+        if (code != 0) {
+            std::fprintf(stderr, "aether_package: the packaged game did not run (%d frames, exit code %d)\n", smoke_frames, code);
+            return 1;
+        }
+        std::printf("smoke test: the packaged game ran %d frame(s)\n", smoke_frames);
+    }
     return 0;
 }

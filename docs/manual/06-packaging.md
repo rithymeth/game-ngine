@@ -20,6 +20,16 @@ Run `dist/Game/Game.exe`. Check a package at any time with
 `aether_pak verify-package dist/Game`; it compares every listed file against its
 size and CRC-32 and prints what differs.
 
+Add `--smoke` to start the packaged game headless for a few frames before the
+command returns, so a package that cannot run is a failed command rather than
+something you find out later:
+
+    aether_package Game.aproject --out dist/Game --config shipping --smoke
+
+The smoke run uses a scratch folder outside the package and deletes it, so what
+`verify-package` checked is still what is there. `--smoke-frames <n>` runs
+longer than the default three.
+
 `PackageManifest.json` records the project name, the configuration and the
 engine version, so a folder somebody ships you can be identified without running
 it -- and a bug report can start from the build that produced it.
