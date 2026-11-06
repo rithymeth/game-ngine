@@ -415,3 +415,23 @@ by the other does not cancel hardware, it hides it behind a number that looks li
 That is why the gate fails on a different pair of rows each run, and why refreshing the baseline fixes exactly the rows it
 was taken from and no others. A per-runner baseline or a noise floor would both help; neither fixes the underlying point
 that this normalisation cannot compare two machines.
+### Recommendation for the gate, 7 November 2026
+
+Three options were on the table; the measurements above rule one out and rank the others.
+
+**Not a noise floor.** The failing rows are not micro-benchmarks: `bp/loop_arith_10k` measured 865 us with a 5 us
+min-to-p95 spread, and `ecs/query_50k_of_100k` 30 us. A floor would have to be set above a millisecond to silence them,
+which would silence most of the table.
+
+**Not another baseline refresh.** It fixes exactly the rows it was taken from, and the next run drifts. This was done
+once already in this round and the failure moved to two different rows.
+
+**Recommended: a baseline per hardware class, with the comparison advisory until the class is known.** The calibration
+loop cannot stand in for the machine -- 1% agreement and a 3x-to-7x spread across the table on this machine -- so the
+baseline has to be tied to the hardware that produced it, and a runner without its own baseline should report rather
+than fail. That is also what `M8_PRODUCTION_TECHNOLOGY.md` already says: *shared-runner performance thresholds should
+remain advisory until their noise and repeatability are understood.*
+
+Whichever is chosen, the change is to the gate's policy, and the `bench --baseline` output now carries the evidence
+needed to review it: both calibration figures, how many benchmarks moved each way, and a warning when the run moved as a
+whole.
