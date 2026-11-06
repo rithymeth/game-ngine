@@ -2,6 +2,8 @@
 #include "mcp_server.h"
 #include "test_framework.h"
 
+#include "aether/scene/serialization.h"
+
 #include <cmath>
 #include <filesystem>
 #include <map>
@@ -3330,4 +3332,42 @@ AETHER_TEST(Mcp_LevelInstancesListsWhatIsPlaced) {
     AETHER_CHECK(instances[0]["scene"] == "scenes/town");
     AETHER_CHECK(instances[0]["expanded"] == false);
     AETHER_CHECK(instances[0]["entity"] == placed); // the guid a caller would use elsewhere
+}
+// Phase 42.6: expanding a level instance through MCP, as one undoable edit, with the scene path going
+// through the same containment save_scene and load_scene use.
+AETHER_TEST(Mcp_ExpandLevelInstancePlacesTheSceneAndUndoesIt) {
+    const auto root = std::filesystem::temp_directory_path() / "aether_mcp_level_expand";
+    std::filesystem::create_directories(root);
+    World source;
+    source.CreateEntity(Transform{Vec3(), Quaternion::Identity()}, IdComponent{NewEntityGuid()});
+    source.CreateEntity(Transform{Vec3(1.0f, 0.0f, 0.0f), Quaternion::Identity()}, IdComponent{NewEntityGuid()});
+    AETHER_CHECK(SaveScene(source, (root / "town.aesc").string()));
+
+    Harness h;
+    h.session.scene_root = root;
+    const std::string instance = h.Create({{"LevelInstance", {{"scene", "town.aesc"}, {"expanded", false}}}});
+    if (instance.empty()) { AETHER_CHECK(!instance.empty()); return; }
+
+    const usize before = h.session.world.EntityCount();
+    const auto expanded = h.Call("expand_level_instance", {{"entity", instance}});
+    if (expanded.is_error) {
+        std::printf("expand_level_instance failed: %s\n", expanded.text.c_str());
+        AETHER_CHECK(!expanded.is_error);
+        return;
+    }
+    AETHER_CHECK(h.session.world.EntityCount() > before);
+
+    // One edit, so one undo puts the scene away again.
+    AETHER_CHECK(!h.Call("undo").is_error);
+    AETHER_CHECK(h.session.world.EntityCount() == before);
+
+    // A scene outside the root is refused rather than read.
+    const std::string outside = h.Create({{"LevelInstance", {{"scene", "../escape.aesc"}, {"expanded", false}}}});
+    AETHER_CHECK(h.Call("expand_level_instance", {{"entity", outside}}).is_error);
+
+    // And an entity that is not a level instance is refused with a reason.
+    const std::string plain = h.Create();
+    AETHER_CHECK(h.Call("expand_level_instance", {{"entity", plain}}).is_error);
+
+    std::filesystem::remove_all(root);
 }

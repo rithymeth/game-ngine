@@ -351,6 +351,35 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                         return {{"instances", instances}};
                     }});
 
+    server.AddTool({"expand_level_instance",
+                    "Load the scene a level instance places and place it, as one undoable edit. The instance must not be expanded yet; see level_instances for their GUIDs.",
+                    Schema({{"entity", {{"type", "string"}, {"description", "The level instance's entity GUID"}}}}, {"entity"}),
+                    [&s](const Json& args) -> Json {
+                        if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before expanding a level instance");
+                        const EntityGuid guid = RequireGuid(args, "entity");
+                        const Entity instance = s.guids.Find(s.world, guid);
+                        if (instance == kNullEntity) throw ToolError("No entity with that GUID");
+                        const LevelInstance* level = s.world.GetComponent<LevelInstance>(instance);
+                        if (level == nullptr) throw ToolError("That entity is not a level instance");
+                        if (level->expanded) throw ToolError("That level instance is already expanded");
+                        // The scene path goes through the same containment save_scene and load_scene use: a
+                        // level instance may name any scene the scene root contains, and nothing outside it.
+                        std::string path_error;
+                        const std::filesystem::path path = ResolveScenePath(s.scene_root, level->scene, path_error);
+                        if (path.empty()) throw ToolError(path_error.empty() ? "the scene path is not allowed" : path_error);
+                        PrefabData prefab;
+                        std::string load_error;
+                        if (!LoadSceneAsPrefab(path.string(), prefab, load_error)) {
+                            throw ToolError(load_error.empty() ? "could not load the scene" : load_error);
+                        }
+                        editor::CommandContext ctx = s.Context();
+                        std::unique_ptr<editor::ICommand> command =
+                            editor::ExpandLevelInstanceCommand::Make(ctx, guid, std::move(prefab));
+                        command->Do(ctx);
+                        s.stack.Record(std::move(command));
+                        return {{"entity", ToString(guid)}, {"expanded", true}};
+                    }});
+
     server.AddTool({"set_data_layer",
                     "Switch a data layer on or off as one undoable edit. Each member keeps its own state, so switching a layer back on restores what each entity had -- one that was already off stays off.",
                     Schema({{"layer", {{"type", "string"}, {"description", "The data layer to switch"}}},
