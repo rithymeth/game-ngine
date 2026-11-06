@@ -594,3 +594,57 @@ AETHER_TEST(Process_StartsWaitsAndReportsTheExitCode) {
     CHECK(!missing.Start(dir / "no_such_program", {}, {}, &error) && error.find("No program") == 0);
     CHECK(!missing.Wait());
 }
+#if defined(_WIN32)
+// A packaged game is the player under another name, and the player carries no
+// version information at all: Windows' Properties dialog shows nothing and Task
+// Manager shows a file name. The staged copy is stamped with the game's own name
+// and version, so a shipped folder identifies itself without being opened.
+AETHER_TEST(Package_ThePackagedGameCarriesItsOwnVersionInformation) {
+    const stdfs::path parent = stdfs::temp_directory_path() / "aether_package_tests";
+    stdfs::remove_all(parent / "Stamped");
+    stdfs::remove_all(parent / "StampedOut");
+    stdfs::create_directories(parent);
+
+    ProjectPaths project;
+    std::string error;
+    AETHER_CHECK(templates::CreateProjectFromTemplate(parent, "Stamped", "blank", &project, &error));
+    ProjectSettings settings;
+    AETHER_CHECK(LoadProject(project.file, settings, &error));
+    settings.version = "3.4.5";
+    settings.window_title = "Stamped Game";
+    AETHER_CHECK(SaveProject(project.file, settings, &error));
+
+    // The test binary is a real executable; a fake player has no resource table
+    // for Windows to update.
+    const stdfs::path self = platform::ExecutablePath();
+    AETHER_CHECK(!self.empty());
+    cook::PackageOptions options;
+    options.cook.project_file = project.file;
+    options.output_dir = parent / "StampedOut";
+    options.player_executable = self;
+    const cook::PackageReport packaged = cook::Package(options);
+    CHECK(packaged.ok);
+    CHECK(packaged.version_stamped);
+
+    DWORD ignored = 0;
+    const DWORD size = GetFileVersionInfoSizeW(packaged.game_executable.wstring().c_str(), &ignored);
+    AETHER_CHECK(size > 0);
+    std::vector<wchar_t> buffer(size / sizeof(wchar_t) + 1, L'\0');
+    AETHER_CHECK(GetFileVersionInfoW(packaged.game_executable.wstring().c_str(), 0, size, buffer.data()));
+
+    VS_FIXEDFILEINFO* fixed = nullptr;
+    UINT length = 0;
+    AETHER_CHECK(VerQueryValueW(buffer.data(), L"\\", reinterpret_cast<void**>(&fixed), &length) && fixed != nullptr);
+    CHECK(HIWORD(fixed->dwProductVersionMS) == 3);
+    CHECK(LOWORD(fixed->dwProductVersionMS) == 4);
+    CHECK(HIWORD(fixed->dwProductVersionLS) == 5);
+    wchar_t* product = nullptr;
+    AETHER_CHECK(VerQueryValueW(buffer.data(), L"\\StringFileInfo\\040904B0\\ProductName",
+                                reinterpret_cast<void**>(&product), &length) && product != nullptr);
+    CHECK(std::wstring(product) == L"Stamped");
+    wchar_t* description = nullptr;
+    AETHER_CHECK(VerQueryValueW(buffer.data(), L"\\StringFileInfo\\040904B0\\FileDescription",
+                                reinterpret_cast<void**>(&description), &length) && description != nullptr);
+    CHECK(std::wstring(description) == L"Stamped Game");
+}
+#endif

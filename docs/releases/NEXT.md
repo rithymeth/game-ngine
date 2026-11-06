@@ -24,6 +24,9 @@ describes what is on `master`, not a promise of a version number or a date.
 - A project now has its own **`version`**, separate from the engine version, and a package records it as `game_version` in both
   `CookManifest.json` and `PackageManifest.json`. Until now a shipped game could say which engine built it and not which version of
   the game it was, so AETHER-01's release script invented one in a side file.
+- A packaged game's executable now carries **its own Windows version information** -- product name, game version, and the window
+  title as its description. The player has none of its own, so a shipped `Game.exe` used to show nothing in Properties and a file
+  name in Task Manager.
 ## Known gaps
 
 - **Built, tested and not adopted** -- check before assuming a feature is live. The repository builds infrastructure

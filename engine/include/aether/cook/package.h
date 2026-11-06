@@ -34,6 +34,9 @@ struct PackageReport {
     std::filesystem::path paks_dir;
     std::filesystem::path manifest_file;
     std::vector<std::filesystem::path> copied; // the player and its DLLs, as staged
+    // The game's name and version are now in the executable's Windows version
+    // resource, so Properties and Task Manager show the game rather than nothing.
+    bool version_stamped = false;
 };
 
 PackageReport Package(const PackageOptions& options);

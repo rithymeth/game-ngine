@@ -33,6 +33,11 @@ add_executable(aether_tests
 )
 
 target_link_libraries(aether_tests PRIVATE Aether::Engine)
+if(WIN32)
+    # Package_ThePackagedGameCarriesItsOwnVersionInformation reads a staged exe's
+    # version resource back with the Windows version APIs.
+    target_link_libraries(aether_tests PRIVATE version)
+endif()
 
 if(TARGET coin_run_game)
     target_sources(aether_tests PRIVATE test_coin_run.cpp)

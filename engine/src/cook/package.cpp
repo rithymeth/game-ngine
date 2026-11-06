@@ -15,6 +15,13 @@
 #include <fstream>
 #include <set>
 #include <system_error>
+#include <vector>
+
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
 
 namespace aether::cook {
 
@@ -28,6 +35,161 @@ constexpr usize kMaxPackageManifestBytes = 16 * 1024 * 1024;
 constexpr const char* kExeSuffix = ".exe";
 #else
 constexpr const char* kExeSuffix = "";
+#endif
+
+#if defined(_WIN32)
+// A packaged game is the player binary under the game's name, and the player
+// carries no version information at all: Properties shows nothing and Task
+// Manager shows the file name. Stamping the game's own identity into the staged
+// copy is the difference between a shipped game and a renamed player.
+//
+// Built by hand because it has to happen after the copy, at package time, and a
+// resource script is a link-time thing.
+void PushU16(std::vector<u8>& out, u16 value) {
+    out.push_back(static_cast<u8>(value & 0xFF));
+    out.push_back(static_cast<u8>((value >> 8) & 0xFF));
+}
+
+void PushU32(std::vector<u8>& out, u32 value) {
+    for (int i = 0; i < 4; ++i) out.push_back(static_cast<u8>((value >> (8 * i)) & 0xFF));
+}
+
+void PushWide(std::vector<u8>& out, const std::wstring& text) {
+    for (const wchar_t c : text) PushU16(out, static_cast<u16>(c));
+    PushU16(out, 0);
+}
+
+void AlignDword(std::vector<u8>& out) {
+    while (out.size() % 4 != 0) out.push_back(0);
+}
+
+// Every block starts with its own wLength, so it is patched once its children
+// are in.
+void PatchBlockLength(std::vector<u8>& block) {
+    const u16 length = static_cast<u16>(block.size());
+    block[0] = static_cast<u8>(length & 0xFF);
+    block[1] = static_cast<u8>((length >> 8) & 0xFF);
+}
+
+std::vector<u8> MakeVersionString(const std::wstring& key, const std::wstring& value) {
+    std::vector<u8> block;
+    PushU16(block, 0);                                        // wLength
+    PushU16(block, static_cast<u16>((value.size() + 1) * 2)); // wValueLength: the value, in bytes
+    PushU16(block, 1);                                        // wType: text
+    PushWide(block, key);
+    AlignDword(block);
+    PushWide(block, value);
+    AlignDword(block);
+    PatchBlockLength(block);
+    return block;
+}
+
+std::vector<u8> MakeVersionBlock(const std::wstring& key, u16 value_length,
+                                 const std::vector<std::vector<u8>>& children) {
+    std::vector<u8> block;
+    PushU16(block, 0);            // wLength
+    PushU16(block, value_length); // bytes of fixed data that follow the key, or 0
+    PushU16(block, 1);            // wType: text
+    PushWide(block, key);
+    AlignDword(block);
+    for (const std::vector<u8>& child : children) block.insert(block.end(), child.begin(), child.end());
+    AlignDword(block);
+    PatchBlockLength(block);
+    return block;
+}
+
+// "1.2.3" -> 1, 2, 3, 0. Anything unparseable stays 0.0.0.0: the string form is
+// kept in the table either way, and a confidently wrong number is worse than a
+// blank one.
+void ParseGameVersion(const std::string& text, u16 parts[4]) {
+    parts[0] = parts[1] = parts[2] = parts[3] = 0;
+    usize part = 0;
+    u32 value = 0;
+    bool any = false;
+    for (const char c : text) {
+        if (c >= '0' && c <= '9') {
+            value = value * 10 + static_cast<u32>(c - '0');
+            any = true;
+            if (value > 0xFFFF) return;
+        } else if (c == '.') {
+            if (!any || part >= 3) return;
+            parts[part++] = static_cast<u16>(value);
+            value = 0;
+            any = false;
+        } else {
+            return;
+        }
+    }
+    if (any && part < 4) parts[part] = static_cast<u16>(value);
+}
+
+bool StampGameVersion(const stdfs::path& exe, const std::string& description, const std::string& product,
+                      const std::string& version, const std::string& original_name) {
+    const auto wide = [](const std::string& text) {
+        std::wstring out;
+        out.reserve(text.size());
+        for (const char c : text) out.push_back(static_cast<wchar_t>(static_cast<unsigned char>(c)));
+        return out;
+    };
+    u16 parts[4];
+    ParseGameVersion(version, parts);
+
+    std::vector<std::vector<u8>> strings;
+    strings.push_back(MakeVersionString(L"FileDescription", wide(description)));
+    strings.push_back(MakeVersionString(L"ProductName", wide(product)));
+    strings.push_back(MakeVersionString(L"FileVersion", wide(version)));
+    strings.push_back(MakeVersionString(L"ProductVersion", wide(version)));
+    strings.push_back(MakeVersionString(L"OriginalFilename", wide(original_name)));
+    const std::vector<u8> table = MakeVersionBlock(L"040904B0", 0, strings);
+    const std::vector<u8> string_info = MakeVersionBlock(L"StringFileInfo", 0, {table});
+
+    // The root: header, key, the fixed info its wValueLength describes, then the
+    // string table.
+    std::vector<u8> root;
+    PushU16(root, 0);                        // wLength
+    PushU16(root, sizeof(VS_FIXEDFILEINFO)); // wValueLength: the fixed info
+    PushU16(root, 0);                        // wType: binary
+    PushWide(root, L"VS_VERSION_INFO");
+    AlignDword(root);
+    PushU32(root, 0xFEEF04BD);                                             // dwSignature
+    PushU32(root, 0x00010000);                                             // dwStrucVersion
+    PushU32(root, (static_cast<u32>(parts[0]) << 16) | parts[1]);           // dwFileVersionMS
+    PushU32(root, (static_cast<u32>(parts[2]) << 16) | parts[3]);           // dwFileVersionLS
+    PushU32(root, (static_cast<u32>(parts[0]) << 16) | parts[1]);           // dwProductVersionMS
+    PushU32(root, (static_cast<u32>(parts[2]) << 16) | parts[3]);           // dwProductVersionLS
+    PushU32(root, 0x3F);                                                    // dwFileFlagsMask
+    PushU32(root, 0);                                                       // dwFileFlags
+    PushU32(root, 0x00040004);                                              // dwFileOS: VOS_NT_WINDOWS32
+    PushU32(root, 0x00000001);                                              // dwFileType: VFT_APP
+    PushU32(root, 0);                                                       // dwFileSubtype
+    PushU32(root, 0);                                                       // dwFileDateMS
+    PushU32(root, 0);                                                       // dwFileDateLS
+    AlignDword(root);
+    root.insert(root.end(), string_info.begin(), string_info.end());
+    AlignDword(root);
+    PatchBlockLength(root);
+
+    HANDLE update = BeginUpdateResourceW(exe.wstring().c_str(), FALSE);
+    if (update == nullptr) {
+        AETHER_LOG_WARN("Package", "Can't open %s to stamp its version: error %lu", exe.string().c_str(),
+                        static_cast<unsigned long>(GetLastError()));
+        return false;
+    }
+    // A matching type/name/language is replaced, so there is nothing to delete
+    // first: asking the API to "delete" a resource that is not there is what made
+    // this fail with ERROR_INTERNAL_ERROR.
+    LPWSTR version_type = reinterpret_cast<LPWSTR>(RT_VERSION);
+    const BOOL written = UpdateResourceW(update, version_type, MAKEINTRESOURCEW(1), 0x0409, root.data(),
+                                         static_cast<DWORD>(root.size()));
+    const unsigned long write_error = static_cast<unsigned long>(GetLastError());
+    const BOOL ended = EndUpdateResourceW(update, FALSE);
+    if (written == FALSE || ended == FALSE) {
+        AETHER_LOG_WARN("Package", "Can't stamp %s: update error %lu, end error %lu, %zu bytes", exe.string().c_str(),
+                        write_error, static_cast<unsigned long>(GetLastError()), root.size());
+        return false;
+    }
+    return true;
+}
 #endif
 
 bool FileChecksum(const stdfs::path& file, u64& bytes, u32& crc) {
@@ -234,6 +396,13 @@ PackageReport Package(const PackageOptions& options) {
     }
 #endif
     report.copied.push_back(report.game_executable);
+#if defined(_WIN32)
+    // The staged copy is the player; give it the game's identity. Best effort: a
+    // package must not fail because an executable cannot be stamped, and a test
+    // player is not an executable at all.
+    report.version_stamped = StampGameVersion(staged_player, settings.window_title.empty() ? settings.name : settings.window_title,
+                                              settings.name, settings.version, report.game_executable.filename().string());
+#endif
 #if defined(_WIN32)
     // The DLLs the player loads (dxcompiler.dll and the like).
     for (stdfs::directory_iterator it(player.parent_path(), ec), end; !ec && it != end; it.increment(ec)) {
