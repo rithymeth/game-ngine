@@ -338,3 +338,46 @@ AETHER_TEST(RHI_VulkanDestroyTextureFreesTheSlotForReuse) {
         AETHER_CHECK(device->DestroyTexture(t));
     }
 }
+
+// M8 108: the queue's validation increments were recorded as "implemented locally; runtime check
+// unverified". These are the runtime checks, against a real D3D12 device.
+//
+// What the check found: the queue says these rejections "return an invalid handle". They do not.
+// CreateTexture logs and throws std::invalid_argument for an unsupported extent or null pixels, and
+// returns an invalid handle only when the descriptor heaps are exhausted. The test below pins the
+// behaviour that exists rather than the behaviour the row predicted -- the row is corrected in
+// M8_PRODUCTION_TECHNOLOGY.md.
+AETHER_TEST(RHI_D3D12RejectsInvalidTextureArguments) {
+    auto device = CreateDevice(Backend::D3D12, /*enable_debug_layer=*/false);
+    AETHER_CHECK(device != nullptr);
+    std::vector<u8> pixels(16 * 16 * 4, 255);
+
+    // Control: a representable extent with real pixels allocates and frees. Without this the rejections
+    // below would pass just as happily if every call failed.
+    const SampledTextureHandle control = device->CreateTexture(16, 16, pixels.data());
+    AETHER_CHECK(control.IsValid());
+    AETHER_CHECK(device->DestroyTexture(control));
+
+    const auto rejects = [&](u32 width, u32 height, const u8* data) {
+        try {
+            device->CreateTexture(width, height, data);
+        } catch (const std::invalid_argument&) {
+            return true;
+        } catch (...) {
+            return false;
+        }
+        return false;
+    };
+    // Rows 4 and 39: zero extents, a null pixel pointer, and an extent no device can represent are all
+    // rejected before anything is allocated.
+    AETHER_CHECK(rejects(0, 0, pixels.data()));
+    AETHER_CHECK(rejects(0, 16, pixels.data()));
+    AETHER_CHECK(rejects(16, 0, pixels.data()));
+    AETHER_CHECK(rejects(16, 16, nullptr));
+    AETHER_CHECK(rejects(100000, 100000, pixels.data()));
+
+    // A rejected argument must not leave the device unusable.
+    const SampledTextureHandle after = device->CreateTexture(8, 8, pixels.data());
+    AETHER_CHECK(after.IsValid());
+    AETHER_CHECK(device->DestroyTexture(after));
+}

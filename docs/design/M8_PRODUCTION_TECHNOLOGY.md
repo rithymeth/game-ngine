@@ -281,6 +281,29 @@ Evidence for the items, in the order they cost time:
 Order 104 and 105 first: they make 108 possible. 106 and 107 are small and independent. 109 last, because
 it is only worth writing checks for documents once the checks themselves are legible.
 
+### Verification debt census (2026-11-07)
+
+Measured, not estimated: the queue above holds **103 increments, of which 98 are recorded as unverified**. Categorised by
+what would close each one:
+
+| Count | What it needs | Status |
+|---|---|---|
+| 94 | A device-backed runtime check: the validation exists but no check exercises it against a real device | Closable here — `tests/test_rhi.cpp` already creates real D3D12 devices |
+| 4 | A validation-layer or GPU run (increments 6, 7, 98 and one other) | Needs a device with `VK_LAYER_KHRONOS_validation`; local Vulkan is not configured |
+| 1 | Only "automated tests were not run" (increment 4) | Closed by any green `ctest` |
+| 4 | Already claimed verified/complete (increments 1, 5, 13, 103) | No debt |
+
+**First batch closed, and it corrected the queue.** `RHI_D3D12RejectsInvalidTextureArguments` covers increments 4 and 39
+against a real NVIDIA D3D12 device, with a valid control case so a call that always failed could not pass it. It found
+that those rows describe the wrong contract: they say invalid input **returns an invalid handle**, but `CreateTexture`
+**logs and throws `std::invalid_argument`** for an unsupported extent or null pixels, and returns an invalid handle only
+when the descriptor heaps are exhausted. The test pins the behaviour that exists; the rows are corrected to match it.
+The first version of the test asserted the documented contract and died with `0xE06D7363` — which is how the mismatch
+was found, and which also demonstrated increment 105 naming the test and the check that trapped.
+
+**Debt count: 98 before, 96 after this batch.** Every remaining row needs either a device-backed test (94) or a
+validation-layer run (4); none needs a new engine capability.
+
 ## Deferred from M8
 
 These may be considered in a later feature milestone, but are not M8 scope:
