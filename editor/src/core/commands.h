@@ -209,4 +209,25 @@ private:
     bool active_ = false;
 };
 
+// Phase 42.6: expanding a level instance places a whole scene, which is one edit and must be undoable as
+// one. The caller loads the scene into prefab data (that needs a file system, which a command has no
+// business owning); this places it and, on undo, destroys exactly what the instantiation reported it
+// created -- `World::DestroyEntity` does not recurse, so a list of entities is the only way back.
+class ExpandLevelInstanceCommand final : public ICommand {
+public:
+    static std::unique_ptr<ICommand> Make(const CommandContext& ctx, const EntityGuid& instance, PrefabData prefab);
+    void Do(CommandContext& ctx) override;
+    void Undo(CommandContext& ctx) override;
+    std::string Label() const override;
+
+
+
+private:
+    EntityGuid instance_;
+    PrefabData prefab_;
+    Entity instance_entity_ = kNullEntity;
+    std::vector<Entity> created_; // filled by Do, destroyed by Undo
+    bool expanded_before_ = false;
+};
+
 } // namespace aether::editor

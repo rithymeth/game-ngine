@@ -1,6 +1,8 @@
 #include "core/commands.h"
 
 #include "aether/scene/data_layers.h"
+#include "aether/scene/level_instance.h"
+#include "aether/scene/prefab.h"
 #include "aether/scene/gameplay.h"
 
 #include "aether/core/log.h"
@@ -441,6 +443,55 @@ void SetDataLayerActiveCommand::Undo(CommandContext& ctx) {
 
 std::string SetDataLayerActiveCommand::Label() const {
     return std::string(active_ ? "Show " : "Hide ") + layer_ + " layer";
+}
+
+// ---------------------------------------------------------------- level instances (Phase 42.6)
+
+std::unique_ptr<ICommand> ExpandLevelInstanceCommand::Make(const CommandContext& ctx, const EntityGuid& instance,
+                                                           PrefabData prefab) {
+    auto command = std::make_unique<ExpandLevelInstanceCommand>();
+    command->instance_ = instance;
+    command->prefab_ = std::move(prefab);
+    command->instance_entity_ = ctx.guids.Find(ctx.world, instance);
+    if (command->instance_entity_ != kNullEntity) {
+        const LevelInstance* level = ctx.world.GetComponent<LevelInstance>(command->instance_entity_);
+        command->expanded_before_ = level != nullptr && level->expanded;
+    }
+    return command;
+}
+
+void ExpandLevelInstanceCommand::Do(CommandContext& ctx) {
+    created_.clear();
+    if (instance_entity_ == kNullEntity || !ctx.world.IsAlive(instance_entity_)) return;
+    LevelInstance* level = ctx.world.GetComponent<LevelInstance>(instance_entity_);
+    if (level == nullptr || level->expanded) return; // already placed: nothing to do
+    const Transform* placement = ctx.world.GetComponent<Transform>(instance_entity_);
+    ResolveReport report;
+    assets::AssetGuid source{}; // a scene is not a prefab asset; the instance is identified by its root
+    const Entity root = InstantiatePrefab(ctx.world, ctx.guids, source, prefab_, placement, &report);    if (root.IsNull()) return;
+    // Parent the placed scene under the instance so moving the instance moves the scene, and only then
+    // mark it expanded -- the same order ExpandLevelInstances uses.
+    const IdComponent* id = ctx.world.GetComponent<IdComponent>(instance_entity_);
+    if (id != nullptr) ctx.world.AddComponent(root, Parent{id->guid});
+    created_ = report.created_entities;
+    level = ctx.world.GetComponent<LevelInstance>(instance_entity_);
+    if (level != nullptr) level->expanded = true;
+}
+
+void ExpandLevelInstanceCommand::Undo(CommandContext& ctx) {
+    if (instance_entity_ == kNullEntity || !ctx.world.IsAlive(instance_entity_)) return;
+    // Reverse order, because the list is parents-first and destroying a parent leaves its children
+    // alive with a Parent whose GUID no longer resolves.
+    for (auto it = created_.rbegin(); it != created_.rend(); ++it) {
+        if (ctx.world.IsAlive(*it)) ctx.world.DestroyEntity(*it);
+    }
+    created_.clear();
+    LevelInstance* level = ctx.world.GetComponent<LevelInstance>(instance_entity_);
+    if (level != nullptr) level->expanded = expanded_before_;
+}
+
+std::string ExpandLevelInstanceCommand::Label() const {
+    return "Expand level instance";
 }
 
 } // namespace aether::editor

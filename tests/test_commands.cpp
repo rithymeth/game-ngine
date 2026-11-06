@@ -7,6 +7,8 @@
 #include "aether/reflection/serialize.h"
 #include "core/commands.h"
 #include "aether/scene/data_layers.h"
+#include "aether/scene/level_instance.h"
+#include "aether/scene/prefab.h"
 #include "world/data_layer_panel.h"
 #include "aether/scene/gameplay.h"
 #include "test_framework.h"
@@ -458,4 +460,46 @@ AETHER_TEST(Commands_DataLayerPanelSwitchesThroughTheStack) {
     AETHER_CHECK(!IsDataLayerActive(world, "Props"));
     AETHER_CHECK(world.GetComponent<Active>(b) == nullptr || world.GetComponent<Active>(b)->active);
     AETHER_CHECK(world.GetComponent<Active>(c) == nullptr || world.GetComponent<Active>(c)->active);
+}
+// Phase 42.6: expanding a level instance places a whole scene as one edit, and undo removes exactly what
+// it created -- which is why the instantiation report has to name the entities.
+AETHER_TEST(Commands_ExpandLevelInstanceUndoesWhatItCreated) {
+    // A prefab to place, built the way the MCP and the editor both do: from a temporary world.
+    World temp;
+    GuidIndex temp_guids;
+    const Entity temp_root = temp.CreateEntity(Transform{Vec3(), Quaternion::Identity()}, IdComponent{});
+    temp.CreateEntity(Transform{Vec3(), Quaternion::Identity()}, IdComponent{},
+                      Parent{temp.GetComponent<IdComponent>(temp_root)->guid});
+    temp_guids.Rebuild(temp);
+    const PrefabData prefab = MakePrefab(temp, temp_guids, temp_root);
+    AETHER_CHECK(!prefab.entities.empty());
+
+    World world;
+    GuidIndex guids;
+    CommandStack stack;
+    CommandContext ctx{world, guids};
+    const Entity placement = world.CreateEntity(Transform{Vec3(10.0f, 0.0f, 0.0f), Quaternion::Identity()}, IdComponent{});
+    world.AddComponent<LevelInstance>(placement, LevelInstance{"town"});
+    // IdComponent{} starts with a null guid, which the index skips: EnsureAllGuids is the documented
+    // way to give every entity a real one before anything looks one up.
+    EnsureAllGuids(world, guids);
+    guids.Rebuild(world);
+    const EntityGuid placement_guid = world.GetComponent<IdComponent>(placement)->guid;
+
+    const usize before = world.EntityCount();
+    auto command = ExpandLevelInstanceCommand::Make(ctx, placement_guid, prefab);
+
+    command->Do(ctx);
+    AETHER_CHECK(world.EntityCount() > before);
+    AETHER_CHECK(world.GetComponent<LevelInstance>(placement)->expanded);
+
+    command->Undo(ctx);
+    AETHER_CHECK(world.EntityCount() == before); // everything it made is gone again
+    AETHER_CHECK(!world.GetComponent<LevelInstance>(placement)->expanded);
+
+    // Doing it again after undo works, because Do records a fresh list each time.
+    command->Do(ctx);
+    AETHER_CHECK(world.EntityCount() > before);
+    command->Undo(ctx);
+    AETHER_CHECK(world.EntityCount() == before);
 }
