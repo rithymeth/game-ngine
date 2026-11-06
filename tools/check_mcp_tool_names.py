@@ -47,9 +47,24 @@ def main() -> int:
         for name in undocumented:
             print(f"{name}: registered but not named in mcp/README.md")
 
+    # The other direction: a table row naming a tool that no longer exists. Only the first cell of a row
+    # is checked, because the prose legitimately names argument names like `components_all`.
+    stale: list[str] = []
+    row_names: set[str] = set()
+    if readme.exists():
+        for line in text.splitlines():
+            match = re.match(r"^\|\s*`([a-z][a-z0-9_]*)`", line)
+            if match:
+                row_names.add(match.group(1))
+                if match.group(1) not in seen:
+                    stale.append(match.group(1))
+    for name in stale:
+        print(f"{name}: in a README tool row but not registered")
+
     print(f"{len(seen)} MCP tools, {len(duplicates)} duplicate name(s), "
-          f"{len(undocumented)} not in the README")
-    return 1 if duplicates or undocumented else 0
+          f"{len(undocumented)} not in the README, {len(row_names)} documented rows, "
+          f"{len(stale)} stale row(s)")
+    return 1 if duplicates or undocumented or stale else 0
 
 
 if __name__ == "__main__":
