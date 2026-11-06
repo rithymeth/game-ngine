@@ -143,6 +143,11 @@ describes what is on `master`, not a promise of a version number or a date.
   caller in `renderer/` either, which is CPU-side only. They stay because they are tested and requested, not
   because anything uses them.
 
+- The predicted-movement sequence is a `u32` compared with `<=`, so it wraps after 4 billion inputs (about two
+  years at 60 Hz) and every acknowledgement is then rejected. The rest of netcode compares sequences modularly with
+  `SeqGreater`, which is `u16`; a `u32` overload would fix it. Not worth a template for two years of continuous play,
+  but it is a known asymmetry rather than an unknown one.
+
 - The hierarchical path finder is **slower than plain Detour everywhere it has been measured**, including the
   dead-end serpentine it was designed for (4.7x), a 1 600-tile mesh (3.6x) and a ~13 700-tile one (4.5x; 80 ms
   against 18 ms). It is marked experimental and nothing in the engine uses it -- build paths with
