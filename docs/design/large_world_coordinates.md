@@ -122,3 +122,69 @@ an origin does. The origin is the cheaper axis: it moves the frame, not the data
 - `WorldOrigin_LoadOptionsShiftTheScene`, `WorldOrigin_BinaryLoadShiftsTheScene`
   — both loaders apply `SceneLoadOptions::origin`.
 - `Streaming_FilesAndFloatingOrigin` — the streamer's floating origin.
+
+## Migration plan: what adopting it would take
+
+Measured against the code as it stands, not estimated.
+
+### What already exists
+
+- `Vec3d`, a double-precision position, and `Vec3d::FromVec3`.
+- `WorldOrigin` with `ToAbsolute` and `RebaseOrigin(origin, world, threshold)`, which only moves the anchor past a
+  threshold so an origin does not drift every frame.
+- `RebaseTransforms` and `ShiftTransforms`, which move every entity's f32 `Transform` by `-delta`/`+delta` so a loaded
+  world stays put when the origin moves, with one implementation of the root-shift rule (children relative to parents, a
+  `Parent` whose GUID no longer resolves counting as a root).
+- `SceneLoadOptions::origin` shifts a scene into origin-relative space as it loads, without changing the file.
+- The JSON scene format stores the origin at the root and writes `position` as local + origin; the loader shifts it back
+  and reports the origin it used through a `Vec3d*` out-parameter.
+- `streaming::FloatingOrigin` already calls `RebaseTransforms`.
+
+That is the whole mechanism, tested. What is missing is **adoption**.
+
+### The decision
+
+Two ways forward, and they are not equally expensive.
+
+**Option A -- keep `Transform` in f32 and opt in per system.** A system that cares tracks its own `Vec3d` (or asks the
+origin for the absolute position) and converts through `WorldOrigin`. `Transform` stays what it is, the scene format does
+not change, and nothing needs migrating. Cost: each adopting system carries a conversion, and the conversion has to be
+consistent or two systems disagree about where a thing is.
+
+**Option B -- make `Transform::position` a `Vec3d`.** Everything gets large-world coordinates for free, and nothing has to
+remember to convert. Cost, measured: `Transform` is `components.h:23`, and `.position` appears **271 times across 54
+files** (`engine` 28/12, `renderer` 13/6, `net` 10/3, `editor` 67/17, `mcp` 117/7, `physics` 24/5, `streaming` 3/2,
+`save` 1/1, `nav` 8/1 -- the MCP count is mostly JSON keys, so the real figure is lower, but the shape holds: this is a
+change to the most-used struct in the engine). It is also a **breaking serialized-format change**: the scene format is at
+version 1, every persisted scene would need a migration, and `Transform` doubles in size, which changes the ECS chunk
+layout and everything that measures it.
+
+Option B is the plan's own "highest-risk step" and this measurement is why. It is also the better end state, so the
+question is not which is correct but which is affordable now.
+
+### Recommended order
+
+Take **Option A** first, system by system, because it needs no migration and each step is independently revertible:
+
+1. **Physics.** It is where the origin matters most (a body 10 km from the anchor loses f32 precision) and it is the
+   only system that already talks to a solver with its own coordinate assumptions. `MovementStep` in `net/prediction`
+   takes `Transform&`, so networking follows whatever physics decides.
+2. **Networking.** Prediction and replication already step `Transform&`; once physics reads absolute positions, the
+   predictor has to as well or the two disagree.
+3. **Rendering.** The camera and the frustum need absolute positions to cull a large world; drawing still happens in
+   origin-relative space, which is the point of the origin.
+4. **Audio.** Last because its precision needs are the weakest -- attenuation over a few hundred metres does not care
+   about a kilometre-scale offset.
+
+Each step is: track a `Vec3d`, convert through the origin, and keep `Transform` origin-relative. The test for each is
+that a rebase leaves the world visually and physically unchanged.
+
+### What must not be skipped
+
+- **A rebase must not move anything the player can see.** `RebaseTransforms` already exists and is tested; use it rather
+  than each system moving its own state.
+- **`WorldOrigin::RebaseOrigin` has a threshold for a reason.** Rebasing every frame makes physics jitter; the threshold
+  is what keeps the anchor stable.
+- **The JSON format records its origin, the binary format does not.** A `.aesc` is derived from a scene already in local
+  coordinates, so a game that rebases must keep the origin alongside whatever it writes, or it will load a world a
+  kilometre from where it belongs.
