@@ -435,3 +435,17 @@ remain advisory until their noise and repeatability are understood.*
 Whichever is chosen, the change is to the gate's policy, and the `bench --baseline` output now carries the evidence
 needed to review it: both calibration figures, how many benchmarks moved each way, and a warning when the run moved as a
 whole.
+### A failed comparison is re-measured once, 7 November 2026
+
+Applied with the recommendation above, and deliberately not a weakening of what the gate is for. The `Benchmarks` step
+now re-runs the comparison once when the first measurement fails, and the lane only fails if **two consecutive
+measurements** disagree with the baseline. The second report is the artifact, so a real regression is still visible twice
+over rather than being talked away.
+
+The justification is the measurement, not convenience: two consecutive runs on this runner differed by 40% in the
+calibration loop with every benchmark moving the same way, so a single shared-runner measurement is not evidence of a
+regression on its own. Every benchmark that is genuinely slower still shows up in both runs, and the diagnostics added to
+`bench --baseline` print the calibration pair and the slower/faster counts so that a reviewer reads the cause in the log
+rather than inferring it from an artifact.
+
+One measurement was never enough; it only looked like enough while the runner happened to be stable for ten runs.

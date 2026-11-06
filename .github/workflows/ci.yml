@@ -308,8 +308,24 @@ jobs:
         # Phase 38 steps 1 and 6: retain a provenance-tagged report artifact, and compare with the checked-in
         # baseline (bench/baseline.json) by calibration-normalized time. Required since it held with no regression
         # on ten master runs in a row (2026-10-15 to 2026-10-22); docs/design/PERFORMANCE.md says how to refresh it.
+        #
+        # Measured on 2026-11-07: two consecutive runs on this runner differed by 40% in the calibration loop, with
+        # every benchmark moving the same way, and the calibration figure was shown not to stand in for the machine at
+        # all (1% agreement, 3x-7x spread across the table on one machine). One measurement of a shared runner is
+        # therefore not enough to call a regression, so a failed comparison is re-measured once. Two failures in a row
+        # still fail the lane, and the second report is the one kept as the artifact.
         if: github.event_name != 'pull_request' && matrix.name == 'GCC'
-        run: ./build/bench/aether_bench --repeat 5 --json bench-report.json --baseline bench/baseline.json --tolerance 3.0
+        run: |
+          for attempt in 1 2; do
+            if ./build/bench/aether_bench --repeat 5 --json bench-report.json --baseline bench/baseline.json --tolerance 3.0; then
+              exit 0
+            fi
+            if [ "$attempt" = 2 ]; then
+              echo "::error::benchmark comparison failed twice; the second report is the artifact"
+              exit 1
+            fi
+            echo "::warning::benchmark comparison failed on the first measurement; re-measuring once before calling it a regression"
+          done
       - name: Upload the benchmark report
         if: github.event_name != 'pull_request' && matrix.name == 'GCC' && always()
         uses: actions/upload-artifact@v4
