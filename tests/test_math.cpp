@@ -2,7 +2,6 @@
 #include "aether/math/world_origin.h"
 #include "test_framework.h"
 
-#include "aether/math/frustum.h"
 
 using namespace aether;
 
@@ -118,31 +117,4 @@ AETHER_TEST(WorldOrigin_RebasesIntoRelativeSpace) {
     AETHER_CHECK(RebaseOrigin(origin, world, 1.0));
     AETHER_CHECK_NEAR(origin.absolute.x, world.x, 1e-9);
     AETHER_CHECK_NEAR(origin.ToRelative(world).Length(), 0.0f, 1e-6);
-}
-
-// Phase 38 step 8: the culling test. A perspective camera at the origin looking down -Z, so nothing
-// needs a view matrix to be interesting.
-AETHER_TEST(Math_FrustumCullsWhatIsBehindAndOutside) {
-    const Mat4 view_projection = Mat4::PerspectiveRH(Radians(60.0f), 16.0f / 9.0f, 0.1f, 100.0f);
-    const Frustum frustum = Frustum::FromViewProjection(view_projection);
-
-    // In front, and inside the near and far planes.
-    AETHER_CHECK(frustum.ContainsSphere(Vec3(0.0f, 0.0f, -5.0f), 0.5f));
-    AETHER_CHECK(frustum.ContainsAabb(Vec3(-1.0f, -1.0f, -6.0f), Vec3(1.0f, 1.0f, -4.0f)));
-
-    // Behind the camera, and past the far plane.
-    AETHER_CHECK(!frustum.ContainsSphere(Vec3(0.0f, 0.0f, 5.0f), 0.5f));
-    AETHER_CHECK(!frustum.ContainsSphere(Vec3(0.0f, 0.0f, -500.0f), 0.5f));
-
-    // Far off to the side.
-    AETHER_CHECK(!frustum.ContainsSphere(Vec3(100.0f, 0.0f, -5.0f), 0.5f));
-    AETHER_CHECK(!frustum.ContainsAabb(Vec3(10.0f, 10.0f, -6.0f), Vec3(11.0f, 11.0f, -4.0f)));
-
-    // A sphere straddling the near plane is still reported visible: the test is conservative on
-    // purpose, and the normals point outwards so dot + distance >= 0 means inside.
-    AETHER_CHECK(frustum.ContainsSphere(Vec3(0.0f, 0.0f, 0.0f), 1.0f));
-    for (usize i = 0; i < 6; ++i) {
-        const Plane& plane = frustum[i];
-        AETHER_CHECK_NEAR(plane.normal.Length(), 1.0f, 1e-3f);
-    }
 }

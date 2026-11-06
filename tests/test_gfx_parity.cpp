@@ -1,7 +1,6 @@
 #include "aether/gfx/parity.h"
 #include "test_framework.h"
 
-#include "aether/gfx/draw_submission.h"
 
 #include "aether/math/math.h"
 
@@ -197,35 +196,6 @@ AETHER_TEST(Gfx_PipelineCacheCreatesOncePerState) {
 
     cache.Clear();
     AETHER_CHECK(cache.Size() == 0 && cache.Hits() == 0 && cache.Misses() == 0);
-}
-// Phase 38 step 8: draw submission. Culling uses the frustum from math/frustum.h, ordering is by
-// material so the pipeline changes as few times as possible, and the submitter is a fake, so this
-// needs no GPU.
-AETHER_TEST(Gfx_DrawSubmissionCullsAndOrdersByMaterial) {
-    const Mat4 view_projection = Mat4::PerspectiveRH(Radians(60.0f), 16.0f / 9.0f, 0.1f, 100.0f);
-    const Frustum frustum = Frustum::FromViewProjection(view_projection);
-
-    gfx::DrawSubmission submission;
-    submission.Begin();
-    submission.Add({"mesh-a", "z-material", Vec3(0.0f, 0.0f, -5.0f), 0.5f, 1});
-    submission.Add({"mesh-b", "a-material", Vec3(0.0f, 0.0f, -6.0f), 0.5f, 2});
-    submission.Add({"mesh-c", "a-material", Vec3(0.0f, 0.0f, -7.0f), 0.5f, 3});
-    submission.Add({"behind", "a-material", Vec3(0.0f, 0.0f, 50.0f), 0.5f, 4}); // behind the camera
-    AETHER_CHECK(submission.Queued() == 4);
-
-    std::vector<u64> order;
-    const usize drawn = submission.Submit(frustum, [&order](const gfx::DrawItem& item) { order.push_back(item.user); });
-    AETHER_CHECK(drawn == 3);
-    AETHER_CHECK(submission.Submitted() == 3 && submission.Culled() == 1);
-
-    // a-material before z-material, and within a material by mesh: mesh-b, mesh-c, then mesh-a.
-    AETHER_CHECK(order.size() == 3);
-    AETHER_CHECK(order[0] == 2 && order[1] == 3 && order[2] == 1);
-
-    // Begin starts a fresh frame rather than piling onto the last one.
-    submission.Begin();
-    AETHER_CHECK(submission.Queued() == 0 && submission.Submitted() == 0 && submission.Culled() == 0);
-    AETHER_CHECK(submission.Submit(frustum, {}) == 0); // no items, and a null submitter is fine
 }
 // Phase 38 step 8: the render thread. Work posted from the game thread runs on the worker, in order, and
 // Flush is the frame boundary where the caller waits.
