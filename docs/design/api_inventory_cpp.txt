@@ -2500,6 +2500,14 @@
   void InstallScriptApi(void*script_host)
   void LoadAssets(const KitAssetContext&context)
   void RegisterComponents()
+[engine/include/aether/math/frustum.h] experimental
+  type class Frustum
+  type struct Plane
+  bool ContainsAabb(const Vec3&min,const Vec3&max)const
+  bool ContainsSphere(const Vec3&center,f32 radius)const
+  const Plane&operator[](usize i)const
+  private:void Set(usize index,const Vec4&raw)
+  public:static Frustum FromViewProjection(const Mat4&matrix)
 [engine/include/aether/math/mat4.h] stable
   Mat4 operator*(const Mat4&rhs)const
   Mat4()
