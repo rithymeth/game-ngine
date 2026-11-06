@@ -44,6 +44,13 @@ evidence; Phase 48 release waits for M8.12 product validation on the same candid
   benchmarks; both are fixed. The third is `Unit tests` under ASan+UBSan, which dies with exit code 132 -- SIGILL, the
   trap a sanitizer emits for undefined behaviour, not an ASan memory report. It cannot be reproduced on this machine (no
   clang compiler, and MSVC has no UBSan) and the job log requires admin rights, so it needs the log to name the test.
+
+  **The editor half of the same goal is now evidenced.** `aether_editor.exe --self-test` runs on a machine with a desktop and
+  passes (exit 0): new project, scene save, settings round-trip, sequence save, glTF import and placement, and Play-in-Editor.
+  CI runs the same self-test twice, once on the build tree and once on the packaged editor on a clean runner, so "from an empty
+  editor" is checked even though no package test can reach it. Its one gap: the self-test does **not** cover Build and Package.
+  That window calls the same `cook::Package` the command line and the tests use, so what is unverified is its threading around
+  that call, not the packaging itself.
   tree on this machine.**
   exactly what CI passing says.
   Interaction, Quests, Net, Nav, AI, Scripting, Physics and Game. Jobs live in
