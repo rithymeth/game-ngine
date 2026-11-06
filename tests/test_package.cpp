@@ -1,4 +1,5 @@
 #include "aether/cook/package.h"
+#include "aether/core/version.h"
 #include "aether/platform/process.h"
 #include "aether/pak/pak.h"
 #include "aether/player/game.h"
@@ -191,6 +192,8 @@ AETHER_TEST(Package_StagesThePlayerWithThePaks) {
     CHECK(stdfs::exists(report.paks_dir / "Game.apak") && stdfs::exists(report.paks_dir / "CookManifest.json"));
     CHECK(!stdfs::exists(report.paks_dir / "Old.apak"));
     CHECK(player::GamePackage::FindPaks(report.paks_dir).size() == 1);
+    // A packaged game has to say which engine built it.
+    CHECK(ReadManifest(report.paks_dir / "Game.apak")["engine_version"] == kEngineVersion);
 
     options.player_executable = file.parent_path() / "missing_player";
     const cook::PackageReport missing = cook::Package(options);
@@ -260,6 +263,15 @@ AETHER_TEST(Package_APackagedNewProjectLoadsInThePlayer) {
     }
     CHECK(package.LoadManifest(&error));
     CHECK(package.Manifest().startup_scene.empty() == false);
+
+    // The package itself records the engine version, so a shipped folder can be
+    // identified: support and the upgrade path both start from it.
+    {
+        std::ifstream in(packaged.manifest_file);
+        const json package_manifest = json::parse(in);
+        CHECK(package_manifest["engine_version"] == kEngineVersion);
+        CHECK(package_manifest["project"] == "LoadTemplate");
+    }
 
     player::Game game(package);
     game.SetUserPaths(player::ResolveUserPaths("LoadTemplate", parent / "LoadTemplateUser"));

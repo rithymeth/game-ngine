@@ -12,11 +12,15 @@ named for the project, its DLLs and the cooked archive beside it, writes
     dist/Game/*.dll                    the player's DLLs (Windows)
     dist/Game/Paks/Game.apak           the cooked content
     dist/Game/Paks/CookManifest.json   what went into it
-    dist/Game/PackageManifest.json     sizes and CRC-32s
+    dist/Game/PackageManifest.json     sizes, CRC-32s, and what built it
 
 Run `dist/Game/Game.exe`. Check a package at any time with
 `aether_pak verify-package dist/Game`; it compares every listed file against its
 size and CRC-32 and prints what differs.
+
+`PackageManifest.json` records the project name, the configuration and the
+engine version, so a folder somebody ships you can be identified without running
+it -- and a bug report can start from the build that produced it.
 
 The player is found automatically -- beside `aether_package`, or the one the
 engine was built with -- so a build tree needs no arguments beyond the project

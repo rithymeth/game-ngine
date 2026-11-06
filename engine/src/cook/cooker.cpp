@@ -7,6 +7,7 @@
 #include "aether/cook/mesh_cook.h"
 #include "aether/cook/texture_cook.h"
 #include "aether/core/log.h"
+#include "aether/core/version.h"
 #include "aether/platform/filesystem.h"
 #include "aether/plugin/plugin.h"
 #include "aether/project/project.h"
@@ -482,6 +483,7 @@ CookReport Cook(const CookOptions& options) {
         {"project", settings.name},
         {"configuration", ConfigurationName(options.configuration)},
         {"startup_scene", settings.startup_scene},
+        {"engine_version", kEngineVersion},
         {"fixed_timestep_hz", settings.fixed_timestep_hz},
         {"gravity", {settings.gravity.x, settings.gravity.y, settings.gravity.z}},
         {"layers", settings.layers},

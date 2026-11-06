@@ -1,6 +1,7 @@
 #include "aether/cook/package.h"
 
 #include "aether/core/log.h"
+#include "aether/core/version.h"
 #include "aether/platform/filesystem.h"
 #include "aether/platform/process.h"
 #include "aether/project/project.h"
@@ -255,6 +256,7 @@ PackageReport Package(const PackageOptions& options) {
                                      {"$version", 1},
                                      {"project", settings.name},
                                      {"configuration", ConfigurationName(options.cook.configuration)},
+                                     {"engine_version", kEngineVersion},
                                      {"checksum", "crc32"},
                                      {"files", std::move(file_list)}};
     report.manifest_file = options.output_dir / "PackageManifest.json";
