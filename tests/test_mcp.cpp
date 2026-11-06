@@ -3371,3 +3371,25 @@ AETHER_TEST(Mcp_ExpandLevelInstancePlacesTheSceneAndUndoesIt) {
 
     std::filesystem::remove_all(root);
 }
+// Phase 44.5: the prefab surface, which the MCP had none of. The success path is the command, covered in
+// test_commands; this covers what the tool has to get right on its own.
+AETHER_TEST(Mcp_RevertPrefabOverrideRefusesWhatItCannotDo) {
+    Harness h;
+    const std::string entity = h.Create({{"Transform", Json::object()}});
+
+    // A component nobody knows is refused by name.
+    const auto unknown = h.Call("revert_prefab_override", {{"entity", entity}, {"component", "NoSuchComponent"}});
+    AETHER_CHECK(unknown.is_error);
+    AETHER_CHECK(unknown.text.find("NoSuchComponent") != std::string::npos);
+
+    // An entity that is not part of a prefab instance has no overrides: the command refuses, and the tool
+    // passes its reason on rather than recording an edit that changes nothing.
+    const auto plain = h.Call("revert_prefab_override", {{"entity", entity}, {"component", "Transform"}});
+    AETHER_CHECK(plain.is_error);
+    AETHER_CHECK(plain.text.find("prefab instance") != std::string::npos);
+
+    // A GUID that names nothing is refused too.
+    AETHER_CHECK(h.Call("revert_prefab_override",
+                        {{"entity", "00000000-0000-0000-0000-000000000000"}, {"component", "Transform"}})
+                     .is_error);
+}

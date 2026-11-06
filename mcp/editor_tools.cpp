@@ -380,6 +380,37 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                         return {{"entity", ToString(guid)}, {"expanded", true}};
                     }});
 
+    server.AddTool({"revert_prefab_override",
+                    "Drop an override on a prefab instance and re-resolve the instance from its prefab, as one undoable edit. An empty field reverts every override of that component.",
+                    Schema({{"entity", {{"type", "string"}, {"description", "The prefab instance's entity GUID"}}},
+                            {"component", {{"type", "string"}, {"description", "The component whose override to drop"}}},
+                            {"field", {{"type", "string"}, {"description", "The field path, or empty for all of them"}}}},
+                           {"entity", "component"}),
+                    [&s](const Json& args) -> Json {
+                        if (s.stack.IsFrozen()) throw ToolError("Stop Play-in-Editor before reverting an override");
+                        const EntityGuid guid = RequireGuid(args, "entity");
+                        const std::string component = RequireString(args, "component");
+                        // FindComponentIdByName does not report an unknown name reliably, so the known list
+                        // is what says whether an agent named a component that exists.
+                        const std::vector<std::string> known = KnownComponentNames();
+                        if (std::find(known.begin(), known.end(), component) == known.end()) {
+                            throw ToolError("Unknown component \"" + component + "\"");
+                        }
+                        // A guid that names nothing must be refused here: the command resolves the entity and
+                        // then walks for the instance root, and a null entity does not survive that walk.
+                        if (s.guids.Find(s.world, guid) == kNullEntity) throw ToolError("No entity with that GUID");
+                        const std::string field = args.value("field", std::string{});
+                        editor::CommandContext ctx = s.Context();
+                        auto command = std::make_unique<editor::RevertPrefabOverrideCommand>(
+                            guid, FindComponentIdByName(component), field);
+                        command->Do(ctx);
+                        // The command refuses to act on an entity that is not part of an instance, and says
+                        // why in its report; passing that on is more useful than recording a no-op edit.
+                        if (!command->LastReport().ok) throw ToolError(command->LastReport().error);
+                        s.stack.Record(std::move(command));
+                        return {{"entity", ToString(guid)}, {"component", component}, {"field", field}};
+                    }});
+
     server.AddTool({"set_data_layer",
                     "Switch a data layer on or off as one undoable edit. Each member keeps its own state, so switching a layer back on restores what each entity had -- one that was already off stays off.",
                     Schema({{"layer", {{"type", "string"}, {"description", "The data layer to switch"}}},
