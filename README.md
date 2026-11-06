@@ -24,6 +24,9 @@ Other playable samples: [Gem Hop](samples/gem_hop/README.md),
 - [Current platform priorities](docs/design/PLATFORM_SUPPORT_POLICY.md) — what
   is a release target and what is only validated in CI.
 - [Qt editor status](editor/qt/README.md) — current workflow and limitations.
+- [Working on Aether](AGENTS.md) — build and check commands, and the traps that cost the most time: the test
+  suite is not idempotent, `AETHER_CHECK` does not abort, `IdComponent{}` is a null GUID, and the repository is
+  forty sibling source trees rather than one.
 
 ## Status
 
