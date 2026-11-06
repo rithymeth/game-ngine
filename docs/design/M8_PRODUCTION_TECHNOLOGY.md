@@ -352,7 +352,15 @@ after the work landed — the cheapest kind of debt to pay, and the easiest to l
 render-target clear issued on a **compute** command list are both refused, using the swap chain's real back buffer. Because
 the handle is valid, the clause under test is the queue — not the handle, which the earlier batches already covered.
 
-**Debt count: 98 before, 74 after nine batches.** 24 rows closed. The remaining 74 are 70 device-backed checks and 4 that
+**Tenth batch, and a contract that disagrees with itself.** `RHI_Validation_PipelineCreationRejectsUnsupportedLayout_D3D12`
+closes row 35: an unknown `VertexLayout` value is refused at pipeline creation, with a declared layout creating a pipeline as
+the control. While writing it, the adjacent validation turned out to behave differently for the same kind of mistake — in the
+**same function**, an unsupported vertex layout logs and returns an invalid handle, while a push-constant size outside the
+root signature logs and **throws** `std::invalid_argument`. Both are rejections; only one is a return value. The test pins
+what exists and says so in a comment, because the tidier contract would fail and no contract at all would miss it. Unifying
+the two behaviours is a change to the public contract of `CreatePipeline`, not a test fix.
+
+**Debt count: 98 before, 73 after ten batches.** 25 rows closed. The remaining 73 are 69 device-backed checks and 4 that
 need a validation-layer run; none needs a new engine capability.
 
 ## Deferred from M8

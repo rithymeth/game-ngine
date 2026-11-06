@@ -575,3 +575,51 @@ void GraphicsResourcesOnComputeLists(Backend backend) {
     AETHER_CHECK(device->IsComputeFenceComplete(fence));
 }
 AETHER_TEST(RHI_Validation_GraphicsResourcesOnComputeLists_D3D12) { GraphicsResourcesOnComputeLists(Backend::D3D12); }
+// Rows 35 and 23's pipeline-side half: a vertex layout outside the declared set and a push-constant size that is not
+// four-byte aligned are refused at pipeline creation, before any native pipeline exists.
+void PipelineCreationRejectsUnsupportedLayout(Backend backend) {
+    auto device = MakeDevice(backend);
+    if (!device) return;
+    std::unique_ptr<ISwapChain> target = device->CreateSwapChain(nullptr, kW, kH, 2);
+    AETHER_CHECK(target != nullptr);
+    if (!target) return;
+
+    // Row 35: an unknown vertex layout value.
+    PipelineDesc unknown;
+    unknown.hlsl_source = kProceduralShader;
+    unknown.vertex_layout = static_cast<VertexLayout>(0xFF);
+    aether::Logger::Instance().ClearRecent();
+    AETHER_CHECK(!device->CreatePipeline(unknown, *target).IsValid());
+    AETHER_CHECK(aether::test::LoggedErrorContaining("unsupported vertex layout"));
+
+    // Row 23, pipeline side: a push-constant size that is not a multiple of four.
+    //
+    // Contract note: this is the same function's adjacent validation, and it does NOT behave like the one above.
+    // An unsupported vertex layout logs and returns an invalid handle; a push-constant size outside the root
+    // signature logs and THROWS. Both are rejections, only one is a return value. Pinned as it is, because a test
+    // that asserted the tidier behaviour would fail and a test that asserted nothing would miss the difference.
+    PipelineDesc misaligned;
+    misaligned.hlsl_source = kProceduralShader;
+    misaligned.push_constant_size_bytes = 6;
+    aether::Logger::Instance().ClearRecent();
+    bool threw = false;
+    try {
+        const PipelineHandle rejected = device->CreatePipeline(misaligned, *target);
+        AETHER_CHECK(!rejected.IsValid());
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    AETHER_CHECK(threw);
+    AETHER_CHECK(aether::test::LoggedErrorContaining("four-byte aligned"));
+
+    // Control: a declared layout with a legal push-constant size does create a pipeline.
+    PipelineDesc good;
+    good.hlsl_source = kProceduralShader;
+    good.push_constant_size_bytes = 8;
+    const PipelineHandle ok = device->CreatePipeline(good, *target);
+    AETHER_CHECK(ok.IsValid());
+    if (ok.IsValid()) AETHER_CHECK(device->DestroyPipeline(ok));
+}
+AETHER_TEST(RHI_Validation_PipelineCreationRejectsUnsupportedLayout_D3D12) {
+    PipelineCreationRejectsUnsupportedLayout(Backend::D3D12);
+}
