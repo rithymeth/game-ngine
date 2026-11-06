@@ -3,9 +3,12 @@
 #include <csignal>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <string>
 
 #if defined(_WIN32)
 #include <io.h>
+#include <process.h>
 #include <windows.h>
 #define AETHER_TEST_WRITE(text, len) _write(2, text, static_cast<unsigned>(len))
 #else
@@ -14,6 +17,14 @@
 #endif
 
 namespace {
+
+unsigned long ProcessId() {
+#if defined(_WIN32)
+    return static_cast<unsigned long>(_getpid());
+#else
+    return static_cast<unsigned long>(getpid());
+#endif
+}
 
 // Integer to text by hand: a crash handler cannot rely on printf.
 void WriteNumber(int value) {
@@ -92,6 +103,42 @@ LONG WINAPI OnUnhandledException(EXCEPTION_POINTERS* info) {
 }
 #endif
 
+// Every test that writes scratch state asks the system for a temp directory and uses a fixed name inside
+// it, so a file left behind by a failed run can fail the next one before its logic executes. Give each run
+// a private directory and point the temp environment at it: one place instead of 150 test-side helpers.
+std::filesystem::path PrepareRunDirectory() {
+    std::error_code error;
+    std::filesystem::path root = std::filesystem::temp_directory_path(error);
+    if (error) root = std::filesystem::current_path(error);
+    if (error) return {};
+    const auto dir = root / ("aether-tests-" + std::to_string(ProcessId()));
+    // A directory left by a killed run of this same process id is stale by definition.
+    std::filesystem::remove_all(dir, error);
+    if (!std::filesystem::create_directories(dir, error) && !std::filesystem::exists(dir, error)) return {};
+    return dir;
+}
+
+void PointTempEnvironmentAt(const std::filesystem::path& dir) {
+    if (dir.empty()) return;
+#if defined(_WIN32)
+    _wputenv_s(L"TEMP", dir.c_str());
+    _wputenv_s(L"TMP", dir.c_str());
+#else
+    setenv("TMPDIR", dir.c_str(), 1);
+    setenv("TMP", dir.c_str(), 1);
+    setenv("TEMP", dir.c_str(), 1);
+#endif
+}
+
+void RemoveRunDirectory(const std::filesystem::path& dir) {
+    if (dir.empty()) return;
+    std::error_code error;
+    std::filesystem::remove_all(dir, error);
+    if (error) {
+        std::fprintf(stderr, "\nscratch state left in %s (%s)\n", dir.string().c_str(), error.message().c_str());
+    }
+}
+
 } // namespace
 
 int main() {
@@ -108,5 +155,10 @@ int main() {
 #if defined(_WIN32)
     SetUnhandledExceptionFilter(OnUnhandledException);
 #endif
-    return aether::test::RunAll();
+    // Before any test runs, so every test's scratch state is private to this run.
+    const std::filesystem::path runDirectory = PrepareRunDirectory();
+    PointTempEnvironmentAt(runDirectory);
+    const int failures = aether::test::RunAll();
+    RemoveRunDirectory(runDirectory);
+    return failures;
 }

@@ -15,9 +15,10 @@ ctest --test-dir build -j 4
 stability, API freeze, API inventory, format tables, docs index, MCP tool names) and the module-graph cycle check. Run
 the whole thing before believing a change is fine.
 
-**`aether_tests` is not idempotent.** Stale state under `E:/aether-test-temp` or `%TEMP%/aether_*` can make a run fail
-before any test logic executes. Clear both before debugging a red suite — otherwise you will spend turns reverting a
-change that was never the problem.
+**Every test run owns its scratch state.** The runner points `TEMP`, `TMP` and `TMPDIR` at a private
+`aether-tests-<pid>` directory before the first test and removes it afterwards, so a file left behind by a failed run
+can no longer fail the next one before its logic executes. If a run dies hard enough to skip cleanup, the leftovers
+are named on stderr. Clearing `E:/aether-test-temp` or `%TEMP%/aether_*` by hand is no longer part of any workflow.
 
 **A trap in CI that does not happen locally is a configuration difference.** `RelWithDebInfo` and `Release` define
 `NDEBUG`, which turns `AETHER_ASSERT` into a no-op; the sanitizer lane builds `Debug`, where it does not. Configure a
