@@ -1,6 +1,41 @@
 # Packaging and shipping
 
-## Cook, pack, play
+## One command from project to package
+
+    aether_package Game.aproject --out dist/Game --config shipping
+
+That is the whole of it. `aether_package` cooks the project, stages the player
+named for the project, its DLLs and the cooked archive beside it, writes
+`PackageManifest.json`, and verifies the result before it returns:
+
+    dist/Game/Game.exe                 the player, named for the project
+    dist/Game/*.dll                    the player's DLLs (Windows)
+    dist/Game/Paks/Game.apak           the cooked content
+    dist/Game/Paks/CookManifest.json   what went into it
+    dist/Game/PackageManifest.json     sizes and CRC-32s
+
+Run `dist/Game/Game.exe`. Check a package at any time with
+`aether_pak verify-package dist/Game`; it compares every listed file against its
+size and CRC-32 and prints what differs.
+
+The player is found automatically -- beside `aether_package`, or the one the
+engine was built with -- so a build tree needs no arguments beyond the project
+and the destination. Pass `--player <aether_player>` to stage a different one,
+for example a release build from another configuration. `--strict` fails the
+cook on any warning instead of shipping past it.
+
+In the editor, **Tools > Project > Build and Package** runs the same engine call
+with a progress bar, a log, a Cancel button and Launch. A scripted or CI build
+uses `aether_package`; the two cannot drift apart, because they are one
+function.
+
+## Cook and pack separately
+
+To inspect what a cook produced, or to run a cooked build from a source tree,
+cook and play in two steps:
+
+    aether_cook Game.aproject --out Paks --config shipping
+    aether_player --pak Paks
 
 `aether_cook` collects what the game reaches (the startup scene, everything it
 refers to, and the folders on the **always cook** list), converts textures to
@@ -9,12 +44,6 @@ and runs the game without the editor.
 Cooked textures are cached by source content and cook settings in the project's
 `Intermediate/DerivedDataCache` folder. A repeat cook reuses unchanged texture
 output; `aether_cook` reports how many textures were reused and cooked.
-
-    aether_cook Game.aproject --out Paks --config shipping
-    aether_player --pak Paks
-
-In the editor, **Tools > Project > Build and Package** does the same with a
-progress bar, a log, a Cancel button and Launch.
 
 For multiplayer games, `tools/package_server.sh` packages the same cook with the
 headless `aether_server` as a `.tar.gz` with SHA-256 checksums; see

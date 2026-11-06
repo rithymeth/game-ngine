@@ -2,6 +2,10 @@
 
 A working draft of the next release's notes. It is rewritten into `vX.Y.Z.md` when a version is tagged; it
 describes what is on `master`, not a promise of a version number or a date.
+- Added **`aether_package <project.aproject> --out <dir>`**, which cooks a project and stages it with the player, its DLLs, the
+  archive and a verified `PackageManifest.json` in one command. The engine already had the logic -- the editor's Build and
+  Package window calls it -- but no command-line tool did, so every scripted release hand-assembled a package or adapted a
+  script written for one specific game.
 ## Known gaps
 
 - **Built, tested and not adopted** -- check before assuming a feature is live. The repository builds infrastructure

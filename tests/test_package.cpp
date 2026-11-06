@@ -5,6 +5,7 @@
 #include "aether/project/project.h"
 #include "aether/reflection/serialize.h"
 #include "aether/scene/gameplay.h"
+#include "aether/templates/templates.h"
 #include "test_framework.h"
 
 #include <nlohmann/json.hpp>
@@ -196,6 +197,37 @@ AETHER_TEST(Package_StagesThePlayerWithThePaks) {
     options.player_executable = fake_player;
     options.output_dir.clear();
     CHECK(!cook::Package(options).ok);
+}
+
+// The pipeline the engine is judged by: a project made the way "New Project"
+// makes one, packaged with nobody editing a script or a file by hand, and the
+// result verified. Nothing here is specific to a game: that is the point.
+AETHER_TEST(Package_ANewProjectFromATemplateBecomesAVerifiedPackage) {
+    const stdfs::path parent = stdfs::temp_directory_path() / "aether_package_tests";
+    stdfs::remove_all(parent / "FromTemplate");
+    stdfs::remove_all(parent / "FromTemplateOut");
+    stdfs::create_directories(parent);
+
+    ProjectPaths project;
+    std::string error;
+    AETHER_CHECK(templates::CreateProjectFromTemplate(parent, "FromTemplate", "blank", &project, &error));
+
+    const stdfs::path fake_player = parent / "template_fake_player.bin";
+    std::ofstream(fake_player, std::ios::binary) << "not really a player";
+    cook::PackageOptions options;
+    options.cook.project_file = project.file;
+    options.output_dir = parent / "FromTemplateOut";
+    options.player_executable = fake_player;
+    const cook::PackageReport report = cook::Package(options);
+    CHECK(report.ok);
+    // The staged game is named for the project, not for the player it came from,
+    // so two packaged games in one folder cannot overwrite each other's exe.
+    CHECK(report.game_executable == options.output_dir / cook::GameExecutableName("FromTemplate"));
+    CHECK(stdfs::exists(report.paks_dir / "Game.apak"));
+    CHECK(stdfs::exists(report.manifest_file));
+    std::vector<std::string> problems;
+    CHECK(cook::VerifyPackageManifest(options.output_dir, problems));
+    CHECK(problems.empty());
 }
 
 AETHER_TEST(Package_FailedPlayerStagingKeepsThePreviousPackage) {
