@@ -341,7 +341,14 @@ vertex buffer holds are each rejected — and then both draws are issued **at ex
 off-by-one these rows exist to prevent sits precisely on that boundary, so the accepted case carries as much weight as the
 rejection.
 
-**Debt count: 98 before, 78 after seven batches.** 20 rows closed. The remaining 78 are 74 device-backed checks and 4 that
+**Eighth batch — two rows that were already verified.** Rows 2 and 3 asked for documented ownership and fence expectations
+plus "a repeatable reproduction or existing regression check". Both already existed: `docs/design/RHI_RESOURCE_LIFETIME.md`
+records the expectations, and the `RHI_Lifetime_*` tests run on D3D12 and Vulkan covering buffer and pipeline slot recycling,
+double and invalid destroy, destroy-while-submitted keeping its draw, stale handles drawing nothing, stress
+create/destroy, and teardown with live resources. They were marked unverified because nobody re-read the acceptance clause
+after the work landed — the cheapest kind of debt to pay, and the easiest to leave standing.
+
+**Debt count: 98 before, 76 after eight batches.** 22 rows closed. The remaining 76 are 72 device-backed checks and 4 that
 need a validation-layer run; none needs a new engine capability.
 
 ## Deferred from M8
