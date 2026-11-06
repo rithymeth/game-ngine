@@ -128,6 +128,13 @@ describes what is on `master`, not a promise of a version number or a date.
 - `aether_alloc_audit` (hot paths must not allocate) and `aether_soak` (heap growth over churn, streaming and
   replication) are CTest checks. The soak found and fixed an unbounded replication profile table.
 - Load and save results on scenes, prefabs, glTF, images, plugins, projects, input and pak are `[[nodiscard]]`.- `RevertPrefabOverrideCommand` used to dereference a `PrefabInstance` that was not there, and to walk for the
+- The netcode was read for hostile input rather than only run. Three paths came back clean: RPC parameter decoding
+  bounds every argument against its stated length and checks entity ownership before dispatch; replication validates
+  the baseline it rewinds to, guards every loop with the reader's state, and sizes its history so the modulo cannot
+  divide by zero; movement input sanitisation turns an invalid `dt` into zero and a huge or NaN axis into no movement
+  rather than trusting either. Two paths did not: the redundant-input count could truncate and desync a client, and
+  fragment reassembly had no bound at all, so any connected peer could grow it without limit. Both are fixed and both
+  have regression tests.
   instance root with whatever entity it had resolved. Both paths are for an entity that is not part of an
   instance (a plain one, or a GUID that names nothing) and both crashed the process; it now refuses and says why,
   which matters because `prefab_revert` calls the same command.
