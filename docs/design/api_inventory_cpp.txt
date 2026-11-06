@@ -1845,6 +1845,17 @@
   std::string SceneHlsl(const Scene&scene,u32 width,u32 height)
   std::vector<u8>ReferenceImage(const Scene&scene,u32 width,u32 height)
   usize RenderedCount()const
+[engine/include/aether/gfx/pipeline_cache.h] experimental
+  type class PipelineCache
+  type struct PipelineKey
+  bool operator<(const PipelineKey&other)const
+  const Handle&Get(const PipelineKey&key)
+  explicit PipelineCache(Creator creator):creator_(std::move(creator))
+  public:using Creator=std::function<Handle(const PipelineKey&)>
+  usize Hits()const
+  usize Misses()const
+  usize Size()const
+  void Clear()
 [engine/include/aether/gfx/render_graph.h] experimental
   type class PassBuilder
   type class RenderGraph

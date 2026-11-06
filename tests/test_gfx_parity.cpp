@@ -1,6 +1,7 @@
 #include "aether/gfx/parity.h"
 #include "test_framework.h"
 
+#include "aether/gfx/pipeline_cache.h"
 #include "aether/gfx/shader_cache.h"
 
 #include <cstdio>
@@ -154,4 +155,39 @@ AETHER_TEST(Gfx_ShaderCacheCompilesOncePerKey) {
 
     cache.Clear();
     AETHER_CHECK(cache.Size() == 0);
+}
+// Phase 38 step 8: the pipeline cache. The creator is injected, so this needs no GPU -- the fake
+// numbers the pipelines it makes, which is enough to see that each state is created once.
+AETHER_TEST(Gfx_PipelineCacheCreatesOncePerState) {
+    usize created = 0;
+    gfx::PipelineCache<u64> cache([&created](const gfx::PipelineKey&) { return ++created; });
+
+    const gfx::PipelineKey opaque{"vs", "ps", gfx::ShaderBackend::Vulkan, true, true, false, {1}};
+    const u64 first = cache.Get(opaque);
+    AETHER_CHECK(first == 1 && created == 1 && cache.Misses() == 1 && cache.Hits() == 0);
+    AETHER_CHECK(cache.Get(opaque) == first && created == 1 && cache.Hits() == 1);
+
+    // Blend, depth and the target formats are all part of the identity: the same shaders with
+    // different state are a different pipeline.
+    gfx::PipelineKey blended = opaque;
+    blended.blend = true;
+    AETHER_CHECK(cache.Get(blended) == 2 && created == 2);
+    gfx::PipelineKey no_write = opaque;
+    no_write.depth_write = false;
+    AETHER_CHECK(cache.Get(no_write) == 3 && created == 3);
+    gfx::PipelineKey other_target = opaque;
+    other_target.render_target_formats = {2};
+    AETHER_CHECK(cache.Get(other_target) == 4 && created == 4);
+
+    // A pipeline that could not be created is cached too, so a bad state is reported once instead of
+    // being retried on every draw.
+    usize attempts = 0;
+    gfx::PipelineCache<u64> failing([&attempts](const gfx::PipelineKey&) {
+        ++attempts;
+        return u64(0);
+    });
+    AETHER_CHECK(failing.Get(opaque) == 0 && failing.Get(opaque) == 0 && attempts == 1);
+
+    cache.Clear();
+    AETHER_CHECK(cache.Size() == 0 && cache.Hits() == 0 && cache.Misses() == 0);
 }
