@@ -2,6 +2,7 @@
 #include "aether/platform/process.h"
 #include "aether/pak/pak.h"
 #include "aether/player/game.h"
+#include "aether/player/user_paths.h"
 #include "aether/project/project.h"
 #include "aether/reflection/serialize.h"
 #include "aether/scene/gameplay.h"
@@ -228,6 +229,49 @@ AETHER_TEST(Package_ANewProjectFromATemplateBecomesAVerifiedPackage) {
     std::vector<std::string> problems;
     CHECK(cook::VerifyPackageManifest(options.output_dir, problems));
     CHECK(problems.empty());
+}
+
+// The end of the pipeline, in the engine's own terms: a project made the way
+// "New Project" makes one, packaged with the player, then loaded by the player
+// the way the player loads it. Nothing here is specific to any game, which is
+// the point -- a new project has to run before it can be polished.
+AETHER_TEST(Package_APackagedNewProjectLoadsInThePlayer) {
+    const stdfs::path parent = stdfs::temp_directory_path() / "aether_package_tests";
+    stdfs::remove_all(parent / "LoadTemplate");
+    stdfs::remove_all(parent / "LoadTemplateOut");
+    stdfs::create_directories(parent);
+
+    ProjectPaths project;
+    std::string error;
+    AETHER_CHECK(templates::CreateProjectFromTemplate(parent, "LoadTemplate", "first_person", &project, &error));
+
+    const stdfs::path fake_player = parent / "load_fake_player.bin";
+    std::ofstream(fake_player, std::ios::binary) << "not really a player";
+    cook::PackageOptions options;
+    options.cook.project_file = project.file;
+    options.output_dir = parent / "LoadTemplateOut";
+    options.player_executable = fake_player;
+    const cook::PackageReport packaged = cook::Package(options);
+    CHECK(packaged.ok);
+
+    player::GamePackage package;
+    for (const std::string& pak : player::GamePackage::FindPaks(packaged.paks_dir)) {
+        AETHER_CHECK(package.Mount(pak, 0, &error));
+    }
+    CHECK(package.LoadManifest(&error));
+    CHECK(package.Manifest().startup_scene.empty() == false);
+
+    player::Game game(package);
+    game.SetUserPaths(player::ResolveUserPaths("LoadTemplate", parent / "LoadTemplateUser"));
+    CHECK(game.LoadStartupScene(&error));
+    AETHER_CHECK(game.GetWorld().EntityCount() > 0);
+
+    // A component the player cannot resolve is dropped while the scene still
+    // "loads": lights and widgets vanish, and only a warning says so. A packaged
+    // project may not lose part of itself that way.
+    for (const std::string& warning : game.Warnings()) {
+        CHECK(warning.find("unknown or unreflected component") == std::string::npos);
+    }
 }
 
 AETHER_TEST(Package_FailedPlayerStagingKeepsThePreviousPackage) {
