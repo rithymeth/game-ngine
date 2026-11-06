@@ -348,7 +348,11 @@ double and invalid destroy, destroy-while-submitted keeping its draw, stale hand
 create/destroy, and teardown with live resources. They were marked unverified because nobody re-read the acceptance clause
 after the work landed — the cheapest kind of debt to pay, and the easiest to leave standing.
 
-**Debt count: 98 before, 76 after eight batches.** 22 rows closed. The remaining 76 are 72 device-backed checks and 4 that
+**Ninth batch.** `RHI_Validation_GraphicsResourcesOnComputeLists_D3D12` closes rows 19 and 42: a texture transition and a
+render-target clear issued on a **compute** command list are both refused, using the swap chain's real back buffer. Because
+the handle is valid, the clause under test is the queue — not the handle, which the earlier batches already covered.
+
+**Debt count: 98 before, 74 after nine batches.** 24 rows closed. The remaining 74 are 70 device-backed checks and 4 that
 need a validation-layer run; none needs a new engine capability.
 
 ## Deferred from M8

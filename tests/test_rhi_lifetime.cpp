@@ -542,3 +542,36 @@ void DrawBoundsAndStrideReadiness(Backend backend) {
     AETHER_CHECK(device->DestroyPipeline(pipeline));
 }
 AETHER_TEST(RHI_Validation_DrawBoundsAndStrideReadiness_D3D12) { DrawBoundsAndStrideReadiness(Backend::D3D12); }
+// Rows 19 and 42: graphics-only resources are refused on a compute command list rather than recorded into a queue
+// that cannot execute them. The back buffer is a real, valid texture, so this is the queue clause being checked and
+// not "the handle was invalid".
+void GraphicsResourcesOnComputeLists(Backend backend) {
+    auto device = MakeDevice(backend);
+    if (!device) return;
+    std::unique_ptr<ISwapChain> target = device->CreateSwapChain(nullptr, kW, kH, 2);
+    AETHER_CHECK(target != nullptr);
+    if (!target) return;
+    target->AcquireNextImage();
+    const TextureHandle backBuffer = target->CurrentBackBuffer();
+    AETHER_CHECK(backBuffer.IsValid());
+    if (!backBuffer.IsValid()) return;
+
+    auto compute = device->CreateComputeCommandList();
+    AETHER_CHECK(compute != nullptr);
+    if (!compute) return;
+    compute->Reset();
+
+    aether::Logger::Instance().ClearRecent();
+    compute->TransitionTexture(backBuffer, ResourceState::Present, ResourceState::RenderTarget);
+    AETHER_CHECK(aether::test::LoggedErrorContaining("graphics list and valid texture/resource states"));
+
+    aether::Logger::Instance().ClearRecent();
+    compute->ClearRenderTarget(backBuffer, kBlue);
+    AETHER_CHECK(aether::test::LoggedErrorContaining("graphics list and valid texture/color"));
+
+    compute->Close();
+    const u64 fence = device->SubmitCompute(*compute);
+    device->WaitForComputeFence(fence);
+    AETHER_CHECK(device->IsComputeFenceComplete(fence));
+}
+AETHER_TEST(RHI_Validation_GraphicsResourcesOnComputeLists_D3D12) { GraphicsResourcesOnComputeLists(Backend::D3D12); }
