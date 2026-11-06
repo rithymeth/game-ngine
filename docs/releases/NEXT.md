@@ -27,6 +27,8 @@ describes what is on `master`, not a promise of a version number or a date.
 - A packaged game's executable now carries **its own Windows version information** -- product name, game version, and the window
   title as its description. The player has none of its own, so a shipped `Game.exe` used to show nothing in Properties and a file
   name in Task Manager.
+- **`aether_package` now ships with the editor package**, beside `aether_cook` and `aether_pak`. It was added for scripting a
+  build and then left out of the one download that carries the other tools.
 ## Known gaps
 
 - **Built, tested and not adopted** -- check before assuming a feature is live. The repository builds infrastructure

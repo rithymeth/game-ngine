@@ -817,7 +817,8 @@ jobs:
           & $qtDeploy.Source --release --no-translations $qtEditor
           if ($LASTEXITCODE -ne 0) { throw "Deploying the Qt editor runtime failed" }
           Copy-Item build/editor/Release/aether_editor_legacy.exe (Join-Path $out "AetherEditorLegacy.exe")
-          # The build tools and the player: cook a project, pack it, play it.
+          # The build tools and the player: package a project, cook it, play it.
+          Copy-Item build/tools/package/Release/aether_package.exe $out/
           Copy-Item build/tools/cook/Release/aether_cook.exe $out/
           Copy-Item build/tools/pak/Release/aether_pak.exe $out/
           Copy-Item build/player/Release/aether_player.exe $out/
