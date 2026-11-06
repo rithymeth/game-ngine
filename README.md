@@ -19,6 +19,20 @@ sample uses software rendering, so you do not need a graphics card.
 Other playable samples: [Gem Hop](samples/gem_hop/README.md),
 [Beacon Run](samples/beacon_run/README.md), and the cooked [Stardust Hop](games/STARDUST-HOP/README.md).
 
+**Evervale reboot** is the largest game built on Aether — a 288 × 192 valley with a farm, three villages,
+fifteen cave floors, four festivals and Khmer localization. It is a **separate repository**, checked out at
+`games/EVERVALE-REBOOT` and ignored here, so it has its own history and its own tests:
+
+```
+cmake -S . -B build -DAETHER_BUILD_EVERVALE_REBOOT=ON
+cmake --build build --config RelWithDebInfo
+ctest --test-dir build -C RelWithDebInfo     # 54 checks: the engine's 44 plus the game's 10
+```
+
+The flag is off by default so an engine-only build never pays for game content. When the game's checkout is
+not present the option is ignored rather than failing. `games/EVERVALE-REBOOT/Design/REBOOT_CHECKLIST.md`
+records what the game implements, what is verified, and what is still missing, against its own product plan.
+
 - [Aether manual](docs/manual/README.md) — projects, assets, scripting, input,
   and packaging.
 - [Current platform priorities](docs/design/PLATFORM_SUPPORT_POLICY.md) — what
