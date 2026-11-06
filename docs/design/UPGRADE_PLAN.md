@@ -29,6 +29,13 @@ evidence; Phase 48 release waits for M8.12 product validation on the same candid
   its root. Five experiments, each narrowing: it is not the build, not the binaries, not flakiness, not file I/O, not
   the harness path logic, and not git. Something local to this one directory reacts to a new executable in it. That is
   an environment finding, not a repository one, and a clean clone on another machine should not see it -- which is
+  Following this further: an **AddressSanitizer** build (MSVC `/fsanitize=address`, `/bigobj`, runtime DLLs beside the exe)
+  fails the same two `Filesystem_*` tests, and so did the earlier clean build -- while `build/` passes the identical test.
+  `fs::WriteFileBytes` returns false, the file is never created, and a plain `[System.IO.File]::WriteAllBytes` to the same
+  `%TEMP%` path succeeds immediately afterwards. So it is not permissions and not the test. Two fresh build trees fail it
+  and the canonical one does not; that is the whole of what is known, and it also stops the ASan run from reaching
+  whatever CI's ASan `Unit tests` failure actually is. **Unresolved, and worth resolving before trusting any second build
+  tree on this machine.**
   exactly what CI passing says.
   Interaction, Quests, Net, Nav, AI, Scripting, Physics and Game. Jobs live in
   `engine/include/aether/job`, the RHI in `engine/gfx` (there is no `jobs/` or `rhi/` directory).
