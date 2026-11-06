@@ -329,8 +329,14 @@ pipeline with no vertex buffer bound is rejected. The test then binds the vertic
 error logged — so it cannot pass by having every draw fail. The log-reading helper moved into `test_framework.h` for this,
 because at this point three files needed it: a validation that logs and returns has no return value to assert.
 
-**Debt count: 98 before, 83 after five batches** (rows 4, 12, 17, 22, 23, 24, 25, 27, 28, 29, 31, 32, 33, 34, 39). The
-remaining 83 are 79 device-backed checks and 4 that need a validation-layer run; none needs a new engine capability.
+**Sixth batch.** `RHI_D3D12RejectsInvalidBufferSizes` closes row 41: a zero size, a size beyond the D3D12 buffer-view limit,
+a size that is not a multiple of its element stride, and an element stride that does not divide the size are all refused
+before allocation, with a representable size allocated and freed as the control.
+`RHI_D3D12RejectsQueueMismatchedSubmissions` closes row 20: a compute list submitted to the graphics queue and a graphics list
+submitted to the compute queue are both refused, return no fence value, and report which kind of list they wanted.
+
+**Debt count: 98 before, 81 after six batches** (rows 4, 12, 17, 20, 22, 23, 24, 25, 27, 28, 29, 31, 32, 33, 34, 39, 41). The
+remaining 81 are 77 device-backed checks and 4 that need a validation-layer run; none needs a new engine capability.
 
 ## Deferred from M8
 

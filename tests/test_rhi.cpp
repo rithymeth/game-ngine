@@ -2,6 +2,7 @@
 #include "aether/core/log.h"
 #include "test_framework.h"
 
+#include <limits>
 #include <span>
 #include <stdexcept>
 #include <vector>
@@ -567,4 +568,50 @@ AETHER_TEST(RHI_D3D12RejectsInvalidIndexBufferFormatAndHandle) {
     const u64 fence = device->Submit(*cmd);
     device->WaitForFence(fence);
     AETHER_CHECK(device->IsFenceComplete(fence));
+}
+// Row 41 and the submission-queue checks: sizes a backend cannot represent are refused before any allocation, and a
+// command list submitted to the wrong queue is refused rather than executed.
+AETHER_TEST(RHI_D3D12RejectsInvalidBufferSizes) {
+    auto device = CreateDevice(Backend::D3D12, /*enable_debug_layer=*/false);
+    AETHER_CHECK(device != nullptr);
+    const u8 bytes[16] = {};
+    const auto rejects = [&](u64 size, u32 stride) {
+        try {
+            device->CreateStorageBuffer(size, stride, bytes);
+        } catch (const std::invalid_argument&) {
+            return true;
+        } catch (...) {
+            return false;
+        }
+        return false;
+    };
+    AETHER_CHECK(rejects(0, 4));                                        // zero
+    AETHER_CHECK(rejects(std::numeric_limits<u64>::max(), 4));          // beyond the buffer view limit
+    AETHER_CHECK(rejects(6, 4));                                        // not a multiple of its stride
+    AETHER_CHECK(rejects(64, 3));                                       // stride that does not divide the size
+    // Control: a representable size allocates and frees, so the rejections are not "every call fails".
+    const BufferHandle ok = device->CreateStorageBuffer(16, 4, bytes);
+    AETHER_CHECK(ok.IsValid());
+    AETHER_CHECK(device->DestroyBuffer(ok));
+}
+
+AETHER_TEST(RHI_D3D12RejectsQueueMismatchedSubmissions) {
+    auto device = CreateDevice(Backend::D3D12, /*enable_debug_layer=*/false);
+    AETHER_CHECK(device != nullptr);
+
+    auto compute = device->CreateComputeCommandList();
+    AETHER_CHECK(compute != nullptr);
+    compute->Reset();
+    compute->Close();
+    aether::Logger::Instance().ClearRecent();
+    AETHER_CHECK(device->Submit(*compute) == 0);  // a compute list on the graphics queue
+    AETHER_CHECK(aether::test::LoggedErrorContaining("closed graphics command list"));
+
+    auto graphics = device->CreateCommandList();
+    AETHER_CHECK(graphics != nullptr);
+    graphics->Reset();
+    graphics->Close();
+    aether::Logger::Instance().ClearRecent();
+    AETHER_CHECK(device->SubmitCompute(*graphics) == 0);  // a graphics list on the compute queue
+    AETHER_CHECK(aether::test::LoggedErrorContaining("closed compute command list"));
 }
