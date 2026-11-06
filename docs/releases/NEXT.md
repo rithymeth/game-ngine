@@ -137,6 +137,11 @@ describes what is on `master`, not a promise of a version number or a date.
   Worth knowing about coverage: session datagrams are already a fuzz target, and the fragment reassembly bug
   survived it. A fuzzer feeds inputs and watches for crashes; it cannot see a buffer that grows across a session,
   because every single input is small and harmless. Unbounded growth needs a stateful run -- which is also why the
+- Which paths deserve that reading is a question about **trust, not size**. The streamer is as large as the netcode
+  and needed no fixes: its input is cell files the developer authored, and it already budgets in-flight reads, loads,
+  entities and apply time per update. The two defects both lived where a peer sends bytes -- which is the rule worth
+  carrying forward: read the paths that parse input from a peer, an agent or a network, and spend less time on the
+  ones that parse the project.
   soak test, not the fuzzer, is the place to look for the next one.
   have regression tests.
   instance root with whatever entity it had resolved. Both paths are for an entity that is not part of an
