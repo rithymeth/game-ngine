@@ -180,26 +180,6 @@
       "normalized": 34.632985,
       "p95_ms": 63.943,
       "samples": 5
-    },
-    {
-      "iterations": 5,
-      "max_ms": 0.2122,
-      "median_ms": 0.2111,
-      "min_ms": 0.2107,
-      "name": "nav/path_across_100_tiles_plain",
-      "normalized": 0.12259,
-      "p95_ms": 0.2122,
-      "samples": 5
-    },
-    {
-      "iterations": 5,
-      "max_ms": 0.5822,
-      "median_ms": 0.5674,
-      "min_ms": 0.5637,
-      "name": "nav/path_across_100_tiles_hierarchical",
-      "normalized": 0.329501,
-      "p95_ms": 0.5822,
-      "samples": 5
     }
   ]
 }

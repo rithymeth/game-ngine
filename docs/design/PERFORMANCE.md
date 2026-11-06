@@ -60,6 +60,25 @@ failure now means a benchmark got more than 3x slower than its baseline after ca
 something deliberately slower, or the runner hardware changes, refresh the baseline as above in the same PR and say
 why. The 3.0 tolerance is wide on purpose; tighten it once the spread between runs is measured.
 
+## A renamed benchmark is not a regression
+
+Phase 40.2 replaced the nav path benchmarks, because the hierarchical one measured the wrong thing:
+`nav/path_across_100_tiles_plain` and `..._hierarchical` became `nav/path_around_wall_*` and
+`nav/path_through_serpentine_*`. The baseline was not refreshed with the rename, so every run afterwards failed with
+
+    can't compare with bench/baseline.json: current report is missing baseline benchmark: nav/path_across_100_tiles_plain
+
+That is a failure about a name, not about speed, and it reads like a missing measurement rather than a missing update. The
+two stale rows are removed, so the gate compares the eighteen benchmarks that still exist -- the same eighteen that held for
+ten runs before the rename.
+
+Five benchmarks are measured but not yet baselined: the four nav replacements and `physics/step_500_bodies`. They are reported
+and not gated until the next refresh, which has to happen on the `Linux (GCC)` runner as above. A baseline written anywhere
+else is worse than none: this machine's calibration-normalised times are 100x off on `ecs/query_50k_of_100k`, so refreshing
+from it would fail the runner on every benchmark at once.
+
+**A rename must refresh the baseline in the same commit.**
+
 ## One baseline row is not a measurement
 
 `ecs/query_50k_of_100k` records `min_ms`, `median_ms`, `max_ms` and `p95_ms` as the same 0.0012 ms across all five
