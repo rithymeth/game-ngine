@@ -379,6 +379,21 @@ that test does not force.
 **Debt count: 98 before, 69 after thirteen batches.** 29 rows closed. The remaining 69 are 26 Vulkan-only, 4 needing a
 validation-layer run, 37 requiring fault injection or race-safe construction, and 2 D3D12 error-path rows (55, 61).
 
+### What the remaining 69 rows actually need
+
+The queue's verification debt is paid down to the point where the rest is no longer a sequence of cheap batches. What is
+left needs infrastructure this milestone does not have, and saying that plainly is more useful than another dozen increments:
+
+| Rows | What closes them | What it takes |
+|---|---|---|
+| 37 | Fault injection: allocation and creation failures, error-path drains, torn-down state | A test-only failure hook in the RHI — one place that can make the Nth allocation or creation fail, callable from a test. Without it these paths are only reachable by luck. |
+| 26 | Vulkan-only behaviour | A Vulkan-capable runner with the Khronos validation layer. The engine is built without Vulkan on the machine this work was done on, so those rows cannot be exercised there at all. |
+| 4 | A validation-layer run | The same runner; these are diagnostics rather than behaviour. |
+| 2 | D3D12 fence-event error paths (55, 61) | The fault hook above, aimed at the Win32 wait and event-creation results. |
+
+None of these needs a new engine capability, which was the milestone's premise — but all four need **machinery outside the
+engine's current test process**, which is why they are recorded as a work item rather than continued as increments.
+
 ## Deferred from M8
 
 These may be considered in a later feature milestone, but are not M8 scope:
