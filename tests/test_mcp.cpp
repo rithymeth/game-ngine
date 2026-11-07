@@ -15,6 +15,10 @@ using namespace aether::mcp;
 
 namespace {
 
+// Cleanup only: a remove_all that cannot delete a directory here must not fail the test that already checked what it
+// came to check. On Windows a handle held briefly by a tool call makes the throwing overload end the test.
+std::error_code g_cleanup_error;
+
 struct Harness {
     EditorSession session;
     McpServer server{"test", "0"};
@@ -409,7 +413,7 @@ AETHER_TEST(Mcp_PhysicsFallsWhilePlayingAndStopRestores) {
 AETHER_TEST(Mcp_GameToolsHostACookedGame) {
     namespace stdfs = std::filesystem;
     const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_game_test";
-    stdfs::remove_all(dir);
+    stdfs::remove_all(dir, g_cleanup_error);
     stdfs::create_directories(dir);
 
     const Json transform = {{"position", {1, 2, 3}}, {"rotation", {0, 0, 0, 1}}, {"scale", {1, 1, 1}}};
@@ -466,7 +470,7 @@ AETHER_TEST(Mcp_GameToolsHostACookedGame) {
 
     AETHER_CHECK(!h.Call("game_unload").is_error);
     AETHER_CHECK(h.Call("game_state").is_error);
-    stdfs::remove_all(dir);
+    stdfs::remove_all(dir, g_cleanup_error);
 }
 
 #include "aether/player/game.h"
@@ -476,7 +480,7 @@ AETHER_TEST(Mcp_LogRecentShowsWhatScriptsPrint) {
     if (!aether::player::Game::HasScripting()) return;
     namespace stdfs = std::filesystem;
     const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_log_test";
-    stdfs::remove_all(dir);
+    stdfs::remove_all(dir, g_cleanup_error);
     stdfs::create_directories(dir);
     const std::string script_guid = assets::ToString(assets::NewAssetGuid());
     const Json manifest = {{"$type", "CookManifest"}, {"$version", 1}, {"project", "McpLog"}, {"configuration", "Development"},
@@ -511,7 +515,7 @@ AETHER_TEST(Mcp_LogRecentShowsWhatScriptsPrint) {
     AETHER_CHECK(!h.Call("log_clear").is_error);
     AETHER_CHECK(h.Call("log_recent", {{"contains", "mcp-log-marker"}}).value["count"] == 0);
     h.Call("game_unload");
-    stdfs::remove_all(dir);
+    stdfs::remove_all(dir, g_cleanup_error);
 }
 
 // M8.8: game_ai_debug reports what scripts set with AI.SetDebugState and which agents have an AIPerception.
@@ -519,7 +523,7 @@ AETHER_TEST(Mcp_GameAiDebugReportsStateAndPerception) {
     if (!aether::player::Game::HasScripting()) return;
     namespace stdfs = std::filesystem;
     const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_ai_debug_test";
-    stdfs::remove_all(dir);
+    stdfs::remove_all(dir, g_cleanup_error);
     stdfs::create_directories(dir);
     const std::string script_guid = assets::ToString(assets::NewAssetGuid());
     const Json manifest = {{"$type", "CookManifest"}, {"$version", 1}, {"project", "McpAi"}, {"configuration", "Development"},
@@ -563,7 +567,7 @@ AETHER_TEST(Mcp_GameAiDebugReportsStateAndPerception) {
     AETHER_CHECK(sentinel.is_object() && sentinel["state"] == "" && sentinel["target"].is_null());
     AETHER_CHECK(sentinel["known"].is_array() && sentinel["known"].empty());
     h.Call("game_unload");
-    stdfs::remove_all(dir);
+    stdfs::remove_all(dir, g_cleanup_error);
 }
 
 #include "build_tools.h"
@@ -602,7 +606,7 @@ AETHER_TEST(Mcp_RunProcessCapturesOutputAndKillsOnTimeout) {
 AETHER_TEST(Mcp_BuildToolsFindTheBuildAndRefuseEscapes) {
     namespace stdfs = std::filesystem;
     const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_build_test";
-    stdfs::remove_all(dir);
+    stdfs::remove_all(dir, g_cleanup_error);
     stdfs::create_directories(dir / "sub" / "deeper");
     {
         std::ofstream cache(dir / "CMakeCache.txt");
@@ -630,7 +634,7 @@ AETHER_TEST(Mcp_BuildToolsFindTheBuildAndRefuseEscapes) {
     Harness none;
     RegisterBuildTools(none.server, BuildContext{});
     AETHER_CHECK(none.Call("build").is_error);
-    stdfs::remove_all(dir);
+    stdfs::remove_all(dir, g_cleanup_error);
 }
 
 AETHER_TEST(Mcp_ToolsCanReturnImages) {
@@ -684,7 +688,7 @@ AETHER_TEST(Mcp_ToolsCanReturnImages) {
 AETHER_TEST(Mcp_ContentFilesCannotTraverseSymlinks) {
     namespace stdfs = std::filesystem;
     const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_content_symlink_test";
-    stdfs::remove_all(dir);
+    stdfs::remove_all(dir, g_cleanup_error);
     stdfs::create_directories(dir);
 
     ProjectPaths paths;
@@ -720,13 +724,13 @@ AETHER_TEST(Mcp_ContentFilesCannotTraverseSymlinks) {
         std::getline(private_file, private_text);
     }
     AETHER_CHECK(private_text == "keep me private");
-    stdfs::remove_all(dir);
+    stdfs::remove_all(dir, g_cleanup_error);
 }
 
 AETHER_TEST(Mcp_AssetToolsImportMoveAndCookAProject) {
     namespace stdfs = std::filesystem;
     const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_asset_test";
-    stdfs::remove_all(dir);
+    stdfs::remove_all(dir, g_cleanup_error);
     stdfs::create_directories(dir);
 
     ProjectPaths paths;
@@ -808,13 +812,13 @@ AETHER_TEST(Mcp_AssetToolsImportMoveAndCookAProject) {
     AETHER_CHECK(!h.Call("asset_delete", {{"asset", "Textures/renamed.tga"}}).is_error);
     AETHER_CHECK(h.Call("asset_info", {{"asset", "Textures/renamed.tga"}}).is_error);
     AETHER_CHECK(h.Call("asset_cook", {{"output_dir", (dir / "Cooked2").string()}, {"configuration", "bogus"}}).is_error);
-    stdfs::remove_all(dir);
+    stdfs::remove_all(dir, g_cleanup_error);
 }
 
 AETHER_TEST(Mcp_KitToolsValidateWriteAndCrossCheckDefinitions) {
     namespace stdfs = std::filesystem;
     const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_kit_test";
-    stdfs::remove_all(dir);
+    stdfs::remove_all(dir, g_cleanup_error);
     stdfs::create_directories(dir);
     ProjectPaths paths;
     std::string error;
@@ -875,7 +879,7 @@ AETHER_TEST(Mcp_KitToolsValidateWriteAndCrossCheckDefinitions) {
     unsigned invalid = 0;
     for (const Json& row : listed) invalid += row["valid"] == false ? 1 : 0;
     AETHER_CHECK(invalid == 1);
-    stdfs::remove_all(dir);
+    stdfs::remove_all(dir, g_cleanup_error);
 }
 
 AETHER_TEST(Mcp_AttributeToolsEditUndoAndCheckTheProject) {
@@ -914,7 +918,7 @@ AETHER_TEST(Mcp_AttributeToolsEditUndoAndCheckTheProject) {
 
     // The project's scenes define attributes; kit_check warns about effects that modify unknown ones.
     const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_attr_test";
-    stdfs::remove_all(dir);
+    stdfs::remove_all(dir, g_cleanup_error);
     stdfs::create_directories(dir);
     ProjectPaths paths;
     std::string error;
@@ -942,13 +946,13 @@ AETHER_TEST(Mcp_AttributeToolsEditUndoAndCheckTheProject) {
     AETHER_CHECK(check["ok"] == true); // a warning, not a problem
     AETHER_CHECK(check["warnings"].size() == 1);
     AETHER_CHECK(check["warnings"][0]["warning"].get<std::string>().find("Sanity") != std::string::npos);
-    stdfs::remove_all(dir);
+    stdfs::remove_all(dir, g_cleanup_error);
 }
 
 AETHER_TEST(Mcp_GameAttributesReadAndChangeLiveValues) {
     namespace stdfs = std::filesystem;
     const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_game_attr_test";
-    stdfs::remove_all(dir);
+    stdfs::remove_all(dir, g_cleanup_error);
     stdfs::create_directories(dir);
     const Json manifest = {{"$type", "CookManifest"}, {"$version", 1}, {"project", "McpAttr"}, {"configuration", "Development"},
                            {"startup_scene", "Scenes/start.ascene"}, {"fixed_timestep_hz", 60.0}, {"gravity", {0.0, -9.81, 0.0}},
@@ -982,7 +986,7 @@ AETHER_TEST(Mcp_GameAttributesReadAndChangeLiveValues) {
     AETHER_CHECK(h.Call("game_set_attribute", {{"entity", who}, {"name", "Nope"}, {"base", 1}}).is_error);
     AETHER_CHECK(h.Call("game_set_attribute", {{"entity", who}, {"name", "Health"}}).is_error); // needs one mode
     h.Call("game_unload");
-    stdfs::remove_all(dir);
+    stdfs::remove_all(dir, g_cleanup_error);
 }
 
 #if AETHER_MCP_INTERACTION
@@ -1016,7 +1020,7 @@ AETHER_TEST(Mcp_InteractableToolsEditCheckAndDriveTheGame) {
 
     // --- the project: references to effects and abilities are checked
     const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_interact_test";
-    stdfs::remove_all(dir);
+    stdfs::remove_all(dir, g_cleanup_error);
     stdfs::create_directories(dir);
     ProjectPaths paths;
     std::string error;
@@ -1034,7 +1038,7 @@ AETHER_TEST(Mcp_InteractableToolsEditCheckAndDriveTheGame) {
     AETHER_CHECK(check["ok"] == false);
     AETHER_CHECK(check["problems"].size() == 1); // Heal exists, the ability does not
     AETHER_CHECK(check["problems"][0]["problem"].get<std::string>().find("Missing") != std::string::npos);
-    stdfs::remove_all(dir);
+    stdfs::remove_all(dir, g_cleanup_error);
 
     // --- the running game
     const stdfs::path gdir = stdfs::temp_directory_path() / "aether_mcp_interact_game_test";
@@ -1155,7 +1159,7 @@ AETHER_TEST(Mcp_AudioToolsEditCheckPreviewAndDriveTheGame) {
 
     // --- a project with a real sound, a cue and a scene that uses them
     const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_audio_test";
-    stdfs::remove_all(dir);
+    stdfs::remove_all(dir, g_cleanup_error);
     stdfs::create_directories(dir);
     ProjectPaths paths;
     std::string error;
@@ -1259,7 +1263,7 @@ AETHER_TEST(Mcp_AudioToolsEditCheckPreviewAndDriveTheGame) {
     h.Call("game_step", {{"frames", 2}});
     AETHER_CHECK(h.Call("game_audio_source", {{"entity", source}, {"action", "stop"}}).value["volume_db"] == -9);
     h.Call("game_unload");
-    stdfs::remove_all(dir);
+    stdfs::remove_all(dir, g_cleanup_error);
 }
 
 AETHER_TEST(Mcp_VfxToolsEditValidateSimulateAndCheck) {
@@ -1334,7 +1338,7 @@ AETHER_TEST(Mcp_VfxToolsEditValidateSimulateAndCheck) {
 
     // --- a project: effects live under Content/ and scenes refer to them
     const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_vfx_test";
-    stdfs::remove_all(dir);
+    stdfs::remove_all(dir, g_cleanup_error);
     stdfs::create_directories(dir);
     ProjectPaths paths;
     std::string error;
@@ -1371,7 +1375,7 @@ AETHER_TEST(Mcp_VfxToolsEditValidateSimulateAndCheck) {
     // A hand-edited, broken effect shows up as a problem.
     AETHER_CHECK(!h.Call("content_write", {{"path", "VFX/Bad.avfx"}, {"text", "{ not json"}}).is_error);
     AETHER_CHECK(h.Call("vfx_check").value["ok"] == false);
-    stdfs::remove_all(dir);
+    stdfs::remove_all(dir, g_cleanup_error);
 }
 
 AETHER_TEST(Mcp_TerrainToolsSculptPaintPlanAndRoundTrip) {
@@ -1457,7 +1461,7 @@ AETHER_TEST(Mcp_TerrainToolsSculptPaintPlanAndRoundTrip) {
 
     // The picture: an image content item, and a PNG file if asked.
     const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_terrain_test";
-    stdfs::remove_all(dir);
+    stdfs::remove_all(dir, g_cleanup_error);
     stdfs::create_directories(dir);
     Json rpc = h.Rpc("tools/call", {{"name", "terrain_preview"}, {"arguments", {{"mode", "layers"}, {"size", 128}, {"path", (dir / "look.png").string()}}}});
     AETHER_CHECK(rpc["result"]["isError"] == false);
@@ -1500,7 +1504,7 @@ AETHER_TEST(Mcp_TerrainToolsSculptPaintPlanAndRoundTrip) {
     AETHER_CHECK(hills["heights"]["max"].get<double>() > hills["heights"]["min"].get<double>() + 1.0);
     Json again = h.Call("terrain_create", {{"width", 65}, {"kind", "procedural"}, {"scale", 8}}).value;
     AETHER_CHECK(again["heights"] == hills["heights"]);
-    stdfs::remove_all(dir);
+    stdfs::remove_all(dir, g_cleanup_error);
 }
 
 AETHER_TEST(Mcp_NavToolsBakeQuerySimulateAndEditComponents) {
@@ -1579,7 +1583,7 @@ AETHER_TEST(Mcp_NavToolsBakeQuerySimulateAndEditComponents) {
 
     // --- the picture
     const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_nav_test";
-    stdfs::remove_all(dir);
+    stdfs::remove_all(dir, g_cleanup_error);
     stdfs::create_directories(dir);
     Json rpc = h.Rpc("tools/call", {{"name", "nav_preview"}, {"arguments", {{"size", 128}, {"path", (dir / "nav.png").string()}, {"paths", {{{"start", {5, 0, 5}}, {"end", {35, 0, 35}}}}}, {"points", {{10, 0, 10}}}}}});
     AETHER_CHECK(rpc["result"]["isError"] == false);
@@ -1640,7 +1644,7 @@ AETHER_TEST(Mcp_NavToolsBakeQuerySimulateAndEditComponents) {
     AETHER_CHECK(!h.Call("nav_bake", {{"agent_radius", 0.5}, {"agent_max_slope", 35}}).is_error);
     const double hill = path_length({5, 0, 32}, {59, 0, 32});
     AETHER_CHECK(hill > 54.0); // over or round the hill, never shorter than straight across
-    stdfs::remove_all(dir);
+    stdfs::remove_all(dir, g_cleanup_error);
 
     // --- the editor scene's navigation components
     std::string agent = h.Create({{"Transform", Json::object()}});
@@ -1794,7 +1798,7 @@ AETHER_TEST(Mcp_BlueprintToolsFindValidateCompileAndRun) {
 
     // --- Blueprints in a project go through the kit tools, and the Blueprint tools read them by path
     const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_bp_test";
-    stdfs::remove_all(dir);
+    stdfs::remove_all(dir, g_cleanup_error);
     stdfs::create_directories(dir);
     ProjectPaths paths;
     std::string error;
@@ -1817,7 +1821,7 @@ AETHER_TEST(Mcp_BlueprintToolsFindValidateCompileAndRun) {
     Json check = h.Call("kit_check").value;
     AETHER_CHECK(check["ok"] == false);
     AETHER_CHECK(check["problems"][0]["problem"].get<std::string>().find("blueprint.") != std::string::npos);
-    stdfs::remove_all(dir);
+    stdfs::remove_all(dir, g_cleanup_error);
 }
 
 AETHER_TEST(Mcp_LocToolsFormatEditGatherValidateAndRoundTrip) {
@@ -1863,7 +1867,7 @@ AETHER_TEST(Mcp_LocToolsFormatEditGatherValidateAndRoundTrip) {
 
     // --- a project's string table
     const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_loc_test";
-    stdfs::remove_all(dir);
+    stdfs::remove_all(dir, g_cleanup_error);
     stdfs::create_directories(dir);
     ProjectPaths paths;
     std::string error;
@@ -1970,7 +1974,7 @@ AETHER_TEST(Mcp_LocToolsFormatEditGatherValidateAndRoundTrip) {
     AETHER_CHECK(h.Call("loc_status").value["tables"].size() == 2);
     AETHER_CHECK(h.Call("loc_set", {{"key", "ui.next"}, {"translations", {{"en", "Next"}}}}).is_error);
     AETHER_CHECK(h.Call("loc_get", {{"key", "ui.back"}}).value["translations"]["en"] == "Back"); // the merged view sees both
-    stdfs::remove_all(dir);
+    stdfs::remove_all(dir, g_cleanup_error);
 }
 
 AETHER_TEST(Mcp_SequenceToolsValidateEvaluateAndPlay) {
@@ -2064,7 +2068,7 @@ AETHER_TEST(Mcp_SequenceToolsValidateEvaluateAndPlay) {
 
     // --- in a project: files, references, loops
     const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_seq_test";
-    stdfs::remove_all(dir);
+    stdfs::remove_all(dir, g_cleanup_error);
     stdfs::create_directories(dir);
     ProjectPaths paths;
     std::string error;
@@ -2150,7 +2154,7 @@ AETHER_TEST(Mcp_SequenceToolsValidateEvaluateAndPlay) {
     h.Call("game_step", {{"frames", 3}});
     AETHER_CHECK(std::fabs(h.Call("game_get_entity", {{"entity", door}}).value["components"]["Transform"]["position"][1].get<double>() - 3.0) < 0.01); // skipped to the final pose
     h.Call("game_unload");
-    stdfs::remove_all(dir);
+    stdfs::remove_all(dir, g_cleanup_error);
 
     // --- the editor scene's SequenceComponent
     Harness editor;
@@ -2185,7 +2189,7 @@ AETHER_TEST(Mcp_TilemapToolsBuildPaintReadAndPreviewALevel) {
 
     AETHER_CHECK(h.Call("tilemap_info", {{"asset", "Levels/x.atilemap"}}).is_error); // needs a project
     const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_tile_test";
-    stdfs::remove_all(dir);
+    stdfs::remove_all(dir, g_cleanup_error);
     stdfs::create_directories(dir);
     ProjectPaths paths;
     std::string error;
@@ -2326,7 +2330,7 @@ AETHER_TEST(Mcp_TilemapToolsBuildPaintReadAndPreviewALevel) {
     AETHER_CHECK(h.Call("kit_list", {{"type", "tilemap"}}).value[0]["valid"] == true);
     AETHER_CHECK(h.Call("kit_list", {{"type", "tileset"}}).value[0]["valid"] == true);
     AETHER_CHECK(h.Call("kit_validate", {{"type", "tilemap"}, {"definition", {{"$type", "Nonsense"}}}}).value["ok"] == false);
-    stdfs::remove_all(dir);
+    stdfs::remove_all(dir, g_cleanup_error);
 }
 
 AETHER_TEST(Mcp_AnimationToolsValidateBlendAndSimulateAGraph) {
@@ -2487,7 +2491,7 @@ AETHER_TEST(Mcp_SaveToolsListInspectDeleteAndEditSettings) {
     namespace stdfs = std::filesystem;
     namespace sv = aether::save;
     const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_saves";
-    stdfs::remove_all(dir);
+    stdfs::remove_all(dir, g_cleanup_error);
     stdfs::create_directories(dir);
     Harness h;
     RegisterSaveTools(h.server);
@@ -2539,7 +2543,7 @@ AETHER_TEST(Mcp_SaveToolsListInspectDeleteAndEditSettings) {
     AETHER_CHECK(!h.Call("save_delete", {{"directory", dir.string()}, {"slot", "slot1"}}).is_error);
     AETHER_CHECK(!stdfs::exists(dir / "slot1.asav") && !stdfs::exists(dir / "slot1.asav.bak"));
     AETHER_CHECK(h.Call("save_delete", {{"directory", dir.string()}, {"slot", "slot1"}}).is_error);
-    stdfs::remove_all(dir);
+    stdfs::remove_all(dir, g_cleanup_error);
 }
 
 AETHER_TEST(Mcp_UiCheckFlagsSmallTouchTargetsAndBadControlKeys) {
@@ -2649,7 +2653,7 @@ AETHER_TEST(Mcp_UiThemeAndAnimationTools) {
 AETHER_TEST(Mcp_StreamingToolsPartitionInspectAndStreamAWorld) {
     namespace stdfs = std::filesystem;
     const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_world";
-    stdfs::remove_all(dir);
+    stdfs::remove_all(dir, g_cleanup_error);
     Harness h;
     RegisterStreamingTools(h.server, h.session);
     h.Create({{"Transform", {{"position", {10, 0, 10}}}}});
@@ -2686,7 +2690,7 @@ AETHER_TEST(Mcp_StreamingToolsPartitionInspectAndStreamAWorld) {
     stdfs::remove(dir / "cells" / "0_0.aesc");
     Json broken = h.Call("world_partition_info", {{"directory", dir.string()}}).value;
     AETHER_CHECK(broken["ok"] == false && broken["problems"].dump().find("0_0") != std::string::npos);
-    stdfs::remove_all(dir);
+    stdfs::remove_all(dir, g_cleanup_error);
 }
 
 AETHER_TEST(Mcp_MaterialToolsValidateCompileAndResolve) {
@@ -2760,7 +2764,7 @@ AETHER_TEST(Mcp_PrefabToolsMakeInstantiateOverrideAndApply) {
 
     AETHER_CHECK(h.Call("prefab_info", {{"prefab", "Prefabs/x.aprefab"}}).is_error); // needs a project
     const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_prefab_test";
-    stdfs::remove_all(dir);
+    stdfs::remove_all(dir, g_cleanup_error);
     stdfs::create_directories(dir);
     ProjectPaths paths;
     std::string error;
@@ -2811,7 +2815,7 @@ AETHER_TEST(Mcp_PrefabToolsMakeInstantiateOverrideAndApply) {
     const std::string text = h.Call("content_read", {{"path", "Prefabs/Crate.aprefab"}}).value["text"];
     AETHER_CHECK(text.find("7") != std::string::npos);
     AETHER_CHECK(h.Call("prefab_apply", {{"entity", instance}}).value["applied"] == 0);
-    stdfs::remove_all(dir);
+    stdfs::remove_all(dir, g_cleanup_error);
 }
 
 #if AETHER_MCP_TEMPLATES
@@ -2821,7 +2825,7 @@ AETHER_TEST(Mcp_ProjectCreateMakesBlankAndTemplateProjects) {
     auto project = MakeAssetHost();
     RegisterAssetTools(h.server, project, h.session);
     const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_new_projects";
-    stdfs::remove_all(dir);
+    stdfs::remove_all(dir, g_cleanup_error);
 
     Json templates = h.Call("project_templates").value;
     AETHER_CHECK(templates["count"].get<int>() >= 6);
@@ -2843,7 +2847,7 @@ AETHER_TEST(Mcp_ProjectCreateMakesBlankAndTemplateProjects) {
     AETHER_CHECK(h.Call("project_create", {{"parent_dir", dir.string()}, {"name", "bad/name"}}).is_error);                       // not a folder name
     AETHER_CHECK(h.Call("project_create", {{"parent_dir", dir.string()}, {"name", "Other"}, {"template", "nope"}}).is_error);   // no such template
     AETHER_CHECK(h.Call("project_info").value["name"] == "Runner");                                                              // failures leave it open
-    stdfs::remove_all(dir);
+    stdfs::remove_all(dir, g_cleanup_error);
 }
 #endif
 
@@ -2969,7 +2973,7 @@ AETHER_TEST(Mcp_ScriptToolsCheckCompleteRunSimulateAndCheckTheProject) {
 
     // --- the project: scripts compile and scenes use them correctly
     const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_script_test";
-    stdfs::remove_all(dir);
+    stdfs::remove_all(dir, g_cleanup_error);
     stdfs::create_directories(dir);
     ProjectPaths paths;
     std::string error;
@@ -3007,7 +3011,7 @@ AETHER_TEST(Mcp_ScriptToolsCheckCompleteRunSimulateAndCheckTheProject) {
     AETHER_CHECK(h.Call("script_check_project").value["problems"][0]["problem"].get<std::string>().find("not a script in the project") != std::string::npos);
     write_scene(scene_with({{"script", ""}}));
     AETHER_CHECK(h.Call("script_check_project").value["problems"][0]["problem"].get<std::string>().find("has no script") != std::string::npos);
-    stdfs::remove_all(dir);
+    stdfs::remove_all(dir, g_cleanup_error);
 }
 #endif
 AETHER_TEST(Mcp_SceneToolsStayInsideTheSceneFolder) {
@@ -3146,7 +3150,7 @@ AETHER_TEST(Mcp_GameUiShowsWidgetsAndClicksThem) {
     if (!aether::player::Game::HasScripting()) return;
     namespace stdfs = std::filesystem;
     const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_game_ui_test";
-    stdfs::remove_all(dir);
+    stdfs::remove_all(dir, g_cleanup_error);
     stdfs::create_directories(dir);
     auto root = std::make_unique<ui::Canvas>();
     root->name = "Hud";
@@ -3208,14 +3212,14 @@ AETHER_TEST(Mcp_GameUiShowsWidgetsAndClicksThem) {
     AETHER_CHECK(h.Call("game_ui_click", {{"widget", "Nothing"}}).is_error);
     AETHER_CHECK(h.Call("game_ui_click", {}).is_error);
     h.Call("game_unload");
-    stdfs::remove_all(dir);
+    stdfs::remove_all(dir, g_cleanup_error);
 }
 
 // game_spawn_entity, game_add_component and game_remove_component change the running world.
 AETHER_TEST(Mcp_GameSpawnsEntitiesAndEditsTheirComponents) {
     namespace stdfs = std::filesystem;
     const stdfs::path dir = stdfs::temp_directory_path() / "aether_mcp_game_spawn_test";
-    stdfs::remove_all(dir);
+    stdfs::remove_all(dir, g_cleanup_error);
     stdfs::create_directories(dir);
     const Json manifest = {{"$type", "CookManifest"}, {"$version", 1}, {"project", "McpSpawn"}, {"configuration", "Development"},
                            {"startup_scene", "Scenes/start.ascene"}, {"fixed_timestep_hz", 60.0}, {"gravity", {0.0, -9.81, 0.0}},
@@ -3259,7 +3263,7 @@ AETHER_TEST(Mcp_GameSpawnsEntitiesAndEditsTheirComponents) {
     AETHER_CHECK(h.Call("game_remove_component", {{"entity", key}, {"component", "Transform"}}).is_error);
     AETHER_CHECK(!h.Call("game_destroy_entity", {{"entity", key}}).is_error);
     h.Call("game_unload");
-    stdfs::remove_all(dir);
+    stdfs::remove_all(dir, g_cleanup_error);
 }
 
 // Phase 42.6: the MCP can see the scene's data layers. Switching one is a scene edit and is not
