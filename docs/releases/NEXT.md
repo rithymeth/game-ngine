@@ -95,7 +95,14 @@ describes what is on `master`, not a promise of a version number or a date.
   variable left.
   Also eliminated earlier: the test temp directory (an explicit empty TEMP changes nothing) and any difference in the two
   generators' `RelWithDebInfo` command lines apart from `/arch:AVX2`, which Ninja passes and Visual Studio does not.
-  **Remaining candidates, all in the build configuration**: `/arch:AVX2`, `/permissive-`, the `AETHER_HAS_EDITOR_VULKAN`
-  and `AETHER_REPO_*` definitions that differ between the generated projects, and `/w`. The next experiment is to add
-  `/arch:AVX2` to the Visual Studio tree's flags and rebuild -- if the tests pass, that is the cause; if not, bisect the
-  definitions the same way. Cause still not diagnosed.
+  **Remaining candidates, all in the build configuration.** The two generated projects for `test_filesystem.cpp` differ in
+  exactly these ways, extracted from `build.ninja` and the `.vcxproj` rather than assumed:
+  - Ninja defines `AETHER_HAS_EXAMPLE_PLATFORM`; the Visual Studio project does not.
+  - Visual Studio defines `_ENABLE_EXTENDED_ALIGNED_STORAGE`, `JPH_*` feature macros and `CMAKE_INTDIR="RelWithDebInfo"`;
+    Ninja defines the JPH set too but not the other two.
+  - Visual Studio adds `AETHER_TEST_PLAYER_PATH` pointing at its own `player/RelWithDebInfo/aether_player.exe`.
+  - The compiler command lines differ in `/arch:AVX2`, which Ninja passes and Visual Studio does not.
+  The bisect is therefore four items, not a search: remove `/arch:AVX2` from a Ninja build first, because that is a
+  one-line change and a full rebuild, and it is the only difference in how the same source is compiled rather than what it
+  is told about the tree. If that reproduces the failure, the rest is unnecessary.
+  Cause still not diagnosed.
