@@ -1,3 +1,4 @@
+#include <sstream>
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
@@ -262,11 +263,10 @@ int Symbolicate(const std::filesystem::path& dump_path, const std::filesystem::p
                              module.BaseOfImage, module.SizeOfImage, nullptr, 0);
     }
 
-    std::wofstream output(output_path, std::ios::trunc);
-    if (!output) {
-        std::wcerr << L"Could not create symbolicated report: " << output_path << L"\n";
-        return 1;
-    }
+    // Buffered, then written with the same Win32 call that already opened the dump successfully. A std::wofstream on
+    // this path fails to open even in a writable directory, and the failure reports nothing useful; CreateFileW at least
+    // gives a Win32 error code to report.
+    std::wostringstream output;
     output << L"Aether symbolicated crash dump\nDump: " << dump_path << L"\nArchitecture: "
            << Architecture(architecture) << L"\nSymbol search path: " << search << L"\n\n";
     if (!MiniDumpReadDumpStream(dump.base, ThreadListStream, nullptr, &stream, &stream_size)) {
@@ -285,9 +285,26 @@ int Symbolicate(const std::filesystem::path& dump_path, const std::filesystem::p
     for (ULONG32 i = 0; i < threads->NumberOfThreads; ++i)
         if (WalkThread(dump, threads->Threads[i], architecture, process, output)) ++walked;
     g_dump = nullptr;
-    output.close();
-    if (!walked || !output) {
+    if (!walked) {
         std::wcerr << L"No thread stacks could be read from the dump.\n";
+        return 1;
+    }
+    const std::wstring report_text = output.str();
+    HANDLE report_file = CreateFileW(output_path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
+                                     FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (report_file == INVALID_HANDLE_VALUE) {
+        std::wcerr << L"Could not create symbolicated report: " << output_path << L" (Win32 error="
+                   << GetLastError() << L")\n";
+        return 1;
+    }
+    DWORD written = 0;
+    const DWORD report_bytes = static_cast<DWORD>(report_text.size() * sizeof(wchar_t));
+    const BOOL wrote = WriteFile(report_file, report_text.data(), report_bytes, &written, nullptr);
+    const DWORD write_error = GetLastError();
+    CloseHandle(report_file);
+    if (!wrote || written != report_bytes) {
+        std::wcerr << L"Could not write symbolicated report: " << output_path << L" (Win32 error=" << write_error
+                   << L")\n";
         return 1;
     }
     std::wcout << L"Wrote " << output_path << L" (" << walked << L" thread stacks).\n";

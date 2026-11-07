@@ -66,3 +66,24 @@ reaches the log, and the two observations do not yet agree. I stopped rather tha
 **The next step needs a debugger attached to the Qt editor, not another edit.** Two things make that easier and are worth doing
 first: make `aether_symbolicate` work on this machine so the existing dumps can be read, and add a renderer-startup path to
 `--self-test` so the lane that CI runs covers the code that crashes.
+
+## The write fault has a name: Win32 error 5, and it is the same one everywhere
+
+Fixing `aether_symbolicate`'s report writer -- `std::wofstream` told us nothing useful when it failed, so it now buffers and
+writes with `CreateFileW`, reporting the Win32 error -- produced the number that has been missing all session:
+
+    Could not create symbolicated report: "...\aether-sym\report.txt" (Win32 error=5)
+
+**ACCESS_DENIED**, creating a brand-new file in a directory created moments earlier, in `%LOCALAPPDATA%` and in `%TEMP%` alike.
+
+That is the same error the test harness gets when `create_directories` builds its run directory, and the same one that makes
+`Filesystem_WriteThenReadTextRoundTrips` fail. **One fault, and it is not in either piece of code**: PowerShell writes to both
+directories without trouble, a .NET executable (the installer) extracted 1039 files into `%LOCALAPPDATA%` without trouble, and a
+C++ executable cannot create a file in either.
+
+So the remaining question is not about the editor, the harness or the symbolicate. It is why a native process launched from this
+session's shell is denied write access to directories the same user can write to. That is one investigation, and it unblocks three
+things at once: the crash dumps, the local test gate, and any native tool that writes a file.
+
+The symbolicate change is kept anyway: reporting the Win32 error is what made this visible at all, where the old code said only
+"could not create".
