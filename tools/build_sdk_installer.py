@@ -26,45 +26,82 @@ using System;
 using System.IO;
 using System.IO.Compression;
 using System.Reflection;
+using System.Text;
 
 class AetherInstaller
-{
+{{
+    static readonly string LogPath = Path.Combine(Path.GetTempPath(), "aether-install-log.txt");
+    static readonly StringBuilder Log = new StringBuilder();
+
+    static void Note(string line) {{ Console.WriteLine(line); Log.AppendLine(line); }}
+
+    static void Pause()
+    {{
+        Console.WriteLine();
+        Console.Write("Press Enter to close...");
+        try {{ Console.ReadLine(); }} catch {{ }}
+    }}
+
+    static void WriteLog() {{ try {{ File.WriteAllText(LogPath, Log.ToString()); }} catch {{ }} }}
+
+    static int Fail(string message)
+    {{
+        Console.Error.WriteLine();
+        Console.Error.WriteLine("INSTALL FAILED: " + message);
+        Console.Error.WriteLine("Log written to " + LogPath);
+        Log.AppendLine("FAILED: " + message);
+        WriteLog();
+        Pause();
+        return 1;
+    }}
+
     static int Main(string[] args)
-    {
-        string target = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Aether");
-        Console.WriteLine("Aether {version} SDK installer");
-        Console.WriteLine("Installing to " + target);
-
-        Stream payload = Assembly.GetExecutingAssembly().GetManifestResourceStream("aether-sdk.zip");
-        if (payload == null) {{ Console.Error.WriteLine("installer payload missing"); return 2; }}
-
-        string temp = Path.Combine(Path.GetTempPath(), "aether-install-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(temp);
-        string zipPath = Path.Combine(temp, "aether-sdk.zip");
-        using (var file = File.Create(zipPath)) {{ payload.CopyTo(file); }}
-
+    {{
         try
         {{
-            if (Directory.Exists(target)) Directory.Delete(target, true);
+            Note("Aether {version} SDK installer");
+            Note("");
+            Stream payload = Assembly.GetExecutingAssembly().GetManifestResourceStream("aether-sdk.zip");
+            if (payload == null) return Fail("the payload is not inside this executable");
+            Note("Payload found: " + (payload.Length / 1024 / 1024) + " MB");
+
+            string target = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Aether");
+            Note("Target: " + target);
+
+            string temp = Path.Combine(Path.GetTempPath(), "aether-install-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(temp);
+            string zipPath = Path.Combine(temp, "aether-sdk.zip");
+            Note("Writing the payload to a scratch folder...");
+            using (FileStream file = File.Create(zipPath)) {{ payload.CopyTo(file); }}
+
+            if (Directory.Exists(target))
+            {{
+                Note("Removing the previous installation...");
+                Directory.Delete(target, true);
+            }}
             Directory.CreateDirectory(target);
+
+            Note("Unpacking the SDK, this takes a few moments...");
             ZipFile.ExtractToDirectory(zipPath, target);
+            try {{ Directory.Delete(temp, true); }} catch {{ }}
+
+            string[] files = Directory.GetFiles(target, "*", SearchOption.AllDirectories);
+            Note("");
+            Note("Installed " + files.Length + " files to " + target);
+            Note("");
+            Note("To use it from CMake:");
+            Note("  cmake -S . -B build -DCMAKE_PREFIX_PATH=\\"" + target + "\\"");
+            Note("  find_package(Aether REQUIRED)");
+            Note("  target_link_libraries(app PRIVATE Aether::Engine)");
+            WriteLog();
+            Pause();
+            return 0;
         }}
         catch (Exception error)
         {{
-            Console.Error.WriteLine("install failed: " + error.Message);
-            return 1;
+            return Fail(error.GetType().Name + ": " + error.Message);
         }}
-        finally {{ try {{ Directory.Delete(temp, true); }} catch {{ }} }}
-
-        Console.WriteLine();
-        Console.WriteLine("Installed " + target);
-        Console.WriteLine();
-        Console.WriteLine("To use it from CMake:");
-        Console.WriteLine("  cmake -S . -B build -DCMAKE_PREFIX_PATH=\\"" + target + "\\"");
-        Console.WriteLine("  find_package(Aether REQUIRED)");
-        Console.WriteLine("  target_link_libraries(app PRIVATE Aether::Engine)");
-        return 0;
     }}
 }}
 """
@@ -107,7 +144,7 @@ def main():
         dist = ROOT / "dist"
         dist.mkdir(exist_ok=True)
         output = dist / f"Aether-{args.version}-SDK-installer.exe"
-        run([str(CSC), "/nologo", "/target:winexe", "/optimize+", f"/out:{output}",
+        run([str(CSC), "/nologo", "/target:exe", "/optimize+", f"/out:{output}",
              f"/resource:{payload},aether-sdk.zip",
              "/reference:System.IO.Compression.FileSystem.dll", str(source)])
         print(f"wrote {output} ({output.stat().st_size / 1024 / 1024:.1f} MB)")
