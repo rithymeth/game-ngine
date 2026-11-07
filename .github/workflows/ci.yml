@@ -747,6 +747,10 @@ jobs:
         env:
           AETHER01_INPUT_TRACE: ${{ github.workspace }}/build/aether01-input-trace.json
         run: .\build\tests\Release\aether_tests.exe
+      - name: Windows installer
+        # Compiles tools/installer/AetherInstaller.cs with a stand-in payload and runs it: a fresh install, an upgrade over a running
+        # program, a held file, and the shortcuts. The installer is built by hand for releases, so nothing else would catch it breaking.
+        run: .\tools\installer\test_installer.ps1
       - name: Editor session soak
         run: .\build\editor\Release\aether_editor.exe --self-test --self-test-repeats 4
       - name: Functional tests
