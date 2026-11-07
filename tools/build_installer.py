@@ -5,9 +5,9 @@ Configures a lean Release tree (no Vulkan, no editor, no tests), installs it to 
 compiles a self-extracting installer with the .NET Framework compiler that ships with Windows. The payload is embedded as a
 managed resource, so the output is a single exe a user runs with no administrator rights.
 
-    python tools/build_sdk_installer.py --version 0.29.0
+    python tools/build_installer.py --version 0.29.0
 
-The result goes to dist/Aether-<version>-SDK-installer.exe.
+The result goes to dist/Aether-<version>-Windows-x64.exe.
 """
 
 import argparse
@@ -59,9 +59,9 @@ class AetherInstaller
     {{
         try
         {{
-            Note("Aether {version} SDK installer");
+            Note("Aether Engine {version} - full application installer");
             Note("");
-            Stream payload = Assembly.GetExecutingAssembly().GetManifestResourceStream("aether-sdk.zip");
+            Stream payload = Assembly.GetExecutingAssembly().GetManifestResourceStream("aether-app.zip");
             if (payload == null) return Fail("the payload is not inside this executable");
             Note("Payload found: " + (payload.Length / 1024 / 1024) + " MB");
 
@@ -71,7 +71,7 @@ class AetherInstaller
 
             string temp = Path.Combine(Path.GetTempPath(), "aether-install-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(temp);
-            string zipPath = Path.Combine(temp, "aether-sdk.zip");
+            string zipPath = Path.Combine(temp, "aether-app.zip");
             Note("Writing the payload to a scratch folder...");
             using (FileStream file = File.Create(zipPath)) {{ payload.CopyTo(file); }}
 
@@ -124,16 +124,15 @@ def main():
     stage = work / "stage"
     try:
         run(["cmake", "-S", str(ROOT), "-B", str(tree), "-G", "Ninja",
-             "-DCMAKE_BUILD_TYPE=Release", "-DAETHER_BUILD_VULKAN=OFF",
-             "-DAETHER_BUILD_EDITOR=OFF", "-DAETHER_BUILD_EDITOR_UI=OFF",
-             "-DAETHER_BUILD_BENCH=OFF", "-DAETHER_BUILD_FUZZERS=OFF",
-             "-DAETHER_BUILD_TESTS=OFF", "-DAETHER_BUILD_DEVTOOLS=OFF"],
+             "-DCMAKE_BUILD_TYPE=Release", "-DAETHER_BUILD_EDITOR=ON",
+             "-DAETHER_BUILD_DEVTOOLS=ON", "-DAETHER_BUILD_BENCH=OFF",
+             "-DAETHER_BUILD_FUZZERS=OFF", "-DAETHER_BUILD_TESTS=OFF"],
             stdout=subprocess.DEVNULL)
         run(["cmake", "--build", str(tree), "--parallel", "2"], stdout=subprocess.DEVNULL)
         run(["cmake", "--install", str(tree), "--prefix", str(stage), "--config", "Release"],
             stdout=subprocess.DEVNULL)
 
-        payload = work / "aether-sdk.zip"
+        payload = work / "aether-app.zip"
         with zipfile.ZipFile(payload, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
             for path in sorted(stage.rglob("*")):
                 if path.is_file():
@@ -143,9 +142,9 @@ def main():
         source.write_text(PROGRAM.format(version=args.version), encoding="utf-8")
         dist = ROOT / "dist"
         dist.mkdir(exist_ok=True)
-        output = dist / f"Aether-{args.version}-SDK-installer.exe"
+        output = dist / f"Aether-{args.version}-Windows-x64.exe"
         run([str(CSC), "/nologo", "/target:exe", "/optimize+", f"/out:{output}",
-             f"/resource:{payload},aether-sdk.zip",
+             f"/resource:{payload},aether-app.zip",
              "/reference:System.IO.Compression.FileSystem.dll", str(source)])
         print(f"wrote {output} ({output.stat().st_size / 1024 / 1024:.1f} MB)")
     finally:
