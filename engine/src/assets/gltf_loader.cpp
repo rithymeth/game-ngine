@@ -750,15 +750,20 @@ void ApplyAnimationToNodes(const GltfScene& scene, const GltfAnimation& animatio
 static bool ParseGltfText(const std::string& text, const std::string& path, bool allow_external,
                           GltfScene& out_scene) {
     Json gltf;
+    std::fprintf(stderr, "[trace] ParseGltfText enter, %zu bytes\n", text.size());
     try {
         gltf = Json::parse(text);
     } catch (const std::exception& e) {
+        std::fprintf(stderr, "[trace] parse threw: %s\n", e.what());
         // Not just parse_error: nlohmann throws type_error from value() and get<>() when a field holds the wrong type, and
         // a document with a malformed field reached the caller as an uncaught exception, ending the process.
+        std::fprintf(stderr, "[trace] about to GltfError\n");
         GltfError("Failed to parse \"%s\": %s", path.c_str(), e.what());
+        std::fprintf(stderr, "[trace] GltfError returned\n");
         return false;
     }
 
+    std::fprintf(stderr, "[trace] parsed ok\n");
     std::string base_dir = allow_external ? fs::ParentPath(path) : std::string();
 
     std::vector<std::vector<u8>> buffers;
