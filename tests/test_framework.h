@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <exception>
 #include <cstddef>
 #include <cstdlib>
 #include <functional>
@@ -100,8 +101,23 @@ inline int RunAll() {
         ++ran;
         int before = FailureCount();
         CurrentTest() = test.name.c_str();
-        test.fn();
+        // A test body that throws must fail that test, not end the run. Several suites call Json and filesystem APIs that
+        // throw on exactly the malformed input a test feeds them to check the rejection, and an escaping exception used to
+        // stop the process with the rest of the suite unrun -- one test's bad input hiding every test after it.
+        std::string thrown;
+        try {
+            test.fn();
+        } catch (const std::exception& error) {
+            thrown = error.what();
+        } catch (...) {
+            thrown = "non-standard exception";
+        }
         CurrentTest() = nullptr;
+        if (!thrown.empty()) {
+            SetCurrentCheck("a test body that does not throw", __FILE__, __LINE__);
+            std::printf("  threw: %s\n", thrown.c_str());
+            ++FailureCount();
+        }
         if (FailureCount() == before) {
             std::printf("[PASS] %s\n", test.name.c_str());
             ++passed;
