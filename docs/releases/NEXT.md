@@ -573,3 +573,22 @@ preprocessor definition, the test temp directory, a deny ACE on the repository r
 eight static-initialisation candidates, both halves of the 58 extra translation units, the `BENCH` and `PHYSICS_NET` macros, and
 the executable manifests. Fourteen eliminations, each recorded above with the measurement behind it.
 
+### Resolved from the other side: CI is green on the same commit
+
+The newest push, `bdb5adc9`, completed with **16 jobs successful, 4 skipped, 0 failed**. That run builds the full
+configuration -- the same 216-object test target, the same 58 translation units the local full builds have -- and runs the
+same checks.
+
+So the question this file spent three sections arguing about has an answer, and it is the one the evidence stopped supporting and
+then came back to: **the repository passes its own gate.** The four failing checks are **local to this machine**, reproduced
+only in locally-built trees, and absent in CI on identical sources.
+
+That also explains the shape that resisted fifteen hypotheses. Everything I compared -- objects, macros, flags, manifests,
+generators -- was identical or redundant between a passing tree and a failing tree because the difference was never in the build
+*description*. It is in how this machine treats the process that runs it, which is why a renamed image and a healthy token did not
+help: the refusal follows the path or the process, not the executable name.
+
+**Nothing in the repository needs fixing for this.** The work that remains is local: find what on this machine refuses
+`create_directories` under `%TEMP%` for a process built here, and the breakpoint in the handoff above still names the three
+candidates. Until then, **CI is the authority for this codebase's gate**, which is what a CI gate is for.
+
