@@ -560,9 +560,13 @@ between those two stops is the answer -- that is why fourteen static comparisons
 difference is in the process.
 
 **4. If the tokens match too**, break inside `std::filesystem::create_directories` itself and read the Win32 error from
-`CreateDirectoryW` directly rather than the `std::error_code` translation. Error 5 from the CRT with a healthy token and a
-writable parent usually means a **filter driver** is refusing the path for that image name -- which would explain why one binary
-passes and another fails on one machine while CI is green.
+`CreateDirectoryW` directly rather than the `std::error_code` translation.
+
+**Fifteenth elimination, recorded so it is not followed:** a filter driver keyed on the **image name** was the natural candidate
+for "one binary passes and another fails on one machine while CI is green", and it is wrong. Copying the failing executable to
+`zz_probe_renamed.exe` in its own directory and running it changes nothing -- the same check fails. So whatever refuses the
+directory is not distinguishing the executable by name. The remaining candidates at that breakpoint are the token itself, a
+filesystem filter keyed on **path** rather than image, or something the process does to itself before `main`.
 
 **What has been eliminated, so it is not re-tried:** tree age, generator, `/arch:AVX2`, `/permissive-`, every differing
 preprocessor definition, the test temp directory, a deny ACE on the repository root, the reflection renames, ten feature flags,
