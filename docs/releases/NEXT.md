@@ -424,3 +424,17 @@ mechanical and finite, it is larger than it looked, and it is the right next pie
 Nothing is left to infer. The repository fails four checks in a full build; the difference happens before any test runs; the test
 object is identical in both binaries; the candidate set is 58 translation units; and the tool is an edit to one file.
 
+### The candidate set is eight, by static-initialisation reach
+
+Ranked the 58 by whether they can run code before `main`: eight declare a namespace-scope object whose initialiser references
+`std::filesystem` -- `test_build_window`, `test_compat_corpus`, `test_editor_projects`, `test_extensions`, `test_loc_editor`,
+`test_save_inspector`, `test_script_reload`, `test_vcs`. That is consistent with the failure, which is a filesystem operation
+(`create_directories`) that runs in the process but fails with Access denied while the same call from PowerShell succeeds.
+
+My attempt to look at *what* each initialiser does produced the same line for all eight, because the regex matched the type name
+rather than the call. So the eight are ranked, not distinguished.
+
+Next step, now small enough to be a single sitting: disable those eight `target_sources` entries in four-and-four and let the
+filesystem check say which half holds the culprit. Three builds at fifteen minutes each. Everything else in this investigation is
+either established or eliminated.
+
