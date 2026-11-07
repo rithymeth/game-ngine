@@ -537,3 +537,35 @@ Two things done after the diagnosis stopped:
 Nothing about the failure changed. The four failing checks are still failing and still need a debugger. What changed is that the
 misleading evidence has been labelled where a person will see it.
 
+### Handoff: the debugger run, step by step
+
+Everything below is a single sitting. The reproducer is one command and the breakpoint is one function.
+
+**1. Reproduce in five seconds.** From a full build tree:
+
+    AETHER_TEST_FILTER=Filesystem_WriteThenReadText ./tests/aether_tests.exe
+
+Expect `CHECK failed: fs::WriteFileBytes`. If it passes, the tree is stale -- check that `tests/CMakeFiles/aether_tests.dir`
+contains 216 objects, not 158.
+
+**2. Break where it starts.** `PrepareRunDirectory()` in `tests/main.cpp`, called from `main` before any test runs. It has three
+fallible calls: `temp_directory_path(error)`, `remove_all(dir, error)`, `create_directories(dir, error)`. A local run already
+showed the third returning **error 5, Access is denied**, for `C:\Users\pilot\AppData\Local\Temp\aether-tests-<pid>`, while
+PowerShell creates that same directory under that same parent without difficulty.
+
+**3. Ask the question the logs cannot answer.** At the `create_directories` call, inspect the **process token**: integrity level,
+privileges, and the resolved `TEMP`/`TMP` values *at that moment*. Compare them against the same breakpoint in
+`build-evervale-verify/tests/aether_tests.exe`, which passes the identical test from an identical object file. Whatever differs
+between those two stops is the answer -- that is why fourteen static comparisons failed: they compared the trees, and the
+difference is in the process.
+
+**4. If the tokens match too**, break inside `std::filesystem::create_directories` itself and read the Win32 error from
+`CreateDirectoryW` directly rather than the `std::error_code` translation. Error 5 from the CRT with a healthy token and a
+writable parent usually means a **filter driver** is refusing the path for that image name -- which would explain why one binary
+passes and another fails on one machine while CI is green.
+
+**What has been eliminated, so it is not re-tried:** tree age, generator, `/arch:AVX2`, `/permissive-`, every differing
+preprocessor definition, the test temp directory, a deny ACE on the repository root, the reflection renames, ten feature flags,
+eight static-initialisation candidates, both halves of the 58 extra translation units, the `BENCH` and `PHYSICS_NET` macros, and
+the executable manifests. Fourteen eliminations, each recorded above with the measurement behind it.
+
