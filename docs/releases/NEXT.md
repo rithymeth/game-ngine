@@ -224,3 +224,22 @@ steps: `temp_directory_path(error)`, the `remove_all`, and the `create_directori
 `std::error_code` values, which turns the remaining question into a single line of output rather than another hypothesis. This
 is the last inference in the chain that is worth writing down before measuring -- six previous ones on this failure were wrong.
 
+### The deny ACE was real, was removed, and is not the cause
+
+The error codes named the mechanism: `temp_directory_path` succeeded, and `create_directories` failed with
+**error 5, Access is denied**. Walking up the ACL chain found a `Everyone : DeleteSubdirectoriesAndFiles (Deny)` ACE defined
+on **`D:\game-ngine` itself**, inherited by every directory created underneath it. `build/` and `build-evervale-verify/` were
+created before that ACE existed and do not inherit it; every tree created since does. That is why two faithful trees failed
+identically and the two stale ones passed, and it looked like the answer.
+
+Removing the ACE succeeded (`icacls D:\game-ngine /remove:d Everyone`, deny count now 0, and a freshly created nested
+directory inherits no deny). **The filesystem test still fails with the same checks, and `WriteFileBytes` still returns
+false.** So the ACE was real and worth removing -- new build trees should not inherit a deny -- but it is not what makes this
+test fail.
+
+That is the eighth explanation for this failure and the eighth to be withdrawn. What is now known without inference:
+`temp_directory_path` succeeds; `create_directories` for `aether-tests-<pid>` returns error 5 in this process even though
+PowerShell creates the same kind of directory under the same parent without trouble; and the same binary passes when run from
+`build/tests/` and fails when run from `build-fresh-ninja/tests/`. The next measurement is the process token -- integrity level
+and privileges -- rather than another filesystem hypothesis.
+
