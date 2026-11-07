@@ -1,3 +1,4 @@
+#include <cstdio>
 #include "ai/bt_editor.h"
 #include "ai/nav_panel.h"
 #include "test_framework.h"
@@ -62,15 +63,22 @@ bool Floor(const ModelRenderer& m, std::vector<Vec3>& v, std::vector<u32>& i) {
 
 // Guard: Selector [ Sequence(if Enemy is set) [MoveTo Enemy, Log], Wait ].
 BehaviorTreeDocument GuardDoc() {
+    std::fprintf(stderr, "[trace] GuardDoc: constructing\n"); std::fflush(stderr);
     BehaviorTreeDocument doc;
+    std::fprintf(stderr, "[trace] GuardDoc: constructed\n"); std::fflush(stderr);
     CHECK(doc.AddKey("Enemy", BlackboardType::Entity));
+    std::fprintf(stderr, "[trace] GuardDoc: key Enemy\n"); std::fflush(stderr);
     CHECK(doc.AddKey("Health", BlackboardType::Float));
+    std::fprintf(stderr, "[trace] GuardDoc: key Health\n"); std::fflush(stderr);
     const auto chase = doc.AddNode({}, BtNodeType::Sequence, 0);
+    std::fprintf(stderr, "[trace] GuardDoc: AddNode root\n"); std::fflush(stderr);
     CHECK(chase && *chase == BtPath{0});
     CHECK(doc.AddNode({0}, BtNodeType::MoveTo));
     CHECK(doc.SetNodeField({0, 0}, "key", "Enemy"));
     CHECK(doc.AddNode({0}, BtNodeType::Log));
+    std::fprintf(stderr, "[trace] GuardDoc: children added\n"); std::fflush(stderr);
     CHECK(doc.AddDecorator({0}, BtDecoratorType::BlackboardCondition));
+    std::fprintf(stderr, "[trace] GuardDoc: decorator added, returning\n"); std::fflush(stderr);
     return doc;
 }
 
@@ -173,8 +181,11 @@ AETHER_TEST(AIEditor_AIDebugDraw) {
 }
 
 AETHER_TEST(AIEditor_Document) {
+    std::fprintf(stderr, "[trace] test body: before GuardDoc call\n"); std::fflush(stderr);
     BehaviorTreeDocument doc = GuardDoc();
+    std::fprintf(stderr, "[trace] test body: after GuardDoc, root children=%zu\n", doc.Get().root.children.size()); std::fflush(stderr);
     std::string error;
+    std::fprintf(stderr, "[trace] test body: error string constructed\n"); std::fflush(stderr);
     CHECK(doc.Get().root.type == BtNodeType::Selector);
     CHECK(doc.Get().root.children.size() == 2); // the chase sequence, then the starting Wait
     CHECK(doc.Node({1})->type == BtNodeType::Wait);

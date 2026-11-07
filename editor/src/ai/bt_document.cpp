@@ -222,15 +222,22 @@ json BehaviorTreeDocument::NodeJson(const BtPath& path) const {
 
 bool BehaviorTreeDocument::EditJson(const std::string& label, const BtPath& path, const std::function<bool(json&, std::string&)>& change, std::string* error,
                                     const std::string& merge_key) {
-    json all = SaveBehaviorTree(tree_);
-    json* n = NodeAt(all["root"], path);
-    if (n == nullptr) return Fail(error, "no such node");
-    std::string why;
-    if (!change(*n, why)) return Fail(error, why);
-    BehaviorTreeAsset t;
-    if (!LoadBehaviorTree(all, t, &why)) return Fail(error, why);
-    Edit(label, [&](BehaviorTreeAsset& a) { a = std::move(t); }, merge_key);
-    return true;
+    try {
+        json all = SaveBehaviorTree(tree_);
+        json* n = NodeAt(all["root"], path);
+        if (n == nullptr) return Fail(error, "no such node");
+        std::string why;
+        if (!change(*n, why)) return Fail(error, why);
+        BehaviorTreeAsset t;
+        if (!LoadBehaviorTree(all, t, &why)) return Fail(error, why);
+        Edit(label, [&](BehaviorTreeAsset& a) { a = std::move(t); }, merge_key);
+        return true;
+    } catch (const std::exception& e) {
+        // LoadBehaviorTree reads the edited JSON with nlohmann's value() and get<>(), which throw when the edit put the
+        // wrong type in a field -- the check that sets "seconds" to a string is doing exactly that on purpose. A refused
+        // edit must come back as an error, not end the caller.
+        return Fail(error, e.what());
+    }
 }
 
 bool BehaviorTreeDocument::SetNodeField(const BtPath& path, const std::string& key, const json& value, std::string* error, const std::string& merge_key) {
