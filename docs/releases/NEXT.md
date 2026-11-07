@@ -43,3 +43,26 @@ only automated check of the production editor does not start the thing that cras
 
 Until this is fixed, the working editor on this machine is the Vulkan ImGui shell. That is the opposite of what the naming
 suggests, and it is worth knowing before a release tells anyone to start `aether_editor.exe`.
+
+## The Qt editor crash: what I established, and where it stalls
+
+Reproducible facts, all measured:
+
+- `aether_editor.exe` (the Qt editor) opens no window and dies with an access violation (0xC0000005) at roughly 40 seconds.
+- It reproduces from the build tree, not only from an installed copy, so packaging is not involved.
+- The process's captured output ends at exactly one line: `[INFO] D3D12: Selected adapter: NVIDIA GeForce RTX 3050 Laptop GPU`.
+- `--self-test` passes, because the self-test exercises scene save/load, Play-in-Editor and physics and never initialises a
+  renderer.
+- The crash reporter writes a dump and a text file to `%APPDATA%\Aether\crashes`, with an unresolved backtrace.
+- `aether_symbolicate` cannot produce a symbolicated report on this machine: it fails with "Could not create symbolicated
+  report" even when the dump is copied to a writable directory, which is the same local fault that breaks the test harness's
+  scratch directory.
+
+Instrumentation I added -- logs immediately before device creation, after device creation, around swap-chain creation, and after
+command-list creation -- did not appear in the captured output at all, while the engine's own `Selected adapter` line from inside
+`CreateDevice` did. So the surface code that creates the device is not where the process dies, or the process is dying before it
+reaches the log, and the two observations do not yet agree. I stopped rather than guess an eleventh time.
+
+**The next step needs a debugger attached to the Qt editor, not another edit.** Two things make that easier and are worth doing
+first: make `aether_symbolicate` work on this machine so the existing dumps can be read, and add a renderer-startup path to
+`--self-test` so the lane that CI runs covers the code that crashes.
