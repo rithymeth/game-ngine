@@ -84,12 +84,18 @@ describes what is on `master`, not a promise of a version number or a date.
   `Filesystem_WriteThenReadTextRoundTrips` (the file reads back empty after a successful write),
   `Serialization_RoundTripsComponentsAcrossWorlds` and `Serialization_ReflectedComponentsUseDeclaredNames`, with the
   reflection registry reporting duplicate declared type names in that tree. The Ninja gate is green.
-  Narrowed by experiment, not by reasoning. **Not the test temp directory**: running the same binary with TEMP and TMP
-  pointed at a fresh empty directory gives an identical result, and the harness's private run directory is created and
-  removed correctly in that tree. **Not the compiler flags**: the two generators' `RelWithDebInfo` command lines are
-  equivalent apart from `/arch:AVX2`, which Ninja passes and Visual Studio 2022 does not. What is measurable is the shape of
-  the failure: `fs::WriteFileBytes` **reports success** and the read-back then fails, for both the bytes and the text
-  variants, while the other two filesystem checks in that tree pass.
-  Cause still not diagnosed. Two candidates remain and both need a debugger rather than another edit: the write reporting
-  success without producing readable content, or a `std::filesystem` path/locale difference between the two build systems.
-  A breakpoint on `ReadFileText` in the Visual Studio tree with the error code from `std::ifstream` would separate them.
+  Established by a controlled experiment, with one invalid attempt on the way. **The binary determines the result, not the
+  directory and not the temp state**: the Visual Studio-built `aether_tests` reports 2/4 on the filtered filesystem checks when
+  run from its own output directory, from the repository root, and from the Ninja tree's directory, while the Ninja-built
+  binary reports 4/4 from all of the same three directories. Same sources, same working directories.
+  The invalid attempt is worth recording because it nearly became the conclusion: I copied the Ninja binary into the Visual
+  Studio tree and ran it there, and it failed -- which looked like proof that the directory was responsible. The copy changed
+  `argv[0]`, and the harness resolves its run directory from that, so the copied binary was not running under the same
+  conditions as the original. Re-run with the real binaries in place, the result reverses and the binary is the only
+  variable left.
+  Also eliminated earlier: the test temp directory (an explicit empty TEMP changes nothing) and any difference in the two
+  generators' `RelWithDebInfo` command lines apart from `/arch:AVX2`, which Ninja passes and Visual Studio does not.
+  **Remaining candidates, all in the build configuration**: `/arch:AVX2`, `/permissive-`, the `AETHER_HAS_EDITOR_VULKAN`
+  and `AETHER_REPO_*` definitions that differ between the generated projects, and `/w`. The next experiment is to add
+  `/arch:AVX2` to the Visual Studio tree's flags and rebuild -- if the tests pass, that is the cause; if not, bisect the
+  definitions the same way. Cause still not diagnosed.
