@@ -791,6 +791,35 @@ set(AETHER_PACKAGE_USE_TRACY ${AETHER_TRACY})
 set(AETHER_PACKAGE_LZ4_FILENAME "${AETHER_LZ4_INSTALL_FILENAME}")
 aether_generate_package_config()
 
+# Applications and tools, installed alongside the SDK so an installed tree can author and run a game rather than only link
+# against the engine. Each is guarded by its target so a lean configuration that leaves one out still installs.
+set(_aether_install_apps
+    aether_editor_shell aether_editor aether_player aether_package aether_cook aether_pak
+    aether_plugin aether_loc aether_symbolicate aether_server)
+foreach(_aether_app IN LISTS _aether_install_apps)
+    if(TARGET ${_aether_app})
+        install(TARGETS ${_aether_app} RUNTIME DESTINATION bin COMPONENT Applications)
+    endif()
+endforeach()
+unset(_aether_install_apps)
+unset(_aether_app)
+
+# The editor shell and the player load dxcompiler.dll at runtime; every executable in this tree gets it copied beside it
+# by a POST_BUILD step. An installed tree needs it too -- without it the Vulkan editor exits with STATUS_DLL_NOT_FOUND
+# before opening a window. AETHER_DXCOMPILER_DLL is the cache variable the engine resolves (GitHub release first, then the
+# Windows SDK), so the install follows whatever the build actually used.
+if(AETHER_DXCOMPILER_DLL)
+    install(FILES "${AETHER_DXCOMPILER_DLL}" DESTINATION bin COMPONENT Applications RENAME dxcompiler.dll)
+endif()
+if(AETHER_DXIL_DLL)
+    install(FILES "${AETHER_DXIL_DLL}" DESTINATION bin COMPONENT Applications RENAME dxil.dll)
+endif()
+
+# The editor and player read templates and starters from the installed assets, not just the source tree.
+if(EXISTS "${PROJECT_SOURCE_DIR}/assets")
+    install(DIRECTORY "${PROJECT_SOURCE_DIR}/assets" DESTINATION . COMPONENT Applications)
+endif()
+
 # The pull-request gate (.github/workflows/ci.yml) runs only these: the unit and functional binaries, the frozen
 # API sample and the fuzz-corpus replays. Building this target instead of "all" skips the player, tools, benches,
 # demos and games, which the post-merge lanes still build.
