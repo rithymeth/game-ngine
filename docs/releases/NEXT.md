@@ -102,7 +102,14 @@ describes what is on `master`, not a promise of a version number or a date.
     Ninja defines the JPH set too but not the other two.
   - Visual Studio adds `AETHER_TEST_PLAYER_PATH` pointing at its own `player/RelWithDebInfo/aether_player.exe`.
   - The compiler command lines differ in `/arch:AVX2`, which Ninja passes and Visual Studio does not.
-  The bisect is therefore four items, not a search: remove `/arch:AVX2` from a Ninja build first, because that is a
-  one-line change and a full rebuild, and it is the only difference in how the same source is compiled rather than what it
-  is told about the tree. If that reproduces the failure, the rest is unnecessary.
+  Each of those was then checked against the source, and **none of them is referenced**: `CMAKE_INTDIR` and
+  `AETHER_HAS_EXAMPLE_PLATFORM` appear nowhere in the tests or the filesystem implementation they exercise. A definition that
+  nothing reads cannot change behaviour, so the four-item list above shrinks to the toolchain itself: how the same source is
+  compiled, not what it is told.
+  That leaves two candidates, and file I/O rules out the first on inspection: `/arch:AVX2` cannot change `WriteFileBytes` or
+  `ReadFileText`, which open a stream and copy bytes. What is left is `/permissive-` and the runtime-library selection the two
+  generators make, either of which can change how `std::filesystem` overloads resolve or how `std::ifstream` reports a
+  failure. The next experiment is to build the Visual Studio tree with `/arch:AVX2` and `/permissive-` added and see whether
+  the failures disappear; if they do, bisect those two; if they do not, the difference is in the CRT linkage, which is a
+  generator-level setting rather than a flag.
   Cause still not diagnosed.
