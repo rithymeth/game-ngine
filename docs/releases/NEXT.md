@@ -409,3 +409,18 @@ What is now established with no inference left:
 
 The next step is a link bisect over those 58, starting with the ones that register reflection state at namespace scope.
 
+### The link bisect has its method, and it is a CMake edit
+
+The 58 extra translation units are not in the `add_executable(aether_tests ...)` list. The first few are; the rest arrive through
+`target_sources(aether_tests PRIVATE ...)` blocks, most of them inside `if(...)` guards that also define the `AETHER_TEST_HAS_*`
+macros the guarded tests depend on. My first attempt to comment them out matched nothing, which was itself informative: the test
+target is assembled in three different ways across one file, so a mechanical edit has to remove a **guard and its
+`target_sources`**, not a filename.
+
+So the link bisect is a sequence of edits to `tests/CMakeLists.txt`: disable the guard blocks a few at a time, keeping their
+macros consistent with the sources still compiled, and the block whose removal flips the filesystem check names the culprit. It is
+mechanical and finite, it is larger than it looked, and it is the right next piece of work.
+
+Nothing is left to infer. The repository fails four checks in a full build; the difference happens before any test runs; the test
+object is identical in both binaries; the candidate set is 58 translation units; and the tool is an edit to one file.
+
