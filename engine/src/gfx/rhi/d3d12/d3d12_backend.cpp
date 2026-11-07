@@ -828,6 +828,10 @@ SampledTextureHandle D3D12Device::CreateTexture(u32 width, u32 height, const u8*
 
     gfx::CommandList setup_cmd(device_);
     setup_cmd.Reset();
+        // NOT COVERED BY A TEST as of 7 November 2026. The buffer hook is proven by
+        // RHI_D3D12FaultInjectionFailsTheArmedAllocation; this one fires when armed but the assertion that proved it
+        // failed for a reason not yet understood, so it was withdrawn rather than left claiming coverage it does not have.
+        // An armed texture creation throws here; that is the intent, not a verified behaviour.
     if (FailAllocationForTest()) {
         throw std::runtime_error("D3D12 texture creation failed (AETHER_RHI_FAIL_ALLOCATION_AT)");
     }
