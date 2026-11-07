@@ -5372,6 +5372,17 @@ int main(int argc, char** argv) {
                 EditorWindow window;
                 window.SetCrashRecoveryContext(crash_config.directory, !previous_crash_reports.empty());
                 if (!window.RunSelfTest()) passed = false;
+                // Renderer startup. RunSelfTest covers document I/O, Play-in-Editor and physics, but it never shows a
+                // widget, so EnsureSurface -- and the D3D12 device, swap chain and scene pipeline it creates -- never runs.
+                // An access violation in exactly that path shipped in 0.29.0 because this test could not see it.
+                window.resize(480, 300);
+                window.show();
+                for (int frame = 0; frame < 4; ++frame) {
+                    app.processEvents();
+                    QThread::msleep(16);
+                }
+                window.close();
+                app.processEvents();
             }
             QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
             app.processEvents();
