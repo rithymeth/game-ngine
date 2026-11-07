@@ -438,3 +438,20 @@ Next step, now small enough to be a single sitting: disable those eight `target_
 filesystem check say which half holds the culprit. Three builds at fifteen minutes each. Everything else in this investigation is
 either established or eliminated.
 
+### Neither half of the eight contains it, so the static-initialisation filter was wrong
+
+Disabled `test_build_window`, `test_compat_corpus`, `test_editor_projects` and `test_extensions`, rebuilt: **still fails**.
+Swapped to `test_loc_editor`, `test_save_inspector`, `test_script_reload` and `test_vcs`: **still fails**.
+
+Both halves exclude the culprit, so it is not among the eight files whose namespace-scope objects touch `std::filesystem`. That
+makes the reasoning that produced the eight wrong, not merely incomplete -- the failure is not caused by an initialiser in those
+files.
+
+That is the twelfth explanation to fall and the first one where a *filter* produced a set that provably excludes the answer. The
+candidate set goes back to all 58, and the next bisect has to be over the full set rather than a ranked subset.
+
+The honest summary of this failure after a full session: a full build of the committed repository fails four checks before any
+test executes; the test object is identical in passing and failing binaries; 58 translation units differ between the only passing
+and the only failing builds; and four separate attempts to narrow those 58 -- by feature flag, by compile flags, by configuration
+and by static initialisation -- have each been wrong.
+
