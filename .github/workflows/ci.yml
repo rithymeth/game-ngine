@@ -1519,7 +1519,9 @@ jobs:
     # A pushed v* tag, or a manual run given a release_tag (which creates
     # the tag on the commit it built).
     if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
-    needs: [linux, clean-machine-sdk, dedicated-server, game-ship, macos, windows, windows-package-validation, windows-sign-release, android, android-emulator, ios, ios-simulator]
+    # linux-full, not linux: the linux lane only runs on pull_request, so needing it made this job skip on every
+    # tag push -- which is why v0.29.0 published with no CI-built assets. linux-full runs on every non-PR event.
+    needs: [linux-full, clean-machine-sdk, dedicated-server, game-ship, macos, windows, windows-package-validation, windows-sign-release, android, android-emulator, ios, ios-simulator]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
