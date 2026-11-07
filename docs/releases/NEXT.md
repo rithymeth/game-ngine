@@ -207,3 +207,20 @@ That means the write is failing against the real temp directory, and the isolati
 bug on its own; together they explain the check without explaining why the open fails, which is the next question and needs the
 `errno` the stream sets rather than another guess.
 
+### The harness run directory is never created, and the environment is not why
+
+`main` does call `PrepareRunDirectory()` and `PointTempEnvironmentAt()`. A probe inside `PointTempEnvironmentAt` printed
+**nothing**, so it returned at its first line: `PrepareRunDirectory()` returned an empty path. That is why the isolation is
+absent and why the filesystem test wrote to the real temp directory and failed.
+
+What has been checked about the environment, all from PowerShell in the same session:
+
+- writing `aether_test_text.txt` to `C:\Users\pilot\AppData\Local\Temp` succeeds;
+- creating a directory there succeeds;
+- no stale `aether_test*` files are present, though two stale `aether-tests-<pid>` directories from earlier crashed runs are.
+
+So the directory and its permissions are fine and the failure is inside the process, in `PrepareRunDirectory`'s three fallible
+steps: `temp_directory_path(error)`, the `remove_all`, and the `create_directories`. The next step is to print those three
+`std::error_code` values, which turns the remaining question into a single line of output rather than another hypothesis. This
+is the last inference in the chain that is worth writing down before measuring -- six previous ones on this failure were wrong.
+
