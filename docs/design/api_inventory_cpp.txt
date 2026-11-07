@@ -1524,6 +1524,7 @@
   void SetInt(i64 value)
   void SetString(std::string value)
 [engine/include/aether/core/json_util.h] stable
+  inline float JsonFloat(const nlohmann::json&j,const char*key,float fallback=0.0f)
   inline int JsonVersion(const nlohmann::json&j,int fallback=0)
   inline std::string JsonString(const nlohmann::json&j,const char*key,const std::string&fallback=std::string())
   template<class F>bool GuardJsonLoader(std::string*error,const char*what,F&&body)

@@ -26,6 +26,15 @@ inline std::string JsonString(const nlohmann::json& j, const char* key, const st
 // JSON object at all. nlohmann's `j.value("$version", 0)` throws on a string or an array where a number
 // is expected, and nothing in a loader catches it: a malformed file would end the process. (Found by the
 // fuzzers, Phase 47 step 1.)
+// The number of `key`, or `fallback` if it is missing, not an object, or not a number. `j.value("x", 1.0f)` throws when
+// the stored value is a string, an array or an object, which is the shape that ended the process in the utility loader.
+inline float JsonFloat(const nlohmann::json& j, const char* key, float fallback = 0.0f) {
+    if (!j.is_object()) return fallback;
+    const auto it = j.find(key);
+    if (it == j.end() || !it->is_number()) return fallback;
+    return static_cast<float>(it->get<double>());
+}
+
 inline int JsonVersion(const nlohmann::json& j, int fallback = 0) {
     if (!j.is_object()) return fallback;
     const auto it = j.find("$version");

@@ -112,31 +112,33 @@ bool UtilityBrain::FromJson(const nlohmann::json& json, UtilityBrain& out, std::
         if (JsonString(json, "$type") != "UtilityBrain") return fail("not a utility brain");
         if (JsonVersion(json) > kUtilityFormatVersion) return fail("saved by a newer version of the engine");
         UtilityBrain brain;
-        brain.inertia = json.value("inertia", 0.05f);
+        brain.inertia = JsonFloat(json, "inertia", 0.05f);
         if (!json.contains("actions") || !json["actions"].is_array()) return fail("a utility brain needs an actions list");
         for (const nlohmann::json& a : json["actions"]) {
             if (!a.is_object()) return fail("an action must be an object");
             UtilityAction action;
-            action.name = a.value("name", std::string());
+            action.name = JsonString(a, "name");
             if (action.name.empty()) return fail("an action needs a name");
-            action.weight = a.value("weight", 1.0f);
-            for (const nlohmann::json& c : a.value("considerations", nlohmann::json::array())) {
+            action.weight = JsonFloat(a, "weight", 1.0f);
+            const nlohmann::json considerations = a.contains("considerations") ? a["considerations"] : nlohmann::json::array();
+            if (!considerations.is_array()) return fail("action '" + action.name + "': considerations must be an array");
+            for (const nlohmann::json& c : considerations) {
                 if (!c.is_object()) return fail("action '" + action.name + "': a consideration must be an object");
                 Consideration cons;
-                cons.name = c.value("name", std::string());
-                cons.input = c.value("input", std::string());
+                cons.name = JsonString(c, "name");
+                cons.input = JsonString(c, "input");
                 if (cons.input.empty()) return fail("action '" + action.name + "': a consideration needs an input key");
-                cons.min = c.value("min", 0.0f);
-                cons.max = c.value("max", 1.0f);
-                cons.missing = c.value("missing", 0.0f);
+                cons.min = JsonFloat(c, "min", 0.0f);
+                cons.max = JsonFloat(c, "max", 1.0f);
+                cons.missing = JsonFloat(c, "missing", 0.0f);
                 if (const auto curve = c.find("curve"); curve != c.end()) {
                     if (!curve->is_object()) return fail("action '" + action.name + "': a curve must be an object");
-                    if (!CurveKindFromName(curve->value("kind", std::string("linear")), cons.curve.kind)) {
+                    if (!CurveKindFromName(JsonString(*curve, "kind", "linear"), cons.curve.kind)) {
                         return fail("action '" + action.name + "': unknown curve '" + JsonString(*curve, "kind") + "'");
                     }
-                    cons.curve.slope = curve->value("slope", 1.0f);
-                    cons.curve.exponent = curve->value("exponent", 2.0f);
-                    cons.curve.shift = curve->value("shift", 0.0f);
+                    cons.curve.slope = JsonFloat(*curve, "slope", 1.0f);
+                    cons.curve.exponent = JsonFloat(*curve, "exponent", 2.0f);
+                    cons.curve.shift = JsonFloat(*curve, "shift", 0.0f);
                 }
                 action.considerations.push_back(std::move(cons));
             }

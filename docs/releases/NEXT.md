@@ -111,3 +111,27 @@ edit from here -- this is the point where the session's tooling has cost more th
 
 Verified working: running the same suite in a plain shell gets **past** the four filesystem and serialization tests that fail
 inside this session, which confirms those four are the confinement and not the code.
+
+## Fixed: the utility loader crash on a numeric action name
+
+The eight malformed documents are now eight tests, and one of them named itself in one run:
+
+    *** fatal signal in test: UtilityLoader_RejectsANumericActionName
+    ***   last check: !Loads(R"({"$type":"UtilityBrain","actions":[{"name":5}]})")
+
+`{"$type":"UtilityBrain","actions":[{"name":5}]}` -- a numeric where a string is expected. The loader had thirteen unchecked
+`json.value(key, default)` reads, and that is the defect: **`value()` throws when the stored type does not match the default's**,
+so a malformed field raises a type error, and while `GuardJsonLoader` catches `std::exception`, the crash came from the one place
+the guard cannot see -- the same shape as `StateTree::Validate`.
+
+All thirteen now go through checked helpers: `JsonString` where a string is expected, a new `JsonFloat` in
+`engine/include/aether/core/json_util.h` where a number is, and an explicit `is_array()` check before iterating considerations,
+which previously iterated `a.value("considerations", array())` and would have thrown on a non-array too.
+
+Verified: all eight `UtilityLoader_*` tests pass, and the crash that used to kill the process at test 128 no longer appears in the
+full suite run.
+
+Also worth recording, because it cost hours: **the local build failures were a full disk.** `D:` had 0.3 GB free of 127 GB, and
+`LNK1201: error writing to program database` is what that looks like, along with `create_directories` failing in the test harness
+and the symbolicate being unable to write its report. Deleting the stale 34 GB build tree took D: to 35.6 GB free and the build
+worked immediately. Every "local fault" explanation in this file should be read with that in mind.
