@@ -360,3 +360,20 @@ That turns the next step into a finite list rather than another hunt: configure 
 `AETHER_BUILD_EDITOR=OFF` and so on one flag at a time, or link each of the 58 in turn, and the one that flips the result names
 itself. It is the first time in this investigation that the candidate set has a known size.
 
+### The flag bisect is invalid: the features are coupled into the test target
+
+Ten `AETHER_BUILD_*` flags differ between the passing minimal tree and the failing default one (devtools, editor, editor UI, MCP,
+net, physics, sandbox, scripting, terrain, Vulkan -- all OFF in the minimal tree, all ON in the default one). Bisecting them
+looked like the obvious next step, so I turned six of the ten OFF and rebuilt: **the build fails with four errors**, because the
+test target's sources require those features.
+
+So the flags cannot be bisected individually, and the only configuration comparison this repository supports is the two extremes:
+everything on, or everything off. That is why the failure has resisted every intermediate experiment -- there is no valid
+intermediate configuration to test.
+
+What is left is the method the diff actually supports: a **link-order bisect over the 58 extra test translation units**. Add them
+to the 158-object build a few at a time and the one whose presence flips the result names itself. That is finite, it does not
+require a valid intermediate *configuration*, and each step is a link rather than a full build.
+
+Not done here. The session has produced the narrowing -- 158 versus 216 objects, the same test object in both, a difference that
+happens before any test runs -- and the next step is mechanical with a known size.
