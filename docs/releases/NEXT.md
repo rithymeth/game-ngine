@@ -26,3 +26,20 @@ Two things it needed that are worth knowing: NSIS could not be installed on this
 certificate error), and `iexpress.exe` produced nothing usable, so the self-extractor embeds a zip payload as a managed
 resource compiled with `csc.exe`. A Vulkan-enabled install also fails for a consumer that lacks the Vulkan SDK, because the
 generated `AetherConfig.cmake` requires it -- which is why the installer builds with Vulkan off.
+
+## The Qt editor crashes at startup, and CI cannot see it
+
+Running the production Qt editor (`aether_editor.exe`, built by `aether_editor_qt`) opens no window and dies with an access
+violation about forty seconds in. Captured output ends at:
+
+    [INFO] D3D12: Selected adapter: NVIDIA GeForce RTX 3050 Laptop GPU
+
+It reproduces from the build tree, not only from an installed copy, so it is not a packaging gap: the editor crashes while
+initialising the D3D12 renderer, after adapter selection and before it creates a window.
+
+The reason CI is green is the shape of the lane. The D3D12 editor job runs `aether_editor.exe --self-test --self-test-repeats 4`,
+and the self-test exercises scene save/load, Play-in-Editor and physics -- it passes, and it never initialises the renderer. So the
+only automated check of the production editor does not start the thing that crashes.
+
+Until this is fixed, the working editor on this machine is the Vulkan ImGui shell. That is the opposite of what the naming
+suggests, and it is worth knowing before a release tells anyone to start `aether_editor.exe`.
