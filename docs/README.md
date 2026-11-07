@@ -43,6 +43,7 @@ without a server or network connection.
 | [design/agent_gameplay_ai_boundary.md](design/agent_gameplay_ai_boundary.md) | Which AI runs inside the game simulation and which runs outside it |
 | [design/history_rewrite.md](design/history_rewrite.md) | Runbook for dropping the large binaries from history, with its status and where the backup is |
 | [design/M8_PACKAGE_RELIABILITY.md](design/M8_PACKAGE_RELIABILITY.md) | The M8 increment over cook, package, verify and release |
+| [design/CLEAN_BUILD_INVESTIGATION.md](design/CLEAN_BUILD_INVESTIGATION.md) | One local build failure and the fifteen explanations that were tested against it |
 
 ## Editor migration
 
@@ -86,6 +87,7 @@ without a server or network connection.
 |---|---|
 | [releases/NEXT.md](releases/NEXT.md) | The working draft of the next release; rewritten into `vX.Y.Z.md` when a version is tagged |
 | [releases/v0.28.0.md](releases/v0.28.0.md) | v0.28.0: netcode and MCP hardening, level instances, and AGENTS.md |
+| [releases/v0.29.0.md](releases/v0.29.0.md) | Verification debt, five gates added or repaired, and the defects each one found |
 | [releases/v0.27.6.md](releases/v0.27.6.md) | v0.27.6: Qt editor startup fix |
 | [releases/v0.27.5.md](releases/v0.27.5.md) | v0.27.5: the current editor in the Windows package |
 | [releases/v0.27.4.md](releases/v0.27.4.md) | v0.27.4: release and cook reliability |

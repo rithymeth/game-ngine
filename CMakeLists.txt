@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(Aether VERSION 0.28.0 LANGUAGES CXX)
+project(Aether VERSION 0.29.0 LANGUAGES CXX)
 
 # The engine version is written by hand in two places -- the project() line above and
 # engine/include/aether/core/version.h (which has both the integer parts and the string) -- and a
