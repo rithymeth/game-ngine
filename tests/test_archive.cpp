@@ -9,9 +9,9 @@ using namespace aether::reflect;
 
 namespace save {
 
-enum class Mood : u8 { Calm, Angry, Sleepy };
+enum class ArchiveMood : u8 { Calm, Angry, Sleepy };
 
-struct Stats {
+struct ArchiveStats {
     i32 level = 1;
     u64 experience = 0;
     f64 precise = 0.0;
@@ -30,11 +30,11 @@ struct Everything {
     f32 single = 0.0f;
     f64 dbl = 0.0;
     std::string text;
-    Mood mood = Mood::Calm;
+    ArchiveMood mood = ArchiveMood::Calm;
     Vec3 position;
     Quaternion rotation;
     Mat4 matrix;
-    Stats stats;
+    ArchiveStats stats;
     i32 cache = 0; // Transient: never saved
 };
 
@@ -54,8 +54,8 @@ struct Grown {
 
 } // namespace save
 
-AETHER_ENUM(save::Mood, 1, AETHER_ENUM_VALUE(Calm), AETHER_ENUM_VALUE(Angry), AETHER_ENUM_VALUE(Sleepy))
-AETHER_REFLECT(save::Stats, 1, AETHER_FIELD(level), AETHER_FIELD(experience), AETHER_FIELD(precise))
+AETHER_ENUM(save::ArchiveMood, 1, AETHER_ENUM_VALUE(Calm), AETHER_ENUM_VALUE(Angry), AETHER_ENUM_VALUE(Sleepy))
+AETHER_REFLECT(save::ArchiveStats, 1, AETHER_FIELD(level), AETHER_FIELD(experience), AETHER_FIELD(precise))
 AETHER_REFLECT(save::Everything, 3,
     AETHER_FIELD(flag), AETHER_FIELD(tiny), AETHER_FIELD(small), AETHER_FIELD(medium), AETHER_FIELD(large),
     AETHER_FIELD(byte), AETHER_FIELD(ushort), AETHER_FIELD(uint), AETHER_FIELD(ulong),
@@ -82,7 +82,7 @@ save::Everything MakeInteresting() {
     e.single = 0.1f;
     e.dbl = 3.141592653589793;
     e.text = "quote \" backslash \\ unicode \xC3\xA9 newline \n";
-    e.mood = save::Mood::Sleepy;
+    e.mood = save::ArchiveMood::Sleepy;
     e.position = Vec3(1.5f, -2.25f, 1e-7f);
     e.rotation = Quaternion(0.0f, 0.70710677f, 0.0f, 0.70710677f);
     e.matrix = Mat4::Translation(Vec3(4, 5, 6));
@@ -217,7 +217,7 @@ AETHER_TEST(Archive_BadValuesAreSkippedWithWarnings) {
     loaded.medium = 11;
     loaded.byte = 12;
     loaded.text = "keep";
-    loaded.mood = save::Mood::Angry;
+    loaded.mood = save::ArchiveMood::Angry;
     loaded.flag = true;
 
     LoadReport report;
@@ -240,7 +240,7 @@ AETHER_TEST(Archive_BadValuesAreSkippedWithWarnings) {
     AETHER_CHECK(loaded.uint == 0);
     AETHER_CHECK(loaded.tiny == 0);
     AETHER_CHECK(loaded.text == "keep");
-    AETHER_CHECK(loaded.mood == save::Mood::Angry);
+    AETHER_CHECK(loaded.mood == save::ArchiveMood::Angry);
     AETHER_CHECK(loaded.flag == true);
     AETHER_CHECK(loaded.position.x == 9.0f && loaded.position.y == 8.0f && loaded.position.z == 0.0f);
     AETHER_CHECK(loaded.dbl == 2.5); // good values next to bad ones still load
@@ -254,7 +254,7 @@ AETHER_TEST(Archive_BadValuesAreSkippedWithWarnings) {
 
     // Enums also accept their numeric value.
     AETHER_CHECK(LoadJsonText(loaded, R"({"mood": 0})"));
-    AETHER_CHECK(loaded.mood == save::Mood::Calm);
+    AETHER_CHECK(loaded.mood == save::ArchiveMood::Calm);
 }
 
 AETHER_TEST(Archive_UnparsableOrWrongShapeFails) {

@@ -29,11 +29,11 @@ struct Profile {
     std::vector<i32> inventory;
     bool hard_mode = false;
 };
-struct Other {
+struct SaveOther {
     i32 x = 0;
 };
 // Version 2 renamed "hp" to "health" and added "shield"; the migration hook carries old saves over.
-struct Fighter {
+struct SaveFighter {
     f32 health = 10.0f;
     f32 shield = 5.0f;
 };
@@ -47,8 +47,8 @@ void MigrateFighter(u16 from, reflect::Json& data) {
 
 AETHER_REFLECT(save_test::Profile, 1, AETHER_FIELD(level, Field_EditAnywhere), AETHER_FIELD(health, Field_EditAnywhere),
                AETHER_FIELD(name, Field_EditAnywhere), AETHER_FIELD(inventory, Field_EditAnywhere), AETHER_FIELD(hard_mode, Field_EditAnywhere))
-AETHER_REFLECT(save_test::Other, 1, AETHER_FIELD(x, Field_EditAnywhere))
-AETHER_REFLECT(save_test::Fighter, 2, AETHER_FIELD(health, Field_EditAnywhere), AETHER_FIELD(shield, Field_EditAnywhere))
+AETHER_REFLECT(save_test::SaveOther, 1, AETHER_FIELD(x, Field_EditAnywhere))
+AETHER_REFLECT(save_test::SaveFighter, 2, AETHER_FIELD(health, Field_EditAnywhere), AETHER_FIELD(shield, Field_EditAnywhere))
 
 namespace {
 
@@ -124,14 +124,14 @@ AETHER_TEST(Save_ListsExistsAndDeletesSlots) {
     SaveSystem saves(Dir("List"));
     CHECK(saves.ListSlots().empty() && !saves.Exists("a"));
     save_test::Profile p = Sample();
-    save_test::Other o;
+    save_test::SaveOther o;
     CHECK(saves.Save("beta", p).ok && saves.Save("alpha", o).ok);
     WriteAll(saves.Directory() / "junk.asav", "not a save");
     WriteAll(saves.Directory() / "notes.txt", "ignored");
     CHECK(saves.Exists("alpha") && saves.Exists("beta") && !saves.Exists("gamma"));
     const std::vector<SlotInfo> slots = saves.ListSlots();
     CHECK(slots.size() == 3 && slots[0].slot == "alpha" && slots[1].slot == "beta" && slots[2].slot == "junk");
-    CHECK(slots[0].valid && slots[0].type == "Other" && slots[0].version == 1 && slots[0].bytes > 0 && slots[0].timestamp > 1000000);
+    CHECK(slots[0].valid && slots[0].type == "SaveOther" && slots[0].version == 1 && slots[0].bytes > 0 && slots[0].timestamp > 1000000);
     CHECK(slots[1].type == "Profile" && !slots[2].valid && slots[2].type.empty());
     CHECK(saves.DeleteSlot("alpha").ok && !saves.Exists("alpha") && saves.DeleteSlot("alpha").error == SaveError::NotFound);
     CHECK(saves.Load("alpha", o).error == SaveError::NotFound);
@@ -213,9 +213,9 @@ AETHER_TEST(Save_RefusesTheWrongTypeAndNewerVersions) {
     SaveSystem saves(Dir("Types"));
     save_test::Profile p = Sample();
     CHECK(saves.Save("a", p).ok);
-    save_test::Other o;
+    save_test::SaveOther o;
     SaveResult r = saves.Load("a", o);
-    CHECK(!r.ok && r.error == SaveError::WrongType && r.message.find("Profile") != std::string::npos && r.message.find("Other") != std::string::npos);
+    CHECK(!r.ok && r.error == SaveError::WrongType && r.message.find("Profile") != std::string::npos && r.message.find("SaveOther") != std::string::npos);
     // A save from a newer version of the struct isn't guessed at, and isn't replaced by the backup.
     WriteAll(saves.Directory() / "future.asav", Envelope("Profile", 9, reflect::Json{{"$v", 9}, {"level", 5}}));
     save_test::Profile loaded;
@@ -224,12 +224,12 @@ AETHER_TEST(Save_RefusesTheWrongTypeAndNewerVersions) {
 }
 
 AETHER_TEST(Save_MigratesOlderVersionsAndKeepsDefaultsForNewFields) {
-    reflect::RegisterMigration<save_test::Fighter>(&save_test::MigrateFighter);
+    reflect::RegisterMigration<save_test::SaveFighter>(&save_test::MigrateFighter);
     SaveSystem saves(Dir("Migrate"));
     // Version 1 called it "hp" and had no shield.
     stdfs::create_directories(saves.Directory());
-    WriteAll(saves.Directory() / "old.asav", Envelope("Fighter", 1, reflect::Json{{"$v", 1}, {"hp", 77.0f}}));
-    save_test::Fighter f;
+    WriteAll(saves.Directory() / "old.asav", Envelope("SaveFighter", 1, reflect::Json{{"$v", 1}, {"hp", 77.0f}}));
+    save_test::SaveFighter f;
     const SaveResult r = saves.Load("old", f);
     CHECK(r.ok && f.health == 77.0f && f.shield == 5.0f); // renamed by the hook; the new field keeps its default
     // Saving again writes the current version.
@@ -237,8 +237,8 @@ AETHER_TEST(Save_MigratesOlderVersionsAndKeepsDefaultsForNewFields) {
     const reflect::Json j = reflect::Json::parse(ReadAll(saves.Directory() / "old.asav"));
     CHECK(j["type_version"] == 2 && j["data"]["health"] == 77.0f);
     // An unknown field in the data (from another build) is ignored, with a warning.
-    WriteAll(saves.Directory() / "extra.asav", Envelope("Fighter", 2, reflect::Json{{"$v", 2}, {"health", 1.0f}, {"mystery", 3}}));
-    save_test::Fighter g;
+    WriteAll(saves.Directory() / "extra.asav", Envelope("SaveFighter", 2, reflect::Json{{"$v", 2}, {"health", 1.0f}, {"mystery", 3}}));
+    save_test::SaveFighter g;
     CHECK(saves.Load("extra", g).ok && g.health == 1.0f);
 }
 

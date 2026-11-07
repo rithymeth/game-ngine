@@ -10,7 +10,7 @@
 using namespace aether;
 
 namespace scheduler_test {
-struct Health {
+struct ScheduledHealth {
     f32 value = 100.0f;
 };
 struct Score {
@@ -21,7 +21,7 @@ struct Ammo {
 };
 } // namespace scheduler_test
 
-AETHER_REFLECT(scheduler_test::Health, 1, AETHER_FIELD(value))
+AETHER_REFLECT(scheduler_test::ScheduledHealth, 1, AETHER_FIELD(value))
 AETHER_REFLECT(scheduler_test::Score, 1, AETHER_FIELD(value))
 AETHER_REFLECT(scheduler_test::Ammo, 1, AETHER_FIELD(value))
 
@@ -49,11 +49,11 @@ bool Near(f32 a, f32 b, f32 eps = 1e-4f) { return std::fabs(a - b) < eps; }
 AETHER_TEST(Scheduler_OrdersByAccessAndAfter) {
     SystemScheduler s;
     AETHER_CHECK(s.Add(Make("Move", {}, Access<Transform>())));
-    AETHER_CHECK(s.Add(Make("Regen", {}, Access<Health>())));
+    AETHER_CHECK(s.Add(Make("Regen", {}, Access<ScheduledHealth>())));
     AETHER_CHECK(s.Add(Make("Aim", Access<Transform>(), Access<Ammo>())));    // reads what Move writes
     AETHER_CHECK(s.Add(Make("Hud", {}, {}, {"Aim"})));                        // explicitly after Aim
-    AETHER_CHECK(s.Add(Make("Score", Access<Health>(), Access<Score>())));    // reads what Regen writes
-    AETHER_CHECK(s.Add(Make("Log", Access<Health, Transform>(), {})));        // readers don't conflict with readers
+    AETHER_CHECK(s.Add(Make("Score", Access<ScheduledHealth>(), Access<Score>())));    // reads what Regen writes
+    AETHER_CHECK(s.Add(Make("Log", Access<ScheduledHealth, Transform>(), {})));        // readers don't conflict with readers
     std::string error;
     AETHER_CHECK(s.Build(&error));
     AETHER_CHECK((s.Levels(SystemPhase::Update) ==
@@ -132,10 +132,10 @@ AETHER_TEST(Scheduler_RunsInParallelWithoutConflicts) {
         s.Add(std::move(system));
     };
     add("W1", {}, Access<Transform>());
-    add("W2", {}, Access<Health>());
+    add("W2", {}, Access<ScheduledHealth>());
     add("W3", {}, Access<Score>());
     add("W4", {}, Access<Ammo>());
-    add("R1", Access<Transform, Health>(), {});
+    add("R1", Access<Transform, ScheduledHealth>(), {});
     add("R2", Access<Transform, Score>(), {});
     add("Ui", Access<Score>(), {}, /*main_only=*/true);
     add("W1b", {}, Access<Transform>());

@@ -19,12 +19,12 @@
 // placement, drawing, hit testing and input).
 
 namespace uitest5 {
-struct Health {
+struct UiTextHealth {
     aether::f32 current = 50.0f;
     aether::f32 max = 100.0f;
 };
 } // namespace uitest5
-AETHER_REFLECT(uitest5::Health, 1, AETHER_FIELD(current), AETHER_FIELD(max))
+AETHER_REFLECT(uitest5::UiTextHealth, 1, AETHER_FIELD(current), AETHER_FIELD(max))
 
 using namespace aether;
 using namespace aether::ui;
@@ -281,7 +281,7 @@ AETHER_TEST(UI_WorldSpaceWidgets) {
             {"type":"Text","name":"Name","text":"Enemy","size":16,"slot":{"position":[0,0],"auto_size":true}},
             {"type":"ProgressBar","name":"HP","slot":{"position":[0,20],"size":[140,20]}},
             {"type":"Button","name":"Talk","slot":{"position":[150,5],"size":[40,30]}}]},
-            "bindings":[{"widget":"HP","property":"percent","source":"Health.current","divide_by":"Health.max"}]})"},
+            "bindings":[{"widget":"HP","property":"percent","source":"UiTextHealth.current","divide_by":"UiTextHealth.max"}]})"},
         {"Console", R"({"root":{"type":"Canvas","children":[{"type":"Button","name":"Use","slot":{"position":[50,25],"size":[100,50]}}]}})"},
     };
     UISystem::LayoutLoader loader = [&](const std::string& name, LayoutDocument& out, std::string* error) {
@@ -293,7 +293,7 @@ AETHER_TEST(UI_WorldSpaceWidgets) {
         return LoadLayout(it->second, out, {}, error);
     };
     World world;
-    (void)GetComponentId<uitest5::Health>();
+    (void)GetComponentId<uitest5::UiTextHealth>();
     WorldUISystem sys(world, kFont, loader);
     AETHER_CHECK(WorldUISystem::Active() == &sys);
 
@@ -311,7 +311,7 @@ AETHER_TEST(UI_WorldSpaceWidgets) {
     WorldWidgetComponent bar;
     bar.layout = "HealthBar";
     bar.interactive = true;
-    const Entity enemy = world.CreateEntity(at({0, 0, -10}), uitest5::Health{}, bar);
+    const Entity enemy = world.CreateEntity(at({0, 0, -10}), uitest5::UiTextHealth{}, bar);
     sys.Update(cam, 0.016f);
     for (const std::string& p : sys.Problems()) std::printf("    %s\n", p.c_str());
     AETHER_CHECK(sys.Problems().empty() && sys.RootOf(enemy) != nullptr && sys.ShownCount() == 1);
@@ -323,7 +323,7 @@ AETHER_TEST(UI_WorldSpaceWidgets) {
     // Bound to its own entity's components.
     auto* hp = static_cast<ProgressBar*>(sys.FindWidget(enemy, "HP"));
     AETHER_CHECK(Near(hp->percent, 0.5f));
-    world.GetComponent<uitest5::Health>(enemy)->current = 25;
+    world.GetComponent<uitest5::UiTextHealth>(enemy)->current = 25;
     sys.Update(cam, 0.016f);
     AETHER_CHECK(Near(hp->percent, 0.25f));
     // Drawn in pixels over the entity, clipped to its box.
@@ -363,7 +363,7 @@ AETHER_TEST(UI_WorldSpaceWidgets) {
     WorldWidgetComponent far_bar = bar;
     far_bar.reference_distance = 10.0f;
     far_bar.min_scale = 0.25f;
-    const Entity far = world.CreateEntity(at({0, 0, -20}), uitest5::Health{}, far_bar);
+    const Entity far = world.CreateEntity(at({0, 0, -20}), uitest5::UiTextHealth{}, far_bar);
     sys.Update(cam, 0.016f);
     const WorldUISystem::Placement* fp = sys.PlacementOf(far);
     AETHER_CHECK(fp->shown && Near(fp->scale, 10.0f / std::sqrt(404.0f)) && Near(fp->rect.w, 200 * fp->scale));

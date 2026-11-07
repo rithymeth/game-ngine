@@ -13,12 +13,12 @@
 // Blueprints (WidgetComponent, UISystem, the UI node library, widget events).
 
 namespace uitest4 {
-struct Health {
+struct UiWidgetHealth {
     aether::f32 current = 80.0f;
     aether::f32 max = 100.0f;
 };
 } // namespace uitest4
-AETHER_REFLECT(uitest4::Health, 1, AETHER_FIELD(current), AETHER_FIELD(max))
+AETHER_REFLECT(uitest4::UiWidgetHealth, 1, AETHER_FIELD(current), AETHER_FIELD(max))
 
 using namespace aether;
 using namespace aether::ui;
@@ -146,7 +146,7 @@ AETHER_TEST(UI_RenderTransformsAndAnimations) {
 }
 
 AETHER_TEST(UI_WidgetBlueprintsAndSystem) {
-    // Layouts by name: a HUD bound to the entity's Health, and a menu.
+    // Layouts by name: a HUD bound to the entity's UiWidgetHealth, and a menu.
     const std::map<std::string, std::string> files = {
         {"HUD", R"({"version":1,
             "root":{"type":"Canvas","children":[
@@ -155,8 +155,8 @@ AETHER_TEST(UI_WidgetBlueprintsAndSystem) {
                 {"type":"Text","name":"Status","text":"","slot":{"position":[20,100],"auto_size":true}},
                 {"type":"Button","name":"Pause","class":"Primary","slot":{"position":[1700,20],"size":[200,60]},"children":[{"type":"Text","text":"Pause"}]},
                 {"type":"Slider","name":"Volume","max":100,"slot":{"position":[1600,200],"size":[200,24]}}]},
-            "bindings":[{"widget":"HPText","property":"text","source":"Health.current","format":"HP {}"},
-                        {"widget":"HPBar","property":"percent","source":"Health.current","divide_by":"Health.max"}],
+            "bindings":[{"widget":"HPText","property":"text","source":"UiWidgetHealth.current","format":"HP {}"},
+                        {"widget":"HPBar","property":"percent","source":"UiWidgetHealth.current","divide_by":"UiWidgetHealth.max"}],
             "animations":[{"name":"Flash","tracks":[{"widget":"Status","property":"opacity","keys":[[0,0],[0.2,1]]}]}]})"},
         {"Menu", R"({"root":{"type":"Canvas","children":[{"type":"Text","name":"Title","text":"Menu"}]}})"},
     };
@@ -174,14 +174,14 @@ AETHER_TEST(UI_WidgetBlueprintsAndSystem) {
     theme.styles["Button.Primary"] = primary;
 
     World world;
-    (void)GetComponentId<uitest4::Health>();
+    (void)GetComponentId<uitest4::UiWidgetHealth>();
     Viewport vp;
     UIInputRouter router(vp, kFont);
     UISystem sys(world, vp, router, loader, &theme);
     AETHER_CHECK(UISystem::Active() == &sys);
     WidgetComponent hud;
     hud.layout = "HUD";
-    const Entity player = world.CreateEntity(uitest4::Health{}, hud);
+    const Entity player = world.CreateEntity(uitest4::UiWidgetHealth{}, hud);
     sys.Update(0.016f);
     for (const std::string& p : sys.Problems()) std::printf("    %s\n", p.c_str());
     AETHER_CHECK(sys.Problems().empty() && sys.RootOf(player) != nullptr && vp.LayerCount() == 1);
@@ -190,7 +190,7 @@ AETHER_TEST(UI_WidgetBlueprintsAndSystem) {
     AETHER_CHECK(hp_text->text == "HP 80" && Near(hp_bar->percent, 0.8f));
     AETHER_CHECK(Near(static_cast<Button*>(sys.FindWidget(player, "Pause"))->style.text_size, 30)); // themed
     // Bindings follow the component, even after the entity changes archetype (its storage moves).
-    world.GetComponent<uitest4::Health>(player)->current = 40;
+    world.GetComponent<uitest4::UiWidgetHealth>(player)->current = 40;
     world.AddComponent(player, Transform{});
     sys.Update(0.016f);
     AETHER_CHECK(hp_text->text == "HP 40" && Near(hp_bar->percent, 0.4f));
