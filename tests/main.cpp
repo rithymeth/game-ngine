@@ -1,3 +1,4 @@
+#include <cerrno>
 #include "test_framework.h"
 
 #include <csignal>
@@ -114,7 +115,15 @@ std::filesystem::path PrepareRunDirectory() {
     const auto dir = root / ("aether-tests-" + std::to_string(ProcessId()));
     // A directory left by a killed run of this same process id is stale by definition.
     std::filesystem::remove_all(dir, error);
-    if (!std::filesystem::create_directories(dir, error) && !std::filesystem::exists(dir, error)) return {};
+    error.clear();
+    if (!std::filesystem::create_directories(dir, error) && !std::filesystem::exists(dir, error)) {
+        // Returning empty silently left every writing test pointed at the system temp directory, which is the one thing
+        // this function exists to prevent -- a file from an earlier run then fails a later one before its logic runs.
+        std::fprintf(stderr, "scratch directory %s could not be created (%s, errno=%d); writing tests will use %s\n",
+                     dir.string().c_str(), error.message().c_str(), errno,
+                     std::filesystem::temp_directory_path(error).string().c_str());
+        return {};
+    }
     return dir;
 }
 

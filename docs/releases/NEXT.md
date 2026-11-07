@@ -160,3 +160,24 @@ sandbox or filter on that specific process, not on the path.
 `Serialization_LegacyV1SceneStillLoads` takes a fatal signal rather than reporting a failure, which is the same write path: a
 `SaveScene` that cannot open its file and then dereferences something instead of returning. Making `WriteFileBytes` honest (this
 change) is what will let that test fail properly instead of crashing once the open succeeds or the caller is guarded.
+
+## The filesystem failures are the harness process, not the engine
+
+The runner now reports a scratch directory it cannot create, and that closed the last gap:
+
+    scratch directory D:\aether-temp-experiment\aether-tests-21384 could not be created
+    (The operation completed successfully., errno=0); writing tests will use D:\aether-temp-experiment
+    WriteFileBytes: could not open 'D:\aether-temp-experiment\aether_test_text.txt' (errno=13: Permission denied)
+
+Pointed at a brand-new directory on **D:**, created by the shell moments earlier, the test process created **nothing at all** --
+the directory was empty afterwards. A 20-line native probe compiled the same way, creating the same filenames in the same
+directories, succeeds with `errno=0` every time.
+
+`create_directories` returning false with a cleared error code and `exists` then returning false is not a filesystem behaviour
+this code can produce. It is what an intercepted process looks like.
+
+**So the four filesystem and serialization failures are the harness's own process confinement, not defects in `fs::`, the
+runner, or the serialization.** CI is green on the same commit for that reason.
+
+Proof is one command in a plain shell, and it has to run **outside** this session, because the earlier outside run never reached
+these tests -- it died at the utility-loader crash first, which is now fixed.
