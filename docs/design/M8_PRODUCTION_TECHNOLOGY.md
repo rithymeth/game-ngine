@@ -394,19 +394,24 @@ left needs infrastructure this milestone does not have, and saying that plainly 
 None of these needs a new engine capability, which was the milestone's premise — but all four need **machinery outside the
 engine's current test process**, which is why they are recorded as a work item rather than continued as increments.
 
-### Where the fault hook would go
+### Where the fault hook went
 
-Located so the work item is executable rather than aspirational. In `engine/src/gfx/rhi/d3d12/d3d12_backend.cpp` the buffer
-paths all pass through **`ReserveBufferRegistryEntry()`** (three call sites) and the GPU allocations through four inline
-`CreateCommittedResource` calls; wrapping those two choke points gives every buffer and texture creation a single
-injectable step. The Vulkan backend has the equivalent pair. A hook that counts creations and fails the Nth — enabled only
-when an environment variable such as `AETHER_RHI_FAIL_AT` is set, so nothing changes in a normal run — is then between one
-and two days of work rather than an unknown.
+Built on 7 November 2026, where the plan said it would go: `AETHER_RHI_FAIL_ALLOCATION_AT=N` fails every Nth allocation in
+`engine/src/gfx/rhi/d3d12/d3d12_backend.cpp`, hooked at `ReserveBufferRegistryEntry()` for the buffer registry and inside
+`CreateTexture` for the texture path. It is opt-in through the environment, so a normal run never sees it, and
+`RHI_D3D12FaultInjectionFailsTheArmedAllocation` proves both registries and both recoveries -- armed creation throws,
+disarmed creation succeeds and its handle is destroyed.
 
-The catch, and the reason this is not simply an increment: **most of the rows it unblocks are Vulkan-only** (6, 9, 10, 11,
-50, 52, 53 are Vulkan partial-construction cleanup). The hook is portable, but on a machine without Vulkan it can only
-reach the D3D12 side — rows 55 and 61 — which is two of thirty-seven. The hook and a Vulkan-capable runner are therefore a
-single work item, not two.
+Getting it to fire took four wrong explanations, all recorded in the source because the last one is the useful one: the
+hook's first version reset its counter only when the armed value changed *as the hook observed it*, and no allocation
+happens while a test disarms and re-arms, so re-arming to the same N was silently ignored. The buffer path worked only
+because it was the first arm. It now fails every Nth allocation and restarts after each failure.
+
+The catch recorded in this section before it was built still stands, and the build did not change it: **most of the rows it
+unblocks are Vulkan-only** (6, 9, 10, 11, 50, 52, 53 are Vulkan partial-construction cleanup). This machine cannot run the
+Vulkan backend, so the hook reaches the D3D12 rows -- 55 and 61, which are fence-event paths the current hook does not cover
+either -- and nothing more. Wiring the Vulkan backend is a small change; running it is the missing piece, and writing it
+untested would be a claim rather than a capability.
 
 ## Deferred from M8
 
