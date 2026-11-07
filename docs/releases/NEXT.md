@@ -106,10 +106,14 @@ describes what is on `master`, not a promise of a version number or a date.
   `AETHER_HAS_EXAMPLE_PLATFORM` appear nowhere in the tests or the filesystem implementation they exercise. A definition that
   nothing reads cannot change behaviour, so the four-item list above shrinks to the toolchain itself: how the same source is
   compiled, not what it is told.
-  That leaves two candidates, and file I/O rules out the first on inspection: `/arch:AVX2` cannot change `WriteFileBytes` or
-  `ReadFileText`, which open a stream and copy bytes. What is left is `/permissive-` and the runtime-library selection the two
-  generators make, either of which can change how `std::filesystem` overloads resolve or how `std::ifstream` reports a
-  failure. The next experiment is to build the Visual Studio tree with `/arch:AVX2` and `/permissive-` added and see whether
-  the failures disappear; if they do, bisect those two; if they do not, the difference is in the CRT linkage, which is a
-  generator-level setting rather than a flag.
-  Cause still not diagnosed.
+  **Tested, and both are ruled out.** The Visual Studio tree was reconfigured with
+  `CMAKE_CXX_FLAGS="/arch:AVX2 /permissive-"` and rebuilt from scratch (0 errors): the filesystem checks still report 2/4. The
+  cause is not the compiler command line at all, and the two trees now compile the same source with the same flags and still
+  disagree.
+  What remains is the generator's build and link settings rather than its flags: whole-program optimisation, linker defaults,
+  and the project-scope `ItemDefinitionGroup` options CMake emits for a Visual Studio solution and not for Ninja. The next
+  step is to diff the `.vcxproj`'s `Link` settings and project-scope options against Ninja's link rule -- a much shorter list
+  than where this started.
+  Seven things have now been eliminated: tree age, the test temp directory, a copied-binary test that inverted itself, the
+  differing preprocessor definitions (unreferenced in the source), `/arch:AVX2`, and `/permissive-`. Cause still not
+  diagnosed.
