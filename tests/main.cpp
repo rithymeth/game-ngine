@@ -1,3 +1,4 @@
+#include <cstdlib>
 #include <cerrno>
 #include "test_framework.h"
 
@@ -109,9 +110,25 @@ LONG WINAPI OnUnhandledException(EXCEPTION_POINTERS* info) {
 // a private directory and point the temp environment at it: one place instead of 150 test-side helpers.
 std::filesystem::path PrepareRunDirectory() {
     std::error_code error;
-    std::filesystem::path root = std::filesystem::temp_directory_path(error);
-    if (error) root = std::filesystem::current_path(error);
-    if (error) return {};
+    // AETHER_TEST_TEMP_DIR keeps scratch state off the system disk. CMake's aether_test_scratch_dir sets it for the ctest
+    // entries; this honours it when the test binary is run directly too, which is how a developer usually runs it and is
+    // why a machine can end up with scratch on one drive and the system temp on another.
+    std::filesystem::path root;
+    if (const char* configured = std::getenv("AETHER_TEST_TEMP_DIR"); configured != nullptr && *configured != '\0') {
+        root = std::filesystem::path(configured);
+        std::filesystem::create_directories(root, error);
+        if (error) {
+            std::fprintf(stderr, "AETHER_TEST_TEMP_DIR=%s could not be used (%s); falling back to the system temp\n",
+                         configured, error.message().c_str());
+            root.clear();
+            error.clear();
+        }
+    }
+    if (root.empty()) {
+        root = std::filesystem::temp_directory_path(error);
+        if (error) root = std::filesystem::current_path(error);
+        if (error) return {};
+    }
     const auto dir = root / ("aether-tests-" + std::to_string(ProcessId()));
     // A directory left by a killed run of this same process id is stale by definition.
     std::filesystem::remove_all(dir, error);
