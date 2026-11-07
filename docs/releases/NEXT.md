@@ -73,3 +73,15 @@ describes what is on `master`, not a promise of a version number or a date.
   locally and failed in CI.
 - **`doc_links`** checks that every relative link in `docs/**/*.md` resolves, which is the check that would have noticed a
   design document cited as authoritative while it was absent from the repository.
+
+- **A clean build tree fails eight checks that an incremental tree passes.** Found 7 November 2026 by configuring and
+  building a second, empty tree from the same sources with the same cache settings (`AETHER_BUILD_EVERVALE_REBOOT=ON`,
+  `AETHER_ENABLE_ASSERTIONS=OFF`) and running ctest in it: `aether_tests` plus four game suites failed, where the
+  long-lived tree passes 55/55. The failing checks are `Filesystem_WriteThenReadBytesRoundTrips`,
+  `Filesystem_WriteThenReadTextRoundTrips`, `Serialization_RoundTripsComponentsAcrossWorlds`,
+  `Serialization_ReflectedComponentsUseDeclaredNames` and the game's smoke, audio, resident-art and building-art suites.
+  The log shows the reflection registry reporting **duplicate declared type names** ("Health", "Decal", "Team", "Stats",
+  "Mood", "Other", "Fighter") in the clean tree, which the serialization tests are downstream of. Disk space is not the
+  cause (29 GB free). **The cause is not yet known and is not diagnosed here** -- the finding is that a release cannot be
+  signed from a long-lived build directory, which is how every local gate this session was run. Reproduce by configuring a
+  new empty build directory from the same sources and running the gate in it.
