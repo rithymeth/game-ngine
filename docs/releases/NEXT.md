@@ -181,3 +181,29 @@ second each, which is a start-up failure rather than a behavioural one.
 that fit partial evidence; the fresh-tree rebuild is the measurement that settles it. Next step is unchanged in method and much
 higher in priority: run `aether_tests` from `build-fresh-ninja/` and read the first four failures, which are the same ones the
 Visual Studio tree showed.
+
+### The filesystem failure, measured
+
+Instrumented `Filesystem_WriteThenReadTextRoundTrips` in the fresh tree rather than reasoning about it again, and the probe
+contradicted the shape I had inferred:
+
+```
+CHECK failed: fs::WriteFileBytes(path, content.data(), content.size())
+[PROBE] path=C:\Users\pilot\AppData\Local\Temp\aether_test_text.txt exists=0 size=0
+        temp=C:\Users\pilot\AppData\Local\Temp\
+```
+
+Two things, both concrete:
+
+1. **The write returns false.** It does not "succeed and vanish" -- `WriteFileBytes` cannot open the file at all. The
+   previous note said the write reported success and the read-back failed; that was inferred from the failure lines without
+   the write's own check visible, and it was wrong.
+2. **The harness's private run directory is not in effect.** `temp_directory_path()` returns the real
+   `C:\Users\pilot\AppData\Local\Temp`, not the `aether-tests-<pid>` directory the harness is documented to point
+   `TEMP`/`TMP`/`TMPDIR` at before the first test and remove afterwards. So the redirect that is supposed to isolate every run
+   is not happening in this build.
+
+That means the write is failing against the real temp directory, and the isolation the harness documents is absent. Either is a
+bug on its own; together they explain the check without explaining why the open fails, which is the next question and needs the
+`errno` the stream sets rather than another guess.
+
