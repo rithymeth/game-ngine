@@ -377,3 +377,35 @@ require a valid intermediate *configuration*, and each step is a link rather tha
 
 Not done here. The session has produced the narrowing -- 158 versus 216 objects, the same test object in both, a difference that
 happens before any test runs -- and the next step is mechanical with a known size.
+
+### The retraction was wrong: the repository does fail its own gate
+
+Turned every differing feature flag OFF in the fresh tree -- devtools, editor, editor UI, MCP, net, physics, sandbox, scripting,
+terrain, Vulkan -- and rebuilt. The build succeeds, and the test target still contains **216 objects**. The minimal tree's 158 is
+not a configuration at all: it is **stale**. Its `tests/CMakeLists.txt` predates 58 test files that exist in the repository now.
+
+So the two "passing" trees are both stale in different ways:
+
+| tree | objects | why it passes |
+|---|---|---|
+| `build/` | 55/55 | links the deleted `platform_plugins/` directory |
+| `build-evervale-verify/` | 158 | **predates 58 test files** |
+| `build-clean-verify/` | 216 | **fails** |
+| `build-fresh-ninja/` | 216 | **fails** |
+
+**The repository as committed fails 4 of 54 checks in a full build.** That was three note sections ago and I retracted it after
+seeing that CI passed -- but CI passing and this failing are not in conflict, because CI and this machine are not building the
+same set of 58 translation units. The retraction was premature: I generalised from "CI is green" to "the configuration is fine"
+without checking that the object counts matched.
+
+What is now established with no inference left:
+- A full build of the committed repository fails `Filesystem_WriteThenReadBytesRoundTrips`,
+  `Filesystem_WriteThenReadTextRoundTrips`, `Serialization_RoundTripsComponentsAcrossWorlds` and
+  `Serialization_ReflectedComponentsUseDeclaredNames`.
+- The failure happens **before any test runs** (a single filtered test fails), and the test object is identical in the passing
+  and failing binaries, so the difference comes from another object's static initialisation or link-time state.
+- The candidate set is the 58 test translation units the stale tree never compiled -- **not** any feature flag, since turning
+  them all off changes nothing.
+
+The next step is a link bisect over those 58, starting with the ones that register reflection state at namespace scope.
+
