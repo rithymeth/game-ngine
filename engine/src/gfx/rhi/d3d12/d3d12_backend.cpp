@@ -828,13 +828,14 @@ SampledTextureHandle D3D12Device::CreateTexture(u32 width, u32 height, const u8*
 
     gfx::CommandList setup_cmd(device_);
     setup_cmd.Reset();
-        // NOT COVERED BY A TEST, and the guard is NOT EXECUTED on this path (7 November 2026). The buffer hook is
-        // proven by RHI_D3D12FaultInjectionFailsTheArmedAllocation. Arming for N = 1, 2, 3 and 4 in turn and calling
-        // CreateTexture(2, 2, pixels) produced a valid handle and no throw EVERY time, so this is not a mis-armed hook --
-        // the texture creation the caller reaches does not pass through this function. Two candidates: another overload
-        // handles it, or the bound gfx::Texture construction happens on a path that never enters this block. Find the
-        // real path before enabling the texture rows of the verification queue; a hook inserted in dead code is worse
-        // than none, because it looks like coverage.
+        // NOT COVERED BY A TEST (7 November 2026). The buffer hook is proven by
+        // RHI_D3D12FaultInjectionFailsTheArmedAllocation. This guard IS REACHED -- an AETHER_LOG_ERROR placed directly
+        // above it printed on every texture creation -- but arming AETHER_RHI_FAIL_ALLOCATION_AT for N = 1, 2, 3 and 4
+        // produced a valid handle and no throw every time, while the same arm fires in the buffer path. So the hook
+        // evaluates false here for a reason that is not "not reached" and not "another overload" (there is only one
+        // CreateTexture in this file): the environment the helper observes differs between the two call sites. The next
+        // step is a breakpoint on FailAllocationForTest from CreateTexture, not another guess.
+        // A hook that looks installed and never fires is worse than none, because it reads as coverage.
     if (FailAllocationForTest()) {
         throw std::runtime_error("D3D12 texture creation failed (AETHER_RHI_FAIL_ALLOCATION_AT)");
     }
