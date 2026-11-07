@@ -749,21 +749,16 @@ void ApplyAnimationToNodes(const GltfScene& scene, const GltfAnimation& animatio
 
 static bool ParseGltfText(const std::string& text, const std::string& path, bool allow_external,
                           GltfScene& out_scene) {
-    Json gltf;
-    std::fprintf(stderr, "[trace] ParseGltfText enter, %zu bytes\n", text.size());
-    try {
-        gltf = Json::parse(text);
-    } catch (const std::exception& e) {
-        std::fprintf(stderr, "[trace] parse threw: %s\n", e.what());
-        // Not just parse_error: nlohmann throws type_error from value() and get<>() when a field holds the wrong type, and
-        // a document with a malformed field reached the caller as an uncaught exception, ending the process.
-        std::fprintf(stderr, "[trace] about to GltfError\n");
-        GltfError("Failed to parse \"%s\": %s", path.c_str(), e.what());
-        std::fprintf(stderr, "[trace] GltfError returned\n");
+    // Parsed without exceptions. A malformed document used to die inside Json::parse itself -- the trace showed the call
+    // entered and never reached the catch -- so the throwing path is avoided entirely and a discarded value is the error.
+    // The try/catch below still covers the type errors that value() and get<>() raise on a well-formed but wrong-typed
+    // document.
+    Json gltf = Json::parse(text, nullptr, /*allow_exceptions=*/false);
+    if (gltf.is_discarded()) {
+        GltfError("Failed to parse \"%s\": not valid JSON", path.c_str());
         return false;
     }
 
-    std::fprintf(stderr, "[trace] parsed ok\n");
     std::string base_dir = allow_external ? fs::ParentPath(path) : std::string();
 
     std::vector<std::vector<u8>> buffers;
