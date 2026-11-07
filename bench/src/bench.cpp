@@ -99,7 +99,8 @@ std::string ToJson(const std::vector<Result>& results, double calibration_ms) {
     return j.dump(2);
 }
 
-bool Compare(const std::string& baseline_json, const std::string& current_json, double tolerance, std::vector<Regression>& regressions, std::string* error) {
+bool Compare(const std::string& baseline_json, const std::string& current_json, double tolerance,
+             std::vector<Regression>& regressions, std::string* error, double noise_floor_ms) {
     regressions.clear();
     if (error) error->clear();
     const auto base = nlohmann::json::parse(baseline_json, nullptr, false);
@@ -146,6 +147,15 @@ bool Compare(const std::string& baseline_json, const std::string& current_json, 
         if (found == baseline.end()) continue; // New benchmarks have no history yet.
         const double was = found->second;
         const double ratio = now / was;
+        // A benchmark whose baseline is a couple of microseconds cannot be compared on a shared runner: the
+        // timer cannot tell 2 us from 25 us reliably, and one such row flickered between 0.001 and 0.139
+        // normalized across three runs of the same job. Those rows are measured and reported, but not failed.
+        if (noise_floor_ms > 0.0) {
+            const auto baseline_entry = std::find_if(base["results"].begin(), base["results"].end(), [&](const nlohmann::json& item) {
+                return item.is_object() && item.value("name", std::string()) == name;
+            });
+            if (baseline_entry != base["results"].end() && baseline_entry->value("median_ms", 0.0) < noise_floor_ms) continue;
+        }
         if (ratio > tolerance) regressions.push_back({name, was, now, ratio});
     }
     return true;

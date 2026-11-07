@@ -39,12 +39,14 @@ int main(int argc, char** argv) {
     std::string filter, json_path, baseline_path;
     u32 samples = 7;
     double tolerance = 1.5;
+    double noise_floor_ms = 0.0;
     for (int i = 1; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--filter") && i + 1 < argc) filter = argv[++i];
         else if (!std::strcmp(argv[i], "--repeat") && i + 1 < argc) samples = static_cast<u32>(std::atoi(argv[++i]));
         else if (!std::strcmp(argv[i], "--json") && i + 1 < argc) json_path = argv[++i];
         else if (!std::strcmp(argv[i], "--baseline") && i + 1 < argc) baseline_path = argv[++i];
         else if (!std::strcmp(argv[i], "--tolerance") && i + 1 < argc) tolerance = std::atof(argv[++i]);
+        else if (!std::strcmp(argv[i], "--noise-floor-ms") && i + 1 < argc) noise_floor_ms = std::atof(argv[++i]);
         else {
             std::fprintf(stderr, "usage: aether_bench [--filter text] [--repeat N] [--json report.json] [--baseline file.json] [--tolerance 1.5]\n");
             return 2;
@@ -80,10 +82,11 @@ int main(int argc, char** argv) {
     if (!baseline_path.empty()) {
         std::string baseline, error;
         std::vector<bench::Regression> regressions;
-        if (!ReadFile(baseline_path, baseline) || !bench::Compare(baseline, report, tolerance, regressions, &error)) {
+        if (!ReadFile(baseline_path, baseline) || !bench::Compare(baseline, report, tolerance, regressions, &error, noise_floor_ms)) {
             std::fprintf(stderr, "can't compare with %s: %s\n", baseline_path.c_str(), error.empty() ? "unreadable" : error.c_str());
             return 2;
         }
+        if (noise_floor_ms > 0.0) std::printf("benchmarks below a %.3f ms baseline are reported, not failed\n", noise_floor_ms);
         for (const bench::Regression& r : regressions) std::printf("REGRESSION %s: %.2fx the baseline (limit %.2fx)\n", r.name.c_str(), r.ratio, tolerance);
         if (!regressions.empty()) {
             // Say which kind of failure this is. A regression in one benchmark is a code question; the same shift

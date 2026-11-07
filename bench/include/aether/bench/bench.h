@@ -50,7 +50,8 @@ struct Regression {
 // present in the current report, additional current entries are allowed, and a benchmark whose current value is
 // more than `tolerance` times the baseline's is a regression. `error` is set (and false returned) for malformed,
 // incomplete, or non-overlapping reports.
-bool Compare(const std::string& baseline_json, const std::string& current_json, double tolerance, std::vector<Regression>& regressions, std::string* error);
+bool Compare(const std::string& baseline_json, const std::string& current_json, double tolerance,
+             std::vector<Regression>& regressions, std::string* error, double noise_floor_ms = 0.0);
 
 // How the whole run moved, for diagnosing a failed comparison. A single benchmark regressing is a code question; nearly
 // every benchmark moving the same way is the runner being slower than the one the baseline came from, which the

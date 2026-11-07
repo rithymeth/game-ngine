@@ -317,7 +317,7 @@ jobs:
         if: github.event_name != 'pull_request' && matrix.name == 'GCC'
         run: |
           for attempt in 1 2; do
-            if ./build/bench/aether_bench --repeat 5 --json bench-report.json --baseline bench/baseline.json --tolerance 3.0; then
+            if ./build/bench/aether_bench --repeat 5 --json bench-report.json --baseline bench/baseline.json --tolerance 3.0 --noise-floor-ms 0.01; then
               exit 0
             fi
             if [ "$attempt" = 2 ]; then

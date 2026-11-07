@@ -449,3 +449,24 @@ regression on its own. Every benchmark that is genuinely slower still shows up i
 rather than inferring it from an artifact.
 
 One measurement was never enough; it only looked like enough while the runner happened to be stable for ten runs.
+
+### Refined: one unstable micro-benchmark, not a broken gate, 7 November 2026
+
+The re-measure experiment answered the question it was built for. The next CI run also failed the benchmark step, which ruled
+out "one noisy reading" -- so the report artifact was read again, and it says something much narrower than the earlier
+conclusion:
+
+- **1 row of 22** was over the 3x tolerance: `cook/atex_roundtrip_256` at 11x.
+- The median row was **1.21x**, and that run's calibration loop was **1.60x** the baseline's, so the run was simply slower
+  overall and normalisation roughly matched it.
+- That one row's **baseline median is 1.8 microseconds** and it measured 25 microseconds. A 1.8 us benchmark is at the timer
+  floor: it cannot distinguish 2 us from 25 us reliably, and across three runs of the same job it swung between 0.001 and
+  0.139 normalised -- a 139x spread.
+
+So the fix is not a per-runner baseline and not an advisory gate. It is a **noise floor**: `aether_bench --baseline` accepts
+`--noise-floor-ms`, and a benchmark whose baseline median is below it is **measured and reported but not failed**. CI passes
+0.01 ms, which excludes the 1.8 us row and keeps everything with a baseline at or above `ecs/query_50k_of_100k`'s 30 us
+under the gate.
+
+Verified by running the comparison twice locally: `cook/atex_roundtrip_256` is reported as a regression without the floor and
+is not reported with it.

@@ -863,7 +863,7 @@
   )#define AETHER_BENCH_SETUP(name,iterations,setup,...)\ static::aether::bench::Registrar AETHER_BENCH_CONCAT(aether_bench_registrar_,__LINE__)(::aether::bench::Benchmark
   Registrar(Benchmark b)
   ShiftSummary SummarizeShift(const std::string&baseline_json,const std::string&current_json)
-  bool Compare(const std::string&baseline_json,const std::string&current_json,double tolerance,std::vector<Regression>&regressions,std::string*error)
+  bool Compare(const std::string&baseline_json,const std::string&current_json,double tolerance,std::vector<Regression>&regressions,std::string*error,double noise_floor_ms=0.0)
   double CalibrationMs()
   std::function<void()>body
   std::function<void()>setup
