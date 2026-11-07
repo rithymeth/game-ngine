@@ -339,3 +339,24 @@ The next step follows from the binary-size difference rather than from another h
 55 MB binary contains and the 31 MB one does not, and check the filesystem check in that configuration with the harness probe
 that produced the error codes. That is a diff, not a guess.
 
+### The diff, done: 58 extra translation units, and it is not test order
+
+Compared the test objects between the two configurations:
+
+| configuration | test objects | `test_filesystem.cpp.obj` | result |
+|---|---|---|---|
+| minimal (editor/bench/fuzzers off) | 158 | present, 783087 bytes | **passes** |
+| default (everything on) | 216 | present, 783075 bytes | **fails** |
+
+The same test object is in both, at the same size, and the 58 extra objects are all editor, bench, build-window and other
+non-core tests. Every test the minimal binary has, the default one has too -- the sets are nested, not different.
+
+That rules out test ordering as the cause, and the earlier evidence was already against it: the failing check was run through
+`AETHER_TEST_FILTER=Filesystem_WriteThenReadText`, so only that one test executed in the failing binary. A single filtered test
+that fails while its identical object passes in another binary means the difference happens **before any test runs** --
+static initialisation or link-time state contributed by one of those 58 objects, not a test that ran earlier and left a mess.
+
+That turns the next step into a finite list rather than another hunt: configure the default build with `AETHER_BUILD_BENCH=OFF`,
+`AETHER_BUILD_EDITOR=OFF` and so on one flag at a time, or link each of the 58 in turn, and the one that flips the result names
+itself. It is the first time in this investigation that the candidate set has a known size.
+
