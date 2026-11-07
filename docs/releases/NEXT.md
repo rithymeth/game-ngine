@@ -56,3 +56,20 @@ describes what is on `master`, not a promise of a version number or a date.
   before the state carrying the broken ancestor -- which is why the fuzzer found it and the existing tests did not. The walk
   now rejects a missing ancestor, `Start` no longer dereferences a search result without checking it, and the crashing input
   is a regression test.
+
+- A **crash now names the test and the check that died**, on both platforms. The harness already named the test from a POSIX
+  signal handler, which never runs on Windows -- an assertion raises a structured exception, not a signal -- so on the
+  platform most development happens on it printed nothing at all. `SetUnhandledExceptionFilter` now reports breakpoints,
+  access violations, illegal instructions, divide-by-zero and stack overflows, and `AETHER_CHECK` records its expression and
+  site before evaluating, so a trap prints `*** assertion trap in test: <name>` and `*** last check: <expr> (file:line)`.
+- **`-DAETHER_ENABLE_ASSERTIONS=ON` keeps `AETHER_ASSERT` alive in Release and RelWithDebInfo**, where `NDEBUG` normally
+  compiles it out. One required CI lane sets it, so a configuration difference that once blocked a release for several
+  rounds -- an assertion that existed only in CI -- is now exercised rather than discovered.
+- **Every test run owns its scratch state.** The runner points `TEMP`, `TMP` and `TMPDIR` at a private
+  `aether-tests-<pid>` directory and removes it afterwards, so a file left by a failed run can no longer fail the next one
+  before its logic executes. Clearing temp directories by hand is no longer part of any workflow.
+- **The module-graph gate reads the source as well as the graph**, so a target declared in a `CMakeLists.txt` must have a
+  layer whether or not the current configuration built it. It found two omissions immediately; the previous form passed
+  locally and failed in CI.
+- **`doc_links`** checks that every relative link in `docs/**/*.md` resolves, which is the check that would have noticed a
+  design document cited as authoritative while it was absent from the repository.
