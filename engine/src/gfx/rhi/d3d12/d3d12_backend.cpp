@@ -828,11 +828,13 @@ SampledTextureHandle D3D12Device::CreateTexture(u32 width, u32 height, const u8*
 
     gfx::CommandList setup_cmd(device_);
     setup_cmd.Reset();
-        // NOT COVERED BY A TEST as of 7 November 2026. The buffer hook is proven by
-        // RHI_D3D12FaultInjectionFailsTheArmedAllocation. This one does not fire: an armed CreateTexture(2,2,pixels)
-        // returned a valid handle and threw nothing, so either the guard is not reached or the arm was consumed earlier in
-        // the call. The assertion that would have proven it was withdrawn rather than left claiming coverage it lacks.
-        // Fix the reachability before enabling the texture rows of the verification queue.
+        // NOT COVERED BY A TEST, and the guard is NOT EXECUTED on this path (7 November 2026). The buffer hook is
+        // proven by RHI_D3D12FaultInjectionFailsTheArmedAllocation. Arming for N = 1, 2, 3 and 4 in turn and calling
+        // CreateTexture(2, 2, pixels) produced a valid handle and no throw EVERY time, so this is not a mis-armed hook --
+        // the texture creation the caller reaches does not pass through this function. Two candidates: another overload
+        // handles it, or the bound gfx::Texture construction happens on a path that never enters this block. Find the
+        // real path before enabling the texture rows of the verification queue; a hook inserted in dead code is worse
+        // than none, because it looks like coverage.
     if (FailAllocationForTest()) {
         throw std::runtime_error("D3D12 texture creation failed (AETHER_RHI_FAIL_ALLOCATION_AT)");
     }
