@@ -294,3 +294,26 @@ Recommended bisect script, because a plain `git bisect run` will not do here:
 `--parallel 2` because the default parallelism exhausts the compiler heap; the target is `aether_tests` alone because that is
 where the failing checks live and it cuts each step to a few minutes rather than the full tree's fifty.
 
+### The bisect was invalid, and why every "passing" tree is suspect
+
+`git bisect` ran four steps and named **`f8a9011c` -- "Record the developer-facing changes in the release notes"** as the first
+bad commit. That commit touches one markdown file. It cannot break a filesystem test, so the bisect's premise is false and its
+answer is worthless.
+
+The premise was "`3d7ad154` is good", and that was taken from `build-evervale-verify/` passing 54/54. That tree is **not a
+comparable build**:
+
+| tree | configuration | deps fetched | verdict |
+|---|---|---|---|
+| `build-evervale-verify/` | editor, editor UI, bench, fuzzers all **OFF** | 5 | 54/54 pass |
+| `build-fresh-ninja/` | default (everything on) | 42 | 4 fail |
+| `build/` | default, but stale -- links the deleted `platform_plugins/` | -- | 55/55 pass |
+
+Neither passing tree is a build of the repository as anyone would configure it: one is a minimal subset, the other still links
+code that no longer exists. **Every faithful, full build fails the same four checks.** So the bisect range was wrong before it
+started, and the failure predates everything in this session's commit range.
+
+The next bisect must use the **same options** on both endpoints -- in practice, `git bisect` with a script that configures with
+the default options and builds `aether_tests` only, and a first step that verifies the assumed-good commit actually passes in
+that configuration. That last check is the one I skipped, and it is the reason four bisect runs were spent proving nothing.
+
