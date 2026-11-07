@@ -108,6 +108,38 @@ LONG WINAPI OnUnhandledException(EXCEPTION_POINTERS* info) {
 // Every test that writes scratch state asks the system for a temp directory and uses a fixed name inside
 // it, so a file left behind by a failed run can fail the next one before its logic executes. Give each run
 // a private directory and point the temp environment at it: one place instead of 150 test-side helpers.
+// A run that is killed -- a crash, a timeout, a stopped process -- never reaches RemoveRunDirectory, so its directory stays
+// behind. A live run owns the directory named after its own process id, so any other aether-tests-<pid> under the same root
+// belongs to a process that is gone and can be removed before this run creates its own.
+bool ProcessIsAlive(unsigned long process_id) {
+#if defined(_WIN32)
+    HANDLE process = OpenProcess(SYNCHRONIZE, FALSE, process_id);
+    if (process == nullptr) return GetLastError() == ERROR_ACCESS_DENIED; // exists but not ours to inspect
+    const DWORD wait = WaitForSingleObject(process, 0);
+    CloseHandle(process);
+    return wait == WAIT_TIMEOUT;
+#else
+    return std::filesystem::exists("/proc/" + std::to_string(process_id));
+#endif
+}
+
+void SweepStaleRunDirectories(const std::filesystem::path& root) {
+    if (root.empty()) return;
+    std::error_code error;
+    for (const auto& entry : std::filesystem::directory_iterator(root, error)) {
+        if (error) return;
+        if (!entry.is_directory(error)) continue;
+        const std::string name = entry.path().filename().string();
+        const std::string prefix = "aether-tests-";
+        if (name.rfind(prefix, 0) != 0) continue;
+        const std::string pid_text = name.substr(prefix.size());
+        if (pid_text.empty() || pid_text.find_first_not_of("0123456789") != std::string::npos) continue;
+        if (ProcessIsAlive(static_cast<unsigned long>(std::stoul(pid_text)))) continue;
+        std::error_code remove_error;
+        std::filesystem::remove_all(entry.path(), remove_error);
+    }
+}
+
 std::filesystem::path PrepareRunDirectory() {
     std::error_code error;
     // AETHER_TEST_TEMP_DIR keeps scratch state off the system disk. CMake's aether_test_scratch_dir sets it for the ctest
@@ -129,6 +161,7 @@ std::filesystem::path PrepareRunDirectory() {
         if (error) root = std::filesystem::current_path(error);
         if (error) return {};
     }
+    SweepStaleRunDirectories(root);
     const auto dir = root / ("aether-tests-" + std::to_string(ProcessId()));
     // A directory left by a killed run of this same process id is stale by definition.
     std::filesystem::remove_all(dir, error);
