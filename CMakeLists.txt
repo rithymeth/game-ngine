@@ -619,7 +619,9 @@ add_subdirectory(samples/frozen_api_game)
 # Phase 24 step 5: the portable editor shell - the editor's panels in a
 # GLFW (or Win32) window, or offscreen, drawn through the Vulkan RHI.
 if(AETHER_BUILD_EDITOR_UI AND AETHER_BUILD_VULKAN)
-    add_subdirectory(editor/shell)
+    # The editor is the Vulkan shell in editor/shell; the old ImGui/D3D12 shell was removed, so this is the only
+# editor target now.
+add_subdirectory(editor/shell)
 endif()
 
 # Phase 26 step 1: the engine's own plugins (their modules).
@@ -686,8 +688,7 @@ if(AETHER_BUILD_SANDBOX)
 endif()
 
 if(AETHER_BUILD_PHYSICS AND AETHER_BUILD_EDITOR AND WIN32)
-    add_subdirectory(editor)
-endif()
+    endif()
 
 if(WIN32)
     add_subdirectory(rhi_demo)
@@ -697,7 +698,7 @@ endif()
 
 # Phase 26 step 1: the executables that host plugins get every module this
 # build has (each registers itself; the project's plugins decide which start).
-foreach(host aether_player aether_editor_shell aether_editor aether_editor_qt aether_tests)
+foreach(host aether_player aether_editor_shell aether_editor_qt aether_tests)
     if(TARGET ${host})
         aether_link_modules(${host})
     endif()
@@ -794,7 +795,7 @@ aether_generate_package_config()
 # Applications and tools, installed alongside the SDK so an installed tree can author and run a game rather than only link
 # against the engine. Each is guarded by its target so a lean configuration that leaves one out still installs.
 set(_aether_install_apps
-    aether_editor_shell aether_editor aether_player aether_package aether_cook aether_pak
+    aether_editor_shell aether_player aether_package aether_cook aether_pak
     aether_plugin aether_loc aether_symbolicate aether_server)
 foreach(_aether_app IN LISTS _aether_install_apps)
     if(TARGET ${_aether_app})

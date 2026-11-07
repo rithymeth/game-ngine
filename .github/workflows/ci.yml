@@ -840,7 +840,6 @@ jobs:
           $qtDeploy = Get-Command windeployqt.exe -ErrorAction Stop
           & $qtDeploy.Source --release --no-translations $qtEditor
           if ($LASTEXITCODE -ne 0) { throw "Deploying the Qt editor runtime failed" }
-          Copy-Item build/editor/Release/aether_editor_legacy.exe (Join-Path $out "AetherEditorLegacy.exe")
           # The build tools and the player: package a project, cook it, play it.
           Copy-Item build/tools/package/Release/aether_package.exe $out/
           Copy-Item build/tools/cook/Release/aether_cook.exe $out/
@@ -853,7 +852,6 @@ jobs:
           Get-ChildItem build/editor/Release -Filter *.dll | Copy-Item -Destination $out/
           Set-Content -Path (Join-Path $out "EDITOR_README.txt") -Value @(
             "Launch AetherEditor.exe for the current Qt-based Windows editor UI."
-            "Use AetherEditorLegacy.exe for tools that have not migrated yet."
           ) -Encoding utf8
           Copy-Item -Recurse assets $out/assets
           Copy-Item README.md $out/
@@ -1021,7 +1019,6 @@ jobs:
         run: |
           Expand-Archive dist/AetherEditor-windows-x64.zip -DestinationPath run -Force
           Push-Location run
-          ./AetherEditorLegacy.exe
           Pop-Location
           if (-not (Test-Path editor-screenshot.png)) { throw "the editor wrote no screenshot" }
       - name: Verify and record the editor screenshot
