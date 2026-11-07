@@ -1,3 +1,17 @@
 # Aether Engine -- unreleased changes
 
 A working draft of the next release's notes. It is rewritten into `vX.Y.Z.md` when a version is tagged, so it describes what is on `master`, not a promise of a version number or a date.
+
+## Flake observed at the 0.29.0 tag
+
+The first run on `3734ec05` failed two jobs: `Post-merge Linux (GCC)` on `bp/loop_arith_10k` at 3.25x and 3.20x against a
+3.00x limit, and `Verify and record the editor screenshot` for a missing image. A re-run of the same commit passed with zero
+failures, and the commit is identical.
+
+So `bp/loop_arith_10k` (baseline 187 us) is unstable at roughly the 3x boundary on this runner, and the benchmark gate will
+intermittently fail on it. The noise floor did its job -- `cook/atex_roundtrip_256` no longer appears as a regression, since its
+1.8 us baseline is under the 0.01 ms floor -- but the floor does not cover a 187 us row that can triple.
+
+Recorded rather than patched: raising the tolerance to 4x would hide it, and raising the floor to 0.2 ms would stop gating
+everything under 200 us. The honest options are a per-row tolerance, or a baseline taken on the same runner, and both are bigger
+than a fix made at a tag.
