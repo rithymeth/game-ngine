@@ -496,3 +496,31 @@ The next step is no longer a hypothesis about the build; it is to run the failin
 `create_directories`, which is the only instrument that has not yet been asked. Thirteen guesses have been wrong; it is time to
 stop guessing.
 
+### Fourteen: the manifests match
+
+Extracted the embedded manifest from both binaries with `mt.exe`. Both request `asInvoker` and neither is `longPathAware`. So the
+failing process does not run at a different integrity level or with a different execution level, and the difference is not in how
+Windows launches them.
+
+Fourteen differences have now been found and eliminated:
+
+| difference | outcome |
+|---|---|
+| tree age and staleness | — |
+| generator (Ninja vs Visual Studio) | both fail |
+| `/arch:AVX2`, `/permissive-` | rebuilt with them, still fails |
+| differing preprocessor definitions | unreferenced in the source |
+| test temp directory | explicit empty TEMP, identical |
+| deny ACE on the repository root | removed, still fails |
+| reflection renames (mine) | reverted, still fails |
+| ten feature flags | all off, still fails |
+| eight static-initialisation candidates | either half removed, still fails |
+| first 29 of the 58 | removed, still fails |
+| second 29 of the 58 | removed, still fails |
+| `BENCH` and `PHYSICS_NET` macros | sources removed, still fails |
+| executable manifests | identical (`asInvoker`, no `longPathAware`) |
+
+Every static-analysis instrument available without an interactive debugger has been tried. The failing call is
+`create_directories` returning `Access denied` in a process whose identical object passes in another binary, and the next thing
+that can answer it is a breakpoint with the `std::error_code` and the token in hand -- not a fifteenth hypothesis.
+
