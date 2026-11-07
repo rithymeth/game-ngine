@@ -455,3 +455,22 @@ test executes; the test object is identical in passing and failing binaries; 58 
 and the only failing builds; and four separate attempts to narrow those 58 -- by feature flag, by compile flags, by configuration
 and by static initialisation -- have each been wrong.
 
+### Bisect does not apply: either half of the 58 leaves the failure
+
+Disabled the first 29 of the 58: **still fails**. Disabled the other 29: **still fails**. Both builds are clean (no compile or
+link errors), and the filesystem check fails identically in each.
+
+A bisect assumes one culprit. Removing either half leaving the symptom means one of two things, and both change the next step:
+
+- the failure needs **two or more** of the 58 together, or
+- **none of them** is the cause and the 58 are a correlate of whatever really differs.
+
+The second is now more likely, because the difference between the passing and failing trees is not only which test sources are
+compiled -- it is the **`tests/CMakeLists.txt` itself**. The stale tree's copy predates 58 sources *and* may define a different set
+of `AETHER_TEST_HAS_*` macros, which changes what the shared test code compiles into. The 58 were the visible difference, not
+necessarily the operative one.
+
+So the next comparison is not link order. It is **the two `tests/CMakeLists.txt` files**, and in particular their
+`target_compile_definitions` and guard structure -- the difference that changes the *content* of tests both trees compile. That is
+a diff of two files, not a sequence of 15-minute rebuilds.
+
