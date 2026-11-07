@@ -79,3 +79,4 @@ imgui.ini
 Thumbs.db
 *.log
 *.tmp
+dist/

@@ -15,3 +15,14 @@ intermittently fail on it. The noise floor did its job -- `cook/atex_roundtrip_2
 Recorded rather than patched: raising the tolerance to 4x would hide it, and raising the floor to 0.2 ms would stop gating
 everything under 200 us. The honest options are a per-row tolerance, or a baseline taken on the same runner, and both are bigger
 than a fix made at a tag.
+
+## Installer
+
+`tools/build_sdk_installer.py` builds a self-extracting Windows SDK installer from a lean Release tree. It was added for
+0.29.0 and produces `dist/Aether-<version>-SDK-installer.exe`, which installs to `%LOCALAPPDATA%\Aether` without administrator
+rights. The first one published is 98 MB and was verified by installing it and building a project against the result.
+
+Two things it needed that are worth knowing: NSIS could not be installed on this machine (the winget download failed on a
+certificate error), and `iexpress.exe` produced nothing usable, so the self-extractor embeds a zip payload as a managed
+resource compiled with `csc.exe`. A Vulkan-enabled install also fails for a consumer that lacks the Vulkan SDK, because the
+generated `AetherConfig.cmake` requires it -- which is why the installer builds with Vulkan off.
