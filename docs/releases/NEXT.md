@@ -87,3 +87,27 @@ things at once: the crash dumps, the local test gate, and any native tool that w
 
 The symbolicate change is kept anyway: reporting the Win32 error is what made this visible at all, where the old code said only
 "could not create".
+
+## A real crash in the AI utility loader, found by running outside the confinement
+
+Running the suite in a plain administrator shell -- outside this session's process confinement -- still crashes, in a different
+test than the filesystem ones:
+
+    *** fatal signal in test: Utility_JsonRoundTripsAndRefusesBadInput
+    ***   last check: !UtilityBrain::FromJson(json::parse(text), loaded, &error) (tests/test_ai_decision.cpp:128)
+
+So this one is **not** the sandbox. It is a real defect in shipped AI code, the same class as the `StateTree::Validate` crash the
+fuzzer found: a signal where `GuardJsonLoader` expects an exception.
+
+What is already ruled out: **all eight malformed inputs are valid JSON** (checked by parsing them independently), `JsonString` and
+`JsonVersion` both guard their types and cannot dereference a non-object, `GuardJsonLoader` catches `std::exception`, and reading
+`FromJson` line by line shows every field access either type-checked or enclosed in the guard. None of that explains a signal,
+which means the crash is somewhere the source reading does not reach -- most likely a lifetime or ownership problem in the
+`Consideration`/`UtilityAction` containers rather than in the parsing.
+
+Two attempts to instrument the loop failed to compile (the brace structure around the range-for does not survive a mechanical
+patch), and the bisect only ran the previous binary. **The next step is a debugger or a standalone reproducer**, not another
+edit from here -- this is the point where the session's tooling has cost more than it returned twice over.
+
+Verified working: running the same suite in a plain shell gets **past** the four filesystem and serialization tests that fail
+inside this session, which confirms those four are the confinement and not the code.
