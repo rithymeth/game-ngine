@@ -474,3 +474,25 @@ So the next comparison is not link order. It is **the two `tests/CMakeLists.txt`
 `target_compile_definitions` and guard structure -- the difference that changes the *content* of tests both trees compile. That is
 a diff of two files, not a sequence of 15-minute rebuilds.
 
+### The macro difference is real and is not the cause either
+
+The two trees' compile definitions for `test_filesystem.cpp` differ in exactly two test macros -- the current build defines
+`AETHER_TEST_HAS_BENCH` and `AETHER_TEST_HAS_PHYSICS_NET`, the stale one does not -- and in nothing else; the compiler flags are
+identical, `/arch:AVX2` included. That was the first difference found this session that changes what the **shared** test code
+compiles into rather than which files are compiled.
+
+Removed `test_bench.cpp` and the net test sources to match. Rebuilt clean. **The filesystem check still fails.**
+
+So the macro difference is real, is the operative difference between the trees, and is still not what breaks the check.
+
+Thirteen explanations have now been tested and withdrawn. What remains true, and is all that this session can honestly assert:
+
+- a full build of the committed repository fails four checks, before any test executes;
+- the failing test object is byte-for-byte the same object in a passing and a failing binary;
+- every difference found between those binaries so far -- file count, macros, flags, configuration -- has been removed or matched
+  and the failure persists.
+
+The next step is no longer a hypothesis about the build; it is to run the failing binary under a debugger and break on
+`create_directories`, which is the only instrument that has not yet been asked. Thirteen guesses have been wrong; it is time to
+stop guessing.
+
