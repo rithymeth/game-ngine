@@ -1,3 +1,5 @@
+#include <iostream>
+#include <array>
 #include "aether/gfx/rhi/device.h"
 #include "aether/core/log.h"
 #include "test_framework.h"
@@ -669,6 +671,25 @@ AETHER_TEST(RHI_D3D12FaultInjectionFailsTheArmedAllocation) {
     unsetenv("AETHER_RHI_FAIL_ALLOCATION_AT");
 #endif
     AETHER_CHECK(threw);
+    const std::array<u8, 16> texel{};
+#if defined(_WIN32)
+    _putenv_s("AETHER_RHI_FAIL_ALLOCATION_AT", "1");
+#else
+    setenv("AETHER_RHI_FAIL_ALLOCATION_AT", "1", 1);
+#endif
+    bool texture_threw = false;
+    try {
+        const SampledTextureHandle probe = device->CreateTexture(2, 2, texel.data());
+        if (probe.IsValid()) AETHER_CHECK(device->DestroyTexture(probe));
+    } catch (const std::exception& error) {
+        texture_threw = true;
+    }
+#if defined(_WIN32)
+    _putenv_s("AETHER_RHI_FAIL_ALLOCATION_AT", "");
+#else
+    unsetenv("AETHER_RHI_FAIL_ALLOCATION_AT");
+#endif
+    AETHER_CHECK(texture_threw);
     const BufferHandle after = device->CreateVertexBuffer(bytes, 40);
     AETHER_CHECK(after.IsValid());
     if (after.IsValid()) AETHER_CHECK(device->DestroyBuffer(after));

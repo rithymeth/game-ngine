@@ -766,7 +766,12 @@ bool FailAllocationForTest() {
     const int setting = text != nullptr ? std::atoi(text) : 0;
     if (setting != last_setting.exchange(setting)) seen.store(0);
     if (setting <= 0) return false;
-    return seen.fetch_add(1) + 1 == setting;
+    // Every Nth allocation fails, and the count restarts after a failure. The first version reset only when the
+    // value changed, so re-arming to the same N was silently ignored -- no allocation happens while a test
+    // disarms and re-arms, so the helper never observed the change. That is why a texture failure never fired.
+    if (seen.fetch_add(1) + 1 < setting) return false;
+    seen.store(0);
+    return true;
 }
 
 void D3D12Device::ReserveBufferRegistryEntry() {
@@ -828,14 +833,11 @@ SampledTextureHandle D3D12Device::CreateTexture(u32 width, u32 height, const u8*
 
     gfx::CommandList setup_cmd(device_);
     setup_cmd.Reset();
-        // NOT COVERED BY A TEST (7 November 2026). The buffer hook is proven by
-        // RHI_D3D12FaultInjectionFailsTheArmedAllocation. This guard IS REACHED -- an AETHER_LOG_ERROR placed directly
-        // above it printed on every texture creation -- but arming AETHER_RHI_FAIL_ALLOCATION_AT for N = 1, 2, 3 and 4
-        // produced a valid handle and no throw every time, while the same arm fires in the buffer path. So the hook
-        // evaluates false here for a reason that is not "not reached" and not "another overload" (there is only one
-        // CreateTexture in this file): the environment the helper observes differs between the two call sites. The next
-        // step is a breakpoint on FailAllocationForTest from CreateTexture, not another guess.
-        // A hook that looks installed and never fires is worse than none, because it reads as coverage.
+        // Covered by RHI_D3D12FaultInjectionFailsTheArmedAllocation, which arms this and the buffer registry in turn
+        // and checks that each throws and that each recovers once disarmed.
+        // Reaching this took three wrong explanations, and the cause was in the hook: the first version reset its counter
+        // only when the armed value CHANGED, and no allocation happens while a test disarms and re-arms, so re-arming to
+        // the same N was silently ignored. The hook now fails every Nth allocation and restarts after each failure.
     if (FailAllocationForTest()) {
         throw std::runtime_error("D3D12 texture creation failed (AETHER_RHI_FAIL_ALLOCATION_AT)");
     }
