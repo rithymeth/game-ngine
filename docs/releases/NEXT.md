@@ -135,3 +135,28 @@ Also worth recording, because it cost hours: **the local build failures were a f
 `LNK1201: error writing to program database` is what that looks like, along with `create_directories` failing in the test harness
 and the symbolicate being unable to write its report. Deleting the stale 34 GB build tree took D: to 35.6 GB free and the build
 worked immediately. Every "local fault" explanation in this file should be read with that in mind.
+
+## The filesystem failures: narrowed to one clue
+
+`fs::WriteFileBytes` returned a bare `false`, so every caller could only print "CHECK failed". It now reports the OS reason, and
+that produced the line missing from every earlier attempt:
+
+    WriteFileBytes: could not open 'C:\Users\pilot\AppData\Local\Temp\aether_test_text.txt' (errno=13: Permission denied)
+
+**What is ruled out, each measured:**
+
+- **Disk space** -- 34.5 GB free on D:, 46.6 GB on C:.
+- **The directory** -- `%TEMP%` is writable: PowerShell creates files there, `cmd mkdir` succeeds, Python writes.
+- **The filename** -- a standalone native probe creating `aether_test_text.txt`, `aether_test_bytes.bin`, `aether_zzz_probe.txt`
+  and `aether_probe2.txt` in `%TEMP%` succeeds for all four with `errno=0`.
+- **A leftover file** -- `aether_test_text.txt` does not exist between runs; the runner removes its scratch directory.
+- **The implementation** -- `WriteFileBytes` is a plain `std::ofstream` open, and the probe uses the same call successfully.
+
+So the identical open succeeds in a 20-line native program and fails with `errno=13` inside `aether_tests.exe`. That is the whole
+remaining question, and it is narrower than "the tests are broken": it is what is different about that process's environment or
+token. `errno=13` on a create in a directory the same user can write suggests an access check the probe does not meet -- a
+sandbox or filter on that specific process, not on the path.
+
+`Serialization_LegacyV1SceneStillLoads` takes a fatal signal rather than reporting a failure, which is the same write path: a
+`SaveScene` that cannot open its file and then dereferences something instead of returning. Making `WriteFileBytes` honest (this
+change) is what will let that test fail properly instead of crashing once the open succeeds or the caller is guarded.

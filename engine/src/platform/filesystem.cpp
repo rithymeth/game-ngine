@@ -1,6 +1,9 @@
 #include "aether/platform/filesystem.h"
 
 #include <algorithm>
+#include <cerrno>
+#include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <limits>
@@ -53,12 +56,23 @@ bool ReadFileText(const std::string& path, std::string& out_text) {
 
 bool WriteFileBytes(const std::string& path, const void* data, usize size_bytes) {
     if (size_bytes > static_cast<usize>(std::numeric_limits<std::streamsize>::max())) return false;
+    // Report the OS reason. A silent false leaves the caller unable to tell a bad path from a full disk, and the tests
+    // that use this print only "CHECK failed", which says nothing about the file that could not be opened.
+    errno = 0;
     std::ofstream file(path, std::ios::binary | std::ios::trunc);
     if (!file) {
+        std::fprintf(stderr, "WriteFileBytes: could not open '%s' (errno=%d: %s)\n", path.c_str(), errno,
+                     std::strerror(errno));
         return false;
     }
+    errno = 0;
     file.write(reinterpret_cast<const char*>(data), static_cast<std::streamsize>(size_bytes));
-    return file.good();
+    if (!file.good()) {
+        std::fprintf(stderr, "WriteFileBytes: write to '%s' failed after %zu bytes (errno=%d: %s)\n", path.c_str(),
+                     size_bytes, errno, std::strerror(errno));
+        return false;
+    }
+    return true;
 }
 
 bool WriteFileAtomic(const std::string& path, const void* data, usize size_bytes) {
