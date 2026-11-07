@@ -74,14 +74,16 @@ describes what is on `master`, not a promise of a version number or a date.
 - **`doc_links`** checks that every relative link in `docs/**/*.md` resolves, which is the check that would have noticed a
   design document cited as authoritative while it was absent from the repository.
 
-- **A clean build tree fails eight checks that an incremental tree passes.** Found 7 November 2026 by configuring and
-  building a second, empty tree from the same sources with the same cache settings (`AETHER_BUILD_EVERVALE_REBOOT=ON`,
-  `AETHER_ENABLE_ASSERTIONS=OFF`) and running ctest in it: `aether_tests` plus four game suites failed, where the
-  long-lived tree passes 55/55. The failing checks are `Filesystem_WriteThenReadBytesRoundTrips`,
-  `Filesystem_WriteThenReadTextRoundTrips`, `Serialization_RoundTripsComponentsAcrossWorlds`,
-  `Serialization_ReflectedComponentsUseDeclaredNames` and the game's smoke, audio, resident-art and building-art suites.
-  The log shows the reflection registry reporting **duplicate declared type names** ("Health", "Decal", "Team", "Stats",
-  "Mood", "Other", "Fighter") in the clean tree, which the serialization tests are downstream of. Disk space is not the
-  cause (29 GB free). **The cause is not yet known and is not diagnosed here** -- the finding is that a release cannot be
-  signed from a long-lived build directory, which is how every local gate this session was run. Reproduce by configuring a
-  new empty build directory from the same sources and running the gate in it.
+- **The Visual Studio 2022 build fails eight checks that the Ninja build passes.** Found 7 November 2026, and the first
+  explanation was wrong in a way worth recording. I configured a second, empty tree and it failed eight checks where the
+  long-lived tree passes 55/55, so I wrote it up as "a clean tree disagrees with an incremental one". It does not. The two
+  trees use **different generators**: `build/` and `build-evervale-verify/` are Ninja, and the new tree was Visual Studio 17
+  2022. The failures follow the generator, not the tree's age.
+  This matters because **Visual Studio 2022 is the generator this repository's own AGENTS.md documents**, so the documented
+  configuration is the one that fails: `aether_tests` plus four game suites, including
+  `Filesystem_WriteThenReadTextRoundTrips` (the file reads back empty after a successful write),
+  `Serialization_RoundTripsComponentsAcrossWorlds` and `Serialization_ReflectedComponentsUseDeclaredNames`, with the
+  reflection registry reporting duplicate declared type names in that tree. The Ninja gate is green.
+  The cause is not diagnosed. The next step is to diff the two configurations' compile definitions and runtime settings --
+  `NDEBUG`, `/permissive-`, the CRT linkage, and how each generator sets the test working directory -- rather than to compare
+  the trees' ages, which is what the first version of this note did.
