@@ -147,3 +147,37 @@ The consequence is that two earlier statements in this file are wrong in a way w
 
 **Action before the next release:** delete `build/` and configure it fresh. Any number produced by a tree that links a deleted
 source directory is not evidence about the repository, and this one had been producing the headline number all day.
+
+### The real answer: a clean build of the repository fails, under either generator
+
+A fresh Ninja tree (`-G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DAETHER_BUILD_EVERVALE_REBOOT=ON`, built with `--parallel 2`
+because the default parallelism exhausts the compiler heap) produces **the same eight failures** as the Visual Studio tree:
+
+```
+aether_tests, evervale_reboot_smoke, evervale_reboot_audio_smoke,
+evervale_reboot_resident_art_smoke, evervale_reboot_building_art_smoke   (8 of 54, 85% passed)
+```
+
+So the generator is not the variable after all -- the previous section's conclusion is wrong, for the third time on this one
+failure. What the three trees actually show is:
+
+| tree | faithfully built from the current sources | gate |
+|---|---|---|
+| `build/` | **no** -- 33 links to the deleted `platform_plugins/` | 55/55 |
+| `build-evervale-verify/` | **no** -- passes the checks a clean build fails | 54/54 |
+| `build-clean-verify/` (VS) | yes | **8 failures** |
+| `build-fresh-ninja/` (Ninja) | yes | **8 failures** |
+
+**The two trees that report green are both stale, and the two that are faithful both fail identically.** That means the gate
+results reported throughout this session's earlier work -- every "55/55", every "all gates green" -- were measured on trees
+that no longer match the repository. The repository as committed does not pass its own gate.
+
+The failures are consistent and reproducible: `aether_tests` reports `Filesystem_WriteThenReadBytesRoundTrips`,
+`Filesystem_WriteThenReadTextRoundTrips`, `Serialization_RoundTripsComponentsAcrossWorlds` and
+`Serialization_ReflectedComponentsUseDeclaredNames` failing, in both generators. The four game suites fail in under half a
+second each, which is a start-up failure rather than a behavioural one.
+
+**This supersedes the two earlier explanations in this file** ("clean vs incremental", then "the generator"). Both were stories
+that fit partial evidence; the fresh-tree rebuild is the measurement that settles it. Next step is unchanged in method and much
+higher in priority: run `aether_tests` from `build-fresh-ninja/` and read the first four failures, which are the same ones the
+Visual Studio tree showed.
