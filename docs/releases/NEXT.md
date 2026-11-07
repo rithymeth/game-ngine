@@ -317,3 +317,25 @@ The next bisect must use the **same options** on both endpoints -- in practice, 
 the default options and builds `aether_tests` only, and a first step that verifies the assumed-good commit actually passes in
 that configuration. That last check is the one I skipped, and it is the reason four bisect runs were spent proving nothing.
 
+### The endpoint was never good: the failure is configuration-dependent and local
+
+Tested `3d7ad154` -- the commit the bisect assumed was good -- in the same default configuration the bisect would build. It
+**fails the same filesystem checks**. So the bisect's good endpoint was never good, the range was inverted from the start, and
+the four bisect steps were measuring nothing. The failure predates this session's entire commit range.
+
+What that leaves, tested rather than inferred:
+
+- **`build-fresh-ninja/`**, default configuration (editor, editor UI, bench, fuzzers on): **fails**.
+- **`build-evervale-verify/`**, minimal configuration (those four OFF): **passes**.
+- The two test binaries are **31 MB and 55 MB** -- different test sets, so they are not running the same program.
+- **CI's Windows lane passed the full configuration** on `3e4aa6af`, so the full configuration is not intrinsically broken.
+
+So this is **configuration-dependent and local**: a build with the editor and its dependencies enabled fails a filesystem check
+that a build without them passes, on this machine, while CI's full build passes. That is a very different claim from "the
+repository does not pass its own gate", which is what three earlier note sections said. The repository's gate is green in CI; what
+is broken is one local configuration.
+
+The next step follows from the binary-size difference rather than from another hypothesis: find which test translation units the
+55 MB binary contains and the 31 MB one does not, and check the filesystem check in that configuration with the harness probe
+that produced the error codes. That is a diff, not a guess.
+
