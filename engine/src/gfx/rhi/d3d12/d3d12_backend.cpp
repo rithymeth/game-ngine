@@ -828,6 +828,9 @@ SampledTextureHandle D3D12Device::CreateTexture(u32 width, u32 height, const u8*
 
     gfx::CommandList setup_cmd(device_);
     setup_cmd.Reset();
+    if (FailAllocationForTest()) {
+        throw std::runtime_error("D3D12 texture creation failed (AETHER_RHI_FAIL_ALLOCATION_AT)");
+    }
     auto texture =
         std::make_unique<gfx::Texture>(device_, *bindless_texture_heap_, setup_cmd.Get(), width, height, rgba8_pixels);
     setup_cmd.Close();
