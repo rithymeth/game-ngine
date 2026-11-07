@@ -264,3 +264,33 @@ Two facts are worth carrying into that bisect because they cost the most to lear
   denied, **in the test process** while PowerShell creates the same directory under the same parent without difficulty.
 - The default Ninja parallelism exhausts the compiler heap on this machine; use `--parallel 2`.
 
+### The bisect range, bounded by a passing binary
+
+The last tree that passes is `build-evervale-verify/` at **54/54**, whose `aether_tests.exe` was linked at **06:57** and whose
+`filesystem.cpp.obj` dates from the previous evening. The source state at that moment is **`3d7ad154`** (06:44). HEAD is
+**24 commits** later and a fresh build of it fails four checks.
+
+Between those two states, **`engine/src/platform/filesystem.cpp`, `tests/main.cpp` and the filesystem header are unchanged** --
+
+```
+git diff --stat 3d7ad154 HEAD -- engine/src/platform/filesystem.cpp tests/main.cpp .../filesystem.h
+(no output)
+```
+
+-- so the regression is not in the code the failing checks exercise directly, and not in the harness that sets up their
+directory. That narrows the bisect further than the commit range alone: whatever changed, it changes the environment the test
+process runs in, not the filesystem calls it makes.
+
+The tree is clean of deny ACEs (0 on the repository root, the tree and the tests directory), PowerShell writes into both the
+fresh tree and the temp directory without trouble, and the test process still gets **error 5** from `create_directories`. So the
+bisect is the right next tool and it has a known-good endpoint: `3d7ad154`.
+
+Recommended bisect script, because a plain `git bisect run` will not do here:
+
+    cmake -S . -B build-bisect -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DAETHER_BUILD_EVERVALE_REBOOT=ON &&
+    cmake --build build-bisect --parallel 2 --target aether_tests &&
+    AETHER_TEST_FILTER=Filesystem_WriteThenReadText ./build-bisect/tests/aether_tests.exe
+
+`--parallel 2` because the default parallelism exhausts the compiler heap; the target is `aether_tests` alone because that is
+where the failing checks live and it cuts each step to a few minutes rather than the full tree's fifty.
+
