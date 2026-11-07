@@ -84,6 +84,12 @@ describes what is on `master`, not a promise of a version number or a date.
   `Filesystem_WriteThenReadTextRoundTrips` (the file reads back empty after a successful write),
   `Serialization_RoundTripsComponentsAcrossWorlds` and `Serialization_ReflectedComponentsUseDeclaredNames`, with the
   reflection registry reporting duplicate declared type names in that tree. The Ninja gate is green.
-  The cause is not diagnosed. The next step is to diff the two configurations' compile definitions and runtime settings --
-  `NDEBUG`, `/permissive-`, the CRT linkage, and how each generator sets the test working directory -- rather than to compare
-  the trees' ages, which is what the first version of this note did.
+  Narrowed by experiment, not by reasoning. **Not the test temp directory**: running the same binary with TEMP and TMP
+  pointed at a fresh empty directory gives an identical result, and the harness's private run directory is created and
+  removed correctly in that tree. **Not the compiler flags**: the two generators' `RelWithDebInfo` command lines are
+  equivalent apart from `/arch:AVX2`, which Ninja passes and Visual Studio 2022 does not. What is measurable is the shape of
+  the failure: `fs::WriteFileBytes` **reports success** and the read-back then fails, for both the bytes and the text
+  variants, while the other two filesystem checks in that tree pass.
+  Cause still not diagnosed. Two candidates remain and both need a debugger rather than another edit: the write reporting
+  success without producing readable content, or a `std::filesystem` path/locale difference between the two build systems.
+  A breakpoint on `ReadFileText` in the Visual Studio tree with the error code from `std::ifstream` would separate them.
