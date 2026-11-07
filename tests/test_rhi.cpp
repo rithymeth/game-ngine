@@ -642,3 +642,34 @@ AETHER_TEST(RHI_D3D12RejectsTextureCreationWhenDescriptorsAreExhausted) {
     }
     for (const SampledTextureHandle texture : held) AETHER_CHECK(device->DestroyTexture(texture));
 }
+
+// The fault hook the remaining verification-debt rows need. AETHER_RHI_FAIL_ALLOCATION_AT makes the Nth buffer or
+// texture registry reservation fail, which is the only practical way to reach partial-construction and error paths.
+// It is opt-in through the environment, so a normal run never sees it, and this test proves both that it fires and
+// that disarming it leaves the device usable.
+AETHER_TEST(RHI_D3D12FaultInjectionFailsTheArmedAllocation) {
+    auto device = CreateDevice(Backend::D3D12, /*enable_debug_layer=*/false);
+    AETHER_CHECK(device != nullptr);
+    if (!device) return;
+    const u8 bytes[64] = {};
+#if defined(_WIN32)
+    _putenv_s("AETHER_RHI_FAIL_ALLOCATION_AT", "1");
+#else
+    setenv("AETHER_RHI_FAIL_ALLOCATION_AT", "1", 1);
+#endif
+    bool threw = false;
+    try {
+        (void)device->CreateVertexBuffer(bytes, 40);
+    } catch (const std::exception&) {
+        threw = true;
+    }
+#if defined(_WIN32)
+    _putenv_s("AETHER_RHI_FAIL_ALLOCATION_AT", "");
+#else
+    unsetenv("AETHER_RHI_FAIL_ALLOCATION_AT");
+#endif
+    AETHER_CHECK(threw);
+    const BufferHandle after = device->CreateVertexBuffer(bytes, 40);
+    AETHER_CHECK(after.IsValid());
+    if (after.IsValid()) AETHER_CHECK(device->DestroyBuffer(after));
+}

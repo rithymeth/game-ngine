@@ -1,5 +1,7 @@
 #include "aether/gfx/rhi/d3d12/d3d12_backend.h"
 
+#include <cstdlib>
+#include <atomic>
 #include <limits>
 #include <cmath>
 
@@ -752,7 +754,25 @@ BufferHandle D3D12Device::CreateFrameConstantBuffer(u64 size_bytes) {
     return CreateConstantBuffer(padded, nullptr);
 }
 
+
+// Test-only fault injection. AETHER_RHI_FAIL_ALLOCATION_AT=N makes the Nth buffer or texture registry reservation
+// after the variable is set fail, which is the only practical way to reach the partial-construction and error-path
+// increments in the verification queue. Unset -- the normal case -- costs one getenv per creation, and the counter
+// resets whenever the setting changes so a test can arm it for exactly one allocation.
+bool FailAllocationForTest() {
+    static std::atomic<int> last_setting{0};
+    static std::atomic<int> seen{0};
+    const char* text = std::getenv("AETHER_RHI_FAIL_ALLOCATION_AT");
+    const int setting = text != nullptr ? std::atoi(text) : 0;
+    if (setting != last_setting.exchange(setting)) seen.store(0);
+    if (setting <= 0) return false;
+    return seen.fetch_add(1) + 1 == setting;
+}
+
 void D3D12Device::ReserveBufferRegistryEntry() {
+    if (FailAllocationForTest()) {
+        throw std::runtime_error("D3D12 buffer registry reservation failed (AETHER_RHI_FAIL_ALLOCATION_AT)");
+    }
     const usize next_size = buffers_.size() + 1;
     if (next_size <= buffers_.size() || next_size > buffers_.max_size() ||
         next_size > storage_descriptor_indices_.max_size() || next_size > constant_buffer_flags_.max_size()) {
