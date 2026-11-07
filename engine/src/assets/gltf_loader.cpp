@@ -1055,6 +1055,9 @@ bool LoadGltf(const std::string& path, GltfScene& out_scene) {
     }
     std::string text;
     if (!bytes.empty()) text.assign(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+    // The file path and the byte count, because a fatal signal inside this function has been reproducible without a stack:
+    // these two lines say whether it dies reading the file, building the text, or parsing it.
+    AETHER_LOG_INFO("glTF", "LoadGltf \"%s\": read %zu byte(s)", path.c_str(), bytes.size());
     GltfScene scene;
     try {
         if (!ParseGltfText(text, path, true, scene)) return false;
@@ -1063,6 +1066,7 @@ bool LoadGltf(const std::string& path, GltfScene& out_scene) {
         return false;
     }
     out_scene = std::move(scene);
+    AETHER_LOG_INFO("glTF", "LoadGltf \"%s\": parsed", path.c_str());
     return true;
 }
 
