@@ -243,3 +243,24 @@ PowerShell creates the same kind of directory under the same parent without trou
 `build/tests/` and fails when run from `build-fresh-ninja/tests/`. The next measurement is the process token -- integrity level
 and privileges -- rather than another filesystem hypothesis.
 
+### What is left after nine eliminations
+
+Reverted the reflection renames, rebuilt the fresh tree, and the filesystem checks still fail. So it is not those edits either.
+Cleared every deny ACE from the tree (count 0, inherited and explicit) and re-ran: still fails. Ran the same binary from four
+different working directories: fails from all four, so it is not the directory. The two tests directories contain the same six
+files.
+
+The eliminations now stand at nine: tree age, generator, compiler flags `/arch:AVX2`, `/permissive-`, the differing
+preprocessor definitions, the test temp directory, a copied-binary test that inverted itself, the deny ACE on the repository
+root, and the reflection renames.
+
+What remains is the simplest statement available and the one worth acting on: **a fresh build of the current sources fails these
+four checks, and a tree whose object files predate some commit passes them.** The two differ only in when their objects were
+compiled, so the next tool is `git bisect` with a scripted `configure && build --parallel 2 && ctest -R "Filesystem|Serialization"`,
+not another hypothesis. Nine guesses have been wrong; a bisect cannot be.
+
+Two facts are worth carrying into that bisect because they cost the most to learn:
+- `WriteFileBytes` returns false because `create_directories` for the harness's run directory fails with error 5, Access is
+  denied, **in the test process** while PowerShell creates the same directory under the same parent without difficulty.
+- The default Ninja parallelism exhausts the compiler heap on this machine; use `--parallel 2`.
+
