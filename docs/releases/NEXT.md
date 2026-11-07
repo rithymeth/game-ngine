@@ -524,3 +524,16 @@ Every static-analysis instrument available without an interactive debugger has b
 `create_directories` returning `Access denied` in a process whose identical object passes in another binary, and the next thing
 that can answer it is a breakpoint with the `std::error_code` and the token in hand -- not a fifteenth hypothesis.
 
+### Housekeeping, so the mistake cannot repeat quietly
+
+Two things done after the diagnosis stopped:
+
+- **`build/` was renamed to `build-STALE-do-not-gate/`.** It is the tree that produced every "55/55" in this file's earlier
+  sections, and it still links object files from the deleted `platform_plugins/`. Renaming is reversible -- `mv` it back -- and it
+  means nobody, human or script, can pick it up by habit and quote a number from it again. Nine other `build*` trees are present in
+  the workspace and several may be equally stale; any of them used for a release number should be deleted and reconfigured first.
+- **The dangling objects the bisect left** (one tag, one commit, one tree) were pruned; `git fsck` is clean again.
+
+Nothing about the failure changed. The four failing checks are still failing and still need a debugger. What changed is that the
+misleading evidence has been labelled where a person will see it.
+
