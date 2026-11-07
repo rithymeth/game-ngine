@@ -117,3 +117,33 @@ describes what is on `master`, not a promise of a version number or a date.
   Seven things have now been eliminated: tree age, the test temp directory, a copied-binary test that inverted itself, the
   differing preprocessor definitions (unreferenced in the source), `/arch:AVX2`, and `/permissive-`. Cause still not
   diagnosed.
+
+### Two separate findings: the Visual Studio failures, and a stale primary tree
+
+Chasing the Visual Studio failures produced a result that matters more than they do. Comparing all three build trees against
+the repository:
+
+| tree | generator | stale references to the deleted `platform_plugins/` | gate |
+|---|---|---|---|
+| `build/` | Ninja | **33** | 55/55 |
+| `build-evervale-verify/` | Ninja | 0 | 54/54 |
+| `build-clean-verify/` | Visual Studio 2022 | 0 | 8 failures |
+
+**`build/` links object files from `platform_plugins/example/`, which no longer exists in the repository at all.** Its
+`CMakeCache` still carries the configuration from when that directory was present, the object file is still on disk, and the
+link line still names it. So the tree that produced every "55/55" reported in this session's earlier notes is **not a build of
+the current repository** -- it is a build of the repository as it was, with deleted code still linked in. `git log -S
+platform_plugins -- CMakeLists.txt` shows the configuration knob that used to add it (`AETHER_PLATFORM_PLUGINS`) still exists,
+but nothing sets it any more.
+
+The consequence is that two earlier statements in this file are wrong in a way worth keeping visible:
+
+- "55/55" was a claim about a stale tree, not about the repository. The unaffected Ninja tree
+  (`build-evervale-verify/`) is green at 54/54 and does not link the deleted plugin, so the repository's Ninja build is
+  genuinely fine -- but the tree I was gating on was not a faithful build of it.
+- The Visual Studio failures are real and confined to that generator: the one non-stale Ninja tree passes every check the
+  Visual Studio tree fails. The two candidates left are the generator's build and link settings; the comparison that produced
+  this table is the method for continuing it.
+
+**Action before the next release:** delete `build/` and configure it fresh. Any number produced by a tree that links a deleted
+source directory is not evidence about the repository, and this one had been producing the headline number all day.
