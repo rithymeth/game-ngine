@@ -105,6 +105,10 @@ bool ResolveBufferData(const Json& buffer_json, const std::string& base_dir, boo
         GltfError("Buffer with no uri (GLB-embedded binary chunk) is not supported");
         return false;
     }
+    if (!buffer_json["uri"].is_string()) {
+        GltfError("Buffer uri is not a string");
+        return false;
+    }
     std::string uri = buffer_json["uri"].get<std::string>();
     if (uri.rfind("data:", 0) == 0) {
         usize comma = uri.find(',');
@@ -121,6 +125,10 @@ bool ResolveBufferData(const Json& buffer_json, const std::string& base_dir, boo
         return false;
     }
     if (buffer_json.contains("byteLength")) {
+        if (!buffer_json["byteLength"].is_number_integer()) {
+            GltfError("Buffer byteLength is not a whole number");
+            return false;
+        }
         const usize declared_size = buffer_json["byteLength"].get<usize>();
         if (declared_size > remaining_budget || out_data.size() != declared_size) {
             GltfError("Referenced buffer \"%s\" is larger than its declared or allowed size", path.c_str());
@@ -405,28 +413,32 @@ void ReadU16x4(const AccessorInfo& info, usize index, std::array<u16, 4>& out) {
 // (scale applied first, then rotate, then translate) — see
 // GltfNode::LocalTransform.
 void ParseNodeTRS(const Json& node_json, GltfNode& out_node) {
-    if (node_json.contains("matrix")) {
+    if (node_json.contains("matrix") && node_json["matrix"].is_array()) {
         const Json& matrix_json = node_json["matrix"];
         f32 values[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
         for (usize i = 0; i < 16 && i < matrix_json.size(); ++i) {
-            values[i] = matrix_json[i].get<f32>();
+            if (matrix_json[i].is_number()) values[i] = matrix_json[i].get<f32>();
         }
         std::memcpy(&out_node.matrix, values, sizeof(values));
         out_node.uses_matrix = true;
         return;
     }
 
-    if (node_json.contains("translation")) {
+    if (node_json.contains("translation") && node_json["translation"].is_array() &&
+        node_json["translation"].size() == 3) {
         const Json& t = node_json["translation"];
-        out_node.translation = Vec3(t[0].get<f32>(), t[1].get<f32>(), t[2].get<f32>());
+        if (t[0].is_number() && t[1].is_number() && t[2].is_number())
+            out_node.translation = Vec3(t[0].get<f32>(), t[1].get<f32>(), t[2].get<f32>());
     }
-    if (node_json.contains("rotation")) {
+    if (node_json.contains("rotation") && node_json["rotation"].is_array() && node_json["rotation"].size() == 4) {
         const Json& r = node_json["rotation"];
-        out_node.rotation = Quaternion(r[0].get<f32>(), r[1].get<f32>(), r[2].get<f32>(), r[3].get<f32>());
+        if (r[0].is_number() && r[1].is_number() && r[2].is_number() && r[3].is_number())
+            out_node.rotation = Quaternion(r[0].get<f32>(), r[1].get<f32>(), r[2].get<f32>(), r[3].get<f32>());
     }
-    if (node_json.contains("scale")) {
+    if (node_json.contains("scale") && node_json["scale"].is_array() && node_json["scale"].size() == 3) {
         const Json& s = node_json["scale"];
-        out_node.scale = Vec3(s[0].get<f32>(), s[1].get<f32>(), s[2].get<f32>());
+        if (s[0].is_number() && s[1].is_number() && s[2].is_number())
+            out_node.scale = Vec3(s[0].get<f32>(), s[1].get<f32>(), s[2].get<f32>());
     }
 }
 
@@ -487,14 +499,15 @@ void ParseNodeHierarchy(const Json& gltf, GltfScene& out_scene) {
         GltfNode& node = out_scene.nodes[i];
         node.name = node_json.value("name", std::string{});
         ParseNodeTRS(node_json, node);
-        if (node_json.contains("mesh")) {
+        if (node_json.contains("mesh") && node_json["mesh"].is_number_integer()) {
             node.mesh_index = node_json["mesh"].get<i32>();
         }
-        if (node_json.contains("skin")) {
+        if (node_json.contains("skin") && node_json["skin"].is_number_integer()) {
             node.skin_index = node_json["skin"].get<i32>();
         }
-        if (node_json.contains("children")) {
+        if (node_json.contains("children") && node_json["children"].is_array()) {
             for (const auto& child_ref : node_json["children"]) {
+                if (!child_ref.is_number_integer() && !child_ref.is_number_unsigned()) continue;
                 usize child_index = child_ref.get<usize>();
                 if (child_index < node_count) {
                     node.children.push_back(child_index);
@@ -509,8 +522,9 @@ void ParseNodeHierarchy(const Json& gltf, GltfScene& out_scene) {
         if (scene_index >= gltf["scenes"].size()) {
             scene_index = 0;
         }
-        if (gltf["scenes"][scene_index].contains("nodes")) {
+        if (gltf["scenes"][scene_index].contains("nodes") && gltf["scenes"][scene_index]["nodes"].is_array()) {
             for (const auto& root_ref : gltf["scenes"][scene_index]["nodes"]) {
+                if (!root_ref.is_number_integer() && !root_ref.is_number_unsigned()) continue;
                 usize root_index = root_ref.get<usize>();
                 if (root_index < node_count) {
                     out_scene.root_nodes.push_back(root_index);
@@ -738,7 +752,9 @@ static bool ParseGltfText(const std::string& text, const std::string& path, bool
     Json gltf;
     try {
         gltf = Json::parse(text);
-    } catch (const Json::parse_error& e) {
+    } catch (const std::exception& e) {
+        // Not just parse_error: nlohmann throws type_error from value() and get<>() when a field holds the wrong type, and
+        // a document with a malformed field reached the caller as an uncaught exception, ending the process.
         GltfError("Failed to parse \"%s\": %s", path.c_str(), e.what());
         return false;
     }
@@ -797,7 +813,11 @@ static bool ParseGltfText(const std::string& text, const std::string& path, bool
                 const Json& pbr = material_json["pbrMetallicRoughness"];
                 if (pbr.contains("baseColorFactor")) {
                     const Json& factor = pbr["baseColorFactor"];
-                    for (usize i = 0; i < 4 && i < factor.size(); ++i) {
+                    // contains() says the key is there, not that it holds four numbers. A string here indexed as an array
+                    // is undefined behaviour rather than a thrown type error, so it has to be checked, not caught.
+                    if (!factor.is_array() || factor.size() > 4) return false;
+                    for (usize i = 0; i < factor.size(); ++i) {
+                        if (!factor[i].is_number()) return false;
                         material.base_color[i] = factor[i].get<f32>();
                     }
                 }
