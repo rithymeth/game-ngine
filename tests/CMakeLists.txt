@@ -30,6 +30,7 @@ add_executable(aether_tests
     test_input_bindings.cpp
     test_assets.cpp
     test_gltf_loader.cpp
+    test_skinning.cpp
 )
 
 target_link_libraries(aether_tests PRIVATE Aether::Engine)

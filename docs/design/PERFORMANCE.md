@@ -474,8 +474,8 @@ is not reported with it.
 ## CPU skinning cost, 8 November 2026
 
 `player/src/scene_renderer.cpp` skins on the CPU: every vertex is blended against its joint matrices each frame and the
-vertex buffers are rewritten. `bench/src/bench_skinning.cpp` replicates that loop (position, normal and tangent over four
-influences, normalise, re-orthogonalise the tangent) to answer one question: is it a bottleneck?
+vertex buffers are rewritten. `bench/src/bench_skinning.cpp` times that loop (position, normal and tangent over four
+influences, normalise, re-orthogonalise the tangent; now `assets::SkinVertices`) to answer one question: is it a bottleneck?
 
 Windows, MSVC RelWithDebInfo, one thread, synthetic meshes. **The median is one frame of skinning.**
 
@@ -501,3 +501,43 @@ What this says:
 
 Decision: GPU skinning is justified by the AAA target, not by the proof game. It should come with a test that renders a
 deformed pose, so it lands together with the evidence A06 is missing.
+
+### Making it faster: one idea did not work, one did (8 November 2026)
+
+**Tried and rejected: blend the four joint matrices once per vertex.** The idea was to build one 3x4 and one 3x3 matrix
+per vertex (sum of weight times matrix) and transform position, normal and tangent by those, instead of transforming each
+by every influence: roughly half the multiplies on paper. Measured against the original loop on the same meshes:
+
+| Case | Original loop | Blended matrices |
+|---|---|---|
+| 20,000 vertices x 1 | 0.93 ms | 0.96 ms |
+| 20,000 vertices x 10 | 10.3 ms | 10.7 ms |
+| 5,000 vertices x 100 | 26.3 ms | 31.4 ms |
+
+It was no faster, and slower on the small meshes. The original loop is already compiled into vector operations on
+`Vec4`/`Mat4`, so the "saved" multiplies were not what the time was going to; the blended version replaced that with
+scalar code. It matched the original to float rounding, and it was removed rather than kept as dead complexity.
+
+**Kept: split each skinned mesh across the job system.** `SkinVerticesParallel` runs chunks of at least 1,024 vertices
+on a small `JobSystem` (two workers plus the rendering thread). The output is bit-identical to the serial loop, because each
+vertex is computed the same way and only the order of work changes. The player uses it for primitives of 4,096 vertices
+or more and skins smaller ones in place, where a fork-join would cost more than it saves.
+
+| Case | Serial | Parallel | Speed-up | Share of a 16.6 ms frame, parallel |
+|---|---|---|---|---|
+| 104 vertices x 1 (Kael) | 0.006 ms | not used (below the threshold) | | |
+| 20,000 vertices x 1 | 0.97 ms | 0.28 ms | 3.4x | 2% |
+| 20,000 vertices x 10 | 10.4 ms | 2.76 ms | 3.8x | 17% |
+| 5,000 vertices x 100 | 25.1 ms | 9.7 ms | 2.6x | 58% |
+
+Timer noise between runs of the same binary on this machine was about 25% (the first table in the previous section was
+taken on a different run), so read these as ratios within one run, not as absolute numbers.
+
+What this does and does not settle:
+
+- Ten production heroes now fit comfortably. A 100-NPC crowd of 5,000-vertex characters still takes over half a frame,
+  and that is skinning alone. Splitting work per character, instead of per mesh, would help the crowd case (a 5,000-vertex
+  mesh only splits into a few chunks); it has not been done.
+- This is still CPU work plus a vertex-buffer upload every frame. GPU skinning would remove both, but needs a new vertex
+  layout and a joint-palette binding in the graphics RHI on D3D12 and Vulkan. It is not justified by AETHER-01 (104 vertices)
+  and not yet by these numbers for a single hero; revisit it when a real scene has a crowd.
