@@ -30,7 +30,7 @@ struct AssetChange {
 };
 
 // Keeps the asset database and imported data in step with the content folder
-// while the editor runs (docs/design/PHASE_SPECS.md §8.3): call Update() once
+// while the editor runs : call Update() once
 // per frame, before anything uses asset data, and apply the returned changes
 // (e.g. AssetStore::Set for Reimported). Importing runs inside Update, so a
 // frame with a large change may stall; moving imports to worker jobs comes

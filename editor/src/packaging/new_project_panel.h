@@ -6,7 +6,7 @@
 #include <functional>
 #include <string>
 
-// The New Project panel (Phase 26 step 2, docs/design/PHASE_SPECS.md §26.2):
+// The New Project panel (Phase 26 step 2):
 // the templates with what each holds, a name and a folder, and Create.
 // Draws into the current ImGui window.
 

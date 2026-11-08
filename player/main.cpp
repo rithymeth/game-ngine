@@ -1,5 +1,5 @@
 // aether_player: a cooked game, without the editor (Phase 25 step 4,
-// docs/design/PHASE_SPECS.md §25.4). It mounts the game's .apak archives,
+// a retired planning doc). It mounts the game's .apak archives,
 // loads the startup scene and runs it on the fixed-timestep frame loop, in
 // a window drawn through the RHI (D3D12 on Windows, Vulkan elsewhere), or
 // headless.

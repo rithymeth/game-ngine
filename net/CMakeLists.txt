@@ -1,4 +1,4 @@
-# Aether Net (Phase 22, docs/design/PHASE_SPECS.md): the network transport -
+# Aether Net (Phase 22): the network transport -
 # datagram sockets (UDP, and an in-memory network with simulated latency
 # and loss for tests and the editor), connections with reliable and
 # unreliable channels, and hosts that accept or make connections - and

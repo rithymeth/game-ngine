@@ -1,4 +1,4 @@
-// The portable editor shell (Phase 24 step 5, docs/design/PHASE_SPECS.md
+// The portable editor shell (Phase 24 step 5
 // §24.4): every tool editor (editor/src/workspace: Blueprint, Luau,
 // Material, VFX, animation, AI, audio, UI, world, networking and debug
 // tools) in a window (GLFW on Linux and macOS, Win32 on Windows) or

@@ -10,7 +10,7 @@
 #include <utility>
 #include <vector>
 
-// 2D physics (Phase 26 step 5, docs/design/PHASE_SPECS.md §26.6): rigid
+// 2D physics (Phase 26 step 5): rigid
 // bodies as circles and axis-aligned boxes on the entity's Transform (x and
 // y; the rotation stays as it is), sequential-impulse contact resolution
 // with restitution and friction, trigger volumes, collision layers, solid

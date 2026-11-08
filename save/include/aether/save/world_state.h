@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-// World state in a save (Phase 28 step 2, docs/design/PHASE_SPECS.md §28.3):
+// World state in a save (Phase 28 step 2):
 // the things in a level that change as you play and must be there after a
 // load (a door that was opened, a pickup that was taken, an enemy that was
 // killed), keyed by the entity's EntityGuid so they find their entity again

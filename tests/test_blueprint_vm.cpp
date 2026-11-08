@@ -120,7 +120,7 @@ AETHER_TEST(BlueprintVM_DoorCompilesToGoldenBytecodeAndRuns) {
     if (!compiled) return;
     AETHER_CHECK(compiled->functions.size() == 2 && compiled->events.count("Event.OnTriggerEnter") == 1);
 
-    // Golden bytecode (docs/ROADMAP_DETAILS.md §C.3): opcode changes show up here.
+    // Golden bytecode : opcode changes show up here.
     const std::string trigger = Disassemble(*compiled, *compiled->FindEvent("Event.OnTriggerEnter"));
     const std::string open = Disassemble(*compiled, compiled->functions[compiled->function_index.at("Open")]);
     const char* kTriggerGolden =

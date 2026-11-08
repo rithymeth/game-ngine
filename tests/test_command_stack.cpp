@@ -305,7 +305,7 @@ AETHER_TEST(CommandStack_MemoryBudgetDropsOldestEntries) {
 }
 
 AETHER_TEST(CommandStack_ThousandRandomCommandsUndoAndRedoExactly) {
-    // docs/design/PHASE_SPECS.md §7.2: random commands, undo all -> the
+    // a retired planning doc: random commands, undo all -> the
     // original state; redo all -> the state after the random run.
     Fixture f;
     for (int i = 0; i < 20; ++i) {

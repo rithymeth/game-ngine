@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-// Project templates (Phase 26 step 2, docs/design/PHASE_SPECS.md §26.2).
+// Project templates (Phase 26 step 2).
 // "New Project" starts from one of these: a project with a startup scene, a
 // controller script, input bindings and a Blueprint, so the first thing you
 // see is a game that's wired up, not an empty folder.

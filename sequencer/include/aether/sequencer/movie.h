@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-// Rendering a sequence to frames (Phase 27 step 6, docs/design/PHASE_SPECS.md
+// Rendering a sequence to frames (Phase 27 step 6
 // §27.7): a fixed-step loop that steps a SequencePlayer one frame at a time
 // and hands each frame to a sink. Frame i is at exactly i / fps seconds
 // (computed from the integer, so nothing drifts), so the same sequence on the

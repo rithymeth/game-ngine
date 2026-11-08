@@ -1,6 +1,6 @@
 # Large-world coordinates
 
-Status: **Option B started** (UPGRADE_PLAN.md step 42.1). The JSON scene format
+Status: **Option B started** (a retired planning doc step 42.1). The JSON scene format
 records an origin and stores absolute positions today; the binary format and the
 cross-system wiring below are still to do. This note records what exists, the
 convention decision behind it, and the plan for the systems that still assume

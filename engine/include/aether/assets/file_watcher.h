@@ -16,7 +16,7 @@ struct FileChange {
     std::string path; // relative to the watched folder, '/'-separated
 };
 
-// Watches a folder tree for file changes (Phase 8, docs/design/PHASE_SPECS.md
+// Watches a folder tree for file changes (Phase 8
 // §8.3), with debouncing: a file's change is reported once it has been quiet
 // for `debounce` (default 200 ms). Editors often save in several steps —
 // write a temp file, then rename it over the original — and those steps

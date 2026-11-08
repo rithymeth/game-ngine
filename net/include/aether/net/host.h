@@ -72,7 +72,7 @@ struct PeerInfo {
 };
 
 // Hosts connections over a datagram socket (Phase 22 step 1,
-// docs/design/PHASE_SPECS.md §22.1): a server listens and accepts peers up
+// a retired planning doc): a server listens and accepts peers up
 // to max_peers (refusing the rest); a client connects (retrying until
 // accepted, refused or out of time). Connected peers exchange messages on
 // the Connection's channels, keep alive, time out, and say goodbye.

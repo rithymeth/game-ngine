@@ -12,7 +12,7 @@
 #include <string>
 #include <vector>
 
-// Sequences in a scene (Phase 27 step 2, docs/design/PHASE_SPECS.md §27.2): a
+// Sequences in a scene (Phase 27 step 2): a
 // SequenceComponent plays a .asequence from an entity, the SequenceSystem
 // runs them each frame, and the component's methods are Blueprint nodes
 // (and Luau calls) the way AudioSource's are.

@@ -2,7 +2,7 @@
 
 // @stability: experimental
 //
-// A generated test world (Phase 42 step 3, docs/design/UPGRADE_PLAN.md): a deterministic city-block grid of
+// A generated test world (Phase 42 step 3): a deterministic city-block grid of
 // entities for the flythrough hitch test (42.7) and for scale tests. The same parameters always give the same
 // world, entity for entity, so two runs (or two machines) compare like with like.
 

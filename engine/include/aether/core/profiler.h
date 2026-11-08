@@ -19,7 +19,7 @@
 
 namespace aether {
 
-// The profiler (Phase 23 step 2, docs/design/PHASE_SPECS.md §23.2).
+// The profiler (Phase 23 step 2).
 //
 // Zones are scoped timers (AETHER_PROFILE_ZONE("Physics")) recorded per
 // thread without locking; EndFrame gathers every thread's zones since the

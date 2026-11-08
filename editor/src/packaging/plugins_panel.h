@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-// The Plugins panel (Phase 26 step 1, docs/design/PHASE_SPECS.md §26.1):
+// The Plugins panel (Phase 26 step 1):
 // every plugin the project can use (the engine's and its own), with what
 // each needs and whether its modules are built in; checking one enables it
 // in the project (and what it depends on comes along). New Plugin makes a

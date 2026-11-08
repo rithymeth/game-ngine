@@ -7,7 +7,7 @@
 
 namespace aether::audio {
 
-// A sound's samples (Phase 17 step 1, docs/design/PHASE_SPECS.md §17.1):
+// A sound's samples (Phase 17 step 1):
 // interleaved floats in -1..1 at a sample rate, mono or stereo.
 struct SoundWave {
     std::string name;

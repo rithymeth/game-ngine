@@ -14,7 +14,7 @@ class IDevice;
 
 namespace aether {
 
-// A platform plugin (Phase 24, docs/design/PHASE_SPECS.md §24.5): how a
+// A platform plugin (Phase 24): how a
 // platform the engine doesn't build in - Android, a console - plugs itself
 // in without the engine knowing about it. The plugin's code lives outside
 // the engine (platforms/<name>/, or a private repository for consoles),

@@ -6,7 +6,7 @@
 
 namespace aether::editor {
 
-// The waveform preview (Phase 17 step 6, docs/design/PHASE_SPECS.md §17.6):
+// The waveform preview (Phase 17 step 6):
 // a sound drawn as its min/max per pixel column, zoomed and scrolled, with a
 // playhead, a selected region and preview playback through a mixer.
 

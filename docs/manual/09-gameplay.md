@@ -3,7 +3,7 @@
 The gameplay module gives characters stats, status effects and abilities
 without writing the bookkeeping yourself. It works from Blueprints and Luau, and
 the player runs it each frame. The build spec is
-[PHASE_SPECS §30](../design/PHASE_SPECS.md).
+PHASE_SPECS §30 (removed).
 
 ## The pieces
 

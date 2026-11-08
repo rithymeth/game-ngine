@@ -1,4 +1,4 @@
-# Aether benchmark harness (Phase 38 step 1, docs/design/UPGRADE_PLAN.md): a small runner for
+# Aether benchmark harness (Phase 38 step 1): a small runner for
 # micro and system benchmarks, with JSON reports and a baseline comparison that normalizes by a
 # calibration loop (so a slow or noisy machine doesn't fail the gate). aether_bench runs them:
 #   aether_bench [--filter text] [--repeat N] [--json report.json] [--baseline file.json] [--tolerance 1.5]

@@ -33,7 +33,7 @@ constexpr u16 kDefaultDiscoveryPort = 7778;
 // the query that asked (M8.9 anti-amplification: a spoofed query can't be turned into a bigger reply).
 constexpr usize kDiscoveryQueryBytes = 1024;
 
-// Answers LAN discovery queries (Phase 22 step 5, docs/design/PHASE_SPECS.md
+// Answers LAN discovery queries (Phase 22 step 5
 // §22.5): listen on the discovery port, and every query with our protocol
 // id gets the session's info back, with the query's nonce so the browser
 // can time it. M8.9: an answer is never larger than its query (queries are

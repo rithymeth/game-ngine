@@ -1,4 +1,4 @@
-# Aether Animation (Phase 16, docs/design/PHASE_SPECS.md): skeletons, poses,
+# Aether Animation (Phase 16): skeletons, poses,
 # clips, blending, blend spaces, animation graphs, IK and retargeting.
 # Engine-only, so it builds and tests headless on every platform.
 add_library(aether_animation STATIC

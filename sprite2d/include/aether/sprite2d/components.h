@@ -11,7 +11,7 @@
 #include <functional>
 #include <string>
 
-// The 2D scene components (Phase 26 step 5, docs/design/PHASE_SPECS.md
+// The 2D scene components (Phase 26 step 5
 // §26.6). Sprites and tilemaps sit on the entity's Transform: x and y are
 // the 2D position, z orders depth, and the rotation turns them (in the
 // plane, about z).

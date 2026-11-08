@@ -1,4 +1,4 @@
-# Aether Loc (Phase 29, docs/design/PHASE_SPECS.md §29): localization.
+# Aether Loc (Phase 29): localization.
 # LocText (a key plus source text), string tables with CSV import/export,
 # language fallback chains, and plural-aware message formatting. Engine-only
 # and dependency-free, so it builds and tests headless on every platform.

@@ -4,7 +4,7 @@
 
 namespace aether::anim {
 
-// Root motion (Phase 16 step 2, docs/design/PHASE_SPECS.md §16.3): the root
+// Root motion (Phase 16 step 2): the root
 // bone's movement over the ground and turn about the up axis (+Y), taken
 // out of the animation and handed to the character, so walking clips
 // move the capsule instead of sliding away from it.

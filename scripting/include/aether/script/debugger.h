@@ -57,7 +57,7 @@ enum class DebugAction {
 // DAP server blocks on its client. It must not run scripts on the same VM.
 using DebugHandler = std::function<DebugAction(const DebugStop& stop)>;
 
-// The script debugger core (Phase 11 step 6, docs/design/PHASE_SPECS.md
+// The script debugger core (Phase 11 step 6
 // §11.5): breakpoints and stepping on one LuauHost, built on Luau's
 // breakpoint instructions and single-step callback.
 //

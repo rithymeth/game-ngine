@@ -11,7 +11,7 @@
 namespace aether {
 
 // System scheduling and the fixed-timestep frame (Phase 9 step 6,
-// docs/design/PHASE_SPECS.md §9.6).
+// a retired planning doc).
 
 enum class SystemPhase : u8 { PreUpdate, FixedUpdate, Update, LateUpdate, PreRender };
 inline constexpr usize kSystemPhaseCount = 5;

@@ -1,4 +1,4 @@
-# Fuzzing (Phase 47 step 1, docs/design/UPGRADE_PLAN.md). Each target is a libFuzzer entry point
+# Fuzzing (Phase 47 step 1). Each target is a libFuzzer entry point
 # (LLVMFuzzerTestOneInput). Two builds of each:
 #   aether_replay_<name>  always built: runs the checked-in corpus (tools/fuzz/corpus/<name>) as a
 #                         regression test on any compiler (ctest: fuzz_replay_<name>).

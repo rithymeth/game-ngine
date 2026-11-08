@@ -8,7 +8,7 @@
 
 namespace aether::anim {
 
-// Retargeting (Phase 16 step 5, docs/design/PHASE_SPECS.md §16.6): playing
+// Retargeting (Phase 16 step 5): playing
 // one skeleton's animation on another. Rotations are carried over in model
 // space relative to each skeleton's rest pose, so bones whose rest
 // orientations differ (a T-pose and an A-pose, different bone axes) still

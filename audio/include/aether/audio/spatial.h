@@ -8,7 +8,7 @@
 
 namespace aether::audio {
 
-// 3D audio maths (Phase 17 step 2, docs/design/PHASE_SPECS.md §17.2):
+// 3D audio maths (Phase 17 step 2):
 // distance attenuation, panning from the listener's point of view, doppler
 // and distance filtering. The mixer applies these per voice; they're plain
 // functions so the editor can draw the curves.

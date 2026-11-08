@@ -9,7 +9,7 @@
 
 namespace aether::anim {
 
-// Montages (Phase 16 step 4, docs/design/PHASE_SPECS.md §16.5): a clip
+// Montages (Phase 16 step 4): a clip
 // played on top of the graph through a named slot (an attack, a reload, an
 // emote), split into sections that can chain, loop, or be jumped to.
 

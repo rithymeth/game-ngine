@@ -36,7 +36,7 @@ struct ImportResult {
 };
 
 // Turns one kind of source file into engine-ready data (Phase 8,
-// docs/design/PHASE_SPECS.md §8.1). Importers are pure functions of (source
+// a retired planning doc). Importers are pure functions of (source
 // bytes, settings): that's what makes their output cacheable. Bump Version()
 // whenever the output for the same input changes, so cached results from the
 // old version aren't reused.

@@ -6,7 +6,7 @@
 
 namespace aether::ui {
 
-// UI geometry (Phase 18 step 1, docs/design/PHASE_SPECS.md §18.1). Layout
+// UI geometry (Phase 18 step 1). Layout
 // works in layout units (the reference resolution's pixels); the viewport
 // scales them to screen pixels. +x is right, +y is down.
 

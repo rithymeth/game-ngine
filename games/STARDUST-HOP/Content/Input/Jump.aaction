@@ -1,8 +1,0 @@
-{
-  "$type": "InputAction",
-  "data": {
-    "$v": 1,
-    "name": "Jump",
-    "value_type": "Bool"
-  }
-}

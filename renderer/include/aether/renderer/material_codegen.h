@@ -7,7 +7,7 @@
 
 namespace aether::mat {
 
-// HLSL generation (Phase 15 step 2, docs/design/PHASE_SPECS.md §15.3): a
+// HLSL generation (Phase 15 step 2): a
 // valid material graph becomes a shader include that the renderer's passes
 // call. Only nodes that reach a pin the material's settings use are
 // emitted, identical expressions are computed once, and parameters are

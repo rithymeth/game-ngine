@@ -8,7 +8,7 @@
 
 namespace aether::ai {
 
-// Goal-oriented action planning (Phase 40 step 4, docs/design/UPGRADE_PLAN.md): the world is up to 64 true or
+// Goal-oriented action planning (Phase 40 step 4): the world is up to 64 true or
 // false facts, an action needs some facts true and some false and then sets and clears others, and the planner
 // finds the cheapest sequence of actions from the start facts to a goal. A uniform-cost search (so the plan is
 // the cheapest one, not just any one) with a node budget, and fully deterministic: equal costs go to the state

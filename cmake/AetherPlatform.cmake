@@ -1,4 +1,4 @@
-# Platform plugins (Phase 24, docs/design/PHASE_SPECS.md §24.5).
+# Platform plugins (Phase 24).
 #
 # A platform the engine doesn't build in (Android, a console) lives in its
 # own directory with a CMakeLists.txt that calls aether_platform_plugin().

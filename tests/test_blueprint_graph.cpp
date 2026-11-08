@@ -29,7 +29,7 @@ AETHER_REFLECT(BpTestHealth, 1,
 
 namespace {
 
-// BP_Door from docs/ROADMAP_DETAILS.md §A.4, with its Open function.
+// BP_Door from a retired planning doc, with its Open function.
 const char* kDoor = R"({
   "$type": "Blueprint",
   "$version": 1,

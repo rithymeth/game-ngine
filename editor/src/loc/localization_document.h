@@ -8,7 +8,7 @@
 #include <vector>
 
 // A string table (.astrings) open in the Localization dashboard (Phase 29
-// step 5, docs/design/PHASE_SPECS.md §29.5): which languages it has and how
+// step 5): which languages it has and how
 // complete each is, what a language is missing, edits to the cells, keys and
 // languages, saving back as CSV, .po import and export, and the gather step
 // run on the project's content. Edits stay in memory (the document is dirty)

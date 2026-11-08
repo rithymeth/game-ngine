@@ -9,7 +9,7 @@
 
 namespace aether {
 
-// Character movement (Phase 13 step 5, docs/design/PHASE_SPECS.md §13.3):
+// Character movement (Phase 13 step 5):
 // a capsule moved by Jolt's CharacterVirtual. It walks, runs, climbs steps
 // and slopes up to a limit, slides down steeper ones, jumps (with coyote
 // time and a jump buffer), and rides moving platforms. The Transform's

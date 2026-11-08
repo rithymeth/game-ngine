@@ -108,7 +108,7 @@ struct ModelData {
     std::vector<std::string> animations;
 };
 
-// Splits a glTF file into sub-assets (docs/design/PHASE_SPECS.md §8.5 step 4):
+// Splits a glTF file into sub-assets (a retired planning doc step 4):
 // one "Mesh" per glTF mesh ("mesh:<i>"), one "Material" per material
 // ("material:<i>") and one "Animation" per animation ("animation:<i>").
 // The main data is the ModelData manifest. Materials and animations are

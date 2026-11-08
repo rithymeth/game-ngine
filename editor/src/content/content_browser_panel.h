@@ -10,7 +10,7 @@
 #include <vector>
 
 // The Content Browser (Phase 8 step 6's data, with version control status
-// from Phase 26 step 5, docs/design/PHASE_SPECS.md §26.7): the project's
+// from Phase 26 step 5): the project's
 // folders and assets, each with a badge for its git status (M modified, A
 // added, ? untracked, D deleted, R renamed, ! conflict; a folder shows its
 // worst child), a search, a "changed only" filter, and double-click to open

@@ -10,7 +10,7 @@ namespace aether::assets {
 template <typename T>
 class AssetStore;
 
-// A live reference to loaded asset data (docs/design/PHASE_SPECS.md §8.3).
+// A live reference to loaded asset data .
 // Hot reload replaces the data behind every handle at once and bumps the
 // generation, so code that built something from the data (a GPU texture, a
 // physics mesh) compares generations and rebuilds when it changed:

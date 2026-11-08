@@ -10,7 +10,7 @@
 
 namespace aether::assets {
 
-// The derived data cache (DDC, docs/design/PHASE_SPECS.md §8.1): processed
+// The derived data cache (DDC): processed
 // import results stored under Intermediate/DDC/, keyed by everything that
 // determines them — so reopening a project, switching branches back and
 // forth, or undoing a settings change never re-imports what was already

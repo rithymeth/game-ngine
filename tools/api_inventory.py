@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Core API inventory (M8.1, docs/design/M8_PRODUCTION_PLAN.md).
+"""Core API inventory (M8.1).
 
 Writes or checks two generated, sorted files:
 

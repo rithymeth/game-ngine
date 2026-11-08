@@ -11,7 +11,7 @@
 #include <unordered_map>
 #include <vector>
 
-// .apak archives (Phase 25 step 1, docs/design/PHASE_SPECS.md §25.1): the
+// .apak archives (Phase 25 step 1): the
 // packaged game's content in a few files instead of thousands. Each entry is
 // stored raw, LZ4- or zstd-compressed, with a CRC-32 of its original bytes;
 // an index at the end maps paths to entries.

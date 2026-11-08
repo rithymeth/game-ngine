@@ -9,7 +9,7 @@
 #include <vector>
 
 // A save or settings file open in the Save Inspector (Phase 28 step 5,
-// docs/design/PHASE_SPECS.md §28.5): what the file says it is (kind, type,
+// a retired planning doc): what the file says it is (kind, type,
 // version, time, size), whether its checksum holds, whether a backup sits
 // beside it, every problem found, and its contents, either reflected into a
 // temporary instance of the saved struct when that type is registered in

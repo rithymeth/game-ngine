@@ -2,7 +2,7 @@
 
 // @stability: experimental
 //
-// Cooked meshes (Phase 39 step 6a, docs/design/UPGRADE_PLAN.md): the packaged form of a model's Mesh sub-asset.
+// Cooked meshes (Phase 39 step 6a): the packaged form of a model's Mesh sub-asset.
 // Each primitive keeps its vertices once, a chain of LOD index buffers (level 0 is the source), and the meshlets
 // of every level (see meshlet_cook.h). The container is "AMSC" v1, little-endian, with a CRC-32 trailer; the
 // reader checks every count against the bytes that remain, so hostile input fails cleanly.

@@ -14,7 +14,7 @@ class dtNavMeshQuery;
 
 namespace aether::nav {
 
-// Navigation meshes (Phase 20 step 1, docs/design/PHASE_SPECS.md §20.1):
+// Navigation meshes (Phase 20 step 1):
 // walkable surfaces baked from the scene's triangles with Recast, in
 // square tiles (so step 2 can rebuild tiles at runtime), and queried with
 // Detour: paths, nearest points, raycasts, random points.

@@ -39,7 +39,7 @@ struct AnimationAsset {
     static constexpr const char* kImporter = "Animation";
 };
 
-// A reference to an asset by GUID (Phase 8, docs/design/PHASE_SPECS.md §8.1),
+// A reference to an asset by GUID (Phase 8),
 // typed by what kind of asset it must be. Saved as the GUID string, so it
 // survives the asset being renamed or moved. A null GUID means "none".
 namespace detail {

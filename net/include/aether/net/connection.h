@@ -43,7 +43,7 @@ struct ConnectionStats {
 };
 
 // One end of a connection over datagrams (Phase 22 step 1,
-// docs/design/PHASE_SPECS.md §22.1): packets carry a sequence number and
+// a retired planning doc): packets carry a sequence number and
 // acks for the last 33 packets received; reliable messages ride packets
 // until one carrying them is acked (resent after a round trip and a bit),
 // and are delivered in order; large ones are split into fragments. Time

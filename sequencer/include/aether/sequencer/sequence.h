@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-// Level sequences (Phase 27 step 1, docs/design/PHASE_SPECS.md §27.1): the
+// Level sequences (Phase 27 step 1): the
 // data of a cutscene. A sequence is tracks; a track is bound to an entity by
 // its GUID (so it survives undo and reloading the scene) and holds keyed
 // values: a Transform track animates position and rotation, a Property track

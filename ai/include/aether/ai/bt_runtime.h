@@ -27,7 +27,7 @@ struct BtContext {
     const BtHooks* hooks = nullptr;
 };
 
-// One running tree (Phase 20 step 4, docs/design/PHASE_SPECS.md §20.4). The
+// One running tree (Phase 20 step 4). The
 // asset must outlive it. Each Tick walks from the root down the running
 // branch, re-checking conditions that abort; when the root ends it starts
 // over on the next tick.

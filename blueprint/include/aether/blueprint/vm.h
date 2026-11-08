@@ -72,7 +72,7 @@ struct BpTraceEvent {
 };
 
 // Runs compiled Blueprints on a world's entities (Phase 12 step 2,
-// docs/ROADMAP_DETAILS.md §C). Each attached entity is an instance with its
+// a retired planning doc). Each attached entity is an instance with its
 // own variables; events run to completion on the calling thread.
 class BlueprintVM {
 public:

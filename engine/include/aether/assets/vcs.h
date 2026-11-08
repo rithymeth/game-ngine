@@ -8,7 +8,7 @@
 #include <unordered_map>
 #include <vector>
 
-// Version control status (Phase 26 step 5, docs/design/PHASE_SPECS.md §26.7):
+// Version control status (Phase 26 step 5):
 // which files in the project's repository are modified, added, deleted,
 // untracked or in conflict, for the Content Browser's badges. Git is the
 // system (assets and their .ameta sidecars are plain files, so a project is

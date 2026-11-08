@@ -2,7 +2,7 @@
 
 // @stability: experimental
 //
-// Meshlets and LODs for the cooker (Phase 39 step 5 and Phase 42 step 4, docs/design/UPGRADE_PLAN.md).
+// Meshlets and LODs for the cooker (Phase 39 step 5 and Phase 42 step 4).
 // Offline, CPU-only steps on an indexed triangle mesh, built on meshoptimizer (MIT, hidden behind the .cpp):
 //
 //   BuildMeshlets  splits a mesh into small clusters (at most 64 vertices and 124 triangles by default) with

@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-// A save without a C++ struct (Phase 28 step 4, docs/design/PHASE_SPECS.md
+// A save without a C++ struct (Phase 28 step 4
 // §28.4): a bag of named values (bool, int, float, string, vector) and,
 // optionally, a world snapshot. Blueprints and Luau can't name a game's own
 // reflected struct, so they keep their save state in the bag; it is itself an

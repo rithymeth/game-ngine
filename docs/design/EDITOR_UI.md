@@ -34,7 +34,7 @@ Contents:
    overridden prefab values and PIE mode are always visible.
 5. **Keyboard reachable.** Every action has a name in the command
    palette; common actions have shortcuts (see
-   [ROADMAP_DETAILS.md §F](../ROADMAP_DETAILS.md)).
+   a retired planning doc (removed)).
 6. **Beginners first, experts not slowed down.** Sensible defaults, empty
    states that explain what to do, and tooltips on every control. Experts
    get shortcuts, the command palette, and dense mode.
@@ -310,7 +310,7 @@ Package ▾, Settings on the right.
 
 ### 6.2 Viewport
 
-- Overlays: see [ROADMAP_DETAILS.md §E.7](../ROADMAP_DETAILS.md).
+- Overlays: see a retired planning doc (removed).
 - **Selection outline:** 2 px `accent` outline around selected meshes;
   hovered objects get a 1 px `text.secondary` outline.
 - **Grid:** infinite fading grid on the XZ plane, 1 m minor / 10 m major

@@ -22,7 +22,7 @@ struct SubAssetMeta {
 };
 
 // Sidecar metadata stored next to every asset source as "<file>.ameta"
-// (format: docs/ROADMAP_DETAILS.md §A.2).
+// (format: a retired planning doc).
 struct AssetMeta {
     AssetGuid guid;
     std::string importer;          // "Texture", "Model", "Scene", ...
@@ -76,7 +76,7 @@ struct ScanResult {
 };
 
 // The editor's index of every asset under a project's Content/ folder
-// (docs/design/PHASE_SPECS.md §8.1-8.2). The runtime player won't use this:
+// (a retired planning doc-8.2). The runtime player won't use this:
 // it reads the cooker's GUID -> package table instead (Phase 25).
 class AssetDatabase {
 public:

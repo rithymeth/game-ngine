@@ -2,7 +2,7 @@
 
 // @stability: experimental
 //
-// Allocation tracking (Phase 38 step 7, docs/design/UPGRADE_PLAN.md): counts the heap allocations a block of code
+// Allocation tracking (Phase 38 step 7): counts the heap allocations a block of code
 // makes, so a hot path can be shown to allocate nothing once it is warm.
 //
 // The engine does not replace global operator new (that is a program-wide decision, and it fights sanitizers).
