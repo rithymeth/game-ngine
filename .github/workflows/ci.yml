@@ -40,6 +40,9 @@ concurrency:
 permissions:
   contents: read
 
+# Artifact retention: every upload sets retention-days (the default is 90). The repository's artifact storage hit its quota with ~29 GB live
+# from three days of runs, which made every later upload fail (Failed to CreateArtifact: Artifact storage quota has been hit). Hand-offs between
+# jobs of one run keep 2 days, release inputs 14, logs and reports 7. A new upload-artifact step needs its own retention-days.
 jobs:
   linux:
     name: Linux (GCC)
@@ -267,6 +270,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: aether-sdk-linux-x64
+          retention-days: 2
           path: build/sdk-install
           if-no-files-found: error
       - name: Unit tests
@@ -351,6 +355,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: bench-report
+          retention-days: 14
           path: bench-report.json
           if-no-files-found: error
       - name: Pack the assets
@@ -416,6 +421,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: m87-cinematic-logs
+          retention-days: 7
           path: m87
           if-no-files-found: warn
       - name: Packaged character move set (M8.6)
@@ -431,6 +437,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: m86-character-logs
+          retention-days: 7
           path: m86
           if-no-files-found: warn
       - name: Package the dedicated server (M8.9)
@@ -445,6 +452,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: aether-server-linux-x64
+          retention-days: 14
           path: server-dist
           if-no-files-found: error
       - name: Build the AETHER-01 Linux release candidate, symbols and patch (M8.10)
@@ -460,6 +468,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: aether01-linux-x64-ship
+          retention-days: 2
           path: ship-dist
           if-no-files-found: error
       - name: Play AETHER-01 through Vulkan with the validation layer
@@ -507,6 +516,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: editor-screenshot-linux
+          retention-days: 7
           path: |
             editor-screenshot-linux.png
             editor-capture-linux.json
@@ -516,6 +526,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: functional-results-linux-${{ matrix.name }}
+          retention-days: 7
           path: functional-results.xml
           if-no-files-found: ignore
 
@@ -579,6 +590,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: dedicated-server-profile
+          retention-days: 7
           path: server-run
           if-no-files-found: ignore
 
@@ -615,6 +627,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: aether01-release-dry-run
+          retention-days: 2
           path: release-dry-run
           if-no-files-found: error
 
@@ -667,6 +680,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: aether-server-macos-arm64
+          retention-days: 14
           path: server-dist
           if-no-files-found: error
       - name: Upload the server log and profile capture
@@ -674,6 +688,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: dedicated-server-profile-macos
+          retention-days: 7
           path: server-run/aether-server-macos-arm64/logs
           if-no-files-found: ignore
       - name: Build the AETHER-01 macOS release candidate, symbols and patch (M8.10)
@@ -698,6 +713,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: aether01-macos-arm64-ship
+          retention-days: 2
           path: ship-dist
           if-no-files-found: error
       - name: Screenshot the editor shell
@@ -717,6 +733,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: editor-screenshot-macos
+          retention-days: 7
           path: |
             editor-screenshot-macos.png
             editor-capture-macos.json
@@ -726,6 +743,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: functional-results-macos
+          retention-days: 7
           path: functional-results.xml
           if-no-files-found: ignore
 
@@ -817,6 +835,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: aether-server-windows-x64
+          retention-days: 14
           path: server-dist
           if-no-files-found: error
       - name: Upload the server log and profile capture
@@ -824,6 +843,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: dedicated-server-profile-windows
+          retention-days: 7
           path: server-run/aether-server-windows-x64/logs
           if-no-files-found: ignore
       - name: Verify repeat cook and incremental texture cache
@@ -867,6 +887,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: AETHER-01-rendered-proof
+          retention-days: 7
           path: build/aether01-proof-*.bmp
           if-no-files-found: ignore
       - name: Package the editor
@@ -912,6 +933,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: AetherEditor-windows-x64
+          retention-days: 14
           path: dist/AetherEditor-windows-x64.zip
       - name: Build the AETHER-01 Windows release candidate, symbols and patch (M8.10)
         # tools/ship/build_release.sh under Git Bash: strict shipping cook -> v1 .zip package (AETHER-01.exe +
@@ -939,6 +961,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: aether01-windows-x64-ship
+          retention-days: 2
           path: ship-dist
           if-no-files-found: error
       - name: Package and validate the standalone proof game
@@ -1034,12 +1057,14 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: AETHER-01-windows-x64
+          retention-days: 14
           path: dist/AETHER-01-windows-x64.zip
           if-no-files-found: error
       - name: Upload package evidence
         uses: actions/upload-artifact@v4
         with:
           name: Aether-release-evidence
+          retention-days: 14
           path: |
             dist/RELEASE_MANIFEST.json
             dist/SHA256SUMS.txt
@@ -1070,6 +1095,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: editor-screenshot-windows
+          retention-days: 7
           path: |
             editor-screenshot.png
             editor-capture-windows.json
@@ -1079,6 +1105,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: functional-results-windows
+          retention-days: 7
           path: functional-results.xml
           if-no-files-found: ignore
 
@@ -1165,6 +1192,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Aether-release-assets
+          retention-days: 14
           path: dist/release-assets/*
           if-no-files-found: error
 
@@ -1229,6 +1257,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: aether-android-arm64-debug
+          retention-days: 2
           path: platforms/android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
@@ -1374,6 +1403,7 @@ jobs:
         if: always()
         with:
           name: aether-android-emulator-logcat
+          retention-days: 7
           path: |
             emulator-logcat.txt
             emulator-screen.raw
@@ -1421,6 +1451,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: aether-ios-iphoneos-arm64
+          retention-days: 2
           path: dist/AetherEngine-iphoneos-arm64.zip
           if-no-files-found: error
 
@@ -1472,6 +1503,7 @@ jobs:
         if: always()
         with:
           name: aether-ios-simulator-stdout
+          retention-days: 7
           path: simulator-stdout.txt
           if-no-files-found: ignore
 
@@ -1550,6 +1582,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: fuzz-crashes
+          retention-days: 30
           path: crash-*
           if-no-files-found: ignore
 
