@@ -2069,14 +2069,20 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                                             }
                                         }
                                     }
-                                    renderer.device.UpdateVertexBuffer(frame_vertex_buffer, deformed.data(),
-                                                                       deformed.size() * sizeof(SceneVertex));
+                                    if (!renderer.device.WriteBufferUnsynchronized(frame_vertex_buffer, deformed.data(),
+                                                                                   deformed.size() * sizeof(SceneVertex))) {
+                                        renderer.device.UpdateVertexBuffer(frame_vertex_buffer, deformed.data(),
+                                                                           deformed.size() * sizeof(SceneVertex));
+                                    }
                                     uploaded_animation = true;
                                 }
                             }
                             if (!primitive.frame_vertex_buffers.empty() && !uploaded_animation) {
-                                renderer.device.UpdateVertexBuffer(frame_vertex_buffer, primitive.bind_pose_vertices.data(),
-                                                                   primitive.bind_pose_vertices.size() * sizeof(SceneVertex));
+                                if (!renderer.device.WriteBufferUnsynchronized(frame_vertex_buffer, primitive.bind_pose_vertices.data(),
+                                                                               primitive.bind_pose_vertices.size() * sizeof(SceneVertex))) {
+                                    renderer.device.UpdateVertexBuffer(frame_vertex_buffer, primitive.bind_pose_vertices.data(),
+                                                                       primitive.bind_pose_vertices.size() * sizeof(SceneVertex));
+                                }
                             }
                             DrawConstants constants;
                             constants.mvp = mvp;
@@ -2150,8 +2156,12 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
         std::memcpy(frame_data.shadow_cascade, shadow.cascade, sizeof(shadow.cascade));
         std::memcpy(frame_data.shadow_info, shadow.info, sizeof(shadow.info));
     }
-    if (frame_buffer.IsValid()) renderer.device.UpdateFrameConstantBuffer(frame_buffer, &frame_data, sizeof(frame_data));
-    if (light_buffer.IsValid() && frame_data.cluster_info[3] != 0 && !renderer.clusters.bytes.empty()) {
+    // This frame's slot: the frame loop waited on its fence, so it is written without waiting for the GPU (WriteBufferUnsynchronized).
+    if (frame_buffer.IsValid() && !renderer.device.WriteBufferUnsynchronized(frame_buffer, &frame_data, sizeof(frame_data))) {
+        renderer.device.UpdateFrameConstantBuffer(frame_buffer, &frame_data, sizeof(frame_data));
+    }
+    if (light_buffer.IsValid() && frame_data.cluster_info[3] != 0 && !renderer.clusters.bytes.empty() &&
+        !renderer.device.WriteBufferUnsynchronized(light_buffer, renderer.clusters.bytes.data(), renderer.clusters.bytes.size())) {
         renderer.device.UpdateFrameConstantBuffer(light_buffer, renderer.clusters.bytes.data(), renderer.clusters.bytes.size());
     }
     if (renderer.hdr) {

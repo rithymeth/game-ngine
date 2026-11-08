@@ -246,6 +246,15 @@ public:
     virtual BufferHandle CreateFrameConstantBuffer(u64 /*size_bytes*/) { return {}; }
     virtual void UpdateFrameConstantBuffer(BufferHandle /*buffer*/, const void* /*data*/, u64 /*size_bytes*/) {}
 
+    // Writes a host-visible buffer (one made by CreateFrameConstantBuffer or CreateVertexBuffer) at once, without waiting for the GPU:
+    // the caller promises that no submitted work still to finish reads the range, which is what keeping one buffer per frame in flight
+    // and waiting on that frame's fence before reusing it gives. UpdateFrameConstantBuffer and UpdateVertexBuffer may instead wait for
+    // the queues to drain (D3D12's do), which takes away the overlap of one frame's recording with the last one's GPU work. False (nothing
+    // written) for any other buffer, a bad range, and on devices without it (the default): the caller then falls back to those.
+    virtual bool WriteBufferUnsynchronized(BufferHandle /*buffer*/, const void* /*data*/, u64 /*size_bytes*/, u64 /*offset*/ = 0) {
+        return false;
+    }
+
     // Block-compressed textures (BC1, BC3, BC7: see CompressedTextureFormat), kept compressed on the GPU with their whole mip chain: a quarter
     // of the memory of RGBA8, and mips for the sampler. The handle indexes the same bindless table as CreateTexture. Devices that cannot (Vulkan
     // here until it is implemented; ASTC is not offered anywhere yet) answer false and an invalid handle, and the caller decodes to RGBA8 and

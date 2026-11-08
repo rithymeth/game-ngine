@@ -2014,6 +2014,7 @@
   bool SceneDepthEnabled()const
   bool SupportsCompressedTexture(CompressedTextureFormat f)const override
   bool SupportsFrameConstants()const override
+  bool WriteBufferUnsynchronized(BufferHandle buffer,const void*data,u64 size_bytes,u64 offset=0)override
   const ComputePipelineRecord&GetComputePipeline(ComputePipelineHandle handle)const
   const PipelineRecord&GetPipeline(PipelineHandle handle)const
   const TextureRecord&GetTexture(TextureHandle handle)const
@@ -2123,6 +2124,7 @@
   virtual bool IsFenceComplete(u64 fence_value)const=0
   virtual bool SupportsCompressedTexture(CompressedTextureFormat)const
   virtual bool SupportsFrameConstants()const
+  virtual bool WriteBufferUnsynchronized(BufferHandle,const void*,u64,u64=0)
   virtual std::unique_ptr<ICommandList>CreateCommandList()=0
   virtual std::unique_ptr<ICommandList>CreateComputeCommandList()=0
   virtual std::unique_ptr<ISwapChain>CreateSwapChain(void*native_window_handle,u32 width,u32 height,u32 buffer_count=2)=0
@@ -2252,6 +2254,7 @@
   bool SupportsCompressedTexture(CompressedTextureFormat format)const override
   bool SupportsFrameConstants()const override
   bool TextureTableFull()const
+  bool WriteBufferUnsynchronized(BufferHandle buffer,const void*data,u64 size_bytes,u64 offset=0)override
   const BufferRecord&GetBuffer(BufferHandle handle)const
   const ComputePipelineRecord&GetComputePipeline(ComputePipelineHandle handle)const
   const PipelineRecord&GetPipeline(PipelineHandle handle)const

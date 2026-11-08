@@ -763,6 +763,16 @@ void D3D12Device::UpdateConstantBuffer(BufferHandle buffer, const void* data, u6
     device_.WithQueuesIdle([&] { buffers_[buffer.index]->Update(data, size_bytes, offset); });
 }
 
+bool D3D12Device::WriteBufferUnsynchronized(BufferHandle buffer, const void* data, u64 size_bytes, u64 offset) {
+    // Constant and vertex buffers live in the upload heap, persistently mapped: a plain copy, ordered by the caller's fences.
+    if (!(IsConstantBuffer(buffer) || IsVertexBuffer(buffer)) || buffer.index >= buffers_.size() || !data || size_bytes == 0 ||
+        offset > buffers_[buffer.index]->Size() || size_bytes > buffers_[buffer.index]->Size() - offset) {
+        return false;
+    }
+    buffers_[buffer.index]->Update(data, size_bytes, offset);
+    return true;
+}
+
 BufferHandle D3D12Device::CreateVertexBuffer(const void* data, u64 size_bytes) {
     return CreateBufferInternal(data, size_bytes, true);
 }

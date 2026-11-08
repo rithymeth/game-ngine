@@ -83,6 +83,7 @@ public:
     bool SupportsFrameConstants() const override { return true; }
     BufferHandle CreateFrameConstantBuffer(u64 size_bytes) override;
     void UpdateFrameConstantBuffer(BufferHandle buffer, const void* data, u64 size_bytes) override { UpdateConstantBuffer(buffer, data, size_bytes, 0); }
+    bool WriteBufferUnsynchronized(BufferHandle buffer, const void* data, u64 size_bytes, u64 offset = 0) override;
     const gfx::Buffer& GetBuffer(BufferHandle handle) const { return *buffers_[handle.index]; }
     usize BufferCount() const { return buffers_.size(); }
     D3D12_GPU_DESCRIPTOR_HANDLE ComputeStorageDescriptor(BufferHandle handle) const;

@@ -429,7 +429,10 @@ void ParticlePass::DrawStream(gfx::rhi::ICommandList& commands, gfx::rhi::Pipeli
         buffer.capacity = grown.IsValid() ? capacity : 0;
         if (!grown.IsValid()) return;
     }
-    device_.UpdateVertexBuffer(buffer.handle, vertices.data(), vertices.size() * sizeof(ParticleQuadVertex));
+    // This frame slot's buffer: the frame loop waited on the frame that last used it, so no GPU wait is needed.
+    if (!device_.WriteBufferUnsynchronized(buffer.handle, vertices.data(), vertices.size() * sizeof(ParticleQuadVertex))) {
+        device_.UpdateVertexBuffer(buffer.handle, vertices.data(), vertices.size() * sizeof(ParticleQuadVertex));
+    }
     commands.BindPipeline(pipeline);
     commands.BindBindlessTextures();
     commands.BindVertexBuffer(buffer.handle, sizeof(ParticleQuadVertex));

@@ -141,6 +141,7 @@ public:
     bool SupportsFrameConstants() const override { return true; }
     BufferHandle CreateFrameConstantBuffer(u64 size_bytes) override;
     void UpdateFrameConstantBuffer(BufferHandle buffer, const void* data, u64 size_bytes) override;
+    bool WriteBufferUnsynchronized(BufferHandle buffer, const void* data, u64 size_bytes, u64 offset = 0) override;
     VkDescriptorSetLayout FrameConstantsSetLayout() const { return frame_constants_set_layout_; }
     SampledTextureHandle CreateR32FloatTexture(u32 width, u32 height, const f32* values) override;
     const SampledTextureRecord& GetSampledTexture(SampledTextureHandle handle) const {

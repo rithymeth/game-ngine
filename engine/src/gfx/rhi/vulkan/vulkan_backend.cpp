@@ -1514,6 +1514,17 @@ void VulkanDevice::UpdateFrameConstantBuffer(BufferHandle buffer, const void* da
     std::memcpy(record.mapped, data, static_cast<usize>(size_bytes));
 }
 
+bool VulkanDevice::WriteBufferUnsynchronized(BufferHandle buffer, const void* data, u64 size_bytes, u64 offset) {
+    if (!IsBufferAlive(buffer)) return false;
+    BufferRecord& record = buffers_[buffer.index];
+    const bool host_written = record.is_vertex || record.constants_set != VK_NULL_HANDLE;
+    if (!host_written || !record.mapped || !data || size_bytes == 0 || offset > record.size_bytes || size_bytes > record.size_bytes - offset) {
+        return false;
+    }
+    std::memcpy(static_cast<u8*>(record.mapped) + offset, data, static_cast<usize>(size_bytes));
+    return true;
+}
+
 BufferHandle VulkanDevice::CreateFrameConstantBuffer(u64 size_bytes) {
     if (size_bytes == 0) {
         AETHER_LOG_ERROR("Vulkan", "CreateConstantBuffer requires a non-zero size");

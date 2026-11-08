@@ -716,3 +716,39 @@ Measured with a throwaway harness:
 - **Motion is the camera's only.** An object that moves on its own reprojects to where its pixels were, not where it was, so its
   history is held only by the neighbourhood clip. That limits ghosting but does not remove it. Per-object motion vectors would
   need a second render target in the scene pass, which the RHI does not have yet.
+
+## Per-frame uploads without waiting for the GPU, 8 November 2026
+
+**What changed.** On D3D12, `UpdateFrameConstantBuffer` and `UpdateVertexBuffer` wait for the queues to drain before they write:
+- `UpdateFrameConstantBuffer` goes through `UpdateConstantBuffer` and `WithQueuesIdle`;
+- `UpdateVertexBuffer` goes through `WithGraphicsQueueIdle`.
+
+The player called them every frame for the frame constants, the clustered lights, skinned vertices and particle vertices. Each of
+those buffers is one per frame in flight, and `player/main.cpp` already waits on a frame's fence before it reuses that frame's
+slot. The wait was redundant, so the CPU stopped mid-frame until the GPU had finished the previous frame.
+
+`IDevice::WriteBufferUnsynchronized` writes such a buffer at once, on the caller's promise that nothing in flight reads it.
+Vulkan's `UpdateFrameConstantBuffer` already wrote without waiting. The old calls keep their behaviour for everyone else; the VFX
+GPU runtime rewrites one constant buffer each frame and relies on the wait.
+
+**Measured** with a throwaway harness: a frame loop like the player's, with 2 frames in flight, a busy CPU section standing in for
+the tick, then the upload, then a 1280 x 720 GPU workload. Two rounds; RTX 3050 Laptop GPU, RelWithDebInfo.
+
+| GPU alone | CPU | Waiting: frame | Waiting: blocked in upload | Unsynchronized: frame |
+| --- | --- | --- | --- | --- |
+| 2.7 - 3.1 ms | 1 ms | 2.60 - 2.68 ms | 1.50 - 1.58 ms | 2.29 - 2.39 ms |
+| 2.7 - 3.1 ms | 2 ms | 2.44 - 2.49 ms | 0.37 - 0.40 ms | 2.28 - 2.40 ms |
+| 2.7 - 3.1 ms | 4 ms | 4.06 - 4.09 ms | 0.00 ms | 4.08 - 4.09 ms |
+| 4.4 - 4.6 ms | 1 ms | 4.57 - 4.76 ms | 3.47 - 3.63 ms | 4.38 - 4.63 ms |
+| 4.4 - 4.6 ms | 2 ms | 4.87 - 5.49 ms | 2.74 - 3.27 ms | 4.78 - 4.90 ms |
+| 4.4 - 4.6 ms | 4 ms | 4.95 - 5.76 ms | 0.81 - 1.53 ms | 4.77 - 5.07 ms |
+
+**What the numbers say.**
+- **The wait blocked the CPU for up to 3.6 ms a frame.** That is the remainder of the previous frame's GPU work. The upload now
+  takes no measurable time.
+- **Frame time improves by only 0 to 12 percent,** and most of the gain is where CPU and GPU times are close. The tick before the
+  upload already overlapped most of the GPU's work. What the wait really cost was the GPU sitting idle while the frame after the
+  upload was recorded, and the CPU time lost in the upload.
+- **On the 60-light lantern scene, whole-process timings show no difference within their noise** (about +-20 percent from run to
+  run on this laptop).
+- **Worth keeping, but not a headline.** The CPU time freed in the upload is time the game can use.
