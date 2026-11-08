@@ -32,6 +32,7 @@
 #include <cstring>
 #include <filesystem>
 #include <cmath>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -721,6 +722,23 @@ struct SceneRenderer::Impl {
     std::unique_ptr<PostPass> post;
     std::unique_ptr<ShadowPass> shadows; // where the device has frame constants and depth textures (D3D12)
     std::unique_ptr<TaaPass> taa;         // temporal anti-aliasing, with the HDR target (AETHER_RENDER_TAA=0 turns it off)
+    // Each drawn node's model transform as of the frame it was last drawn, for TAA's motion pass: key (entity index, generation, node).
+    struct PreviousTransform {
+        Mat4 model;
+        u64 frame = 0;
+    };
+    struct TransformKey {
+        u32 index = 0, generation = 0, node = 0;
+        bool operator==(const TransformKey&) const = default;
+    };
+    struct TransformKeyHash {
+        usize operator()(const TransformKey& key) const {
+            return std::hash<u64>()((static_cast<u64>(key.index) << 32 | key.generation) * 0x9E3779B97F4A7C15ull ^ key.node);
+        }
+    };
+    std::unordered_map<TransformKey, PreviousTransform, TransformKeyHash> previous_transforms;
+    u64 transform_frame = 0;
+    bool taa_motion = false; // the motion pass (AETHER_RENDER_TAA_MOTION=0 turns it off)
     std::unique_ptr<SkyPass> sky;        // where the device has frame constants and half-float textures (D3D12)
     bool hdr = false;
     vfx::ParticleRenderData particle_data;
@@ -800,6 +818,8 @@ struct SceneRenderer::Impl {
         if (hdr && (taa_setting == nullptr || std::strcmp(taa_setting, "0") != 0)) {
             taa = std::make_unique<TaaPass>(device, swap_chain);
             if (!taa->Valid()) taa.reset();
+            const char* motion_setting = std::getenv("AETHER_RENDER_TAA_MOTION"); // 0: the camera's reprojection alone, for comparison
+            taa_motion = taa && (motion_setting == nullptr || std::strcmp(motion_setting, "0") != 0);
         }
         PipelineDesc desc;
         desc.hlsl_source = SceneShaderSource(false, hdr);
@@ -1851,6 +1871,8 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
     std::vector<PendingTransparentDraw> transparent_draws;
     std::vector<PendingOpaqueDraw> opaque_draws;
     std::vector<ShadowCaster> shadow_casters;
+    std::vector<TaaMover> taa_movers; // opaque draws whose model transform changed since last frame
+    const u64 transform_frame = ++renderer.transform_frame;
     FrameData frame_data;
     View shadow_view;
     bool sun_shadows = false;
@@ -1992,6 +2014,17 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                         }
                         const Mat4 model_transform = entity_transform * node.world_transform;
                         const Mat4 mvp = view_projection * model_transform;
+                        // Last frame's transform of this node, when it moved since (for TAA's motion pass).
+                        std::optional<Mat4> previous_model;
+                        if (renderer.taa_motion) {
+                            Impl::PreviousTransform& previous = renderer.previous_transforms[{entities[row].index, entities[row].generation,
+                                                                                              static_cast<u32>(node.node_index)}];
+                            if (previous.frame + 1 == transform_frame && TaaTransformMoved(previous.model, model_transform)) {
+                                previous_model = previous.model;
+                            }
+                            previous.model = model_transform;
+                            previous.frame = transform_frame;
+                        }
                         const Mat4 normal_transform = BuildNormalTransform(model_transform);
                         std::vector<Mat4> skin_normal_matrices;
                         if (has_skin && !model->skin_matrices.empty()) {
@@ -2122,6 +2155,10 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                                                              constants, dx * dx + dy * dy + dz * dz, cull});
                             } else {
                                 opaque_draws.push_back({frame_vertex_buffer, primitive.indices, primitive.index_count, constants, cull});
+                                if (previous_model) {
+                                    taa_movers.push_back({frame_vertex_buffer, primitive.indices, primitive.index_count,
+                                                          static_cast<u32>(sizeof(SceneVertex)), model_transform, *previous_model});
+                                }
                                 if (sun_shadows) {
                                     ShadowCaster caster;
                                     caster.vertices = frame_vertex_buffer;
@@ -2152,6 +2189,8 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
             }
         });
     }
+    // Forget the nodes not drawn this frame (destroyed entities, culled models): they start over when they come back.
+    std::erase_if(renderer.previous_transforms, [&](const auto& entry) { return entry.second.frame != transform_frame; });
     // The sun's shadow atlas, outside any pass; then this frame's constants (lights and cascades) and the scene pass itself.
     if (sun_shadows) {
         const Vec3 light_travel(-frame_data.sun_direction[0], -frame_data.sun_direction[1], -frame_data.sun_direction[2]);
@@ -2241,7 +2280,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
         u32 resolved = 0;
         if (resolve) {
             resolved = renderer.taa->Resolve(commands, taa_view_projection,
-                                             (static_cast<u64>(camera_entity.index) << 32) | camera_entity.generation);
+                                             (static_cast<u64>(camera_entity.index) << 32) | camera_entity.generation, taa_movers);
         } else if (renderer.taa) {
             renderer.taa->Reset();
         }

@@ -5,6 +5,8 @@
 #include "aether/math/math.h"
 #include "aether/renderer/post.h"
 
+#include <span>
+
 // Temporal anti-aliasing (render roadmap step 6). Each frame the scene's projection is moved by a sub-pixel offset (the Halton 2, 3
 // sequence, 8 frames long), so successive frames sample each pixel at different points. After the scene colour pass, a resolve pass
 // blends the frame into a history of the frames before it:
@@ -15,8 +17,10 @@
 //     longer belongs (disocclusion, moving objects, lighting changes);
 //   - and it is blended at kTaaBlend with this frame, both weighted by 1 / (1 + luma) so one bright sample can't flicker.
 // The result is a render texture that becomes next frame's history and the image bloom and the tone mapper read (PostPass::SetSource).
-// Motion is the camera's only: objects that move on their own are held to their neighbourhood by the clip, which limits their ghosting
-// but does not remove it.
+// (AETHER_RENDER_TAA_MOTION=0 turns the motion pass below off, for comparison.) Objects that move on their own (a model transform different from last frame's) are drawn first into a motion texture: each covered
+// pixel gets the screen-space offset to where its surface was last frame, and the resolve follows that instead of the camera's
+// reprojection. The pass tests against the scene depth copy, so a mover behind something writes nothing. Skinned deformation is not
+// in it: a skinned mesh moves with its entity's transform, and the clip holds what its bones add.
 
 namespace aether::player {
 
@@ -31,9 +35,30 @@ struct TaaConstants {
     u32 depth = 0;          // of the scene depth copy
     f32 blend = 1.0f;       // the newest frame's weight; 1: no history (the first frame, a cut, a resize)
     f32 texel[2]{};         // 1 / the target's size
-    f32 padding[2]{};
+    u32 motion = 0;         // bindless index of the motion texture; 0: nothing moved on its own this frame
+    f32 padding = 0.0f;
 };
 static_assert(sizeof(TaaConstants) == 96);
+
+// The motion pass's push constants: 144 bytes.
+struct TaaMotionConstants {
+    f32 mvp[16]{};          // this frame's, without jitter
+    f32 previous_mvp[16]{}; // last frame's view-projection times last frame's model transform
+    f32 jitter[2]{};        // this frame's offset in NDC (what JitterProjection adds per unit of w)
+    u32 depth = 0;          // bindless index of the scene depth copy
+    f32 padding = 0.0f;
+};
+static_assert(sizeof(TaaMotionConstants) == 144);
+
+// An opaque draw whose model transform changed since last frame.
+struct TaaMover {
+    gfx::rhi::BufferHandle vertices;
+    gfx::rhi::BufferHandle indices; // 32-bit
+    u32 index_count = 0;
+    u32 vertex_stride = 0;          // position first, as the scene's vertices (PositionNormalUvTangent)
+    Mat4 model;
+    Mat4 previous_model;
+};
 
 // The jitter itself is renderer/post.h's: TaaJitter (Halton 2, 3) and JitterProjection.
 // What the resolve shader does to find a pixel's history: last frame's view-projection times the inverse of this frame's (both
@@ -42,6 +67,12 @@ bool TaaReprojection(const Mat4& previous_view_projection, const Mat4& view_proj
 
 // The resolve shader (VSMain, PSMain), for the pipeline and for tests.
 const char* TaaShaderSource();
+// The motion shader (VSMain, PSMain): a mover's offset to last frame, in UV, with alpha 1 where it wrote.
+const char* TaaMotionShaderSource();
+
+// Whether a model transform moved enough since last frame to need the motion pass (any element by more than a millionth of the
+// largest).
+bool TaaTransformMoved(const Mat4& previous, const Mat4& current);
 
 class TaaPass {
 public:
@@ -58,7 +89,10 @@ public:
     // Records the resolve outside any render pass, after the scene colour pass has ended (with the depth copied by CopySceneDepth).
     // `view_projection` is this frame's without jitter; `camera` names the camera (a different one starts the history over). Returns
     // the bindless index of the resolved image, or 0 with nothing recorded (no room in the bindless table for the history, a zero size).
-    u32 Resolve(gfx::rhi::ICommandList& commands, const Mat4& view_projection, u64 camera);
+    // `movers` are drawn into the motion texture first (when the history is kept), so the resolve follows them.
+    u32 Resolve(gfx::rhi::ICommandList& commands, const Mat4& view_projection, u64 camera, std::span<const TaaMover> movers = {});
+    // The bindless index of the motion texture the last Resolve drew, or 0 when it drew none (for tests).
+    u32 LastMotion() const { return last_motion_; }
     // Starts the history over on the next Resolve.
     void Reset() { history_valid_ = false; }
     // Frees the history textures (they come back on the next Resolve).
@@ -66,10 +100,15 @@ public:
 
 private:
     bool EnsureHistory(u32 width, u32 height);
+    u32 DrawMotion(gfx::rhi::ICommandList& commands, const Mat4& view_projection, std::span<const TaaMover> movers);
 
     gfx::rhi::IDevice& device_;
     gfx::rhi::ISwapChain& swap_chain_;
     gfx::rhi::PipelineHandle pipeline_;
+    gfx::rhi::PipelineHandle motion_pipeline_;
+    gfx::rhi::SampledTextureHandle motion_;
+    u32 last_motion_ = 0;
+    f32 jitter_ndc_[2]{};
     u32 scene_color_ = 0;
     u32 scene_depth_ = 0;
     gfx::rhi::SampledTextureHandle history_[2];

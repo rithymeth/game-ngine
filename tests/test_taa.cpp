@@ -4,6 +4,7 @@
 #include "aether/gfx/rhi/device.h"
 #include "test_framework.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -88,7 +89,8 @@ AETHER_TEST(Taa_ShaderClipsTheHistoryAndWeighsByLuma) {
     const std::string source = TaaShaderSource();
     AETHER_CHECK(source.find("float3 HistoryCatmullRom(float2 uv)") != std::string::npos);
     AETHER_CHECK(source.find("ClipToBox(ToYCoCg(history), mean, 1.25 * sigma)") != std::string::npos);
-    AETHER_CHECK(source.find("depth = min(depth, Depth(p + int2(x, y)))") != std::string::npos); // the nearest depth of the neighbourhood
+    AETHER_CHECK(source.find("float d = Depth(p + int2(x, y));") != std::string::npos); // the nearest depth of the neighbourhood
+    AETHER_CHECK(source.find("if (motion.a > 0.5)") != std::string::npos);                 // and its motion, where something moved
     AETHER_CHECK(source.find("g_PC.g_Blend / (1.0 + Luma(current))") != std::string::npos);
     AETHER_CHECK(kTaaBlend > 0.0f && kTaaBlend < 0.5f && sizeof(TaaConstants) <= 256);
 }
@@ -223,7 +225,173 @@ static void Taa_ThePostPassReadsTheResolveWhenGivenIt(rhi::Backend backend) {
     AETHER_CHECK(post.Source() == post.SceneColorIndex());
 }
 
+AETHER_TEST(Taa_OnlyATransformThatChangedCountsAsMoving) {
+    const Mat4 a = Mat4::Translation(Vec3(100.0f, 2.0f, -3.0f));
+    AETHER_CHECK(!TaaTransformMoved(a, a));
+    AETHER_CHECK(!TaaTransformMoved(a, Mat4::Translation(Vec3(100.0f + 1e-5f, 2.0f, -3.0f)))); // rounding, not motion
+    AETHER_CHECK(TaaTransformMoved(a, Mat4::Translation(Vec3(100.01f, 2.0f, -3.0f))));
+    Mat4 turned = Mat4::Identity();
+    turned.cols[0].z = -0.01f, turned.cols[2].x = 0.01f; // a hundredth of a radian about y
+    AETHER_CHECK(TaaTransformMoved(Mat4::Identity(), turned));
+}
+
+// A bar of pixel-aligned stripes (2 pixels white, 2 black) moving 2 pixels a frame over a still background. With the camera's
+// reprojection alone every pixel's history is the opposite stripe, inside the neighbourhood's colour box, so the stripes blur toward grey;
+// with the bar as a mover the history follows it and they stay sharp. Pixels the bar has just uncovered keep the camera's reprojection.
+static void Taa_AMovingObjectKeepsItsDetailWithMotionVectors(rhi::Backend backend) {
+    if (!rhi::IsBackendAvailable(backend)) return;
+    std::unique_ptr<rhi::IDevice> device;
+    try {
+        device = rhi::CreateDevice(backend, false);
+    } catch (const std::exception&) {
+    }
+    if (!device) return;
+    constexpr u32 kSize = 32;
+    std::unique_ptr<rhi::ISwapChain> target = device->CreateSwapChain(nullptr, kSize, kSize, 2);
+
+    rhi::PipelineDesc scene;
+    scene.hlsl_source = R"(
+struct PushConstants { float4x4 mvp; };
+#ifdef __spirv__
+[[vk::push_constant]]
+#endif
+ConstantBuffer<PushConstants> g_PC : register(b0);
+struct VSInput {
+    float3 position : POSITION;
+    float3 normal : NORMAL;
+    float2 uv : TEXCOORD0;
+    float4 tangent : TANGENT;
+};
+struct PSInput {
+    float4 position : SV_POSITION;
+    float local_x : TEXCOORD0;
+};
+PSInput VSMain(VSInput input) {
+    PSInput output;
+    output.position = mul(g_PC.mvp, float4(input.position, 1.0));
+    output.local_x = input.position.x;
+    return output;
+}
+float4 PSMain(PSInput input) : SV_Target {
+    return frac(input.local_x / 0.25 + 1e-3) < 0.5 ? float4(1, 1, 1, 1) : float4(0, 0, 0, 1);
+}
+)";
+    scene.push_constant_size_bytes = 64;
+    scene.scene_color_target = true;
+    scene.use_vertex_buffer = true;
+    scene.vertex_layout = rhi::VertexLayout::PositionNormalUvTangent;
+    scene.depth_test = true;
+    scene.depth_write = true;
+    const rhi::PipelineHandle scene_pipeline = device->CreatePipeline(scene, *target);
+    rhi::PipelineDesc show;
+    show.hlsl_source = R"(
+struct PushConstants { uint index; uint pad0; uint pad1; uint pad2; };
+#ifdef __spirv__
+[[vk::push_constant]]
+#endif
+ConstantBuffer<PushConstants> g_PC : register(b0);
+Texture2D g_Textures[128] : register(t0, space0);
+SamplerState g_Sampler : register(s0, space1);
+float4 VSMain(uint id : SV_VertexID) : SV_Position {
+    float2 uv = float2((id << 1) & 2, id & 2);
+    return float4(uv * float2(2.0, -2.0) + float2(-1.0, 1.0), 0.0, 1.0);
+}
+float4 PSMain(float4 position : SV_Position) : SV_Target {
+    return float4(saturate(g_Textures[g_PC.index].Load(int3(int2(position.xy), 0)).rgb), 1.0);
+}
+)";
+    show.push_constant_size_bytes = 16;
+    show.enable_bindless_textures = true;
+    const rhi::PipelineHandle show_pipeline = device->CreatePipeline(show, *target);
+    AETHER_CHECK(scene_pipeline.IsValid() && show_pipeline.IsValid());
+    if (!scene_pipeline.IsValid() || !show_pipeline.IsValid()) return;
+
+    // The bar: x -0.5 .. 0 in NDC (8 pixels), y -0.5 .. 0.5, at depth 0.5; 12 floats a vertex, as the scene's.
+    const f32 vertices[4][12] = {{-0.5f, -0.5f, 0.5f, 0, 0, 1, 0, 0, 1, 0, 0, 1}, {0.0f, -0.5f, 0.5f, 0, 0, 1, 0, 0, 1, 0, 0, 1},
+                                 {0.0f, 0.5f, 0.5f, 0, 0, 1, 0, 0, 1, 0, 0, 1},   {-0.5f, 0.5f, 0.5f, 0, 0, 1, 0, 0, 1, 0, 0, 1}};
+    const u32 indices[6] = {0, 1, 2, 0, 2, 3};
+    const rhi::BufferHandle vertex_buffer = device->CreateVertexBuffer(vertices, sizeof(vertices));
+    const rhi::BufferHandle index_buffer = device->CreateIndexBuffer(indices, sizeof(indices), rhi::IndexFormat::UInt32);
+    AETHER_CHECK(vertex_buffer.IsValid() && index_buffer.IsValid());
+
+    // 24 frames of the moving bar; the resolved row through its middle afterwards. Frame f's bar is f % 8 steps of 2 pixels right.
+    const auto run = [&](bool with_motion, std::vector<u8>& row) {
+        TaaPass taa(*device, *target);
+        if (!taa.Valid()) return false;
+        const Mat4 view_projection = Mat4::Identity();
+        Mat4 previous_model = Mat4::Identity();
+        bool drew_motion = false;
+        for (u32 f = 0; f < 24; ++f) {
+            const Mat4 model = Mat4::Translation(Vec3(0.125f * static_cast<f32>(f % 8), 0.0f, 0.0f));
+            f32 jx = 0.0f, jy = 0.0f;
+            taa.NextJitter(jx, jy);
+            const Mat4 mvp = JitterProjection(view_projection, jx, jy, kSize, kSize) * model;
+            std::unique_ptr<rhi::ICommandList> cmd = device->CreateCommandList();
+            target->AcquireNextImage();
+            cmd->Reset();
+            if (!cmd->BeginSceneColorPass(*target, {0, 0, 0, 1})) return false;
+            cmd->BindPipeline(scene_pipeline);
+            cmd->SetPushConstants(&mvp.cols[0], 64);
+            cmd->BindVertexBuffer(vertex_buffer, sizeof(vertices[0]));
+            cmd->BindIndexBuffer(index_buffer, rhi::IndexFormat::UInt32);
+            cmd->DrawIndexed(6);
+            if (!cmd->CopySceneDepth()) return false;
+            cmd->EndRenderPass();
+            std::vector<TaaMover> movers;
+            if (with_motion && f > 0) movers.push_back({vertex_buffer, index_buffer, 6, sizeof(vertices[0]), model, previous_model});
+            const u32 resolved = taa.Resolve(*cmd, view_projection, 1, movers);
+            if (resolved == 0) return false;
+            drew_motion = drew_motion || taa.LastMotion() != 0;
+            cmd->BeginRenderPass(*target, {1, 0, 1, 1});
+            cmd->BindPipeline(show_pipeline);
+            cmd->BindBindlessTextures();
+            const u32 index[4] = {resolved, 0, 0, 0};
+            cmd->SetPushConstants(index, sizeof(index));
+            cmd->Draw(3);
+            cmd->EndRenderPass();
+            cmd->Close();
+            device->WaitForFence(device->Submit(*cmd, target.get()));
+            if (f == 23) {
+                std::vector<u8> pixels;
+                const bool read = target->ReadBack(pixels) && pixels.size() == kSize * kSize * 4;
+                target->Present(false);
+                if (!read) return false;
+                row.resize(kSize);
+                for (u32 x = 0; x < kSize; ++x) row[x] = pixels[(16 * kSize + x) * 4 + 1];
+            } else {
+                target->Present(false);
+            }
+            previous_model = model;
+        }
+        return drew_motion == with_motion;
+    };
+
+    // Frame 23 is 7 steps along: the bar covers pixels 22 .. 29. Its interior (23 .. 28) is what the history has to follow.
+    std::vector<u8> sharp, blurred;
+    AETHER_CHECK(run(true, sharp));
+    AETHER_CHECK(run(false, blurred));
+    if (sharp.size() == kSize && blurred.size() == kSize) {
+        std::printf("    with motion:    %3u %3u %3u %3u %3u %3u\n", sharp[23], sharp[24], sharp[25], sharp[26], sharp[27], sharp[28]);
+        std::printf("    camera only:    %3u %3u %3u %3u %3u %3u\n", blurred[23], blurred[24], blurred[25], blurred[26], blurred[27], blurred[28]);
+        int grey_with = 0, lowest = 255, highest = 0;
+        for (u32 x = 23; x <= 28; ++x) {
+            if (sharp[x] > 40 && sharp[x] < 215) ++grey_with;
+            lowest = std::min<int>(lowest, blurred[x]);
+            highest = std::max<int>(highest, blurred[x]);
+        }
+        AETHER_CHECK(grey_with == 0);             // every stripe pixel still white or black
+        AETHER_CHECK(highest - lowest < 128);     // the test can tell: without the motion pass the stripes wash out
+        AETHER_CHECK(sharp[4] < 5 && sharp[12] < 5); // the uncovered background stays the background
+    }
+    device->DestroyBuffer(vertex_buffer);
+    device->DestroyBuffer(index_buffer);
+    device->DestroyPipeline(scene_pipeline);
+    device->DestroyPipeline(show_pipeline);
+}
+
 // On both backends.
+AETHER_TEST(Taa_AMovingObjectKeepsItsDetailWithMotionVectors_D3D12) { Taa_AMovingObjectKeepsItsDetailWithMotionVectors(rhi::Backend::D3D12); }
+AETHER_TEST(Taa_AMovingObjectKeepsItsDetailWithMotionVectors_Vulkan) { Taa_AMovingObjectKeepsItsDetailWithMotionVectors(rhi::Backend::Vulkan); }
 AETHER_TEST(Taa_AHardEdgeConvergesToItsCoverageAndACutStartsOver_D3D12) { Taa_AHardEdgeConvergesToItsCoverageAndACutStartsOver(rhi::Backend::D3D12); }
 AETHER_TEST(Taa_AHardEdgeConvergesToItsCoverageAndACutStartsOver_Vulkan) { Taa_AHardEdgeConvergesToItsCoverageAndACutStartsOver(rhi::Backend::Vulkan); }
 AETHER_TEST(Taa_ThePostPassReadsTheResolveWhenGivenIt_D3D12) { Taa_ThePostPassReadsTheResolveWhenGivenIt(rhi::Backend::D3D12); }

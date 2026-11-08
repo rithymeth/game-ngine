@@ -713,9 +713,45 @@ Measured with a throwaway harness:
 - **Not checked visually:** a moving camera, because the player's screenshot mode holds the camera still.
 
 **Limits.**
-- **Motion is the camera's only.** An object that moves on its own reprojects to where its pixels were, not where it was, so its
-  history is held only by the neighbourhood clip. That limits ghosting but does not remove it. Per-object motion vectors would
-  need a second render target in the scene pass, which the RHI does not have yet.
+- **Motion was the camera's only** when this was written; the next section adds per-object motion.
+
+## TAA motion vectors for objects that move, 8 November 2026
+
+**What changed.** Each opaque node is drawn into a motion texture after the scene pass when its model transform differs from last
+frame's (`TaaTransformMoved`, `player/src/taa_pass.h`):
+- the scene renderer keeps every drawn node's previous transform, keyed by entity and node;
+- the motion pass rasterises the movers with this frame's jitter and keeps a pixel only where the mover is the surface in the scene
+  depth copy. It writes the UV offset to where that surface was last frame. It needs no second render target and no backend
+  changes;
+- the resolve follows that offset where the texture has one, read at the same nearest-depth neighbour as the depth, and keeps the
+  camera's reprojection everywhere else;
+- a still scene draws no motion pass at all;
+- switching it off: `AETHER_RENDER_TAA_MOTION=0`.
+
+**Measured** with a throwaway harness, using the method of the section above: an offscreen D3D12 device, 20 repetitions in one
+command list, fence to fence, best of 10 lists after 2 warm-ups. Three rounds; RTX 3050 Laptop GPU, RelWithDebInfo.
+- **The scene:** a 100 x 100 grid (20 000 triangles) covering about half the pixels; the scene pass and depth copy; then the
+  resolve; then the resolve with the grid as a mover.
+
+| Resolution | Scene | + resolve | + resolve with a mover | Motion pass |
+| --- | --- | --- | --- | --- |
+| 1280 x 720 | 0.117 - 0.140 ms | 0.273 - 0.322 ms | 0.355 - 0.375 ms | 0.03 - 0.10 ms |
+| 1920 x 1080 | 0.198 - 0.202 ms | 0.562 - 0.574 ms | 0.716 - 0.736 ms | 0.15 - 0.17 ms |
+
+**What the numbers say.**
+- **The motion pass costs about 0.15 ms at 1080p for a mover covering half the screen.** That is the clear of a half-float target
+  plus the movers' geometry a second time. It is paid only on frames where something moved.
+- **The test shows the difference** (`Taa_AMovingObjectKeepsItsDetailWithMotionVectors`, both backends): a bar of 2-pixel stripes
+  moving 2 pixels a frame stays exactly black and white with motion vectors. With the camera's reprojection alone, every pixel's
+  history is the opposite stripe, which the colour box does not reject, and the stripes wash out to 29 - 42 / 255.
+- **Checked visually** on the lantern swinging +-25 degrees: with motion vectors the moving cap and finial are anti-aliased and
+  clean. With the camera's reprojection alone their edges smear a little; with TAA off they stair-step. A mean-Laplacian sharpness
+  figure did not separate the three cleanly, because ghosted double edges also add high-frequency energy, so none is quoted.
+
+**Limits.**
+- **Skinned deformation is not in the motion texture.** A skinned mesh moves with its entity's transform; what its bones add is
+  still held by the colour clip alone. Covering it needs last frame's skinned positions as a second vertex stream.
+- **Transparent surfaces and particles** keep the camera's reprojection, as before.
 
 ## Per-frame uploads without waiting for the GPU, 8 November 2026
 

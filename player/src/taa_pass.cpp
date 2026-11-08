@@ -2,6 +2,8 @@
 
 #include "aether/core/log.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstring>
 
 namespace aether::player {
@@ -16,7 +18,8 @@ struct TaaConstants {
     uint g_Depth;
     float g_Blend;
     float2 g_Texel;
-    float2 g_Padding;
+    uint g_Motion;
+    float g_Padding;
 };
 #ifdef __spirv__
 [[vk::push_constant]]
@@ -79,22 +82,37 @@ float4 PSMain(float4 position : SV_Position) : SV_Target {
     // The neighbourhood: its colour moments, and its nearest depth (so an edge's pixels follow the surface in front).
     float3 m1 = float3(0, 0, 0), m2 = float3(0, 0, 0);
     float depth = 1.0;
+    int2 nearest = int2(0, 0);
     [unroll] for (int y = -1; y <= 1; ++y) {
         [unroll] for (int x = -1; x <= 1; ++x) {
             float3 c = ToYCoCg(Current(p + int2(x, y)));
             m1 += c;
             m2 += c * c;
-            depth = min(depth, Depth(p + int2(x, y)));
+            float d = Depth(p + int2(x, y));
+            if (d < depth) {
+                depth = d;
+                nearest = int2(x, y);
+            }
         }
     }
     float3 mean = m1 / 9.0;
     float3 sigma = sqrt(max(m2 / 9.0 - mean * mean, 0.0));
 
-    // Where this pixel was last frame.
-    float2 ndc = float2(position.x * g_PC.g_Texel.x * 2.0 - 1.0, 1.0 - position.y * g_PC.g_Texel.y * 2.0);
-    float4 previous = mul(g_PC.g_Reprojection, float4(ndc, depth, 1.0));
-    if (previous.w <= 1e-6) return float4(current, 1.0);
-    float2 previous_uv = float2(previous.x / previous.w * 0.5 + 0.5, 0.5 - previous.y / previous.w * 0.5);
+    // Where this pixel was last frame: the motion texture's offset where an object moved on its own (read at the nearest neighbour,
+    // like the depth), else the camera's reprojection of the depth.
+    float4 motion = float4(0, 0, 0, 0);
+    if (g_PC.g_Motion != 0) {
+        motion = g_Textures[g_PC.g_Motion].Load(int3(clamp(p + nearest, int2(0, 0), TargetSize() - 1), 0));
+    }
+    float2 previous_uv;
+    if (motion.a > 0.5) {
+        previous_uv = position.xy * g_PC.g_Texel + motion.xy;
+    } else {
+        float2 ndc = float2(position.x * g_PC.g_Texel.x * 2.0 - 1.0, 1.0 - position.y * g_PC.g_Texel.y * 2.0);
+        float4 previous = mul(g_PC.g_Reprojection, float4(ndc, depth, 1.0));
+        if (previous.w <= 1e-6) return float4(current, 1.0);
+        previous_uv = float2(previous.x / previous.w * 0.5 + 0.5, 0.5 - previous.y / previous.w * 0.5);
+    }
     if (any(previous_uv < 0.0) || any(previous_uv > 1.0)) return float4(current, 1.0); // off screen last frame: nothing to keep
 
     float3 history = HistoryCatmullRom(previous_uv);
@@ -104,6 +122,56 @@ float4 PSMain(float4 position : SV_Position) : SV_Target {
     float current_weight = g_PC.g_Blend / (1.0 + Luma(current));
     float history_weight = (1.0 - g_PC.g_Blend) / (1.0 + Luma(history));
     return float4(max((current * current_weight + history * history_weight) / (current_weight + history_weight), 0.0), 1.0);
+}
+)";
+
+// The motion pass: each mover rasterised with this frame's jitter (so it covers the same pixels as in the scene), keeping only the pixels
+// where it is the surface in the scene depth copy, and writing the UV offset from this frame's position to last frame's (both without
+// jitter). Alpha 1 marks the pixels it wrote; the target is cleared to 0.
+constexpr char kTaaMotionShader[] = R"(
+struct MotionConstants {
+    float4x4 g_Mvp;
+    float4x4 g_PreviousMvp;
+    float2 g_Jitter;
+    uint g_Depth;
+    float g_Padding;
+};
+#ifdef __spirv__
+[[vk::push_constant]]
+#endif
+ConstantBuffer<MotionConstants> g_PC : register(b0);
+Texture2D g_Textures[128] : register(t0, space0);
+SamplerState g_Sampler : register(s0, space1);
+
+struct VSInput {
+    float3 position : POSITION;
+    float3 normal : NORMAL;
+    float2 uv : TEXCOORD0;
+    float4 tangent : TANGENT;
+};
+struct PSInput {
+    float4 position : SV_POSITION;
+    float3 current : TEXCOORD0;
+    float3 previous : TEXCOORD1;
+};
+
+PSInput VSMain(VSInput input) {
+    float4 clip = mul(g_PC.g_Mvp, float4(input.position, 1.0));
+    float4 previous = mul(g_PC.g_PreviousMvp, float4(input.position, 1.0));
+    PSInput output;
+    output.position = float4(clip.xy + g_PC.g_Jitter * clip.w, clip.zw);
+    output.current = clip.xyw;
+    output.previous = previous.xyw;
+    return output;
+}
+
+float4 PSMain(PSInput input) : SV_Target {
+    float stored = g_Textures[g_PC.g_Depth].Load(int3(int2(input.position.xy), 0)).r;
+    if (input.position.z > stored + 1e-5) discard; // behind the visible surface
+    if (input.previous.z <= 1e-6) return float4(-4.0, -4.0, 0.0, 1.0); // behind last frame's camera: off screen, nothing to keep
+    float2 current_uv = float2(input.current.x / input.current.z * 0.5 + 0.5, 0.5 - input.current.y / input.current.z * 0.5);
+    float2 previous_uv = float2(input.previous.x / input.previous.z * 0.5 + 0.5, 0.5 - input.previous.y / input.previous.z * 0.5);
+    return float4(previous_uv - current_uv, 0.0, 1.0);
 }
 )";
 
@@ -117,6 +185,18 @@ bool TaaReprojection(const Mat4& previous_view_projection, const Mat4& view_proj
 }
 
 const char* TaaShaderSource() { return kTaaShader; }
+const char* TaaMotionShaderSource() { return kTaaMotionShader; }
+
+bool TaaTransformMoved(const Mat4& previous, const Mat4& current) {
+    f32 largest = 0.0f, difference = 0.0f;
+    for (int c = 0; c < 4; ++c) {
+        const Vec4& a = previous.cols[c];
+        const Vec4& b = current.cols[c];
+        largest = std::max({largest, std::fabs(b.x), std::fabs(b.y), std::fabs(b.z), std::fabs(b.w)});
+        difference = std::max({difference, std::fabs(a.x - b.x), std::fabs(a.y - b.y), std::fabs(a.z - b.z), std::fabs(a.w - b.w)});
+    }
+    return difference > largest * 1e-6f;
+}
 
 TaaPass::TaaPass(gfx::rhi::IDevice& device, gfx::rhi::ISwapChain& swap_chain) : device_(device), swap_chain_(swap_chain) {
     const gfx::rhi::SampledTextureHandle color = swap_chain.SceneColorTexture();
@@ -133,11 +213,27 @@ TaaPass::TaaPass(gfx::rhi::IDevice& device, gfx::rhi::ISwapChain& swap_chain) : 
     desc.enable_bindless_textures = true;
     desc.render_texture_target = true;
     pipeline_ = device.CreatePipeline(desc, swap_chain);
-    if (!pipeline_.IsValid()) AETHER_LOG_WARN("PlayerRenderer", "Temporal anti-aliasing pipeline unavailable");
+    if (!pipeline_.IsValid()) {
+        AETHER_LOG_WARN("PlayerRenderer", "Temporal anti-aliasing pipeline unavailable");
+        return;
+    }
+    gfx::rhi::PipelineDesc motion;
+    motion.hlsl_source = kTaaMotionShader;
+    motion.push_constant_size_bytes = sizeof(TaaMotionConstants);
+    motion.enable_bindless_textures = true;
+    motion.render_texture_target = true;
+    motion.use_vertex_buffer = true;
+    motion.vertex_layout = gfx::rhi::VertexLayout::PositionNormalUvTangent;
+    motion.cull_back_face = false; // the depth test keeps the front surface
+    motion_pipeline_ = device.CreatePipeline(motion, swap_chain);
+    if (!motion_pipeline_.IsValid()) {
+        AETHER_LOG_WARN("PlayerRenderer", "Motion pipeline unavailable; objects moving on their own keep the colour clip alone");
+    }
 }
 
 TaaPass::~TaaPass() {
     Release();
+    if (motion_pipeline_.IsValid()) device_.DestroyPipeline(motion_pipeline_);
     if (pipeline_.IsValid()) device_.DestroyPipeline(pipeline_);
 }
 
@@ -146,6 +242,9 @@ void TaaPass::Release() {
         if (texture.IsValid()) device_.DestroyTexture(texture);
         texture = {};
     }
+    if (motion_.IsValid()) device_.DestroyTexture(motion_);
+    motion_ = {};
+    last_motion_ = 0;
     width_ = height_ = 0;
     history_valid_ = false;
 }
@@ -169,9 +268,45 @@ void TaaPass::NextJitter(f32& x, f32& y) {
     const Vec3 jitter = TaaJitter(frame_++, kTaaSequenceLength);
     x = jitter.x;
     y = jitter.y;
+    // As JitterProjection adds it.
+    jitter_ndc_[0] = 2.0f * x / static_cast<f32>(std::max(swap_chain_.Width(), 1u));
+    jitter_ndc_[1] = 2.0f * y / static_cast<f32>(std::max(swap_chain_.Height(), 1u));
 }
 
-u32 TaaPass::Resolve(gfx::rhi::ICommandList& commands, const Mat4& view_projection, u64 camera) {
+u32 TaaPass::DrawMotion(gfx::rhi::ICommandList& commands, const Mat4& view_projection, std::span<const TaaMover> movers) {
+    if (movers.empty() || !motion_pipeline_.IsValid()) return 0;
+    if (!motion_.IsValid()) {
+        motion_ = device_.CreateRenderTexture(width_, height_);
+        if (!motion_.IsValid() || motion_.index >= gfx::rhi::kMaxBindlessTextures) {
+            if (motion_.IsValid()) device_.DestroyTexture(motion_);
+            motion_ = {};
+            return 0;
+        }
+    }
+    const gfx::rhi::ClearColor none{0.0f, 0.0f, 0.0f, 0.0f};
+    if (!commands.BeginTexturePass(motion_, &none)) return 0;
+    commands.BindPipeline(motion_pipeline_);
+    commands.BindBindlessTextures();
+    for (const TaaMover& mover : movers) {
+        if (!mover.vertices.IsValid() || !mover.indices.IsValid() || mover.index_count == 0) continue;
+        TaaMotionConstants constants;
+        const Mat4 mvp = view_projection * mover.model;
+        const Mat4 previous_mvp = previous_view_projection_ * mover.previous_model;
+        std::memcpy(constants.mvp, &mvp.cols[0], sizeof(constants.mvp));
+        std::memcpy(constants.previous_mvp, &previous_mvp.cols[0], sizeof(constants.previous_mvp));
+        constants.jitter[0] = jitter_ndc_[0];
+        constants.jitter[1] = jitter_ndc_[1];
+        constants.depth = scene_depth_;
+        commands.BindVertexBuffer(mover.vertices, mover.vertex_stride);
+        commands.BindIndexBuffer(mover.indices, gfx::rhi::IndexFormat::UInt32);
+        commands.SetPushConstants(&constants, sizeof(constants));
+        commands.DrawIndexed(mover.index_count);
+    }
+    commands.EndRenderPass();
+    return motion_.index;
+}
+
+u32 TaaPass::Resolve(gfx::rhi::ICommandList& commands, const Mat4& view_projection, u64 camera, std::span<const TaaMover> movers) {
     if (!Valid()) return 0;
     const u32 width = swap_chain_.Width(), height = swap_chain_.Height();
     if (width == 0 || height == 0 || !EnsureHistory(width, height)) return 0;
@@ -187,6 +322,8 @@ u32 TaaPass::Resolve(gfx::rhi::ICommandList& commands, const Mat4& view_projecti
                       TaaReprojection(previous_view_projection_, view_projection, reprojection);
     constants.blend = keep ? kTaaBlend : 1.0f;
     if (keep) std::memcpy(constants.reprojection, &reprojection.cols[0], sizeof(constants.reprojection));
+    last_motion_ = keep ? DrawMotion(commands, view_projection, movers) : 0;
+    constants.motion = last_motion_;
 
     // The full-screen triangle writes every texel, so the target needn't be cleared.
     if (!commands.BeginTexturePass(history_[current_], nullptr)) return 0;
