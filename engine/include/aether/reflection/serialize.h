@@ -26,7 +26,7 @@ using Json = nlohmann::json;
 // - Binary (SaveBinary/LoadBinary): the same document encoded as
 //   MessagePack. It's smaller and faster to parse, and keeps field names, so
 //   it's exactly as tolerant of schema changes as the JSON form. The compact,
-//   name-free cooked format from docs/ROADMAP_DETAILS.md §A.5 is separate
+//   name-free cooked format from a retired planning doc is separate
 //   and comes with the cooker.
 //
 // Value encoding by TypeKind: bool/int/uint/float/string as the matching JSON

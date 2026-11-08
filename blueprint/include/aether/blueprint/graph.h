@@ -10,7 +10,7 @@
 
 namespace aether::bp {
 
-// The saved form of a Blueprint (Phase 12 step 1, docs/design/PHASE_SPECS.md
+// The saved form of a Blueprint (Phase 12 step 1
 // §12.2). Pins aren't stored: they come from the node type (nodes.h).
 
 using NodeId = u32; // unique within a graph; 0 = none
@@ -101,7 +101,7 @@ struct Blueprint {
 };
 
 // .abp files: {"$type": "Blueprint", "$version": 1, "parent": ..., "variables":
-// [...], "graphs": [...]}, the shape in docs/ROADMAP_DETAILS.md §A.4.
+// [...], "graphs": [...]}, the shape in a retired planning doc
 nlohmann::json BlueprintToJson(const Blueprint& blueprint);
 bool BlueprintFromJson(const nlohmann::json& json, Blueprint& out, std::string* error = nullptr);
 bool SaveBlueprint(const Blueprint& blueprint, const std::filesystem::path& path, std::string* error = nullptr);

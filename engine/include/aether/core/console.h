@@ -18,7 +18,7 @@ struct ConsoleLine {
     std::string text;
 };
 
-// The developer console (Phase 23 step 1, docs/design/PHASE_SPECS.md §23.1):
+// The developer console (Phase 23 step 1):
 // runs lines against the CVar registry -
 //   `name`         prints the variable (value, default, range, help);
 //   `name value`   sets it (ReadOnly refused; Cheat only with allow_cheats);

@@ -9,7 +9,7 @@
 
 namespace aether::anim {
 
-// Skeletons, poses and blending (Phase 16 step 1, docs/design/PHASE_SPECS.md
+// Skeletons, poses and blending (Phase 16 step 1
 // §16.1).
 
 // --- Rotation helpers (the engine's Quaternion is minimal) ----------------------------

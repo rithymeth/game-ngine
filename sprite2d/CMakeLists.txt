@@ -1,4 +1,4 @@
-# Aether Sprite2D (Phase 26 step 5, docs/design/PHASE_SPECS.md §26.6): the
+# Aether Sprite2D (Phase 26 step 5): the
 # 2D toolkit's data and render batching - sprite atlases and animation,
 # tilesets and tilemaps with autotiling, and the pixel-perfect camera.
 # Engine-only, so it builds and tests headless on every platform.

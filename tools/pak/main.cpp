@@ -1,5 +1,5 @@
 // aether_pak: the command-line side of .apak archives (Phase 25 step 1,
-// docs/design/PHASE_SPECS.md §25.1).
+// a retired planning doc).
 //
 //   aether_pak create <out.apak> <directory> [--prefix p] [--compression auto|lz4|zstd|none]
 //   aether_pak list <archive.apak>

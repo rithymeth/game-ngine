@@ -9,7 +9,7 @@
 #include <unordered_map>
 #include <vector>
 
-// Luau's `AI` and `Nav` tables (M8.8 step 1, docs/design/M8_PRODUCTION_PLAN.md): the
+// Luau's `AI` and `Nav` tables (M8.8 step 1): the
 // engine's perception and navigation for game scripts, so archetypes stop hard-coding
 // line-of-sight boxes and room clamps. Positions are each entity's Transform (world space,
 // as PerceptionWorld and NavWorld take them).

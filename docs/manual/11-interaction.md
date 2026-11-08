@@ -4,7 +4,7 @@ The interaction kit is for everything a character walks up to and uses: doors, l
 chests, people to talk to, pickups. It is an optional part of the build
 (`AETHER_KIT_INTERACTION`, on by default) and works with the [gameplay](09-gameplay.md)
 tags, effects and abilities. The build spec is
-[PHASE_SPECS §30.8](../design/PHASE_SPECS.md).
+PHASE_SPECS §30.8 (removed).
 
 ## The Interactable component
 

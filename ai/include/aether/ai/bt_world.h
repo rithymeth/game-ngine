@@ -14,7 +14,7 @@ struct BehaviorTreeCommand {
 };
 
 // Runs a Behavior Tree (.abt) on its entity (Phase 20 step 4,
-// docs/design/PHASE_SPECS.md §20.4), with the tree's blackboard. The
+// a retired planning doc), with the tree's blackboard. The
 // methods are Blueprint nodes and Luau methods: Start, Stop and Restart
 // are applied on the next update; the blackboard methods act at once
 // (set before the tree starts, values that fit its keys are kept).

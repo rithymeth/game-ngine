@@ -9,7 +9,7 @@
 namespace aether::editor {
 
 // The text model behind the script code editor (Phase 11 step 6,
-// docs/design/PHASE_SPECS.md §11.5): lines, a cursor with an optional
+// a retired planning doc): lines, a cursor with an optional
 // selection, editing with auto-indent, undo/redo, find. No UI; the ImGui
 // widget (code_editor.h) draws it and turns keys into these calls.
 

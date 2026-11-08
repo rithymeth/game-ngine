@@ -2,7 +2,7 @@
 
 // @stability: experimental
 //
-// Platform lifecycle (Phase 45 step 2, docs/design/UPGRADE_PLAN.md): the events a phone, a console or a
+// Platform lifecycle (Phase 45 step 2): the events a phone, a console or a
 // window manager sends a running game (suspended, resumed, low on memory) and the permission requests a
 // platform asks the user about. The engine side is the same everywhere: a platform backend (or a platform
 // plugin) feeds events in, and game code subscribes. `MockLifecycleBackend` drives it from tests.

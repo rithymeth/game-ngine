@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Checks the Aether module dependency graph (Phase 37 step 2, docs/design/UPGRADE_PLAN.md).
+"""Checks the Aether module dependency graph (Phase 37 step 2).
 
   1. The CMake link graph between first-party targets (aether_*) has no cycles.
   2. Every link edge goes from a higher layer to a strictly lower one, per docs/design/module_layers.txt

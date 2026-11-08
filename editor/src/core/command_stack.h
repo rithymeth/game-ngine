@@ -36,7 +36,7 @@ struct EditorHooks {
 };
 
 // What commands act on. Grows as the editor does (selection, assets, ...);
-// kept to the essentials for now. See docs/design/PHASE_SPECS.md §7.2.
+// kept to the essentials for now. See a retired planning doc
 struct CommandContext {
     CommandContext(World& world_, GuidIndex& guids_, EditorHooks* hooks_ = nullptr)
         : world(world_), guids(guids_), hooks(hooks_) {}

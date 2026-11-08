@@ -9,7 +9,7 @@
 
 namespace aether {
 
-// Debug drawing (Phase 23 step 3, docs/design/PHASE_SPECS.md §23.3): lines
+// Debug drawing (Phase 23 step 3): lines
 // and shapes in the world and text in the world or on screen, from any
 // thread, for one frame (duration 0) or for some seconds. Shapes become
 // lines here, so whatever draws them (the renderer's debug pass, or the

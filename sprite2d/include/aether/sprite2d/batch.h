@@ -9,7 +9,7 @@
 #include <vector>
 
 // Turns a world's sprites and tilemaps into draw batches (Phase 26 step 5,
-// docs/design/PHASE_SPECS.md §26.6): quads sorted back to front, merged into
+// a retired planning doc): quads sorted back to front, merged into
 // runs that share a texture, ready for any renderer to upload and draw.
 
 namespace aether::sprite2d {

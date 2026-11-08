@@ -10,7 +10,7 @@
 namespace aether::editor {
 
 // The script code editor panel's widget (Phase 11 step 6,
-// docs/design/PHASE_SPECS.md §11.5), built only on Dear ImGui so it runs
+// a retired planning doc), built only on Dear ImGui so it runs
 // headless in tests. It edits a CodeDocument with Luau highlighting, a
 // gutter with line numbers and breakpoints, the debugger's current line, an
 // error marker, and a completion popup fed by a callback (the editor wires

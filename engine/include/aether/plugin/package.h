@@ -2,7 +2,7 @@
 
 // @stability: experimental
 //
-// Plugin packaging (Phase 46 step 3, docs/design/UPGRADE_PLAN.md). A plugin folder becomes one `.apkg` file (an
+// Plugin packaging (Phase 46 step 3). A plugin folder becomes one `.apkg` file (an
 // .apak archive whose paths all start with `<Name>/`) that can be inspected without unpacking, checked against what
 // is installed, and installed into a Plugins/ folder. Installing never trusts the archive: every path must stay
 // inside `<Name>/`, the descriptor must match the folder, sizes are capped, and the files are written to a staging

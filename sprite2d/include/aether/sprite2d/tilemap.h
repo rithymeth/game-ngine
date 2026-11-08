@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 
-// Tilesets and tilemaps (Phase 26 step 5, docs/design/PHASE_SPECS.md §26.6).
+// Tilesets and tilemaps (Phase 26 step 5).
 //
 // A Tileset (`.atileset`) cuts a texture into equal tiles, numbered in
 // reading order from 0 at the top left, with a collision flag per tile and

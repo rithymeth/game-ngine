@@ -11,7 +11,7 @@
 
 namespace aether {
 
-// The editor's loaded prefab assets (Phase 9 step 4, docs/design/PHASE_SPECS.md
+// The editor's loaded prefab assets (Phase 9 step 4
 // §9.4), read from a project's AssetDatabase on first use and kept with
 // their flattened form. When a prefab is saved or its file changes, the
 // cached flat data of every prefab built on it (nesting it, or a variant of

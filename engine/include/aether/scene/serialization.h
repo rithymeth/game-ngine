@@ -64,7 +64,7 @@ std::vector<u8> SaveSceneToMemory(const World& world);
                          const SceneLoadOptions& options, Vec3d* used_origin = nullptr);
 
 // JSON scene files: the human-readable, diff-friendly form (see
-// docs/ROADMAP_DETAILS.md §A.3). Only reflected components can be written as
+// a retired planning doc). Only reflected components can be written as
 // JSON; any other component is left out with a warning (and so is an entity
 // left with no components at all). Loading tolerates unknown components by
 // default and unknown fields in all modes. JSON entities are collected before

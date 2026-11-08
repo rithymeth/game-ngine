@@ -15,7 +15,7 @@
 
 namespace aether {
 
-// Prefabs (Phase 9, docs/design/PHASE_SPECS.md §9.1-9.2): a reusable group of
+// Prefabs (Phase 9.1-9.2): a reusable group of
 // entities saved as an asset (.aprefab), placed into scenes as instances that
 // follow later edits to the prefab, except for the fields an instance
 // overrides.

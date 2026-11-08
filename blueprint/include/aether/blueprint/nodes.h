@@ -87,7 +87,7 @@ struct PaletteEntry {
 // Lists a family's members for a Blueprint (for the palette).
 using FamilyLister = std::function<std::vector<PaletteEntry>(const Blueprint& blueprint)>;
 
-// Custom node types (docs/ROADMAP_DETAILS.md §D): game modules add node
+// Custom node types : game modules add node
 // libraries the same way the built-ins are registered. `id` is exact
 // ("Flow.Branch"); a family's `prefix` ends with ':' ("Var.Get:").
 void RegisterNodeType(const std::string& id, NodeFactory factory);

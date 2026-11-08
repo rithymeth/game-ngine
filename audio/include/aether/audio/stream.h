@@ -8,7 +8,7 @@
 
 namespace aether::audio {
 
-// Decoding and streaming (Phase 17 step 3, docs/design/PHASE_SPECS.md §17.3).
+// Decoding and streaming (Phase 17 step 3).
 // WAV, Ogg Vorbis and FLAC decode whole into a SoundWave, or play as a
 // stream that decodes as the mixer needs it: from compressed bytes held in
 // memory, or from a file on disk. Mono and stereo only.

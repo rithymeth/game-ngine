@@ -2,7 +2,7 @@
 
 // @stability: experimental
 //
-// What a model would cook to (Phase 39 step 6, docs/design/UPGRADE_PLAN.md): triangles, LODs and meshlets summed
+// What a model would cook to (Phase 39 step 6): triangles, LODs and meshlets summed
 // over a glTF scene's meshes, for an editor to show beside the model without cooking it. It runs the same
 // GenerateLods and BuildMeshlets the cooker does, so the numbers match the cooked mesh.
 

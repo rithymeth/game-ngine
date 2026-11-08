@@ -1,4 +1,4 @@
-# Aether Interaction (Phase 30 step 7b, docs/design/PHASE_SPECS.md §30.8): the
+# Aether Interaction (Phase 30 step 7b): the
 # interaction genre kit (doors, levers, pickups, anything you walk up to and use).
 # Optional: AETHER_KIT_INTERACTION=OFF leaves it out of the build (and of the player).
 add_library(aether_interaction STATIC

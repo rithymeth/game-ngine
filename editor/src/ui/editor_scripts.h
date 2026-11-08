@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-// Editor scripts (Phase 26 step 4, docs/design/PHASE_SPECS.md §26.5): Luau
+// Editor scripts (Phase 26 step 4): Luau
 // files that extend the editor. Every .luau file under a project's
 // Content/Editor/ folder runs once when the project opens (and again on
 // Reload), and uses

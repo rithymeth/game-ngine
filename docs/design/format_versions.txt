@@ -1,5 +1,5 @@
 # Serialized formats, their current version, and what a loader does with a file from another version
-# (Phase 48 step 2, docs/design/UPGRADE_PLAN.md). Core JSON formats are checked by tests/test_format_versions.cpp;
+# (Phase 48 step 2). Core JSON formats are checked by tests/test_format_versions.cpp;
 # other rows describe version checks in their loaders. "missing/0 accepted" means an unversioned file
 # defaults to version 0 and is read without a migration.
 #

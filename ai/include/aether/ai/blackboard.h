@@ -13,7 +13,7 @@
 
 namespace aether::ai {
 
-// Blackboards (Phase 20 step 4, docs/design/PHASE_SPECS.md §20.4): the
+// Blackboards (Phase 20 step 4): the
 // typed memory a Behavior Tree reads and writes - what the AI knows (its
 // target, where it heard a noise, whether it's alarmed).
 

@@ -1,8 +1,0 @@
-{
-  "$type": "InputAction",
-  "data": {
-    "$v": 1,
-    "name": "UseTool",
-    "value_type": "Bool"
-  }
-}

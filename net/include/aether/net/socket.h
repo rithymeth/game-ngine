@@ -27,7 +27,7 @@ struct Address {
 };
 
 // Datagrams, unreliable and unordered (Phase 22 step 1,
-// docs/design/PHASE_SPECS.md §22.1). Never blocks.
+// a retired planning doc). Never blocks.
 class DatagramSocket {
 public:
     virtual ~DatagramSocket() = default;

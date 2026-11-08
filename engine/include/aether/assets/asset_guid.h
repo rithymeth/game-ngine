@@ -10,7 +10,7 @@
 
 namespace aether::assets {
 
-// Permanent identity of an asset (Phase 8, docs/design/PHASE_SPECS.md §8.1):
+// Permanent identity of an asset (Phase 8):
 // a random version 4 UUID stored in the asset's .ameta sidecar. References
 // between assets and from scenes use it rather than the file path, so
 // renaming or moving files never breaks them. Same format as EntityGuid, but

@@ -12,14 +12,14 @@
 #include <string>
 #include <vector>
 
-// M8.9 (docs/design/M8_PRODUCTION_PLAN.md): the automatable multiplayer
+// M8.9 : the automatable multiplayer
 // production checks. A server (SessionHost + ReplicationServer + RpcRouter)
 // and four clients (SessionClient + ReplicationClient + RpcRouter) play a
 // small scenario on the seeded LoopbackNetwork - moving NPCs that churn
 // (despawn/respawn), one owned pawn per player, and a server-authoritative
 // score each owner bumps by RPC. Everything runs on simulated time, so each
 // measurement is deterministic and asserted against the thresholds recorded
-// in docs/design/M8_PRODUCTION_PLAN.md (M8.9 "Recorded thresholds").
+// in a retired planning doc (M8.9 "Recorded thresholds").
 
 using namespace aether;
 using namespace aether::net;

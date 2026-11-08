@@ -10,7 +10,7 @@
 namespace aether::audio {
 
 // Signal processing for the mixer's effects (Phase 17 step 1,
-// docs/design/PHASE_SPECS.md §17.1). Buffers are interleaved stereo.
+// a retired planning doc). Buffers are interleaved stereo.
 
 f32 DbToGain(f32 db);
 f32 GainToDb(f32 gain); // -inf for 0 (clamped to -144)

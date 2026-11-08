@@ -2,7 +2,7 @@
 
 #include "aether/script/luau_host.h"
 
-// Luau's `Localization` table (Phase 29 step 2, docs/design/PHASE_SPECS.md
+// Luau's `Localization` table (Phase 29 step 2
 // §29.2): the same functions as the Blueprint library (aether::loc::Localize),
 // on the active Localization:
 //

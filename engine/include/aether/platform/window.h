@@ -17,7 +17,7 @@ struct WindowDesc {
     bool visible = true; // false: create it hidden (tests, offscreen tools)
 };
 
-// What a window reports (Phase 24 step 3, docs/design/PHASE_SPECS.md
+// What a window reports (Phase 24 step 3
 // §24.3), the same on every platform: keys and buttons in the engine's
 // input::Key terms, mouse movement and wheel, typed characters, gamepad
 // axes, focus, resizes and the close request.

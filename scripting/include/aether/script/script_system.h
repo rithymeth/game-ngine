@@ -27,7 +27,7 @@ struct ScriptError {
     static ScriptError Parse(const std::string& text);
 };
 
-// Runs ScriptComponents (Phase 11 step 3, docs/design/PHASE_SPECS.md §11.2).
+// Runs ScriptComponents (Phase 11 step 3).
 //
 // A script is a module that returns a table, its "class":
 //

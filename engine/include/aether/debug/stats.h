@@ -10,7 +10,7 @@
 
 namespace aether {
 
-// Stat overlays (Phase 23 step 3, docs/design/PHASE_SPECS.md §23.3): named
+// Stat overlays (Phase 23 step 3): named
 // groups of text lines - `stat fps`, `stat memory`, `stat net` - shown in a
 // corner of the game or editor viewport while toggled on. Groups are
 // registered by whoever has the numbers: the engine registers fps, zones,

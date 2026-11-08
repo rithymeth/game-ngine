@@ -9,7 +9,7 @@
 #include <string_view>
 #include <vector>
 
-// The editor extensibility API (Phase 26 step 4, docs/design/PHASE_SPECS.md
+// The editor extensibility API (Phase 26 step 4
 // §26.5): what a plugin, a game module or a project's editor script adds to
 // the editor without touching it.
 //

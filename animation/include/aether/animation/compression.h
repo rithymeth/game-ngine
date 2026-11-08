@@ -7,7 +7,7 @@
 
 namespace aether::anim {
 
-// Clip compression (Phase 16 step 1, docs/design/PHASE_SPECS.md §16.1):
+// Clip compression (Phase 16 step 1):
 // times and values quantized to 16 bits within each track's range, and
 // rotations stored as their three smallest components plus the index of
 // the dropped one. About 4x smaller than floats; the error is bounded by

@@ -1,4 +1,4 @@
-# Aether Quests (Phase 30 step 7c, docs/design/PHASE_SPECS.md §30.10): the quests
+# Aether Quests (Phase 30 step 7c): the quests
 # genre kit, built on the gameplay module's effects. Optional: AETHER_KIT_QUESTS=OFF
 # leaves it out of the build (and of the player). It doesn't depend on the other kits:
 # the player forwards item changes into it, and scripts and Blueprints notify it.

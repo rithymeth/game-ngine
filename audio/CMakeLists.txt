@@ -1,4 +1,4 @@
-# Aether Audio (Phase 17, docs/design/PHASE_SPECS.md): sounds and their
+# Aether Audio (Phase 17): sounds and their
 # decoders, streaming, the software mixer (voices, buses, effects), 3D audio
 # and sound cues. Engine-only; it renders into buffers, so it builds and
 # tests headless on every platform. Output backends pull from it.

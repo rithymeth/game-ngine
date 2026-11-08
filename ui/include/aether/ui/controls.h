@@ -8,7 +8,7 @@
 
 namespace aether::ui {
 
-// Interactive widgets (Phase 18 step 2, docs/design/PHASE_SPECS.md §18.2).
+// Interactive widgets (Phase 18 step 2).
 // They paint with a ControlStyle until themes arrive (step 3).
 
 struct ControlStyle {

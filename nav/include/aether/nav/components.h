@@ -14,7 +14,7 @@ namespace aether {
 enum class NavObstacleShape : u8 { Box, Cylinder };
 
 // Carves a hole in the navigation mesh where the entity is (Phase 20 step
-// 2, docs/design/PHASE_SPECS.md §20.2): a box turned with the entity (by
+// 2): a box turned with the entity (by
 // yaw), or an upright cylinder. The hole follows the entity, rebaked once
 // it has moved `move_threshold` or turned 5 degrees.
 struct NavObstacle {

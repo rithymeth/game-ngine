@@ -7,7 +7,7 @@
 
 namespace aether::anim {
 
-// Animation clips (Phase 16 step 1, docs/design/PHASE_SPECS.md §16.1): one
+// Animation clips (Phase 16 step 1): one
 // track per bone, sampled into a Pose.
 
 struct Vec3Track {

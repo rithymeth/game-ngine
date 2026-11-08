@@ -1,4 +1,4 @@
-# Aether Sequencer (Phase 27, docs/design/PHASE_SPECS.md §27): cinematics.
+# Aether Sequencer (Phase 27): cinematics.
 # A level sequence is tracks of keyed values bound to entities; the player
 # applies them to a world. Engine-only, so it builds and tests headless on
 # every platform.

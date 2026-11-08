@@ -13,7 +13,7 @@
 
 namespace aether {
 
-// A permanent identity for an entity (Phase 7, docs/design/PHASE_SPECS.md
+// A permanent identity for an entity (Phase 7
 // §7.1). An `Entity` is an index + generation: right for runtime lookups, but
 // it changes whenever an entity is destroyed and recreated (undo, reloading a
 // scene, instantiating a prefab), so it can't be saved or used to refer to an

@@ -7,7 +7,7 @@
 
 namespace aether::anim {
 
-// Inverse kinematics (Phase 16 step 5, docs/design/PHASE_SPECS.md §16.6):
+// Inverse kinematics (Phase 16 step 5):
 // solvers that bend a pose so a bone reaches or faces a target. Targets are
 // in model space (the skeleton's root space); the solvers change the
 // pose's local rotations (and the pelvis translation for foot placement).

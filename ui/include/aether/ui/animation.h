@@ -9,7 +9,7 @@
 
 namespace aether::ui {
 
-// UI animations (Phase 18 step 4, docs/design/PHASE_SPECS.md §18.4):
+// UI animations (Phase 18 step 4):
 // keyframe tracks on widget properties, played by an animator; tweens are
 // one-track animations from the current value.
 

@@ -503,7 +503,7 @@ if(AETHER_BUILD_BENCH)
     add_subdirectory(bench)
 endif()
 
-# The module dependency check (Phase 37 step 2, docs/design/UPGRADE_PLAN.md): `cmake --build <dir> --target check_module_graph`.
+# The module dependency check (Phase 37 step 2): `cmake --build <dir> --target check_module_graph`.
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
     add_custom_target(check_module_graph
@@ -514,7 +514,7 @@ if(Python3_Interpreter_FOUND)
         VERBATIM)
 endif()
 
-# Genre kits (Phase 30 step 7, docs/design/PHASE_SPECS.md §30.8): optional libraries on the gameplay module.
+# Genre kits (Phase 30 step 7): optional libraries on the gameplay module.
 option(AETHER_KIT_INVENTORY "Build the inventory and items genre kit" ON)
 if(AETHER_KIT_INVENTORY)
     add_subdirectory(inventory)

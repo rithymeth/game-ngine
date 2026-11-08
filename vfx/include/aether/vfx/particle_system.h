@@ -23,7 +23,7 @@ struct ParticleSystemCommand {
 };
 
 // Plays a particle system asset (.avfx) at an entity (Phase 19 step 4,
-// docs/design/PHASE_SPECS.md §19.4). It follows the entity's world
+// a retired planning doc). It follows the entity's world
 // transform. The methods are Blueprint nodes; they queue commands.
 struct ParticleSystem {
     std::string asset;

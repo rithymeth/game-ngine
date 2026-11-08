@@ -28,7 +28,7 @@ struct NetPlaySettings {
     f64 interpolation_delay = 0.1;
 };
 
-// Networked Play-in-Editor (Phase 22 step 6, docs/design/PHASE_SPECS.md
+// Networked Play-in-Editor (Phase 22 step 6
 // §22.6): the edited world is copied into a server world, and N client
 // worlds connect to it over a simulated network (net::LoopbackNetwork)
 // with adjustable latency, jitter, loss and duplication - all in one

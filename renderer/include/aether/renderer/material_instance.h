@@ -8,7 +8,7 @@
 
 namespace aether::mat {
 
-// Material instances (Phase 15 step 3, docs/design/PHASE_SPECS.md §15.4):
+// Material instances (Phase 15 step 3):
 // parameter overrides on a parent material, or on another instance, that
 // share the parent's compiled shader. Changing a value only repacks the
 // parameter buffer; nothing is recompiled.

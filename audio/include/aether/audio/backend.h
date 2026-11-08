@@ -12,7 +12,7 @@
 
 namespace aether::audio {
 
-// Audio output (Phase 17 step 5, docs/design/PHASE_SPECS.md §17.5): a
+// Audio output (Phase 17 step 5): a
 // backend owns the thread that asks for audio, and calls back for each block
 // of interleaved stereo it needs.
 using RenderCallback = std::function<void(f32* stereo, u32 frames)>;

@@ -1,4 +1,4 @@
-# Plugin modules (Phase 26 step 1, docs/design/PHASE_SPECS.md §26.1).
+# Plugin modules (Phase 26 step 1).
 #
 # A plugin's module is code that registers itself with AETHER_MODULE. Built
 # with aether_module(), it's an OBJECT library, so the registration is

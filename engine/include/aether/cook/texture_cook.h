@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-// Cooked textures (Phase 25 step 3, docs/design/PHASE_SPECS.md §25.3): the
+// Cooked textures (Phase 25 step 3): the
 // GPU-ready form a packaged game loads - block-compressed, with its mip
 // chain - in an .atex container. Block compression keeps textures
 // compressed in GPU memory too: BC1 at 8:1, BC3/BC5/BC7 at 4:1, BC4 at 2:1

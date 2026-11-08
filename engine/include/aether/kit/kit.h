@@ -2,7 +2,7 @@
 
 // @stability: experimental
 //
-// IKit and KitRegistry (Phase 37, docs/design/UPGRADE_PLAN.md).
+// IKit and KitRegistry (Phase 37).
 //
 // A kit is an optional gameplay module (gameplay, inventory, interaction, quests, ...). IKit describes the
 // kit's install hooks, stages and scene-scoped runtime; KitRegistry orders and owns the installed kits.

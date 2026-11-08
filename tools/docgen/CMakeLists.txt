@@ -1,5 +1,5 @@
 # aether_docgen: writes the API reference from the reflection registry
-# (Phase 26 step 5, docs/design/PHASE_SPECS.md §26.7).
+# (Phase 26 step 5).
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/site.js" AETHER_DOCGEN_SITE_JS)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/site.css" AETHER_DOCGEN_SITE_CSS)
 configure_file(site_assets.h.in "${CMAKE_CURRENT_BINARY_DIR}/site_assets.h" @ONLY)

@@ -12,7 +12,7 @@
 // Making it pay needs a route that is genuinely local (per-cluster portal graphs) or
 // a world far larger than the navmesh bake can build today.
 //
-// Hierarchical pathfinding (Phase 40 step 2, docs/design/UPGRADE_PLAN.md). A coarse graph is built once over a
+// Hierarchical pathfinding (Phase 40 step 2). A coarse graph is built once over a
 // NavMesh's tile borders: a node per walkable polygon edge that crosses into the next tile, edges between the nodes
 // of one tile (straight-line cost) and across each border. A query searches that graph for the tiles to cross, then
 // asks Detour for each short leg (start -> border -> border -> goal), so a path across a mesh of hundreds of tiles

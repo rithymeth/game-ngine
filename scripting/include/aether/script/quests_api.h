@@ -2,7 +2,7 @@
 
 #include "aether/script/luau_host.h"
 
-// Luau's `Quests` table (Phase 30 step 7c, docs/design/PHASE_SPECS.md §30.10): the same functions
+// Luau's `Quests` table (Phase 30 step 7c): the same functions
 // as the `Quests` Blueprint library, on the active QuestSystem. Present only when the quests kit is built.
 //
 //   Quests.Start / Abandon / Fail (owner, quest)                 -> boolean (true if it worked)

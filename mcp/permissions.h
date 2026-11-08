@@ -1,6 +1,6 @@
 #pragma once
 
-// What an agent may do through the MCP server (Phase 44 steps 3 and 4, docs/design/UPGRADE_PLAN.md): a
+// What an agent may do through the MCP server (Phase 44 steps 3 and 4): a
 // per-project permission file and the three answers it gives for a tool call.
 //
 //   Allow    run it.

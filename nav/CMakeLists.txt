@@ -1,4 +1,4 @@
-# Aether Nav (Phase 20, docs/design/PHASE_SPECS.md): navigation meshes baked
+# Aether Nav (Phase 20): navigation meshes baked
 # with Recast, paths and queries with Detour. Engine-only, so it builds and
 # tests headless on every platform.
 add_library(aether_nav STATIC

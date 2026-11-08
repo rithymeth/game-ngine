@@ -3,7 +3,7 @@
 The inventory kit gives characters bags, stacks, weight limits, equipment and usable
 items, built on the [gameplay](09-gameplay.md) effects. It is an optional part of the
 build (`AETHER_KIT_INVENTORY`, on by default). The build spec is
-[PHASE_SPECS §30.7](../design/PHASE_SPECS.md).
+PHASE_SPECS §30.7 (removed).
 
 ## Items
 

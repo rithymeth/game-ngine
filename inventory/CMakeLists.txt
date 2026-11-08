@@ -1,4 +1,4 @@
-# Aether Inventory (Phase 30 step 7a, docs/design/PHASE_SPECS.md §30.8): the
+# Aether Inventory (Phase 30 step 7a): the
 # inventory and items genre kit, built on the gameplay module's effects. Optional:
 # AETHER_KIT_INVENTORY=OFF leaves it out of the build (and of the player).
 add_library(aether_inventory STATIC

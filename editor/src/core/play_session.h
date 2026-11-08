@@ -7,7 +7,7 @@
 
 namespace aether::editor {
 
-// Play-in-Editor (Phase 7 step 5, docs/design/PHASE_SPECS.md §7.3).
+// Play-in-Editor (Phase 7 step 5).
 //
 // Play snapshots the edited world into memory (the binary scene format) and
 // freezes the command stack; the game then runs in that same World. Stop

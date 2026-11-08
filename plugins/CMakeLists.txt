@@ -1,4 +1,4 @@
-# The engine's own plugins (Phase 26 step 1, docs/design/PHASE_SPECS.md
+# The engine's own plugins (Phase 26 step 1
 # §26.1): each optional module as a plugin with an .aplugin descriptor and a
 # runtime module, built when the module itself is.
 foreach(plugin Physics Audio Navigation AI Networking)

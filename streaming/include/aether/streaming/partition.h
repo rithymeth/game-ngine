@@ -30,7 +30,7 @@ void RegisterStreamingComponents();
 
 namespace aether::streaming {
 
-// World partition (Phase 21 step 6, docs/design/PHASE_SPECS.md §21.6): a
+// World partition (Phase 21 step 6): a
 // level split into square grid cells on the ground plane, each saved as its
 // own additive scene, plus a persistent scene for what never streams out.
 

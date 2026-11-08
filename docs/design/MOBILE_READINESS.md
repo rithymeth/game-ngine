@@ -10,14 +10,14 @@ native mobile windowing, real-device input, and haptic backends remain open.
 
 - `platforms/README.md`: Windows, Linux and macOS are built in. Android is meant to plug in from outside the engine as a *platform plugin*
   (a directory with a `CMakeLists.txt` that calls `aether_platform_plugin()`). Only an example plugin exists.
-- `UPGRADE_PLAN.md`, Phase 45 (Mobile and Console):
+- a retired planning doc, Phase 45 (Mobile and Console):
   - 45.1 input abstraction and remapping: done except a remapping UI.
   - 45.2 lifecycle, permissions and memory-pressure events: complete interface and mock; platform plugins can connect native callbacks.
   - 45.3 Android build: started; arm64 Gradle app and debug APK build in CI, and an x86_64 build runs on an emulator in CI, where the app plays Lantern Run headless on start and then renders through the Vulkan RHI into a SurfaceView: a clear plus a triangle drawn with an HLSL pipeline that glslang (built from source for Android) compiles on the device; the job checks a screenshot for both (required job). Touches reach the engine through ApplyWindowEvents (the triangle turns blue while a finger is down; the job long-presses and checks a screenshot). An "android" platform plugin feeds Activity pause, resume and onTrimMemory into PlatformLifecycle and reports the app's files directory as user_data_dir; the job sends the app home and back and checks Suspend, Resume and that rendering restarts on the new surface. In scene mode (`--es mode scene`) the app runs a cooked game through the player runtime and player::SceneRenderer: CI cooks AETHER-01 on the host, ships it in the APK and checks that the frame is a real scene. Still open: lifecycle (pause/resume), and real-device testing.
   - 45.4 iOS build: started; unsigned arm64 app bundle build in CI, and a Simulator build runs in CI, where the app plays Lantern Run headless on start (required job). Signing, platform windowing and real-device testing remain.
   - 45.5 touch and haptics: started; touch controls and semantic haptic requests are implemented. Native mobile haptic backends remain.
   - 45.7 device-farm job: needs a paid service, so the user's decision.
-- `PHASE_SPECS.md` §25.3: cooked textures are BC1/3/4/5/7; "ASTC for mobile ... comes with Phase 33's mobile targets".
+- a retired planning doc: cooked textures are BC1/3/4/5/7; "ASTC for mobile ... comes with Phase 33's mobile targets".
 
 ## Already in place
 
@@ -136,7 +136,7 @@ control), which the router's per-pointer capture is built for. None of it needs 
 
 ## Re-check against master at `e1d6e9f` (engine upgrade #207)
 
-Checked what the latest merge from `master` changes for mobile. The gaps above all still stand: Phase 45 in `UPGRADE_PLAN.md` is unchanged
+Checked what the latest merge from `master` changes for mobile. The gaps above all still stand: Phase 45 in a retired planning doc is unchanged
 (45.2 started, 45.3 to 45.7 not), and the merge touched no window, RHI, input, texture-cook or lifecycle code.
 
 What it does add that helps a mobile game:
@@ -205,7 +205,7 @@ entity OnStart/OnUpdate dispatcher, a different thing). Plan:
 
 - Which mobile platforms matter first: Android only, or iOS too (iOS needs a Mac and signing, and rules out downloaded native plugins).
 - Whether the first milestone is the desktop-verifiable set (steps 1, 3 cooker part, 6) or goes straight to an Android build.
-- The device-farm job is a paid service (`UPGRADE_PLAN.md` 45.7): yes or no.
+- The device-farm job is a paid service (a retired planning doc 45.7): yes or no.
 - Mobile as a product goal: today the docs list mobile as out of scope for the current game work, so this note is for planning only until you decide.
 
 ## Step 4 plan: frame constants on Vulkan, and device-based limits

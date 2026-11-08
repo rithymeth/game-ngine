@@ -8,7 +8,7 @@
 namespace aether::nav {
 
 // A navigation mesh that changes at runtime (Phase 20 step 2,
-// docs/design/PHASE_SPECS.md §20.2): volumes (carving obstacles, or areas)
+// a retired planning doc): volumes (carving obstacles, or areas)
 // and off-mesh links come and go, and only the tiles they touch are
 // rebaked, a few per Update so a frame never stalls.
 class DynamicNavMesh {

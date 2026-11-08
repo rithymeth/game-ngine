@@ -2,7 +2,7 @@
 
 #include "aether/script/luau_host.h"
 
-// Luau's `Inventory` table (Phase 30 step 7a, docs/design/PHASE_SPECS.md §30.7): the same
+// Luau's `Inventory` table (Phase 30 step 7a): the same
 // functions as the `Items` Blueprint library, on the active InventorySystem. Present only
 // when the inventory kit is built (otherwise the table doesn't exist). Slots count from 0.
 //

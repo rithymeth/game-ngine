@@ -17,7 +17,7 @@ struct TypeInfo;
 
 namespace aether::bp {
 
-// Blueprint pin and variable types (Phase 12, docs/design/PHASE_SPECS.md
+// Blueprint pin and variable types (Phase 12
 // §12.2; colors and shapes in docs/design/BLUEPRINT_NODES.md).
 
 enum class PinKind : u8 { Exec, Data };

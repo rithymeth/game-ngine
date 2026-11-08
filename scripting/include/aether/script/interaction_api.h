@@ -2,7 +2,7 @@
 
 #include "aether/script/luau_host.h"
 
-// Luau's `Interaction` table (Phase 30 step 7b, docs/design/PHASE_SPECS.md §30.8): the same
+// Luau's `Interaction` table (Phase 30 step 7b): the same
 // functions as the `Interaction` Blueprint library, on the active InteractionSystem. Present
 // only when the interaction kit is built.
 //

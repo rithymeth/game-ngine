@@ -1,4 +1,4 @@
-# Aether Streaming (Phase 21 step 6, docs/design/PHASE_SPECS.md): large
+# Aether Streaming (Phase 21 step 6): large
 # worlds - partitioning a scene into grid cells, streaming the cells in and
 # out around streaming sources, and a floating origin. Engine-only, so it
 # builds and tests headless on every platform.

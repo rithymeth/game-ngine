@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Checks API stability annotations (Phase 37 step 3, docs/design/UPGRADE_PLAN.md).
+"""Checks API stability annotations (Phase 37 step 3).
 
 Every top-level module with public headers (<module>/include/aether/...) has a level in
 docs/design/api_stability.txt, every level is stable/experimental/internal, and every header-level

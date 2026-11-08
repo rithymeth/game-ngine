@@ -14,7 +14,7 @@
 
 namespace aether {
 
-// Console variables (Phase 23 step 1, docs/design/PHASE_SPECS.md §23.1):
+// Console variables (Phase 23 step 1):
 // named, typed settings any module declares where it uses them and anyone
 // can change at runtime from the console, a config file or the command
 // line - `r.shadows.cascades 4`, `physics.debug 1`.

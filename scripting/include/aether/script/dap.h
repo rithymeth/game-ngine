@@ -12,7 +12,7 @@
 
 namespace aether::script {
 
-// The Debug Adapter Protocol (Phase 11 step 6, docs/design/PHASE_SPECS.md
+// The Debug Adapter Protocol (Phase 11 step 6
 // §11.5): lets VS Code and other DAP clients debug the game's scripts
 // through the ScriptDebugger. Transport-agnostic: the editor feeds it bytes
 // from a socket (or stdio) and sends what it writes.

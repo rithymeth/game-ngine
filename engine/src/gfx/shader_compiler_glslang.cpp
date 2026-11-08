@@ -12,7 +12,7 @@
 #include <stdexcept>
 #include <vector>
 
-// The shader compilers off Windows (Phase 24, docs/design/PHASE_SPECS.md
+// The shader compilers off Windows (Phase 24
 // §24.3): glslang's HLSL front end compiles the same HLSL the Windows
 // build hands to DXC into SPIR-V for the Vulkan backend, with DXC's
 // register-to-binding mapping (register(tN, spaceM) -> set M, binding N)
