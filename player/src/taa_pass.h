@@ -17,10 +17,12 @@
 //     longer belongs (disocclusion, moving objects, lighting changes);
 //   - and it is blended at kTaaBlend with this frame, both weighted by 1 / (1 + luma) so one bright sample can't flicker.
 // The result is a render texture that becomes next frame's history and the image bloom and the tone mapper read (PostPass::SetSource).
-// (AETHER_RENDER_TAA_MOTION=0 turns the motion pass below off, for comparison.) Objects that move on their own (a model transform different from last frame's) are drawn first into a motion texture: each covered
-// pixel gets the screen-space offset to where its surface was last frame, and the resolve follows that instead of the camera's
-// reprojection. The pass tests against the scene depth copy, so a mover behind something writes nothing. Skinned deformation is not
-// in it: a skinned mesh moves with its entity's transform, and the clip holds what its bones add.
+// Objects that move on their own (a model transform different from last frame's, or a skinned mesh whose pose changed) are drawn
+// first into a motion texture: each covered pixel gets the screen-space offset to where its surface was last frame, and the resolve
+// follows that instead of the camera's reprojection. The pass tests against the scene depth copy, so a mover behind something writes
+// nothing. A skinned mover's last-frame vertex positions come from a read buffer (TaaMover::previous_positions), indexed by vertex,
+// where the device has frame read buffers; elsewhere it moves with its transform alone. AETHER_RENDER_TAA_MOTION=0 turns the motion
+// pass off, for comparison.
 
 namespace aether::player {
 
@@ -46,11 +48,13 @@ struct TaaMotionConstants {
     f32 previous_mvp[16]{}; // last frame's view-projection times last frame's model transform
     f32 jitter[2]{};        // this frame's offset in NDC (what JitterProjection adds per unit of w)
     u32 depth = 0;          // bindless index of the scene depth copy
-    f32 padding = 0.0f;
+    u32 previous_positions = 0xffffffffu; // byte offset of last frame's positions in the read buffer; none: this frame's
 };
 static_assert(sizeof(TaaMotionConstants) == 144);
 
-// An opaque draw whose model transform changed since last frame.
+constexpr u32 kTaaNoPreviousPositions = 0xffffffffu;
+
+// An opaque draw that moved since last frame: its model transform, or (skinned) its vertices.
 struct TaaMover {
     gfx::rhi::BufferHandle vertices;
     gfx::rhi::BufferHandle indices; // 32-bit
@@ -58,6 +62,9 @@ struct TaaMover {
     u32 vertex_stride = 0;          // position first, as the scene's vertices (PositionNormalUvTangent)
     Mat4 model;
     Mat4 previous_model;
+    // Where last frame's positions are in Resolve's `previous_positions` buffer: a byte offset to three floats per vertex, in vertex
+    // order. kTaaNoPreviousPositions: the vertices didn't change, only the transform.
+    u32 previous_positions = kTaaNoPreviousPositions;
 };
 
 // The jitter itself is renderer/post.h's: TaaJitter (Halton 2, 3) and JitterProjection.
@@ -89,10 +96,15 @@ public:
     // Records the resolve outside any render pass, after the scene colour pass has ended (with the depth copied by CopySceneDepth).
     // `view_projection` is this frame's without jitter; `camera` names the camera (a different one starts the history over). Returns
     // the bindless index of the resolved image, or 0 with nothing recorded (no room in the bindless table for the history, a zero size).
-    // `movers` are drawn into the motion texture first (when the history is kept), so the resolve follows them.
-    u32 Resolve(gfx::rhi::ICommandList& commands, const Mat4& view_projection, u64 camera, std::span<const TaaMover> movers = {});
+    // `movers` are drawn into the motion texture first (when the history is kept), so the resolve follows them. `previous_positions`
+    // is a buffer made by IDevice::CreateFrameConstantBuffer holding the skinned movers' last-frame positions (TaaMover::
+    // previous_positions), written for this frame and not rewritten until it completes; invalid when no mover has any.
+    u32 Resolve(gfx::rhi::ICommandList& commands, const Mat4& view_projection, u64 camera, std::span<const TaaMover> movers = {},
+                gfx::rhi::BufferHandle previous_positions = {});
     // The bindless index of the motion texture the last Resolve drew, or 0 when it drew none (for tests).
     u32 LastMotion() const { return last_motion_; }
+    // Whether movers' last-frame positions are read (the device has frame read buffers); without, they move with their transforms.
+    bool ReadsPreviousPositions() const { return motion_reads_positions_; }
     // Starts the history over on the next Resolve.
     void Reset() { history_valid_ = false; }
     // Frees the history textures (they come back on the next Resolve).
@@ -100,12 +112,15 @@ public:
 
 private:
     bool EnsureHistory(u32 width, u32 height);
-    u32 DrawMotion(gfx::rhi::ICommandList& commands, const Mat4& view_projection, std::span<const TaaMover> movers);
+    u32 DrawMotion(gfx::rhi::ICommandList& commands, const Mat4& view_projection, std::span<const TaaMover> movers,
+                   gfx::rhi::BufferHandle previous_positions);
 
     gfx::rhi::IDevice& device_;
     gfx::rhi::ISwapChain& swap_chain_;
     gfx::rhi::PipelineHandle pipeline_;
     gfx::rhi::PipelineHandle motion_pipeline_;
+    bool motion_reads_positions_ = false;
+    gfx::rhi::BufferHandle no_positions_; // bound when a frame has no skinned movers (the pipeline's read buffer must be bound)
     gfx::rhi::SampledTextureHandle motion_;
     u32 last_motion_ = 0;
     f32 jitter_ndc_[2]{};

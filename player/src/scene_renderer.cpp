@@ -728,15 +728,27 @@ struct SceneRenderer::Impl {
         u64 frame = 0;
     };
     struct TransformKey {
-        u32 index = 0, generation = 0, node = 0;
+        u32 index = 0, generation = 0, node = 0, primitive = 0; // primitive: 0 for transforms, which belong to the node
         bool operator==(const TransformKey&) const = default;
     };
     struct TransformKeyHash {
         usize operator()(const TransformKey& key) const {
-            return std::hash<u64>()((static_cast<u64>(key.index) << 32 | key.generation) * 0x9E3779B97F4A7C15ull ^ key.node);
+            return std::hash<u64>()((static_cast<u64>(key.index) << 32 | key.generation) * 0x9E3779B97F4A7C15ull ^
+                                    (static_cast<u64>(key.node) << 20 | key.primitive));
         }
     };
     std::unordered_map<TransformKey, PreviousTransform, TransformKeyHash> previous_transforms;
+    // Each skinned primitive's deformed positions (three floats a vertex) as of the frame it was last drawn, per entity: last frame's
+    // pose for the motion pass.
+    struct PreviousPose {
+        std::vector<f32> positions;
+        u64 frame = 0;
+    };
+    std::unordered_map<TransformKey, PreviousPose, TransformKeyHash> previous_poses;
+    // This frame's packed previous poses, uploaded into one of motion_position_buffers (one per frame in flight, grown as needed).
+    std::vector<f32> motion_positions;
+    std::vector<BufferHandle> motion_position_buffers;
+    std::vector<u64> motion_position_capacity;
     u64 transform_frame = 0;
     bool taa_motion = false; // the motion pass (AETHER_RENDER_TAA_MOTION=0 turns it off)
     std::unique_ptr<SkyPass> sky;        // where the device has frame constants and half-float textures (D3D12)
@@ -798,6 +810,7 @@ struct SceneRenderer::Impl {
         }
         for (BufferHandle& buffer : frame_buffers) free_buffer(buffer);
         for (BufferHandle& buffer : light_buffers) free_buffer(buffer);
+        for (BufferHandle& buffer : motion_position_buffers) free_buffer(buffer);
         for (auto& [path, texture] : textures) free_texture(texture);
         free_texture(font_texture_handle);
         free_texture(white_texture);
@@ -1871,8 +1884,9 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
     std::vector<PendingTransparentDraw> transparent_draws;
     std::vector<PendingOpaqueDraw> opaque_draws;
     std::vector<ShadowCaster> shadow_casters;
-    std::vector<TaaMover> taa_movers; // opaque draws whose model transform changed since last frame
+    std::vector<TaaMover> taa_movers; // opaque draws whose model transform or skinned pose changed since last frame
     const u64 transform_frame = ++renderer.transform_frame;
+    renderer.motion_positions.clear();
     FrameData frame_data;
     View shadow_view;
     bool sun_shadows = false;
@@ -2014,13 +2028,16 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                         }
                         const Mat4 model_transform = entity_transform * node.world_transform;
                         const Mat4 mvp = view_projection * model_transform;
-                        // Last frame's transform of this node, when it moved since (for TAA's motion pass).
+                        // Last frame's transform of this node, when it was drawn last frame, and whether it moved since (for TAA's
+                        // motion pass; a skinned primitive whose pose changed is a mover even when the transform did not).
                         std::optional<Mat4> previous_model;
+                        bool transform_moved = false;
                         if (renderer.taa_motion) {
                             Impl::PreviousTransform& previous = renderer.previous_transforms[{entities[row].index, entities[row].generation,
                                                                                               static_cast<u32>(node.node_index)}];
-                            if (previous.frame + 1 == transform_frame && TaaTransformMoved(previous.model, model_transform)) {
+                            if (previous.frame + 1 == transform_frame) {
                                 previous_model = previous.model;
+                                transform_moved = TaaTransformMoved(previous.model, model_transform);
                             }
                             previous.model = model_transform;
                             previous.frame = transform_frame;
@@ -2042,6 +2059,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                                                                          : primitive.frame_vertex_buffers[
                                                                                frame_index % primitive.frame_vertex_buffers.size()];
                             bool uploaded_animation = false;
+                            u32 previous_positions = kTaaNoPreviousPositions; // this draw's last-frame pose in motion_positions
                             if (has_skin && !model->skin_matrices.empty() && primitive_index < source_primitives.size()) {
                                 const auto& source = source_primitives[primitive_index];
                                 const auto& matrices = model->skin_matrices;
@@ -2112,6 +2130,31 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                                                                            deformed.size() * sizeof(SceneVertex));
                                     }
                                     uploaded_animation = true;
+                                    if (renderer.taa_motion && renderer.taa->ReadsPreviousPositions() &&
+                                        primitive.alpha_mode != assets::MaterialAlphaMode::Blend) {
+                                        Impl::PreviousPose& pose_before = renderer.previous_poses[{
+                                            entities[row].index, entities[row].generation, static_cast<u32>(node.node_index),
+                                            static_cast<u32>(primitive_index) + 1}];
+                                        const usize floats = deformed.size() * 3;
+                                        bool pose_moved = false;
+                                        if (pose_before.frame + 1 == transform_frame && pose_before.positions.size() == floats) {
+                                            for (usize v = 0; v < deformed.size() && !pose_moved; ++v) {
+                                                for (usize axis = 0; axis < 3; ++axis) {
+                                                    if (pose_before.positions[v * 3 + axis] != deformed[v].position[axis]) pose_moved = true;
+                                                }
+                                            }
+                                        }
+                                        if (pose_moved) {
+                                            previous_positions = static_cast<u32>(renderer.motion_positions.size() * sizeof(f32));
+                                            renderer.motion_positions.insert(renderer.motion_positions.end(), pose_before.positions.begin(),
+                                                                             pose_before.positions.end());
+                                        }
+                                        pose_before.positions.resize(floats);
+                                        for (usize v = 0; v < deformed.size(); ++v) {
+                                            for (usize axis = 0; axis < 3; ++axis) pose_before.positions[v * 3 + axis] = deformed[v].position[axis];
+                                        }
+                                        pose_before.frame = transform_frame;
+                                    }
                                 }
                             }
                             if (!primitive.frame_vertex_buffers.empty() && !uploaded_animation) {
@@ -2155,9 +2198,10 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                                                              constants, dx * dx + dy * dy + dz * dz, cull});
                             } else {
                                 opaque_draws.push_back({frame_vertex_buffer, primitive.indices, primitive.index_count, constants, cull});
-                                if (previous_model) {
+                                if (transform_moved || previous_positions != kTaaNoPreviousPositions) {
                                     taa_movers.push_back({frame_vertex_buffer, primitive.indices, primitive.index_count,
-                                                          static_cast<u32>(sizeof(SceneVertex)), model_transform, *previous_model});
+                                                          static_cast<u32>(sizeof(SceneVertex)), model_transform,
+                                                          previous_model.value_or(model_transform), previous_positions});
                                 }
                                 if (sun_shadows) {
                                     ShadowCaster caster;
@@ -2191,6 +2235,29 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
     }
     // Forget the nodes not drawn this frame (destroyed entities, culled models): they start over when they come back.
     std::erase_if(renderer.previous_transforms, [&](const auto& entry) { return entry.second.frame != transform_frame; });
+    std::erase_if(renderer.previous_poses, [&](const auto& entry) { return entry.second.frame != transform_frame; });
+    // The skinned movers' last-frame poses, in this frame's slot (the frame loop waited on its fence; a slot too small is replaced, the
+    // old buffer retired once the GPU is done with it).
+    BufferHandle motion_position_buffer;
+    if (!renderer.motion_positions.empty()) {
+        if (renderer.motion_position_buffers.empty()) {
+            renderer.motion_position_buffers.resize(Impl::kFrameBuffers);
+            renderer.motion_position_capacity.assign(Impl::kFrameBuffers, 0);
+        }
+        const usize slot = frame_index % Impl::kFrameBuffers;
+        const u64 bytes = renderer.motion_positions.size() * sizeof(f32);
+        if (renderer.motion_position_capacity[slot] < bytes) {
+            if (renderer.motion_position_buffers[slot].IsValid()) renderer.device.DestroyBuffer(renderer.motion_position_buffers[slot]);
+            const u64 capacity = std::max<u64>(bytes + bytes / 2, 64 * 1024);
+            renderer.motion_position_buffers[slot] = renderer.device.CreateFrameConstantBuffer(capacity);
+            renderer.motion_position_capacity[slot] = renderer.motion_position_buffers[slot].IsValid() ? capacity : 0;
+        }
+        motion_position_buffer = renderer.motion_position_buffers[slot];
+        if (motion_position_buffer.IsValid() &&
+            !renderer.device.WriteBufferUnsynchronized(motion_position_buffer, renderer.motion_positions.data(), bytes)) {
+            renderer.device.UpdateFrameConstantBuffer(motion_position_buffer, renderer.motion_positions.data(), bytes);
+        }
+    }
     // The sun's shadow atlas, outside any pass; then this frame's constants (lights and cascades) and the scene pass itself.
     if (sun_shadows) {
         const Vec3 light_travel(-frame_data.sun_direction[0], -frame_data.sun_direction[1], -frame_data.sun_direction[2]);
@@ -2280,7 +2347,8 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
         u32 resolved = 0;
         if (resolve) {
             resolved = renderer.taa->Resolve(commands, taa_view_projection,
-                                             (static_cast<u64>(camera_entity.index) << 32) | camera_entity.generation, taa_movers);
+                                             (static_cast<u64>(camera_entity.index) << 32) | camera_entity.generation, taa_movers,
+                                             motion_position_buffer);
         } else if (renderer.taa) {
             renderer.taa->Reset();
         }

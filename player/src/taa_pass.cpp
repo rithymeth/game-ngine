@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <string>
 
 namespace aether::player {
 
@@ -134,7 +135,7 @@ struct MotionConstants {
     float4x4 g_PreviousMvp;
     float2 g_Jitter;
     uint g_Depth;
-    float g_Padding;
+    uint g_PreviousPositions;
 };
 #ifdef __spirv__
 [[vk::push_constant]]
@@ -142,6 +143,9 @@ struct MotionConstants {
 ConstantBuffer<MotionConstants> g_PC : register(b0);
 Texture2D g_Textures[128] : register(t0, space0);
 SamplerState g_Sampler : register(s0, space1);
+#ifdef AETHER_PREVIOUS_POSITIONS
+ByteAddressBuffer g_FrameLights : register(t0, space3); // last frame's skinned positions, three floats a vertex
+#endif
 
 struct VSInput {
     float3 position : POSITION;
@@ -155,9 +159,15 @@ struct PSInput {
     float3 previous : TEXCOORD1;
 };
 
-PSInput VSMain(VSInput input) {
+PSInput VSMain(VSInput input, uint vertex_id : SV_VertexID) {
+    float3 previous_position = input.position;
+#ifdef AETHER_PREVIOUS_POSITIONS
+    if (g_PC.g_PreviousPositions != 0xffffffffu) {
+        previous_position = asfloat(g_FrameLights.Load3(g_PC.g_PreviousPositions + vertex_id * 12));
+    }
+#endif
     float4 clip = mul(g_PC.g_Mvp, float4(input.position, 1.0));
-    float4 previous = mul(g_PC.g_PreviousMvp, float4(input.position, 1.0));
+    float4 previous = mul(g_PC.g_PreviousMvp, float4(previous_position, 1.0));
     PSInput output;
     output.position = float4(clip.xy + g_PC.g_Jitter * clip.w, clip.zw);
     output.current = clip.xyw;
@@ -217,8 +227,16 @@ TaaPass::TaaPass(gfx::rhi::IDevice& device, gfx::rhi::ISwapChain& swap_chain) : 
         AETHER_LOG_WARN("PlayerRenderer", "Temporal anti-aliasing pipeline unavailable");
         return;
     }
+    // With frame read buffers the shader reads skinned movers' last-frame positions; the buffer must be bound for every draw, so a
+    // small one stands in on frames without any.
+    static const std::string reading_source = std::string("#define AETHER_PREVIOUS_POSITIONS\n") + kTaaMotionShader;
+    if (device.SupportsFrameConstants()) no_positions_ = device.CreateFrameConstantBuffer(16);
+    motion_reads_positions_ = no_positions_.IsValid();
     gfx::rhi::PipelineDesc motion;
-    motion.hlsl_source = kTaaMotionShader;
+    motion.hlsl_source = motion_reads_positions_ ? reading_source.c_str() : kTaaMotionShader;
+    motion.frame_read_buffer = motion_reads_positions_;
+    // The read buffer comes with frame constants (Vulkan's set 3 needs a set 2); the shader names none, and no_positions_ is bound there.
+    motion.frame_constants_size_bytes = motion_reads_positions_ ? 16u : 0u;
     motion.push_constant_size_bytes = sizeof(TaaMotionConstants);
     motion.enable_bindless_textures = true;
     motion.render_texture_target = true;
@@ -234,6 +252,7 @@ TaaPass::TaaPass(gfx::rhi::IDevice& device, gfx::rhi::ISwapChain& swap_chain) : 
 TaaPass::~TaaPass() {
     Release();
     if (motion_pipeline_.IsValid()) device_.DestroyPipeline(motion_pipeline_);
+    if (no_positions_.IsValid()) device_.DestroyBuffer(no_positions_);
     if (pipeline_.IsValid()) device_.DestroyPipeline(pipeline_);
 }
 
@@ -273,7 +292,8 @@ void TaaPass::NextJitter(f32& x, f32& y) {
     jitter_ndc_[1] = 2.0f * y / static_cast<f32>(std::max(swap_chain_.Height(), 1u));
 }
 
-u32 TaaPass::DrawMotion(gfx::rhi::ICommandList& commands, const Mat4& view_projection, std::span<const TaaMover> movers) {
+u32 TaaPass::DrawMotion(gfx::rhi::ICommandList& commands, const Mat4& view_projection, std::span<const TaaMover> movers,
+                        gfx::rhi::BufferHandle previous_positions) {
     if (movers.empty() || !motion_pipeline_.IsValid()) return 0;
     if (!motion_.IsValid()) {
         motion_ = device_.CreateRenderTexture(width_, height_);
@@ -287,8 +307,16 @@ u32 TaaPass::DrawMotion(gfx::rhi::ICommandList& commands, const Mat4& view_proje
     if (!commands.BeginTexturePass(motion_, &none)) return 0;
     commands.BindPipeline(motion_pipeline_);
     commands.BindBindlessTextures();
+    const bool have_positions = motion_reads_positions_ && previous_positions.IsValid();
+    if (motion_reads_positions_) {
+        commands.BindFrameConstants(no_positions_);
+        commands.BindFrameReadBuffer(have_positions ? previous_positions : no_positions_);
+    }
     for (const TaaMover& mover : movers) {
         if (!mover.vertices.IsValid() || !mover.indices.IsValid() || mover.index_count == 0) continue;
+        if (mover.previous_positions != kTaaNoPreviousPositions && !have_positions && !TaaTransformMoved(mover.previous_model, mover.model)) {
+            continue; // a pose change this device can't follow: the colour clip holds it, as before
+        }
         TaaMotionConstants constants;
         const Mat4 mvp = view_projection * mover.model;
         const Mat4 previous_mvp = previous_view_projection_ * mover.previous_model;
@@ -297,6 +325,7 @@ u32 TaaPass::DrawMotion(gfx::rhi::ICommandList& commands, const Mat4& view_proje
         constants.jitter[0] = jitter_ndc_[0];
         constants.jitter[1] = jitter_ndc_[1];
         constants.depth = scene_depth_;
+        constants.previous_positions = have_positions ? mover.previous_positions : kTaaNoPreviousPositions;
         commands.BindVertexBuffer(mover.vertices, mover.vertex_stride);
         commands.BindIndexBuffer(mover.indices, gfx::rhi::IndexFormat::UInt32);
         commands.SetPushConstants(&constants, sizeof(constants));
@@ -306,7 +335,8 @@ u32 TaaPass::DrawMotion(gfx::rhi::ICommandList& commands, const Mat4& view_proje
     return motion_.index;
 }
 
-u32 TaaPass::Resolve(gfx::rhi::ICommandList& commands, const Mat4& view_projection, u64 camera, std::span<const TaaMover> movers) {
+u32 TaaPass::Resolve(gfx::rhi::ICommandList& commands, const Mat4& view_projection, u64 camera, std::span<const TaaMover> movers,
+                     gfx::rhi::BufferHandle previous_positions) {
     if (!Valid()) return 0;
     const u32 width = swap_chain_.Width(), height = swap_chain_.Height();
     if (width == 0 || height == 0 || !EnsureHistory(width, height)) return 0;
@@ -322,7 +352,7 @@ u32 TaaPass::Resolve(gfx::rhi::ICommandList& commands, const Mat4& view_projecti
                       TaaReprojection(previous_view_projection_, view_projection, reprojection);
     constants.blend = keep ? kTaaBlend : 1.0f;
     if (keep) std::memcpy(constants.reprojection, &reprojection.cols[0], sizeof(constants.reprojection));
-    last_motion_ = keep ? DrawMotion(commands, view_projection, movers) : 0;
+    last_motion_ = keep ? DrawMotion(commands, view_projection, movers, previous_positions) : 0;
     constants.motion = last_motion_;
 
     // The full-screen triangle writes every texel, so the target needn't be cleared.

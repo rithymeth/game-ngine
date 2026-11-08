@@ -749,9 +749,26 @@ command list, fence to fence, best of 10 lists after 2 warm-ups. Three rounds; R
   figure did not separate the three cleanly, because ghosted double edges also add high-frequency energy, so none is quoted.
 
 **Limits.**
-- **Skinned deformation is not in the motion texture.** A skinned mesh moves with its entity's transform; what its bones add is
-  still held by the colour clip alone. Covering it needs last frame's skinned positions as a second vertex stream.
 - **Transparent surfaces and particles** keep the camera's reprojection, as before.
+
+**Skinned deformation, 9 November 2026.** A skinned primitive is now a mover when its pose changes, even if its entity stays put:
+- the renderer keeps each skinned primitive's deformed positions from last frame, per entity;
+- it packs the changed ones into one read buffer per frame in flight, which the motion vertex shader indexes by vertex ID;
+- the RHI has one vertex stream, so the frame read buffer carries them instead. On D3D12 it is now visible to the vertex stage
+  too, as Vulkan's set 3 already was;
+- devices without frame read buffers keep the transform-only motion.
+- **Measured:** nothing new on the GPU beyond the motion pass above: a skinned mover is drawn there like any other, plus three
+  floats read per vertex. The CPU copies and compares each skinned primitive's positions once a frame. That cost is not timed:
+  the player's skinning is on the CPU already, and this adds less work per vertex than skinning does.
+- **The test** (`Taa_AMovingObjectKeepsItsDetailWithMotionVectors`, both backends) now also moves the striped bar by its
+  vertices with its transform still. It resolves to exactly the same pixels as the rigid move. Without last frame's positions
+  being read, it would wash out like the camera-only case.
+- **Checked in the player** with AETHER-01's Kael rig walking beside the lantern: both backends, motion on and off, no errors.
+- **Not checked in the player:** the Aegis Vanguard character. Its cooked model is 39 MB of binary data, which the player
+  re-encodes as base64 inside the glTF JSON (about 53 MB). That is over the loader's 32 MiB JSON limit, so the model is skipped
+  with "Couldn't parse cooked model". This is a separate loader bug.
+- **Still not covered:** entities that share a skinned model share its per-frame vertex buffers, so all of them draw the pose
+  skinned last. Their last-frame positions are kept per entity, but what they draw is not.
 
 ## Per-frame uploads without waiting for the GPU, 8 November 2026
 

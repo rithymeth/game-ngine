@@ -117,7 +117,7 @@ struct PipelineDesc {
     // light lists):
     //   ByteAddressBuffer g_FrameLights : register(t0, space3);
     // Fill a buffer made by IDevice::CreateFrameConstantBuffer (any size; UpdateFrameConstantBuffer writes it) and bind it with
-    // ICommandList::BindFrameReadBuffer before drawing. Read by the pixel shader. Only for devices where SupportsFrameConstants() is
+    // ICommandList::BindFrameReadBuffer before drawing. Readable by the vertex and pixel shaders. Only for devices where SupportsFrameConstants() is
     // true; others ignore the field and the shader must not name the buffer. false (the default) reserves nothing.
     bool frame_read_buffer = false;
 };

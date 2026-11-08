@@ -436,7 +436,7 @@ PipelineHandle D3D12Device::CreatePipeline(const PipelineDesc& desc, ISwapChain&
         D3D12_ROOT_PARAMETER param{};
         param.ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
         param.Descriptor = {/*ShaderRegister=*/0, /*RegisterSpace=*/3};
-        param.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+        param.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL; // both stages, as Vulkan's set 3
         frame_read_root_index = static_cast<u32>(params.size());
         params.push_back(param);
     }

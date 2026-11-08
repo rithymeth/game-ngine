@@ -264,16 +264,16 @@ struct VSInput {
 };
 struct PSInput {
     float4 position : SV_POSITION;
-    float local_x : TEXCOORD0;
+    float u : TEXCOORD0;
 };
 PSInput VSMain(VSInput input) {
     PSInput output;
     output.position = mul(g_PC.mvp, float4(input.position, 1.0));
-    output.local_x = input.position.x;
+    output.u = input.uv.x; // the stripes travel with the surface, however it moves
     return output;
 }
 float4 PSMain(PSInput input) : SV_Target {
-    return frac(input.local_x / 0.25 + 1e-3) < 0.5 ? float4(1, 1, 1, 1) : float4(0, 0, 0, 1);
+    return frac(input.u / 0.25 + 1e-3) < 0.5 ? float4(1, 1, 1, 1) : float4(0, 0, 0, 1);
 }
 )";
     scene.push_constant_size_bytes = 64;
@@ -306,23 +306,34 @@ float4 PSMain(float4 position : SV_Position) : SV_Target {
     AETHER_CHECK(scene_pipeline.IsValid() && show_pipeline.IsValid());
     if (!scene_pipeline.IsValid() || !show_pipeline.IsValid()) return;
 
-    // The bar: x -0.5 .. 0 in NDC (8 pixels), y -0.5 .. 0.5, at depth 0.5; 12 floats a vertex, as the scene's.
-    const f32 vertices[4][12] = {{-0.5f, -0.5f, 0.5f, 0, 0, 1, 0, 0, 1, 0, 0, 1}, {0.0f, -0.5f, 0.5f, 0, 0, 1, 0, 0, 1, 0, 0, 1},
-                                 {0.0f, 0.5f, 0.5f, 0, 0, 1, 0, 0, 1, 0, 0, 1},   {-0.5f, 0.5f, 0.5f, 0, 0, 1, 0, 0, 1, 0, 0, 1}};
+    // The bar: x -0.5 .. 0 in NDC (8 pixels), y -0.5 .. 0.5, at depth 0.5, u its rest x; 12 floats a vertex, as the scene's.
+    const f32 vertices[4][12] = {{-0.5f, -0.5f, 0.5f, 0, 0, 1, -0.5f, 0, 1, 0, 0, 1}, {0.0f, -0.5f, 0.5f, 0, 0, 1, 0.0f, 0, 1, 0, 0, 1},
+                                 {0.0f, 0.5f, 0.5f, 0, 0, 1, 0.0f, 0, 1, 0, 0, 1},    {-0.5f, 0.5f, 0.5f, 0, 0, 1, -0.5f, 0, 1, 0, 0, 1}};
     const u32 indices[6] = {0, 1, 2, 0, 2, 3};
     const rhi::BufferHandle vertex_buffer = device->CreateVertexBuffer(vertices, sizeof(vertices));
     const rhi::BufferHandle index_buffer = device->CreateIndexBuffer(indices, sizeof(indices), rhi::IndexFormat::UInt32);
     AETHER_CHECK(vertex_buffer.IsValid() && index_buffer.IsValid());
 
-    // 24 frames of the moving bar; the resolved row through its middle afterwards. Frame f's bar is f % 8 steps of 2 pixels right.
-    const auto run = [&](bool with_motion, std::vector<u8>& row) {
+    // Last frame's positions for the deforming case, 64 bytes into the buffer (as a skinned mover's are, after others').
+    const rhi::BufferHandle previous_buffer = device->CreateFrameConstantBuffer(64 + sizeof(f32) * 12);
+
+    // 24 frames of the moving bar; the resolved row through its middle afterwards. Frame f's bar is f % 8 steps of 2 pixels right:
+    // moved by its transform (kRigid), or by its vertices with the transform still, as a skinned mesh deforms (kDeforming).
+    enum Mode { kCameraOnly, kRigid, kDeforming };
+    const auto run = [&](Mode mode, std::vector<u8>& row) {
         TaaPass taa(*device, *target);
         if (!taa.Valid()) return false;
         const Mat4 view_projection = Mat4::Identity();
         Mat4 previous_model = Mat4::Identity();
+        f32 previous_positions[16 + 12]{};
         bool drew_motion = false;
         for (u32 f = 0; f < 24; ++f) {
-            const Mat4 model = Mat4::Translation(Vec3(0.125f * static_cast<f32>(f % 8), 0.0f, 0.0f));
+            const f32 offset = 0.125f * static_cast<f32>(f % 8);
+            const Mat4 model = mode == kDeforming ? Mat4::Identity() : Mat4::Translation(Vec3(offset, 0.0f, 0.0f));
+            f32 moved[4][12];
+            std::memcpy(moved, vertices, sizeof(moved));
+            for (auto& v : moved) v[0] += mode == kDeforming ? offset : 0.0f;
+            device->UpdateVertexBuffer(vertex_buffer, moved, sizeof(moved));
             f32 jx = 0.0f, jy = 0.0f;
             taa.NextJitter(jx, jy);
             const Mat4 mvp = JitterProjection(view_projection, jx, jy, kSize, kSize) * model;
@@ -338,8 +349,12 @@ float4 PSMain(float4 position : SV_Position) : SV_Target {
             if (!cmd->CopySceneDepth()) return false;
             cmd->EndRenderPass();
             std::vector<TaaMover> movers;
-            if (with_motion && f > 0) movers.push_back({vertex_buffer, index_buffer, 6, sizeof(vertices[0]), model, previous_model});
-            const u32 resolved = taa.Resolve(*cmd, view_projection, 1, movers);
+            if (mode == kRigid && f > 0) movers.push_back({vertex_buffer, index_buffer, 6, sizeof(vertices[0]), model, previous_model});
+            if (mode == kDeforming && f > 0) {
+                device->UpdateFrameConstantBuffer(previous_buffer, previous_positions, sizeof(previous_positions));
+                movers.push_back({vertex_buffer, index_buffer, 6, sizeof(vertices[0]), model, model, 64});
+            }
+            const u32 resolved = taa.Resolve(*cmd, view_projection, 1, movers, mode == kDeforming ? previous_buffer : rhi::BufferHandle{});
             if (resolved == 0) return false;
             drew_motion = drew_motion || taa.LastMotion() != 0;
             cmd->BeginRenderPass(*target, {1, 0, 1, 1});
@@ -362,14 +377,25 @@ float4 PSMain(float4 position : SV_Position) : SV_Target {
                 target->Present(false);
             }
             previous_model = model;
+            for (u32 v = 0; v < 4; ++v) {
+                for (u32 axis = 0; axis < 3; ++axis) previous_positions[16 + v * 3 + axis] = moved[v][axis];
+            }
         }
-        return drew_motion == with_motion;
+        return drew_motion == (mode != kCameraOnly);
     };
 
     // Frame 23 is 7 steps along: the bar covers pixels 22 .. 29. Its interior (23 .. 28) is what the history has to follow.
-    std::vector<u8> sharp, blurred;
-    AETHER_CHECK(run(true, sharp));
-    AETHER_CHECK(run(false, blurred));
+    std::vector<u8> sharp, blurred, deformed;
+    AETHER_CHECK(run(kRigid, sharp));
+    AETHER_CHECK(run(kCameraOnly, blurred));
+    if (previous_buffer.IsValid()) {
+        AETHER_CHECK(run(kDeforming, deformed));
+        if (deformed.size() == kSize) {
+            std::printf("    deforming:      %3u %3u %3u %3u %3u %3u\n", deformed[23], deformed[24], deformed[25], deformed[26],
+                        deformed[27], deformed[28]);
+            for (u32 x = 23; x <= 28; ++x) AETHER_CHECK(deformed[x] == sharp[x]); // the same as the rigid move: the vertices' own motion
+        }
+    }
     if (sharp.size() == kSize && blurred.size() == kSize) {
         std::printf("    with motion:    %3u %3u %3u %3u %3u %3u\n", sharp[23], sharp[24], sharp[25], sharp[26], sharp[27], sharp[28]);
         std::printf("    camera only:    %3u %3u %3u %3u %3u %3u\n", blurred[23], blurred[24], blurred[25], blurred[26], blurred[27], blurred[28]);
@@ -385,6 +411,7 @@ float4 PSMain(float4 position : SV_Position) : SV_Target {
     }
     device->DestroyBuffer(vertex_buffer);
     device->DestroyBuffer(index_buffer);
+    if (previous_buffer.IsValid()) device->DestroyBuffer(previous_buffer);
     device->DestroyPipeline(scene_pipeline);
     device->DestroyPipeline(show_pipeline);
 }
