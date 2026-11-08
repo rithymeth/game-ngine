@@ -1327,6 +1327,12 @@
   public:const char*Name()const override
   std::vector<u8>EncodeMeshData(const MeshData&mesh)
   u32 Version()const override
+[engine/include/aether/assets/skinning.h] experimental
+  type struct SkinVertex
+  static_assert(sizeof(SkinVertex)==sizeof(f32)*12)
+  void ComputeSkinNormalMatrices(std::span<const Mat4>skin,std::vector<Mat4>&out)
+  void SkinVertices(const SkinVertex*bind,SkinVertex*out,const std::array<u16,4>*joints,const std::array<f32,4>*weights,usize count,std::span<const Mat4>skin,std::span<const Mat4>skin_normal)
+  void SkinVerticesParallel(JobSystem*jobs,const SkinVertex*bind,SkinVertex*out,const std::array<u16,4>*joints,const std::array<f32,4>*weights,usize count,std::span<const Mat4>skin,std::span<const Mat4>skin_normal,usize min_chunk=1024)
 [engine/include/aether/assets/texture_importer.h] experimental
   type class TextureImporter
   type struct TextureData
