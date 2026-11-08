@@ -523,6 +523,7 @@ bool VulkanDevice::DestroyBuffer(BufferHandle buffer) {
             vkFreeDescriptorSets(device_, frame_constants_pool_, 1, &record.constants_set);
             --constant_buffer_count_;
         }
+        if (record.read_set != VK_NULL_HANDLE) vkFreeDescriptorSets(device_, frame_read_pool_, 1, &record.read_set);
         vkDestroyBuffer(device_, record.buffer, nullptr);
         vkFreeMemory(device_, record.memory, nullptr);
     });
@@ -626,6 +627,7 @@ void VulkanDevice::Destroy() noexcept {
         for (const BufferRecord& buffer : buffers_) {
             if (buffer.mapped) vkUnmapMemory(device_, buffer.memory);
             if (buffer.constants_set != VK_NULL_HANDLE) vkFreeDescriptorSets(device_, frame_constants_pool_, 1, &buffer.constants_set);
+            if (buffer.read_set != VK_NULL_HANDLE) vkFreeDescriptorSets(device_, frame_read_pool_, 1, &buffer.read_set);
             if (buffer.buffer != VK_NULL_HANDLE) vkDestroyBuffer(device_, buffer.buffer, nullptr);
             if (buffer.memory != VK_NULL_HANDLE) vkFreeMemory(device_, buffer.memory, nullptr);
         }
@@ -644,6 +646,8 @@ void VulkanDevice::Destroy() noexcept {
         if (frame_constants_set_layout_ != VK_NULL_HANDLE) {
             vkDestroyDescriptorSetLayout(device_, frame_constants_set_layout_, nullptr);
         }
+        if (frame_read_pool_ != VK_NULL_HANDLE) vkDestroyDescriptorPool(device_, frame_read_pool_, nullptr);
+        if (frame_read_set_layout_ != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(device_, frame_read_set_layout_, nullptr);
         if (bindless_pool_ != VK_NULL_HANDLE) {
             vkDestroyDescriptorPool(device_, bindless_pool_, nullptr);
         }
@@ -1054,7 +1058,8 @@ BufferHandle VulkanDevice::CreateBufferInternal(const void* data, u64 size_bytes
     // demo's scale.
     ScopedBufferRecord owned_record(device_);
     owned_record.Get() = CreateHostVisibleBuffer(device_, physical_device_, size_bytes,
-                                                  VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                                                  VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT |
+                                                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, // a frame read buffer is a storage buffer
                                                   data, true);
     const u32 slot = AcquireBufferSlot(owned_record.Get());
     owned_record.Release();
@@ -1547,7 +1552,11 @@ BufferHandle VulkanDevice::CreateFrameConstantBuffer(u64 size_bytes) {
     AETHER_VK_CHECK(vkAllocateDescriptorSets(device_, &alloc, &record.constants_set));
     ++constant_buffer_count_;
 
-    VkDescriptorBufferInfo buffer_desc{record.buffer, 0, padded};
+    // As frame constants the shader sees at most maxUniformBufferRange (64 KiB on most devices): a larger buffer is a frame read
+    // buffer (the clustered lights), and a uniform descriptor over all of it would be invalid.
+    const VkDeviceSize uniform_range = max_uniform_buffer_range_ > 0 ? std::min<VkDeviceSize>(padded, max_uniform_buffer_range_ / 256 * 256)
+                                                                     : padded;
+    VkDescriptorBufferInfo buffer_desc{record.buffer, 0, uniform_range};
     VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
     write.dstSet = record.constants_set;
     write.dstBinding = 0;
@@ -1555,6 +1564,20 @@ BufferHandle VulkanDevice::CreateFrameConstantBuffer(u64 size_bytes) {
     write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     write.pBufferInfo = &buffer_desc;
     vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+
+    // The same buffer as a frame read buffer (HLSL's ByteAddressBuffer at t0, space3 is a storage buffer at set 3, binding 0).
+    VkDescriptorSetAllocateInfo read_alloc{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+    read_alloc.descriptorPool = frame_read_pool_;
+    read_alloc.descriptorSetCount = 1;
+    read_alloc.pSetLayouts = &frame_read_set_layout_;
+    AETHER_VK_CHECK(vkAllocateDescriptorSets(device_, &read_alloc, &record.read_set));
+    VkDescriptorBufferInfo read_desc{record.buffer, 0, max_storage_buffer_range_ > 0 ? std::min<VkDeviceSize>(padded, max_storage_buffer_range_)
+                                                                                      : padded};
+    VkWriteDescriptorSet read_write = write;
+    read_write.dstSet = record.read_set;
+    read_write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    read_write.pBufferInfo = &read_desc;
+    vkUpdateDescriptorSets(device_, 1, &read_write, 0, nullptr);
     return handle;
 }
 
@@ -1661,6 +1684,18 @@ void VulkanDevice::CreateBindlessTextureInfrastructure() {
     constants_pool_info.poolSizeCount = 1;
     constants_pool_info.pPoolSizes = &constants_pool_size;
     AETHER_VK_CHECK(vkCreateDescriptorPool(device_, &constants_pool_info, nullptr, &frame_constants_pool_));
+
+    // Frame read buffers: set 3, one storage buffer, a set per frame constant buffer (CreateFrameConstantBuffer makes both).
+    VkDescriptorSetLayoutBinding read_binding = constants_binding;
+    read_binding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    VkDescriptorSetLayoutCreateInfo read_layout_info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+    read_layout_info.bindingCount = 1;
+    read_layout_info.pBindings = &read_binding;
+    AETHER_VK_CHECK(vkCreateDescriptorSetLayout(device_, &read_layout_info, nullptr, &frame_read_set_layout_));
+    VkDescriptorPoolSize read_pool_size{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, kMaxConstantBuffers};
+    VkDescriptorPoolCreateInfo read_pool_info = constants_pool_info;
+    read_pool_info.pPoolSizes = &read_pool_size;
+    AETHER_VK_CHECK(vkCreateDescriptorPool(device_, &read_pool_info, nullptr, &frame_read_pool_));
 }
 
 ComputePipelineHandle VulkanDevice::CreateComputePipeline(const ComputePipelineDesc& desc) {
@@ -1785,6 +1820,7 @@ PipelineHandle VulkanDevice::CreatePipeline(const PipelineDesc& desc, ISwapChain
     PipelineRecord& record = owned_record.Get();
     record.push_constant_size_bytes = desc.push_constant_size_bytes;
     record.enable_bindless_textures = desc.enable_bindless_textures;
+    record.frame_read_buffer = desc.frame_read_buffer;
     record.use_vertex_buffer = desc.use_vertex_buffer;
     record.vertex_stride_bytes = desc.vertex_layout == VertexLayout::PositionNormalUvTangent
                                      ? 48u
@@ -1801,12 +1837,17 @@ PipelineHandle VulkanDevice::CreatePipeline(const PipelineDesc& desc, ISwapChain
         layout_info.pushConstantRangeCount = 1;
         layout_info.pPushConstantRanges = &push_range;
     }
-    // Sets 0 and 1: the bindless textures and sampler. Set 2: the frame constants (which need the other two, so the set indices match the HLSL spaces).
-    VkDescriptorSetLayout bindless_set_layouts[3] = {bindless_texture_set_layout_, bindless_sampler_set_layout_, frame_constants_set_layout_};
+    // Sets 0 and 1: the bindless textures and sampler. Set 2: the frame constants (which need the other two, so the set indices match the HLSL
+    // spaces). Set 3: the frame read buffer (which needs all three).
+    VkDescriptorSetLayout bindless_set_layouts[4] = {bindless_texture_set_layout_, bindless_sampler_set_layout_, frame_constants_set_layout_,
+                                                     frame_read_set_layout_};
+    if (desc.frame_read_buffer && desc.frame_constants_size_bytes == 0) {
+        throw std::invalid_argument("PipelineDesc::frame_read_buffer needs frame constants");
+    }
     if (desc.frame_constants_size_bytes > 0) {
         AETHER_ASSERT(desc.enable_bindless_textures);
         AETHER_ASSERT(desc.frame_constants_size_bytes % 16 == 0);
-        layout_info.setLayoutCount = 3;
+        layout_info.setLayoutCount = desc.frame_read_buffer ? 4u : 3u;
         layout_info.pSetLayouts = bindless_set_layouts;
     } else if (desc.enable_bindless_textures) {
         layout_info.setLayoutCount = 2;
@@ -3039,6 +3080,7 @@ void VulkanCommandList::Reset() {
     active_swap_chain_ = nullptr;
     graphics_pipeline_bound_ = false;
     graphics_bindless_enabled_ = false;
+    graphics_frame_read_buffer_ = false;
     graphics_bindless_bound_ = false;
     graphics_uses_vertex_buffer_ = false;
     graphics_vertex_stride_bytes_ = 0;
@@ -3230,6 +3272,7 @@ void VulkanCommandList::EndRenderPass() {
 void VulkanCommandList::ResetGraphicsBindings() {
     graphics_pipeline_bound_ = false;
     graphics_bindless_enabled_ = false;
+    graphics_frame_read_buffer_ = false;
     graphics_bindless_bound_ = false;
     graphics_uses_vertex_buffer_ = false;
     vertex_buffer_bound_ = false;
@@ -3247,6 +3290,7 @@ void VulkanCommandList::BindPipeline(PipelineHandle pipeline) {
         AETHER_LOG_ERROR("Vulkan", "BindPipeline requires an active render pass");
         graphics_pipeline_bound_ = false;
         graphics_bindless_enabled_ = false;
+        graphics_frame_read_buffer_ = false;
         graphics_bindless_bound_ = false;
         graphics_uses_vertex_buffer_ = false;
         vertex_buffer_bound_ = false;
@@ -3259,6 +3303,7 @@ void VulkanCommandList::BindPipeline(PipelineHandle pipeline) {
         AETHER_LOG_ERROR("Vulkan", "BindPipeline received an invalid graphics-pipeline handle");
         graphics_pipeline_bound_ = false;
         graphics_bindless_enabled_ = false;
+        graphics_frame_read_buffer_ = false;
         graphics_bindless_bound_ = false;
         graphics_uses_vertex_buffer_ = false;
         vertex_buffer_bound_ = false;
@@ -3273,6 +3318,7 @@ void VulkanCommandList::BindPipeline(PipelineHandle pipeline) {
     graphics_pipeline_bound_ = true;
     graphics_push_constant_size_bytes_ = record.push_constant_size_bytes;
     graphics_bindless_enabled_ = record.enable_bindless_textures;
+    graphics_frame_read_buffer_ = record.frame_read_buffer;
     graphics_bindless_bound_ = false;
     graphics_uses_vertex_buffer_ = record.use_vertex_buffer;
     graphics_vertex_stride_bytes_ = record.vertex_stride_bytes;
@@ -3370,6 +3416,19 @@ void VulkanCommandList::BindFrameConstants(BufferHandle buffer) {
     }
     const VkDescriptorSet set = device_.GetBuffer(buffer).constants_set;
     vkCmdBindDescriptorSets(command_buffer_, VK_PIPELINE_BIND_POINT_GRAPHICS, bound_pipeline_layout_, 2, 1, &set, 0, nullptr);
+}
+
+void VulkanCommandList::BindFrameReadBuffer(BufferHandle buffer) {
+    if (!device_.IsBufferAlive(buffer) || device_.GetBuffer(buffer).read_set == VK_NULL_HANDLE) {
+        AETHER_LOG_ERROR("Vulkan", "BindFrameReadBuffer needs a buffer made by CreateFrameConstantBuffer");
+        return;
+    }
+    if (!graphics_pipeline_bound_ || !graphics_frame_read_buffer_) {
+        AETHER_LOG_ERROR("Vulkan", "BindFrameReadBuffer needs a bound pipeline made with PipelineDesc::frame_read_buffer");
+        return;
+    }
+    const VkDescriptorSet set = device_.GetBuffer(buffer).read_set;
+    vkCmdBindDescriptorSets(command_buffer_, VK_PIPELINE_BIND_POINT_GRAPHICS, bound_pipeline_layout_, 3, 1, &set, 0, nullptr);
 }
 void VulkanCommandList::BindComputePipeline(ComputePipelineHandle pipeline) {
     if (!recording_) {

@@ -34,6 +34,7 @@ struct PipelineRecord {
     VkPipeline pipeline = VK_NULL_HANDLE;
     u32 push_constant_size_bytes = 0;
     bool enable_bindless_textures = false;
+    bool frame_read_buffer = false;
     bool use_vertex_buffer = false;
     u32 vertex_stride_bytes = 20;
 };
@@ -57,6 +58,7 @@ struct BufferRecord {
     VkDeviceSize size_bytes = 0;
     void* mapped = nullptr;
     VkDescriptorSet constants_set = VK_NULL_HANDLE; // frame constants: the set that points at this buffer (see CreateConstantBuffer)
+    VkDescriptorSet read_set = VK_NULL_HANDLE;      // the same buffer as a frame read buffer (set 3, a storage buffer)
     bool is_storage = false;
     bool is_constant = false;
     bool is_vertex = false;
@@ -292,6 +294,9 @@ private:
     // Frame constants: one uniform buffer per set, one set per constant buffer, allocated from this pool.
     VkDescriptorSetLayout frame_constants_set_layout_ = VK_NULL_HANDLE;
     VkDescriptorPool frame_constants_pool_ = VK_NULL_HANDLE;
+    // Frame read buffers (PipelineDesc::frame_read_buffer): set 3, one storage buffer, a set per frame constant buffer.
+    VkDescriptorSetLayout frame_read_set_layout_ = VK_NULL_HANDLE;
+    VkDescriptorPool frame_read_pool_ = VK_NULL_HANDLE;
     static constexpr u32 kMaxConstantBuffers = 64;
     std::atomic<u32> constant_buffer_count_{0};
 
@@ -477,6 +482,7 @@ public:
     void Dispatch(u32 groups_x, u32 groups_y, u32 groups_z) override;
     void BindBindlessTextures() override;
     void BindFrameConstants(BufferHandle buffer) override;
+    void BindFrameReadBuffer(BufferHandle buffer) override;
     bool CopySceneDepth() override;
 
     void* NativeHandle() const override { return command_buffer_; }
@@ -510,6 +516,7 @@ private:
     VkPipelineLayout bound_pipeline_layout_ = VK_NULL_HANDLE; // set by BindPipeline, read by SetPushConstants
     bool graphics_pipeline_bound_ = false;
     bool graphics_bindless_enabled_ = false;
+    bool graphics_frame_read_buffer_ = false; // the bound pipeline has set 3 (PipelineDesc::frame_read_buffer)
     bool graphics_bindless_bound_ = false;
     bool graphics_uses_vertex_buffer_ = false;
     u32 graphics_vertex_stride_bytes_ = 0;

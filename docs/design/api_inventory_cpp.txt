@@ -2293,6 +2293,7 @@
   void BindComputeSampledTexture(u32 slot,SampledTextureHandle texture)override
   void BindComputeStorageBuffer(u32 slot,BufferHandle buffer)override
   void BindFrameConstants(BufferHandle buffer)override
+  void BindFrameReadBuffer(BufferHandle buffer)override
   void BindIndexBuffer(BufferHandle buffer,IndexFormat format)override
   void BindPipeline(PipelineHandle pipeline)override
   void BindVertexBuffer(BufferHandle buffer,u32 stride_bytes)override

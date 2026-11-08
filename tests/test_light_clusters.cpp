@@ -59,15 +59,15 @@ f32 KeptX(const LightClusters& clusters, u32 k) {
     return x;
 }
 
-std::unique_ptr<rhi::IDevice> MakeD3D12() {
+std::unique_ptr<rhi::IDevice> MakeDevice(rhi::Backend backend) {
     std::unique_ptr<rhi::IDevice> device;
-    if (rhi::IsBackendAvailable(rhi::Backend::D3D12)) {
+    if (rhi::IsBackendAvailable(backend)) {
         try {
-            device = rhi::CreateDevice(rhi::Backend::D3D12, false);
+            device = rhi::CreateDevice(backend, false);
         } catch (const std::exception&) {
         }
     }
-    if (!device) std::printf("    (no D3D12 device: skipping)\n");
+    if (!device) std::printf("    (no %s device: skipping)\n", backend == rhi::Backend::D3D12 ? "D3D12" : "Vulkan");
     return device;
 }
 
@@ -260,8 +260,9 @@ AETHER_TEST(Clusters_EveryLightInTheWorldAndTheParticlesAreGathered) {
     AETHER_CHECK(FrameData{}.cluster_info[3] == 0); // off unless filled: the nearest lights above, as before
 }
 
-AETHER_TEST(Clusters_TheShaderFindsTheCellsTheCpuFilled) {
-    std::unique_ptr<rhi::IDevice> device = MakeD3D12();
+// On both backends: the frame read buffer is bound where the shader looks for it (Vulkan once had no set 3 and lost the device).
+void TheShaderFindsTheCellsTheCpuFilled(rhi::Backend backend) {
+    std::unique_ptr<rhi::IDevice> device = MakeDevice(backend);
     if (!device || !device->SupportsFrameConstants()) return;
     // Three lights at 9 m: middle, upper left, lower right (a spot). Each pixel writes which of them its cell lists.
     const ClusterView view = TestView();
@@ -281,6 +282,9 @@ AETHER_TEST(Clusters_TheShaderFindsTheCellsTheCpuFilled) {
     rhi::PipelineDesc desc;
     desc.hlsl_source = std::string(R"(
 struct PushConstants { float depth; uint pad0; uint pad1; uint pad2; };
+#ifdef __spirv__
+[[vk::push_constant]]
+#endif
 ConstantBuffer<PushConstants> g_PC : register(b0);
 Texture2D g_Textures[128] : register(t0, space0);
 SamplerState g_Sampler : register(s0, space1);
@@ -354,3 +358,5 @@ float4 PSMain(float4 position : SV_Position) : SV_Target {
     device->DestroyBuffer(frame_buffer);
     device->DestroyBuffer(light_buffer);
 }
+AETHER_TEST(Clusters_TheShaderFindsTheCellsTheCpuFilled_D3D12) { TheShaderFindsTheCellsTheCpuFilled(rhi::Backend::D3D12); }
+AETHER_TEST(Clusters_TheShaderFindsTheCellsTheCpuFilled_Vulkan) { TheShaderFindsTheCellsTheCpuFilled(rhi::Backend::Vulkan); }
