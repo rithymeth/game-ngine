@@ -108,6 +108,9 @@ struct PipelineDesc {
     // shadow maps. No colour target; depth tested (LESS) and written whatever depth_test and depth_write say. An empty ps_entry builds
     // the pipeline with no pixel shader (the fast path for opaque casters). Takes precedence over the other two targets.
     bool depth_target = false;
+    // With depth_target: writes depth without comparing it with what is there (an ALWAYS test), to set a region of a depth texture, as
+    // clearing a page of a shared atlas. Otherwise a depth pass tests LESS.
+    bool depth_always = false;
     // Rasterizer depth bias, for any pipeline (shadow casters use it to keep surfaces from shadowing themselves): a constant in units of
     // the depth format's precision, and a multiple of the triangle's depth slope. 0 (the default) is no bias.
     i32 depth_bias = 0;

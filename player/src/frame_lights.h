@@ -43,8 +43,17 @@ struct FrameData {
     f32 cluster_forward[4]{}; // xyz: the camera's forward axis (a point's view depth is dot(point - camera, forward)); w: depth scale
     f32 cluster_scale[4]{};   // x, y: tiles per pixel across and down; z: depth bias (slice = floor(log(depth) * scale + bias))
     u32 cluster_info[4]{};    // x: the cells' byte offset in g_FrameLights; y: the index list's; z: lights binned; w: 1 when in use
+    // The sun's virtual shadow map (virtual_shadow.h, vsm_pages.h): the light's basis, the camera and the window of pages around it, and the page
+    // table in g_FrameLights. vsm_info.x is 255 when there is none and the cascades alone shadow the sun.
+    f32 vsm_light_right[4]{};     // xyz
+    f32 vsm_light_up[4]{};        // xyz
+    f32 vsm_light_direction[4]{}; // xyz: the way the light travels
+    f32 vsm_camera[4]{};          // xyz: the camera's position; w: a pixel's footprint per metre of distance
+    i32 vsm_window[3][4]{};       // the window's first page, (x, y) for each level, two levels to a row: x0 y0 x1 y1 / x2 y2 x3 y3 / x4 y4 x5 y5
+    u32 vsm_info[4]{255u, 0u, 0u, 0u}; // x: the page atlas's bindless index (255: none); y: pages per side of the pool; z: the page table's byte offset
+    f32 vsm_params[4]{};          // x: a pixel's footprint that does not depend on distance (an orthographic camera's)
 };
-static_assert(sizeof(FrameData) % 16 == 0 && sizeof(FrameData) == 1072);
+static_assert(sizeof(FrameData) % 16 == 0 && sizeof(FrameData) == 1216);
 
 // The HLSL for FrameData (the layout above), its constant buffer g_Frame (register b0, space2), and the sky helpers that read it:
 // EnvironmentRadiance(direction, lod), SkyIrradiance(normal) and SkyLighting(...), the split-sum image-based lighting. Needs g_Textures

@@ -33,6 +33,13 @@ struct FrameData {
     float4 cluster_forward;   // xyz: the camera's forward axis; w: depth scale
     float4 cluster_scale;     // x, y: tiles per pixel; z: depth bias
     uint4 cluster_info;       // x: the cells' byte offset; y: the index list's; z: lights; w: 1 when the clustered lights are in use
+    float4 vsm_light_right;   // the sun's virtual shadow map (player/src/virtual_shadow.h): the light's basis,
+    float4 vsm_light_up;
+    float4 vsm_light_direction;
+    float4 vsm_camera;        // xyz: the camera; w: a pixel's footprint per metre of distance
+    int4 vsm_window[3];       // the window's first page per level, two levels to a row
+    uint4 vsm_info;           // x: the page atlas's bindless index (255: none); y: pages per side of the pool; z: the page table's byte offset
+    float4 vsm_params;        // x: a footprint that does not depend on distance
 };
 ConstantBuffer<FrameData> g_Frame : register(b0, space2);
 

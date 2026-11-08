@@ -4897,8 +4897,10 @@
   ~Game()
 [player/include/aether/player/scene_renderer.h] experimental
   type class SceneRenderer
+  type struct VirtualShadowStats
   SceneRenderer&operator=(const SceneRenderer&)=delete
   SceneRenderer(const SceneRenderer&)=delete
+  VirtualShadowStats VirtualShadows()const
   public:SceneRenderer(gfx::rhi::IDevice&device,gfx::rhi::ISwapChain&swap_chain,const GamePackage&package)
   std::string SceneShaderSource(bool with_frame_data,bool hdr_target=false)
   void Draw(Game&game,gfx::rhi::ICommandList&commands,u32 frame_index)

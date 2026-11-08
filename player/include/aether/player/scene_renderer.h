@@ -41,6 +41,18 @@ public:
     void SetRenderPoseSampler(std::function<bool(Entity, Transform&)> sampler);
     void Draw(Game& game, gfx::rhi::ICommandList& commands, u32 frame_index);
 
+    // The sun's virtual shadow maps (pages of a fine shadow near the camera over the cascades) as of the last Draw, for tests and the profiler.
+    struct VirtualShadowStats {
+        bool enabled = false;   // the device and the settings allow them
+        u32 requests = 0;       // pages the feedback of a few frames ago asked for
+        u32 resident = 0;       // pages holding a physical page
+        u32 pending = 0;        // of those, waiting to be drawn
+        u32 drawn_pages = 0;    // pages drawn this frame
+        u32 caster_draws = 0;   // caster draws over those pages
+        f64 cpu_ms = 0.0;       // the CPU's time in this frame's page work (feedback, allocation, the page table, recording the pages)
+    };
+    VirtualShadowStats VirtualShadows() const;
+
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

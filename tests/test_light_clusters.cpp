@@ -74,7 +74,8 @@ std::unique_ptr<rhi::IDevice> MakeDevice(rhi::Backend backend) {
 } // namespace
 
 AETHER_TEST(Clusters_FrameDataCarriesTheGrid) {
-    static_assert(sizeof(FrameData) == 1072 && offsetof(FrameData, cluster_forward) == 1024 && offsetof(FrameData, cluster_info) == 1056);
+    static_assert(sizeof(FrameData) == 1216 && offsetof(FrameData, cluster_forward) == 1024 && offsetof(FrameData, cluster_info) == 1056 &&
+                  offsetof(FrameData, vsm_light_right) == 1072 && offsetof(FrameData, vsm_window) == 1136 && offsetof(FrameData, vsm_info) == 1184);
     const std::string hlsl = FrameDataHlsl();
     AETHER_CHECK(hlsl.find("ByteAddressBuffer g_FrameLights : register(t0, space3)") != std::string::npos);
     AETHER_CHECK(hlsl.find("uint4 cluster_info;") != std::string::npos && hlsl.find("uint2 ClusterRange(") != std::string::npos);

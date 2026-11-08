@@ -45,6 +45,10 @@ an index or a dereference traps the process instead of reporting a failure. Guar
   -Encoding utf8NoBOM` is not valid; use `[System.IO.File]::WriteAllLines`.
 - **Here-strings use LF; most source files here are CRLF.** A `-replace` built from a here-string silently misses. Prefer
   the editor tools, or `[System.IO.File]::ReadAllText` with explicit contents.
+- **`ICommandList::Dispatch` works only on lists from `CreateComputeCommandList`** (the async compute queue); the frame's graphics list
+  cannot dispatch. A pass that needs GPU results on the CPU is a small graphics pass into a render texture plus
+  `CopyRenderTextureToReadback` (the virtual shadow feedback does this). On Vulkan a buffer the CPU reads must be in cached host memory
+  (`CreateReadbackBuffer` asks for it); uncached reads cost milliseconds.
 - **`git add -u` does not stage new files.** `git add -A` in this repo picks up 8 000+ build artifacts; add paths
   explicitly.
 

@@ -1116,7 +1116,7 @@ private:
 BufferRecord CreateHostVisibleBuffer(VkDevice device, VkPhysicalDevice physical_device, VkDeviceSize size,
                                       VkBufferUsageFlags usage, const void* data, bool keep_mapped = false,
                                       u32 family_a = VK_QUEUE_FAMILY_IGNORED,
-                                      u32 family_b = VK_QUEUE_FAMILY_IGNORED) {
+                                      u32 family_b = VK_QUEUE_FAMILY_IGNORED, bool prefer_cached = false) {
     if (size == 0 || size > std::numeric_limits<usize>::max()) {
         AETHER_LOG_ERROR("Vulkan", "Host-visible buffer size must be non-zero and fit the host address space");
         throw std::invalid_argument("Host-visible buffer size must fit the host address space");
@@ -1141,8 +1141,23 @@ BufferRecord CreateHostVisibleBuffer(VkDevice device, VkPhysicalDevice physical_
     vkGetBufferMemoryRequirements(device, result.buffer, &mem_reqs);
     VkMemoryAllocateInfo alloc_info{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
     alloc_info.allocationSize = mem_reqs.size;
-    alloc_info.memoryTypeIndex = FindMemoryType(
-        physical_device, mem_reqs.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    // A buffer the CPU reads (a readback) wants cached memory, where reads are fast; uncached write-combined memory is for writing.
+    constexpr VkMemoryPropertyFlags kCoherent = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    VkPhysicalDeviceMemoryProperties memory_properties{};
+    vkGetPhysicalDeviceMemoryProperties(physical_device, &memory_properties);
+    bool found_cached = false;
+    if (prefer_cached) {
+        for (u32 i = 0; i < memory_properties.memoryTypeCount; ++i) {
+            if ((mem_reqs.memoryTypeBits & (1u << i)) != 0 &&
+                (memory_properties.memoryTypes[i].propertyFlags & (kCoherent | VK_MEMORY_PROPERTY_HOST_CACHED_BIT)) ==
+                    (kCoherent | VK_MEMORY_PROPERTY_HOST_CACHED_BIT)) {
+                alloc_info.memoryTypeIndex = i;
+                found_cached = true;
+                break;
+            }
+        }
+    }
+    if (!found_cached) alloc_info.memoryTypeIndex = FindMemoryType(physical_device, mem_reqs.memoryTypeBits, kCoherent);
     AETHER_VK_CHECK(vkAllocateMemory(device, &alloc_info, nullptr, &result.memory));
     AETHER_VK_CHECK(vkBindBufferMemory(device, result.buffer, result.memory, 0));
 
@@ -1191,7 +1206,8 @@ BufferHandle VulkanDevice::CreateReadbackBuffer(u64 size_bytes) {
         throw std::invalid_argument("A readback buffer's size must be non-zero and within 4 GiB");
     }
     ScopedBufferRecord owned_record(device_);
-    owned_record.Get() = CreateHostVisibleBuffer(device_, physical_device_, size_bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT, nullptr, true);
+    owned_record.Get() = CreateHostVisibleBuffer(device_, physical_device_, size_bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT, nullptr, true,
+                                                 VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, /*prefer_cached=*/true);
     owned_record.Get().is_readback = true;
     const u32 slot = AcquireBufferSlot(owned_record.Get());
     owned_record.Release();
@@ -2285,7 +2301,7 @@ PipelineHandle VulkanDevice::CreatePipeline(const PipelineDesc& desc, ISwapChain
     const bool depth_written = target == PassTarget::Depth || (depth_tested && desc.depth_write);
     depth_stencil.depthTestEnable = depth_tested ? VK_TRUE : VK_FALSE;
     depth_stencil.depthWriteEnable = depth_written ? VK_TRUE : VK_FALSE;
-    depth_stencil.depthCompareOp = VK_COMPARE_OP_LESS;
+    depth_stencil.depthCompareOp = target == PassTarget::Depth && desc.depth_always ? VK_COMPARE_OP_ALWAYS : VK_COMPARE_OP_LESS;
 
     VkDynamicState dynamic_states[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
     VkPipelineDynamicStateCreateInfo dynamic_state{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};

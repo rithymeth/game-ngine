@@ -27,6 +27,7 @@ constexpr u32 kVsmPageTexels = 128;
 constexpr u32 kVsmWindowPages = 32;
 constexpr f32 kVsmBaseTexel = 0.002f; // metres per texel at level 0
 constexpr u32 kVsmFeedbackScale = 8;  // the feedback image is the screen over this, each side
+constexpr f32 kVsmDepthRange = 4096.0f; // a page stores depth along the light as z / range + 0.5, so z may lie within +-2048 m of the origin
 
 f32 VsmTexelSize(u32 level);
 f32 VsmPageSize(u32 level); // metres per page side
@@ -46,6 +47,12 @@ struct VsmPage {
     bool operator==(const VsmPage&) const = default;
 };
 VsmPage VsmPageOf(const VsmLight& light, u32 level, const Vec3& p);
+
+// The matrix that draws world space into a page: x and y across the page (clip -1 to 1 over u and v, v up), depth z / kVsmDepthRange + 0.5. The
+// page is drawn into a viewport of kVsmPageTexels square.
+Mat4 VsmPageMatrix(const VsmLight& light, const VsmPage& page);
+// Whether a world-space sphere's circle in the light's space reaches the page (whatever its depth along the light).
+bool VsmSphereTouchesPage(const VsmLight& light, const VsmPage& page, const Vec3& center, f32 radius);
 
 // The window's first page along one axis for a camera in page `camera_page`, and a wrapped (x & 31) coordinate turned back into a page of the window.
 i32 VsmWindowOrigin(i32 camera_page);
@@ -108,6 +115,7 @@ private:
         std::array<std::array<i32, 2>, kVsmLevels> window_origins{};
     };
     Pending pending_[kSlots];
+    std::vector<u8> scratch_; // the rows Collect reads, reused
 };
 
 // Decodes one feedback image (`rows` as copied: RGBA16F texels, `pitch` bytes apart) into requests.

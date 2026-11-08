@@ -559,6 +559,66 @@ shadows off (the atlas index 255 makes it return at once):
   `shadow_cascades`, through `SceneRenderer::SetShadows`). Setting either to 0 frees the atlas.
 - **Vulkan has no depth textures yet,** so there the scene draws unshadowed and pays nothing.
 
+## Virtual shadow maps for the sun, 10 November 2026
+
+Render roadmap phase 4. A clipmap of 128 x 128 texel pages with a much finer texel near the camera sits over the cascades; where a page
+is not there yet the shader falls back to a coarser level and then to the cascades, so a late page costs quality, never correctness.
+The design is in `player/src/virtual_shadow.h`, `vsm_pages.h` and `vsm_pass.h`.
+- **Levels and pages:** six levels, texel 2 mm doubling to 64 mm, pages anchored in the light's space at the world origin so a page keeps
+  its contents as the camera moves. A pixel uses the level whose texel is about its own footprint on the surface.
+- **Feedback:** a small graphics pass over the scene depth copy writes the page each eighth pixel looks at into an image an eighth the
+  screen's size, which is copied to a readback buffer in the frame's own command list and read when that slot's fence has passed (the
+  new `IDevice::CreateReadbackBuffer`, `ICommandList::CopyRenderTextureToReadback`). It is a few frames old, so a fast camera move shows
+  the cascades for a moment.
+- **Not a compute pass, by finding:** `ICommandList::Dispatch` exists only on lists from `CreateComputeCommandList`, which run on the
+  async compute queue; the frame's single graphics list cannot dispatch. A feedback compute pass would need a second queue, fences
+  between them and care that the depth copy is rewritten next frame, so the feedback is a graphics pass.
+- **Pages:** `VsmPageAllocator` gives pages physical pages (a pool of 24 x 24 pages, one 3072 x 3072 D32 atlas, 36 MB), evicting the
+  least recently used (finer first) and never a page used this frame. Pages are drawn when new and redrawn when a caster that is new,
+  has moved or deforms reaches them, where it is and where it was; at most 64 pages a frame. A page waiting to be drawn is not in the
+  page table, so the shader never reads stale or empty depth. The table lives in the frame read buffer after the clustered lights.
+- **Switching it off:** `AETHER_RENDER_VSM=0`; `AETHER_VSM_POOL` sets the pool's pages per side. Shadows off (`SetShadows(0, ...)`)
+  frees the pages too.
+
+**Measured** in a throwaway harness through the whole renderer (`SceneRenderer::Draw` on an offscreen device): a sunlit floor with two
+boxes and a small cube, the camera 1.6 m away, 200 frames, each recorded, submitted and waited on, the median of frames 60 to 200, three
+rounds. RTX 3050 Laptop GPU, RelWithDebInfo. The scene is small, so the frame is cheap and the overhead is a large share of it.
+
+| Backend, size | Cascades only | Pages, still scene | Pages, a caster moving |
+| --- | --- | --- | --- |
+| D3D12 1280 x 720 | 1.11 ms | 1.30 ms | 1.42 ms |
+| D3D12 1920 x 1080 | 2.03 ms | 2.36 ms | 2.46 ms |
+| Vulkan 1280 x 720 | 1.10 ms | 1.31 ms | 1.33 ms |
+| Vulkan 1920 x 1080 | 2.07 ms | 2.40 ms | 2.43 ms |
+
+**What the numbers say.**
+- **The overhead is about 0.2 ms at 720p and 0.33 ms at 1080p,** 16 to 18 percent of this small frame, on both backends. A moving
+  caster adds about 0.1 ms: its pages are redrawn (14 frames of a cube walking redrew 179 pages, a dozen a frame).
+- **It started at 1.35 ms at 1080p,** and three things took it down. Decoding the feedback image did a `std::map` insert for every
+  ground sample; it now counts runs of identical texels (the page almost never changes between neighbours), which took the CPU's
+  page work from 0.9 ms to 0.4 ms, then reuses its buffer and compares raw texels (0.115 ms for the decode). The shader looks the page
+  up once when all sixteen filter taps lie in one page (the usual case), which took about 0.4 ms off the frame at 1080p. And on Vulkan
+  the readback buffer was in uncached host memory, where the CPU's reads are slow: asking for cached memory took Vulkan's overhead
+  from about 3.3 ms to 0.6 ms at 1080p, and the decode changes above then took it to 0.3 ms.
+- **What is left is mostly CPU:** about 0.11 ms of decoding, plus the feedback pass, the readback copy and the page table upload.
+  A half-size feedback image would cut the decode by about three quarters, at the price of looking at fewer pixels each frame.
+- **The gain in sharpness is modest here.** A cascade's texel is about a pixel's footprint at the far end of its range, so the pages
+  win only close up: at 1.6 m and 720p the shadow edges carry 2 percent more edge energy than the cascades' (the sum of squared steps
+  between neighbouring pixels), and the two frames differ only at those edges (mean difference 0.02 of 255). The pages are a quality
+  feature for close views and high resolutions, not a speed one.
+- **Memory:** the atlas is 36 MB on top of the cascades' 64 MB (`AETHER_VSM_POOL` changes it). The scene above needed 48 pages, 3 MB.
+- **Both backends build the same pages** (`Vsm_BothBackendsDrawTheSamePages`): the same count of requests, resident pages and
+  pages drawn, and frames within 1 of 255.
+
+**Limits.**
+- **Skinned casters are redrawn every frame they animate,** in every page their grown bind-pose sphere reaches (the 192k-triangle
+  Aegis would be drawn into each of those pages). The budget of 64 pages a frame limits the damage but a crowd would need a cheaper
+  rule. Not measured.
+- **Only the sun,** and only opaque and alpha-tested casters, as the cascades.
+- **The pages cover the window around the camera:** 32 pages a side per level, about 8.2 m a side at the finest level and doubling with
+  each, and a sun that turns invalidates everything (a day cycle would redraw all pages every frame it moves).
+- **Depth is kept within 2048 m of the world origin** (z / 4096 + 0.5 in a D32); casters beyond that get no pages and fall back.
+
 ## Image-based lighting from the sky, 8 November 2026
 
 Render roadmap step 3 lights surfaces from the sky.

@@ -68,6 +68,13 @@ float4 PSMain(float4 position : SV_Position) : SV_Target {
 }
 )";
 
+// A whole number from a half-float's bits, exact for the 0 .. 2048 the feedback writes (anything below 1 reads as 0).
+u32 HalfToWholeNumber(u16 half) {
+    const u32 exponent = (half >> 10) & 31u;
+    if (exponent < 15u || exponent > 25u) return 0;
+    return (1024u | (half & 1023u)) >> (25u - exponent);
+}
+
 struct FeedbackConstants {
     f32 inverse_view_projection[16];
     f32 camera_position[3];
@@ -113,6 +120,29 @@ VsmPage VsmPageOf(const VsmLight& light, u32 level, const Vec3& p) {
     return {level, static_cast<i32>(std::floor(u / size)), static_cast<i32>(std::floor(v / size))};
 }
 
+Mat4 VsmPageMatrix(const VsmLight& light, const VsmPage& page) {
+    const f32 size = VsmPageSize(page.level);
+    const f32 u0 = static_cast<f32>(page.x) * size, v0 = static_cast<f32>(page.y) * size;
+    const f32 scale = 2.0f / size, depth_scale = 1.0f / kVsmDepthRange;
+    // Rows: x from u, y from v, z from the depth along the light, w untouched. Mat4 is column-major.
+    const Vec3 rx = light.right * scale, ry = light.up * scale, rz = light.direction * depth_scale;
+    Mat4 m = Mat4::Identity();
+    m.cols[0] = Vec4(rx.x, ry.x, rz.x, 0.0f);
+    m.cols[1] = Vec4(rx.y, ry.y, rz.y, 0.0f);
+    m.cols[2] = Vec4(rx.z, ry.z, rz.z, 0.0f);
+    m.cols[3] = Vec4(-u0 * scale - 1.0f, -v0 * scale - 1.0f, 0.5f, 1.0f);
+    return m;
+}
+
+bool VsmSphereTouchesPage(const VsmLight& light, const VsmPage& page, const Vec3& center, f32 radius) {
+    f32 u = 0, v = 0, depth = 0;
+    VsmLightSpace(light, center, u, v, depth);
+    const f32 size = VsmPageSize(page.level);
+    const f32 u0 = static_cast<f32>(page.x) * size, v0 = static_cast<f32>(page.y) * size;
+    const f32 dx = u - std::clamp(u, u0, u0 + size), dy = v - std::clamp(v, v0, v0 + size);
+    return dx * dx + dy * dy <= radius * radius;
+}
+
 i32 VsmWindowOrigin(i32 camera_page) { return camera_page - static_cast<i32>(kVsmWindowPages / 2); }
 
 i32 VsmRecoverPage(i32 window_origin, u32 wrapped) {
@@ -135,19 +165,39 @@ const char* VsmShaderLibrary() { return kVsmLibrary; }
 std::vector<VsmRequest> VsmDecodeFeedback(const u8* rows, u32 width, u32 height, u32 pitch_bytes,
                                           const std::array<std::array<i32, 2>, kVsmLevels>& window_origins) {
     std::map<std::tuple<u32, i32, i32>, u32> hits;
+    // Neighbouring samples nearly always look at the same page: runs are counted here and only a change of page touches the map.
+    std::tuple<u32, i32, i32> run_page{};
+    u32 run_length = 0;
+    u64 run_raw = 0; // the run's texel, bit for bit: the same bits are the same page
+    const auto flush = [&] {
+        if (run_length != 0) hits[run_page] += run_length;
+        run_length = 0;
+    };
     for (u32 y = 0; y < height; ++y) {
         for (u32 x = 0; x < width; ++x) {
+            u64 raw = 0;
+            std::memcpy(&raw, rows + static_cast<usize>(y) * pitch_bytes + static_cast<usize>(x) * 8, sizeof(raw));
+            if ((raw & 0x7FFFu) == 0) continue; // a zero marker: nothing drawn here
+            if (run_length != 0 && raw == run_raw) {
+                ++run_length;
+                continue;
+            }
             u16 texel[4];
-            std::memcpy(texel, rows + static_cast<usize>(y) * pitch_bytes + static_cast<usize>(x) * 8, sizeof(texel));
-            const f32 marker = assets::HalfToFloat(texel[0]);
-            if (!(marker >= 0.5f)) continue; // nothing drawn here
-            const u32 level = static_cast<u32>(marker + 0.5f) - 1;
-            if (level >= kVsmLevels) continue;
-            const u32 wrapped_x = static_cast<u32>(assets::HalfToFloat(texel[1]) + 0.5f);
-            const u32 wrapped_y = static_cast<u32>(assets::HalfToFloat(texel[2]) + 0.5f);
-            ++hits[{level, VsmRecoverPage(window_origins[level][0], wrapped_x), VsmRecoverPage(window_origins[level][1], wrapped_y)}];
+            std::memcpy(texel, &raw, sizeof(texel));
+            const u32 marker = HalfToWholeNumber(texel[0]);
+            if (marker == 0 || marker > kVsmLevels) continue;
+            const u32 level = marker - 1;
+            const u32 wrapped_x = HalfToWholeNumber(texel[1]);
+            const u32 wrapped_y = HalfToWholeNumber(texel[2]);
+            const std::tuple<u32, i32, i32> page{level, VsmRecoverPage(window_origins[level][0], wrapped_x),
+                                                 VsmRecoverPage(window_origins[level][1], wrapped_y)};
+            flush();
+            run_page = page;
+            run_raw = raw;
+            run_length = 1;
         }
     }
+    flush();
     std::vector<VsmRequest> out;
     out.reserve(hits.size());
     for (const auto& [key, count] : hits) out.push_back({{std::get<0>(key), std::get<1>(key), std::get<2>(key)}, count});
@@ -246,9 +296,9 @@ std::vector<VsmRequest> VsmFeedback::Collect(u32 slot) {
     Pending& pending = pending_[slot];
     pending.valid = false;
     const u32 pitch = gfx::rhi::ReadbackRowPitch(pending.width, 8);
-    std::vector<u8> rows(static_cast<usize>(pitch) * pending.height);
-    if (!device_.ReadReadbackBuffer(readback_[slot], rows.data(), rows.size())) return {};
-    return VsmDecodeFeedback(rows.data(), pending.width, pending.height, pitch, pending.window_origins);
+    scratch_.resize(static_cast<usize>(pitch) * pending.height); // kept between frames: no allocation or clearing each time
+    if (!device_.ReadReadbackBuffer(readback_[slot], scratch_.data(), scratch_.size())) return {};
+    return VsmDecodeFeedback(scratch_.data(), pending.width, pending.height, pitch, pending.window_origins);
 }
 
 } // namespace aether::player

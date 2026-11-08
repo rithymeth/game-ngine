@@ -1,0 +1,259 @@
+#include "aether/cook/cooker.h"
+#include "aether/core/log.h"
+#include "aether/gfx/rhi/command_list.h"
+#include "aether/gfx/rhi/device.h"
+#include "aether/player/game.h"
+#include "aether/player/scene_renderer.h"
+#include "aether/player/user_paths.h"
+#include "aether/reflection/serialize.h"
+#include "aether/scene/components.h"
+#include "aether/scene/gameplay.h"
+#include "test_framework.h"
+
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <functional>
+#include <memory>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+using namespace aether;
+namespace fs = std::filesystem;
+namespace rhi = aether::gfx::rhi;
+
+// The sun's virtual shadow maps through the whole renderer: pages are asked for by the feedback pass, drawn, and read by the scene shader in
+// place of the cascades. Set AETHER_PARITY_OUT to a directory to keep the frames (BMP).
+
+namespace {
+
+reflect::Json SceneEntity(reflect::Json components) { return {{"guid", assets::ToString(assets::NewAssetGuid())}, {"components", std::move(components)}}; }
+
+reflect::Json TransformJson(std::initializer_list<f32> position, std::initializer_list<f32> rotation = {0, 0, 0, 1}, f32 scale = 1.0f) {
+    return {{"$v", 1}, {"position", position}, {"rotation", rotation}, {"scale", {scale, scale, scale}}};
+}
+
+reflect::Json Model(const char* path, std::initializer_list<f32> position, std::initializer_list<f32> rotation, f32 scale) {
+    return SceneEntity({{"Transform", TransformJson(position, rotation, scale)},
+                        {"ModelRenderer", {{"$v", 1}, {"model", ""}, {"asset_path", path}}}});
+}
+
+reflect::Json Mover(reflect::Json entity) {
+    entity["components"]["Tags"] = {{"$v", 1}, {"names", {"Mover"}}};
+    return entity;
+}
+
+void SetEnvironmentVariableForTest(const char* name, const char* value) {
+#ifdef _WIN32
+    _putenv_s(name, value); // an empty value removes it
+#else
+    if (*value != '\0') setenv(name, value, 1);
+    else unsetenv(name);
+#endif
+}
+
+struct SceneRun {
+    std::vector<u8> pixels;
+    player::SceneRenderer::VirtualShadowStats last;
+    u32 max_resident = 0, drawn_pages = 0, max_requests = 0;
+    std::vector<u32> drawn_by_frame; // pages drawn in each frame
+};
+
+// A sunlit floor with two boxes and a small cube (tagged Mover) on it, seen from `camera_distance` metres away.
+fs::path CookScene(const fs::path& root, f32 camera_distance) {
+    fs::create_directories(root / "Content/models");
+    fs::create_directories(root / "Content/Scenes");
+    const fs::path games = fs::path(AETHER_REPO_ASSETS_DIR).parent_path() / "games/AETHER-01";
+    for (const char* name : {"aether_greybox_core.gltf", "aether_greybox_armor.gltf", "aether_greybox_rifle.gltf", "test_cube.bin"}) {
+        fs::copy_file(games / "Content/models" / name, root / "Content/models" / name, fs::copy_options::overwrite_existing);
+    }
+    reflect::Json project = reflect::Json::parse(std::ifstream(games / "AETHER-01.aproject"));
+    project["name"] = "VsmScene";
+    project["startup_scene"] = "Scenes/Main.ascene";
+    project["always_cook"] = reflect::Json::array();
+    std::ofstream(root / "VsmScene.aproject") << project.dump(2);
+    const reflect::Json scene = {{"$type", "Scene"}, {"$version", 1}, {"entities", {
+        SceneEntity({{"Transform", TransformJson({0.0f, 1.0f, camera_distance}, {-0.18f, 0.0f, 0.0f, 0.984f})},
+                     {"Camera", {{"$v", 1}, {"projection", "Perspective"}, {"fov_degrees", 50.0f}, {"near_plane", 0.1f}, {"far_plane", 100.0f},
+                                 {"ortho_height", 10.0f}, {"priority", 0}}}}),
+        SceneEntity({{"Transform", TransformJson({0, 0, 0}, {-0.4f, 0.35f, 0.15f, 0.83f})},
+                     {"DirectionalLight", {{"$v", 1}, {"color", {1.0f, 0.95f, 0.88f}}, {"intensity", 3.0f}, {"cast_shadows", true}}}}),
+        SceneEntity({{"Transform", TransformJson({0, 0, 0})},
+                     {"SkyLight", {{"$v", 1}, {"color", {1.0f, 1.0f, 1.0f}}, {"intensity", 1.0f}, {"environment", ""},
+                                   {"environment_rotation_degrees", 0.0f}}}}),
+        Model("models/aether_greybox_rifle.gltf", {0.0f, -0.3f, 0.0f}, {0, 0, 0, 1}, 12.0f), // the floor
+        Model("models/aether_greybox_core.gltf", {-0.9f, 0.4f, 0.0f}, {0.0f, 0.38f, 0.0f, 0.92f}, 2.0f),
+        Mover(Model("models/aether_greybox_armor.gltf", {0.0f, 0.3f, 0.2f}, {0.0f, -0.2f, 0.0f, 0.98f}, 0.2f)),
+        Model("models/aether_greybox_core.gltf", {0.9f, 0.4f, -0.3f}, {0.0f, 0.1f, 0.0f, 0.99f}, 2.0f)}}};
+    std::ofstream(root / "Content/Scenes/Main.ascene") << scene.dump(2);
+    cook::CookOptions options;
+    options.project_file = root / "VsmScene.aproject";
+    options.output_dir = root / "cooked";
+    const auto cooked = cook::Cook(options);
+    AETHER_CHECK(cooked.ok);
+    return cooked.ok ? cooked.pak_file : fs::path();
+}
+
+// `before_frame` runs before each frame is drawn (to move things).
+SceneRun RunScene(rhi::Backend backend, const fs::path& root, const fs::path& pak_file, u32 width, u32 height, u32 frames,
+                  const std::function<void(player::Game&, u32)>& before_frame = {}) {
+    SceneRun run;
+    if (!rhi::IsBackendAvailable(backend)) return run;
+    std::unique_ptr<rhi::IDevice> device;
+    try {
+        device = rhi::CreateDevice(backend, false);
+    } catch (const std::exception&) {
+    }
+    if (!device) return run;
+    player::GamePackage package;
+    std::string error;
+    AETHER_CHECK(package.Mount(pak_file.string(), 0, &error) && package.LoadManifest(&error));
+    player::Game game(package);
+    game.SetUserPaths(player::ResolveUserPaths("VsmScene", root / (backend == rhi::Backend::Vulkan ? "user_vk" : "user_dx")));
+    AETHER_CHECK(game.LoadStartupScene(&error));
+    game.BeginPlay();
+    std::unique_ptr<rhi::ISwapChain> target = device->CreateSwapChain(nullptr, width, height, 2);
+    {
+        player::SceneRenderer renderer(*device, *target, package);
+        std::unique_ptr<rhi::ICommandList> cmd = device->CreateCommandList();
+        for (u32 frame = 0; frame < frames; ++frame) {
+            game.Tick(1.0f / 60.0f);
+            if (before_frame) before_frame(game, frame);
+            target->AcquireNextImage();
+            cmd->Reset();
+            renderer.Draw(game, *cmd, frame % 2);
+            cmd->Close();
+            device->WaitForFence(device->Submit(*cmd, target.get()));
+            run.last = renderer.VirtualShadows();
+            run.max_resident = std::max(run.max_resident, run.last.resident);
+            run.max_requests = std::max(run.max_requests, run.last.requests);
+            run.drawn_pages += run.last.drawn_pages;
+            run.drawn_by_frame.push_back(run.last.drawn_pages);
+            if (frame + 1 == frames) AETHER_CHECK(target->ReadBack(run.pixels) && run.pixels.size() == static_cast<usize>(width) * height * 4);
+            target->Present(false);
+        }
+    }
+    return run;
+}
+
+// The sum of squared luminance steps between neighbouring pixels: a shadow edge blurred over more pixels has less of it.
+double EdgeEnergy(const std::vector<u8>& rgba, u32 width, u32 height) {
+    const auto luma = [&](u32 x, u32 y) {
+        const u8* p = &rgba[(static_cast<usize>(y) * width + x) * 4];
+        return 0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2];
+    };
+    double energy = 0.0;
+    for (u32 y = 0; y + 1 < height; ++y) {
+        for (u32 x = 0; x + 1 < width; ++x) {
+            const double dx = luma(x + 1, y) - luma(x, y), dy = luma(x, y + 1) - luma(x, y);
+            energy += dx * dx + dy * dy;
+        }
+    }
+    return energy;
+}
+
+double MeanDifference(const std::vector<u8>& a, const std::vector<u8>& b) {
+    double total = 0.0;
+    for (usize i = 0; i < a.size(); i += 4) {
+        int difference = 0;
+        for (usize c = 0; c < 3; ++c) difference = std::max(difference, std::abs(static_cast<int>(a[i + c]) - static_cast<int>(b[i + c])));
+        total += difference;
+    }
+    return total / static_cast<double>(a.size() / 4);
+}
+
+constexpr u32 kWidth = 1280, kHeight = 720;
+
+const char* Name(rhi::Backend backend) { return backend == rhi::Backend::Vulkan ? "vulkan" : "d3d12"; }
+
+} // namespace
+
+// The sun's shadow from pages: asked for by the feedback, drawn once, kept while nothing moves, and the same shadow as the cascades' but crisper
+// close up, where the cascades' texel is coarser than a pixel.
+static void Vsm_PagesShadowTheSunAndAreKeptWhileNothingMoves(rhi::Backend backend) {
+    if (!rhi::IsBackendAvailable(backend)) return;
+    const fs::path root = fs::temp_directory_path() / "aether_vsm_scene" / assets::ToString(assets::NewAssetGuid());
+    const fs::path pak = CookScene(root, 1.6f);
+    if (pak.empty()) return;
+    constexpr u32 kFrames = 20;
+    SetEnvironmentVariableForTest("AETHER_RENDER_VSM", "");
+    const SceneRun with = RunScene(backend, root, pak, kWidth, kHeight, kFrames);
+    SetEnvironmentVariableForTest("AETHER_RENDER_VSM", "0");
+    const SceneRun without = RunScene(backend, root, pak, kWidth, kHeight, kFrames);
+    SetEnvironmentVariableForTest("AETHER_RENDER_VSM", "");
+    AETHER_CHECK(with.last.enabled && !without.last.enabled);
+    AETHER_CHECK(with.max_requests > 0 && with.max_resident > 0 && with.drawn_pages >= with.max_resident);
+    AETHER_CHECK(with.last.drawn_pages == 0 && with.last.pending == 0); // a still scene redraws nothing once its pages are there
+    AETHER_CHECK(with.pixels.size() == static_cast<usize>(kWidth) * kHeight * 4 && without.pixels.size() == with.pixels.size());
+    if (with.pixels.size() != without.pixels.size() || with.pixels.empty()) return;
+    const double difference = MeanDifference(with.pixels, without.pixels);
+    const double sharp = EdgeEnergy(with.pixels, kWidth, kHeight), blurred = EdgeEnergy(without.pixels, kWidth, kHeight);
+    std::printf("    %s: %u pages resident (%u asked for), %u drawn in all; against the cascades: mean difference %.3f, edge energy %.4f x\n",
+                Name(backend), with.max_resident, with.max_requests, with.drawn_pages, difference, sharp / blurred);
+    AETHER_CHECK(difference < 1.0);        // the same shadows: only their edges differ
+    AETHER_CHECK(sharp > blurred * 1.005); // and those edges are crisper
+    std::error_code ignored;
+    fs::remove_all(root, ignored);
+}
+
+AETHER_TEST(Vsm_PagesShadowTheSunAndAreKeptWhileNothingMoves_D3D12) { Vsm_PagesShadowTheSunAndAreKeptWhileNothingMoves(rhi::Backend::D3D12); }
+AETHER_TEST(Vsm_PagesShadowTheSunAndAreKeptWhileNothingMoves_Vulkan) { Vsm_PagesShadowTheSunAndAreKeptWhileNothingMoves(rhi::Backend::Vulkan); }
+
+// A caster that moves has its pages redrawn, and the shadow follows it: the frame matches the cascades', which have no pages to keep right.
+static void Vsm_AMovingCasterRedrawsThePagesItReaches(rhi::Backend backend) {
+    if (!rhi::IsBackendAvailable(backend)) return;
+    const fs::path root = fs::temp_directory_path() / "aether_vsm_scene" / assets::ToString(assets::NewAssetGuid());
+    const fs::path pak = CookScene(root, 1.6f);
+    if (pak.empty()) return;
+    constexpr u32 kFrames = 28, kMoveAt = 14;
+    const auto move = [](player::Game& game, u32 frame) {
+        if (frame < kMoveAt) return;
+        const std::vector<Entity> movers = FindEntitiesWithTag(game.GetWorld(), "Mover");
+        if (movers.size() != 1) return;
+        if (Transform* transform = game.GetWorld().GetComponent<Transform>(movers.front())) {
+            transform->position.x = 0.3f + 0.05f * static_cast<f32>(frame - kMoveAt); // a slow walk to the right
+        }
+    };
+    SetEnvironmentVariableForTest("AETHER_RENDER_VSM", "");
+    const SceneRun with = RunScene(backend, root, pak, kWidth, kHeight, kFrames, move);
+    SetEnvironmentVariableForTest("AETHER_RENDER_VSM", "0");
+    const SceneRun without = RunScene(backend, root, pak, kWidth, kHeight, kFrames, move);
+    SetEnvironmentVariableForTest("AETHER_RENDER_VSM", "");
+    AETHER_CHECK(with.drawn_by_frame.size() == kFrames);
+    if (with.drawn_by_frame.size() != kFrames || with.pixels.size() != without.pixels.size() || with.pixels.empty()) return;
+    u32 before = 0, after = 0;
+    for (u32 frame = 0; frame < kFrames; ++frame) (frame < kMoveAt - 2 ? before : after) += with.drawn_by_frame[frame];
+    for (u32 frame = kMoveAt - 3; frame < kMoveAt; ++frame) AETHER_CHECK(with.drawn_by_frame[frame] == 0); // quiet before it moves
+    AETHER_CHECK(before > 0 && after > 0);
+    u32 busy_frames = 0;
+    for (u32 frame = kMoveAt; frame < kFrames; ++frame) busy_frames += with.drawn_by_frame[frame] > 0 ? 1u : 0u;
+    AETHER_CHECK(busy_frames + 2 >= kFrames - kMoveAt); // a page or more redrawn nearly every frame it moves
+    const double difference = MeanDifference(with.pixels, without.pixels);
+    std::printf("    %s: %u pages drawn before it moved, %u after (%u frames of %u); mean difference from the cascades %.3f\n", Name(backend),
+                before, after, busy_frames, kFrames - kMoveAt, difference);
+    AETHER_CHECK(difference < 1.0); // the shadow is where the caster is, not where it was
+    std::error_code ignored;
+    fs::remove_all(root, ignored);
+}
+
+AETHER_TEST(Vsm_AMovingCasterRedrawsThePagesItReaches_D3D12) { Vsm_AMovingCasterRedrawsThePagesItReaches(rhi::Backend::D3D12); }
+AETHER_TEST(Vsm_AMovingCasterRedrawsThePagesItReaches_Vulkan) { Vsm_AMovingCasterRedrawsThePagesItReaches(rhi::Backend::Vulkan); }
+
+// The two backends build and read the same pages.
+AETHER_TEST(Vsm_BothBackendsDrawTheSamePages) {
+    if (!rhi::IsBackendAvailable(rhi::Backend::D3D12) || !rhi::IsBackendAvailable(rhi::Backend::Vulkan)) return;
+    const fs::path root = fs::temp_directory_path() / "aether_vsm_scene" / assets::ToString(assets::NewAssetGuid());
+    const fs::path pak = CookScene(root, 1.6f);
+    if (pak.empty()) return;
+    const SceneRun dx = RunScene(rhi::Backend::D3D12, root, pak, kWidth, kHeight, 20);
+    const SceneRun vk = RunScene(rhi::Backend::Vulkan, root, pak, kWidth, kHeight, 20);
+    AETHER_CHECK(dx.last.enabled && vk.last.enabled);
+    AETHER_CHECK(dx.max_resident == vk.max_resident && dx.drawn_pages == vk.drawn_pages && dx.max_requests == vk.max_requests);
+    if (dx.pixels.size() == vk.pixels.size() && !dx.pixels.empty()) AETHER_CHECK(MeanDifference(dx.pixels, vk.pixels) < 1.0);
+    std::error_code ignored;
+    fs::remove_all(root, ignored);
+}

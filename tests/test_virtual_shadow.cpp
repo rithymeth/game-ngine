@@ -81,6 +81,47 @@ AETHER_TEST(Vsm_PagesAreAnchoredInLightSpaceAndTheWindowWrapsBack) {
     AETHER_CHECK(after[0][0] == before[0][0] + 1);
 }
 
+AETHER_TEST(Vsm_APageMatrixMapsThePageToClipSpaceAndDepthToZeroToOne) {
+    const VsmLight light = VsmLightBasis(Vec3(0.3f, -1.0f, 0.2f));
+    const VsmPage page{2, 7, -4};
+    const f32 size = VsmPageSize(2);
+    const Mat4 matrix = VsmPageMatrix(light, page);
+    const auto project = [&](f32 u, f32 v, f32 depth) {
+        const Vec3 p = light.right * u + light.up * v + light.direction * depth;
+        const Vec4 clip = matrix * Vec4(p.x, p.y, p.z, 1.0f);
+        return Vec3(clip.x / clip.w, clip.y / clip.w, clip.z / clip.w);
+    };
+    const f32 u0 = 7.0f * size, v0 = -4.0f * size;
+    const Vec3 low = project(u0, v0, 0.0f), high = project(u0 + size, v0 + size, 0.0f), middle = project(u0 + size * 0.5f, v0 + size * 0.5f, 100.0f);
+    AETHER_CHECK(Near(low.x, -1.0f, 1e-3f) && Near(low.y, -1.0f, 1e-3f)); // the page's corners are the clip square's
+    AETHER_CHECK(Near(high.x, 1.0f, 1e-3f) && Near(high.y, 1.0f, 1e-3f));
+    AETHER_CHECK(Near(middle.x, 0.0f, 1e-3f) && Near(middle.y, 0.0f, 1e-3f));
+    // Depth along the light: z / range + 0.5, whatever the page; further from the light is deeper.
+    AETHER_CHECK(Near(low.z, 0.5f, 1e-5f) && Near(middle.z, 0.5f + 100.0f / kVsmDepthRange, 1e-5f));
+    AETHER_CHECK(project(u0, v0, -2000.0f).z > 0.0f && project(u0, v0, 2000.0f).z < 1.0f);
+    // The next page along u starts where this one ends.
+    const Vec3 next = [&] {
+        const Mat4 m = VsmPageMatrix(light, VsmPage{2, 8, -4});
+        const Vec3 p = light.right * (u0 + size) + light.up * v0;
+        const Vec4 clip = m * Vec4(p.x, p.y, p.z, 1.0f);
+        return Vec3(clip.x / clip.w, clip.y / clip.w, clip.z / clip.w);
+    }();
+    AETHER_CHECK(Near(next.x, -1.0f, 1e-3f) && Near(next.y, -1.0f, 1e-3f));
+}
+
+AETHER_TEST(Vsm_ASphereTouchesThePagesItsCircleReaches) {
+    const VsmLight light = VsmLightBasis(Vec3(0.3f, -1.0f, 0.2f));
+    const VsmPage page{1, 0, 0};
+    const f32 size = VsmPageSize(1);
+    const auto at = [&](f32 u, f32 v, f32 depth) { return light.right * u + light.up * v + light.direction * depth; };
+    AETHER_CHECK(VsmSphereTouchesPage(light, page, at(size * 0.5f, size * 0.5f, 3.0f), 0.01f));              // inside
+    AETHER_CHECK(!VsmSphereTouchesPage(light, page, at(size * 1.5f, size * 0.5f, 3.0f), size * 0.4f));       // beside it, short of the edge
+    AETHER_CHECK(VsmSphereTouchesPage(light, page, at(size * 1.5f, size * 0.5f, 3.0f), size * 0.6f));        // beside it, over the edge
+    AETHER_CHECK(!VsmSphereTouchesPage(light, page, at(size * 1.4f, size * 1.4f, 3.0f), size * 0.5f));       // the corner: the circle misses it
+    AETHER_CHECK(VsmSphereTouchesPage(light, page, at(size * 1.4f, size * 1.4f, 3.0f), size * 0.6f));        // ...and meets it
+    AETHER_CHECK(VsmSphereTouchesPage(light, page, at(size * 0.5f, size * 0.5f, -1500.0f), 0.01f));          // depth does not matter
+}
+
 AETHER_TEST(Vsm_FeedbackImagesDecodeToRequestsMostLookedAtFirst) {
     // A 4 x 2 image: three texels look at (level 1, page 40, -2), one at (level 0, 5, 5), the rest nothing. The window origins make 40 & 31 = 8
     // and -2 & 31 = 30 mean those pages.

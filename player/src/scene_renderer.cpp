@@ -19,6 +19,8 @@
 #include "shadow_pass.h"
 #include "sky_pass.h"
 #include "taa_pass.h"
+#include "virtual_shadow.h"
+#include "vsm_pass.h"
 #include "package_textures.h"
 #include "aether/ui/draw.h"
 #include "aether/ui/font.h"
@@ -254,6 +256,92 @@ PSInput VSMain(VSInput input) {
 }
 #ifdef AETHER_FRAME_DATA
 )";
+// The frame read buffer: the clustered lights, then (virtual shadow maps) the page table, aligned to 16 bytes.
+constexpr u64 kVsmTableOffset = (kLightClusterBufferBytes + 15) / 16 * 16;
+constexpr u64 kLightBufferBytes = kVsmTableOffset + VsmPageAllocator::kTableEntries * sizeof(u32);
+
+constexpr char kSceneShaderVsm[] = R"(
+
+// The sun's shadow from the virtual shadow map's pages (player/src/virtual_shadow.h, vsm_pages.h): 1 lit, 0 shadowed, and -1 where no resident
+// page covers the point, when the caller falls back to the cascades. Starts at the level whose texel matches the pixel's footprint and goes
+// coarser while a page is missing. The filter is the cascades' (4x4 texel loads, tent weights); a tap on a neighbouring page looks that page up.
+#define VSM_DEPTH_RANGE 4096.0
+
+int2 VsmPageOfTexel(int2 texel) { return texel >> 7; } // VSM_PAGE_TEXELS is 128; a signed shift rounds toward minus infinity
+
+// The atlas texel of a page's first texel, or -1 when the page is outside its level's window or not resident (a page table entry is 0).
+int2 VsmPageOrigin(uint level, int2 page) {
+    int4 window = g_Frame.vsm_window[level >> 1];
+    int2 origin = (level & 1) != 0 ? window.zw : window.xy;
+    int2 relative = page - origin;
+    if (any(relative < 0) || any(relative >= 32)) return int2(-1, -1);
+    uint entry = g_FrameLights.Load(g_Frame.vsm_info.z + ((((level * 32 + (uint)(page.y & 31)) * 32) + (uint)(page.x & 31)) << 2));
+    if (entry == 0) return int2(-1, -1);
+    uint physical = entry - 1;
+    uint side = g_Frame.vsm_info.y;
+    return int2((physical % side) * VSM_PAGE_TEXELS, (physical / side) * VSM_PAGE_TEXELS);
+}
+
+float VsmSunShadow(float3 world_position, float3 geometric_normal, float3 sun_direction) {
+    uint atlas = g_Frame.vsm_info.x;
+    if (atlas >= 128) return -1.0;
+    float footprint = g_Frame.vsm_camera.w * length(world_position - g_Frame.vsm_camera.xyz) + g_Frame.vsm_params.x;
+    float n_dot_l = saturate(dot(geometric_normal, sun_direction));
+    float slope = sqrt(saturate(1.0 - n_dot_l * n_dot_l));
+    for (uint level = VsmLevelForFootprint(footprint); level < VSM_LEVELS; ++level) {
+        float texel = VsmTexel(level);
+        float3 p = world_position + geometric_normal * (texel * (0.5 + 1.5 * slope));
+        float2 position = float2(dot(p, g_Frame.vsm_light_right.xyz), dot(p, g_Frame.vsm_light_up.xyz)) / texel; // in texels
+        float depth = (dot(p, g_Frame.vsm_light_direction.xyz) - texel) / VSM_DEPTH_RANGE + 0.5;                  // a texel nearer, against acne
+        float2 tc = position - 0.5;
+        float2 base = floor(tc);
+        float2 f = tc - base;
+        float wx[4] = {1.0 - f.x, 1.0, 1.0, f.x};
+        float wy[4] = {1.0 - f.y, 1.0, 1.0, f.y};
+        int2 first = int2(base) - int2(1, 1);
+        int2 cached_page = VsmPageOfTexel(first);
+        int2 cached_origin = VsmPageOrigin(level, cached_page);
+        bool complete = cached_origin.x >= 0;
+        float lit = 0.0;
+        if (complete && all(cached_page == VsmPageOfTexel(first + int2(3, 3)))) {
+            // The common case: all sixteen taps are in one page, so the page is looked up once.
+            int2 inside = first - cached_page * VSM_PAGE_TEXELS;
+            [unroll] for (int y = 0; y < 4; ++y) {
+                [unroll] for (int x = 0; x < 4; ++x) {
+                    int2 atlas_texel = cached_origin + int2(inside.x + x, VSM_PAGE_TEXELS - 1 - (inside.y + y));
+                    float stored = g_Textures[atlas].Load(int3(atlas_texel, 0)).r;
+                    lit += wx[x] * wy[y] * (depth <= stored ? 1.0 : 0.0);
+                }
+            }
+            return lit / 9.0;
+        }
+        [unroll] for (int y = 0; y < 4; ++y) {
+            [unroll] for (int x = 0; x < 4; ++x) {
+                if (complete) {
+                    int2 index = first + int2(x, y);
+                    int2 page = VsmPageOfTexel(index);
+                    if (any(page != cached_page)) {
+                        cached_page = page;
+                        cached_origin = VsmPageOrigin(level, page);
+                    }
+                    if (cached_origin.x < 0) {
+                        complete = false;
+                    } else {
+                        // A page is drawn with v up, so its texel row is counted from the top: the last texel of v is row 0.
+                        int2 inside = index - page * VSM_PAGE_TEXELS;
+                        int2 atlas_texel = cached_origin + int2(inside.x, VSM_PAGE_TEXELS - 1 - inside.y);
+                        float stored = g_Textures[atlas].Load(int3(atlas_texel, 0)).r;
+                        lit += wx[x] * wy[y] * (depth <= stored ? 1.0 : 0.0);
+                    }
+                }
+            }
+        }
+        if (complete) return lit / 9.0;
+    }
+    return -1.0;
+}
+)";
+
 constexpr char kSceneShaderFrame[] = R"(
 
 // The sun's shadow at a world position: 1 lit, 0 shadowed. The first cascade the point falls inside (two texels clear of its edge) is
@@ -261,6 +349,8 @@ constexpr char kSceneShaderFrame[] = R"(
 // out along the surface normal by about a texel first (normal offset), and compared a texel's depth nearer, against acne; the caster
 // pipelines add a slope-scaled bias of their own. The last cascade fades out over its outer tenth instead of ending in a hard line.
 float SunShadow(float3 world_position, float3 geometric_normal, float3 sun_direction) {
+    float virtual_shadow = VsmSunShadow(world_position, geometric_normal, sun_direction);
+    if (virtual_shadow >= 0.0) return virtual_shadow;
     uint atlas = g_Frame.shadow_info.x;
     uint count = min(g_Frame.shadow_info.y, 4u);
     if (atlas >= 128 || count == 0) return 1.0;
@@ -692,6 +782,9 @@ struct SceneRenderer::Impl {
         // A bounding sphere of the bind pose in model space, for culling shadow casters; radius < 0 for skinned primitives (always drawn).
         f32 bounds_center[3] = {0, 0, 0};
         f32 bounds_radius = -1.0f;
+        // A skinned primitive's bind-pose bounding sphere, grown by half for its poses: what a virtual shadow page redraws when it moves.
+        f32 skin_bounds_center[3] = {0, 0, 0};
+        f32 skin_bounds_radius = -1.0f;
     };
     struct MaterialTextures {
         SampledTextureHandle base_color;
@@ -728,6 +821,23 @@ struct SceneRenderer::Impl {
     // pass tone maps into the back buffer; without one (hdr false) they draw straight into the back buffer as before.
     std::unique_ptr<PostPass> post;
     std::unique_ptr<ShadowPass> shadows; // where the device has frame constants and depth textures (D3D12)
+    // Virtual shadow maps (virtual_shadow.h, vsm_pages.h, vsm_pass.h): pages of a much finer sun shadow near the camera, over the cascades, which
+    // stay as the fallback. Where the device has frame constants, depth textures, readback and the HDR path. AETHER_RENDER_VSM=0 turns them off.
+    std::unique_ptr<VsmFeedback> vsm_feedback;
+    std::unique_ptr<VsmPass> vsm_pass;
+    std::unique_ptr<VsmPageAllocator> vsm_pages;
+    VsmLight vsm_light;
+    bool vsm_have_light = false;
+    u64 vsm_frame = 0;
+    u32 vsm_pool = 24;         // pages per side of the pool (24 x 24 pages of 128 x 128 texels: 36 MB)
+    u32 vsm_draw_budget = 64;  // pages drawn per frame
+    struct VsmCasterState {
+        Mat4 model;
+        Vec3 center{0, 0, 0};
+        f32 radius = -1.0f;
+        u64 frame = 0;
+    };
+    SceneRenderer::VirtualShadowStats vsm_stats;
     std::unique_ptr<TaaPass> taa;         // temporal anti-aliasing, with the HDR target (AETHER_RENDER_TAA=0 turns it off)
     // Each drawn node's model transform as of the frame it was last drawn, for TAA's motion pass: key (entity index, generation, node).
     struct PreviousTransform {
@@ -752,6 +862,8 @@ struct SceneRenderer::Impl {
         u64 frame = 0;
     };
     std::unordered_map<TransformKey, PreviousPose, TransformKeyHash> previous_poses;
+    // The sun's shadow casters as of the frame they were last drawn (per entity, node and primitive), for the pages that need redrawing.
+    std::unordered_map<TransformKey, VsmCasterState, TransformKeyHash> vsm_casters;
     // This frame's packed previous poses, uploaded into one of motion_position_buffers (one per frame in flight, grown as needed).
     std::vector<f32> motion_positions;
     std::vector<BufferHandle> motion_position_buffers;
@@ -852,7 +964,7 @@ struct SceneRenderer::Impl {
             desc.frame_constants_size_bytes = sizeof(FrameData);
             for (usize i = 0; i < kFrameBuffers; ++i) frame_buffers.push_back(device.CreateFrameConstantBuffer(sizeof(FrameData)));
             desc.frame_read_buffer = true;
-            for (usize i = 0; i < kFrameBuffers; ++i) light_buffers.push_back(device.CreateFrameConstantBuffer(kLightClusterBufferBytes));
+            for (usize i = 0; i < kFrameBuffers; ++i) light_buffers.push_back(device.CreateFrameConstantBuffer(kLightBufferBytes));
             const char* clustered_setting = std::getenv("AETHER_RENDER_CLUSTERED");
             clustered = clustered_setting == nullptr || std::strcmp(clustered_setting, "0") != 0;
             // AETHER_RENDER_SHADOWS=0 turns sun shadows off (for comparisons).
@@ -860,6 +972,22 @@ struct SceneRenderer::Impl {
             if (shadow_setting == nullptr || std::strcmp(shadow_setting, "0") != 0) {
                 shadows = std::make_unique<ShadowPass>(device, swap_chain);
                 if (!shadows->Valid()) shadows.reset();
+            }
+            const char* vsm_setting = std::getenv("AETHER_RENDER_VSM");
+            if (shadows && hdr && device.SupportsReadback() && (vsm_setting == nullptr || std::strcmp(vsm_setting, "0") != 0)) {
+                if (const char* pool = std::getenv("AETHER_VSM_POOL")) vsm_pool = std::clamp<u32>(static_cast<u32>(std::atoi(pool)), 2u, 64u);
+                vsm_feedback = std::make_unique<VsmFeedback>(device, swap_chain);
+                vsm_pass = std::make_unique<VsmPass>(device, swap_chain);
+                // The scene depth copy the feedback reads (TAA asks for it too).
+                (void)swap_chain.SceneColorTexture();
+                const bool depth_ok = swap_chain.SceneDepthTexture().IsValid();
+                if (!vsm_feedback->Valid() || !vsm_pass->Valid() || !depth_ok) {
+                    vsm_feedback.reset();
+                    vsm_pass.reset();
+                } else {
+                    vsm_pages = std::make_unique<VsmPageAllocator>(vsm_pool);
+                    vsm_stats.enabled = true;
+                }
             }
             // AETHER_RENDER_IBL=0 keeps the flat ambient term and background (for comparisons).
             const char* ibl_setting = std::getenv("AETHER_RENDER_IBL");
@@ -1729,6 +1857,20 @@ struct SceneRenderer::Impl {
                             device.CreateVertexBuffer(vertices.data(), vertices.size() * sizeof(SceneVertex)));
                     }
                     draw.vertices = draw.frame_vertex_buffers.front();
+                    {
+                        Vec3 lo(vertices[0].position[0], vertices[0].position[1], vertices[0].position[2]), hi = lo;
+                        for (const SceneVertex& v : vertices) {
+                            lo = Vec3(std::min(lo.x, v.position[0]), std::min(lo.y, v.position[1]), std::min(lo.z, v.position[2]));
+                            hi = Vec3(std::max(hi.x, v.position[0]), std::max(hi.y, v.position[1]), std::max(hi.z, v.position[2]));
+                        }
+                        const Vec3 center = (lo + hi) * 0.5f;
+                        f32 radius = 0.0f;
+                        for (const SceneVertex& v : vertices) {
+                            radius = std::max(radius, (Vec3(v.position[0], v.position[1], v.position[2]) - center).Length());
+                        }
+                        draw.skin_bounds_center[0] = center.x, draw.skin_bounds_center[1] = center.y, draw.skin_bounds_center[2] = center.z;
+                        draw.skin_bounds_radius = radius * 1.5f;
+                    }
                     AETHER_LOG_INFO("PlayerRenderer", "Skinned primitive: %zu vertices, per-frame vertex buffers %u..%u",
                                     vertices.size(), draw.frame_vertex_buffers.front().index,
                                     draw.frame_vertex_buffers.back().index);
@@ -1885,7 +2027,13 @@ void SceneRenderer::SetViewDistance(f32 metres) { impl_->view_distance = metres;
 void SceneRenderer::SetDrawParticles(bool draw) { impl_->draw_particles = draw; }
 void SceneRenderer::SetShadows(u32 resolution, u32 cascades) {
     if (impl_->shadows) impl_->shadows->Configure(resolution, cascades);
+    if (resolution == 0 || cascades == 0) { // no sun shadows: the pages and their atlas go too
+        if (impl_->vsm_pass) impl_->vsm_pass->Release();
+        if (impl_->vsm_pages) impl_->vsm_pages->Clear();
+        impl_->vsm_casters.clear();
+    }
 }
+SceneRenderer::VirtualShadowStats SceneRenderer::VirtualShadows() const { return impl_->vsm_stats; }
 void SceneRenderer::SetBloom(bool enabled) {
     impl_->bloom = enabled;
     if (!enabled && impl_->post) impl_->post->ReleaseBloom(); // the chain's bindless slots go back to the table
@@ -1956,6 +2104,11 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
     std::vector<PendingOpaqueDraw> opaque_draws;
     std::vector<ShadowCaster> shadow_casters;
     std::vector<TaaMover> taa_movers; // opaque draws whose model transform or skinned pose changed since last frame
+    struct DirtySphere {
+        Vec3 center;
+        f32 radius;
+    };
+    std::vector<DirtySphere> vsm_dirty; // where a caster is, and was, that is new, has moved or deforms: virtual shadow pages to redraw
     const u64 transform_frame = ++renderer.transform_frame;
     renderer.motion_positions.clear();
     FrameData frame_data;
@@ -2317,6 +2470,31 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                                     caster.alpha = primitive.color[3];
                                     caster.alpha_cutoff = primitive.alpha_cutoff;
                                     shadow_casters.push_back(caster);
+                                    if (renderer.vsm_pages) {
+                                        // The caster's world sphere (a skinned one's from its bind pose, grown): the pages it touches are redrawn when it is
+                                        // new, has moved, or deforms, both where it is now and where it was.
+                                        Vec3 sphere_center = caster.bounds_center;
+                                        f32 sphere_radius = caster.bounds_radius;
+                                        if (!(sphere_radius >= 0.0f) && primitive.skin_bounds_radius >= 0.0f) {
+                                            const Vec4 c = model_transform * Vec4(primitive.skin_bounds_center[0], primitive.skin_bounds_center[1],
+                                                                                  primitive.skin_bounds_center[2], 1.0f);
+                                            const f32 scale = std::max({Vec3(model_transform.cols[0].x, model_transform.cols[0].y, model_transform.cols[0].z).Length(),
+                                                                        Vec3(model_transform.cols[1].x, model_transform.cols[1].y, model_transform.cols[1].z).Length(),
+                                                                        Vec3(model_transform.cols[2].x, model_transform.cols[2].y, model_transform.cols[2].z).Length()});
+                                            sphere_center = Vec3(c.x, c.y, c.z);
+                                            sphere_radius = primitive.skin_bounds_radius * scale;
+                                        }
+                                        Impl::VsmCasterState& state = renderer.vsm_casters[{entities[row].index, entities[row].generation,
+                                                                                            static_cast<u32>(node.node_index),
+                                                                                            static_cast<u32>(primitive_index) + 1}];
+                                        const bool seen = state.frame + 1 == transform_frame;
+                                        if (sphere_radius >= 0.0f &&
+                                            (!seen || uploaded_animation || TaaTransformMoved(state.model, model_transform))) {
+                                            vsm_dirty.push_back({sphere_center, sphere_radius});
+                                            if (seen && state.radius >= 0.0f) vsm_dirty.push_back({state.center, state.radius});
+                                        }
+                                        state = {model_transform, sphere_center, sphere_radius, transform_frame};
+                                    }
                                 }
                             }
                         }
@@ -2358,6 +2536,83 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
         std::memcpy(frame_data.shadow_cascade, shadow.cascade, sizeof(shadow.cascade));
         std::memcpy(frame_data.shadow_info, shadow.info, sizeof(shadow.info));
     }
+    // The sun's virtual shadow pages: what the feedback of a few frames ago asked for gets physical pages, the pages that need it are drawn, and
+    // the page table goes to the light buffer for the scene shader. Without any of that the cascades alone shadow the sun.
+    bool vsm_record = false;
+    VsmFeedbackParams vsm_feedback_params;
+    renderer.vsm_stats.drawn_pages = renderer.vsm_stats.caster_draws = renderer.vsm_stats.requests = 0;
+    const auto vsm_start = std::chrono::steady_clock::now();
+    if (renderer.vsm_pages) {
+        VsmPageAllocator& pages = *renderer.vsm_pages;
+        // Casters no longer drawn (destroyed, hidden, out of reach) leave their pages stale where they were.
+        for (auto it = renderer.vsm_casters.begin(); it != renderer.vsm_casters.end();) {
+            if (it->second.frame == transform_frame) {
+                ++it;
+                continue;
+            }
+            if (it->second.radius >= 0.0f) vsm_dirty.push_back({it->second.center, it->second.radius});
+            it = renderer.vsm_casters.erase(it);
+        }
+        if (!sun_shadows || !have_camera || !light_buffer.IsValid()) {
+            pages.InvalidateAll(); // nothing is kept up to date while the sun's shadows are off
+            renderer.vsm_casters.clear();
+        } else {
+            const Vec3 light_travel(-frame_data.sun_direction[0], -frame_data.sun_direction[1], -frame_data.sun_direction[2]);
+            const VsmLight light = VsmLightBasis(light_travel);
+            if (!renderer.vsm_have_light || light.direction.Dot(renderer.vsm_light.direction) < 0.99999f) pages.InvalidateAll(); // the sun turned
+            renderer.vsm_light = light;
+            renderer.vsm_have_light = true;
+            renderer.vsm_pass->EnsureAtlas(renderer.vsm_pool); // made before the first page is drawn, so the first frame can ask for pages
+            pages.BeginFrame(++renderer.vsm_frame);
+            const std::vector<VsmRequest> requests = renderer.vsm_feedback->Collect(frame_index);
+            renderer.vsm_stats.requests = static_cast<u32>(requests.size());
+            pages.Request(requests);
+            for (const DirtySphere& sphere : vsm_dirty) pages.InvalidateSphere(light, sphere.center, sphere.radius);
+            const std::vector<VsmPageDraw> draws = pages.TakeDraws(renderer.vsm_draw_budget);
+            renderer.vsm_stats.drawn_pages = static_cast<u32>(draws.size());
+            renderer.vsm_stats.caster_draws = renderer.vsm_pass->DrawPages(commands, light, draws, renderer.vsm_pool, shadow_casters);
+            const auto origins = VsmWindowOrigins(light, decal_camera_position);
+            const std::vector<u32> table = pages.BuildPageTable(origins);
+            if (renderer.vsm_pass->Atlas().IsValid() &&
+                renderer.device.WriteBufferUnsynchronized(light_buffer, table.data(), table.size() * sizeof(u32), kVsmTableOffset)) {
+                const auto set = [](f32 (&out)[4], const Vec3& v, f32 w) { out[0] = v.x, out[1] = v.y, out[2] = v.z, out[3] = w; };
+                const f32 height = static_cast<f32>(std::max(renderer.swap_chain.Height(), 1u));
+                const bool perspective = camera != nullptr && camera->projection == Projection::Perspective;
+                const f32 footprint_scale =
+                    perspective ? 2.0f * std::tan(camera->fov_degrees * 0.5f * 3.14159265f / 180.0f) / height : 0.0f;
+                const f32 footprint_constant = !perspective && camera != nullptr ? camera->ortho_height / height : 0.0f;
+                set(frame_data.vsm_light_right, light.right, 0.0f);
+                set(frame_data.vsm_light_up, light.up, 0.0f);
+                set(frame_data.vsm_light_direction, light.direction, 0.0f);
+                set(frame_data.vsm_camera, decal_camera_position, footprint_scale);
+                frame_data.vsm_params[0] = footprint_constant;
+                for (u32 level = 0; level < kVsmLevels; ++level) {
+                    frame_data.vsm_window[level / 2][(level % 2) * 2] = origins[level][0];
+                    frame_data.vsm_window[level / 2][(level % 2) * 2 + 1] = origins[level][1];
+                }
+                frame_data.vsm_info[0] = renderer.vsm_pass->Atlas().index;
+                frame_data.vsm_info[1] = renderer.vsm_pool;
+                frame_data.vsm_info[2] = static_cast<u32>(kVsmTableOffset);
+                Mat4 inverse;
+                if (taa_view_projection.TryInverse(inverse)) {
+                    vsm_feedback_params.inverse_view_projection = inverse;
+                    vsm_feedback_params.camera_position = decal_camera_position;
+                    vsm_feedback_params.footprint_scale = footprint_scale;
+                    vsm_feedback_params.footprint_constant = footprint_constant;
+                    vsm_feedback_params.light = light;
+                    vsm_feedback_params.depth_texture = renderer.swap_chain.SceneDepthTexture().index;
+                    vsm_feedback_params.screen_width = renderer.swap_chain.Width();
+                    vsm_feedback_params.screen_height = renderer.swap_chain.Height();
+                    vsm_feedback_params.frame = static_cast<u32>(renderer.vsm_frame);
+                    vsm_record = true;
+                }
+            }
+            const VsmPageStats stats = pages.Stats();
+            renderer.vsm_stats.resident = stats.resident;
+            renderer.vsm_stats.pending = stats.pending;
+        }
+    }
+    renderer.vsm_stats.cpu_ms = std::chrono::duration<f64, std::milli>(std::chrono::steady_clock::now() - vsm_start).count();
     // This frame's slot: the frame loop waited on its fence, so it is written without waiting for the GPU (WriteBufferUnsynchronized).
     if (frame_buffer.IsValid() && !renderer.device.WriteBufferUnsynchronized(frame_buffer, &frame_data, sizeof(frame_data))) {
         renderer.device.UpdateFrameConstantBuffer(frame_buffer, &frame_data, sizeof(frame_data));
@@ -2434,10 +2689,11 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
     if (renderer.hdr) {
         // The lit scene is in the HDR target: tone map it into the back buffer under the post volumes at the camera, then the HUD on top
         // in display space. Temporal anti-aliasing first blends it with the frames before (reading the depth copied here).
-        const bool resolve = renderer.taa && have_camera && commands.CopySceneDepth();
+        const bool resolve = (renderer.taa || vsm_record) && have_camera && commands.CopySceneDepth();
         commands.EndRenderPass();
+        if (resolve && vsm_record) renderer.vsm_feedback->Record(commands, vsm_feedback_params, frame_index);
         u32 resolved = 0;
-        if (resolve) {
+        if (resolve && renderer.taa) {
             resolved = renderer.taa->Resolve(commands, taa_view_projection,
                                              (static_cast<u64>(camera_entity.index) << 32) | camera_entity.generation, taa_movers,
                                              motion_position_buffer);
@@ -2460,7 +2716,8 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
 // The advanced PBR library (anisotropic GGX, sheen, clear coat) goes ahead of the scene shader.
 std::string SceneShaderSource(bool with_frame_data, bool hdr_target) {
     return std::string(with_frame_data ? "#define AETHER_FRAME_DATA 1\n" : "") + (hdr_target ? "#define AETHER_HDR_TARGET 1\n" : "") +
-           mat::AdvancedPbrHlsl() + mat::ShadingModelsHlsl() + kSceneShader + (with_frame_data ? FrameDataHlsl() : "") + kSceneShaderFrame;
+           mat::AdvancedPbrHlsl() + mat::ShadingModelsHlsl() + kSceneShader + (with_frame_data ? FrameDataHlsl() : "") +
+           (with_frame_data ? VsmShaderLibrary() : "") + (with_frame_data ? kSceneShaderVsm : "") + kSceneShaderFrame;
 }
 
 } // namespace aether::player

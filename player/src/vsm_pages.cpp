@@ -101,15 +101,10 @@ std::vector<VsmPageDraw> VsmPageAllocator::TakeDraws(u32 budget) {
 }
 
 u32 VsmPageAllocator::InvalidateSphere(const VsmLight& light, const Vec3& center, f32 radius) {
-    f32 u = 0, v = 0, depth = 0;
-    VsmLightSpace(light, center, u, v, depth);
     u32 count = 0;
     for (auto& [key, page] : pages_) {
         if (page.pending) continue; // never drawn, or already waiting
-        const f32 size = VsmPageSize(page.page.level);
-        const f32 u0 = static_cast<f32>(page.page.x) * size, v0 = static_cast<f32>(page.page.y) * size;
-        const f32 dx = u - std::clamp(u, u0, u0 + size), dy = v - std::clamp(v, v0, v0 + size);
-        if (dx * dx + dy * dy > radius * radius) continue;
+        if (!VsmSphereTouchesPage(light, page.page, center, radius)) continue;
         page.pending = true;
         page.stale = true;
         ++count;

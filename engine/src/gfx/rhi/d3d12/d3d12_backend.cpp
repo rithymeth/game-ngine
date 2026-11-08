@@ -570,6 +570,7 @@ PipelineHandle D3D12Device::CreatePipeline(const PipelineDesc& desc, ISwapChain&
     if (desc.depth_target) {
         pso_desc.DepthStencilState.DepthEnable = TRUE;
         pso_desc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+        if (desc.depth_always) pso_desc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_ALWAYS;
         pso_desc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
     }
 
