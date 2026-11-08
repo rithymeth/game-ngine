@@ -306,7 +306,6 @@ jobs:
         if: github.event_name != 'pull_request' && matrix.name == 'Physics'
         run: python3 tools/api_inventory.py --tests ./build/tests/aether_tests
       - name: Long-running heap soak
-        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
         if: github.event_name != 'pull_request' && matrix.name == 'GCC'
         env:
           AETHER_SOAK_SCALE: "4"
@@ -769,6 +768,7 @@ jobs:
       - name: Registered regression tests
         run: ctest --test-dir build -C Release --output-on-failure --parallel 4 -R "^(fuzz_replay_.*|module_graph_catches_a_cycle|api_stability_annotations|api_freeze_checks|api_inventory|frozen_api_game|production_gate_table|m8_gate_table)$"
       - name: Long-running heap soak
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
         env:
           AETHER_SOAK_SCALE: "4"
         run: ctest --test-dir build -C Release --output-on-failure -R "^soak$"
