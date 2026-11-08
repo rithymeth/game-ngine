@@ -102,6 +102,15 @@ struct PipelineDesc {
     // and EndRenderPass: for post-processing chains such as bloom's. Depth testing and writing are off whatever depth_test and
     // depth_write say. Takes precedence over scene_color_target.
     bool render_texture_target = false;
+
+    // Renders depth only into depth textures (IDevice::CreateDepthTexture, D32) between ICommandList::BeginDepthPass and EndRenderPass:
+    // shadow maps. No colour target; depth tested (LESS) and written whatever depth_test and depth_write say. An empty ps_entry builds
+    // the pipeline with no pixel shader (the fast path for opaque casters). Takes precedence over the other two targets.
+    bool depth_target = false;
+    // Rasterizer depth bias, for any pipeline (shadow casters use it to keep surfaces from shadowing themselves): a constant in units of
+    // the depth format's precision, and a multiple of the triangle's depth slope. 0 (the default) is no bias.
+    i32 depth_bias = 0;
+    f32 slope_scaled_depth_bias = 0.0f;
 };
 
 // Compute shader pipeline with fixed storage-buffer bindings at u0..u(N-1),
@@ -289,6 +298,11 @@ public:
     // bind it). No GPU wait: callable between passes while recording. Invalid when the table is full and on devices without support
     // (the default); invalid sizes (zero, or over the device's 2D limit) throw std::invalid_argument.
     virtual SampledTextureHandle CreateRenderTexture(u32 /*width*/, u32 /*height*/) { return {}; }
+    // A depth texture a pass renders into and later passes read with a texel load (.r, 0 near .. 1 far): D32, width x height, in the
+    // bindless table, contents undefined until an ICommandList::BeginDepthPass clears or draws them. Draw into it with pipelines made
+    // with PipelineDesc::depth_target. Otherwise as CreateRenderTexture (freed with DestroyTexture, graphics only, invalid when the table
+    // is full or on devices without support, invalid sizes throw std::invalid_argument).
+    virtual SampledTextureHandle CreateDepthTexture(u32 /*width*/, u32 /*height*/) { return {}; }
 
     virtual Backend GetBackend() const = 0;
 

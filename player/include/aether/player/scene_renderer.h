@@ -33,6 +33,9 @@ public:
     // Whether the post pass draws bloom (a quality preset's `bloom`); on by default. Only where there is an HDR scene colour target: the
     // fallback path that tone maps in the scene shader has no bloom.
     void SetBloom(bool enabled);
+    // Sun shadows: texels per cascade side and cascades (a quality preset's shadow_resolution and shadow_cascades; 0 turns them off).
+    // On by default at 2048 and 4, from a DirectionalLight with cast_shadows, where the device can draw them (D3D12 today).
+    void SetShadows(u32 resolution, u32 cascades);
     // Optional visual-only transform sampler. Never mutates Game's World or PhysicsScene.
     // Leave unset for the original offline/single-player rendering path.
     void SetRenderPoseSampler(std::function<bool(Entity, Transform&)> sampler);

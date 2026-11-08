@@ -58,6 +58,11 @@ public:
     // shader-readable. False (nothing recorded) for a handle that isn't a live render texture of this device, inside another pass, and
     // on devices without support (the default).
     virtual bool BeginTexturePass(SampledTextureHandle /*target*/, const ClearColor* /*clear_color*/) { return false; }
+    // Begins drawing depth only into a depth texture (IDevice::CreateDepthTexture), cleared to 1 (far) when `clear`, the viewport and
+    // scissor its full size (SetViewportAndScissor narrows them, e.g. to one cascade of a shadow atlas). Only pipelines made with
+    // PipelineDesc::depth_target draw in it. EndRenderPass leaves it shader-readable. False (nothing recorded) for a handle that isn't a
+    // live depth texture of this device, inside another pass, and on devices without support (the default).
+    virtual bool BeginDepthPass(SampledTextureHandle /*target*/, bool /*clear*/) { return false; }
     virtual void EndRenderPass() = 0;
 
     // Binds a pipeline created via IDevice::CreatePipeline. Must be called

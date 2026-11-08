@@ -1910,6 +1910,7 @@
 [engine/include/aether/gfx/rhi/command_list.h] experimental
   type class ICommandList
   public:virtual ~ICommandList()=default
+  virtual bool BeginDepthPass(SampledTextureHandle,bool)
   virtual bool BeginSceneColorPass(ISwapChain&,const ClearColor&)
   virtual bool BeginTexturePass(SampledTextureHandle,const ClearColor*)
   virtual bool CopySceneDepth()
@@ -1940,6 +1941,7 @@
   type class D3D12Device
   type class D3D12SwapChain
   type struct ComputePipelineRecord
+  type struct DepthTextureView
   type struct PipelineRecord
   type struct RenderTextureView
   type struct RetiredResource
@@ -1956,6 +1958,7 @@
   D3D12_GPU_DESCRIPTOR_HANDLE ComputeSampledDescriptor(SampledTextureHandle handle)const
   D3D12_GPU_DESCRIPTOR_HANDLE ComputeStorageDescriptor(BufferHandle handle)const
   D3D12_RESOURCE_STATES ToD3D12(ResourceState state)
+  DepthTextureView FindDepthTexture(SampledTextureHandle handle)const
   DescriptorHeap&BindlessTextureHeap()
   ID3D12DescriptorHeap*ComputeStorageHeap()const
   ID3D12Resource*DepthResource(u32 index)const
@@ -1965,6 +1968,7 @@
   RenderTextureView FindRenderTexture(SampledTextureHandle handle)const
   ResourceStats GetResourceStats()const override
   SampledTextureHandle CreateCompressedTexture(CompressedTextureFormat format,u32 width,u32 height,std::span<const CompressedMip>mips)override
+  SampledTextureHandle CreateDepthTexture(u32 width,u32 height)override
   SampledTextureHandle CreateR32FloatTexture(u32 width,u32 height,const f32*values)override
   SampledTextureHandle CreateRenderTexture(u32 width,u32 height)override
   SampledTextureHandle CreateTexture(u32 width,u32 height,const u8*rgba8_pixels)override
@@ -1973,6 +1977,7 @@
   SampledTextureHandle SceneDepthTexture()override
   TextureHandle CurrentBackBuffer()const override
   TextureHandle RegisterTexture(ID3D12Resource*resource,D3D12_CPU_DESCRIPTOR_HANDLE rtv)
+  bool BeginDepthPass(SampledTextureHandle target,bool clear)override
   bool BeginSceneColorPass(ISwapChain&swap_chain,const ClearColor&clear_color)override
   bool BeginTexturePass(SampledTextureHandle target,const ClearColor*clear_color)override
   bool BelongsTo(const D3D12Device&device)const
@@ -2094,6 +2099,7 @@
   virtual PipelineHandle CreatePipeline(const PipelineDesc&desc,ISwapChain&swap_chain)=0
   virtual ResourceStats GetResourceStats()const
   virtual SampledTextureHandle CreateCompressedTexture(CompressedTextureFormat,u32,u32,std::span<const CompressedMip>)
+  virtual SampledTextureHandle CreateDepthTexture(u32,u32)
   virtual SampledTextureHandle CreateR32FloatTexture(u32 width,u32 height,const f32*values)=0
   virtual SampledTextureHandle CreateRenderTexture(u32,u32)
   virtual SampledTextureHandle CreateTexture(u32 width,u32 height,const u8*rgba8_pixels)=0
@@ -4832,6 +4838,7 @@
   void SetBloom(bool enabled)
   void SetDrawParticles(bool draw)
   void SetRenderPoseSampler(std::function<bool(Entity,Transform&)>sampler)
+  void SetShadows(u32 resolution,u32 cascades)
   void SetViewDistance(f32 metres)
   ~SceneRenderer()
 [player/include/aether/player/settings_apply.h] experimental

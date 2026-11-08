@@ -481,6 +481,7 @@ int main(int argc, char** argv) {
                 if (quality) {
                     scene_renderer->SetViewDistance(quality->view_distance);
                     scene_renderer->SetBloom(quality->bloom);
+                    scene_renderer->SetShadows(quality->shadow_resolution, quality->shadow_cascades);
                 }
                 window->on_resize = [&](u32, u32) { resized = true; };
             } else {
@@ -537,6 +538,7 @@ int main(int argc, char** argv) {
                     if (scene_renderer) {
                         scene_renderer->SetViewDistance(next->view_distance);
                         scene_renderer->SetBloom(next->bloom);
+                        scene_renderer->SetShadows(next->shadow_resolution, next->shadow_cascades);
                     }
                     resized = true; // the swap chain is rebuilt at the new size
                 } else {

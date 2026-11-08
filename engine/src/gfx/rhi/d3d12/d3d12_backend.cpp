@@ -62,6 +62,10 @@ D3D12Device::D3D12Device(bool enable_debug_layer) : device_(enable_debug_layer) 
     render_texture_rtv_heap_ = std::make_unique<DescriptorHeap>(device_, D3D12_DESCRIPTOR_HEAP_TYPE_RTV, kMaxUserBindlessTextures,
                                                                 /*shader_visible=*/false);
     for (u32 i = 0; i < kMaxUserBindlessTextures; ++i) render_texture_rtv_heap_->Allocate(); // slot i: the texture at bindless i + 1
+    render_texture_dsv_heap_ = std::make_unique<DescriptorHeap>(device_, D3D12_DESCRIPTOR_HEAP_TYPE_DSV, kMaxUserBindlessTextures,
+                                                                /*shader_visible=*/false);
+    for (u32 i = 0; i < kMaxUserBindlessTextures; ++i) render_texture_dsv_heap_->Allocate();
+    render_texture_depth_.resize(kMaxUserBindlessTextures, 0);
     sampled_textures_.reserve(kMaxUserBindlessTextures);
 
     // A 1x1 white dummy texture, uploaded once and duplicated (by
@@ -375,6 +379,7 @@ PipelineHandle D3D12Device::CreatePipeline(const PipelineDesc& desc, ISwapChain&
                              : desc.scene_color_target  ? D3D12SwapChain::kSceneColorFormat
                                                         : d3d_swap.Native().Format();
 
+    if (desc.depth_target) rtv_format = DXGI_FORMAT_UNKNOWN;
     const u32 max_root_constants = desc.enable_bindless_textures ? 63u : 64u;
     if (desc.push_constant_size_bytes % 4 != 0 || desc.push_constant_size_bytes / 4 > max_root_constants) {
         AETHER_LOG_ERROR("D3D12", "Graphics push-constant size must be four-byte aligned and fit the root signature");
@@ -468,7 +473,10 @@ PipelineHandle D3D12Device::CreatePipeline(const PipelineDesc& desc, ISwapChain&
     // table's HLSL — see the "Unified mode's textured-quad pipeline"
     // comment in rhi_demo/main.cpp) are only valid from shader model 5.1.
     gfx::ShaderBytecode vs = gfx::CompileHLSL(desc.hlsl_source, desc.vs_entry.c_str(), "vs_5_1", "rhi_pipeline_vs");
-    gfx::ShaderBytecode ps = gfx::CompileHLSL(desc.hlsl_source, desc.ps_entry.c_str(), "ps_5_1", "rhi_pipeline_ps");
+    // A depth-only pipeline may have no pixel shader at all (opaque shadow casters).
+    const bool has_pixel_shader = !(desc.depth_target && desc.ps_entry.empty());
+    gfx::ShaderBytecode ps = has_pixel_shader ? gfx::CompileHLSL(desc.hlsl_source, desc.ps_entry.c_str(), "ps_5_1", "rhi_pipeline_ps")
+                                              : gfx::ShaderBytecode{};
 
     // Keep POSITION / TEXCOORD as the default, with optional normal and
     // tangent elements for lit, normal-mapped model vertices.
@@ -486,7 +494,7 @@ PipelineHandle D3D12Device::CreatePipeline(const PipelineDesc& desc, ISwapChain&
     D3D12_GRAPHICS_PIPELINE_STATE_DESC pso_desc{};
     pso_desc.pRootSignature = record.root_signature.Get();
     pso_desc.VS = {vs.Data(), vs.Size()};
-    pso_desc.PS = {ps.Data(), ps.Size()};
+    if (has_pixel_shader) pso_desc.PS = {ps.Data(), ps.Size()};
     if (desc.use_vertex_buffer) {
         if (!has_tangents && !has_normals) {
             // PositionUv has no NORMAL semantic. Its second element is UV.
@@ -497,7 +505,10 @@ PipelineHandle D3D12Device::CreatePipeline(const PipelineDesc& desc, ISwapChain&
     }
     pso_desc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
     pso_desc.RasterizerState.CullMode = desc.cull_back_face ? D3D12_CULL_MODE_BACK : D3D12_CULL_MODE_NONE;
-    pso_desc.RasterizerState.DepthClipEnable = TRUE;
+    // Depth-only (shadow) pipelines clamp instead of clipping: a caster between the light and the map's near plane still lands in it.
+    pso_desc.RasterizerState.DepthClipEnable = desc.depth_target ? FALSE : TRUE;
+    pso_desc.RasterizerState.DepthBias = desc.depth_bias;
+    pso_desc.RasterizerState.SlopeScaledDepthBias = std::isfinite(desc.slope_scaled_depth_bias) ? desc.slope_scaled_depth_bias : 0.0f;
 
     // D3D12_GRAPHICS_PIPELINE_STATE_DESC is zero-initialized above, but a
     // zeroed D3D12_RENDER_TARGET_BLEND_DESC is not the API's default state:
@@ -538,10 +549,15 @@ PipelineHandle D3D12Device::CreatePipeline(const PipelineDesc& desc, ISwapChain&
         pso_desc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
         pso_desc.DSVFormat = DXGI_FORMAT_UNKNOWN;
     }
+    if (desc.depth_target) {
+        pso_desc.DepthStencilState.DepthEnable = TRUE;
+        pso_desc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+        pso_desc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
+    }
 
     pso_desc.SampleMask = UINT_MAX;
     pso_desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
-    pso_desc.NumRenderTargets = 1;
+    pso_desc.NumRenderTargets = desc.depth_target ? 0 : 1;
     pso_desc.RTVFormats[0] = rtv_format;
     pso_desc.SampleDesc.Count = 1;
 
@@ -961,6 +977,7 @@ bool D3D12Device::DestroyTexture(SampledTextureHandle texture) {
     ComPtr<ID3D12Resource> floating = std::move(sampled_float_textures_[descriptor_slot]);
     sampled_float_textures_[descriptor_slot].Reset();
     render_texture_sizes_[descriptor_slot] = {0u, 0u}; // no longer a render texture: BeginTexturePass refuses the handle
+    render_texture_depth_[descriptor_slot] = 0;
     const u32 compute_index = sampled_descriptor_indices_[descriptor_slot];
     sampled_descriptor_indices_[descriptor_slot] = DescriptorHeap::kInvalidIndex;
     if (sampled_texture_count_ > 0) --sampled_texture_count_;
@@ -1028,8 +1045,64 @@ SampledTextureHandle D3D12Device::CreateRenderTexture(u32 width, u32 height) {
 D3D12Device::RenderTextureView D3D12Device::FindRenderTexture(SampledTextureHandle handle) const {
     if (!handle.IsValid() || handle.index < kFirstUserBindlessTextureIndex || handle.index >= kMaxBindlessTextures) return {};
     const usize slot = handle.index - kFirstUserBindlessTextureIndex;
-    if (render_texture_sizes_[slot].first == 0 || !sampled_float_textures_[slot]) return {};
+    if (render_texture_sizes_[slot].first == 0 || !sampled_float_textures_[slot] || render_texture_depth_[slot]) return {};
     return {sampled_float_textures_[slot].Get(), render_texture_rtv_heap_->CPUHandle(static_cast<u32>(slot)), render_texture_sizes_[slot].first,
+            render_texture_sizes_[slot].second};
+}
+
+SampledTextureHandle D3D12Device::CreateDepthTexture(u32 width, u32 height) {
+    if (width == 0 || height == 0 || width > D3D12_REQ_TEXTURE2D_U_OR_V_DIMENSION || height > D3D12_REQ_TEXTURE2D_U_OR_V_DIMENSION) {
+        throw std::invalid_argument("CreateDepthTexture requires a non-zero extent within the device's 2D texture limit");
+    }
+    DrainRetired();
+    if (sampled_texture_count_ >= kMaxUserBindlessTextures || !bindless_texture_heap_->CanAllocate()) {
+        AETHER_LOG_ERROR("D3D12", "CreateDepthTexture: the bindless texture table is full (capacity=%u real textures)", kMaxUserBindlessTextures);
+        return {};
+    }
+    D3D12_RESOURCE_DESC desc{};
+    desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    desc.Width = width;
+    desc.Height = height;
+    desc.DepthOrArraySize = 1;
+    desc.MipLevels = 1;
+    desc.Format = DXGI_FORMAT_R32_TYPELESS; // D32_FLOAT to draw, R32_FLOAT to read
+    desc.SampleDesc.Count = 1;
+    desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+    D3D12_CLEAR_VALUE clear{};
+    clear.Format = DXGI_FORMAT_D32_FLOAT;
+    clear.DepthStencil.Depth = 1.0f;
+    D3D12_HEAP_PROPERTIES default_heap{};
+    default_heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+    ComPtr<ID3D12Resource> texture;
+    AETHER_D3D_CHECK(device_.Handle()->CreateCommittedResource(&default_heap, D3D12_HEAP_FLAG_NONE, &desc,
+                                                                D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, &clear,
+                                                                IID_PPV_ARGS(&texture)));
+    const u32 bindless_index = bindless_texture_heap_->Allocate();
+    if (bindless_index == DescriptorHeap::kInvalidIndex) return {};
+    const usize slot = bindless_index - kFirstUserBindlessTextureIndex;
+    D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
+    srv.Format = DXGI_FORMAT_R32_FLOAT;
+    srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    srv.Texture2D.MipLevels = 1;
+    device_.Handle()->CreateShaderResourceView(texture.Get(), &srv, bindless_texture_heap_->CPUHandle(bindless_index));
+    D3D12_DEPTH_STENCIL_VIEW_DESC dsv{};
+    dsv.Format = DXGI_FORMAT_D32_FLOAT;
+    dsv.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
+    device_.Handle()->CreateDepthStencilView(texture.Get(), &dsv, render_texture_dsv_heap_->CPUHandle(static_cast<u32>(slot)));
+    sampled_descriptor_indices_[slot] = DescriptorHeap::kInvalidIndex; // graphics only
+    sampled_float_textures_[slot] = std::move(texture);
+    render_texture_sizes_[slot] = {width, height};
+    render_texture_depth_[slot] = 1;
+    ++sampled_texture_count_;
+    return SampledTextureHandle{bindless_index};
+}
+
+D3D12Device::DepthTextureView D3D12Device::FindDepthTexture(SampledTextureHandle handle) const {
+    if (!handle.IsValid() || handle.index < kFirstUserBindlessTextureIndex || handle.index >= kMaxBindlessTextures) return {};
+    const usize slot = handle.index - kFirstUserBindlessTextureIndex;
+    if (render_texture_sizes_[slot].first == 0 || !sampled_float_textures_[slot] || !render_texture_depth_[slot]) return {};
+    return {sampled_float_textures_[slot].Get(), render_texture_dsv_heap_->CPUHandle(static_cast<u32>(slot)), render_texture_sizes_[slot].first,
             render_texture_sizes_[slot].second};
 }
 
@@ -1386,6 +1459,7 @@ void D3D12CommandList::Reset() {
     active_swap_chain_ = nullptr;
     active_backbuffer_ = nullptr;
     active_scene_color_ = nullptr;
+    active_depth_texture_ = nullptr;
     graphics_pipeline_bound_ = false;
     graphics_bindless_enabled_ = false;
     graphics_bindless_bound_ = false;
@@ -1572,6 +1646,27 @@ bool D3D12CommandList::BeginTexturePass(SampledTextureHandle target, const Clear
     return true;
 }
 
+bool D3D12CommandList::BeginDepthPass(SampledTextureHandle target, bool clear) {
+    const D3D12Device::DepthTextureView view = device_.FindDepthTexture(target);
+    if (!recording_ || IsComputeList() || render_pass_active_ || view.resource == nullptr) {
+        AETHER_LOG_ERROR("D3D12", "BeginDepthPass requires a recording, non-nested list and a live depth texture of this device");
+        return false;
+    }
+    D3D12_RESOURCE_BARRIER to_depth =
+        TransitionBarrier(view.resource, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+    cmd_.Get()->ResourceBarrier(1, &to_depth);
+    if (clear) cmd_.Get()->ClearDepthStencilView(view.dsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+    cmd_.Get()->OMSetRenderTargets(0, nullptr, FALSE, &view.dsv);
+    D3D12_VIEWPORT viewport{0.0f, 0.0f, static_cast<f32>(view.width), static_cast<f32>(view.height), 0.0f, 1.0f};
+    D3D12_RECT scissor{0, 0, static_cast<LONG>(view.width), static_cast<LONG>(view.height)};
+    cmd_.Get()->RSSetViewports(1, &viewport);
+    cmd_.Get()->RSSetScissorRects(1, &scissor);
+    active_depth_texture_ = view.resource;
+    active_swap_chain_ = nullptr; // CopySceneDepth refuses
+    render_pass_active_ = true;
+    return true;
+}
+
 bool D3D12CommandList::CopySceneDepth() {
     if (!recording_ || !render_pass_active_ || !active_swap_chain_ || !active_swap_chain_->SceneDepthEnabled()) {
         AETHER_LOG_ERROR("D3D12", "CopySceneDepth requires an active render pass on a swap chain with a SceneDepthTexture");
@@ -1610,18 +1705,21 @@ void D3D12CommandList::EndRenderPass() {
         AETHER_LOG_ERROR("D3D12", "EndRenderPass requires a recording command list");
         return;
     }
-    if (!render_pass_active_ || (!active_backbuffer_ && !active_scene_color_)) {
+    if (!render_pass_active_ || (!active_backbuffer_ && !active_scene_color_ && !active_depth_texture_)) {
         AETHER_LOG_ERROR("D3D12", "EndRenderPass requires an active render pass");
         return;
     }
-    // A scene colour pass leaves its target readable by the post pass; a back-buffer pass hands the image to Present.
+    // A scene colour, texture or depth pass leaves its target readable by later passes; a back-buffer pass hands the image to Present.
     D3D12_RESOURCE_BARRIER after =
-        active_scene_color_
+        active_depth_texture_
+            ? TransitionBarrier(active_depth_texture_, D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)
+        : active_scene_color_
             ? TransitionBarrier(active_scene_color_, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)
             : TransitionBarrier(active_backbuffer_, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
     cmd_.Get()->ResourceBarrier(1, &after);
     active_backbuffer_ = nullptr;
     active_scene_color_ = nullptr;
+    active_depth_texture_ = nullptr;
     active_swap_chain_ = nullptr;
     render_pass_active_ = false;
     graphics_pipeline_bound_ = false;

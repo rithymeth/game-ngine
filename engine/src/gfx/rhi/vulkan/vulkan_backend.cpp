@@ -1854,6 +1854,11 @@ PipelineHandle VulkanDevice::CreatePipeline(const PipelineDesc& desc, ISwapChain
     rasterizer.cullMode = desc.cull_back_face ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE;
     rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
     rasterizer.lineWidth = 1.0f;
+    if (desc.depth_bias != 0 || (std::isfinite(desc.slope_scaled_depth_bias) && desc.slope_scaled_depth_bias != 0.0f)) {
+        rasterizer.depthBiasEnable = VK_TRUE;
+        rasterizer.depthBiasConstantFactor = static_cast<f32>(desc.depth_bias);
+        rasterizer.depthBiasSlopeFactor = std::isfinite(desc.slope_scaled_depth_bias) ? desc.slope_scaled_depth_bias : 0.0f;
+    }
 
     VkPipelineMultisampleStateCreateInfo multisample{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
     multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;

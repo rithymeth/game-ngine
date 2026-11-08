@@ -117,6 +117,15 @@ public:
     };
     // The live render texture behind `handle`, or a view with a null resource.
     RenderTextureView FindRenderTexture(SampledTextureHandle handle) const;
+    // Depth textures (IDevice::CreateDepthTexture): an R32_TYPELESS resource in sampled_float_textures_, an R32_FLOAT SRV in the table
+    // and a D32_FLOAT DSV of its own; render_texture_sizes_ holds its size and render_texture_depth_ marks it as depth.
+    SampledTextureHandle CreateDepthTexture(u32 width, u32 height) override;
+    struct DepthTextureView {
+        ID3D12Resource* resource = nullptr;
+        D3D12_CPU_DESCRIPTOR_HANDLE dsv{};
+        u32 width = 0, height = 0;
+    };
+    DepthTextureView FindDepthTexture(SampledTextureHandle handle) const;
     DescriptorHeap& BindlessTextureHeap() { return *bindless_texture_heap_; }
     // A bindless slot for a resource someone else owns (a swap chain's scene-depth copy, ISwapChain::SceneDepthTexture): it counts against
     // the table, DestroyTexture refuses it, and it views the white fallback until SetExternalBindlessTexture gives it a resource (null:
@@ -201,6 +210,8 @@ private:
     std::vector<ComPtr<ID3D12Resource>> sampled_float_textures_;
     std::unique_ptr<DescriptorHeap> render_texture_rtv_heap_; // one RTV per user bindless slot, written by CreateRenderTexture
     std::vector<std::pair<u32, u32>> render_texture_sizes_;
+    std::unique_ptr<DescriptorHeap> render_texture_dsv_heap_; // one DSV per user bindless slot, written by CreateDepthTexture
+    std::vector<u8> render_texture_depth_;                    // 1: the slot's render texture is a depth texture
     u32 sampled_texture_count_ = 0;
 };
 
@@ -286,6 +297,7 @@ public:
     void BeginRenderPass(ISwapChain& swap_chain, const ClearColor& clear_color) override;
     bool BeginSceneColorPass(ISwapChain& swap_chain, const ClearColor& clear_color) override;
     bool BeginTexturePass(SampledTextureHandle target, const ClearColor* clear_color) override;
+    bool BeginDepthPass(SampledTextureHandle target, bool clear) override;
     void EndRenderPass() override;
     void BindPipeline(PipelineHandle pipeline) override;
     void SetPushConstants(const void* data, u32 size_bytes) override;
@@ -327,6 +339,7 @@ private:
     ID3D12Resource* active_backbuffer_ = nullptr; // set by BeginRenderPass, consumed by EndRenderPass
     D3D12SwapChain* active_swap_chain_ = nullptr; // likewise, for CopySceneDepth
     ID3D12Resource* active_scene_color_ = nullptr; // set by BeginSceneColorPass in place of active_backbuffer_
+    ID3D12Resource* active_depth_texture_ = nullptr; // set by BeginDepthPass: EndRenderPass returns it from DEPTH_WRITE
     u32 frame_constants_root_index_ = ~0u;        // of the pipeline BindPipeline last bound
     u32 compute_storage_buffer_count_ = 0;
     u32 compute_sampled_texture_count_ = 0;

@@ -522,3 +522,39 @@ upsample into the 960x540 level, and the composite's 9 taps over the screen. If 
 change first: a cheaper first downsample, or folding the last upsample into the composite. Turning it off is per quality preset
 (`QualityPreset::bloom`, applied by `SceneRenderer::SetBloom`); with it off, the chain's five bindless slots are freed. The
 harness was a throwaway test, as before.
+
+## Cascaded sun shadows, 8 November 2026
+
+Render roadmap step 2 shadows the sun (a `DirectionalLight` with `cast_shadows`) through four cascades in one D32 atlas
+(`IDevice::CreateDepthTexture`, `ICommandList::BeginDepthPass`; `player/src/shadow_pass.cpp`). The scene shader's `SunShadow`
+picks a cascade and reads it with a 3x3 bilinear PCF built from 16 texel loads. It was measured as two parts with a throwaway
+harness: an offscreen D3D12 device, 40 frames in one command list, fence to fence, the best of 10 lists after 2 warm-ups, three
+rounds. RTX 3050 Laptop GPU, RelWithDebInfo.
+
+**Casters.** 100 UV spheres of 4 096 triangles each, on a 10 x 10 grid 4 m apart, under the same camera. Culling against
+each cascade drew 289 of the 400 possible sphere-cascade pairs, 1.18 M triangles:
+
+| Cascade resolution | Atlas clear only | 289 draws, 1.18 M triangles |
+| --- | --- | --- |
+| 1024 (2048 x 2048 atlas) | 0.011 - 0.014 ms | 0.515 - 0.516 ms |
+| 2048 (4096 x 4096 atlas) | 0.032 - 0.033 ms | 0.515 - 0.518 ms |
+
+**Receivers.** `SunShadow` itself (extracted from the scene shader source) runs on every pixel of a ground plane. That plane
+spans the cascades, so most pixels test more than one before they find theirs. The other run uses the same shader with
+shadows off (the atlas index 255 makes it return at once):
+
+| Resolution | Shadows off | Shadows on | Added |
+| --- | --- | --- | --- |
+| 1280 x 720 | 0.024 - 0.025 ms | 0.136 - 0.141 ms | 0.111 - 0.116 ms |
+| 1920 x 1080 | 0.056 - 0.057 ms | 0.249 - 0.264 ms | 0.192 - 0.208 ms |
+| 2560 x 1440 | 0.096 - 0.099 ms | 0.417 - 0.431 ms | 0.319 - 0.332 ms |
+
+**What the numbers say.**
+- **The caster pass is bound by triangles, not by atlas size.** It runs at about 2.3 G triangles/s. Raising the cascade from
+  1024 to 2048 changed nothing beyond the clear, which costs 0.02 ms more for a 64 MB atlas.
+- **Lowering the atlas resolution only saves memory.** If the caster pass has to come down, the lever is fewer triangles per
+  cascade: tighter culling, which today is a bounding sphere against each cascade's box, or caster LODs.
+- **The receiver costs about 0.1 ms per megapixel,** 0.2 ms at 1080p. That is less than bloom.
+- **Both parts go away with the quality preset.** Shadows are set per preset (`QualityPreset::shadow_resolution` /
+  `shadow_cascades`, through `SceneRenderer::SetShadows`). Setting either to 0 frees the atlas.
+- **Vulkan has no depth textures yet,** so there the scene draws unshadowed and pays nothing.

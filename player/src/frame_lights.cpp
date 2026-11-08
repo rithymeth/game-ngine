@@ -71,6 +71,7 @@ FrameData BuildFrameData(const World& world, const GuidIndex& guids, const Vec3&
         if (world.HasComponent<Transform>(e)) to_light = BackAxis(ComputeWorldTransform(world, guids, e), default_sun);
         Set4(data.sun_direction, to_light.x, to_light.y, to_light.z, 1.0f);
         Set4(data.sun_color, light->color.x * light->intensity, light->color.y * light->intensity, light->color.z * light->intensity, 1.0f);
+        data.counts[2] = light->cast_shadows ? 1u : 0u;
         break;
     }
     for (const Entity e : EntitiesWith<SkyLight>(world)) {

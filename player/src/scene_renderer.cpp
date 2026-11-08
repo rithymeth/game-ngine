@@ -15,6 +15,7 @@
 #include "particle_pass.h"
 #include "decal_pass.h"
 #include "post_pass.h"
+#include "shadow_pass.h"
 #include "package_textures.h"
 #include "aether/ui/draw.h"
 #include "aether/ui/font.h"
@@ -247,8 +248,54 @@ struct FrameData {
     float4 spot_position_range[4];
     float4 spot_direction_outer[4];
     float4 spot_color_inner[4];
+    float4x4 shadow_view_projection[4];
+    float4 shadow_cascade[4]; // x, y: origin in the atlas (texels); z: world units per texel; w: 1 / depth range
+    uint4 shadow_info;        // x: the atlas's bindless index (255: none); y: cascades; z: texels per cascade side
 };
 ConstantBuffer<FrameData> g_Frame : register(b0, space2);
+
+// The sun's shadow at a world position: 1 lit, 0 shadowed. The first cascade the point falls inside (two texels clear of its edge) is
+// read with a 3x3 bilinear PCF of texel loads (4x4 texels, tent weights), so filtering needs no comparison sampler. The point is pushed
+// out along the surface normal by about a texel first (normal offset), and compared a texel's depth nearer, against acne; the caster
+// pipelines add a slope-scaled bias of their own. The last cascade fades out over its outer tenth instead of ending in a hard line.
+float SunShadow(float3 world_position, float3 geometric_normal, float3 sun_direction) {
+    uint atlas = g_Frame.shadow_info.x;
+    uint count = min(g_Frame.shadow_info.y, 4u);
+    if (atlas >= 128 || count == 0) return 1.0;
+    float size = (float)g_Frame.shadow_info.z;
+    float n_dot_l = saturate(dot(geometric_normal, sun_direction));
+    float slope = sqrt(saturate(1.0 - n_dot_l * n_dot_l));
+    for (uint i = 0; i < count; ++i) {
+        float texel = g_Frame.shadow_cascade[i].z;
+        float3 p = world_position + geometric_normal * (texel * (0.5 + 1.5 * slope));
+        float4 clip = mul(g_Frame.shadow_view_projection[i], float4(p, 1.0));
+        float2 uv = float2(clip.x * 0.5 + 0.5, 0.5 - clip.y * 0.5);
+        float margin = 2.0 / size;
+        if (any(uv < margin) || any(uv > 1.0 - margin) || clip.z > 1.0) continue;
+        float depth = clip.z - texel * g_Frame.shadow_cascade[i].w;
+        float2 tc = uv * size - 0.5;
+        float2 base = floor(tc);
+        float2 f = tc - base;
+        float wx[4] = {1.0 - f.x, 1.0, 1.0, f.x};
+        float wy[4] = {1.0 - f.y, 1.0, 1.0, f.y};
+        float2 origin = g_Frame.shadow_cascade[i].xy;
+        float lit = 0.0;
+        [unroll] for (int y = 0; y < 4; ++y) {
+            [unroll] for (int x = 0; x < 4; ++x) {
+                float2 t = clamp(base + float2(x - 1, y - 1), 0.0, size - 1.0) + origin;
+                float stored = g_Textures[atlas].Load(int3(int2(t), 0)).r;
+                lit += wx[x] * wy[y] * (depth <= stored ? 1.0 : 0.0);
+            }
+        }
+        lit /= 9.0;
+        if (i + 1 == count) {
+            float edge = max(abs(clip.x), abs(clip.y));
+            lit = lerp(1.0, lit, saturate((1.0 - edge) / 0.1));
+        }
+        return lit;
+    }
+    return 1.0;
+}
 #endif
 
 // The surface's response to one light from direction `light_direction` (towards the light), before the light's own radiance: the
@@ -434,10 +481,14 @@ float4 PSMain(PSInput input) : SV_TARGET {
     // the key light. The environment term includes reflected metal color.
     float sky_fill = 0.28 + 0.14 * saturate(normal.y);
     float3 environment = (base_color * (1.0 - metallic) * sky_fill + f0 * (0.45 + 0.25 * roughness)) * sky_tint;
-    float3 color = environment * ambient_occlusion + SurfaceLightEx(sun_direction, normal, view_direction, base_color, metallic, roughness, f0, surface_ext, surface_tangent, surface_bitangent) * sun_radiance;
+    float sun_visibility = 1.0;
 #ifdef AETHER_FRAME_DATA
     // The world position of this pixel: the camera minus the (world-space) vector from the pixel to the camera.
     float3 world_position = g_Frame.camera_world.xyz - ApplyModelTransform(view_local);
+    sun_visibility = SunShadow(world_position, normalize(input.normal), sun_direction);
+#endif
+    float3 color = environment * ambient_occlusion + SurfaceLightEx(sun_direction, normal, view_direction, base_color, metallic, roughness, f0, surface_ext, surface_tangent, surface_bitangent) * sun_radiance * sun_visibility;
+#ifdef AETHER_FRAME_DATA
     for (uint point_index = 0; point_index < g_Frame.counts.x; ++point_index) {
         float3 to_light = g_Frame.point_position_range[point_index].xyz - world_position;
         float distance = max(length(to_light), 1e-4);
@@ -601,6 +652,9 @@ struct SceneRenderer::Impl {
         // KHR_materials_clearcoat, sheen and anisotropy: a 2x1 texture of the packed factors (assets::PackSurfaceExtension), read by texel fetch.
         SampledTextureHandle extension_texture;
         bool has_extension_texture = false;
+        // A bounding sphere of the bind pose in model space, for culling shadow casters; radius < 0 for skinned primitives (always drawn).
+        f32 bounds_center[3] = {0, 0, 0};
+        f32 bounds_radius = -1.0f;
     };
     struct MaterialTextures {
         SampledTextureHandle base_color;
@@ -634,6 +688,7 @@ struct SceneRenderer::Impl {
     // The HDR path (render roadmap step 1): with a scene colour target the scene, decals and particles draw in linear light and the post
     // pass tone maps into the back buffer; without one (hdr false) they draw straight into the back buffer as before.
     std::unique_ptr<PostPass> post;
+    std::unique_ptr<ShadowPass> shadows; // where the device has frame constants and depth textures (D3D12)
     bool hdr = false;
     vfx::ParticleRenderData particle_data;
     // Mesh particles' geometry, flattened once from the package's models (empty: the model couldn't be loaded).
@@ -708,6 +763,12 @@ struct SceneRenderer::Impl {
             desc.hlsl_source = SceneShaderSource(true, hdr);
             desc.frame_constants_size_bytes = sizeof(FrameData);
             for (usize i = 0; i < kFrameBuffers; ++i) frame_buffers.push_back(device.CreateFrameConstantBuffer(sizeof(FrameData)));
+            // AETHER_RENDER_SHADOWS=0 turns sun shadows off (for comparisons).
+            const char* shadow_setting = std::getenv("AETHER_RENDER_SHADOWS");
+            if (shadow_setting == nullptr || std::strcmp(shadow_setting, "0") != 0) {
+                shadows = std::make_unique<ShadowPass>(device, swap_chain);
+                if (!shadows->Valid()) shadows.reset();
+            }
         }
         desc.push_constant_size_bytes = sizeof(DrawConstants);
         desc.use_vertex_buffer = true;
@@ -1419,6 +1480,20 @@ struct SceneRenderer::Impl {
                                     draw.frame_vertex_buffers.back().index);
                 } else {
                     draw.vertices = device.CreateVertexBuffer(vertices.data(), vertices.size() * sizeof(SceneVertex));
+                    if (!vertices.empty()) {
+                        Vec3 lo(vertices[0].position[0], vertices[0].position[1], vertices[0].position[2]), hi = lo;
+                        for (const SceneVertex& v : vertices) {
+                            lo = Vec3(std::min(lo.x, v.position[0]), std::min(lo.y, v.position[1]), std::min(lo.z, v.position[2]));
+                            hi = Vec3(std::max(hi.x, v.position[0]), std::max(hi.y, v.position[1]), std::max(hi.z, v.position[2]));
+                        }
+                        const Vec3 center = (lo + hi) * 0.5f;
+                        f32 radius = 0.0f;
+                        for (const SceneVertex& v : vertices) {
+                            radius = std::max(radius, (Vec3(v.position[0], v.position[1], v.position[2]) - center).Length());
+                        }
+                        draw.bounds_center[0] = center.x, draw.bounds_center[1] = center.y, draw.bounds_center[2] = center.z;
+                        draw.bounds_radius = radius;
+                    }
                 }
                 draw.indices = device.CreateIndexBuffer(primitive.indices.data(), primitive.indices.size() * sizeof(u32),
                                                         IndexFormat::UInt32);
@@ -1553,6 +1628,9 @@ SceneRenderer::~SceneRenderer() = default;
 
 void SceneRenderer::SetViewDistance(f32 metres) { impl_->view_distance = metres; }
 void SceneRenderer::SetDrawParticles(bool draw) { impl_->draw_particles = draw; }
+void SceneRenderer::SetShadows(u32 resolution, u32 cascades) {
+    if (impl_->shadows) impl_->shadows->Configure(resolution, cascades);
+}
 void SceneRenderer::SetBloom(bool enabled) {
     impl_->bloom = enabled;
     if (!enabled && impl_->post) impl_->post->ReleaseBloom(); // the chain's bindless slots go back to the table
@@ -1568,6 +1646,13 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
         u32 index_count = 0;
         DrawConstants constants;
         f32 distance_squared = 0.0f;
+    };
+    // Opaque and alpha-tested draws are gathered first and issued once the shadow atlas (drawn before the scene pass) is ready.
+    struct PendingOpaqueDraw {
+        BufferHandle vertices;
+        BufferHandle indices;
+        u32 index_count = 0;
+        DrawConstants constants;
     };
 
     Impl& renderer = *impl_;
@@ -1610,12 +1695,12 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
     // (solved numerically: the curve's toe crushes the plain sRGB decode of these values to black). Other tone mappers or exposures shift it.
     constexpr ClearColor kBackground{0.015f, 0.025f, 0.045f, 1.0f};
     constexpr ClearColor kBackgroundLinear{0.01037f, 0.01450f, 0.02188f, 1.0f};
-    if (renderer.hdr) {
-        if (!commands.BeginSceneColorPass(renderer.swap_chain, kBackgroundLinear)) return;
-    } else {
-        commands.BeginRenderPass(renderer.swap_chain, kBackground);
-    }
     std::vector<PendingTransparentDraw> transparent_draws;
+    std::vector<PendingOpaqueDraw> opaque_draws;
+    std::vector<ShadowCaster> shadow_casters;
+    FrameData frame_data;
+    View shadow_view;
+    bool sun_shadows = false;
     BufferHandle frame_buffer; // this frame's lights, when the device has frame constants
     const Entity camera_entity = FindActiveCamera(world, guids);
     const Camera* camera = world.IsAlive(camera_entity) ? world.GetComponent<Camera>(camera_entity) : nullptr;
@@ -1644,6 +1729,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
         decal_view_projection = view_projection;
         decal_camera_position = camera_position;
         have_camera = true;
+        shadow_view = MakeView(LimitViewDistance(*camera, renderer.view_distance), camera_transform, aspect);
         // Mesh particles get the scene shader's sun and sky: the frame's lights where the device has frame constants, else the shader's
         // fixed light (ParticleLighting's defaults), through the pass's push constants on every backend.
         ParticleLighting particle_lighting;
@@ -1651,9 +1737,9 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
         if (!renderer.frame_buffers.empty()) {
             // The sun, sky and nearby point and spot lights of this scene (the previous use of this slot's frame has finished).
             frame_buffer = renderer.frame_buffers[frame_index % renderer.frame_buffers.size()];
-            FrameData frame_data = BuildFrameData(world, guids, camera_position);
+            frame_data = BuildFrameData(world, guids, camera_position);
             if (draw_particles) AddParticleLights(frame_data, renderer.particle_data.lights, camera_position);
-            renderer.device.UpdateFrameConstantBuffer(frame_buffer, &frame_data, sizeof(frame_data));
+            sun_shadows = renderer.shadows && frame_data.counts[2] != 0; // uploaded once the shadow pass has filled its part
             particle_lighting.sun_direction = Vec3(frame_data.sun_direction[0], frame_data.sun_direction[1], frame_data.sun_direction[2]);
             particle_lighting.sun_color = Vec3(frame_data.sun_color[0], frame_data.sun_color[1], frame_data.sun_color[2]);
             particle_lighting.sky_color = Vec3(frame_data.sky_color[0], frame_data.sky_color[1], frame_data.sky_color[2]);
@@ -1665,9 +1751,6 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
             }
         }
         if (renderer.particles) renderer.particles->SetLighting(particle_lighting);
-        commands.BindPipeline(renderer.pipeline);
-        if (frame_buffer.IsValid()) commands.BindFrameConstants(frame_buffer);
-        commands.BindBindlessTextures();
         world.ForEachArchetype([&](const Archetype& archetype) {
             if (!archetype.Mask().test(GetComponentId<Transform>()) || !archetype.Mask().test(GetComponentId<ModelRenderer>())) return;
             for (usize chunk = 0; chunk < archetype.ChunkCount(); ++chunk) {
@@ -1843,16 +1926,61 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                                 transparent_draws.push_back({frame_vertex_buffer, primitive.indices, primitive.index_count,
                                                              constants, dx * dx + dy * dy + dz * dz});
                             } else {
-                                commands.BindVertexBuffer(frame_vertex_buffer, sizeof(SceneVertex));
-                                commands.BindIndexBuffer(primitive.indices, IndexFormat::UInt32);
-                                commands.SetPushConstants(&constants, sizeof(constants));
-                                commands.DrawIndexed(primitive.index_count);
+                                opaque_draws.push_back({frame_vertex_buffer, primitive.indices, primitive.index_count, constants});
+                                if (sun_shadows) {
+                                    ShadowCaster caster;
+                                    caster.vertices = frame_vertex_buffer;
+                                    caster.indices = primitive.indices;
+                                    caster.index_count = primitive.index_count;
+                                    caster.model = model_transform;
+                                    if (primitive.bounds_radius >= 0.0f && primitive.frame_vertex_buffers.empty()) {
+                                        const Vec4 c = model_transform * Vec4(primitive.bounds_center[0], primitive.bounds_center[1],
+                                                                              primitive.bounds_center[2], 1.0f);
+                                        const f32 scale = std::max({Vec3(model_transform.cols[0].x, model_transform.cols[0].y, model_transform.cols[0].z).Length(),
+                                                                    Vec3(model_transform.cols[1].x, model_transform.cols[1].y, model_transform.cols[1].z).Length(),
+                                                                    Vec3(model_transform.cols[2].x, model_transform.cols[2].y, model_transform.cols[2].z).Length()});
+                                        caster.bounds_center = Vec3(c.x, c.y, c.z);
+                                        caster.bounds_radius = primitive.bounds_radius * scale;
+                                    }
+                                    caster.alpha_tested = primitive.alpha_mode == assets::MaterialAlphaMode::Mask;
+                                    caster.base_color_texture = primitive.has_base_color_texture && primitive.base_color_texture.IsValid()
+                                                                    ? primitive.base_color_texture.index
+                                                                    : 255u;
+                                    caster.alpha = primitive.color[3];
+                                    caster.alpha_cutoff = primitive.alpha_cutoff;
+                                    shadow_casters.push_back(caster);
+                                }
                             }
                         }
                     }
                 }
             }
         });
+    }
+    // The sun's shadow atlas, outside any pass; then this frame's constants (lights and cascades) and the scene pass itself.
+    if (sun_shadows) {
+        const Vec3 light_travel(-frame_data.sun_direction[0], -frame_data.sun_direction[1], -frame_data.sun_direction[2]);
+        const ShadowFrameData shadow = renderer.shadows->Render(commands, shadow_view, light_travel, shadow_casters);
+        std::memcpy(frame_data.shadow_view_projection, shadow.view_projection, sizeof(shadow.view_projection));
+        std::memcpy(frame_data.shadow_cascade, shadow.cascade, sizeof(shadow.cascade));
+        std::memcpy(frame_data.shadow_info, shadow.info, sizeof(shadow.info));
+    }
+    if (frame_buffer.IsValid()) renderer.device.UpdateFrameConstantBuffer(frame_buffer, &frame_data, sizeof(frame_data));
+    if (renderer.hdr) {
+        if (!commands.BeginSceneColorPass(renderer.swap_chain, kBackgroundLinear)) return;
+    } else {
+        commands.BeginRenderPass(renderer.swap_chain, kBackground);
+    }
+    if (!opaque_draws.empty()) {
+        commands.BindPipeline(renderer.pipeline);
+        if (frame_buffer.IsValid()) commands.BindFrameConstants(frame_buffer);
+        commands.BindBindlessTextures();
+        for (const PendingOpaqueDraw& draw : opaque_draws) {
+            commands.BindVertexBuffer(draw.vertices, sizeof(SceneVertex));
+            commands.BindIndexBuffer(draw.indices, IndexFormat::UInt32);
+            commands.SetPushConstants(&draw.constants, sizeof(draw.constants));
+            commands.DrawIndexed(draw.index_count);
+        }
     }
     // Decals paint over the opaque surfaces' lit colour, before the transparent ones. The pass copies the scene depth first, so the transparent
     // draws below rebind their own pipeline, frame constants and texture table.

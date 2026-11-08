@@ -23,14 +23,18 @@ struct FrameData {
     f32 sun_direction[4]{}; // xyz: the unit vector from a surface toward the sun; w: 1 when a DirectionalLight set it
     f32 sun_color[4]{};     // rgb: the sun's colour times its intensity
     f32 sky_color[4]{};     // rgb: the ambient light's colour times its intensity; w: 1 when a SkyLight set it
-    u32 counts[4]{};        // x: point lights used, y: spot lights used
+    u32 counts[4]{};        // x: point lights used, y: spot lights used, z: 1 when the sun is a DirectionalLight that casts shadows
     f32 point_position_range[kMaxPointLights][4]{}; // xyz position, w range (the light fades to nothing there)
     f32 point_color[kMaxPointLights][4]{};          // rgb colour times intensity
     f32 spot_position_range[kMaxSpotLights][4]{};   // xyz position, w range
     f32 spot_direction_outer[kMaxSpotLights][4]{};  // xyz: the way it points; w: cosine of the outer cone angle
     f32 spot_color_inner[kMaxSpotLights][4]{};      // rgb colour times intensity; w: cosine of the inner cone angle
+    // The sun's shadow cascades (ShadowPass, player/src/shadow_pass.h): ShadowFrameData's layout.
+    f32 shadow_view_projection[4][16]{}; // per cascade, column-major
+    f32 shadow_cascade[4][4]{};          // x, y: origin in the atlas (texels); z: world units per texel; w: 1 / depth range
+    u32 shadow_info[4]{255u, 0u, 0u, 0u}; // x: the atlas's bindless index (255: no shadows); y: cascades; z: texels per cascade side
 };
-static_assert(sizeof(FrameData) % 16 == 0 && sizeof(FrameData) == 528);
+static_assert(sizeof(FrameData) % 16 == 0 && sizeof(FrameData) == 864);
 
 // The camera as a quality preset's view distance (metres) draws it: the far plane pulled in to that distance, kept clear of the near plane. An
 // orthographic camera and a distance of 0 or less are left alone, as is a far plane already nearer.
