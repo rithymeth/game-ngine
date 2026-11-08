@@ -470,3 +470,34 @@ under the gate.
 
 Verified by running the comparison twice locally: `cook/atex_roundtrip_256` is reported as a regression without the floor and
 is not reported with it.
+
+## CPU skinning cost, 8 November 2026
+
+`player/src/scene_renderer.cpp` skins on the CPU: every vertex is blended against its joint matrices each frame and the
+vertex buffers are rewritten. `bench/src/bench_skinning.cpp` replicates that loop (position, normal and tangent over four
+influences, normalise, re-orthogonalise the tangent) to answer one question: is it a bottleneck?
+
+Windows, MSVC RelWithDebInfo, one thread, synthetic meshes. **The median is one frame of skinning.**
+
+| Benchmark | Median per frame | Share of a 16.6 ms (60 fps) frame |
+|---|---|---|
+| 104 vertices x 1 (the shipped AETHER-01 Kael rig) | 0.007 ms | 0.04% |
+| 20,000 vertices x 1 (a hero) | 1.19 ms | 7% |
+| 5,000 vertices x 10 (an NPC group) | 2.58 ms | 16% |
+| 20,000 vertices x 10 (ten heroes) | 13.3 ms | 80% |
+| 5,000 vertices x 100 (a crowd) | 29.0 ms | 175% |
+
+That is about **60 ns per vertex**, and it scales linearly with vertices times characters.
+
+What this says:
+
+- **Not a bottleneck for AETHER-01 as shipped.** Kael has 104 vertices and Warden 112, so skinning is noise there. Do not
+  build GPU skinning to fix AETHER-01.
+- **It is a bottleneck at AAA character counts.** One hero is cheap, but ten heroes use four fifths of a 60 fps frame
+  and a 100-NPC crowd does not fit in the frame at all, before rendering, physics or gameplay.
+- **Caveats.** Single-threaded; synthetic vertices and weights; the loop only, so pose evaluation and the vertex-buffer
+  upload are not included. The per-frame upload will add to these figures. Real production rigs also have far more
+  joints, which makes matrix and cache behaviour worse, not better.
+
+Decision: GPU skinning is justified by the AAA target, not by the proof game. It should come with a test that renders a
+deformed pose, so it lands together with the evidence A06 is missing.
