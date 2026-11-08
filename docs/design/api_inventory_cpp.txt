@@ -1282,10 +1282,13 @@
   public:HotReloader(AssetDatabase&database,const ImporterRegistry&importers,DerivedDataCache&cache,std::chrono::milliseconds debounce=std::chrono::milliseconds(200),std::string platform="")
   std::vector<AssetChange>Update(FileWatcher::Clock::time_point now)
 [engine/include/aether/assets/image.h] experimental
+  type struct HdrImageData
   type struct ImageData
+  [[nodiscard]]bool DecodeHdrImageFromMemory(std::span<const u8>bytes,HdrImageData&out_image,u64 max_pixels=16*1024*1024)
   [[nodiscard]]bool DecodeImageFile(const std::string&path,ImageData&out_image)
   [[nodiscard]]bool DecodeImageFile(const std::string&path,ImageData&out_image,u64 max_pixels)
   [[nodiscard]]bool DecodeImageFromMemory(std::span<const u8>bytes,ImageData&out_image,u64 max_pixels=16*1024*1024)
+  [[nodiscard]]bool IsHdrImage(std::span<const u8>bytes)
 [engine/include/aether/assets/importer.h] experimental
   type class IAssetImporter
   type class ImporterRegistry
@@ -1969,6 +1972,7 @@
   ResourceStats GetResourceStats()const override
   SampledTextureHandle CreateCompressedTexture(CompressedTextureFormat format,u32 width,u32 height,std::span<const CompressedMip>mips)override
   SampledTextureHandle CreateDepthTexture(u32 width,u32 height)override
+  SampledTextureHandle CreateHalfFloatTexture(u32 width,u32 height,u32 mip_count,const u16*halves)override
   SampledTextureHandle CreateR32FloatTexture(u32 width,u32 height,const f32*values)override
   SampledTextureHandle CreateRenderTexture(u32 width,u32 height)override
   SampledTextureHandle CreateTexture(u32 width,u32 height,const u8*rgba8_pixels)override
@@ -2100,6 +2104,7 @@
   virtual ResourceStats GetResourceStats()const
   virtual SampledTextureHandle CreateCompressedTexture(CompressedTextureFormat,u32,u32,std::span<const CompressedMip>)
   virtual SampledTextureHandle CreateDepthTexture(u32,u32)
+  virtual SampledTextureHandle CreateHalfFloatTexture(u32,u32,u32,const u16*)
   virtual SampledTextureHandle CreateR32FloatTexture(u32 width,u32 height,const f32*values)=0
   virtual SampledTextureHandle CreateRenderTexture(u32,u32)
   virtual SampledTextureHandle CreateTexture(u32 width,u32 height,const u8*rgba8_pixels)=0
@@ -4962,6 +4967,8 @@
   ),AETHER_FIELD(cast_shadows,Field_EditAnywhere))AETHER_REFLECT(aether::SpotLight,1,AETHER_FIELD(color,Field_EditAnywhere),AETHER_FIELD(intensity,Field_EditAnywhere,
   ),AETHER_FIELD(color,Field_EditAnywhere),AETHER_FIELD(opacity,Field_EditAnywhere,
   ),AETHER_FIELD(enabled,Field_EditAnywhere))
+  ),AETHER_FIELD(environment,Field_EditAnywhere,
+  ),AETHER_FIELD(environment_rotation_degrees,Field_EditAnywhere,
   ),AETHER_FIELD(exposure_compensation,Field_EditAnywhere,
   ),AETHER_FIELD(extents,Field_EditAnywhere,
   ),AETHER_FIELD(inner_angle_degrees,Field_EditAnywhere,

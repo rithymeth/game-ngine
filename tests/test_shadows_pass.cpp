@@ -98,7 +98,7 @@ AETHER_TEST(Shadows_AtlasLayoutAndFrameData) {
     AETHER_CHECK(x == 1024 && y == 1024);
 
     // The C++ frame data matches the HLSL struct: the shadow block follows the spot lights, 16-byte aligned.
-    static_assert(sizeof(player::FrameData) == 864);
+    static_assert(sizeof(player::FrameData) >= 864);
     static_assert(offsetof(player::FrameData, shadow_view_projection) == 528 && offsetof(player::FrameData, shadow_info) == 848);
 
     const std::vector<ShadowCascade> cascades = player::FitShadowCascades(TestView(), Vec3(0, -1, 0), 512, 4, 20.0f);

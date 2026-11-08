@@ -28,4 +28,17 @@ struct ImageData {
 // bounds allocations when this is used on untrusted/imported data.
 [[nodiscard]] bool DecodeImageFromMemory(std::span<const u8> bytes, ImageData& out_image, u64 max_pixels = 16 * 1024 * 1024);
 
+// Decoded high-dynamic-range image data: linear RGB floats, tightly packed, top row first.
+struct HdrImageData {
+    u32 width = 0;
+    u32 height = 0;
+    std::vector<f32> rgb;
+};
+
+// Whether the bytes are a Radiance RGBE (.hdr) image.
+[[nodiscard]] bool IsHdrImage(std::span<const u8> bytes);
+// Decodes a Radiance RGBE (.hdr) image from memory to linear floats, unclamped. False (out_image untouched) for anything else, a
+// damaged file or more than max_pixels pixels.
+[[nodiscard]] bool DecodeHdrImageFromMemory(std::span<const u8> bytes, HdrImageData& out_image, u64 max_pixels = 16 * 1024 * 1024);
+
 } // namespace aether::assets

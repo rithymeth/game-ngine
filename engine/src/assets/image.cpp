@@ -83,6 +83,34 @@ bool DecodeImageFile(const std::string& path, ImageData& out_image, u64 max_pixe
     return true;
 }
 
+bool IsHdrImage(std::span<const u8> bytes) {
+    if (bytes.empty() || bytes.size() > static_cast<usize>(std::numeric_limits<int>::max())) return false;
+    return stbi_is_hdr_from_memory(reinterpret_cast<const stbi_uc*>(bytes.data()), static_cast<int>(bytes.size())) != 0;
+}
+
+bool DecodeHdrImageFromMemory(std::span<const u8> bytes, HdrImageData& out_image, u64 max_pixels) {
+    if (!IsHdrImage(bytes)) return false;
+    int width = 0, height = 0, channels = 0;
+    const auto* input = reinterpret_cast<const stbi_uc*>(bytes.data());
+    const int input_size = static_cast<int>(bytes.size());
+    if (!stbi_info_from_memory(input, input_size, &width, &height, &channels) || width <= 0 || height <= 0) return false;
+    const u64 pixel_count = static_cast<u64>(width) * static_cast<u64>(height);
+    if (pixel_count > max_pixels || pixel_count > std::numeric_limits<usize>::max() / (3 * sizeof(f32))) return false;
+    f32* pixels = stbi_loadf_from_memory(input, input_size, &width, &height, &channels, 3);
+    if (!pixels) return false;
+    if (width <= 0 || height <= 0 || static_cast<u64>(width) * static_cast<u64>(height) != pixel_count) {
+        stbi_image_free(pixels);
+        return false;
+    }
+    HdrImageData decoded;
+    decoded.width = static_cast<u32>(width);
+    decoded.height = static_cast<u32>(height);
+    decoded.rgb.assign(pixels, pixels + static_cast<usize>(pixel_count) * 3);
+    stbi_image_free(pixels);
+    out_image = std::move(decoded);
+    return true;
+}
+
 bool DecodeImageFromMemory(std::span<const u8> bytes, ImageData& out_image, u64 max_pixels) {
     if (bytes.empty() || bytes.size() > static_cast<usize>(std::numeric_limits<int>::max()) ||
         !PngChunksFitInput(bytes)) return false;

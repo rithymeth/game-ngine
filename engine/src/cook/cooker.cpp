@@ -338,7 +338,10 @@ CookReport Cook(const CookOptions& options) {
         cooked.bytes = bytes.size();
         report.original_bytes += bytes.size();
         // A texture's source goes in after it is cooked, and only if there is no cooked copy to stand in for it (strip_source_textures).
-        const bool defer_source = options.strip_source_textures && options.cook_textures && record.importer == "Texture";
+        // A Radiance .hdr (a sky's environment) is not block-compressed: an 8-bit copy can't stand in for its range, so its source
+        // always goes in, as it is.
+        const bool hdr_texture = record.importer == "Texture" && assets::IsHdrImage(bytes);
+        const bool defer_source = options.strip_source_textures && options.cook_textures && record.importer == "Texture" && !hdr_texture;
         if (!defer_source) writer.Add("Content/" + record.path, bytes);
 
         // A .gltf's buffers and images that aren't assets themselves.
@@ -392,7 +395,7 @@ CookReport Cook(const CookOptions& options) {
 
         // Textures: the GPU-ready form.
         std::string cooked_format;
-        if (options.cook_textures && record.importer == "Texture") {
+        if (options.cook_textures && record.importer == "Texture" && !hdr_texture) {
             assets::AssetMeta meta;
             json settings_json = json::object();
             if (assets::LoadAssetMeta(database.MetaPath(guid), meta)) settings_json = meta.settings;

@@ -2,6 +2,7 @@
 
 #include "aether/ecs/world.h"
 #include "aether/math/math.h"
+#include "aether/renderer/components.h"
 #include "aether/scene/entity_guid.h"
 #include "aether/scene/gameplay.h"
 #include "aether/vfx/render.h"
@@ -33,8 +34,16 @@ struct FrameData {
     f32 shadow_view_projection[4][16]{}; // per cascade, column-major
     f32 shadow_cascade[4][4]{};          // x, y: origin in the atlas (texels); z: world units per texel; w: 1 / depth range
     u32 shadow_info[4]{255u, 0u, 0u, 0u}; // x: the atlas's bindless index (255: no shadows); y: cascades; z: texels per cascade side
+    // The sky's image-based lighting (player/src/environment.h): the irradiance's SH coefficients (rgb), and the prefiltered environment.
+    f32 sky_sh[9][4]{};
+    u32 environment_info[4]{255u, 0u, 0u, 0u}; // x: the environment's bindless index (255: none); y: mip levels; z: level 0's height
 };
-static_assert(sizeof(FrameData) % 16 == 0 && sizeof(FrameData) == 864);
+static_assert(sizeof(FrameData) % 16 == 0 && sizeof(FrameData) == 1024);
+
+// The HLSL for FrameData (the layout above), its constant buffer g_Frame (register b0, space2), and the sky helpers that read it:
+// EnvironmentRadiance(direction, lod), SkyIrradiance(normal) and SkyLighting(...), the split-sum image-based lighting. Needs g_Textures
+// and g_Sampler declared before it.
+const char* FrameDataHlsl();
 
 // The camera as a quality preset's view distance (metres) draws it: the far plane pulled in to that distance, kept clear of the near plane. An
 // orthographic camera and a distance of 0 or less are left alone, as is a far plane already nearer.
@@ -43,6 +52,8 @@ Camera LimitViewDistance(const Camera& camera, f32 view_distance);
 // The first DirectionalLight and SkyLight in the world (an entity with no Transform keeps the default direction), and the PointLights and SpotLights
 // nearest to `camera_position`, up to the limits above. Positions and directions are world space (parents included).
 FrameData BuildFrameData(const World& world, const GuidIndex& guids, const Vec3& camera_position);
+// The first SkyLight in the world (the one BuildFrameData uses), or null.
+const SkyLight* FindSkyLight(const World& world);
 
 // Particle lights (vfx::ParticleLight: fire, sparks, explosions) join the point lights: the scene's and the particles' are pooled and the
 // kMaxPointLights nearest to `camera_position` stay, except that the scene's nearest four keep their slots however many particle lights

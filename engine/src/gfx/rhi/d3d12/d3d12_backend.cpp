@@ -432,6 +432,9 @@ PipelineHandle D3D12Device::CreatePipeline(const PipelineDesc& desc, ISwapChain&
     D3D12_STATIC_SAMPLER_DESC sampler{};
     sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
     sampler.AddressU = sampler.AddressV = sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+    // Every mip level: a zero-initialised MaxLOD would clamp sampling to level 0 (cooked textures carry whole mip chains).
+    sampler.MinLOD = 0.0f;
+    sampler.MaxLOD = D3D12_FLOAT32_MAX;
     sampler.ShaderRegister = 0;
     // space1, matching the shared HLSL's `register(s0, space1)` — see the
     // "Unified mode's textured-quad pipeline" comment in rhi_demo/main.cpp
@@ -1094,6 +1097,90 @@ SampledTextureHandle D3D12Device::CreateDepthTexture(u32 width, u32 height) {
     sampled_float_textures_[slot] = std::move(texture);
     render_texture_sizes_[slot] = {width, height};
     render_texture_depth_[slot] = 1;
+    ++sampled_texture_count_;
+    return SampledTextureHandle{bindless_index};
+}
+
+SampledTextureHandle D3D12Device::CreateHalfFloatTexture(u32 width, u32 height, u32 mip_count, const u16* halves) {
+    if (width == 0 || height == 0 || halves == nullptr || width > D3D12_REQ_TEXTURE2D_U_OR_V_DIMENSION ||
+        height > D3D12_REQ_TEXTURE2D_U_OR_V_DIMENSION) {
+        throw std::invalid_argument("CreateHalfFloatTexture requires a non-zero extent within the device's 2D texture limit and data");
+    }
+    u32 max_mips = 1;
+    while ((std::max(width, height) >> max_mips) > 0) ++max_mips;
+    if (mip_count == 0 || mip_count > max_mips) {
+        throw std::invalid_argument("CreateHalfFloatTexture requires between 1 and the extent's full chain of mip levels");
+    }
+    DrainRetired(); // destroyed textures give their slots back at retirement
+    if (sampled_texture_count_ >= kMaxUserBindlessTextures || !bindless_texture_heap_->CanAllocate()) {
+        AETHER_LOG_ERROR("D3D12", "CreateHalfFloatTexture: the bindless texture table is full (capacity=%u real textures)", kMaxUserBindlessTextures);
+        return {};
+    }
+    D3D12_RESOURCE_DESC desc{};
+    desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    desc.Width = width;
+    desc.Height = height;
+    desc.DepthOrArraySize = 1;
+    desc.MipLevels = static_cast<UINT16>(mip_count);
+    desc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+    desc.SampleDesc.Count = 1;
+    D3D12_HEAP_PROPERTIES default_heap{};
+    default_heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+    ComPtr<ID3D12Resource> texture;
+    AETHER_D3D_CHECK(device_.Handle()->CreateCommittedResource(&default_heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COPY_DEST,
+                                                                nullptr, IID_PPV_ARGS(&texture)));
+    std::vector<D3D12_PLACED_SUBRESOURCE_FOOTPRINT> footprints(mip_count);
+    std::vector<UINT> rows(mip_count);
+    std::vector<UINT64> row_sizes(mip_count);
+    UINT64 upload_size = 0;
+    device_.Handle()->GetCopyableFootprints(&desc, 0, mip_count, 0, footprints.data(), rows.data(), row_sizes.data(), &upload_size);
+    std::vector<u8> upload(static_cast<usize>(upload_size), 0);
+    const u8* source = reinterpret_cast<const u8*>(halves);
+    for (u32 mip = 0; mip < mip_count; ++mip) {
+        const u32 h = std::max(1u, height >> mip), w = std::max(1u, width >> mip);
+        const usize row_bytes = static_cast<usize>(w) * 8;
+        for (u32 y = 0; y < h; ++y) {
+            std::memcpy(upload.data() + footprints[mip].Offset + static_cast<usize>(y) * footprints[mip].Footprint.RowPitch, source, row_bytes);
+            source += row_bytes;
+        }
+    }
+    gfx::Buffer staging(device_, upload_size, gfx::BufferKind::Upload);
+    staging.Update(upload.data(), upload_size);
+    gfx::CommandList copy(device_);
+    copy.Reset();
+    for (u32 mip = 0; mip < mip_count; ++mip) {
+        D3D12_TEXTURE_COPY_LOCATION dst{};
+        dst.pResource = texture.Get();
+        dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+        dst.SubresourceIndex = mip;
+        D3D12_TEXTURE_COPY_LOCATION src{};
+        src.pResource = staging.Handle();
+        src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+        src.PlacedFootprint = footprints[mip];
+        copy->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+    }
+    D3D12_RESOURCE_BARRIER to_read{};
+    to_read.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    to_read.Transition.pResource = texture.Get();
+    to_read.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    to_read.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+    to_read.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+    copy->ResourceBarrier(1, &to_read);
+    copy.Close();
+    ID3D12CommandList* lists[] = {copy.Get()};
+    device_.WaitForFence(device_.Submit(lists, 1));
+
+    const u32 bindless_index = bindless_texture_heap_->Allocate();
+    if (bindless_index == DescriptorHeap::kInvalidIndex) return {};
+    const usize slot = bindless_index - kFirstUserBindlessTextureIndex;
+    D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
+    srv.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+    srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    srv.Texture2D.MipLevels = mip_count;
+    device_.Handle()->CreateShaderResourceView(texture.Get(), &srv, bindless_texture_heap_->CPUHandle(bindless_index));
+    sampled_descriptor_indices_[slot] = DescriptorHeap::kInvalidIndex; // graphics only
+    sampled_float_textures_[slot] = std::move(texture);
     ++sampled_texture_count_;
     return SampledTextureHandle{bindless_index};
 }

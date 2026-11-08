@@ -342,6 +342,48 @@ AETHER_TEST(Cook_MobileTargetCooksAstcAndCanStripTheSourceTextures) {
     CHECK(report.pak_bytes < both.pak_bytes);
 }
 
+// A sky's .hdr environment (SkyLight::environment) keeps its source in the pak even when sources are stripped, and gets no block-compressed
+// copy: 8 bits per channel can't stand in for its range.
+AETHER_TEST(Cook_KeepsHdrSkiesAsTheyAre) {
+    const stdfs::path project = MakeProject("HdrSky");
+    const stdfs::path content = project.parent_path() / "Content";
+    // A 2x1 Radiance image, flat (unencoded) scanlines: (1, 1, 1) and (4, 2, 1).
+    std::string hdr = std::string("#?RADIANCE") + '\n' + "FORMAT=32-bit_rle_rgbe" + '\n' + '\n' + "-Y 1 +X 2" + '\n';
+    for (const unsigned char b : {128, 128, 128, 129, 128, 64, 32, 131}) hdr.push_back(static_cast<char>(b));
+    WriteText(content / "Skies/sunset.hdr", hdr);
+    json scene = {{"$type", "Scene"},
+                  {"$version", 1},
+                  {"entities", json::array({{{"components", {{"SkyLight", {{"$v", 1}, {"environment", "Skies/sunset.hdr"}}}}}}})}};
+    WriteText(content / "Scenes/sky.ascene", scene.dump(2));
+    ProjectSettings settings;
+    std::string error;
+    AETHER_CHECK(LoadProject(project, settings, &error));
+    settings.startup_scene = "Scenes/sky.ascene";
+    AETHER_CHECK(SaveProject(project, settings, &error));
+
+    cook::CookOptions options;
+    options.project_file = project;
+    options.output_dir = project.parent_path() / "HdrOut";
+    options.configuration = cook::BuildConfiguration::Shipping;
+    options.strip_source_textures = true;
+    const cook::CookReport report = cook::Cook(options);
+    CHECK(report.ok);
+    pak::PakReader reader;
+    CHECK(reader.Open(report.pak_file.string(), &error));
+    std::vector<u8> bytes;
+    CHECK(reader.Read("Content/Skies/sunset.hdr", bytes) && bytes.size() == hdr.size());
+    std::string text;
+    CHECK(reader.ReadText("Manifest.json", text));
+    bool listed = false;
+    const json manifest = json::parse(text);
+    for (const json& a : manifest["assets"]) {
+        if (a.value("path", std::string()) != "Skies/sunset.hdr") continue;
+        listed = true;
+        CHECK(a.value("cooked", std::string()).empty());
+    }
+    CHECK(listed);
+}
+
 AETHER_TEST(Cook_RefusesNothingToCook) {
     const stdfs::path parent = stdfs::temp_directory_path() / "aether_cook_tests";
     stdfs::remove_all(parent / "Empty");

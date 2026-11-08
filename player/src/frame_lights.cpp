@@ -12,6 +12,77 @@ namespace aether::player {
 
 namespace {
 
+constexpr char kFrameDataHlsl[] = R"(
+// Everything a frame shares (filled by player/src/frame_lights.cpp: keep the two layouts in step).
+struct FrameData {
+    float4 camera_world;
+    float4 sun_direction;
+    float4 sun_color;
+    float4 sky_color;
+    uint4 counts;
+    float4 point_position_range[8];
+    float4 point_color[8];
+    float4 spot_position_range[4];
+    float4 spot_direction_outer[4];
+    float4 spot_color_inner[4];
+    float4x4 shadow_view_projection[4];
+    float4 shadow_cascade[4]; // x, y: origin in the atlas (texels); z: world units per texel; w: 1 / depth range
+    uint4 shadow_info;        // x: the atlas's bindless index (255: none); y: cascades; z: texels per cascade side
+    float4 sky_sh[9];         // the sky's irradiance, SH coefficients (rgb)
+    uint4 environment_info;   // x: the prefiltered environment's bindless index (255: none); y: mip levels; z: level 0's height
+};
+ConstantBuffer<FrameData> g_Frame : register(b0, space2);
+
+// The environment's radiance from `direction` at mip `lod` (0 sharp; level i prefiltered for roughness i / (levels - 1)). Equirectangular:
+// u = 0.5 looks down -Z and grows toward +X, v = 0 is up. v stays half a texel clear of the poles (the sampler wraps).
+float3 EnvironmentRadiance(float3 direction, float lod) {
+    direction = normalize(direction);
+    float u = atan2(direction.x, -direction.z) * 0.15915494 + 0.5;
+    float v = acos(clamp(direction.y, -1.0, 1.0)) * 0.31830989;
+    float rows = max(1.0, (float)(g_Frame.environment_info.z >> (uint)ceil(lod)));
+    v = clamp(v, 0.5 / rows, 1.0 - 0.5 / rows);
+    return g_Textures[g_Frame.environment_info.x].SampleLevel(g_Sampler, float2(u, v), lod).rgb;
+}
+
+// The sky's irradiance arriving at a surface facing `n` (from the SH coefficients; the cosine lobe is folded in).
+float3 SkyIrradiance(float3 n) {
+    float3 e = g_Frame.sky_sh[0].rgb * 0.282095
+             + g_Frame.sky_sh[1].rgb * (0.488603 * n.y) + g_Frame.sky_sh[2].rgb * (0.488603 * n.z) + g_Frame.sky_sh[3].rgb * (0.488603 * n.x)
+             + g_Frame.sky_sh[4].rgb * (1.092548 * n.x * n.y) + g_Frame.sky_sh[5].rgb * (1.092548 * n.y * n.z)
+             + g_Frame.sky_sh[6].rgb * (0.315392 * (3.0 * n.z * n.z - 1.0)) + g_Frame.sky_sh[7].rgb * (1.092548 * n.x * n.z)
+             + g_Frame.sky_sh[8].rgb * (0.546274 * (n.x * n.x - n.y * n.y));
+    return max(e, 0.0);
+}
+
+// The split-sum environment BRDF, analytic (Karis 2014, "Physically Based Shading on Mobile"): scale and bias applied to F0.
+float2 EnvironmentBrdf(float roughness, float n_dot_v) {
+    const float4 c0 = float4(-1.0, -0.0275, -0.572, 0.022);
+    const float4 c1 = float4(1.0, 0.0425, 1.04, -0.04);
+    float4 r = roughness * c0 + c1;
+    float a004 = min(r.x * r.x, exp2(-9.28 * n_dot_v)) * r.x + r.y;
+    return float2(-1.04, 1.04) * a004 + r.zw;
+}
+
+// The sky's light on a surface, before the SkyLight's tint: Lambert diffuse from the irradiance, and the prefiltered reflection at the
+// roughness's mip times the environment BRDF. Ambient occlusion darkens the diffuse, and the specular through specular occlusion
+// (Lagarde and de Rousiers 2014).
+float3 SkyLighting(float3 n, float3 v, float3 base_color, float metallic, float roughness, float3 f0, float occlusion) {
+    float n_dot_v = saturate(dot(n, v)) + 1e-4;
+    float levels = (float)max(g_Frame.environment_info.y, 1u);
+    float3 reflected = EnvironmentRadiance(reflect(-v, n), roughness * (levels - 1.0));
+    float2 brdf = EnvironmentBrdf(roughness, n_dot_v);
+    float specular_occlusion = saturate(pow(n_dot_v + occlusion, exp2(-16.0 * roughness - 1.0)) - 1.0 + occlusion);
+    float3 diffuse = SkyIrradiance(n) * base_color * (1.0 - metallic) * (0.31830989 * occlusion);
+    return diffuse + reflected * (f0 * brdf.x + brdf.y) * specular_occlusion;
+}
+)";
+
+} // namespace
+
+const char* FrameDataHlsl() { return kFrameDataHlsl; }
+
+namespace {
+
 constexpr usize kReservedSceneLights = 4; // see AddParticleLights
 constexpr f32 kDegreesToRadians = 3.14159265358979f / 180.0f;
 
@@ -55,6 +126,13 @@ Camera LimitViewDistance(const Camera& camera, f32 view_distance) {
     return limited;
 }
 
+const SkyLight* FindSkyLight(const World& world) {
+    for (const Entity e : EntitiesWith<SkyLight>(world)) {
+        if (const SkyLight* light = world.GetComponent<SkyLight>(e)) return light;
+    }
+    return nullptr;
+}
+
 FrameData BuildFrameData(const World& world, const GuidIndex& guids, const Vec3& camera_position) {
     FrameData data;
     Set4(data.camera_world, camera_position.x, camera_position.y, camera_position.z, 1.0f);
@@ -74,11 +152,8 @@ FrameData BuildFrameData(const World& world, const GuidIndex& guids, const Vec3&
         data.counts[2] = light->cast_shadows ? 1u : 0u;
         break;
     }
-    for (const Entity e : EntitiesWith<SkyLight>(world)) {
-        const SkyLight* light = world.GetComponent<SkyLight>(e);
-        if (light == nullptr) continue;
+    if (const SkyLight* light = FindSkyLight(world)) {
         Set4(data.sky_color, light->color.x * light->intensity, light->color.y * light->intensity, light->color.z * light->intensity, 1.0f);
-        break;
     }
 
     struct Near {

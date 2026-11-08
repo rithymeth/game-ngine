@@ -558,3 +558,52 @@ shadows off (the atlas index 255 makes it return at once):
 - **Both parts go away with the quality preset.** Shadows are set per preset (`QualityPreset::shadow_resolution` /
   `shadow_cascades`, through `SceneRenderer::SetShadows`). Setting either to 0 frees the atlas.
 - **Vulkan has no depth textures yet,** so there the scene draws unshadowed and pays nothing.
+
+## Image-based lighting from the sky, 8 November 2026
+
+Render roadmap step 3 lights surfaces from the sky.
+- **Source:** a `SkyLight`'s environment, which is an equirectangular `.hdr`, an LDR image, or a procedural sky.
+- **CPU work, once per environment:** an RGBA16F mip chain prefiltered with GGX (split sum), plus 9 SH coefficients of the
+  irradiance (`player/src/environment.cpp`).
+- **Scene shader:** `SkyLighting` replaces the flat ambient term. It does one `SampleLevel` of the chain, evaluates the SH, and
+  applies an analytic environment BRDF and specular occlusion.
+- **Sky pass:** draws level 0 behind the scene (`player/src/sky_pass.cpp`).
+
+Measured with a throwaway harness: an offscreen D3D12 device, 40 full-screen draws in one command list, fence to fence, the best
+of 10 lists after 2 warm-ups, three rounds. RTX 3050 Laptop GPU, RelWithDebInfo.
+
+**Shading.** A full-screen pass shades every pixel with roughness varying across the screen. It runs once with the old flat
+ambient term and once with `SkyLighting`, the same shader with the environment present or absent:
+
+| Resolution | Flat ambient | IBL | Added |
+| --- | --- | --- | --- |
+| 1280 x 720 | 0.024 - 0.031 ms | 0.048 - 0.056 ms | 0.023 - 0.025 ms |
+| 1920 x 1080 | 0.055 - 0.059 ms | 0.104 - 0.108 ms | 0.049 - 0.050 ms |
+| 2560 x 1440 | 0.096 - 0.097 ms | 0.188 - 0.197 ms | 0.091 - 0.101 ms |
+
+**Background.** The scene colour pass is measured cleared, and again cleared with the sky drawn over it:
+
+| Resolution | Clear only | Clear + sky | Added |
+| --- | --- | --- | --- |
+| 1280 x 720 | 0.010 - 0.011 ms | 0.053 - 0.060 ms | 0.042 - 0.050 ms |
+| 1920 x 1080 | 0.018 - 0.019 ms | 0.114 - 0.115 ms | 0.095 - 0.096 ms |
+| 2560 x 1440 | 0.031 - 0.032 ms | 0.202 - 0.204 ms | 0.170 - 0.173 ms |
+
+**Prefiltering on the CPU,** 16 threads, best of three:
+
+| Source | Level 0 | Time |
+| --- | --- | --- |
+| procedural, 256 x 128 | 256 x 128, 6 levels | 9.5 - 10.3 ms |
+| 1024 x 512 | 1024 x 512, 8 levels | 118 - 124 ms |
+| 2048 x 1024 | 1024 x 512, 8 levels | 129 - 163 ms |
+
+**What the numbers say.**
+- **IBL shading costs about 0.025 ms per megapixel** over the flat term it replaces, which is a quarter of what the shadow lookup
+  costs. In a real frame it is paid only on lit, opaque pixels.
+- **The sky costs about 0.045 ms per megapixel.** It is drawn under the whole screen, including pixels the scene covers later. If
+  that matters, draw it after the opaque pass with a depth test against the far plane.
+- **The prefilter is the real cost.** A 1024-wide sky takes about 120 ms on the CPU when its `SkyLight` first appears or its
+  image or rotation changes. That is a load-time hitch, not a per-frame one. Moving it to the cook (writing the chain into the
+  pak) would remove it, at the price of a new cooked format.
+- **The sampler fix is free.** The D3D12 sampler's `MaxLOD` used to be 0, which clamped every texture to level 0, so cooked
+  textures never used their mips. Sampling them now costs nothing extra and should be cheaper at a distance (smaller texels).

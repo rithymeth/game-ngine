@@ -16,6 +16,7 @@
 #include "decal_pass.h"
 #include "post_pass.h"
 #include "shadow_pass.h"
+#include "sky_pass.h"
 #include "package_textures.h"
 #include "aether/ui/draw.h"
 #include "aether/ui/font.h"
@@ -236,23 +237,8 @@ PSInput VSMain(VSInput input) {
     return output;
 }
 #ifdef AETHER_FRAME_DATA
-// Everything a frame shares (filled by player/src/frame_lights.cpp: keep the two layouts in step).
-struct FrameData {
-    float4 camera_world;
-    float4 sun_direction;
-    float4 sun_color;
-    float4 sky_color;
-    uint4 counts;
-    float4 point_position_range[8];
-    float4 point_color[8];
-    float4 spot_position_range[4];
-    float4 spot_direction_outer[4];
-    float4 spot_color_inner[4];
-    float4x4 shadow_view_projection[4];
-    float4 shadow_cascade[4]; // x, y: origin in the atlas (texels); z: world units per texel; w: 1 / depth range
-    uint4 shadow_info;        // x: the atlas's bindless index (255: none); y: cascades; z: texels per cascade side
-};
-ConstantBuffer<FrameData> g_Frame : register(b0, space2);
+)";
+constexpr char kSceneShaderFrame[] = R"(
 
 // The sun's shadow at a world position: 1 lit, 0 shadowed. The first cascade the point falls inside (two texels clear of its edge) is
 // read with a 3x3 bilinear PCF of texel loads (4x4 texels, tent weights), so filtering needs no comparison sampler. The point is pushed
@@ -480,14 +466,20 @@ float4 PSMain(PSInput input) : SV_TARGET {
     // Broad sky and room fill keeps metallic characters readable outside
     // the key light. The environment term includes reflected metal color.
     float sky_fill = 0.28 + 0.14 * saturate(normal.y);
-    float3 environment = (base_color * (1.0 - metallic) * sky_fill + f0 * (0.45 + 0.25 * roughness)) * sky_tint;
+    float3 ambient = (base_color * (1.0 - metallic) * sky_fill + f0 * (0.45 + 0.25 * roughness)) * sky_tint * ambient_occlusion;
+#ifdef AETHER_FRAME_DATA
+    // Image-based lighting from the sky's environment, where the renderer has one (player/src/environment.h).
+    if (g_Frame.environment_info.x < 128) {
+        ambient = SkyLighting(normal, view_direction, base_color, metallic, roughness, f0, ambient_occlusion) * sky_tint;
+    }
+#endif
     float sun_visibility = 1.0;
 #ifdef AETHER_FRAME_DATA
     // The world position of this pixel: the camera minus the (world-space) vector from the pixel to the camera.
     float3 world_position = g_Frame.camera_world.xyz - ApplyModelTransform(view_local);
     sun_visibility = SunShadow(world_position, normalize(input.normal), sun_direction);
 #endif
-    float3 color = environment * ambient_occlusion + SurfaceLightEx(sun_direction, normal, view_direction, base_color, metallic, roughness, f0, surface_ext, surface_tangent, surface_bitangent) * sun_radiance * sun_visibility;
+    float3 color = ambient + SurfaceLightEx(sun_direction, normal, view_direction, base_color, metallic, roughness, f0, surface_ext, surface_tangent, surface_bitangent) * sun_radiance * sun_visibility;
 #ifdef AETHER_FRAME_DATA
     for (uint point_index = 0; point_index < g_Frame.counts.x; ++point_index) {
         float3 to_light = g_Frame.point_position_range[point_index].xyz - world_position;
@@ -689,6 +681,7 @@ struct SceneRenderer::Impl {
     // pass tone maps into the back buffer; without one (hdr false) they draw straight into the back buffer as before.
     std::unique_ptr<PostPass> post;
     std::unique_ptr<ShadowPass> shadows; // where the device has frame constants and depth textures (D3D12)
+    std::unique_ptr<SkyPass> sky;        // where the device has frame constants and half-float textures (D3D12)
     bool hdr = false;
     vfx::ParticleRenderData particle_data;
     // Mesh particles' geometry, flattened once from the package's models (empty: the model couldn't be loaded).
@@ -768,6 +761,12 @@ struct SceneRenderer::Impl {
             if (shadow_setting == nullptr || std::strcmp(shadow_setting, "0") != 0) {
                 shadows = std::make_unique<ShadowPass>(device, swap_chain);
                 if (!shadows->Valid()) shadows.reset();
+            }
+            // AETHER_RENDER_IBL=0 keeps the flat ambient term and background (for comparisons).
+            const char* ibl_setting = std::getenv("AETHER_RENDER_IBL");
+            if (ibl_setting == nullptr || std::strcmp(ibl_setting, "0") != 0) {
+                sky = std::make_unique<SkyPass>(device, swap_chain, hdr);
+                if (!sky->Valid()) sky.reset();
             }
         }
         desc.push_constant_size_bytes = sizeof(DrawConstants);
@@ -1279,6 +1278,36 @@ struct SceneRenderer::Impl {
         }
     }
 
+    // The SkyLight's environment, rebuilt when its image or rotation changes: the image from the package (a .hdr as it is, an LDR image
+    // decoded from sRGB), or the procedural sky when it has none or the image can't be read (said once per image).
+    void UpdateSky(const SkyLight& light) {
+        const f32 rotation = std::isfinite(light.environment_rotation_degrees) ? light.environment_rotation_degrees : 0.0f;
+        const std::string key = light.environment + "@" + std::to_string(rotation);
+        if (sky->Key() == key && sky->HasEnvironment()) return;
+        if (sky->Key() == key) return; // tried and failed: don't retry every frame
+        EnvironmentImage image;
+        if (!light.environment.empty()) {
+            std::vector<u8> bytes;
+            if (!package.ReadContent(light.environment, bytes)) {
+                AETHER_LOG_WARN("PlayerRenderer", "SkyLight environment '%s' is not in the package; using the procedural sky", light.environment.c_str());
+            } else if (assets::IsHdrImage(bytes)) {
+                assets::HdrImageData hdr_image;
+                if (assets::DecodeHdrImageFromMemory(bytes, hdr_image)) image = MakeEnvironment(hdr_image.width, hdr_image.height, hdr_image.rgb, rotation);
+            } else {
+                assets::ImageData ldr_image;
+                if (assets::DecodeImageFromMemory(bytes, ldr_image)) image = MakeEnvironmentFromSrgb(ldr_image.width, ldr_image.height, ldr_image.pixels, rotation);
+            }
+            if (image.width == 0 && !bytes.empty()) {
+                AETHER_LOG_WARN("PlayerRenderer", "SkyLight environment '%s' can't be decoded; using the procedural sky", light.environment.c_str());
+            }
+        }
+        if (sky->SetEnvironment(key, image)) {
+            AETHER_LOG_INFO("PlayerRenderer", "Sky environment '%s': %ux%u, %u levels, prefiltered in %.1f ms",
+                            light.environment.empty() ? "(procedural)" : light.environment.c_str(), sky->Environment().width,
+                            sky->Environment().height, sky->Environment().mip_count, sky->LastBuildMilliseconds());
+        }
+    }
+
     bool LoadTexture(const std::string& path, SampledTextureHandle& out) {
         if (path.empty()) {
             out = white_texture;
@@ -1701,6 +1730,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
     FrameData frame_data;
     View shadow_view;
     bool sun_shadows = false;
+    bool draw_sky = false;
     BufferHandle frame_buffer; // this frame's lights, when the device has frame constants
     const Entity camera_entity = FindActiveCamera(world, guids);
     const Camera* camera = world.IsAlive(camera_entity) ? world.GetComponent<Camera>(camera_entity) : nullptr;
@@ -1740,6 +1770,14 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
             frame_data = BuildFrameData(world, guids, camera_position);
             if (draw_particles) AddParticleLights(frame_data, renderer.particle_data.lights, camera_position);
             sun_shadows = renderer.shadows && frame_data.counts[2] != 0; // uploaded once the shadow pass has filled its part
+            // The sky's image-based lighting and background, from a SkyLight (a world without one keeps the flat ambient term).
+            if (renderer.sky) {
+                if (const SkyLight* sky_light = FindSkyLight(world)) {
+                    renderer.UpdateSky(*sky_light);
+                    renderer.sky->Fill(frame_data);
+                    draw_sky = renderer.hdr && renderer.sky->HasEnvironment();
+                }
+            }
             particle_lighting.sun_direction = Vec3(frame_data.sun_direction[0], frame_data.sun_direction[1], frame_data.sun_direction[2]);
             particle_lighting.sun_color = Vec3(frame_data.sun_color[0], frame_data.sun_color[1], frame_data.sun_color[2]);
             particle_lighting.sky_color = Vec3(frame_data.sky_color[0], frame_data.sky_color[1], frame_data.sky_color[2]);
@@ -1971,6 +2009,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
     } else {
         commands.BeginRenderPass(renderer.swap_chain, kBackground);
     }
+    if (draw_sky) renderer.sky->Draw(commands, shadow_view, frame_buffer);
     if (!opaque_draws.empty()) {
         commands.BindPipeline(renderer.pipeline);
         if (frame_buffer.IsValid()) commands.BindFrameConstants(frame_buffer);
@@ -2032,7 +2071,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
 // The advanced PBR library (anisotropic GGX, sheen, clear coat) goes ahead of the scene shader.
 std::string SceneShaderSource(bool with_frame_data, bool hdr_target) {
     return std::string(with_frame_data ? "#define AETHER_FRAME_DATA 1\n" : "") + (hdr_target ? "#define AETHER_HDR_TARGET 1\n" : "") +
-           mat::AdvancedPbrHlsl() + mat::ShadingModelsHlsl() + kSceneShader;
+           mat::AdvancedPbrHlsl() + mat::ShadingModelsHlsl() + kSceneShader + (with_frame_data ? FrameDataHlsl() : "") + kSceneShaderFrame;
 }
 
 } // namespace aether::player

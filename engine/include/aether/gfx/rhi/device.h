@@ -303,6 +303,12 @@ public:
     // with PipelineDesc::depth_target. Otherwise as CreateRenderTexture (freed with DestroyTexture, graphics only, invalid when the table
     // is full or on devices without support, invalid sizes throw std::invalid_argument).
     virtual SampledTextureHandle CreateDepthTexture(u32 /*width*/, u32 /*height*/) { return {}; }
+    // A sampled RGBA16F texture (linear, unclamped: HDR environments) with `mip_count` levels, uploaded once like CreateTexture's (the
+    // call waits for its copy). `halves` holds every level's texels one after another, level 0 first, level i being max(1, width >> i)
+    // by max(1, height >> i), four IEEE half floats (as u16) per texel. Sample it with SampleLevel to choose a level. In the bindless
+    // table, freed with DestroyTexture, graphics only. Invalid when the table is full and on devices without support (the default);
+    // a zero or oversized extent, a mip_count of 0 or more levels than the extent has, or null data throw std::invalid_argument.
+    virtual SampledTextureHandle CreateHalfFloatTexture(u32 /*width*/, u32 /*height*/, u32 /*mip_count*/, const u16* /*halves*/) { return {}; }
 
     virtual Backend GetBackend() const = 0;
 
