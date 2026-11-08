@@ -137,13 +137,26 @@ VsmPageStats VsmPageAllocator::Stats() const {
     return stats;
 }
 
-std::vector<u32> VsmPageAllocator::BuildPageTable(const std::array<std::array<i32, 2>, kVsmLevels>& window_origins) const {
+std::vector<u32> VsmPageAllocator::BuildPageTable(const std::array<std::array<i32, 2>, kVsmLevels>& window_origins, const VsmLight& light,
+                                                  std::span<const Sphere> suppress, u32* suppressed) const {
     std::vector<u32> table(kTableEntries, 0);
+    if (suppressed != nullptr) *suppressed = 0;
     const i32 window = static_cast<i32>(kVsmWindowPages);
     for (const auto& [key, page] : pages_) {
         if (page.pending || page.page.level >= kVsmLevels) continue;
         const i32 ox = window_origins[page.page.level][0], oy = window_origins[page.page.level][1];
         if (page.page.x < ox || page.page.x >= ox + window || page.page.y < oy || page.page.y >= oy + window) continue;
+        bool covered = false;
+        for (const Sphere& sphere : suppress) {
+            if (VsmSphereTouchesPage(light, page.page, sphere.center, sphere.radius)) {
+                covered = true;
+                break;
+            }
+        }
+        if (covered) {
+            if (suppressed != nullptr) ++*suppressed;
+            continue;
+        }
         const usize index = (static_cast<usize>(page.page.level) * kVsmWindowPages + (static_cast<u32>(page.page.y) & (kVsmWindowPages - 1))) *
                                 kVsmWindowPages +
                             (static_cast<u32>(page.page.x) & (kVsmWindowPages - 1));

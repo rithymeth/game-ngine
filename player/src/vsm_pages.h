@@ -67,8 +67,14 @@ public:
     VsmPageStats Stats() const;
 
     // The page table for a camera with these window origins: kVsmLevels * 32 * 32 entries, [level][y & 31][x & 31], physical index + 1 for a
-    // resident page inside the level's window that is not waiting to be drawn, else 0.
-    std::vector<u32> BuildPageTable(const std::array<std::array<i32, 2>, kVsmLevels>& window_origins) const;
+    // resident page inside the level's window that is not waiting to be drawn, else 0. Pages a world-space sphere of `suppress` reaches are
+    // left out too (the cascades shadow them), and counted in `suppressed` when given.
+    struct Sphere {
+        Vec3 center;
+        f32 radius = 0.0f;
+    };
+    std::vector<u32> BuildPageTable(const std::array<std::array<i32, 2>, kVsmLevels>& window_origins, const VsmLight& light = {},
+                                    std::span<const Sphere> suppress = {}, u32* suppressed = nullptr) const;
     static constexpr usize kTableEntries = static_cast<usize>(kVsmLevels) * kVsmWindowPages * kVsmWindowPages;
 
     // A physical page's origin in the pool, in texels.

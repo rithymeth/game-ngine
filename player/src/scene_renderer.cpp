@@ -836,6 +836,7 @@ struct SceneRenderer::Impl {
         Vec3 center{0, 0, 0};
         f32 radius = -1.0f;
         u64 frame = 0;
+        bool dynamic = false; // deforming: in the cascades, in no page
     };
     SceneRenderer::VirtualShadowStats vsm_stats;
     std::unique_ptr<TaaPass> taa;         // temporal anti-aliasing, with the HDR target (AETHER_RENDER_TAA=0 turns it off)
@@ -2108,7 +2109,8 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
         Vec3 center;
         f32 radius;
     };
-    std::vector<DirtySphere> vsm_dirty; // where a caster is, and was, that is new, has moved or deforms: virtual shadow pages to redraw
+    std::vector<DirtySphere> vsm_dirty; // where a caster is, and was, that is new or has moved: virtual shadow pages to redraw
+    std::vector<VsmPageAllocator::Sphere> vsm_suppress; // where a deforming caster is: its pages are left out of the page table
     const u64 transform_frame = ++renderer.transform_frame;
     renderer.motion_positions.clear();
     FrameData frame_data;
@@ -2469,6 +2471,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                                                                     : 255u;
                                     caster.alpha = primitive.color[3];
                                     caster.alpha_cutoff = primitive.alpha_cutoff;
+                                    caster.deforming = uploaded_animation;
                                     shadow_casters.push_back(caster);
                                     if (renderer.vsm_pages) {
                                         // The caster's world sphere (a skinned one's from its bind pose, grown): the pages it touches are redrawn when it is
@@ -2488,12 +2491,19 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                                                                                             static_cast<u32>(node.node_index),
                                                                                             static_cast<u32>(primitive_index) + 1}];
                                         const bool seen = state.frame + 1 == transform_frame;
-                                        if (sphere_radius >= 0.0f &&
-                                            (!seen || uploaded_animation || TaaTransformMoved(state.model, model_transform))) {
-                                            vsm_dirty.push_back({sphere_center, sphere_radius});
-                                            if (seen && state.radius >= 0.0f) vsm_dirty.push_back({state.center, state.radius});
+                                        const bool dynamic = uploaded_animation;
+                                        if (sphere_radius >= 0.0f) {
+                                            // A deforming caster is in no page (the cascades have it), and the pages under it are left out of the
+                                            // table; one that starts or stops deforming changes what its pages hold, so they are redrawn.
+                                            if (dynamic) vsm_suppress.push_back({sphere_center, sphere_radius});
+                                            const bool changed_kind = seen && state.dynamic != dynamic;
+                                            const bool moved = !dynamic && (!seen || TaaTransformMoved(state.model, model_transform));
+                                            if (moved || changed_kind) {
+                                                vsm_dirty.push_back({sphere_center, sphere_radius});
+                                                if (seen && !state.dynamic && state.radius >= 0.0f) vsm_dirty.push_back({state.center, state.radius});
+                                            }
                                         }
-                                        state = {model_transform, sphere_center, sphere_radius, transform_frame};
+                                        state = {model_transform, sphere_center, sphere_radius, transform_frame, dynamic};
                                     }
                                 }
                             }
@@ -2540,7 +2550,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
     // the page table goes to the light buffer for the scene shader. Without any of that the cascades alone shadow the sun.
     bool vsm_record = false;
     VsmFeedbackParams vsm_feedback_params;
-    renderer.vsm_stats.drawn_pages = renderer.vsm_stats.caster_draws = renderer.vsm_stats.requests = 0;
+    renderer.vsm_stats.drawn_pages = renderer.vsm_stats.caster_draws = renderer.vsm_stats.requests = renderer.vsm_stats.suppressed = 0;
     const auto vsm_start = std::chrono::steady_clock::now();
     if (renderer.vsm_pages) {
         VsmPageAllocator& pages = *renderer.vsm_pages;
@@ -2550,7 +2560,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                 ++it;
                 continue;
             }
-            if (it->second.radius >= 0.0f) vsm_dirty.push_back({it->second.center, it->second.radius});
+            if (it->second.radius >= 0.0f && !it->second.dynamic) vsm_dirty.push_back({it->second.center, it->second.radius});
             it = renderer.vsm_casters.erase(it);
         }
         if (!sun_shadows || !have_camera || !light_buffer.IsValid()) {
@@ -2572,7 +2582,9 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
             renderer.vsm_stats.drawn_pages = static_cast<u32>(draws.size());
             renderer.vsm_stats.caster_draws = renderer.vsm_pass->DrawPages(commands, light, draws, renderer.vsm_pool, shadow_casters);
             const auto origins = VsmWindowOrigins(light, decal_camera_position);
-            const std::vector<u32> table = pages.BuildPageTable(origins);
+            u32 suppressed = 0;
+            const std::vector<u32> table = pages.BuildPageTable(origins, light, vsm_suppress, &suppressed);
+            renderer.vsm_stats.suppressed = suppressed;
             if (renderer.vsm_pass->Atlas().IsValid() &&
                 renderer.device.WriteBufferUnsynchronized(light_buffer, table.data(), table.size() * sizeof(u32), kVsmTableOffset)) {
                 const auto set = [](f32 (&out)[4], const Vec3& v, f32 w) { out[0] = v.x, out[1] = v.y, out[2] = v.z, out[3] = w; };

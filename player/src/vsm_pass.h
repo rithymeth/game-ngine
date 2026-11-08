@@ -7,7 +7,9 @@
 
 // Draws virtual shadow map pages (vsm_pages.h) into their physical pages of one depth atlas. Each page is set to the far depth by a triangle
 // drawn with an ALWAYS depth test, then the casters whose bounding spheres reach it are drawn with the page's own orthographic matrix
-// (VsmPageMatrix) through the same caster shaders as the cascades (shadow_pass.h). Every page of a frame goes in one depth pass.
+// (VsmPageMatrix) through the same caster shaders as the cascades (shadow_pass.h). Every page of a frame goes in one depth pass. Casters that
+// deform (a skinned mesh posed anew each frame) are not drawn here: a page would have to be redrawn every frame with a mesh of tens of thousands
+// of vertices in every page it reaches, so the cascades keep them and the pages they overlap are left out of the page table (vsm_pages.h).
 
 namespace aether::player {
 

@@ -611,9 +611,14 @@ rounds. RTX 3050 Laptop GPU, RelWithDebInfo. The scene is small, so the frame is
   pages drawn, and frames within 1 of 255.
 
 **Limits.**
-- **Skinned casters are redrawn every frame they animate,** in every page their grown bind-pose sphere reaches (the 192k-triangle
-  Aegis would be drawn into each of those pages). The budget of 64 pages a frame limits the damage but a crowd would need a cheaper
-  rule. Not measured.
+- **Skinned casters are not drawn into pages.** The first version redrew them into every page their sphere reached each frame, and with
+  the 192k-vertex Aegis animating that cost 8 to 12 ms a frame on D3D12 and more on Vulkan, though only 6 or 7 pages were redrawn: each
+  redraw sends the whole vertex buffer (upload-heap memory the GPU reads over PCIe) through another draw. A deforming caster is now in
+  the cascades only, and the pages it stands over are left out of the page table, so the cascades shadow that patch (26 pages in the
+  test scene, their edges as soft as the cascades'). Measured with the Aegis animating at 1280 x 720, alternating the two settings over
+  seven rounds: D3D12 27.4 ms with cascades only and 28.0 ms with pages, Vulkan 38.5 and 39.2 ms; the frame is 25 ms or more of CPU
+  skinning and the rounds vary by 7 to 17 ms, so the cost of the pages here is lost in the noise, as it should be. A caster that starts or
+  stops deforming has its pages redrawn. Rigid movers still redraw their pages; a heavy rigid mover could cost what the skinned one did.
 - **Only the sun,** and only opaque and alpha-tested casters, as the cascades.
 - **The pages cover the window around the camera:** 32 pages a side per level, about 8.2 m a side at the finest level and doubling with
   each, and a sun that turns invalidates everything (a day cycle would redraw all pages every frame it moves).

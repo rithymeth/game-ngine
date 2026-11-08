@@ -59,12 +59,13 @@ void SetEnvironmentVariableForTest(const char* name, const char* value) {
 struct SceneRun {
     std::vector<u8> pixels;
     player::SceneRenderer::VirtualShadowStats last;
-    u32 max_resident = 0, drawn_pages = 0, max_requests = 0;
+    u32 max_resident = 0, drawn_pages = 0, max_requests = 0, suppressed = 0;
     std::vector<u32> drawn_by_frame; // pages drawn in each frame
 };
 
-// A sunlit floor with two boxes and a small cube (tagged Mover) on it, seen from `camera_distance` metres away.
-fs::path CookScene(const fs::path& root, f32 camera_distance) {
+// A sunlit floor with two boxes and a small cube (tagged Mover) on it, seen from `camera_distance` metres away; with `character`, also a
+// skinned figure (Kael's rig, its walk clip as the one the player plays on non-player entities) that animates every frame.
+fs::path CookScene(const fs::path& root, f32 camera_distance, bool character = false) {
     fs::create_directories(root / "Content/models");
     fs::create_directories(root / "Content/Scenes");
     const fs::path games = fs::path(AETHER_REPO_ASSETS_DIR).parent_path() / "games/AETHER-01";
@@ -76,7 +77,17 @@ fs::path CookScene(const fs::path& root, f32 camera_distance) {
     project["startup_scene"] = "Scenes/Main.ascene";
     project["always_cook"] = reflect::Json::array();
     std::ofstream(root / "VsmScene.aproject") << project.dump(2);
-    const reflect::Json scene = {{"$type", "Scene"}, {"$version", 1}, {"entities", {
+    if (character) {
+        std::ifstream rig_file(games / "Content/Characters/Kael/Kael_Rig.gltf");
+        AETHER_CHECK(rig_file.good());
+        if (!rig_file.good()) return {};
+        reflect::Json rig = reflect::Json::parse(rig_file);
+        for (reflect::Json& animation : rig["animations"]) {
+            if (animation["name"] == "Walk") animation["name"] = "Enemy_Idle";
+        }
+        std::ofstream(root / "Content/models/kael.gltf") << rig.dump();
+    }
+    reflect::Json entities = {
         SceneEntity({{"Transform", TransformJson({0.0f, 1.0f, camera_distance}, {-0.18f, 0.0f, 0.0f, 0.984f})},
                      {"Camera", {{"$v", 1}, {"projection", "Perspective"}, {"fov_degrees", 50.0f}, {"near_plane", 0.1f}, {"far_plane", 100.0f},
                                  {"ortho_height", 10.0f}, {"priority", 0}}}}),
@@ -88,7 +99,9 @@ fs::path CookScene(const fs::path& root, f32 camera_distance) {
         Model("models/aether_greybox_rifle.gltf", {0.0f, -0.3f, 0.0f}, {0, 0, 0, 1}, 12.0f), // the floor
         Model("models/aether_greybox_core.gltf", {-0.9f, 0.4f, 0.0f}, {0.0f, 0.38f, 0.0f, 0.92f}, 2.0f),
         Mover(Model("models/aether_greybox_armor.gltf", {0.0f, 0.3f, 0.2f}, {0.0f, -0.2f, 0.0f, 0.98f}, 0.2f)),
-        Model("models/aether_greybox_core.gltf", {0.9f, 0.4f, -0.3f}, {0.0f, 0.1f, 0.0f, 0.99f}, 2.0f)}}};
+        Model("models/aether_greybox_core.gltf", {0.9f, 0.4f, -0.3f}, {0.0f, 0.1f, 0.0f, 0.99f}, 2.0f)};
+    if (character) entities.push_back(Model("models/kael.gltf", {0.2f, 0.05f, 0.5f}, {0, 0, 0, 1}, 0.4f));
+    const reflect::Json scene = {{"$type", "Scene"}, {"$version", 1}, {"entities", entities}};
     std::ofstream(root / "Content/Scenes/Main.ascene") << scene.dump(2);
     cook::CookOptions options;
     options.project_file = root / "VsmScene.aproject";
@@ -131,6 +144,7 @@ SceneRun RunScene(rhi::Backend backend, const fs::path& root, const fs::path& pa
             run.last = renderer.VirtualShadows();
             run.max_resident = std::max(run.max_resident, run.last.resident);
             run.max_requests = std::max(run.max_requests, run.last.requests);
+            run.suppressed = std::max(run.suppressed, run.last.suppressed);
             run.drawn_pages += run.last.drawn_pages;
             run.drawn_by_frame.push_back(run.last.drawn_pages);
             if (frame + 1 == frames) AETHER_CHECK(target->ReadBack(run.pixels) && run.pixels.size() == static_cast<usize>(width) * height * 4);
@@ -257,3 +271,34 @@ AETHER_TEST(Vsm_BothBackendsDrawTheSamePages) {
     std::error_code ignored;
     fs::remove_all(root, ignored);
 }
+
+// A skinned figure that animates every frame is in the cascades and in no page: the pages under it are left to the cascades, nothing is redrawn
+// for it, and the frame is still the cascades' (its shadow comes from them). Drawing it into pages instead cost 8 to 12 ms a frame for a
+// 192k-vertex character, every frame, so this is the rule that keeps skinned casters affordable.
+static void Vsm_ADeformingCasterIsLeftToTheCascades(rhi::Backend backend) {
+    if (!rhi::IsBackendAvailable(backend)) return;
+    const fs::path root = fs::temp_directory_path() / "aether_vsm_scene" / assets::ToString(assets::NewAssetGuid());
+    const fs::path pak = CookScene(root, 1.6f, true);
+    if (pak.empty()) return;
+    constexpr u32 kFrames = 24;
+    SetEnvironmentVariableForTest("AETHER_RENDER_VSM", "");
+    const SceneRun with = RunScene(backend, root, pak, kWidth, kHeight, kFrames);
+    SetEnvironmentVariableForTest("AETHER_RENDER_VSM", "0");
+    const SceneRun without = RunScene(backend, root, pak, kWidth, kHeight, kFrames);
+    SetEnvironmentVariableForTest("AETHER_RENDER_VSM", "");
+    AETHER_CHECK(with.last.enabled && with.max_resident > 0);
+    AETHER_CHECK(with.suppressed > 0); // pages under the figure are left to the cascades
+    AETHER_CHECK(with.drawn_by_frame.size() == kFrames);
+    if (with.drawn_by_frame.size() != kFrames || with.pixels.size() != without.pixels.size() || with.pixels.empty()) return;
+    u32 late_pages = 0;
+    for (u32 frame = kFrames - 8; frame < kFrames; ++frame) late_pages += with.drawn_by_frame[frame];
+    AETHER_CHECK(late_pages == 0); // the figure animates all the while, and no page is redrawn for it
+    const double difference = MeanDifference(with.pixels, without.pixels);
+    std::printf("    %s: %u pages left to the cascades under the figure, %u drawn in the last 8 frames; mean difference from the cascades %.3f\n", Name(backend), with.suppressed, late_pages, difference);
+    AETHER_CHECK(difference < 1.0);
+    std::error_code ignored;
+    fs::remove_all(root, ignored);
+}
+
+AETHER_TEST(Vsm_ADeformingCasterIsLeftToTheCascades_D3D12) { Vsm_ADeformingCasterIsLeftToTheCascades(rhi::Backend::D3D12); }
+AETHER_TEST(Vsm_ADeformingCasterIsLeftToTheCascades_Vulkan) { Vsm_ADeformingCasterIsLeftToTheCascades(rhi::Backend::Vulkan); }

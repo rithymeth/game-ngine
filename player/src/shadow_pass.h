@@ -32,6 +32,7 @@ struct ShadowCaster {
     Mat4 model;
     Vec3 bounds_center{0, 0, 0}; // world-space bounding sphere; radius < 0: always drawn (e.g. skinned meshes)
     f32 bounds_radius = -1.0f;
+    bool deforming = false; // a skinned mesh posed anew this frame: drawn into the cascades, never into virtual shadow pages (vsm_pass.h)
     bool alpha_tested = false;
     u32 base_color_texture = 255;
     f32 alpha = 1.0f;

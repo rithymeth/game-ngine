@@ -49,6 +49,7 @@ public:
         u32 pending = 0;        // of those, waiting to be drawn
         u32 drawn_pages = 0;    // pages drawn this frame
         u32 caster_draws = 0;   // caster draws over those pages
+        u32 suppressed = 0;     // resident pages left out of the page table because a deforming caster is over them (the cascades shadow them)
         f64 cpu_ms = 0.0;       // the CPU's time in this frame's page work (feedback, allocation, the page table, recording the pages)
     };
     VirtualShadowStats VirtualShadows() const;

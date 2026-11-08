@@ -91,7 +91,7 @@ u32 VsmPass::DrawPages(gfx::rhi::ICommandList& commands, const VsmLight& light, 
         for (const bool masked : {false, true}) {
             bool bound = false;
             for (const ShadowCaster& caster : casters) {
-                if (caster.alpha_tested != masked || caster.index_count == 0) continue;
+                if (caster.alpha_tested != masked || caster.index_count == 0 || caster.deforming) continue;
                 if (caster.bounds_radius >= 0.0f && !VsmSphereTouchesPage(light, draw.page, caster.bounds_center, caster.bounds_radius)) continue;
                 if (!bound) {
                     commands.BindPipeline(masked ? masked_ : opaque_);
