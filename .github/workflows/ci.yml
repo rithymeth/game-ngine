@@ -179,6 +179,15 @@ jobs:
             physics: "ON"
             assertions: "OFF"
     steps:
+      - name: Free disk space
+        # The ASan+UBSan lane links the test binary, the server and about forty fuzz-replay executables with the sanitizer runtimes, and the
+        # runner's free disk ran out at the last of them (step 937 of 941: "No space left on device"; runs 1960, 1966 and 1969), which also
+        # made the ccache save fail. The toolchains below ship on the image and none of these lanes uses them. The df lines are the evidence
+        # if this ever needs revisiting.
+        run: |
+          df -h / | tail -1
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          df -h / | tail -1
       - uses: actions/checkout@v4
       - name: Install tools
         # The X11 development packages build GLFW's window backend; Xvfb gives
@@ -233,6 +242,11 @@ jobs:
         run: |
           cmake --build build --parallel
           ccache --show-stats
+      - name: Disk use after the build
+        if: always()
+        run: |
+          df -h / | tail -1
+          du -sh build 2>/dev/null || true
       - name: Save compiled objects (ccache)
         # Saved even when a later step fails, so a red run still warms the cache.
         if: always() && steps.ccache.outputs.cache-hit != 'true'
