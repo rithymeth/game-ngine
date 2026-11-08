@@ -659,6 +659,11 @@ struct SceneRenderer::Impl {
         BufferHandle indices;
         u32 index_count = 0;
         std::vector<BufferHandle> frame_vertex_buffers;
+        // For a skinned primitive drawn more than once in a frame (entities sharing the model): the buffers of the second draw on, per
+        // frame in flight, made when first needed. draws counts this frame's draws (draws_frame: which frame).
+        std::vector<std::vector<BufferHandle>> extra_vertex_buffers;
+        u32 draws = 0;
+        u64 draws_frame = 0;
         std::vector<SceneVertex> bind_pose_vertices;
         std::vector<SceneVertex> animated_vertices;
         f32 color[4] = {1, 1, 1, 1};
@@ -802,6 +807,9 @@ struct SceneRenderer::Impl {
                         free_buffer(primitive.vertices);
                     } else {
                         for (BufferHandle& buffer : primitive.frame_vertex_buffers) free_buffer(buffer);
+                        for (std::vector<BufferHandle>& frame : primitive.extra_vertex_buffers) {
+                            for (BufferHandle& buffer : frame) free_buffer(buffer);
+                        }
                         primitive.vertices = {};
                     }
                     free_buffer(primitive.indices);
@@ -2083,10 +2091,31 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                         const auto& source_primitives = model->scene.meshes[node.mesh_index].primitives;
                         for (usize primitive_index = 0; primitive_index < draw_primitives.size(); ++primitive_index) {
                             Impl::Primitive& primitive = draw_primitives[primitive_index];
-                            const BufferHandle frame_vertex_buffer = primitive.frame_vertex_buffers.empty()
-                                                                         ? primitive.vertices
-                                                                         : primitive.frame_vertex_buffers[
-                                                                               frame_index % primitive.frame_vertex_buffers.size()];
+                            // A skinned primitive's vertices are written for each draw, and the GPU reads them when the frame runs, after every
+                            // draw is recorded: so each draw of it in a frame needs its own buffer, or the entities that share a model all
+                            // show the pose written last. The first draw uses the primitive's per-frame buffer, the others buffers made on
+                            // demand (kept for later frames).
+                            BufferHandle frame_vertex_buffer = primitive.vertices;
+                            if (!primitive.frame_vertex_buffers.empty()) {
+                                if (primitive.draws_frame != transform_frame) {
+                                    primitive.draws_frame = transform_frame;
+                                    primitive.draws = 0;
+                                }
+                                const usize draw_slot = primitive.draws++;
+                                const usize frame_slot = frame_index % primitive.frame_vertex_buffers.size();
+                                frame_vertex_buffer = primitive.frame_vertex_buffers[frame_slot];
+                                if (draw_slot > 0) {
+                                    primitive.extra_vertex_buffers.resize(primitive.frame_vertex_buffers.size());
+                                    std::vector<BufferHandle>& extra = primitive.extra_vertex_buffers[frame_slot];
+                                    while (extra.size() < draw_slot) {
+                                        const BufferHandle made = renderer.device.CreateVertexBuffer(
+                                            primitive.bind_pose_vertices.data(), primitive.bind_pose_vertices.size() * sizeof(SceneVertex));
+                                        if (!made.IsValid()) break;
+                                        extra.push_back(made);
+                                    }
+                                    if (extra.size() >= draw_slot) frame_vertex_buffer = extra[draw_slot - 1]; // else: shares the first
+                                }
+                            }
                             bool uploaded_animation = false;
                             u32 previous_positions = kTaaNoPreviousPositions; // this draw's last-frame pose in motion_positions
                             if (has_skin && !model->skin_matrices.empty() && primitive_index < source_primitives.size()) {

@@ -770,8 +770,12 @@ command list, fence to fence, best of 10 lists after 2 warm-ups. Three rounds; R
   reach the parser as a GLB (`player/src/model_glb.h`); a `.gltf` with one external buffer is turned into one in memory. A
   test (`Material_ALargeBufferLoadsFromAGlbButNotAsADataUri`) loads a 28 MiB buffer that way and shows the old form refused.
   GHOST-SHIFT and AETHER-01 load the same models as before and render the same.
-- **Still not covered:** entities that share a skinned model share its per-frame vertex buffers, so all of them draw the pose
-  skinned last. Their last-frame positions are kept per entity, but what they draw is not.
+- **Entities sharing a skinned model, fixed 9 November 2026.** They used to share the model's per-frame vertex buffers, so every one
+  showed the pose written last (the GPU reads a frame's buffers after all its draws are recorded). Each draw of a skinned primitive in a
+  frame now has its own buffer: the first the primitive's per-frame one, the others made when first needed and kept. The cost is memory,
+  one copy of the primitive's vertices (48 bytes each) per simultaneous instance per frame in flight; an unmeasured CPU cost beyond
+  that is none. A test (`Skinned_EntitiesSharingAModelShowTheirOwnPoses`, both backends) cooks a project with two characters of one
+  model, one walking and one at the end of its Death clip, and checks that their heights differ (81 and 54 px; 81 and 80 without the fix).
 
 ## Per-frame uploads without waiting for the GPU, 8 November 2026
 
