@@ -1911,6 +1911,7 @@
   type class ICommandList
   public:virtual ~ICommandList()=default
   virtual bool BeginSceneColorPass(ISwapChain&,const ClearColor&)
+  virtual bool BeginTexturePass(SampledTextureHandle,const ClearColor*)
   virtual bool CopySceneDepth()
   virtual void BeginRenderPass(ISwapChain&swap_chain,const ClearColor&clear_color)=0
   virtual void BindBindlessTextures()=0
@@ -1940,6 +1941,7 @@
   type class D3D12SwapChain
   type struct ComputePipelineRecord
   type struct PipelineRecord
+  type struct RenderTextureView
   type struct RetiredResource
   type struct TextureRecord
   Backend GetBackend()const override
@@ -1960,9 +1962,11 @@
   ID3D12Resource*SceneColorResource()const
   ID3D12Resource*SceneDepthCopy()const
   PipelineHandle CreatePipeline(const PipelineDesc&desc,ISwapChain&swap_chain)override
+  RenderTextureView FindRenderTexture(SampledTextureHandle handle)const
   ResourceStats GetResourceStats()const override
   SampledTextureHandle CreateCompressedTexture(CompressedTextureFormat format,u32 width,u32 height,std::span<const CompressedMip>mips)override
   SampledTextureHandle CreateR32FloatTexture(u32 width,u32 height,const f32*values)override
+  SampledTextureHandle CreateRenderTexture(u32 width,u32 height)override
   SampledTextureHandle CreateTexture(u32 width,u32 height,const u8*rgba8_pixels)override
   SampledTextureHandle ReserveExternalBindlessSlot()
   SampledTextureHandle SceneColorTexture()override
@@ -1970,6 +1974,7 @@
   TextureHandle CurrentBackBuffer()const override
   TextureHandle RegisterTexture(ID3D12Resource*resource,D3D12_CPU_DESCRIPTOR_HANDLE rtv)
   bool BeginSceneColorPass(ISwapChain&swap_chain,const ClearColor&clear_color)override
+  bool BeginTexturePass(SampledTextureHandle target,const ClearColor*clear_color)override
   bool BelongsTo(const D3D12Device&device)const
   bool ConsumeUsedBefore(u32 index)
   bool CopySceneDepth()override
@@ -2090,6 +2095,7 @@
   virtual ResourceStats GetResourceStats()const
   virtual SampledTextureHandle CreateCompressedTexture(CompressedTextureFormat,u32,u32,std::span<const CompressedMip>)
   virtual SampledTextureHandle CreateR32FloatTexture(u32 width,u32 height,const f32*values)=0
+  virtual SampledTextureHandle CreateRenderTexture(u32,u32)
   virtual SampledTextureHandle CreateTexture(u32 width,u32 height,const u8*rgba8_pixels)=0
   virtual bool DestroyBuffer(BufferHandle)
   virtual bool DestroyComputePipeline(ComputePipelineHandle)
@@ -4823,6 +4829,7 @@
   public:SceneRenderer(gfx::rhi::IDevice&device,gfx::rhi::ISwapChain&swap_chain,const GamePackage&package)
   std::string SceneShaderSource(bool with_frame_data,bool hdr_target=false)
   void Draw(Game&game,gfx::rhi::ICommandList&commands,u32 frame_index)
+  void SetBloom(bool enabled)
   void SetDrawParticles(bool draw)
   void SetRenderPoseSampler(std::function<bool(Entity,Transform&)>sampler)
   void SetViewDistance(f32 metres)

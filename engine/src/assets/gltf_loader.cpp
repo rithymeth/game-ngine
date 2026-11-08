@@ -935,6 +935,9 @@ static bool ParseGltfText(const std::string& text, const std::string& path, bool
                 material.occlusion_texture = resolve_texture_path(material_json["occlusionTexture"]);
                 material.occlusion_strength = material_json["occlusionTexture"].value("strength", 1.0f);
             }
+            if (material_json.contains("emissiveTexture")) {
+                material.emissive_texture = resolve_texture_path(material_json["emissiveTexture"]);
+            }
             if (material_json.contains("emissiveFactor")) {
                 const Json& factor = material_json["emissiveFactor"];
                 for (usize i = 0; i < 3 && i < factor.size(); ++i) {
@@ -951,6 +954,10 @@ static bool ParseGltfText(const std::string& text, const std::string& path, bool
                     const auto it = extensions.find(name);
                     return it != extensions.end() && it->is_object() ? &*it : nullptr;
                 };
+                if (const Json* strength = object_of("KHR_materials_emissive_strength")) {
+                    const auto it = strength->find("emissiveStrength");
+                    if (it != strength->end() && it->is_number()) material.emissive_strength = std::max(it->get<f32>(), 0.0f);
+                }
                 if (const Json* coat = object_of("KHR_materials_clearcoat")) {
                     material.clear_coat = coat->value("clearcoatFactor", 0.0f);
                     material.clear_coat_roughness = coat->value("clearcoatRoughnessFactor", 0.0f);

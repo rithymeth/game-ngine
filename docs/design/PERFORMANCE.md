@@ -499,3 +499,26 @@ same way (offscreen swap chain, batched frames, fence-to-fence) rather than with
 
 `AETHER_RENDER_HDR=0` turns the HDR path off in the player, for A/B comparisons. Vulkan does not have the target yet and
 keeps tone mapping in the scene shader.
+
+## Bloom, 8 November 2026
+
+Render roadmap step 4 adds bloom to the post pass (`player/src/post_pass.cpp`): a chain of up to five half-size RGBA16F render
+textures (`IDevice::CreateRenderTexture`), a 13-tap downsample into each level (with a Karis average on the first), a 3x3 tent
+upsample back up the chain added onto each level, and a 3x3 tent read of the top level in the composite. At 1280 x 720 that is
+640x360 down to 40x23. Measured the same way as the HDR target above: an offscreen D3D12 swap chain, 40 frames in one command
+list, fence to fence, the best of 10 lists after 2 warm-ups, three rounds. Both frames clear the scene colour target and run the
+post pass; the bloom frame also runs `RenderBloom`. RTX 3050 Laptop GPU, RelWithDebInfo:
+
+| Resolution | Post pass only | Bloom + post pass | Added by bloom |
+| --- | --- | --- | --- |
+| 1280 x 720 | 0.053 - 0.063 ms | 0.217 - 0.256 ms | 0.164 - 0.194 ms |
+| 1920 x 1080 | 0.114 - 0.118 ms | 0.472 - 0.497 ms | 0.357 - 0.379 ms |
+| 2560 x 1440 | 0.200 - 0.207 ms | 0.815 - 0.833 ms | 0.615 - 0.626 ms |
+
+**What the numbers say.** Bloom costs about **0.17 ms per megapixel**, two and a half times the HDR target itself. That is
+0.36 ms, or 2% of a 16.7 ms frame, at 1080p, and 5% of a 6.9 ms frame. The chain's later levels are small, so most of the cost
+is in three full- or half-resolution steps: the first downsample (13 bilinear taps over the full-resolution target), the last
+upsample into the 960x540 level, and the composite's 9 taps over the screen. If this needs to come down, those are what to
+change first: a cheaper first downsample, or folding the last upsample into the composite. Turning it off is per quality preset
+(`QualityPreset::bloom`, applied by `SceneRenderer::SetBloom`); with it off, the chain's five bindless slots are freed. The
+harness was a throwaway test, as before.

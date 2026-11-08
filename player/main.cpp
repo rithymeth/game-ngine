@@ -478,7 +478,10 @@ int main(int argc, char** argv) {
                     });
                 }
 #endif
-                if (quality) scene_renderer->SetViewDistance(quality->view_distance);
+                if (quality) {
+                    scene_renderer->SetViewDistance(quality->view_distance);
+                    scene_renderer->SetBloom(quality->bloom);
+                }
                 window->on_resize = [&](u32, u32) { resized = true; };
             } else {
                 AETHER_LOG_WARN("Player", "No graphics device; running without drawing");
@@ -531,7 +534,10 @@ int main(int argc, char** argv) {
                 if (const QualityPreset* next = ChooseQuality(manifest, live_quality); next && next->name == live_quality) {
                     AETHER_LOG_INFO("Player", "Quality: %s (resolution x%.2f, view distance %.0f m)", next->name.c_str(), next->resolution_scale, next->view_distance);
                     render_scale = can_stretch ? next->resolution_scale : 1.0f;
-                    if (scene_renderer) scene_renderer->SetViewDistance(next->view_distance);
+                    if (scene_renderer) {
+                        scene_renderer->SetViewDistance(next->view_distance);
+                        scene_renderer->SetBloom(next->bloom);
+                    }
                     resized = true; // the swap chain is rebuilt at the new size
                 } else {
                     AETHER_LOG_WARN("Player", "No quality preset '%s'", live_quality.c_str());

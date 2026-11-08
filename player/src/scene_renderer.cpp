@@ -50,7 +50,10 @@ static_assert(sizeof(SceneVertex) == sizeof(f32) * 12);
 
 struct DrawConstants {
     Mat4 mvp;
-    f32 color[4] = {1, 1, 1, 1};
+    // The base colour factor as four halves, then the emissive colour as three halves (r|g, b) with the emissive texture's index (63 =
+    // none) in bits 16-21 of the second word: halves keep HDR emission (KHR_materials_emissive_strength) up to 65504.
+    u32 color_packed[2] = {0x3c003c00u, 0x3c003c00u};
+    u32 emissive_packed[2] = {0u, 63u << 16};
     u32 normal_matrix_packed[5]{};
     u32 material_textures = 0x3fffffffu; // four texture indices and the extension index (63 = none), 6 bits each
     u32 material_factors_0 = 0x3c003c00u;
@@ -108,15 +111,16 @@ u32 PackMaterialTextures(const SampledTextureHandle& base_color, bool has_base_c
            ((occlusion_index & 63u) << 18) | ((extension_index & 63u) << 24);
 }
 
-u32 PackMaterialOptions(assets::MaterialAlphaMode mode, f32 cutoff, const f32 emissive[3]) {
-    // Preserve alpha mode and cutoff while using the unused middle bits for
-    // low-cost RGB emissive (4 bits per channel, linear 0-4 range).
-    const auto channel = [](f32 value) {
-        return static_cast<u32>(std::lround(std::clamp(value, 0.0f, 4.0f) * (15.0f / 4.0f)));
-    };
-    return (static_cast<u32>(FloatToHalf(std::clamp(cutoff, 0.0f, 1.0f))) << 16) |
-           ((channel(emissive[2]) & 15u) << 10) | ((channel(emissive[1]) & 15u) << 6) |
-           ((channel(emissive[0]) & 15u) << 2) | (static_cast<u32>(mode) & 3u);
+u32 PackMaterialOptions(assets::MaterialAlphaMode mode, f32 cutoff) {
+    // The alpha mode in bits 0-1 and the cutoff as a half in bits 16-31 (emission moved to DrawConstants::emissive_packed).
+    return (static_cast<u32>(FloatToHalf(std::clamp(cutoff, 0.0f, 1.0f))) << 16) | (static_cast<u32>(mode) & 3u);
+}
+
+void PackEmissive(const f32 emissive[3], const SampledTextureHandle& texture, bool has_texture, u32 packed[2]) {
+    const auto channel = [](f32 value) { return std::isfinite(value) ? std::max(value, 0.0f) : 0.0f; };
+    const u32 index = has_texture && texture.IsValid() ? texture.index : 63u;
+    packed[0] = PackHalfPair(channel(emissive[0]), channel(emissive[1]));
+    packed[1] = static_cast<u32>(FloatToHalf(channel(emissive[2]))) | ((index & 63u) << 16);
 }
 
 void PackNormalMatrix(const Mat4& matrix, u32 packed[5]) {
@@ -149,7 +153,8 @@ Mat4 BuildNormalTransform(const Mat4& model_transform) {
 constexpr char kSceneShader[] = R"(
 struct PushConstants {
     float4x4 g_Mvp;
-    float4 g_Color;
+    uint2 g_ColorPacked;
+    uint2 g_Emissive;
     uint4 g_NormalPacked0;
     uint g_NormalPacked1;
     uint g_MaterialTextures;
@@ -364,7 +369,11 @@ float3 SurfaceLightEx(float3 light_direction, float3 normal, float3 view_directi
     return lit;
 }
 
+)" // split: MSVC caps one string literal at 16 KB
+R"(
 float4 PSMain(PSInput input) : SV_TARGET {
+    float4 material_color = float4(f16tof32(g_PC.g_ColorPacked.x), f16tof32(g_PC.g_ColorPacked.x >> 16),
+                                   f16tof32(g_PC.g_ColorPacked.y), f16tof32(g_PC.g_ColorPacked.y >> 16));
     uint base_index = g_PC.g_MaterialTextures & 63;
     uint normal_index = (g_PC.g_MaterialTextures >> 6) & 63;
     uint metallic_roughness_index = (g_PC.g_MaterialTextures >> 12) & 63;
@@ -373,14 +382,14 @@ float4 PSMain(PSInput input) : SV_TARGET {
     float4 base_sample = float4(1, 1, 1, 1);
     if (base_index < 32) base_sample = g_Textures[base_index].Sample(g_Sampler, input.uv);
     uint alpha_mode = g_PC.g_AlphaOptions & 3;
-    float surface_alpha = saturate(base_sample.a * g_PC.g_Color.a);
+    float surface_alpha = saturate(base_sample.a * material_color.a);
     if (alpha_mode == 1) {
         clip(surface_alpha - f16tof32(g_PC.g_AlphaOptions >> 16));
         surface_alpha = 1.0;
     } else if (alpha_mode == 0) {
         surface_alpha = 1.0;
     }
-    float3 base_color = SRGBToLinear(base_sample.rgb) * g_PC.g_Color.rgb;
+    float3 base_color = SRGBToLinear(base_sample.rgb) * material_color.rgb;
     float metallic = saturate(f16tof32(g_PC.g_MaterialFactors0 & 0xffff));
     float roughness = clamp(f16tof32(g_PC.g_MaterialFactors0 >> 16), 0.04, 1.0);
     float normal_scale = f16tof32(g_PC.g_MaterialFactors1 & 0xffff);
@@ -451,9 +460,9 @@ float4 PSMain(PSInput input) : SV_TARGET {
         color += SurfaceLightEx(light_direction, normal, view_direction, base_color, metallic, roughness, f0, surface_ext, surface_tangent, surface_bitangent) * g_Frame.spot_color_inner[spot_index].rgb * falloff * cone;
     }
 #endif
-    float3 emissive = float3((g_PC.g_AlphaOptions >> 2) & 15,
-                             (g_PC.g_AlphaOptions >> 6) & 15,
-                             (g_PC.g_AlphaOptions >> 10) & 15) * (4.0 / 15.0);
+    float3 emissive = float3(f16tof32(g_PC.g_Emissive.x), f16tof32(g_PC.g_Emissive.x >> 16), f16tof32(g_PC.g_Emissive.y));
+    uint emissive_index = (g_PC.g_Emissive.y >> 16) & 63;
+    if (emissive_index < 32) emissive *= SRGBToLinear(g_Textures[emissive_index].Sample(g_Sampler, input.uv).rgb);
     color += emissive;
 #ifdef AETHER_HDR_TARGET
     // Linear light into the HDR scene colour target; the post pass applies exposure, the tone mapper and the sRGB encoding.
@@ -587,10 +596,12 @@ struct SceneRenderer::Impl {
         SampledTextureHandle normal_texture;
         SampledTextureHandle metallic_roughness_texture;
         SampledTextureHandle occlusion_texture;
+        SampledTextureHandle emissive_texture;
         bool has_base_color_texture = false;
         bool has_normal_texture = false;
         bool has_metallic_roughness_texture = false;
         bool has_occlusion_texture = false;
+        bool has_emissive_texture = false;
         // KHR_materials_clearcoat, sheen and anisotropy: a 2x1 texture of the packed factors (assets::PackSurfaceExtension), read by texel fetch.
         SampledTextureHandle extension_texture;
         bool has_extension_texture = false;
@@ -600,10 +611,12 @@ struct SceneRenderer::Impl {
         SampledTextureHandle normal;
         SampledTextureHandle metallic_roughness;
         SampledTextureHandle occlusion;
+        SampledTextureHandle emissive;
         bool has_base_color = false;
         bool has_normal = false;
         bool has_metallic_roughness = false;
         bool has_occlusion = false;
+        bool has_emissive = false;
     };
     struct Model {
         assets::GltfScene scene;
@@ -630,6 +643,7 @@ struct SceneRenderer::Impl {
     // Mesh particles' geometry, flattened once from the package's models (empty: the model couldn't be loaded).
     std::unordered_map<std::string, ParticleMesh> particle_meshes;
     bool draw_particles = true;
+    bool bloom = true;
     // The scene's lights, as frame constants (one buffer per frame in flight) where the device has them; else the shader's fixed light.
     static constexpr usize kFrameBuffers = 8;
     std::vector<BufferHandle> frame_buffers;
@@ -1368,6 +1382,10 @@ struct SceneRenderer::Impl {
                     textures_for_material.has_occlusion =
                         upload_texture_reference(material_json["occlusionTexture"], textures_for_material.occlusion);
                 }
+                if (material_json.contains("emissiveTexture")) {
+                    textures_for_material.has_emissive =
+                        upload_texture_reference(material_json["emissiveTexture"], textures_for_material.emissive);
+                }
             }
         }
 
@@ -1414,7 +1432,7 @@ struct SceneRenderer::Impl {
                     std::copy(std::begin(material.base_color), std::end(material.base_color), draw.color);
                     draw.metallic = material.metallic;
                     draw.roughness = material.roughness;
-                    std::copy(std::begin(material.emissive_factor), std::end(material.emissive_factor), draw.emissive);
+                    for (usize c = 0; c < 3; ++c) draw.emissive[c] = material.emissive_factor[c] * material.emissive_strength;
                     draw.normal_scale = material.normal_scale;
                     draw.occlusion_strength = material.occlusion_strength;
                     draw.alpha_cutoff = material.alpha_cutoff;
@@ -1440,6 +1458,8 @@ struct SceneRenderer::Impl {
                         draw.normal_texture = textures_for_material.normal;
                         draw.metallic_roughness_texture = textures_for_material.metallic_roughness;
                         draw.occlusion_texture = textures_for_material.occlusion;
+                        draw.emissive_texture = textures_for_material.emissive;
+                        draw.has_emissive_texture = textures_for_material.has_emissive;
                         draw.has_base_color_texture = textures_for_material.has_base_color;
                         draw.has_normal_texture = textures_for_material.has_normal;
                         draw.has_metallic_roughness_texture = textures_for_material.has_metallic_roughness;
@@ -1469,9 +1489,10 @@ struct SceneRenderer::Impl {
         for (auto& [path, model] : models) {
             for (auto& primitives : model.meshes) {
                 for (Primitive& primitive : primitives) {
-                    primitive.base_color_texture = primitive.normal_texture = primitive.metallic_roughness_texture = primitive.occlusion_texture = white_texture;
+                    primitive.base_color_texture = primitive.normal_texture = primitive.metallic_roughness_texture = primitive.occlusion_texture =
+                        primitive.emissive_texture = white_texture;
                     primitive.has_base_color_texture = primitive.has_normal_texture = primitive.has_metallic_roughness_texture =
-                        primitive.has_occlusion_texture = false;
+                        primitive.has_occlusion_texture = primitive.has_emissive_texture = false;
                 }
             }
         }
@@ -1536,6 +1557,10 @@ SceneRenderer::~SceneRenderer() = default;
 
 void SceneRenderer::SetViewDistance(f32 metres) { impl_->view_distance = metres; }
 void SceneRenderer::SetDrawParticles(bool draw) { impl_->draw_particles = draw; }
+void SceneRenderer::SetBloom(bool enabled) {
+    impl_->bloom = enabled;
+    if (!enabled && impl_->post) impl_->post->ReleaseBloom(); // the chain's bindless slots go back to the table
+}
 void SceneRenderer::SetRenderPoseSampler(std::function<bool(Entity, Transform&)> sampler) {
     impl_->render_pose_sampler = std::move(sampler);
 }
@@ -1794,7 +1819,9 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                             }
                             DrawConstants constants;
                             constants.mvp = mvp;
-                            std::copy(std::begin(primitive.color), std::end(primitive.color), constants.color);
+                            constants.color_packed[0] = PackHalfPair(primitive.color[0], primitive.color[1]);
+                            constants.color_packed[1] = PackHalfPair(primitive.color[2], primitive.color[3]);
+                            PackEmissive(primitive.emissive, primitive.emissive_texture, primitive.has_emissive_texture, constants.emissive_packed);
                             PackNormalMatrix(normal_transform, constants.normal_matrix_packed);
                             constants.material_textures = PackMaterialTextures(
                                 primitive.base_color_texture, primitive.has_base_color_texture,
@@ -1804,7 +1831,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                                 primitive.extension_texture, primitive.has_extension_texture);
                             constants.material_factors_0 = PackHalfPair(primitive.metallic, primitive.roughness);
                             constants.material_factors_1 = PackHalfPair(primitive.normal_scale, primitive.occlusion_strength);
-                            constants.alpha_options = PackMaterialOptions(primitive.alpha_mode, primitive.alpha_cutoff, primitive.emissive);
+                            constants.alpha_options = PackMaterialOptions(primitive.alpha_mode, primitive.alpha_cutoff);
                             Mat4 inverse_model_transform;
                             if (model_transform.TryInverse(inverse_model_transform)) {
                                 const Vec4 local_camera = inverse_model_transform *
@@ -1866,10 +1893,13 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
         // The lit scene is in the HDR target: tone map it into the back buffer under the post volumes at the camera, then the HUD on top
         // in display space.
         commands.EndRenderPass();
-        commands.BeginRenderPass(renderer.swap_chain, kBackground);
         RenderScene volumes;
         volumes.post_volumes = ExtractPostVolumes(world, guids);
-        renderer.post->Draw(commands, BlendPostProcess(volumes, have_camera ? decal_camera_position : Vec3(0, 0, 0)));
+        const PostProcessSettings post_settings = BlendPostProcess(volumes, have_camera ? decal_camera_position : Vec3(0, 0, 0));
+        // Bloom reads the finished scene colour into its own chain of render textures, between the two passes.
+        if (renderer.bloom) renderer.post->RenderBloom(commands, post_settings);
+        commands.BeginRenderPass(renderer.swap_chain, kBackground);
+        renderer.post->Draw(commands, post_settings);
     }
     renderer.DrawHud(game, commands);
     commands.EndRenderPass();

@@ -158,3 +158,32 @@ AETHER_TEST(GltfGlb_TextGltfStillLoadsAndRejectsAUrilessBuffer) {
     GltfScene scene;
     AETHER_CHECK(!LoadGltfFromMemory(std::span<const u8>(reinterpret_cast<const u8*>(text.data()), text.size()), scene));
 }
+
+// Emission past 1 (KHR_materials_emissive_strength) and the emissive texture: before step 4 the factor was read alone and the player
+// squeezed it into 4 bits between 0 and 4, so a flame authored at strength 2.5 drew at a pale fraction of it.
+AETHER_TEST(GltfGlb_ReadsEmissiveStrengthAndTexture) {
+    std::string json = TriangleJson();
+    const std::string plain = R"("materials": [{"pbrMetallicRoughness": {"baseColorFactor": [0.8, 0.2, 0.1, 1.0]}}],)";
+    const std::string emissive =
+        R"("materials": [{"emissiveFactor": [1.0, 0.55, 0.15], "emissiveTexture": {"index": 0},
+            "extensions": {"KHR_materials_emissive_strength": {"emissiveStrength": 2.5}}},
+          {"emissiveFactor": [0.5, 0.5, 0.5], "extensions": {"KHR_materials_emissive_strength": {"emissiveStrength": -3}}},
+          {"emissiveFactor": [0.25, 0.0, 0.0]}],
+        "textures": [{"source": 0}], "images": [{"uri": "glow.png"}],)";
+    const usize at = json.find(plain);
+    AETHER_CHECK(at != std::string::npos);
+    if (at == std::string::npos) return;
+    json.replace(at, plain.size(), emissive);
+    const std::filesystem::path path = WriteTemp("aether_emissive.glb", MakeGlb(json, TriangleBin()));
+    GltfScene scene;
+    std::string error;
+    AETHER_CHECK(LoadGltf(path.string(), scene, &error));
+    std::filesystem::remove(path);
+    AETHER_CHECK(scene.materials.size() == 3);
+    if (scene.materials.size() != 3) return;
+    const GltfMaterial& flame = scene.materials[0];
+    AETHER_CHECK(flame.emissive_strength == 2.5f && flame.emissive_factor[1] == 0.55f);
+    AETHER_CHECK(std::filesystem::path(flame.emissive_texture).filename() == "glow.png");
+    AETHER_CHECK(scene.materials[1].emissive_strength == 0.0f); // negative strength: no emission rather than negative light
+    AETHER_CHECK(scene.materials[2].emissive_strength == 1.0f && scene.materials[2].emissive_texture.empty()); // the defaults
+}

@@ -97,6 +97,11 @@ struct PipelineDesc {
     // pipelines drawn between ICommandList::BeginSceneColorPass and EndRenderPass. A pipeline is compatible with one of the two passes
     // only; drawing it in the other is undefined. false (the default) targets the back buffer, as every pipeline did before.
     bool scene_color_target = false;
+
+    // Renders into render textures (IDevice::CreateRenderTexture, RGBA16F, no depth attachment) between ICommandList::BeginTexturePass
+    // and EndRenderPass: for post-processing chains such as bloom's. Depth testing and writing are off whatever depth_test and
+    // depth_write say. Takes precedence over scene_color_target.
+    bool render_texture_target = false;
 };
 
 // Compute shader pipeline with fixed storage-buffer bindings at u0..u(N-1),
@@ -278,6 +283,12 @@ public:
     // Texture2D<float>. The returned handle can be bound to compute pipelines
     // that declare a sampled texture at the corresponding slot.
     virtual SampledTextureHandle CreateR32FloatTexture(u32 width, u32 height, const f32* values) = 0;
+    // A texture a pass renders into and later passes sample: RGBA16F (linear, unclamped), width x height, in the bindless table like
+    // CreateTexture's, contents undefined until a ICommandList::BeginTexturePass clears or draws them, shader-readable between passes.
+    // Draw into it with pipelines made with PipelineDesc::render_texture_target. Freed with DestroyTexture. Graphics only (compute can't
+    // bind it). No GPU wait: callable between passes while recording. Invalid when the table is full and on devices without support
+    // (the default); invalid sizes (zero, or over the device's 2D limit) throw std::invalid_argument.
+    virtual SampledTextureHandle CreateRenderTexture(u32 /*width*/, u32 /*height*/) { return {}; }
 
     virtual Backend GetBackend() const = 0;
 

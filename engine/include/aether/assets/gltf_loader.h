@@ -38,6 +38,9 @@ struct GltfMaterial {
     std::string normal_texture;
     std::string metallic_roughness_texture;
     std::string occlusion_texture;
+    std::string emissive_texture;
+    // KHR_materials_emissive_strength's emissiveStrength: multiplies emissive_factor (and the texture), so emission can exceed 1.
+    f32 emissive_strength = 1.0f;
 
     // KHR_materials_clearcoat, KHR_materials_sheen and KHR_materials_anisotropy (Phase 39.3), factors only: their textures are not read.
     // All three default to "off" (the extensions' own defaults), so a material without them is unchanged.

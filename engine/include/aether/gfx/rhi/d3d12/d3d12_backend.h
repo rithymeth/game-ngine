@@ -106,6 +106,17 @@ public:
     SampledTextureHandle CreateCompressedTexture(CompressedTextureFormat format, u32 width, u32 height, std::span<const CompressedMip> mips) override;
     bool DestroyTexture(SampledTextureHandle texture) override;
     SampledTextureHandle CreateR32FloatTexture(u32 width, u32 height, const f32* values) override;
+    // Render textures (IDevice::CreateRenderTexture): an RGBA16F resource in sampled_float_textures_ with an RTV of its own, its size
+    // in render_texture_sizes_ (0 x 0: the slot holds no render texture).
+    static constexpr DXGI_FORMAT kRenderTextureFormat = DXGI_FORMAT_R16G16B16A16_FLOAT;
+    SampledTextureHandle CreateRenderTexture(u32 width, u32 height) override;
+    struct RenderTextureView {
+        ID3D12Resource* resource = nullptr;
+        D3D12_CPU_DESCRIPTOR_HANDLE rtv{};
+        u32 width = 0, height = 0;
+    };
+    // The live render texture behind `handle`, or a view with a null resource.
+    RenderTextureView FindRenderTexture(SampledTextureHandle handle) const;
     DescriptorHeap& BindlessTextureHeap() { return *bindless_texture_heap_; }
     // A bindless slot for a resource someone else owns (a swap chain's scene-depth copy, ISwapChain::SceneDepthTexture): it counts against
     // the table, DestroyTexture refuses it, and it views the white fallback until SetExternalBindlessTexture gives it a resource (null:
@@ -188,6 +199,8 @@ private:
     std::unique_ptr<gfx::Texture> dummy_texture_;
     std::vector<std::unique_ptr<gfx::Texture>> sampled_textures_;
     std::vector<ComPtr<ID3D12Resource>> sampled_float_textures_;
+    std::unique_ptr<DescriptorHeap> render_texture_rtv_heap_; // one RTV per user bindless slot, written by CreateRenderTexture
+    std::vector<std::pair<u32, u32>> render_texture_sizes_;
     u32 sampled_texture_count_ = 0;
 };
 
@@ -272,6 +285,7 @@ public:
 
     void BeginRenderPass(ISwapChain& swap_chain, const ClearColor& clear_color) override;
     bool BeginSceneColorPass(ISwapChain& swap_chain, const ClearColor& clear_color) override;
+    bool BeginTexturePass(SampledTextureHandle target, const ClearColor* clear_color) override;
     void EndRenderPass() override;
     void BindPipeline(PipelineHandle pipeline) override;
     void SetPushConstants(const void* data, u32 size_bytes) override;

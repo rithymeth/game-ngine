@@ -52,6 +52,12 @@ public:
     // leaves the target shader-readable for the pass that follows. False (nothing recorded) without a SceneColorTexture, inside another
     // pass, and on devices without support (the default).
     virtual bool BeginSceneColorPass(ISwapChain& /*swap_chain*/, const ClearColor& /*clear_color*/) { return false; }
+    // Begins drawing into a render texture (IDevice::CreateRenderTexture), with no depth attachment, the viewport and scissor its full
+    // size. `clear_color` null keeps its contents (for additive passes over what an earlier pass drew), else clears to it. Only
+    // pipelines made with PipelineDesc::render_texture_target draw in it; CopySceneDepth is refused. EndRenderPass leaves it
+    // shader-readable. False (nothing recorded) for a handle that isn't a live render texture of this device, inside another pass, and
+    // on devices without support (the default).
+    virtual bool BeginTexturePass(SampledTextureHandle /*target*/, const ClearColor* /*clear_color*/) { return false; }
     virtual void EndRenderPass() = 0;
 
     // Binds a pipeline created via IDevice::CreatePipeline. Must be called

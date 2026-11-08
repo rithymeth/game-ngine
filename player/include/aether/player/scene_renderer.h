@@ -30,6 +30,9 @@ public:
     void SetViewDistance(f32 metres);
     // Whether the particle pass draws the game's particle effects (Game::Particles()); on by default.
     void SetDrawParticles(bool draw);
+    // Whether the post pass draws bloom (a quality preset's `bloom`); on by default. Only where there is an HDR scene colour target: the
+    // fallback path that tone maps in the scene shader has no bloom.
+    void SetBloom(bool enabled);
     // Optional visual-only transform sampler. Never mutates Game's World or PhysicsScene.
     // Leave unset for the original offline/single-player rendering path.
     void SetRenderPoseSampler(std::function<bool(Entity, Transform&)> sampler);

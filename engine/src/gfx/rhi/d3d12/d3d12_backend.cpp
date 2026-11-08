@@ -58,6 +58,10 @@ D3D12Device::D3D12Device(bool enable_debug_layer) : device_(enable_debug_layer) 
                                                               8192, /*shader_visible=*/true);
     sampled_descriptor_indices_.resize(kMaxUserBindlessTextures, DescriptorHeap::kInvalidIndex);
     sampled_float_textures_.resize(kMaxUserBindlessTextures);
+    render_texture_sizes_.resize(kMaxUserBindlessTextures, {0u, 0u});
+    render_texture_rtv_heap_ = std::make_unique<DescriptorHeap>(device_, D3D12_DESCRIPTOR_HEAP_TYPE_RTV, kMaxUserBindlessTextures,
+                                                                /*shader_visible=*/false);
+    for (u32 i = 0; i < kMaxUserBindlessTextures; ++i) render_texture_rtv_heap_->Allocate(); // slot i: the texture at bindless i + 1
     sampled_textures_.reserve(kMaxUserBindlessTextures);
 
     // A 1x1 white dummy texture, uploaded once and duplicated (by
@@ -367,7 +371,9 @@ PipelineHandle D3D12Device::CreatePipeline(const PipelineDesc& desc, ISwapChain&
         return {};
     }
     auto& d3d_swap = *d3d_swap_ptr;
-    DXGI_FORMAT rtv_format = desc.scene_color_target ? D3D12SwapChain::kSceneColorFormat : d3d_swap.Native().Format();
+    DXGI_FORMAT rtv_format = desc.render_texture_target ? kRenderTextureFormat
+                             : desc.scene_color_target  ? D3D12SwapChain::kSceneColorFormat
+                                                        : d3d_swap.Native().Format();
 
     const u32 max_root_constants = desc.enable_bindless_textures ? 63u : 64u;
     if (desc.push_constant_size_bytes % 4 != 0 || desc.push_constant_size_bytes / 4 > max_root_constants) {
@@ -526,6 +532,12 @@ PipelineHandle D3D12Device::CreatePipeline(const PipelineDesc& desc, ISwapChain&
                                                                   : D3D12_DEPTH_WRITE_MASK_ZERO;
     pso_desc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
     pso_desc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
+    if (desc.render_texture_target) {
+        // Texture passes bind no depth buffer, so the PSO declares none.
+        pso_desc.DepthStencilState.DepthEnable = FALSE;
+        pso_desc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+        pso_desc.DSVFormat = DXGI_FORMAT_UNKNOWN;
+    }
 
     pso_desc.SampleMask = UINT_MAX;
     pso_desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
@@ -948,6 +960,7 @@ bool D3D12Device::DestroyTexture(SampledTextureHandle texture) {
     }
     ComPtr<ID3D12Resource> floating = std::move(sampled_float_textures_[descriptor_slot]);
     sampled_float_textures_[descriptor_slot].Reset();
+    render_texture_sizes_[descriptor_slot] = {0u, 0u}; // no longer a render texture: BeginTexturePass refuses the handle
     const u32 compute_index = sampled_descriptor_indices_[descriptor_slot];
     sampled_descriptor_indices_[descriptor_slot] = DescriptorHeap::kInvalidIndex;
     if (sampled_texture_count_ > 0) --sampled_texture_count_;
@@ -965,6 +978,59 @@ bool D3D12Device::DestroyTexture(SampledTextureHandle texture) {
         floating.Reset();
     });
     return true;
+}
+
+SampledTextureHandle D3D12Device::CreateRenderTexture(u32 width, u32 height) {
+    if (width == 0 || height == 0 || width > D3D12_REQ_TEXTURE2D_U_OR_V_DIMENSION || height > D3D12_REQ_TEXTURE2D_U_OR_V_DIMENSION) {
+        throw std::invalid_argument("CreateRenderTexture requires a non-zero extent within the device's 2D texture limit");
+    }
+    DrainRetired(); // destroyed textures give their slots back at retirement
+    if (sampled_texture_count_ >= kMaxUserBindlessTextures || !bindless_texture_heap_->CanAllocate()) {
+        AETHER_LOG_ERROR("D3D12", "CreateRenderTexture: the bindless texture table is full (capacity=%u real textures)", kMaxUserBindlessTextures);
+        return {};
+    }
+    D3D12_RESOURCE_DESC desc{};
+    desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    desc.Width = width;
+    desc.Height = height;
+    desc.DepthOrArraySize = 1;
+    desc.MipLevels = 1;
+    desc.Format = kRenderTextureFormat;
+    desc.SampleDesc.Count = 1;
+    desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+    D3D12_CLEAR_VALUE clear{};
+    clear.Format = kRenderTextureFormat;
+    D3D12_HEAP_PROPERTIES default_heap{};
+    default_heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+    ComPtr<ID3D12Resource> texture;
+    AETHER_D3D_CHECK(device_.Handle()->CreateCommittedResource(&default_heap, D3D12_HEAP_FLAG_NONE, &desc,
+                                                                D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, &clear,
+                                                                IID_PPV_ARGS(&texture)));
+    const u32 bindless_index = bindless_texture_heap_->Allocate();
+    if (bindless_index == DescriptorHeap::kInvalidIndex) return {};
+    const usize slot = bindless_index - kFirstUserBindlessTextureIndex;
+    D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
+    srv.Format = kRenderTextureFormat;
+    srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    srv.Texture2D.MipLevels = 1;
+    // The slot is free (nothing in flight reads it: a destroyed texture's slot is only reused after retirement), so its descriptor
+    // can be written while the GPU works on other slots.
+    device_.Handle()->CreateShaderResourceView(texture.Get(), &srv, bindless_texture_heap_->CPUHandle(bindless_index));
+    device_.Handle()->CreateRenderTargetView(texture.Get(), nullptr, render_texture_rtv_heap_->CPUHandle(static_cast<u32>(slot)));
+    sampled_descriptor_indices_[slot] = DescriptorHeap::kInvalidIndex; // graphics only: no compute descriptor
+    sampled_float_textures_[slot] = std::move(texture);
+    render_texture_sizes_[slot] = {width, height};
+    ++sampled_texture_count_;
+    return SampledTextureHandle{bindless_index};
+}
+
+D3D12Device::RenderTextureView D3D12Device::FindRenderTexture(SampledTextureHandle handle) const {
+    if (!handle.IsValid() || handle.index < kFirstUserBindlessTextureIndex || handle.index >= kMaxBindlessTextures) return {};
+    const usize slot = handle.index - kFirstUserBindlessTextureIndex;
+    if (render_texture_sizes_[slot].first == 0 || !sampled_float_textures_[slot]) return {};
+    return {sampled_float_textures_[slot].Get(), render_texture_rtv_heap_->CPUHandle(static_cast<u32>(slot)), render_texture_sizes_[slot].first,
+            render_texture_sizes_[slot].second};
 }
 
 SampledTextureHandle D3D12Device::CreateR32FloatTexture(u32 width, u32 height, const f32* values) {
@@ -1476,6 +1542,32 @@ bool D3D12CommandList::BeginSceneColorPass(ISwapChain& swap_chain, const ClearCo
     cmd_.Get()->RSSetScissorRects(1, &scissor);
     active_scene_color_ = target;
     active_swap_chain_ = &d3d_swap;
+    render_pass_active_ = true;
+    return true;
+}
+
+bool D3D12CommandList::BeginTexturePass(SampledTextureHandle target, const ClearColor* clear_color) {
+    const D3D12Device::RenderTextureView view = device_.FindRenderTexture(target);
+    if (!recording_ || IsComputeList() || render_pass_active_ || view.resource == nullptr ||
+        (clear_color != nullptr && !IsFiniteClearColor(*clear_color))) {
+        AETHER_LOG_ERROR("D3D12", "BeginTexturePass requires a recording, non-nested list, a live render texture of this device and a "
+                                  "finite clear colour (or none)");
+        return false;
+    }
+    D3D12_RESOURCE_BARRIER to_rt =
+        TransitionBarrier(view.resource, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+    cmd_.Get()->ResourceBarrier(1, &to_rt);
+    if (clear_color != nullptr) {
+        const f32 c[4] = {clear_color->r, clear_color->g, clear_color->b, clear_color->a};
+        cmd_.Get()->ClearRenderTargetView(view.rtv, c, 0, nullptr);
+    }
+    cmd_.Get()->OMSetRenderTargets(1, &view.rtv, FALSE, nullptr);
+    D3D12_VIEWPORT viewport{0.0f, 0.0f, static_cast<f32>(view.width), static_cast<f32>(view.height), 0.0f, 1.0f};
+    D3D12_RECT scissor{0, 0, static_cast<LONG>(view.width), static_cast<LONG>(view.height)};
+    cmd_.Get()->RSSetViewports(1, &viewport);
+    cmd_.Get()->RSSetScissorRects(1, &scissor);
+    active_scene_color_ = view.resource; // EndRenderPass returns it to PIXEL_SHADER_RESOURCE, as for the scene colour target
+    active_swap_chain_ = nullptr;        // no depth: CopySceneDepth refuses
     render_pass_active_ = true;
     return true;
 }

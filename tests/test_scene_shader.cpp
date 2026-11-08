@@ -50,6 +50,8 @@ AETHER_TEST(SceneShader_SourceIsTheLibraryThenTheSceneShader) {
         AETHER_CHECK(Contains(*s, "VSMain") && Contains(*s, "SurfaceLightEx") && Contains(*s, "LoadSurfaceExtension"));
         // Every light the scene shader adds goes through the extension-aware term.
         AETHER_CHECK(Contains(*s, "AetherAnisotropicSpecular") && Contains(*s, "AetherSheen") && Contains(*s, "AetherClearCoat"));
+        // Emission comes from its own half-float constants (and texture), no longer from four bits a channel in the alpha options.
+        AETHER_CHECK(Contains(*s, "g_PC.g_Emissive.x") && Contains(*s, "emissive_index") && !Contains(*s, "g_AlphaOptions >> 2"));
     }
     AETHER_CHECK(Contains(frame, "ConstantBuffer<FrameData> g_Frame"));
     // The HDR variant writes linear light for the post pass: the define follows the frame-data one, and the tone map is compiled out.
