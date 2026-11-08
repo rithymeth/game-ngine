@@ -723,7 +723,19 @@ jobs:
     if: github.event_name != 'pull_request'
     steps:
       - uses: actions/checkout@v4
+      - name: Use the Qt 6.8.3 installed on the self-hosted runner
+        # Only when WINDOWS_RUNNER is set: the runner already has Qt, so skip the per-run download.
+        if: vars.WINDOWS_RUNNER != ''
+        shell: pwsh
+        run: |
+          $qt = 'C:\Qt.8.3\msvc2022_64'
+          if (-not (Test-Path "$qtin\Qt6Core.dll")) { throw "Qt 6.8.3 not found at $qt" }
+          "CMAKE_PREFIX_PATH=$qt" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "QT_ROOT_DIR=$qt" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "Qt6_DIR=$qt\lib\cmake\Qt6" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "$qtin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
       - name: Install Qt 6.8.3
+        if: vars.WINDOWS_RUNNER == ''
         uses: jurplel/install-qt-action@v4
         with:
           version: '6.8.3'
