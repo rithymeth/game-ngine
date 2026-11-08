@@ -20,7 +20,7 @@ struct PushConstants {
 [[vk::push_constant]]
 #endif
 ConstantBuffer<PushConstants> g_PC : register(b0);
-Texture2D g_Textures[32] : register(t0, space0);
+Texture2D g_Textures[128] : register(t0, space0);
 SamplerState g_Sampler : register(s0, space1);
 
 // The decal's rectangle as two triangles.
@@ -51,7 +51,7 @@ float4 PSMain(float4 position : SV_POSITION) : SV_TARGET {
     float angle_fade = saturate((facing - g_PC.g_Fade.y) / max(g_PC.g_Fade.x - g_PC.g_Fade.y, 1e-4));
     // Not a ?: — HLSL evaluates both arms, so the "no texture" index would still be sampled out of bounds.
     float4 texel = float4(1.0, 1.0, 1.0, 1.0);
-    if (texture_index < 32) texel = g_Textures[texture_index].Sample(g_Sampler, float2(p.x + 0.5, 0.5 - p.y));
+    if (texture_index < 128) texel = g_Textures[texture_index].Sample(g_Sampler, float2(p.x + 0.5, 0.5 - p.y));
 #ifdef AETHER_HDR_TARGET
     // Into the linear HDR target: the texture's colour decoded from sRGB, the tint already linear (the post pass encodes the whole scene).
     texel.rgb = lerp(texel.rgb / 12.92, pow((texel.rgb + 0.055) / 1.055, 2.4), step(0.04045, texel.rgb));

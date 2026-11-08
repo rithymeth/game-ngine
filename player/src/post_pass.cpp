@@ -27,7 +27,7 @@ struct PushConstants {
 [[vk::push_constant]]
 #endif
 ConstantBuffer<PushConstants> g_PC : register(b0);
-Texture2D g_Textures[32] : register(t0, space0);
+Texture2D g_Textures[128] : register(t0, space0);
 SamplerState g_Sampler : register(s0, space1);
 
 // One triangle that covers the screen.
@@ -86,7 +86,7 @@ float4 PSMain(float4 position : SV_POSITION) : SV_TARGET {
     uint width, height;
     g_Textures[g_PC.g_SceneColor].GetDimensions(width, height);
     float3 c = g_Textures[g_PC.g_SceneColor].Load(int3(int2(position.xy), 0)).rgb;
-    if (g_PC.g_Bloom < 32 && g_PC.g_BloomIntensity > 0.0) {
+    if (g_PC.g_Bloom < 128 && g_PC.g_BloomIntensity > 0.0) {
         // The chain's top level, half the screen's size, read with the same 3x3 tent the upsample uses.
         uint bloom_width, bloom_height;
         g_Textures[g_PC.g_Bloom].GetDimensions(bloom_width, bloom_height);
@@ -126,7 +126,7 @@ struct PushConstants {
 [[vk::push_constant]]
 #endif
 ConstantBuffer<PushConstants> g_PC : register(b0);
-Texture2D g_Textures[32] : register(t0, space0);
+Texture2D g_Textures[128] : register(t0, space0);
 SamplerState g_Sampler : register(s0, space1);
 
 float4 VSMain(uint id : SV_VertexID) : SV_POSITION {

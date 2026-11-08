@@ -156,7 +156,7 @@ public:
 
     // The device-global bindless texture table — TWO descriptor sets, not
     // one: set 0 is a SAMPLED_IMAGE array (kMaxBindlessTextures slots,
-    // matching the shared HLSL's `Texture2D g_Textures[32] : register(t0,
+    // matching the shared HLSL's `Texture2D g_Textures[128] : register(t0,
     // space0)`), set 1 is a single SAMPLER (matching `SamplerState
     // g_Sampler : register(s0, space1)`). See the "Unified mode's
     // textured-quad pipeline" comment in rhi_demo/main.cpp for why the

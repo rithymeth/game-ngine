@@ -16,7 +16,7 @@
 namespace aether::player {
 
 // The "no texture" bindless index (what the scene shader uses too): the decal draws as a flat tint.
-constexpr u32 kDecalNoTexture = 63;
+constexpr u32 kDecalNoTexture = 255; // past the 128-slot table
 
 // One decal ready to draw: the geometry (mat::BuildDecalDraws), its texture's bindless index (kDecalNoTexture: flat tint) and its look.
 struct DecalPassItem {

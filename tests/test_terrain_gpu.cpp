@@ -50,7 +50,10 @@ AETHER_TEST(TerrainGpu_ConstantsPackTheBindingsIntoOneHundredTwentyEightBytes) {
     params.sun_intensity = 4.5f, params.sky_intensity = 0.25f;
     const TerrainConstants c = PackTerrainConstants(Mat4::Identity(), params);
     const u32 p = c.packed[0];
-    AETHER_CHECK((p & 63u) == 3 && ((p >> 6) & 63u) == 8 && ((p >> 12) & 63u) == 13 && ((p >> 18) & 63u) == 18 && ((p >> 24) & 63u) == 27);
+    AETHER_CHECK((p & 255u) == 3 && ((p >> 8) & 255u) == 8 && ((p >> 16) & 255u) == 13 && ((p >> 24) & 255u) == 18);
+    u32 light_bits = 0;
+    std::memcpy(&light_bits, &c.light[3], sizeof(u32));
+    AETHER_CHECK((light_bits >> 16) == 27 && (light_bits & 0xffffu) == 0x3c00u); // splatmap 27; height contrast 1.0 as a half
     AETHER_CHECK(c.splat_rect[0] == 10.0f && c.splat_rect[1] == -4.0f && c.splat_rect[2] == 1.0f / 64.0f && c.splat_rect[3] == 1.0f / 32.0f);
     const auto half = [](u32 bits) { // the test's own decoder, apart from the one the packing uses
         const u32 e = (bits >> 10) & 31u, m = bits & 1023u;
@@ -58,7 +61,7 @@ AETHER_TEST(TerrainGpu_ConstantsPackTheBindingsIntoOneHundredTwentyEightBytes) {
     };
     AETHER_CHECK(std::fabs(half(c.packed[2] & 0xffffu) - 0.1f) < 1e-3f && std::fabs(half(c.packed[2] >> 16) - 0.2f) < 1e-3f);
     AETHER_CHECK(std::fabs(half(c.packed[3] & 0xffffu) - 0.3f) < 1e-3f && std::fabs(half(c.packed[3] >> 16) - 0.4f) < 1e-3f);
-    AETHER_CHECK(c.light[0] == 1.0f && c.light[1] == 2.0f && c.light[2] == 3.0f && c.light[3] == 1.0f);
+    AETHER_CHECK(c.light[0] == 1.0f && c.light[1] == 2.0f && c.light[2] == 3.0f);
     AETHER_CHECK(half(c.packed[1] & 0xffffu) == 4.5f && half(c.packed[1] >> 16) == 0.25f);
     u32 surface;
     std::memcpy(&surface, &c.camera[3], 4);

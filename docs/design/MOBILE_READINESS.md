@@ -227,8 +227,8 @@ From reading `vulkan_backend.cpp`, a Vulkan version needs:
 5. *Report support.* `SupportsFrameConstants` returns true. The existing test `RHI_VulkanLeavesFrameConstantsUnsupportedForNow` becomes the
    positive test. Vulkan is not built on the Windows dev machine, so this needs the Linux or macOS CI jobs, or a local Vulkan SDK, to verify.
 
-Limits to read from the device instead of constants: `kMaxBindlessTextures = 32` (query `maxPerStageDescriptorSampledImages` and
-`maxDescriptorSetSampledImages`, which are small on some mobile GPUs), and the 128-byte push-constant block (`maxPushConstantsSize`; 128 is the
+Limits to read from the device instead of constants: `kMaxBindlessTextures` (32 until November 2026, now 128; query `maxPerStageDescriptorSampledImages` and
+`maxDescriptorSetSampledImages`, which are small on some mobile GPUs: an adapter reporting fewer than 128 is skipped today), and the 128-byte push-constant block (`maxPushConstantsSize`; 128 is the
 guaranteed minimum, so staying at 128 is safe, but moving data into the frame constants would give headroom).
 
 ## Step 2 plan: the Android platform plugin

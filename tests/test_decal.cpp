@@ -168,7 +168,7 @@ AETHER_TEST(DecalPass_ConstantsAreExactly128BytesAndCarryTheItem) {
     AETHER_CHECK(c.fade[2] == 2.0f && c.fade[3] == 3.0f && c.extra[0] == 4.0f && c.extra[1] == 7.0f && c.extra[2] == 9.0f);
     AETHER_CHECK(c.clip_to_unit.cols[1].y == draws[0].clip_to_unit.cols[1].y);
     // No texture by default.
-    AETHER_CHECK(player::DecalPassItem{}.texture == player::kDecalNoTexture && player::kDecalNoTexture == 63);
+    AETHER_CHECK(player::DecalPassItem{}.texture == player::kDecalNoTexture && player::kDecalNoTexture == 255);
 }
 
 AETHER_TEST(DecalPass_TintIsTheSrgbCurve) {

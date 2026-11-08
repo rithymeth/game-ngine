@@ -74,7 +74,11 @@ struct SampledTextureHandle {
 // Slot zero is the permanent white fallback on both backends. This fixed
 // table capacity avoids Vulkan descriptor-set-layout recreation; the table
 // is built once and every descriptor is valid before any real texture loads.
-constexpr u32 kMaxBindlessTextures = 32;
+// 128 is the most a graphics stage may see on D3D12 resource-binding tier 1
+// and what MoltenVK reports for Apple GPUs; shaders declare
+// `Texture2D g_Textures[128]` (a shader may declare fewer: both APIs allow a
+// smaller array than the table). Packed shader indices are 8 bits, 255 = none.
+constexpr u32 kMaxBindlessTextures = 128;
 constexpr u32 kBindlessFallbackTextureIndex = 0;
 constexpr u32 kFirstUserBindlessTextureIndex = kBindlessFallbackTextureIndex + 1;
 constexpr u32 kMaxUserBindlessTextures = kMaxBindlessTextures - kFirstUserBindlessTextureIndex;

@@ -238,8 +238,8 @@ PhysicalDeviceChoice PickPhysicalDevice(VkInstance instance) {
         if (supported_features.shaderSampledImageArrayDynamicIndexing != VK_TRUE ||
             props.limits.maxPerStageDescriptorSampledImages < kMaxBindlessTextures ||
             props.limits.maxDescriptorSetSampledImages < kMaxBindlessTextures) {
-            AETHER_LOG_INFO("Vulkan", "Skipping adapter %s: dynamic sampled-image indexing or 32-image limits missing",
-                            props.deviceName);
+            AETHER_LOG_INFO("Vulkan", "Skipping adapter %s: dynamic sampled-image indexing or %u-image limits missing",
+                            props.deviceName, kMaxBindlessTextures);
             continue;
         }
 

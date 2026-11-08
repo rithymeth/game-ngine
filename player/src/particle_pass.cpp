@@ -25,7 +25,7 @@ struct PushConstants {
 [[vk::push_constant]]
 #endif
 ConstantBuffer<PushConstants> g_PC : register(b0);
-Texture2D g_Textures[32] : register(t0, space0);
+Texture2D g_Textures[128] : register(t0, space0);
 SamplerState g_Sampler : register(s0, space1);
 
 struct VSInput {
@@ -76,7 +76,7 @@ float4 PSMain(PSInput input) : SV_TARGET {
     float kind = input.params.x - 4.0 * floor(input.params.x * 0.25);
     bool lit = g_PC.g_Texture.w != 0;
     bool sprite = !lit && kind > 0.5;
-    if (texture_index != 0 && texture_index < 32) {
+    if (texture_index != 0 && texture_index < 128) {
         float4 texel = g_Textures[texture_index].Sample(g_Sampler, input.uv);
         float frame_blend = sprite ? saturate(kind - 1.0) : 0.0;
         if (frame_blend > 0.0) texel = lerp(texel, g_Textures[texture_index].Sample(g_Sampler, input.uv + input.params.yz), frame_blend);
@@ -90,7 +90,7 @@ float4 PSMain(PSInput input) : SV_TARGET {
     // depth) from the scene depth copy at this pixel.
     float soft = asfloat(g_PC.g_Texture.z);
     uint depth_index = g_PC.g_Texture.y;
-    if (soft > 0.0 && depth_index != 0 && depth_index < 32) {
+    if (soft > 0.0 && depth_index != 0 && depth_index < 128) {
         float scene = g_Textures[depth_index].Load(int3(int2(input.position.xy), 0)).r;
         color.a *= saturate((ViewDistance(scene) - ViewDistance(input.position.z)) / soft);
     }

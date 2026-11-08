@@ -1508,7 +1508,7 @@ struct PushConstants {
 ConstantBuffer<PushConstants> pc : register(b0);
 struct VertexIn { float3 position : POSITION; float2 uv : TEXCOORD0; };
 struct VertexOut { float4 position : SV_POSITION; float2 uv : TEXCOORD0; };
-Texture2D modelTextures[32] : register(t0, space0);
+Texture2D modelTextures[128] : register(t0, space0);
 SamplerState modelSampler : register(s0, space1);
 VertexOut VSMain(VertexIn input) {
     VertexOut output;

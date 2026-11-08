@@ -68,8 +68,8 @@ struct TerrainConstants {
     Mat4 view_projection;
     f32 splat_rect[4];  // origin x, origin z, 1 / width, 1 / depth
     f32 camera[4];      // camera position xyz; w: the layers' roughness (6 bits each, bits 0..23) and metallic (2 bits each, bits 24..31) as u32 bits
-    f32 light[4];       // sun direction xyz (towards the sun), height contrast
-    u32 packed[4];      // x: layer 0..3 texture indices at bits 0, 6, 12, 18 and the splatmap's at 24; y: sun intensity | sky intensity << 16 (halves);
+    f32 light[4];       // sun direction xyz (towards the sun); w: the height contrast as a half | the splatmap's texture index << 16, as u32 bits
+    u32 packed[4];      // x: layer 0..3 texture indices, 8 bits each; y: sun intensity | sky intensity << 16 (halves);
                         // z, w: the four layers' tile scales as halves (layer 0 in z's low half)
 };
 static_assert(sizeof(TerrainConstants) == 128);

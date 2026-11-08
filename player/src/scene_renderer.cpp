@@ -51,15 +51,15 @@ static_assert(sizeof(SceneVertex) == sizeof(f32) * 12);
 struct DrawConstants {
     Mat4 mvp;
     // The base colour factor as four halves, then the emissive colour as three halves (r|g, b) with the emissive texture's index (63 =
-    // none) in bits 16-21 of the second word: halves keep HDR emission (KHR_materials_emissive_strength) up to 65504.
+    // none) in bits 16-23 of the second word: halves keep HDR emission (KHR_materials_emissive_strength) up to 65504.
     u32 color_packed[2] = {0x3c003c00u, 0x3c003c00u};
-    u32 emissive_packed[2] = {0u, 63u << 16};
+    u32 emissive_packed[2] = {0u, 255u << 16};
     u32 normal_matrix_packed[5]{};
-    u32 material_textures = 0x3fffffffu; // four texture indices and the extension index (63 = none), 6 bits each
+    u32 material_textures = 0xffffffffu; // base colour, normal, metallic-roughness and occlusion indices, 8 bits each (255 = none)
     u32 material_factors_0 = 0x3c003c00u;
     u32 material_factors_1 = 0x3c003c00u;
     f32 camera_local[3]{};
-    u32 alpha_options = 0x38000000u;
+    u32 alpha_options = 0x38000000u | (255u << 2); // mode (bits 0-1), the extension texture's index (2-9, 255 = none), cutoff half (16-31)
 };
 static_assert(sizeof(DrawConstants) == 128);
 
@@ -94,33 +94,29 @@ u32 PackHalfPair(f32 low, f32 high) {
     return static_cast<u32>(FloatToHalf(low)) | (static_cast<u32>(FloatToHalf(high)) << 16);
 }
 
+// A texture's 8-bit shader index: 255 (none) when absent, invalid or outside the bindless table.
+u32 TextureSlot(const SampledTextureHandle& texture, bool present) {
+    return present && texture.IsValid() && texture.index < kMaxBindlessTextures ? texture.index : 255u;
+}
+
 u32 PackMaterialTextures(const SampledTextureHandle& base_color, bool has_base_color,
                          const SampledTextureHandle& normal, bool has_normal,
                          const SampledTextureHandle& metallic_roughness, bool has_metallic_roughness,
-                         const SampledTextureHandle& occlusion, bool has_occlusion,
-                         const SampledTextureHandle& extension, bool has_extension) {
-    constexpr u32 absent = 63u;
-    const u32 base = has_base_color && base_color.IsValid() ? base_color.index : absent;
-    const u32 normal_index = has_normal && normal.IsValid() ? normal.index : absent;
-    const u32 metallic_roughness_index = has_metallic_roughness && metallic_roughness.IsValid()
-                                             ? metallic_roughness.index
-                                             : absent;
-    const u32 occlusion_index = has_occlusion && occlusion.IsValid() ? occlusion.index : absent;
-    const u32 extension_index = has_extension && extension.IsValid() ? extension.index : absent;
-    return (base & 63u) | ((normal_index & 63u) << 6) | ((metallic_roughness_index & 63u) << 12) |
-           ((occlusion_index & 63u) << 18) | ((extension_index & 63u) << 24);
+                         const SampledTextureHandle& occlusion, bool has_occlusion) {
+    return TextureSlot(base_color, has_base_color) | (TextureSlot(normal, has_normal) << 8) |
+           (TextureSlot(metallic_roughness, has_metallic_roughness) << 16) | (TextureSlot(occlusion, has_occlusion) << 24);
 }
 
-u32 PackMaterialOptions(assets::MaterialAlphaMode mode, f32 cutoff) {
-    // The alpha mode in bits 0-1 and the cutoff as a half in bits 16-31 (emission moved to DrawConstants::emissive_packed).
-    return (static_cast<u32>(FloatToHalf(std::clamp(cutoff, 0.0f, 1.0f))) << 16) | (static_cast<u32>(mode) & 3u);
+u32 PackMaterialOptions(assets::MaterialAlphaMode mode, f32 cutoff, const SampledTextureHandle& extension, bool has_extension) {
+    // The alpha mode in bits 0-1, the surface-extension texture's index in bits 2-9 and the cutoff as a half in bits 16-31.
+    return (static_cast<u32>(FloatToHalf(std::clamp(cutoff, 0.0f, 1.0f))) << 16) | (TextureSlot(extension, has_extension) << 2) |
+           (static_cast<u32>(mode) & 3u);
 }
 
 void PackEmissive(const f32 emissive[3], const SampledTextureHandle& texture, bool has_texture, u32 packed[2]) {
     const auto channel = [](f32 value) { return std::isfinite(value) ? std::max(value, 0.0f) : 0.0f; };
-    const u32 index = has_texture && texture.IsValid() ? texture.index : 63u;
     packed[0] = PackHalfPair(channel(emissive[0]), channel(emissive[1]));
-    packed[1] = static_cast<u32>(FloatToHalf(channel(emissive[2]))) | ((index & 63u) << 16);
+    packed[1] = static_cast<u32>(FloatToHalf(channel(emissive[2]))) | (TextureSlot(texture, has_texture) << 16);
 }
 
 void PackNormalMatrix(const Mat4& matrix, u32 packed[5]) {
@@ -182,7 +178,7 @@ struct PSInput {
     float tangent_sign : TEXCOORD3;
     float3 local_position : TEXCOORD4;
 };
-Texture2D g_Textures[32] : register(t0, space0);
+Texture2D g_Textures[128] : register(t0, space0);
 SamplerState g_Sampler : register(s0, space1);
 
 float3 SRGBToLinear(float3 encoded) {
@@ -374,13 +370,13 @@ R"(
 float4 PSMain(PSInput input) : SV_TARGET {
     float4 material_color = float4(f16tof32(g_PC.g_ColorPacked.x), f16tof32(g_PC.g_ColorPacked.x >> 16),
                                    f16tof32(g_PC.g_ColorPacked.y), f16tof32(g_PC.g_ColorPacked.y >> 16));
-    uint base_index = g_PC.g_MaterialTextures & 63;
-    uint normal_index = (g_PC.g_MaterialTextures >> 6) & 63;
-    uint metallic_roughness_index = (g_PC.g_MaterialTextures >> 12) & 63;
-    uint occlusion_index = (g_PC.g_MaterialTextures >> 18) & 63;
+    uint base_index = g_PC.g_MaterialTextures & 255;
+    uint normal_index = (g_PC.g_MaterialTextures >> 8) & 255;
+    uint metallic_roughness_index = (g_PC.g_MaterialTextures >> 16) & 255;
+    uint occlusion_index = (g_PC.g_MaterialTextures >> 24) & 255;
     // Not a ?: — HLSL evaluates both arms, so the "no texture" index (63) would still be sampled out of bounds.
     float4 base_sample = float4(1, 1, 1, 1);
-    if (base_index < 32) base_sample = g_Textures[base_index].Sample(g_Sampler, input.uv);
+    if (base_index < 128) base_sample = g_Textures[base_index].Sample(g_Sampler, input.uv);
     uint alpha_mode = g_PC.g_AlphaOptions & 3;
     float surface_alpha = saturate(base_sample.a * material_color.a);
     if (alpha_mode == 1) {
@@ -394,7 +390,7 @@ float4 PSMain(PSInput input) : SV_TARGET {
     float roughness = clamp(f16tof32(g_PC.g_MaterialFactors0 >> 16), 0.04, 1.0);
     float normal_scale = f16tof32(g_PC.g_MaterialFactors1 & 0xffff);
     float occlusion_strength = saturate(f16tof32(g_PC.g_MaterialFactors1 >> 16));
-    if (metallic_roughness_index < 32) {
+    if (metallic_roughness_index < 128) {
         float4 metallic_roughness = g_Textures[metallic_roughness_index].Sample(g_Sampler, input.uv);
         roughness = clamp(roughness * metallic_roughness.g, 0.04, 1.0);
         metallic = saturate(metallic * metallic_roughness.b);
@@ -402,7 +398,7 @@ float4 PSMain(PSInput input) : SV_TARGET {
 
     float3 normal = normalize(input.normal);
     float3 tangent = normalize(input.tangent - normal * dot(normal, input.tangent));
-    if (normal_index < 32) {
+    if (normal_index < 128) {
         float3 tangent_normal = g_Textures[normal_index].Sample(g_Sampler, input.uv).xyz * 2.0 - 1.0;
         tangent_normal.xy *= normal_scale;
         tangent_normal = normalize(tangent_normal);
@@ -411,14 +407,14 @@ float4 PSMain(PSInput input) : SV_TARGET {
     }
 
     float ambient_occlusion = 1.0;
-    if (occlusion_index < 32) {
+    if (occlusion_index < 128) {
         float occlusion_sample = g_Textures[occlusion_index].Sample(g_Sampler, input.uv).r;
         ambient_occlusion = lerp(1.0, occlusion_sample, occlusion_strength);
     }
     SurfaceExtension surface_ext = NoSurfaceExtension();
-    uint extension_index = (g_PC.g_MaterialTextures >> 24) & 63;
+    uint extension_index = (g_PC.g_AlphaOptions >> 2) & 255;
     // Not a ?: for the same reason as above.
-    if (extension_index < 32) surface_ext = LoadSurfaceExtension(extension_index);
+    if (extension_index < 128) surface_ext = LoadSurfaceExtension(extension_index);
     float3 surface_tangent = normalize(tangent - normal * dot(normal, tangent));
     float3 surface_bitangent = normalize(cross(normal, surface_tangent)) * input.tangent_sign;
     float3 view_local = g_PC.g_CameraLocal - input.local_position;
@@ -461,8 +457,8 @@ float4 PSMain(PSInput input) : SV_TARGET {
     }
 #endif
     float3 emissive = float3(f16tof32(g_PC.g_Emissive.x), f16tof32(g_PC.g_Emissive.x >> 16), f16tof32(g_PC.g_Emissive.y));
-    uint emissive_index = (g_PC.g_Emissive.y >> 16) & 63;
-    if (emissive_index < 32) emissive *= SRGBToLinear(g_Textures[emissive_index].Sample(g_Sampler, input.uv).rgb);
+    uint emissive_index = (g_PC.g_Emissive.y >> 16) & 255;
+    if (emissive_index < 128) emissive *= SRGBToLinear(g_Textures[emissive_index].Sample(g_Sampler, input.uv).rgb);
     color += emissive;
 #ifdef AETHER_HDR_TARGET
     // Linear light into the HDR scene colour target; the post pass applies exposure, the tone mapper and the sRGB encoding.
@@ -506,7 +502,7 @@ struct PushConstants {
 [[vk::push_constant]]
 #endif
 ConstantBuffer<PushConstants> g_PC : register(b0);
-Texture2D g_Textures[32] : register(t0, space0);
+Texture2D g_Textures[128] : register(t0, space0);
 SamplerState g_Sampler : register(s0, space1);
 
 struct PSInput {
@@ -1827,11 +1823,11 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                                 primitive.base_color_texture, primitive.has_base_color_texture,
                                 primitive.normal_texture, primitive.has_normal_texture,
                                 primitive.metallic_roughness_texture, primitive.has_metallic_roughness_texture,
-                                primitive.occlusion_texture, primitive.has_occlusion_texture,
-                                primitive.extension_texture, primitive.has_extension_texture);
+                                primitive.occlusion_texture, primitive.has_occlusion_texture);
                             constants.material_factors_0 = PackHalfPair(primitive.metallic, primitive.roughness);
                             constants.material_factors_1 = PackHalfPair(primitive.normal_scale, primitive.occlusion_strength);
-                            constants.alpha_options = PackMaterialOptions(primitive.alpha_mode, primitive.alpha_cutoff);
+                            constants.alpha_options = PackMaterialOptions(primitive.alpha_mode, primitive.alpha_cutoff, primitive.extension_texture,
+                                                                          primitive.has_extension_texture);
                             Mat4 inverse_model_transform;
                             if (model_transform.TryInverse(inverse_model_transform)) {
                                 const Vec4 local_camera = inverse_model_transform *
