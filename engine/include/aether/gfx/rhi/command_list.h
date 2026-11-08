@@ -47,6 +47,11 @@ public:
     // internally per swapchain image, not by the caller). Must be paired
     // with EndRenderPass() before Close().
     virtual void BeginRenderPass(ISwapChain& swap_chain, const ClearColor& clear_color) = 0;
+    // As BeginRenderPass, but into `swap_chain`'s SceneColorTexture (which must already exist) with the swap chain's depth, both cleared.
+    // Only pipelines made with PipelineDesc::scene_color_target draw in it; CopySceneDepth works as in a back-buffer pass. EndRenderPass
+    // leaves the target shader-readable for the pass that follows. False (nothing recorded) without a SceneColorTexture, inside another
+    // pass, and on devices without support (the default).
+    virtual bool BeginSceneColorPass(ISwapChain& /*swap_chain*/, const ClearColor& /*clear_color*/) { return false; }
     virtual void EndRenderPass() = 0;
 
     // Binds a pipeline created via IDevice::CreatePipeline. Must be called

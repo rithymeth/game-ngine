@@ -14,6 +14,7 @@
 #include "render_pose.h"
 #include "particle_pass.h"
 #include "decal_pass.h"
+#include "post_pass.h"
 #include "package_textures.h"
 #include "aether/ui/draw.h"
 #include "aether/ui/font.h"
@@ -24,6 +25,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <cmath>
@@ -453,9 +455,14 @@ float4 PSMain(PSInput input) : SV_TARGET {
                              (g_PC.g_AlphaOptions >> 6) & 15,
                              (g_PC.g_AlphaOptions >> 10) & 15) * (4.0 / 15.0);
     color += emissive;
+#ifdef AETHER_HDR_TARGET
+    // Linear light into the HDR scene colour target; the post pass applies exposure, the tone mapper and the sRGB encoding.
+    return float4(max(color, 0.0), surface_alpha);
+#else
     color = color / (color + 1.0);
     color = LinearToSRGB(color);
     return float4(color, surface_alpha);
+#endif
 }
 )";
 
@@ -615,6 +622,10 @@ struct SceneRenderer::Impl {
     // The particle pass (M8.7), drawn after the scene's surfaces.
     std::unique_ptr<ParticlePass> particles;
     std::unique_ptr<DecalPass> decals;
+    // The HDR path (render roadmap step 1): with a scene colour target the scene, decals and particles draw in linear light and the post
+    // pass tone maps into the back buffer; without one (hdr false) they draw straight into the back buffer as before.
+    std::unique_ptr<PostPass> post;
+    bool hdr = false;
     vfx::ParticleRenderData particle_data;
     // Mesh particles' geometry, flattened once from the package's models (empty: the model couldn't be loaded).
     std::unordered_map<std::string, ParticleMesh> particle_meshes;
@@ -674,10 +685,17 @@ struct SceneRenderer::Impl {
     }
 
     Impl(IDevice& d, ISwapChain& s, const GamePackage& p) : device(d), swap_chain(s), package(p) {
+        // AETHER_RENDER_HDR=0 keeps the old direct-to-back-buffer path (for comparisons, and as a way out if a driver mishandles it).
+        const char* hdr_setting = std::getenv("AETHER_RENDER_HDR");
+        if (hdr_setting == nullptr || std::strcmp(hdr_setting, "0") != 0) {
+            post = std::make_unique<PostPass>(device, swap_chain);
+            hdr = post->Valid();
+        }
         PipelineDesc desc;
-        desc.hlsl_source = SceneShaderSource(false);
+        desc.hlsl_source = SceneShaderSource(false, hdr);
+        desc.scene_color_target = hdr;
         if (device.SupportsFrameConstants()) {
-            desc.hlsl_source = SceneShaderSource(true);
+            desc.hlsl_source = SceneShaderSource(true, hdr);
             desc.frame_constants_size_bytes = sizeof(FrameData);
             for (usize i = 0; i < kFrameBuffers; ++i) frame_buffers.push_back(device.CreateFrameConstantBuffer(sizeof(FrameData)));
         }
@@ -706,8 +724,8 @@ struct SceneRenderer::Impl {
         // with the same pipeline and font.
         legacy_hud = package.Manifest().project == "AETHER-01";
 
-        particles = std::make_unique<ParticlePass>(device, swap_chain);
-        decals = std::make_unique<DecalPass>(device, swap_chain);
+        particles = std::make_unique<ParticlePass>(device, swap_chain, hdr);
+        decals = std::make_unique<DecalPass>(device, swap_chain, hdr);
         // Particle materials are textures in the package, through the same cache as the models' (0: untextured, drawn procedurally).
         particles->SetTextureResolver([this](const std::string& material) -> u32 {
             SampledTextureHandle texture;
@@ -783,7 +801,11 @@ struct SceneRenderer::Impl {
             item.draw = draw;
             SampledTextureHandle texture;
             if (!decal.texture.empty() && LoadTexture(decal.texture, texture)) item.texture = texture.index;
-            item.color[0] = DecalTint(decal.color.x), item.color[1] = DecalTint(decal.color.y), item.color[2] = DecalTint(decal.color.z);
+            if (decals->HdrTarget()) {
+                item.color[0] = std::max(decal.color.x, 0.0f), item.color[1] = std::max(decal.color.y, 0.0f), item.color[2] = std::max(decal.color.z, 0.0f);
+            } else {
+                item.color[0] = DecalTint(decal.color.x), item.color[1] = DecalTint(decal.color.y), item.color[2] = DecalTint(decal.color.z);
+            }
             item.color[3] = std::clamp(decal.opacity, 0.0f, 1.0f);
             item.fade_start = decal.angle_fade_start, item.fade_end = decal.angle_fade_end;
             items.push_back(item);
@@ -1253,7 +1275,26 @@ struct SceneRenderer::Impl {
             AETHER_LOG_WARN("PlayerRenderer", "Couldn't read cooked model '%s'", path.c_str());
             return false;
         }
-        json document = json::parse(source.begin(), source.end(), nullptr, false);
+        // A .glb: its JSON chunk is the document and its BIN chunk becomes buffer 0's data URI (the parser below reads only
+        // self-contained documents).
+        std::string glb_json;
+        std::vector<u8> glb_bin;
+        const bool glb = source.size() >= 4 && std::memcmp(source.data(), "glTF", 4) == 0;
+        if (glb && !assets::ReadGlbChunks(source, glb_json, glb_bin)) {
+            AETHER_LOG_WARN("PlayerRenderer", "Cooked model '%s' isn't a valid GLB", path.c_str());
+            return false;
+        }
+        json document = glb ? json::parse(glb_json, nullptr, false) : json::parse(source.begin(), source.end(), nullptr, false);
+        if (glb && !document.is_discarded() && document.is_object() && document.contains("buffers") && document["buffers"].is_array() &&
+            !document["buffers"].empty() && document["buffers"][0].is_object() && !document["buffers"][0].contains("uri")) {
+            json& buffer = document["buffers"][0];
+            // The data URI holds byteLength exactly (the chunk's alignment padding is not the buffer's).
+            if (buffer.contains("byteLength") && buffer["byteLength"].is_number_unsigned()) {
+                const usize declared = buffer["byteLength"].get<usize>();
+                if (declared <= glb_bin.size()) glb_bin.resize(declared);
+            }
+            buffer["uri"] = "data:application/octet-stream;base64," + Base64(glb_bin);
+        }
         if (document.is_discarded() || !document.is_object()) {
             AETHER_LOG_WARN("PlayerRenderer", "Cooked model '%s' isn't valid glTF JSON", path.c_str());
             return false;
@@ -1544,7 +1585,15 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
         if (model.asset_path[0] != '\0') renderer.FindModel(model.asset_path);
     });
 
-    commands.BeginRenderPass(renderer.swap_chain, {0.015f, 0.025f, 0.045f, 1.0f});
+    // The background: the same display colour on both paths. In the HDR target it is the linear value that ACES at exposure 1 maps back to
+    // (solved numerically: the curve's toe crushes the plain sRGB decode of these values to black). Other tone mappers or exposures shift it.
+    constexpr ClearColor kBackground{0.015f, 0.025f, 0.045f, 1.0f};
+    constexpr ClearColor kBackgroundLinear{0.01037f, 0.01450f, 0.02188f, 1.0f};
+    if (renderer.hdr) {
+        if (!commands.BeginSceneColorPass(renderer.swap_chain, kBackgroundLinear)) return;
+    } else {
+        commands.BeginRenderPass(renderer.swap_chain, kBackground);
+    }
     std::vector<PendingTransparentDraw> transparent_draws;
     BufferHandle frame_buffer; // this frame's lights, when the device has frame constants
     const Entity camera_entity = FindActiveCamera(world, guids);
@@ -1813,13 +1862,23 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
     if (draw_particles) {
         renderer.particles->Draw(commands, renderer.particle_data, particle_camera, particle_view_projection, particle_projection, frame_index);
     }
+    if (renderer.hdr) {
+        // The lit scene is in the HDR target: tone map it into the back buffer under the post volumes at the camera, then the HUD on top
+        // in display space.
+        commands.EndRenderPass();
+        commands.BeginRenderPass(renderer.swap_chain, kBackground);
+        RenderScene volumes;
+        volumes.post_volumes = ExtractPostVolumes(world, guids);
+        renderer.post->Draw(commands, BlendPostProcess(volumes, have_camera ? decal_camera_position : Vec3(0, 0, 0)));
+    }
     renderer.DrawHud(game, commands);
     commands.EndRenderPass();
 }
 
 // The advanced PBR library (anisotropic GGX, sheen, clear coat) goes ahead of the scene shader.
-std::string SceneShaderSource(bool with_frame_data) {
-    return std::string(with_frame_data ? "#define AETHER_FRAME_DATA 1\n" : "") + mat::AdvancedPbrHlsl() + mat::ShadingModelsHlsl() + kSceneShader;
+std::string SceneShaderSource(bool with_frame_data, bool hdr_target) {
+    return std::string(with_frame_data ? "#define AETHER_FRAME_DATA 1\n" : "") + (hdr_target ? "#define AETHER_HDR_TARGET 1\n" : "") +
+           mat::AdvancedPbrHlsl() + mat::ShadingModelsHlsl() + kSceneShader;
 }
 
 } // namespace aether::player

@@ -92,6 +92,11 @@ struct PipelineDesc {
     // 0 (the default) means none. Only for devices where SupportsFrameConstants()
     // is true; others ignore the field and the shader must not name g_Frame.
     u32 frame_constants_size_bytes = 0;
+
+    // Renders into the swap chain's HDR scene colour target (ISwapChain::SceneColorTexture, RGBA16F) instead of its back buffer: for
+    // pipelines drawn between ICommandList::BeginSceneColorPass and EndRenderPass. A pipeline is compatible with one of the two passes
+    // only; drawing it in the other is undefined. false (the default) targets the back buffer, as every pipeline did before.
+    bool scene_color_target = false;
 };
 
 // Compute shader pipeline with fixed storage-buffer bindings at u0..u(N-1),

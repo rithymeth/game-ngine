@@ -470,3 +470,32 @@ under the gate.
 
 Verified by running the comparison twice locally: `cook/atex_roundtrip_256` is reported as a regression without the floor and
 is not reported with it.
+
+## The HDR scene colour target and post pass, 8 November 2026
+
+Render roadmap step 1 moved the player's lit scene off the 8-bit back buffer: on D3D12 the scene, decals and particles now draw
+into an RGBA16F target (`ISwapChain::SceneColorTexture`) in linear light, and one full-screen pass (`player/src/post_pass.cpp`)
+applies exposure, saturation, the ACES or AgX tone mapper, the vignette and the sRGB encoding into the back buffer. The cost is
+one extra full-screen fp16 write and read, so it was measured before being called cheap.
+
+**Method.** Whole-player timings could not see it: a windowed run of the brass lantern scene sat at ~6.9 ms a frame with HDR on
+and off alike, which is the 144 Hz panel's present cadence (vsync off does not uncap a composited flip-model window), not GPU
+work. So the GPU work was isolated instead: an offscreen D3D12 swap chain, 50 frames recorded into one command list, one submit,
+wall time to the fence divided by 50; the median of 10 lists (2 warm-up lists dropped), three rounds. The baseline frame is one
+depth-tested full-screen triangle into the back buffer; the HDR frame is the same triangle into the scene colour target plus
+the real post pass. The difference is what step 1 adds to every frame. RTX 3050 Laptop GPU, RelWithDebInfo:
+
+| Resolution | Back buffer only | HDR target + post | Added per frame |
+| --- | --- | --- | --- |
+| 1280 x 720 | 0.039 ms | 0.099 - 0.115 ms | 0.061 - 0.076 ms |
+| 1920 x 1080 | 0.070 - 0.075 ms | 0.216 ms | 0.141 - 0.146 ms |
+| 2560 x 1440 | 0.116 - 0.120 ms | 0.371 - 0.372 ms | 0.252 - 0.257 ms |
+
+**What the numbers say.** The added cost is linear in pixels, about **0.07 ms per megapixel** on this laptop GPU: bandwidth
+for the fp16 target and the post pass's read, not shader arithmetic. At 1080p it is under 1% of a 16.7 ms frame and about 2%
+of a 6.9 ms one. It is a fixed per-pixel cost that bloom (step 4) and auto-exposure will add to, so those should reuse this
+target rather than add more full-resolution passes. The harness was a throwaway test and is not in the tree; repeat it the
+same way (offscreen swap chain, batched frames, fence-to-fence) rather than with a windowed player.
+
+`AETHER_RENDER_HDR=0` turns the HDR path off in the player, for A/B comparisons. Vulkan does not have the target yet and
+keeps tone mapping in the scene shader.

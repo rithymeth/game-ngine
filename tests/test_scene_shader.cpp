@@ -52,6 +52,10 @@ AETHER_TEST(SceneShader_SourceIsTheLibraryThenTheSceneShader) {
         AETHER_CHECK(Contains(*s, "AetherAnisotropicSpecular") && Contains(*s, "AetherSheen") && Contains(*s, "AetherClearCoat"));
     }
     AETHER_CHECK(Contains(frame, "ConstantBuffer<FrameData> g_Frame"));
+    // The HDR variant writes linear light for the post pass: the define follows the frame-data one, and the tone map is compiled out.
+    const std::string hdr = player::SceneShaderSource(true, true);
+    AETHER_CHECK(hdr.rfind("#define AETHER_FRAME_DATA 1\n#define AETHER_HDR_TARGET 1\n", 0) == 0);
+    AETHER_CHECK(!Contains(frame, "#define AETHER_HDR_TARGET") && Contains(hdr, "#ifdef AETHER_HDR_TARGET"));
     AETHER_CHECK(!Contains(plain, "ConstantBuffer<FrameData> g_Frame") || Contains(plain, "#ifdef AETHER_FRAME_DATA"));
 }
 
@@ -60,8 +64,9 @@ AETHER_TEST(SceneShader_CompilesWithGlslang) {
         std::printf("  (glslangValidator not found: skipping the HLSL compile check)\n");
         return;
     }
-    for (const bool with_frame_data : {false, true}) {
-        const std::string source = player::SceneShaderSource(with_frame_data);
+    for (const int variant : {0, 1, 2, 3}) {
+        const bool with_frame_data = (variant & 1) != 0, hdr_target = (variant & 2) != 0;
+        const std::string source = player::SceneShaderSource(with_frame_data, hdr_target);
         std::string log;
         const bool vertex = Compiles(source, "vert", "VSMain", log);
         if (!vertex) std::printf("%s\n", log.c_str());

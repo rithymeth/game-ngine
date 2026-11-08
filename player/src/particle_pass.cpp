@@ -100,11 +100,19 @@ float4 PSMain(PSInput input) : SV_TARGET {
         float n_dot_l = saturate(dot(n, normalize(g_PC.g_SunDirection.xyz)));
         float sky_fill = 0.28 + 0.14 * saturate(n.y);
         float3 lit_color = color.rgb * (sky_fill * g_PC.g_DepthToView.rgb + g_PC.g_SunColor.rgb * (n_dot_l * 0.96 / 3.14159265));
+#ifdef AETHER_HDR_TARGET
+        color.rgb = lit_color; // linear light: the post pass tone maps the scene and the particles together
+#else
         color.rgb = lit_color / (lit_color + 1.0);
+#endif
     }
+#ifdef AETHER_HDR_TARGET
+    return float4(max(color.rgb, 0.0), saturate(color.a));
+#else
     float3 encoded = saturate(color.rgb);
     encoded = lerp(encoded * 12.92, 1.055 * pow(encoded, 1.0 / 2.4) - 0.055, step(0.0031308, encoded));
     return float4(encoded, saturate(color.a));
+#endif
 }
 )";
 
@@ -353,13 +361,14 @@ void PackParticleVertices(const vfx::ParticleRenderData& data, const vfx::Partic
     }
 }
 
-ParticlePass::ParticlePass(gfx::rhi::IDevice& device, gfx::rhi::ISwapChain& swap_chain) : device_(device) {
+ParticlePass::ParticlePass(gfx::rhi::IDevice& device, gfx::rhi::ISwapChain& swap_chain, bool hdr_target) : device_(device) {
     // Soft particles read the scene depth copy; without one (backend, depth format or a full table) they draw hard-edged.
     const gfx::rhi::SampledTextureHandle depth = swap_chain.SceneDepthTexture();
     scene_depth_ = depth.IsValid() && depth.index < gfx::rhi::kMaxBindlessTextures ? depth.index : 0u;
     if (scene_depth_ == 0) AETHER_LOG_INFO("PlayerRenderer", "No scene depth texture on this device; soft particles draw hard-edged");
     gfx::rhi::PipelineDesc desc;
-    desc.hlsl_source = kParticleShader;
+    desc.hlsl_source = std::string(hdr_target ? "#define AETHER_HDR_TARGET 1\n" : "") + kParticleShader;
+    desc.scene_color_target = hdr_target;
     desc.push_constant_size_bytes = sizeof(ParticleConstants);
     desc.use_vertex_buffer = true;
     desc.vertex_layout = gfx::rhi::VertexLayout::PositionNormalUvTangent;

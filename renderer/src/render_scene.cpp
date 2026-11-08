@@ -116,11 +116,17 @@ RenderScene ExtractRenderScene(const World& world, const GuidIndex& guids, const
         const SkyLight& l = *world.GetComponent<SkyLight>(e);
         scene.sky_radiance = scene.sky_radiance + l.color * l.intensity;
     }
-    for (Entity e : EntitiesWith<PostProcessVolume>(world)) {
-        if (!active(e)) continue;
-        scene.post_volumes.push_back({Point(ComputeWorldTransform(world, guids, e), Vec3(0, 0, 0)), *world.GetComponent<PostProcessVolume>(e)});
-    }
+    scene.post_volumes = ExtractPostVolumes(world, guids);
     return scene;
+}
+
+std::vector<RenderPostVolume> ExtractPostVolumes(const World& world, const GuidIndex& guids) {
+    std::vector<RenderPostVolume> volumes;
+    for (Entity e : EntitiesWith<PostProcessVolume>(world)) {
+        if (!IsActiveInHierarchy(world, guids, e)) continue;
+        volumes.push_back({Point(ComputeWorldTransform(world, guids, e), Vec3(0, 0, 0)), *world.GetComponent<PostProcessVolume>(e)});
+    }
+    return volumes;
 }
 
 PostProcessSettings BlendPostProcess(const RenderScene& scene, const Vec3& position) {

@@ -264,8 +264,15 @@ void ComputeSkinMatrices(const GltfScene& scene, const GltfAnimation* animation,
 [[nodiscard]] bool LoadGltf(const std::string& path, GltfScene& out_scene);
 // As above; on failure `error` (if given) gets the first reason, e.g. a parse error or a missing buffer.
 [[nodiscard]] bool LoadGltf(const std::string& path, GltfScene& out_scene, std::string* error);
-// Parses a self-contained glTF JSON document. External file URIs are refused;
-// data URIs remain available. The input is capped at 32 MiB for untrusted data.
+// Parses a self-contained glTF JSON document, or a .glb (binary glTF) whose
+// first buffer is its BIN chunk. External file URIs are refused; data URIs
+// remain available. JSON is capped at 32 MiB for untrusted data.
 [[nodiscard]] bool LoadGltfFromMemory(std::span<const u8> json, GltfScene& out_scene);
+// Splits a .glb (the glTF 2.0 binary container: header, JSON chunk, optional
+// BIN chunk) into its JSON text and its BIN chunk (left empty when it has
+// none). LoadGltf and LoadGltfFromMemory read .glb files themselves; this is
+// for callers that need the JSON (e.g. to resolve textures) or the binary.
+// False for anything that is not a well-formed GLB.
+[[nodiscard]] bool ReadGlbChunks(std::span<const u8> bytes, std::string& json, std::vector<u8>& bin);
 
 } // namespace aether::assets

@@ -49,11 +49,14 @@ const char* DecalShaderSource();
 
 class DecalPass {
 public:
-    DecalPass(gfx::rhi::IDevice& device, gfx::rhi::ISwapChain& swap_chain);
+    // `hdr_target`: draws into the HDR scene colour target in linear light (the texture decoded from sRGB, the tint linear: pass the
+    // Decal's colour as it is, not through DecalTint); otherwise in the back buffer's display encoding, as before.
+    DecalPass(gfx::rhi::IDevice& device, gfx::rhi::ISwapChain& swap_chain, bool hdr_target = false);
     ~DecalPass();
     DecalPass(const DecalPass&) = delete;
     DecalPass& operator=(const DecalPass&) = delete;
     bool Valid() const { return pipeline_.IsValid() && scene_depth_ != 0; }
+    bool HdrTarget() const { return hdr_target_; }
     // Records the draws inside the current render pass, after the opaque surfaces. Copies the scene depth first (ICommandList::CopySceneDepth),
     // so the caller's pipeline and bindings are gone afterwards. Returns how many were drawn (0 when invalid, empty, or the copy failed).
     u32 Draw(gfx::rhi::ICommandList& commands, const std::vector<DecalPassItem>& items);
@@ -62,6 +65,7 @@ private:
     gfx::rhi::IDevice& device_;
     gfx::rhi::PipelineHandle pipeline_;
     u32 scene_depth_ = 0;
+    bool hdr_target_ = false;
 };
 
 } // namespace aether::player

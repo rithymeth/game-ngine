@@ -1259,6 +1259,7 @@
   [[nodiscard]]bool LoadGltf(const std::string&path,GltfScene&out_scene)
   [[nodiscard]]bool LoadGltf(const std::string&path,GltfScene&out_scene,std::string*error)
   [[nodiscard]]bool LoadGltfFromMemory(std::span<const u8>json,GltfScene&out_scene)
+  [[nodiscard]]bool ReadGlbChunks(std::span<const u8>bytes,std::string&json,std::vector<u8>&bin)
   bool HasSurfaceExtension()const
   usize ComponentsPerKey()const
   void ComputeSkinMatrices(const GltfAnimationPose&pose,const GltfSkin&skin,std::vector<Mat4>&out_matrices,i32 mesh_node_index)
@@ -1909,6 +1910,7 @@
 [engine/include/aether/gfx/rhi/command_list.h] experimental
   type class ICommandList
   public:virtual ~ICommandList()=default
+  virtual bool BeginSceneColorPass(ISwapChain&,const ClearColor&)
   virtual bool CopySceneDepth()
   virtual void BeginRenderPass(ISwapChain&swap_chain,const ClearColor&clear_color)=0
   virtual void BindBindlessTextures()=0
@@ -1948,12 +1950,14 @@
   BufferHandle CreateVertexBuffer(const void*data,u64 size_bytes)override
   ComputePipelineHandle CreateComputePipeline(const ComputePipelineDesc&desc)override
   D3D12_CPU_DESCRIPTOR_HANDLE DepthDSV(u32 index)const
+  D3D12_CPU_DESCRIPTOR_HANDLE SceneColorRTV()const
   D3D12_GPU_DESCRIPTOR_HANDLE ComputeSampledDescriptor(SampledTextureHandle handle)const
   D3D12_GPU_DESCRIPTOR_HANDLE ComputeStorageDescriptor(BufferHandle handle)const
   D3D12_RESOURCE_STATES ToD3D12(ResourceState state)
   DescriptorHeap&BindlessTextureHeap()
   ID3D12DescriptorHeap*ComputeStorageHeap()const
   ID3D12Resource*DepthResource(u32 index)const
+  ID3D12Resource*SceneColorResource()const
   ID3D12Resource*SceneDepthCopy()const
   PipelineHandle CreatePipeline(const PipelineDesc&desc,ISwapChain&swap_chain)override
   ResourceStats GetResourceStats()const override
@@ -1961,9 +1965,11 @@
   SampledTextureHandle CreateR32FloatTexture(u32 width,u32 height,const f32*values)override
   SampledTextureHandle CreateTexture(u32 width,u32 height,const u8*rgba8_pixels)override
   SampledTextureHandle ReserveExternalBindlessSlot()
+  SampledTextureHandle SceneColorTexture()override
   SampledTextureHandle SceneDepthTexture()override
   TextureHandle CurrentBackBuffer()const override
   TextureHandle RegisterTexture(ID3D12Resource*resource,D3D12_CPU_DESCRIPTOR_HANDLE rtv)
+  bool BeginSceneColorPass(ISwapChain&swap_chain,const ClearColor&clear_color)override
   bool BelongsTo(const D3D12Device&device)const
   bool ConsumeUsedBefore(u32 index)
   bool CopySceneDepth()override
@@ -1985,6 +1991,7 @@
   bool IsTextureValid(TextureHandle handle)const
   bool IsVertexBuffer(BufferHandle handle)const
   bool ReadBack(std::vector<u8>&rgba8)override
+  bool SceneColorEnabled()const
   bool SceneDepthEnabled()const
   bool SupportsCompressedTexture(CompressedTextureFormat f)const override
   bool SupportsFrameConstants()const override
@@ -2031,6 +2038,7 @@
   void Close()override
   void ComputeBufferBarrier(BufferHandle buffer)override
   void ComputeQueueWaitOnGraphics(u64 graphics_fence_value)override
+  void CreateSceneColor()
   void CreateSceneDepthCopy()
   void DeferCommandAllocator(ComPtr<ID3D12CommandAllocator>allocator)noexcept
   void Dispatch(u32 groups_x,u32 groups_y,u32 groups_z)override
@@ -2109,6 +2117,7 @@
 [engine/include/aether/gfx/rhi/swap_chain.h] experimental
   type class ISwapChain
   public:virtual ~ISwapChain()=default
+  virtual SampledTextureHandle SceneColorTexture()
   virtual SampledTextureHandle SceneDepthTexture()
   virtual TextureHandle CurrentBackBuffer()const=0
   virtual bool ReadBack(std::vector<u8>&rgba8)
@@ -4812,7 +4821,7 @@
   SceneRenderer&operator=(const SceneRenderer&)=delete
   SceneRenderer(const SceneRenderer&)=delete
   public:SceneRenderer(gfx::rhi::IDevice&device,gfx::rhi::ISwapChain&swap_chain,const GamePackage&package)
-  std::string SceneShaderSource(bool with_frame_data)
+  std::string SceneShaderSource(bool with_frame_data,bool hdr_target=false)
   void Draw(Game&game,gfx::rhi::ICommandList&commands,u32 frame_index)
   void SetDrawParticles(bool draw)
   void SetRenderPoseSampler(std::function<bool(Entity,Transform&)>sampler)
@@ -5151,6 +5160,7 @@
   Vec3 Center()const
   Vec3 Extents()const
   std::function<bool(const ModelRenderer&mesh,Aabb&local_bounds)>mesh_bounds
+  std::vector<RenderPostVolume>ExtractPostVolumes(const World&world,const GuidIndex&guids)
 [renderer/include/aether/renderer/shadows.h] experimental
   type struct CascadeSettings
   type struct ShadowCascade

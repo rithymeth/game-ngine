@@ -230,11 +230,20 @@ public:
     bool SceneDepthEnabled() const { return scene_depth_handle_.IsValid(); }
     ID3D12Resource* DepthResource(u32 index) const { return depth_resources_[index].Get(); }
     ID3D12Resource* SceneDepthCopy() const { return scene_depth_copy_.Get(); }
+
+    // HDR scene colour (see ISwapChain::SceneColorTexture): one R16G16B16A16_FLOAT target with its own RTV, kept in
+    // PIXEL_SHADER_RESOURCE between passes.
+    static constexpr DXGI_FORMAT kSceneColorFormat = DXGI_FORMAT_R16G16B16A16_FLOAT;
+    SampledTextureHandle SceneColorTexture() override;
+    bool SceneColorEnabled() const { return scene_color_handle_.IsValid(); }
+    ID3D12Resource* SceneColorResource() const { return scene_color_.Get(); }
+    D3D12_CPU_DESCRIPTOR_HANDLE SceneColorRTV() const { return scene_color_rtv_heap_->CPUHandle(0); }
     ~D3D12SwapChain() override;
 
 private:
     void CreateDepthBuffer(u32 width, u32 height);
     void CreateSceneDepthCopy();
+    void CreateSceneColor();
 
     D3D12Device& device_;
     gfx::SwapChain swap_chain_;
@@ -245,6 +254,9 @@ private:
     std::unique_ptr<DescriptorHeap> depth_dsv_heap_;
     SampledTextureHandle scene_depth_handle_{};
     ComPtr<ID3D12Resource> scene_depth_copy_;
+    SampledTextureHandle scene_color_handle_{};
+    ComPtr<ID3D12Resource> scene_color_;
+    std::unique_ptr<DescriptorHeap> scene_color_rtv_heap_;
 };
 
 class D3D12CommandList final : public ICommandList {
@@ -259,6 +271,7 @@ public:
     void SetViewportAndScissor(const Viewport& viewport, const Rect& scissor) override;
 
     void BeginRenderPass(ISwapChain& swap_chain, const ClearColor& clear_color) override;
+    bool BeginSceneColorPass(ISwapChain& swap_chain, const ClearColor& clear_color) override;
     void EndRenderPass() override;
     void BindPipeline(PipelineHandle pipeline) override;
     void SetPushConstants(const void* data, u32 size_bytes) override;
@@ -299,6 +312,7 @@ private:
     u64 last_submitted_fence_ = 0;
     ID3D12Resource* active_backbuffer_ = nullptr; // set by BeginRenderPass, consumed by EndRenderPass
     D3D12SwapChain* active_swap_chain_ = nullptr; // likewise, for CopySceneDepth
+    ID3D12Resource* active_scene_color_ = nullptr; // set by BeginSceneColorPass in place of active_backbuffer_
     u32 frame_constants_root_index_ = ~0u;        // of the pipeline BindPipeline last bound
     u32 compute_storage_buffer_count_ = 0;
     u32 compute_sampled_texture_count_ = 0;

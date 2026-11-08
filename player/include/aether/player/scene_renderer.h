@@ -11,8 +11,9 @@ namespace aether::player {
 
 // The HLSL the scene pass compiles (entry points VSMain and PSMain), as SceneRenderer builds it: the advanced PBR library ahead of the scene
 // shader, and with the frame-constants block when `with_frame_data` (what devices that support frame constants get). Here so a test can
-// compile the real source with glslang.
-std::string SceneShaderSource(bool with_frame_data);
+// compile the real source with glslang. With `hdr_target` the pixel shader writes linear light for the HDR scene colour target (the
+// post pass tone maps it) instead of tone mapping and encoding for the back buffer itself.
+std::string SceneShaderSource(bool with_frame_data, bool hdr_target = false);
 
 // Draws the current game's cooked ModelRenderer entities through the same
 // cross-API RHI used by the renderer demos. The player owns this alongside

@@ -367,7 +367,7 @@ PipelineHandle D3D12Device::CreatePipeline(const PipelineDesc& desc, ISwapChain&
         return {};
     }
     auto& d3d_swap = *d3d_swap_ptr;
-    DXGI_FORMAT rtv_format = d3d_swap.Native().Format();
+    DXGI_FORMAT rtv_format = desc.scene_color_target ? D3D12SwapChain::kSceneColorFormat : d3d_swap.Native().Format();
 
     const u32 max_root_constants = desc.enable_bindless_textures ? 63u : 64u;
     if (desc.push_constant_size_bytes % 4 != 0 || desc.push_constant_size_bytes / 4 > max_root_constants) {
@@ -1091,13 +1091,51 @@ void D3D12Device::ReleaseExternalBindlessSlot(SampledTextureHandle slot) {
 }
 
 D3D12SwapChain::~D3D12SwapChain() {
-    if (!scene_depth_handle_.IsValid()) return;
+    if (!scene_depth_handle_.IsValid() && !scene_color_handle_.IsValid()) return;
     try {
-        device_.Native().WaitForFence(device_.Native().Submit(nullptr, 0)); // nothing in flight still reads the copy
+        device_.Native().WaitForFence(device_.Native().Submit(nullptr, 0)); // nothing in flight still reads them
     } catch (...) {
-        AETHER_LOG_WARN("D3D12", "Could not drain the graphics queue before releasing the scene depth copy");
+        AETHER_LOG_WARN("D3D12", "Could not drain the graphics queue before releasing the scene depth and colour targets");
     }
-    device_.ReleaseExternalBindlessSlot(scene_depth_handle_);
+    if (scene_depth_handle_.IsValid()) device_.ReleaseExternalBindlessSlot(scene_depth_handle_);
+    if (scene_color_handle_.IsValid()) device_.ReleaseExternalBindlessSlot(scene_color_handle_);
+}
+
+SampledTextureHandle D3D12SwapChain::SceneColorTexture() {
+    if (scene_color_handle_.IsValid()) return scene_color_handle_;
+    device_.Native().WaitForFence(device_.Native().Submit(nullptr, 0));
+    scene_color_handle_ = device_.ReserveExternalBindlessSlot();
+    if (!scene_color_handle_.IsValid()) return {};
+    CreateSceneColor();
+    return scene_color_handle_;
+}
+
+void D3D12SwapChain::CreateSceneColor() {
+    D3D12_HEAP_PROPERTIES default_heap{};
+    default_heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+    D3D12_RESOURCE_DESC desc{};
+    desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    desc.Width = swap_chain_.Width();
+    desc.Height = swap_chain_.Height();
+    desc.DepthOrArraySize = 1;
+    desc.MipLevels = 1;
+    desc.Format = kSceneColorFormat;
+    desc.SampleDesc.Count = 1;
+    desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+    D3D12_CLEAR_VALUE clear{};
+    clear.Format = kSceneColorFormat;
+    device_.SetExternalBindlessTexture(scene_color_handle_, nullptr, DXGI_FORMAT_UNKNOWN);
+    scene_color_.Reset();
+    AETHER_D3D_CHECK(device_.Native().Handle()->CreateCommittedResource(
+        &default_heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, &clear,
+        IID_PPV_ARGS(&scene_color_)));
+    if (!scene_color_rtv_heap_) {
+        scene_color_rtv_heap_ = std::make_unique<DescriptorHeap>(device_.Native(), D3D12_DESCRIPTOR_HEAP_TYPE_RTV, 1,
+                                                                 /*shader_visible=*/false);
+        scene_color_rtv_heap_->Allocate();
+    }
+    device_.Native().Handle()->CreateRenderTargetView(scene_color_.Get(), nullptr, scene_color_rtv_heap_->CPUHandle(0));
+    device_.SetExternalBindlessTexture(scene_color_handle_, scene_color_.Get(), kSceneColorFormat);
 }
 
 SampledTextureHandle D3D12SwapChain::SceneDepthTexture() {
@@ -1175,6 +1213,7 @@ void D3D12SwapChain::CreateDepthBuffer(u32 width, u32 height) {
                                                            depth_dsv_heap_->CPUHandle(i));
     }
     if (SceneDepthEnabled()) CreateSceneDepthCopy();
+    if (SceneColorEnabled()) CreateSceneColor();
 }
 
 void D3D12SwapChain::Resize(u32 width, u32 height) {
@@ -1280,6 +1319,7 @@ void D3D12CommandList::Reset() {
     render_pass_active_ = false;
     active_swap_chain_ = nullptr;
     active_backbuffer_ = nullptr;
+    active_scene_color_ = nullptr;
     graphics_pipeline_bound_ = false;
     graphics_bindless_enabled_ = false;
     graphics_bindless_bound_ = false;
@@ -1411,6 +1451,35 @@ void D3D12CommandList::BeginRenderPass(ISwapChain& swap_chain, const ClearColor&
     render_pass_active_ = true;
 }
 
+bool D3D12CommandList::BeginSceneColorPass(ISwapChain& swap_chain, const ClearColor& clear_color) {
+    auto* d3d_swap_ptr = dynamic_cast<D3D12SwapChain*>(&swap_chain);
+    if (!recording_ || IsComputeList() || render_pass_active_ || !IsFiniteClearColor(clear_color) || !d3d_swap_ptr ||
+        !d3d_swap_ptr->BelongsTo(device_) || !d3d_swap_ptr->SceneColorEnabled()) {
+        AETHER_LOG_ERROR("D3D12", "BeginSceneColorPass requires a recording, non-nested list, a finite clear colour and a D3D12 swap "
+                                  "chain from this device with a SceneColorTexture");
+        return false;
+    }
+    D3D12SwapChain& d3d_swap = *d3d_swap_ptr;
+    ID3D12Resource* target = d3d_swap.SceneColorResource();
+    D3D12_RESOURCE_BARRIER to_rt =
+        TransitionBarrier(target, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+    cmd_.Get()->ResourceBarrier(1, &to_rt);
+    const D3D12_CPU_DESCRIPTOR_HANDLE rtv = d3d_swap.SceneColorRTV();
+    const f32 c[4] = {clear_color.r, clear_color.g, clear_color.b, clear_color.a};
+    cmd_.Get()->ClearRenderTargetView(rtv, c, 0, nullptr);
+    const D3D12_CPU_DESCRIPTOR_HANDLE dsv = d3d_swap.DepthDSV(d3d_swap.CurrentIndex());
+    cmd_.Get()->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+    cmd_.Get()->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
+    D3D12_VIEWPORT viewport{0.0f, 0.0f, static_cast<f32>(d3d_swap.Width()), static_cast<f32>(d3d_swap.Height()), 0.0f, 1.0f};
+    D3D12_RECT scissor{0, 0, static_cast<LONG>(d3d_swap.Width()), static_cast<LONG>(d3d_swap.Height())};
+    cmd_.Get()->RSSetViewports(1, &viewport);
+    cmd_.Get()->RSSetScissorRects(1, &scissor);
+    active_scene_color_ = target;
+    active_swap_chain_ = &d3d_swap;
+    render_pass_active_ = true;
+    return true;
+}
+
 bool D3D12CommandList::CopySceneDepth() {
     if (!recording_ || !render_pass_active_ || !active_swap_chain_ || !active_swap_chain_->SceneDepthEnabled()) {
         AETHER_LOG_ERROR("D3D12", "CopySceneDepth requires an active render pass on a swap chain with a SceneDepthTexture");
@@ -1449,14 +1518,18 @@ void D3D12CommandList::EndRenderPass() {
         AETHER_LOG_ERROR("D3D12", "EndRenderPass requires a recording command list");
         return;
     }
-    if (!render_pass_active_ || !active_backbuffer_) {
+    if (!render_pass_active_ || (!active_backbuffer_ && !active_scene_color_)) {
         AETHER_LOG_ERROR("D3D12", "EndRenderPass requires an active render pass");
         return;
     }
-    D3D12_RESOURCE_BARRIER to_present =
-        TransitionBarrier(active_backbuffer_, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
-    cmd_.Get()->ResourceBarrier(1, &to_present);
+    // A scene colour pass leaves its target readable by the post pass; a back-buffer pass hands the image to Present.
+    D3D12_RESOURCE_BARRIER after =
+        active_scene_color_
+            ? TransitionBarrier(active_scene_color_, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)
+            : TransitionBarrier(active_backbuffer_, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
+    cmd_.Get()->ResourceBarrier(1, &after);
     active_backbuffer_ = nullptr;
+    active_scene_color_ = nullptr;
     active_swap_chain_ = nullptr;
     render_pass_active_ = false;
     graphics_pipeline_bound_ = false;
