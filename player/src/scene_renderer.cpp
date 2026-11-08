@@ -11,6 +11,7 @@
 #include "aether/scene/gameplay.h"
 #include "aether/scene/hierarchy.h"
 #include "frame_lights.h"
+#include "model_glb.h"
 #include "render_pose.h"
 #include "particle_pass.h"
 #include "decal_pass.h"
@@ -1528,6 +1529,8 @@ struct SceneRenderer::Impl {
         json document = glb ? json::parse(glb_json, nullptr, false) : json::parse(source.begin(), source.end(), nullptr, false);
         // Each buffer's bytes, kept for images stored in a bufferView (a .glb's usual way of embedding them).
         std::vector<std::vector<u8>> buffer_bytes;
+        bool parse_glb = false;          // the parser reads `source` itself
+        std::vector<u8> built_glb;       // or this: a one-buffer .gltf with its buffer as the BIN chunk
         if (!document.is_discarded() && document.is_object() && document.contains("buffers") && document["buffers"].is_array()) {
             buffer_bytes.resize(document["buffers"].size());
         }
@@ -1539,8 +1542,8 @@ struct SceneRenderer::Impl {
                 const usize declared = buffer["byteLength"].get<usize>();
                 if (declared <= glb_bin.size()) glb_bin.resize(declared);
             }
-            buffer["uri"] = "data:application/octet-stream;base64," + Base64(glb_bin);
-            buffer_bytes[0] = glb_bin;
+            parse_glb = true; // the file as it is: buffer 0 is its BIN chunk
+            buffer_bytes[0] = std::move(glb_bin);
         }
         if (document.is_discarded() || !document.is_object()) {
             AETHER_LOG_WARN("PlayerRenderer", "Cooked model '%s' isn't valid glTF JSON", path.c_str());
@@ -1550,7 +1553,25 @@ struct SceneRenderer::Impl {
         // A cooked package is a VFS, not a filesystem. Embed the already
         // cooked buffer bytes into the in-memory glTF document so the shared
         // parser can safely load it without opening arbitrary paths.
-        if (document.contains("buffers") && document["buffers"].is_array()) {
+        // A .gltf with one external buffer becomes a GLB in memory (see MakeGlb).
+        if (!glb && document.contains("buffers") && document["buffers"].is_array() && document["buffers"].size() == 1 &&
+            document["buffers"][0].is_object() && document["buffers"][0].contains("uri") && document["buffers"][0]["uri"].is_string() &&
+            document["buffers"][0]["uri"].get<std::string>().rfind("data:", 0) != 0) {
+            const std::string buffer_path = ResolveContentPath(path, document["buffers"][0]["uri"].get<std::string>());
+            std::vector<u8> bytes;
+            if (!package.ReadContent(buffer_path, bytes)) {
+                AETHER_LOG_WARN("PlayerRenderer", "Model '%s' references missing buffer '%s'", path.c_str(), buffer_path.c_str());
+                return false;
+            }
+            json without_uri = document;
+            without_uri["buffers"][0].erase("uri");
+            if (without_uri["buffers"][0].contains("byteLength") && without_uri["buffers"][0]["byteLength"].is_number_unsigned()) {
+                const usize declared = without_uri["buffers"][0]["byteLength"].get<usize>();
+                if (declared <= bytes.size()) bytes.resize(declared);
+            }
+            built_glb = MakeGlb(without_uri.dump(), bytes);
+            buffer_bytes[0] = std::move(bytes);
+        } else if (!parse_glb && document.contains("buffers") && document["buffers"].is_array()) {
             for (usize buffer_index = 0; buffer_index < document["buffers"].size(); ++buffer_index) {
                 json& buffer = document["buffers"][buffer_index];
                 if (!buffer.contains("uri") || !buffer["uri"].is_string()) continue;
@@ -1566,9 +1587,17 @@ struct SceneRenderer::Impl {
                 buffer_bytes[buffer_index] = std::move(bytes);
             }
         }
-        const std::string cooked_json = document.dump();
-        if (!assets::LoadGltfFromMemory(std::span<const u8>(reinterpret_cast<const u8*>(cooked_json.data()), cooked_json.size()),
-                                        out.scene)) {
+        std::string cooked_json;
+        std::span<const u8> parser_input;
+        if (parse_glb) {
+            parser_input = source;
+        } else if (!built_glb.empty()) {
+            parser_input = built_glb;
+        } else {
+            cooked_json = document.dump(); // buffers embedded as data URIs: several, or none
+            parser_input = std::span<const u8>(reinterpret_cast<const u8*>(cooked_json.data()), cooked_json.size());
+        }
+        if (!assets::LoadGltfFromMemory(parser_input, out.scene)) {
             AETHER_LOG_WARN("PlayerRenderer", "Couldn't parse cooked model '%s'", path.c_str());
             return false;
         }

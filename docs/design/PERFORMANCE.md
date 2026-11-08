@@ -764,9 +764,12 @@ command list, fence to fence, best of 10 lists after 2 warm-ups. Three rounds; R
   vertices with its transform still. It resolves to exactly the same pixels as the rigid move. Without last frame's positions
   being read, it would wash out like the camera-only case.
 - **Checked in the player** with AETHER-01's Kael rig walking beside the lantern: both backends, motion on and off, no errors.
-- **Not checked in the player:** the Aegis Vanguard character. Its cooked model is 39 MB of binary data, which the player
-  re-encodes as base64 inside the glTF JSON (about 53 MB). That is over the loader's 32 MiB JSON limit, so the model is skipped
-  with "Couldn't parse cooked model". This is a separate loader bug.
+- **Checked on a real character too:** the Aegis Vanguard (192,562 vertices, 4K textures) walking beside the lantern, on both
+  backends. It did not load at first: the player turned a model's binary data into base64 inside the glTF JSON, and the loader
+  caps JSON at 32 MiB, so a buffer over 24 MiB (this one is 39 MiB) was skipped with "Couldn't parse cooked model". Models now
+  reach the parser as a GLB (`player/src/model_glb.h`); a `.gltf` with one external buffer is turned into one in memory. A
+  test (`Material_ALargeBufferLoadsFromAGlbButNotAsADataUri`) loads a 28 MiB buffer that way and shows the old form refused.
+  GHOST-SHIFT and AETHER-01 load the same models as before and render the same.
 - **Still not covered:** entities that share a skinned model share its per-frame vertex buffers, so all of them draw the pose
   skinned last. Their last-frame positions are kept per entity, but what they draw is not.
 

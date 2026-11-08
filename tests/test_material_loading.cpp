@@ -3,6 +3,7 @@
 #include "aether/gfx/rhi/command_list.h"
 #include "aether/gfx/rhi/device.h"
 #include "aether/player/scene_renderer.h"
+#include "../player/src/model_glb.h"
 #include "test_framework.h"
 
 #include <cmath>
@@ -278,4 +279,29 @@ AETHER_TEST(Material_SceneShaderReadsEachNormalCoefficientWithADynamicIndex) {
             AETHER_CHECK(std::abs(got - static_cast<int>(expected[i])) <= 2);
         }
     }
+}
+
+// Models reach the glTF parser as a GLB (player/src/model_glb.h), not a data URI: the parser caps JSON at 32 MiB, and base64 of a buffer over
+// 24 MiB is past that. A character with 4K textures is 39 MiB of binary data.
+AETHER_TEST(Material_ALargeBufferLoadsFromAGlbButNotAsADataUri) {
+    // One triangle (three positions) at the start of a 28 MiB buffer.
+    std::vector<u8> bin(28u * 1024u * 1024u, 0);
+    const f32 positions[9] = {0, 0, 0, 1, 0, 0, 0, 1, 0};
+    std::memcpy(bin.data(), positions, sizeof(positions));
+    const std::string json = R"({"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0]}],"nodes":[{"mesh":0}],)"
+                             R"("meshes":[{"primitives":[{"attributes":{"POSITION":0}}]}],)"
+                             R"("accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3","min":[0,0,0],"max":[1,1,0]}],)"
+                             R"("bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":36}],)"
+                             R"("buffers":[{"byteLength":)" + std::to_string(bin.size()) + "}]}";
+    const std::vector<u8> glb = player::MakeGlb(json, bin);
+    AETHER_CHECK(glb.size() % 4 == 0);
+    assets::GltfScene scene;
+    AETHER_CHECK(assets::LoadGltfFromMemory(glb, scene));
+    AETHER_CHECK(scene.meshes.size() == 1 && scene.meshes[0].primitives.size() == 1 && scene.meshes[0].primitives[0].vertices.size() == 3);
+    // The same buffer as a data URI makes JSON of about 37 MiB: refused. (What the player used to do.)
+    std::string embedded = json;
+    const usize at = embedded.find("\"buffers\":[{");
+    AETHER_CHECK(at != std::string::npos);
+    embedded.insert(at + 12, "\"uri\":\"data:application/octet-stream;base64," + std::string(bin.size() / 3 * 4, 'A') + "\",");
+    AETHER_CHECK(!assets::LoadGltfFromMemory(std::span<const u8>(reinterpret_cast<const u8*>(embedded.data()), embedded.size()), scene));
 }
