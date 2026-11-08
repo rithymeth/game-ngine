@@ -202,8 +202,8 @@ AETHER_TEST(Ibl_SkyConstantsSpanTheView) {
     AETHER_CHECK(Near(Vec3(c.right[0], c.right[1], c.right[2]), Vec3(2, 0, 0), 1e-4f) && Near(Vec3(c.up[0], c.up[1], c.up[2]), Vec3(0, 1, 0), 1e-4f));
 }
 
-AETHER_TEST(Ibl_HalfFloatTexturesOnD3D12) {
-    std::unique_ptr<rhi::IDevice> device = MakeDevice(rhi::Backend::D3D12);
+static void Ibl_HalfFloatTextures(rhi::Backend backend) {
+    std::unique_ptr<rhi::IDevice> device = MakeDevice(backend);
     if (!device) return;
     // 4x2 with three levels (4x2, 2x1, 1x1): red, green, blue.
     std::vector<u16> halves;
@@ -245,6 +245,9 @@ AETHER_TEST(Ibl_HalfFloatTexturesOnD3D12) {
     rhi::PipelineDesc desc;
     desc.hlsl_source = R"(
 struct PushConstants { uint texture_index; uint pad0; uint pad1; uint pad2; };
+#ifdef __spirv__
+[[vk::push_constant]]
+#endif
 ConstantBuffer<PushConstants> g_PC : register(b0);
 Texture2D g_Textures[128] : register(t0, space0);
 SamplerState g_Sampler : register(s0, space1);
@@ -286,7 +289,9 @@ float4 PSMain(float4 position : SV_Position) : SV_Target {
 }
 
 AETHER_TEST(Ibl_SkyPassOnD3D12AndVulkan) {
-    if (std::unique_ptr<rhi::IDevice> device = MakeDevice(rhi::Backend::D3D12)) {
+    for (const rhi::Backend backend : {rhi::Backend::D3D12, rhi::Backend::Vulkan}) {
+        std::unique_ptr<rhi::IDevice> device = MakeDevice(backend);
+        if (!device) continue;
         std::unique_ptr<rhi::ISwapChain> target = device->CreateSwapChain(nullptr, 32, 32, 2);
         player::SkyPass sky(*device, *target, true);
         AETHER_CHECK(sky.Valid() && sky.CanDrawBackground());
@@ -300,11 +305,8 @@ AETHER_TEST(Ibl_SkyPassOnD3D12AndVulkan) {
         // A new environment replaces the old one's texture.
         AETHER_CHECK(sky.SetEnvironment("b@0", Uniform(64, Vec3(1, 1, 1))) && sky.Environment().width == 64);
     }
-    if (std::unique_ptr<rhi::IDevice> device = MakeDevice(rhi::Backend::Vulkan)) {
-        const u16 texel[4] = {0, 0, 0, 0x3C00};
-        AETHER_CHECK(!device->CreateHalfFloatTexture(1, 1, 1, texel).IsValid());
-        std::unique_ptr<rhi::ISwapChain> target = device->CreateSwapChain(nullptr, 16, 16, 2);
-        player::SkyPass sky(*device, *target, false);
-        AETHER_CHECK(!sky.Valid()); // the flat ambient term there
-    }
 }
+
+// The rendering checks above, on both backends (Vulkan has render targets since the parity work).
+AETHER_TEST(Ibl_HalfFloatTextures_D3D12) { Ibl_HalfFloatTextures(rhi::Backend::D3D12); }
+AETHER_TEST(Ibl_HalfFloatTextures_Vulkan) { Ibl_HalfFloatTextures(rhi::Backend::Vulkan); }

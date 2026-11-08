@@ -37,8 +37,9 @@ native mobile windowing, real-device input, and haptic backends remain open.
 4. **Hard limits that fit mobile poorly.**
    - The bindless texture table is `kMaxBindlessTextures = 32`.
    - Push constants are already 128 bytes, the minimum Vulkan guarantees.
-   - The frame-constants buffer (scene lights) exists on D3D12 only; Vulkan reports no support and keeps the fixed light, so mobile
-     Vulkan would need it implemented.
+   - Vulkan has the frame constants, the clustered-light buffer, render and depth textures and the HDR scene colour target, but the
+     targets need an update-after-bind texture table (`descriptorBindingSampledImageUpdateAfterBind`), which some mobile GPUs lack;
+     there the player falls back to the tone-mapping scene shader, unshadowed, with sky lighting but no sky background.
 5. **Renderer cost.** The player's renderer is a plain forward pass with a per-pixel loop over lights. There is no mobile tuning (quality
    tiers beyond the presets, resolution scale, thermal or battery handling) that I could find.
 6. **No packaging.** No Gradle build, signing, Android manifest or iOS project, and no way to run on a device.

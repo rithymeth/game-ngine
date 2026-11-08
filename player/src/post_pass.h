@@ -7,10 +7,10 @@
 #include <string>
 #include <vector>
 
-// The player's post pass (render roadmap step 1). Where the device has an HDR scene colour target (ISwapChain::SceneColorTexture: D3D12
-// today) the scene draws into it in linear light, unclamped, and this pass turns that into the display image in the back buffer: exposure,
+// The player's post pass (render roadmap step 1). Where the device has an HDR scene colour target (ISwapChain::SceneColorTexture: D3D12, and
+// Vulkan where the texture table is update-after-bind) the scene draws into it in linear light, unclamped, and this pass turns that into the display image in the back buffer: exposure,
 // the tone mapper (ACES or AgX, the CPU references in renderer/post.h), saturation, the vignette and the sRGB encoding, in one full-screen
-// triangle that reads each pixel with a texel load. Where there is no such target (Vulkan for now) the scene shader tone maps itself, as it
+// triangle that reads each pixel with a texel load. Where there is no such target (an older Vulkan device) the scene shader tone maps itself, as it
 // always did, and this pass is not made.
 //
 // Bloom (render roadmap step 4) runs between the scene pass and this one, into a chain of half-size render textures: a 13-tap downsample

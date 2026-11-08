@@ -17,6 +17,9 @@ struct SkyConstants {
     float4 up;
     float4 forward;
 };
+#ifdef __spirv__
+[[vk::push_constant]]
+#endif
 ConstantBuffer<SkyConstants> g_PC : register(b0);
 Texture2D g_Textures[128] : register(t0, space0);
 SamplerState g_Sampler : register(s0, space1);

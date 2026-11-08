@@ -93,11 +93,11 @@ AETHER_TEST(Taa_ShaderClipsTheHistoryAndWeighsByLuma) {
     AETHER_CHECK(kTaaBlend > 0.0f && kTaaBlend < 0.5f && sizeof(TaaConstants) <= 256);
 }
 
-AETHER_TEST(Taa_AHardEdgeConvergesToItsCoverageAndACutStartsOver) {
-    if (!rhi::IsBackendAvailable(rhi::Backend::D3D12)) return;
+static void Taa_AHardEdgeConvergesToItsCoverageAndACutStartsOver(rhi::Backend backend) {
+    if (!rhi::IsBackendAvailable(backend)) return;
     std::unique_ptr<rhi::IDevice> device;
     try {
-        device = rhi::CreateDevice(rhi::Backend::D3D12, false);
+        device = rhi::CreateDevice(backend, false);
     } catch (const std::exception&) {
     }
     if (!device) return;
@@ -111,6 +111,9 @@ AETHER_TEST(Taa_AHardEdgeConvergesToItsCoverageAndACutStartsOver) {
     rhi::PipelineDesc scene;
     scene.hlsl_source = R"(
 struct PushConstants { float jitter_x; float edge; float pad0; float pad1; };
+#ifdef __spirv__
+[[vk::push_constant]]
+#endif
 ConstantBuffer<PushConstants> g_PC : register(b0);
 float4 VSMain(uint id : SV_VertexID) : SV_Position {
     float2 uv = float2((id << 1) & 2, id & 2);
@@ -127,6 +130,9 @@ float4 PSMain(float4 position : SV_Position) : SV_Target {
     rhi::PipelineDesc show;
     show.hlsl_source = R"(
 struct PushConstants { uint index; uint pad0; uint pad1; uint pad2; };
+#ifdef __spirv__
+[[vk::push_constant]]
+#endif
 ConstantBuffer<PushConstants> g_PC : register(b0);
 Texture2D g_Textures[128] : register(t0, space0);
 SamplerState g_Sampler : register(s0, space1);
@@ -198,12 +204,12 @@ float4 PSMain(float4 position : SV_Position) : SV_Target {
     device->DestroyPipeline(show_pipeline);
 }
 
-AETHER_TEST(Taa_ThePostPassReadsTheResolveWhenGivenIt) {
+static void Taa_ThePostPassReadsTheResolveWhenGivenIt(rhi::Backend backend) {
     // PostPass::SetSource: Source() is the given index, or the scene colour target when 0.
-    if (!rhi::IsBackendAvailable(rhi::Backend::D3D12)) return;
+    if (!rhi::IsBackendAvailable(backend)) return;
     std::unique_ptr<rhi::IDevice> device;
     try {
-        device = rhi::CreateDevice(rhi::Backend::D3D12, false);
+        device = rhi::CreateDevice(backend, false);
     } catch (const std::exception&) {
     }
     if (!device) return;
@@ -216,3 +222,9 @@ AETHER_TEST(Taa_ThePostPassReadsTheResolveWhenGivenIt) {
     post.SetSource(0);
     AETHER_CHECK(post.Source() == post.SceneColorIndex());
 }
+
+// On both backends.
+AETHER_TEST(Taa_AHardEdgeConvergesToItsCoverageAndACutStartsOver_D3D12) { Taa_AHardEdgeConvergesToItsCoverageAndACutStartsOver(rhi::Backend::D3D12); }
+AETHER_TEST(Taa_AHardEdgeConvergesToItsCoverageAndACutStartsOver_Vulkan) { Taa_AHardEdgeConvergesToItsCoverageAndACutStartsOver(rhi::Backend::Vulkan); }
+AETHER_TEST(Taa_ThePostPassReadsTheResolveWhenGivenIt_D3D12) { Taa_ThePostPassReadsTheResolveWhenGivenIt(rhi::Backend::D3D12); }
+AETHER_TEST(Taa_ThePostPassReadsTheResolveWhenGivenIt_Vulkan) { Taa_ThePostPassReadsTheResolveWhenGivenIt(rhi::Backend::Vulkan); }

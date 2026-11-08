@@ -128,8 +128,8 @@ AETHER_TEST(Bloom_ShadersCompileWithGlslang) {
     AETHER_CHECK(Compiles(player::PostShaderSource(), "frag", "PSMain"));
 }
 
-AETHER_TEST(Bloom_RenderTexturesOnD3D12) {
-    std::unique_ptr<gfx::rhi::IDevice> device = MakeDevice(gfx::rhi::Backend::D3D12);
+static void Bloom_RenderTextures(gfx::rhi::Backend backend) {
+    std::unique_ptr<gfx::rhi::IDevice> device = MakeDevice(backend);
     if (!device) return;
     std::unique_ptr<gfx::rhi::ISwapChain> target = device->CreateSwapChain(nullptr, kWidth, kHeight, 2);
     const gfx::rhi::SampledTextureHandle texture = device->CreateRenderTexture(32, 16);
@@ -167,14 +167,8 @@ AETHER_TEST(Bloom_RenderTexturesOnD3D12) {
     if (plain.IsValid()) device->DestroyTexture(plain);
 }
 
-AETHER_TEST(Bloom_RenderTexturesAreRefusedOnVulkan) {
-    std::unique_ptr<gfx::rhi::IDevice> device = MakeDevice(gfx::rhi::Backend::Vulkan);
-    if (!device) return;
-    AETHER_CHECK(!device->CreateRenderTexture(32, 16).IsValid()); // not implemented there yet: the default, an invalid handle
-}
-
-AETHER_TEST(Bloom_SpreadsABrightPatchOnD3D12) {
-    std::unique_ptr<gfx::rhi::IDevice> device = MakeDevice(gfx::rhi::Backend::D3D12);
+static void Bloom_SpreadsABrightPatch(gfx::rhi::Backend backend) {
+    std::unique_ptr<gfx::rhi::IDevice> device = MakeDevice(backend);
     if (!device) return;
     std::unique_ptr<gfx::rhi::ISwapChain> target = device->CreateSwapChain(nullptr, kWidth, kHeight, 2);
     player::PostPass post(*device, *target);
@@ -248,3 +242,9 @@ AETHER_TEST(Bloom_SpreadsABrightPatchOnD3D12) {
     AETHER_CHECK(post.BloomTextures().empty());
     device->DestroyPipeline(patch);
 }
+
+// The rendering checks above, on both backends (Vulkan has render targets since the parity work).
+AETHER_TEST(Bloom_RenderTextures_D3D12) { Bloom_RenderTextures(gfx::rhi::Backend::D3D12); }
+AETHER_TEST(Bloom_RenderTextures_Vulkan) { Bloom_RenderTextures(gfx::rhi::Backend::Vulkan); }
+AETHER_TEST(Bloom_SpreadsABrightPatch_D3D12) { Bloom_SpreadsABrightPatch(gfx::rhi::Backend::D3D12); }
+AETHER_TEST(Bloom_SpreadsABrightPatch_Vulkan) { Bloom_SpreadsABrightPatch(gfx::rhi::Backend::Vulkan); }

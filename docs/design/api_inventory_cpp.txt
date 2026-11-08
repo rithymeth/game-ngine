@@ -2177,6 +2177,7 @@
   type class VulkanCommandList
   type class VulkanDevice
   type class VulkanSwapChain
+  type enum class PassTarget
   type struct BufferRecord
   type struct ComputePipelineRecord
   type struct DeferredCommandListResources
@@ -2198,9 +2199,16 @@
   PipelineHandle CreatePipeline(const PipelineDesc&desc,ISwapChain&swap_chain)override
   ResourceStats GetResourceStats()const override
   SampledTextureHandle CreateCompressedTexture(CompressedTextureFormat format,u32 width,u32 height,std::span<const CompressedMip>mips)override
+  SampledTextureHandle CreateDepthTexture(u32 width,u32 height)override
+  SampledTextureHandle CreateHalfFloatTexture(u32 width,u32 height,u32 mip_count,const u16*halves)override
+  SampledTextureHandle CreateMippedTexture(const char*what,VkFormat format,u32 texel_bytes,u32 width,u32 height,u32 mip_count,const void*levels)
   SampledTextureHandle CreateR32FloatTexture(u32 width,u32 height,const f32*values)override
+  SampledTextureHandle CreateRenderTexture(u32 width,u32 height)override
+  SampledTextureHandle CreateTargetTexture(const char*what,PassTarget target,u32 width,u32 height)
   SampledTextureHandle CreateTexture(u32 width,u32 height,const u8*rgba8_pixels)override
+  SampledTextureHandle CreateTextureWithMips(u32 width,u32 height,u32 mip_count,const u8*rgba8_levels)override
   SampledTextureHandle ReserveExternalBindlessSlot()
+  SampledTextureHandle SceneColorTexture()override
   SampledTextureHandle SceneDepthTexture()override
   SampledTextureRecord UploadImageRecord(VkFormat format,u32 width,u32 height,const std::vector<ImageLevel>&levels)
   SampledTextureRecord UploadTextureRecord(u32 width,u32 height,const u8*rgba8_pixels)
@@ -2215,6 +2223,7 @@
   VkFormat DepthFormat()const
   VkFormat Format()const
   VkFramebuffer CurrentFramebuffer()const
+  VkFramebuffer CurrentSceneColorFramebuffer()const
   VkImage CurrentDepthImage()const
   VkImage GetTexture(TextureHandle handle)const
   VkImage SceneDepthImage()const
@@ -2228,9 +2237,15 @@
   VkRenderPass CreateRenderPassVariant(bool load_existing,bool store_depth)
   VkRenderPass DefaultRenderPass()const
   VkRenderPass ResumeRenderPass()const
+  VkRenderPass SceneColorPass()
+  VkRenderPass SceneColorResumePass()const
+  VkRenderPass TargetPass(PassTarget target,bool clear)const
   VkResult WaitForDeviceIdle()
   VkSemaphore CurrentImageAvailableSemaphore()const
   VkSemaphore CurrentRenderFinishedSemaphore()const
+  bool BeginDepthPass(SampledTextureHandle target,bool clear)override
+  bool BeginSceneColorPass(ISwapChain&swap_chain,const ClearColor&clear_color)override
+  bool BeginTexturePass(SampledTextureHandle target,const ClearColor*clear_color)override
   bool BelongsTo(const VulkanDevice&device)const
   bool CopySceneDepth()override
   bool DestroyBuffer(BufferHandle buffer)override
@@ -2250,15 +2265,18 @@
   bool IsSubmissionInFlight()const
   bool IsVertexBuffer(BufferHandle handle)const
   bool ReadBack(std::vector<u8>&rgba8)override
+  bool SceneColorEnabled()const
   bool SceneDepthEnabled()const
   bool SupportsCompressedTexture(CompressedTextureFormat format)const override
   bool SupportsFrameConstants()const override
+  bool SupportsRenderTargets()const
   bool TextureTableFull()const
   bool WriteBufferUnsynchronized(BufferHandle buffer,const void*data,u64 size_bytes,u64 offset=0)override
   const BufferRecord&GetBuffer(BufferHandle handle)const
   const ComputePipelineRecord&GetComputePipeline(ComputePipelineHandle handle)const
   const PipelineRecord&GetPipeline(PipelineHandle handle)const
   const SampledTextureRecord&GetSampledTexture(SampledTextureHandle handle)const
+  const SampledTextureRecord*FindTarget(SampledTextureHandle handle,PassTarget target)const
   private:VkDescriptorPool CreateComputeDescriptorPool()
   private:void CreateSwapchainAndImages(u32 width,u32 height)
   public:VulkanSwapChain(VulkanDevice&device,void*native_window_handle,u32 width,u32 height,u32 buffer_count)
@@ -2305,12 +2323,15 @@
   void CreateDefaultRenderPass()
   void CreateDepthResources()
   void CreateFramebuffers()
+  void CreateSceneColorImage()
   void CreateSceneDepthImage()
   void CreateSyncObjects()
+  void CreateTargetPasses()
   void DeferCommandListResources(VkCommandPool command_pool,std::vector<VkDescriptorPool>descriptor_pools)noexcept
   void Destroy()noexcept
   void DestroyDepthResources()
   void DestroyFramebuffers()
+  void DestroySceneColorImage()
   void DestroySceneDepthImage()
   void DestroySwapchainAndImages()
   void DestroySyncObjects()
@@ -2321,6 +2342,7 @@
   void EndRenderPass()override
   void FlushRetired()noexcept
   void GraphicsQueueWaitOnCompute(u64 compute_fence_value)override
+  void MakeShaderReadable(VkImage image,VkImageAspectFlags aspect,bool wait)
   void MarkSubmitted(u64 fence_value)
   void Present(bool vsync)override
   void ReclaimTextureSlots()
@@ -2331,7 +2353,7 @@
   void Resize(u32 width,u32 height)override
   void Retire(std::function<void()>release)
   void SetExternalBindlessView(SampledTextureHandle slot,VkImageView view)
-  void SetFullViewport(const VulkanSwapChain&swap_chain)
+  void SetFullViewport(u32 width,u32 height)
   void SetPushConstants(const void*data,u32 size_bytes)override
   void SetViewportAndScissor(const Viewport&viewport,const Rect&scissor)override
   void TransitionTexture(TextureHandle texture,ResourceState before,ResourceState after)override

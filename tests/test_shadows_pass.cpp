@@ -70,6 +70,9 @@ bool AtlasTexel(const ShadowCascade& cascade, u32 resolution, const Vec3& p, u32
 // Writes the atlas, texel for pixel, to the back buffer: green where something was drawn (depth < 1), black where it is still clear.
 constexpr char kShowDepthShader[] = R"(
 struct PushConstants { uint atlas; uint pad0; uint pad1; uint pad2; };
+#ifdef __spirv__
+[[vk::push_constant]]
+#endif
 ConstantBuffer<PushConstants> g_PC : register(b0);
 Texture2D g_Textures[128] : register(t0, space0);
 SamplerState g_Sampler : register(s0, space1);
@@ -139,8 +142,8 @@ AETHER_TEST(Shadows_SceneShaderReadsTheAtlas) {
     AETHER_CHECK(source.find("* sun_radiance * sun_visibility") != std::string::npos);
 }
 
-AETHER_TEST(Shadows_DepthTexturesOnD3D12) {
-    std::unique_ptr<rhi::IDevice> device = MakeDevice(rhi::Backend::D3D12);
+static void Shadows_DepthTextures(rhi::Backend backend) {
+    std::unique_ptr<rhi::IDevice> device = MakeDevice(backend);
     if (!device) return;
     const rhi::SampledTextureHandle depth = device->CreateDepthTexture(64, 32);
     const rhi::SampledTextureHandle color = device->CreateRenderTexture(64, 32);
@@ -174,17 +177,8 @@ AETHER_TEST(Shadows_DepthTexturesOnD3D12) {
     device->DestroyTexture(color);
 }
 
-AETHER_TEST(Shadows_DepthTexturesAreRefusedOnVulkan) {
-    std::unique_ptr<rhi::IDevice> device = MakeDevice(rhi::Backend::Vulkan);
-    if (!device) return;
-    AETHER_CHECK(!device->CreateDepthTexture(64, 64).IsValid());
-    std::unique_ptr<rhi::ISwapChain> target = device->CreateSwapChain(nullptr, 16, 16, 2);
-    player::ShadowPass shadows(*device, *target);
-    AETHER_CHECK(!shadows.Valid()); // the scene draws unshadowed there
-}
-
-AETHER_TEST(Shadows_PassDrawsOpaqueAndAlphaTestedCastersOnD3D12) {
-    std::unique_ptr<rhi::IDevice> device = MakeDevice(rhi::Backend::D3D12);
+static void Shadows_PassDrawsOpaqueAndAlphaTestedCasters(rhi::Backend backend) {
+    std::unique_ptr<rhi::IDevice> device = MakeDevice(backend);
     if (!device) return;
     constexpr u32 kRes = 64;
     std::unique_ptr<rhi::ISwapChain> target = device->CreateSwapChain(nullptr, kRes, kRes, 2);
@@ -259,3 +253,9 @@ AETHER_TEST(Shadows_PassDrawsOpaqueAndAlphaTestedCastersOnD3D12) {
     device->DestroyBuffer(masked_vb);
     device->DestroyBuffer(ib);
 }
+
+// The rendering checks above, on both backends (Vulkan has render targets since the parity work).
+AETHER_TEST(Shadows_DepthTextures_D3D12) { Shadows_DepthTextures(rhi::Backend::D3D12); }
+AETHER_TEST(Shadows_DepthTextures_Vulkan) { Shadows_DepthTextures(rhi::Backend::Vulkan); }
+AETHER_TEST(Shadows_PassDrawsOpaqueAndAlphaTestedCasters_D3D12) { Shadows_PassDrawsOpaqueAndAlphaTestedCasters(rhi::Backend::D3D12); }
+AETHER_TEST(Shadows_PassDrawsOpaqueAndAlphaTestedCasters_Vulkan) { Shadows_PassDrawsOpaqueAndAlphaTestedCasters(rhi::Backend::Vulkan); }

@@ -203,8 +203,8 @@ AETHER_TEST(PostPass_TonemapsTheHdrTargetLikeTheCpuReferenceOnVulkan) {
     PostPass_TonemapsTheHdrTargetLikeTheCpuReference(gfx::rhi::Backend::Vulkan);
 }
 
-AETHER_TEST(PostPass_SceneColorPassIsRefusedWithoutATarget) {
-    std::unique_ptr<gfx::rhi::IDevice> device = MakeDevice(gfx::rhi::Backend::D3D12);
+static void PostPass_SceneColorPassIsRefusedWithoutATarget(gfx::rhi::Backend backend) {
+    std::unique_ptr<gfx::rhi::IDevice> device = MakeDevice(backend);
     if (!device) return;
     std::unique_ptr<gfx::rhi::ISwapChain> target = device->CreateSwapChain(nullptr, kSize, kSize, 2);
     std::unique_ptr<gfx::rhi::ICommandList> cmd = device->CreateCommandList();
@@ -224,8 +224,8 @@ AETHER_TEST(PostPass_SceneColorPassIsRefusedWithoutATarget) {
     AETHER_CHECK(target->SceneColorTexture().index == index);
 }
 
-AETHER_TEST(PostPass_ParticleAndDecalPassesBuildHdrPipelines) {
-    std::unique_ptr<gfx::rhi::IDevice> device = MakeDevice(gfx::rhi::Backend::D3D12);
+static void PostPass_ParticleAndDecalPassesBuildHdrPipelines(gfx::rhi::Backend backend) {
+    std::unique_ptr<gfx::rhi::IDevice> device = MakeDevice(backend);
     if (!device) return;
     std::unique_ptr<gfx::rhi::ISwapChain> target = device->CreateSwapChain(nullptr, kSize, kSize, 2);
     if (!target->SceneColorTexture().IsValid()) return;
@@ -234,3 +234,9 @@ AETHER_TEST(PostPass_ParticleAndDecalPassesBuildHdrPipelines) {
     player::DecalPass decals(*device, *target, /*hdr_target=*/true);
     AETHER_CHECK(decals.HdrTarget() && (decals.Valid() || !target->SceneDepthTexture().IsValid()));
 }
+
+// The rendering checks above, on both backends (Vulkan has render targets since the parity work).
+AETHER_TEST(PostPass_SceneColorPassIsRefusedWithoutATarget_D3D12) { PostPass_SceneColorPassIsRefusedWithoutATarget(gfx::rhi::Backend::D3D12); }
+AETHER_TEST(PostPass_SceneColorPassIsRefusedWithoutATarget_Vulkan) { PostPass_SceneColorPassIsRefusedWithoutATarget(gfx::rhi::Backend::Vulkan); }
+AETHER_TEST(PostPass_ParticleAndDecalPassesBuildHdrPipelines_D3D12) { PostPass_ParticleAndDecalPassesBuildHdrPipelines(gfx::rhi::Backend::D3D12); }
+AETHER_TEST(PostPass_ParticleAndDecalPassesBuildHdrPipelines_Vulkan) { PostPass_ParticleAndDecalPassesBuildHdrPipelines(gfx::rhi::Backend::Vulkan); }

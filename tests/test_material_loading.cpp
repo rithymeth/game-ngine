@@ -161,14 +161,10 @@ float4 PSMain(float4 position : SV_Position) : SV_Target {
         target->Present(false);
         if (pixels.size() == kSize * kSize * 4) {
             const auto at = [&](u32 x, u32 c) { return pixels[(static_cast<usize>(kSize / 2) * kSize + x) * 4 + c]; };
-            AETHER_CHECK(at(8, 0) > 240 && at(8, 1) < 16); // level 0 everywhere
-            if (backend == rhi::Backend::D3D12) {
-                // D3D12 keeps the chain; a device without support (Vulkan today) uploads level 0 alone, which every level reads.
-                AETHER_CHECK(at(24, 1) > 240 && at(24, 0) < 16);
-                AETHER_CHECK(at(40, 2) > 240 && at(40, 0) < 16);
-            } else {
-                AETHER_CHECK(at(40, 0) > 240);
-            }
+            AETHER_CHECK(at(8, 0) > 240 && at(8, 1) < 16); // level 0
+            // Both backends keep the chain: each band reads its own level.
+            AETHER_CHECK(at(24, 1) > 240 && at(24, 0) < 16);
+            AETHER_CHECK(at(40, 2) > 240 && at(40, 0) < 16);
         }
         device->DestroyPipeline(pipeline);
         device->DestroyTexture(texture);

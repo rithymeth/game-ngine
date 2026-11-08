@@ -9,7 +9,7 @@
 
 // Cascaded sun shadows (render roadmap step 2). Up to four cascades (renderer/shadows.h: practical splits, bounding-sphere fit, texel
 // snapping) are drawn into one D32 atlas, one bindless slot, laid out two by two; the scene shader picks the first cascade a point
-// projects into and filters it with a 3x3 bilinear PCF of texel loads. Where the device has no depth textures (Vulkan for now) the pass
+// projects into and filters it with a 3x3 bilinear PCF of texel loads. Where the device has no depth textures (an older Vulkan device) the pass
 // is not Valid and the scene draws unshadowed, as before.
 
 namespace aether::player {
