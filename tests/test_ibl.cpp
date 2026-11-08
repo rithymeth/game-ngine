@@ -310,3 +310,54 @@ AETHER_TEST(Ibl_SkyPassOnD3D12AndVulkan) {
 // The rendering checks above, on both backends (Vulkan has render targets since the parity work).
 AETHER_TEST(Ibl_HalfFloatTextures_D3D12) { Ibl_HalfFloatTextures(rhi::Backend::D3D12); }
 AETHER_TEST(Ibl_HalfFloatTextures_Vulkan) { Ibl_HalfFloatTextures(rhi::Backend::Vulkan); }
+
+// The cooked form (assets/environment.h): what the cooker stores so a packaged game skips the prefilter.
+AETHER_TEST(Ibl_ACookedEnvironmentRoundTripsAndDamageIsRefused) {
+    const assets::PrefilterSettings settings;
+    const assets::PrefilteredEnvironment environment = assets::PrefilterEnvironment(player::MakeProceduralSky(128), settings);
+    AETHER_CHECK(environment.mip_count > 1);
+    const std::vector<u8> bytes = assets::SaveEnvironment(environment, settings);
+    AETHER_CHECK(!bytes.empty());
+
+    assets::PrefilteredEnvironment loaded;
+    assets::PrefilterSettings read;
+    std::string error;
+    AETHER_CHECK(assets::LoadEnvironment(bytes, loaded, &read, &error));
+    AETHER_CHECK(loaded.width == environment.width && loaded.height == environment.height && loaded.mip_count == environment.mip_count);
+    AETHER_CHECK(loaded.halves == environment.halves); // every level, bit for bit
+    AETHER_CHECK(std::memcmp(loaded.irradiance_sh, environment.irradiance_sh, sizeof(loaded.irradiance_sh)) == 0);
+    AETHER_CHECK(read.max_width == settings.max_width && read.smallest_width == settings.smallest_width && read.samples == settings.samples);
+
+    const auto refused = [](const std::vector<u8>& damaged) {
+        assets::PrefilteredEnvironment out;
+        std::string why;
+        return !assets::LoadEnvironment(damaged, out, nullptr, &why) && !why.empty() && out.mip_count == 0;
+    };
+    const auto with_u32 = [&](usize at, u32 value) {
+        std::vector<u8> copy = bytes;
+        for (int i = 0; i < 4; ++i) copy[at + i] = static_cast<u8>(value >> (8 * i));
+        return copy;
+    };
+    AETHER_CHECK(refused({}));
+    AETHER_CHECK(refused(std::vector<u8>(bytes.begin(), bytes.begin() + 100)));         // cut in the header
+    AETHER_CHECK(refused(std::vector<u8>(bytes.begin(), bytes.end() - 1)));             // a texel short
+    std::vector<u8> longer = bytes;
+    longer.push_back(0);
+    AETHER_CHECK(refused(longer));                                                       // a byte over
+    std::vector<u8> magic = bytes;
+    magic[0] = 'X';
+    AETHER_CHECK(refused(magic));
+    AETHER_CHECK(refused(with_u32(4, assets::kEnvironmentFormatVersion + 1)));           // another version
+    AETHER_CHECK(refused(with_u32(20, 100)));                                            // not a power of two
+    AETHER_CHECK(refused(with_u32(20, 32)));                                             // under the 64 minimum
+    AETHER_CHECK(refused(with_u32(20, 1u << 20)));                                       // over the cap
+    AETHER_CHECK(refused(with_u32(24, environment.height + 1)));                         // not half as tall
+    AETHER_CHECK(refused(with_u32(28, 0)));                                              // no levels
+    AETHER_CHECK(refused(with_u32(28, 40)));                                             // more levels than the size has
+    AETHER_CHECK(refused(with_u32(32, 0x7FC00000u)));                                    // a NaN coefficient
+    // Saving what doesn't add up gives nothing.
+    assets::PrefilteredEnvironment broken = environment;
+    broken.halves.pop_back();
+    AETHER_CHECK(assets::SaveEnvironment(broken, settings).empty());
+    AETHER_CHECK(assets::SaveEnvironment({}, settings).empty());
+}

@@ -25,6 +25,7 @@ animation clip       animation/src/compression.cpp           2        version 1 
 navigation mesh      nav/src/navmesh.cpp                     1        refused             refused
 texture (imported)   engine/src/assets/texture_importer.cpp  1        refused             refused
 texture (cooked)     engine/src/cook/texture_cook.cpp        1        refused             refused
+environment (cooked) engine/src/assets/environment.cpp       1        refused             refused
 mesh (imported)      engine/src/assets/model_importer.cpp    2        version 1 loads     refused
 mesh (cooked)        engine/src/cook/mesh_cook.cpp           1        refused             refused
 derived data cache   engine/src/assets/importer.cpp          1        refused             refused

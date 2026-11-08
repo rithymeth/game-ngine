@@ -1,6 +1,7 @@
 #include "aether/cook/cooker.h"
 
 #include "aether/assets/derived_data_cache.h"
+#include "aether/assets/environment.h"
 #include "aether/assets/gltf_references.h"
 #include "aether/assets/image.h"
 #include "aether/assets/importer.h"
@@ -458,6 +459,38 @@ CookReport Cook(const CookOptions& options) {
                 cooked_format = TextureFormatName(cooked_texture.format);
                 writer.Add(cooked.cooked, atex);
                 report.original_bytes += atex.size();
+            }
+        }
+
+        // A sky's .hdr: its prefiltered environment, as the player would build it at rotation 0 (assets/environment.h).
+        if (options.cook_environments && hdr_texture) {
+            const assets::PrefilterSettings environment_settings;
+            const json settings_json = {{"max_width", environment_settings.max_width},
+                                        {"smallest_width", environment_settings.smallest_width},
+                                        {"samples", environment_settings.samples}};
+            const std::string key = assets::DerivedDataCache::MakeKey(
+                "CookedEnvironment", assets::kEnvironmentFormatVersion, record.source_hash, settings_json.dump(), options.platform);
+            std::optional<std::vector<u8>> cached = cache.Get(key);
+            assets::PrefilteredEnvironment checked;
+            std::vector<u8> aenv;
+            if (cached && assets::LoadEnvironment(*cached, checked)) {
+                ++report.environment_cache_hits;
+                aenv = std::move(*cached);
+            } else {
+                assets::HdrImageData image;
+                if (assets::DecodeHdrImageFromMemory(bytes, image)) {
+                    const assets::EnvironmentImage environment = assets::MakeEnvironment(image.width, image.height, image.rgb, 0.0f);
+                    aenv = assets::SaveEnvironment(assets::PrefilterEnvironment(environment, environment_settings), environment_settings);
+                    if (aenv.empty()) report.warnings.push_back("Can't prefilter " + record.path + " as an environment");
+                    else if (!cache.Put(key, aenv)) report.warnings.push_back("Can't cache cooked environment " + record.path);
+                }
+            }
+            if (!aenv.empty()) {
+                cooked.cooked = "Cooked/" + assets::ToString(guid) + ".aenv";
+                cooked.cooked_bytes = aenv.size();
+                cooked_format = "aenv" + std::to_string(assets::kEnvironmentFormatVersion);
+                writer.Add(cooked.cooked, aenv);
+                report.original_bytes += aenv.size();
             }
         }
 

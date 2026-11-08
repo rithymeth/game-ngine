@@ -1,4 +1,4 @@
-#include "environment.h"
+#include "aether/assets/environment.h"
 
 #include <algorithm>
 #include <bit>
@@ -6,7 +6,7 @@
 #include <cstring>
 #include <thread>
 
-namespace aether::player {
+namespace aether::assets {
 
 namespace {
 
@@ -347,4 +347,91 @@ Vec3 EvaluateIrradiance(const f32 (&sh)[9][4], const Vec3& n) {
     return Vec3(std::max(e.x, 0.0f), std::max(e.y, 0.0f), std::max(e.z, 0.0f));
 }
 
-} // namespace aether::player
+namespace {
+
+constexpr char kEnvironmentMagic[4] = {'A', 'E', 'N', 'V'};
+constexpr usize kEnvironmentHeaderBytes = 4 + 4 * 7 + sizeof(f32) * 9 * 4;
+constexpr u32 kMaxEnvironmentWidth = 16384;
+
+void PutU32(std::vector<u8>& out, u32 value) {
+    for (int i = 0; i < 4; ++i) out.push_back(static_cast<u8>(value >> (8 * i)));
+}
+
+u32 GetU32(std::span<const u8> bytes, usize at) {
+    return static_cast<u32>(bytes[at]) | static_cast<u32>(bytes[at + 1]) << 8 | static_cast<u32>(bytes[at + 2]) << 16 |
+           static_cast<u32>(bytes[at + 3]) << 24;
+}
+
+// The half-float texels of a chain of `levels` levels whose first is width x width / 2, as PrefilterEnvironment lays it out.
+usize EnvironmentTexels(u32 width, u32 levels) {
+    usize total = 0;
+    for (u32 i = 0; i < levels; ++i) total += static_cast<usize>(width >> i) * std::max(1u, (width / 2) >> i);
+    return total;
+}
+
+} // namespace
+
+std::vector<u8> SaveEnvironment(const PrefilteredEnvironment& environment, const PrefilterSettings& settings) {
+    std::vector<u8> out;
+    if (environment.mip_count == 0 || environment.halves.size() != EnvironmentTexels(environment.width, environment.mip_count) * 4) return out;
+    out.reserve(kEnvironmentHeaderBytes + environment.halves.size() * 2);
+    out.insert(out.end(), kEnvironmentMagic, kEnvironmentMagic + 4);
+    PutU32(out, kEnvironmentFormatVersion);
+    PutU32(out, settings.max_width);
+    PutU32(out, settings.smallest_width);
+    PutU32(out, settings.samples);
+    PutU32(out, environment.width);
+    PutU32(out, environment.height);
+    PutU32(out, environment.mip_count);
+    for (const auto& coefficient : environment.irradiance_sh) {
+        for (const f32 value : coefficient) {
+            u32 bits = 0;
+            std::memcpy(&bits, &value, sizeof(bits));
+            PutU32(out, bits);
+        }
+    }
+    for (const u16 half : environment.halves) {
+        out.push_back(static_cast<u8>(half));
+        out.push_back(static_cast<u8>(half >> 8));
+    }
+    return out;
+}
+
+bool LoadEnvironment(std::span<const u8> bytes, PrefilteredEnvironment& out, PrefilterSettings* settings, std::string* error) {
+    const auto fail = [&](const char* message) {
+        if (error != nullptr) *error = message;
+        return false;
+    };
+    if (bytes.size() < kEnvironmentHeaderBytes || std::memcmp(bytes.data(), kEnvironmentMagic, 4) != 0) return fail("not an .aenv file");
+    if (GetU32(bytes, 4) != kEnvironmentFormatVersion) return fail("an .aenv of another version");
+    PrefilterSettings read;
+    read.max_width = GetU32(bytes, 8);
+    read.smallest_width = GetU32(bytes, 12);
+    read.samples = GetU32(bytes, 16);
+    const u32 width = GetU32(bytes, 20), height = GetU32(bytes, 24), levels = GetU32(bytes, 28);
+    // Level 0 is a power of two, at least 64 wide and twice as wide as tall; the chain ends no smaller than 2 wide.
+    if (width < 64 || width > kMaxEnvironmentWidth || !std::has_single_bit(width) || height != width / 2) return fail("bad environment size");
+    if (levels == 0 || levels > 32 || (width >> (levels - 1)) < 2) return fail("bad level count");
+    const usize halves = EnvironmentTexels(width, levels) * 4;
+    if (bytes.size() != kEnvironmentHeaderBytes + halves * 2) return fail("size does not match the levels");
+    PrefilteredEnvironment result;
+    result.width = width;
+    result.height = height;
+    result.mip_count = levels;
+    usize at = 32;
+    for (auto& coefficient : result.irradiance_sh) {
+        for (f32& value : coefficient) {
+            const u32 bits = GetU32(bytes, at);
+            at += 4;
+            std::memcpy(&value, &bits, sizeof(value));
+            if (!std::isfinite(value)) return fail("a non-finite SH coefficient");
+        }
+    }
+    result.halves.resize(halves);
+    for (usize i = 0; i < halves; ++i) result.halves[i] = static_cast<u16>(bytes[at + i * 2] | bytes[at + i * 2 + 1] << 8);
+    if (settings != nullptr) *settings = read;
+    out = std::move(result);
+    return true;
+}
+
+} // namespace aether::assets

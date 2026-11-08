@@ -1,3 +1,4 @@
+#include "aether/core/log.h"
 #include "aether/cook/cooker.h"
 #include "aether/gfx/rhi/command_list.h"
 #include "aether/gfx/rhi/device.h"
@@ -178,6 +179,102 @@ AETHER_TEST(Player_AWholeFrameLooksTheSameOnD3D12AndVulkan) {
         }
         AETHER_CHECK(red > 50);
         AETHER_CHECK(dark > 200);
+    }
+    std::error_code ignored;
+    fs::remove_all(root, ignored);
+}
+
+namespace {
+
+void SetEnvironmentVariableForTest(const char* name, const char* value) {
+#ifdef _WIN32
+    _putenv_s(name, value); // an empty value removes it
+#else
+    if (*value != '\0') setenv(name, value, 1);
+    else unsetenv(name);
+#endif
+}
+
+} // namespace
+
+// A packaged sky's cooked environment (Cooked/<guid>.aenv) lights and draws exactly like the one the player prefilters from the .hdr at load,
+// and the player takes it when it is there.
+AETHER_TEST(Player_ACookedSkyLooksTheSameAsOnePrefilteredAtLoad) {
+    const rhi::Backend backend = rhi::IsBackendAvailable(rhi::Backend::D3D12) ? rhi::Backend::D3D12 : rhi::Backend::Vulkan;
+    if (!rhi::IsBackendAvailable(backend)) return;
+
+    const fs::path root = fs::temp_directory_path() / "aether_cooked_sky" / assets::ToString(assets::NewAssetGuid());
+    fs::create_directories(root / "Content/models");
+    fs::create_directories(root / "Content/Scenes");
+    fs::create_directories(root / "Content/skies");
+    const fs::path games = fs::path(AETHER_REPO_ASSETS_DIR).parent_path() / "games/AETHER-01";
+    for (const char* name : {"aether_greybox_core.gltf", "test_cube.bin"}) {
+        fs::copy_file(games / "Content/models" / name, root / "Content/models" / name, fs::copy_options::overwrite_existing);
+    }
+    // A 256 x 128 Radiance sky, flat scanlines: a blue-to-orange gradient with a bright sun patch.
+    constexpr u32 kSkyWidth = 256, kSkyHeight = 128;
+    std::string hdr = "#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 128 +X 256\n";
+    for (u32 y = 0; y < kSkyHeight; ++y) {
+        for (u32 x = 0; x < kSkyWidth; ++x) {
+            const bool sun = x >= 150 && x < 160 && y >= 40 && y < 50;
+            const int red = sun ? 250 : 40 + static_cast<int>(y) * 1, blue = sun ? 180 : 200 - static_cast<int>(y) * 1;
+            for (const int b : {red, 100, blue, sun ? 140 : 128}) hdr.push_back(static_cast<char>(b));
+        }
+    }
+    std::ofstream(root / "Content/skies/sky.hdr", std::ios::binary) << hdr;
+    reflect::Json project = reflect::Json::parse(std::ifstream(games / "AETHER-01.aproject"));
+    project["name"] = "BackendParity";
+    project["startup_scene"] = "Scenes/Main.ascene";
+    project["always_cook"] = reflect::Json::array();
+    std::ofstream(root / "BackendParity.aproject") << project.dump(2);
+    const reflect::Json scene = {{"$type", "Scene"}, {"$version", 1}, {"entities", {
+        SceneEntity({{"Transform", TransformJson({0.0f, 1.0f, 3.0f})},
+                     {"Camera", {{"$v", 1}, {"projection", "Perspective"}, {"fov_degrees", 70.0f}, {"near_plane", 0.1f}, {"far_plane", 100.0f},
+                                 {"ortho_height", 10.0f}, {"priority", 0}}}}),
+        SceneEntity({{"Transform", TransformJson({0, 0, 0})},
+                     {"SkyLight", {{"$v", 1}, {"color", {1.0f, 1.0f, 1.0f}}, {"intensity", 1.0f}, {"environment", "skies/sky.hdr"},
+                                   {"environment_rotation_degrees", 0.0f}}}}),
+        Cube("models/aether_greybox_core.gltf", {0.0f, 1.0f, 0.0f}, {0.0f, 0.3f, 0.0f, 0.95f}, 4.0f)}}};
+    std::ofstream(root / "Content/Scenes/Main.ascene") << scene.dump(2);
+
+    cook::CookOptions options;
+    options.project_file = root / "BackendParity.aproject";
+    options.output_dir = root / "cooked";
+    const auto cooked = cook::Cook(options);
+    AETHER_CHECK(cooked.ok);
+    if (!cooked.ok) return;
+
+    constexpr u32 kWidth = 320, kHeight = 180, kFrames = 6;
+    const auto render = [&](const char* cooked_sky, bool& took_cooked_path, bool& prefiltered) {
+        SetEnvironmentVariableForTest("AETHER_RENDER_COOKED_SKY", cooked_sky);
+        bool cooked_line = false, prefilter_line = false;
+        const int sink = Logger::Instance().AddSink([&](const LogLine& line) {
+            if (line.message.find("Sky environment 'skies/sky.hdr'") == std::string::npos) return;
+            if (line.message.find("cooked, loaded") != std::string::npos) cooked_line = true;
+            if (line.message.find("prefiltered in") != std::string::npos) prefilter_line = true;
+        });
+        std::vector<u8> pixels = RenderProject(backend, root, cooked.pak_file, kWidth, kHeight, kFrames);
+        Logger::Instance().RemoveSink(sink);
+        took_cooked_path = cooked_line;
+        prefiltered = prefilter_line;
+        return pixels;
+    };
+    bool used_cooked = false, prefiltered = false, used_cooked_off = false, prefiltered_off = false;
+    const std::vector<u8> with_cooked = render("", used_cooked, prefiltered);
+    const std::vector<u8> without = render("0", used_cooked_off, prefiltered_off);
+    SetEnvironmentVariableForTest("AETHER_RENDER_COOKED_SKY", "");
+    AETHER_CHECK(used_cooked && !prefiltered);          // the cooked environment, no prefilter
+    AETHER_CHECK(!used_cooked_off && prefiltered_off);  // switched off: the .hdr prefiltered at load
+    AETHER_CHECK(with_cooked.size() == static_cast<usize>(kWidth) * kHeight * 4 && without.size() == with_cooked.size());
+    if (with_cooked.size() == without.size()) {
+        AETHER_CHECK(with_cooked == without); // the same pixels, not close ones: the cooked data is what the prefilter makes
+        // And the frame has the sky in it: not one flat colour.
+        int lowest = 255, highest = 0;
+        for (usize i = 0; i < with_cooked.size(); i += 4) {
+            lowest = std::min<int>(lowest, with_cooked[i + 2]);
+            highest = std::max<int>(highest, with_cooked[i + 2]);
+        }
+        AETHER_CHECK(highest - lowest > 40);
     }
     std::error_code ignored;
     fs::remove_all(root, ignored);

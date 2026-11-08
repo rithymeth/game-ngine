@@ -1226,6 +1226,21 @@
   std::optional<std::vector<u8>>Get(const std::string&key)
   u64 Hits()const
   u64 Misses()const
+[engine/include/aether/assets/environment.h] experimental
+  type struct EnvironmentImage
+  type struct PrefilterSettings
+  type struct PrefilteredEnvironment
+  EnvironmentImage MakeEnvironment(u32 width,u32 height,const std::vector<f32>&rgb,f32 rotation_degrees=0.0f)
+  EnvironmentImage MakeEnvironmentFromSrgb(u32 width,u32 height,const std::vector<u8>&rgba8,f32 rotation_degrees=0.0f)
+  EnvironmentImage MakeProceduralSky(u32 width=256)
+  PrefilteredEnvironment PrefilterEnvironment(const EnvironmentImage&source,const PrefilterSettings&settings=
+  Vec3 EquirectToDirection(f32 u,f32 v)
+  Vec3 EvaluateIrradiance(const f32(&sh)[9][4],const Vec3&n)
+  bool LoadEnvironment(std::span<const u8>bytes,PrefilteredEnvironment&out,PrefilterSettings*settings=nullptr,std::string*error=nullptr)
+  f32 HalfToFloat(u16 value)
+  std::vector<u8>SaveEnvironment(const PrefilteredEnvironment&environment,const PrefilterSettings&settings)
+  u16 FloatToHalf(f32 value)
+  void DirectionToEquirect(const Vec3&direction,f32&u,f32&v)
 [engine/include/aether/assets/file_watcher.h] experimental
   type class FileWatcher
   type enum class Kind

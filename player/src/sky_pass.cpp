@@ -111,7 +111,18 @@ bool SkyPass::SetEnvironment(const std::string& key, const EnvironmentImage& ima
     key_ = key;
     if (!supported_) return false;
     const auto start = std::chrono::steady_clock::now();
-    environment_ = PrefilterEnvironment(image.width == 0 ? MakeProceduralSky() : image, settings);
+    return Upload(PrefilterEnvironment(image.width == 0 ? MakeProceduralSky() : image, settings), start);
+}
+
+bool SkyPass::SetPrefilteredEnvironment(const std::string& key, PrefilteredEnvironment&& environment) {
+    Release();
+    key_ = key;
+    if (!supported_) return false;
+    return Upload(std::move(environment), std::chrono::steady_clock::now());
+}
+
+bool SkyPass::Upload(PrefilteredEnvironment&& environment, std::chrono::steady_clock::time_point start) {
+    environment_ = std::move(environment);
     if (environment_.mip_count > 0) {
         texture_ = device_.CreateHalfFloatTexture(environment_.width, environment_.height, environment_.mip_count, environment_.halves.data());
     }

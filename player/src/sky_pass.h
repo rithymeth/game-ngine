@@ -7,6 +7,7 @@
 #include "aether/gfx/rhi/device.h"
 #include "aether/renderer/view.h"
 
+#include <chrono>
 #include <string>
 
 // The sky (render roadmap step 3): a SkyLight's environment as image-based lighting and as the background. SetEnvironment prefilters
@@ -37,6 +38,8 @@ public:
     // Replaces the environment with `image` (the procedural sky when it is empty), remembered under `key`: what the caller compares to
     // decide whether to rebuild (Key()). False when no texture could be made; the previous one is released either way.
     bool SetEnvironment(const std::string& key, const EnvironmentImage& image, const PrefilterSettings& settings = {});
+    // The same from an environment already prefiltered (a cooked .aenv, assets/environment.h): only the upload is left to do.
+    bool SetPrefilteredEnvironment(const std::string& key, PrefilteredEnvironment&& environment);
     const std::string& Key() const { return key_; }
     bool HasEnvironment() const { return texture_.IsValid(); }
     gfx::rhi::SampledTextureHandle Texture() const { return texture_; }
@@ -54,6 +57,7 @@ public:
 
 private:
     void Release();
+    bool Upload(PrefilteredEnvironment&& environment, std::chrono::steady_clock::time_point start);
 
     gfx::rhi::IDevice& device_;
     bool supported_ = false;

@@ -608,6 +608,41 @@ ambient term and once with `SkyLighting`, the same shader with the environment p
 - **The sampler fix is free.** The D3D12 sampler's `MaxLOD` used to be 0, which clamped every texture to level 0, so cooked
   textures never used their mips. Sampling them now costs nothing extra and should be cheaper at a distance (smaller texels).
 
+## Sky prefilter at cook time, 9 November 2026
+
+The IBL section above left the prefilter as a load-time hitch and named the cook as the cure. The cooker now does the work for each Radiance `.hdr`.
+- **What is cooked:** `Cooked/<guid>.aenv`, the prefiltered chain and SH coefficients exactly as `PrefilterEnvironment` builds them
+  at rotation 0 with the default settings (`engine/src/assets/environment.cpp`, which moved down from the player so the cooker can call it).
+  It goes through the derived data cache, keyed by the source's hash and the settings. The `.hdr` source stays in the pak.
+- **The player** reads it when the `SkyLight` is not rotated and the file was built with the settings the player would use. A rotated
+  sky, a pak without it, a damaged file or another format version are prefiltered at load as before. The rotation is baked into
+  the chain, so it can't be applied to cooked data without a shader change.
+- **Switching it off:** `cook_environments = false` in `CookOptions` leaves it out of the pak; `AETHER_RENDER_COOKED_SKY=0` makes the
+  player ignore it.
+
+**Measured** in the real player (RTX 3050 Laptop GPU, RelWithDebInfo, D3D12): a project with one `SkyLight` on a generated sky with a sun and
+noise, three runs each, the median of the time the player logs. A fallback time covers the prefilter and the texture upload, not decoding
+the `.hdr`, which the cooked path skips as well; a cooked time covers reading the entry, checking it and the upload.
+
+| Sky | Cooked | Prefiltered at load | Chain in the pak |
+| --- | --- | --- | --- |
+| 512 x 256 | 19 ms | 162 ms | 1.33 MiB |
+| 1024 x 512 | 50 ms | 361 ms | 5.33 MiB |
+| 2048 x 1024 | 50 ms | 203 ms | 5.33 MiB |
+| 4096 x 2048 | 35 ms | 271 ms | 5.33 MiB |
+
+**What the numbers say.**
+- **About 7 to 8 times faster, 130 to 800 ms saved per sky.** The fallback column is noisy (one 1024 run took 807 ms; the others
+  311 and 361). The cooked column is not free either: 20 to 70 ms covering the pak read, the checks and the upload. I did not
+  break that down.
+- **The chain is capped at 1024 wide,** so the cost in the pak does not grow with the source: 5.33 MiB (half-float, before the pak
+  compresses it) for any sky from 1024 up. I did not measure the compressed size of the entry.
+- **The cooked data is bit-identical** to what the player builds itself (`Cook_BuildsAnEnvironmentForAnHdrSky`), and a frame lit by
+  it is pixel-identical to one lit by the load-time prefilter (`Player_ACookedSkyLooksTheSameAsOnePrefilteredAtLoad`).
+- **Not covered:** LDR skies (PNG, JPG) stay prefiltered at load, because the cooker can't tell a sky from any other texture; a sky
+  with a non-zero rotation; and a cook of the same project for a platform with other prefilter settings (the file would be refused,
+  and the player would prefilter).
+
 ## Clustered forward lighting, 8 November 2026
 
 Render roadmap step 5 replaces the frame constants' **nearest 8 point and 4 spot lights** with clustered lights.

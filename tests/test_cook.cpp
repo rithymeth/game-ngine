@@ -1,3 +1,5 @@
+#include "aether/assets/environment.h"
+#include "aether/assets/image.h"
 #include "aether/cook/cooker.h"
 #include "aether/cook/texture_cook.h"
 #include "aether/pak/pak.h"
@@ -7,6 +9,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -343,7 +347,7 @@ AETHER_TEST(Cook_MobileTargetCooksAstcAndCanStripTheSourceTextures) {
 }
 
 // A sky's .hdr environment (SkyLight::environment) keeps its source in the pak even when sources are stripped, and gets no block-compressed
-// copy: 8 bits per channel can't stand in for its range.
+// copy: 8 bits per channel can't stand in for its range. Its cooked form is the prefiltered environment (.aenv), not a texture.
 AETHER_TEST(Cook_KeepsHdrSkiesAsTheyAre) {
     const stdfs::path project = MakeProject("HdrSky");
     const stdfs::path content = project.parent_path() / "Content";
@@ -379,9 +383,84 @@ AETHER_TEST(Cook_KeepsHdrSkiesAsTheyAre) {
     for (const json& a : manifest["assets"]) {
         if (a.value("path", std::string()) != "Skies/sunset.hdr") continue;
         listed = true;
-        CHECK(a.value("cooked", std::string()).empty());
+        const std::string cooked = a.value("cooked", std::string());
+        CHECK(cooked.size() > 5 && cooked.substr(cooked.size() - 5) == ".aenv"); // the environment, not an .atex
+        CHECK(a.value("cooked_format", std::string()) == "aenv1");
     }
     CHECK(listed);
+}
+
+// The cooked environment is what the player would prefilter itself (rotation 0, default settings), reused from the derived data cache on a
+// repeat cook, and left out with cook_environments off.
+AETHER_TEST(Cook_BuildsAnEnvironmentForAnHdrSky) {
+    const stdfs::path project = MakeProject("HdrEnvironment");
+    const stdfs::path content = project.parent_path() / "Content";
+    // A 64 x 32 Radiance image, flat scanlines: a gradient with a bright patch.
+    constexpr u32 kWidth = 64, kHeight = 32;
+    std::string hdr = std::string("#?RADIANCE") + '\n' + "FORMAT=32-bit_rle_rgbe" + '\n' + '\n' + "-Y 32 +X 64" + '\n';
+    for (u32 y = 0; y < kHeight; ++y) {
+        for (u32 x = 0; x < kWidth; ++x) {
+            const bool patch = x >= 40 && x < 48 && y >= 6 && y < 12;
+            const int mantissa = patch ? 200 : 60 + static_cast<int>(y) * 3;
+            for (const int b : {mantissa, mantissa * 3 / 4, mantissa / 2, patch ? 134 : 128}) hdr.push_back(static_cast<char>(b));
+        }
+    }
+    WriteText(content / "Skies/gradient.hdr", hdr);
+    json scene = {{"$type", "Scene"},
+                  {"$version", 1},
+                  {"entities", json::array({{{"components", {{"SkyLight", {{"$v", 1}, {"environment", "Skies/gradient.hdr"}}}}}}})}};
+    WriteText(content / "Scenes/sky.ascene", scene.dump(2));
+    ProjectSettings settings;
+    std::string error;
+    AETHER_CHECK(LoadProject(project, settings, &error));
+    settings.startup_scene = "Scenes/sky.ascene";
+    AETHER_CHECK(SaveProject(project, settings, &error));
+
+    cook::CookOptions options;
+    options.project_file = project;
+    options.output_dir = project.parent_path() / "EnvOne";
+    const cook::CookReport first = cook::Cook(options);
+    CHECK(first.ok && first.environment_cache_hits == 0);
+    options.output_dir = project.parent_path() / "EnvTwo";
+    const cook::CookReport second = cook::Cook(options);
+    CHECK(second.ok && second.environment_cache_hits == 1);
+
+    // The .aenv in the archive is exactly what the same prefilter gives for the decoded image.
+    pak::PakReader reader;
+    CHECK(reader.Open(first.pak_file.string(), &error));
+    std::string text;
+    CHECK(reader.ReadText("Manifest.json", text));
+    std::string cooked_path;
+    const json manifest = json::parse(text);
+    for (const json& a : manifest["assets"]) {
+        if (a.value("path", std::string()) == "Skies/gradient.hdr") cooked_path = a.value("cooked", std::string());
+    }
+    CHECK(!cooked_path.empty());
+    std::vector<u8> aenv;
+    CHECK(reader.Read(cooked_path, aenv));
+    assets::PrefilteredEnvironment cooked;
+    assets::PrefilterSettings built;
+    CHECK(assets::LoadEnvironment(aenv, cooked, &built, &error));
+    std::vector<u8> source(hdr.begin(), hdr.end());
+    assets::HdrImageData image;
+    CHECK(assets::DecodeHdrImageFromMemory(source, image));
+    const assets::PrefilterSettings defaults;
+    const assets::PrefilteredEnvironment expected =
+        assets::PrefilterEnvironment(assets::MakeEnvironment(image.width, image.height, image.rgb, 0.0f), defaults);
+    CHECK(expected.mip_count > 0 && cooked.mip_count == expected.mip_count && cooked.width == expected.width);
+    CHECK(cooked.halves == expected.halves);
+    CHECK(std::memcmp(cooked.irradiance_sh, expected.irradiance_sh, sizeof(cooked.irradiance_sh)) == 0);
+    CHECK(built.max_width == defaults.max_width && built.smallest_width == defaults.smallest_width && built.samples == defaults.samples);
+
+    // Off: no environment, the source still there.
+    options.cook_environments = false;
+    options.output_dir = project.parent_path() / "EnvOff";
+    const cook::CookReport off = cook::Cook(options);
+    CHECK(off.ok);
+    pak::PakReader off_reader;
+    CHECK(off_reader.Open(off.pak_file.string(), &error));
+    CHECK(off_reader.Contains("Content/Skies/gradient.hdr"));
+    CHECK(!off_reader.Contains(cooked_path));
 }
 
 AETHER_TEST(Cook_RefusesNothingToCook) {

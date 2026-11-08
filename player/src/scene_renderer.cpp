@@ -32,6 +32,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <chrono>
 #include <cmath>
 #include <optional>
 #include <string>
@@ -1383,11 +1384,44 @@ struct SceneRenderer::Impl {
 
     // The SkyLight's environment, rebuilt when its image or rotation changes: the image from the package (a .hdr as it is, an LDR image
     // decoded from sRGB), or the procedural sky when it has none or the image can't be read (said once per image).
+    // The cooked environment of an .hdr (Cooked/<guid>.aenv, built by the cooker at rotation 0 with the default settings). False when the pak has
+    // none, it is damaged, or it was built with other settings than this player uses; the caller then prefilters the source itself.
+    bool LoadCookedEnvironment(const std::string& path, PrefilteredEnvironment& out) {
+        const GameManifest::Asset* asset = package.FindAsset(path);
+        if (asset == nullptr || asset->cooked.size() < 5 || asset->cooked.compare(asset->cooked.size() - 5, 5, ".aenv") != 0) return false;
+        std::vector<u8> bytes;
+        std::string why;
+        if (!package.Files().Read(asset->cooked, bytes, &why)) {
+            AETHER_LOG_WARN("PlayerRenderer", "Can't read %s: %s; prefiltering '%s' here", asset->cooked.c_str(), why.c_str(), path.c_str());
+            return false;
+        }
+        PrefilterSettings built;
+        if (!assets::LoadEnvironment(bytes, out, &built, &why)) {
+            AETHER_LOG_WARN("PlayerRenderer", "%s: %s; prefiltering '%s' here", asset->cooked.c_str(), why.c_str(), path.c_str());
+            return false;
+        }
+        const PrefilterSettings wanted;
+        return built.max_width == wanted.max_width && built.smallest_width == wanted.smallest_width && built.samples == wanted.samples;
+    }
+
     void UpdateSky(const SkyLight& light) {
         const f32 rotation = std::isfinite(light.environment_rotation_degrees) ? light.environment_rotation_degrees : 0.0f;
         const std::string key = light.environment + "@" + std::to_string(rotation);
         if (sky->Key() == key && sky->HasEnvironment()) return;
         if (sky->Key() == key) return; // tried and failed: don't retry every frame
+        // A sky that is not turned and has a cooked environment skips the prefilter (the rotation is baked into the cooked data, so a turned
+        // sky is prefiltered here). AETHER_RENDER_COOKED_SKY=0 ignores the cooked data, for comparison.
+        const char* cooked_setting = std::getenv("AETHER_RENDER_COOKED_SKY");
+        if (rotation == 0.0f && !light.environment.empty() && (cooked_setting == nullptr || std::strcmp(cooked_setting, "0") != 0)) {
+            const auto start = std::chrono::steady_clock::now();
+            PrefilteredEnvironment cooked;
+            if (LoadCookedEnvironment(light.environment, cooked) && sky->SetPrefilteredEnvironment(key, std::move(cooked))) {
+                AETHER_LOG_INFO("PlayerRenderer", "Sky environment '%s': %ux%u, %u levels, cooked, loaded in %.1f ms", light.environment.c_str(),
+                                sky->Environment().width, sky->Environment().height, sky->Environment().mip_count,
+                                std::chrono::duration<f64, std::milli>(std::chrono::steady_clock::now() - start).count());
+                return;
+            }
+        }
         EnvironmentImage image;
         if (!light.environment.empty()) {
             std::vector<u8> bytes;
