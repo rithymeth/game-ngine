@@ -121,11 +121,14 @@ public:
     // and a D32_FLOAT DSV of its own; render_texture_sizes_ holds its size and render_texture_depth_ marks it as depth.
     SampledTextureHandle CreateDepthTexture(u32 width, u32 height) override;
     SampledTextureHandle CreateHalfFloatTexture(u32 width, u32 height, u32 mip_count, const u16* halves) override;
+    SampledTextureHandle CreateTextureWithMips(u32 width, u32 height, u32 mip_count, const u8* rgba8_levels) override;
     struct DepthTextureView {
         ID3D12Resource* resource = nullptr;
         D3D12_CPU_DESCRIPTOR_HANDLE dsv{};
         u32 width = 0, height = 0;
     };
+    // A sampled texture with mips uploaded once (CreateHalfFloatTexture, CreateTextureWithMips): levels packed level 0 first.
+    SampledTextureHandle CreateMippedTexture(const char* what, DXGI_FORMAT format, u32 texel_bytes, u32 width, u32 height, u32 mip_count, const void* levels);
     DepthTextureView FindDepthTexture(SampledTextureHandle handle) const;
     DescriptorHeap& BindlessTextureHeap() { return *bindless_texture_heap_; }
     // A bindless slot for a resource someone else owns (a swap chain's scene-depth copy, ISwapChain::SceneDepthTexture): it counts against

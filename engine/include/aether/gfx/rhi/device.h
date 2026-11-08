@@ -37,6 +37,7 @@ struct PipelineDesc {
     std::string vs_entry = "VSMain";
     std::string ps_entry = "PSMain";
     u32 push_constant_size_bytes = 0;
+    // Culls triangles facing away: the front is counter-clockwise as seen on screen (glTF's convention), on every backend.
     bool cull_back_face = false;
 
     // Real vertex-buffer input instead of procedural SV_VertexID/
@@ -309,6 +310,13 @@ public:
     // table, freed with DestroyTexture, graphics only. Invalid when the table is full and on devices without support (the default);
     // a zero or oversized extent, a mip_count of 0 or more levels than the extent has, or null data throw std::invalid_argument.
     virtual SampledTextureHandle CreateHalfFloatTexture(u32 /*width*/, u32 /*height*/, u32 /*mip_count*/, const u16* /*halves*/) { return {}; }
+    // CreateTexture with a mip chain: `rgba8_levels` holds every level one after another, level 0 first, level i being
+    // max(1, width >> i) by max(1, height >> i) RGBA8 texels (assets::BuildMipChain makes it). Checks as CreateHalfFloatTexture.
+    // A device without support (the default) uploads level 0 alone, as CreateTexture does.
+    virtual SampledTextureHandle CreateTextureWithMips(u32 width, u32 height, u32 mip_count, const u8* rgba8_levels) {
+        (void)mip_count;
+        return CreateTexture(width, height, rgba8_levels);
+    }
 
     virtual Backend GetBackend() const = 0;
 

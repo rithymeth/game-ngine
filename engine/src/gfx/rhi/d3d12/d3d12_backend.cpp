@@ -508,6 +508,7 @@ PipelineHandle D3D12Device::CreatePipeline(const PipelineDesc& desc, ISwapChain&
     }
     pso_desc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
     pso_desc.RasterizerState.CullMode = desc.cull_back_face ? D3D12_CULL_MODE_BACK : D3D12_CULL_MODE_NONE;
+    pso_desc.RasterizerState.FrontCounterClockwise = TRUE; // counter-clockwise as seen is the front, as glTF has it (and the Vulkan backend)
     // Depth-only (shadow) pipelines clamp instead of clipping: a caster between the light and the map's near plane still lands in it.
     pso_desc.RasterizerState.DepthClipEnable = desc.depth_target ? FALSE : TRUE;
     pso_desc.RasterizerState.DepthBias = desc.depth_bias;
@@ -1102,18 +1103,27 @@ SampledTextureHandle D3D12Device::CreateDepthTexture(u32 width, u32 height) {
 }
 
 SampledTextureHandle D3D12Device::CreateHalfFloatTexture(u32 width, u32 height, u32 mip_count, const u16* halves) {
-    if (width == 0 || height == 0 || halves == nullptr || width > D3D12_REQ_TEXTURE2D_U_OR_V_DIMENSION ||
+    return CreateMippedTexture("CreateHalfFloatTexture", DXGI_FORMAT_R16G16B16A16_FLOAT, 8, width, height, mip_count, halves);
+}
+
+SampledTextureHandle D3D12Device::CreateTextureWithMips(u32 width, u32 height, u32 mip_count, const u8* rgba8_levels) {
+    return CreateMippedTexture("CreateTextureWithMips", DXGI_FORMAT_R8G8B8A8_UNORM, 4, width, height, mip_count, rgba8_levels);
+}
+
+SampledTextureHandle D3D12Device::CreateMippedTexture(const char* what, DXGI_FORMAT format, u32 texel_bytes, u32 width, u32 height,
+                                                      u32 mip_count, const void* levels) {
+    if (width == 0 || height == 0 || levels == nullptr || width > D3D12_REQ_TEXTURE2D_U_OR_V_DIMENSION ||
         height > D3D12_REQ_TEXTURE2D_U_OR_V_DIMENSION) {
-        throw std::invalid_argument("CreateHalfFloatTexture requires a non-zero extent within the device's 2D texture limit and data");
+        throw std::invalid_argument(std::string(what) + " requires a non-zero extent within the device's 2D texture limit and data");
     }
     u32 max_mips = 1;
     while ((std::max(width, height) >> max_mips) > 0) ++max_mips;
     if (mip_count == 0 || mip_count > max_mips) {
-        throw std::invalid_argument("CreateHalfFloatTexture requires between 1 and the extent's full chain of mip levels");
+        throw std::invalid_argument(std::string(what) + " requires between 1 and the extent's full chain of mip levels");
     }
     DrainRetired(); // destroyed textures give their slots back at retirement
     if (sampled_texture_count_ >= kMaxUserBindlessTextures || !bindless_texture_heap_->CanAllocate()) {
-        AETHER_LOG_ERROR("D3D12", "CreateHalfFloatTexture: the bindless texture table is full (capacity=%u real textures)", kMaxUserBindlessTextures);
+        AETHER_LOG_ERROR("D3D12", "%s: the bindless texture table is full (capacity=%u real textures)", what, kMaxUserBindlessTextures);
         return {};
     }
     D3D12_RESOURCE_DESC desc{};
@@ -1122,7 +1132,7 @@ SampledTextureHandle D3D12Device::CreateHalfFloatTexture(u32 width, u32 height, 
     desc.Height = height;
     desc.DepthOrArraySize = 1;
     desc.MipLevels = static_cast<UINT16>(mip_count);
-    desc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+    desc.Format = format;
     desc.SampleDesc.Count = 1;
     D3D12_HEAP_PROPERTIES default_heap{};
     default_heap.Type = D3D12_HEAP_TYPE_DEFAULT;
@@ -1135,10 +1145,10 @@ SampledTextureHandle D3D12Device::CreateHalfFloatTexture(u32 width, u32 height, 
     UINT64 upload_size = 0;
     device_.Handle()->GetCopyableFootprints(&desc, 0, mip_count, 0, footprints.data(), rows.data(), row_sizes.data(), &upload_size);
     std::vector<u8> upload(static_cast<usize>(upload_size), 0);
-    const u8* source = reinterpret_cast<const u8*>(halves);
+    const u8* source = static_cast<const u8*>(levels);
     for (u32 mip = 0; mip < mip_count; ++mip) {
         const u32 h = std::max(1u, height >> mip), w = std::max(1u, width >> mip);
-        const usize row_bytes = static_cast<usize>(w) * 8;
+        const usize row_bytes = static_cast<usize>(w) * texel_bytes;
         for (u32 y = 0; y < h; ++y) {
             std::memcpy(upload.data() + footprints[mip].Offset + static_cast<usize>(y) * footprints[mip].Footprint.RowPitch, source, row_bytes);
             source += row_bytes;
@@ -1174,7 +1184,7 @@ SampledTextureHandle D3D12Device::CreateHalfFloatTexture(u32 width, u32 height, 
     if (bindless_index == DescriptorHeap::kInvalidIndex) return {};
     const usize slot = bindless_index - kFirstUserBindlessTextureIndex;
     D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
-    srv.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+    srv.Format = format;
     srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
     srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
     srv.Texture2D.MipLevels = mip_count;

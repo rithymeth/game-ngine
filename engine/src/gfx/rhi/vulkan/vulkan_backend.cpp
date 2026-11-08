@@ -1852,7 +1852,8 @@ PipelineHandle VulkanDevice::CreatePipeline(const PipelineDesc& desc, ISwapChain
     VkPipelineRasterizationStateCreateInfo rasterizer{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
     rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
     rasterizer.cullMode = desc.cull_back_face ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE;
-    rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+    // Counter-clockwise as seen is the front (glTF's convention; the D3D12 backend matches, and Material_CullingKeepsCounterClockwiseFaces checks both).
+    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     rasterizer.lineWidth = 1.0f;
     if (desc.depth_bias != 0 || (std::isfinite(desc.slope_scaled_depth_bias) && desc.slope_scaled_depth_bias != 0.0f)) {
         rasterizer.depthBiasEnable = VK_TRUE;

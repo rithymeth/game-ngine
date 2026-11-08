@@ -28,6 +28,15 @@ struct ImageData {
 // bounds allocations when this is used on untrusted/imported data.
 [[nodiscard]] bool DecodeImageFromMemory(std::span<const u8> bytes, ImageData& out_image, u64 max_pixels = 16 * 1024 * 1024);
 
+// How BuildMipChain averages texels: colour stored as sRGB (averaged in linear light, alpha linearly), plain data (each channel
+// linearly: metallic-roughness, occlusion, masks), or a tangent-space normal map (xyz decoded, averaged, renormalised; alpha linearly).
+enum class MipFilter : u8 { Srgb, Linear, NormalMap };
+
+// Every mip level of an RGBA8 image, level 0 (the image) first, down to 1x1: level i is max(1, width >> i) by max(1, height >> i),
+// each texel the 2x2 box average of the level above (clamped at an odd edge). The layout IDevice::CreateTextureWithMips takes;
+// `mip_count` receives the number of levels. Empty (mip_count 0) when the sizes don't match the pixels.
+[[nodiscard]] std::vector<u8> BuildMipChain(u32 width, u32 height, std::span<const u8> rgba8, MipFilter filter, u32& mip_count);
+
 // Decoded high-dynamic-range image data: linear RGB floats, tightly packed, top row first.
 struct HdrImageData {
     u32 width = 0;

@@ -34,6 +34,8 @@ struct GltfMaterial {
     f32 occlusion_strength = 1.0f;
     f32 alpha_cutoff = 0.5f;
     MaterialAlphaMode alpha_mode = MaterialAlphaMode::Opaque;
+    // glTF's doubleSided: both faces drawn, the back lit with its normal reversed. Single-sided materials have their back faces culled.
+    bool double_sided = false;
     std::string base_color_texture;
     std::string normal_texture;
     std::string metallic_roughness_texture;

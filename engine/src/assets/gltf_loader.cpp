@@ -948,6 +948,7 @@ static bool ParseGltfText(const std::string& text, const std::string& path, bool
             if (alpha_mode == "MASK") material.alpha_mode = MaterialAlphaMode::Mask;
             else if (alpha_mode == "BLEND") material.alpha_mode = MaterialAlphaMode::Blend;
             material.alpha_cutoff = material_json.value("alphaCutoff", 0.5f);
+            if (const auto it = material_json.find("doubleSided"); it != material_json.end() && it->is_boolean()) material.double_sided = it->get<bool>();
             if (material_json.contains("extensions") && material_json["extensions"].is_object()) {
                 const Json& extensions = material_json["extensions"];
                 const auto object_of = [&](const char* name) -> const Json* {

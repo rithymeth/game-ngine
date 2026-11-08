@@ -109,10 +109,18 @@ u32 PackMaterialTextures(const SampledTextureHandle& base_color, bool has_base_c
            (TextureSlot(metallic_roughness, has_metallic_roughness) << 16) | (TextureSlot(occlusion, has_occlusion) << 24);
 }
 
-u32 PackMaterialOptions(assets::MaterialAlphaMode mode, f32 cutoff, const SampledTextureHandle& extension, bool has_extension) {
-    // The alpha mode in bits 0-1, the surface-extension texture's index in bits 2-9 and the cutoff as a half in bits 16-31.
+// The determinant of a transform's upper 3x3: negative when it mirrors (turning its triangles' winding round).
+f32 ModelDeterminant(const Mat4& m) {
+    const Vec3 x(m.cols[0].x, m.cols[0].y, m.cols[0].z), y(m.cols[1].x, m.cols[1].y, m.cols[1].z), z(m.cols[2].x, m.cols[2].y, m.cols[2].z);
+    return x.Dot(y.Cross(z));
+}
+
+u32 PackMaterialOptions(assets::MaterialAlphaMode mode, f32 cutoff, const SampledTextureHandle& extension, bool has_extension,
+                        bool double_sided = false) {
+    // The alpha mode in bits 0-1, the surface-extension texture's index in bits 2-9, double-sided in bit 10 and the cutoff as a half
+    // in bits 16-31.
     return (static_cast<u32>(FloatToHalf(std::clamp(cutoff, 0.0f, 1.0f))) << 16) | (TextureSlot(extension, has_extension) << 2) |
-           (static_cast<u32>(mode) & 3u);
+           (double_sided ? 1u << 10 : 0u) | (static_cast<u32>(mode) & 3u);
 }
 
 void PackEmissive(const f32 emissive[3], const SampledTextureHandle& texture, bool has_texture, u32 packed[2]) {
@@ -400,7 +408,10 @@ float3 SurfaceLightEx(float3 light_direction, float3 normal, float3 view_directi
 
 )" // split: MSVC caps one string literal at 16 KB
 R"(
-float4 PSMain(PSInput input) : SV_TARGET {
+float4 PSMain(PSInput input, bool is_front : SV_IsFrontFace) : SV_TARGET {
+    // A double-sided material's back face is lit from its own side: the normal reversed. (A mirrored model turns its faces' winding
+    // round, so the face toward the camera is the front when exactly one of the two says so.)
+    if (((g_PC.g_AlphaOptions >> 10) & 1) != 0 && is_front == (NormalDeterminant() < 0.0)) input.normal = -input.normal;
     float4 material_color = float4(f16tof32(g_PC.g_ColorPacked.x), f16tof32(g_PC.g_ColorPacked.x >> 16),
                                    f16tof32(g_PC.g_ColorPacked.y), f16tof32(g_PC.g_ColorPacked.y >> 16));
     uint base_index = g_PC.g_MaterialTextures & 255;
@@ -631,6 +642,7 @@ struct SceneRenderer::Impl {
         f32 occlusion_strength = 1.0f;
         f32 alpha_cutoff = 0.5f;
         assets::MaterialAlphaMode alpha_mode = assets::MaterialAlphaMode::Opaque;
+        bool double_sided = false; // glTF doubleSided: drawn without culling, the back face lit from behind
         SampledTextureHandle base_color_texture;
         SampledTextureHandle normal_texture;
         SampledTextureHandle metallic_roughness_texture;
@@ -673,6 +685,8 @@ struct SceneRenderer::Impl {
     const GamePackage& package;
     PipelineHandle pipeline;
     PipelineHandle transparent_pipeline;
+    PipelineHandle culled_pipeline;             // `pipeline` with back faces culled (single-sided materials)
+    PipelineHandle transparent_culled_pipeline; // likewise for `transparent_pipeline`
     PipelineHandle hud_pipeline;
     // The particle pass (M8.7), drawn after the scene's surfaces.
     std::unique_ptr<ParticlePass> particles;
@@ -736,7 +750,7 @@ struct SceneRenderer::Impl {
         for (auto& [path, texture] : textures) free_texture(texture);
         free_texture(font_texture_handle);
         free_texture(white_texture);
-        for (PipelineHandle* handle : {&pipeline, &transparent_pipeline, &hud_pipeline}) {
+        for (PipelineHandle* handle : {&pipeline, &transparent_pipeline, &culled_pipeline, &transparent_culled_pipeline, &hud_pipeline}) {
             if (handle->IsValid()) device.DestroyPipeline(*handle);
             *handle = {};
         }
@@ -780,6 +794,11 @@ struct SceneRenderer::Impl {
         transparent_desc.enable_blending = true;
         transparent_desc.depth_write = false;
         transparent_pipeline = device.CreatePipeline(transparent_desc, swap_chain);
+        PipelineDesc culled_desc = desc;
+        culled_desc.cull_back_face = true;
+        culled_pipeline = device.CreatePipeline(culled_desc, swap_chain);
+        transparent_desc.cull_back_face = true;
+        transparent_culled_pipeline = device.CreatePipeline(transparent_desc, swap_chain);
         if (!transparent_pipeline.IsValid()) {
             AETHER_LOG_WARN("PlayerRenderer", "Transparent material pipeline unavailable; blended materials draw opaque");
         }
@@ -1308,12 +1327,15 @@ struct SceneRenderer::Impl {
         }
     }
 
-    bool LoadTexture(const std::string& path, SampledTextureHandle& out) {
+    // `filter` says how the mip chain averages it (colour by default; a material's normal and data maps say so). A texture used both
+    // ways is cached once per way.
+    bool LoadTexture(const std::string& path, SampledTextureHandle& out, assets::MipFilter filter = assets::MipFilter::Srgb) {
         if (path.empty()) {
             out = white_texture;
             return false;
         }
-        if (const auto found = textures.find(path); found != textures.end()) {
+        const std::string key = filter == assets::MipFilter::Srgb ? path : path + (filter == assets::MipFilter::NormalMap ? "#normal" : "#linear");
+        if (const auto found = textures.find(key); found != textures.end()) {
             out = found->second;
             return out.IsValid() && out.index != white_texture.index;
         }
@@ -1346,7 +1368,7 @@ struct SceneRenderer::Impl {
                         out = device.CreateCompressedTexture(format, cooked.width, cooked.height, mips);
                         if (out.IsValid()) {
                             ++sampled_texture_count;
-                            textures.emplace(path, out);
+                            textures.emplace(key, out);
                             return out.index != white_texture.index;
                         }
                     }
@@ -1358,15 +1380,59 @@ struct SceneRenderer::Impl {
         if (!LoadPackageTexture(package, path, image, &why)) {
             AETHER_LOG_WARN("PlayerRenderer", "Couldn't load model texture '%s' (%s); using the white fallback", path.c_str(), why.c_str());
             out = white_texture;
-            textures.emplace(path, white_texture); // remembered, so a missing UI image isn't read and decoded again every frame
+            textures.emplace(key, white_texture); // remembered, so a missing UI image isn't read and decoded again every frame
             return false;
         }
-        out = device.CreateTexture(image.width, image.height, image.pixels.data());
+        // With its whole mip chain, so minified surfaces filter instead of shimmering.
+        u32 mip_count = 0;
+        const std::vector<u8> levels = assets::BuildMipChain(image.width, image.height, image.pixels, filter, mip_count);
+        out = mip_count > 0 ? device.CreateTextureWithMips(image.width, image.height, mip_count, levels.data())
+                            : device.CreateTexture(image.width, image.height, image.pixels.data());
         if (out.IsValid()) {
             ++sampled_texture_count;
-            textures.emplace(path, out);
+            textures.emplace(key, out);
         }
         return out.IsValid() && out.index != white_texture.index;
+    }
+
+    // An image embedded in a model's buffer (images[i].bufferView), decoded and uploaded with its mips like LoadTexture's, cached
+    // under `key` (the model's path and the image's index).
+    bool LoadEmbeddedTexture(const std::string& key, const json& document, usize view_index, const std::vector<std::vector<u8>>& buffers,
+                             SampledTextureHandle& out, assets::MipFilter filter) {
+        const std::string cache_key = key + (filter == assets::MipFilter::Srgb ? "" : filter == assets::MipFilter::NormalMap ? "#normal" : "#linear");
+        if (const auto found = textures.find(cache_key); found != textures.end()) {
+            out = found->second;
+            return out.IsValid() && out.index != white_texture.index;
+        }
+        out = white_texture;
+        if (sampled_texture_count >= kMaxUserBindlessTextures) {
+            AETHER_LOG_WARN("PlayerRenderer", "Bindless texture limit reached; using the white fallback for '%s'", key.c_str());
+            return false;
+        }
+        if (!document.contains("bufferViews") || !document["bufferViews"].is_array() || view_index >= document["bufferViews"].size()) return false;
+        const json& view = document["bufferViews"][view_index];
+        const usize buffer_index = view.value("buffer", usize(-1));
+        const usize offset = view.value("byteOffset", usize(0));
+        const usize length = view.value("byteLength", usize(0));
+        assets::ImageData image;
+        if (buffer_index >= buffers.size() || length == 0 || offset > buffers[buffer_index].size() ||
+            length > buffers[buffer_index].size() - offset ||
+            !assets::DecodeImageFromMemory(std::span<const u8>(buffers[buffer_index].data() + offset, length), image)) {
+            AETHER_LOG_WARN("PlayerRenderer", "Couldn't decode embedded texture '%s'; using the white fallback", key.c_str());
+            textures.emplace(cache_key, white_texture);
+            return false;
+        }
+        u32 mip_count = 0;
+        const std::vector<u8> levels = assets::BuildMipChain(image.width, image.height, image.pixels, filter, mip_count);
+        out = mip_count > 0 ? device.CreateTextureWithMips(image.width, image.height, mip_count, levels.data())
+                            : device.CreateTexture(image.width, image.height, image.pixels.data());
+        if (!out.IsValid()) {
+            out = white_texture;
+            return false;
+        }
+        ++sampled_texture_count;
+        textures.emplace(cache_key, out);
+        return true;
     }
 
     bool LoadModel(const std::string& path, Model& out) {
@@ -1385,6 +1451,11 @@ struct SceneRenderer::Impl {
             return false;
         }
         json document = glb ? json::parse(glb_json, nullptr, false) : json::parse(source.begin(), source.end(), nullptr, false);
+        // Each buffer's bytes, kept for images stored in a bufferView (a .glb's usual way of embedding them).
+        std::vector<std::vector<u8>> buffer_bytes;
+        if (!document.is_discarded() && document.is_object() && document.contains("buffers") && document["buffers"].is_array()) {
+            buffer_bytes.resize(document["buffers"].size());
+        }
         if (glb && !document.is_discarded() && document.is_object() && document.contains("buffers") && document["buffers"].is_array() &&
             !document["buffers"].empty() && document["buffers"][0].is_object() && !document["buffers"][0].contains("uri")) {
             json& buffer = document["buffers"][0];
@@ -1394,6 +1465,7 @@ struct SceneRenderer::Impl {
                 if (declared <= glb_bin.size()) glb_bin.resize(declared);
             }
             buffer["uri"] = "data:application/octet-stream;base64," + Base64(glb_bin);
+            buffer_bytes[0] = glb_bin;
         }
         if (document.is_discarded() || !document.is_object()) {
             AETHER_LOG_WARN("PlayerRenderer", "Cooked model '%s' isn't valid glTF JSON", path.c_str());
@@ -1404,7 +1476,8 @@ struct SceneRenderer::Impl {
         // cooked buffer bytes into the in-memory glTF document so the shared
         // parser can safely load it without opening arbitrary paths.
         if (document.contains("buffers") && document["buffers"].is_array()) {
-            for (json& buffer : document["buffers"]) {
+            for (usize buffer_index = 0; buffer_index < document["buffers"].size(); ++buffer_index) {
+                json& buffer = document["buffers"][buffer_index];
                 if (!buffer.contains("uri") || !buffer["uri"].is_string()) continue;
                 const std::string uri = buffer["uri"].get<std::string>();
                 if (uri.rfind("data:", 0) == 0) continue;
@@ -1415,6 +1488,7 @@ struct SceneRenderer::Impl {
                     return false;
                 }
                 buffer["uri"] = "data:application/octet-stream;base64," + Base64(bytes);
+                buffer_bytes[buffer_index] = std::move(bytes);
             }
         }
         const std::string cooked_json = document.dump();
@@ -1424,7 +1498,8 @@ struct SceneRenderer::Impl {
             return false;
         }
 
-        auto upload_texture_reference = [&](const json& texture_reference, SampledTextureHandle& texture) {
+        auto upload_texture_reference = [&](const json& texture_reference, SampledTextureHandle& texture,
+                                            assets::MipFilter filter = assets::MipFilter::Srgb) {
             if (!texture_reference.is_object() || !texture_reference.contains("index") ||
                 !document.contains("textures") || !document["textures"].is_array() ||
                 !document.contains("images") || !document["images"].is_array()) {
@@ -1436,10 +1511,14 @@ struct SceneRenderer::Impl {
             const usize image_index = texture_info.value("source", usize(-1));
             if (image_index >= document["images"].size()) return false;
             const json& image = document["images"][image_index];
+            if (image.contains("bufferView") && image["bufferView"].is_number_unsigned()) {
+                return LoadEmbeddedTexture(path + "#image" + std::to_string(image_index), document, image["bufferView"].get<usize>(),
+                                           buffer_bytes, texture, filter);
+            }
             if (!image.contains("uri") || !image["uri"].is_string()) return false;
             const std::string uri = image["uri"].get<std::string>();
             if (uri.rfind("data:", 0) == 0) return false;
-            return LoadTexture(ResolveContentPath(path, uri), texture);
+            return LoadTexture(ResolveContentPath(path, uri), texture, filter);
         };
 
         std::vector<MaterialTextures> material_textures(out.scene.materials.size());
@@ -1457,16 +1536,16 @@ struct SceneRenderer::Impl {
                     if (pbr.contains("metallicRoughnessTexture")) {
                         textures_for_material.has_metallic_roughness =
                             upload_texture_reference(pbr["metallicRoughnessTexture"],
-                                                     textures_for_material.metallic_roughness);
+                                                     textures_for_material.metallic_roughness, assets::MipFilter::Linear);
                     }
                 }
                 if (material_json.contains("normalTexture")) {
                     textures_for_material.has_normal =
-                        upload_texture_reference(material_json["normalTexture"], textures_for_material.normal);
+                        upload_texture_reference(material_json["normalTexture"], textures_for_material.normal, assets::MipFilter::NormalMap);
                 }
                 if (material_json.contains("occlusionTexture")) {
                     textures_for_material.has_occlusion =
-                        upload_texture_reference(material_json["occlusionTexture"], textures_for_material.occlusion);
+                        upload_texture_reference(material_json["occlusionTexture"], textures_for_material.occlusion, assets::MipFilter::Linear);
                 }
                 if (material_json.contains("emissiveTexture")) {
                     textures_for_material.has_emissive =
@@ -1537,6 +1616,7 @@ struct SceneRenderer::Impl {
                     draw.occlusion_strength = material.occlusion_strength;
                     draw.alpha_cutoff = material.alpha_cutoff;
                     draw.alpha_mode = material.alpha_mode;
+                    draw.double_sided = material.double_sided;
                     const usize material_index = static_cast<usize>(primitive.material_index);
                     if (material.HasSurfaceExtension()) {
                         if (extension_textures.size() < out.scene.materials.size()) extension_textures.resize(out.scene.materials.size());
@@ -1675,6 +1755,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
         u32 index_count = 0;
         DrawConstants constants;
         f32 distance_squared = 0.0f;
+        bool cull = false; // back faces culled: a single-sided material on a model that isn't mirrored
     };
     // Opaque and alpha-tested draws are gathered first and issued once the shadow atlas (drawn before the scene pass) is ready.
     struct PendingOpaqueDraw {
@@ -1682,6 +1763,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
         BufferHandle indices;
         u32 index_count = 0;
         DrawConstants constants;
+        bool cull = false;
     };
 
     Impl& renderer = *impl_;
@@ -1948,7 +2030,10 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                             constants.material_factors_0 = PackHalfPair(primitive.metallic, primitive.roughness);
                             constants.material_factors_1 = PackHalfPair(primitive.normal_scale, primitive.occlusion_strength);
                             constants.alpha_options = PackMaterialOptions(primitive.alpha_mode, primitive.alpha_cutoff, primitive.extension_texture,
-                                                                          primitive.has_extension_texture);
+                                                                          primitive.has_extension_texture, primitive.double_sided);
+                            // Single-sided materials cull their back faces, except on a mirrored model (a negative scale turns the
+                            // winding round): that draws both faces, as every model did before.
+                            const bool cull = !primitive.double_sided && ModelDeterminant(model_transform) > 0.0f;
                             Mat4 inverse_model_transform;
                             if (model_transform.TryInverse(inverse_model_transform)) {
                                 const Vec4 local_camera = inverse_model_transform *
@@ -1962,9 +2047,9 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                                 const f32 dy = model_transform.cols[3].y - camera_position.y;
                                 const f32 dz = model_transform.cols[3].z - camera_position.z;
                                 transparent_draws.push_back({frame_vertex_buffer, primitive.indices, primitive.index_count,
-                                                             constants, dx * dx + dy * dy + dz * dz});
+                                                             constants, dx * dx + dy * dy + dz * dz, cull});
                             } else {
-                                opaque_draws.push_back({frame_vertex_buffer, primitive.indices, primitive.index_count, constants});
+                                opaque_draws.push_back({frame_vertex_buffer, primitive.indices, primitive.index_count, constants, cull});
                                 if (sun_shadows) {
                                     ShadowCaster caster;
                                     caster.vertices = frame_vertex_buffer;
@@ -2011,10 +2096,18 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
     }
     if (draw_sky) renderer.sky->Draw(commands, shadow_view, frame_buffer);
     if (!opaque_draws.empty()) {
-        commands.BindPipeline(renderer.pipeline);
-        if (frame_buffer.IsValid()) commands.BindFrameConstants(frame_buffer);
-        commands.BindBindlessTextures();
+        // Culled draws first, then the two-sided ones: one pipeline switch.
+        std::stable_partition(opaque_draws.begin(), opaque_draws.end(), [](const PendingOpaqueDraw& draw) { return draw.cull; });
+        bool bound = false, bound_cull = false;
         for (const PendingOpaqueDraw& draw : opaque_draws) {
+            const bool cull = draw.cull && renderer.culled_pipeline.IsValid();
+            if (!bound || cull != bound_cull) {
+                commands.BindPipeline(cull ? renderer.culled_pipeline : renderer.pipeline);
+                if (frame_buffer.IsValid()) commands.BindFrameConstants(frame_buffer);
+                commands.BindBindlessTextures();
+                bound = true;
+                bound_cull = cull;
+            }
             commands.BindVertexBuffer(draw.vertices, sizeof(SceneVertex));
             commands.BindIndexBuffer(draw.indices, IndexFormat::UInt32);
             commands.SetPushConstants(&draw.constants, sizeof(draw.constants));
@@ -2036,10 +2129,17 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
         const PipelineHandle transparent_pipeline = renderer.transparent_pipeline.IsValid()
                                                         ? renderer.transparent_pipeline
                                                         : renderer.pipeline;
-        commands.BindPipeline(transparent_pipeline);
-        if (frame_buffer.IsValid()) commands.BindFrameConstants(frame_buffer);
-        commands.BindBindlessTextures();
+        // Back to front, switching between the culled and two-sided pipelines as the draws need.
+        bool bound = false, bound_cull = false;
         for (const PendingTransparentDraw& draw : transparent_draws) {
+            const bool cull = draw.cull && renderer.transparent_culled_pipeline.IsValid() && renderer.transparent_pipeline.IsValid();
+            if (!bound || cull != bound_cull) {
+                commands.BindPipeline(cull ? renderer.transparent_culled_pipeline : transparent_pipeline);
+                if (frame_buffer.IsValid()) commands.BindFrameConstants(frame_buffer);
+                commands.BindBindlessTextures();
+                bound = true;
+                bound_cull = cull;
+            }
             commands.BindVertexBuffer(draw.vertices, sizeof(SceneVertex));
             commands.BindIndexBuffer(draw.indices, IndexFormat::UInt32);
             commands.SetPushConstants(&draw.constants, sizeof(draw.constants));
