@@ -799,7 +799,7 @@ set(_aether_install_apps
     aether_plugin aether_loc aether_symbolicate aether_server)
 foreach(_aether_app IN LISTS _aether_install_apps)
     if(TARGET ${_aether_app})
-        install(TARGETS ${_aether_app} RUNTIME DESTINATION bin COMPONENT Applications)
+        install(TARGETS ${_aether_app} RUNTIME DESTINATION bin BUNDLE DESTINATION bin COMPONENT Applications)
     endif()
 endforeach()
 unset(_aether_install_apps)
