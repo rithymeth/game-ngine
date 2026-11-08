@@ -773,6 +773,24 @@ bool D3D12Device::WriteBufferUnsynchronized(BufferHandle buffer, const void* dat
     return true;
 }
 
+BufferHandle D3D12Device::CreateReadbackBuffer(u64 size_bytes) {
+    if (size_bytes == 0 || size_bytes > std::numeric_limits<UINT>::max()) {
+        throw std::invalid_argument("A readback buffer's size must be non-zero and fit the D3D12 buffer limits");
+    }
+    ReserveBufferRegistryEntry();
+    auto buffer = std::make_unique<gfx::Buffer>(device_, size_bytes, gfx::BufferKind::Readback);
+    return BufferHandle{StoreBuffer(std::move(buffer), DescriptorHeap::kInvalidIndex, false, false, std::nullopt)};
+}
+
+bool D3D12Device::ReadReadbackBuffer(BufferHandle buffer, void* out, u64 size_bytes, u64 offset) {
+    if (!IsBufferAlive(buffer) || buffers_[buffer.index]->Kind() != gfx::BufferKind::Readback || out == nullptr || size_bytes == 0 ||
+        offset > buffers_[buffer.index]->Size() || size_bytes > buffers_[buffer.index]->Size() - offset) {
+        return false;
+    }
+    buffers_[buffer.index]->Read(out, size_bytes, offset);
+    return true;
+}
+
 BufferHandle D3D12Device::CreateVertexBuffer(const void* data, u64 size_bytes) {
     return CreateBufferInternal(data, size_bytes, true);
 }
@@ -1764,6 +1782,37 @@ bool D3D12CommandList::BeginTexturePass(SampledTextureHandle target, const Clear
     active_scene_color_ = view.resource; // EndRenderPass returns it to PIXEL_SHADER_RESOURCE, as for the scene colour target
     active_swap_chain_ = nullptr;        // no depth: CopySceneDepth refuses
     render_pass_active_ = true;
+    return true;
+}
+
+bool D3D12CommandList::CopyRenderTextureToReadback(SampledTextureHandle texture, BufferHandle readback) {
+    const D3D12Device::RenderTextureView view = device_.FindRenderTexture(texture);
+    if (!recording_ || IsComputeList() || render_pass_active_ || view.resource == nullptr || !device_.IsBufferAlive(readback) ||
+        device_.GetBuffer(readback).Kind() != gfx::BufferKind::Readback) {
+        AETHER_LOG_ERROR("D3D12", "CopyRenderTextureToReadback requires a recording graphics list outside any pass, a live render texture and a readback buffer");
+        return false;
+    }
+    const u32 pitch = ReadbackRowPitch(view.width, 8);
+    if (device_.GetBuffer(readback).Size() < static_cast<u64>(pitch) * view.height) {
+        AETHER_LOG_ERROR("D3D12", "CopyRenderTextureToReadback: the readback buffer is smaller than the texture's rows");
+        return false;
+    }
+    D3D12_RESOURCE_BARRIER to_copy =
+        TransitionBarrier(view.resource, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    cmd_.Get()->ResourceBarrier(1, &to_copy);
+    D3D12_TEXTURE_COPY_LOCATION destination{};
+    destination.pResource = device_.GetBuffer(readback).Handle();
+    destination.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+    destination.PlacedFootprint.Offset = 0;
+    destination.PlacedFootprint.Footprint = {DXGI_FORMAT_R16G16B16A16_FLOAT, view.width, view.height, 1, pitch};
+    D3D12_TEXTURE_COPY_LOCATION source{};
+    source.pResource = view.resource;
+    source.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+    source.SubresourceIndex = 0;
+    cmd_.Get()->CopyTextureRegion(&destination, 0, 0, 0, &source, nullptr);
+    D3D12_RESOURCE_BARRIER back =
+        TransitionBarrier(view.resource, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    cmd_.Get()->ResourceBarrier(1, &back);
     return true;
 }
 

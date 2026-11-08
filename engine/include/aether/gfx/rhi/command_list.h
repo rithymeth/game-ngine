@@ -124,6 +124,10 @@ public:
     // BeginRenderPass: rebind before drawing. Draws after it may read the texture; they must not write depth they then expect to read. False
     // (nothing recorded, the pass untouched) without an active pass or a SceneDepthTexture, and on devices without support (the default).
     virtual bool CopySceneDepth() { return false; }
+    // Outside any pass: copies a render texture (IDevice::CreateRenderTexture, RGBA16F: 8 bytes a texel) into a buffer made by
+    // IDevice::CreateReadbackBuffer, rows ReadbackRowPitch(width, 8) apart, which the buffer must have room for (height rows). The texture
+    // stays shader-readable. False, nothing recorded, for any other texture or buffer, inside a pass, or on devices without readback.
+    virtual bool CopyRenderTextureToReadback(SampledTextureHandle /*texture*/, BufferHandle /*readback*/) { return false; }
 
     // Escape hatch: the backend-native command list/buffer pointer
     // (ID3D12GraphicsCommandList* for D3D12, VkCommandBuffer for Vulkan,

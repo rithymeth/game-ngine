@@ -147,6 +147,9 @@ struct ComputePipelineDesc {
 // states, ...) is a distinctly larger, separate piece of work still done via
 // ICommandList::NativeHandle() and backend-specific recording (see
 // rhi_demo's cube mode) — GetBackend() is there for exactly that case.
+// Bytes from one row of a texture copied to a readback buffer to the next: the row's size rounded up to 256, which both backends accept.
+constexpr u32 ReadbackRowPitch(u32 width_pixels, u32 bytes_per_pixel) { return (width_pixels * bytes_per_pixel + 255u) / 256u * 256u; }
+
 class IDevice {
 public:
     virtual ~IDevice() = default;
@@ -254,6 +257,16 @@ public:
     virtual bool WriteBufferUnsynchronized(BufferHandle /*buffer*/, const void* /*data*/, u64 /*size_bytes*/, u64 /*offset*/ = 0) {
         return false;
     }
+
+    // Reading a render texture back on the CPU without stalling the GPU. ICommandList::CopyRenderTextureToReadback records a copy of a
+    // render texture into a buffer made here; once the submission carrying it has finished (WaitForFence / IsFenceComplete), ReadReadbackBuffer
+    // reads the bytes. The buffer's rows are ReadbackRowPitch(width, bytes per texel) apart. Devices without it (SupportsReadback false, the
+    // default) return an invalid handle and false.
+    virtual bool SupportsReadback() const { return false; }
+    virtual BufferHandle CreateReadbackBuffer(u64 /*size_bytes*/) { return {}; }
+    // False (nothing read) for a buffer that is not a readback buffer, a dead handle or a range outside it. Only valid after the GPU has finished
+    // the copy into it.
+    virtual bool ReadReadbackBuffer(BufferHandle /*buffer*/, void* /*out*/, u64 /*size_bytes*/, u64 /*offset*/ = 0) { return false; }
 
     // Block-compressed textures (BC1, BC3, BC7: see CompressedTextureFormat), kept compressed on the GPU with their whole mip chain: a quarter
     // of the memory of RGBA8, and mips for the sampler. The handle indexes the same bindless table as CreateTexture. Devices that cannot (Vulkan

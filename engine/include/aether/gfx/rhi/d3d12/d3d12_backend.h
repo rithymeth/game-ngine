@@ -84,6 +84,9 @@ public:
     BufferHandle CreateFrameConstantBuffer(u64 size_bytes) override;
     void UpdateFrameConstantBuffer(BufferHandle buffer, const void* data, u64 size_bytes) override { UpdateConstantBuffer(buffer, data, size_bytes, 0); }
     bool WriteBufferUnsynchronized(BufferHandle buffer, const void* data, u64 size_bytes, u64 offset = 0) override;
+    bool SupportsReadback() const override { return true; }
+    BufferHandle CreateReadbackBuffer(u64 size_bytes) override;
+    bool ReadReadbackBuffer(BufferHandle buffer, void* out, u64 size_bytes, u64 offset = 0) override;
     const gfx::Buffer& GetBuffer(BufferHandle handle) const { return *buffers_[handle.index]; }
     usize BufferCount() const { return buffers_.size(); }
     D3D12_GPU_DESCRIPTOR_HANDLE ComputeStorageDescriptor(BufferHandle handle) const;
@@ -323,6 +326,7 @@ public:
     void BindFrameConstants(BufferHandle buffer) override;
     void BindFrameReadBuffer(BufferHandle buffer) override;
     bool CopySceneDepth() override;
+    bool CopyRenderTextureToReadback(SampledTextureHandle texture, BufferHandle readback) override;
 
     void* NativeHandle() const override { return cmd_.Get(); }
     bool BelongsTo(const D3D12Device& device) const { return &device_ == &device; }

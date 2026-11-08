@@ -1186,6 +1186,27 @@ BufferHandle VulkanDevice::CreateBufferInternal(const void* data, u64 size_bytes
     return BufferHandle{slot};
 }
 
+BufferHandle VulkanDevice::CreateReadbackBuffer(u64 size_bytes) {
+    if (size_bytes == 0 || size_bytes > std::numeric_limits<u32>::max()) {
+        throw std::invalid_argument("A readback buffer's size must be non-zero and within 4 GiB");
+    }
+    ScopedBufferRecord owned_record(device_);
+    owned_record.Get() = CreateHostVisibleBuffer(device_, physical_device_, size_bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT, nullptr, true);
+    owned_record.Get().is_readback = true;
+    const u32 slot = AcquireBufferSlot(owned_record.Get());
+    owned_record.Release();
+    return BufferHandle{slot};
+}
+
+bool VulkanDevice::ReadReadbackBuffer(BufferHandle buffer, void* out, u64 size_bytes, u64 offset) {
+    if (!IsBufferAlive(buffer) || !buffers_[buffer.index].is_readback || buffers_[buffer.index].mapped == nullptr || out == nullptr ||
+        size_bytes == 0 || offset > buffers_[buffer.index].size_bytes || size_bytes > buffers_[buffer.index].size_bytes - offset) {
+        return false;
+    }
+    std::memcpy(out, static_cast<const u8*>(buffers_[buffer.index].mapped) + offset, static_cast<usize>(size_bytes));
+    return true;
+}
+
 BufferHandle VulkanDevice::CreateVertexBuffer(const void* data, u64 size_bytes) {
     const BufferHandle handle = CreateBufferInternal(data, size_bytes);
     buffers_[handle.index].is_vertex = true;
@@ -3701,6 +3722,52 @@ bool VulkanCommandList::BeginTexturePass(SampledTextureHandle target, const Clea
     active_swap_chain_ = nullptr;
     active_target_ = PassTarget::Texture;
     SetFullViewport(record->width, record->height);
+    return true;
+}
+
+bool VulkanCommandList::CopyRenderTextureToReadback(SampledTextureHandle texture, BufferHandle readback) {
+    const SampledTextureRecord* record = device_.FindTarget(texture, PassTarget::Texture);
+    if (!recording_ || compute_queue_ || render_pass_active_ || !record || !device_.IsBufferAlive(readback) ||
+        !device_.GetBuffer(readback).is_readback) {
+        AETHER_LOG_ERROR("Vulkan", "CopyRenderTextureToReadback requires a recording graphics list outside any pass, a live render texture and a readback buffer");
+        return false;
+    }
+    const u32 pitch = ReadbackRowPitch(record->width, 8);
+    if (device_.GetBuffer(readback).size_bytes < static_cast<VkDeviceSize>(pitch) * record->height) {
+        AETHER_LOG_ERROR("Vulkan", "CopyRenderTextureToReadback: the readback buffer is smaller than the texture's rows");
+        return false;
+    }
+    VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    barrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT;
+    barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    barrier.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    barrier.srcQueueFamilyIndex = barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = record->image;
+    barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    vkCmdPipelineBarrier(command_buffer_, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+    VkBufferImageCopy region{};
+    region.bufferRowLength = pitch / 8; // in texels
+    region.bufferImageHeight = record->height;
+    region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    region.imageExtent = {record->width, record->height, 1};
+    vkCmdCopyImageToBuffer(command_buffer_, record->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, device_.GetBuffer(readback).buffer, 1, &region);
+    // The texture goes back to being sampled, and the copy's writes become visible to the host once the submission's fence has passed.
+    barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    VkBufferMemoryBarrier host{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER};
+    host.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    host.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+    host.srcQueueFamilyIndex = host.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    host.buffer = device_.GetBuffer(readback).buffer;
+    host.offset = 0;
+    host.size = VK_WHOLE_SIZE;
+    vkCmdPipelineBarrier(command_buffer_, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1,
+                         &barrier);
+    vkCmdPipelineBarrier(command_buffer_, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 0, nullptr, 1, &host, 0, nullptr);
     return true;
 }
 

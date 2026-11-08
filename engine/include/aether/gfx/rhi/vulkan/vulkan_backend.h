@@ -68,6 +68,7 @@ struct BufferRecord {
     bool is_constant = false;
     bool is_vertex = false;
     bool is_index = false;
+    bool is_readback = false; // CreateReadbackBuffer: the destination of CopyRenderTextureToReadback, read by the host
     IndexFormat index_format = IndexFormat::UInt16;
 };
 
@@ -153,6 +154,9 @@ public:
     BufferHandle CreateFrameConstantBuffer(u64 size_bytes) override;
     void UpdateFrameConstantBuffer(BufferHandle buffer, const void* data, u64 size_bytes) override;
     bool WriteBufferUnsynchronized(BufferHandle buffer, const void* data, u64 size_bytes, u64 offset = 0) override;
+    bool SupportsReadback() const override { return true; }
+    BufferHandle CreateReadbackBuffer(u64 size_bytes) override;
+    bool ReadReadbackBuffer(BufferHandle buffer, void* out, u64 size_bytes, u64 offset = 0) override;
     VkDescriptorSetLayout FrameConstantsSetLayout() const { return frame_constants_set_layout_; }
     SampledTextureHandle CreateR32FloatTexture(u32 width, u32 height, const f32* values) override;
     // Render textures (RGBA16F) and depth textures (D32), drawn in their own passes (TargetPass) and sampled between them. The player makes
@@ -544,6 +548,7 @@ public:
     void BindFrameConstants(BufferHandle buffer) override;
     void BindFrameReadBuffer(BufferHandle buffer) override;
     bool CopySceneDepth() override;
+    bool CopyRenderTextureToReadback(SampledTextureHandle texture, BufferHandle readback) override;
 
     void* NativeHandle() const override { return command_buffer_; }
     bool BelongsTo(const VulkanDevice& device) const { return &device_ == &device; }
