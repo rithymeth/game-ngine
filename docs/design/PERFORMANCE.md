@@ -607,3 +607,69 @@ ambient term and once with `SkyLighting`, the same shader with the environment p
   pak) would remove it, at the price of a new cooked format.
 - **The sampler fix is free.** The D3D12 sampler's `MaxLOD` used to be 0, which clamped every texture to level 0, so cooked
   textures never used their mips. Sampling them now costs nothing extra and should be cheaper at a distance (smaller texels).
+
+## Clustered forward lighting, 8 November 2026
+
+Render roadmap step 5 replaces the frame constants' **nearest 8 point and 4 spot lights** with clustered lights.
+- **The grid:** the view frustum is cut into 16 x 9 screen tiles by 24 depth slices, spaced exponentially from the near plane to
+  the far plane (`player/src/light_clusters.h`).
+- **CPU binning, every frame:** each light in view is binned into every cell its bounding sphere reaches. A spot's sphere bounds
+  its cone, not its whole range.
+- **What the shader reads:** the lights, a per-cell `(first, count)` table and a 16-bit index list, from a new RHI frame read
+  buffer (`PipelineDesc::frame_read_buffer`, a root SRV on D3D12).
+- **What the scene shader does:** it finds its pixel's cell and shades only that cell's lights.
+- **Limits:** up to 1024 lights a frame, and 262 144 cell entries. Past either limit, the nearest lights stay.
+- **Switching back:** `AETHER_RENDER_CLUSTERED=0` restores the old path.
+
+Measured with a throwaway harness:
+- **GPU:** an offscreen D3D12 device draws 20 full-screen passes in one command list, timed fence to fence. Each figure is the
+  best of 10 lists after 2 warm-ups. Three rounds were run, and the tables give their range.
+- **Shading model:** each pixel is the ground plane seen from 3 m up, pitched 20 degrees down, with a 90 degree view. Each light
+  is shaded with GGX, using the scene shader's falloff and cone.
+- **Lights:** scattered over 80 x 88 m of ground ahead of the camera, each with 4 to 8 m of reach. Every fourth light is a spot
+  pointing down.
+- **The three columns:**
+  - "Fixed 8 + 4": the old loops over the frame constants. These shade at most 12 lights, so above 12 they are not the same
+    picture.
+  - "Clustered": the new path.
+  - "Brute": every light at every pixel.
+- **Hardware:** RTX 3050 Laptop GPU, RelWithDebInfo.
+
+| Lights | Resolution | Fixed 8 + 4 | Clustered | Brute |
+| --- | --- | --- | --- | --- |
+| 12 | 1280 x 720 | 0.119 - 0.153 ms | 0.038 - 0.047 ms | 0.123 - 0.151 ms |
+| 12 | 2560 x 1440 | 0.470 - 0.666 ms | 0.130 - 0.140 ms | 0.494 - 0.581 ms |
+| 64 | 1280 x 720 | 0.129 - 0.135 ms | 0.075 - 0.080 ms | 0.664 - 0.918 ms |
+| 64 | 2560 x 1440 | 0.493 - 0.643 ms | 0.278 - 0.338 ms | 2.79 - 3.39 ms |
+| 256 | 1280 x 720 | 0.126 - 0.131 ms | 0.163 - 0.188 ms | 2.75 - 3.62 ms |
+| 256 | 1920 x 1080 | 0.281 - 0.306 ms | 0.351 - 0.375 ms | 6.46 - 8.03 ms |
+| 256 | 2560 x 1440 | 0.502 - 0.608 ms | 0.656 - 0.772 ms | 11.7 - 14.7 ms |
+| 1024 | 1280 x 720 | 0.128 ms | 0.716 - 0.843 ms | 13.3 - 16.4 ms |
+| 1024 | 2560 x 1440 | 0.497 - 0.621 ms | 3.11 - 3.54 ms | 56.7 - 63.9 ms |
+
+Binning on the CPU, one thread, best of 20:
+
+| Lights | In view | Cell entries | Busiest cell | Time |
+| --- | --- | --- | --- | --- |
+| 12 | 10 | 427 | 4 | 0.020 ms |
+| 64 | 62 | 6 043 | 13 | 0.031 ms |
+| 256 | 249 | 22 376 | 36 | 0.070 ms |
+| 1024 | 1006 | 105 018 | 142 | 0.363 ms |
+
+**What the numbers say.**
+- **Clustering is cheaper even for a few lights.** With the same 12 lights, the clustered path costs about a third of the old
+  loops. They shaded all 12 at every pixel; a cell lists only the lights that can reach it. The lookup itself (a depth, a log,
+  one load) does not show.
+- **256 lights cost about what 12 used to.** At 1080p, 256 clustered lights take 0.35 ms where the old 12-light loop took
+  0.29 ms, and a brute loop over 256 takes 6.5 ms.
+- **The cost follows the lights per cell, not the lights in the scene.** At 1024 the ground is crowded: up to 142 lights reach
+  one cell, and the cost rises to about 1.7 ms at 1080p. That is still 20 times cheaper than the brute loop.
+- **Binning is cheap enough to do every frame on the CPU:** 0.07 ms for 256 lights and 0.36 ms for 1024. A compute pass could
+  take it over if a scene needs thousands.
+- **The first index budget was too small.** It was 65 536 entries at 32 bits each, and it dropped 832 of the 1024 lights. The
+  index list is now 16 bits an entry with four times the budget, in the same 512 KB.
+- **The buffers:** one read buffer per frame in flight, at 588 KB each (8 frames: 4.6 MB of upload heap). Each frame uploads
+  only the bytes it uses.
+
+**Checked visually** on the lantern scene. Its one point light renders identically with and without clustering. A variant with
+60 coloured lights on the ground shows all 60 pools with no seams at tile edges; the old path shows only the nearest 8.

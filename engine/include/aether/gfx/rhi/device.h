@@ -112,6 +112,14 @@ struct PipelineDesc {
     // the depth format's precision, and a multiple of the triangle's depth slope. 0 (the default) is no bias.
     i32 depth_bias = 0;
     f32 slope_scaled_depth_bias = 0.0f;
+
+    // Reserves a per-frame read-only buffer beside the frame constants, for what is too large or too variable for them (the clustered
+    // light lists):
+    //   ByteAddressBuffer g_FrameLights : register(t0, space3);
+    // Fill a buffer made by IDevice::CreateFrameConstantBuffer (any size; UpdateFrameConstantBuffer writes it) and bind it with
+    // ICommandList::BindFrameReadBuffer before drawing. Read by the pixel shader. Only for devices where SupportsFrameConstants() is
+    // true; others ignore the field and the shader must not name the buffer. false (the default) reserves nothing.
+    bool frame_read_buffer = false;
 };
 
 // Compute shader pipeline with fixed storage-buffer bindings at u0..u(N-1),

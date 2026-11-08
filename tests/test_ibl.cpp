@@ -177,7 +177,7 @@ AETHER_TEST(Ibl_DecodesRadianceImages) {
 }
 
 AETHER_TEST(Ibl_FrameDataAndSceneShader) {
-    static_assert(sizeof(player::FrameData) == 1024);
+    static_assert(sizeof(player::FrameData) >= 1024); // the clustered lights' block follows (test_light_clusters.cpp)
     static_assert(offsetof(player::FrameData, sky_sh) == 864 && offsetof(player::FrameData, environment_info) == 1008);
     AETHER_CHECK(player::FrameData{}.environment_info[0] == 255);
     const std::string source = player::SceneShaderSource(true, true);

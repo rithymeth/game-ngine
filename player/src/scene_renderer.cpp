@@ -492,6 +492,25 @@ float4 PSMain(PSInput input, bool is_front : SV_IsFrontFace) : SV_TARGET {
 #endif
     float3 color = ambient + SurfaceLightEx(sun_direction, normal, view_direction, base_color, metallic, roughness, f0, surface_ext, surface_tangent, surface_bitangent) * sun_radiance * sun_visibility;
 #ifdef AETHER_FRAME_DATA
+    if (g_Frame.cluster_info.w != 0) {
+        // Clustered lights (player/src/light_clusters.h): the point and spot lights that can reach this pixel's cell of the view grid.
+        uint2 cluster = ClusterRange(input.position.xy, ClusterViewDepth(world_position));
+        for (uint cluster_i = 0; cluster_i < cluster.y; ++cluster_i) {
+            uint light_offset = ClusterLightIndex(cluster.x + cluster_i) * 48;
+            float4 position_range = asfloat(g_FrameLights.Load4(light_offset));
+            float4 color_inner = asfloat(g_FrameLights.Load4(light_offset + 16));
+            float4 direction_outer = asfloat(g_FrameLights.Load4(light_offset + 32));
+            float3 to_light = position_range.xyz - world_position;
+            float distance = max(length(to_light), 1e-4);
+            float3 light_direction = to_light / distance;
+            float falloff = saturate(1.0 - pow(distance / position_range.w, 4.0));
+            falloff = falloff * falloff / (distance * distance + 1.0);
+            if (falloff <= 0.0) continue;
+            // A point light's cosines are below -1, so its cone passes everywhere.
+            float cone = smoothstep(direction_outer.w, color_inner.w, dot(-light_direction, direction_outer.xyz));
+            color += SurfaceLightEx(light_direction, normal, view_direction, base_color, metallic, roughness, f0, surface_ext, surface_tangent, surface_bitangent) * color_inner.rgb * (falloff * cone);
+        }
+    } else {
     for (uint point_index = 0; point_index < g_Frame.counts.x; ++point_index) {
         float3 to_light = g_Frame.point_position_range[point_index].xyz - world_position;
         float distance = max(length(to_light), 1e-4);
@@ -508,6 +527,7 @@ float4 PSMain(PSInput input, bool is_front : SV_IsFrontFace) : SV_TARGET {
         float falloff = saturate(1.0 - pow(distance / g_Frame.spot_position_range[spot_index].w, 4.0));
         falloff = falloff * falloff / (distance * distance + 1.0);
         color += SurfaceLightEx(light_direction, normal, view_direction, base_color, metallic, roughness, f0, surface_ext, surface_tangent, surface_bitangent) * g_Frame.spot_color_inner[spot_index].rgb * falloff * cone;
+    }
     }
 #endif
     float3 emissive = float3(f16tof32(g_PC.g_Emissive.x), f16tof32(g_PC.g_Emissive.x >> 16), f16tof32(g_PC.g_Emissive.y));
@@ -705,6 +725,12 @@ struct SceneRenderer::Impl {
     // The scene's lights, as frame constants (one buffer per frame in flight) where the device has them; else the shader's fixed light.
     static constexpr usize kFrameBuffers = 8;
     std::vector<BufferHandle> frame_buffers;
+    // The clustered lights (light_clusters.h), one frame read buffer per frame in flight beside frame_buffers. `clustered` false
+    // (AETHER_RENDER_CLUSTERED=0) keeps the nearest 8 point and 4 spot lights of the frame constants; the buffers are bound either way.
+    std::vector<BufferHandle> light_buffers;
+    bool clustered = true;
+    LightClusters clusters;              // this frame's, reused
+    std::vector<ClusterLight> cluster_lights;
     bool legacy_hud = false; // the AETHER-01 HUD, drawn when the game has no UI of its own
     SampledTextureHandle white_texture;
     SampledTextureHandle font_texture_handle;
@@ -747,6 +773,7 @@ struct SceneRenderer::Impl {
             }
         }
         for (BufferHandle& buffer : frame_buffers) free_buffer(buffer);
+        for (BufferHandle& buffer : light_buffers) free_buffer(buffer);
         for (auto& [path, texture] : textures) free_texture(texture);
         free_texture(font_texture_handle);
         free_texture(white_texture);
@@ -770,6 +797,10 @@ struct SceneRenderer::Impl {
             desc.hlsl_source = SceneShaderSource(true, hdr);
             desc.frame_constants_size_bytes = sizeof(FrameData);
             for (usize i = 0; i < kFrameBuffers; ++i) frame_buffers.push_back(device.CreateFrameConstantBuffer(sizeof(FrameData)));
+            desc.frame_read_buffer = true;
+            for (usize i = 0; i < kFrameBuffers; ++i) light_buffers.push_back(device.CreateFrameConstantBuffer(kLightClusterBufferBytes));
+            const char* clustered_setting = std::getenv("AETHER_RENDER_CLUSTERED");
+            clustered = clustered_setting == nullptr || std::strcmp(clustered_setting, "0") != 0;
             // AETHER_RENDER_SHADOWS=0 turns sun shadows off (for comparisons).
             const char* shadow_setting = std::getenv("AETHER_RENDER_SHADOWS");
             if (shadow_setting == nullptr || std::strcmp(shadow_setting, "0") != 0) {
@@ -1814,6 +1845,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
     bool sun_shadows = false;
     bool draw_sky = false;
     BufferHandle frame_buffer; // this frame's lights, when the device has frame constants
+    BufferHandle light_buffer; // and its clustered lights
     const Entity camera_entity = FindActiveCamera(world, guids);
     const Camera* camera = world.IsAlive(camera_entity) ? world.GetComponent<Camera>(camera_entity) : nullptr;
     Mat4 particle_view_projection, particle_projection;
@@ -1851,6 +1883,20 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
             frame_buffer = renderer.frame_buffers[frame_index % renderer.frame_buffers.size()];
             frame_data = BuildFrameData(world, guids, camera_position);
             if (draw_particles) AddParticleLights(frame_data, renderer.particle_data.lights, camera_position);
+            if (!renderer.light_buffers.empty()) {
+                light_buffer = renderer.light_buffers[frame_index % renderer.light_buffers.size()];
+                if (renderer.clustered) {
+                    // Every light in view, binned into the view grid; the frame constants' nearest lights stay for lit particles.
+                    renderer.cluster_lights = GatherClusterLights(
+                        world, guids, draw_particles ? std::span<const vfx::ParticleLight>(renderer.particle_data.lights)
+                                                     : std::span<const vfx::ParticleLight>());
+                    const Camera limited = LimitViewDistance(*camera, renderer.view_distance);
+                    const ClusterView cluster_view{camera_view, projection, std::max(limited.near_plane, 1e-4f),
+                                                   std::max(limited.far_plane, std::max(limited.near_plane, 1e-4f) * 1.001f)};
+                    BuildLightClusters(renderer.cluster_lights, cluster_view, renderer.clusters);
+                    FillClusterData(frame_data, renderer.clusters, cluster_view, renderer.swap_chain.Width(), renderer.swap_chain.Height());
+                }
+            }
             sun_shadows = renderer.shadows && frame_data.counts[2] != 0; // uploaded once the shadow pass has filled its part
             // The sky's image-based lighting and background, from a SkyLight (a world without one keeps the flat ambient term).
             if (renderer.sky) {
@@ -2089,6 +2135,9 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
         std::memcpy(frame_data.shadow_info, shadow.info, sizeof(shadow.info));
     }
     if (frame_buffer.IsValid()) renderer.device.UpdateFrameConstantBuffer(frame_buffer, &frame_data, sizeof(frame_data));
+    if (light_buffer.IsValid() && frame_data.cluster_info[3] != 0 && !renderer.clusters.bytes.empty()) {
+        renderer.device.UpdateFrameConstantBuffer(light_buffer, renderer.clusters.bytes.data(), renderer.clusters.bytes.size());
+    }
     if (renderer.hdr) {
         if (!commands.BeginSceneColorPass(renderer.swap_chain, kBackgroundLinear)) return;
     } else {
@@ -2104,6 +2153,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
             if (!bound || cull != bound_cull) {
                 commands.BindPipeline(cull ? renderer.culled_pipeline : renderer.pipeline);
                 if (frame_buffer.IsValid()) commands.BindFrameConstants(frame_buffer);
+                if (light_buffer.IsValid()) commands.BindFrameReadBuffer(light_buffer);
                 commands.BindBindlessTextures();
                 bound = true;
                 bound_cull = cull;
@@ -2136,6 +2186,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
             if (!bound || cull != bound_cull) {
                 commands.BindPipeline(cull ? renderer.transparent_culled_pipeline : transparent_pipeline);
                 if (frame_buffer.IsValid()) commands.BindFrameConstants(frame_buffer);
+                if (light_buffer.IsValid()) commands.BindFrameReadBuffer(light_buffer);
                 commands.BindBindlessTextures();
                 bound = true;
                 bound_cull = cull;

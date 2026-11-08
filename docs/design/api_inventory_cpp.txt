@@ -1926,6 +1926,7 @@
   virtual void BindComputeSampledTexture(u32 slot,SampledTextureHandle texture)=0
   virtual void BindComputeStorageBuffer(u32 slot,BufferHandle buffer)=0
   virtual void BindFrameConstants(BufferHandle)
+  virtual void BindFrameReadBuffer(BufferHandle)
   virtual void BindIndexBuffer(BufferHandle buffer,IndexFormat format)=0
   virtual void BindPipeline(PipelineHandle pipeline)=0
   virtual void BindVertexBuffer(BufferHandle buffer,u32 stride_bytes)=0
@@ -2049,6 +2050,7 @@
   void BindComputeSampledTexture(u32 slot,SampledTextureHandle texture)override
   void BindComputeStorageBuffer(u32 slot,BufferHandle buffer)override
   void BindFrameConstants(BufferHandle buffer)override
+  void BindFrameReadBuffer(BufferHandle buffer)override
   void BindIndexBuffer(BufferHandle buffer,IndexFormat format)override
   void BindPipeline(PipelineHandle pipeline)override
   void BindVertexBuffer(BufferHandle buffer,u32 stride_bytes)override

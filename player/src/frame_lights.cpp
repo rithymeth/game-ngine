@@ -30,8 +30,30 @@ struct FrameData {
     uint4 shadow_info;        // x: the atlas's bindless index (255: none); y: cascades; z: texels per cascade side
     float4 sky_sh[9];         // the sky's irradiance, SH coefficients (rgb)
     uint4 environment_info;   // x: the prefiltered environment's bindless index (255: none); y: mip levels; z: level 0's height
+    float4 cluster_forward;   // xyz: the camera's forward axis; w: depth scale
+    float4 cluster_scale;     // x, y: tiles per pixel; z: depth bias
+    uint4 cluster_info;       // x: the cells' byte offset; y: the index list's; z: lights; w: 1 when the clustered lights are in use
 };
 ConstantBuffer<FrameData> g_Frame : register(b0, space2);
+
+// Clustered lights (player/src/light_clusters.h): 48 bytes a light, from offset 0; per cell, uint2 (first index, count); the index list,
+// 16 bits an entry.
+ByteAddressBuffer g_FrameLights : register(t0, space3);
+
+// A world position's depth along the camera's view.
+float ClusterViewDepth(float3 world_position) { return dot(world_position - g_Frame.camera_world.xyz, g_Frame.cluster_forward.xyz); }
+
+// The run of the index list for the cell holding pixel `pixel` (SV_Position.xy) at view depth `depth`: x the first index, y how many.
+// The grid is 16 x 9 tiles by 24 slices (kClusterTilesX, kClusterTilesY, kClusterSlices).
+uint2 ClusterRange(float2 pixel, float depth) {
+    uint2 tile = min(uint2(max(pixel * g_Frame.cluster_scale.xy, 0.0)), uint2(15, 8));
+    uint slice = (uint)clamp(floor(log(max(depth, 1e-6)) * g_Frame.cluster_forward.w + g_Frame.cluster_scale.z), 0.0, 23.0);
+    uint cell = (slice * 9 + tile.y) * 16 + tile.x;
+    return g_FrameLights.Load2(g_Frame.cluster_info.x + cell * 8);
+}
+
+// The index list's i-th entry: a light's position in the light array.
+uint ClusterLightIndex(uint i) { return (g_FrameLights.Load(g_Frame.cluster_info.y + (i >> 1) * 4) >> ((i & 1) * 16)) & 0xFFFF; }
 
 // The environment's radiance from `direction` at mip `lod` (0 sharp; level i prefiltered for roughness i / (levels - 1)). Equirectangular:
 // u = 0.5 looks down -Z and grows toward +X, v = 0 is up. v stays half a texel clear of the poles (the sampler wraps).
@@ -80,6 +102,8 @@ float3 SkyLighting(float3 n, float3 v, float3 base_color, float metallic, float 
 } // namespace
 
 const char* FrameDataHlsl() { return kFrameDataHlsl; }
+
+static_assert(kClusterTilesX == 16 && kClusterTilesY == 9 && kClusterSlices == 24, "ClusterRange in kFrameDataHlsl spells out the grid");
 
 namespace {
 
@@ -245,6 +269,41 @@ void AddParticleLights(FrameData& data, std::span<const vfx::ParticleLight> ligh
         std::copy(std::begin(pool[i].color), std::end(pool[i].color), std::begin(data.point_color[i]));
     }
     data.counts[0] = static_cast<u32>(pool.size());
+}
+
+std::vector<ClusterLight> GatherClusterLights(const World& world, const GuidIndex& guids, std::span<const vfx::ParticleLight> particles) {
+    std::vector<ClusterLight> out;
+    for (const Entity e : EntitiesWith<PointLight>(world)) {
+        const PointLight* light = world.GetComponent<PointLight>(e);
+        if (light == nullptr || !(light->range > 0.0f) || !world.HasComponent<Transform>(e)) continue;
+        const Vec3 p = Position(ComputeWorldTransform(world, guids, e));
+        out.push_back(MakePointClusterLight(p, light->range, light->color * light->intensity));
+    }
+    for (const Entity e : EntitiesWith<SpotLight>(world)) {
+        const SpotLight* light = world.GetComponent<SpotLight>(e);
+        if (light == nullptr || !(light->range > 0.0f) || !world.HasComponent<Transform>(e)) continue;
+        const Mat4 transform = ComputeWorldTransform(world, guids, e);
+        const Vec3 back = BackAxis(transform, Vec3(0, 0, 1));
+        out.push_back(MakeSpotClusterLight(Position(transform), light->range, light->color * light->intensity, back * -1.0f,
+                                           light->outer_angle_degrees, light->inner_angle_degrees));
+    }
+    for (const vfx::ParticleLight& light : particles) {
+        if (!(light.radius > 0.0f) || !(light.intensity > 0.0f)) continue;
+        out.push_back(MakePointClusterLight(light.position, light.radius,
+                                            Vec3(light.color.r, light.color.g, light.color.b) * light.intensity));
+    }
+    return out;
+}
+
+void FillClusterData(FrameData& data, const LightClusters& clusters, const ClusterView& view, u32 width, u32 height) {
+    const Vec3 forward = Normalized(Vec3(-view.view.cols[0].z, -view.view.cols[1].z, -view.view.cols[2].z), Vec3(0, 0, -1));
+    Set4(data.cluster_forward, forward.x, forward.y, forward.z, clusters.depth_scale);
+    Set4(data.cluster_scale, static_cast<f32>(kClusterTilesX) / static_cast<f32>(std::max(width, 1u)),
+         static_cast<f32>(kClusterTilesY) / static_cast<f32>(std::max(height, 1u)), clusters.depth_bias, 0.0f);
+    data.cluster_info[0] = clusters.cells_offset;
+    data.cluster_info[1] = clusters.indices_offset;
+    data.cluster_info[2] = clusters.light_count;
+    data.cluster_info[3] = 1u;
 }
 
 } // namespace aether::player

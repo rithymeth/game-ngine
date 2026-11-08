@@ -31,8 +31,10 @@ struct PipelineRecord {
     ComPtr<ID3D12RootSignature> root_signature;
     ComPtr<ID3D12PipelineState> pso;
     u32 frame_constants_root_index = ~0u; // the root CBV for PipelineDesc::frame_constants_size_bytes, if any
+    u32 frame_read_root_index = ~0u;      // the root SRV for PipelineDesc::frame_read_buffer, if any
     u32 push_constant_size_bytes = 0;
     bool enable_bindless_textures = false;
+    u32 bindless_root_index = ~0u; // the texture table's root parameter (0 without push constants, else 1)
     bool use_vertex_buffer = false;
     u32 vertex_stride_bytes = 20;
 };
@@ -318,6 +320,7 @@ public:
     void Dispatch(u32 groups_x, u32 groups_y, u32 groups_z) override;
     void BindBindlessTextures() override;
     void BindFrameConstants(BufferHandle buffer) override;
+    void BindFrameReadBuffer(BufferHandle buffer) override;
     bool CopySceneDepth() override;
 
     void* NativeHandle() const override { return cmd_.Get(); }
@@ -345,12 +348,14 @@ private:
     ID3D12Resource* active_scene_color_ = nullptr; // set by BeginSceneColorPass in place of active_backbuffer_
     ID3D12Resource* active_depth_texture_ = nullptr; // set by BeginDepthPass: EndRenderPass returns it from DEPTH_WRITE
     u32 frame_constants_root_index_ = ~0u;        // of the pipeline BindPipeline last bound
+    u32 frame_read_root_index_ = ~0u;             // likewise
     u32 compute_storage_buffer_count_ = 0;
     u32 compute_sampled_texture_count_ = 0;
     u32 compute_constant_buffer_count_ = 0;
     bool compute_pipeline_bound_ = false;
     bool graphics_pipeline_bound_ = false;
     bool graphics_bindless_enabled_ = false;
+    u32 graphics_bindless_root_index_ = ~0u;
     bool graphics_bindless_bound_ = false;
     bool graphics_uses_vertex_buffer_ = false;
     u32 graphics_vertex_stride_bytes_ = 0;

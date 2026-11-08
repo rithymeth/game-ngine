@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <memory>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 using namespace aether;
@@ -96,3 +97,51 @@ void FillsAndSamplesTheWholeTable(rhi::Backend backend) {
 
 AETHER_TEST(BindlessTable_FillsAndSamplesTheLastSlotOnD3D12) { FillsAndSamplesTheWholeTable(rhi::Backend::D3D12); }
 AETHER_TEST(BindlessTable_FillsAndSamplesTheLastSlotOnVulkan) { FillsAndSamplesTheWholeTable(rhi::Backend::Vulkan); }
+
+// A bindless pipeline without push constants has its texture table as the first root parameter: binding it must not assume the second
+// (D3D12 did, binding the table onto whatever came next, or past the end, and the draw crashed the device).
+AETHER_TEST(BindlessTable_BindsWithoutPushConstantsOnD3D12) {
+    if (!rhi::IsBackendAvailable(rhi::Backend::D3D12)) return;
+    std::unique_ptr<rhi::IDevice> device;
+    try {
+        device = rhi::CreateDevice(rhi::Backend::D3D12, false);
+    } catch (const std::exception&) {
+    }
+    if (!device) return;
+    std::unique_ptr<rhi::ISwapChain> target = device->CreateSwapChain(nullptr, 16, 16, 2);
+    const u8 green[4] = {0, 255, 0, 255};
+    const rhi::SampledTextureHandle texture = device->CreateTexture(1, 1, green);
+    AETHER_CHECK(texture.IsValid());
+    if (!texture.IsValid()) return;
+    rhi::PipelineDesc desc;
+    desc.hlsl_source = R"(
+Texture2D g_Textures[128] : register(t0, space0);
+SamplerState g_Sampler : register(s0, space1);
+float4 VSMain(uint id : SV_VertexID) : SV_Position {
+    float2 uv = float2((id << 1) & 2, id & 2);
+    return float4(uv * float2(2.0, -2.0) + float2(-1.0, 1.0), 0.0, 1.0);
+}
+float4 PSMain(float4 position : SV_Position) : SV_Target { return g_Textures[)" + std::to_string(texture.index) + R"(].Load(int3(0, 0, 0)); }
+)";
+    desc.enable_bindless_textures = true; // and no push constants
+    const rhi::PipelineHandle pipeline = device->CreatePipeline(desc, *target);
+    AETHER_CHECK(pipeline.IsValid());
+    if (pipeline.IsValid()) {
+        std::unique_ptr<rhi::ICommandList> cmd = device->CreateCommandList();
+        target->AcquireNextImage();
+        cmd->Reset();
+        cmd->BeginRenderPass(*target, {1, 0, 1, 1});
+        cmd->BindPipeline(pipeline);
+        cmd->BindBindlessTextures();
+        cmd->Draw(3);
+        cmd->EndRenderPass();
+        cmd->Close();
+        device->WaitForFence(device->Submit(*cmd, target.get()));
+        std::vector<u8> pixels;
+        AETHER_CHECK(target->ReadBack(pixels) && pixels.size() == 16 * 16 * 4);
+        if (pixels.size() == 16 * 16 * 4) AETHER_CHECK(pixels[(8 * 16 + 8) * 4 + 1] > 250 && pixels[(8 * 16 + 8) * 4] < 5);
+        target->Present(false);
+        device->DestroyPipeline(pipeline);
+    }
+    device->DestroyTexture(texture);
+}

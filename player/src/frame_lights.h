@@ -6,6 +6,7 @@
 #include "aether/scene/entity_guid.h"
 #include "aether/scene/gameplay.h"
 #include "aether/vfx/render.h"
+#include "light_clusters.h"
 
 #include <span>
 
@@ -37,8 +38,13 @@ struct FrameData {
     // The sky's image-based lighting (player/src/environment.h): the irradiance's SH coefficients (rgb), and the prefiltered environment.
     f32 sky_sh[9][4]{};
     u32 environment_info[4]{255u, 0u, 0u, 0u}; // x: the environment's bindless index (255: none); y: mip levels; z: level 0's height
+    // Clustered lights (light_clusters.h), read from the frame read buffer g_FrameLights. When cluster_info.w is 0 the shader lights
+    // with the nearest point and spot lights above instead.
+    f32 cluster_forward[4]{}; // xyz: the camera's forward axis (a point's view depth is dot(point - camera, forward)); w: depth scale
+    f32 cluster_scale[4]{};   // x, y: tiles per pixel across and down; z: depth bias (slice = floor(log(depth) * scale + bias))
+    u32 cluster_info[4]{};    // x: the cells' byte offset in g_FrameLights; y: the index list's; z: lights binned; w: 1 when in use
 };
-static_assert(sizeof(FrameData) % 16 == 0 && sizeof(FrameData) == 1024);
+static_assert(sizeof(FrameData) % 16 == 0 && sizeof(FrameData) == 1072);
 
 // The HLSL for FrameData (the layout above), its constant buffer g_Frame (register b0, space2), and the sky helpers that read it:
 // EnvironmentRadiance(direction, lod), SkyIrradiance(normal) and SkyLighting(...), the split-sum image-based lighting. Needs g_Textures
@@ -60,5 +66,11 @@ const SkyLight* FindSkyLight(const World& world);
 // there are. A light with no radius or no energy is ignored. Call after
 // BuildFrameData, before the frame constants are uploaded.
 void AddParticleLights(FrameData& data, std::span<const vfx::ParticleLight> lights, const Vec3& camera_position);
+
+// Every PointLight and SpotLight in the world with a range (positions and directions in world space, parents included), then the
+// particle lights with a radius and energy, as clustered lights (light_clusters.h) for BuildLightClusters.
+std::vector<ClusterLight> GatherClusterLights(const World& world, const GuidIndex& guids, std::span<const vfx::ParticleLight> particles);
+// Turns the clustered path on in `data`: the cluster block above, for clusters built for `view` and a render target of width x height.
+void FillClusterData(FrameData& data, const LightClusters& clusters, const ClusterView& view, u32 width, u32 height);
 
 } // namespace aether::player

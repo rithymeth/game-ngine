@@ -410,7 +410,9 @@ PipelineHandle D3D12Device::CreatePipeline(const PipelineDesc& desc, ISwapChain&
         param.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
         params.push_back(param);
     }
+    u32 bindless_root_index = ~0u;
     if (desc.enable_bindless_textures) {
+        bindless_root_index = static_cast<u32>(params.size());
         D3D12_ROOT_PARAMETER param{};
         param.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
         param.DescriptorTable = {1, &texture_range};
@@ -426,6 +428,16 @@ PipelineHandle D3D12Device::CreatePipeline(const PipelineDesc& desc, ISwapChain&
         param.Descriptor = {/*ShaderRegister=*/0, /*RegisterSpace=*/2};
         param.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
         frame_constants_root_index = static_cast<u32>(params.size());
+        params.push_back(param);
+    }
+    // The frame read buffer: a root SRV at t0, space3 (a raw buffer in the upload heap, always readable).
+    u32 frame_read_root_index = ~0u;
+    if (desc.frame_read_buffer) {
+        D3D12_ROOT_PARAMETER param{};
+        param.ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+        param.Descriptor = {/*ShaderRegister=*/0, /*RegisterSpace=*/3};
+        param.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+        frame_read_root_index = static_cast<u32>(params.size());
         params.push_back(param);
     }
 
@@ -463,6 +475,8 @@ PipelineHandle D3D12Device::CreatePipeline(const PipelineDesc& desc, ISwapChain&
 
     PipelineRecord record;
     record.frame_constants_root_index = frame_constants_root_index;
+    record.frame_read_root_index = frame_read_root_index;
+    record.bindless_root_index = bindless_root_index;
     record.push_constant_size_bytes = desc.push_constant_size_bytes;
     record.enable_bindless_textures = desc.enable_bindless_textures;
     record.use_vertex_buffer = desc.use_vertex_buffer;
@@ -1860,9 +1874,11 @@ void D3D12CommandList::BindPipeline(PipelineHandle pipeline) {
     cmd_.Get()->SetPipelineState(record.pso.Get());
     cmd_.Get()->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     frame_constants_root_index_ = record.frame_constants_root_index;
+    frame_read_root_index_ = record.frame_read_root_index;
     graphics_pipeline_bound_ = true;
     graphics_push_constant_size_bytes_ = record.push_constant_size_bytes;
     graphics_bindless_enabled_ = record.enable_bindless_textures;
+    graphics_bindless_root_index_ = record.bindless_root_index;
     graphics_bindless_bound_ = false;
     graphics_uses_vertex_buffer_ = record.use_vertex_buffer;
     graphics_vertex_stride_bytes_ = record.vertex_stride_bytes;
@@ -1967,6 +1983,14 @@ void D3D12CommandList::BindFrameConstants(BufferHandle buffer) {
         return;
     }
     cmd_.Get()->SetGraphicsRootConstantBufferView(frame_constants_root_index_, device_.GetBuffer(buffer).GPUAddress());
+}
+
+void D3D12CommandList::BindFrameReadBuffer(BufferHandle buffer) {
+    if (frame_read_root_index_ == ~0u || !device_.IsBufferAlive(buffer)) {
+        AETHER_LOG_ERROR("D3D12", "BindFrameReadBuffer needs a pipeline made with frame_read_buffer and a valid buffer");
+        return;
+    }
+    cmd_.Get()->SetGraphicsRootShaderResourceView(frame_read_root_index_, device_.GetBuffer(buffer).GPUAddress());
 }
 void D3D12CommandList::BindComputePipeline(ComputePipelineHandle pipeline) {
     if (!recording_) {
@@ -2114,7 +2138,8 @@ void D3D12CommandList::BindBindlessTextures() {
     }
     ID3D12DescriptorHeap* heaps[] = {device_.BindlessTextureHeap().Heap()};
     cmd_.Get()->SetDescriptorHeaps(1, heaps);
-    cmd_.Get()->SetGraphicsRootDescriptorTable(1, device_.BindlessTextureHeap().GPUHandle(0));
+    // The table follows the push constants when the pipeline has them; without, it is the first parameter.
+    cmd_.Get()->SetGraphicsRootDescriptorTable(graphics_bindless_root_index_, device_.BindlessTextureHeap().GPUHandle(0));
     graphics_bindless_bound_ = true;
 }
 
