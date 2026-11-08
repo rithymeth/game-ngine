@@ -79,6 +79,9 @@ AETHER_TEST(Crash_ReportsWrittenAndRead) {
 
 #ifndef _WIN32
 namespace {
+// Thrown through a noexcept caller (see the cases below), so the compiler has nothing to warn about at the throw itself.
+void ThrowUncaught() { throw std::runtime_error("the save file is corrupt"); }
+
 // Runs `crash` in a child process with the handler installed; returns the signal it died of.
 int CrashInChild(const std::filesystem::path& dir, void (*crash)()) {
     const pid_t pid = fork();
@@ -108,7 +111,10 @@ AETHER_TEST(Crash_RealCrashesAreReported) {
     const Case cases[] = {
         {[] { raise(SIGSEGV); }, SIGSEGV, "segmentation fault"},
         {[] { std::abort(); }, SIGABRT, "abort (SIGABRT)"},
-        {[] { throw std::runtime_error("the save file is corrupt"); }, SIGABRT, "uncaught exception: the save file is corrupt"},
+        // noexcept: the child is a fork of the test runner, so its stack still holds the runner's catch around this test. A plain throw would be
+        // caught there (the child would then carry on running the suite and delete the parent's scratch directory); a throw out of a noexcept
+        // function goes straight to std::terminate, which is what an exception nobody catches does.
+        {[]() noexcept { ThrowUncaught(); }, SIGABRT, "uncaught exception: the save file is corrupt"},
         {[] { raise(SIGFPE); }, SIGFPE, "floating-point exception"},
     };
     for (const Case& c : cases) {

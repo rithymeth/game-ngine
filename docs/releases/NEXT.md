@@ -18,6 +18,18 @@ than a fix made at a tag.
 
 ## Installer
 
+The application installer (`Aether-<version>-Windows-x64.exe`, built by `tools/build_installer.py`; its source is
+`tools/installer/AetherInstaller.cs`) was reworked after a report that it did not install and the old editor kept running. What it
+does now: it closes any Aether program running from the install folder (asking first), moves the previous installation aside
+before unpacking (all or nothing, so a file that is still open leaves the old installation intact rather than half deleted, and
+the failure says so), checks that `bin\aether_editor.exe` exists after unpacking and writes `INSTALLED_VERSION.txt`, creates
+"Aether Editor" shortcuts in the Start menu and on the Desktop, and offers to start the editor. Earlier installers made no shortcuts
+and started nothing, so anyone launching from an old shortcut or folder kept running the old build. It takes `/silent`,
+`/target:DIR`, `/noshortcuts` and `/nolaunch`. CI compiles it and runs it against a stand-in payload on Windows
+(`tools/installer/test_installer.ps1`: fresh install, upgrade over a running program, a held file, shortcuts). Not covered: whether
+the Qt editor it installs starts on a given machine; see the next section.
+
+
 `tools/build_sdk_installer.py` builds a self-extracting Windows SDK installer from a lean Release tree. It was added for
 0.29.0 and produces `dist/Aether-<version>-SDK-installer.exe`, which installs to `%LOCALAPPDATA%\Aether` without administrator
 rights. The first one published is 98 MB and was verified by installing it and building a project against the result.

@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""Build the Windows SDK installer for a tagged release.
+"""Build the Windows application installer for a tagged release.
 
-Configures a lean Release tree (no Vulkan, no editor, no tests), installs it to a staging prefix, zips the result and
+Configures a Release tree (the editor and the dev tools, no tests), installs it to a staging prefix, zips the result and
 compiles a self-extracting installer with the .NET Framework compiler that ships with Windows. The payload is embedded as a
-managed resource, so the output is a single exe a user runs with no administrator rights.
+managed resource, so the output is a single exe a user runs with no administrator rights. The installer's source is
+tools/installer/AetherInstaller.cs: it closes (with the user's consent) any Aether program running from the install folder, moves
+a previous installation aside (leaving it untouched if it is in use), checks that the editor is there after unpacking, makes the Start menu and
+Desktop shortcuts, and offers to start the editor. CI compiles and runs it on Windows (tools/installer/test_installer.ps1).
 
     python tools/build_installer.py --version 0.29.0
 
@@ -21,90 +24,7 @@ import zipfile
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 CSC = pathlib.Path(r"C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe")
 
-PROGRAM = r"""
-using System;
-using System.IO;
-using System.IO.Compression;
-using System.Reflection;
-using System.Text;
-
-class AetherInstaller
-{{
-    static readonly string LogPath = Path.Combine(Path.GetTempPath(), "aether-install-log.txt");
-    static readonly StringBuilder Log = new StringBuilder();
-
-    static void Note(string line) {{ Console.WriteLine(line); Log.AppendLine(line); }}
-
-    static void Pause()
-    {{
-        Console.WriteLine();
-        Console.Write("Press Enter to close...");
-        try {{ Console.ReadLine(); }} catch {{ }}
-    }}
-
-    static void WriteLog() {{ try {{ File.WriteAllText(LogPath, Log.ToString()); }} catch {{ }} }}
-
-    static int Fail(string message)
-    {{
-        Console.Error.WriteLine();
-        Console.Error.WriteLine("INSTALL FAILED: " + message);
-        Console.Error.WriteLine("Log written to " + LogPath);
-        Log.AppendLine("FAILED: " + message);
-        WriteLog();
-        Pause();
-        return 1;
-    }}
-
-    static int Main(string[] args)
-    {{
-        try
-        {{
-            Note("Aether Engine {version} - full application installer");
-            Note("");
-            Stream payload = Assembly.GetExecutingAssembly().GetManifestResourceStream("aether-app.zip");
-            if (payload == null) return Fail("the payload is not inside this executable");
-            Note("Payload found: " + (payload.Length / 1024 / 1024) + " MB");
-
-            string target = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Aether");
-            Note("Target: " + target);
-
-            string temp = Path.Combine(Path.GetTempPath(), "aether-install-" + Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(temp);
-            string zipPath = Path.Combine(temp, "aether-app.zip");
-            Note("Writing the payload to a scratch folder...");
-            using (FileStream file = File.Create(zipPath)) {{ payload.CopyTo(file); }}
-
-            if (Directory.Exists(target))
-            {{
-                Note("Removing the previous installation...");
-                Directory.Delete(target, true);
-            }}
-            Directory.CreateDirectory(target);
-
-            Note("Unpacking the SDK, this takes a few moments...");
-            ZipFile.ExtractToDirectory(zipPath, target);
-            try {{ Directory.Delete(temp, true); }} catch {{ }}
-
-            string[] files = Directory.GetFiles(target, "*", SearchOption.AllDirectories);
-            Note("");
-            Note("Installed " + files.Length + " files to " + target);
-            Note("");
-            Note("To use it from CMake:");
-            Note("  cmake -S . -B build -DCMAKE_PREFIX_PATH=\\"" + target + "\\"");
-            Note("  find_package(Aether REQUIRED)");
-            Note("  target_link_libraries(app PRIVATE Aether::Engine)");
-            WriteLog();
-            Pause();
-            return 0;
-        }}
-        catch (Exception error)
-        {{
-            return Fail(error.GetType().Name + ": " + error.Message);
-        }}
-    }}
-}}
-"""
+SOURCE = ROOT / "tools" / "installer" / "AetherInstaller.cs"
 
 
 def run(command, **kwargs):
@@ -136,10 +56,10 @@ def main():
         with zipfile.ZipFile(payload, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
             for path in sorted(stage.rglob("*")):
                 if path.is_file():
-                    archive.write(path, path.relative_to(stage))
+                    archive.write(path, path.relative_to(stage).as_posix())
 
         source = work / "AetherInstaller.cs"
-        source.write_text(PROGRAM.format(version=args.version), encoding="utf-8")
+        source.write_text(SOURCE.read_text(encoding="utf-8").replace("@VERSION@", args.version), encoding="utf-8")
         dist = ROOT / "dist"
         dist.mkdir(exist_ok=True)
         output = dist / f"Aether-{args.version}-Windows-x64.exe"

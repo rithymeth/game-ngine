@@ -2,7 +2,7 @@
 # Written by: tools/check_api_stability.py --update-frozen
 engine/include/aether/core/api.h: a2677e2a517c4d11a5c86f763d85123ec0f52cbc1d7a50ac33a81b4d0f71c627
 engine/include/aether/core/base.h: 359e1201eaa8ea1244bf7dd342f766f387349b0e55b9c8af4f68422a5ad55218
-engine/include/aether/core/json_util.h: 5f5241e3e9c848eefc4eefc9d19da3508639d44f7e5e9295b75bf30addcbf952
+engine/include/aether/core/json_util.h: 08b500d6a1bdd9712de8fc51a5fe9e139accedf358b2d6e8c8d74d29eaab75fa
 engine/include/aether/core/log.h: 590f1d1859bd0e334aa9789f6ec1e5356547e820cd46ce12cbd9223b5bc70eea
 engine/include/aether/core/version.h: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 engine/include/aether/ecs/component.h: f85f1466718d78e4cbc766d67a73ff13c852f77d8bf0234a361b4b629ef9804a
