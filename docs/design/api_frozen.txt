@@ -2,7 +2,7 @@
 # Written by: tools/check_api_stability.py --update-frozen
 engine/include/aether/core/api.h: AETHER_DEPRECATED AETHER_EXPERIMENTAL AETHER_INTERNAL AETHER_STABLE deprecated
 engine/include/aether/core/base.h: AETHER_ALIGN AETHER_ASSERT AETHER_DEBUGBREAK AETHER_FORCEINLINE AETHER_NOINLINE AlignUp aether alignas f32 f64 i16 i32 i64 i8 u16 u32 u64 u8 usize
-engine/include/aether/core/json_util.h: F GuardJsonLoader JsonString JsonVersion aether string
+engine/include/aether/core/json_util.h: F GuardJsonLoader JsonFloat JsonString JsonVersion aether string
 engine/include/aether/core/log.h: AETHER_LOG_ERROR AETHER_LOG_FATAL AETHER_LOG_INFO AETHER_LOG_TRACE AETHER_LOG_WARN AddSink ClearRecent Instance Log LogFormatted LogLevel LogLevelName LogLine Logger MinLevel Recent RecentCapacity RemoveSink SetMinLevel SetStdout Sink aether
 engine/include/aether/core/version.h: aether
 engine/include/aether/ecs/component.h: AppendComponentField ComponentEncoding ComponentId ComponentIdCounter ComponentInfo ComponentMask ComponentMaskOf ComponentNameRegistry ComponentRegistry FindComponentIdByName GetComponentId GetComponentInfo ReadComponentField RegisterComponentAlias RegisteredComponentCount SetComponentSerializer SetLegacyRawLoader aether detail
