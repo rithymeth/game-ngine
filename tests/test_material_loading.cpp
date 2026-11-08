@@ -191,3 +191,91 @@ AETHER_TEST(Material_SceneShaderLightsDoubleSidedBackFaces) {
     AETHER_CHECK(source.find("bool is_front : SV_IsFrontFace") != std::string::npos);
     AETHER_CHECK(source.find("((g_PC.g_AlphaOptions >> 10) & 1) != 0 && is_front == (NormalDeterminant() < 0.0)") != std::string::npos);
 }
+
+// The scene shader's normal-matrix coefficients, read in a pixel shader with an index that is not a compile-time constant. Indexing the
+// push constants' uint4 by a computed component (g_NormalPacked0[index / 2]) read the wrong words in D3D12 pixel shaders, which turned
+// every view direction, and so every metal's highlight and reflection, into one constant: the brass lantern rendered flat.
+namespace {
+
+constexpr char kCoefficientShaderHead[] = R"(
+struct PushConstants {
+    uint4 g_NormalPacked0;
+    uint g_NormalPacked1;
+    uint3 pad;
+};
+#ifdef __spirv__
+[[vk::push_constant]]
+#endif
+ConstantBuffer<PushConstants> g_PC : register(b0);
+)";
+
+constexpr char kCoefficientShaderTail[] = R"(
+float4 VSMain(uint id : SV_VertexID) : SV_Position {
+    float2 uv = float2((id << 1) & 2, id & 2);
+    return float4(uv * float2(2.0, -2.0) + float2(-1.0, 1.0), 0.5, 1.0);
+}
+float4 PSMain(float4 position : SV_Position) : SV_Target {
+    uint index = (uint)position.x;
+    return float4(index < 9 ? GetNormalCoefficient(index) : 0.0, 0, 0, 1);
+}
+)";
+
+} // namespace
+
+AETHER_TEST(Material_SceneShaderReadsEachNormalCoefficientWithADynamicIndex) {
+    const std::string scene = player::SceneShaderSource(true, true);
+    const usize begin = scene.find("float GetNormalCoefficient(uint index) {");
+    const usize end = begin == std::string::npos ? std::string::npos : scene.find("\n}", begin);
+    AETHER_CHECK(end != std::string::npos);
+    if (end == std::string::npos) return;
+    const std::string source = std::string(kCoefficientShaderHead) + scene.substr(begin, end + 2 - begin) + "\n" + kCoefficientShaderTail;
+
+    u32 push[8]{};
+    for (u32 i = 0; i < 9; ++i) {
+        const u32 half = 0x2E66u + i * 0x0100u; // 0.1 and up, distinct halves
+        u32& word = i < 8 ? push[i / 2] : push[4];
+        word |= (i & 1) != 0 ? half << 16 : half;
+    }
+    std::vector<u8> expected;
+    for (u32 i = 0; i < 9; ++i) {
+        const u32 half = 0x2E66u + i * 0x0100u;
+        const f32 mantissa = 1.0f + static_cast<f32>(half & 0x3ffu) / 1024.0f;
+        const f32 value = std::ldexp(mantissa, static_cast<int>((half >> 10) & 0x1fu) - 15);
+        expected.push_back(static_cast<u8>(std::lround(value * 255.0f)));
+    }
+
+    for (const rhi::Backend backend : {rhi::Backend::D3D12, rhi::Backend::Vulkan}) {
+        std::unique_ptr<rhi::IDevice> device = MakeDevice(backend);
+        if (!device) continue;
+        constexpr u32 kSize = 16;
+        std::unique_ptr<rhi::ISwapChain> target = device->CreateSwapChain(nullptr, kSize, kSize, 2);
+        rhi::PipelineDesc desc;
+        desc.hlsl_source = source.c_str();
+        desc.push_constant_size_bytes = sizeof(push);
+        const rhi::PipelineHandle pipeline = device->CreatePipeline(desc, *target);
+        AETHER_CHECK(pipeline.IsValid());
+        if (!pipeline.IsValid()) continue;
+        std::unique_ptr<rhi::ICommandList> cmd = device->CreateCommandList();
+        target->AcquireNextImage();
+        cmd->Reset();
+        cmd->BeginRenderPass(*target, {0, 0, 0, 1});
+        cmd->BindPipeline(pipeline);
+        cmd->SetPushConstants(push, sizeof(push));
+        cmd->Draw(3);
+        cmd->EndRenderPass();
+        cmd->Close();
+        device->WaitForFence(device->Submit(*cmd, target.get()));
+        std::vector<u8> pixels;
+        const bool read = target->ReadBack(pixels) && pixels.size() == kSize * kSize * 4;
+        target->Present(false);
+        device->DestroyPipeline(pipeline);
+        AETHER_CHECK(read);
+        if (!read) continue;
+        for (u32 i = 0; i < 9; ++i) {
+            const int red = pixels[(8 * kSize + i) * 4 + 0]; // the readback is RGBA or BGRA; red is the only non-zero colour channel
+            const int blue = pixels[(8 * kSize + i) * 4 + 2];
+            const int got = red > blue ? red : blue;
+            AETHER_CHECK(std::abs(got - static_cast<int>(expected[i])) <= 2);
+        }
+    }
+}

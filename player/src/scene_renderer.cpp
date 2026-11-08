@@ -206,7 +206,11 @@ float3 LinearToSRGB(float3 linear_color) {
 }
 
 float GetNormalCoefficient(uint index) {
-    uint packed = index < 8 ? g_PC.g_NormalPacked0[index / 2] : g_PC.g_NormalPacked1;
+    uint packed = g_PC.g_NormalPacked1;
+    if (index < 2) packed = g_PC.g_NormalPacked0.x;
+    else if (index < 4) packed = g_PC.g_NormalPacked0.y;
+    else if (index < 6) packed = g_PC.g_NormalPacked0.z;
+    else if (index < 8) packed = g_PC.g_NormalPacked0.w;
     uint half_value = (index & 1) != 0 ? packed >> 16 : packed & 0xffff;
     return f16tof32(half_value);
 }
