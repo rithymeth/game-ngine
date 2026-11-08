@@ -673,3 +673,46 @@ Binning on the CPU, one thread, best of 20:
 
 **Checked visually** on the lantern scene. Its one point light renders identically with and without clustering. A variant with
 60 coloured lights on the ground shows all 60 pools with no seams at tile edges; the old path shows only the nearest 8.
+
+## Temporal anti-aliasing, 8 November 2026
+
+Render roadmap step 6 (`player/src/taa_pass.h`).
+- **Jitter:** each frame the projection moves by a sub-pixel offset from the Halton(2, 3) sequence, 8 frames long
+  (`renderer/post.h`'s `TaaJitter` and `JitterProjection`).
+- **The resolve,** after the scene colour pass:
+  - it reprojects last frame's history with the camera's motion, from the nearest depth in the 3x3 neighbourhood;
+  - it reads the history with a 5-tap Catmull-Rom filter;
+  - it clips the history to this frame's 3x3 colour box (YCoCg, mean +- 1.25 sigma);
+  - it blends 10% of the new frame in, both sides weighted by 1 / (1 + luma).
+- **Downstream:** bloom and the tone mapper read the resolved image (`PostPass::SetSource`).
+- **Switching it off:** `AETHER_RENDER_TAA=0`.
+
+Measured with a throwaway harness:
+- **Method:** an offscreen D3D12 device records 20 repetitions in one command list, timed fence to fence. Each figure is the best
+  of 10 lists after 2 warm-ups. Three rounds were run, and the table gives their range.
+- **Hardware:** RTX 3050 Laptop GPU, RelWithDebInfo.
+- **The steps:** the scene colour pass, cleared; then the scene depth copied in it (`CopySceneDepth`); then that plus the resolve.
+
+| Resolution | Clear | + depth copy | + resolve | Depth copy | Resolve |
+| --- | --- | --- | --- | --- | --- |
+| 1280 x 720 | 0.011 - 0.013 ms | 0.035 - 0.044 ms | 0.167 - 0.196 ms | 0.024 - 0.031 ms | 0.13 - 0.15 ms |
+| 1920 x 1080 | 0.022 - 0.024 ms | 0.074 - 0.081 ms | 0.381 - 0.409 ms | 0.052 - 0.059 ms | 0.31 - 0.33 ms |
+| 2560 x 1440 | 0.031 - 0.034 ms | 0.124 - 0.126 ms | 0.687 - 0.699 ms | 0.090 - 0.093 ms | 0.56 - 0.58 ms |
+
+**What the numbers say.**
+- **The resolve costs about 0.15 ms per megapixel,** and the depth copy about 0.03 to 0.04 ms more. At 1080p, TAA as a whole is
+  about 0.37 ms. Most of the resolve's cost is the 18 texel loads of the 3x3 neighbourhood (colour and depth). Sharing them
+  through group-shared memory in a compute pass is the obvious saving if this ever matters.
+- **A frame with soft particles or decals already copies the depth.** TAA copies it again at the end of the pass, so that the
+  copy includes the mesh particles.
+- **On a static camera, a hard edge settles within the 25 frames the test runs (10% a frame).** The resolve test draws a white-to-black edge 30% of the way
+  across a pixel. Two of the 8 offsets sample white, and the luma weighting deliberately pulls a bright-on-dark edge darker
+  (perceptual, not linear, averaging). The pixel settles at about 33 / 255 where the frame without TAA gives 0 or 255.
+- **Checked visually** on the lantern scene: the handle's and cap's stair-steps are gone and the checker ground keeps its
+  sharpness.
+- **Not checked visually:** a moving camera, because the player's screenshot mode holds the camera still.
+
+**Limits.**
+- **Motion is the camera's only.** An object that moves on its own reprojects to where its pixels were, not where it was, so its
+  history is held only by the neighbourhood clip. That limits ghosting but does not remove it. Per-object motion vectors would
+  need a second render target in the scene pass, which the RHI does not have yet.

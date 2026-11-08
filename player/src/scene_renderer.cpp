@@ -17,6 +17,7 @@
 #include "post_pass.h"
 #include "shadow_pass.h"
 #include "sky_pass.h"
+#include "taa_pass.h"
 #include "package_textures.h"
 #include "aether/ui/draw.h"
 #include "aether/ui/font.h"
@@ -715,6 +716,7 @@ struct SceneRenderer::Impl {
     // pass tone maps into the back buffer; without one (hdr false) they draw straight into the back buffer as before.
     std::unique_ptr<PostPass> post;
     std::unique_ptr<ShadowPass> shadows; // where the device has frame constants and depth textures (D3D12)
+    std::unique_ptr<TaaPass> taa;         // temporal anti-aliasing, with the HDR target (AETHER_RENDER_TAA=0 turns it off)
     std::unique_ptr<SkyPass> sky;        // where the device has frame constants and half-float textures (D3D12)
     bool hdr = false;
     vfx::ParticleRenderData particle_data;
@@ -789,6 +791,11 @@ struct SceneRenderer::Impl {
         if (hdr_setting == nullptr || std::strcmp(hdr_setting, "0") != 0) {
             post = std::make_unique<PostPass>(device, swap_chain);
             hdr = post->Valid();
+        }
+        const char* taa_setting = std::getenv("AETHER_RENDER_TAA");
+        if (hdr && (taa_setting == nullptr || std::strcmp(taa_setting, "0") != 0)) {
+            taa = std::make_unique<TaaPass>(device, swap_chain);
+            if (!taa->Valid()) taa.reset();
         }
         PipelineDesc desc;
         desc.hlsl_source = SceneShaderSource(false, hdr);
@@ -1852,13 +1859,22 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
     vfx::ParticleCamera particle_camera;
     bool draw_particles = false;
     Mat4 decal_view_projection;
+    Mat4 taa_view_projection; // without the jitter
     Vec3 decal_camera_position;
     bool have_camera = false;
     if (camera) {
         const f32 aspect = static_cast<f32>(renderer.swap_chain.Width()) /
                            static_cast<f32>(std::max(renderer.swap_chain.Height(), 1u));
         const Mat4 camera_view = CameraView(world, guids, camera_entity);
-        const Mat4 projection = CameraProjection(LimitViewDistance(*camera, renderer.view_distance), aspect);
+        const Mat4 steady_projection = CameraProjection(LimitViewDistance(*camera, renderer.view_distance), aspect);
+        // Temporal anti-aliasing moves every draw by this frame's sub-pixel offset; its resolve reprojects without it.
+        Mat4 projection = steady_projection;
+        if (renderer.taa) {
+            f32 jitter_x = 0.0f, jitter_y = 0.0f;
+            renderer.taa->NextJitter(jitter_x, jitter_y);
+            projection = JitterProjection(steady_projection, jitter_x, jitter_y, renderer.swap_chain.Width(), renderer.swap_chain.Height());
+        }
+        taa_view_projection = steady_projection * camera_view;
         const Mat4 view_projection = projection * camera_view;
         particle_view_projection = view_projection;
         particle_projection = projection;
@@ -2205,8 +2221,17 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
     }
     if (renderer.hdr) {
         // The lit scene is in the HDR target: tone map it into the back buffer under the post volumes at the camera, then the HUD on top
-        // in display space.
+        // in display space. Temporal anti-aliasing first blends it with the frames before (reading the depth copied here).
+        const bool resolve = renderer.taa && have_camera && commands.CopySceneDepth();
         commands.EndRenderPass();
+        u32 resolved = 0;
+        if (resolve) {
+            resolved = renderer.taa->Resolve(commands, taa_view_projection,
+                                             (static_cast<u64>(camera_entity.index) << 32) | camera_entity.generation);
+        } else if (renderer.taa) {
+            renderer.taa->Reset();
+        }
+        renderer.post->SetSource(resolved);
         RenderScene volumes;
         volumes.post_volumes = ExtractPostVolumes(world, guids);
         const PostProcessSettings post_settings = BlendPostProcess(volumes, have_camera ? decal_camera_position : Vec3(0, 0, 0));

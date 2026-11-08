@@ -272,14 +272,14 @@ bool PostPass::EnsureBloomChain(u32 width, u32 height) {
 bool PostPass::RenderBloom(gfx::rhi::ICommandList& commands, const PostProcessSettings& settings) {
     bloom_ready_ = false;
     if (!Valid() || !bloom_down_.IsValid() || !bloom_up_.IsValid()) return false;
-    if (!(PackPostConstants(settings, scene_color_).bloom_intensity > 0.0f)) return false;
+    if (!(PackPostConstants(settings, Source()).bloom_intensity > 0.0f)) return false;
     const u32 width = swap_chain_.Width(), height = swap_chain_.Height();
     if (width == 0 || height == 0 || !EnsureBloomChain(width, height)) return false;
 
     const usize levels = bloom_levels_.size();
     for (usize i = 0; i < levels; ++i) {
         BloomConstants constants;
-        constants.source = i == 0 ? scene_color_ : bloom_levels_[i - 1].index;
+        constants.source = i == 0 ? Source() : bloom_levels_[i - 1].index;
         constants.karis = i == 0 ? 1u : 0u;
         const f32 source_width = static_cast<f32>(i == 0 ? width : bloom_extents_[i - 1].width);
         const f32 source_height = static_cast<f32>(i == 0 ? height : bloom_extents_[i - 1].height);
@@ -316,7 +316,7 @@ bool PostPass::RenderBloom(gfx::rhi::ICommandList& commands, const PostProcessSe
 
 void PostPass::Draw(gfx::rhi::ICommandList& commands, const PostProcessSettings& settings) {
     if (!Valid()) return;
-    PostConstants constants = PackPostConstants(settings, scene_color_);
+    PostConstants constants = PackPostConstants(settings, Source());
     if (bloom_ready_ && !bloom_levels_.empty()) {
         constants.bloom = bloom_levels_.front().index;
         constants.bloom_scale = 1.0f / static_cast<f32>(bloom_levels_.size());

@@ -71,6 +71,10 @@ public:
     PostPass& operator=(const PostPass&) = delete;
     bool Valid() const { return pipeline_.IsValid() && scene_color_ != 0; }
     u32 SceneColorIndex() const { return scene_color_; }
+    // The HDR image RenderBloom and Draw read: a bindless index of a texture the size of the scene colour target (the temporal
+    // anti-aliasing's resolve), or 0 for the scene colour target itself (the default).
+    void SetSource(u32 index) { source_ = index; }
+    u32 Source() const { return source_ != 0 ? source_ : scene_color_; }
     // Records the full-screen draw inside the current back-buffer render pass, after the scene colour pass has ended. Composites the
     // bloom chain when RenderBloom drew it since the last Draw.
     void Draw(gfx::rhi::ICommandList& commands, const PostProcessSettings& settings);
@@ -94,6 +98,7 @@ private:
     gfx::rhi::PipelineHandle bloom_down_;
     gfx::rhi::PipelineHandle bloom_up_;
     u32 scene_color_ = 0;
+    u32 source_ = 0; // SetSource's; 0: scene_color_
     std::vector<gfx::rhi::SampledTextureHandle> bloom_levels_;
     std::vector<Extent> bloom_extents_;
     u32 bloom_width_ = 0, bloom_height_ = 0; // the scene size the chain was made for
