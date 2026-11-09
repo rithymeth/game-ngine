@@ -1,3 +1,4 @@
+#include "../player/src/skin_workers.h"
 #include "aether/assets/skinning.h"
 #include "aether/job/job_system.h"
 #include "test_framework.h"
@@ -148,4 +149,33 @@ AETHER_TEST(Skinning_ParallelMatchesSerial) {
     SkinVerticesParallel(nullptr, m.bind.data(), fallback.data(), m.joints.data(), m.weights.data(), m.bind.size(),
                          m.skin, m.skin_normal);
     AETHER_CHECK(MaxDifference(serial, fallback) == 0.0f);
+}
+
+// The skinning is the same arithmetic per vertex whatever the split, so every worker count gives the bytes the serial loop does, on a vertex
+// count that does not divide into the chunks evenly.
+AETHER_TEST(Skinning_ParallelIsBitIdenticalAtEveryWorkerCount) {
+    Mesh m = MakeMesh(20011, 64);
+    std::vector<SkinVertex> serial(m.bind.size());
+    SkinVertices(m.bind.data(), serial.data(), m.joints.data(), m.weights.data(), m.bind.size(), m.skin, m.skin_normal);
+    for (const u32 workers : {1u, 2u, 3u, 5u, 7u, 15u}) {
+        JobSystem jobs{workers};
+        std::vector<SkinVertex> parallel(m.bind.size());
+        SkinVerticesParallel(&jobs, m.bind.data(), parallel.data(), m.joints.data(), m.weights.data(), m.bind.size(), m.skin, m.skin_normal, 1024);
+        AETHER_CHECK(MaxDifference(serial, parallel) == 0.0f);
+    }
+}
+
+// How many workers the player gives the skinner: scaled to the machine, bounded, overridable.
+AETHER_TEST(Skinning_WorkerCountScalesWithTheMachine) {
+    using player::SkinWorkerCount;
+    AETHER_CHECK(SkinWorkerCount(0) == 2);                                   // unknown: the old default
+    AETHER_CHECK(SkinWorkerCount(1) == 0 && SkinWorkerCount(2) == 0);        // too small to split across
+    AETHER_CHECK(SkinWorkerCount(3) == 1 && SkinWorkerCount(4) == 1);
+    AETHER_CHECK(SkinWorkerCount(6) == 2 && SkinWorkerCount(8) == 3 && SkinWorkerCount(12) == 5);
+    AETHER_CHECK(SkinWorkerCount(16) == 7);
+    AETHER_CHECK(SkinWorkerCount(32) == 7 && SkinWorkerCount(128) == 7);     // the speed-up flattens: capped
+    // The override: a number wins, including 0 (render thread alone) and a cap of 32; anything else is ignored.
+    AETHER_CHECK(SkinWorkerCount(16, "3") == 3 && SkinWorkerCount(16, "0") == 0 && SkinWorkerCount(2, "5") == 5);
+    AETHER_CHECK(SkinWorkerCount(16, "1000") == 32);
+    AETHER_CHECK(SkinWorkerCount(16, "") == 7 && SkinWorkerCount(16, "many") == 7 && SkinWorkerCount(16, "-2") == 7 && SkinWorkerCount(16, "4x") == 7);
 }
