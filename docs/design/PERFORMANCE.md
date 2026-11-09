@@ -1180,3 +1180,46 @@ only); without a radius a caster is drawn into every cascade.
   (here), not one under a low sun or one that fills the view. The TAA motion pass still redraws the character (2 to 3 ms), and there is still no mesh
   level of detail. A skinned caster's sphere is its bind pose grown by half: a pose that reaches farther could be culled from a cascade it only
   just touches (not seen in the tests; the animated character in the image test is covered).
+
+### The CPU's side of the heavy-character scene, and scaling the skinning workers, 9 November 2026
+
+With the cascade culling the heavy-character scene (one animated character of 192,562 vertices) is balanced between the CPU and the GPU: about 6 ms
+of CPU recording against 5.5 ms of GPU time at 720p. (The first guess, that it was CPU-bound three or four times over, was a misreading: the
+18 to 25 ms CPU frame times of the earlier tables were recording plus the wait for a slower GPU.) Measured with temporary timers around each phase of
+`SceneRenderer::Draw` (not committed), medians of frames 60 to 200, 720p:
+
+| Phase of the CPU's recording | D3D12 | Vulkan |
+| --- | --- | --- |
+| Skinning the character (2 workers plus the render thread, as shipped) | 3.7 to 4.0 ms | 4.1 ms |
+| Uploading the skinned vertices (about 9 MB) | 0.65 ms | 0.7 ms |
+| TAA: comparing and copying the previous pose | 0.8 ms | 0.9 ms |
+| Uploading the previous positions | 0.2 ms | 0.2 ms |
+| Everything else (pose evaluation, collecting casters, recording) | 0.5 ms | 0.4 ms |
+| **Recording, total** | **5.9 to 6.1 ms** | **6.2 to 6.4 ms** |
+
+Skinning is two thirds of it, and it scales with the cores it is given. On this machine (8 cores, 16 threads), D3D12 at 720p, skinning and recording
+against the number of worker threads (the render thread works too):
+
+| Workers | 2 (shipped) | 4 | 6 | 7 |
+| --- | --- | --- | --- | --- |
+| Skinning | 3.7 to 4.0 ms | 2.49 ms | 1.90 ms | 1.73 ms |
+| Recording | 5.9 to 6.1 ms | 4.55 ms | 3.97 ms | 3.79 ms |
+
+**Built:** the worker count now comes from the machine (`player/src/skin_workers.h`): half the logical threads less the render thread, between 1 and 7
+(7 on 16 threads, 3 on 8, 1 on 4), no workers on a machine with two threads or fewer, and `AETHER_SKIN_WORKERS` overrides (0 skins on the render
+thread alone). Measured with that default (7 workers here), skinning falls from 4.1 to 1.9 ms and recording from 6.2 to 4.1 ms on Vulkan at 720p, and
+from 5.9 to 4.1 ms on D3D12 (the other D3D12 rounds of the old setting ran while the GPU was also slower, 7 to 9 ms against 5.5, and read 7.1 to 8.3 ms
+of recording, so the quiet round is quoted). At 1080p the recording is 4.1 to 4.3 ms on both backends against 6.3 to 7.1 ms. The output is the same
+bytes whatever the split (a test skins 20,011 vertices at 1, 2, 3, 5, 7 and 15 workers and compares them with the serial loop).
+
+- **What it buys, and what it does not.** About 2 ms of recording a frame for this one character, and proportionally more with more characters, since
+  each big mesh now splits across more cores. In a loop that records the next frame while the GPU draws this one, that only shows in the frame time
+  when the CPU is the longer side: here the GPU (5.5 to 6.4 ms) is, so the gain is headroom (more characters before the CPU limits, less latency),
+  not a shorter frame at one character. The harness records, submits and waits each frame, so its totals are serial.
+- **Not measured:** other machines. The policy is extrapolated from this one; the speed-up flattens past 6 or 7 workers here (1.90 to 1.73 ms), which is
+  the cap, and a machine with fewer cores gets fewer workers rather than oversubscribing. A game that is already using every core for physics or
+  animation would see the skinning workers compete with them; `AETHER_SKIN_WORKERS` is there for that.
+- **Tried, no gain:** `memcmp` and `memcpy` for the TAA previous-pose loops (0.78 ms against 0.80). They are memory-bound (2.3 MB read and written a
+  frame) and were already vectorised. Removing them means not copying the pose at all, which GPU skinning would do.
+- **What is left on the CPU for this character:** 2.4 of the 4.1 ms are the per-frame vertex work that only GPU skinning removes (the upload, the
+  previous-pose handling), with the 1.9 ms skinning; that is the large item, justified by crowds, not by one character.

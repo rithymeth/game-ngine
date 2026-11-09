@@ -19,6 +19,7 @@
 #include "decal_pass.h"
 #include "post_pass.h"
 #include "shadow_pass.h"
+#include "skin_workers.h"
 #include "sky_pass.h"
 #include "taa_pass.h"
 #include "virtual_shadow.h"
@@ -40,6 +41,7 @@
 #include <cmath>
 #include <optional>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -963,8 +965,10 @@ struct SceneRenderer::Impl {
     bool clustered = true;
     LightClusters clusters;              // this frame's, reused
     std::vector<ClusterLight> cluster_lights;
-    // Skins big meshes in parallel (kParallelSkinVertices); made on first use by the rendering thread.
+    // Skins big meshes in parallel (kParallelSkinVertices); made on first use by the rendering thread. skin_workers (skin_workers.h) is how many
+    // worker threads it gets: scaled to the machine, AETHER_SKIN_WORKERS overrides, 0 skins on the rendering thread alone.
     std::unique_ptr<JobSystem> skin_jobs;
+    u32 skin_workers = SkinWorkerCount(std::thread::hardware_concurrency(), std::getenv("AETHER_SKIN_WORKERS"));
     bool legacy_hud = false; // the AETHER-01 HUD, drawn when the game has no UI of its own
     SampledTextureHandle white_texture;
     SampledTextureHandle font_texture_handle;
@@ -2447,8 +2451,8 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                                     std::vector<SceneVertex>& deformed = primitive.animated_vertices;
                                     // Meshes big enough to be worth splitting go over the job system (made on first use, on this
                                     // thread, which is the one that renders); small ones are cheaper to skin in place.
-                                    const bool split = deformed.size() >= kParallelSkinVertices;
-                                    if (split && !renderer.skin_jobs) renderer.skin_jobs = std::make_unique<JobSystem>(2);
+                                    const bool split = renderer.skin_workers > 0 && deformed.size() >= kParallelSkinVertices;
+                                    if (split && !renderer.skin_jobs) renderer.skin_jobs = std::make_unique<JobSystem>(renderer.skin_workers);
                                     assets::SkinVerticesParallel(
                                         split ? renderer.skin_jobs.get() : nullptr, primitive.bind_pose_vertices.data(),
                                         deformed.data(), source.joint_indices.data(), source.joint_weights.data(),
