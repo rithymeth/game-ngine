@@ -117,6 +117,9 @@ public:
     // Binds a buffer made by IDevice::CreateFrameConstantBuffer as the bound pipeline's frame read buffer (PipelineDesc::
     // frame_read_buffer). Call after BindPipeline; the binding holds until the next BindPipeline. A no-op on devices without support.
     virtual void BindFrameReadBuffer(BufferHandle /*buffer*/) {}
+    // Binds a top-level structure (IDevice::CreateTopLevelAS) as the bound pipeline's RaytracingAccelerationStructure (PipelineDesc::
+    // acceleration_structure). Call after BindPipeline; the binding holds until the next BindPipeline. A no-op on devices without support.
+    virtual void BindAccelerationStructure(AccelerationStructureHandle /*structure*/) {}
 
     // Inside a BeginRenderPass pass: copies the depth drawn so far into the swap chain's SceneDepthTexture (which must already exist) and
     // continues the same pass, colour and depth kept (Vulkan ends the render pass, copies and begins a loading one; D3D12 copies between

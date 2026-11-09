@@ -60,6 +60,12 @@ struct PipelineDesc {
     // keeps FXC for every existing pipeline.
     bool shader_model_6 = false;
 
+    // Reserves a slot for one top-level acceleration structure, bound with ICommandList::BindAccelerationStructure and declared in HLSL as
+    //   RaytracingAccelerationStructure g_Scene : register(t0, space4);
+    // for inline ray queries (RayQuery<> in the pixel shader). Needs shader_model_6 and SupportsRayTracing(); CreatePipeline throws
+    // std::invalid_argument otherwise. On Vulkan the structure is descriptor set 4. false (the default) means none.
+    bool acceleration_structure = false;
+
     // Depth test + write (LESS) against the swap chain's own per-image
     // depth buffer (see ISwapChain — both backends now always maintain one,
     // recreated alongside the color images on resize, regardless of whether
@@ -273,9 +279,23 @@ public:
     virtual bool SupportsReadback() const { return false; }
 
     // Whether the GPU can trace rays from a shader against an acceleration structure (inline ray queries: DXR tier 1.1 on D3D12, VK_KHR_ray_query
-    // plus VK_KHR_acceleration_structure on Vulkan). A probe only: the RHI has no acceleration-structure objects yet, and a device that says true
-    // has not had the Vulkan features enabled. Default false.
+    // plus VK_KHR_acceleration_structure on Vulkan) and the device is set up to. D3D12 needs nothing. Vulkan enables the extensions only when
+    // AETHER_VK_RAY_TRACING=1 is set as the device is made: merely enabling VK_KHR_acceleration_structure made the virtual shadow feedback test
+    // read zero depth intermittently on the NVIDIA driver tried (no ray tracing call made), so it stays off unless asked for. Default false.
     virtual bool SupportsRayTracing() const { return false; }
+
+    // Acceleration structures (SupportsRayTracing). Both build synchronously: the call records, submits and waits for its own build, so the
+    // result is ready on return (a spike-scale choice: no async builds, no refit yet). Static geometry; a moved mesh needs a new structure.
+    //  - CreateBottomLevelAS: the triangles of `vertices` (a CreateVertexBuffer buffer, `vertex_count` vertices `vertex_stride_bytes` apart,
+    //    float3 position at byte 0) indexed by `indices` (a CreateIndexBuffer buffer, `index_count` indices, a multiple of 3). Invalid handle
+    //    when the device has no ray tracing; throws std::invalid_argument for buffers that are not those, or counts that do not fit them.
+    //  - CreateTopLevelAS: places bottom-level structures (the instances' `blas` must be live; they must stay live while the top level is used).
+    //  Destroy with DestroyAccelerationStructure (false for a dead handle); the GPU finishing with it first is handled.
+    // A pipeline made with PipelineDesc::acceleration_structure sees the structure bound by ICommandList::BindAccelerationStructure.
+    virtual AccelerationStructureHandle CreateBottomLevelAS(BufferHandle /*vertices*/, u32 /*vertex_count*/, u32 /*vertex_stride_bytes*/,
+                                                            BufferHandle /*indices*/, u32 /*index_count*/) { return {}; }
+    virtual AccelerationStructureHandle CreateTopLevelAS(std::span<const AccelerationInstance> /*instances*/) { return {}; }
+    virtual bool DestroyAccelerationStructure(AccelerationStructureHandle /*handle*/) { return false; }
     virtual BufferHandle CreateReadbackBuffer(u64 /*size_bytes*/) { return {}; }
     // False (nothing read) for a buffer that is not a readback buffer, a dead handle or a range outside it. Only valid after the GPU has finished
     // the copy into it.

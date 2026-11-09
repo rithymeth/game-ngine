@@ -74,7 +74,14 @@ ShaderBytecode CompileWithDxc(const std::string& source, const char* entry_point
     std::wstring wprofile = Utf8ToWide(target_profile);
 
     std::vector<LPCWSTR> args = {L"-E", wentry.c_str(), L"-T", wprofile.c_str()};
-    if (spirv) args.push_back(L"-spirv");
+    if (spirv) {
+        args.push_back(L"-spirv");
+        // Shader model 6.5 is what inline ray queries need: allow the extension and target Vulkan 1.2 (SPIR-V 1.5).
+        if (std::string(target_profile).find("_6_5") != std::string::npos) {
+            args.push_back(L"-fspv-target-env=vulkan1.2");
+            args.push_back(L"-fspv-extension=SPV_KHR_ray_query");
+        }
+    }
 #if !defined(NDEBUG)
     args.push_back(L"-Od");
 #endif

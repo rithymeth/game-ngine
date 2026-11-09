@@ -32,6 +32,7 @@ struct PipelineRecord {
     ComPtr<ID3D12PipelineState> pso;
     u32 frame_constants_root_index = ~0u; // the root CBV for PipelineDesc::frame_constants_size_bytes, if any
     u32 frame_read_root_index = ~0u;      // the root SRV for PipelineDesc::frame_read_buffer, if any
+    u32 acceleration_root_index = ~0u;    // the root SRV for PipelineDesc::acceleration_structure, if any
     u32 push_constant_size_bytes = 0;
     bool enable_bindless_textures = false;
     u32 bindless_root_index = ~0u; // the texture table's root parameter (0 without push constants, else 1)
@@ -86,6 +87,16 @@ public:
     bool WriteBufferUnsynchronized(BufferHandle buffer, const void* data, u64 size_bytes, u64 offset = 0) override;
     bool SupportsReadback() const override { return true; }
     bool SupportsRayTracing() const override;
+    AccelerationStructureHandle CreateBottomLevelAS(BufferHandle vertices, u32 vertex_count, u32 vertex_stride_bytes, BufferHandle indices,
+                                                    u32 index_count) override;
+    AccelerationStructureHandle CreateTopLevelAS(std::span<const AccelerationInstance> instances) override;
+    bool DestroyAccelerationStructure(AccelerationStructureHandle handle) override;
+    bool IsAccelerationStructureAlive(AccelerationStructureHandle h) const {
+        return h.IsValid() && h.index < acceleration_structures_.size() && acceleration_structures_[h.index].resource != nullptr;
+    }
+    D3D12_GPU_VIRTUAL_ADDRESS AccelerationStructureAddress(AccelerationStructureHandle h) const {
+        return acceleration_structures_[h.index].resource->GetGPUVirtualAddress();
+    }
     BufferHandle CreateReadbackBuffer(u64 size_bytes) override;
     bool ReadReadbackBuffer(BufferHandle buffer, void* out, u64 size_bytes, u64 offset = 0) override;
     const gfx::Buffer& GetBuffer(BufferHandle handle) const { return *buffers_[handle.index]; }
@@ -207,6 +218,16 @@ private:
     std::vector<bool> buffer_vertex_flags_;
     std::vector<std::optional<IndexFormat>> index_buffer_formats_;
 
+    // Acceleration structures: a default-heap buffer in the acceleration-structure state, plus whether it is a top level.
+    struct AccelerationRecord {
+        ComPtr<ID3D12Resource> resource;
+        bool top_level = false;
+    };
+    std::vector<AccelerationRecord> acceleration_structures_;
+    std::vector<u32> free_acceleration_slots_;
+    // Records a build on a throwaway command list, submits it and waits (see IDevice::CreateBottomLevelAS).
+    AccelerationStructureHandle BuildAccelerationStructure(const D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS& inputs, bool top_level);
+
     // The device-global bindless texture table (see kMaxBindlessTextures):
     // built once here so a pipeline created with enable_bindless_textures
     // can reference a stable descriptor-table shape from the start, with
@@ -316,6 +337,7 @@ public:
 
     void BindVertexBuffer(BufferHandle buffer, u32 stride_bytes) override;
     void BindIndexBuffer(BufferHandle buffer, IndexFormat format) override;
+    void BindAccelerationStructure(AccelerationStructureHandle structure) override;
     void DrawIndexed(u32 index_count) override;
     void BindComputePipeline(ComputePipelineHandle pipeline) override;
     void BindComputeStorageBuffer(u32 slot, BufferHandle buffer) override;
@@ -355,6 +377,7 @@ private:
     ID3D12Resource* active_depth_texture_ = nullptr; // set by BeginDepthPass: EndRenderPass returns it from DEPTH_WRITE
     u32 frame_constants_root_index_ = ~0u;        // of the pipeline BindPipeline last bound
     u32 frame_read_root_index_ = ~0u;             // likewise
+    u32 acceleration_root_index_ = ~0u;           // likewise (PipelineDesc::acceleration_structure)
     u32 compute_storage_buffer_count_ = 0;
     u32 compute_sampled_texture_count_ = 0;
     u32 compute_constant_buffer_count_ = 0;

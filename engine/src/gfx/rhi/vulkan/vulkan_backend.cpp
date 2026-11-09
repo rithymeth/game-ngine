@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <optional>
@@ -429,7 +430,8 @@ bool ProbeRayTracing(VkPhysicalDevice physical_device) {
     return acceleration.accelerationStructure == VK_TRUE && ray_query.rayQuery == VK_TRUE && features_12.bufferDeviceAddress == VK_TRUE;
 }
 
-VkDevice CreateLogicalDevice(VkPhysicalDevice physical_device, const PhysicalDeviceChoice& choice, bool& update_after_bind) {
+VkDevice CreateLogicalDevice(VkPhysicalDevice physical_device, const PhysicalDeviceChoice& choice, bool& update_after_bind,
+                             bool& ray_tracing) {
     f32 priorities[2] = {1.0f, 1.0f};
     std::vector<VkDeviceQueueCreateInfo> queue_infos;
 
@@ -464,6 +466,24 @@ VkDevice CreateLogicalDevice(VkPhysicalDevice physical_device, const PhysicalDev
     features_12.descriptorBindingSampledImageUpdateAfterBind = update_after_bind ? VK_TRUE : VK_FALSE;
     features_12.descriptorBindingUpdateUnusedWhilePending = update_after_bind ? VK_TRUE : VK_FALSE;
     std::vector<const char*> extensions = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+    // Ray queries where the GPU has them: the acceleration-structure and ray-query features, with the buffer device addresses they build from.
+    // Opt-in (AETHER_VK_RAY_TRACING=1): on the NVIDIA driver tried, merely enabling VK_KHR_acceleration_structure made the virtual shadow
+    // feedback test read zero depth in a third to a half of its runs, with no ray tracing call ever made; nothing found in the depth copy's
+    // barriers explains it, so the extension is not enabled unless asked for.
+    const char* opt_in = std::getenv("AETHER_VK_RAY_TRACING");
+    ray_tracing = opt_in != nullptr && std::strcmp(opt_in, "1") == 0 && ProbeRayTracing(physical_device);
+    VkPhysicalDeviceAccelerationStructureFeaturesKHR acceleration_features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR};
+    VkPhysicalDeviceRayQueryFeaturesKHR ray_query_features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR};
+    if (ray_tracing) {
+        acceleration_features.accelerationStructure = VK_TRUE;
+        ray_query_features.rayQuery = VK_TRUE;
+        ray_query_features.pNext = &acceleration_features;
+        features_12.bufferDeviceAddress = VK_TRUE;
+        features_12.pNext = &ray_query_features;
+        extensions.push_back(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
+        extensions.push_back(VK_KHR_RAY_QUERY_EXTENSION_NAME);
+        extensions.push_back(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
+    }
     // A portability implementation (MoltenVK) must have its subset enabled.
     u32 ext_count = 0;
     vkEnumerateDeviceExtensionProperties(physical_device, nullptr, &ext_count, nullptr);
@@ -526,7 +546,7 @@ VulkanDevice::VulkanDevice(bool enable_debug_layer) {
         compute_queue_family_index_ = choice.compute_family;
 
         bool update_after_bind = false;
-        device_ = CreateLogicalDevice(physical_device_, choice, update_after_bind);
+        device_ = CreateLogicalDevice(physical_device_, choice, update_after_bind, ray_tracing_supported_);
         VkPhysicalDeviceVulkan12Properties properties_12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_PROPERTIES};
         VkPhysicalDeviceProperties2 properties_2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
         properties_2.pNext = &properties_12;
@@ -535,7 +555,6 @@ VulkanDevice::VulkanDevice(bool enable_debug_layer) {
                                       properties_12.maxPerStageDescriptorUpdateAfterBindSampledImages >= kMaxBindlessTextures &&
                                       properties_12.maxDescriptorSetUpdateAfterBindSampledImages >= kMaxBindlessTextures &&
                                       properties_12.maxPerStageUpdateAfterBindResources >= kMaxBindlessTextures + 8;
-        ray_tracing_supported_ = ProbeRayTracing(physical_device_);
         render_targets_supported_ =
             bindless_update_after_bind_ &&
             HasFormatFeatures(physical_device_, kRenderTextureFormat,
@@ -797,6 +816,13 @@ void VulkanDevice::Destroy() noexcept {
         }
         if (frame_read_pool_ != VK_NULL_HANDLE) vkDestroyDescriptorPool(device_, frame_read_pool_, nullptr);
         if (frame_read_set_layout_ != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(device_, frame_read_set_layout_, nullptr);
+        for (const AccelerationRecord& record : acceleration_structures_) {
+            if (record.handle != VK_NULL_HANDLE) DestroyAccelerationStructureNow(record);
+        }
+        acceleration_structures_.clear();
+        if (acceleration_pool_ != VK_NULL_HANDLE) vkDestroyDescriptorPool(device_, acceleration_pool_, nullptr);
+        if (acceleration_set_layout_ != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(device_, acceleration_set_layout_, nullptr);
+        if (empty_set_layout_ != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(device_, empty_set_layout_, nullptr);
         if (bindless_pool_ != VK_NULL_HANDLE) {
             vkDestroyDescriptorPool(device_, bindless_pool_, nullptr);
         }
@@ -1145,7 +1171,7 @@ private:
 BufferRecord CreateHostVisibleBuffer(VkDevice device, VkPhysicalDevice physical_device, VkDeviceSize size,
                                       VkBufferUsageFlags usage, const void* data, bool keep_mapped = false,
                                       u32 family_a = VK_QUEUE_FAMILY_IGNORED,
-                                      u32 family_b = VK_QUEUE_FAMILY_IGNORED, bool prefer_cached = false) {
+                                      u32 family_b = VK_QUEUE_FAMILY_IGNORED, bool prefer_cached = false, bool device_address = false) {
     if (size == 0 || size > std::numeric_limits<usize>::max()) {
         AETHER_LOG_ERROR("Vulkan", "Host-visible buffer size must be non-zero and fit the host address space");
         throw std::invalid_argument("Host-visible buffer size must fit the host address space");
@@ -1155,7 +1181,7 @@ BufferRecord CreateHostVisibleBuffer(VkDevice device, VkPhysicalDevice physical_
     result.size_bytes = size;
     VkBufferCreateInfo buffer_info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
     buffer_info.size = size;
-    buffer_info.usage = usage;
+    buffer_info.usage = usage | (device_address ? VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT : 0u);
     u32 queue_families[2] = {family_a, family_b};
     if (family_a != VK_QUEUE_FAMILY_IGNORED && family_b != VK_QUEUE_FAMILY_IGNORED && family_a != family_b) {
         buffer_info.sharingMode = VK_SHARING_MODE_CONCURRENT;
@@ -1169,6 +1195,9 @@ BufferRecord CreateHostVisibleBuffer(VkDevice device, VkPhysicalDevice physical_
     VkMemoryRequirements mem_reqs{};
     vkGetBufferMemoryRequirements(device, result.buffer, &mem_reqs);
     VkMemoryAllocateInfo alloc_info{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    VkMemoryAllocateFlagsInfo address_flags{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO};
+    address_flags.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
+    if (device_address) alloc_info.pNext = &address_flags;
     alloc_info.allocationSize = mem_reqs.size;
     // A buffer the CPU reads (a readback) wants cached memory, where reads are fast; uncached write-combined memory is for writing.
     constexpr VkMemoryPropertyFlags kCoherent = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
@@ -1223,8 +1252,9 @@ BufferHandle VulkanDevice::CreateBufferInternal(const void* data, u64 size_bytes
     ScopedBufferRecord owned_record(device_);
     owned_record.Get() = CreateHostVisibleBuffer(device_, physical_device_, size_bytes,
                                                   VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT |
-                                                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, // a frame read buffer is a storage buffer
-                                                  data, true);
+                                                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | // a frame read buffer is a storage buffer
+                                                      (ray_tracing_supported_ ? VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR : 0u),
+                                                  data, true, VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, false, ray_tracing_supported_);
     const u32 slot = AcquireBufferSlot(owned_record.Get());
     owned_record.Release();
     return BufferHandle{slot};
@@ -2065,6 +2095,241 @@ void VulkanDevice::CreateBindlessTextureInfrastructure() {
     VkDescriptorPoolCreateInfo read_pool_info = constants_pool_info;
     read_pool_info.pPoolSizes = &read_pool_size;
     AETHER_VK_CHECK(vkCreateDescriptorPool(device_, &read_pool_info, nullptr, &frame_read_pool_));
+    if (ray_tracing_supported_) CreateAccelerationResources();
+}
+
+void VulkanDevice::CreateAccelerationResources() {
+    create_acceleration_structure_ =
+        reinterpret_cast<PFN_vkCreateAccelerationStructureKHR>(vkGetDeviceProcAddr(device_, "vkCreateAccelerationStructureKHR"));
+    destroy_acceleration_structure_ =
+        reinterpret_cast<PFN_vkDestroyAccelerationStructureKHR>(vkGetDeviceProcAddr(device_, "vkDestroyAccelerationStructureKHR"));
+    get_acceleration_build_sizes_ =
+        reinterpret_cast<PFN_vkGetAccelerationStructureBuildSizesKHR>(vkGetDeviceProcAddr(device_, "vkGetAccelerationStructureBuildSizesKHR"));
+    cmd_build_acceleration_structures_ =
+        reinterpret_cast<PFN_vkCmdBuildAccelerationStructuresKHR>(vkGetDeviceProcAddr(device_, "vkCmdBuildAccelerationStructuresKHR"));
+    get_acceleration_address_ = reinterpret_cast<PFN_vkGetAccelerationStructureDeviceAddressKHR>(
+        vkGetDeviceProcAddr(device_, "vkGetAccelerationStructureDeviceAddressKHR"));
+    if (!create_acceleration_structure_ || !destroy_acceleration_structure_ || !get_acceleration_build_sizes_ ||
+        !cmd_build_acceleration_structures_ || !get_acceleration_address_) {
+        AETHER_LOG_WARN("Vulkan", "Ray tracing entry points are missing; ray tracing is off");
+        ray_tracing_supported_ = false;
+        return;
+    }
+    // Set 4: one top-level structure, read by the fragment stage (HLSL register(t0, space4)). An empty layout stands in for the set indices
+    // below it that an acceleration-structure pipeline does not use.
+    VkDescriptorSetLayoutBinding binding{};
+    binding.binding = 0;
+    binding.descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+    binding.descriptorCount = 1;
+    binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_VERTEX_BIT;
+    VkDescriptorSetLayoutCreateInfo layout_info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+    layout_info.bindingCount = 1;
+    layout_info.pBindings = &binding;
+    AETHER_VK_CHECK(vkCreateDescriptorSetLayout(device_, &layout_info, nullptr, &acceleration_set_layout_));
+    VkDescriptorSetLayoutCreateInfo empty_info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+    AETHER_VK_CHECK(vkCreateDescriptorSetLayout(device_, &empty_info, nullptr, &empty_set_layout_));
+    VkDescriptorPoolSize pool_size{VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, kMaxAccelerationStructures};
+    VkDescriptorPoolCreateInfo pool_info{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+    pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+    pool_info.maxSets = kMaxAccelerationStructures;
+    pool_info.poolSizeCount = 1;
+    pool_info.pPoolSizes = &pool_size;
+    AETHER_VK_CHECK(vkCreateDescriptorPool(device_, &pool_info, nullptr, &acceleration_pool_));
+}
+
+void VulkanDevice::DestroyAccelerationStructureNow(const AccelerationRecord& record) {
+    if (record.set != VK_NULL_HANDLE) vkFreeDescriptorSets(device_, acceleration_pool_, 1, &record.set);
+    if (record.handle != VK_NULL_HANDLE) destroy_acceleration_structure_(device_, record.handle, nullptr);
+    if (record.buffer != VK_NULL_HANDLE) vkDestroyBuffer(device_, record.buffer, nullptr);
+    if (record.memory != VK_NULL_HANDLE) vkFreeMemory(device_, record.memory, nullptr);
+}
+
+AccelerationStructureHandle VulkanDevice::BuildAccelerationStructure(VkAccelerationStructureTypeKHR type,
+                                                                     const VkAccelerationStructureGeometryKHR& geometry, u32 primitive_count) {
+    VkAccelerationStructureBuildGeometryInfoKHR build{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR};
+    build.type = type;
+    build.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+    build.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+    build.geometryCount = 1;
+    build.pGeometries = &geometry;
+    VkAccelerationStructureBuildSizesInfoKHR sizes{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR};
+    get_acceleration_build_sizes_(device_, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &build, &primitive_count, &sizes);
+
+    // Device-local buffers with addresses: the structure's storage, and the scratch space the build uses.
+    auto make_buffer = [&](VkDeviceSize size, VkBufferUsageFlags usage, VkBuffer& buffer, VkDeviceMemory& memory) {
+        VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+        info.size = size;
+        info.usage = usage | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+        info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        AETHER_VK_CHECK(vkCreateBuffer(device_, &info, nullptr, &buffer));
+        VkMemoryRequirements reqs{};
+        vkGetBufferMemoryRequirements(device_, buffer, &reqs);
+        VkMemoryAllocateFlagsInfo flags{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO};
+        flags.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
+        VkMemoryAllocateInfo alloc{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        alloc.pNext = &flags;
+        alloc.allocationSize = reqs.size;
+        alloc.memoryTypeIndex = FindMemoryType(physical_device_, reqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        AETHER_VK_CHECK(vkAllocateMemory(device_, &alloc, nullptr, &memory));
+        AETHER_VK_CHECK(vkBindBufferMemory(device_, buffer, memory, 0));
+    };
+    AccelerationRecord record;
+    VkBuffer scratch = VK_NULL_HANDLE;
+    VkDeviceMemory scratch_memory = VK_NULL_HANDLE;
+    VkCommandPool pool = VK_NULL_HANDLE;
+    auto cleanup_scratch = [&] {
+        if (pool != VK_NULL_HANDLE) vkDestroyCommandPool(device_, pool, nullptr);
+        if (scratch != VK_NULL_HANDLE) vkDestroyBuffer(device_, scratch, nullptr);
+        if (scratch_memory != VK_NULL_HANDLE) vkFreeMemory(device_, scratch_memory, nullptr);
+    };
+    try {
+        make_buffer(sizes.accelerationStructureSize, VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR, record.buffer, record.memory);
+        make_buffer(sizes.buildScratchSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, scratch, scratch_memory);
+        VkAccelerationStructureCreateInfoKHR create{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR};
+        create.buffer = record.buffer;
+        create.size = sizes.accelerationStructureSize;
+        create.type = type;
+        AETHER_VK_CHECK(create_acceleration_structure_(device_, &create, nullptr, &record.handle));
+        VkBufferDeviceAddressInfo scratch_info{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO};
+        scratch_info.buffer = scratch;
+        build.dstAccelerationStructure = record.handle;
+        build.scratchData.deviceAddress = vkGetBufferDeviceAddress(device_, &scratch_info);
+        VkAccelerationStructureBuildRangeInfoKHR range{};
+        range.primitiveCount = primitive_count;
+        const VkAccelerationStructureBuildRangeInfoKHR* ranges = &range;
+
+        VkCommandPoolCreateInfo pool_info{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+        pool_info.queueFamilyIndex = queue_family_index_;
+        pool_info.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+        AETHER_VK_CHECK(vkCreateCommandPool(device_, &pool_info, nullptr, &pool));
+        VkCommandBufferAllocateInfo cmd_info{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+        cmd_info.commandPool = pool;
+        cmd_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        cmd_info.commandBufferCount = 1;
+        VkCommandBuffer cmd = VK_NULL_HANDLE;
+        AETHER_VK_CHECK(vkAllocateCommandBuffers(device_, &cmd_info, &cmd));
+        VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+        begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        AETHER_VK_CHECK(vkBeginCommandBuffer(cmd, &begin));
+        cmd_build_acceleration_structures_(cmd, 1, &build, &ranges);
+        AETHER_VK_CHECK(vkEndCommandBuffer(cmd));
+        VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+        submit.commandBufferCount = 1;
+        submit.pCommandBuffers = &cmd;
+        {
+            std::lock_guard<std::mutex> lock(graphics_queue_mutex_);
+            AETHER_VK_CHECK(vkQueueSubmit(queue_, 1, &submit, VK_NULL_HANDLE));
+            AETHER_VK_CHECK(vkQueueWaitIdle(queue_));
+        }
+        VkAccelerationStructureDeviceAddressInfoKHR address_info{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR};
+        address_info.accelerationStructure = record.handle;
+        record.address = get_acceleration_address_(device_, &address_info);
+        record.top_level = type == VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
+        if (record.top_level) {
+            VkDescriptorSetAllocateInfo alloc{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+            alloc.descriptorPool = acceleration_pool_;
+            alloc.descriptorSetCount = 1;
+            alloc.pSetLayouts = &acceleration_set_layout_;
+            AETHER_VK_CHECK(vkAllocateDescriptorSets(device_, &alloc, &record.set));
+            VkWriteDescriptorSetAccelerationStructureKHR as_write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR};
+            as_write.accelerationStructureCount = 1;
+            as_write.pAccelerationStructures = &record.handle;
+            VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+            write.pNext = &as_write;
+            write.dstSet = record.set;
+            write.dstBinding = 0;
+            write.descriptorCount = 1;
+            write.descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+            vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+        }
+    } catch (...) {
+        cleanup_scratch();
+        DestroyAccelerationStructureNow(record);
+        throw;
+    }
+    cleanup_scratch();
+    u32 slot;
+    if (!free_acceleration_slots_.empty()) {
+        slot = free_acceleration_slots_.back();
+        free_acceleration_slots_.pop_back();
+        acceleration_structures_[slot] = record;
+    } else {
+        slot = static_cast<u32>(acceleration_structures_.size());
+        acceleration_structures_.push_back(record);
+    }
+    return AccelerationStructureHandle{slot};
+}
+
+AccelerationStructureHandle VulkanDevice::CreateBottomLevelAS(BufferHandle vertices, u32 vertex_count, u32 vertex_stride_bytes,
+                                                              BufferHandle indices, u32 index_count) {
+    if (!ray_tracing_supported_) return {};
+    if (!IsBufferAlive(vertices) || !buffers_[vertices.index].is_vertex || !IsBufferAlive(indices) || !buffers_[indices.index].is_index ||
+        vertex_count == 0 || vertex_stride_bytes < 12 || index_count == 0 || index_count % 3 != 0) {
+        throw std::invalid_argument("CreateBottomLevelAS needs a vertex buffer, an index buffer and whole triangles");
+    }
+    const BufferRecord& vertex_buffer = buffers_[vertices.index];
+    const BufferRecord& index_buffer = buffers_[indices.index];
+    const u32 index_size = index_buffer.index_format == IndexFormat::UInt16 ? 2u : 4u;
+    if (static_cast<u64>(vertex_count) * vertex_stride_bytes > vertex_buffer.size_bytes ||
+        static_cast<u64>(index_count) * index_size > index_buffer.size_bytes) {
+        throw std::invalid_argument("CreateBottomLevelAS counts run past the end of their buffers");
+    }
+    VkBufferDeviceAddressInfo vertex_info{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO};
+    vertex_info.buffer = vertex_buffer.buffer;
+    VkBufferDeviceAddressInfo index_info{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO};
+    index_info.buffer = index_buffer.buffer;
+    VkAccelerationStructureGeometryKHR geometry{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR};
+    geometry.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+    geometry.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
+    geometry.geometry.triangles.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
+    geometry.geometry.triangles.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
+    geometry.geometry.triangles.vertexData.deviceAddress = vkGetBufferDeviceAddress(device_, &vertex_info);
+    geometry.geometry.triangles.vertexStride = vertex_stride_bytes;
+    geometry.geometry.triangles.maxVertex = vertex_count - 1;
+    geometry.geometry.triangles.indexType = index_buffer.index_format == IndexFormat::UInt16 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32;
+    geometry.geometry.triangles.indexData.deviceAddress = vkGetBufferDeviceAddress(device_, &index_info);
+    return BuildAccelerationStructure(VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR, geometry, index_count / 3);
+}
+
+AccelerationStructureHandle VulkanDevice::CreateTopLevelAS(std::span<const AccelerationInstance> instances) {
+    if (!ray_tracing_supported_) return {};
+    if (instances.empty()) throw std::invalid_argument("CreateTopLevelAS needs at least one instance");
+    if (acceleration_pool_ == VK_NULL_HANDLE) return {};
+    std::vector<VkAccelerationStructureInstanceKHR> native(instances.size());
+    for (usize i = 0; i < instances.size(); ++i) {
+        if (!IsAccelerationStructureAlive(instances[i].blas) || acceleration_structures_[instances[i].blas.index].top_level) {
+            throw std::invalid_argument("CreateTopLevelAS instances must name live bottom-level structures");
+        }
+        VkAccelerationStructureInstanceKHR& out = native[i];
+        std::memcpy(out.transform.matrix, instances[i].transform, sizeof(out.transform.matrix));
+        out.instanceCustomIndex = instances[i].instance_id & 0xFFFFFFu;
+        out.mask = 0xFF;
+        out.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
+        out.accelerationStructureReference = acceleration_structures_[instances[i].blas.index].address;
+    }
+    ScopedBufferRecord instance_buffer(device_);
+    instance_buffer.Get() = CreateHostVisibleBuffer(device_, physical_device_, native.size() * sizeof(native[0]),
+                                                    VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR, native.data(), false,
+                                                    VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, false, true);
+    VkBufferDeviceAddressInfo address_info{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO};
+    address_info.buffer = instance_buffer.Get().buffer;
+    VkAccelerationStructureGeometryKHR geometry{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR};
+    geometry.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
+    geometry.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
+    geometry.geometry.instances.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
+    geometry.geometry.instances.arrayOfPointers = VK_FALSE;
+    geometry.geometry.instances.data.deviceAddress = vkGetBufferDeviceAddress(device_, &address_info);
+    return BuildAccelerationStructure(VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR, geometry, static_cast<u32>(instances.size()));
+}
+
+bool VulkanDevice::DestroyAccelerationStructure(AccelerationStructureHandle handle) {
+    if (!IsAccelerationStructureAlive(handle)) return false;
+    const AccelerationRecord record = acceleration_structures_[handle.index];
+    acceleration_structures_[handle.index] = {};
+    free_acceleration_slots_.push_back(handle.index);
+    Retire([this, record] { DestroyAccelerationStructureNow(record); });
+    DrainRetired();
+    return true;
 }
 
 ComputePipelineHandle VulkanDevice::CreateComputePipeline(const ComputePipelineDesc& desc) {
@@ -2202,6 +2467,7 @@ PipelineHandle VulkanDevice::CreatePipeline(const PipelineDesc& desc, ISwapChain
     record.target = target;
     record.enable_bindless_textures = desc.enable_bindless_textures;
     record.frame_read_buffer = desc.frame_read_buffer;
+    record.acceleration_structure = desc.acceleration_structure;
     record.use_vertex_buffer = desc.use_vertex_buffer;
     record.vertex_stride_bytes = desc.vertex_layout == VertexLayout::PositionNormalUvTangent
                                      ? 48u
@@ -2222,10 +2488,27 @@ PipelineHandle VulkanDevice::CreatePipeline(const PipelineDesc& desc, ISwapChain
     // spaces). Set 3: the frame read buffer (which needs all three).
     VkDescriptorSetLayout bindless_set_layouts[4] = {bindless_texture_set_layout_, bindless_sampler_set_layout_, frame_constants_set_layout_,
                                                      frame_read_set_layout_};
+    VkDescriptorSetLayout acceleration_layouts_storage[5] = {};
     if (desc.frame_read_buffer && desc.frame_constants_size_bytes == 0) {
         throw std::invalid_argument("PipelineDesc::frame_read_buffer needs frame constants");
     }
-    if (desc.frame_constants_size_bytes > 0) {
+    if (desc.acceleration_structure) {
+        if (!desc.shader_model_6 || !ray_tracing_supported_) {
+            throw std::invalid_argument("PipelineDesc::acceleration_structure needs shader_model_6 and a device with ray tracing");
+        }
+        // Set 4 is the structure; the sets below it that the pipeline does not use are empty layouts, so the indices match the HLSL spaces.
+        bindless_set_layouts[0] = desc.enable_bindless_textures ? bindless_texture_set_layout_ : empty_set_layout_;
+        bindless_set_layouts[1] = desc.enable_bindless_textures ? bindless_sampler_set_layout_ : empty_set_layout_;
+        bindless_set_layouts[2] = desc.frame_constants_size_bytes > 0 ? frame_constants_set_layout_ : empty_set_layout_;
+        bindless_set_layouts[3] = desc.frame_read_buffer ? frame_read_set_layout_ : empty_set_layout_;
+        acceleration_layouts_storage[0] = bindless_set_layouts[0];
+        acceleration_layouts_storage[1] = bindless_set_layouts[1];
+        acceleration_layouts_storage[2] = bindless_set_layouts[2];
+        acceleration_layouts_storage[3] = bindless_set_layouts[3];
+        acceleration_layouts_storage[4] = acceleration_set_layout_;
+        layout_info.setLayoutCount = 5;
+        layout_info.pSetLayouts = acceleration_layouts_storage;
+    } else if (desc.frame_constants_size_bytes > 0) {
         AETHER_ASSERT(desc.enable_bindless_textures);
         AETHER_ASSERT(desc.frame_constants_size_bytes % 16 == 0);
         layout_info.setLayoutCount = desc.frame_read_buffer ? 4u : 3u;
@@ -2237,13 +2520,14 @@ PipelineHandle VulkanDevice::CreatePipeline(const PipelineDesc& desc, ISwapChain
     AETHER_VK_CHECK(vkCreatePipelineLayout(device_, &layout_info, nullptr, &record.layout));
 
     gfx::ShaderBytecode vs_spirv =
-        gfx::CompileHLSLToSPIRV(desc.hlsl_source, desc.vs_entry.c_str(), "vs_6_0", "rhi_pipeline_vs");
+        gfx::CompileHLSLToSPIRV(desc.hlsl_source, desc.vs_entry.c_str(), desc.shader_model_6 ? "vs_6_5" : "vs_6_0", "rhi_pipeline_vs");
     // A depth-only pipeline may have no pixel shader (PipelineDesc::depth_target with an empty ps_entry).
     const bool has_pixel_shader = !(target == PassTarget::Depth && desc.ps_entry.empty());
     ScopedShaderModule owned_vs_module(device_, vs_spirv);
     std::optional<ScopedShaderModule> owned_ps_module;
     if (has_pixel_shader) {
-        owned_ps_module.emplace(device_, gfx::CompileHLSLToSPIRV(desc.hlsl_source, desc.ps_entry.c_str(), "ps_6_0", "rhi_pipeline_ps"));
+        owned_ps_module.emplace(device_, gfx::CompileHLSLToSPIRV(desc.hlsl_source, desc.ps_entry.c_str(),
+                                                                 desc.shader_model_6 ? "ps_6_5" : "ps_6_0", "rhi_pipeline_ps"));
     }
 
     VkPipelineShaderStageCreateInfo stages[2]{};
@@ -3924,6 +4208,7 @@ void VulkanCommandList::BindPipeline(PipelineHandle pipeline) {
     graphics_push_constant_size_bytes_ = record.push_constant_size_bytes;
     graphics_bindless_enabled_ = record.enable_bindless_textures;
     graphics_frame_read_buffer_ = record.frame_read_buffer;
+    graphics_acceleration_structure_ = record.acceleration_structure;
     graphics_bindless_bound_ = false;
     graphics_uses_vertex_buffer_ = record.use_vertex_buffer;
     graphics_vertex_stride_bytes_ = record.vertex_stride_bytes;
@@ -4034,6 +4319,18 @@ void VulkanCommandList::BindFrameReadBuffer(BufferHandle buffer) {
     }
     const VkDescriptorSet set = device_.GetBuffer(buffer).read_set;
     vkCmdBindDescriptorSets(command_buffer_, VK_PIPELINE_BIND_POINT_GRAPHICS, bound_pipeline_layout_, 3, 1, &set, 0, nullptr);
+}
+void VulkanCommandList::BindAccelerationStructure(AccelerationStructureHandle structure) {
+    const VkDescriptorSet set = device_.AccelerationSet(structure);
+    if (set == VK_NULL_HANDLE) {
+        AETHER_LOG_ERROR("Vulkan", "BindAccelerationStructure needs a live top-level structure");
+        return;
+    }
+    if (!graphics_pipeline_bound_ || !graphics_acceleration_structure_) {
+        AETHER_LOG_ERROR("Vulkan", "BindAccelerationStructure needs a bound pipeline made with PipelineDesc::acceleration_structure");
+        return;
+    }
+    vkCmdBindDescriptorSets(command_buffer_, VK_PIPELINE_BIND_POINT_GRAPHICS, bound_pipeline_layout_, 4, 1, &set, 0, nullptr);
 }
 void VulkanCommandList::BindComputePipeline(ComputePipelineHandle pipeline) {
     if (!recording_) {

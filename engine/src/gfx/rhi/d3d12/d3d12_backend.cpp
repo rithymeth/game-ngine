@@ -441,6 +441,20 @@ PipelineHandle D3D12Device::CreatePipeline(const PipelineDesc& desc, ISwapChain&
         params.push_back(param);
     }
 
+    // The acceleration structure: a root SRV at t0, space4 (the GPU address of a top-level structure is a valid root SRV).
+    u32 acceleration_root_index = ~0u;
+    if (desc.acceleration_structure) {
+        if (!desc.shader_model_6 || !SupportsRayTracing()) {
+            throw std::invalid_argument("PipelineDesc::acceleration_structure needs shader_model_6 and a device with ray tracing");
+        }
+        D3D12_ROOT_PARAMETER param{};
+        param.ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+        param.Descriptor = {/*ShaderRegister=*/0, /*RegisterSpace=*/4};
+        param.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+        acceleration_root_index = static_cast<u32>(params.size());
+        params.push_back(param);
+    }
+
     D3D12_STATIC_SAMPLER_DESC sampler{};
     sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
     sampler.AddressU = sampler.AddressV = sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
@@ -476,6 +490,7 @@ PipelineHandle D3D12Device::CreatePipeline(const PipelineDesc& desc, ISwapChain&
     PipelineRecord record;
     record.frame_constants_root_index = frame_constants_root_index;
     record.frame_read_root_index = frame_read_root_index;
+    record.acceleration_root_index = acceleration_root_index;
     record.bindless_root_index = bindless_root_index;
     record.push_constant_size_bytes = desc.push_constant_size_bytes;
     record.enable_bindless_textures = desc.enable_bindless_textures;
@@ -774,6 +789,129 @@ bool D3D12Device::SupportsRayTracing() const {
     ID3D12Device* device = device_.Handle();
     return device && SUCCEEDED(device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS5, &options, sizeof(options))) &&
            options.RaytracingTier >= D3D12_RAYTRACING_TIER_1_1;
+}
+
+AccelerationStructureHandle D3D12Device::BuildAccelerationStructure(const D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS& inputs,
+                                                                    bool top_level) {
+    ID3D12Device* native = device_.Handle();
+    ComPtr<ID3D12Device5> device5;
+    AETHER_D3D_CHECK(native->QueryInterface(IID_PPV_ARGS(&device5)));
+    D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO prebuild{};
+    device5->GetRaytracingAccelerationStructurePrebuildInfo(&inputs, &prebuild);
+    if (prebuild.ResultDataMaxSizeInBytes == 0) throw std::invalid_argument("The acceleration structure has no geometry to build");
+
+    auto make_buffer = [&](u64 size, D3D12_RESOURCE_STATES state) {
+        D3D12_HEAP_PROPERTIES heap{};
+        heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+        D3D12_RESOURCE_DESC buffer{};
+        buffer.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+        buffer.Width = size;
+        buffer.Height = buffer.DepthOrArraySize = buffer.MipLevels = 1;
+        buffer.SampleDesc.Count = 1;
+        buffer.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        buffer.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+        ComPtr<ID3D12Resource> resource;
+        AETHER_D3D_CHECK(native->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &buffer, state, nullptr, IID_PPV_ARGS(&resource)));
+        return resource;
+    };
+    ComPtr<ID3D12Resource> result = make_buffer(prebuild.ResultDataMaxSizeInBytes, D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE);
+    ComPtr<ID3D12Resource> scratch = make_buffer(prebuild.ScratchDataSizeInBytes, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+
+    ComPtr<ID3D12CommandAllocator> allocator;
+    AETHER_D3D_CHECK(native->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&allocator)));
+    ComPtr<ID3D12GraphicsCommandList> list;
+    AETHER_D3D_CHECK(native->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocator.Get(), nullptr, IID_PPV_ARGS(&list)));
+    ComPtr<ID3D12GraphicsCommandList4> list4;
+    AETHER_D3D_CHECK(list.As(&list4));
+    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC build{};
+    build.Inputs = inputs;
+    build.DestAccelerationStructureData = result->GetGPUVirtualAddress();
+    build.ScratchAccelerationStructureData = scratch->GetGPUVirtualAddress();
+    list4->BuildRaytracingAccelerationStructure(&build, 0, nullptr);
+    AETHER_D3D_CHECK(list4->Close());
+    ID3D12CommandList* lists[] = {list4.Get()};
+    device_.WaitForFence(device_.Submit(lists, 1)); // the scratch buffer and allocator are released after the wait
+
+    AccelerationRecord record;
+    record.resource = std::move(result);
+    record.top_level = top_level;
+    u32 slot;
+    if (!free_acceleration_slots_.empty()) {
+        slot = free_acceleration_slots_.back();
+        free_acceleration_slots_.pop_back();
+        acceleration_structures_[slot] = std::move(record);
+    } else {
+        slot = static_cast<u32>(acceleration_structures_.size());
+        acceleration_structures_.push_back(std::move(record));
+    }
+    return AccelerationStructureHandle{slot};
+}
+
+AccelerationStructureHandle D3D12Device::CreateBottomLevelAS(BufferHandle vertices, u32 vertex_count, u32 vertex_stride_bytes,
+                                                             BufferHandle indices, u32 index_count) {
+    if (!SupportsRayTracing()) return {};
+    if (!IsBufferAlive(vertices) || !IsVertexBuffer(vertices) || !IsBufferAlive(indices) || !index_buffer_formats_[indices.index].has_value() ||
+        vertex_count == 0 || vertex_stride_bytes < 12 || index_count == 0 || index_count % 3 != 0) {
+        throw std::invalid_argument("CreateBottomLevelAS needs a vertex buffer, an index buffer and whole triangles");
+    }
+    const IndexFormat format = *index_buffer_formats_[indices.index];
+    const u32 index_size = format == IndexFormat::UInt16 ? 2u : 4u;
+    if (static_cast<u64>(vertex_count) * vertex_stride_bytes > GetBuffer(vertices).Size() ||
+        static_cast<u64>(index_count) * index_size > GetBuffer(indices).Size()) {
+        throw std::invalid_argument("CreateBottomLevelAS counts run past the end of their buffers");
+    }
+    D3D12_RAYTRACING_GEOMETRY_DESC geometry{};
+    geometry.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES;
+    geometry.Flags = D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE;
+    geometry.Triangles.VertexBuffer.StartAddress = GetBuffer(vertices).GPUAddress();
+    geometry.Triangles.VertexBuffer.StrideInBytes = vertex_stride_bytes;
+    geometry.Triangles.VertexFormat = DXGI_FORMAT_R32G32B32_FLOAT;
+    geometry.Triangles.VertexCount = vertex_count;
+    geometry.Triangles.IndexBuffer = GetBuffer(indices).GPUAddress();
+    geometry.Triangles.IndexFormat = format == IndexFormat::UInt16 ? DXGI_FORMAT_R16_UINT : DXGI_FORMAT_R32_UINT;
+    geometry.Triangles.IndexCount = index_count;
+    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS inputs{};
+    inputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL;
+    inputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_TRACE;
+    inputs.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
+    inputs.NumDescs = 1;
+    inputs.pGeometryDescs = &geometry;
+    return BuildAccelerationStructure(inputs, false);
+}
+
+AccelerationStructureHandle D3D12Device::CreateTopLevelAS(std::span<const AccelerationInstance> instances) {
+    if (!SupportsRayTracing()) return {};
+    if (instances.empty()) throw std::invalid_argument("CreateTopLevelAS needs at least one instance");
+    std::vector<D3D12_RAYTRACING_INSTANCE_DESC> descs(instances.size());
+    for (usize i = 0; i < instances.size(); ++i) {
+        if (!IsAccelerationStructureAlive(instances[i].blas) || acceleration_structures_[instances[i].blas.index].top_level) {
+            throw std::invalid_argument("CreateTopLevelAS instances must name live bottom-level structures");
+        }
+        D3D12_RAYTRACING_INSTANCE_DESC& desc = descs[i];
+        std::memcpy(desc.Transform, instances[i].transform, sizeof(desc.Transform));
+        desc.InstanceID = instances[i].instance_id & 0xFFFFFFu;
+        desc.InstanceMask = 0xFF;
+        desc.AccelerationStructure = AccelerationStructureAddress(instances[i].blas);
+    }
+    gfx::Buffer instance_buffer(device_, descs.size() * sizeof(descs[0]), gfx::BufferKind::Upload);
+    instance_buffer.Update(descs.data(), descs.size() * sizeof(descs[0]));
+    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS inputs{};
+    inputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL;
+    inputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_TRACE;
+    inputs.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
+    inputs.NumDescs = static_cast<UINT>(descs.size());
+    inputs.InstanceDescs = instance_buffer.GPUAddress();
+    return BuildAccelerationStructure(inputs, true); // waits for the build, so the instance buffer may go out of scope
+}
+
+bool D3D12Device::DestroyAccelerationStructure(AccelerationStructureHandle handle) {
+    if (!IsAccelerationStructureAlive(handle)) return false;
+    std::shared_ptr<ID3D12Resource> keep(acceleration_structures_[handle.index].resource.Detach(), [](ID3D12Resource* r) { r->Release(); });
+    acceleration_structures_[handle.index] = {};
+    free_acceleration_slots_.push_back(handle.index);
+    Retire([keep]() mutable { keep.reset(); });
+    DrainRetired();
+    return true;
 }
 
 bool D3D12Device::WriteBufferUnsynchronized(BufferHandle buffer, const void* data, u64 size_bytes, u64 offset) {
@@ -1947,6 +2085,7 @@ void D3D12CommandList::BindPipeline(PipelineHandle pipeline) {
     cmd_.Get()->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     frame_constants_root_index_ = record.frame_constants_root_index;
     frame_read_root_index_ = record.frame_read_root_index;
+    acceleration_root_index_ = record.acceleration_root_index;
     graphics_pipeline_bound_ = true;
     graphics_push_constant_size_bytes_ = record.push_constant_size_bytes;
     graphics_bindless_enabled_ = record.enable_bindless_textures;
@@ -2063,6 +2202,13 @@ void D3D12CommandList::BindFrameReadBuffer(BufferHandle buffer) {
         return;
     }
     cmd_.Get()->SetGraphicsRootShaderResourceView(frame_read_root_index_, device_.GetBuffer(buffer).GPUAddress());
+}
+void D3D12CommandList::BindAccelerationStructure(AccelerationStructureHandle structure) {
+    if (acceleration_root_index_ == ~0u || !device_.IsAccelerationStructureAlive(structure)) {
+        AETHER_LOG_ERROR("D3D12", "BindAccelerationStructure needs a pipeline made with acceleration_structure and a live structure");
+        return;
+    }
+    cmd_.Get()->SetGraphicsRootShaderResourceView(acceleration_root_index_, device_.AccelerationStructureAddress(structure));
 }
 void D3D12CommandList::BindComputePipeline(ComputePipelineHandle pipeline) {
     if (!recording_) {

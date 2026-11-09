@@ -6,6 +6,7 @@
 #include "test_framework.h"
 
 #include <cstdio>
+#include <cstdlib>
 #include <memory>
 #include <stdexcept>
 #include <vector>
@@ -13,16 +14,36 @@
 using namespace aether;
 namespace rhi = aether::gfx::rhi;
 
-// IDevice::SupportsRayTracing is a probe: it must answer without throwing, and say the same thing every time. What the answer is depends on
-// the GPU, so the test reports it rather than demanding it.
-
-static void RayTracingProbe_AnswersConsistently(rhi::Backend backend, const char* name) {
-    if (!rhi::IsBackendAvailable(backend)) return;
+namespace {
+// Vulkan enables its ray tracing features only when AETHER_VK_RAY_TRACING=1 is set as the device is made (see vulkan_backend.cpp); the variable
+// is cleared again at once so that no other test's device gets them.
+std::unique_ptr<rhi::IDevice> MakeRayTracingDevice(rhi::Backend backend) {
+    const bool vulkan = backend == rhi::Backend::Vulkan;
+#if defined(_WIN32)
+    if (vulkan) _putenv_s("AETHER_VK_RAY_TRACING", "1");
+#else
+    if (vulkan) setenv("AETHER_VK_RAY_TRACING", "1", 1);
+#endif
     std::unique_ptr<rhi::IDevice> device;
     try {
         device = rhi::CreateDevice(backend, false);
     } catch (const std::exception&) {
     }
+#if defined(_WIN32)
+    if (vulkan) _putenv_s("AETHER_VK_RAY_TRACING", "");
+#else
+    if (vulkan) unsetenv("AETHER_VK_RAY_TRACING");
+#endif
+    return device;
+}
+} // namespace
+
+// IDevice::SupportsRayTracing is a probe: it must answer without throwing, and say the same thing every time. What the answer is depends on
+// the GPU, so the test reports it rather than demanding it.
+
+static void RayTracingProbe_AnswersConsistently(rhi::Backend backend, const char* name) {
+    if (!rhi::IsBackendAvailable(backend)) return;
+    std::unique_ptr<rhi::IDevice> device = MakeRayTracingDevice(backend);
     if (!device) return;
     const bool first = device->SupportsRayTracing();
     AETHER_CHECK(device->SupportsRayTracing() == first);
@@ -129,3 +150,131 @@ float4 PSMain(float4 position : SV_Position) : SV_Target {
     AETHER_CHECK(threw);
 }
 #endif
+
+// Acceleration structures end to end: a quad covers the left half of the unit square in the plane z = 1; the pixel shader fires one ray per
+// pixel along +z and paints the pixel red when the ray query hits. A bottom level, a top level placing it, a pipeline that sees the top level,
+// the same picture on both backends; then the instance moved by half the square to show the transform is honoured.
+static void AccelerationStructure_RaysHitTheQuad(rhi::Backend backend) {
+    if (!rhi::IsBackendAvailable(backend)) return;
+    std::unique_ptr<rhi::IDevice> device = MakeRayTracingDevice(backend);
+    if (!device || !device->SupportsRayTracing()) return;
+    constexpr char kRayShader[] = R"(
+RaytracingAccelerationStructure g_Scene : register(t0, space4);
+float4 VSMain(uint id : SV_VertexID) : SV_Position {
+    float2 uv = float2((id << 1) & 2, id & 2);
+    return float4(uv * float2(2.0, -2.0) + float2(-1.0, 1.0), 0.0, 1.0);
+}
+float4 PSMain(float4 position : SV_Position) : SV_Target {
+    RayDesc ray;
+    ray.Origin = float3(position.x / 8.0, position.y / 8.0, 0.0);
+    ray.Direction = float3(0.0, 0.0, 1.0);
+    ray.TMin = 0.001;
+    ray.TMax = 10.0;
+    RayQuery<RAY_FLAG_NONE> query;
+    query.TraceRayInline(g_Scene, RAY_FLAG_NONE, 0xFF, ray);
+    query.Proceed();
+    return query.CommittedStatus() == COMMITTED_TRIANGLE_HIT ? float4(1, 0, 0, 1) : float4(0, 0, 0, 1);
+}
+)";
+    std::unique_ptr<rhi::ISwapChain> swap = device->CreateSwapChain(nullptr, 16, 16, 2);
+    // Four vertices of position + uv (20 bytes each) and two triangles.
+    const f32 vertices[] = {0.0f, 0.0f, 1.0f, 0, 0, 0.5f, 0.0f, 1.0f, 0, 0, 0.5f, 1.0f, 1.0f, 0, 0, 0.0f, 1.0f, 1.0f, 0, 0};
+    const u32 indices[] = {0, 1, 2, 0, 2, 3};
+    const rhi::BufferHandle vertex_buffer = device->CreateVertexBuffer(vertices, sizeof(vertices));
+    const rhi::BufferHandle index_buffer = device->CreateIndexBuffer(indices, sizeof(indices), rhi::IndexFormat::UInt32);
+    rhi::AccelerationStructureHandle blas;
+    try {
+        blas = device->CreateBottomLevelAS(vertex_buffer, 4, 20, index_buffer, 6);
+    } catch (const std::exception&) {
+    }
+    AETHER_CHECK(blas.IsValid());
+    if (!blas.IsValid()) return;
+
+    rhi::PipelineDesc desc;
+    desc.hlsl_source = kRayShader;
+    desc.render_texture_target = true;
+    desc.shader_model_6 = true;
+    desc.acceleration_structure = true;
+    rhi::PipelineHandle pipeline;
+    try {
+        pipeline = device->CreatePipeline(desc, *swap);
+    } catch (const std::exception&) {
+    }
+    AETHER_CHECK(pipeline.IsValid());
+    constexpr u32 kSize = 8;
+    const rhi::SampledTextureHandle texture = device->CreateRenderTexture(kSize, kSize);
+    const u32 pitch = rhi::ReadbackRowPitch(kSize, 8);
+    const rhi::BufferHandle readback = device->CreateReadbackBuffer(static_cast<u64>(pitch) * kSize);
+    if (!pipeline.IsValid() || !texture.IsValid() || !readback.IsValid()) return;
+
+    // Draws with `tlas` bound and returns the red channel of every pixel.
+    auto trace = [&](rhi::AccelerationStructureHandle tlas) {
+        std::unique_ptr<rhi::ICommandList> cmd = device->CreateCommandList();
+        cmd->Reset();
+        AETHER_CHECK(cmd->BeginTexturePass(texture, nullptr));
+        cmd->BindPipeline(pipeline);
+        cmd->BindAccelerationStructure(tlas);
+        cmd->Draw(3);
+        cmd->EndRenderPass();
+        AETHER_CHECK(cmd->CopyRenderTextureToReadback(texture, readback));
+        cmd->Close();
+        device->WaitForFence(device->Submit(*cmd, nullptr));
+        std::vector<u16> rows(static_cast<usize>(pitch) / 2 * kSize);
+        AETHER_CHECK(device->ReadReadbackBuffer(readback, rows.data(), rows.size() * 2));
+        std::vector<f32> red(kSize * kSize);
+        for (u32 y = 0; y < kSize; ++y) {
+            for (u32 x = 0; x < kSize; ++x) red[y * kSize + x] = assets::HalfToFloat(rows[static_cast<usize>(y) * (pitch / 2) + x * 4]);
+        }
+        return red;
+    };
+    auto expect_columns = [&](const std::vector<f32>& red, u32 first_hit, u32 last_hit) {
+        u32 wrong = 0;
+        for (u32 y = 0; y < kSize; ++y) {
+            for (u32 x = 0; x < kSize; ++x) {
+                const bool hit = x >= first_hit && x <= last_hit;
+                if (red[y * kSize + x] != (hit ? 1.0f : 0.0f)) ++wrong;
+            }
+        }
+        return wrong;
+    };
+
+    rhi::AccelerationInstance instance;
+    instance.blas = blas;
+    rhi::AccelerationStructureHandle left = device->CreateTopLevelAS(std::span<const rhi::AccelerationInstance>(&instance, 1));
+    AETHER_CHECK(left.IsValid());
+    instance.transform[3] = 0.5f; // moved half the square to the right
+    rhi::AccelerationStructureHandle right = device->CreateTopLevelAS(std::span<const rhi::AccelerationInstance>(&instance, 1));
+    AETHER_CHECK(right.IsValid());
+    if (left.IsValid()) AETHER_CHECK(expect_columns(trace(left), 0, 3) == 0);
+    if (right.IsValid()) AETHER_CHECK(expect_columns(trace(right), 4, 7) == 0);
+
+    // Refusals: a top level is not an instance, a dead handle, buffers that are not those, a bottom level as the bound structure.
+    rhi::AccelerationInstance bad;
+    bad.blas = left;
+    bool threw = false;
+    try {
+        device->CreateTopLevelAS(std::span<const rhi::AccelerationInstance>(&bad, 1));
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    AETHER_CHECK(threw);
+    threw = false;
+    try {
+        device->CreateBottomLevelAS(index_buffer, 4, 20, vertex_buffer, 6); // swapped
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    AETHER_CHECK(threw);
+    AETHER_CHECK(device->DestroyAccelerationStructure(left));
+    AETHER_CHECK(!device->DestroyAccelerationStructure(left));
+    AETHER_CHECK(device->DestroyAccelerationStructure(right));
+    AETHER_CHECK(device->DestroyAccelerationStructure(blas));
+    device->DestroyPipeline(pipeline);
+    device->DestroyTexture(texture);
+    device->DestroyBuffer(readback);
+    device->DestroyBuffer(vertex_buffer);
+    device->DestroyBuffer(index_buffer);
+}
+
+AETHER_TEST(AccelerationStructure_RaysHitTheQuad_D3D12) { AccelerationStructure_RaysHitTheQuad(rhi::Backend::D3D12); }
+AETHER_TEST(AccelerationStructure_RaysHitTheQuad_Vulkan) { AccelerationStructure_RaysHitTheQuad(rhi::Backend::Vulkan); }

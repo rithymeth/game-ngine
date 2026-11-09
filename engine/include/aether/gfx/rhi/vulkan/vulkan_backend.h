@@ -40,6 +40,7 @@ struct PipelineRecord {
     u32 push_constant_size_bytes = 0;
     bool enable_bindless_textures = false;
     bool frame_read_buffer = false;
+    bool acceleration_structure = false;
     bool use_vertex_buffer = false;
     u32 vertex_stride_bytes = 20;
 };
@@ -156,6 +157,17 @@ public:
     bool WriteBufferUnsynchronized(BufferHandle buffer, const void* data, u64 size_bytes, u64 offset = 0) override;
     bool SupportsReadback() const override { return true; }
     bool SupportsRayTracing() const override { return ray_tracing_supported_; }
+    AccelerationStructureHandle CreateBottomLevelAS(BufferHandle vertices, u32 vertex_count, u32 vertex_stride_bytes, BufferHandle indices,
+                                                    u32 index_count) override;
+    AccelerationStructureHandle CreateTopLevelAS(std::span<const AccelerationInstance> instances) override;
+    bool DestroyAccelerationStructure(AccelerationStructureHandle handle) override;
+    bool IsAccelerationStructureAlive(AccelerationStructureHandle h) const {
+        return h.IsValid() && h.index < acceleration_structures_.size() && acceleration_structures_[h.index].handle != VK_NULL_HANDLE;
+    }
+    // The descriptor set (set 4) that points at a top-level structure; null for a bottom level or a dead handle.
+    VkDescriptorSet AccelerationSet(AccelerationStructureHandle h) const {
+        return IsAccelerationStructureAlive(h) ? acceleration_structures_[h.index].set : VK_NULL_HANDLE;
+    }
     BufferHandle CreateReadbackBuffer(u64 size_bytes) override;
     bool ReadReadbackBuffer(BufferHandle buffer, void* out, u64 size_bytes, u64 offset = 0) override;
     VkDescriptorSetLayout FrameConstantsSetLayout() const { return frame_constants_set_layout_; }
@@ -341,6 +353,32 @@ private:
     VkDescriptorPool frame_read_pool_ = VK_NULL_HANDLE;
     static constexpr u32 kMaxConstantBuffers = 64;
     std::atomic<u32> constant_buffer_count_{0};
+
+    // Acceleration structures (IDevice::CreateBottomLevelAS): a device-local buffer holding the structure, and for a top level the set 4
+    // descriptor that binds it. Builds are synchronous. The extension's entry points are fetched once the device exists.
+    struct AccelerationRecord {
+        VkAccelerationStructureKHR handle = VK_NULL_HANDLE;
+        VkBuffer buffer = VK_NULL_HANDLE;
+        VkDeviceMemory memory = VK_NULL_HANDLE;
+        VkDeviceAddress address = 0;
+        VkDescriptorSet set = VK_NULL_HANDLE;
+        bool top_level = false;
+    };
+    std::vector<AccelerationRecord> acceleration_structures_;
+    std::vector<u32> free_acceleration_slots_;
+    VkDescriptorSetLayout acceleration_set_layout_ = VK_NULL_HANDLE;
+    VkDescriptorSetLayout empty_set_layout_ = VK_NULL_HANDLE; // fills the set indices an acceleration-structure pipeline does not use
+    VkDescriptorPool acceleration_pool_ = VK_NULL_HANDLE;
+    PFN_vkCreateAccelerationStructureKHR create_acceleration_structure_ = nullptr;
+    PFN_vkDestroyAccelerationStructureKHR destroy_acceleration_structure_ = nullptr;
+    PFN_vkGetAccelerationStructureBuildSizesKHR get_acceleration_build_sizes_ = nullptr;
+    PFN_vkCmdBuildAccelerationStructuresKHR cmd_build_acceleration_structures_ = nullptr;
+    PFN_vkGetAccelerationStructureDeviceAddressKHR get_acceleration_address_ = nullptr;
+    static constexpr u32 kMaxAccelerationStructures = 64;
+    void CreateAccelerationResources();
+    AccelerationStructureHandle BuildAccelerationStructure(VkAccelerationStructureTypeKHR type, const VkAccelerationStructureGeometryKHR& geometry,
+                                                           u32 primitive_count);
+    void DestroyAccelerationStructureNow(const AccelerationRecord& record);
 
     // A 1x1 white dummy image, permanently retained for slot zero and also
     // referenced by every other bindless descriptor slot before real
@@ -549,6 +587,7 @@ public:
     void BindBindlessTextures() override;
     void BindFrameConstants(BufferHandle buffer) override;
     void BindFrameReadBuffer(BufferHandle buffer) override;
+    void BindAccelerationStructure(AccelerationStructureHandle structure) override;
     bool CopySceneDepth() override;
     bool CopyRenderTextureToReadback(SampledTextureHandle texture, BufferHandle readback) override;
 
@@ -584,6 +623,7 @@ private:
     bool graphics_pipeline_bound_ = false;
     bool graphics_bindless_enabled_ = false;
     bool graphics_frame_read_buffer_ = false; // the bound pipeline has set 3 (PipelineDesc::frame_read_buffer)
+    bool graphics_acceleration_structure_ = false; // the bound pipeline has set 4 (PipelineDesc::acceleration_structure)
     bool graphics_bindless_bound_ = false;
     bool graphics_uses_vertex_buffer_ = false;
     u32 graphics_vertex_stride_bytes_ = 0;

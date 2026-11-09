@@ -57,6 +57,20 @@ struct BufferHandle {
     bool IsValid() const { return index != static_cast<u32>(-1); }
 };
 
+// A bottom- or top-level acceleration structure (IDevice::CreateBottomLevelAS / CreateTopLevelAS): the BVH a shader traces rays against.
+struct AccelerationStructureHandle {
+    u32 index = static_cast<u32>(-1);
+    bool IsValid() const { return index != static_cast<u32>(-1); }
+};
+
+// One placed copy of a bottom-level structure in a top-level one. `transform` is the object-to-world matrix's upper three rows, row-major
+// (so transform[0..3] is the X row with its translation last); a ray sees the instance with this id as InstanceID().
+struct AccelerationInstance {
+    AccelerationStructureHandle blas;
+    f32 transform[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
+    u32 instance_id = 0;
+};
+
 // Opaque handle into a backend device's global bindless texture table — see
 // IDevice::CreateTexture. Unlike TextureHandle (render-target/backbuffer
 // textures, tracked in a separate table), a SampledTextureHandle's `index`
