@@ -2547,6 +2547,17 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                                         caster.bounds_center = Vec3(c.x, c.y, c.z);
                                         caster.bounds_radius = primitive.bounds_radius * scale;
                                     }
+                                    if (!(caster.bounds_radius >= 0.0f) && primitive.skin_bounds_radius >= 0.0f) {
+                                        // A skinned caster: its bind-pose sphere, grown for its poses, so the cascades it cannot reach are skipped
+                                        // (without a radius a caster is drawn into every cascade).
+                                        const Vec4 c = model_transform * Vec4(primitive.skin_bounds_center[0], primitive.skin_bounds_center[1],
+                                                                              primitive.skin_bounds_center[2], 1.0f);
+                                        const f32 scale = std::max({Vec3(model_transform.cols[0].x, model_transform.cols[0].y, model_transform.cols[0].z).Length(),
+                                                                    Vec3(model_transform.cols[1].x, model_transform.cols[1].y, model_transform.cols[1].z).Length(),
+                                                                    Vec3(model_transform.cols[2].x, model_transform.cols[2].y, model_transform.cols[2].z).Length()});
+                                        caster.bounds_center = Vec3(c.x, c.y, c.z);
+                                        caster.bounds_radius = primitive.skin_bounds_radius * scale;
+                                    }
                                     caster.alpha_tested = primitive.alpha_mode == assets::MaterialAlphaMode::Mask;
                                     caster.base_color_texture = primitive.has_base_color_texture && primitive.base_color_texture.IsValid()
                                                                     ? primitive.base_color_texture.index
@@ -2577,19 +2588,10 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                                         }
                                     }
                                     if (renderer.vsm_pages) {
-                                        // The caster's world sphere (a skinned one's from its bind pose, grown): the pages it touches are redrawn when it is
-                                        // new, has moved, or deforms, both where it is now and where it was.
-                                        Vec3 sphere_center = caster.bounds_center;
-                                        f32 sphere_radius = caster.bounds_radius;
-                                        if (!(sphere_radius >= 0.0f) && primitive.skin_bounds_radius >= 0.0f) {
-                                            const Vec4 c = model_transform * Vec4(primitive.skin_bounds_center[0], primitive.skin_bounds_center[1],
-                                                                                  primitive.skin_bounds_center[2], 1.0f);
-                                            const f32 scale = std::max({Vec3(model_transform.cols[0].x, model_transform.cols[0].y, model_transform.cols[0].z).Length(),
-                                                                        Vec3(model_transform.cols[1].x, model_transform.cols[1].y, model_transform.cols[1].z).Length(),
-                                                                        Vec3(model_transform.cols[2].x, model_transform.cols[2].y, model_transform.cols[2].z).Length()});
-                                            sphere_center = Vec3(c.x, c.y, c.z);
-                                            sphere_radius = primitive.skin_bounds_radius * scale;
-                                        }
+                                        // The caster's world sphere (a skinned one's from its bind pose, grown, set above): the pages it touches are
+                                        // redrawn when it is new, has moved, or deforms, both where it is now and where it was.
+                                        const Vec3 sphere_center = caster.bounds_center;
+                                        const f32 sphere_radius = caster.bounds_radius;
                                         Impl::VsmCasterState& state = renderer.vsm_casters[{entities[row].index, entities[row].generation,
                                                                                             static_cast<u32>(node.node_index),
                                                                                             static_cast<u32>(primitive_index) + 1}];

@@ -259,3 +259,193 @@ AETHER_TEST(Shadows_DepthTextures_D3D12) { Shadows_DepthTextures(rhi::Backend::D
 AETHER_TEST(Shadows_DepthTextures_Vulkan) { Shadows_DepthTextures(rhi::Backend::Vulkan); }
 AETHER_TEST(Shadows_PassDrawsOpaqueAndAlphaTestedCasters_D3D12) { Shadows_PassDrawsOpaqueAndAlphaTestedCasters(rhi::Backend::D3D12); }
 AETHER_TEST(Shadows_PassDrawsOpaqueAndAlphaTestedCasters_Vulkan) { Shadows_PassDrawsOpaqueAndAlphaTestedCasters(rhi::Backend::Vulkan); }
+
+// ---- Receiver culling: a caster is skipped for a cascade only when its shadow cannot land on a pixel that reads that cascade. ----
+
+namespace {
+
+struct Lcg {
+    u64 state;
+    explicit Lcg(u64 seed) : state(seed) {}
+    f32 Next() { // 0 .. 1
+        state = state * 6364136223846793005ull + 1442695040888963407ull;
+        return static_cast<f32>((state >> 40) & 0xFFFFFF) / static_cast<f32>(0x1000000);
+    }
+    f32 Range(f32 lo, f32 hi) { return lo + (hi - lo) * Next(); }
+};
+
+View RandomView(Lcg& rng) {
+    Camera camera;
+    camera.fov_degrees = rng.Range(40.0f, 90.0f);
+    camera.near_plane = 0.1f;
+    camera.far_plane = 400.0f;
+    const f32 yaw = rng.Range(0.0f, 6.2831853f), pitch = rng.Range(-1.0f, 0.35f);
+    const Vec3 forward(std::sin(yaw) * std::cos(pitch), std::sin(pitch), -std::cos(yaw) * std::cos(pitch));
+    const Vec3 right = forward.Cross(Vec3(0, 1, 0)).Normalized();
+    const Vec3 up = right.Cross(forward);
+    Mat4 world = Mat4::Identity();
+    world.cols[0] = Vec4(right.x, right.y, right.z, 0);
+    world.cols[1] = Vec4(up.x, up.y, up.z, 0);
+    world.cols[2] = Vec4(-forward.x, -forward.y, -forward.z, 0);
+    world.cols[3] = Vec4(rng.Range(-30.0f, 30.0f), rng.Range(0.5f, 12.0f), rng.Range(-30.0f, 30.0f), 1);
+    return MakeView(camera, world, rng.Range(1.0f, 2.0f));
+}
+
+// The cascade the scene shader would read for a pixel at `p` with normal `n`: the first whose map holds it, two texels clear of the edge.
+int CascadeReadBy(const std::vector<ShadowCascade>& cascades, u32 resolution, const Vec3& p, const Vec3& n, const Vec3& to_sun) {
+    const f32 n_dot_l = std::clamp(n.Dot(to_sun), 0.0f, 1.0f);
+    const f32 slope = std::sqrt(std::clamp(1.0f - n_dot_l * n_dot_l, 0.0f, 1.0f));
+    const f32 margin = 2.0f / static_cast<f32>(resolution);
+    for (usize i = 0; i < cascades.size(); ++i) {
+        const Vec3 offset = p + n * (cascades[i].texel_size * (0.5f + 1.5f * slope));
+        const Vec4 clip = cascades[i].view_projection * Vec4(offset.x, offset.y, offset.z, 1.0f);
+        const f32 u = clip.x * 0.5f + 0.5f, v = 0.5f - clip.y * 0.5f;
+        if (u < margin || v < margin || u > 1.0f - margin || v > 1.0f - margin || clip.z > 1.0f) continue;
+        return static_cast<int>(i);
+    }
+    return -1;
+}
+
+} // namespace
+
+AETHER_TEST(Shadows_ReceiverCullingNeverDropsACasterThatShadowsAPixel) {
+    Lcg rng(0x5EEDF00Dull);
+    constexpr u32 kResolution = 2048;
+    u64 occluders = 0, violations = 0, sphere_violations = 0, pairs = 0, culled_pairs = 0, near_pairs = 0, near_culled = 0;
+    for (int scenario = 0; scenario < 400; ++scenario) {
+        const View view = RandomView(rng);
+        // The way the light travels: always some way down, from any side.
+        const f32 azimuth = rng.Range(0.0f, 6.2831853f), elevation = rng.Range(0.15f, 1.5f);
+        const Vec3 travel(-std::cos(azimuth) * std::cos(elevation), -std::sin(elevation), -std::sin(azimuth) * std::cos(elevation));
+        const Vec3 to_sun = travel * -1.0f;
+        const std::vector<ShadowCascade> cascades = player::FitShadowCascades(view, travel, kResolution, 4, 100.0f);
+        AETHER_CHECK(cascades.size() == 4);
+        if (cascades.size() != 4) return;
+        std::vector<player::CascadeReceivers> regions;
+        for (usize i = 0; i < cascades.size(); ++i) regions.push_back(player::CascadeReceiverRegion(view, cascades, i));
+
+        // Casters near the camera, against every cascade: how many would be skipped (a test of the cull doing something).
+        for (int c = 0; c < 6; ++c) {
+            player::ShadowCaster caster;
+            caster.bounds_center = view.position + view.forward * rng.Range(1.0f, 5.0f) + Vec3(rng.Range(-1.5f, 1.5f), rng.Range(-1.0f, 0.5f), rng.Range(-1.5f, 1.5f));
+            caster.bounds_radius = rng.Range(0.3f, 1.2f);
+            for (usize i = 0; i < cascades.size(); ++i) {
+                if (!player::CasterTouchesCascade(caster, cascades[i])) continue;
+                ++near_pairs;
+                if (!player::CasterReachesReceivers(caster, cascades[i], regions[i])) ++near_culled;
+            }
+        }
+
+        const f32 half_tan = view.perspective ? std::tan(Radians(view.fov_degrees) * 0.5f) : 0.0f;
+        for (int sample = 0; sample < 400; ++sample) {
+            // A pixel anywhere in the view out to the shadow distance, with a normal facing roughly up.
+            const f32 depth = view.near_plane + (std::min(view.far_plane, 100.0f) - view.near_plane) * rng.Next() * rng.Next();
+            const f32 half_h = depth * half_tan, half_w = half_h * view.aspect;
+            const Vec3 p = view.position + view.forward * depth + view.Right() * (rng.Range(-1.0f, 1.0f) * half_w) +
+                           view.Up() * (rng.Range(-1.0f, 1.0f) * half_h);
+            Vec3 n(rng.Range(-0.7f, 0.7f), 1.0f, rng.Range(-0.7f, 0.7f));
+            n = n.Normalized();
+            const int read_by = CascadeReadBy(cascades, kResolution, p, n, to_sun);
+            if (read_by < 0) continue;
+            // A sphere on the ray from the pixel to the sun: it shades the pixel, and so must be drawn into the cascade the pixel reads.
+            const f32 radius = rng.Range(0.05f, 3.0f);
+            const f32 t = rng.Range(0.3f, 60.0f);
+            const Vec3 off(rng.Range(-1.0f, 1.0f), rng.Range(-1.0f, 1.0f), rng.Range(-1.0f, 1.0f));
+            player::ShadowCaster caster;
+            caster.bounds_center = p + to_sun * t + off * (0.9f * radius / std::max(off.Length(), 1.0f));
+            caster.bounds_radius = radius;
+            ++occluders;
+            const usize k = static_cast<usize>(read_by);
+            if (!player::CasterTouchesCascade(caster, cascades[k])) ++sphere_violations; // the test before this one (a reference)
+            if (!player::CasterReachesReceivers(caster, cascades[k], regions[k])) ++violations;
+            ++pairs;
+            for (usize i = 0; i < cascades.size(); ++i) {
+                if (player::CasterTouchesCascade(caster, cascades[i]) && !player::CasterReachesReceivers(caster, cascades[i], regions[i])) ++culled_pairs;
+            }
+        }
+    }
+    std::printf("    %llu occluders of pixels checked: %llu wrongly culled (the sphere test alone: %llu); casters near the camera culled from %.0f percent of the "
+                "cascades their sphere touches\n",
+                static_cast<unsigned long long>(occluders), static_cast<unsigned long long>(violations),
+                static_cast<unsigned long long>(sphere_violations), near_pairs ? 100.0 * static_cast<double>(near_culled) / static_cast<double>(near_pairs) : 0.0);
+    AETHER_CHECK(occluders > 50000);
+    AETHER_CHECK(violations == 0);
+    AETHER_CHECK(near_pairs > 1000 && near_culled * 4 > near_pairs); // it culls a good share of what a character near the camera would draw
+    (void)pairs;
+    (void)culled_pairs;
+}
+
+AETHER_TEST(Shadows_ReceiverRegionIsTheViewFromThePreviousSliceOn) {
+    const View view = TestView();
+    const std::vector<ShadowCascade> cascades = player::FitShadowCascades(view, Vec3(0.3f, -1.0f, 0.2f), 1024, 4, 100.0f);
+    AETHER_CHECK(cascades.size() == 4);
+    if (cascades.size() != 4) return;
+    const player::CascadeReceivers first = player::CascadeReceiverRegion(view, cascades, 0), last = player::CascadeReceiverRegion(view, cascades, 3);
+    AETHER_CHECK(first.valid && last.valid && first.hull_count >= 3 && last.hull_count >= 3);
+    AETHER_CHECK(!player::CascadeReceiverRegion(view, cascades, 4).valid); // no such cascade
+    // A caster with no bounding radius is always kept, whatever the region.
+    player::ShadowCaster unbounded;
+    AETHER_CHECK(player::CasterReachesReceivers(unbounded, cascades[3], last));
+    // A caster far off to the side of the view, out of every outline, is dropped; one at the camera is kept for the first cascade.
+    player::ShadowCaster far_away;
+    far_away.bounds_center = Vec3(5000.0f, 0.0f, 5000.0f);
+    far_away.bounds_radius = 1.0f;
+    AETHER_CHECK(!player::CasterReachesReceivers(far_away, cascades[0], first));
+    player::ShadowCaster at_camera;
+    at_camera.bounds_center = view.position + view.forward * 2.0f;
+    at_camera.bounds_radius = 0.5f;
+    AETHER_CHECK(player::CasterReachesReceivers(at_camera, cascades[0], first));
+}
+
+// The pixels the random test almost never draws: those within two texels of their own slice's map edge, which the shader hands to the next
+// cascade. A cascade's sphere is tight around its slice, so only a slice corner comes that close, and only for some sun directions; the test
+// sweeps the sun's azimuth and elevation around each corner of each slice over several cameras, keeps the pixels the shader really does hand on,
+// and checks their occluders.
+AETHER_TEST(Shadows_ReceiverCullingKeepsCastersForPixelsThatFallThroughToTheNextCascade) {
+    Lcg rng(0xFA11ull);
+    constexpr u32 kResolution = 2048;
+    u64 fall_through_pixels = 0, occluders = 0, violations = 0;
+    for (int scenario = 0; scenario < 120; ++scenario) {
+        const View view = RandomView(rng);
+        // The slices' corners, from the cascades of any sun (the splits do not depend on it).
+        const std::vector<ShadowCascade> reference = player::FitShadowCascades(view, Vec3(0.1f, -1.0f, 0.1f), kResolution, 4, 100.0f);
+        if (reference.size() != 4) return;
+        for (usize j = 0; j + 1 < reference.size(); ++j) {
+            Vec3 corners[8];
+            FrustumSliceCorners(view, reference[j].split_near, reference[j].split_far, corners);
+            Vec3 centre(0, 0, 0);
+            for (const Vec3& c : corners) centre = centre + c * 0.125f;
+            for (const Vec3& corner : corners) {
+                for (const f32 elevation : {0.45f, 0.95f, 1.4f}) {
+                    for (int degrees = 0; degrees < 360; degrees += 2) {
+                        const f32 azimuth = static_cast<f32>(degrees) * 3.14159265f / 180.0f;
+                        const Vec3 travel(-std::cos(azimuth) * std::cos(elevation), -std::sin(elevation), -std::sin(azimuth) * std::cos(elevation));
+                        const Vec3 to_sun = travel * -1.0f;
+                        const std::vector<ShadowCascade> cascades = player::FitShadowCascades(view, travel, kResolution, 4, 100.0f);
+                        const Vec3 p = corner + (centre - corner) * 0.0005f;
+                        const Vec3 n(0.0f, 1.0f, 0.0f);
+                        const int read_by = CascadeReadBy(cascades, kResolution, p, n, to_sun);
+                        if (read_by <= static_cast<int>(j)) continue; // read by its own cascade, an earlier one, or none
+                        ++fall_through_pixels;
+                        const usize k = static_cast<usize>(read_by);
+                        const player::CascadeReceivers region = player::CascadeReceiverRegion(view, cascades, k);
+                        for (int o = 0; o < 40; ++o) {
+                            ++occluders;
+                            const f32 radius = rng.Range(0.05f, 3.0f);
+                            const Vec3 off(rng.Range(-1.0f, 1.0f), rng.Range(-1.0f, 1.0f), rng.Range(-1.0f, 1.0f));
+                            player::ShadowCaster caster;
+                            caster.bounds_center = p + to_sun * rng.Range(0.3f, 60.0f) + off * (0.9f * radius / std::max(off.Length(), 1.0f));
+                            caster.bounds_radius = radius;
+                            if (!player::CasterReachesReceivers(caster, cascades[k], region)) ++violations;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    std::printf("    %llu pixels fell through to a later cascade; %llu occluders of them checked, %llu wrongly culled%s",
+                static_cast<unsigned long long>(fall_through_pixels), static_cast<unsigned long long>(occluders),
+                static_cast<unsigned long long>(violations), "\n");
+    AETHER_CHECK(fall_through_pixels > 20); // the case is really exercised
+    AETHER_CHECK(violations == 0);
+}

@@ -58,6 +58,35 @@ ShadowFrameData PackShadowFrameData(const std::vector<ShadowCascade>& cascades, 
 // pipelines clamp depth rather than clip).
 bool CasterTouchesCascade(const ShadowCaster& caster, const ShadowCascade& cascade);
 
+// The pixels that can read a cascade, seen from the light. The scene shader reads the first cascade whose map holds a pixel, two texels clear of the
+// map's edge. A cascade's map is a square around the bounding sphere of its slice of the view, so cascade k is read by:
+//  - the pixels of the view from the start of its own slice to the shadow distance (the ones of its own slice, and those further out that the nearer
+//    maps do not hold), held as an outline in the light's plane (a convex polygon in light-view x and y) and the farthest depth along the light any of
+//    them has; and
+//  - the pixels of the slice before it that sit in the thin frame along the edge of that slice's map, which that map refuses (a band outline, with the
+//    previous cascade's light view and the half-width of its map less the margin, to say whether a caster reaches the frame).
+// Assumed, not proved: a pixel of a slice two or more before is never handed this far on, because it would have to sit in the edge frame of its own
+// map and outside the maps in between, which sit further from the camera; the tests sweep the sun round the slices' corners, where that frame is
+// reachable at all, and find no such pixel.
+struct CascadeReceivers {
+    f32 hull[16][2] = {};
+    u32 hull_count = 0;
+    f32 max_depth = 0.0f;
+    f32 band_hull[16][2] = {};
+    u32 band_hull_count = 0;
+    f32 band_max_depth = 0.0f;
+    Mat4 previous_view;           // the previous cascade's light view, for the band
+    f32 previous_inner_half = 0.0f; // half the width of the previous cascade's map less the margin (its edge frame is outside this)
+    bool valid = false;
+};
+CascadeReceivers CascadeReceiverRegion(const View& view, const std::vector<ShadowCascade>& cascades, usize index);
+
+// Whether a caster can put shadow on the pixels that read `cascade`: its bounding sphere, pushed along the light, reaches the receivers' outline
+// (with four texels to spare for the normal offset and the filter) and is not beyond all of them along the light; or reaches the band of the previous
+// slice and the edge frame of the previous map. A caster with no bounding radius, or a region that is not valid, always can. Skipping a caster that
+// cannot is what this exists for: a character near the camera has no business in the maps of the far slices.
+bool CasterReachesReceivers(const ShadowCaster& caster, const ShadowCascade& cascade, const CascadeReceivers& receivers);
+
 // The HLSL (VSMain; PSMain for alpha-tested casters).
 const char* ShadowCasterShaderSource();
 
@@ -83,8 +112,12 @@ public:
     u32 LastDrawCount() const { return last_draws_; }
     gfx::rhi::SampledTextureHandle Atlas() const { return atlas_; }
     void ReleaseAtlas();
+    // Skips casters that cannot shadow what a cascade is read for (CasterReachesReceivers). On unless AETHER_RENDER_SHADOW_CULL=0.
+    void SetReceiverCulling(bool enabled) { cull_receivers_ = enabled; }
+    bool ReceiverCulling() const { return cull_receivers_; }
 
 private:
+    bool cull_receivers_ = true;
     gfx::rhi::IDevice& device_;
     gfx::rhi::PipelineHandle opaque_;
     gfx::rhi::PipelineHandle masked_;

@@ -1084,3 +1084,99 @@ RTX 3050 Laptop GPU, RelWithDebInfo), now in GPU milliseconds. "Pre-scene" is th
 - **Scope and caveats.** One scene of four rigid casters on one laptop GPU; the stage boundaries are three points in the frame, not
   per-pass; timer slots must all be written in the frame (a frame that returns early from a pass that cannot begin leaves its timer
   unresolved, and on Vulkan that slot is not reset for the next use).
+
+### Where the GPU time goes: the post stage in detail, and a heavy-character scene (9 November 2026)
+
+Measured with temporary finer timestamps (eight in a frame: not committed) through the post stage, in the small scene above and in the same
+kind of scene with one animated, high-detail character (the Aegis Vanguard: one skinned primitive of 192,562 vertices, CPU-skinned each frame).
+RTX 3050 Laptop GPU, RelWithDebInfo, medians of frames 60 to 200, virtual shadow pages on (the default).
+
+**The small scene's post stage** (GPU ms; the first number is D3D12, the second Vulkan):
+
+| Stage | 720p | 1080p |
+| --- | --- | --- |
+| Scene pass | 0.43 / 0.56 | 0.99 / 1.07 |
+| Virtual shadow feedback | 0.03 / 0.02 | 0.04 / 0.04 |
+| TAA (motion pass and resolve) | 0.16 / 0.18 | 0.36 / 0.35 |
+| Bloom | 0.10 / 0.13 | 0.21 / 0.22 |
+| Tone mapping | 0.12 / 0.14 | 0.28 / 0.27 |
+| HUD | 0.00 | 0.00 |
+
+The post stage is three similar-sized full-screen passes (TAA resolve, bloom, tone mapping), each 0.10 to 0.18 ms at 720p, scaling with pixels.
+No pass stands out; the gain from fusing them (a read and a write of the HDR target saved) would be a fraction of 0.1 to 0.3 ms.
+
+**The heavy scene is a different frame.** At 720p the GPU frame is 10 to 13 ms, against 0.9 to 1.1 ms for the small scene:
+
+| Stage (D3D12 / Vulkan, 720p) | Heavy scene |
+| --- | --- |
+| Before the scene pass (the cascades; virtual pages draw nothing for a deforming caster) | 5.8 to 6.4 / 6.3 to 7.9 ms |
+| Scene pass | 1.8 to 3.5 / 1.8 to 2.5 ms |
+| TAA (its motion pass draws the character again) | 2.3 to 2.5 / 1.7 to 2.9 ms |
+| Everything else (feedback, bloom, tone mapping, HUD) | 0.2 / 0.2 ms |
+| With shadows off, the whole frame | 4.2 to 4.9 ms |
+
+- **The cascade pass is more than the rest of the frame.** With shadows off the frame is 4.2 to 4.9 ms; with the cascades it is 10 to 12 ms. One
+  192,562-vertex character is drawn into all four cascades (the caster pass is 5.8 to 6.4 ms on D3D12 and does not change with resolution).
+  Virtual shadow pages add nothing here: the animated character is cascade-only, and the static pages are cached.
+- **The TAA motion pass redraws the whole character** (2 to 3 ms against 0.16 ms in the small scene), so this one mesh is drawn six times a frame:
+  four cascades, the motion pass and the scene pass.
+- **Rejected by measurement: cull a skinned caster by its bind-pose sphere.** A skinned caster has no bounding radius, so the cascades always
+  draw it; the sphere exists already (it sizes the virtual page invalidation). Giving it to the cascades changed nothing: four alternating rounds on
+  D3D12 read 6.19, 6.16, 6.27 and 6.10 ms of cascade pass without it and 6.40, 6.23, 6.16 and 6.31 with it, and Vulkan showed no consistent
+  difference either. The cascades are fitted to bounding spheres of their depth slices, and the character, three metres from the camera, is inside
+  every one of those spheres, so a sphere-against-sphere test culls nothing. Not kept.
+- **What would pay: draw the character only into the cascades it can shadow.** As an upper bound, drawing it into cascade 0 only took the cascade
+  pass from 6.0 and 6.2 ms to 1.4 and 1.6 ms on D3D12 (two clean rounds; GPU frame 12.0 to 5.6 ms and 12.7 to 7.2 ms) and from 7.9 ms to 2.2 ms
+  on Vulkan. That is a ceiling, not the gain: it loses the shadow the character casts onto the farther cascades' receivers, which is what a correct
+  test has to keep (the caster's volume extruded toward the sun against each cascade's receiving slice, instead of sphere against sphere).
+- **Noise.** The heavy scene's GPU frame varies by about 2 ms from run to run on this laptop (even the shadows-off frame ranged from 4.2 to
+  9.3 ms in one Vulkan sequence), so only rounds that agree with their neighbours are quoted above; the later, noisy rounds of the upper-bound
+  test were left out.
+
+What this points at, in order of size for a scene with a character like this: cull casters against the cascades' real receiving volumes (up to
+about 4 to 6 ms here); a level of detail for the shadow and motion passes, which would also cut the TAA motion pass (2 to 3 ms), since the
+engine has no mesh level of detail at all; then the small items (fusing the full-screen post passes). The first is built, below.
+
+### Cascade caster culling against the receivers, 9 November 2026
+
+`ShadowPass::Render` now draws a caster into a cascade only if its shadow can land on a pixel that reads that cascade
+(`CasterReachesReceivers`, `player/src/shadow_pass.cpp`), on top of the sphere-against-map test it already had. `AETHER_RENDER_SHADOW_CULL=0`
+turns it off. Skinned casters also get a world bounding sphere now (their bind-pose sphere grown by half, which sized virtual page invalidation
+only); without a radius a caster is drawn into every cascade.
+
+- **Why the sphere test did nothing for a character** (the rejected experiment above): a cascade's map is a square around the bounding sphere of its
+  slice of the view, and the character three metres from the camera is inside all of those spheres. What decides whether it is needed in a far
+  cascade is whether its shadow, falling along the light, reaches the pixels that cascade is read for.
+- **The test.** The scene shader reads the first cascade whose map holds a pixel, two texels clear of the edge. So cascade k is read by the pixels
+  of the view from the start of its own slice to the shadow distance (held as their outline in the light's plane, a convex polygon, and the
+  farthest depth along the light they reach), plus the thin edge frame of the previous slice's map, which that map refuses. A caster is kept for
+  cascade k if its sphere, with four texels to spare for the normal offset and the filter, touches that outline and is not beyond all of it along
+  the light, or reaches the band. A high sun keeps a near character out of the far cascades; a low sun, whose shadows stretch into the distance, keeps it.
+- **The assumption, written down:** a pixel two or more slices before cannot be handed on to cascade k, because it would have to sit in the edge
+  frame of its own map and outside the maps in between. A cascade's sphere is tight around its slice, so only the slice's far-end corners
+  come near the map's edge at all, and they sit at the start of the next slice, inside that cascade's outline.
+- **Evidence it drops nothing it should keep** (`tests/test_shadows_pass.cpp`, `tests/test_vsm_scene.cpp`): 160,000 random occluders (a sphere placed
+  on the ray from a random pixel to the sun) over 400 random cameras and suns, none wrongly culled, while it culls 51 percent of the
+  cascades a caster near the camera would otherwise be drawn into; the same check for the pixels the shader really does hand to a later cascade,
+  found by sweeping the sun round the slices' corners (23 pixels, 920 occluders, none wrongly culled); and whole frames: a floor, boxes and an animated
+  character at two camera distances render **identically** (0 of 921,600 bytes differ) with and without it, on both backends. Dropping every bounded
+  caster instead changes up to 27,000 bytes, so the image test can fail. **The random and sweep tests cannot tell the band from no band** (the corner
+  pixels always lie inside the outline anyway), so the band is a safety margin that can only keep casters, not something the tests prove necessary.
+- **Measured** on the heavy-character scene (one animated character of 192,562 vertices; GPU time from the timers above, medians of frames
+  60 to 200, rounds alternating with the culling off and on, RTX 3050 Laptop GPU):
+
+| Backend, size | Before the scene pass, off | on | GPU frame, off | on |
+| --- | --- | --- | --- | --- |
+| D3D12 720p (4 rounds) | 5.56 to 5.69 ms | 1.39 to 1.40 ms | 9.60 to 9.82 ms | 5.51 to 5.54 ms |
+| D3D12 1080p (4 rounds) | 5.62 to 5.75 ms | 1.41 to 1.42 ms | 10.56 to 10.75 ms | 6.32 to 6.37 ms |
+| Vulkan 720p (4 rounds) | 5.86 to 5.96 ms (one round 6.31) | 1.48 to 1.54 ms (one noisy round 3.24) | 9.58 to 10.24 ms | 5.03 to 5.95 ms (one noisy round 10.32) |
+| Vulkan 1080p (4 rounds) | 6.05 to 6.44 ms | 1.50 to 1.99 ms | 10.42 to 11.83 ms | 6.45 to 8.02 ms |
+
+  The cascade stage falls by about 4.2 ms on D3D12 (75 percent) and the GPU frame by 40 to 44 percent (9.8 to 5.5 ms at 720p, 10.6 to 6.3 at 1080p):
+  the character is now drawn into cascade 0 alone, and the stage reads the same 1.4 ms as the "cascade 0 only" upper bound measured before the test
+  was built, so nothing is left on the table in this scene. Vulkan shows the same drop in the same stage, with noisier frames (the heavy scene's GPU time
+  varies by about 2 ms between rounds on this laptop, and the noisy Vulkan rounds are listed, not hidden).
+- **What it does not do.** It helps in proportion to how many cascades a caster can be kept out of: a character near the camera under a high sun
+  (here), not one under a low sun or one that fills the view. The TAA motion pass still redraws the character (2 to 3 ms), and there is still no mesh
+  level of detail. A skinned caster's sphere is its bind pose grown by half: a pose that reaches farther could be culled from a cascade it only
+  just touches (not seen in the tests; the animated character in the image test is covered).
