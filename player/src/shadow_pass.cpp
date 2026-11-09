@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 
 namespace aether::player {
@@ -107,7 +108,112 @@ bool CasterTouchesCascade(const ShadowCaster& caster, const ShadowCascade& casca
     return -p.z - r <= far_plane;
 }
 
+namespace {
+
+struct Point2 {
+    f32 x, y;
+};
+f32 Cross2(const Point2& o, const Point2& a, const Point2& b) { return (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x); }
+
+} // namespace
+
+namespace {
+
+// The convex outline (counter-clockwise, at most 8 corners) of eight world points seen in a cascade's light plane, and the farthest depth along the
+// light any of them has.
+void LightOutline(const Vec3 corners[8], const Mat4& light_view, f32 hull[16][2], u32& hull_count, f32& max_depth) {
+    Point2 points[8];
+    max_depth = -3.4e38f;
+    for (int i = 0; i < 8; ++i) {
+        const Vec4 v = light_view * Vec4(corners[i].x, corners[i].y, corners[i].z, 1.0f);
+        points[i] = {v.x, v.y};
+        max_depth = std::max(max_depth, -v.z);
+    }
+    std::sort(points, points + 8, [](const Point2& a, const Point2& b) { return a.x < b.x || (a.x == b.x && a.y < b.y); });
+    // Andrew's monotone chain.
+    Point2 chain[17];
+    usize k = 0;
+    for (int i = 0; i < 8; ++i) {
+        while (k >= 2 && Cross2(chain[k - 2], chain[k - 1], points[i]) <= 0.0f) --k;
+        chain[k++] = points[i];
+    }
+    for (int i = 6, lower = static_cast<int>(k) + 1; i >= 0; --i) {
+        while (k >= static_cast<usize>(lower) && Cross2(chain[k - 2], chain[k - 1], points[i]) <= 0.0f) --k;
+        chain[k++] = points[i];
+    }
+    const usize count = std::min<usize>(k > 1 ? k - 1 : k, 16);
+    for (usize i = 0; i < count; ++i) {
+        hull[i][0] = chain[i].x;
+        hull[i][1] = chain[i].y;
+    }
+    hull_count = static_cast<u32>(count);
+}
+
+// Whether a circle at `centre` of radius `r` touches the convex outline: inside it, or within r of an edge.
+bool CircleTouchesOutline(const f32 hull[16][2], u32 n, const Point2& centre, f32 r) {
+    if (n >= 3) {
+        bool inside = true;
+        for (u32 i = 0; i < n && inside; ++i) {
+            const Point2 a{hull[i][0], hull[i][1]};
+            const Point2 b{hull[(i + 1) % n][0], hull[(i + 1) % n][1]};
+            if (Cross2(a, b, centre) < 0.0f) inside = false;
+        }
+        if (inside) return true;
+    }
+    for (u32 i = 0; i < n; ++i) {
+        const Point2 a{hull[i][0], hull[i][1]};
+        const Point2 b{hull[(i + 1) % n][0], hull[(i + 1) % n][1]};
+        const f32 dx = b.x - a.x, dy = b.y - a.y;
+        const f32 length_squared = dx * dx + dy * dy;
+        f32 t = length_squared > 0.0f ? ((centre.x - a.x) * dx + (centre.y - a.y) * dy) / length_squared : 0.0f;
+        t = std::clamp(t, 0.0f, 1.0f);
+        const f32 ex = a.x + dx * t - centre.x, ey = a.y + dy * t - centre.y;
+        if (ex * ex + ey * ey <= r * r) return true;
+    }
+    return false;
+}
+
+} // namespace
+
+CascadeReceivers CascadeReceiverRegion(const View& view, const std::vector<ShadowCascade>& cascades, usize index) {
+    CascadeReceivers out;
+    if (index >= cascades.size()) return out;
+    const f32 near_depth = cascades[index].split_near;
+    const f32 far_depth = cascades.back().split_far;
+    if (!(far_depth > near_depth)) return out;
+    Vec3 corners[8];
+    FrustumSliceCorners(view, near_depth, far_depth, corners);
+    LightOutline(corners, cascades[index].view, out.hull, out.hull_count, out.max_depth);
+    out.valid = out.hull_count > 0;
+    if (index > 0) {
+        // The slice before: what this cascade may be handed from the edge frame of the previous map.
+        const ShadowCascade& previous = cascades[index - 1];
+        FrustumSliceCorners(view, previous.split_near, previous.split_far, corners);
+        LightOutline(corners, cascades[index].view, out.band_hull, out.band_hull_count, out.band_max_depth);
+        out.previous_view = previous.view;
+        // The shader tests the pixel two texels clear of the edge, after a normal offset of up to two more; five covers the snap as well.
+        out.previous_inner_half = previous.radius - 5.0f * previous.texel_size;
+    }
+    return out;
+}
+
+bool CasterReachesReceivers(const ShadowCaster& caster, const ShadowCascade& cascade, const CascadeReceivers& receivers) {
+    if (!(caster.bounds_radius >= 0.0f) || !receivers.valid) return true;
+    const Vec4 p = cascade.view * Vec4(caster.bounds_center.x, caster.bounds_center.y, caster.bounds_center.z, 1.0f);
+    const f32 r = caster.bounds_radius + 4.0f * cascade.texel_size;
+    const Point2 centre{p.x, p.y};
+    // The light looks down -Z, so depth is -z. A caster beyond the farthest receiver along the light shadows none of them.
+    if (-p.z - r <= receivers.max_depth && CircleTouchesOutline(receivers.hull, receivers.hull_count, centre, r)) return true;
+    if (receivers.band_hull_count == 0 || -p.z - r > receivers.band_max_depth) return false;
+    if (!CircleTouchesOutline(receivers.band_hull, receivers.band_hull_count, centre, r)) return false;
+    // The band's pixels are only those in the previous map's edge frame: the caster must reach outside that map's inner square.
+    const Vec4 q = receivers.previous_view * Vec4(caster.bounds_center.x, caster.bounds_center.y, caster.bounds_center.z, 1.0f);
+    const f32 half = receivers.previous_inner_half;
+    return !(std::fabs(q.x) + r <= half && std::fabs(q.y) + r <= half);
+}
+
 ShadowPass::ShadowPass(gfx::rhi::IDevice& device, gfx::rhi::ISwapChain& swap_chain) : device_(device) {
+    if (const char* cull = std::getenv("AETHER_RENDER_SHADOW_CULL")) cull_receivers_ = std::strcmp(cull, "0") != 0;
     // Probe for depth textures with a tiny one: no point building pipelines the device can't draw into.
     const gfx::rhi::SampledTextureHandle probe = device.CreateDepthTexture(4, 4);
     if (!probe.IsValid()) {
@@ -172,6 +278,10 @@ ShadowFrameData ShadowPass::Render(gfx::rhi::ICommandList& commands, const View&
     const std::vector<ShadowCascade> cascades = FitShadowCascades(view, light_direction, resolution_, cascades_, distance_);
     if (cascades.empty() || !commands.BeginDepthPass(atlas_, true)) return {};
 
+    std::vector<CascadeReceivers> receivers;
+    if (cull_receivers_) {
+        for (usize i = 0; i < cascades.size(); ++i) receivers.push_back(CascadeReceiverRegion(view, cascades, i));
+    }
     const f32 size = static_cast<f32>(resolution_);
     for (usize i = 0; i < cascades.size(); ++i) {
         u32 x = 0, y = 0;
@@ -183,6 +293,7 @@ ShadowFrameData ShadowPass::Render(gfx::rhi::ICommandList& commands, const View&
             bool bound = false;
             for (const ShadowCaster& caster : casters) {
                 if (caster.alpha_tested != masked || caster.index_count == 0 || !CasterTouchesCascade(caster, cascades[i])) continue;
+                if (cull_receivers_ && !CasterReachesReceivers(caster, cascades[i], receivers[i])) continue;
                 if (!bound) {
                     commands.BindPipeline(masked ? masked_ : opaque_);
                     if (masked) commands.BindBindlessTextures();

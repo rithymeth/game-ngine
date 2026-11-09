@@ -397,3 +397,34 @@ static void GpuTiming_TheRendererReportsGpuTimePerStage(rhi::Backend backend) {
 
 AETHER_TEST(GpuTiming_TheRendererReportsGpuTimePerStage_D3D12) { GpuTiming_TheRendererReportsGpuTimePerStage(rhi::Backend::D3D12); }
 AETHER_TEST(GpuTiming_TheRendererReportsGpuTimePerStage_Vulkan) { GpuTiming_TheRendererReportsGpuTimePerStage(rhi::Backend::Vulkan); }
+
+// Skipping a caster for a cascade that cannot show its shadow must change no pixel: the same scenes with and without the receiver culling
+// (AETHER_RENDER_SHADOW_CULL=0), a sunlit floor with boxes and an animated character, at two camera distances, cascades only.
+static void Shadows_ReceiverCullingChangesNoPixel(rhi::Backend backend) {
+    if (!rhi::IsBackendAvailable(backend)) return;
+    for (const f32 distance : {1.6f, 7.0f}) {
+        const fs::path root = fs::temp_directory_path() / "aether_cull_scene" / assets::ToString(assets::NewAssetGuid());
+        const fs::path pak = CookScene(root, distance, true);
+        if (pak.empty()) return;
+        SetEnvironmentVariableForTest("AETHER_RENDER_VSM", "0");
+        SetEnvironmentVariableForTest("AETHER_RENDER_SHADOW_CULL", "");
+        const SceneRun culled = RunScene(backend, root, pak, 640, 360, 12);
+        SetEnvironmentVariableForTest("AETHER_RENDER_SHADOW_CULL", "0");
+        const SceneRun all = RunScene(backend, root, pak, 640, 360, 12);
+        SetEnvironmentVariableForTest("AETHER_RENDER_SHADOW_CULL", "");
+        SetEnvironmentVariableForTest("AETHER_RENDER_VSM", "");
+        AETHER_CHECK(culled.pixels.size() == static_cast<usize>(640) * 360 * 4 && culled.pixels.size() == all.pixels.size());
+        if (culled.pixels.size() != all.pixels.size() || culled.pixels.empty()) return;
+        const double difference = MeanDifference(culled.pixels, all.pixels);
+        usize differing = 0;
+        for (usize i = 0; i < culled.pixels.size(); ++i) differing += culled.pixels[i] != all.pixels[i] ? 1 : 0;
+        std::printf("    %s, camera %.1f m: %zu bytes of %zu differ with the culling on, mean difference %.5f\n", Name(backend), distance, differing,
+                    culled.pixels.size(), difference);
+        AETHER_CHECK(differing == 0);
+        std::error_code ignored;
+        fs::remove_all(root, ignored);
+    }
+}
+
+AETHER_TEST(Shadows_ReceiverCullingChangesNoPixel_D3D12) { Shadows_ReceiverCullingChangesNoPixel(rhi::Backend::D3D12); }
+AETHER_TEST(Shadows_ReceiverCullingChangesNoPixel_Vulkan) { Shadows_ReceiverCullingChangesNoPixel(rhi::Backend::Vulkan); }
