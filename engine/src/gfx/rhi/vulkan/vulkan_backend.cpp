@@ -5,8 +5,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -80,6 +82,87 @@ bool SupportsSampledTextureUpload(VkPhysicalDevice physical_device, VkFormat for
     constexpr VkFormatFeatureFlags required =
         VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
     return (properties.optimalTilingFeatures & required) == required;
+}
+
+constexpr VkFormat kRenderTextureFormat = VK_FORMAT_R16G16B16A16_SFLOAT; // render textures and the HDR scene colour (D3D12's too)
+constexpr VkFormat kDepthTextureFormat = VK_FORMAT_D32_SFLOAT;         // depth textures (shadow maps)
+
+bool HasFormatFeatures(VkPhysicalDevice physical_device, VkFormat format, VkFormatFeatureFlags features) {
+    VkFormatProperties properties{};
+    vkGetPhysicalDeviceFormatProperties(physical_device, format, &properties);
+    return (properties.optimalTilingFeatures & features) == features;
+}
+
+// The passes of render textures, depth textures and the scene colour: one subpass over a colour attachment (VK_FORMAT_UNDEFINED: none)
+// and a depth one (likewise). Colour is cleared (from UNDEFINED) or kept (loaded from SHADER_READ_ONLY_OPTIMAL) and left
+// SHADER_READ_ONLY_OPTIMAL for the passes that sample it. Depth likewise when `depth_sampled` (a depth texture); otherwise it is a swap
+// chain's depth buffer, cleared from UNDEFINED or loaded from DEPTH_STENCIL_ATTACHMENT_OPTIMAL and stored and left there (CopySceneDepth
+// copies it). Both variants are render-pass compatible. The dependencies order the pass after earlier passes' draws into and reads of the
+// same images (and CopySceneDepth's copy), and before later ones'.
+VkRenderPass CreateTargetRenderPass(VkDevice device, VkFormat color, VkFormat depth, bool depth_sampled, bool clear) {
+    VkAttachmentDescription attachments[2]{};
+    u32 attachment_count = 0;
+    VkAttachmentReference color_ref{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+    VkAttachmentReference depth_ref{0, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
+    VkSubpassDescription subpass{};
+    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    if (color != VK_FORMAT_UNDEFINED) {
+        VkAttachmentDescription& attachment = attachments[attachment_count];
+        attachment.format = color;
+        attachment.samples = VK_SAMPLE_COUNT_1_BIT;
+        attachment.loadOp = clear ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
+        attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        attachment.initialLayout = clear ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        attachment.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        color_ref.attachment = attachment_count++;
+        subpass.colorAttachmentCount = 1;
+        subpass.pColorAttachments = &color_ref;
+    }
+    if (depth != VK_FORMAT_UNDEFINED) {
+        const VkImageLayout kept = depth_sampled ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        VkAttachmentDescription& attachment = attachments[attachment_count];
+        attachment.format = depth;
+        attachment.samples = VK_SAMPLE_COUNT_1_BIT;
+        attachment.loadOp = clear ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
+        attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        attachment.initialLayout = clear ? VK_IMAGE_LAYOUT_UNDEFINED : kept;
+        attachment.finalLayout = kept;
+        depth_ref.attachment = attachment_count++;
+        subpass.pDepthStencilAttachment = &depth_ref;
+    }
+    constexpr VkPipelineStageFlags kAttachmentStages = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                                                       VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+    constexpr VkAccessFlags kAttachmentWrites = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    constexpr VkAccessFlags kAttachmentAccess =
+        kAttachmentWrites | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+    VkSubpassDependency dependencies[2]{};
+    dependencies[0].srcSubpass = VK_SUBPASS_EXTERNAL;
+    dependencies[0].dstSubpass = 0;
+    dependencies[0].srcStageMask = kAttachmentStages | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT;
+    dependencies[0].srcAccessMask = kAttachmentWrites | VK_ACCESS_TRANSFER_WRITE_BIT;
+    dependencies[0].dstStageMask = kAttachmentStages;
+    dependencies[0].dstAccessMask = kAttachmentAccess;
+    dependencies[1].srcSubpass = 0;
+    dependencies[1].dstSubpass = VK_SUBPASS_EXTERNAL;
+    dependencies[1].srcStageMask = kAttachmentStages;
+    dependencies[1].srcAccessMask = kAttachmentWrites;
+    dependencies[1].dstStageMask = kAttachmentStages | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT;
+    dependencies[1].dstAccessMask = kAttachmentAccess | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT;
+
+    VkRenderPassCreateInfo info{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
+    info.attachmentCount = attachment_count;
+    info.pAttachments = attachments;
+    info.subpassCount = 1;
+    info.pSubpasses = &subpass;
+    info.dependencyCount = 2;
+    info.pDependencies = dependencies;
+    VkRenderPass render_pass = VK_NULL_HANDLE;
+    if (vkCreateRenderPass(device, &info, nullptr, &render_pass) != VK_SUCCESS) throw std::runtime_error("Vulkan: vkCreateRenderPass failed");
+    return render_pass;
 }
 
 VkFormat SelectDepthAttachmentFormat(VkPhysicalDevice physical_device) {
@@ -238,8 +321,8 @@ PhysicalDeviceChoice PickPhysicalDevice(VkInstance instance) {
         if (supported_features.shaderSampledImageArrayDynamicIndexing != VK_TRUE ||
             props.limits.maxPerStageDescriptorSampledImages < kMaxBindlessTextures ||
             props.limits.maxDescriptorSetSampledImages < kMaxBindlessTextures) {
-            AETHER_LOG_INFO("Vulkan", "Skipping adapter %s: dynamic sampled-image indexing or 32-image limits missing",
-                            props.deviceName);
+            AETHER_LOG_INFO("Vulkan", "Skipping adapter %s: dynamic sampled-image indexing or %u-image limits missing",
+                            props.deviceName, kMaxBindlessTextures);
             continue;
         }
 
@@ -319,7 +402,36 @@ PhysicalDeviceChoice PickPhysicalDevice(VkInstance instance) {
     return best;
 }
 
-VkDevice CreateLogicalDevice(VkPhysicalDevice physical_device, const PhysicalDeviceChoice& choice) {
+// Inline ray queries need the acceleration-structure and ray-query extensions, their features, and deferred host operations (a dependency of
+// the first). Probed here, not enabled: nothing in the RHI builds an acceleration structure yet.
+bool ProbeRayTracing(VkPhysicalDevice physical_device) {
+    u32 count = 0;
+    vkEnumerateDeviceExtensionProperties(physical_device, nullptr, &count, nullptr);
+    std::vector<VkExtensionProperties> available(count);
+    vkEnumerateDeviceExtensionProperties(physical_device, nullptr, &count, available.data());
+    auto has = [&](const char* name) {
+        for (const VkExtensionProperties& ext : available) {
+            if (std::strcmp(ext.extensionName, name) == 0) return true;
+        }
+        return false;
+    };
+    if (!has(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME) || !has(VK_KHR_RAY_QUERY_EXTENSION_NAME) ||
+        !has(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME)) {
+        return false;
+    }
+    VkPhysicalDeviceAccelerationStructureFeaturesKHR acceleration{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR};
+    VkPhysicalDeviceRayQueryFeaturesKHR ray_query{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR};
+    VkPhysicalDeviceVulkan12Features features_12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
+    ray_query.pNext = &acceleration;
+    features_12.pNext = &ray_query;
+    VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+    features.pNext = &features_12;
+    vkGetPhysicalDeviceFeatures2(physical_device, &features);
+    return acceleration.accelerationStructure == VK_TRUE && ray_query.rayQuery == VK_TRUE && features_12.bufferDeviceAddress == VK_TRUE;
+}
+
+VkDevice CreateLogicalDevice(VkPhysicalDevice physical_device, const PhysicalDeviceChoice& choice, bool& update_after_bind,
+                             bool& ray_tracing) {
     f32 priorities[2] = {1.0f, 1.0f};
     std::vector<VkDeviceQueueCreateInfo> queue_infos;
 
@@ -344,7 +456,34 @@ VkDevice CreateLogicalDevice(VkPhysicalDevice physical_device, const PhysicalDev
 
     VkPhysicalDeviceVulkan12Features features_12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
     features_12.timelineSemaphore = VK_TRUE;
+    // An update-after-bind texture table where the device has one (VulkanDevice::bindless_update_after_bind_).
+    VkPhysicalDeviceVulkan12Features supported_12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
+    VkPhysicalDeviceFeatures2 supported_2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+    supported_2.pNext = &supported_12;
+    vkGetPhysicalDeviceFeatures2(physical_device, &supported_2);
+    update_after_bind = supported_12.descriptorBindingSampledImageUpdateAfterBind == VK_TRUE &&
+                        supported_12.descriptorBindingUpdateUnusedWhilePending == VK_TRUE;
+    features_12.descriptorBindingSampledImageUpdateAfterBind = update_after_bind ? VK_TRUE : VK_FALSE;
+    features_12.descriptorBindingUpdateUnusedWhilePending = update_after_bind ? VK_TRUE : VK_FALSE;
     std::vector<const char*> extensions = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+    // Ray queries where the GPU has them: the acceleration-structure and ray-query features, with the buffer device addresses they build from.
+    // Opt-in (AETHER_VK_RAY_TRACING=1): on the NVIDIA driver tried, merely enabling VK_KHR_acceleration_structure made the virtual shadow
+    // feedback test read zero depth in a third to a half of its runs, with no ray tracing call ever made; nothing found in the depth copy's
+    // barriers explains it, so the extension is not enabled unless asked for.
+    const char* opt_in = std::getenv("AETHER_VK_RAY_TRACING");
+    ray_tracing = opt_in != nullptr && std::strcmp(opt_in, "1") == 0 && ProbeRayTracing(physical_device);
+    VkPhysicalDeviceAccelerationStructureFeaturesKHR acceleration_features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR};
+    VkPhysicalDeviceRayQueryFeaturesKHR ray_query_features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR};
+    if (ray_tracing) {
+        acceleration_features.accelerationStructure = VK_TRUE;
+        ray_query_features.rayQuery = VK_TRUE;
+        ray_query_features.pNext = &acceleration_features;
+        features_12.bufferDeviceAddress = VK_TRUE;
+        features_12.pNext = &ray_query_features;
+        extensions.push_back(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
+        extensions.push_back(VK_KHR_RAY_QUERY_EXTENSION_NAME);
+        extensions.push_back(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
+    }
     // A portability implementation (MoltenVK) must have its subset enabled.
     u32 ext_count = 0;
     vkEnumerateDeviceExtensionProperties(physical_device, nullptr, &ext_count, nullptr);
@@ -406,7 +545,27 @@ VulkanDevice::VulkanDevice(bool enable_debug_layer) {
         queue_family_index_ = choice.graphics_family;
         compute_queue_family_index_ = choice.compute_family;
 
-        device_ = CreateLogicalDevice(physical_device_, choice);
+        bool update_after_bind = false;
+        device_ = CreateLogicalDevice(physical_device_, choice, update_after_bind, ray_tracing_supported_);
+        VkPhysicalDeviceVulkan12Properties properties_12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_PROPERTIES};
+        VkPhysicalDeviceProperties2 properties_2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
+        properties_2.pNext = &properties_12;
+        vkGetPhysicalDeviceProperties2(physical_device_, &properties_2);
+        bindless_update_after_bind_ = update_after_bind &&
+                                      properties_12.maxPerStageDescriptorUpdateAfterBindSampledImages >= kMaxBindlessTextures &&
+                                      properties_12.maxDescriptorSetUpdateAfterBindSampledImages >= kMaxBindlessTextures &&
+                                      properties_12.maxPerStageUpdateAfterBindResources >= kMaxBindlessTextures + 8;
+        render_targets_supported_ =
+            bindless_update_after_bind_ &&
+            HasFormatFeatures(physical_device_, kRenderTextureFormat,
+                              VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT | VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND_BIT |
+                                  VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) &&
+            HasFormatFeatures(physical_device_, kDepthTextureFormat,
+                              VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT);
+        if (!render_targets_supported_) {
+            AETHER_LOG_INFO("Vulkan", "No update-after-bind texture table or RGBA16F/D32 targets: render textures, depth textures and the "
+                                      "HDR scene colour are unavailable");
+        }
         vkGetDeviceQueue(device_, queue_family_index_, 0, &queue_);
         if (choice.compute_is_separate_queue) {
             vkGetDeviceQueue(device_, compute_queue_family_index_, choice.compute_queue_index, &compute_queue_);
@@ -427,6 +586,7 @@ VulkanDevice::VulkanDevice(bool enable_debug_layer) {
                          queue_family_index_, compute_queue_family_index_);
 
         CreateBindlessTextureInfrastructure();
+        if (render_targets_supported_) CreateTargetPasses();
     } catch (...) {
         Destroy();
         throw;
@@ -523,6 +683,7 @@ bool VulkanDevice::DestroyBuffer(BufferHandle buffer) {
             vkFreeDescriptorSets(device_, frame_constants_pool_, 1, &record.constants_set);
             --constant_buffer_count_;
         }
+        if (record.read_set != VK_NULL_HANDLE) vkFreeDescriptorSets(device_, frame_read_pool_, 1, &record.read_set);
         vkDestroyBuffer(device_, record.buffer, nullptr);
         vkFreeMemory(device_, record.memory, nullptr);
     });
@@ -590,6 +751,7 @@ void VulkanDevice::Destroy() noexcept {
             if (resources.command_pool != VK_NULL_HANDLE) vkDestroyCommandPool(device_, resources.command_pool, nullptr);
         }
         deferred_command_list_resources_.clear();
+        pending_transitions_.clear(); // the device is idle: they are done
         // The device is idle, so everything destroyed-but-pending can go now; records the free lists emptied are skipped below, which is what
         // keeps each native object freed exactly once.
         if (live_buffers_ != 0 || live_pipelines_ != 0 || live_compute_pipelines_ != 0) {
@@ -626,10 +788,12 @@ void VulkanDevice::Destroy() noexcept {
         for (const BufferRecord& buffer : buffers_) {
             if (buffer.mapped) vkUnmapMemory(device_, buffer.memory);
             if (buffer.constants_set != VK_NULL_HANDLE) vkFreeDescriptorSets(device_, frame_constants_pool_, 1, &buffer.constants_set);
+            if (buffer.read_set != VK_NULL_HANDLE) vkFreeDescriptorSets(device_, frame_read_pool_, 1, &buffer.read_set);
             if (buffer.buffer != VK_NULL_HANDLE) vkDestroyBuffer(device_, buffer.buffer, nullptr);
             if (buffer.memory != VK_NULL_HANDLE) vkFreeMemory(device_, buffer.memory, nullptr);
         }
         auto destroy_texture_record = [this](const SampledTextureRecord& record) {
+            if (record.framebuffer != VK_NULL_HANDLE) vkDestroyFramebuffer(device_, record.framebuffer, nullptr);
             if (record.view != VK_NULL_HANDLE) vkDestroyImageView(device_, record.view, nullptr);
             if (record.image != VK_NULL_HANDLE) vkDestroyImage(device_, record.image, nullptr);
             if (record.memory != VK_NULL_HANDLE) vkFreeMemory(device_, record.memory, nullptr);
@@ -638,12 +802,27 @@ void VulkanDevice::Destroy() noexcept {
             if (texture.image != VK_NULL_HANDLE) destroy_texture_record(texture);
         }
         destroy_texture_record(dummy_texture_);
+        for (auto& passes : target_passes_) {
+            for (VkRenderPass& pass : passes) {
+                if (pass != VK_NULL_HANDLE) vkDestroyRenderPass(device_, pass, nullptr);
+                pass = VK_NULL_HANDLE;
+            }
+        }
         if (frame_constants_pool_ != VK_NULL_HANDLE) {
             vkDestroyDescriptorPool(device_, frame_constants_pool_, nullptr);
         }
         if (frame_constants_set_layout_ != VK_NULL_HANDLE) {
             vkDestroyDescriptorSetLayout(device_, frame_constants_set_layout_, nullptr);
         }
+        if (frame_read_pool_ != VK_NULL_HANDLE) vkDestroyDescriptorPool(device_, frame_read_pool_, nullptr);
+        if (frame_read_set_layout_ != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(device_, frame_read_set_layout_, nullptr);
+        for (const AccelerationRecord& record : acceleration_structures_) {
+            if (record.handle != VK_NULL_HANDLE) DestroyAccelerationStructureNow(record);
+        }
+        acceleration_structures_.clear();
+        if (acceleration_pool_ != VK_NULL_HANDLE) vkDestroyDescriptorPool(device_, acceleration_pool_, nullptr);
+        if (acceleration_set_layout_ != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(device_, acceleration_set_layout_, nullptr);
+        if (empty_set_layout_ != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(device_, empty_set_layout_, nullptr);
         if (bindless_pool_ != VK_NULL_HANDLE) {
             vkDestroyDescriptorPool(device_, bindless_pool_, nullptr);
         }
@@ -992,7 +1171,7 @@ private:
 BufferRecord CreateHostVisibleBuffer(VkDevice device, VkPhysicalDevice physical_device, VkDeviceSize size,
                                       VkBufferUsageFlags usage, const void* data, bool keep_mapped = false,
                                       u32 family_a = VK_QUEUE_FAMILY_IGNORED,
-                                      u32 family_b = VK_QUEUE_FAMILY_IGNORED) {
+                                      u32 family_b = VK_QUEUE_FAMILY_IGNORED, bool prefer_cached = false, bool device_address = false) {
     if (size == 0 || size > std::numeric_limits<usize>::max()) {
         AETHER_LOG_ERROR("Vulkan", "Host-visible buffer size must be non-zero and fit the host address space");
         throw std::invalid_argument("Host-visible buffer size must fit the host address space");
@@ -1002,7 +1181,7 @@ BufferRecord CreateHostVisibleBuffer(VkDevice device, VkPhysicalDevice physical_
     result.size_bytes = size;
     VkBufferCreateInfo buffer_info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
     buffer_info.size = size;
-    buffer_info.usage = usage;
+    buffer_info.usage = usage | (device_address ? VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT : 0u);
     u32 queue_families[2] = {family_a, family_b};
     if (family_a != VK_QUEUE_FAMILY_IGNORED && family_b != VK_QUEUE_FAMILY_IGNORED && family_a != family_b) {
         buffer_info.sharingMode = VK_SHARING_MODE_CONCURRENT;
@@ -1016,9 +1195,27 @@ BufferRecord CreateHostVisibleBuffer(VkDevice device, VkPhysicalDevice physical_
     VkMemoryRequirements mem_reqs{};
     vkGetBufferMemoryRequirements(device, result.buffer, &mem_reqs);
     VkMemoryAllocateInfo alloc_info{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    VkMemoryAllocateFlagsInfo address_flags{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO};
+    address_flags.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
+    if (device_address) alloc_info.pNext = &address_flags;
     alloc_info.allocationSize = mem_reqs.size;
-    alloc_info.memoryTypeIndex = FindMemoryType(
-        physical_device, mem_reqs.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    // A buffer the CPU reads (a readback) wants cached memory, where reads are fast; uncached write-combined memory is for writing.
+    constexpr VkMemoryPropertyFlags kCoherent = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    VkPhysicalDeviceMemoryProperties memory_properties{};
+    vkGetPhysicalDeviceMemoryProperties(physical_device, &memory_properties);
+    bool found_cached = false;
+    if (prefer_cached) {
+        for (u32 i = 0; i < memory_properties.memoryTypeCount; ++i) {
+            if ((mem_reqs.memoryTypeBits & (1u << i)) != 0 &&
+                (memory_properties.memoryTypes[i].propertyFlags & (kCoherent | VK_MEMORY_PROPERTY_HOST_CACHED_BIT)) ==
+                    (kCoherent | VK_MEMORY_PROPERTY_HOST_CACHED_BIT)) {
+                alloc_info.memoryTypeIndex = i;
+                found_cached = true;
+                break;
+            }
+        }
+    }
+    if (!found_cached) alloc_info.memoryTypeIndex = FindMemoryType(physical_device, mem_reqs.memoryTypeBits, kCoherent);
     AETHER_VK_CHECK(vkAllocateMemory(device, &alloc_info, nullptr, &result.memory));
     AETHER_VK_CHECK(vkBindBufferMemory(device, result.buffer, result.memory, 0));
 
@@ -1054,11 +1251,35 @@ BufferHandle VulkanDevice::CreateBufferInternal(const void* data, u64 size_bytes
     // demo's scale.
     ScopedBufferRecord owned_record(device_);
     owned_record.Get() = CreateHostVisibleBuffer(device_, physical_device_, size_bytes,
-                                                  VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-                                                  data, true);
+                                                  VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT |
+                                                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | // a frame read buffer is a storage buffer
+                                                      (ray_tracing_supported_ ? VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR : 0u),
+                                                  data, true, VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, false, ray_tracing_supported_);
     const u32 slot = AcquireBufferSlot(owned_record.Get());
     owned_record.Release();
     return BufferHandle{slot};
+}
+
+BufferHandle VulkanDevice::CreateReadbackBuffer(u64 size_bytes) {
+    if (size_bytes == 0 || size_bytes > std::numeric_limits<u32>::max()) {
+        throw std::invalid_argument("A readback buffer's size must be non-zero and within 4 GiB");
+    }
+    ScopedBufferRecord owned_record(device_);
+    owned_record.Get() = CreateHostVisibleBuffer(device_, physical_device_, size_bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT, nullptr, true,
+                                                 VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, /*prefer_cached=*/true);
+    owned_record.Get().is_readback = true;
+    const u32 slot = AcquireBufferSlot(owned_record.Get());
+    owned_record.Release();
+    return BufferHandle{slot};
+}
+
+bool VulkanDevice::ReadReadbackBuffer(BufferHandle buffer, void* out, u64 size_bytes, u64 offset) {
+    if (!IsBufferAlive(buffer) || !buffers_[buffer.index].is_readback || buffers_[buffer.index].mapped == nullptr || out == nullptr ||
+        size_bytes == 0 || offset > buffers_[buffer.index].size_bytes || size_bytes > buffers_[buffer.index].size_bytes - offset) {
+        return false;
+    }
+    std::memcpy(out, static_cast<const u8*>(buffers_[buffer.index].mapped) + offset, static_cast<usize>(size_bytes));
+    return true;
 }
 
 BufferHandle VulkanDevice::CreateVertexBuffer(const void* data, u64 size_bytes) {
@@ -1437,6 +1658,178 @@ SampledTextureHandle VulkanDevice::CreateR32FloatTexture(u32 width, u32 height, 
     return SampledTextureHandle{index};
 }
 
+SampledTextureHandle VulkanDevice::CreateMippedTexture(const char* what, VkFormat format, u32 texel_bytes, u32 width, u32 height,
+                                                       u32 mip_count, const void* levels) {
+    VkPhysicalDeviceProperties properties{};
+    vkGetPhysicalDeviceProperties(physical_device_, &properties);
+    if (width == 0 || height == 0 || levels == nullptr || width > properties.limits.maxImageDimension2D ||
+        height > properties.limits.maxImageDimension2D) {
+        throw std::invalid_argument(std::string(what) + " requires a non-zero extent within the device's 2D texture limit and data");
+    }
+    u32 max_mips = 1;
+    while ((std::max(width, height) >> max_mips) > 0) ++max_mips;
+    if (mip_count == 0 || mip_count > max_mips) {
+        throw std::invalid_argument(std::string(what) + " requires between 1 and the extent's full chain of mip levels");
+    }
+    if (!HasFormatFeatures(physical_device_, format,
+                           VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT |
+                               VK_FORMAT_FEATURE_TRANSFER_DST_BIT)) {
+        AETHER_LOG_ERROR("Vulkan", "%s: this device cannot sample that format with filtering", what);
+        return {};
+    }
+    ReclaimTextureSlots();
+    if (TextureTableFull()) {
+        AETHER_LOG_ERROR("Vulkan", "%s: the bindless texture table is full (capacity=%u real textures)", what, kMaxUserBindlessTextures);
+        return {};
+    }
+    std::vector<ImageLevel> image_levels;
+    const u8* data = static_cast<const u8*>(levels);
+    for (u32 i = 0; i < mip_count; ++i) {
+        const u32 w = std::max(1u, width >> i), h = std::max(1u, height >> i);
+        const u64 size = static_cast<u64>(w) * h * texel_bytes;
+        image_levels.push_back({data, size, w, h});
+        data += size;
+    }
+    ScopedSampledTextureRecord owned_record(device_);
+    owned_record.Get() = UploadImageRecord(format, width, height, image_levels);
+    const SampledTextureRecord record = owned_record.Get();
+    const u32 index = StoreTextureRecord(record);
+    owned_record.Release();
+    WriteBindlessTexture(index, record);
+    return SampledTextureHandle{index};
+}
+
+SampledTextureHandle VulkanDevice::CreateHalfFloatTexture(u32 width, u32 height, u32 mip_count, const u16* halves) {
+    return CreateMippedTexture("CreateHalfFloatTexture", VK_FORMAT_R16G16B16A16_SFLOAT, 8, width, height, mip_count, halves);
+}
+
+SampledTextureHandle VulkanDevice::CreateTextureWithMips(u32 width, u32 height, u32 mip_count, const u8* rgba8_levels) {
+    return CreateMippedTexture("CreateTextureWithMips", VK_FORMAT_R8G8B8A8_UNORM, 4, width, height, mip_count, rgba8_levels);
+}
+
+void VulkanDevice::CreateTargetPasses() {
+    for (u32 clear = 0; clear < 2; ++clear) {
+        target_passes_[0][clear] = CreateTargetRenderPass(device_, kRenderTextureFormat, VK_FORMAT_UNDEFINED, false, clear != 0);
+        target_passes_[1][clear] = CreateTargetRenderPass(device_, VK_FORMAT_UNDEFINED, kDepthTextureFormat, true, clear != 0);
+    }
+}
+
+VkRenderPass VulkanDevice::TargetPass(PassTarget target, bool clear) const {
+    if (target != PassTarget::Texture && target != PassTarget::Depth) return VK_NULL_HANDLE;
+    return target_passes_[target == PassTarget::Depth ? 1 : 0][clear ? 1 : 0];
+}
+
+const SampledTextureRecord* VulkanDevice::FindTarget(SampledTextureHandle handle, PassTarget target) const {
+    if (!handle.IsValid() || handle.index < kFirstUserBindlessTextureIndex) return nullptr;
+    const u32 position = handle.index - kFirstUserBindlessTextureIndex;
+    if (position >= sampled_textures_.size()) return nullptr;
+    const SampledTextureRecord& record = sampled_textures_[position];
+    return record.image != VK_NULL_HANDLE && record.framebuffer != VK_NULL_HANDLE && record.target == target ? &record : nullptr;
+}
+
+void VulkanDevice::MakeShaderReadable(VkImage image, VkImageAspectFlags aspect, bool wait) {
+    // Earlier ones whose submission has completed go first (a command list's destructor waits for its submission).
+    std::erase_if(pending_transitions_, [](const std::unique_ptr<ICommandList>& list) {
+        return !static_cast<const VulkanCommandList&>(*list).IsSubmissionInFlight();
+    });
+    std::unique_ptr<ICommandList> cmd = CreateCommandList();
+    cmd->Reset();
+    VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = image;
+    barrier.subresourceRange = {aspect, 0, 1, 0, 1};
+    barrier.srcAccessMask = 0;
+    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(static_cast<VkCommandBuffer>(cmd->NativeHandle()), VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+    cmd->Close();
+    const u64 fence = Submit(*cmd, nullptr);
+    if (fence == 0) throw std::runtime_error("Vulkan: could not submit a new image's layout transition");
+    if (wait) {
+        WaitForFence(fence);
+    } else {
+        pending_transitions_.push_back(std::move(cmd));
+    }
+}
+
+SampledTextureHandle VulkanDevice::CreateRenderTexture(u32 width, u32 height) {
+    return CreateTargetTexture("CreateRenderTexture", PassTarget::Texture, width, height);
+}
+
+SampledTextureHandle VulkanDevice::CreateDepthTexture(u32 width, u32 height) {
+    return CreateTargetTexture("CreateDepthTexture", PassTarget::Depth, width, height);
+}
+
+SampledTextureHandle VulkanDevice::CreateTargetTexture(const char* what, PassTarget target, u32 width, u32 height) {
+    VkPhysicalDeviceProperties properties{};
+    vkGetPhysicalDeviceProperties(physical_device_, &properties);
+    if (width == 0 || height == 0 || width > properties.limits.maxImageDimension2D || height > properties.limits.maxImageDimension2D) {
+        throw std::invalid_argument(std::string(what) + " requires a non-zero extent within the device's 2D texture limit");
+    }
+    if (!render_targets_supported_) return {};
+    DrainRetired(); // destroyed textures give their slots back at retirement
+    ReclaimTextureSlots();
+    if (TextureTableFull()) {
+        AETHER_LOG_ERROR("Vulkan", "%s: the bindless texture table is full (capacity=%u real textures)", what, kMaxUserBindlessTextures);
+        return {};
+    }
+    const bool depth = target == PassTarget::Depth;
+    const VkFormat format = depth ? kDepthTextureFormat : kRenderTextureFormat;
+    const VkImageAspectFlags aspect = depth ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
+    ScopedSampledTextureRecord owned_record(device_);
+    SampledTextureRecord& record = owned_record.Get();
+    VkImageCreateInfo image_info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+    image_info.imageType = VK_IMAGE_TYPE_2D;
+    image_info.format = format;
+    image_info.extent = {width, height, 1};
+    image_info.mipLevels = 1;
+    image_info.arrayLayers = 1;
+    image_info.samples = VK_SAMPLE_COUNT_1_BIT;
+    image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
+    // A colour render texture can be read back to the CPU (CopyRenderTextureToReadback copies it to a buffer), so it is a transfer source too;
+    // without that bit the copy and its layout barriers are invalid, and the copy returned wrong data in a third of the runs once the device
+    // enabled VK_KHR_acceleration_structure (found with the Khronos validation layer).
+    image_info.usage = VK_IMAGE_USAGE_SAMPLED_BIT | (depth ? VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT
+                                                           : (VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT));
+    image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE; // graphics only
+    image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    AETHER_VK_CHECK(vkCreateImage(device_, &image_info, nullptr, &record.image));
+    VkMemoryRequirements mem_reqs{};
+    vkGetImageMemoryRequirements(device_, record.image, &mem_reqs);
+    VkMemoryAllocateInfo alloc_info{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    alloc_info.allocationSize = mem_reqs.size;
+    alloc_info.memoryTypeIndex = FindMemoryType(physical_device_, mem_reqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    AETHER_VK_CHECK(vkAllocateMemory(device_, &alloc_info, nullptr, &record.memory));
+    AETHER_VK_CHECK(vkBindImageMemory(device_, record.image, record.memory, 0));
+    VkImageViewCreateInfo view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+    view_info.image = record.image;
+    view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    view_info.format = format;
+    view_info.subresourceRange = {aspect, 0, 1, 0, 1};
+    AETHER_VK_CHECK(vkCreateImageView(device_, &view_info, nullptr, &record.view));
+    VkFramebufferCreateInfo framebuffer_info{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+    framebuffer_info.renderPass = TargetPass(target, true);
+    framebuffer_info.attachmentCount = 1;
+    framebuffer_info.pAttachments = &record.view;
+    framebuffer_info.width = width;
+    framebuffer_info.height = height;
+    framebuffer_info.layers = 1;
+    AETHER_VK_CHECK(vkCreateFramebuffer(device_, &framebuffer_info, nullptr, &record.framebuffer));
+    record.target = target;
+    record.width = width;
+    record.height = height;
+    // Shader-readable before anything draws it (a pass that keeps its contents loads from that layout); no wait: callable mid-frame.
+    MakeShaderReadable(record.image, aspect, false);
+    const SampledTextureRecord stored = record;
+    const u32 index = StoreTextureRecord(stored);
+    owned_record.Release();
+    WriteBindlessTexture(index, stored); // a free slot: nothing in flight reads it (update-after-bind, unused while pending)
+    return SampledTextureHandle{index};
+}
+
 u32 VulkanDevice::StoreTextureRecord(const SampledTextureRecord& record) {
     ReclaimTextureSlots();
     if (!free_texture_slots_.empty()) {
@@ -1462,6 +1855,7 @@ bool VulkanDevice::DestroyTexture(SampledTextureHandle texture) {
     sampled_textures_[position].retiring = true;
     Retire([this, record, position, index = texture.index] {
         WriteBindlessTexture(index, dummy_texture_);
+        if (record.framebuffer != VK_NULL_HANDLE) vkDestroyFramebuffer(device_, record.framebuffer, nullptr);
         vkDestroyImageView(device_, record.view, nullptr);
         vkDestroyImage(device_, record.image, nullptr);
         vkFreeMemory(device_, record.memory, nullptr);
@@ -1514,6 +1908,17 @@ void VulkanDevice::UpdateFrameConstantBuffer(BufferHandle buffer, const void* da
     std::memcpy(record.mapped, data, static_cast<usize>(size_bytes));
 }
 
+bool VulkanDevice::WriteBufferUnsynchronized(BufferHandle buffer, const void* data, u64 size_bytes, u64 offset) {
+    if (!IsBufferAlive(buffer)) return false;
+    BufferRecord& record = buffers_[buffer.index];
+    const bool host_written = record.is_vertex || record.constants_set != VK_NULL_HANDLE;
+    if (!host_written || !record.mapped || !data || size_bytes == 0 || offset > record.size_bytes || size_bytes > record.size_bytes - offset) {
+        return false;
+    }
+    std::memcpy(static_cast<u8*>(record.mapped) + offset, data, static_cast<usize>(size_bytes));
+    return true;
+}
+
 BufferHandle VulkanDevice::CreateFrameConstantBuffer(u64 size_bytes) {
     if (size_bytes == 0) {
         AETHER_LOG_ERROR("Vulkan", "CreateConstantBuffer requires a non-zero size");
@@ -1536,7 +1941,11 @@ BufferHandle VulkanDevice::CreateFrameConstantBuffer(u64 size_bytes) {
     AETHER_VK_CHECK(vkAllocateDescriptorSets(device_, &alloc, &record.constants_set));
     ++constant_buffer_count_;
 
-    VkDescriptorBufferInfo buffer_desc{record.buffer, 0, padded};
+    // As frame constants the shader sees at most maxUniformBufferRange (64 KiB on most devices): a larger buffer is a frame read
+    // buffer (the clustered lights), and a uniform descriptor over all of it would be invalid.
+    const VkDeviceSize uniform_range = max_uniform_buffer_range_ > 0 ? std::min<VkDeviceSize>(padded, max_uniform_buffer_range_ / 256 * 256)
+                                                                     : padded;
+    VkDescriptorBufferInfo buffer_desc{record.buffer, 0, uniform_range};
     VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
     write.dstSet = record.constants_set;
     write.dstBinding = 0;
@@ -1544,6 +1953,20 @@ BufferHandle VulkanDevice::CreateFrameConstantBuffer(u64 size_bytes) {
     write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     write.pBufferInfo = &buffer_desc;
     vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+
+    // The same buffer as a frame read buffer (HLSL's ByteAddressBuffer at t0, space3 is a storage buffer at set 3, binding 0).
+    VkDescriptorSetAllocateInfo read_alloc{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+    read_alloc.descriptorPool = frame_read_pool_;
+    read_alloc.descriptorSetCount = 1;
+    read_alloc.pSetLayouts = &frame_read_set_layout_;
+    AETHER_VK_CHECK(vkAllocateDescriptorSets(device_, &read_alloc, &record.read_set));
+    VkDescriptorBufferInfo read_desc{record.buffer, 0, max_storage_buffer_range_ > 0 ? std::min<VkDeviceSize>(padded, max_storage_buffer_range_)
+                                                                                      : padded};
+    VkWriteDescriptorSet read_write = write;
+    read_write.dstSet = record.read_set;
+    read_write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    read_write.pBufferInfo = &read_desc;
+    vkUpdateDescriptorSets(device_, 1, &read_write, 0, nullptr);
     return handle;
 }
 
@@ -1555,6 +1978,7 @@ void VulkanDevice::CreateBindlessTextureInfrastructure() {
     sampler_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
     sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
     sampler_info.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    sampler_info.maxLod = VK_LOD_CLAMP_NONE; // every mip level (the default 0 would pin sampling to level 0)
     AETHER_VK_CHECK(vkCreateSampler(device_, &sampler_info, nullptr, &bindless_sampler_));
 
     // Two separate set layouts (SAMPLED_IMAGE array + standalone SAMPLER),
@@ -1569,6 +1993,17 @@ void VulkanDevice::CreateBindlessTextureInfrastructure() {
     VkDescriptorSetLayoutCreateInfo texture_layout_info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
     texture_layout_info.bindingCount = 1;
     texture_layout_info.pBindings = &texture_binding;
+    // Update-after-bind, unused-while-pending: a slot no submitted or recorded draw uses may be written at any time (render targets made
+    // mid-frame). Every slot holds a valid view from the start (the white fallback), so no partially-bound flag is needed.
+    const VkDescriptorBindingFlags texture_binding_flags =
+        VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT;
+    VkDescriptorSetLayoutBindingFlagsCreateInfo texture_flags_info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO};
+    texture_flags_info.bindingCount = 1;
+    texture_flags_info.pBindingFlags = &texture_binding_flags;
+    if (bindless_update_after_bind_) {
+        texture_layout_info.pNext = &texture_flags_info;
+        texture_layout_info.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT;
+    }
     AETHER_VK_CHECK(vkCreateDescriptorSetLayout(device_, &texture_layout_info, nullptr, &bindless_texture_set_layout_));
 
     VkDescriptorSetLayoutBinding sampler_binding{};
@@ -1587,6 +2022,7 @@ void VulkanDevice::CreateBindlessTextureInfrastructure() {
         {VK_DESCRIPTOR_TYPE_SAMPLER, 1},
     };
     VkDescriptorPoolCreateInfo pool_info{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+    if (bindless_update_after_bind_) pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
     pool_info.maxSets = 2;
     pool_info.poolSizeCount = 2;
     pool_info.pPoolSizes = pool_sizes;
@@ -1650,6 +2086,253 @@ void VulkanDevice::CreateBindlessTextureInfrastructure() {
     constants_pool_info.poolSizeCount = 1;
     constants_pool_info.pPoolSizes = &constants_pool_size;
     AETHER_VK_CHECK(vkCreateDescriptorPool(device_, &constants_pool_info, nullptr, &frame_constants_pool_));
+
+    // Frame read buffers: set 3, one storage buffer, a set per frame constant buffer (CreateFrameConstantBuffer makes both).
+    VkDescriptorSetLayoutBinding read_binding = constants_binding;
+    read_binding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    VkDescriptorSetLayoutCreateInfo read_layout_info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+    read_layout_info.bindingCount = 1;
+    read_layout_info.pBindings = &read_binding;
+    AETHER_VK_CHECK(vkCreateDescriptorSetLayout(device_, &read_layout_info, nullptr, &frame_read_set_layout_));
+    VkDescriptorPoolSize read_pool_size{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, kMaxConstantBuffers};
+    VkDescriptorPoolCreateInfo read_pool_info = constants_pool_info;
+    read_pool_info.pPoolSizes = &read_pool_size;
+    AETHER_VK_CHECK(vkCreateDescriptorPool(device_, &read_pool_info, nullptr, &frame_read_pool_));
+    if (ray_tracing_supported_) CreateAccelerationResources();
+}
+
+void VulkanDevice::CreateAccelerationResources() {
+    create_acceleration_structure_ =
+        reinterpret_cast<PFN_vkCreateAccelerationStructureKHR>(vkGetDeviceProcAddr(device_, "vkCreateAccelerationStructureKHR"));
+    destroy_acceleration_structure_ =
+        reinterpret_cast<PFN_vkDestroyAccelerationStructureKHR>(vkGetDeviceProcAddr(device_, "vkDestroyAccelerationStructureKHR"));
+    get_acceleration_build_sizes_ =
+        reinterpret_cast<PFN_vkGetAccelerationStructureBuildSizesKHR>(vkGetDeviceProcAddr(device_, "vkGetAccelerationStructureBuildSizesKHR"));
+    cmd_build_acceleration_structures_ =
+        reinterpret_cast<PFN_vkCmdBuildAccelerationStructuresKHR>(vkGetDeviceProcAddr(device_, "vkCmdBuildAccelerationStructuresKHR"));
+    get_acceleration_address_ = reinterpret_cast<PFN_vkGetAccelerationStructureDeviceAddressKHR>(
+        vkGetDeviceProcAddr(device_, "vkGetAccelerationStructureDeviceAddressKHR"));
+    if (!create_acceleration_structure_ || !destroy_acceleration_structure_ || !get_acceleration_build_sizes_ ||
+        !cmd_build_acceleration_structures_ || !get_acceleration_address_) {
+        AETHER_LOG_WARN("Vulkan", "Ray tracing entry points are missing; ray tracing is off");
+        ray_tracing_supported_ = false;
+        return;
+    }
+    // Set 4: one top-level structure, read by the fragment stage (HLSL register(t0, space4)). An empty layout stands in for the set indices
+    // below it that an acceleration-structure pipeline does not use.
+    VkDescriptorSetLayoutBinding binding{};
+    binding.binding = 0;
+    binding.descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+    binding.descriptorCount = 1;
+    binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_VERTEX_BIT;
+    VkDescriptorSetLayoutCreateInfo layout_info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+    layout_info.bindingCount = 1;
+    layout_info.pBindings = &binding;
+    AETHER_VK_CHECK(vkCreateDescriptorSetLayout(device_, &layout_info, nullptr, &acceleration_set_layout_));
+    VkDescriptorSetLayoutCreateInfo empty_info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+    AETHER_VK_CHECK(vkCreateDescriptorSetLayout(device_, &empty_info, nullptr, &empty_set_layout_));
+    VkDescriptorPoolSize pool_size{VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, kMaxAccelerationStructures};
+    VkDescriptorPoolCreateInfo pool_info{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+    pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+    pool_info.maxSets = kMaxAccelerationStructures;
+    pool_info.poolSizeCount = 1;
+    pool_info.pPoolSizes = &pool_size;
+    AETHER_VK_CHECK(vkCreateDescriptorPool(device_, &pool_info, nullptr, &acceleration_pool_));
+}
+
+void VulkanDevice::DestroyAccelerationStructureNow(const AccelerationRecord& record) {
+    if (record.set != VK_NULL_HANDLE) vkFreeDescriptorSets(device_, acceleration_pool_, 1, &record.set);
+    if (record.handle != VK_NULL_HANDLE) destroy_acceleration_structure_(device_, record.handle, nullptr);
+    if (record.buffer != VK_NULL_HANDLE) vkDestroyBuffer(device_, record.buffer, nullptr);
+    if (record.memory != VK_NULL_HANDLE) vkFreeMemory(device_, record.memory, nullptr);
+}
+
+AccelerationStructureHandle VulkanDevice::BuildAccelerationStructure(VkAccelerationStructureTypeKHR type,
+                                                                     const VkAccelerationStructureGeometryKHR& geometry, u32 primitive_count) {
+    VkAccelerationStructureBuildGeometryInfoKHR build{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR};
+    build.type = type;
+    build.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+    build.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+    build.geometryCount = 1;
+    build.pGeometries = &geometry;
+    VkAccelerationStructureBuildSizesInfoKHR sizes{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR};
+    get_acceleration_build_sizes_(device_, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &build, &primitive_count, &sizes);
+
+    // Device-local buffers with addresses: the structure's storage, and the scratch space the build uses.
+    auto make_buffer = [&](VkDeviceSize size, VkBufferUsageFlags usage, VkBuffer& buffer, VkDeviceMemory& memory) {
+        VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+        info.size = size;
+        info.usage = usage | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+        info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        AETHER_VK_CHECK(vkCreateBuffer(device_, &info, nullptr, &buffer));
+        VkMemoryRequirements reqs{};
+        vkGetBufferMemoryRequirements(device_, buffer, &reqs);
+        VkMemoryAllocateFlagsInfo flags{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO};
+        flags.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
+        VkMemoryAllocateInfo alloc{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        alloc.pNext = &flags;
+        alloc.allocationSize = reqs.size;
+        alloc.memoryTypeIndex = FindMemoryType(physical_device_, reqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        AETHER_VK_CHECK(vkAllocateMemory(device_, &alloc, nullptr, &memory));
+        AETHER_VK_CHECK(vkBindBufferMemory(device_, buffer, memory, 0));
+    };
+    AccelerationRecord record;
+    VkBuffer scratch = VK_NULL_HANDLE;
+    VkDeviceMemory scratch_memory = VK_NULL_HANDLE;
+    VkCommandPool pool = VK_NULL_HANDLE;
+    auto cleanup_scratch = [&] {
+        if (pool != VK_NULL_HANDLE) vkDestroyCommandPool(device_, pool, nullptr);
+        if (scratch != VK_NULL_HANDLE) vkDestroyBuffer(device_, scratch, nullptr);
+        if (scratch_memory != VK_NULL_HANDLE) vkFreeMemory(device_, scratch_memory, nullptr);
+    };
+    try {
+        make_buffer(sizes.accelerationStructureSize, VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR, record.buffer, record.memory);
+        make_buffer(sizes.buildScratchSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, scratch, scratch_memory);
+        VkAccelerationStructureCreateInfoKHR create{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR};
+        create.buffer = record.buffer;
+        create.size = sizes.accelerationStructureSize;
+        create.type = type;
+        AETHER_VK_CHECK(create_acceleration_structure_(device_, &create, nullptr, &record.handle));
+        VkBufferDeviceAddressInfo scratch_info{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO};
+        scratch_info.buffer = scratch;
+        build.dstAccelerationStructure = record.handle;
+        build.scratchData.deviceAddress = vkGetBufferDeviceAddress(device_, &scratch_info);
+        VkAccelerationStructureBuildRangeInfoKHR range{};
+        range.primitiveCount = primitive_count;
+        const VkAccelerationStructureBuildRangeInfoKHR* ranges = &range;
+
+        VkCommandPoolCreateInfo pool_info{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+        pool_info.queueFamilyIndex = queue_family_index_;
+        pool_info.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+        AETHER_VK_CHECK(vkCreateCommandPool(device_, &pool_info, nullptr, &pool));
+        VkCommandBufferAllocateInfo cmd_info{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+        cmd_info.commandPool = pool;
+        cmd_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        cmd_info.commandBufferCount = 1;
+        VkCommandBuffer cmd = VK_NULL_HANDLE;
+        AETHER_VK_CHECK(vkAllocateCommandBuffers(device_, &cmd_info, &cmd));
+        VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+        begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        AETHER_VK_CHECK(vkBeginCommandBuffer(cmd, &begin));
+        cmd_build_acceleration_structures_(cmd, 1, &build, &ranges);
+        AETHER_VK_CHECK(vkEndCommandBuffer(cmd));
+        VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+        submit.commandBufferCount = 1;
+        submit.pCommandBuffers = &cmd;
+        {
+            std::lock_guard<std::mutex> lock(graphics_queue_mutex_);
+            AETHER_VK_CHECK(vkQueueSubmit(queue_, 1, &submit, VK_NULL_HANDLE));
+            AETHER_VK_CHECK(vkQueueWaitIdle(queue_));
+        }
+        VkAccelerationStructureDeviceAddressInfoKHR address_info{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR};
+        address_info.accelerationStructure = record.handle;
+        record.address = get_acceleration_address_(device_, &address_info);
+        record.top_level = type == VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
+        if (record.top_level) {
+            VkDescriptorSetAllocateInfo alloc{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+            alloc.descriptorPool = acceleration_pool_;
+            alloc.descriptorSetCount = 1;
+            alloc.pSetLayouts = &acceleration_set_layout_;
+            AETHER_VK_CHECK(vkAllocateDescriptorSets(device_, &alloc, &record.set));
+            VkWriteDescriptorSetAccelerationStructureKHR as_write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR};
+            as_write.accelerationStructureCount = 1;
+            as_write.pAccelerationStructures = &record.handle;
+            VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+            write.pNext = &as_write;
+            write.dstSet = record.set;
+            write.dstBinding = 0;
+            write.descriptorCount = 1;
+            write.descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+            vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+        }
+    } catch (...) {
+        cleanup_scratch();
+        DestroyAccelerationStructureNow(record);
+        throw;
+    }
+    cleanup_scratch();
+    u32 slot;
+    if (!free_acceleration_slots_.empty()) {
+        slot = free_acceleration_slots_.back();
+        free_acceleration_slots_.pop_back();
+        acceleration_structures_[slot] = record;
+    } else {
+        slot = static_cast<u32>(acceleration_structures_.size());
+        acceleration_structures_.push_back(record);
+    }
+    return AccelerationStructureHandle{slot};
+}
+
+AccelerationStructureHandle VulkanDevice::CreateBottomLevelAS(BufferHandle vertices, u32 vertex_count, u32 vertex_stride_bytes,
+                                                              BufferHandle indices, u32 index_count) {
+    if (!ray_tracing_supported_) return {};
+    if (!IsBufferAlive(vertices) || !buffers_[vertices.index].is_vertex || !IsBufferAlive(indices) || !buffers_[indices.index].is_index ||
+        vertex_count == 0 || vertex_stride_bytes < 12 || index_count == 0 || index_count % 3 != 0) {
+        throw std::invalid_argument("CreateBottomLevelAS needs a vertex buffer, an index buffer and whole triangles");
+    }
+    const BufferRecord& vertex_buffer = buffers_[vertices.index];
+    const BufferRecord& index_buffer = buffers_[indices.index];
+    const u32 index_size = index_buffer.index_format == IndexFormat::UInt16 ? 2u : 4u;
+    if (static_cast<u64>(vertex_count) * vertex_stride_bytes > vertex_buffer.size_bytes ||
+        static_cast<u64>(index_count) * index_size > index_buffer.size_bytes) {
+        throw std::invalid_argument("CreateBottomLevelAS counts run past the end of their buffers");
+    }
+    VkBufferDeviceAddressInfo vertex_info{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO};
+    vertex_info.buffer = vertex_buffer.buffer;
+    VkBufferDeviceAddressInfo index_info{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO};
+    index_info.buffer = index_buffer.buffer;
+    VkAccelerationStructureGeometryKHR geometry{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR};
+    geometry.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+    geometry.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
+    geometry.geometry.triangles.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
+    geometry.geometry.triangles.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
+    geometry.geometry.triangles.vertexData.deviceAddress = vkGetBufferDeviceAddress(device_, &vertex_info);
+    geometry.geometry.triangles.vertexStride = vertex_stride_bytes;
+    geometry.geometry.triangles.maxVertex = vertex_count - 1;
+    geometry.geometry.triangles.indexType = index_buffer.index_format == IndexFormat::UInt16 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32;
+    geometry.geometry.triangles.indexData.deviceAddress = vkGetBufferDeviceAddress(device_, &index_info);
+    return BuildAccelerationStructure(VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR, geometry, index_count / 3);
+}
+
+AccelerationStructureHandle VulkanDevice::CreateTopLevelAS(std::span<const AccelerationInstance> instances) {
+    if (!ray_tracing_supported_) return {};
+    if (instances.empty()) throw std::invalid_argument("CreateTopLevelAS needs at least one instance");
+    if (acceleration_pool_ == VK_NULL_HANDLE) return {};
+    std::vector<VkAccelerationStructureInstanceKHR> native(instances.size());
+    for (usize i = 0; i < instances.size(); ++i) {
+        if (!IsAccelerationStructureAlive(instances[i].blas) || acceleration_structures_[instances[i].blas.index].top_level) {
+            throw std::invalid_argument("CreateTopLevelAS instances must name live bottom-level structures");
+        }
+        VkAccelerationStructureInstanceKHR& out = native[i];
+        std::memcpy(out.transform.matrix, instances[i].transform, sizeof(out.transform.matrix));
+        out.instanceCustomIndex = instances[i].instance_id & 0xFFFFFFu;
+        out.mask = 0xFF;
+        out.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
+        out.accelerationStructureReference = acceleration_structures_[instances[i].blas.index].address;
+    }
+    ScopedBufferRecord instance_buffer(device_);
+    instance_buffer.Get() = CreateHostVisibleBuffer(device_, physical_device_, native.size() * sizeof(native[0]),
+                                                    VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR, native.data(), false,
+                                                    VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, false, true);
+    VkBufferDeviceAddressInfo address_info{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO};
+    address_info.buffer = instance_buffer.Get().buffer;
+    VkAccelerationStructureGeometryKHR geometry{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR};
+    geometry.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
+    geometry.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
+    geometry.geometry.instances.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
+    geometry.geometry.instances.arrayOfPointers = VK_FALSE;
+    geometry.geometry.instances.data.deviceAddress = vkGetBufferDeviceAddress(device_, &address_info);
+    return BuildAccelerationStructure(VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR, geometry, static_cast<u32>(instances.size()));
+}
+
+bool VulkanDevice::DestroyAccelerationStructure(AccelerationStructureHandle handle) {
+    if (!IsAccelerationStructureAlive(handle)) return false;
+    const AccelerationRecord record = acceleration_structures_[handle.index];
+    acceleration_structures_[handle.index] = {};
+    free_acceleration_slots_.push_back(handle.index);
+    Retire([this, record] { DestroyAccelerationStructureNow(record); });
+    DrainRetired();
+    return true;
 }
 
 ComputePipelineHandle VulkanDevice::CreateComputePipeline(const ComputePipelineDesc& desc) {
@@ -1761,6 +2444,17 @@ PipelineHandle VulkanDevice::CreatePipeline(const PipelineDesc& desc, ISwapChain
         return {};
     }
     auto& vk_swap = *vk_swap_ptr;
+    const PassTarget target = desc.depth_target           ? PassTarget::Depth
+                              : desc.render_texture_target ? PassTarget::Texture
+                              : desc.scene_color_target    ? PassTarget::SceneColor
+                                                           : PassTarget::BackBuffer;
+    const VkRenderPass render_pass = target == PassTarget::BackBuffer   ? vk_swap.DefaultRenderPass()
+                                     : target == PassTarget::SceneColor ? vk_swap.SceneColorPass()
+                                                                        : TargetPass(target, true);
+    if (render_pass == VK_NULL_HANDLE) {
+        AETHER_LOG_ERROR("Vulkan", "CreatePipeline: this device has no render textures, depth textures or scene colour target");
+        return {};
+    }
 
     VkPhysicalDeviceProperties device_properties{};
     vkGetPhysicalDeviceProperties(physical_device_, &device_properties);
@@ -1773,7 +2467,10 @@ PipelineHandle VulkanDevice::CreatePipeline(const PipelineDesc& desc, ISwapChain
     ScopedPipelineRecord owned_record(device_);
     PipelineRecord& record = owned_record.Get();
     record.push_constant_size_bytes = desc.push_constant_size_bytes;
+    record.target = target;
     record.enable_bindless_textures = desc.enable_bindless_textures;
+    record.frame_read_buffer = desc.frame_read_buffer;
+    record.acceleration_structure = desc.acceleration_structure;
     record.use_vertex_buffer = desc.use_vertex_buffer;
     record.vertex_stride_bytes = desc.vertex_layout == VertexLayout::PositionNormalUvTangent
                                      ? 48u
@@ -1790,12 +2487,34 @@ PipelineHandle VulkanDevice::CreatePipeline(const PipelineDesc& desc, ISwapChain
         layout_info.pushConstantRangeCount = 1;
         layout_info.pPushConstantRanges = &push_range;
     }
-    // Sets 0 and 1: the bindless textures and sampler. Set 2: the frame constants (which need the other two, so the set indices match the HLSL spaces).
-    VkDescriptorSetLayout bindless_set_layouts[3] = {bindless_texture_set_layout_, bindless_sampler_set_layout_, frame_constants_set_layout_};
-    if (desc.frame_constants_size_bytes > 0) {
+    // Sets 0 and 1: the bindless textures and sampler. Set 2: the frame constants (which need the other two, so the set indices match the HLSL
+    // spaces). Set 3: the frame read buffer (which needs all three).
+    VkDescriptorSetLayout bindless_set_layouts[4] = {bindless_texture_set_layout_, bindless_sampler_set_layout_, frame_constants_set_layout_,
+                                                     frame_read_set_layout_};
+    VkDescriptorSetLayout acceleration_layouts_storage[5] = {};
+    if (desc.frame_read_buffer && desc.frame_constants_size_bytes == 0) {
+        throw std::invalid_argument("PipelineDesc::frame_read_buffer needs frame constants");
+    }
+    if (desc.acceleration_structure) {
+        if (!desc.shader_model_6 || !ray_tracing_supported_) {
+            throw std::invalid_argument("PipelineDesc::acceleration_structure needs shader_model_6 and a device with ray tracing");
+        }
+        // Set 4 is the structure; the sets below it that the pipeline does not use are empty layouts, so the indices match the HLSL spaces.
+        bindless_set_layouts[0] = desc.enable_bindless_textures ? bindless_texture_set_layout_ : empty_set_layout_;
+        bindless_set_layouts[1] = desc.enable_bindless_textures ? bindless_sampler_set_layout_ : empty_set_layout_;
+        bindless_set_layouts[2] = desc.frame_constants_size_bytes > 0 ? frame_constants_set_layout_ : empty_set_layout_;
+        bindless_set_layouts[3] = desc.frame_read_buffer ? frame_read_set_layout_ : empty_set_layout_;
+        acceleration_layouts_storage[0] = bindless_set_layouts[0];
+        acceleration_layouts_storage[1] = bindless_set_layouts[1];
+        acceleration_layouts_storage[2] = bindless_set_layouts[2];
+        acceleration_layouts_storage[3] = bindless_set_layouts[3];
+        acceleration_layouts_storage[4] = acceleration_set_layout_;
+        layout_info.setLayoutCount = 5;
+        layout_info.pSetLayouts = acceleration_layouts_storage;
+    } else if (desc.frame_constants_size_bytes > 0) {
         AETHER_ASSERT(desc.enable_bindless_textures);
         AETHER_ASSERT(desc.frame_constants_size_bytes % 16 == 0);
-        layout_info.setLayoutCount = 3;
+        layout_info.setLayoutCount = desc.frame_read_buffer ? 4u : 3u;
         layout_info.pSetLayouts = bindless_set_layouts;
     } else if (desc.enable_bindless_textures) {
         layout_info.setLayoutCount = 2;
@@ -1804,11 +2523,15 @@ PipelineHandle VulkanDevice::CreatePipeline(const PipelineDesc& desc, ISwapChain
     AETHER_VK_CHECK(vkCreatePipelineLayout(device_, &layout_info, nullptr, &record.layout));
 
     gfx::ShaderBytecode vs_spirv =
-        gfx::CompileHLSLToSPIRV(desc.hlsl_source, desc.vs_entry.c_str(), "vs_6_0", "rhi_pipeline_vs");
-    gfx::ShaderBytecode ps_spirv =
-        gfx::CompileHLSLToSPIRV(desc.hlsl_source, desc.ps_entry.c_str(), "ps_6_0", "rhi_pipeline_ps");
+        gfx::CompileHLSLToSPIRV(desc.hlsl_source, desc.vs_entry.c_str(), desc.shader_model_6 ? "vs_6_5" : "vs_6_0", "rhi_pipeline_vs");
+    // A depth-only pipeline may have no pixel shader (PipelineDesc::depth_target with an empty ps_entry).
+    const bool has_pixel_shader = !(target == PassTarget::Depth && desc.ps_entry.empty());
     ScopedShaderModule owned_vs_module(device_, vs_spirv);
-    ScopedShaderModule owned_ps_module(device_, ps_spirv);
+    std::optional<ScopedShaderModule> owned_ps_module;
+    if (has_pixel_shader) {
+        owned_ps_module.emplace(device_, gfx::CompileHLSLToSPIRV(desc.hlsl_source, desc.ps_entry.c_str(),
+                                                                 desc.shader_model_6 ? "ps_6_5" : "ps_6_0", "rhi_pipeline_ps"));
+    }
 
     VkPipelineShaderStageCreateInfo stages[2]{};
     stages[0] = VkPipelineShaderStageCreateInfo{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
@@ -1817,7 +2540,7 @@ PipelineHandle VulkanDevice::CreatePipeline(const PipelineDesc& desc, ISwapChain
     stages[0].pName = desc.vs_entry.c_str();
     stages[1] = VkPipelineShaderStageCreateInfo{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
     stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-    stages[1].module = owned_ps_module.Get();
+    stages[1].module = has_pixel_shader ? owned_ps_module->Get() : VK_NULL_HANDLE;
     stages[1].pName = desc.ps_entry.c_str();
 
     // Keep POSITION / TEXCOORD as the default and match optional NORMAL and
@@ -1852,8 +2575,14 @@ PipelineHandle VulkanDevice::CreatePipeline(const PipelineDesc& desc, ISwapChain
     VkPipelineRasterizationStateCreateInfo rasterizer{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
     rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
     rasterizer.cullMode = desc.cull_back_face ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE;
-    rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+    // Counter-clockwise as seen is the front (glTF's convention; the D3D12 backend matches, and Material_CullingKeepsCounterClockwiseFaces checks both).
+    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     rasterizer.lineWidth = 1.0f;
+    if (desc.depth_bias != 0 || (std::isfinite(desc.slope_scaled_depth_bias) && desc.slope_scaled_depth_bias != 0.0f)) {
+        rasterizer.depthBiasEnable = VK_TRUE;
+        rasterizer.depthBiasConstantFactor = static_cast<f32>(desc.depth_bias);
+        rasterizer.depthBiasSlopeFactor = std::isfinite(desc.slope_scaled_depth_bias) ? desc.slope_scaled_depth_bias : 0.0f;
+    }
 
     VkPipelineMultisampleStateCreateInfo multisample{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
     multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
@@ -1876,16 +2605,19 @@ PipelineHandle VulkanDevice::CreatePipeline(const PipelineDesc& desc, ISwapChain
     }
 
     VkPipelineColorBlendStateCreateInfo blend_state{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
-    blend_state.attachmentCount = 1;
+    blend_state.attachmentCount = target == PassTarget::Depth ? 0u : 1u; // a depth pass has no colour attachment
     blend_state.pAttachments = &blend_attachment;
 
     // The render pass's depth attachment (see CreateDefaultRenderPass) is
     // always present; this is what actually opts a given pipeline in or out
     // of testing/writing against it.
     VkPipelineDepthStencilStateCreateInfo depth_stencil{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
-    depth_stencil.depthTestEnable = desc.depth_test ? VK_TRUE : VK_FALSE;
-    depth_stencil.depthWriteEnable = desc.depth_test && desc.depth_write ? VK_TRUE : VK_FALSE;
-    depth_stencil.depthCompareOp = VK_COMPARE_OP_LESS;
+    // A depth pass always tests and writes; a render-texture pass has no depth attachment.
+    const bool depth_tested = target == PassTarget::Depth || (target != PassTarget::Texture && desc.depth_test);
+    const bool depth_written = target == PassTarget::Depth || (depth_tested && desc.depth_write);
+    depth_stencil.depthTestEnable = depth_tested ? VK_TRUE : VK_FALSE;
+    depth_stencil.depthWriteEnable = depth_written ? VK_TRUE : VK_FALSE;
+    depth_stencil.depthCompareOp = target == PassTarget::Depth && desc.depth_always ? VK_COMPARE_OP_ALWAYS : VK_COMPARE_OP_LESS;
 
     VkDynamicState dynamic_states[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
     VkPipelineDynamicStateCreateInfo dynamic_state{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
@@ -1893,7 +2625,7 @@ PipelineHandle VulkanDevice::CreatePipeline(const PipelineDesc& desc, ISwapChain
     dynamic_state.pDynamicStates = dynamic_states;
 
     VkGraphicsPipelineCreateInfo pipeline_info{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
-    pipeline_info.stageCount = 2;
+    pipeline_info.stageCount = has_pixel_shader ? 2u : 1u;
     pipeline_info.pStages = stages;
     pipeline_info.pVertexInputState = &vertex_input;
     pipeline_info.pInputAssemblyState = &input_assembly;
@@ -1904,7 +2636,7 @@ PipelineHandle VulkanDevice::CreatePipeline(const PipelineDesc& desc, ISwapChain
     pipeline_info.pDepthStencilState = &depth_stencil;
     pipeline_info.pDynamicState = &dynamic_state;
     pipeline_info.layout = record.layout;
-    pipeline_info.renderPass = vk_swap.DefaultRenderPass();
+    pipeline_info.renderPass = render_pass;
     pipeline_info.subpass = 0;
 
     VkResult pipeline_result =
@@ -2201,6 +2933,9 @@ VulkanSwapChain::~VulkanSwapChain() {
     DestroySyncObjects();
     DestroySwapchainAndImages();
     device_.ReleaseExternalBindlessSlot(scene_depth_handle_);
+    device_.ReleaseExternalBindlessSlot(scene_color_handle_);
+    if (scene_color_pass_ != VK_NULL_HANDLE) vkDestroyRenderPass(device_.Handle(), scene_color_pass_, nullptr);
+    if (scene_color_resume_pass_ != VK_NULL_HANDLE) vkDestroyRenderPass(device_.Handle(), scene_color_resume_pass_, nullptr);
     if (default_render_pass_ != VK_NULL_HANDLE) {
         vkDestroyRenderPass(device_.Handle(), default_render_pass_, nullptr);
     }
@@ -2409,6 +3144,89 @@ void VulkanSwapChain::DestroySceneDepthImage() {
     scene_depth_memory_ = VK_NULL_HANDLE;
 }
 
+VkRenderPass VulkanSwapChain::SceneColorPass() {
+    if (scene_color_pass_ == VK_NULL_HANDLE && device_.SupportsRenderTargets()) {
+        scene_color_pass_ = CreateTargetRenderPass(device_.Handle(), kRenderTextureFormat, depth_format_, false, true);
+        scene_color_resume_pass_ = CreateTargetRenderPass(device_.Handle(), kRenderTextureFormat, depth_format_, false, false);
+    }
+    return scene_color_pass_;
+}
+
+SampledTextureHandle VulkanSwapChain::SceneColorTexture() {
+    if (scene_color_handle_.IsValid()) return scene_color_handle_;
+    if (SceneColorPass() == VK_NULL_HANDLE) return {};
+    if (device_.WaitForDeviceIdle() != VK_SUCCESS) return {};
+    const SampledTextureHandle handle = device_.ReserveExternalBindlessSlot();
+    if (!handle.IsValid()) return {};
+    try {
+        scene_color_handle_ = handle;
+        CreateSceneColorImage();
+    } catch (...) {
+        DestroySceneColorImage();
+        device_.ReleaseExternalBindlessSlot(handle);
+        scene_color_handle_ = {};
+        throw;
+    }
+    return scene_color_handle_;
+}
+
+void VulkanSwapChain::CreateSceneColorImage() {
+    VkImageCreateInfo image_info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+    image_info.imageType = VK_IMAGE_TYPE_2D;
+    image_info.format = kRenderTextureFormat;
+    image_info.extent = {extent_.width, extent_.height, 1};
+    image_info.mipLevels = 1;
+    image_info.arrayLayers = 1;
+    image_info.samples = VK_SAMPLE_COUNT_1_BIT;
+    image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
+    image_info.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    AETHER_VK_CHECK(vkCreateImage(device_.Handle(), &image_info, nullptr, &scene_color_image_));
+    VkMemoryRequirements mem_reqs{};
+    vkGetImageMemoryRequirements(device_.Handle(), scene_color_image_, &mem_reqs);
+    VkMemoryAllocateInfo alloc_info{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    alloc_info.allocationSize = mem_reqs.size;
+    alloc_info.memoryTypeIndex =
+        FindMemoryType(device_.PhysicalDevice(), mem_reqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    AETHER_VK_CHECK(vkAllocateMemory(device_.Handle(), &alloc_info, nullptr, &scene_color_memory_));
+    AETHER_VK_CHECK(vkBindImageMemory(device_.Handle(), scene_color_image_, scene_color_memory_, 0));
+    VkImageViewCreateInfo view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+    view_info.image = scene_color_image_;
+    view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    view_info.format = kRenderTextureFormat;
+    view_info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    AETHER_VK_CHECK(vkCreateImageView(device_.Handle(), &view_info, nullptr, &scene_color_view_));
+    device_.MakeShaderReadable(scene_color_image_, VK_IMAGE_ASPECT_COLOR_BIT, true); // at setup or resize: the GPU is idle anyway
+    scene_color_framebuffers_.assign(depth_image_views_.size(), VK_NULL_HANDLE);
+    for (usize i = 0; i < depth_image_views_.size(); ++i) {
+        VkImageView attachments[] = {scene_color_view_, depth_image_views_[i]};
+        VkFramebufferCreateInfo fb_info{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+        fb_info.renderPass = scene_color_pass_;
+        fb_info.attachmentCount = 2;
+        fb_info.pAttachments = attachments;
+        fb_info.width = extent_.width;
+        fb_info.height = extent_.height;
+        fb_info.layers = 1;
+        AETHER_VK_CHECK(vkCreateFramebuffer(device_.Handle(), &fb_info, nullptr, &scene_color_framebuffers_[i]));
+    }
+    device_.SetExternalBindlessView(scene_color_handle_, scene_color_view_);
+}
+
+void VulkanSwapChain::DestroySceneColorImage() {
+    if (scene_color_handle_.IsValid()) device_.SetExternalBindlessView(scene_color_handle_, VK_NULL_HANDLE);
+    for (VkFramebuffer framebuffer : scene_color_framebuffers_) {
+        if (framebuffer != VK_NULL_HANDLE) vkDestroyFramebuffer(device_.Handle(), framebuffer, nullptr);
+    }
+    scene_color_framebuffers_.clear();
+    if (scene_color_view_ != VK_NULL_HANDLE) vkDestroyImageView(device_.Handle(), scene_color_view_, nullptr);
+    if (scene_color_image_ != VK_NULL_HANDLE) vkDestroyImage(device_.Handle(), scene_color_image_, nullptr);
+    if (scene_color_memory_ != VK_NULL_HANDLE) vkFreeMemory(device_.Handle(), scene_color_memory_, nullptr);
+    scene_color_view_ = VK_NULL_HANDLE;
+    scene_color_image_ = VK_NULL_HANDLE;
+    scene_color_memory_ = VK_NULL_HANDLE;
+}
+
 void VulkanSwapChain::CreateDepthResources() {
     VkImageCreateInfo image_info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
     image_info.imageType = VK_IMAGE_TYPE_2D;
@@ -2445,10 +3263,12 @@ void VulkanSwapChain::CreateDepthResources() {
         AETHER_VK_CHECK(vkCreateImageView(device_.Handle(), &view_info, nullptr, &depth_image_views_[i]));
     }
     if (SceneDepthEnabled()) CreateSceneDepthImage();
+    if (SceneColorEnabled()) CreateSceneColorImage();
 }
 
 void VulkanSwapChain::DestroyDepthResources() {
     DestroySceneDepthImage();
+    DestroySceneColorImage(); // its framebuffers hold the depth views
     for (usize i = 0; i < depth_images_.size(); ++i) {
         if (i < depth_image_views_.size() && depth_image_views_[i] != VK_NULL_HANDLE) {
             vkDestroyImageView(device_.Handle(), depth_image_views_[i], nullptr);
@@ -3022,6 +3842,7 @@ void VulkanCommandList::Reset() {
     active_swap_chain_ = nullptr;
     graphics_pipeline_bound_ = false;
     graphics_bindless_enabled_ = false;
+    graphics_frame_read_buffer_ = false;
     graphics_bindless_bound_ = false;
     graphics_uses_vertex_buffer_ = false;
     graphics_vertex_stride_bytes_ = 0;
@@ -3131,7 +3952,8 @@ void VulkanCommandList::SetViewportAndScissor(const Viewport& viewport, const Re
         AETHER_LOG_ERROR("Vulkan", "SetViewportAndScissor requires an active pass and valid viewport/scissor bounds");
         return;
     }
-    VkViewport vp{viewport.x, viewport.y, viewport.width, viewport.height, viewport.min_depth, viewport.max_depth};
+    // y flipped as in SetFullViewport, so a viewport covers the same pixels (top-left origin) as on D3D12.
+    VkViewport vp{viewport.x, viewport.y + viewport.height, viewport.width, -viewport.height, viewport.min_depth, viewport.max_depth};
     VkRect2D rect{{scissor.left, scissor.top},
                   {static_cast<u32>(scissor_width), static_cast<u32>(scissor_height)}};
     vkCmdSetViewport(command_buffer_, 0, 1, &vp);
@@ -3176,10 +3998,134 @@ void VulkanCommandList::BeginRenderPass(ISwapChain& swap_chain, const ClearColor
     vkCmdBeginRenderPass(command_buffer_, &rp_begin, VK_SUBPASS_CONTENTS_INLINE);
     render_pass_active_ = true;
     active_swap_chain_ = &vk_swap;
-    SetFullViewport(vk_swap);
+    active_target_ = PassTarget::BackBuffer;
+    SetFullViewport(vk_swap.Width(), vk_swap.Height());
 }
 
-void VulkanCommandList::SetFullViewport(const VulkanSwapChain& vk_swap) {
+bool VulkanCommandList::BeginSceneColorPass(ISwapChain& swap_chain, const ClearColor& clear_color) {
+    auto* vk_swap = dynamic_cast<VulkanSwapChain*>(&swap_chain);
+    if (!recording_ || compute_queue_ || render_pass_active_ || !vk_swap || !vk_swap->BelongsTo(device_) || !vk_swap->SceneColorEnabled() ||
+        !IsFiniteClearColor(clear_color)) {
+        AETHER_LOG_ERROR("Vulkan", "BeginSceneColorPass requires a recording list outside any pass, a finite clear colour and a swap chain "
+                                   "with a SceneColorTexture");
+        return false;
+    }
+    VkClearValue clear_values[2]{};
+    clear_values[0].color.float32[0] = clear_color.r;
+    clear_values[0].color.float32[1] = clear_color.g;
+    clear_values[0].color.float32[2] = clear_color.b;
+    clear_values[0].color.float32[3] = clear_color.a;
+    clear_values[1].depthStencil.depth = 1.0f;
+    VkRenderPassBeginInfo rp_begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+    rp_begin.renderPass = vk_swap->SceneColorPass();
+    rp_begin.framebuffer = vk_swap->CurrentSceneColorFramebuffer();
+    rp_begin.renderArea.extent = {vk_swap->Width(), vk_swap->Height()};
+    rp_begin.clearValueCount = 2;
+    rp_begin.pClearValues = clear_values;
+    vkCmdBeginRenderPass(command_buffer_, &rp_begin, VK_SUBPASS_CONTENTS_INLINE);
+    render_pass_active_ = true;
+    active_swap_chain_ = vk_swap;
+    active_target_ = PassTarget::SceneColor;
+    SetFullViewport(vk_swap->Width(), vk_swap->Height());
+    return true;
+}
+
+bool VulkanCommandList::BeginTexturePass(SampledTextureHandle target, const ClearColor* clear_color) {
+    const SampledTextureRecord* record = device_.FindTarget(target, PassTarget::Texture);
+    if (!recording_ || compute_queue_ || render_pass_active_ || !record || (clear_color && !IsFiniteClearColor(*clear_color))) {
+        AETHER_LOG_ERROR("Vulkan", "BeginTexturePass requires a recording list outside any pass and a live render texture of this device");
+        return false;
+    }
+    VkClearValue clear{};
+    if (clear_color) {
+        clear.color.float32[0] = clear_color->r;
+        clear.color.float32[1] = clear_color->g;
+        clear.color.float32[2] = clear_color->b;
+        clear.color.float32[3] = clear_color->a;
+    }
+    VkRenderPassBeginInfo rp_begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+    rp_begin.renderPass = device_.TargetPass(PassTarget::Texture, clear_color != nullptr);
+    rp_begin.framebuffer = record->framebuffer;
+    rp_begin.renderArea.extent = {record->width, record->height};
+    rp_begin.clearValueCount = clear_color ? 1u : 0u;
+    rp_begin.pClearValues = &clear;
+    vkCmdBeginRenderPass(command_buffer_, &rp_begin, VK_SUBPASS_CONTENTS_INLINE);
+    render_pass_active_ = true;
+    active_swap_chain_ = nullptr;
+    active_target_ = PassTarget::Texture;
+    SetFullViewport(record->width, record->height);
+    return true;
+}
+
+bool VulkanCommandList::CopyRenderTextureToReadback(SampledTextureHandle texture, BufferHandle readback) {
+    const SampledTextureRecord* record = device_.FindTarget(texture, PassTarget::Texture);
+    if (!recording_ || compute_queue_ || render_pass_active_ || !record || !device_.IsBufferAlive(readback) ||
+        !device_.GetBuffer(readback).is_readback) {
+        AETHER_LOG_ERROR("Vulkan", "CopyRenderTextureToReadback requires a recording graphics list outside any pass, a live render texture and a readback buffer");
+        return false;
+    }
+    const u32 pitch = ReadbackRowPitch(record->width, 8);
+    if (device_.GetBuffer(readback).size_bytes < static_cast<VkDeviceSize>(pitch) * record->height) {
+        AETHER_LOG_ERROR("Vulkan", "CopyRenderTextureToReadback: the readback buffer is smaller than the texture's rows");
+        return false;
+    }
+    VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    barrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT;
+    barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    barrier.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    barrier.srcQueueFamilyIndex = barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = record->image;
+    barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    vkCmdPipelineBarrier(command_buffer_, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+    VkBufferImageCopy region{};
+    region.bufferRowLength = pitch / 8; // in texels
+    region.bufferImageHeight = record->height;
+    region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    region.imageExtent = {record->width, record->height, 1};
+    vkCmdCopyImageToBuffer(command_buffer_, record->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, device_.GetBuffer(readback).buffer, 1, &region);
+    // The texture goes back to being sampled, and the copy's writes become visible to the host once the submission's fence has passed.
+    barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    VkBufferMemoryBarrier host{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER};
+    host.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    host.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+    host.srcQueueFamilyIndex = host.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    host.buffer = device_.GetBuffer(readback).buffer;
+    host.offset = 0;
+    host.size = VK_WHOLE_SIZE;
+    vkCmdPipelineBarrier(command_buffer_, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1,
+                         &barrier);
+    vkCmdPipelineBarrier(command_buffer_, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 0, nullptr, 1, &host, 0, nullptr);
+    return true;
+}
+
+bool VulkanCommandList::BeginDepthPass(SampledTextureHandle target, bool clear) {
+    const SampledTextureRecord* record = device_.FindTarget(target, PassTarget::Depth);
+    if (!recording_ || compute_queue_ || render_pass_active_ || !record) {
+        AETHER_LOG_ERROR("Vulkan", "BeginDepthPass requires a recording list outside any pass and a live depth texture of this device");
+        return false;
+    }
+    VkClearValue clear_value{};
+    clear_value.depthStencil.depth = 1.0f;
+    VkRenderPassBeginInfo rp_begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+    rp_begin.renderPass = device_.TargetPass(PassTarget::Depth, clear);
+    rp_begin.framebuffer = record->framebuffer;
+    rp_begin.renderArea.extent = {record->width, record->height};
+    rp_begin.clearValueCount = clear ? 1u : 0u;
+    rp_begin.pClearValues = &clear_value;
+    vkCmdBeginRenderPass(command_buffer_, &rp_begin, VK_SUBPASS_CONTENTS_INLINE);
+    render_pass_active_ = true;
+    active_swap_chain_ = nullptr;
+    active_target_ = PassTarget::Depth;
+    SetFullViewport(record->width, record->height);
+    return true;
+}
+
+void VulkanCommandList::SetFullViewport(u32 width, u32 height) {
     // Negative-height viewport (y = height, height = -height): the standard
     // trick to make Vulkan's NDC +Y point up like D3D12's, entirely on the
     // host side — callers of this abstract BeginRenderPass never need to
@@ -3188,9 +4134,8 @@ void VulkanCommandList::SetFullViewport(const VulkanSwapChain& vk_swap) {
     // already requires 1.2). Found necessary by actually screenshotting
     // Unified-mode's output on both backends and seeing the same shader
     // produce a vertically mirrored triangle without this.
-    VkViewport viewport{0.0f, static_cast<f32>(vk_swap.Height()), static_cast<f32>(vk_swap.Width()),
-                         -static_cast<f32>(vk_swap.Height()), 0.0f, 1.0f};
-    VkRect2D scissor{{0, 0}, {vk_swap.Width(), vk_swap.Height()}};
+    VkViewport viewport{0.0f, static_cast<f32>(height), static_cast<f32>(width), -static_cast<f32>(height), 0.0f, 1.0f};
+    VkRect2D scissor{{0, 0}, {width, height}};
     vkCmdSetViewport(command_buffer_, 0, 1, &viewport);
     vkCmdSetScissor(command_buffer_, 0, 1, &scissor);
 }
@@ -3207,12 +4152,14 @@ void VulkanCommandList::EndRenderPass() {
     vkCmdEndRenderPass(command_buffer_);
     render_pass_active_ = false;
     active_swap_chain_ = nullptr;
+    active_target_ = PassTarget::BackBuffer;
     ResetGraphicsBindings();
 }
 
 void VulkanCommandList::ResetGraphicsBindings() {
     graphics_pipeline_bound_ = false;
     graphics_bindless_enabled_ = false;
+    graphics_frame_read_buffer_ = false;
     graphics_bindless_bound_ = false;
     graphics_uses_vertex_buffer_ = false;
     vertex_buffer_bound_ = false;
@@ -3230,6 +4177,7 @@ void VulkanCommandList::BindPipeline(PipelineHandle pipeline) {
         AETHER_LOG_ERROR("Vulkan", "BindPipeline requires an active render pass");
         graphics_pipeline_bound_ = false;
         graphics_bindless_enabled_ = false;
+        graphics_frame_read_buffer_ = false;
         graphics_bindless_bound_ = false;
         graphics_uses_vertex_buffer_ = false;
         vertex_buffer_bound_ = false;
@@ -3242,6 +4190,7 @@ void VulkanCommandList::BindPipeline(PipelineHandle pipeline) {
         AETHER_LOG_ERROR("Vulkan", "BindPipeline received an invalid graphics-pipeline handle");
         graphics_pipeline_bound_ = false;
         graphics_bindless_enabled_ = false;
+        graphics_frame_read_buffer_ = false;
         graphics_bindless_bound_ = false;
         graphics_uses_vertex_buffer_ = false;
         vertex_buffer_bound_ = false;
@@ -3251,11 +4200,18 @@ void VulkanCommandList::BindPipeline(PipelineHandle pipeline) {
         return;
     }
     const PipelineRecord& record = device_.GetPipeline(pipeline);
+    if (record.target != active_target_) {
+        AETHER_LOG_ERROR("Vulkan", "BindPipeline: the pipeline was made for another kind of pass (PipelineDesc's targets)");
+        ResetGraphicsBindings();
+        return;
+    }
     vkCmdBindPipeline(command_buffer_, VK_PIPELINE_BIND_POINT_GRAPHICS, record.pipeline);
     bound_pipeline_layout_ = record.layout;
     graphics_pipeline_bound_ = true;
     graphics_push_constant_size_bytes_ = record.push_constant_size_bytes;
     graphics_bindless_enabled_ = record.enable_bindless_textures;
+    graphics_frame_read_buffer_ = record.frame_read_buffer;
+    graphics_acceleration_structure_ = record.acceleration_structure;
     graphics_bindless_bound_ = false;
     graphics_uses_vertex_buffer_ = record.use_vertex_buffer;
     graphics_vertex_stride_bytes_ = record.vertex_stride_bytes;
@@ -3353,6 +4309,31 @@ void VulkanCommandList::BindFrameConstants(BufferHandle buffer) {
     }
     const VkDescriptorSet set = device_.GetBuffer(buffer).constants_set;
     vkCmdBindDescriptorSets(command_buffer_, VK_PIPELINE_BIND_POINT_GRAPHICS, bound_pipeline_layout_, 2, 1, &set, 0, nullptr);
+}
+
+void VulkanCommandList::BindFrameReadBuffer(BufferHandle buffer) {
+    if (!device_.IsBufferAlive(buffer) || device_.GetBuffer(buffer).read_set == VK_NULL_HANDLE) {
+        AETHER_LOG_ERROR("Vulkan", "BindFrameReadBuffer needs a buffer made by CreateFrameConstantBuffer");
+        return;
+    }
+    if (!graphics_pipeline_bound_ || !graphics_frame_read_buffer_) {
+        AETHER_LOG_ERROR("Vulkan", "BindFrameReadBuffer needs a bound pipeline made with PipelineDesc::frame_read_buffer");
+        return;
+    }
+    const VkDescriptorSet set = device_.GetBuffer(buffer).read_set;
+    vkCmdBindDescriptorSets(command_buffer_, VK_PIPELINE_BIND_POINT_GRAPHICS, bound_pipeline_layout_, 3, 1, &set, 0, nullptr);
+}
+void VulkanCommandList::BindAccelerationStructure(AccelerationStructureHandle structure) {
+    const VkDescriptorSet set = device_.AccelerationSet(structure);
+    if (set == VK_NULL_HANDLE) {
+        AETHER_LOG_ERROR("Vulkan", "BindAccelerationStructure needs a live top-level structure");
+        return;
+    }
+    if (!graphics_pipeline_bound_ || !graphics_acceleration_structure_) {
+        AETHER_LOG_ERROR("Vulkan", "BindAccelerationStructure needs a bound pipeline made with PipelineDesc::acceleration_structure");
+        return;
+    }
+    vkCmdBindDescriptorSets(command_buffer_, VK_PIPELINE_BIND_POINT_GRAPHICS, bound_pipeline_layout_, 4, 1, &set, 0, nullptr);
 }
 void VulkanCommandList::BindComputePipeline(ComputePipelineHandle pipeline) {
     if (!recording_) {
@@ -3622,14 +4603,16 @@ bool VulkanCommandList::CopySceneDepth() {
                              VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
                          0, 0, nullptr, 0, nullptr, 2, after_copy);
 
+    // Continue the pass it ended: the back buffer's or the scene colour's, colour and depth kept.
+    const bool scene_color = active_target_ == PassTarget::SceneColor;
     VkRenderPassBeginInfo rp_begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
-    rp_begin.renderPass = swap.ResumeRenderPass();
-    rp_begin.framebuffer = swap.CurrentFramebuffer();
+    rp_begin.renderPass = scene_color ? swap.SceneColorResumePass() : swap.ResumeRenderPass();
+    rp_begin.framebuffer = scene_color ? swap.CurrentSceneColorFramebuffer() : swap.CurrentFramebuffer();
     rp_begin.renderArea.offset = {0, 0};
     rp_begin.renderArea.extent = {swap.Width(), swap.Height()};
     vkCmdBeginRenderPass(command_buffer_, &rp_begin, VK_SUBPASS_CONTENTS_INLINE);
     ResetGraphicsBindings();
-    SetFullViewport(swap);
+    SetFullViewport(swap.Width(), swap.Height());
     return true;
 }
 

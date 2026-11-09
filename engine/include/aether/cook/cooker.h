@@ -43,6 +43,9 @@ struct CookOptions {
     // Leave a cooked texture's source image out of the archive (only the cooked copy goes in): smaller packages, for a build that decodes the
     // cooked form (the player does, falling back to it when the source is absent). A texture that could not be cooked keeps its source.
     bool strip_source_textures = false;
+    // Radiance .hdr images (sky environments): the prefiltered form the player lights with (Cooked/<guid>.aenv, see assets/environment.h), so it
+    // skips the work at load. The source stays in the archive. A sky turned by a SkyLight's rotation is still prefiltered at load.
+    bool cook_environments = true;
     // Meshes: LODs and meshlets (Cooked/<guid>.amesh), see mesh_cook.h.
     bool cook_meshes = true;
     // Phase 42.4: also bake HLOD proxies for meshes with several primitives.
@@ -92,6 +95,7 @@ struct CookReport {
     std::vector<std::string> extra_files;     // helper files (a .gltf's .bin, ...)
     usize skipped = 0;                        // assets nothing reaches
     usize stripped_fields = 0;                // editor-only fields removed
+    usize environment_cache_hits = 0;         // cooked environments reused from the derived data cache
     usize texture_cache_hits = 0;             // cooked textures reused from the derived data cache
     usize texture_cache_misses = 0;           // cooked textures generated or regenerated
     usize import_cache_hits = 0;              // importer outputs reused from the derived data cache

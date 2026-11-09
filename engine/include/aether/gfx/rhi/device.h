@@ -37,6 +37,7 @@ struct PipelineDesc {
     std::string vs_entry = "VSMain";
     std::string ps_entry = "PSMain";
     u32 push_constant_size_bytes = 0;
+    // Culls triangles facing away: the front is counter-clockwise as seen on screen (glTF's convention), on every backend.
     bool cull_back_face = false;
 
     // Real vertex-buffer input instead of procedural SV_VertexID/
@@ -53,6 +54,17 @@ struct PipelineDesc {
     // shader which bindless index to sample, the caller is expected to carry
     // it in the push-constant block.
     bool enable_bindless_textures = false;
+
+    // Compiles the shaders as shader model 6.5 through DXC (DXIL) on D3D12 instead of FXC's 5.1, for HLSL that needs 6.x (inline ray queries).
+    // Needs dxcompiler.dll and dxil.dll beside the executable. Vulkan already compiles through DXC, so it ignores this. false (the default)
+    // keeps FXC for every existing pipeline.
+    bool shader_model_6 = false;
+
+    // Reserves a slot for one top-level acceleration structure, bound with ICommandList::BindAccelerationStructure and declared in HLSL as
+    //   RaytracingAccelerationStructure g_Scene : register(t0, space4);
+    // for inline ray queries (RayQuery<> in the pixel shader). Needs shader_model_6 and SupportsRayTracing(); CreatePipeline throws
+    // std::invalid_argument otherwise. On Vulkan the structure is descriptor set 4. false (the default) means none.
+    bool acceleration_structure = false;
 
     // Depth test + write (LESS) against the swap chain's own per-image
     // depth buffer (see ISwapChain — both backends now always maintain one,
@@ -92,6 +104,36 @@ struct PipelineDesc {
     // 0 (the default) means none. Only for devices where SupportsFrameConstants()
     // is true; others ignore the field and the shader must not name g_Frame.
     u32 frame_constants_size_bytes = 0;
+
+    // Renders into the swap chain's HDR scene colour target (ISwapChain::SceneColorTexture, RGBA16F) instead of its back buffer: for
+    // pipelines drawn between ICommandList::BeginSceneColorPass and EndRenderPass. A pipeline is compatible with one of the two passes
+    // only; drawing it in the other is undefined. false (the default) targets the back buffer, as every pipeline did before.
+    bool scene_color_target = false;
+
+    // Renders into render textures (IDevice::CreateRenderTexture, RGBA16F, no depth attachment) between ICommandList::BeginTexturePass
+    // and EndRenderPass: for post-processing chains such as bloom's. Depth testing and writing are off whatever depth_test and
+    // depth_write say. Takes precedence over scene_color_target.
+    bool render_texture_target = false;
+
+    // Renders depth only into depth textures (IDevice::CreateDepthTexture, D32) between ICommandList::BeginDepthPass and EndRenderPass:
+    // shadow maps. No colour target; depth tested (LESS) and written whatever depth_test and depth_write say. An empty ps_entry builds
+    // the pipeline with no pixel shader (the fast path for opaque casters). Takes precedence over the other two targets.
+    bool depth_target = false;
+    // With depth_target: writes depth without comparing it with what is there (an ALWAYS test), to set a region of a depth texture, as
+    // clearing a page of a shared atlas. Otherwise a depth pass tests LESS.
+    bool depth_always = false;
+    // Rasterizer depth bias, for any pipeline (shadow casters use it to keep surfaces from shadowing themselves): a constant in units of
+    // the depth format's precision, and a multiple of the triangle's depth slope. 0 (the default) is no bias.
+    i32 depth_bias = 0;
+    f32 slope_scaled_depth_bias = 0.0f;
+
+    // Reserves a per-frame read-only buffer beside the frame constants, for what is too large or too variable for them (the clustered
+    // light lists):
+    //   ByteAddressBuffer g_FrameLights : register(t0, space3);
+    // Fill a buffer made by IDevice::CreateFrameConstantBuffer (any size; UpdateFrameConstantBuffer writes it) and bind it with
+    // ICommandList::BindFrameReadBuffer before drawing. Readable by the vertex and pixel shaders. Only for devices where SupportsFrameConstants() is
+    // true; others ignore the field and the shader must not name the buffer. false (the default) reserves nothing.
+    bool frame_read_buffer = false;
 };
 
 // Compute shader pipeline with fixed storage-buffer bindings at u0..u(N-1),
@@ -119,6 +161,9 @@ struct ComputePipelineDesc {
 // states, ...) is a distinctly larger, separate piece of work still done via
 // ICommandList::NativeHandle() and backend-specific recording (see
 // rhi_demo's cube mode) — GetBackend() is there for exactly that case.
+// Bytes from one row of a texture copied to a readback buffer to the next: the row's size rounded up to 256, which both backends accept.
+constexpr u32 ReadbackRowPitch(u32 width_pixels, u32 bytes_per_pixel) { return (width_pixels * bytes_per_pixel + 255u) / 256u * 256u; }
+
 class IDevice {
 public:
     virtual ~IDevice() = default;
@@ -218,6 +263,44 @@ public:
     virtual BufferHandle CreateFrameConstantBuffer(u64 /*size_bytes*/) { return {}; }
     virtual void UpdateFrameConstantBuffer(BufferHandle /*buffer*/, const void* /*data*/, u64 /*size_bytes*/) {}
 
+    // Writes a host-visible buffer (one made by CreateFrameConstantBuffer or CreateVertexBuffer) at once, without waiting for the GPU:
+    // the caller promises that no submitted work still to finish reads the range, which is what keeping one buffer per frame in flight
+    // and waiting on that frame's fence before reusing it gives. UpdateFrameConstantBuffer and UpdateVertexBuffer may instead wait for
+    // the queues to drain (D3D12's do), which takes away the overlap of one frame's recording with the last one's GPU work. False (nothing
+    // written) for any other buffer, a bad range, and on devices without it (the default): the caller then falls back to those.
+    virtual bool WriteBufferUnsynchronized(BufferHandle /*buffer*/, const void* /*data*/, u64 /*size_bytes*/, u64 /*offset*/ = 0) {
+        return false;
+    }
+
+    // Reading a render texture back on the CPU without stalling the GPU. ICommandList::CopyRenderTextureToReadback records a copy of a
+    // render texture into a buffer made here; once the submission carrying it has finished (WaitForFence / IsFenceComplete), ReadReadbackBuffer
+    // reads the bytes. The buffer's rows are ReadbackRowPitch(width, bytes per texel) apart. Devices without it (SupportsReadback false, the
+    // default) return an invalid handle and false.
+    virtual bool SupportsReadback() const { return false; }
+
+    // Whether the GPU can trace rays from a shader against an acceleration structure (inline ray queries: DXR tier 1.1 on D3D12, VK_KHR_ray_query
+    // plus VK_KHR_acceleration_structure on Vulkan) and the device is set up to. D3D12 needs nothing. Vulkan enables the extensions only when
+    // AETHER_VK_RAY_TRACING=1 is set as the device is made: merely enabling VK_KHR_acceleration_structure made the virtual shadow feedback test
+    // read zero depth intermittently on the NVIDIA driver tried (no ray tracing call made), so it stays off unless asked for. Default false.
+    virtual bool SupportsRayTracing() const { return false; }
+
+    // Acceleration structures (SupportsRayTracing). Both build synchronously: the call records, submits and waits for its own build, so the
+    // result is ready on return (a spike-scale choice: no async builds, no refit yet). Static geometry; a moved mesh needs a new structure.
+    //  - CreateBottomLevelAS: the triangles of `vertices` (a CreateVertexBuffer buffer, `vertex_count` vertices `vertex_stride_bytes` apart,
+    //    float3 position at byte 0) indexed by `indices` (a CreateIndexBuffer buffer, `index_count` indices, a multiple of 3). Invalid handle
+    //    when the device has no ray tracing; throws std::invalid_argument for buffers that are not those, or counts that do not fit them.
+    //  - CreateTopLevelAS: places bottom-level structures (the instances' `blas` must be live; they must stay live while the top level is used).
+    //  Destroy with DestroyAccelerationStructure (false for a dead handle); the GPU finishing with it first is handled.
+    // A pipeline made with PipelineDesc::acceleration_structure sees the structure bound by ICommandList::BindAccelerationStructure.
+    virtual AccelerationStructureHandle CreateBottomLevelAS(BufferHandle /*vertices*/, u32 /*vertex_count*/, u32 /*vertex_stride_bytes*/,
+                                                            BufferHandle /*indices*/, u32 /*index_count*/) { return {}; }
+    virtual AccelerationStructureHandle CreateTopLevelAS(std::span<const AccelerationInstance> /*instances*/) { return {}; }
+    virtual bool DestroyAccelerationStructure(AccelerationStructureHandle /*handle*/) { return false; }
+    virtual BufferHandle CreateReadbackBuffer(u64 /*size_bytes*/) { return {}; }
+    // False (nothing read) for a buffer that is not a readback buffer, a dead handle or a range outside it. Only valid after the GPU has finished
+    // the copy into it.
+    virtual bool ReadReadbackBuffer(BufferHandle /*buffer*/, void* /*out*/, u64 /*size_bytes*/, u64 /*offset*/ = 0) { return false; }
+
     // Block-compressed textures (BC1, BC3, BC7: see CompressedTextureFormat), kept compressed on the GPU with their whole mip chain: a quarter
     // of the memory of RGBA8, and mips for the sampler. The handle indexes the same bindless table as CreateTexture. Devices that cannot (Vulkan
     // here until it is implemented; ASTC is not offered anywhere yet) answer false and an invalid handle, and the caller decodes to RGBA8 and
@@ -273,6 +356,30 @@ public:
     // Texture2D<float>. The returned handle can be bound to compute pipelines
     // that declare a sampled texture at the corresponding slot.
     virtual SampledTextureHandle CreateR32FloatTexture(u32 width, u32 height, const f32* values) = 0;
+    // A texture a pass renders into and later passes sample: RGBA16F (linear, unclamped), width x height, in the bindless table like
+    // CreateTexture's, contents undefined until a ICommandList::BeginTexturePass clears or draws them, shader-readable between passes.
+    // Draw into it with pipelines made with PipelineDesc::render_texture_target. Freed with DestroyTexture. Graphics only (compute can't
+    // bind it). No GPU wait: callable between passes while recording. Invalid when the table is full and on devices without support
+    // (the default); invalid sizes (zero, or over the device's 2D limit) throw std::invalid_argument.
+    virtual SampledTextureHandle CreateRenderTexture(u32 /*width*/, u32 /*height*/) { return {}; }
+    // A depth texture a pass renders into and later passes read with a texel load (.r, 0 near .. 1 far): D32, width x height, in the
+    // bindless table, contents undefined until an ICommandList::BeginDepthPass clears or draws them. Draw into it with pipelines made
+    // with PipelineDesc::depth_target. Otherwise as CreateRenderTexture (freed with DestroyTexture, graphics only, invalid when the table
+    // is full or on devices without support, invalid sizes throw std::invalid_argument).
+    virtual SampledTextureHandle CreateDepthTexture(u32 /*width*/, u32 /*height*/) { return {}; }
+    // A sampled RGBA16F texture (linear, unclamped: HDR environments) with `mip_count` levels, uploaded once like CreateTexture's (the
+    // call waits for its copy). `halves` holds every level's texels one after another, level 0 first, level i being max(1, width >> i)
+    // by max(1, height >> i), four IEEE half floats (as u16) per texel. Sample it with SampleLevel to choose a level. In the bindless
+    // table, freed with DestroyTexture, graphics only. Invalid when the table is full and on devices without support (the default);
+    // a zero or oversized extent, a mip_count of 0 or more levels than the extent has, or null data throw std::invalid_argument.
+    virtual SampledTextureHandle CreateHalfFloatTexture(u32 /*width*/, u32 /*height*/, u32 /*mip_count*/, const u16* /*halves*/) { return {}; }
+    // CreateTexture with a mip chain: `rgba8_levels` holds every level one after another, level 0 first, level i being
+    // max(1, width >> i) by max(1, height >> i) RGBA8 texels (assets::BuildMipChain makes it). Checks as CreateHalfFloatTexture.
+    // A device without support (the default) uploads level 0 alone, as CreateTexture does.
+    virtual SampledTextureHandle CreateTextureWithMips(u32 width, u32 height, u32 mip_count, const u8* rgba8_levels) {
+        (void)mip_count;
+        return CreateTexture(width, height, rgba8_levels);
+    }
 
     virtual Backend GetBackend() const = 0;
 

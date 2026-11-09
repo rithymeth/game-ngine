@@ -25,7 +25,7 @@ struct PushConstants {
 [[vk::push_constant]]
 #endif
 ConstantBuffer<PushConstants> g_PC : register(b0);
-Texture2D g_Textures[32] : register(t0, space0);
+Texture2D g_Textures[128] : register(t0, space0);
 SamplerState g_Sampler : register(s0, space1);
 
 struct VSInput {
@@ -76,7 +76,7 @@ float4 PSMain(PSInput input) : SV_TARGET {
     float kind = input.params.x - 4.0 * floor(input.params.x * 0.25);
     bool lit = g_PC.g_Texture.w != 0;
     bool sprite = !lit && kind > 0.5;
-    if (texture_index != 0 && texture_index < 32) {
+    if (texture_index != 0 && texture_index < 128) {
         float4 texel = g_Textures[texture_index].Sample(g_Sampler, input.uv);
         float frame_blend = sprite ? saturate(kind - 1.0) : 0.0;
         if (frame_blend > 0.0) texel = lerp(texel, g_Textures[texture_index].Sample(g_Sampler, input.uv + input.params.yz), frame_blend);
@@ -90,7 +90,7 @@ float4 PSMain(PSInput input) : SV_TARGET {
     // depth) from the scene depth copy at this pixel.
     float soft = asfloat(g_PC.g_Texture.z);
     uint depth_index = g_PC.g_Texture.y;
-    if (soft > 0.0 && depth_index != 0 && depth_index < 32) {
+    if (soft > 0.0 && depth_index != 0 && depth_index < 128) {
         float scene = g_Textures[depth_index].Load(int3(int2(input.position.xy), 0)).r;
         color.a *= saturate((ViewDistance(scene) - ViewDistance(input.position.z)) / soft);
     }
@@ -100,11 +100,19 @@ float4 PSMain(PSInput input) : SV_TARGET {
         float n_dot_l = saturate(dot(n, normalize(g_PC.g_SunDirection.xyz)));
         float sky_fill = 0.28 + 0.14 * saturate(n.y);
         float3 lit_color = color.rgb * (sky_fill * g_PC.g_DepthToView.rgb + g_PC.g_SunColor.rgb * (n_dot_l * 0.96 / 3.14159265));
+#ifdef AETHER_HDR_TARGET
+        color.rgb = lit_color; // linear light: the post pass tone maps the scene and the particles together
+#else
         color.rgb = lit_color / (lit_color + 1.0);
+#endif
     }
+#ifdef AETHER_HDR_TARGET
+    return float4(max(color.rgb, 0.0), saturate(color.a));
+#else
     float3 encoded = saturate(color.rgb);
     encoded = lerp(encoded * 12.92, 1.055 * pow(encoded, 1.0 / 2.4) - 0.055, step(0.0031308, encoded));
     return float4(encoded, saturate(color.a));
+#endif
 }
 )";
 
@@ -353,13 +361,14 @@ void PackParticleVertices(const vfx::ParticleRenderData& data, const vfx::Partic
     }
 }
 
-ParticlePass::ParticlePass(gfx::rhi::IDevice& device, gfx::rhi::ISwapChain& swap_chain) : device_(device) {
+ParticlePass::ParticlePass(gfx::rhi::IDevice& device, gfx::rhi::ISwapChain& swap_chain, bool hdr_target) : device_(device) {
     // Soft particles read the scene depth copy; without one (backend, depth format or a full table) they draw hard-edged.
     const gfx::rhi::SampledTextureHandle depth = swap_chain.SceneDepthTexture();
     scene_depth_ = depth.IsValid() && depth.index < gfx::rhi::kMaxBindlessTextures ? depth.index : 0u;
     if (scene_depth_ == 0) AETHER_LOG_INFO("PlayerRenderer", "No scene depth texture on this device; soft particles draw hard-edged");
     gfx::rhi::PipelineDesc desc;
-    desc.hlsl_source = kParticleShader;
+    desc.hlsl_source = std::string(hdr_target ? "#define AETHER_HDR_TARGET 1\n" : "") + kParticleShader;
+    desc.scene_color_target = hdr_target;
     desc.push_constant_size_bytes = sizeof(ParticleConstants);
     desc.use_vertex_buffer = true;
     desc.vertex_layout = gfx::rhi::VertexLayout::PositionNormalUvTangent;
@@ -420,7 +429,10 @@ void ParticlePass::DrawStream(gfx::rhi::ICommandList& commands, gfx::rhi::Pipeli
         buffer.capacity = grown.IsValid() ? capacity : 0;
         if (!grown.IsValid()) return;
     }
-    device_.UpdateVertexBuffer(buffer.handle, vertices.data(), vertices.size() * sizeof(ParticleQuadVertex));
+    // This frame slot's buffer: the frame loop waited on the frame that last used it, so no GPU wait is needed.
+    if (!device_.WriteBufferUnsynchronized(buffer.handle, vertices.data(), vertices.size() * sizeof(ParticleQuadVertex))) {
+        device_.UpdateVertexBuffer(buffer.handle, vertices.data(), vertices.size() * sizeof(ParticleQuadVertex));
+    }
     commands.BindPipeline(pipeline);
     commands.BindBindlessTextures();
     commands.BindVertexBuffer(buffer.handle, sizeof(ParticleQuadVertex));

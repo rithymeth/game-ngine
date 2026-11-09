@@ -13,6 +13,7 @@
 #include <cmath>
 #include <cstring>
 #include <limits>
+#include <span>
 
 namespace aether::assets {
 
@@ -99,11 +100,105 @@ std::string UriDecode(const std::string& uri) {
     return out;
 }
 
-bool ResolveBufferData(const Json& buffer_json, const std::string& base_dir, bool allow_external,
-                       usize remaining_budget, std::vector<u8>& out_data) {
-    if (!buffer_json.contains("uri")) {
-        GltfError("Buffer with no uri (GLB-embedded binary chunk) is not supported");
+// A .glb container (glTF 2.0 binary): a 12-byte header (magic "glTF", version 2, total length), then chunks of {length, type, data}, the
+// first JSON, the optional second BIN. Splits `bytes` into the two; false (with the reason) for anything malformed.
+constexpr u32 kGlbMagic = 0x46546C67;     // "glTF"
+constexpr u32 kGlbChunkJson = 0x4E4F534A; // "JSON"
+constexpr u32 kGlbChunkBin = 0x004E4942;  // "BIN\0"
+
+u32 ReadU32(std::span<const u8> bytes, usize offset) {
+    u32 v = 0;
+    std::memcpy(&v, bytes.data() + offset, sizeof(v));
+    return v;
+}
+
+bool IsGlb(std::span<const u8> bytes) { return bytes.size() >= 4 && ReadU32(bytes, 0) == kGlbMagic; }
+
+bool SplitGlb(std::span<const u8> bytes, std::string& json, std::vector<u8>& bin, bool& has_bin) {
+    has_bin = false;
+    if (!IsGlb(bytes)) {
+        GltfError("Not a GLB file (no \"glTF\" magic)");
         return false;
+    }
+    if (bytes.size() < 20) {
+        GltfError("GLB file is too short for a header and a chunk (%zu bytes)", bytes.size());
+        return false;
+    }
+    const u32 version = ReadU32(bytes, 4), length = ReadU32(bytes, 8);
+    if (version != 2) {
+        GltfError("GLB version %u is not supported (only 2)", version);
+        return false;
+    }
+    if (length > bytes.size() || length < 20) {
+        GltfError("GLB header length %u does not match the file (%zu bytes)", length, bytes.size());
+        return false;
+    }
+    usize offset = 12;
+    bool have_json = false;
+    while (offset + 8 <= length) {
+        const u32 chunk_length = ReadU32(bytes, offset), chunk_type = ReadU32(bytes, offset + 4);
+        offset += 8;
+        if (chunk_length > length - offset) {
+            GltfError("GLB chunk of %u bytes runs past the end of the file", chunk_length);
+            return false;
+        }
+        if (!have_json) {
+            if (chunk_type != kGlbChunkJson) {
+                GltfError("GLB's first chunk is not JSON");
+                return false;
+            }
+            if (chunk_length > kMaxJsonBytes) {
+                GltfError("GLB JSON chunk is larger than the %zu-byte limit", kMaxJsonBytes);
+                return false;
+            }
+            json.assign(reinterpret_cast<const char*>(bytes.data() + offset), chunk_length);
+            have_json = true;
+        } else if (chunk_type == kGlbChunkBin && !has_bin) {
+            if (chunk_length > kMaxBufferBytes) {
+                GltfError("GLB BIN chunk is larger than the %zu-byte buffer budget", kMaxBufferBytes);
+                return false;
+            }
+            bin.assign(bytes.data() + offset, bytes.data() + offset + chunk_length);
+            has_bin = true;
+        } // other chunk types are reserved: skipped, as the spec says
+        offset += (chunk_length + 3u) & ~usize{3}; // chunks are 4-byte aligned
+    }
+    if (!have_json) {
+        GltfError("GLB has no JSON chunk");
+        return false;
+    }
+    return true;
+}
+
+// The buffer data for one entry of "buffers". With no uri it is the GLB's BIN chunk (only buffer 0 may be that, per the spec), when the
+// file is a GLB that has one.
+bool ResolveBufferData(const Json& buffer_json, const std::string& base_dir, bool allow_external,
+                       usize remaining_budget, std::vector<u8>& out_data, std::vector<u8>* glb_bin = nullptr) {
+    if (!buffer_json.contains("uri")) {
+        if (glb_bin == nullptr) {
+            GltfError("Buffer with no uri, but the file is not a GLB with a BIN chunk");
+            return false;
+        }
+        if (glb_bin->size() > remaining_budget) {
+            GltfError("GLB BIN chunk exceeds the glTF buffer budget");
+            return false;
+        }
+        if (buffer_json.contains("byteLength")) {
+            if (!buffer_json["byteLength"].is_number_integer()) {
+                GltfError("Buffer byteLength is not a whole number");
+                return false;
+            }
+            // The BIN chunk may be padded by up to 3 bytes past byteLength.
+            const usize declared = buffer_json["byteLength"].get<usize>();
+            if (declared > glb_bin->size() || glb_bin->size() - declared > 3) {
+                GltfError("GLB BIN chunk (%zu bytes) does not match the buffer's byteLength (%zu)", glb_bin->size(), declared);
+                return false;
+            }
+            glb_bin->resize(declared);
+        }
+        out_data = std::move(*glb_bin);
+        glb_bin->clear();
+        return true;
     }
     if (!buffer_json["uri"].is_string()) {
         GltfError("Buffer uri is not a string");
@@ -748,7 +843,7 @@ void ApplyAnimationToNodes(const GltfScene& scene, const GltfAnimation& animatio
 } // namespace
 
 static bool ParseGltfText(const std::string& text, const std::string& path, bool allow_external,
-                          GltfScene& out_scene) {
+                          GltfScene& out_scene, std::vector<u8>* glb_bin = nullptr) {
     // Parsed without exceptions. A malformed document used to die inside Json::parse itself -- the trace showed the call
     // entered and never reached the catch -- so the throwing path is avoided entirely and a discarded value is the error.
     // The try/catch below still covers the type errors that value() and get<>() raise on a well-formed but wrong-typed
@@ -766,7 +861,9 @@ static bool ParseGltfText(const std::string& text, const std::string& path, bool
     if (gltf.contains("buffers")) {
         for (const auto& buffer_json : gltf["buffers"]) {
             std::vector<u8> data;
-            if (!ResolveBufferData(buffer_json, base_dir, allow_external, buffer_budget, data)) {
+            // Only the first buffer may be the GLB's BIN chunk.
+            std::vector<u8>* bin = buffers.empty() ? glb_bin : nullptr;
+            if (!ResolveBufferData(buffer_json, base_dir, allow_external, buffer_budget, data, bin)) {
                 GltfError("Failed to resolve a buffer referenced by \"%s\"", path.c_str());
                 return false;
             }
@@ -838,6 +935,9 @@ static bool ParseGltfText(const std::string& text, const std::string& path, bool
                 material.occlusion_texture = resolve_texture_path(material_json["occlusionTexture"]);
                 material.occlusion_strength = material_json["occlusionTexture"].value("strength", 1.0f);
             }
+            if (material_json.contains("emissiveTexture")) {
+                material.emissive_texture = resolve_texture_path(material_json["emissiveTexture"]);
+            }
             if (material_json.contains("emissiveFactor")) {
                 const Json& factor = material_json["emissiveFactor"];
                 for (usize i = 0; i < 3 && i < factor.size(); ++i) {
@@ -848,12 +948,17 @@ static bool ParseGltfText(const std::string& text, const std::string& path, bool
             if (alpha_mode == "MASK") material.alpha_mode = MaterialAlphaMode::Mask;
             else if (alpha_mode == "BLEND") material.alpha_mode = MaterialAlphaMode::Blend;
             material.alpha_cutoff = material_json.value("alphaCutoff", 0.5f);
+            if (const auto it = material_json.find("doubleSided"); it != material_json.end() && it->is_boolean()) material.double_sided = it->get<bool>();
             if (material_json.contains("extensions") && material_json["extensions"].is_object()) {
                 const Json& extensions = material_json["extensions"];
                 const auto object_of = [&](const char* name) -> const Json* {
                     const auto it = extensions.find(name);
                     return it != extensions.end() && it->is_object() ? &*it : nullptr;
                 };
+                if (const Json* strength = object_of("KHR_materials_emissive_strength")) {
+                    const auto it = strength->find("emissiveStrength");
+                    if (it != strength->end() && it->is_number()) material.emissive_strength = std::max(it->get<f32>(), 0.0f);
+                }
                 if (const Json* coat = object_of("KHR_materials_clearcoat")) {
                     material.clear_coat = coat->value("clearcoatFactor", 0.0f);
                     material.clear_coat_roughness = coat->value("clearcoatRoughnessFactor", 0.0f);
@@ -1049,18 +1154,33 @@ bool LoadGltf(const std::string& path, GltfScene& out_scene, std::string* error)
 
 bool LoadGltf(const std::string& path, GltfScene& out_scene) {
     std::vector<u8> bytes;
-    if (!fs::ReadFileBytes(path, bytes, kMaxJsonBytes)) {
+    // A .gltf is JSON alone; a .glb carries its buffer too, so it may be as large as both budgets.
+    if (!fs::ReadFileBytes(path, bytes, kMaxJsonBytes + kMaxBufferBytes + 64)) {
         GltfError("Failed to read \"%s\" or file is too large", path.c_str());
         return false;
     }
+    const bool glb = IsGlb(bytes);
+    if (!glb && bytes.size() > kMaxJsonBytes) {
+        GltfError("\"%s\" is larger than the %zu-byte glTF JSON limit", path.c_str(), kMaxJsonBytes);
+        return false;
+    }
     std::string text;
-    if (!bytes.empty()) text.assign(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+    std::vector<u8> bin;
+    bool has_bin = false;
+    if (glb) {
+        if (!SplitGlb(bytes, text, bin, has_bin)) return false;
+        bytes.clear();
+        bytes.shrink_to_fit();
+    } else if (!bytes.empty()) {
+        text.assign(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+    }
     // The file path and the byte count, because a fatal signal inside this function has been reproducible without a stack:
     // these two lines say whether it dies reading the file, building the text, or parsing it.
-    AETHER_LOG_INFO("glTF", "LoadGltf \"%s\": read %zu byte(s)", path.c_str(), bytes.size());
+    AETHER_LOG_INFO("glTF", "LoadGltf \"%s\": read %zu byte(s)%s", path.c_str(), glb ? text.size() + bin.size() : text.size(),
+                    glb ? " (GLB)" : "");
     GltfScene scene;
     try {
-        if (!ParseGltfText(text, path, true, scene)) return false;
+        if (!ParseGltfText(text, path, true, scene, has_bin ? &bin : nullptr)) return false;
     } catch (const std::exception& e) {
         GltfError("Malformed \"%s\": %s", path.c_str(), e.what());
         return false;
@@ -1070,12 +1190,25 @@ bool LoadGltf(const std::string& path, GltfScene& out_scene) {
     return true;
 }
 
+bool ReadGlbChunks(std::span<const u8> bytes, std::string& json, std::vector<u8>& bin) {
+    bool has_bin = false;
+    bin.clear();
+    return SplitGlb(bytes, json, bin, has_bin);
+}
+
 bool LoadGltfFromMemory(std::span<const u8> json, GltfScene& out_scene) {
-    if (json.empty() || json.size() > kMaxJsonBytes) return false;
-    const std::string text(reinterpret_cast<const char*>(json.data()), json.size());
+    std::string text;
+    std::vector<u8> bin;
+    bool has_bin = false;
+    if (IsGlb(json)) {
+        if (!SplitGlb(json, text, bin, has_bin)) return false;
+    } else {
+        if (json.empty() || json.size() > kMaxJsonBytes) return false;
+        text.assign(reinterpret_cast<const char*>(json.data()), json.size());
+    }
     GltfScene scene;
     try {
-        if (!ParseGltfText(text, "<memory>", false, scene)) return false;
+        if (!ParseGltfText(text, "<memory>", false, scene, has_bin ? &bin : nullptr)) return false;
     } catch (const std::exception&) {
         return false;
     }

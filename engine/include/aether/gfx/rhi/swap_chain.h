@@ -56,6 +56,14 @@ public:
     // SV_Position.xy (g_Textures[i].Load(int3(xy, 0)).r), not a filtered sample. Invalid where the backend or the depth format can't (the
     // default), or the table is full; the caller then draws without depth reads.
     virtual SampledTextureHandle SceneDepthTexture() { return {}; }
+
+    // A linear HDR colour target (RGBA16F, Width() x Height()) in the device's bindless table: what a renderer draws its lit scene into
+    // (ICommandList::BeginSceneColorPass, pipelines with PipelineDesc::scene_color_target) before a post pass tone maps it into the back
+    // buffer. Between passes it is shader-readable; read it with a texel load at SV_Position.xy. The first call creates it (at setup, between
+    // frames: it reserves a bindless slot and waits for the GPU); the handle stays the same across Resize. One target per swap chain, shared
+    // by the frames in flight (one queue orders them). Invalid where the backend can't (the default) or the table is full; the caller then
+    // draws straight into the back buffer.
+    virtual SampledTextureHandle SceneColorTexture() { return {}; }
 };
 
 } // namespace aether::gfx::rhi

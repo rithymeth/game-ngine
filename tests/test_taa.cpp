@@ -1,0 +1,425 @@
+#include "../player/src/post_pass.h"
+#include "../player/src/taa_pass.h"
+#include "aether/gfx/rhi/command_list.h"
+#include "aether/gfx/rhi/device.h"
+#include "test_framework.h"
+
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <cstring>
+#include <memory>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+using namespace aether;
+using namespace aether::player;
+namespace rhi = aether::gfx::rhi;
+
+// Render roadmap step 6: temporal anti-aliasing. Sub-pixel jitter on the projection (player/src/taa_pass.h), the resolve that blends
+// each frame into a reprojected, clipped history, and the post pass reading the result.
+
+namespace {
+
+constexpr f32 kTaaTestPi = 3.14159265358979f;
+
+Vec3 Project(const Mat4& m, const Vec3& p) {
+    const Vec4 clip = m * Vec4(p.x, p.y, p.z, 1.0f);
+    return Vec3(clip.x / clip.w, clip.y / clip.w, clip.z / clip.w);
+}
+
+bool Close(f32 a, f32 b, f32 e = 1e-4f) { return std::fabs(a - b) <= e; }
+
+} // namespace
+
+AETHER_TEST(Taa_JitterWalksTheHaltonSequenceInsideThePixel) {
+    f32 sum_x = 0.0f, sum_y = 0.0f;
+    std::vector<std::pair<f32, f32>> seen;
+    for (u32 frame = 0; frame < kTaaSequenceLength; ++frame) {
+        const Vec3 jitter = TaaJitter(frame, kTaaSequenceLength);
+        const f32 x = jitter.x, y = jitter.y;
+        AETHER_CHECK(x > -0.5f && x < 0.5f && y > -0.5f && y < 0.5f);
+        for (const auto& [px, py] : seen) AETHER_CHECK(!(px == x && py == y)); // eight different points
+        seen.push_back({x, y});
+        sum_x += x, sum_y += y;
+    }
+    AETHER_CHECK(std::fabs(sum_x / kTaaSequenceLength) < 0.1f && std::fabs(sum_y / kTaaSequenceLength) < 0.1f); // centred on the pixel
+    const Vec3 first = TaaJitter(0, kTaaSequenceLength), again = TaaJitter(kTaaSequenceLength, kTaaSequenceLength);
+    const f32 x0 = first.x, y0 = first.y, x8 = again.x, y8 = again.y;
+    AETHER_CHECK(x0 == x8 && y0 == y8); // and round again
+    AETHER_CHECK(Close(x0, 0.0f) && Close(y0, 1.0f / 3.0f - 0.5f)); // Halton(1): 1/2 and 1/3
+}
+
+AETHER_TEST(Taa_JitterMovesEveryDepthByTheSameFractionOfAPixel) {
+    const Mat4 perspective = Mat4::PerspectiveRH(kTaaTestPi / 3.0f, 16.0f / 9.0f, 0.1f, 100.0f);
+    const Mat4 jittered = JitterProjection(perspective, 0.25f, -0.4f, 1600, 900);
+    for (const Vec3& p : {Vec3(0.3f, -0.2f, -1.0f), Vec3(-4.0f, 2.0f, -50.0f)}) {
+        const Vec3 a = Project(perspective, p), b = Project(jittered, p);
+        AETHER_CHECK(Close(b.x - a.x, 2.0f * 0.25f / 1600.0f, 1e-6f) && Close(b.y - a.y, 2.0f * -0.4f / 900.0f, 1e-6f));
+        AETHER_CHECK(Close(b.z, a.z, 1e-6f)); // depth untouched
+    }
+    Mat4 orthographic = Mat4::Identity();
+    orthographic.cols[0].x = 0.1f, orthographic.cols[1].y = 0.2f, orthographic.cols[2].z = -0.01f;
+    const Vec3 a = Project(orthographic, Vec3(3, 1, -5)), b = Project(JitterProjection(orthographic, 0.5f, 0.5f, 100, 50), Vec3(3, 1, -5));
+    AETHER_CHECK(Close(b.x - a.x, 0.01f, 1e-6f) && Close(b.y - a.y, 0.02f, 1e-6f));
+}
+
+AETHER_TEST(Taa_ReprojectionFindsWhereAPointWasLastFrame) {
+    const Mat4 projection = Mat4::PerspectiveRH(kTaaTestPi / 2.0f, 1.0f, 0.1f, 100.0f);
+    const Mat4 now = projection * Mat4::LookAtRH(Vec3(0, 0, 0), Vec3(0, 0, -1), Vec3(0, 1, 0));
+    Mat4 same;
+    AETHER_CHECK(TaaReprojection(now, now, same));
+    const Vec3 still = Project(same, Vec3(0.3f, -0.6f, 0.9f));
+    AETHER_CHECK(Close(still.x, 0.3f) && Close(still.y, -0.6f)); // a camera that hasn't moved: the same place
+    // Last frame the camera stood a metre to the left: a point now in the middle of the screen was right of it.
+    const Mat4 before = projection * Mat4::LookAtRH(Vec3(-1, 0, 0), Vec3(-1, 0, -1), Vec3(0, 1, 0));
+    Mat4 reprojection;
+    AETHER_CHECK(TaaReprojection(before, now, reprojection));
+    const Vec3 world(0, 0, -4);
+    const Vec3 ndc_now = Project(now, world), ndc_before = Project(before, world);
+    const Vec3 found = Project(reprojection, ndc_now);
+    AETHER_CHECK(Close(found.x, ndc_before.x, 1e-4f) && Close(found.y, ndc_before.y, 1e-4f) && ndc_before.x > 0.2f);
+    Mat4 singular;
+    std::memset(&singular, 0, sizeof(singular));
+    AETHER_CHECK(!TaaReprojection(now, singular, reprojection));
+}
+
+AETHER_TEST(Taa_ShaderClipsTheHistoryAndWeighsByLuma) {
+    const std::string source = TaaShaderSource();
+    AETHER_CHECK(source.find("float3 HistoryCatmullRom(float2 uv)") != std::string::npos);
+    AETHER_CHECK(source.find("ClipToBox(ToYCoCg(history), mean, 1.25 * sigma)") != std::string::npos);
+    AETHER_CHECK(source.find("float d = Depth(p + int2(x, y));") != std::string::npos); // the nearest depth of the neighbourhood
+    AETHER_CHECK(source.find("if (motion.a > 0.5)") != std::string::npos);                 // and its motion, where something moved
+    AETHER_CHECK(source.find("g_PC.g_Blend / (1.0 + Luma(current))") != std::string::npos);
+    AETHER_CHECK(kTaaBlend > 0.0f && kTaaBlend < 0.5f && sizeof(TaaConstants) <= 256);
+}
+
+static void Taa_AHardEdgeConvergesToItsCoverageAndACutStartsOver(rhi::Backend backend) {
+    if (!rhi::IsBackendAvailable(backend)) return;
+    std::unique_ptr<rhi::IDevice> device;
+    try {
+        device = rhi::CreateDevice(backend, false);
+    } catch (const std::exception&) {
+    }
+    if (!device) return;
+    constexpr u32 kSize = 32;
+    std::unique_ptr<rhi::ISwapChain> target = device->CreateSwapChain(nullptr, kSize, kSize, 2);
+    TaaPass taa(*device, *target);
+    AETHER_CHECK(taa.Valid());
+    if (!taa.Valid()) return;
+
+    // The "scene": white left of x = 10.3 pixels, black right of it, sampled where this frame's jitter puts the pixel's centre.
+    rhi::PipelineDesc scene;
+    scene.hlsl_source = R"(
+struct PushConstants { float jitter_x; float edge; float pad0; float pad1; };
+#ifdef __spirv__
+[[vk::push_constant]]
+#endif
+ConstantBuffer<PushConstants> g_PC : register(b0);
+float4 VSMain(uint id : SV_VertexID) : SV_Position {
+    float2 uv = float2((id << 1) & 2, id & 2);
+    return float4(uv * float2(2.0, -2.0) + float2(-1.0, 1.0), 0.5, 1.0);
+}
+float4 PSMain(float4 position : SV_Position) : SV_Target {
+    return position.x - g_PC.jitter_x < g_PC.edge ? float4(1, 1, 1, 1) : float4(0, 0, 0, 1);
+}
+)";
+    scene.push_constant_size_bytes = 16;
+    scene.scene_color_target = true;
+    const rhi::PipelineHandle scene_pipeline = device->CreatePipeline(scene, *target);
+    // The resolved image, copied into the back buffer to be read.
+    rhi::PipelineDesc show;
+    show.hlsl_source = R"(
+struct PushConstants { uint index; uint pad0; uint pad1; uint pad2; };
+#ifdef __spirv__
+[[vk::push_constant]]
+#endif
+ConstantBuffer<PushConstants> g_PC : register(b0);
+Texture2D g_Textures[128] : register(t0, space0);
+SamplerState g_Sampler : register(s0, space1);
+float4 VSMain(uint id : SV_VertexID) : SV_Position {
+    float2 uv = float2((id << 1) & 2, id & 2);
+    return float4(uv * float2(2.0, -2.0) + float2(-1.0, 1.0), 0.0, 1.0);
+}
+float4 PSMain(float4 position : SV_Position) : SV_Target {
+    return float4(saturate(g_Textures[g_PC.index].Load(int3(int2(position.xy), 0)).rgb), 1.0);
+}
+)";
+    show.push_constant_size_bytes = 16;
+    show.enable_bindless_textures = true;
+    const rhi::PipelineHandle show_pipeline = device->CreatePipeline(show, *target);
+    AETHER_CHECK(scene_pipeline.IsValid() && show_pipeline.IsValid());
+    if (!scene_pipeline.IsValid() || !show_pipeline.IsValid()) return;
+
+    const Mat4 view_projection = Mat4::Identity();
+    // One frame: the scene with this frame's jitter, the resolve, and the result read back (the red channel of row 16).
+    const auto frame = [&](u64 camera, std::vector<u8>& row) {
+        f32 jx = 0.0f, jy = 0.0f;
+        taa.NextJitter(jx, jy);
+        std::unique_ptr<rhi::ICommandList> cmd = device->CreateCommandList();
+        target->AcquireNextImage();
+        cmd->Reset();
+        if (!cmd->BeginSceneColorPass(*target, {0, 0, 0, 1})) return false;
+        cmd->BindPipeline(scene_pipeline);
+        const f32 push[4] = {jx, 10.3f, 0, 0};
+        cmd->SetPushConstants(push, sizeof(push));
+        cmd->Draw(3);
+        if (!cmd->CopySceneDepth()) return false;
+        cmd->EndRenderPass();
+        const u32 resolved = taa.Resolve(*cmd, view_projection, camera);
+        if (resolved == 0) return false;
+        cmd->BeginRenderPass(*target, {1, 0, 1, 1});
+        cmd->BindPipeline(show_pipeline);
+        cmd->BindBindlessTextures();
+        const u32 index[4] = {resolved, 0, 0, 0};
+        cmd->SetPushConstants(index, sizeof(index));
+        cmd->Draw(3);
+        cmd->EndRenderPass();
+        cmd->Close();
+        device->WaitForFence(device->Submit(*cmd, target.get()));
+        std::vector<u8> pixels;
+        const bool read = target->ReadBack(pixels) && pixels.size() == kSize * kSize * 4;
+        target->Present(false);
+        if (!read) return false;
+        row.resize(kSize);
+        for (u32 x = 0; x < kSize; ++x) row[x] = pixels[(16 * kSize + x) * 4];
+        return true;
+    };
+
+    std::vector<u8> row;
+    AETHER_CHECK(frame(1, row));
+    // The first frame has no history: every pixel is one sample, all white or all black.
+    for (const u8 v : row) AETHER_CHECK(v < 3 || v > 252);
+    for (int i = 0; i < 24; ++i) AETHER_CHECK(frame(1, row));
+    // Converged: the pixel the edge crosses (x 10 .. 11, 30% white) is between, its neighbours away from the edge are not.
+    if (row.size() == kSize) {
+        std::printf("    edge row: %u %u [%u] %u %u\n", row[8], row[9], row[10], row[11], row[12]);
+        AETHER_CHECK(row[10] > 20 && row[10] < 235);
+        AETHER_CHECK(row[2] > 250 && row[25] < 5);
+    }
+    // Another camera: a cut, the history dropped, one sample again.
+    AETHER_CHECK(frame(2, row));
+    if (row.size() == kSize) AETHER_CHECK(row[10] < 3 || row[10] > 252);
+
+    device->DestroyPipeline(scene_pipeline);
+    device->DestroyPipeline(show_pipeline);
+}
+
+static void Taa_ThePostPassReadsTheResolveWhenGivenIt(rhi::Backend backend) {
+    // PostPass::SetSource: Source() is the given index, or the scene colour target when 0.
+    if (!rhi::IsBackendAvailable(backend)) return;
+    std::unique_ptr<rhi::IDevice> device;
+    try {
+        device = rhi::CreateDevice(backend, false);
+    } catch (const std::exception&) {
+    }
+    if (!device) return;
+    std::unique_ptr<rhi::ISwapChain> target = device->CreateSwapChain(nullptr, 16, 16, 2);
+    PostPass post(*device, *target);
+    if (!post.Valid()) return;
+    AETHER_CHECK(post.Source() == post.SceneColorIndex());
+    post.SetSource(77);
+    AETHER_CHECK(post.Source() == 77);
+    post.SetSource(0);
+    AETHER_CHECK(post.Source() == post.SceneColorIndex());
+}
+
+AETHER_TEST(Taa_OnlyATransformThatChangedCountsAsMoving) {
+    const Mat4 a = Mat4::Translation(Vec3(100.0f, 2.0f, -3.0f));
+    AETHER_CHECK(!TaaTransformMoved(a, a));
+    AETHER_CHECK(!TaaTransformMoved(a, Mat4::Translation(Vec3(100.0f + 1e-5f, 2.0f, -3.0f)))); // rounding, not motion
+    AETHER_CHECK(TaaTransformMoved(a, Mat4::Translation(Vec3(100.01f, 2.0f, -3.0f))));
+    Mat4 turned = Mat4::Identity();
+    turned.cols[0].z = -0.01f, turned.cols[2].x = 0.01f; // a hundredth of a radian about y
+    AETHER_CHECK(TaaTransformMoved(Mat4::Identity(), turned));
+}
+
+// A bar of pixel-aligned stripes (2 pixels white, 2 black) moving 2 pixels a frame over a still background. With the camera's
+// reprojection alone every pixel's history is the opposite stripe, inside the neighbourhood's colour box, so the stripes blur toward grey;
+// with the bar as a mover the history follows it and they stay sharp. Pixels the bar has just uncovered keep the camera's reprojection.
+static void Taa_AMovingObjectKeepsItsDetailWithMotionVectors(rhi::Backend backend) {
+    if (!rhi::IsBackendAvailable(backend)) return;
+    std::unique_ptr<rhi::IDevice> device;
+    try {
+        device = rhi::CreateDevice(backend, false);
+    } catch (const std::exception&) {
+    }
+    if (!device) return;
+    constexpr u32 kSize = 32;
+    std::unique_ptr<rhi::ISwapChain> target = device->CreateSwapChain(nullptr, kSize, kSize, 2);
+
+    rhi::PipelineDesc scene;
+    scene.hlsl_source = R"(
+struct PushConstants { float4x4 mvp; };
+#ifdef __spirv__
+[[vk::push_constant]]
+#endif
+ConstantBuffer<PushConstants> g_PC : register(b0);
+struct VSInput {
+    float3 position : POSITION;
+    float3 normal : NORMAL;
+    float2 uv : TEXCOORD0;
+    float4 tangent : TANGENT;
+};
+struct PSInput {
+    float4 position : SV_POSITION;
+    float u : TEXCOORD0;
+};
+PSInput VSMain(VSInput input) {
+    PSInput output;
+    output.position = mul(g_PC.mvp, float4(input.position, 1.0));
+    output.u = input.uv.x; // the stripes travel with the surface, however it moves
+    return output;
+}
+float4 PSMain(PSInput input) : SV_Target {
+    return frac(input.u / 0.25 + 1e-3) < 0.5 ? float4(1, 1, 1, 1) : float4(0, 0, 0, 1);
+}
+)";
+    scene.push_constant_size_bytes = 64;
+    scene.scene_color_target = true;
+    scene.use_vertex_buffer = true;
+    scene.vertex_layout = rhi::VertexLayout::PositionNormalUvTangent;
+    scene.depth_test = true;
+    scene.depth_write = true;
+    const rhi::PipelineHandle scene_pipeline = device->CreatePipeline(scene, *target);
+    rhi::PipelineDesc show;
+    show.hlsl_source = R"(
+struct PushConstants { uint index; uint pad0; uint pad1; uint pad2; };
+#ifdef __spirv__
+[[vk::push_constant]]
+#endif
+ConstantBuffer<PushConstants> g_PC : register(b0);
+Texture2D g_Textures[128] : register(t0, space0);
+SamplerState g_Sampler : register(s0, space1);
+float4 VSMain(uint id : SV_VertexID) : SV_Position {
+    float2 uv = float2((id << 1) & 2, id & 2);
+    return float4(uv * float2(2.0, -2.0) + float2(-1.0, 1.0), 0.0, 1.0);
+}
+float4 PSMain(float4 position : SV_Position) : SV_Target {
+    return float4(saturate(g_Textures[g_PC.index].Load(int3(int2(position.xy), 0)).rgb), 1.0);
+}
+)";
+    show.push_constant_size_bytes = 16;
+    show.enable_bindless_textures = true;
+    const rhi::PipelineHandle show_pipeline = device->CreatePipeline(show, *target);
+    AETHER_CHECK(scene_pipeline.IsValid() && show_pipeline.IsValid());
+    if (!scene_pipeline.IsValid() || !show_pipeline.IsValid()) return;
+
+    // The bar: x -0.5 .. 0 in NDC (8 pixels), y -0.5 .. 0.5, at depth 0.5, u its rest x; 12 floats a vertex, as the scene's.
+    const f32 vertices[4][12] = {{-0.5f, -0.5f, 0.5f, 0, 0, 1, -0.5f, 0, 1, 0, 0, 1}, {0.0f, -0.5f, 0.5f, 0, 0, 1, 0.0f, 0, 1, 0, 0, 1},
+                                 {0.0f, 0.5f, 0.5f, 0, 0, 1, 0.0f, 0, 1, 0, 0, 1},    {-0.5f, 0.5f, 0.5f, 0, 0, 1, -0.5f, 0, 1, 0, 0, 1}};
+    const u32 indices[6] = {0, 1, 2, 0, 2, 3};
+    const rhi::BufferHandle vertex_buffer = device->CreateVertexBuffer(vertices, sizeof(vertices));
+    const rhi::BufferHandle index_buffer = device->CreateIndexBuffer(indices, sizeof(indices), rhi::IndexFormat::UInt32);
+    AETHER_CHECK(vertex_buffer.IsValid() && index_buffer.IsValid());
+
+    // Last frame's positions for the deforming case, 64 bytes into the buffer (as a skinned mover's are, after others').
+    const rhi::BufferHandle previous_buffer = device->CreateFrameConstantBuffer(64 + sizeof(f32) * 12);
+
+    // 24 frames of the moving bar; the resolved row through its middle afterwards. Frame f's bar is f % 8 steps of 2 pixels right:
+    // moved by its transform (kRigid), or by its vertices with the transform still, as a skinned mesh deforms (kDeforming).
+    enum Mode { kCameraOnly, kRigid, kDeforming };
+    const auto run = [&](Mode mode, std::vector<u8>& row) {
+        TaaPass taa(*device, *target);
+        if (!taa.Valid()) return false;
+        const Mat4 view_projection = Mat4::Identity();
+        Mat4 previous_model = Mat4::Identity();
+        f32 previous_positions[16 + 12]{};
+        bool drew_motion = false;
+        for (u32 f = 0; f < 24; ++f) {
+            const f32 offset = 0.125f * static_cast<f32>(f % 8);
+            const Mat4 model = mode == kDeforming ? Mat4::Identity() : Mat4::Translation(Vec3(offset, 0.0f, 0.0f));
+            f32 moved[4][12];
+            std::memcpy(moved, vertices, sizeof(moved));
+            for (auto& v : moved) v[0] += mode == kDeforming ? offset : 0.0f;
+            device->UpdateVertexBuffer(vertex_buffer, moved, sizeof(moved));
+            f32 jx = 0.0f, jy = 0.0f;
+            taa.NextJitter(jx, jy);
+            const Mat4 mvp = JitterProjection(view_projection, jx, jy, kSize, kSize) * model;
+            std::unique_ptr<rhi::ICommandList> cmd = device->CreateCommandList();
+            target->AcquireNextImage();
+            cmd->Reset();
+            if (!cmd->BeginSceneColorPass(*target, {0, 0, 0, 1})) return false;
+            cmd->BindPipeline(scene_pipeline);
+            cmd->SetPushConstants(&mvp.cols[0], 64);
+            cmd->BindVertexBuffer(vertex_buffer, sizeof(vertices[0]));
+            cmd->BindIndexBuffer(index_buffer, rhi::IndexFormat::UInt32);
+            cmd->DrawIndexed(6);
+            if (!cmd->CopySceneDepth()) return false;
+            cmd->EndRenderPass();
+            std::vector<TaaMover> movers;
+            if (mode == kRigid && f > 0) movers.push_back({vertex_buffer, index_buffer, 6, sizeof(vertices[0]), model, previous_model});
+            if (mode == kDeforming && f > 0) {
+                device->UpdateFrameConstantBuffer(previous_buffer, previous_positions, sizeof(previous_positions));
+                movers.push_back({vertex_buffer, index_buffer, 6, sizeof(vertices[0]), model, model, 64});
+            }
+            const u32 resolved = taa.Resolve(*cmd, view_projection, 1, movers, mode == kDeforming ? previous_buffer : rhi::BufferHandle{});
+            if (resolved == 0) return false;
+            drew_motion = drew_motion || taa.LastMotion() != 0;
+            cmd->BeginRenderPass(*target, {1, 0, 1, 1});
+            cmd->BindPipeline(show_pipeline);
+            cmd->BindBindlessTextures();
+            const u32 index[4] = {resolved, 0, 0, 0};
+            cmd->SetPushConstants(index, sizeof(index));
+            cmd->Draw(3);
+            cmd->EndRenderPass();
+            cmd->Close();
+            device->WaitForFence(device->Submit(*cmd, target.get()));
+            if (f == 23) {
+                std::vector<u8> pixels;
+                const bool read = target->ReadBack(pixels) && pixels.size() == kSize * kSize * 4;
+                target->Present(false);
+                if (!read) return false;
+                row.resize(kSize);
+                for (u32 x = 0; x < kSize; ++x) row[x] = pixels[(16 * kSize + x) * 4 + 1];
+            } else {
+                target->Present(false);
+            }
+            previous_model = model;
+            for (u32 v = 0; v < 4; ++v) {
+                for (u32 axis = 0; axis < 3; ++axis) previous_positions[16 + v * 3 + axis] = moved[v][axis];
+            }
+        }
+        return drew_motion == (mode != kCameraOnly);
+    };
+
+    // Frame 23 is 7 steps along: the bar covers pixels 22 .. 29. Its interior (23 .. 28) is what the history has to follow.
+    std::vector<u8> sharp, blurred, deformed;
+    AETHER_CHECK(run(kRigid, sharp));
+    AETHER_CHECK(run(kCameraOnly, blurred));
+    if (previous_buffer.IsValid()) {
+        AETHER_CHECK(run(kDeforming, deformed));
+        if (deformed.size() == kSize) {
+            std::printf("    deforming:      %3u %3u %3u %3u %3u %3u\n", deformed[23], deformed[24], deformed[25], deformed[26],
+                        deformed[27], deformed[28]);
+            for (u32 x = 23; x <= 28; ++x) AETHER_CHECK(deformed[x] == sharp[x]); // the same as the rigid move: the vertices' own motion
+        }
+    }
+    if (sharp.size() == kSize && blurred.size() == kSize) {
+        std::printf("    with motion:    %3u %3u %3u %3u %3u %3u\n", sharp[23], sharp[24], sharp[25], sharp[26], sharp[27], sharp[28]);
+        std::printf("    camera only:    %3u %3u %3u %3u %3u %3u\n", blurred[23], blurred[24], blurred[25], blurred[26], blurred[27], blurred[28]);
+        int grey_with = 0, lowest = 255, highest = 0;
+        for (u32 x = 23; x <= 28; ++x) {
+            if (sharp[x] > 40 && sharp[x] < 215) ++grey_with;
+            lowest = std::min<int>(lowest, blurred[x]);
+            highest = std::max<int>(highest, blurred[x]);
+        }
+        AETHER_CHECK(grey_with == 0);             // every stripe pixel still white or black
+        AETHER_CHECK(highest - lowest < 128);     // the test can tell: without the motion pass the stripes wash out
+        AETHER_CHECK(sharp[4] < 5 && sharp[12] < 5); // the uncovered background stays the background
+    }
+    device->DestroyBuffer(vertex_buffer);
+    device->DestroyBuffer(index_buffer);
+    if (previous_buffer.IsValid()) device->DestroyBuffer(previous_buffer);
+    device->DestroyPipeline(scene_pipeline);
+    device->DestroyPipeline(show_pipeline);
+}
+
+// On both backends.
+AETHER_TEST(Taa_AMovingObjectKeepsItsDetailWithMotionVectors_D3D12) { Taa_AMovingObjectKeepsItsDetailWithMotionVectors(rhi::Backend::D3D12); }
+AETHER_TEST(Taa_AMovingObjectKeepsItsDetailWithMotionVectors_Vulkan) { Taa_AMovingObjectKeepsItsDetailWithMotionVectors(rhi::Backend::Vulkan); }
+AETHER_TEST(Taa_AHardEdgeConvergesToItsCoverageAndACutStartsOver_D3D12) { Taa_AHardEdgeConvergesToItsCoverageAndACutStartsOver(rhi::Backend::D3D12); }
+AETHER_TEST(Taa_AHardEdgeConvergesToItsCoverageAndACutStartsOver_Vulkan) { Taa_AHardEdgeConvergesToItsCoverageAndACutStartsOver(rhi::Backend::Vulkan); }
+AETHER_TEST(Taa_ThePostPassReadsTheResolveWhenGivenIt_D3D12) { Taa_ThePostPassReadsTheResolveWhenGivenIt(rhi::Backend::D3D12); }
+AETHER_TEST(Taa_ThePostPassReadsTheResolveWhenGivenIt_Vulkan) { Taa_ThePostPassReadsTheResolveWhenGivenIt(rhi::Backend::Vulkan); }

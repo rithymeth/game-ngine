@@ -1226,6 +1226,21 @@
   std::optional<std::vector<u8>>Get(const std::string&key)
   u64 Hits()const
   u64 Misses()const
+[engine/include/aether/assets/environment.h] experimental
+  type struct EnvironmentImage
+  type struct PrefilterSettings
+  type struct PrefilteredEnvironment
+  EnvironmentImage MakeEnvironment(u32 width,u32 height,const std::vector<f32>&rgb,f32 rotation_degrees=0.0f)
+  EnvironmentImage MakeEnvironmentFromSrgb(u32 width,u32 height,const std::vector<u8>&rgba8,f32 rotation_degrees=0.0f)
+  EnvironmentImage MakeProceduralSky(u32 width=256)
+  PrefilteredEnvironment PrefilterEnvironment(const EnvironmentImage&source,const PrefilterSettings&settings=
+  Vec3 EquirectToDirection(f32 u,f32 v)
+  Vec3 EvaluateIrradiance(const f32(&sh)[9][4],const Vec3&n)
+  bool LoadEnvironment(std::span<const u8>bytes,PrefilteredEnvironment&out,PrefilterSettings*settings=nullptr,std::string*error=nullptr)
+  f32 HalfToFloat(u16 value)
+  std::vector<u8>SaveEnvironment(const PrefilteredEnvironment&environment,const PrefilterSettings&settings)
+  u16 FloatToHalf(f32 value)
+  void DirectionToEquirect(const Vec3&direction,f32&u,f32&v)
 [engine/include/aether/assets/file_watcher.h] experimental
   type class FileWatcher
   type enum class Kind
@@ -1259,6 +1274,7 @@
   [[nodiscard]]bool LoadGltf(const std::string&path,GltfScene&out_scene)
   [[nodiscard]]bool LoadGltf(const std::string&path,GltfScene&out_scene,std::string*error)
   [[nodiscard]]bool LoadGltfFromMemory(std::span<const u8>json,GltfScene&out_scene)
+  [[nodiscard]]bool ReadGlbChunks(std::span<const u8>bytes,std::string&json,std::vector<u8>&bin)
   bool HasSurfaceExtension()const
   usize ComponentsPerKey()const
   void ComputeSkinMatrices(const GltfAnimationPose&pose,const GltfSkin&skin,std::vector<Mat4>&out_matrices,i32 mesh_node_index)
@@ -1281,10 +1297,15 @@
   public:HotReloader(AssetDatabase&database,const ImporterRegistry&importers,DerivedDataCache&cache,std::chrono::milliseconds debounce=std::chrono::milliseconds(200),std::string platform="")
   std::vector<AssetChange>Update(FileWatcher::Clock::time_point now)
 [engine/include/aether/assets/image.h] experimental
+  type enum class MipFilter
+  type struct HdrImageData
   type struct ImageData
+  [[nodiscard]]bool DecodeHdrImageFromMemory(std::span<const u8>bytes,HdrImageData&out_image,u64 max_pixels=16*1024*1024)
   [[nodiscard]]bool DecodeImageFile(const std::string&path,ImageData&out_image)
   [[nodiscard]]bool DecodeImageFile(const std::string&path,ImageData&out_image,u64 max_pixels)
   [[nodiscard]]bool DecodeImageFromMemory(std::span<const u8>bytes,ImageData&out_image,u64 max_pixels=16*1024*1024)
+  [[nodiscard]]bool IsHdrImage(std::span<const u8>bytes)
+  [[nodiscard]]std::vector<u8>BuildMipChain(u32 width,u32 height,std::span<const u8>rgba8,MipFilter filter,u32&mip_count)
 [engine/include/aether/assets/importer.h] experimental
   type class IAssetImporter
   type class ImporterRegistry
@@ -1778,6 +1799,7 @@
   Buffer&operator=(const Buffer&)=delete
   Buffer(Buffer&&other)noexcept
   Buffer(const Buffer&)=delete
+  BufferKind Kind()const
   D3D12_GPU_VIRTUAL_ADDRESS GPUAddress()const
   ID3D12Resource*Handle()const
   private:void Unmap()noexcept
@@ -1915,14 +1937,20 @@
 [engine/include/aether/gfx/rhi/command_list.h] experimental
   type class ICommandList
   public:virtual ~ICommandList()=default
+  virtual bool BeginDepthPass(SampledTextureHandle,bool)
+  virtual bool BeginSceneColorPass(ISwapChain&,const ClearColor&)
+  virtual bool BeginTexturePass(SampledTextureHandle,const ClearColor*)
+  virtual bool CopyRenderTextureToReadback(SampledTextureHandle,BufferHandle)
   virtual bool CopySceneDepth()
   virtual void BeginRenderPass(ISwapChain&swap_chain,const ClearColor&clear_color)=0
+  virtual void BindAccelerationStructure(AccelerationStructureHandle)
   virtual void BindBindlessTextures()=0
   virtual void BindComputeConstantBuffer(u32 slot,BufferHandle buffer)=0
   virtual void BindComputePipeline(ComputePipelineHandle pipeline)=0
   virtual void BindComputeSampledTexture(u32 slot,SampledTextureHandle texture)=0
   virtual void BindComputeStorageBuffer(u32 slot,BufferHandle buffer)=0
   virtual void BindFrameConstants(BufferHandle)
+  virtual void BindFrameReadBuffer(BufferHandle)
   virtual void BindIndexBuffer(BufferHandle buffer,IndexFormat format)=0
   virtual void BindPipeline(PipelineHandle pipeline)=0
   virtual void BindVertexBuffer(BufferHandle buffer,u32 stride_bytes)=0
@@ -1942,41 +1970,65 @@
   type class D3D12CommandList
   type class D3D12Device
   type class D3D12SwapChain
+  type struct AccelerationRecord
   type struct ComputePipelineRecord
+  type struct DepthTextureView
   type struct PipelineRecord
+  type struct RenderTextureView
   type struct RetiredResource
   type struct TextureRecord
+  AccelerationStructureHandle BuildAccelerationStructure(const D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS&inputs,bool top_level)
+  AccelerationStructureHandle CreateBottomLevelAS(BufferHandle vertices,u32 vertex_count,u32 vertex_stride_bytes,BufferHandle indices,u32 index_count)override
+  AccelerationStructureHandle CreateTopLevelAS(std::span<const AccelerationInstance>instances)override
   Backend GetBackend()const override
   BufferHandle CreateConstantBuffer(u64 size_bytes,const void*initial_data)override
   BufferHandle CreateFrameConstantBuffer(u64 size_bytes)override
   BufferHandle CreateIndexBuffer(const void*data,u64 size_bytes,IndexFormat format)override
+  BufferHandle CreateReadbackBuffer(u64 size_bytes)override
   BufferHandle CreateStorageBuffer(u64 size_bytes,u32 element_stride_bytes,const void*initial_data)override
   BufferHandle CreateVertexBuffer(const void*data,u64 size_bytes)override
   ComputePipelineHandle CreateComputePipeline(const ComputePipelineDesc&desc)override
   D3D12_CPU_DESCRIPTOR_HANDLE DepthDSV(u32 index)const
+  D3D12_CPU_DESCRIPTOR_HANDLE SceneColorRTV()const
   D3D12_GPU_DESCRIPTOR_HANDLE ComputeSampledDescriptor(SampledTextureHandle handle)const
   D3D12_GPU_DESCRIPTOR_HANDLE ComputeStorageDescriptor(BufferHandle handle)const
+  D3D12_GPU_VIRTUAL_ADDRESS AccelerationStructureAddress(AccelerationStructureHandle h)const
   D3D12_RESOURCE_STATES ToD3D12(ResourceState state)
+  DepthTextureView FindDepthTexture(SampledTextureHandle handle)const
   DescriptorHeap&BindlessTextureHeap()
   ID3D12DescriptorHeap*ComputeStorageHeap()const
   ID3D12Resource*DepthResource(u32 index)const
+  ID3D12Resource*SceneColorResource()const
   ID3D12Resource*SceneDepthCopy()const
   PipelineHandle CreatePipeline(const PipelineDesc&desc,ISwapChain&swap_chain)override
+  RenderTextureView FindRenderTexture(SampledTextureHandle handle)const
   ResourceStats GetResourceStats()const override
   SampledTextureHandle CreateCompressedTexture(CompressedTextureFormat format,u32 width,u32 height,std::span<const CompressedMip>mips)override
+  SampledTextureHandle CreateDepthTexture(u32 width,u32 height)override
+  SampledTextureHandle CreateHalfFloatTexture(u32 width,u32 height,u32 mip_count,const u16*halves)override
+  SampledTextureHandle CreateMippedTexture(const char*what,DXGI_FORMAT format,u32 texel_bytes,u32 width,u32 height,u32 mip_count,const void*levels)
   SampledTextureHandle CreateR32FloatTexture(u32 width,u32 height,const f32*values)override
+  SampledTextureHandle CreateRenderTexture(u32 width,u32 height)override
   SampledTextureHandle CreateTexture(u32 width,u32 height,const u8*rgba8_pixels)override
+  SampledTextureHandle CreateTextureWithMips(u32 width,u32 height,u32 mip_count,const u8*rgba8_levels)override
   SampledTextureHandle ReserveExternalBindlessSlot()
+  SampledTextureHandle SceneColorTexture()override
   SampledTextureHandle SceneDepthTexture()override
   TextureHandle CurrentBackBuffer()const override
   TextureHandle RegisterTexture(ID3D12Resource*resource,D3D12_CPU_DESCRIPTOR_HANDLE rtv)
+  bool BeginDepthPass(SampledTextureHandle target,bool clear)override
+  bool BeginSceneColorPass(ISwapChain&swap_chain,const ClearColor&clear_color)override
+  bool BeginTexturePass(SampledTextureHandle target,const ClearColor*clear_color)override
   bool BelongsTo(const D3D12Device&device)const
   bool ConsumeUsedBefore(u32 index)
+  bool CopyRenderTextureToReadback(SampledTextureHandle texture,BufferHandle readback)override
   bool CopySceneDepth()override
+  bool DestroyAccelerationStructure(AccelerationStructureHandle handle)override
   bool DestroyBuffer(BufferHandle buffer)override
   bool DestroyComputePipeline(ComputePipelineHandle pipeline)override
   bool DestroyPipeline(PipelineHandle pipeline)override
   bool DestroyTexture(SampledTextureHandle texture)override
+  bool IsAccelerationStructureAlive(AccelerationStructureHandle h)const
   bool IsBufferAlive(BufferHandle h)const
   bool IsComputeFenceComplete(u64 fence_value)const override
   bool IsComputeList()const
@@ -1991,9 +2043,14 @@
   bool IsTextureValid(TextureHandle handle)const
   bool IsVertexBuffer(BufferHandle handle)const
   bool ReadBack(std::vector<u8>&rgba8)override
+  bool ReadReadbackBuffer(BufferHandle buffer,void*out,u64 size_bytes,u64 offset=0)override
+  bool SceneColorEnabled()const
   bool SceneDepthEnabled()const
   bool SupportsCompressedTexture(CompressedTextureFormat f)const override
   bool SupportsFrameConstants()const override
+  bool SupportsRayTracing()const override
+  bool SupportsReadback()const override
+  bool WriteBufferUnsynchronized(BufferHandle buffer,const void*data,u64 size_bytes,u64 offset=0)override
   const ComputePipelineRecord&GetComputePipeline(ComputePipelineHandle handle)const
   const PipelineRecord&GetPipeline(PipelineHandle handle)const
   const TextureRecord&GetTexture(TextureHandle handle)const
@@ -2024,12 +2081,14 @@
   usize PipelineCount()const
   void AcquireNextImage()override
   void BeginRenderPass(ISwapChain&swap_chain,const ClearColor&clear_color)override
+  void BindAccelerationStructure(AccelerationStructureHandle structure)override
   void BindBindlessTextures()override
   void BindComputeConstantBuffer(u32 slot,BufferHandle buffer)override
   void BindComputePipeline(ComputePipelineHandle pipeline)override
   void BindComputeSampledTexture(u32 slot,SampledTextureHandle texture)override
   void BindComputeStorageBuffer(u32 slot,BufferHandle buffer)override
   void BindFrameConstants(BufferHandle buffer)override
+  void BindFrameReadBuffer(BufferHandle buffer)override
   void BindIndexBuffer(BufferHandle buffer,IndexFormat format)override
   void BindPipeline(PipelineHandle pipeline)override
   void BindVertexBuffer(BufferHandle buffer,u32 stride_bytes)override
@@ -2037,6 +2096,7 @@
   void Close()override
   void ComputeBufferBarrier(BufferHandle buffer)override
   void ComputeQueueWaitOnGraphics(u64 graphics_fence_value)override
+  void CreateSceneColor()
   void CreateSceneDepthCopy()
   void DeferCommandAllocator(ComPtr<ID3D12CommandAllocator>allocator)noexcept
   void Dispatch(u32 groups_x,u32 groups_y,u32 groups_z)override
@@ -2075,28 +2135,41 @@
   type struct PipelineDesc
   type struct ResourceStats
   bool IsBackendAvailable(Backend backend)
+  constexpr u32 ReadbackRowPitch(u32 width_pixels,u32 bytes_per_pixel)
   public:virtual ~IDevice()=default
   std::unique_ptr<IDevice>CreateDevice(Backend backend,bool enable_debug_layer=true)
+  virtual AccelerationStructureHandle CreateBottomLevelAS(BufferHandle,u32,u32,BufferHandle,u32)
+  virtual AccelerationStructureHandle CreateTopLevelAS(std::span<const AccelerationInstance>)
   virtual Backend GetBackend()const=0
   virtual BufferHandle CreateConstantBuffer(u64 size_bytes,const void*initial_data=nullptr)=0
   virtual BufferHandle CreateFrameConstantBuffer(u64)
   virtual BufferHandle CreateIndexBuffer(const void*data,u64 size_bytes,IndexFormat format)=0
+  virtual BufferHandle CreateReadbackBuffer(u64)
   virtual BufferHandle CreateStorageBuffer(u64 size_bytes,u32 element_stride_bytes=0,const void*initial_data=nullptr)=0
   virtual BufferHandle CreateVertexBuffer(const void*data,u64 size_bytes)=0
   virtual ComputePipelineHandle CreateComputePipeline(const ComputePipelineDesc&desc)=0
   virtual PipelineHandle CreatePipeline(const PipelineDesc&desc,ISwapChain&swap_chain)=0
   virtual ResourceStats GetResourceStats()const
   virtual SampledTextureHandle CreateCompressedTexture(CompressedTextureFormat,u32,u32,std::span<const CompressedMip>)
+  virtual SampledTextureHandle CreateDepthTexture(u32,u32)
+  virtual SampledTextureHandle CreateHalfFloatTexture(u32,u32,u32,const u16*)
   virtual SampledTextureHandle CreateR32FloatTexture(u32 width,u32 height,const f32*values)=0
+  virtual SampledTextureHandle CreateRenderTexture(u32,u32)
   virtual SampledTextureHandle CreateTexture(u32 width,u32 height,const u8*rgba8_pixels)=0
+  virtual SampledTextureHandle CreateTextureWithMips(u32 width,u32 height,u32 mip_count,const u8*rgba8_levels)
+  virtual bool DestroyAccelerationStructure(AccelerationStructureHandle)
   virtual bool DestroyBuffer(BufferHandle)
   virtual bool DestroyComputePipeline(ComputePipelineHandle)
   virtual bool DestroyPipeline(PipelineHandle)
   virtual bool DestroyTexture(SampledTextureHandle)
   virtual bool IsComputeFenceComplete(u64 fence_value)const=0
   virtual bool IsFenceComplete(u64 fence_value)const=0
+  virtual bool ReadReadbackBuffer(BufferHandle,void*,u64,u64=0)
   virtual bool SupportsCompressedTexture(CompressedTextureFormat)const
   virtual bool SupportsFrameConstants()const
+  virtual bool SupportsRayTracing()const
+  virtual bool SupportsReadback()const
+  virtual bool WriteBufferUnsynchronized(BufferHandle,const void*,u64,u64=0)
   virtual std::unique_ptr<ICommandList>CreateCommandList()=0
   virtual std::unique_ptr<ICommandList>CreateComputeCommandList()=0
   virtual std::unique_ptr<ISwapChain>CreateSwapChain(void*native_window_handle,u32 width,u32 height,u32 buffer_count=2)=0
@@ -2115,6 +2188,7 @@
 [engine/include/aether/gfx/rhi/swap_chain.h] experimental
   type class ISwapChain
   public:virtual ~ISwapChain()=default
+  virtual SampledTextureHandle SceneColorTexture()
   virtual SampledTextureHandle SceneDepthTexture()
   virtual TextureHandle CurrentBackBuffer()const=0
   virtual bool ReadBack(std::vector<u8>&rgba8)
@@ -2130,6 +2204,8 @@
   type enum class CompressedTextureFormat
   type enum class IndexFormat
   type enum class ResourceState
+  type struct AccelerationInstance
+  type struct AccelerationStructureHandle
   type struct BufferHandle
   type struct ClearColor
   type struct CompressedMip
@@ -2148,6 +2224,8 @@
   type class VulkanCommandList
   type class VulkanDevice
   type class VulkanSwapChain
+  type enum class PassTarget
+  type struct AccelerationRecord
   type struct BufferRecord
   type struct ComputePipelineRecord
   type struct DeferredCommandListResources
@@ -2158,25 +2236,37 @@
   type struct SampledTextureRecord
   type struct TextureRecord
   #pragma once #include "" #if defined(_WIN32)#define WIN32_LEAN_AND_MEAN #ifndef NOMINMAX #define NOMINMAX #endif #include<Windows.h>#define VK_USE_PLATFORM_WIN32_KHR #elif defined(__ANDROID__)#define VK_USE_PLATFORM_ANDROID_KHR #endif #include<vulkan/vulkan.h>#include<vector>#include<array>#include<atomic>#include<functional>#include<mutex>namespace aether::gfx::rhi::vulkan_backend
+  AccelerationStructureHandle BuildAccelerationStructure(VkAccelerationStructureTypeKHR type,const VkAccelerationStructureGeometryKHR&geometry,u32 primitive_count)
+  AccelerationStructureHandle CreateBottomLevelAS(BufferHandle vertices,u32 vertex_count,u32 vertex_stride_bytes,BufferHandle indices,u32 index_count)override
+  AccelerationStructureHandle CreateTopLevelAS(std::span<const AccelerationInstance>instances)override
   Backend GetBackend()const override
   BufferHandle CreateBufferInternal(const void*data,u64 size_bytes)
   BufferHandle CreateConstantBuffer(u64 size_bytes,const void*initial_data)override
   BufferHandle CreateFrameConstantBuffer(u64 size_bytes)override
   BufferHandle CreateIndexBuffer(const void*data,u64 size_bytes,IndexFormat format)override
+  BufferHandle CreateReadbackBuffer(u64 size_bytes)override
   BufferHandle CreateStorageBuffer(u64 size_bytes,u32 element_stride_bytes,const void*initial_data)override
   BufferHandle CreateVertexBuffer(const void*data,u64 size_bytes)override
   ComputePipelineHandle CreateComputePipeline(const ComputePipelineDesc&desc)override
   PipelineHandle CreatePipeline(const PipelineDesc&desc,ISwapChain&swap_chain)override
   ResourceStats GetResourceStats()const override
   SampledTextureHandle CreateCompressedTexture(CompressedTextureFormat format,u32 width,u32 height,std::span<const CompressedMip>mips)override
+  SampledTextureHandle CreateDepthTexture(u32 width,u32 height)override
+  SampledTextureHandle CreateHalfFloatTexture(u32 width,u32 height,u32 mip_count,const u16*halves)override
+  SampledTextureHandle CreateMippedTexture(const char*what,VkFormat format,u32 texel_bytes,u32 width,u32 height,u32 mip_count,const void*levels)
   SampledTextureHandle CreateR32FloatTexture(u32 width,u32 height,const f32*values)override
+  SampledTextureHandle CreateRenderTexture(u32 width,u32 height)override
+  SampledTextureHandle CreateTargetTexture(const char*what,PassTarget target,u32 width,u32 height)
   SampledTextureHandle CreateTexture(u32 width,u32 height,const u8*rgba8_pixels)override
+  SampledTextureHandle CreateTextureWithMips(u32 width,u32 height,u32 mip_count,const u8*rgba8_levels)override
   SampledTextureHandle ReserveExternalBindlessSlot()
+  SampledTextureHandle SceneColorTexture()override
   SampledTextureHandle SceneDepthTexture()override
   SampledTextureRecord UploadImageRecord(VkFormat format,u32 width,u32 height,const std::vector<ImageLevel>&levels)
   SampledTextureRecord UploadTextureRecord(u32 width,u32 height,const u8*rgba8_pixels)
   TextureHandle CurrentBackBuffer()const override
   TextureHandle RegisterTexture(VkImage image)
+  VkDescriptorSet AccelerationSet(AccelerationStructureHandle h)const
   VkDescriptorSet BindlessSamplerSet()const
   VkDescriptorSet BindlessTextureSet()const
   VkDescriptorSetLayout BindlessSamplerSetLayout()const
@@ -2186,6 +2276,7 @@
   VkFormat DepthFormat()const
   VkFormat Format()const
   VkFramebuffer CurrentFramebuffer()const
+  VkFramebuffer CurrentSceneColorFramebuffer()const
   VkImage CurrentDepthImage()const
   VkImage GetTexture(TextureHandle handle)const
   VkImage SceneDepthImage()const
@@ -2199,15 +2290,24 @@
   VkRenderPass CreateRenderPassVariant(bool load_existing,bool store_depth)
   VkRenderPass DefaultRenderPass()const
   VkRenderPass ResumeRenderPass()const
+  VkRenderPass SceneColorPass()
+  VkRenderPass SceneColorResumePass()const
+  VkRenderPass TargetPass(PassTarget target,bool clear)const
   VkResult WaitForDeviceIdle()
   VkSemaphore CurrentImageAvailableSemaphore()const
   VkSemaphore CurrentRenderFinishedSemaphore()const
+  bool BeginDepthPass(SampledTextureHandle target,bool clear)override
+  bool BeginSceneColorPass(ISwapChain&swap_chain,const ClearColor&clear_color)override
+  bool BeginTexturePass(SampledTextureHandle target,const ClearColor*clear_color)override
   bool BelongsTo(const VulkanDevice&device)const
+  bool CopyRenderTextureToReadback(SampledTextureHandle texture,BufferHandle readback)override
   bool CopySceneDepth()override
+  bool DestroyAccelerationStructure(AccelerationStructureHandle handle)override
   bool DestroyBuffer(BufferHandle buffer)override
   bool DestroyComputePipeline(ComputePipelineHandle pipeline)override
   bool DestroyPipeline(PipelineHandle pipeline)override
   bool DestroyTexture(SampledTextureHandle texture)override
+  bool IsAccelerationStructureAlive(AccelerationStructureHandle h)const
   bool IsBufferAlive(BufferHandle h)const
   bool IsComputeDispatchWithinLimits(u32 groups_x,u32 groups_y,u32 groups_z)const
   bool IsComputeFenceComplete(u64 fence_value)const override
@@ -2221,14 +2321,21 @@
   bool IsSubmissionInFlight()const
   bool IsVertexBuffer(BufferHandle handle)const
   bool ReadBack(std::vector<u8>&rgba8)override
+  bool ReadReadbackBuffer(BufferHandle buffer,void*out,u64 size_bytes,u64 offset=0)override
+  bool SceneColorEnabled()const
   bool SceneDepthEnabled()const
   bool SupportsCompressedTexture(CompressedTextureFormat format)const override
   bool SupportsFrameConstants()const override
+  bool SupportsRayTracing()const override
+  bool SupportsReadback()const override
+  bool SupportsRenderTargets()const
   bool TextureTableFull()const
+  bool WriteBufferUnsynchronized(BufferHandle buffer,const void*data,u64 size_bytes,u64 offset=0)override
   const BufferRecord&GetBuffer(BufferHandle handle)const
   const ComputePipelineRecord&GetComputePipeline(ComputePipelineHandle handle)const
   const PipelineRecord&GetPipeline(PipelineHandle handle)const
   const SampledTextureRecord&GetSampledTexture(SampledTextureHandle handle)const
+  const SampledTextureRecord*FindTarget(SampledTextureHandle handle,PassTarget target)const
   private:VkDescriptorPool CreateComputeDescriptorPool()
   private:void CreateSwapchainAndImages(u32 width,u32 height)
   public:VulkanSwapChain(VulkanDevice&device,void*native_window_handle,u32 width,u32 height,u32 buffer_count)
@@ -2257,12 +2364,14 @@
   usize SampledTextureCount()const
   void AcquireNextImage()override
   void BeginRenderPass(ISwapChain&swap_chain,const ClearColor&clear_color)override
+  void BindAccelerationStructure(AccelerationStructureHandle structure)override
   void BindBindlessTextures()override
   void BindComputeConstantBuffer(u32 slot,BufferHandle buffer)override
   void BindComputePipeline(ComputePipelineHandle pipeline)override
   void BindComputeSampledTexture(u32 slot,SampledTextureHandle texture)override
   void BindComputeStorageBuffer(u32 slot,BufferHandle buffer)override
   void BindFrameConstants(BufferHandle buffer)override
+  void BindFrameReadBuffer(BufferHandle buffer)override
   void BindIndexBuffer(BufferHandle buffer,IndexFormat format)override
   void BindPipeline(PipelineHandle pipeline)override
   void BindVertexBuffer(BufferHandle buffer,u32 stride_bytes)override
@@ -2270,16 +2379,21 @@
   void Close()override
   void ComputeBufferBarrier(BufferHandle buffer)override
   void ComputeQueueWaitOnGraphics(u64 graphics_fence_value)override
+  void CreateAccelerationResources()
   void CreateBindlessTextureInfrastructure()
   void CreateDefaultRenderPass()
   void CreateDepthResources()
   void CreateFramebuffers()
+  void CreateSceneColorImage()
   void CreateSceneDepthImage()
   void CreateSyncObjects()
+  void CreateTargetPasses()
   void DeferCommandListResources(VkCommandPool command_pool,std::vector<VkDescriptorPool>descriptor_pools)noexcept
   void Destroy()noexcept
+  void DestroyAccelerationStructureNow(const AccelerationRecord&record)
   void DestroyDepthResources()
   void DestroyFramebuffers()
+  void DestroySceneColorImage()
   void DestroySceneDepthImage()
   void DestroySwapchainAndImages()
   void DestroySyncObjects()
@@ -2290,6 +2404,7 @@
   void EndRenderPass()override
   void FlushRetired()noexcept
   void GraphicsQueueWaitOnCompute(u64 compute_fence_value)override
+  void MakeShaderReadable(VkImage image,VkImageAspectFlags aspect,bool wait)
   void MarkSubmitted(u64 fence_value)
   void Present(bool vsync)override
   void ReclaimTextureSlots()
@@ -2300,7 +2415,7 @@
   void Resize(u32 width,u32 height)override
   void Retire(std::function<void()>release)
   void SetExternalBindlessView(SampledTextureHandle slot,VkImageView view)
-  void SetFullViewport(const VulkanSwapChain&swap_chain)
+  void SetFullViewport(u32 width,u32 height)
   void SetPushConstants(const void*data,u32 size_bytes)override
   void SetViewportAndScissor(const Viewport&viewport,const Rect&scissor)override
   void TransitionTexture(TextureHandle texture,ResourceState before,ResourceState after)override
@@ -2334,6 +2449,7 @@
 [engine/include/aether/gfx/shader_compiler.h] experimental
   type struct ShaderBytecode
   ShaderBytecode CompileHLSL(const std::string&source,const char*entry_point,const char*target_profile,const char*debug_name="")
+  ShaderBytecode CompileHLSLToDXIL(const std::string&source,const char*entry_point,const char*target_profile,const char*debug_name="")
   ShaderBytecode CompileHLSLToSPIRV(const std::string&source,const char*entry_point,const char*target_profile,const char*debug_name="")
   const void*Data()const
   usize Size()const
@@ -4815,13 +4931,19 @@
   ~Game()
 [player/include/aether/player/scene_renderer.h] experimental
   type class SceneRenderer
+  type struct RayTracedShadowStats
+  type struct VirtualShadowStats
+  RayTracedShadowStats RayTracedShadows()const
   SceneRenderer&operator=(const SceneRenderer&)=delete
   SceneRenderer(const SceneRenderer&)=delete
+  VirtualShadowStats VirtualShadows()const
   public:SceneRenderer(gfx::rhi::IDevice&device,gfx::rhi::ISwapChain&swap_chain,const GamePackage&package)
-  std::string SceneShaderSource(bool with_frame_data)
+  std::string SceneShaderSource(bool with_frame_data,bool hdr_target=false,bool ray_traced_shadows=false)
   void Draw(Game&game,gfx::rhi::ICommandList&commands,u32 frame_index)
+  void SetBloom(bool enabled)
   void SetDrawParticles(bool draw)
   void SetRenderPoseSampler(std::function<bool(Entity,Transform&)>sampler)
+  void SetShadows(u32 resolution,u32 cascades)
   void SetViewDistance(f32 metres)
   ~SceneRenderer()
 [player/include/aether/player/settings_apply.h] experimental
@@ -4945,6 +5067,8 @@
   ),AETHER_FIELD(cast_shadows,Field_EditAnywhere))AETHER_REFLECT(aether::SpotLight,1,AETHER_FIELD(color,Field_EditAnywhere),AETHER_FIELD(intensity,Field_EditAnywhere,
   ),AETHER_FIELD(color,Field_EditAnywhere),AETHER_FIELD(opacity,Field_EditAnywhere,
   ),AETHER_FIELD(enabled,Field_EditAnywhere))
+  ),AETHER_FIELD(environment,Field_EditAnywhere,
+  ),AETHER_FIELD(environment_rotation_degrees,Field_EditAnywhere,
   ),AETHER_FIELD(exposure_compensation,Field_EditAnywhere,
   ),AETHER_FIELD(extents,Field_EditAnywhere,
   ),AETHER_FIELD(inner_angle_degrees,Field_EditAnywhere,
@@ -5157,6 +5281,7 @@
   Vec3 Center()const
   Vec3 Extents()const
   std::function<bool(const ModelRenderer&mesh,Aabb&local_bounds)>mesh_bounds
+  std::vector<RenderPostVolume>ExtractPostVolumes(const World&world,const GuidIndex&guids)
 [renderer/include/aether/renderer/shadows.h] experimental
   type struct CascadeSettings
   type struct ShadowCascade

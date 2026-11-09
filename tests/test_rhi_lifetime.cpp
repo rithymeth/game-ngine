@@ -404,6 +404,47 @@ void ParticlePassFreesOutgrownBuffers(Backend backend) {
     AETHER_CHECK(after.live_buffers == base.live_buffers && after.live_pipelines == base.live_pipelines);
 }
 
+// IDevice::WriteBufferUnsynchronized: host-visible buffers (vertex and frame constant buffers) are written at once and the next draw sees
+// it; every other buffer, a bad range and a dead handle are refused (false), so the caller falls back to the waiting update.
+void UnsynchronizedWritesReachTheNextDraw(Backend backend) {
+    auto device = MakeDevice(backend);
+    if (!device) return;
+    std::unique_ptr<ISwapChain> target = device->CreateSwapChain(nullptr, kW, kH, 2);
+    const PipelineHandle pipeline = MakeVertexPipeline(*device, *target);
+    AETHER_CHECK(pipeline.IsValid());
+    // The triangle starts off screen; the write brings it on.
+    f32 away[15];
+    for (int i = 0; i < 15; ++i) away[i] = (i % 5 == 0) ? kTriangle[i] + 10.0f : kTriangle[i];
+    const BufferHandle vertices = device->CreateVertexBuffer(away, sizeof(away));
+    std::unique_ptr<ICommandList> cmd = device->CreateCommandList();
+    device->WaitForFence(SubmitTriangle(*device, *target, *cmd, pipeline, vertices));
+    AETHER_CHECK(CenterIs(*target, 0, 0, 255));
+    target->Present(false);
+    AETHER_CHECK(device->WriteBufferUnsynchronized(vertices, kTriangle, sizeof(kTriangle)));
+    device->WaitForFence(SubmitTriangle(*device, *target, *cmd, pipeline, vertices));
+    AETHER_CHECK(CenterIs(*target, 255, 0, 0));
+    target->Present(false);
+    // An offset write lands where it is put.
+    AETHER_CHECK(device->WriteBufferUnsynchronized(vertices, away, 20, 0));
+    AETHER_CHECK(!device->WriteBufferUnsynchronized(vertices, kTriangle, 20, sizeof(kTriangle) - 10)); // past the end
+    AETHER_CHECK(!device->WriteBufferUnsynchronized(vertices, nullptr, 20));
+    AETHER_CHECK(!device->WriteBufferUnsynchronized(vertices, kTriangle, 0));
+
+    const BufferHandle frame = device->CreateFrameConstantBuffer(64);
+    if (frame.IsValid()) AETHER_CHECK(device->WriteBufferUnsynchronized(frame, kTriangle, 16));
+    const u32 indices[3] = {0, 1, 2};
+    const BufferHandle index_buffer = device->CreateIndexBuffer(indices, sizeof(indices), IndexFormat::UInt32);
+    AETHER_CHECK(!device->WriteBufferUnsynchronized(index_buffer, indices, sizeof(indices)));
+    const BufferHandle storage = device->CreateStorageBuffer(64, 16);
+    AETHER_CHECK(!device->WriteBufferUnsynchronized(storage, kTriangle, 16)); // GPU-local: never a plain write
+    AETHER_CHECK(device->DestroyBuffer(storage));
+    AETHER_CHECK(device->DestroyBuffer(index_buffer));
+    if (frame.IsValid()) AETHER_CHECK(device->DestroyBuffer(frame));
+    AETHER_CHECK(device->DestroyBuffer(vertices));
+    AETHER_CHECK(!device->WriteBufferUnsynchronized(vertices, kTriangle, 20)); // gone
+    AETHER_CHECK(device->DestroyPipeline(pipeline));
+}
+
 } // namespace
 
 #define AETHER_RHI_LIFETIME_TEST(Name)                                                \
@@ -419,6 +460,7 @@ AETHER_RHI_LIFETIME_TEST(StaleHandlesDrawNothing)
 AETHER_RHI_LIFETIME_TEST(StressCreateDestroy)
 AETHER_RHI_LIFETIME_TEST(TeardownWithLiveResources)
 AETHER_RHI_LIFETIME_TEST(ParticlePassFreesOutgrownBuffers)
+AETHER_RHI_LIFETIME_TEST(UnsynchronizedWritesReachTheNextDraw)
 
 // M8 108, rows 23, 24 and 25: the checks that need a bound graphics pipeline. Each is asserted inside a real
 // render pass on a real pipeline, and the control at the end proves the pipeline draws once its requirements

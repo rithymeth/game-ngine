@@ -27,6 +27,7 @@ public:
     ID3D12Resource* Handle() const { return resource_.Get(); }
     D3D12_GPU_VIRTUAL_ADDRESS GPUAddress() const { return resource_ ? resource_->GetGPUVirtualAddress() : 0; }
     u64 Size() const { return size_bytes_; }
+    BufferKind Kind() const { return kind_; }
 
     // Upload buffers: memcpy into the persistently-mapped pointer.
     void Update(const void* data, u64 size_bytes, u64 offset = 0);

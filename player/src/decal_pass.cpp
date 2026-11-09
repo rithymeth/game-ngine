@@ -20,7 +20,7 @@ struct PushConstants {
 [[vk::push_constant]]
 #endif
 ConstantBuffer<PushConstants> g_PC : register(b0);
-Texture2D g_Textures[32] : register(t0, space0);
+Texture2D g_Textures[128] : register(t0, space0);
 SamplerState g_Sampler : register(s0, space1);
 
 // The decal's rectangle as two triangles.
@@ -51,7 +51,11 @@ float4 PSMain(float4 position : SV_POSITION) : SV_TARGET {
     float angle_fade = saturate((facing - g_PC.g_Fade.y) / max(g_PC.g_Fade.x - g_PC.g_Fade.y, 1e-4));
     // Not a ?: — HLSL evaluates both arms, so the "no texture" index would still be sampled out of bounds.
     float4 texel = float4(1.0, 1.0, 1.0, 1.0);
-    if (texture_index < 32) texel = g_Textures[texture_index].Sample(g_Sampler, float2(p.x + 0.5, 0.5 - p.y));
+    if (texture_index < 128) texel = g_Textures[texture_index].Sample(g_Sampler, float2(p.x + 0.5, 0.5 - p.y));
+#ifdef AETHER_HDR_TARGET
+    // Into the linear HDR target: the texture's colour decoded from sRGB, the tint already linear (the post pass encodes the whole scene).
+    texel.rgb = lerp(texel.rgb / 12.92, pow((texel.rgb + 0.055) / 1.055, 2.4), step(0.04045, texel.rgb));
+#endif
     float4 color = texel * g_PC.g_Color;
     color.a = color.a * angle_fade;
     return color;
@@ -86,7 +90,8 @@ DecalPass::~DecalPass() {
     if (pipeline_.IsValid()) device_.DestroyPipeline(pipeline_);
 }
 
-DecalPass::DecalPass(gfx::rhi::IDevice& device, gfx::rhi::ISwapChain& swap_chain) : device_(device) {
+DecalPass::DecalPass(gfx::rhi::IDevice& device, gfx::rhi::ISwapChain& swap_chain, bool hdr_target)
+    : device_(device), hdr_target_(hdr_target) {
     const gfx::rhi::SampledTextureHandle depth = swap_chain.SceneDepthTexture();
     scene_depth_ = depth.IsValid() && depth.index < gfx::rhi::kMaxBindlessTextures ? depth.index : 0u;
     if (scene_depth_ == 0) {
@@ -94,7 +99,8 @@ DecalPass::DecalPass(gfx::rhi::IDevice& device, gfx::rhi::ISwapChain& swap_chain
         return;
     }
     gfx::rhi::PipelineDesc desc;
-    desc.hlsl_source = kDecalShader;
+    desc.hlsl_source = std::string(hdr_target ? "#define AETHER_HDR_TARGET 1\n" : "") + kDecalShader;
+    desc.scene_color_target = hdr_target;
     desc.push_constant_size_bytes = sizeof(DecalConstants);
     desc.enable_bindless_textures = true;
     desc.enable_blending = true; // alpha: the decal over the lit surface

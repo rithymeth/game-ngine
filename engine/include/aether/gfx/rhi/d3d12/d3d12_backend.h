@@ -31,8 +31,11 @@ struct PipelineRecord {
     ComPtr<ID3D12RootSignature> root_signature;
     ComPtr<ID3D12PipelineState> pso;
     u32 frame_constants_root_index = ~0u; // the root CBV for PipelineDesc::frame_constants_size_bytes, if any
+    u32 frame_read_root_index = ~0u;      // the root SRV for PipelineDesc::frame_read_buffer, if any
+    u32 acceleration_root_index = ~0u;    // the root SRV for PipelineDesc::acceleration_structure, if any
     u32 push_constant_size_bytes = 0;
     bool enable_bindless_textures = false;
+    u32 bindless_root_index = ~0u; // the texture table's root parameter (0 without push constants, else 1)
     bool use_vertex_buffer = false;
     u32 vertex_stride_bytes = 20;
 };
@@ -81,6 +84,21 @@ public:
     bool SupportsFrameConstants() const override { return true; }
     BufferHandle CreateFrameConstantBuffer(u64 size_bytes) override;
     void UpdateFrameConstantBuffer(BufferHandle buffer, const void* data, u64 size_bytes) override { UpdateConstantBuffer(buffer, data, size_bytes, 0); }
+    bool WriteBufferUnsynchronized(BufferHandle buffer, const void* data, u64 size_bytes, u64 offset = 0) override;
+    bool SupportsReadback() const override { return true; }
+    bool SupportsRayTracing() const override;
+    AccelerationStructureHandle CreateBottomLevelAS(BufferHandle vertices, u32 vertex_count, u32 vertex_stride_bytes, BufferHandle indices,
+                                                    u32 index_count) override;
+    AccelerationStructureHandle CreateTopLevelAS(std::span<const AccelerationInstance> instances) override;
+    bool DestroyAccelerationStructure(AccelerationStructureHandle handle) override;
+    bool IsAccelerationStructureAlive(AccelerationStructureHandle h) const {
+        return h.IsValid() && h.index < acceleration_structures_.size() && acceleration_structures_[h.index].resource != nullptr;
+    }
+    D3D12_GPU_VIRTUAL_ADDRESS AccelerationStructureAddress(AccelerationStructureHandle h) const {
+        return acceleration_structures_[h.index].resource->GetGPUVirtualAddress();
+    }
+    BufferHandle CreateReadbackBuffer(u64 size_bytes) override;
+    bool ReadReadbackBuffer(BufferHandle buffer, void* out, u64 size_bytes, u64 offset = 0) override;
     const gfx::Buffer& GetBuffer(BufferHandle handle) const { return *buffers_[handle.index]; }
     usize BufferCount() const { return buffers_.size(); }
     D3D12_GPU_DESCRIPTOR_HANDLE ComputeStorageDescriptor(BufferHandle handle) const;
@@ -106,6 +124,30 @@ public:
     SampledTextureHandle CreateCompressedTexture(CompressedTextureFormat format, u32 width, u32 height, std::span<const CompressedMip> mips) override;
     bool DestroyTexture(SampledTextureHandle texture) override;
     SampledTextureHandle CreateR32FloatTexture(u32 width, u32 height, const f32* values) override;
+    // Render textures (IDevice::CreateRenderTexture): an RGBA16F resource in sampled_float_textures_ with an RTV of its own, its size
+    // in render_texture_sizes_ (0 x 0: the slot holds no render texture).
+    static constexpr DXGI_FORMAT kRenderTextureFormat = DXGI_FORMAT_R16G16B16A16_FLOAT;
+    SampledTextureHandle CreateRenderTexture(u32 width, u32 height) override;
+    struct RenderTextureView {
+        ID3D12Resource* resource = nullptr;
+        D3D12_CPU_DESCRIPTOR_HANDLE rtv{};
+        u32 width = 0, height = 0;
+    };
+    // The live render texture behind `handle`, or a view with a null resource.
+    RenderTextureView FindRenderTexture(SampledTextureHandle handle) const;
+    // Depth textures (IDevice::CreateDepthTexture): an R32_TYPELESS resource in sampled_float_textures_, an R32_FLOAT SRV in the table
+    // and a D32_FLOAT DSV of its own; render_texture_sizes_ holds its size and render_texture_depth_ marks it as depth.
+    SampledTextureHandle CreateDepthTexture(u32 width, u32 height) override;
+    SampledTextureHandle CreateHalfFloatTexture(u32 width, u32 height, u32 mip_count, const u16* halves) override;
+    SampledTextureHandle CreateTextureWithMips(u32 width, u32 height, u32 mip_count, const u8* rgba8_levels) override;
+    struct DepthTextureView {
+        ID3D12Resource* resource = nullptr;
+        D3D12_CPU_DESCRIPTOR_HANDLE dsv{};
+        u32 width = 0, height = 0;
+    };
+    // A sampled texture with mips uploaded once (CreateHalfFloatTexture, CreateTextureWithMips): levels packed level 0 first.
+    SampledTextureHandle CreateMippedTexture(const char* what, DXGI_FORMAT format, u32 texel_bytes, u32 width, u32 height, u32 mip_count, const void* levels);
+    DepthTextureView FindDepthTexture(SampledTextureHandle handle) const;
     DescriptorHeap& BindlessTextureHeap() { return *bindless_texture_heap_; }
     // A bindless slot for a resource someone else owns (a swap chain's scene-depth copy, ISwapChain::SceneDepthTexture): it counts against
     // the table, DestroyTexture refuses it, and it views the white fallback until SetExternalBindlessTexture gives it a resource (null:
@@ -176,6 +218,16 @@ private:
     std::vector<bool> buffer_vertex_flags_;
     std::vector<std::optional<IndexFormat>> index_buffer_formats_;
 
+    // Acceleration structures: a default-heap buffer in the acceleration-structure state, plus whether it is a top level.
+    struct AccelerationRecord {
+        ComPtr<ID3D12Resource> resource;
+        bool top_level = false;
+    };
+    std::vector<AccelerationRecord> acceleration_structures_;
+    std::vector<u32> free_acceleration_slots_;
+    // Records a build on a throwaway command list, submits it and waits (see IDevice::CreateBottomLevelAS).
+    AccelerationStructureHandle BuildAccelerationStructure(const D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS& inputs, bool top_level);
+
     // The device-global bindless texture table (see kMaxBindlessTextures):
     // built once here so a pipeline created with enable_bindless_textures
     // can reference a stable descriptor-table shape from the start, with
@@ -188,6 +240,10 @@ private:
     std::unique_ptr<gfx::Texture> dummy_texture_;
     std::vector<std::unique_ptr<gfx::Texture>> sampled_textures_;
     std::vector<ComPtr<ID3D12Resource>> sampled_float_textures_;
+    std::unique_ptr<DescriptorHeap> render_texture_rtv_heap_; // one RTV per user bindless slot, written by CreateRenderTexture
+    std::vector<std::pair<u32, u32>> render_texture_sizes_;
+    std::unique_ptr<DescriptorHeap> render_texture_dsv_heap_; // one DSV per user bindless slot, written by CreateDepthTexture
+    std::vector<u8> render_texture_depth_;                    // 1: the slot's render texture is a depth texture
     u32 sampled_texture_count_ = 0;
 };
 
@@ -230,11 +286,20 @@ public:
     bool SceneDepthEnabled() const { return scene_depth_handle_.IsValid(); }
     ID3D12Resource* DepthResource(u32 index) const { return depth_resources_[index].Get(); }
     ID3D12Resource* SceneDepthCopy() const { return scene_depth_copy_.Get(); }
+
+    // HDR scene colour (see ISwapChain::SceneColorTexture): one R16G16B16A16_FLOAT target with its own RTV, kept in
+    // PIXEL_SHADER_RESOURCE between passes.
+    static constexpr DXGI_FORMAT kSceneColorFormat = DXGI_FORMAT_R16G16B16A16_FLOAT;
+    SampledTextureHandle SceneColorTexture() override;
+    bool SceneColorEnabled() const { return scene_color_handle_.IsValid(); }
+    ID3D12Resource* SceneColorResource() const { return scene_color_.Get(); }
+    D3D12_CPU_DESCRIPTOR_HANDLE SceneColorRTV() const { return scene_color_rtv_heap_->CPUHandle(0); }
     ~D3D12SwapChain() override;
 
 private:
     void CreateDepthBuffer(u32 width, u32 height);
     void CreateSceneDepthCopy();
+    void CreateSceneColor();
 
     D3D12Device& device_;
     gfx::SwapChain swap_chain_;
@@ -245,6 +310,9 @@ private:
     std::unique_ptr<DescriptorHeap> depth_dsv_heap_;
     SampledTextureHandle scene_depth_handle_{};
     ComPtr<ID3D12Resource> scene_depth_copy_;
+    SampledTextureHandle scene_color_handle_{};
+    ComPtr<ID3D12Resource> scene_color_;
+    std::unique_ptr<DescriptorHeap> scene_color_rtv_heap_;
 };
 
 class D3D12CommandList final : public ICommandList {
@@ -259,6 +327,9 @@ public:
     void SetViewportAndScissor(const Viewport& viewport, const Rect& scissor) override;
 
     void BeginRenderPass(ISwapChain& swap_chain, const ClearColor& clear_color) override;
+    bool BeginSceneColorPass(ISwapChain& swap_chain, const ClearColor& clear_color) override;
+    bool BeginTexturePass(SampledTextureHandle target, const ClearColor* clear_color) override;
+    bool BeginDepthPass(SampledTextureHandle target, bool clear) override;
     void EndRenderPass() override;
     void BindPipeline(PipelineHandle pipeline) override;
     void SetPushConstants(const void* data, u32 size_bytes) override;
@@ -266,6 +337,7 @@ public:
 
     void BindVertexBuffer(BufferHandle buffer, u32 stride_bytes) override;
     void BindIndexBuffer(BufferHandle buffer, IndexFormat format) override;
+    void BindAccelerationStructure(AccelerationStructureHandle structure) override;
     void DrawIndexed(u32 index_count) override;
     void BindComputePipeline(ComputePipelineHandle pipeline) override;
     void BindComputeStorageBuffer(u32 slot, BufferHandle buffer) override;
@@ -275,7 +347,9 @@ public:
     void Dispatch(u32 groups_x, u32 groups_y, u32 groups_z) override;
     void BindBindlessTextures() override;
     void BindFrameConstants(BufferHandle buffer) override;
+    void BindFrameReadBuffer(BufferHandle buffer) override;
     bool CopySceneDepth() override;
+    bool CopyRenderTextureToReadback(SampledTextureHandle texture, BufferHandle readback) override;
 
     void* NativeHandle() const override { return cmd_.Get(); }
     bool BelongsTo(const D3D12Device& device) const { return &device_ == &device; }
@@ -299,13 +373,18 @@ private:
     u64 last_submitted_fence_ = 0;
     ID3D12Resource* active_backbuffer_ = nullptr; // set by BeginRenderPass, consumed by EndRenderPass
     D3D12SwapChain* active_swap_chain_ = nullptr; // likewise, for CopySceneDepth
+    ID3D12Resource* active_scene_color_ = nullptr; // set by BeginSceneColorPass in place of active_backbuffer_
+    ID3D12Resource* active_depth_texture_ = nullptr; // set by BeginDepthPass: EndRenderPass returns it from DEPTH_WRITE
     u32 frame_constants_root_index_ = ~0u;        // of the pipeline BindPipeline last bound
+    u32 frame_read_root_index_ = ~0u;             // likewise
+    u32 acceleration_root_index_ = ~0u;           // likewise (PipelineDesc::acceleration_structure)
     u32 compute_storage_buffer_count_ = 0;
     u32 compute_sampled_texture_count_ = 0;
     u32 compute_constant_buffer_count_ = 0;
     bool compute_pipeline_bound_ = false;
     bool graphics_pipeline_bound_ = false;
     bool graphics_bindless_enabled_ = false;
+    u32 graphics_bindless_root_index_ = ~0u;
     bool graphics_bindless_bound_ = false;
     bool graphics_uses_vertex_buffer_ = false;
     u32 graphics_vertex_stride_bytes_ = 0;

@@ -28,6 +28,7 @@ add_library(aether_engine STATIC
     src/plugin/package.cpp
     src/plugin/registry.cpp
     src/cook/texture_cook.cpp
+    src/assets/environment.cpp
     src/math/math.cpp
     src/job/job_system.cpp
     src/kit/kit_registry.cpp

@@ -100,8 +100,11 @@ ShaderBytecode CompileHLSL(const std::string& source, const char* entry_point, c
     return result;
 }
 
-ShaderBytecode CompileHLSLToSPIRV(const std::string& source, const char* entry_point, const char* target_profile,
-                                  const char* debug_name) {
+namespace {
+
+// DXC to SPIR-V (the Vulkan backend) or to DXIL (D3D12 pipelines that need shader model 6).
+ShaderBytecode CompileWithDxc(const std::string& source, const char* entry_point, const char* target_profile, const char* debug_name,
+                              bool spirv) {
     ComPtr<IDxcUtils> utils;
     AETHER_D3D_CHECK(DxcCreateInstance(CLSID_DxcUtils, IID_PPV_ARGS(&utils)));
 
@@ -120,7 +123,15 @@ ShaderBytecode CompileHLSLToSPIRV(const std::string& source, const char* entry_p
     std::wstring wentry = Utf8ToWide(entry_point);
     std::wstring wprofile = Utf8ToWide(target_profile);
 
-    std::vector<LPCWSTR> args = {L"-E", wentry.c_str(), L"-T", wprofile.c_str(), L"-spirv"};
+    std::vector<LPCWSTR> args = {L"-E", wentry.c_str(), L"-T", wprofile.c_str()};
+    if (spirv) {
+        args.push_back(L"-spirv");
+        // Shader model 6.5 is what inline ray queries need: allow the extension and target Vulkan 1.2 (SPIR-V 1.5).
+        if (std::string(target_profile).find("_6_5") != std::string::npos) {
+            args.push_back(L"-fspv-target-env=vulkan1.2");
+            args.push_back(L"-fspv-extension=SPV_KHR_ray_query");
+        }
+    }
 #if !defined(NDEBUG)
     args.push_back(L"-Od");
 #endif
@@ -136,10 +147,10 @@ ShaderBytecode CompileHLSLToSPIRV(const std::string& source, const char* entry_p
     result->GetStatus(&status);
     if (FAILED(status)) {
         const char* message = (errors && errors->GetStringLength() > 0) ? errors->GetStringPointer() : "(no error blob)";
-        AETHER_LOG_ERROR("Shader", "Failed to compile \"%s\" (%s) to SPIR-V: %s", debug_name, entry_point, message);
-        throw std::runtime_error("HLSL-to-SPIRV compilation failed");
+        AETHER_LOG_ERROR("Shader", "Failed to compile \"%s\" (%s) to %s: %s", debug_name, entry_point, spirv ? "SPIR-V" : "DXIL", message);
+        throw std::runtime_error(spirv ? "HLSL-to-SPIRV compilation failed" : "HLSL-to-DXIL compilation failed");
     } else if (errors && errors->GetStringLength() > 0) {
-        AETHER_LOG_WARN("Shader", "SPIR-V compile warnings for \"%s\" (%s): %s", debug_name, entry_point,
+        AETHER_LOG_WARN("Shader", "%s compile warnings for \"%s\" (%s): %s", spirv ? "SPIR-V" : "DXIL", debug_name, entry_point,
                          errors->GetStringPointer());
     }
 
@@ -150,6 +161,18 @@ ShaderBytecode CompileHLSLToSPIRV(const std::string& source, const char* entry_p
     bytecode.data.assign(static_cast<u8*>(object->GetBufferPointer()),
                           static_cast<u8*>(object->GetBufferPointer()) + object->GetBufferSize());
     return bytecode;
+}
+
+} // namespace
+
+ShaderBytecode CompileHLSLToSPIRV(const std::string& source, const char* entry_point, const char* target_profile,
+                                  const char* debug_name) {
+    return CompileWithDxc(source, entry_point, target_profile, debug_name, true);
+}
+
+ShaderBytecode CompileHLSLToDXIL(const std::string& source, const char* entry_point, const char* target_profile,
+                                 const char* debug_name) {
+    return CompileWithDxc(source, entry_point, target_profile, debug_name, false);
 }
 
 } // namespace aether::gfx

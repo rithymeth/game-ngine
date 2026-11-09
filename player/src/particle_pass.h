@@ -134,7 +134,9 @@ void PackParticleVertices(const vfx::ParticleRenderData& data, const vfx::Partic
 class ParticlePass {
 public:
     static constexpr usize kFrameSlots = 8;
-    ParticlePass(gfx::rhi::IDevice& device, gfx::rhi::ISwapChain& swap_chain);
+    // `hdr_target`: the pipelines draw into the swap chain's HDR scene colour (PipelineDesc::scene_color_target) and write linear light,
+    // leaving tone mapping and the sRGB encoding to the post pass; otherwise they tone map and encode themselves for the back buffer.
+    ParticlePass(gfx::rhi::IDevice& device, gfx::rhi::ISwapChain& swap_chain, bool hdr_target = false);
     ~ParticlePass();
     ParticlePass(const ParticlePass&) = delete;
     ParticlePass& operator=(const ParticlePass&) = delete;

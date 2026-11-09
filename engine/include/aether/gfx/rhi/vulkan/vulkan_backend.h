@@ -29,11 +29,18 @@ struct TextureRecord {
     VkImage image = VK_NULL_HANDLE;
 };
 
+// What a render pass draws into, and so which pass a pipeline is made for (PipelineDesc's scene_color_target, render_texture_target and
+// depth_target): pipelines and passes of different kinds aren't render-pass compatible, so BindPipeline refuses a mismatch.
+enum class PassTarget : u8 { BackBuffer, SceneColor, Texture, Depth };
+
 struct PipelineRecord {
     VkPipelineLayout layout = VK_NULL_HANDLE;
     VkPipeline pipeline = VK_NULL_HANDLE;
+    PassTarget target = PassTarget::BackBuffer;
     u32 push_constant_size_bytes = 0;
     bool enable_bindless_textures = false;
+    bool frame_read_buffer = false;
+    bool acceleration_structure = false;
     bool use_vertex_buffer = false;
     u32 vertex_stride_bytes = 20;
 };
@@ -57,10 +64,12 @@ struct BufferRecord {
     VkDeviceSize size_bytes = 0;
     void* mapped = nullptr;
     VkDescriptorSet constants_set = VK_NULL_HANDLE; // frame constants: the set that points at this buffer (see CreateConstantBuffer)
+    VkDescriptorSet read_set = VK_NULL_HANDLE;      // the same buffer as a frame read buffer (set 3, a storage buffer)
     bool is_storage = false;
     bool is_constant = false;
     bool is_vertex = false;
     bool is_index = false;
+    bool is_readback = false; // CreateReadbackBuffer: the destination of CopyRenderTextureToReadback, read by the host
     IndexFormat index_format = IndexFormat::UInt16;
 };
 
@@ -72,6 +81,10 @@ struct SampledTextureRecord {
     VkDeviceMemory memory = VK_NULL_HANDLE;
     VkImageView view = VK_NULL_HANDLE;
     bool retiring = false; // DestroyTexture emptied it; the slot is not reusable until the GPU is done with the old image
+    // A render texture (Texture) or depth texture (Depth): the framebuffer its pass draws through, and its size. BackBuffer: sampled only.
+    PassTarget target = PassTarget::BackBuffer;
+    VkFramebuffer framebuffer = VK_NULL_HANDLE;
+    u32 width = 0, height = 0;
 };
 
 // Vulkan counterpart to d3d12_backend::D3D12Device. Notably: this
@@ -141,8 +154,40 @@ public:
     bool SupportsFrameConstants() const override { return true; }
     BufferHandle CreateFrameConstantBuffer(u64 size_bytes) override;
     void UpdateFrameConstantBuffer(BufferHandle buffer, const void* data, u64 size_bytes) override;
+    bool WriteBufferUnsynchronized(BufferHandle buffer, const void* data, u64 size_bytes, u64 offset = 0) override;
+    bool SupportsReadback() const override { return true; }
+    bool SupportsRayTracing() const override { return ray_tracing_supported_; }
+    AccelerationStructureHandle CreateBottomLevelAS(BufferHandle vertices, u32 vertex_count, u32 vertex_stride_bytes, BufferHandle indices,
+                                                    u32 index_count) override;
+    AccelerationStructureHandle CreateTopLevelAS(std::span<const AccelerationInstance> instances) override;
+    bool DestroyAccelerationStructure(AccelerationStructureHandle handle) override;
+    bool IsAccelerationStructureAlive(AccelerationStructureHandle h) const {
+        return h.IsValid() && h.index < acceleration_structures_.size() && acceleration_structures_[h.index].handle != VK_NULL_HANDLE;
+    }
+    // The descriptor set (set 4) that points at a top-level structure; null for a bottom level or a dead handle.
+    VkDescriptorSet AccelerationSet(AccelerationStructureHandle h) const {
+        return IsAccelerationStructureAlive(h) ? acceleration_structures_[h.index].set : VK_NULL_HANDLE;
+    }
+    BufferHandle CreateReadbackBuffer(u64 size_bytes) override;
+    bool ReadReadbackBuffer(BufferHandle buffer, void* out, u64 size_bytes, u64 offset = 0) override;
     VkDescriptorSetLayout FrameConstantsSetLayout() const { return frame_constants_set_layout_; }
     SampledTextureHandle CreateR32FloatTexture(u32 width, u32 height, const f32* values) override;
+    // Render textures (RGBA16F) and depth textures (D32), drawn in their own passes (TargetPass) and sampled between them. The player makes
+    // some mid-frame (TAA's history, bloom's levels), which writes the bindless table while a recorded frame uses it: that needs the table
+    // to be update-after-bind, so a device without it has neither (invalid handles; the player then draws without HDR, shadows or TAA).
+    SampledTextureHandle CreateRenderTexture(u32 width, u32 height) override;
+    SampledTextureHandle CreateDepthTexture(u32 width, u32 height) override;
+    SampledTextureHandle CreateHalfFloatTexture(u32 width, u32 height, u32 mip_count, const u16* halves) override;
+    SampledTextureHandle CreateTextureWithMips(u32 width, u32 height, u32 mip_count, const u8* rgba8_levels) override;
+    bool SupportsRenderTargets() const { return render_targets_supported_; }
+    // The pass a Texture or Depth target draws in, clearing it or keeping its contents (the two are render-pass compatible). Null for the
+    // other kinds and where render targets are unsupported.
+    VkRenderPass TargetPass(PassTarget target, bool clear) const;
+    // The live render texture (Texture) or depth texture (Depth) `handle` names, or null.
+    const SampledTextureRecord* FindTarget(SampledTextureHandle handle, PassTarget target) const;
+    // Moves a new image from UNDEFINED to SHADER_READ_ONLY_OPTIMAL on the graphics queue, so it may be sampled or loaded before anything
+    // draws it. `wait`: return once that is done; otherwise only submit (queue order puts it before anything recorded since).
+    void MakeShaderReadable(VkImage image, VkImageAspectFlags aspect, bool wait);
     const SampledTextureRecord& GetSampledTexture(SampledTextureHandle handle) const {
         return sampled_textures_[handle.index - kFirstUserBindlessTextureIndex];
     }
@@ -156,7 +201,7 @@ public:
 
     // The device-global bindless texture table — TWO descriptor sets, not
     // one: set 0 is a SAMPLED_IMAGE array (kMaxBindlessTextures slots,
-    // matching the shared HLSL's `Texture2D g_Textures[32] : register(t0,
+    // matching the shared HLSL's `Texture2D g_Textures[128] : register(t0,
     // space0)`), set 1 is a single SAMPLER (matching `SamplerState
     // g_Sampler : register(s0, space1)`). See the "Unified mode's
     // textured-quad pipeline" comment in rhi_demo/main.cpp for why the
@@ -282,6 +327,18 @@ private:
     u32 StoreTextureRecord(const SampledTextureRecord& record);
     bool TextureTableFull() const { return sampled_textures_.size() - free_texture_slots_.size() >= kMaxUserBindlessTextures; }
 
+    // The texture table is update-after-bind (with unused-while-pending) where the device has it: a slot nothing uses may be written while
+    // recorded or submitted work uses the table, which is what lets render targets be made mid-frame.
+    bool bindless_update_after_bind_ = false;
+    bool ray_tracing_supported_ = false;
+    bool render_targets_supported_ = false;
+    VkRenderPass target_passes_[2][2]{}; // [Texture, Depth][keep, clear]
+    std::vector<std::unique_ptr<ICommandList>> pending_transitions_; // MakeShaderReadable's, kept until their submission completes
+    void CreateTargetPasses();
+    SampledTextureHandle CreateTargetTexture(const char* what, PassTarget target, u32 width, u32 height);
+    SampledTextureHandle CreateMippedTexture(const char* what, VkFormat format, u32 texel_bytes, u32 width, u32 height, u32 mip_count,
+                                             const void* levels);
+
     VkDescriptorSetLayout bindless_texture_set_layout_ = VK_NULL_HANDLE;
     VkDescriptorSetLayout bindless_sampler_set_layout_ = VK_NULL_HANDLE;
     VkDescriptorPool bindless_pool_ = VK_NULL_HANDLE;
@@ -291,8 +348,37 @@ private:
     // Frame constants: one uniform buffer per set, one set per constant buffer, allocated from this pool.
     VkDescriptorSetLayout frame_constants_set_layout_ = VK_NULL_HANDLE;
     VkDescriptorPool frame_constants_pool_ = VK_NULL_HANDLE;
+    // Frame read buffers (PipelineDesc::frame_read_buffer): set 3, one storage buffer, a set per frame constant buffer.
+    VkDescriptorSetLayout frame_read_set_layout_ = VK_NULL_HANDLE;
+    VkDescriptorPool frame_read_pool_ = VK_NULL_HANDLE;
     static constexpr u32 kMaxConstantBuffers = 64;
     std::atomic<u32> constant_buffer_count_{0};
+
+    // Acceleration structures (IDevice::CreateBottomLevelAS): a device-local buffer holding the structure, and for a top level the set 4
+    // descriptor that binds it. Builds are synchronous. The extension's entry points are fetched once the device exists.
+    struct AccelerationRecord {
+        VkAccelerationStructureKHR handle = VK_NULL_HANDLE;
+        VkBuffer buffer = VK_NULL_HANDLE;
+        VkDeviceMemory memory = VK_NULL_HANDLE;
+        VkDeviceAddress address = 0;
+        VkDescriptorSet set = VK_NULL_HANDLE;
+        bool top_level = false;
+    };
+    std::vector<AccelerationRecord> acceleration_structures_;
+    std::vector<u32> free_acceleration_slots_;
+    VkDescriptorSetLayout acceleration_set_layout_ = VK_NULL_HANDLE;
+    VkDescriptorSetLayout empty_set_layout_ = VK_NULL_HANDLE; // fills the set indices an acceleration-structure pipeline does not use
+    VkDescriptorPool acceleration_pool_ = VK_NULL_HANDLE;
+    PFN_vkCreateAccelerationStructureKHR create_acceleration_structure_ = nullptr;
+    PFN_vkDestroyAccelerationStructureKHR destroy_acceleration_structure_ = nullptr;
+    PFN_vkGetAccelerationStructureBuildSizesKHR get_acceleration_build_sizes_ = nullptr;
+    PFN_vkCmdBuildAccelerationStructuresKHR cmd_build_acceleration_structures_ = nullptr;
+    PFN_vkGetAccelerationStructureDeviceAddressKHR get_acceleration_address_ = nullptr;
+    static constexpr u32 kMaxAccelerationStructures = 64;
+    void CreateAccelerationResources();
+    AccelerationStructureHandle BuildAccelerationStructure(VkAccelerationStructureTypeKHR type, const VkAccelerationStructureGeometryKHR& geometry,
+                                                           u32 primitive_count);
+    void DestroyAccelerationStructureNow(const AccelerationRecord& record);
 
     // A 1x1 white dummy image, permanently retained for slot zero and also
     // referenced by every other bindless descriptor slot before real
@@ -382,6 +468,16 @@ public:
     VkImage SceneDepthImage() const { return scene_depth_image_; }
     VkFormat DepthFormat() const { return depth_format_; }
 
+    // HDR scene colour (ISwapChain::SceneColorTexture): one RGBA16F image the frames in flight share (one queue orders them), drawn with
+    // this swap chain's depth in SceneColorPass (clears both) and, after CopySceneDepth, SceneColorResumePass (loads both); shader-readable
+    // between passes. Recreated with the depth buffers, keeping its bindless slot.
+    SampledTextureHandle SceneColorTexture() override;
+    bool SceneColorEnabled() const { return scene_color_handle_.IsValid(); }
+    // Made on first use (CreatePipeline needs it for scene_color_target pipelines); null where the device has no render targets.
+    VkRenderPass SceneColorPass();
+    VkRenderPass SceneColorResumePass() const { return scene_color_resume_pass_; }
+    VkFramebuffer CurrentSceneColorFramebuffer() const { return scene_color_framebuffers_[current_image_index_]; }
+
 private:
     void CreateSwapchainAndImages(u32 width, u32 height);
     std::vector<VkImage> CreateOffscreenImages(u32 width, u32 height);
@@ -396,6 +492,8 @@ private:
     VkRenderPass CreateRenderPassVariant(bool load_existing, bool store_depth);
     void CreateSceneDepthImage();
     void DestroySceneDepthImage();
+    void CreateSceneColorImage();
+    void DestroySceneColorImage();
 
     VulkanDevice& device_;
     void* window_ = nullptr; // HWND or GLFWwindow*; null when offscreen
@@ -436,6 +534,15 @@ private:
     VkDeviceMemory scene_depth_memory_ = VK_NULL_HANDLE;
     VkImageView scene_depth_view_ = VK_NULL_HANDLE;
 
+    // HDR scene colour (SceneColorTexture): the image, and a framebuffer per swap chain image (each pairs it with that image's depth).
+    SampledTextureHandle scene_color_handle_{};
+    VkRenderPass scene_color_pass_ = VK_NULL_HANDLE;
+    VkRenderPass scene_color_resume_pass_ = VK_NULL_HANDLE;
+    VkImage scene_color_image_ = VK_NULL_HANDLE;
+    VkDeviceMemory scene_color_memory_ = VK_NULL_HANDLE;
+    VkImageView scene_color_view_ = VK_NULL_HANDLE;
+    std::vector<VkFramebuffer> scene_color_framebuffers_;
+
     std::vector<TextureHandle> handles_;                   // one per swapchain image
     std::vector<VkImageView> image_views_;                 // one per swapchain image
     std::vector<VkSemaphore> image_available_semaphores_;  // one per frame-in-flight slot
@@ -460,6 +567,9 @@ public:
     void SetViewportAndScissor(const Viewport& viewport, const Rect& scissor) override;
 
     void BeginRenderPass(ISwapChain& swap_chain, const ClearColor& clear_color) override;
+    bool BeginSceneColorPass(ISwapChain& swap_chain, const ClearColor& clear_color) override;
+    bool BeginTexturePass(SampledTextureHandle target, const ClearColor* clear_color) override;
+    bool BeginDepthPass(SampledTextureHandle target, bool clear) override;
     void EndRenderPass() override;
     void BindPipeline(PipelineHandle pipeline) override;
     void SetPushConstants(const void* data, u32 size_bytes) override;
@@ -476,7 +586,10 @@ public:
     void Dispatch(u32 groups_x, u32 groups_y, u32 groups_z) override;
     void BindBindlessTextures() override;
     void BindFrameConstants(BufferHandle buffer) override;
+    void BindFrameReadBuffer(BufferHandle buffer) override;
+    void BindAccelerationStructure(AccelerationStructureHandle structure) override;
     bool CopySceneDepth() override;
+    bool CopyRenderTextureToReadback(SampledTextureHandle texture, BufferHandle readback) override;
 
     void* NativeHandle() const override { return command_buffer_; }
     bool BelongsTo(const VulkanDevice& device) const { return &device_ == &device; }
@@ -509,6 +622,8 @@ private:
     VkPipelineLayout bound_pipeline_layout_ = VK_NULL_HANDLE; // set by BindPipeline, read by SetPushConstants
     bool graphics_pipeline_bound_ = false;
     bool graphics_bindless_enabled_ = false;
+    bool graphics_frame_read_buffer_ = false; // the bound pipeline has set 3 (PipelineDesc::frame_read_buffer)
+    bool graphics_acceleration_structure_ = false; // the bound pipeline has set 4 (PipelineDesc::acceleration_structure)
     bool graphics_bindless_bound_ = false;
     bool graphics_uses_vertex_buffer_ = false;
     u32 graphics_vertex_stride_bytes_ = 0;
@@ -518,8 +633,10 @@ private:
     u64 bound_index_count_ = 0;
     u32 graphics_push_constant_size_bytes_ = 0;
     bool render_pass_active_ = false;
-    VulkanSwapChain* active_swap_chain_ = nullptr; // set by BeginRenderPass, for CopySceneDepth
-    void SetFullViewport(const VulkanSwapChain& swap_chain);
+    VulkanSwapChain* active_swap_chain_ = nullptr; // set by BeginRenderPass and BeginSceneColorPass, for CopySceneDepth
+    PassTarget active_target_ = PassTarget::BackBuffer; // the active pass's kind (BindPipeline matches it)
+    // The viewport and scissor over the whole target, y flipped (see SetFullViewport's comment).
+    void SetFullViewport(u32 width, u32 height);
     void ResetGraphicsBindings();
 };
 

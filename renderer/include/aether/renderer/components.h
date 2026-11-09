@@ -32,10 +32,14 @@ struct SpotLight {
     bool cast_shadows = false;
 };
 
-// Ambient light from the sky (the IBL's intensity until sky capture arrives).
+// Light from the sky: image-based lighting (diffuse and reflections) and the background. `environment` is an equirectangular
+// (latitude-longitude, 2:1) image in the package, a Radiance .hdr (linear, unclamped) or an LDR image (sRGB); empty uses a
+// procedural sky. Its radiance is scaled by colour times intensity. `environment_rotation_degrees` turns it about +Y.
 struct SkyLight {
     Vec3 color{1, 1, 1};
     f32 intensity = 1.0f;
+    std::string environment;
+    f32 environment_rotation_degrees = 0.0f;
 };
 
 enum class Tonemapper : u8 { ACES, AgX, None };
@@ -96,7 +100,9 @@ AETHER_REFLECT(aether::SpotLight, 1,
 )
 AETHER_REFLECT(aether::SkyLight, 1,
     AETHER_FIELD(color, Field_EditAnywhere),
-    AETHER_FIELD(intensity, Field_EditAnywhere, {.range_min = 0.0, .range_max = 1000.0})
+    AETHER_FIELD(intensity, Field_EditAnywhere, {.range_min = 0.0, .range_max = 1000.0}),
+    AETHER_FIELD(environment, Field_EditAnywhere, {.tooltip = "An equirectangular sky image in the package (.hdr or LDR); empty uses a procedural sky"}),
+    AETHER_FIELD(environment_rotation_degrees, Field_EditAnywhere, {.tooltip = "Turns the sky image about the up axis", .range_min = -360.0, .range_max = 360.0, .units = "deg"})
 )
 AETHER_ENUM(aether::Tonemapper, 1, AETHER_ENUM_VALUE(ACES), AETHER_ENUM_VALUE(AgX), AETHER_ENUM_VALUE(None))
 AETHER_REFLECT(aether::PostProcessVolume, 1,

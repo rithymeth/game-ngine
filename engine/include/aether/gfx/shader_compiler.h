@@ -29,4 +29,10 @@ ShaderBytecode CompileHLSL(const std::string& source, const char* entry_point, c
 ShaderBytecode CompileHLSLToSPIRV(const std::string& source, const char* entry_point, const char* target_profile,
                                   const char* debug_name = "shader");
 
+// DXC to DXIL (shader model 6.x) for the D3D12 backend, for what FXC's shader model 5.1 cannot express (inline ray queries, SM 6.5). Needs
+// dxcompiler.dll and dxil.dll beside the executable: without dxil.dll the output is unsigned and D3D12 refuses to create a pipeline from it.
+// `target_profile` is DXC's syntax ("vs_6_5", "ps_6_5"). Throws std::runtime_error (error text logged) on failure.
+ShaderBytecode CompileHLSLToDXIL(const std::string& source, const char* entry_point, const char* target_profile,
+                                 const char* debug_name = "shader");
+
 } // namespace aether::gfx

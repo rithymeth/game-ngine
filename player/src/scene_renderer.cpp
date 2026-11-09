@@ -13,9 +13,16 @@
 #include "aether/scene/gameplay.h"
 #include "aether/scene/hierarchy.h"
 #include "frame_lights.h"
+#include "model_glb.h"
 #include "render_pose.h"
 #include "particle_pass.h"
 #include "decal_pass.h"
+#include "post_pass.h"
+#include "shadow_pass.h"
+#include "sky_pass.h"
+#include "taa_pass.h"
+#include "virtual_shadow.h"
+#include "vsm_pass.h"
 #include "package_textures.h"
 #include "aether/ui/draw.h"
 #include "aether/ui/font.h"
@@ -26,9 +33,12 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <chrono>
 #include <cmath>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -48,13 +58,16 @@ static_assert(sizeof(SceneVertex) == sizeof(f32) * 12);
 
 struct DrawConstants {
     Mat4 mvp;
-    f32 color[4] = {1, 1, 1, 1};
+    // The base colour factor as four halves, then the emissive colour as three halves (r|g, b) with the emissive texture's index (63 =
+    // none) in bits 16-23 of the second word: halves keep HDR emission (KHR_materials_emissive_strength) up to 65504.
+    u32 color_packed[2] = {0x3c003c00u, 0x3c003c00u};
+    u32 emissive_packed[2] = {0u, 255u << 16};
     u32 normal_matrix_packed[5]{};
-    u32 material_textures = 0x3fffffffu; // four texture indices and the extension index (63 = none), 6 bits each
+    u32 material_textures = 0xffffffffu; // base colour, normal, metallic-roughness and occlusion indices, 8 bits each (255 = none)
     u32 material_factors_0 = 0x3c003c00u;
     u32 material_factors_1 = 0x3c003c00u;
     f32 camera_local[3]{};
-    u32 alpha_options = 0x38000000u;
+    u32 alpha_options = 0x38000000u | (255u << 2); // mode (bits 0-1), the extension texture's index (2-9, 255 = none), cutoff half (16-31)
 };
 static_assert(sizeof(DrawConstants) == 128);
 
@@ -89,32 +102,37 @@ u32 PackHalfPair(f32 low, f32 high) {
     return static_cast<u32>(FloatToHalf(low)) | (static_cast<u32>(FloatToHalf(high)) << 16);
 }
 
+// A texture's 8-bit shader index: 255 (none) when absent, invalid or outside the bindless table.
+u32 TextureSlot(const SampledTextureHandle& texture, bool present) {
+    return present && texture.IsValid() && texture.index < kMaxBindlessTextures ? texture.index : 255u;
+}
+
 u32 PackMaterialTextures(const SampledTextureHandle& base_color, bool has_base_color,
                          const SampledTextureHandle& normal, bool has_normal,
                          const SampledTextureHandle& metallic_roughness, bool has_metallic_roughness,
-                         const SampledTextureHandle& occlusion, bool has_occlusion,
-                         const SampledTextureHandle& extension, bool has_extension) {
-    constexpr u32 absent = 63u;
-    const u32 base = has_base_color && base_color.IsValid() ? base_color.index : absent;
-    const u32 normal_index = has_normal && normal.IsValid() ? normal.index : absent;
-    const u32 metallic_roughness_index = has_metallic_roughness && metallic_roughness.IsValid()
-                                             ? metallic_roughness.index
-                                             : absent;
-    const u32 occlusion_index = has_occlusion && occlusion.IsValid() ? occlusion.index : absent;
-    const u32 extension_index = has_extension && extension.IsValid() ? extension.index : absent;
-    return (base & 63u) | ((normal_index & 63u) << 6) | ((metallic_roughness_index & 63u) << 12) |
-           ((occlusion_index & 63u) << 18) | ((extension_index & 63u) << 24);
+                         const SampledTextureHandle& occlusion, bool has_occlusion) {
+    return TextureSlot(base_color, has_base_color) | (TextureSlot(normal, has_normal) << 8) |
+           (TextureSlot(metallic_roughness, has_metallic_roughness) << 16) | (TextureSlot(occlusion, has_occlusion) << 24);
 }
 
-u32 PackMaterialOptions(assets::MaterialAlphaMode mode, f32 cutoff, const f32 emissive[3]) {
-    // Preserve alpha mode and cutoff while using the unused middle bits for
-    // low-cost RGB emissive (4 bits per channel, linear 0-4 range).
-    const auto channel = [](f32 value) {
-        return static_cast<u32>(std::lround(std::clamp(value, 0.0f, 4.0f) * (15.0f / 4.0f)));
-    };
-    return (static_cast<u32>(FloatToHalf(std::clamp(cutoff, 0.0f, 1.0f))) << 16) |
-           ((channel(emissive[2]) & 15u) << 10) | ((channel(emissive[1]) & 15u) << 6) |
-           ((channel(emissive[0]) & 15u) << 2) | (static_cast<u32>(mode) & 3u);
+// The determinant of a transform's upper 3x3: negative when it mirrors (turning its triangles' winding round).
+f32 ModelDeterminant(const Mat4& m) {
+    const Vec3 x(m.cols[0].x, m.cols[0].y, m.cols[0].z), y(m.cols[1].x, m.cols[1].y, m.cols[1].z), z(m.cols[2].x, m.cols[2].y, m.cols[2].z);
+    return x.Dot(y.Cross(z));
+}
+
+u32 PackMaterialOptions(assets::MaterialAlphaMode mode, f32 cutoff, const SampledTextureHandle& extension, bool has_extension,
+                        bool double_sided = false) {
+    // The alpha mode in bits 0-1, the surface-extension texture's index in bits 2-9, double-sided in bit 10 and the cutoff as a half
+    // in bits 16-31.
+    return (static_cast<u32>(FloatToHalf(std::clamp(cutoff, 0.0f, 1.0f))) << 16) | (TextureSlot(extension, has_extension) << 2) |
+           (double_sided ? 1u << 10 : 0u) | (static_cast<u32>(mode) & 3u);
+}
+
+void PackEmissive(const f32 emissive[3], const SampledTextureHandle& texture, bool has_texture, u32 packed[2]) {
+    const auto channel = [](f32 value) { return std::isfinite(value) ? std::max(value, 0.0f) : 0.0f; };
+    packed[0] = PackHalfPair(channel(emissive[0]), channel(emissive[1]));
+    packed[1] = static_cast<u32>(FloatToHalf(channel(emissive[2]))) | (TextureSlot(texture, has_texture) << 16);
 }
 
 void PackNormalMatrix(const Mat4& matrix, u32 packed[5]) {
@@ -147,7 +165,8 @@ Mat4 BuildNormalTransform(const Mat4& model_transform) {
 constexpr char kSceneShader[] = R"(
 struct PushConstants {
     float4x4 g_Mvp;
-    float4 g_Color;
+    uint2 g_ColorPacked;
+    uint2 g_Emissive;
     uint4 g_NormalPacked0;
     uint g_NormalPacked1;
     uint g_MaterialTextures;
@@ -175,7 +194,7 @@ struct PSInput {
     float tangent_sign : TEXCOORD3;
     float3 local_position : TEXCOORD4;
 };
-Texture2D g_Textures[32] : register(t0, space0);
+Texture2D g_Textures[128] : register(t0, space0);
 SamplerState g_Sampler : register(s0, space1);
 
 float3 SRGBToLinear(float3 encoded) {
@@ -192,7 +211,11 @@ float3 LinearToSRGB(float3 linear_color) {
 }
 
 float GetNormalCoefficient(uint index) {
-    uint packed = index < 8 ? g_PC.g_NormalPacked0[index / 2] : g_PC.g_NormalPacked1;
+    uint packed = g_PC.g_NormalPacked1;
+    if (index < 2) packed = g_PC.g_NormalPacked0.x;
+    else if (index < 4) packed = g_PC.g_NormalPacked0.y;
+    else if (index < 6) packed = g_PC.g_NormalPacked0.z;
+    else if (index < 8) packed = g_PC.g_NormalPacked0.w;
     uint half_value = (index & 1) != 0 ? packed >> 16 : packed & 0xffff;
     return f16tof32(half_value);
 }
@@ -232,20 +255,163 @@ PSInput VSMain(VSInput input) {
     return output;
 }
 #ifdef AETHER_FRAME_DATA
-// Everything a frame shares (filled by player/src/frame_lights.cpp: keep the two layouts in step).
-struct FrameData {
-    float4 camera_world;
-    float4 sun_direction;
-    float4 sun_color;
-    float4 sky_color;
-    uint4 counts;
-    float4 point_position_range[8];
-    float4 point_color[8];
-    float4 spot_position_range[4];
-    float4 spot_direction_outer[4];
-    float4 spot_color_inner[4];
-};
-ConstantBuffer<FrameData> g_Frame : register(b0, space2);
+)";
+// The frame read buffer: the clustered lights, then (virtual shadow maps) the page table, aligned to 16 bytes.
+constexpr u64 kVsmTableOffset = (kLightClusterBufferBytes + 15) / 16 * 16;
+constexpr u64 kLightBufferBytes = kVsmTableOffset + VsmPageAllocator::kTableEntries * sizeof(u32);
+
+constexpr char kSceneShaderVsm[] = R"(
+
+// The sun's shadow from the virtual shadow map's pages (player/src/virtual_shadow.h, vsm_pages.h): 1 lit, 0 shadowed, and -1 where no resident
+// page covers the point, when the caller falls back to the cascades. Starts at the level whose texel matches the pixel's footprint and goes
+// coarser while a page is missing. The filter is the cascades' (4x4 texel loads, tent weights); a tap on a neighbouring page looks that page up.
+#define VSM_DEPTH_RANGE 4096.0
+
+int2 VsmPageOfTexel(int2 texel) { return texel >> 7; } // VSM_PAGE_TEXELS is 128; a signed shift rounds toward minus infinity
+
+// The atlas texel of a page's first texel, or -1 when the page is outside its level's window or not resident (a page table entry is 0).
+int2 VsmPageOrigin(uint level, int2 page) {
+    int4 window = g_Frame.vsm_window[level >> 1];
+    int2 origin = (level & 1) != 0 ? window.zw : window.xy;
+    int2 relative = page - origin;
+    if (any(relative < 0) || any(relative >= 32)) return int2(-1, -1);
+    uint entry = g_FrameLights.Load(g_Frame.vsm_info.z + ((((level * 32 + (uint)(page.y & 31)) * 32) + (uint)(page.x & 31)) << 2));
+    if (entry == 0) return int2(-1, -1);
+    uint physical = entry - 1;
+    uint side = g_Frame.vsm_info.y;
+    return int2((physical % side) * VSM_PAGE_TEXELS, (physical / side) * VSM_PAGE_TEXELS);
+}
+
+float VsmSunShadow(float3 world_position, float3 geometric_normal, float3 sun_direction) {
+    uint atlas = g_Frame.vsm_info.x;
+    if (atlas >= 128) return -1.0;
+    float footprint = g_Frame.vsm_camera.w * length(world_position - g_Frame.vsm_camera.xyz) + g_Frame.vsm_params.x;
+    float n_dot_l = saturate(dot(geometric_normal, sun_direction));
+    float slope = sqrt(saturate(1.0 - n_dot_l * n_dot_l));
+    for (uint level = VsmLevelForFootprint(footprint); level < VSM_LEVELS; ++level) {
+        float texel = VsmTexel(level);
+        float3 p = world_position + geometric_normal * (texel * (0.5 + 1.5 * slope));
+        float2 position = float2(dot(p, g_Frame.vsm_light_right.xyz), dot(p, g_Frame.vsm_light_up.xyz)) / texel; // in texels
+        float depth = (dot(p, g_Frame.vsm_light_direction.xyz) - texel) / VSM_DEPTH_RANGE + 0.5;                  // a texel nearer, against acne
+        float2 tc = position - 0.5;
+        float2 base = floor(tc);
+        float2 f = tc - base;
+        float wx[4] = {1.0 - f.x, 1.0, 1.0, f.x};
+        float wy[4] = {1.0 - f.y, 1.0, 1.0, f.y};
+        int2 first = int2(base) - int2(1, 1);
+        int2 cached_page = VsmPageOfTexel(first);
+        int2 cached_origin = VsmPageOrigin(level, cached_page);
+        bool complete = cached_origin.x >= 0;
+        float lit = 0.0;
+        if (complete && all(cached_page == VsmPageOfTexel(first + int2(3, 3)))) {
+            // The common case: all sixteen taps are in one page, so the page is looked up once.
+            int2 inside = first - cached_page * VSM_PAGE_TEXELS;
+            [unroll] for (int y = 0; y < 4; ++y) {
+                [unroll] for (int x = 0; x < 4; ++x) {
+                    int2 atlas_texel = cached_origin + int2(inside.x + x, VSM_PAGE_TEXELS - 1 - (inside.y + y));
+                    float stored = g_Textures[atlas].Load(int3(atlas_texel, 0)).r;
+                    lit += wx[x] * wy[y] * (depth <= stored ? 1.0 : 0.0);
+                }
+            }
+            return lit / 9.0;
+        }
+        [unroll] for (int y = 0; y < 4; ++y) {
+            [unroll] for (int x = 0; x < 4; ++x) {
+                if (complete) {
+                    int2 index = first + int2(x, y);
+                    int2 page = VsmPageOfTexel(index);
+                    if (any(page != cached_page)) {
+                        cached_page = page;
+                        cached_origin = VsmPageOrigin(level, page);
+                    }
+                    if (cached_origin.x < 0) {
+                        complete = false;
+                    } else {
+                        // A page is drawn with v up, so its texel row is counted from the top: the last texel of v is row 0.
+                        int2 inside = index - page * VSM_PAGE_TEXELS;
+                        int2 atlas_texel = cached_origin + int2(inside.x, VSM_PAGE_TEXELS - 1 - inside.y);
+                        float stored = g_Textures[atlas].Load(int3(atlas_texel, 0)).r;
+                        lit += wx[x] * wy[y] * (depth <= stored ? 1.0 : 0.0);
+                    }
+                }
+            }
+        }
+        if (complete) return lit / 9.0;
+    }
+    return -1.0;
+}
+)";
+
+constexpr char kSceneShaderFrame[] = R"(
+
+// The sun's shadow at a world position: 1 lit, 0 shadowed. The first cascade the point falls inside (two texels clear of its edge) is
+// read with a 3x3 bilinear PCF of texel loads (4x4 texels, tent weights), so filtering needs no comparison sampler. The point is pushed
+// out along the surface normal by about a texel first (normal offset), and compared a texel's depth nearer, against acne; the caster
+// pipelines add a slope-scaled bias of their own. The last cascade fades out over its outer tenth instead of ending in a hard line.
+#ifdef AETHER_RT_SHADOWS
+// Ray-traced sun shadows (AETHER_RENDER_RT_SHADOWS=1): one inline ray from the surface toward the sun against the rigid casters' acceleration
+// structure, 1 lit and 0 shadowed. The origin is pushed off the surface along its normal against self-hits. Hard-edged, and blind to what is not in
+// the structure: skinned and alpha-tested casters.
+RaytracingAccelerationStructure g_RtScene : register(t0, space4);
+float RtSunShadow(float3 world_position, float3 geometric_normal, float3 sun_direction) {
+    if (g_Frame.shadow_info.x >= 128) return 1.0;
+    float n_dot_l = saturate(dot(geometric_normal, sun_direction));
+    float slope = sqrt(saturate(1.0 - n_dot_l * n_dot_l));
+    RayDesc ray;
+    ray.Origin = world_position + geometric_normal * (0.01 + 0.03 * slope);
+    ray.Direction = sun_direction;
+    ray.TMin = 0.005;
+    ray.TMax = 2000.0;
+    RayQuery<RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> query;
+    query.TraceRayInline(g_RtScene, 0, 0xFF, ray);
+    query.Proceed();
+    return query.CommittedStatus() == COMMITTED_TRIANGLE_HIT ? 0.0 : 1.0;
+}
+#endif
+
+float SunShadow(float3 world_position, float3 geometric_normal, float3 sun_direction) {
+#ifdef AETHER_RT_SHADOWS
+    return RtSunShadow(world_position, geometric_normal, sun_direction);
+#endif
+    float virtual_shadow = VsmSunShadow(world_position, geometric_normal, sun_direction);
+    if (virtual_shadow >= 0.0) return virtual_shadow;
+    uint atlas = g_Frame.shadow_info.x;
+    uint count = min(g_Frame.shadow_info.y, 4u);
+    if (atlas >= 128 || count == 0) return 1.0;
+    float size = (float)g_Frame.shadow_info.z;
+    float n_dot_l = saturate(dot(geometric_normal, sun_direction));
+    float slope = sqrt(saturate(1.0 - n_dot_l * n_dot_l));
+    for (uint i = 0; i < count; ++i) {
+        float texel = g_Frame.shadow_cascade[i].z;
+        float3 p = world_position + geometric_normal * (texel * (0.5 + 1.5 * slope));
+        float4 clip = mul(g_Frame.shadow_view_projection[i], float4(p, 1.0));
+        float2 uv = float2(clip.x * 0.5 + 0.5, 0.5 - clip.y * 0.5);
+        float margin = 2.0 / size;
+        if (any(uv < margin) || any(uv > 1.0 - margin) || clip.z > 1.0) continue;
+        float depth = clip.z - texel * g_Frame.shadow_cascade[i].w;
+        float2 tc = uv * size - 0.5;
+        float2 base = floor(tc);
+        float2 f = tc - base;
+        float wx[4] = {1.0 - f.x, 1.0, 1.0, f.x};
+        float wy[4] = {1.0 - f.y, 1.0, 1.0, f.y};
+        float2 origin = g_Frame.shadow_cascade[i].xy;
+        float lit = 0.0;
+        [unroll] for (int y = 0; y < 4; ++y) {
+            [unroll] for (int x = 0; x < 4; ++x) {
+                float2 t = clamp(base + float2(x - 1, y - 1), 0.0, size - 1.0) + origin;
+                float stored = g_Textures[atlas].Load(int3(int2(t), 0)).r;
+                lit += wx[x] * wy[y] * (depth <= stored ? 1.0 : 0.0);
+            }
+        }
+        lit /= 9.0;
+        if (i + 1 == count) {
+            float edge = max(abs(clip.x), abs(clip.y));
+            lit = lerp(1.0, lit, saturate((1.0 - edge) / 0.1));
+        }
+        return lit;
+    }
+    return 1.0;
+}
 #endif
 
 // The surface's response to one light from direction `light_direction` (towards the light), before the light's own radiance: the
@@ -362,28 +528,35 @@ float3 SurfaceLightEx(float3 light_direction, float3 normal, float3 view_directi
     return lit;
 }
 
-float4 PSMain(PSInput input) : SV_TARGET {
-    uint base_index = g_PC.g_MaterialTextures & 63;
-    uint normal_index = (g_PC.g_MaterialTextures >> 6) & 63;
-    uint metallic_roughness_index = (g_PC.g_MaterialTextures >> 12) & 63;
-    uint occlusion_index = (g_PC.g_MaterialTextures >> 18) & 63;
+)" // split: MSVC caps one string literal at 16 KB
+R"(
+float4 PSMain(PSInput input, bool is_front : SV_IsFrontFace) : SV_TARGET {
+    // A double-sided material's back face is lit from its own side: the normal reversed. (A mirrored model turns its faces' winding
+    // round, so the face toward the camera is the front when exactly one of the two says so.)
+    if (((g_PC.g_AlphaOptions >> 10) & 1) != 0 && is_front == (NormalDeterminant() < 0.0)) input.normal = -input.normal;
+    float4 material_color = float4(f16tof32(g_PC.g_ColorPacked.x), f16tof32(g_PC.g_ColorPacked.x >> 16),
+                                   f16tof32(g_PC.g_ColorPacked.y), f16tof32(g_PC.g_ColorPacked.y >> 16));
+    uint base_index = g_PC.g_MaterialTextures & 255;
+    uint normal_index = (g_PC.g_MaterialTextures >> 8) & 255;
+    uint metallic_roughness_index = (g_PC.g_MaterialTextures >> 16) & 255;
+    uint occlusion_index = (g_PC.g_MaterialTextures >> 24) & 255;
     // Not a ?: — HLSL evaluates both arms, so the "no texture" index (63) would still be sampled out of bounds.
     float4 base_sample = float4(1, 1, 1, 1);
-    if (base_index < 32) base_sample = g_Textures[base_index].Sample(g_Sampler, input.uv);
+    if (base_index < 128) base_sample = g_Textures[base_index].Sample(g_Sampler, input.uv);
     uint alpha_mode = g_PC.g_AlphaOptions & 3;
-    float surface_alpha = saturate(base_sample.a * g_PC.g_Color.a);
+    float surface_alpha = saturate(base_sample.a * material_color.a);
     if (alpha_mode == 1) {
         clip(surface_alpha - f16tof32(g_PC.g_AlphaOptions >> 16));
         surface_alpha = 1.0;
     } else if (alpha_mode == 0) {
         surface_alpha = 1.0;
     }
-    float3 base_color = SRGBToLinear(base_sample.rgb) * g_PC.g_Color.rgb;
+    float3 base_color = SRGBToLinear(base_sample.rgb) * material_color.rgb;
     float metallic = saturate(f16tof32(g_PC.g_MaterialFactors0 & 0xffff));
     float roughness = clamp(f16tof32(g_PC.g_MaterialFactors0 >> 16), 0.04, 1.0);
     float normal_scale = f16tof32(g_PC.g_MaterialFactors1 & 0xffff);
     float occlusion_strength = saturate(f16tof32(g_PC.g_MaterialFactors1 >> 16));
-    if (metallic_roughness_index < 32) {
+    if (metallic_roughness_index < 128) {
         float4 metallic_roughness = g_Textures[metallic_roughness_index].Sample(g_Sampler, input.uv);
         roughness = clamp(roughness * metallic_roughness.g, 0.04, 1.0);
         metallic = saturate(metallic * metallic_roughness.b);
@@ -391,7 +564,7 @@ float4 PSMain(PSInput input) : SV_TARGET {
 
     float3 normal = normalize(input.normal);
     float3 tangent = normalize(input.tangent - normal * dot(normal, input.tangent));
-    if (normal_index < 32) {
+    if (normal_index < 128) {
         float3 tangent_normal = g_Textures[normal_index].Sample(g_Sampler, input.uv).xyz * 2.0 - 1.0;
         tangent_normal.xy *= normal_scale;
         tangent_normal = normalize(tangent_normal);
@@ -400,14 +573,14 @@ float4 PSMain(PSInput input) : SV_TARGET {
     }
 
     float ambient_occlusion = 1.0;
-    if (occlusion_index < 32) {
+    if (occlusion_index < 128) {
         float occlusion_sample = g_Textures[occlusion_index].Sample(g_Sampler, input.uv).r;
         ambient_occlusion = lerp(1.0, occlusion_sample, occlusion_strength);
     }
     SurfaceExtension surface_ext = NoSurfaceExtension();
-    uint extension_index = (g_PC.g_MaterialTextures >> 24) & 63;
+    uint extension_index = (g_PC.g_AlphaOptions >> 2) & 255;
     // Not a ?: for the same reason as above.
-    if (extension_index < 32) surface_ext = LoadSurfaceExtension(extension_index);
+    if (extension_index < 128) surface_ext = LoadSurfaceExtension(extension_index);
     float3 surface_tangent = normalize(tangent - normal * dot(normal, tangent));
     float3 surface_bitangent = normalize(cross(normal, surface_tangent)) * input.tangent_sign;
     float3 view_local = g_PC.g_CameraLocal - input.local_position;
@@ -426,11 +599,40 @@ float4 PSMain(PSInput input) : SV_TARGET {
     // Broad sky and room fill keeps metallic characters readable outside
     // the key light. The environment term includes reflected metal color.
     float sky_fill = 0.28 + 0.14 * saturate(normal.y);
-    float3 environment = (base_color * (1.0 - metallic) * sky_fill + f0 * (0.45 + 0.25 * roughness)) * sky_tint;
-    float3 color = environment * ambient_occlusion + SurfaceLightEx(sun_direction, normal, view_direction, base_color, metallic, roughness, f0, surface_ext, surface_tangent, surface_bitangent) * sun_radiance;
+    float3 ambient = (base_color * (1.0 - metallic) * sky_fill + f0 * (0.45 + 0.25 * roughness)) * sky_tint * ambient_occlusion;
+#ifdef AETHER_FRAME_DATA
+    // Image-based lighting from the sky's environment, where the renderer has one (player/src/environment.h).
+    if (g_Frame.environment_info.x < 128) {
+        ambient = SkyLighting(normal, view_direction, base_color, metallic, roughness, f0, ambient_occlusion) * sky_tint;
+    }
+#endif
+    float sun_visibility = 1.0;
 #ifdef AETHER_FRAME_DATA
     // The world position of this pixel: the camera minus the (world-space) vector from the pixel to the camera.
     float3 world_position = g_Frame.camera_world.xyz - ApplyModelTransform(view_local);
+    sun_visibility = SunShadow(world_position, normalize(input.normal), sun_direction);
+#endif
+    float3 color = ambient + SurfaceLightEx(sun_direction, normal, view_direction, base_color, metallic, roughness, f0, surface_ext, surface_tangent, surface_bitangent) * sun_radiance * sun_visibility;
+#ifdef AETHER_FRAME_DATA
+    if (g_Frame.cluster_info.w != 0) {
+        // Clustered lights (player/src/light_clusters.h): the point and spot lights that can reach this pixel's cell of the view grid.
+        uint2 cluster = ClusterRange(input.position.xy, ClusterViewDepth(world_position));
+        for (uint cluster_i = 0; cluster_i < cluster.y; ++cluster_i) {
+            uint light_offset = ClusterLightIndex(cluster.x + cluster_i) * 48;
+            float4 position_range = asfloat(g_FrameLights.Load4(light_offset));
+            float4 color_inner = asfloat(g_FrameLights.Load4(light_offset + 16));
+            float4 direction_outer = asfloat(g_FrameLights.Load4(light_offset + 32));
+            float3 to_light = position_range.xyz - world_position;
+            float distance = max(length(to_light), 1e-4);
+            float3 light_direction = to_light / distance;
+            float falloff = saturate(1.0 - pow(distance / position_range.w, 4.0));
+            falloff = falloff * falloff / (distance * distance + 1.0);
+            if (falloff <= 0.0) continue;
+            // A point light's cosines are below -1, so its cone passes everywhere.
+            float cone = smoothstep(direction_outer.w, color_inner.w, dot(-light_direction, direction_outer.xyz));
+            color += SurfaceLightEx(light_direction, normal, view_direction, base_color, metallic, roughness, f0, surface_ext, surface_tangent, surface_bitangent) * color_inner.rgb * (falloff * cone);
+        }
+    } else {
     for (uint point_index = 0; point_index < g_Frame.counts.x; ++point_index) {
         float3 to_light = g_Frame.point_position_range[point_index].xyz - world_position;
         float distance = max(length(to_light), 1e-4);
@@ -448,14 +650,20 @@ float4 PSMain(PSInput input) : SV_TARGET {
         falloff = falloff * falloff / (distance * distance + 1.0);
         color += SurfaceLightEx(light_direction, normal, view_direction, base_color, metallic, roughness, f0, surface_ext, surface_tangent, surface_bitangent) * g_Frame.spot_color_inner[spot_index].rgb * falloff * cone;
     }
+    }
 #endif
-    float3 emissive = float3((g_PC.g_AlphaOptions >> 2) & 15,
-                             (g_PC.g_AlphaOptions >> 6) & 15,
-                             (g_PC.g_AlphaOptions >> 10) & 15) * (4.0 / 15.0);
+    float3 emissive = float3(f16tof32(g_PC.g_Emissive.x), f16tof32(g_PC.g_Emissive.x >> 16), f16tof32(g_PC.g_Emissive.y));
+    uint emissive_index = (g_PC.g_Emissive.y >> 16) & 255;
+    if (emissive_index < 128) emissive *= SRGBToLinear(g_Textures[emissive_index].Sample(g_Sampler, input.uv).rgb);
     color += emissive;
+#ifdef AETHER_HDR_TARGET
+    // Linear light into the HDR scene colour target; the post pass applies exposure, the tone mapper and the sRGB encoding.
+    return float4(max(color, 0.0), surface_alpha);
+#else
     color = color / (color + 1.0);
     color = LinearToSRGB(color);
     return float4(color, surface_alpha);
+#endif
 }
 )";
 
@@ -490,7 +698,7 @@ struct PushConstants {
 [[vk::push_constant]]
 #endif
 ConstantBuffer<PushConstants> g_PC : register(b0);
-Texture2D g_Textures[32] : register(t0, space0);
+Texture2D g_Textures[128] : register(t0, space0);
 SamplerState g_Sampler : register(s0, space1);
 
 struct PSInput {
@@ -565,7 +773,15 @@ struct SceneRenderer::Impl {
         BufferHandle vertices;
         BufferHandle indices;
         u32 index_count = 0;
+        u32 vertex_count = 0;
+        AccelerationStructureHandle blas; // ray-traced shadows: this rigid primitive's bottom-level structure, made when first needed
+        bool blas_failed = false;
         std::vector<BufferHandle> frame_vertex_buffers;
+        // For a skinned primitive drawn more than once in a frame (entities sharing the model): the buffers of the second draw on, per
+        // frame in flight, made when first needed. draws counts this frame's draws (draws_frame: which frame).
+        std::vector<std::vector<BufferHandle>> extra_vertex_buffers;
+        u32 draws = 0;
+        u64 draws_frame = 0;
         std::vector<SceneVertex> bind_pose_vertices;
         std::vector<SceneVertex> animated_vertices;
         f32 color[4] = {1, 1, 1, 1};
@@ -576,27 +792,38 @@ struct SceneRenderer::Impl {
         f32 occlusion_strength = 1.0f;
         f32 alpha_cutoff = 0.5f;
         assets::MaterialAlphaMode alpha_mode = assets::MaterialAlphaMode::Opaque;
+        bool double_sided = false; // glTF doubleSided: drawn without culling, the back face lit from behind
         SampledTextureHandle base_color_texture;
         SampledTextureHandle normal_texture;
         SampledTextureHandle metallic_roughness_texture;
         SampledTextureHandle occlusion_texture;
+        SampledTextureHandle emissive_texture;
         bool has_base_color_texture = false;
         bool has_normal_texture = false;
         bool has_metallic_roughness_texture = false;
         bool has_occlusion_texture = false;
+        bool has_emissive_texture = false;
         // KHR_materials_clearcoat, sheen and anisotropy: a 2x1 texture of the packed factors (assets::PackSurfaceExtension), read by texel fetch.
         SampledTextureHandle extension_texture;
         bool has_extension_texture = false;
+        // A bounding sphere of the bind pose in model space, for culling shadow casters; radius < 0 for skinned primitives (always drawn).
+        f32 bounds_center[3] = {0, 0, 0};
+        f32 bounds_radius = -1.0f;
+        // A skinned primitive's bind-pose bounding sphere, grown by half for its poses: what a virtual shadow page redraws when it moves.
+        f32 skin_bounds_center[3] = {0, 0, 0};
+        f32 skin_bounds_radius = -1.0f;
     };
     struct MaterialTextures {
         SampledTextureHandle base_color;
         SampledTextureHandle normal;
         SampledTextureHandle metallic_roughness;
         SampledTextureHandle occlusion;
+        SampledTextureHandle emissive;
         bool has_base_color = false;
         bool has_normal = false;
         bool has_metallic_roughness = false;
         bool has_occlusion = false;
+        bool has_emissive = false;
     };
     struct Model {
         assets::GltfScene scene;
@@ -611,17 +838,91 @@ struct SceneRenderer::Impl {
     const GamePackage& package;
     PipelineHandle pipeline;
     PipelineHandle transparent_pipeline;
+    PipelineHandle culled_pipeline;             // `pipeline` with back faces culled (single-sided materials)
+    PipelineHandle transparent_culled_pipeline; // likewise for `transparent_pipeline`
     PipelineHandle hud_pipeline;
     // The particle pass (M8.7), drawn after the scene's surfaces.
     std::unique_ptr<ParticlePass> particles;
     std::unique_ptr<DecalPass> decals;
+    // The HDR path (render roadmap step 1): with a scene colour target the scene, decals and particles draw in linear light and the post
+    // pass tone maps into the back buffer; without one (hdr false) they draw straight into the back buffer as before.
+    std::unique_ptr<PostPass> post;
+    std::unique_ptr<ShadowPass> shadows; // where the device has frame constants and depth textures (D3D12)
+    // Virtual shadow maps (virtual_shadow.h, vsm_pages.h, vsm_pass.h): pages of a much finer sun shadow near the camera, over the cascades, which
+    // stay as the fallback. Where the device has frame constants, depth textures, readback and the HDR path. AETHER_RENDER_VSM=0 turns them off.
+    std::unique_ptr<VsmFeedback> vsm_feedback;
+    std::unique_ptr<VsmPass> vsm_pass;
+    std::unique_ptr<VsmPageAllocator> vsm_pages;
+    // Ray-traced sun shadows (AETHER_RENDER_RT_SHADOWS=1): the scene shader traces one ray per pixel against rt_tlas, rebuilt (synchronously) when
+    // the rigid casters' placement changes. rt_dummy_* is a far-away triangle that keeps the structure valid when nothing casts.
+    bool rt_shadows = false;
+    AccelerationStructureHandle rt_tlas;
+    AccelerationStructureHandle rt_dummy_blas;
+    BufferHandle rt_dummy_vertices, rt_dummy_indices;
+    std::vector<f32> rt_signature;
+    u32 rt_instances = 0;
+    u32 rt_rebuilds = 0;
+    VsmLight vsm_light;
+    bool vsm_have_light = false;
+    u64 vsm_frame = 0;
+    u32 vsm_pool = 24;         // pages per side of the pool (24 x 24 pages of 128 x 128 texels: 36 MB)
+    u32 vsm_draw_budget = 64;  // pages drawn per frame
+    struct VsmCasterState {
+        Mat4 model;
+        Vec3 center{0, 0, 0};
+        f32 radius = -1.0f;
+        u64 frame = 0;
+        bool dynamic = false; // deforming: in the cascades, in no page
+    };
+    SceneRenderer::VirtualShadowStats vsm_stats;
+    std::unique_ptr<TaaPass> taa;         // temporal anti-aliasing, with the HDR target (AETHER_RENDER_TAA=0 turns it off)
+    // Each drawn node's model transform as of the frame it was last drawn, for TAA's motion pass: key (entity index, generation, node).
+    struct PreviousTransform {
+        Mat4 model;
+        u64 frame = 0;
+    };
+    struct TransformKey {
+        u32 index = 0, generation = 0, node = 0, primitive = 0; // primitive: 0 for transforms, which belong to the node
+        bool operator==(const TransformKey&) const = default;
+    };
+    struct TransformKeyHash {
+        usize operator()(const TransformKey& key) const {
+            return std::hash<u64>()((static_cast<u64>(key.index) << 32 | key.generation) * 0x9E3779B97F4A7C15ull ^
+                                    (static_cast<u64>(key.node) << 20 | key.primitive));
+        }
+    };
+    std::unordered_map<TransformKey, PreviousTransform, TransformKeyHash> previous_transforms;
+    // Each skinned primitive's deformed positions (three floats a vertex) as of the frame it was last drawn, per entity: last frame's
+    // pose for the motion pass.
+    struct PreviousPose {
+        std::vector<f32> positions;
+        u64 frame = 0;
+    };
+    std::unordered_map<TransformKey, PreviousPose, TransformKeyHash> previous_poses;
+    // The sun's shadow casters as of the frame they were last drawn (per entity, node and primitive), for the pages that need redrawing.
+    std::unordered_map<TransformKey, VsmCasterState, TransformKeyHash> vsm_casters;
+    // This frame's packed previous poses, uploaded into one of motion_position_buffers (one per frame in flight, grown as needed).
+    std::vector<f32> motion_positions;
+    std::vector<BufferHandle> motion_position_buffers;
+    std::vector<u64> motion_position_capacity;
+    u64 transform_frame = 0;
+    bool taa_motion = false; // the motion pass (AETHER_RENDER_TAA_MOTION=0 turns it off)
+    std::unique_ptr<SkyPass> sky;        // where the device has frame constants and half-float textures (D3D12)
+    bool hdr = false;
     vfx::ParticleRenderData particle_data;
     // Mesh particles' geometry, flattened once from the package's models (empty: the model couldn't be loaded).
     std::unordered_map<std::string, ParticleMesh> particle_meshes;
     bool draw_particles = true;
+    bool bloom = true;
     // The scene's lights, as frame constants (one buffer per frame in flight) where the device has them; else the shader's fixed light.
     static constexpr usize kFrameBuffers = 8;
     std::vector<BufferHandle> frame_buffers;
+    // The clustered lights (light_clusters.h), one frame read buffer per frame in flight beside frame_buffers. `clustered` false
+    // (AETHER_RENDER_CLUSTERED=0) keeps the nearest 8 point and 4 spot lights of the frame constants; the buffers are bound either way.
+    std::vector<BufferHandle> light_buffers;
+    bool clustered = true;
+    LightClusters clusters;              // this frame's, reused
+    std::vector<ClusterLight> cluster_lights;
     // Skins big meshes in parallel (kParallelSkinVertices); made on first use by the rendering thread.
     std::unique_ptr<JobSystem> skin_jobs;
     bool legacy_hud = false; // the AETHER-01 HUD, drawn when the game has no UI of its own
@@ -658,6 +959,9 @@ struct SceneRenderer::Impl {
                         free_buffer(primitive.vertices);
                     } else {
                         for (BufferHandle& buffer : primitive.frame_vertex_buffers) free_buffer(buffer);
+                        for (std::vector<BufferHandle>& frame : primitive.extra_vertex_buffers) {
+                            for (BufferHandle& buffer : frame) free_buffer(buffer);
+                        }
                         primitive.vertices = {};
                     }
                     free_buffer(primitive.indices);
@@ -665,35 +969,131 @@ struct SceneRenderer::Impl {
                 }
             }
         }
+        if (rt_tlas.IsValid()) device.DestroyAccelerationStructure(rt_tlas);
+        for (auto& [path, model] : models) {
+            for (auto& primitives : model.meshes) {
+                for (Primitive& primitive : primitives) {
+                    if (primitive.blas.IsValid()) device.DestroyAccelerationStructure(primitive.blas);
+                }
+            }
+        }
+        if (rt_dummy_blas.IsValid()) device.DestroyAccelerationStructure(rt_dummy_blas);
+        free_buffer(rt_dummy_vertices);
+        free_buffer(rt_dummy_indices);
         for (BufferHandle& buffer : frame_buffers) free_buffer(buffer);
+        for (BufferHandle& buffer : light_buffers) free_buffer(buffer);
+        for (BufferHandle& buffer : motion_position_buffers) free_buffer(buffer);
         for (auto& [path, texture] : textures) free_texture(texture);
         free_texture(font_texture_handle);
         free_texture(white_texture);
-        for (PipelineHandle* handle : {&pipeline, &transparent_pipeline, &hud_pipeline}) {
+        for (PipelineHandle* handle : {&pipeline, &transparent_pipeline, &culled_pipeline, &transparent_culled_pipeline, &hud_pipeline}) {
             if (handle->IsValid()) device.DestroyPipeline(*handle);
             *handle = {};
         }
     }
 
     Impl(IDevice& d, ISwapChain& s, const GamePackage& p) : device(d), swap_chain(s), package(p) {
+        // AETHER_RENDER_HDR=0 keeps the old direct-to-back-buffer path (for comparisons, and as a way out if a driver mishandles it).
+        const char* hdr_setting = std::getenv("AETHER_RENDER_HDR");
+        if (hdr_setting == nullptr || std::strcmp(hdr_setting, "0") != 0) {
+            post = std::make_unique<PostPass>(device, swap_chain);
+            hdr = post->Valid();
+        }
+        const char* taa_setting = std::getenv("AETHER_RENDER_TAA");
+        if (hdr && (taa_setting == nullptr || std::strcmp(taa_setting, "0") != 0)) {
+            taa = std::make_unique<TaaPass>(device, swap_chain);
+            if (!taa->Valid()) taa.reset();
+            const char* motion_setting = std::getenv("AETHER_RENDER_TAA_MOTION"); // 0: the camera's reprojection alone, for comparison
+            taa_motion = taa && (motion_setting == nullptr || std::strcmp(motion_setting, "0") != 0);
+        }
         PipelineDesc desc;
-        desc.hlsl_source = SceneShaderSource(false);
+        desc.hlsl_source = SceneShaderSource(false, hdr);
+        desc.scene_color_target = hdr;
         if (device.SupportsFrameConstants()) {
-            desc.hlsl_source = SceneShaderSource(true);
+            desc.hlsl_source = SceneShaderSource(true, hdr);
             desc.frame_constants_size_bytes = sizeof(FrameData);
             for (usize i = 0; i < kFrameBuffers; ++i) frame_buffers.push_back(device.CreateFrameConstantBuffer(sizeof(FrameData)));
+            desc.frame_read_buffer = true;
+            for (usize i = 0; i < kFrameBuffers; ++i) light_buffers.push_back(device.CreateFrameConstantBuffer(kLightBufferBytes));
+            const char* clustered_setting = std::getenv("AETHER_RENDER_CLUSTERED");
+            clustered = clustered_setting == nullptr || std::strcmp(clustered_setting, "0") != 0;
+            // AETHER_RENDER_SHADOWS=0 turns sun shadows off (for comparisons).
+            const char* shadow_setting = std::getenv("AETHER_RENDER_SHADOWS");
+            if (shadow_setting == nullptr || std::strcmp(shadow_setting, "0") != 0) {
+                shadows = std::make_unique<ShadowPass>(device, swap_chain);
+                if (!shadows->Valid()) shadows.reset();
+            }
+            // AETHER_RENDER_RT_SHADOWS=1: sun shadows by ray query instead of the cascades and virtual pages (needs ray tracing; Vulkan also needs
+            // AETHER_VK_RAY_TRACING=1 as the device is made, which the player sets).
+            const char* rt_setting = std::getenv("AETHER_RENDER_RT_SHADOWS");
+            if (shadows && device.SupportsRayTracing() && rt_setting != nullptr && std::strcmp(rt_setting, "1") == 0) {
+                rt_shadows = true;
+                desc.hlsl_source = SceneShaderSource(true, hdr, true);
+                desc.shader_model_6 = true;
+                desc.acceleration_structure = true;
+            }
+            const char* vsm_setting = std::getenv("AETHER_RENDER_VSM");
+            if (shadows && !rt_shadows && hdr && device.SupportsReadback() && (vsm_setting == nullptr || std::strcmp(vsm_setting, "0") != 0)) {
+                if (const char* pool = std::getenv("AETHER_VSM_POOL")) vsm_pool = std::clamp<u32>(static_cast<u32>(std::atoi(pool)), 2u, 64u);
+                vsm_feedback = std::make_unique<VsmFeedback>(device, swap_chain);
+                vsm_pass = std::make_unique<VsmPass>(device, swap_chain);
+                // The scene depth copy the feedback reads (TAA asks for it too).
+                (void)swap_chain.SceneColorTexture();
+                const bool depth_ok = swap_chain.SceneDepthTexture().IsValid();
+                if (!vsm_feedback->Valid() || !vsm_pass->Valid() || !depth_ok) {
+                    vsm_feedback.reset();
+                    vsm_pass.reset();
+                } else {
+                    vsm_pages = std::make_unique<VsmPageAllocator>(vsm_pool);
+                    vsm_stats.enabled = true;
+                }
+            }
+            // AETHER_RENDER_IBL=0 keeps the flat ambient term and background (for comparisons).
+            const char* ibl_setting = std::getenv("AETHER_RENDER_IBL");
+            if (ibl_setting == nullptr || std::strcmp(ibl_setting, "0") != 0) {
+                sky = std::make_unique<SkyPass>(device, swap_chain, hdr);
+                if (!sky->Valid()) sky.reset();
+            }
         }
         desc.push_constant_size_bytes = sizeof(DrawConstants);
         desc.use_vertex_buffer = true;
         desc.vertex_layout = VertexLayout::PositionNormalUvTangent;
         desc.enable_bindless_textures = true;
         desc.depth_test = true;
-        pipeline = device.CreatePipeline(desc, swap_chain);
+        if (rt_shadows) {
+            // The scene shader through DXC at shader model 6.5; if it will not build, the cascades stay.
+            try {
+                pipeline = device.CreatePipeline(desc, swap_chain);
+                std::vector<SceneVertex> dummy(3);
+                dummy[0].position[1] = dummy[1].position[1] = dummy[2].position[1] = -100000.0f;
+                dummy[1].position[0] = 1.0f;
+                dummy[2].position[2] = 1.0f;
+                const u32 dummy_indices[3] = {0, 1, 2};
+                rt_dummy_vertices = device.CreateVertexBuffer(dummy.data(), dummy.size() * sizeof(SceneVertex));
+                rt_dummy_indices = device.CreateIndexBuffer(dummy_indices, sizeof(dummy_indices), IndexFormat::UInt32);
+                rt_dummy_blas = device.CreateBottomLevelAS(rt_dummy_vertices, 3, sizeof(SceneVertex), rt_dummy_indices, 3);
+                if (!rt_dummy_blas.IsValid()) throw std::runtime_error("no acceleration structure");
+            } catch (const std::exception& error) {
+                AETHER_LOG_WARN("PlayerRenderer", "Ray-traced shadows unavailable (%s); the cascades stay", error.what());
+                rt_shadows = false;
+                if (pipeline.IsValid()) device.DestroyPipeline(pipeline);
+                pipeline = {};
+                desc.hlsl_source = SceneShaderSource(true, hdr);
+                desc.shader_model_6 = false;
+                desc.acceleration_structure = false;
+            }
+        }
+        if (!pipeline.IsValid()) pipeline = device.CreatePipeline(desc, swap_chain);
 
         PipelineDesc transparent_desc = desc;
         transparent_desc.enable_blending = true;
         transparent_desc.depth_write = false;
         transparent_pipeline = device.CreatePipeline(transparent_desc, swap_chain);
+        PipelineDesc culled_desc = desc;
+        culled_desc.cull_back_face = true;
+        culled_pipeline = device.CreatePipeline(culled_desc, swap_chain);
+        transparent_desc.cull_back_face = true;
+        transparent_culled_pipeline = device.CreatePipeline(transparent_desc, swap_chain);
         if (!transparent_pipeline.IsValid()) {
             AETHER_LOG_WARN("PlayerRenderer", "Transparent material pipeline unavailable; blended materials draw opaque");
         }
@@ -708,8 +1108,8 @@ struct SceneRenderer::Impl {
         // with the same pipeline and font.
         legacy_hud = package.Manifest().project == "AETHER-01";
 
-        particles = std::make_unique<ParticlePass>(device, swap_chain);
-        decals = std::make_unique<DecalPass>(device, swap_chain);
+        particles = std::make_unique<ParticlePass>(device, swap_chain, hdr);
+        decals = std::make_unique<DecalPass>(device, swap_chain, hdr);
         // Particle materials are textures in the package, through the same cache as the models' (0: untextured, drawn procedurally).
         particles->SetTextureResolver([this](const std::string& material) -> u32 {
             SampledTextureHandle texture;
@@ -785,7 +1185,11 @@ struct SceneRenderer::Impl {
             item.draw = draw;
             SampledTextureHandle texture;
             if (!decal.texture.empty() && LoadTexture(decal.texture, texture)) item.texture = texture.index;
-            item.color[0] = DecalTint(decal.color.x), item.color[1] = DecalTint(decal.color.y), item.color[2] = DecalTint(decal.color.z);
+            if (decals->HdrTarget()) {
+                item.color[0] = std::max(decal.color.x, 0.0f), item.color[1] = std::max(decal.color.y, 0.0f), item.color[2] = std::max(decal.color.z, 0.0f);
+            } else {
+                item.color[0] = DecalTint(decal.color.x), item.color[1] = DecalTint(decal.color.y), item.color[2] = DecalTint(decal.color.z);
+            }
             item.color[3] = std::clamp(decal.opacity, 0.0f, 1.0f);
             item.fade_start = decal.angle_fade_start, item.fade_end = decal.angle_fade_end;
             items.push_back(item);
@@ -1188,12 +1592,78 @@ struct SceneRenderer::Impl {
         }
     }
 
-    bool LoadTexture(const std::string& path, SampledTextureHandle& out) {
+    // The SkyLight's environment, rebuilt when its image or rotation changes: the image from the package (a .hdr as it is, an LDR image
+    // decoded from sRGB), or the procedural sky when it has none or the image can't be read (said once per image).
+    // The cooked environment of an .hdr (Cooked/<guid>.aenv, built by the cooker at rotation 0 with the default settings). False when the pak has
+    // none, it is damaged, or it was built with other settings than this player uses; the caller then prefilters the source itself.
+    bool LoadCookedEnvironment(const std::string& path, PrefilteredEnvironment& out) {
+        const GameManifest::Asset* asset = package.FindAsset(path);
+        if (asset == nullptr || asset->cooked.size() < 5 || asset->cooked.compare(asset->cooked.size() - 5, 5, ".aenv") != 0) return false;
+        std::vector<u8> bytes;
+        std::string why;
+        if (!package.Files().Read(asset->cooked, bytes, &why)) {
+            AETHER_LOG_WARN("PlayerRenderer", "Can't read %s: %s; prefiltering '%s' here", asset->cooked.c_str(), why.c_str(), path.c_str());
+            return false;
+        }
+        PrefilterSettings built;
+        if (!assets::LoadEnvironment(bytes, out, &built, &why)) {
+            AETHER_LOG_WARN("PlayerRenderer", "%s: %s; prefiltering '%s' here", asset->cooked.c_str(), why.c_str(), path.c_str());
+            return false;
+        }
+        const PrefilterSettings wanted;
+        return built.max_width == wanted.max_width && built.smallest_width == wanted.smallest_width && built.samples == wanted.samples;
+    }
+
+    void UpdateSky(const SkyLight& light) {
+        const f32 rotation = std::isfinite(light.environment_rotation_degrees) ? light.environment_rotation_degrees : 0.0f;
+        const std::string key = light.environment + "@" + std::to_string(rotation);
+        if (sky->Key() == key && sky->HasEnvironment()) return;
+        if (sky->Key() == key) return; // tried and failed: don't retry every frame
+        // A sky that is not turned and has a cooked environment skips the prefilter (the rotation is baked into the cooked data, so a turned
+        // sky is prefiltered here). AETHER_RENDER_COOKED_SKY=0 ignores the cooked data, for comparison.
+        const char* cooked_setting = std::getenv("AETHER_RENDER_COOKED_SKY");
+        if (rotation == 0.0f && !light.environment.empty() && (cooked_setting == nullptr || std::strcmp(cooked_setting, "0") != 0)) {
+            const auto start = std::chrono::steady_clock::now();
+            PrefilteredEnvironment cooked;
+            if (LoadCookedEnvironment(light.environment, cooked) && sky->SetPrefilteredEnvironment(key, std::move(cooked))) {
+                AETHER_LOG_INFO("PlayerRenderer", "Sky environment '%s': %ux%u, %u levels, cooked, loaded in %.1f ms", light.environment.c_str(),
+                                sky->Environment().width, sky->Environment().height, sky->Environment().mip_count,
+                                std::chrono::duration<f64, std::milli>(std::chrono::steady_clock::now() - start).count());
+                return;
+            }
+        }
+        EnvironmentImage image;
+        if (!light.environment.empty()) {
+            std::vector<u8> bytes;
+            if (!package.ReadContent(light.environment, bytes)) {
+                AETHER_LOG_WARN("PlayerRenderer", "SkyLight environment '%s' is not in the package; using the procedural sky", light.environment.c_str());
+            } else if (assets::IsHdrImage(bytes)) {
+                assets::HdrImageData hdr_image;
+                if (assets::DecodeHdrImageFromMemory(bytes, hdr_image)) image = MakeEnvironment(hdr_image.width, hdr_image.height, hdr_image.rgb, rotation);
+            } else {
+                assets::ImageData ldr_image;
+                if (assets::DecodeImageFromMemory(bytes, ldr_image)) image = MakeEnvironmentFromSrgb(ldr_image.width, ldr_image.height, ldr_image.pixels, rotation);
+            }
+            if (image.width == 0 && !bytes.empty()) {
+                AETHER_LOG_WARN("PlayerRenderer", "SkyLight environment '%s' can't be decoded; using the procedural sky", light.environment.c_str());
+            }
+        }
+        if (sky->SetEnvironment(key, image)) {
+            AETHER_LOG_INFO("PlayerRenderer", "Sky environment '%s': %ux%u, %u levels, prefiltered in %.1f ms",
+                            light.environment.empty() ? "(procedural)" : light.environment.c_str(), sky->Environment().width,
+                            sky->Environment().height, sky->Environment().mip_count, sky->LastBuildMilliseconds());
+        }
+    }
+
+    // `filter` says how the mip chain averages it (colour by default; a material's normal and data maps say so). A texture used both
+    // ways is cached once per way.
+    bool LoadTexture(const std::string& path, SampledTextureHandle& out, assets::MipFilter filter = assets::MipFilter::Srgb) {
         if (path.empty()) {
             out = white_texture;
             return false;
         }
-        if (const auto found = textures.find(path); found != textures.end()) {
+        const std::string key = filter == assets::MipFilter::Srgb ? path : path + (filter == assets::MipFilter::NormalMap ? "#normal" : "#linear");
+        if (const auto found = textures.find(key); found != textures.end()) {
             out = found->second;
             return out.IsValid() && out.index != white_texture.index;
         }
@@ -1226,7 +1696,7 @@ struct SceneRenderer::Impl {
                         out = device.CreateCompressedTexture(format, cooked.width, cooked.height, mips);
                         if (out.IsValid()) {
                             ++sampled_texture_count;
-                            textures.emplace(path, out);
+                            textures.emplace(key, out);
                             return out.index != white_texture.index;
                         }
                     }
@@ -1238,15 +1708,59 @@ struct SceneRenderer::Impl {
         if (!LoadPackageTexture(package, path, image, &why)) {
             AETHER_LOG_WARN("PlayerRenderer", "Couldn't load model texture '%s' (%s); using the white fallback", path.c_str(), why.c_str());
             out = white_texture;
-            textures.emplace(path, white_texture); // remembered, so a missing UI image isn't read and decoded again every frame
+            textures.emplace(key, white_texture); // remembered, so a missing UI image isn't read and decoded again every frame
             return false;
         }
-        out = device.CreateTexture(image.width, image.height, image.pixels.data());
+        // With its whole mip chain, so minified surfaces filter instead of shimmering.
+        u32 mip_count = 0;
+        const std::vector<u8> levels = assets::BuildMipChain(image.width, image.height, image.pixels, filter, mip_count);
+        out = mip_count > 0 ? device.CreateTextureWithMips(image.width, image.height, mip_count, levels.data())
+                            : device.CreateTexture(image.width, image.height, image.pixels.data());
         if (out.IsValid()) {
             ++sampled_texture_count;
-            textures.emplace(path, out);
+            textures.emplace(key, out);
         }
         return out.IsValid() && out.index != white_texture.index;
+    }
+
+    // An image embedded in a model's buffer (images[i].bufferView), decoded and uploaded with its mips like LoadTexture's, cached
+    // under `key` (the model's path and the image's index).
+    bool LoadEmbeddedTexture(const std::string& key, const json& document, usize view_index, const std::vector<std::vector<u8>>& buffers,
+                             SampledTextureHandle& out, assets::MipFilter filter) {
+        const std::string cache_key = key + (filter == assets::MipFilter::Srgb ? "" : filter == assets::MipFilter::NormalMap ? "#normal" : "#linear");
+        if (const auto found = textures.find(cache_key); found != textures.end()) {
+            out = found->second;
+            return out.IsValid() && out.index != white_texture.index;
+        }
+        out = white_texture;
+        if (sampled_texture_count >= kMaxUserBindlessTextures) {
+            AETHER_LOG_WARN("PlayerRenderer", "Bindless texture limit reached; using the white fallback for '%s'", key.c_str());
+            return false;
+        }
+        if (!document.contains("bufferViews") || !document["bufferViews"].is_array() || view_index >= document["bufferViews"].size()) return false;
+        const json& view = document["bufferViews"][view_index];
+        const usize buffer_index = view.value("buffer", usize(-1));
+        const usize offset = view.value("byteOffset", usize(0));
+        const usize length = view.value("byteLength", usize(0));
+        assets::ImageData image;
+        if (buffer_index >= buffers.size() || length == 0 || offset > buffers[buffer_index].size() ||
+            length > buffers[buffer_index].size() - offset ||
+            !assets::DecodeImageFromMemory(std::span<const u8>(buffers[buffer_index].data() + offset, length), image)) {
+            AETHER_LOG_WARN("PlayerRenderer", "Couldn't decode embedded texture '%s'; using the white fallback", key.c_str());
+            textures.emplace(cache_key, white_texture);
+            return false;
+        }
+        u32 mip_count = 0;
+        const std::vector<u8> levels = assets::BuildMipChain(image.width, image.height, image.pixels, filter, mip_count);
+        out = mip_count > 0 ? device.CreateTextureWithMips(image.width, image.height, mip_count, levels.data())
+                            : device.CreateTexture(image.width, image.height, image.pixels.data());
+        if (!out.IsValid()) {
+            out = white_texture;
+            return false;
+        }
+        ++sampled_texture_count;
+        textures.emplace(cache_key, out);
+        return true;
     }
 
     bool LoadModel(const std::string& path, Model& out) {
@@ -1255,7 +1769,34 @@ struct SceneRenderer::Impl {
             AETHER_LOG_WARN("PlayerRenderer", "Couldn't read cooked model '%s'", path.c_str());
             return false;
         }
-        json document = json::parse(source.begin(), source.end(), nullptr, false);
+        // A .glb: its JSON chunk is the document and its BIN chunk becomes buffer 0's data URI (the parser below reads only
+        // self-contained documents).
+        std::string glb_json;
+        std::vector<u8> glb_bin;
+        const bool glb = source.size() >= 4 && std::memcmp(source.data(), "glTF", 4) == 0;
+        if (glb && !assets::ReadGlbChunks(source, glb_json, glb_bin)) {
+            AETHER_LOG_WARN("PlayerRenderer", "Cooked model '%s' isn't a valid GLB", path.c_str());
+            return false;
+        }
+        json document = glb ? json::parse(glb_json, nullptr, false) : json::parse(source.begin(), source.end(), nullptr, false);
+        // Each buffer's bytes, kept for images stored in a bufferView (a .glb's usual way of embedding them).
+        std::vector<std::vector<u8>> buffer_bytes;
+        bool parse_glb = false;          // the parser reads `source` itself
+        std::vector<u8> built_glb;       // or this: a one-buffer .gltf with its buffer as the BIN chunk
+        if (!document.is_discarded() && document.is_object() && document.contains("buffers") && document["buffers"].is_array()) {
+            buffer_bytes.resize(document["buffers"].size());
+        }
+        if (glb && !document.is_discarded() && document.is_object() && document.contains("buffers") && document["buffers"].is_array() &&
+            !document["buffers"].empty() && document["buffers"][0].is_object() && !document["buffers"][0].contains("uri")) {
+            json& buffer = document["buffers"][0];
+            // The data URI holds byteLength exactly (the chunk's alignment padding is not the buffer's).
+            if (buffer.contains("byteLength") && buffer["byteLength"].is_number_unsigned()) {
+                const usize declared = buffer["byteLength"].get<usize>();
+                if (declared <= glb_bin.size()) glb_bin.resize(declared);
+            }
+            parse_glb = true; // the file as it is: buffer 0 is its BIN chunk
+            buffer_bytes[0] = std::move(glb_bin);
+        }
         if (document.is_discarded() || !document.is_object()) {
             AETHER_LOG_WARN("PlayerRenderer", "Cooked model '%s' isn't valid glTF JSON", path.c_str());
             return false;
@@ -1264,8 +1805,27 @@ struct SceneRenderer::Impl {
         // A cooked package is a VFS, not a filesystem. Embed the already
         // cooked buffer bytes into the in-memory glTF document so the shared
         // parser can safely load it without opening arbitrary paths.
-        if (document.contains("buffers") && document["buffers"].is_array()) {
-            for (json& buffer : document["buffers"]) {
+        // A .gltf with one external buffer becomes a GLB in memory (see MakeGlb).
+        if (!glb && document.contains("buffers") && document["buffers"].is_array() && document["buffers"].size() == 1 &&
+            document["buffers"][0].is_object() && document["buffers"][0].contains("uri") && document["buffers"][0]["uri"].is_string() &&
+            document["buffers"][0]["uri"].get<std::string>().rfind("data:", 0) != 0) {
+            const std::string buffer_path = ResolveContentPath(path, document["buffers"][0]["uri"].get<std::string>());
+            std::vector<u8> bytes;
+            if (!package.ReadContent(buffer_path, bytes)) {
+                AETHER_LOG_WARN("PlayerRenderer", "Model '%s' references missing buffer '%s'", path.c_str(), buffer_path.c_str());
+                return false;
+            }
+            json without_uri = document;
+            without_uri["buffers"][0].erase("uri");
+            if (without_uri["buffers"][0].contains("byteLength") && without_uri["buffers"][0]["byteLength"].is_number_unsigned()) {
+                const usize declared = without_uri["buffers"][0]["byteLength"].get<usize>();
+                if (declared <= bytes.size()) bytes.resize(declared);
+            }
+            built_glb = MakeGlb(without_uri.dump(), bytes);
+            buffer_bytes[0] = std::move(bytes);
+        } else if (!parse_glb && document.contains("buffers") && document["buffers"].is_array()) {
+            for (usize buffer_index = 0; buffer_index < document["buffers"].size(); ++buffer_index) {
+                json& buffer = document["buffers"][buffer_index];
                 if (!buffer.contains("uri") || !buffer["uri"].is_string()) continue;
                 const std::string uri = buffer["uri"].get<std::string>();
                 if (uri.rfind("data:", 0) == 0) continue;
@@ -1276,16 +1836,26 @@ struct SceneRenderer::Impl {
                     return false;
                 }
                 buffer["uri"] = "data:application/octet-stream;base64," + Base64(bytes);
+                buffer_bytes[buffer_index] = std::move(bytes);
             }
         }
-        const std::string cooked_json = document.dump();
-        if (!assets::LoadGltfFromMemory(std::span<const u8>(reinterpret_cast<const u8*>(cooked_json.data()), cooked_json.size()),
-                                        out.scene)) {
+        std::string cooked_json;
+        std::span<const u8> parser_input;
+        if (parse_glb) {
+            parser_input = source;
+        } else if (!built_glb.empty()) {
+            parser_input = built_glb;
+        } else {
+            cooked_json = document.dump(); // buffers embedded as data URIs: several, or none
+            parser_input = std::span<const u8>(reinterpret_cast<const u8*>(cooked_json.data()), cooked_json.size());
+        }
+        if (!assets::LoadGltfFromMemory(parser_input, out.scene)) {
             AETHER_LOG_WARN("PlayerRenderer", "Couldn't parse cooked model '%s'", path.c_str());
             return false;
         }
 
-        auto upload_texture_reference = [&](const json& texture_reference, SampledTextureHandle& texture) {
+        auto upload_texture_reference = [&](const json& texture_reference, SampledTextureHandle& texture,
+                                            assets::MipFilter filter = assets::MipFilter::Srgb) {
             if (!texture_reference.is_object() || !texture_reference.contains("index") ||
                 !document.contains("textures") || !document["textures"].is_array() ||
                 !document.contains("images") || !document["images"].is_array()) {
@@ -1297,10 +1867,14 @@ struct SceneRenderer::Impl {
             const usize image_index = texture_info.value("source", usize(-1));
             if (image_index >= document["images"].size()) return false;
             const json& image = document["images"][image_index];
+            if (image.contains("bufferView") && image["bufferView"].is_number_unsigned()) {
+                return LoadEmbeddedTexture(path + "#image" + std::to_string(image_index), document, image["bufferView"].get<usize>(),
+                                           buffer_bytes, texture, filter);
+            }
             if (!image.contains("uri") || !image["uri"].is_string()) return false;
             const std::string uri = image["uri"].get<std::string>();
             if (uri.rfind("data:", 0) == 0) return false;
-            return LoadTexture(ResolveContentPath(path, uri), texture);
+            return LoadTexture(ResolveContentPath(path, uri), texture, filter);
         };
 
         std::vector<MaterialTextures> material_textures(out.scene.materials.size());
@@ -1318,16 +1892,20 @@ struct SceneRenderer::Impl {
                     if (pbr.contains("metallicRoughnessTexture")) {
                         textures_for_material.has_metallic_roughness =
                             upload_texture_reference(pbr["metallicRoughnessTexture"],
-                                                     textures_for_material.metallic_roughness);
+                                                     textures_for_material.metallic_roughness, assets::MipFilter::Linear);
                     }
                 }
                 if (material_json.contains("normalTexture")) {
                     textures_for_material.has_normal =
-                        upload_texture_reference(material_json["normalTexture"], textures_for_material.normal);
+                        upload_texture_reference(material_json["normalTexture"], textures_for_material.normal, assets::MipFilter::NormalMap);
                 }
                 if (material_json.contains("occlusionTexture")) {
                     textures_for_material.has_occlusion =
-                        upload_texture_reference(material_json["occlusionTexture"], textures_for_material.occlusion);
+                        upload_texture_reference(material_json["occlusionTexture"], textures_for_material.occlusion, assets::MipFilter::Linear);
+                }
+                if (material_json.contains("emissiveTexture")) {
+                    textures_for_material.has_emissive =
+                        upload_texture_reference(material_json["emissiveTexture"], textures_for_material.emissive);
                 }
             }
         }
@@ -1361,11 +1939,40 @@ struct SceneRenderer::Impl {
                             device.CreateVertexBuffer(vertices.data(), vertices.size() * sizeof(SceneVertex)));
                     }
                     draw.vertices = draw.frame_vertex_buffers.front();
+                    {
+                        Vec3 lo(vertices[0].position[0], vertices[0].position[1], vertices[0].position[2]), hi = lo;
+                        for (const SceneVertex& v : vertices) {
+                            lo = Vec3(std::min(lo.x, v.position[0]), std::min(lo.y, v.position[1]), std::min(lo.z, v.position[2]));
+                            hi = Vec3(std::max(hi.x, v.position[0]), std::max(hi.y, v.position[1]), std::max(hi.z, v.position[2]));
+                        }
+                        const Vec3 center = (lo + hi) * 0.5f;
+                        f32 radius = 0.0f;
+                        for (const SceneVertex& v : vertices) {
+                            radius = std::max(radius, (Vec3(v.position[0], v.position[1], v.position[2]) - center).Length());
+                        }
+                        draw.skin_bounds_center[0] = center.x, draw.skin_bounds_center[1] = center.y, draw.skin_bounds_center[2] = center.z;
+                        draw.skin_bounds_radius = radius * 1.5f;
+                    }
                     AETHER_LOG_INFO("PlayerRenderer", "Skinned primitive: %zu vertices, per-frame vertex buffers %u..%u",
                                     vertices.size(), draw.frame_vertex_buffers.front().index,
                                     draw.frame_vertex_buffers.back().index);
                 } else {
                     draw.vertices = device.CreateVertexBuffer(vertices.data(), vertices.size() * sizeof(SceneVertex));
+                    draw.vertex_count = static_cast<u32>(vertices.size());
+                    if (!vertices.empty()) {
+                        Vec3 lo(vertices[0].position[0], vertices[0].position[1], vertices[0].position[2]), hi = lo;
+                        for (const SceneVertex& v : vertices) {
+                            lo = Vec3(std::min(lo.x, v.position[0]), std::min(lo.y, v.position[1]), std::min(lo.z, v.position[2]));
+                            hi = Vec3(std::max(hi.x, v.position[0]), std::max(hi.y, v.position[1]), std::max(hi.z, v.position[2]));
+                        }
+                        const Vec3 center = (lo + hi) * 0.5f;
+                        f32 radius = 0.0f;
+                        for (const SceneVertex& v : vertices) {
+                            radius = std::max(radius, (Vec3(v.position[0], v.position[1], v.position[2]) - center).Length());
+                        }
+                        draw.bounds_center[0] = center.x, draw.bounds_center[1] = center.y, draw.bounds_center[2] = center.z;
+                        draw.bounds_radius = radius;
+                    }
                 }
                 draw.indices = device.CreateIndexBuffer(primitive.indices.data(), primitive.indices.size() * sizeof(u32),
                                                         IndexFormat::UInt32);
@@ -1375,11 +1982,12 @@ struct SceneRenderer::Impl {
                     std::copy(std::begin(material.base_color), std::end(material.base_color), draw.color);
                     draw.metallic = material.metallic;
                     draw.roughness = material.roughness;
-                    std::copy(std::begin(material.emissive_factor), std::end(material.emissive_factor), draw.emissive);
+                    for (usize c = 0; c < 3; ++c) draw.emissive[c] = material.emissive_factor[c] * material.emissive_strength;
                     draw.normal_scale = material.normal_scale;
                     draw.occlusion_strength = material.occlusion_strength;
                     draw.alpha_cutoff = material.alpha_cutoff;
                     draw.alpha_mode = material.alpha_mode;
+                    draw.double_sided = material.double_sided;
                     const usize material_index = static_cast<usize>(primitive.material_index);
                     if (material.HasSurfaceExtension()) {
                         if (extension_textures.size() < out.scene.materials.size()) extension_textures.resize(out.scene.materials.size());
@@ -1401,6 +2009,8 @@ struct SceneRenderer::Impl {
                         draw.normal_texture = textures_for_material.normal;
                         draw.metallic_roughness_texture = textures_for_material.metallic_roughness;
                         draw.occlusion_texture = textures_for_material.occlusion;
+                        draw.emissive_texture = textures_for_material.emissive;
+                        draw.has_emissive_texture = textures_for_material.has_emissive;
                         draw.has_base_color_texture = textures_for_material.has_base_color;
                         draw.has_normal_texture = textures_for_material.has_normal;
                         draw.has_metallic_roughness_texture = textures_for_material.has_metallic_roughness;
@@ -1430,9 +2040,10 @@ struct SceneRenderer::Impl {
         for (auto& [path, model] : models) {
             for (auto& primitives : model.meshes) {
                 for (Primitive& primitive : primitives) {
-                    primitive.base_color_texture = primitive.normal_texture = primitive.metallic_roughness_texture = primitive.occlusion_texture = white_texture;
+                    primitive.base_color_texture = primitive.normal_texture = primitive.metallic_roughness_texture = primitive.occlusion_texture =
+                        primitive.emissive_texture = white_texture;
                     primitive.has_base_color_texture = primitive.has_normal_texture = primitive.has_metallic_roughness_texture =
-                        primitive.has_occlusion_texture = false;
+                        primitive.has_occlusion_texture = primitive.has_emissive_texture = false;
                 }
             }
         }
@@ -1497,6 +2108,22 @@ SceneRenderer::~SceneRenderer() = default;
 
 void SceneRenderer::SetViewDistance(f32 metres) { impl_->view_distance = metres; }
 void SceneRenderer::SetDrawParticles(bool draw) { impl_->draw_particles = draw; }
+void SceneRenderer::SetShadows(u32 resolution, u32 cascades) {
+    if (impl_->shadows) impl_->shadows->Configure(resolution, cascades);
+    if (resolution == 0 || cascades == 0) { // no sun shadows: the pages and their atlas go too
+        if (impl_->vsm_pass) impl_->vsm_pass->Release();
+        if (impl_->vsm_pages) impl_->vsm_pages->Clear();
+        impl_->vsm_casters.clear();
+    }
+}
+SceneRenderer::VirtualShadowStats SceneRenderer::VirtualShadows() const { return impl_->vsm_stats; }
+SceneRenderer::RayTracedShadowStats SceneRenderer::RayTracedShadows() const {
+    return {impl_->rt_shadows, impl_->rt_instances, impl_->rt_rebuilds};
+}
+void SceneRenderer::SetBloom(bool enabled) {
+    impl_->bloom = enabled;
+    if (!enabled && impl_->post) impl_->post->ReleaseBloom(); // the chain's bindless slots go back to the table
+}
 void SceneRenderer::SetRenderPoseSampler(std::function<bool(Entity, Transform&)> sampler) {
     impl_->render_pose_sampler = std::move(sampler);
 }
@@ -1508,6 +2135,15 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
         u32 index_count = 0;
         DrawConstants constants;
         f32 distance_squared = 0.0f;
+        bool cull = false; // back faces culled: a single-sided material on a model that isn't mirrored
+    };
+    // Opaque and alpha-tested draws are gathered first and issued once the shadow atlas (drawn before the scene pass) is ready.
+    struct PendingOpaqueDraw {
+        BufferHandle vertices;
+        BufferHandle indices;
+        u32 index_count = 0;
+        DrawConstants constants;
+        bool cull = false;
     };
 
     Impl& renderer = *impl_;
@@ -1546,22 +2182,51 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
         if (model.asset_path[0] != '\0') renderer.FindModel(model.asset_path);
     });
 
-    commands.BeginRenderPass(renderer.swap_chain, {0.015f, 0.025f, 0.045f, 1.0f});
+    // The background: the same display colour on both paths. In the HDR target it is the linear value that ACES at exposure 1 maps back to
+    // (solved numerically: the curve's toe crushes the plain sRGB decode of these values to black). Other tone mappers or exposures shift it.
+    constexpr ClearColor kBackground{0.015f, 0.025f, 0.045f, 1.0f};
+    constexpr ClearColor kBackgroundLinear{0.01037f, 0.01450f, 0.02188f, 1.0f};
     std::vector<PendingTransparentDraw> transparent_draws;
+    std::vector<PendingOpaqueDraw> opaque_draws;
+    std::vector<ShadowCaster> shadow_casters;
+    std::vector<AccelerationInstance> rt_instances; // ray-traced shadows: the rigid opaque casters, placed
+    std::vector<TaaMover> taa_movers; // opaque draws whose model transform or skinned pose changed since last frame
+    struct DirtySphere {
+        Vec3 center;
+        f32 radius;
+    };
+    std::vector<DirtySphere> vsm_dirty; // where a caster is, and was, that is new or has moved: virtual shadow pages to redraw
+    std::vector<VsmPageAllocator::Sphere> vsm_suppress; // where a deforming caster is: its pages are left out of the page table
+    const u64 transform_frame = ++renderer.transform_frame;
+    renderer.motion_positions.clear();
+    FrameData frame_data;
+    View shadow_view;
+    bool sun_shadows = false;
+    bool draw_sky = false;
     BufferHandle frame_buffer; // this frame's lights, when the device has frame constants
+    BufferHandle light_buffer; // and its clustered lights
     const Entity camera_entity = FindActiveCamera(world, guids);
     const Camera* camera = world.IsAlive(camera_entity) ? world.GetComponent<Camera>(camera_entity) : nullptr;
     Mat4 particle_view_projection, particle_projection;
     vfx::ParticleCamera particle_camera;
     bool draw_particles = false;
     Mat4 decal_view_projection;
+    Mat4 taa_view_projection; // without the jitter
     Vec3 decal_camera_position;
     bool have_camera = false;
     if (camera) {
         const f32 aspect = static_cast<f32>(renderer.swap_chain.Width()) /
                            static_cast<f32>(std::max(renderer.swap_chain.Height(), 1u));
         const Mat4 camera_view = CameraView(world, guids, camera_entity);
-        const Mat4 projection = CameraProjection(LimitViewDistance(*camera, renderer.view_distance), aspect);
+        const Mat4 steady_projection = CameraProjection(LimitViewDistance(*camera, renderer.view_distance), aspect);
+        // Temporal anti-aliasing moves every draw by this frame's sub-pixel offset; its resolve reprojects without it.
+        Mat4 projection = steady_projection;
+        if (renderer.taa) {
+            f32 jitter_x = 0.0f, jitter_y = 0.0f;
+            renderer.taa->NextJitter(jitter_x, jitter_y);
+            projection = JitterProjection(steady_projection, jitter_x, jitter_y, renderer.swap_chain.Width(), renderer.swap_chain.Height());
+        }
+        taa_view_projection = steady_projection * camera_view;
         const Mat4 view_projection = projection * camera_view;
         particle_view_projection = view_projection;
         particle_projection = projection;
@@ -1576,6 +2241,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
         decal_view_projection = view_projection;
         decal_camera_position = camera_position;
         have_camera = true;
+        shadow_view = MakeView(LimitViewDistance(*camera, renderer.view_distance), camera_transform, aspect);
         // Mesh particles get the scene shader's sun and sky: the frame's lights where the device has frame constants, else the shader's
         // fixed light (ParticleLighting's defaults), through the pass's push constants on every backend.
         ParticleLighting particle_lighting;
@@ -1583,9 +2249,31 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
         if (!renderer.frame_buffers.empty()) {
             // The sun, sky and nearby point and spot lights of this scene (the previous use of this slot's frame has finished).
             frame_buffer = renderer.frame_buffers[frame_index % renderer.frame_buffers.size()];
-            FrameData frame_data = BuildFrameData(world, guids, camera_position);
+            frame_data = BuildFrameData(world, guids, camera_position);
             if (draw_particles) AddParticleLights(frame_data, renderer.particle_data.lights, camera_position);
-            renderer.device.UpdateFrameConstantBuffer(frame_buffer, &frame_data, sizeof(frame_data));
+            if (!renderer.light_buffers.empty()) {
+                light_buffer = renderer.light_buffers[frame_index % renderer.light_buffers.size()];
+                if (renderer.clustered) {
+                    // Every light in view, binned into the view grid; the frame constants' nearest lights stay for lit particles.
+                    renderer.cluster_lights = GatherClusterLights(
+                        world, guids, draw_particles ? std::span<const vfx::ParticleLight>(renderer.particle_data.lights)
+                                                     : std::span<const vfx::ParticleLight>());
+                    const Camera limited = LimitViewDistance(*camera, renderer.view_distance);
+                    const ClusterView cluster_view{camera_view, projection, std::max(limited.near_plane, 1e-4f),
+                                                   std::max(limited.far_plane, std::max(limited.near_plane, 1e-4f) * 1.001f)};
+                    BuildLightClusters(renderer.cluster_lights, cluster_view, renderer.clusters);
+                    FillClusterData(frame_data, renderer.clusters, cluster_view, renderer.swap_chain.Width(), renderer.swap_chain.Height());
+                }
+            }
+            sun_shadows = renderer.shadows && frame_data.counts[2] != 0; // uploaded once the shadow pass has filled its part
+            // The sky's image-based lighting and background, from a SkyLight (a world without one keeps the flat ambient term).
+            if (renderer.sky) {
+                if (const SkyLight* sky_light = FindSkyLight(world)) {
+                    renderer.UpdateSky(*sky_light);
+                    renderer.sky->Fill(frame_data);
+                    draw_sky = renderer.hdr && renderer.sky->HasEnvironment();
+                }
+            }
             particle_lighting.sun_direction = Vec3(frame_data.sun_direction[0], frame_data.sun_direction[1], frame_data.sun_direction[2]);
             particle_lighting.sun_color = Vec3(frame_data.sun_color[0], frame_data.sun_color[1], frame_data.sun_color[2]);
             particle_lighting.sky_color = Vec3(frame_data.sky_color[0], frame_data.sky_color[1], frame_data.sky_color[2]);
@@ -1597,9 +2285,6 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
             }
         }
         if (renderer.particles) renderer.particles->SetLighting(particle_lighting);
-        commands.BindPipeline(renderer.pipeline);
-        if (frame_buffer.IsValid()) commands.BindFrameConstants(frame_buffer);
-        commands.BindBindlessTextures();
         world.ForEachArchetype([&](const Archetype& archetype) {
             if (!archetype.Mask().test(GetComponentId<Transform>()) || !archetype.Mask().test(GetComponentId<ModelRenderer>())) return;
             for (usize chunk = 0; chunk < archetype.ChunkCount(); ++chunk) {
@@ -1655,6 +2340,20 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                         }
                         const Mat4 model_transform = entity_transform * node.world_transform;
                         const Mat4 mvp = view_projection * model_transform;
+                        // Last frame's transform of this node, when it was drawn last frame, and whether it moved since (for TAA's
+                        // motion pass; a skinned primitive whose pose changed is a mover even when the transform did not).
+                        std::optional<Mat4> previous_model;
+                        bool transform_moved = false;
+                        if (renderer.taa_motion) {
+                            Impl::PreviousTransform& previous = renderer.previous_transforms[{entities[row].index, entities[row].generation,
+                                                                                              static_cast<u32>(node.node_index)}];
+                            if (previous.frame + 1 == transform_frame) {
+                                previous_model = previous.model;
+                                transform_moved = TaaTransformMoved(previous.model, model_transform);
+                            }
+                            previous.model = model_transform;
+                            previous.frame = transform_frame;
+                        }
                         const Mat4 normal_transform = BuildNormalTransform(model_transform);
                         std::vector<Mat4> skin_normal_matrices;
                         if (has_skin && !model->skin_matrices.empty()) {
@@ -1664,11 +2363,33 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                         const auto& source_primitives = model->scene.meshes[node.mesh_index].primitives;
                         for (usize primitive_index = 0; primitive_index < draw_primitives.size(); ++primitive_index) {
                             Impl::Primitive& primitive = draw_primitives[primitive_index];
-                            const BufferHandle frame_vertex_buffer = primitive.frame_vertex_buffers.empty()
-                                                                         ? primitive.vertices
-                                                                         : primitive.frame_vertex_buffers[
-                                                                               frame_index % primitive.frame_vertex_buffers.size()];
+                            // A skinned primitive's vertices are written for each draw, and the GPU reads them when the frame runs, after every
+                            // draw is recorded: so each draw of it in a frame needs its own buffer, or the entities that share a model all
+                            // show the pose written last. The first draw uses the primitive's per-frame buffer, the others buffers made on
+                            // demand (kept for later frames).
+                            BufferHandle frame_vertex_buffer = primitive.vertices;
+                            if (!primitive.frame_vertex_buffers.empty()) {
+                                if (primitive.draws_frame != transform_frame) {
+                                    primitive.draws_frame = transform_frame;
+                                    primitive.draws = 0;
+                                }
+                                const usize draw_slot = primitive.draws++;
+                                const usize frame_slot = frame_index % primitive.frame_vertex_buffers.size();
+                                frame_vertex_buffer = primitive.frame_vertex_buffers[frame_slot];
+                                if (draw_slot > 0) {
+                                    primitive.extra_vertex_buffers.resize(primitive.frame_vertex_buffers.size());
+                                    std::vector<BufferHandle>& extra = primitive.extra_vertex_buffers[frame_slot];
+                                    while (extra.size() < draw_slot) {
+                                        const BufferHandle made = renderer.device.CreateVertexBuffer(
+                                            primitive.bind_pose_vertices.data(), primitive.bind_pose_vertices.size() * sizeof(SceneVertex));
+                                        if (!made.IsValid()) break;
+                                        extra.push_back(made);
+                                    }
+                                    if (extra.size() >= draw_slot) frame_vertex_buffer = extra[draw_slot - 1]; // else: shares the first
+                                }
+                            }
                             bool uploaded_animation = false;
+                            u32 previous_positions = kTaaNoPreviousPositions; // this draw's last-frame pose in motion_positions
                             if (has_skin && !model->skin_matrices.empty() && primitive_index < source_primitives.size()) {
                                 const auto& source = source_primitives[primitive_index];
                                 const auto& matrices = model->skin_matrices;
@@ -1683,28 +2404,64 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                                         split ? renderer.skin_jobs.get() : nullptr, primitive.bind_pose_vertices.data(),
                                         deformed.data(), source.joint_indices.data(), source.joint_weights.data(),
                                         deformed.size(), matrices, skin_normal_matrices);
-                                    renderer.device.UpdateVertexBuffer(frame_vertex_buffer, deformed.data(),
-                                                                       deformed.size() * sizeof(SceneVertex));
+                                    if (!renderer.device.WriteBufferUnsynchronized(frame_vertex_buffer, deformed.data(),
+                                                                                   deformed.size() * sizeof(SceneVertex))) {
+                                        renderer.device.UpdateVertexBuffer(frame_vertex_buffer, deformed.data(),
+                                                                           deformed.size() * sizeof(SceneVertex));
+                                    }
                                     uploaded_animation = true;
+                                    if (renderer.taa_motion && renderer.taa->ReadsPreviousPositions() &&
+                                        primitive.alpha_mode != assets::MaterialAlphaMode::Blend) {
+                                        Impl::PreviousPose& pose_before = renderer.previous_poses[{
+                                            entities[row].index, entities[row].generation, static_cast<u32>(node.node_index),
+                                            static_cast<u32>(primitive_index) + 1}];
+                                        const usize floats = deformed.size() * 3;
+                                        bool pose_moved = false;
+                                        if (pose_before.frame + 1 == transform_frame && pose_before.positions.size() == floats) {
+                                            for (usize v = 0; v < deformed.size() && !pose_moved; ++v) {
+                                                for (usize axis = 0; axis < 3; ++axis) {
+                                                    if (pose_before.positions[v * 3 + axis] != deformed[v].position[axis]) pose_moved = true;
+                                                }
+                                            }
+                                        }
+                                        if (pose_moved) {
+                                            previous_positions = static_cast<u32>(renderer.motion_positions.size() * sizeof(f32));
+                                            renderer.motion_positions.insert(renderer.motion_positions.end(), pose_before.positions.begin(),
+                                                                             pose_before.positions.end());
+                                        }
+                                        pose_before.positions.resize(floats);
+                                        for (usize v = 0; v < deformed.size(); ++v) {
+                                            for (usize axis = 0; axis < 3; ++axis) pose_before.positions[v * 3 + axis] = deformed[v].position[axis];
+                                        }
+                                        pose_before.frame = transform_frame;
+                                    }
                                 }
                             }
                             if (!primitive.frame_vertex_buffers.empty() && !uploaded_animation) {
-                                renderer.device.UpdateVertexBuffer(frame_vertex_buffer, primitive.bind_pose_vertices.data(),
-                                                                   primitive.bind_pose_vertices.size() * sizeof(SceneVertex));
+                                if (!renderer.device.WriteBufferUnsynchronized(frame_vertex_buffer, primitive.bind_pose_vertices.data(),
+                                                                               primitive.bind_pose_vertices.size() * sizeof(SceneVertex))) {
+                                    renderer.device.UpdateVertexBuffer(frame_vertex_buffer, primitive.bind_pose_vertices.data(),
+                                                                       primitive.bind_pose_vertices.size() * sizeof(SceneVertex));
+                                }
                             }
                             DrawConstants constants;
                             constants.mvp = mvp;
-                            std::copy(std::begin(primitive.color), std::end(primitive.color), constants.color);
+                            constants.color_packed[0] = PackHalfPair(primitive.color[0], primitive.color[1]);
+                            constants.color_packed[1] = PackHalfPair(primitive.color[2], primitive.color[3]);
+                            PackEmissive(primitive.emissive, primitive.emissive_texture, primitive.has_emissive_texture, constants.emissive_packed);
                             PackNormalMatrix(normal_transform, constants.normal_matrix_packed);
                             constants.material_textures = PackMaterialTextures(
                                 primitive.base_color_texture, primitive.has_base_color_texture,
                                 primitive.normal_texture, primitive.has_normal_texture,
                                 primitive.metallic_roughness_texture, primitive.has_metallic_roughness_texture,
-                                primitive.occlusion_texture, primitive.has_occlusion_texture,
-                                primitive.extension_texture, primitive.has_extension_texture);
+                                primitive.occlusion_texture, primitive.has_occlusion_texture);
                             constants.material_factors_0 = PackHalfPair(primitive.metallic, primitive.roughness);
                             constants.material_factors_1 = PackHalfPair(primitive.normal_scale, primitive.occlusion_strength);
-                            constants.alpha_options = PackMaterialOptions(primitive.alpha_mode, primitive.alpha_cutoff, primitive.emissive);
+                            constants.alpha_options = PackMaterialOptions(primitive.alpha_mode, primitive.alpha_cutoff, primitive.extension_texture,
+                                                                          primitive.has_extension_texture, primitive.double_sided);
+                            // Single-sided materials cull their back faces, except on a mirrored model (a negative scale turns the
+                            // winding round): that draws both faces, as every model did before.
+                            const bool cull = !primitive.double_sided && ModelDeterminant(model_transform) > 0.0f;
                             Mat4 inverse_model_transform;
                             if (model_transform.TryInverse(inverse_model_transform)) {
                                 const Vec4 local_camera = inverse_model_transform *
@@ -1718,18 +2475,270 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                                 const f32 dy = model_transform.cols[3].y - camera_position.y;
                                 const f32 dz = model_transform.cols[3].z - camera_position.z;
                                 transparent_draws.push_back({frame_vertex_buffer, primitive.indices, primitive.index_count,
-                                                             constants, dx * dx + dy * dy + dz * dz});
+                                                             constants, dx * dx + dy * dy + dz * dz, cull});
                             } else {
-                                commands.BindVertexBuffer(frame_vertex_buffer, sizeof(SceneVertex));
-                                commands.BindIndexBuffer(primitive.indices, IndexFormat::UInt32);
-                                commands.SetPushConstants(&constants, sizeof(constants));
-                                commands.DrawIndexed(primitive.index_count);
+                                opaque_draws.push_back({frame_vertex_buffer, primitive.indices, primitive.index_count, constants, cull});
+                                if (transform_moved || previous_positions != kTaaNoPreviousPositions) {
+                                    taa_movers.push_back({frame_vertex_buffer, primitive.indices, primitive.index_count,
+                                                          static_cast<u32>(sizeof(SceneVertex)), model_transform,
+                                                          previous_model.value_or(model_transform), previous_positions});
+                                }
+                                if (sun_shadows) {
+                                    ShadowCaster caster;
+                                    caster.vertices = frame_vertex_buffer;
+                                    caster.indices = primitive.indices;
+                                    caster.index_count = primitive.index_count;
+                                    caster.model = model_transform;
+                                    if (primitive.bounds_radius >= 0.0f && primitive.frame_vertex_buffers.empty()) {
+                                        const Vec4 c = model_transform * Vec4(primitive.bounds_center[0], primitive.bounds_center[1],
+                                                                              primitive.bounds_center[2], 1.0f);
+                                        const f32 scale = std::max({Vec3(model_transform.cols[0].x, model_transform.cols[0].y, model_transform.cols[0].z).Length(),
+                                                                    Vec3(model_transform.cols[1].x, model_transform.cols[1].y, model_transform.cols[1].z).Length(),
+                                                                    Vec3(model_transform.cols[2].x, model_transform.cols[2].y, model_transform.cols[2].z).Length()});
+                                        caster.bounds_center = Vec3(c.x, c.y, c.z);
+                                        caster.bounds_radius = primitive.bounds_radius * scale;
+                                    }
+                                    caster.alpha_tested = primitive.alpha_mode == assets::MaterialAlphaMode::Mask;
+                                    caster.base_color_texture = primitive.has_base_color_texture && primitive.base_color_texture.IsValid()
+                                                                    ? primitive.base_color_texture.index
+                                                                    : 255u;
+                                    caster.alpha = primitive.color[3];
+                                    caster.alpha_cutoff = primitive.alpha_cutoff;
+                                    caster.deforming = uploaded_animation;
+                                    shadow_casters.push_back(caster);
+                                    if (renderer.rt_shadows && !caster.deforming && !caster.alpha_tested && primitive.frame_vertex_buffers.empty()) {
+                                        if (!primitive.blas.IsValid() && !primitive.blas_failed) {
+                                            try {
+                                                primitive.blas = renderer.device.CreateBottomLevelAS(primitive.vertices, primitive.vertex_count,
+                                                                                                    sizeof(SceneVertex), primitive.indices, primitive.index_count);
+                                            } catch (const std::exception&) {
+                                            }
+                                            primitive.blas_failed = !primitive.blas.IsValid();
+                                        }
+                                        if (primitive.blas.IsValid()) {
+                                            AccelerationInstance instance;
+                                            instance.blas = primitive.blas;
+                                            for (usize row = 0; row < 3; ++row) {
+                                                for (usize column = 0; column < 4; ++column) {
+                                                    const Vec4& c = model_transform.cols[column];
+                                                    instance.transform[row * 4 + column] = row == 0 ? c.x : row == 1 ? c.y : c.z;
+                                                }
+                                            }
+                                            rt_instances.push_back(instance);
+                                        }
+                                    }
+                                    if (renderer.vsm_pages) {
+                                        // The caster's world sphere (a skinned one's from its bind pose, grown): the pages it touches are redrawn when it is
+                                        // new, has moved, or deforms, both where it is now and where it was.
+                                        Vec3 sphere_center = caster.bounds_center;
+                                        f32 sphere_radius = caster.bounds_radius;
+                                        if (!(sphere_radius >= 0.0f) && primitive.skin_bounds_radius >= 0.0f) {
+                                            const Vec4 c = model_transform * Vec4(primitive.skin_bounds_center[0], primitive.skin_bounds_center[1],
+                                                                                  primitive.skin_bounds_center[2], 1.0f);
+                                            const f32 scale = std::max({Vec3(model_transform.cols[0].x, model_transform.cols[0].y, model_transform.cols[0].z).Length(),
+                                                                        Vec3(model_transform.cols[1].x, model_transform.cols[1].y, model_transform.cols[1].z).Length(),
+                                                                        Vec3(model_transform.cols[2].x, model_transform.cols[2].y, model_transform.cols[2].z).Length()});
+                                            sphere_center = Vec3(c.x, c.y, c.z);
+                                            sphere_radius = primitive.skin_bounds_radius * scale;
+                                        }
+                                        Impl::VsmCasterState& state = renderer.vsm_casters[{entities[row].index, entities[row].generation,
+                                                                                            static_cast<u32>(node.node_index),
+                                                                                            static_cast<u32>(primitive_index) + 1}];
+                                        const bool seen = state.frame + 1 == transform_frame;
+                                        const bool dynamic = uploaded_animation;
+                                        if (sphere_radius >= 0.0f) {
+                                            // A deforming caster is in no page (the cascades have it), and the pages under it are left out of the
+                                            // table; one that starts or stops deforming changes what its pages hold, so they are redrawn.
+                                            if (dynamic) vsm_suppress.push_back({sphere_center, sphere_radius});
+                                            const bool changed_kind = seen && state.dynamic != dynamic;
+                                            const bool moved = !dynamic && (!seen || TaaTransformMoved(state.model, model_transform));
+                                            if (moved || changed_kind) {
+                                                vsm_dirty.push_back({sphere_center, sphere_radius});
+                                                if (seen && !state.dynamic && state.radius >= 0.0f) vsm_dirty.push_back({state.center, state.radius});
+                                            }
+                                        }
+                                        state = {model_transform, sphere_center, sphere_radius, transform_frame, dynamic};
+                                    }
+                                }
                             }
                         }
                     }
                 }
             }
         });
+    }
+    // Forget the nodes not drawn this frame (destroyed entities, culled models): they start over when they come back.
+    std::erase_if(renderer.previous_transforms, [&](const auto& entry) { return entry.second.frame != transform_frame; });
+    std::erase_if(renderer.previous_poses, [&](const auto& entry) { return entry.second.frame != transform_frame; });
+    // The skinned movers' last-frame poses, in this frame's slot (the frame loop waited on its fence; a slot too small is replaced, the
+    // old buffer retired once the GPU is done with it).
+    BufferHandle motion_position_buffer;
+    if (!renderer.motion_positions.empty()) {
+        if (renderer.motion_position_buffers.empty()) {
+            renderer.motion_position_buffers.resize(Impl::kFrameBuffers);
+            renderer.motion_position_capacity.assign(Impl::kFrameBuffers, 0);
+        }
+        const usize slot = frame_index % Impl::kFrameBuffers;
+        const u64 bytes = renderer.motion_positions.size() * sizeof(f32);
+        if (renderer.motion_position_capacity[slot] < bytes) {
+            if (renderer.motion_position_buffers[slot].IsValid()) renderer.device.DestroyBuffer(renderer.motion_position_buffers[slot]);
+            const u64 capacity = std::max<u64>(bytes + bytes / 2, 64 * 1024);
+            renderer.motion_position_buffers[slot] = renderer.device.CreateFrameConstantBuffer(capacity);
+            renderer.motion_position_capacity[slot] = renderer.motion_position_buffers[slot].IsValid() ? capacity : 0;
+        }
+        motion_position_buffer = renderer.motion_position_buffers[slot];
+        if (motion_position_buffer.IsValid() &&
+            !renderer.device.WriteBufferUnsynchronized(motion_position_buffer, renderer.motion_positions.data(), bytes)) {
+            renderer.device.UpdateFrameConstantBuffer(motion_position_buffer, renderer.motion_positions.data(), bytes);
+        }
+    }
+    // The sun's shadow atlas, outside any pass; then this frame's constants (lights and cascades) and the scene pass itself.
+    if (sun_shadows && renderer.rt_shadows) {
+        // The structure of this frame's rigid casters, rebuilt only when one is new, gone or has moved. The shader reads shadow_info.x < 128 as
+        // "shadows on"; no cascades are drawn.
+        if (rt_instances.empty()) {
+            AccelerationInstance instance;
+            instance.blas = renderer.rt_dummy_blas;
+            rt_instances.push_back(instance);
+        }
+        std::vector<f32> signature;
+        signature.reserve(rt_instances.size() * 13);
+        for (const AccelerationInstance& instance : rt_instances) {
+            signature.push_back(static_cast<f32>(instance.blas.index));
+            signature.insert(signature.end(), instance.transform, instance.transform + 12);
+        }
+        if (!renderer.rt_tlas.IsValid() || signature != renderer.rt_signature) {
+            const AccelerationStructureHandle made = renderer.device.CreateTopLevelAS(rt_instances);
+            if (made.IsValid()) {
+                if (renderer.rt_tlas.IsValid()) renderer.device.DestroyAccelerationStructure(renderer.rt_tlas);
+                renderer.rt_tlas = made;
+                renderer.rt_signature = std::move(signature);
+                ++renderer.rt_rebuilds;
+            }
+        }
+        renderer.rt_instances = static_cast<u32>(rt_instances.size());
+        frame_data.shadow_info[0] = 0u;
+        frame_data.shadow_info[1] = frame_data.shadow_info[2] = frame_data.shadow_info[3] = 0u;
+    } else if (sun_shadows) {
+        const Vec3 light_travel(-frame_data.sun_direction[0], -frame_data.sun_direction[1], -frame_data.sun_direction[2]);
+        const ShadowFrameData shadow = renderer.shadows->Render(commands, shadow_view, light_travel, shadow_casters);
+        std::memcpy(frame_data.shadow_view_projection, shadow.view_projection, sizeof(shadow.view_projection));
+        std::memcpy(frame_data.shadow_cascade, shadow.cascade, sizeof(shadow.cascade));
+        std::memcpy(frame_data.shadow_info, shadow.info, sizeof(shadow.info));
+    }
+    // The sun's virtual shadow pages: what the feedback of a few frames ago asked for gets physical pages, the pages that need it are drawn, and
+    // the page table goes to the light buffer for the scene shader. Without any of that the cascades alone shadow the sun.
+    bool vsm_record = false;
+    VsmFeedbackParams vsm_feedback_params;
+    renderer.vsm_stats.drawn_pages = renderer.vsm_stats.caster_draws = renderer.vsm_stats.requests = renderer.vsm_stats.suppressed = 0;
+    const auto vsm_start = std::chrono::steady_clock::now();
+    if (renderer.vsm_pages) {
+        VsmPageAllocator& pages = *renderer.vsm_pages;
+        // Casters no longer drawn (destroyed, hidden, out of reach) leave their pages stale where they were.
+        for (auto it = renderer.vsm_casters.begin(); it != renderer.vsm_casters.end();) {
+            if (it->second.frame == transform_frame) {
+                ++it;
+                continue;
+            }
+            if (it->second.radius >= 0.0f && !it->second.dynamic) vsm_dirty.push_back({it->second.center, it->second.radius});
+            it = renderer.vsm_casters.erase(it);
+        }
+        if (!sun_shadows || !have_camera || !light_buffer.IsValid()) {
+            pages.InvalidateAll(); // nothing is kept up to date while the sun's shadows are off
+            renderer.vsm_casters.clear();
+        } else {
+            const Vec3 light_travel(-frame_data.sun_direction[0], -frame_data.sun_direction[1], -frame_data.sun_direction[2]);
+            const VsmLight light = VsmLightBasis(light_travel);
+            if (!renderer.vsm_have_light || light.direction.Dot(renderer.vsm_light.direction) < 0.99999f) pages.InvalidateAll(); // the sun turned
+            renderer.vsm_light = light;
+            renderer.vsm_have_light = true;
+            renderer.vsm_pass->EnsureAtlas(renderer.vsm_pool); // made before the first page is drawn, so the first frame can ask for pages
+            pages.BeginFrame(++renderer.vsm_frame);
+            const std::vector<VsmRequest> requests = renderer.vsm_feedback->Collect(frame_index);
+            renderer.vsm_stats.requests = static_cast<u32>(requests.size());
+            pages.Request(requests);
+            for (const DirtySphere& sphere : vsm_dirty) pages.InvalidateSphere(light, sphere.center, sphere.radius);
+            const std::vector<VsmPageDraw> draws = pages.TakeDraws(renderer.vsm_draw_budget);
+            renderer.vsm_stats.drawn_pages = static_cast<u32>(draws.size());
+            renderer.vsm_stats.caster_draws = renderer.vsm_pass->DrawPages(commands, light, draws, renderer.vsm_pool, shadow_casters);
+            const auto origins = VsmWindowOrigins(light, decal_camera_position);
+            u32 suppressed = 0;
+            const std::vector<u32> table = pages.BuildPageTable(origins, light, vsm_suppress, &suppressed);
+            renderer.vsm_stats.suppressed = suppressed;
+            if (renderer.vsm_pass->Atlas().IsValid() &&
+                renderer.device.WriteBufferUnsynchronized(light_buffer, table.data(), table.size() * sizeof(u32), kVsmTableOffset)) {
+                const auto set = [](f32 (&out)[4], const Vec3& v, f32 w) { out[0] = v.x, out[1] = v.y, out[2] = v.z, out[3] = w; };
+                const f32 height = static_cast<f32>(std::max(renderer.swap_chain.Height(), 1u));
+                const bool perspective = camera != nullptr && camera->projection == Projection::Perspective;
+                const f32 footprint_scale =
+                    perspective ? 2.0f * std::tan(camera->fov_degrees * 0.5f * 3.14159265f / 180.0f) / height : 0.0f;
+                const f32 footprint_constant = !perspective && camera != nullptr ? camera->ortho_height / height : 0.0f;
+                set(frame_data.vsm_light_right, light.right, 0.0f);
+                set(frame_data.vsm_light_up, light.up, 0.0f);
+                set(frame_data.vsm_light_direction, light.direction, 0.0f);
+                set(frame_data.vsm_camera, decal_camera_position, footprint_scale);
+                frame_data.vsm_params[0] = footprint_constant;
+                for (u32 level = 0; level < kVsmLevels; ++level) {
+                    frame_data.vsm_window[level / 2][(level % 2) * 2] = origins[level][0];
+                    frame_data.vsm_window[level / 2][(level % 2) * 2 + 1] = origins[level][1];
+                }
+                frame_data.vsm_info[0] = renderer.vsm_pass->Atlas().index;
+                frame_data.vsm_info[1] = renderer.vsm_pool;
+                frame_data.vsm_info[2] = static_cast<u32>(kVsmTableOffset);
+                Mat4 inverse;
+                if (taa_view_projection.TryInverse(inverse)) {
+                    vsm_feedback_params.inverse_view_projection = inverse;
+                    vsm_feedback_params.camera_position = decal_camera_position;
+                    vsm_feedback_params.footprint_scale = footprint_scale;
+                    vsm_feedback_params.footprint_constant = footprint_constant;
+                    vsm_feedback_params.light = light;
+                    vsm_feedback_params.depth_texture = renderer.swap_chain.SceneDepthTexture().index;
+                    vsm_feedback_params.screen_width = renderer.swap_chain.Width();
+                    vsm_feedback_params.screen_height = renderer.swap_chain.Height();
+                    vsm_feedback_params.frame = static_cast<u32>(renderer.vsm_frame);
+                    vsm_record = true;
+                }
+            }
+            const VsmPageStats stats = pages.Stats();
+            renderer.vsm_stats.resident = stats.resident;
+            renderer.vsm_stats.pending = stats.pending;
+        }
+    }
+    renderer.vsm_stats.cpu_ms = std::chrono::duration<f64, std::milli>(std::chrono::steady_clock::now() - vsm_start).count();
+    // This frame's slot: the frame loop waited on its fence, so it is written without waiting for the GPU (WriteBufferUnsynchronized).
+    if (frame_buffer.IsValid() && !renderer.device.WriteBufferUnsynchronized(frame_buffer, &frame_data, sizeof(frame_data))) {
+        renderer.device.UpdateFrameConstantBuffer(frame_buffer, &frame_data, sizeof(frame_data));
+    }
+    if (light_buffer.IsValid() && frame_data.cluster_info[3] != 0 && !renderer.clusters.bytes.empty() &&
+        !renderer.device.WriteBufferUnsynchronized(light_buffer, renderer.clusters.bytes.data(), renderer.clusters.bytes.size())) {
+        renderer.device.UpdateFrameConstantBuffer(light_buffer, renderer.clusters.bytes.data(), renderer.clusters.bytes.size());
+    }
+    if (renderer.hdr) {
+        if (!commands.BeginSceneColorPass(renderer.swap_chain, kBackgroundLinear)) return;
+    } else {
+        commands.BeginRenderPass(renderer.swap_chain, kBackground);
+    }
+    if (draw_sky) renderer.sky->Draw(commands, shadow_view, frame_buffer);
+    if (!opaque_draws.empty()) {
+        // Culled draws first, then the two-sided ones: one pipeline switch.
+        std::stable_partition(opaque_draws.begin(), opaque_draws.end(), [](const PendingOpaqueDraw& draw) { return draw.cull; });
+        bool bound = false, bound_cull = false;
+        for (const PendingOpaqueDraw& draw : opaque_draws) {
+            const bool cull = draw.cull && renderer.culled_pipeline.IsValid();
+            if (!bound || cull != bound_cull) {
+                commands.BindPipeline(cull ? renderer.culled_pipeline : renderer.pipeline);
+                if (frame_buffer.IsValid()) commands.BindFrameConstants(frame_buffer);
+                if (light_buffer.IsValid()) commands.BindFrameReadBuffer(light_buffer);
+                if (renderer.rt_shadows && renderer.rt_tlas.IsValid()) commands.BindAccelerationStructure(renderer.rt_tlas);
+                commands.BindBindlessTextures();
+                bound = true;
+                bound_cull = cull;
+            }
+            commands.BindVertexBuffer(draw.vertices, sizeof(SceneVertex));
+            commands.BindIndexBuffer(draw.indices, IndexFormat::UInt32);
+            commands.SetPushConstants(&draw.constants, sizeof(draw.constants));
+            commands.DrawIndexed(draw.index_count);
+        }
     }
     // Decals paint over the opaque surfaces' lit colour, before the transparent ones. The pass copies the scene depth first, so the transparent
     // draws below rebind their own pipeline, frame constants and texture table.
@@ -1746,10 +2755,19 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
         const PipelineHandle transparent_pipeline = renderer.transparent_pipeline.IsValid()
                                                         ? renderer.transparent_pipeline
                                                         : renderer.pipeline;
-        commands.BindPipeline(transparent_pipeline);
-        if (frame_buffer.IsValid()) commands.BindFrameConstants(frame_buffer);
-        commands.BindBindlessTextures();
+        // Back to front, switching between the culled and two-sided pipelines as the draws need.
+        bool bound = false, bound_cull = false;
         for (const PendingTransparentDraw& draw : transparent_draws) {
+            const bool cull = draw.cull && renderer.transparent_culled_pipeline.IsValid() && renderer.transparent_pipeline.IsValid();
+            if (!bound || cull != bound_cull) {
+                commands.BindPipeline(cull ? renderer.transparent_culled_pipeline : transparent_pipeline);
+                if (frame_buffer.IsValid()) commands.BindFrameConstants(frame_buffer);
+                if (light_buffer.IsValid()) commands.BindFrameReadBuffer(light_buffer);
+                if (renderer.rt_shadows && renderer.rt_tlas.IsValid()) commands.BindAccelerationStructure(renderer.rt_tlas);
+                commands.BindBindlessTextures();
+                bound = true;
+                bound_cull = cull;
+            }
             commands.BindVertexBuffer(draw.vertices, sizeof(SceneVertex));
             commands.BindIndexBuffer(draw.indices, IndexFormat::UInt32);
             commands.SetPushConstants(&draw.constants, sizeof(draw.constants));
@@ -1762,13 +2780,39 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
     if (draw_particles) {
         renderer.particles->Draw(commands, renderer.particle_data, particle_camera, particle_view_projection, particle_projection, frame_index);
     }
+    if (renderer.hdr) {
+        // The lit scene is in the HDR target: tone map it into the back buffer under the post volumes at the camera, then the HUD on top
+        // in display space. Temporal anti-aliasing first blends it with the frames before (reading the depth copied here).
+        const bool resolve = (renderer.taa || vsm_record) && have_camera && commands.CopySceneDepth();
+        commands.EndRenderPass();
+        if (resolve && vsm_record) renderer.vsm_feedback->Record(commands, vsm_feedback_params, frame_index);
+        u32 resolved = 0;
+        if (resolve && renderer.taa) {
+            resolved = renderer.taa->Resolve(commands, taa_view_projection,
+                                             (static_cast<u64>(camera_entity.index) << 32) | camera_entity.generation, taa_movers,
+                                             motion_position_buffer);
+        } else if (renderer.taa) {
+            renderer.taa->Reset();
+        }
+        renderer.post->SetSource(resolved);
+        RenderScene volumes;
+        volumes.post_volumes = ExtractPostVolumes(world, guids);
+        const PostProcessSettings post_settings = BlendPostProcess(volumes, have_camera ? decal_camera_position : Vec3(0, 0, 0));
+        // Bloom reads the finished scene colour into its own chain of render textures, between the two passes.
+        if (renderer.bloom) renderer.post->RenderBloom(commands, post_settings);
+        commands.BeginRenderPass(renderer.swap_chain, kBackground);
+        renderer.post->Draw(commands, post_settings);
+    }
     renderer.DrawHud(game, commands);
     commands.EndRenderPass();
 }
 
 // The advanced PBR library (anisotropic GGX, sheen, clear coat) goes ahead of the scene shader.
-std::string SceneShaderSource(bool with_frame_data) {
-    return std::string(with_frame_data ? "#define AETHER_FRAME_DATA 1\n" : "") + mat::AdvancedPbrHlsl() + mat::ShadingModelsHlsl() + kSceneShader;
+std::string SceneShaderSource(bool with_frame_data, bool hdr_target, bool ray_traced_shadows) {
+    return std::string(with_frame_data ? "#define AETHER_FRAME_DATA 1\n" : "") + (hdr_target ? "#define AETHER_HDR_TARGET 1\n" : "") +
+           (with_frame_data && ray_traced_shadows ? "#define AETHER_RT_SHADOWS 1\n" : "") +
+           mat::AdvancedPbrHlsl() + mat::ShadingModelsHlsl() + kSceneShader + (with_frame_data ? FrameDataHlsl() : "") +
+           (with_frame_data ? VsmShaderLibrary() : "") + (with_frame_data ? kSceneShaderVsm : "") + kSceneShaderFrame;
 }
 
 } // namespace aether::player

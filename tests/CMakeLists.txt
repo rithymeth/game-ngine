@@ -55,7 +55,7 @@ if(TARGET aether_mcp)
     target_link_libraries(aether_tests PRIVATE aether_mcp)
 endif()
 # Phase 25 step 4: the player's runtime.
-target_sources(aether_tests PRIVATE test_player.cpp test_player_lights.cpp test_player_particles.cpp test_player_save.cpp test_loc_runtime.cpp test_package.cpp test_pak_patch.cpp test_plugin.cpp test_templates.cpp test_aether01.cpp)
+target_sources(aether_tests PRIVATE test_player.cpp test_player_lights.cpp test_player_particles.cpp test_player_save.cpp test_loc_runtime.cpp test_package.cpp test_pak_patch.cpp test_plugin.cpp test_templates.cpp test_aether01.cpp test_skinned_instances.cpp test_player_backend_parity.cpp)
 target_link_libraries(aether_tests PRIVATE Aether::Game Aether::Templates Aether::Blueprint Aether::ServerCore)
 if(TARGET Aether::Physics)
     target_link_libraries(aether_tests PRIVATE Aether::Physics)
@@ -99,6 +99,13 @@ if(WIN32)
                     "${AETHER_DXCOMPILER_DLL}" "$<TARGET_FILE_DIR:aether_tests>/dxcompiler.dll"
         )
     endif()
+    # dxil.dll signs the DXIL that CompileHLSLToDXIL produces; D3D12 rejects unsigned shaders.
+    if(AETHER_DXIL_DLL)
+        add_custom_command(TARGET aether_tests POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${AETHER_DXIL_DLL}" "$<TARGET_FILE_DIR:aether_tests>/dxil.dll"
+        )
+    endif()
 endif()
 
 if(TARGET Aether::Physics)
@@ -123,7 +130,7 @@ target_sources(aether_tests PRIVATE test_blueprint_graph.cpp test_blueprint_vm.c
     test_terrain_splat.cpp
     test_terrain_renderer.cpp
     test_terrain_foliage.cpp
-    test_terrain_spline.cpp test_terrain_gpu.cpp test_ai_perception.cpp test_streaming.cpp test_sprite2d.cpp test_sequence_core.cpp test_sequence_system.cpp test_cine_movie.cpp test_sequence_fade_sub.cpp test_sequence_subtitle.cpp test_sequence_vfx.cpp test_save.cpp test_world_state.cpp test_settings.cpp test_save_games.cpp test_loc.cpp test_loc_tools.cpp test_gameplay_tags.cpp test_gameplay_attributes.cpp test_gameplay_effects.cpp test_gameplay_abilities.cpp test_api_docs.cpp test_loader_robustness.cpp test_api_stability.cpp test_manual.cpp test_net_transport.cpp test_net_replication.cpp test_net_rpc.cpp test_net_prediction.cpp test_net_session.cpp test_net_production.cpp test_dedicated_server.cpp test_console.cpp test_profiler.cpp test_debug_draw.cpp test_crash.cpp test_functional.cpp test_window.cpp test_vulkan_rhi.cpp test_rhi_lifetime.cpp test_gfx_parity.cpp test_lit_parity.cpp test_scene_shader.cpp test_decal.cpp test_platform_plugin.cpp test_pak.cpp test_cook.cpp test_texture_cook.cpp)
+    test_terrain_spline.cpp test_terrain_gpu.cpp test_ai_perception.cpp test_streaming.cpp test_sprite2d.cpp test_sequence_core.cpp test_sequence_system.cpp test_cine_movie.cpp test_sequence_fade_sub.cpp test_sequence_subtitle.cpp test_sequence_vfx.cpp test_save.cpp test_world_state.cpp test_settings.cpp test_save_games.cpp test_loc.cpp test_loc_tools.cpp test_gameplay_tags.cpp test_gameplay_attributes.cpp test_gameplay_effects.cpp test_gameplay_abilities.cpp test_api_docs.cpp test_loader_robustness.cpp test_api_stability.cpp test_manual.cpp test_net_transport.cpp test_net_replication.cpp test_net_rpc.cpp test_net_prediction.cpp test_net_session.cpp test_net_production.cpp test_dedicated_server.cpp test_console.cpp test_profiler.cpp test_debug_draw.cpp test_crash.cpp test_functional.cpp test_window.cpp test_vulkan_rhi.cpp test_rhi_lifetime.cpp test_gfx_parity.cpp test_lit_parity.cpp test_scene_shader.cpp test_decal.cpp test_post_pass.cpp test_gltf_glb.cpp test_bloom.cpp test_bindless_table.cpp test_shadows_pass.cpp test_ibl.cpp test_material_loading.cpp test_light_clusters.cpp test_taa.cpp test_readback.cpp test_ray_tracing_probe.cpp test_virtual_shadow.cpp test_vsm_pages.cpp test_vsm_scene.cpp test_platform_plugin.cpp test_pak.cpp test_cook.cpp test_texture_cook.cpp)
 target_link_libraries(aether_tests PRIVATE Aether::Blueprint Aether::Renderer Aether::Animation Aether::Audio Aether::UI Aether::VFX Aether::Nav Aether::AI Aether::Terrain Aether::Streaming Aether::Sprite2D Aether::Sequencer Aether::Save Aether::Loc Aether::Gameplay Aether::Net)
 if(TARGET aether_bench_lib)
     target_sources(aether_tests PRIVATE test_bench.cpp)

@@ -31,14 +31,14 @@ struct PushConstants {
     float4x4 g_ViewProjection;
     float4 g_SplatRect;   // origin x, origin z, 1 / width, 1 / depth
     float4 g_Camera;      // camera position, surface bits (roughness 6 bits and metallic 2 bits per layer)
-    float4 g_Light;       // sun direction (towards the sun), height contrast
-    uint4 g_Packed;       // x: layer 0..3 indices (6 bits each) and the splatmap's at bit 24; y: sun and sky intensity (halves); z, w: tiles (halves)
+    float4 g_Light;       // sun direction (towards the sun); w's bits: height contrast (half) | the splatmap's index << 16
+    uint4 g_Packed;       // x: layer 0..3 indices (8 bits each); y: sun and sky intensity (halves); z, w: tiles (halves)
 };
 #ifdef __spirv__
 [[vk::push_constant]]
 #endif
 ConstantBuffer<PushConstants> g_PC : register(b0);
-Texture2D g_Textures[32] : register(t0, space0);
+Texture2D g_Textures[128] : register(t0, space0);
 SamplerState g_Sampler : register(s0, space1);
 
 struct VSInput {
@@ -74,7 +74,9 @@ float3 LinearToSRGB(float3 linear_color) {
 }
 
 float4 PSMain(PSInput input) : SV_TARGET {
-    uint splat_index = (g_PC.g_Packed.x >> 24) & 63;
+    uint light_bits = asuint(g_PC.g_Light.w);
+    uint splat_index = (light_bits >> 16) & 255;
+    float height_contrast = f16tof32(light_bits);
     // The painted weights, read with the texel mapping of SplatmapData::GetWeights: u = 0 is the first texel's centre and u = 1 the last's.
     float2 splat_uv = saturate((input.world.xz - g_PC.g_SplatRect.xy) * g_PC.g_SplatRect.zw);
     uint splat_width, splat_height;
@@ -89,14 +91,14 @@ float4 PSMain(PSInput input) : SV_TARGET {
     float rough[4];
     float metal[4];
     for (uint layer = 0; layer < 4; ++layer) {
-        uint index = (g_PC.g_Packed.x >> (6 * layer)) & 63;
+        uint index = (g_PC.g_Packed.x >> (8 * layer)) & 255;
         float4 texel = g_Textures[index].Sample(g_Sampler, input.world.xz * tiles[layer]);
         albedo[layer] = SRGBToLinear(texel.rgb);
         heights[layer] = texel.a;
         rough[layer] = float((surface >> (6 * layer)) & 63) / 63.0;
         metal[layer] = float((surface >> (24 + 2 * layer)) & 3) / 3.0;
     }
-    float4 weights = AetherBlendTerrainHeights(painted, float4(heights[0], heights[1], heights[2], heights[3]), g_PC.g_Light.w);
+    float4 weights = AetherBlendTerrainHeights(painted, float4(heights[0], heights[1], heights[2], heights[3]), height_contrast);
     float3 base_color = albedo[0] * weights.x + albedo[1] * weights.y + albedo[2] * weights.z + albedo[3] * weights.w;
 
     float roughness = dot(weights, float4(rough[0], rough[1], rough[2], rough[3]));
@@ -224,11 +226,12 @@ TerrainConstants PackTerrainConstants(const Mat4& view_projection, const Terrain
     const f32 depth = params.splat_size[1] > 0.0f ? params.splat_size[1] : 1.0f;
     c.splat_rect[0] = params.splat_origin[0], c.splat_rect[1] = params.splat_origin[1];
     c.splat_rect[2] = 1.0f / width, c.splat_rect[3] = 1.0f / depth;
+    // Indices past the bindless table (or invalid) read the white fallback, slot 0.
+    const auto slot = [](gfx::rhi::SampledTextureHandle t) { return t.IsValid() && t.index < gfx::rhi::kMaxBindlessTextures ? t.index : 0u; };
     u32 packed = 0;
     for (u32 i = 0; i < 4; ++i) {
-        packed |= (params.layers[i].albedo_height.index & 63u) << (6 * i);
+        packed |= slot(params.layers[i].albedo_height) << (8 * i);
     }
-    packed |= (params.splatmap.index & 63u) << 24;
     c.packed[0] = packed;
     c.packed[1] = FloatToHalf(params.sun_intensity) | (FloatToHalf(params.sky_intensity) << 16);
     c.packed[2] = FloatToHalf(params.layers[0].tile_scale) | (FloatToHalf(params.layers[1].tile_scale) << 16);
@@ -238,7 +241,8 @@ TerrainConstants PackTerrainConstants(const Mat4& view_projection, const Terrain
     c.camera[0] = params.camera_position.x, c.camera[1] = params.camera_position.y, c.camera[2] = params.camera_position.z;
     std::memcpy(&c.camera[3], &surface, sizeof(u32));
     c.light[0] = params.sun_direction.x, c.light[1] = params.sun_direction.y, c.light[2] = params.sun_direction.z;
-    c.light[3] = std::clamp(params.height_contrast, 0.0f, 1.0f);
+    const u32 light_bits = FloatToHalf(std::clamp(params.height_contrast, 0.0f, 1.0f)) | (slot(params.splatmap) << 16);
+    std::memcpy(&c.light[3], &light_bits, sizeof(u32));
     return c;
 }
 
@@ -280,7 +284,7 @@ u32 TerrainPass::Draw(gfx::rhi::ICommandList& commands, const RhiTerrainGpu& gpu
 
 std::array<u8, 3> TerrainReferenceColor(const std::array<Vec3, 4>& albedo_linear, const std::array<f32, 4>& painted_weights,
                                         const std::array<f32, 4>& heights, const TerrainDrawParams& params, const Vec3& world_position) {
-    const std::array<f32, 4> w = BlendTerrainLayerHeights(painted_weights, heights, params.height_contrast);
+    const std::array<f32, 4> w = BlendTerrainLayerHeights(painted_weights, heights, ThroughHalf(std::clamp(params.height_contrast, 0.0f, 1.0f))); // as the shader gets it
     Vec3 base{0, 0, 0};
     f32 roughness = 0.0f, metallic = 0.0f;
     for (usize i = 0; i < 4; ++i) {

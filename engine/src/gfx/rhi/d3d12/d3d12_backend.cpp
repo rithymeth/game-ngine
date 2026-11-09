@@ -58,6 +58,14 @@ D3D12Device::D3D12Device(bool enable_debug_layer) : device_(enable_debug_layer) 
                                                               8192, /*shader_visible=*/true);
     sampled_descriptor_indices_.resize(kMaxUserBindlessTextures, DescriptorHeap::kInvalidIndex);
     sampled_float_textures_.resize(kMaxUserBindlessTextures);
+    render_texture_sizes_.resize(kMaxUserBindlessTextures, {0u, 0u});
+    render_texture_rtv_heap_ = std::make_unique<DescriptorHeap>(device_, D3D12_DESCRIPTOR_HEAP_TYPE_RTV, kMaxUserBindlessTextures,
+                                                                /*shader_visible=*/false);
+    for (u32 i = 0; i < kMaxUserBindlessTextures; ++i) render_texture_rtv_heap_->Allocate(); // slot i: the texture at bindless i + 1
+    render_texture_dsv_heap_ = std::make_unique<DescriptorHeap>(device_, D3D12_DESCRIPTOR_HEAP_TYPE_DSV, kMaxUserBindlessTextures,
+                                                                /*shader_visible=*/false);
+    for (u32 i = 0; i < kMaxUserBindlessTextures; ++i) render_texture_dsv_heap_->Allocate();
+    render_texture_depth_.resize(kMaxUserBindlessTextures, 0);
     sampled_textures_.reserve(kMaxUserBindlessTextures);
 
     // A 1x1 white dummy texture, uploaded once and duplicated (by
@@ -367,8 +375,11 @@ PipelineHandle D3D12Device::CreatePipeline(const PipelineDesc& desc, ISwapChain&
         return {};
     }
     auto& d3d_swap = *d3d_swap_ptr;
-    DXGI_FORMAT rtv_format = d3d_swap.Native().Format();
+    DXGI_FORMAT rtv_format = desc.render_texture_target ? kRenderTextureFormat
+                             : desc.scene_color_target  ? D3D12SwapChain::kSceneColorFormat
+                                                        : d3d_swap.Native().Format();
 
+    if (desc.depth_target) rtv_format = DXGI_FORMAT_UNKNOWN;
     const u32 max_root_constants = desc.enable_bindless_textures ? 63u : 64u;
     if (desc.push_constant_size_bytes % 4 != 0 || desc.push_constant_size_bytes / 4 > max_root_constants) {
         AETHER_LOG_ERROR("D3D12", "Graphics push-constant size must be four-byte aligned and fit the root signature");
@@ -399,7 +410,9 @@ PipelineHandle D3D12Device::CreatePipeline(const PipelineDesc& desc, ISwapChain&
         param.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
         params.push_back(param);
     }
+    u32 bindless_root_index = ~0u;
     if (desc.enable_bindless_textures) {
+        bindless_root_index = static_cast<u32>(params.size());
         D3D12_ROOT_PARAMETER param{};
         param.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
         param.DescriptorTable = {1, &texture_range};
@@ -417,10 +430,37 @@ PipelineHandle D3D12Device::CreatePipeline(const PipelineDesc& desc, ISwapChain&
         frame_constants_root_index = static_cast<u32>(params.size());
         params.push_back(param);
     }
+    // The frame read buffer: a root SRV at t0, space3 (a raw buffer in the upload heap, always readable).
+    u32 frame_read_root_index = ~0u;
+    if (desc.frame_read_buffer) {
+        D3D12_ROOT_PARAMETER param{};
+        param.ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+        param.Descriptor = {/*ShaderRegister=*/0, /*RegisterSpace=*/3};
+        param.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL; // both stages, as Vulkan's set 3
+        frame_read_root_index = static_cast<u32>(params.size());
+        params.push_back(param);
+    }
+
+    // The acceleration structure: a root SRV at t0, space4 (the GPU address of a top-level structure is a valid root SRV).
+    u32 acceleration_root_index = ~0u;
+    if (desc.acceleration_structure) {
+        if (!desc.shader_model_6 || !SupportsRayTracing()) {
+            throw std::invalid_argument("PipelineDesc::acceleration_structure needs shader_model_6 and a device with ray tracing");
+        }
+        D3D12_ROOT_PARAMETER param{};
+        param.ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+        param.Descriptor = {/*ShaderRegister=*/0, /*RegisterSpace=*/4};
+        param.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+        acceleration_root_index = static_cast<u32>(params.size());
+        params.push_back(param);
+    }
 
     D3D12_STATIC_SAMPLER_DESC sampler{};
     sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
     sampler.AddressU = sampler.AddressV = sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+    // Every mip level: a zero-initialised MaxLOD would clamp sampling to level 0 (cooked textures carry whole mip chains).
+    sampler.MinLOD = 0.0f;
+    sampler.MaxLOD = D3D12_FLOAT32_MAX;
     sampler.ShaderRegister = 0;
     // space1, matching the shared HLSL's `register(s0, space1)` — see the
     // "Unified mode's textured-quad pipeline" comment in rhi_demo/main.cpp
@@ -449,6 +489,9 @@ PipelineHandle D3D12Device::CreatePipeline(const PipelineDesc& desc, ISwapChain&
 
     PipelineRecord record;
     record.frame_constants_root_index = frame_constants_root_index;
+    record.frame_read_root_index = frame_read_root_index;
+    record.acceleration_root_index = acceleration_root_index;
+    record.bindless_root_index = bindless_root_index;
     record.push_constant_size_bytes = desc.push_constant_size_bytes;
     record.enable_bindless_textures = desc.enable_bindless_textures;
     record.use_vertex_buffer = desc.use_vertex_buffer;
@@ -461,8 +504,15 @@ PipelineHandle D3D12Device::CreatePipeline(const PipelineDesc& desc, ISwapChain&
     // vs_5_1/ps_5_1, not 5_0: register spaces (used by the bindless texture
     // table's HLSL — see the "Unified mode's textured-quad pipeline"
     // comment in rhi_demo/main.cpp) are only valid from shader model 5.1.
-    gfx::ShaderBytecode vs = gfx::CompileHLSL(desc.hlsl_source, desc.vs_entry.c_str(), "vs_5_1", "rhi_pipeline_vs");
-    gfx::ShaderBytecode ps = gfx::CompileHLSL(desc.hlsl_source, desc.ps_entry.c_str(), "ps_5_1", "rhi_pipeline_ps");
+    // desc.shader_model_6 sends both stages through DXC as DXIL 6.5 (a pipeline cannot mix DXBC and DXIL stages).
+    auto compile = [&](const std::string& entry, const char* fxc_profile, const char* dxc_profile, const char* name) {
+        return desc.shader_model_6 ? gfx::CompileHLSLToDXIL(desc.hlsl_source, entry.c_str(), dxc_profile, name)
+                                   : gfx::CompileHLSL(desc.hlsl_source, entry.c_str(), fxc_profile, name);
+    };
+    gfx::ShaderBytecode vs = compile(desc.vs_entry, "vs_5_1", "vs_6_5", "rhi_pipeline_vs");
+    // A depth-only pipeline may have no pixel shader at all (opaque shadow casters).
+    const bool has_pixel_shader = !(desc.depth_target && desc.ps_entry.empty());
+    gfx::ShaderBytecode ps = has_pixel_shader ? compile(desc.ps_entry, "ps_5_1", "ps_6_5", "rhi_pipeline_ps") : gfx::ShaderBytecode{};
 
     // Keep POSITION / TEXCOORD as the default, with optional normal and
     // tangent elements for lit, normal-mapped model vertices.
@@ -480,7 +530,7 @@ PipelineHandle D3D12Device::CreatePipeline(const PipelineDesc& desc, ISwapChain&
     D3D12_GRAPHICS_PIPELINE_STATE_DESC pso_desc{};
     pso_desc.pRootSignature = record.root_signature.Get();
     pso_desc.VS = {vs.Data(), vs.Size()};
-    pso_desc.PS = {ps.Data(), ps.Size()};
+    if (has_pixel_shader) pso_desc.PS = {ps.Data(), ps.Size()};
     if (desc.use_vertex_buffer) {
         if (!has_tangents && !has_normals) {
             // PositionUv has no NORMAL semantic. Its second element is UV.
@@ -491,7 +541,11 @@ PipelineHandle D3D12Device::CreatePipeline(const PipelineDesc& desc, ISwapChain&
     }
     pso_desc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
     pso_desc.RasterizerState.CullMode = desc.cull_back_face ? D3D12_CULL_MODE_BACK : D3D12_CULL_MODE_NONE;
-    pso_desc.RasterizerState.DepthClipEnable = TRUE;
+    pso_desc.RasterizerState.FrontCounterClockwise = TRUE; // counter-clockwise as seen is the front, as glTF has it (and the Vulkan backend)
+    // Depth-only (shadow) pipelines clamp instead of clipping: a caster between the light and the map's near plane still lands in it.
+    pso_desc.RasterizerState.DepthClipEnable = desc.depth_target ? FALSE : TRUE;
+    pso_desc.RasterizerState.DepthBias = desc.depth_bias;
+    pso_desc.RasterizerState.SlopeScaledDepthBias = std::isfinite(desc.slope_scaled_depth_bias) ? desc.slope_scaled_depth_bias : 0.0f;
 
     // D3D12_GRAPHICS_PIPELINE_STATE_DESC is zero-initialized above, but a
     // zeroed D3D12_RENDER_TARGET_BLEND_DESC is not the API's default state:
@@ -526,10 +580,22 @@ PipelineHandle D3D12Device::CreatePipeline(const PipelineDesc& desc, ISwapChain&
                                                                   : D3D12_DEPTH_WRITE_MASK_ZERO;
     pso_desc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
     pso_desc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
+    if (desc.render_texture_target) {
+        // Texture passes bind no depth buffer, so the PSO declares none.
+        pso_desc.DepthStencilState.DepthEnable = FALSE;
+        pso_desc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+        pso_desc.DSVFormat = DXGI_FORMAT_UNKNOWN;
+    }
+    if (desc.depth_target) {
+        pso_desc.DepthStencilState.DepthEnable = TRUE;
+        pso_desc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+        if (desc.depth_always) pso_desc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+        pso_desc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
+    }
 
     pso_desc.SampleMask = UINT_MAX;
     pso_desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
-    pso_desc.NumRenderTargets = 1;
+    pso_desc.NumRenderTargets = desc.depth_target ? 0 : 1;
     pso_desc.RTVFormats[0] = rtv_format;
     pso_desc.SampleDesc.Count = 1;
 
@@ -715,6 +781,165 @@ void D3D12Device::UpdateConstantBuffer(BufferHandle buffer, const void* data, u6
         return;
     }
     device_.WithQueuesIdle([&] { buffers_[buffer.index]->Update(data, size_bytes, offset); });
+}
+
+bool D3D12Device::SupportsRayTracing() const {
+    // Inline ray queries (RayQuery<> in HLSL) are DXR tier 1.1.
+    D3D12_FEATURE_DATA_D3D12_OPTIONS5 options{};
+    ID3D12Device* device = device_.Handle();
+    return device && SUCCEEDED(device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS5, &options, sizeof(options))) &&
+           options.RaytracingTier >= D3D12_RAYTRACING_TIER_1_1;
+}
+
+AccelerationStructureHandle D3D12Device::BuildAccelerationStructure(const D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS& inputs,
+                                                                    bool top_level) {
+    ID3D12Device* native = device_.Handle();
+    ComPtr<ID3D12Device5> device5;
+    AETHER_D3D_CHECK(native->QueryInterface(IID_PPV_ARGS(&device5)));
+    D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO prebuild{};
+    device5->GetRaytracingAccelerationStructurePrebuildInfo(&inputs, &prebuild);
+    if (prebuild.ResultDataMaxSizeInBytes == 0) throw std::invalid_argument("The acceleration structure has no geometry to build");
+
+    auto make_buffer = [&](u64 size, D3D12_RESOURCE_STATES state) {
+        D3D12_HEAP_PROPERTIES heap{};
+        heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+        D3D12_RESOURCE_DESC buffer{};
+        buffer.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+        buffer.Width = size;
+        buffer.Height = buffer.DepthOrArraySize = buffer.MipLevels = 1;
+        buffer.SampleDesc.Count = 1;
+        buffer.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        buffer.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+        ComPtr<ID3D12Resource> resource;
+        AETHER_D3D_CHECK(native->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &buffer, state, nullptr, IID_PPV_ARGS(&resource)));
+        return resource;
+    };
+    ComPtr<ID3D12Resource> result = make_buffer(prebuild.ResultDataMaxSizeInBytes, D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE);
+    ComPtr<ID3D12Resource> scratch = make_buffer(prebuild.ScratchDataSizeInBytes, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+
+    ComPtr<ID3D12CommandAllocator> allocator;
+    AETHER_D3D_CHECK(native->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&allocator)));
+    ComPtr<ID3D12GraphicsCommandList> list;
+    AETHER_D3D_CHECK(native->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocator.Get(), nullptr, IID_PPV_ARGS(&list)));
+    ComPtr<ID3D12GraphicsCommandList4> list4;
+    AETHER_D3D_CHECK(list.As(&list4));
+    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC build{};
+    build.Inputs = inputs;
+    build.DestAccelerationStructureData = result->GetGPUVirtualAddress();
+    build.ScratchAccelerationStructureData = scratch->GetGPUVirtualAddress();
+    list4->BuildRaytracingAccelerationStructure(&build, 0, nullptr);
+    AETHER_D3D_CHECK(list4->Close());
+    ID3D12CommandList* lists[] = {list4.Get()};
+    device_.WaitForFence(device_.Submit(lists, 1)); // the scratch buffer and allocator are released after the wait
+
+    AccelerationRecord record;
+    record.resource = std::move(result);
+    record.top_level = top_level;
+    u32 slot;
+    if (!free_acceleration_slots_.empty()) {
+        slot = free_acceleration_slots_.back();
+        free_acceleration_slots_.pop_back();
+        acceleration_structures_[slot] = std::move(record);
+    } else {
+        slot = static_cast<u32>(acceleration_structures_.size());
+        acceleration_structures_.push_back(std::move(record));
+    }
+    return AccelerationStructureHandle{slot};
+}
+
+AccelerationStructureHandle D3D12Device::CreateBottomLevelAS(BufferHandle vertices, u32 vertex_count, u32 vertex_stride_bytes,
+                                                             BufferHandle indices, u32 index_count) {
+    if (!SupportsRayTracing()) return {};
+    if (!IsBufferAlive(vertices) || !IsVertexBuffer(vertices) || !IsBufferAlive(indices) || !index_buffer_formats_[indices.index].has_value() ||
+        vertex_count == 0 || vertex_stride_bytes < 12 || index_count == 0 || index_count % 3 != 0) {
+        throw std::invalid_argument("CreateBottomLevelAS needs a vertex buffer, an index buffer and whole triangles");
+    }
+    const IndexFormat format = *index_buffer_formats_[indices.index];
+    const u32 index_size = format == IndexFormat::UInt16 ? 2u : 4u;
+    if (static_cast<u64>(vertex_count) * vertex_stride_bytes > GetBuffer(vertices).Size() ||
+        static_cast<u64>(index_count) * index_size > GetBuffer(indices).Size()) {
+        throw std::invalid_argument("CreateBottomLevelAS counts run past the end of their buffers");
+    }
+    D3D12_RAYTRACING_GEOMETRY_DESC geometry{};
+    geometry.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES;
+    geometry.Flags = D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE;
+    geometry.Triangles.VertexBuffer.StartAddress = GetBuffer(vertices).GPUAddress();
+    geometry.Triangles.VertexBuffer.StrideInBytes = vertex_stride_bytes;
+    geometry.Triangles.VertexFormat = DXGI_FORMAT_R32G32B32_FLOAT;
+    geometry.Triangles.VertexCount = vertex_count;
+    geometry.Triangles.IndexBuffer = GetBuffer(indices).GPUAddress();
+    geometry.Triangles.IndexFormat = format == IndexFormat::UInt16 ? DXGI_FORMAT_R16_UINT : DXGI_FORMAT_R32_UINT;
+    geometry.Triangles.IndexCount = index_count;
+    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS inputs{};
+    inputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL;
+    inputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_TRACE;
+    inputs.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
+    inputs.NumDescs = 1;
+    inputs.pGeometryDescs = &geometry;
+    return BuildAccelerationStructure(inputs, false);
+}
+
+AccelerationStructureHandle D3D12Device::CreateTopLevelAS(std::span<const AccelerationInstance> instances) {
+    if (!SupportsRayTracing()) return {};
+    if (instances.empty()) throw std::invalid_argument("CreateTopLevelAS needs at least one instance");
+    std::vector<D3D12_RAYTRACING_INSTANCE_DESC> descs(instances.size());
+    for (usize i = 0; i < instances.size(); ++i) {
+        if (!IsAccelerationStructureAlive(instances[i].blas) || acceleration_structures_[instances[i].blas.index].top_level) {
+            throw std::invalid_argument("CreateTopLevelAS instances must name live bottom-level structures");
+        }
+        D3D12_RAYTRACING_INSTANCE_DESC& desc = descs[i];
+        std::memcpy(desc.Transform, instances[i].transform, sizeof(desc.Transform));
+        desc.InstanceID = instances[i].instance_id & 0xFFFFFFu;
+        desc.InstanceMask = 0xFF;
+        desc.AccelerationStructure = AccelerationStructureAddress(instances[i].blas);
+    }
+    gfx::Buffer instance_buffer(device_, descs.size() * sizeof(descs[0]), gfx::BufferKind::Upload);
+    instance_buffer.Update(descs.data(), descs.size() * sizeof(descs[0]));
+    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS inputs{};
+    inputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL;
+    inputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_TRACE;
+    inputs.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
+    inputs.NumDescs = static_cast<UINT>(descs.size());
+    inputs.InstanceDescs = instance_buffer.GPUAddress();
+    return BuildAccelerationStructure(inputs, true); // waits for the build, so the instance buffer may go out of scope
+}
+
+bool D3D12Device::DestroyAccelerationStructure(AccelerationStructureHandle handle) {
+    if (!IsAccelerationStructureAlive(handle)) return false;
+    std::shared_ptr<ID3D12Resource> keep(acceleration_structures_[handle.index].resource.Detach(), [](ID3D12Resource* r) { r->Release(); });
+    acceleration_structures_[handle.index] = {};
+    free_acceleration_slots_.push_back(handle.index);
+    Retire([keep]() mutable { keep.reset(); });
+    DrainRetired();
+    return true;
+}
+
+bool D3D12Device::WriteBufferUnsynchronized(BufferHandle buffer, const void* data, u64 size_bytes, u64 offset) {
+    // Constant and vertex buffers live in the upload heap, persistently mapped: a plain copy, ordered by the caller's fences.
+    if (!(IsConstantBuffer(buffer) || IsVertexBuffer(buffer)) || buffer.index >= buffers_.size() || !data || size_bytes == 0 ||
+        offset > buffers_[buffer.index]->Size() || size_bytes > buffers_[buffer.index]->Size() - offset) {
+        return false;
+    }
+    buffers_[buffer.index]->Update(data, size_bytes, offset);
+    return true;
+}
+
+BufferHandle D3D12Device::CreateReadbackBuffer(u64 size_bytes) {
+    if (size_bytes == 0 || size_bytes > std::numeric_limits<UINT>::max()) {
+        throw std::invalid_argument("A readback buffer's size must be non-zero and fit the D3D12 buffer limits");
+    }
+    ReserveBufferRegistryEntry();
+    auto buffer = std::make_unique<gfx::Buffer>(device_, size_bytes, gfx::BufferKind::Readback);
+    return BufferHandle{StoreBuffer(std::move(buffer), DescriptorHeap::kInvalidIndex, false, false, std::nullopt)};
+}
+
+bool D3D12Device::ReadReadbackBuffer(BufferHandle buffer, void* out, u64 size_bytes, u64 offset) {
+    if (!IsBufferAlive(buffer) || buffers_[buffer.index]->Kind() != gfx::BufferKind::Readback || out == nullptr || size_bytes == 0 ||
+        offset > buffers_[buffer.index]->Size() || size_bytes > buffers_[buffer.index]->Size() - offset) {
+        return false;
+    }
+    buffers_[buffer.index]->Read(out, size_bytes, offset);
+    return true;
 }
 
 BufferHandle D3D12Device::CreateVertexBuffer(const void* data, u64 size_bytes) {
@@ -948,6 +1173,8 @@ bool D3D12Device::DestroyTexture(SampledTextureHandle texture) {
     }
     ComPtr<ID3D12Resource> floating = std::move(sampled_float_textures_[descriptor_slot]);
     sampled_float_textures_[descriptor_slot].Reset();
+    render_texture_sizes_[descriptor_slot] = {0u, 0u}; // no longer a render texture: BeginTexturePass refuses the handle
+    render_texture_depth_[descriptor_slot] = 0;
     const u32 compute_index = sampled_descriptor_indices_[descriptor_slot];
     sampled_descriptor_indices_[descriptor_slot] = DescriptorHeap::kInvalidIndex;
     if (sampled_texture_count_ > 0) --sampled_texture_count_;
@@ -965,6 +1192,208 @@ bool D3D12Device::DestroyTexture(SampledTextureHandle texture) {
         floating.Reset();
     });
     return true;
+}
+
+SampledTextureHandle D3D12Device::CreateRenderTexture(u32 width, u32 height) {
+    if (width == 0 || height == 0 || width > D3D12_REQ_TEXTURE2D_U_OR_V_DIMENSION || height > D3D12_REQ_TEXTURE2D_U_OR_V_DIMENSION) {
+        throw std::invalid_argument("CreateRenderTexture requires a non-zero extent within the device's 2D texture limit");
+    }
+    DrainRetired(); // destroyed textures give their slots back at retirement
+    if (sampled_texture_count_ >= kMaxUserBindlessTextures || !bindless_texture_heap_->CanAllocate()) {
+        AETHER_LOG_ERROR("D3D12", "CreateRenderTexture: the bindless texture table is full (capacity=%u real textures)", kMaxUserBindlessTextures);
+        return {};
+    }
+    D3D12_RESOURCE_DESC desc{};
+    desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    desc.Width = width;
+    desc.Height = height;
+    desc.DepthOrArraySize = 1;
+    desc.MipLevels = 1;
+    desc.Format = kRenderTextureFormat;
+    desc.SampleDesc.Count = 1;
+    desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+    D3D12_CLEAR_VALUE clear{};
+    clear.Format = kRenderTextureFormat;
+    D3D12_HEAP_PROPERTIES default_heap{};
+    default_heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+    ComPtr<ID3D12Resource> texture;
+    AETHER_D3D_CHECK(device_.Handle()->CreateCommittedResource(&default_heap, D3D12_HEAP_FLAG_NONE, &desc,
+                                                                D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, &clear,
+                                                                IID_PPV_ARGS(&texture)));
+    const u32 bindless_index = bindless_texture_heap_->Allocate();
+    if (bindless_index == DescriptorHeap::kInvalidIndex) return {};
+    const usize slot = bindless_index - kFirstUserBindlessTextureIndex;
+    D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
+    srv.Format = kRenderTextureFormat;
+    srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    srv.Texture2D.MipLevels = 1;
+    // The slot is free (nothing in flight reads it: a destroyed texture's slot is only reused after retirement), so its descriptor
+    // can be written while the GPU works on other slots.
+    device_.Handle()->CreateShaderResourceView(texture.Get(), &srv, bindless_texture_heap_->CPUHandle(bindless_index));
+    device_.Handle()->CreateRenderTargetView(texture.Get(), nullptr, render_texture_rtv_heap_->CPUHandle(static_cast<u32>(slot)));
+    sampled_descriptor_indices_[slot] = DescriptorHeap::kInvalidIndex; // graphics only: no compute descriptor
+    sampled_float_textures_[slot] = std::move(texture);
+    render_texture_sizes_[slot] = {width, height};
+    ++sampled_texture_count_;
+    return SampledTextureHandle{bindless_index};
+}
+
+D3D12Device::RenderTextureView D3D12Device::FindRenderTexture(SampledTextureHandle handle) const {
+    if (!handle.IsValid() || handle.index < kFirstUserBindlessTextureIndex || handle.index >= kMaxBindlessTextures) return {};
+    const usize slot = handle.index - kFirstUserBindlessTextureIndex;
+    if (render_texture_sizes_[slot].first == 0 || !sampled_float_textures_[slot] || render_texture_depth_[slot]) return {};
+    return {sampled_float_textures_[slot].Get(), render_texture_rtv_heap_->CPUHandle(static_cast<u32>(slot)), render_texture_sizes_[slot].first,
+            render_texture_sizes_[slot].second};
+}
+
+SampledTextureHandle D3D12Device::CreateDepthTexture(u32 width, u32 height) {
+    if (width == 0 || height == 0 || width > D3D12_REQ_TEXTURE2D_U_OR_V_DIMENSION || height > D3D12_REQ_TEXTURE2D_U_OR_V_DIMENSION) {
+        throw std::invalid_argument("CreateDepthTexture requires a non-zero extent within the device's 2D texture limit");
+    }
+    DrainRetired();
+    if (sampled_texture_count_ >= kMaxUserBindlessTextures || !bindless_texture_heap_->CanAllocate()) {
+        AETHER_LOG_ERROR("D3D12", "CreateDepthTexture: the bindless texture table is full (capacity=%u real textures)", kMaxUserBindlessTextures);
+        return {};
+    }
+    D3D12_RESOURCE_DESC desc{};
+    desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    desc.Width = width;
+    desc.Height = height;
+    desc.DepthOrArraySize = 1;
+    desc.MipLevels = 1;
+    desc.Format = DXGI_FORMAT_R32_TYPELESS; // D32_FLOAT to draw, R32_FLOAT to read
+    desc.SampleDesc.Count = 1;
+    desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+    D3D12_CLEAR_VALUE clear{};
+    clear.Format = DXGI_FORMAT_D32_FLOAT;
+    clear.DepthStencil.Depth = 1.0f;
+    D3D12_HEAP_PROPERTIES default_heap{};
+    default_heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+    ComPtr<ID3D12Resource> texture;
+    AETHER_D3D_CHECK(device_.Handle()->CreateCommittedResource(&default_heap, D3D12_HEAP_FLAG_NONE, &desc,
+                                                                D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, &clear,
+                                                                IID_PPV_ARGS(&texture)));
+    const u32 bindless_index = bindless_texture_heap_->Allocate();
+    if (bindless_index == DescriptorHeap::kInvalidIndex) return {};
+    const usize slot = bindless_index - kFirstUserBindlessTextureIndex;
+    D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
+    srv.Format = DXGI_FORMAT_R32_FLOAT;
+    srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    srv.Texture2D.MipLevels = 1;
+    device_.Handle()->CreateShaderResourceView(texture.Get(), &srv, bindless_texture_heap_->CPUHandle(bindless_index));
+    D3D12_DEPTH_STENCIL_VIEW_DESC dsv{};
+    dsv.Format = DXGI_FORMAT_D32_FLOAT;
+    dsv.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
+    device_.Handle()->CreateDepthStencilView(texture.Get(), &dsv, render_texture_dsv_heap_->CPUHandle(static_cast<u32>(slot)));
+    sampled_descriptor_indices_[slot] = DescriptorHeap::kInvalidIndex; // graphics only
+    sampled_float_textures_[slot] = std::move(texture);
+    render_texture_sizes_[slot] = {width, height};
+    render_texture_depth_[slot] = 1;
+    ++sampled_texture_count_;
+    return SampledTextureHandle{bindless_index};
+}
+
+SampledTextureHandle D3D12Device::CreateHalfFloatTexture(u32 width, u32 height, u32 mip_count, const u16* halves) {
+    return CreateMippedTexture("CreateHalfFloatTexture", DXGI_FORMAT_R16G16B16A16_FLOAT, 8, width, height, mip_count, halves);
+}
+
+SampledTextureHandle D3D12Device::CreateTextureWithMips(u32 width, u32 height, u32 mip_count, const u8* rgba8_levels) {
+    return CreateMippedTexture("CreateTextureWithMips", DXGI_FORMAT_R8G8B8A8_UNORM, 4, width, height, mip_count, rgba8_levels);
+}
+
+SampledTextureHandle D3D12Device::CreateMippedTexture(const char* what, DXGI_FORMAT format, u32 texel_bytes, u32 width, u32 height,
+                                                      u32 mip_count, const void* levels) {
+    if (width == 0 || height == 0 || levels == nullptr || width > D3D12_REQ_TEXTURE2D_U_OR_V_DIMENSION ||
+        height > D3D12_REQ_TEXTURE2D_U_OR_V_DIMENSION) {
+        throw std::invalid_argument(std::string(what) + " requires a non-zero extent within the device's 2D texture limit and data");
+    }
+    u32 max_mips = 1;
+    while ((std::max(width, height) >> max_mips) > 0) ++max_mips;
+    if (mip_count == 0 || mip_count > max_mips) {
+        throw std::invalid_argument(std::string(what) + " requires between 1 and the extent's full chain of mip levels");
+    }
+    DrainRetired(); // destroyed textures give their slots back at retirement
+    if (sampled_texture_count_ >= kMaxUserBindlessTextures || !bindless_texture_heap_->CanAllocate()) {
+        AETHER_LOG_ERROR("D3D12", "%s: the bindless texture table is full (capacity=%u real textures)", what, kMaxUserBindlessTextures);
+        return {};
+    }
+    D3D12_RESOURCE_DESC desc{};
+    desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    desc.Width = width;
+    desc.Height = height;
+    desc.DepthOrArraySize = 1;
+    desc.MipLevels = static_cast<UINT16>(mip_count);
+    desc.Format = format;
+    desc.SampleDesc.Count = 1;
+    D3D12_HEAP_PROPERTIES default_heap{};
+    default_heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+    ComPtr<ID3D12Resource> texture;
+    AETHER_D3D_CHECK(device_.Handle()->CreateCommittedResource(&default_heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COPY_DEST,
+                                                                nullptr, IID_PPV_ARGS(&texture)));
+    std::vector<D3D12_PLACED_SUBRESOURCE_FOOTPRINT> footprints(mip_count);
+    std::vector<UINT> rows(mip_count);
+    std::vector<UINT64> row_sizes(mip_count);
+    UINT64 upload_size = 0;
+    device_.Handle()->GetCopyableFootprints(&desc, 0, mip_count, 0, footprints.data(), rows.data(), row_sizes.data(), &upload_size);
+    std::vector<u8> upload(static_cast<usize>(upload_size), 0);
+    const u8* source = static_cast<const u8*>(levels);
+    for (u32 mip = 0; mip < mip_count; ++mip) {
+        const u32 h = std::max(1u, height >> mip), w = std::max(1u, width >> mip);
+        const usize row_bytes = static_cast<usize>(w) * texel_bytes;
+        for (u32 y = 0; y < h; ++y) {
+            std::memcpy(upload.data() + footprints[mip].Offset + static_cast<usize>(y) * footprints[mip].Footprint.RowPitch, source, row_bytes);
+            source += row_bytes;
+        }
+    }
+    gfx::Buffer staging(device_, upload_size, gfx::BufferKind::Upload);
+    staging.Update(upload.data(), upload_size);
+    gfx::CommandList copy(device_);
+    copy.Reset();
+    for (u32 mip = 0; mip < mip_count; ++mip) {
+        D3D12_TEXTURE_COPY_LOCATION dst{};
+        dst.pResource = texture.Get();
+        dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+        dst.SubresourceIndex = mip;
+        D3D12_TEXTURE_COPY_LOCATION src{};
+        src.pResource = staging.Handle();
+        src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+        src.PlacedFootprint = footprints[mip];
+        copy->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+    }
+    D3D12_RESOURCE_BARRIER to_read{};
+    to_read.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    to_read.Transition.pResource = texture.Get();
+    to_read.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    to_read.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+    to_read.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+    copy->ResourceBarrier(1, &to_read);
+    copy.Close();
+    ID3D12CommandList* lists[] = {copy.Get()};
+    device_.WaitForFence(device_.Submit(lists, 1));
+
+    const u32 bindless_index = bindless_texture_heap_->Allocate();
+    if (bindless_index == DescriptorHeap::kInvalidIndex) return {};
+    const usize slot = bindless_index - kFirstUserBindlessTextureIndex;
+    D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
+    srv.Format = format;
+    srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    srv.Texture2D.MipLevels = mip_count;
+    device_.Handle()->CreateShaderResourceView(texture.Get(), &srv, bindless_texture_heap_->CPUHandle(bindless_index));
+    sampled_descriptor_indices_[slot] = DescriptorHeap::kInvalidIndex; // graphics only
+    sampled_float_textures_[slot] = std::move(texture);
+    ++sampled_texture_count_;
+    return SampledTextureHandle{bindless_index};
+}
+
+D3D12Device::DepthTextureView D3D12Device::FindDepthTexture(SampledTextureHandle handle) const {
+    if (!handle.IsValid() || handle.index < kFirstUserBindlessTextureIndex || handle.index >= kMaxBindlessTextures) return {};
+    const usize slot = handle.index - kFirstUserBindlessTextureIndex;
+    if (render_texture_sizes_[slot].first == 0 || !sampled_float_textures_[slot] || !render_texture_depth_[slot]) return {};
+    return {sampled_float_textures_[slot].Get(), render_texture_dsv_heap_->CPUHandle(static_cast<u32>(slot)), render_texture_sizes_[slot].first,
+            render_texture_sizes_[slot].second};
 }
 
 SampledTextureHandle D3D12Device::CreateR32FloatTexture(u32 width, u32 height, const f32* values) {
@@ -1091,13 +1520,51 @@ void D3D12Device::ReleaseExternalBindlessSlot(SampledTextureHandle slot) {
 }
 
 D3D12SwapChain::~D3D12SwapChain() {
-    if (!scene_depth_handle_.IsValid()) return;
+    if (!scene_depth_handle_.IsValid() && !scene_color_handle_.IsValid()) return;
     try {
-        device_.Native().WaitForFence(device_.Native().Submit(nullptr, 0)); // nothing in flight still reads the copy
+        device_.Native().WaitForFence(device_.Native().Submit(nullptr, 0)); // nothing in flight still reads them
     } catch (...) {
-        AETHER_LOG_WARN("D3D12", "Could not drain the graphics queue before releasing the scene depth copy");
+        AETHER_LOG_WARN("D3D12", "Could not drain the graphics queue before releasing the scene depth and colour targets");
     }
-    device_.ReleaseExternalBindlessSlot(scene_depth_handle_);
+    if (scene_depth_handle_.IsValid()) device_.ReleaseExternalBindlessSlot(scene_depth_handle_);
+    if (scene_color_handle_.IsValid()) device_.ReleaseExternalBindlessSlot(scene_color_handle_);
+}
+
+SampledTextureHandle D3D12SwapChain::SceneColorTexture() {
+    if (scene_color_handle_.IsValid()) return scene_color_handle_;
+    device_.Native().WaitForFence(device_.Native().Submit(nullptr, 0));
+    scene_color_handle_ = device_.ReserveExternalBindlessSlot();
+    if (!scene_color_handle_.IsValid()) return {};
+    CreateSceneColor();
+    return scene_color_handle_;
+}
+
+void D3D12SwapChain::CreateSceneColor() {
+    D3D12_HEAP_PROPERTIES default_heap{};
+    default_heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+    D3D12_RESOURCE_DESC desc{};
+    desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    desc.Width = swap_chain_.Width();
+    desc.Height = swap_chain_.Height();
+    desc.DepthOrArraySize = 1;
+    desc.MipLevels = 1;
+    desc.Format = kSceneColorFormat;
+    desc.SampleDesc.Count = 1;
+    desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+    D3D12_CLEAR_VALUE clear{};
+    clear.Format = kSceneColorFormat;
+    device_.SetExternalBindlessTexture(scene_color_handle_, nullptr, DXGI_FORMAT_UNKNOWN);
+    scene_color_.Reset();
+    AETHER_D3D_CHECK(device_.Native().Handle()->CreateCommittedResource(
+        &default_heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, &clear,
+        IID_PPV_ARGS(&scene_color_)));
+    if (!scene_color_rtv_heap_) {
+        scene_color_rtv_heap_ = std::make_unique<DescriptorHeap>(device_.Native(), D3D12_DESCRIPTOR_HEAP_TYPE_RTV, 1,
+                                                                 /*shader_visible=*/false);
+        scene_color_rtv_heap_->Allocate();
+    }
+    device_.Native().Handle()->CreateRenderTargetView(scene_color_.Get(), nullptr, scene_color_rtv_heap_->CPUHandle(0));
+    device_.SetExternalBindlessTexture(scene_color_handle_, scene_color_.Get(), kSceneColorFormat);
 }
 
 SampledTextureHandle D3D12SwapChain::SceneDepthTexture() {
@@ -1175,6 +1642,7 @@ void D3D12SwapChain::CreateDepthBuffer(u32 width, u32 height) {
                                                            depth_dsv_heap_->CPUHandle(i));
     }
     if (SceneDepthEnabled()) CreateSceneDepthCopy();
+    if (SceneColorEnabled()) CreateSceneColor();
 }
 
 void D3D12SwapChain::Resize(u32 width, u32 height) {
@@ -1280,6 +1748,8 @@ void D3D12CommandList::Reset() {
     render_pass_active_ = false;
     active_swap_chain_ = nullptr;
     active_backbuffer_ = nullptr;
+    active_scene_color_ = nullptr;
+    active_depth_texture_ = nullptr;
     graphics_pipeline_bound_ = false;
     graphics_bindless_enabled_ = false;
     graphics_bindless_bound_ = false;
@@ -1411,6 +1881,113 @@ void D3D12CommandList::BeginRenderPass(ISwapChain& swap_chain, const ClearColor&
     render_pass_active_ = true;
 }
 
+bool D3D12CommandList::BeginSceneColorPass(ISwapChain& swap_chain, const ClearColor& clear_color) {
+    auto* d3d_swap_ptr = dynamic_cast<D3D12SwapChain*>(&swap_chain);
+    if (!recording_ || IsComputeList() || render_pass_active_ || !IsFiniteClearColor(clear_color) || !d3d_swap_ptr ||
+        !d3d_swap_ptr->BelongsTo(device_) || !d3d_swap_ptr->SceneColorEnabled()) {
+        AETHER_LOG_ERROR("D3D12", "BeginSceneColorPass requires a recording, non-nested list, a finite clear colour and a D3D12 swap "
+                                  "chain from this device with a SceneColorTexture");
+        return false;
+    }
+    D3D12SwapChain& d3d_swap = *d3d_swap_ptr;
+    ID3D12Resource* target = d3d_swap.SceneColorResource();
+    D3D12_RESOURCE_BARRIER to_rt =
+        TransitionBarrier(target, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+    cmd_.Get()->ResourceBarrier(1, &to_rt);
+    const D3D12_CPU_DESCRIPTOR_HANDLE rtv = d3d_swap.SceneColorRTV();
+    const f32 c[4] = {clear_color.r, clear_color.g, clear_color.b, clear_color.a};
+    cmd_.Get()->ClearRenderTargetView(rtv, c, 0, nullptr);
+    const D3D12_CPU_DESCRIPTOR_HANDLE dsv = d3d_swap.DepthDSV(d3d_swap.CurrentIndex());
+    cmd_.Get()->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+    cmd_.Get()->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
+    D3D12_VIEWPORT viewport{0.0f, 0.0f, static_cast<f32>(d3d_swap.Width()), static_cast<f32>(d3d_swap.Height()), 0.0f, 1.0f};
+    D3D12_RECT scissor{0, 0, static_cast<LONG>(d3d_swap.Width()), static_cast<LONG>(d3d_swap.Height())};
+    cmd_.Get()->RSSetViewports(1, &viewport);
+    cmd_.Get()->RSSetScissorRects(1, &scissor);
+    active_scene_color_ = target;
+    active_swap_chain_ = &d3d_swap;
+    render_pass_active_ = true;
+    return true;
+}
+
+bool D3D12CommandList::BeginTexturePass(SampledTextureHandle target, const ClearColor* clear_color) {
+    const D3D12Device::RenderTextureView view = device_.FindRenderTexture(target);
+    if (!recording_ || IsComputeList() || render_pass_active_ || view.resource == nullptr ||
+        (clear_color != nullptr && !IsFiniteClearColor(*clear_color))) {
+        AETHER_LOG_ERROR("D3D12", "BeginTexturePass requires a recording, non-nested list, a live render texture of this device and a "
+                                  "finite clear colour (or none)");
+        return false;
+    }
+    D3D12_RESOURCE_BARRIER to_rt =
+        TransitionBarrier(view.resource, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+    cmd_.Get()->ResourceBarrier(1, &to_rt);
+    if (clear_color != nullptr) {
+        const f32 c[4] = {clear_color->r, clear_color->g, clear_color->b, clear_color->a};
+        cmd_.Get()->ClearRenderTargetView(view.rtv, c, 0, nullptr);
+    }
+    cmd_.Get()->OMSetRenderTargets(1, &view.rtv, FALSE, nullptr);
+    D3D12_VIEWPORT viewport{0.0f, 0.0f, static_cast<f32>(view.width), static_cast<f32>(view.height), 0.0f, 1.0f};
+    D3D12_RECT scissor{0, 0, static_cast<LONG>(view.width), static_cast<LONG>(view.height)};
+    cmd_.Get()->RSSetViewports(1, &viewport);
+    cmd_.Get()->RSSetScissorRects(1, &scissor);
+    active_scene_color_ = view.resource; // EndRenderPass returns it to PIXEL_SHADER_RESOURCE, as for the scene colour target
+    active_swap_chain_ = nullptr;        // no depth: CopySceneDepth refuses
+    render_pass_active_ = true;
+    return true;
+}
+
+bool D3D12CommandList::CopyRenderTextureToReadback(SampledTextureHandle texture, BufferHandle readback) {
+    const D3D12Device::RenderTextureView view = device_.FindRenderTexture(texture);
+    if (!recording_ || IsComputeList() || render_pass_active_ || view.resource == nullptr || !device_.IsBufferAlive(readback) ||
+        device_.GetBuffer(readback).Kind() != gfx::BufferKind::Readback) {
+        AETHER_LOG_ERROR("D3D12", "CopyRenderTextureToReadback requires a recording graphics list outside any pass, a live render texture and a readback buffer");
+        return false;
+    }
+    const u32 pitch = ReadbackRowPitch(view.width, 8);
+    if (device_.GetBuffer(readback).Size() < static_cast<u64>(pitch) * view.height) {
+        AETHER_LOG_ERROR("D3D12", "CopyRenderTextureToReadback: the readback buffer is smaller than the texture's rows");
+        return false;
+    }
+    D3D12_RESOURCE_BARRIER to_copy =
+        TransitionBarrier(view.resource, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    cmd_.Get()->ResourceBarrier(1, &to_copy);
+    D3D12_TEXTURE_COPY_LOCATION destination{};
+    destination.pResource = device_.GetBuffer(readback).Handle();
+    destination.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+    destination.PlacedFootprint.Offset = 0;
+    destination.PlacedFootprint.Footprint = {DXGI_FORMAT_R16G16B16A16_FLOAT, view.width, view.height, 1, pitch};
+    D3D12_TEXTURE_COPY_LOCATION source{};
+    source.pResource = view.resource;
+    source.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+    source.SubresourceIndex = 0;
+    cmd_.Get()->CopyTextureRegion(&destination, 0, 0, 0, &source, nullptr);
+    D3D12_RESOURCE_BARRIER back =
+        TransitionBarrier(view.resource, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    cmd_.Get()->ResourceBarrier(1, &back);
+    return true;
+}
+
+bool D3D12CommandList::BeginDepthPass(SampledTextureHandle target, bool clear) {
+    const D3D12Device::DepthTextureView view = device_.FindDepthTexture(target);
+    if (!recording_ || IsComputeList() || render_pass_active_ || view.resource == nullptr) {
+        AETHER_LOG_ERROR("D3D12", "BeginDepthPass requires a recording, non-nested list and a live depth texture of this device");
+        return false;
+    }
+    D3D12_RESOURCE_BARRIER to_depth =
+        TransitionBarrier(view.resource, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+    cmd_.Get()->ResourceBarrier(1, &to_depth);
+    if (clear) cmd_.Get()->ClearDepthStencilView(view.dsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+    cmd_.Get()->OMSetRenderTargets(0, nullptr, FALSE, &view.dsv);
+    D3D12_VIEWPORT viewport{0.0f, 0.0f, static_cast<f32>(view.width), static_cast<f32>(view.height), 0.0f, 1.0f};
+    D3D12_RECT scissor{0, 0, static_cast<LONG>(view.width), static_cast<LONG>(view.height)};
+    cmd_.Get()->RSSetViewports(1, &viewport);
+    cmd_.Get()->RSSetScissorRects(1, &scissor);
+    active_depth_texture_ = view.resource;
+    active_swap_chain_ = nullptr; // CopySceneDepth refuses
+    render_pass_active_ = true;
+    return true;
+}
+
 bool D3D12CommandList::CopySceneDepth() {
     if (!recording_ || !render_pass_active_ || !active_swap_chain_ || !active_swap_chain_->SceneDepthEnabled()) {
         AETHER_LOG_ERROR("D3D12", "CopySceneDepth requires an active render pass on a swap chain with a SceneDepthTexture");
@@ -1449,14 +2026,21 @@ void D3D12CommandList::EndRenderPass() {
         AETHER_LOG_ERROR("D3D12", "EndRenderPass requires a recording command list");
         return;
     }
-    if (!render_pass_active_ || !active_backbuffer_) {
+    if (!render_pass_active_ || (!active_backbuffer_ && !active_scene_color_ && !active_depth_texture_)) {
         AETHER_LOG_ERROR("D3D12", "EndRenderPass requires an active render pass");
         return;
     }
-    D3D12_RESOURCE_BARRIER to_present =
-        TransitionBarrier(active_backbuffer_, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
-    cmd_.Get()->ResourceBarrier(1, &to_present);
+    // A scene colour, texture or depth pass leaves its target readable by later passes; a back-buffer pass hands the image to Present.
+    D3D12_RESOURCE_BARRIER after =
+        active_depth_texture_
+            ? TransitionBarrier(active_depth_texture_, D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)
+        : active_scene_color_
+            ? TransitionBarrier(active_scene_color_, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)
+            : TransitionBarrier(active_backbuffer_, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
+    cmd_.Get()->ResourceBarrier(1, &after);
     active_backbuffer_ = nullptr;
+    active_scene_color_ = nullptr;
+    active_depth_texture_ = nullptr;
     active_swap_chain_ = nullptr;
     render_pass_active_ = false;
     graphics_pipeline_bound_ = false;
@@ -1500,9 +2084,12 @@ void D3D12CommandList::BindPipeline(PipelineHandle pipeline) {
     cmd_.Get()->SetPipelineState(record.pso.Get());
     cmd_.Get()->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     frame_constants_root_index_ = record.frame_constants_root_index;
+    frame_read_root_index_ = record.frame_read_root_index;
+    acceleration_root_index_ = record.acceleration_root_index;
     graphics_pipeline_bound_ = true;
     graphics_push_constant_size_bytes_ = record.push_constant_size_bytes;
     graphics_bindless_enabled_ = record.enable_bindless_textures;
+    graphics_bindless_root_index_ = record.bindless_root_index;
     graphics_bindless_bound_ = false;
     graphics_uses_vertex_buffer_ = record.use_vertex_buffer;
     graphics_vertex_stride_bytes_ = record.vertex_stride_bytes;
@@ -1607,6 +2194,21 @@ void D3D12CommandList::BindFrameConstants(BufferHandle buffer) {
         return;
     }
     cmd_.Get()->SetGraphicsRootConstantBufferView(frame_constants_root_index_, device_.GetBuffer(buffer).GPUAddress());
+}
+
+void D3D12CommandList::BindFrameReadBuffer(BufferHandle buffer) {
+    if (frame_read_root_index_ == ~0u || !device_.IsBufferAlive(buffer)) {
+        AETHER_LOG_ERROR("D3D12", "BindFrameReadBuffer needs a pipeline made with frame_read_buffer and a valid buffer");
+        return;
+    }
+    cmd_.Get()->SetGraphicsRootShaderResourceView(frame_read_root_index_, device_.GetBuffer(buffer).GPUAddress());
+}
+void D3D12CommandList::BindAccelerationStructure(AccelerationStructureHandle structure) {
+    if (acceleration_root_index_ == ~0u || !device_.IsAccelerationStructureAlive(structure)) {
+        AETHER_LOG_ERROR("D3D12", "BindAccelerationStructure needs a pipeline made with acceleration_structure and a live structure");
+        return;
+    }
+    cmd_.Get()->SetGraphicsRootShaderResourceView(acceleration_root_index_, device_.AccelerationStructureAddress(structure));
 }
 void D3D12CommandList::BindComputePipeline(ComputePipelineHandle pipeline) {
     if (!recording_) {
@@ -1754,7 +2356,8 @@ void D3D12CommandList::BindBindlessTextures() {
     }
     ID3D12DescriptorHeap* heaps[] = {device_.BindlessTextureHeap().Heap()};
     cmd_.Get()->SetDescriptorHeaps(1, heaps);
-    cmd_.Get()->SetGraphicsRootDescriptorTable(1, device_.BindlessTextureHeap().GPUHandle(0));
+    // The table follows the push constants when the pipeline has them; without, it is the first parameter.
+    cmd_.Get()->SetGraphicsRootDescriptorTable(graphics_bindless_root_index_, device_.BindlessTextureHeap().GPUHandle(0));
     graphics_bindless_bound_ = true;
 }
 

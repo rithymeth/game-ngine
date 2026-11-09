@@ -57,6 +57,20 @@ struct BufferHandle {
     bool IsValid() const { return index != static_cast<u32>(-1); }
 };
 
+// A bottom- or top-level acceleration structure (IDevice::CreateBottomLevelAS / CreateTopLevelAS): the BVH a shader traces rays against.
+struct AccelerationStructureHandle {
+    u32 index = static_cast<u32>(-1);
+    bool IsValid() const { return index != static_cast<u32>(-1); }
+};
+
+// One placed copy of a bottom-level structure in a top-level one. `transform` is the object-to-world matrix's upper three rows, row-major
+// (so transform[0..3] is the X row with its translation last); a ray sees the instance with this id as InstanceID().
+struct AccelerationInstance {
+    AccelerationStructureHandle blas;
+    f32 transform[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
+    u32 instance_id = 0;
+};
+
 // Opaque handle into a backend device's global bindless texture table — see
 // IDevice::CreateTexture. Unlike TextureHandle (render-target/backbuffer
 // textures, tracked in a separate table), a SampledTextureHandle's `index`
@@ -74,7 +88,11 @@ struct SampledTextureHandle {
 // Slot zero is the permanent white fallback on both backends. This fixed
 // table capacity avoids Vulkan descriptor-set-layout recreation; the table
 // is built once and every descriptor is valid before any real texture loads.
-constexpr u32 kMaxBindlessTextures = 32;
+// 128 is the most a graphics stage may see on D3D12 resource-binding tier 1
+// and what MoltenVK reports for Apple GPUs; shaders declare
+// `Texture2D g_Textures[128]` (a shader may declare fewer: both APIs allow a
+// smaller array than the table). Packed shader indices are 8 bits, 255 = none.
+constexpr u32 kMaxBindlessTextures = 128;
 constexpr u32 kBindlessFallbackTextureIndex = 0;
 constexpr u32 kFirstUserBindlessTextureIndex = kBindlessFallbackTextureIndex + 1;
 constexpr u32 kMaxUserBindlessTextures = kMaxBindlessTextures - kFirstUserBindlessTextureIndex;

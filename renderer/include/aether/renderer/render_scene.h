@@ -90,6 +90,9 @@ struct ExtractOptions {
 // Every active entity (Active in its hierarchy) with a ModelRenderer or a
 // light, with world transforms through the hierarchy. In entity order.
 RenderScene ExtractRenderScene(const World& world, const GuidIndex& guids, const ExtractOptions& options = {});
+// Only the post-processing volumes (what ExtractRenderScene puts in post_volumes): for a renderer that needs the frame's post settings
+// without extracting the whole scene.
+std::vector<RenderPostVolume> ExtractPostVolumes(const World& world, const GuidIndex& guids);
 
 // The post-processing settings at `position`: volumes in priority order,
 // each blended in by its weight (and, if bounded, by how far outside it the

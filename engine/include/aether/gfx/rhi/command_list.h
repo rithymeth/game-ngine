@@ -47,6 +47,22 @@ public:
     // internally per swapchain image, not by the caller). Must be paired
     // with EndRenderPass() before Close().
     virtual void BeginRenderPass(ISwapChain& swap_chain, const ClearColor& clear_color) = 0;
+    // As BeginRenderPass, but into `swap_chain`'s SceneColorTexture (which must already exist) with the swap chain's depth, both cleared.
+    // Only pipelines made with PipelineDesc::scene_color_target draw in it; CopySceneDepth works as in a back-buffer pass. EndRenderPass
+    // leaves the target shader-readable for the pass that follows. False (nothing recorded) without a SceneColorTexture, inside another
+    // pass, and on devices without support (the default).
+    virtual bool BeginSceneColorPass(ISwapChain& /*swap_chain*/, const ClearColor& /*clear_color*/) { return false; }
+    // Begins drawing into a render texture (IDevice::CreateRenderTexture), with no depth attachment, the viewport and scissor its full
+    // size. `clear_color` null keeps its contents (for additive passes over what an earlier pass drew), else clears to it. Only
+    // pipelines made with PipelineDesc::render_texture_target draw in it; CopySceneDepth is refused. EndRenderPass leaves it
+    // shader-readable. False (nothing recorded) for a handle that isn't a live render texture of this device, inside another pass, and
+    // on devices without support (the default).
+    virtual bool BeginTexturePass(SampledTextureHandle /*target*/, const ClearColor* /*clear_color*/) { return false; }
+    // Begins drawing depth only into a depth texture (IDevice::CreateDepthTexture), cleared to 1 (far) when `clear`, the viewport and
+    // scissor its full size (SetViewportAndScissor narrows them, e.g. to one cascade of a shadow atlas). Only pipelines made with
+    // PipelineDesc::depth_target draw in it. EndRenderPass leaves it shader-readable. False (nothing recorded) for a handle that isn't a
+    // live depth texture of this device, inside another pass, and on devices without support (the default).
+    virtual bool BeginDepthPass(SampledTextureHandle /*target*/, bool /*clear*/) { return false; }
     virtual void EndRenderPass() = 0;
 
     // Binds a pipeline created via IDevice::CreatePipeline. Must be called
@@ -98,6 +114,12 @@ public:
     // Call after BindPipeline; the binding holds for the draws that follow,
     // until the next BindPipeline. A no-op on devices without support.
     virtual void BindFrameConstants(BufferHandle /*buffer*/) {}
+    // Binds a buffer made by IDevice::CreateFrameConstantBuffer as the bound pipeline's frame read buffer (PipelineDesc::
+    // frame_read_buffer). Call after BindPipeline; the binding holds until the next BindPipeline. A no-op on devices without support.
+    virtual void BindFrameReadBuffer(BufferHandle /*buffer*/) {}
+    // Binds a top-level structure (IDevice::CreateTopLevelAS) as the bound pipeline's RaytracingAccelerationStructure (PipelineDesc::
+    // acceleration_structure). Call after BindPipeline; the binding holds until the next BindPipeline. A no-op on devices without support.
+    virtual void BindAccelerationStructure(AccelerationStructureHandle /*structure*/) {}
 
     // Inside a BeginRenderPass pass: copies the depth drawn so far into the swap chain's SceneDepthTexture (which must already exist) and
     // continues the same pass, colour and depth kept (Vulkan ends the render pass, copies and begins a loading one; D3D12 copies between
@@ -105,6 +127,10 @@ public:
     // BeginRenderPass: rebind before drawing. Draws after it may read the texture; they must not write depth they then expect to read. False
     // (nothing recorded, the pass untouched) without an active pass or a SceneDepthTexture, and on devices without support (the default).
     virtual bool CopySceneDepth() { return false; }
+    // Outside any pass: copies a render texture (IDevice::CreateRenderTexture, RGBA16F: 8 bytes a texel) into a buffer made by
+    // IDevice::CreateReadbackBuffer, rows ReadbackRowPitch(width, 8) apart, which the buffer must have room for (height rows). The texture
+    // stays shader-readable. False, nothing recorded, for any other texture or buffer, inside a pass, or on devices without readback.
+    virtual bool CopyRenderTextureToReadback(SampledTextureHandle /*texture*/, BufferHandle /*readback*/) { return false; }
 
     // Escape hatch: the backend-native command list/buffer pointer
     // (ID3D12GraphicsCommandList* for D3D12, VkCommandBuffer for Vulkan,

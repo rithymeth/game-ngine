@@ -452,6 +452,14 @@ int main(int argc, char** argv) {
             rhi::Backend backend = rhi::Backend::Vulkan;
             void* native = window->PlatformWindow();
 #endif
+            // Ray-traced sun shadows need the Vulkan ray tracing extensions, which are off unless asked for as the device is made.
+            if (const char* rt_shadows = std::getenv("AETHER_RENDER_RT_SHADOWS"); rt_shadows != nullptr && std::string(rt_shadows) == "1") {
+#if defined(_WIN32)
+                _putenv_s("AETHER_VK_RAY_TRACING", "1");
+#else
+                setenv("AETHER_VK_RAY_TRACING", "1", 1);
+#endif
+            }
             device = rhi::CreateDevice(backend, config == cook::BuildConfiguration::Debug);
             if (device) {
                 // A swap chain smaller than the window is stretched to fit by D3D12's flip model; a Vulkan surface has to match the window.
@@ -478,7 +486,11 @@ int main(int argc, char** argv) {
                     });
                 }
 #endif
-                if (quality) scene_renderer->SetViewDistance(quality->view_distance);
+                if (quality) {
+                    scene_renderer->SetViewDistance(quality->view_distance);
+                    scene_renderer->SetBloom(quality->bloom);
+                    scene_renderer->SetShadows(quality->shadow_resolution, quality->shadow_cascades);
+                }
                 window->on_resize = [&](u32, u32) { resized = true; };
             } else {
                 AETHER_LOG_WARN("Player", "No graphics device; running without drawing");
@@ -531,7 +543,11 @@ int main(int argc, char** argv) {
                 if (const QualityPreset* next = ChooseQuality(manifest, live_quality); next && next->name == live_quality) {
                     AETHER_LOG_INFO("Player", "Quality: %s (resolution x%.2f, view distance %.0f m)", next->name.c_str(), next->resolution_scale, next->view_distance);
                     render_scale = can_stretch ? next->resolution_scale : 1.0f;
-                    if (scene_renderer) scene_renderer->SetViewDistance(next->view_distance);
+                    if (scene_renderer) {
+                        scene_renderer->SetViewDistance(next->view_distance);
+                        scene_renderer->SetBloom(next->bloom);
+                        scene_renderer->SetShadows(next->shadow_resolution, next->shadow_cascades);
+                    }
                     resized = true; // the swap chain is rebuilt at the new size
                 } else {
                     AETHER_LOG_WARN("Player", "No quality preset '%s'", live_quality.c_str());

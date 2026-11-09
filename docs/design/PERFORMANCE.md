@@ -471,6 +471,495 @@ under the gate.
 Verified by running the comparison twice locally: `cook/atex_roundtrip_256` is reported as a regression without the floor and
 is not reported with it.
 
+## The HDR scene colour target and post pass, 8 November 2026
+
+Render roadmap step 1 moved the player's lit scene off the 8-bit back buffer: on D3D12 the scene, decals and particles now draw
+into an RGBA16F target (`ISwapChain::SceneColorTexture`) in linear light, and one full-screen pass (`player/src/post_pass.cpp`)
+applies exposure, saturation, the ACES or AgX tone mapper, the vignette and the sRGB encoding into the back buffer. The cost is
+one extra full-screen fp16 write and read, so it was measured before being called cheap.
+
+**Method.** Whole-player timings could not see it: a windowed run of the brass lantern scene sat at ~6.9 ms a frame with HDR on
+and off alike, which is the 144 Hz panel's present cadence (vsync off does not uncap a composited flip-model window), not GPU
+work. So the GPU work was isolated instead: an offscreen D3D12 swap chain, 50 frames recorded into one command list, one submit,
+wall time to the fence divided by 50; the median of 10 lists (2 warm-up lists dropped), three rounds. The baseline frame is one
+depth-tested full-screen triangle into the back buffer; the HDR frame is the same triangle into the scene colour target plus
+the real post pass. The difference is what step 1 adds to every frame. RTX 3050 Laptop GPU, RelWithDebInfo:
+
+| Resolution | Back buffer only | HDR target + post | Added per frame |
+| --- | --- | --- | --- |
+| 1280 x 720 | 0.039 ms | 0.099 - 0.115 ms | 0.061 - 0.076 ms |
+| 1920 x 1080 | 0.070 - 0.075 ms | 0.216 ms | 0.141 - 0.146 ms |
+| 2560 x 1440 | 0.116 - 0.120 ms | 0.371 - 0.372 ms | 0.252 - 0.257 ms |
+
+**What the numbers say.** The added cost is linear in pixels, about **0.07 ms per megapixel** on this laptop GPU: bandwidth
+for the fp16 target and the post pass's read, not shader arithmetic. At 1080p it is under 1% of a 16.7 ms frame and about 2%
+of a 6.9 ms one. It is a fixed per-pixel cost that bloom (step 4) and auto-exposure will add to, so those should reuse this
+target rather than add more full-resolution passes. The harness was a throwaway test and is not in the tree; repeat it the
+same way (offscreen swap chain, batched frames, fence-to-fence) rather than with a windowed player.
+
+`AETHER_RENDER_HDR=0` turns the HDR path off in the player, for A/B comparisons. Vulkan does not have the target yet and
+keeps tone mapping in the scene shader.
+
+## Bloom, 8 November 2026
+
+Render roadmap step 4 adds bloom to the post pass (`player/src/post_pass.cpp`): a chain of up to five half-size RGBA16F render
+textures (`IDevice::CreateRenderTexture`), a 13-tap downsample into each level (with a Karis average on the first), a 3x3 tent
+upsample back up the chain added onto each level, and a 3x3 tent read of the top level in the composite. At 1280 x 720 that is
+640x360 down to 40x23. Measured the same way as the HDR target above: an offscreen D3D12 swap chain, 40 frames in one command
+list, fence to fence, the best of 10 lists after 2 warm-ups, three rounds. Both frames clear the scene colour target and run the
+post pass; the bloom frame also runs `RenderBloom`. RTX 3050 Laptop GPU, RelWithDebInfo:
+
+| Resolution | Post pass only | Bloom + post pass | Added by bloom |
+| --- | --- | --- | --- |
+| 1280 x 720 | 0.053 - 0.063 ms | 0.217 - 0.256 ms | 0.164 - 0.194 ms |
+| 1920 x 1080 | 0.114 - 0.118 ms | 0.472 - 0.497 ms | 0.357 - 0.379 ms |
+| 2560 x 1440 | 0.200 - 0.207 ms | 0.815 - 0.833 ms | 0.615 - 0.626 ms |
+
+**What the numbers say.** Bloom costs about **0.17 ms per megapixel**, two and a half times the HDR target itself. That is
+0.36 ms, or 2% of a 16.7 ms frame, at 1080p, and 5% of a 6.9 ms frame. The chain's later levels are small, so most of the cost
+is in three full- or half-resolution steps: the first downsample (13 bilinear taps over the full-resolution target), the last
+upsample into the 960x540 level, and the composite's 9 taps over the screen. If this needs to come down, those are what to
+change first: a cheaper first downsample, or folding the last upsample into the composite. Turning it off is per quality preset
+(`QualityPreset::bloom`, applied by `SceneRenderer::SetBloom`); with it off, the chain's five bindless slots are freed. The
+harness was a throwaway test, as before.
+
+## Cascaded sun shadows, 8 November 2026
+
+Render roadmap step 2 shadows the sun (a `DirectionalLight` with `cast_shadows`) through four cascades in one D32 atlas
+(`IDevice::CreateDepthTexture`, `ICommandList::BeginDepthPass`; `player/src/shadow_pass.cpp`). The scene shader's `SunShadow`
+picks a cascade and reads it with a 3x3 bilinear PCF built from 16 texel loads. It was measured as two parts with a throwaway
+harness: an offscreen D3D12 device, 40 frames in one command list, fence to fence, the best of 10 lists after 2 warm-ups, three
+rounds. RTX 3050 Laptop GPU, RelWithDebInfo.
+
+**Casters.** 100 UV spheres of 4 096 triangles each, on a 10 x 10 grid 4 m apart, under the same camera. Culling against
+each cascade drew 289 of the 400 possible sphere-cascade pairs, 1.18 M triangles:
+
+| Cascade resolution | Atlas clear only | 289 draws, 1.18 M triangles |
+| --- | --- | --- |
+| 1024 (2048 x 2048 atlas) | 0.011 - 0.014 ms | 0.515 - 0.516 ms |
+| 2048 (4096 x 4096 atlas) | 0.032 - 0.033 ms | 0.515 - 0.518 ms |
+
+**Receivers.** `SunShadow` itself (extracted from the scene shader source) runs on every pixel of a ground plane. That plane
+spans the cascades, so most pixels test more than one before they find theirs. The other run uses the same shader with
+shadows off (the atlas index 255 makes it return at once):
+
+| Resolution | Shadows off | Shadows on | Added |
+| --- | --- | --- | --- |
+| 1280 x 720 | 0.024 - 0.025 ms | 0.136 - 0.141 ms | 0.111 - 0.116 ms |
+| 1920 x 1080 | 0.056 - 0.057 ms | 0.249 - 0.264 ms | 0.192 - 0.208 ms |
+| 2560 x 1440 | 0.096 - 0.099 ms | 0.417 - 0.431 ms | 0.319 - 0.332 ms |
+
+**What the numbers say.**
+- **The caster pass is bound by triangles, not by atlas size.** It runs at about 2.3 G triangles/s. Raising the cascade from
+  1024 to 2048 changed nothing beyond the clear, which costs 0.02 ms more for a 64 MB atlas.
+- **Lowering the atlas resolution only saves memory.** If the caster pass has to come down, the lever is fewer triangles per
+  cascade: tighter culling, which today is a bounding sphere against each cascade's box, or caster LODs.
+- **The receiver costs about 0.1 ms per megapixel,** 0.2 ms at 1080p. That is less than bloom.
+- **Both parts go away with the quality preset.** Shadows are set per preset (`QualityPreset::shadow_resolution` /
+  `shadow_cascades`, through `SceneRenderer::SetShadows`). Setting either to 0 frees the atlas.
+- **Vulkan has no depth textures yet,** so there the scene draws unshadowed and pays nothing.
+
+## Virtual shadow maps for the sun, 10 November 2026
+
+Render roadmap phase 4. A clipmap of 128 x 128 texel pages with a much finer texel near the camera sits over the cascades; where a page
+is not there yet the shader falls back to a coarser level and then to the cascades, so a late page costs quality, never correctness.
+The design is in `player/src/virtual_shadow.h`, `vsm_pages.h` and `vsm_pass.h`.
+- **Levels and pages:** six levels, texel 2 mm doubling to 64 mm, pages anchored in the light's space at the world origin so a page keeps
+  its contents as the camera moves. A pixel uses the level whose texel is about its own footprint on the surface.
+- **Feedback:** a small graphics pass over the scene depth copy writes the page each eighth pixel looks at into an image an eighth the
+  screen's size, which is copied to a readback buffer in the frame's own command list and read when that slot's fence has passed (the
+  new `IDevice::CreateReadbackBuffer`, `ICommandList::CopyRenderTextureToReadback`). It is a few frames old, so a fast camera move shows
+  the cascades for a moment.
+- **Not a compute pass, by finding:** `ICommandList::Dispatch` exists only on lists from `CreateComputeCommandList`, which run on the
+  async compute queue; the frame's single graphics list cannot dispatch. A feedback compute pass would need a second queue, fences
+  between them and care that the depth copy is rewritten next frame, so the feedback is a graphics pass.
+- **Pages:** `VsmPageAllocator` gives pages physical pages (a pool of 24 x 24 pages, one 3072 x 3072 D32 atlas, 36 MB), evicting the
+  least recently used (finer first) and never a page used this frame. Pages are drawn when new and redrawn when a caster that is new,
+  has moved or deforms reaches them, where it is and where it was; at most 64 pages a frame. A page waiting to be drawn is not in the
+  page table, so the shader never reads stale or empty depth. The table lives in the frame read buffer after the clustered lights.
+- **Switching it off:** `AETHER_RENDER_VSM=0`; `AETHER_VSM_POOL` sets the pool's pages per side. Shadows off (`SetShadows(0, ...)`)
+  frees the pages too.
+
+**Measured** in a throwaway harness through the whole renderer (`SceneRenderer::Draw` on an offscreen device): a sunlit floor with two
+boxes and a small cube, the camera 1.6 m away, 200 frames, each recorded, submitted and waited on, the median of frames 60 to 200, three
+rounds. RTX 3050 Laptop GPU, RelWithDebInfo. The scene is small, so the frame is cheap and the overhead is a large share of it.
+
+| Backend, size | Cascades only | Pages, still scene | Pages, a caster moving |
+| --- | --- | --- | --- |
+| D3D12 1280 x 720 | 1.11 ms | 1.30 ms | 1.42 ms |
+| D3D12 1920 x 1080 | 2.03 ms | 2.36 ms | 2.46 ms |
+| Vulkan 1280 x 720 | 1.10 ms | 1.31 ms | 1.33 ms |
+| Vulkan 1920 x 1080 | 2.07 ms | 2.40 ms | 2.43 ms |
+
+**What the numbers say.**
+- **The overhead is about 0.2 ms at 720p and 0.33 ms at 1080p,** 16 to 18 percent of this small frame, on both backends. A moving
+  caster adds about 0.1 ms: its pages are redrawn (14 frames of a cube walking redrew 179 pages, a dozen a frame).
+- **It started at 1.35 ms at 1080p,** and three things took it down. Decoding the feedback image did a `std::map` insert for every
+  ground sample; it now counts runs of identical texels (the page almost never changes between neighbours), which took the CPU's
+  page work from 0.9 ms to 0.4 ms, then reuses its buffer and compares raw texels (0.115 ms for the decode). The shader looks the page
+  up once when all sixteen filter taps lie in one page (the usual case), which took about 0.4 ms off the frame at 1080p. And on Vulkan
+  the readback buffer was in uncached host memory, where the CPU's reads are slow: asking for cached memory took Vulkan's overhead
+  from about 3.3 ms to 0.6 ms at 1080p, and the decode changes above then took it to 0.3 ms.
+- **What is left is mostly CPU:** about 0.11 ms of decoding, plus the feedback pass, the readback copy and the page table upload.
+  A half-size feedback image would cut the decode by about three quarters, at the price of looking at fewer pixels each frame.
+- **The gain in sharpness is modest here.** A cascade's texel is about a pixel's footprint at the far end of its range, so the pages
+  win only close up: at 1.6 m and 720p the shadow edges carry 2 percent more edge energy than the cascades' (the sum of squared steps
+  between neighbouring pixels), and the two frames differ only at those edges (mean difference 0.02 of 255). The pages are a quality
+  feature for close views and high resolutions, not a speed one.
+- **Memory:** the atlas is 36 MB on top of the cascades' 64 MB (`AETHER_VSM_POOL` changes it). The scene above needed 48 pages, 3 MB.
+- **Both backends build the same pages** (`Vsm_BothBackendsDrawTheSamePages`): the same count of requests, resident pages and
+  pages drawn, and frames within 1 of 255.
+
+**Limits.**
+- **Skinned casters are not drawn into pages.** The first version redrew them into every page their sphere reached each frame, and with
+  the 192k-vertex Aegis animating that cost 8 to 12 ms a frame on D3D12 and more on Vulkan, though only 6 or 7 pages were redrawn: each
+  redraw sends the whole vertex buffer (upload-heap memory the GPU reads over PCIe) through another draw. A deforming caster is now in
+  the cascades only, and the pages it stands over are left out of the page table, so the cascades shadow that patch (26 pages in the
+  test scene, their edges as soft as the cascades'). Measured with the Aegis animating at 1280 x 720, alternating the two settings over
+  seven rounds: D3D12 27.4 ms with cascades only and 28.0 ms with pages, Vulkan 38.5 and 39.2 ms; the frame is 25 ms or more of CPU
+  skinning and the rounds vary by 7 to 17 ms, so the cost of the pages here is lost in the noise, as it should be. A caster that starts or
+  stops deforming has its pages redrawn. Rigid movers still redraw their pages; a heavy rigid mover could cost what the skinned one did.
+- **Only the sun,** and only opaque and alpha-tested casters, as the cascades.
+- **The pages cover the window around the camera:** 32 pages a side per level, about 8.2 m a side at the finest level and doubling with
+  each, and a sun that turns invalidates everything (a day cycle would redraw all pages every frame it moves).
+- **Depth is kept within 2048 m of the world origin** (z / 4096 + 0.5 in a D32); casters beyond that get no pages and fall back.
+
+## Image-based lighting from the sky, 8 November 2026
+
+Render roadmap step 3 lights surfaces from the sky.
+- **Source:** a `SkyLight`'s environment, which is an equirectangular `.hdr`, an LDR image, or a procedural sky.
+- **CPU work, once per environment:** an RGBA16F mip chain prefiltered with GGX (split sum), plus 9 SH coefficients of the
+  irradiance (`player/src/environment.cpp`).
+- **Scene shader:** `SkyLighting` replaces the flat ambient term. It does one `SampleLevel` of the chain, evaluates the SH, and
+  applies an analytic environment BRDF and specular occlusion.
+- **Sky pass:** draws level 0 behind the scene (`player/src/sky_pass.cpp`).
+
+Measured with a throwaway harness: an offscreen D3D12 device, 40 full-screen draws in one command list, fence to fence, the best
+of 10 lists after 2 warm-ups, three rounds. RTX 3050 Laptop GPU, RelWithDebInfo.
+
+**Shading.** A full-screen pass shades every pixel with roughness varying across the screen. It runs once with the old flat
+ambient term and once with `SkyLighting`, the same shader with the environment present or absent:
+
+| Resolution | Flat ambient | IBL | Added |
+| --- | --- | --- | --- |
+| 1280 x 720 | 0.024 - 0.031 ms | 0.048 - 0.056 ms | 0.023 - 0.025 ms |
+| 1920 x 1080 | 0.055 - 0.059 ms | 0.104 - 0.108 ms | 0.049 - 0.050 ms |
+| 2560 x 1440 | 0.096 - 0.097 ms | 0.188 - 0.197 ms | 0.091 - 0.101 ms |
+
+**Background.** The scene colour pass is measured cleared, and again cleared with the sky drawn over it:
+
+| Resolution | Clear only | Clear + sky | Added |
+| --- | --- | --- | --- |
+| 1280 x 720 | 0.010 - 0.011 ms | 0.053 - 0.060 ms | 0.042 - 0.050 ms |
+| 1920 x 1080 | 0.018 - 0.019 ms | 0.114 - 0.115 ms | 0.095 - 0.096 ms |
+| 2560 x 1440 | 0.031 - 0.032 ms | 0.202 - 0.204 ms | 0.170 - 0.173 ms |
+
+**Prefiltering on the CPU,** 16 threads, best of three:
+
+| Source | Level 0 | Time |
+| --- | --- | --- |
+| procedural, 256 x 128 | 256 x 128, 6 levels | 9.5 - 10.3 ms |
+| 1024 x 512 | 1024 x 512, 8 levels | 118 - 124 ms |
+| 2048 x 1024 | 1024 x 512, 8 levels | 129 - 163 ms |
+
+**What the numbers say.**
+- **IBL shading costs about 0.025 ms per megapixel** over the flat term it replaces, which is a quarter of what the shadow lookup
+  costs. In a real frame it is paid only on lit, opaque pixels.
+- **The sky costs about 0.045 ms per megapixel.** It is drawn under the whole screen, including pixels the scene covers later. If
+  that matters, draw it after the opaque pass with a depth test against the far plane.
+- **The prefilter is the real cost.** A 1024-wide sky takes about 120 ms on the CPU when its `SkyLight` first appears or its
+  image or rotation changes. That is a load-time hitch, not a per-frame one. Moving it to the cook (writing the chain into the
+  pak) would remove it, at the price of a new cooked format.
+- **The sampler fix is free.** The D3D12 sampler's `MaxLOD` used to be 0, which clamped every texture to level 0, so cooked
+  textures never used their mips. Sampling them now costs nothing extra and should be cheaper at a distance (smaller texels).
+
+## Sky prefilter at cook time, 9 November 2026
+
+The IBL section above left the prefilter as a load-time hitch and named the cook as the cure. The cooker now does the work for each Radiance `.hdr`.
+- **What is cooked:** `Cooked/<guid>.aenv`, the prefiltered chain and SH coefficients exactly as `PrefilterEnvironment` builds them
+  at rotation 0 with the default settings (`engine/src/assets/environment.cpp`, which moved down from the player so the cooker can call it).
+  It goes through the derived data cache, keyed by the source's hash and the settings. The `.hdr` source stays in the pak.
+- **The player** reads it when the `SkyLight` is not rotated and the file was built with the settings the player would use. A rotated
+  sky, a pak without it, a damaged file or another format version are prefiltered at load as before. The rotation is baked into
+  the chain, so it can't be applied to cooked data without a shader change.
+- **Switching it off:** `cook_environments = false` in `CookOptions` leaves it out of the pak; `AETHER_RENDER_COOKED_SKY=0` makes the
+  player ignore it.
+
+**Measured** in the real player (RTX 3050 Laptop GPU, RelWithDebInfo, D3D12): a project with one `SkyLight` on a generated sky with a sun and
+noise, three runs each, the median of the time the player logs. A fallback time covers the prefilter and the texture upload, not decoding
+the `.hdr`, which the cooked path skips as well; a cooked time covers reading the entry, checking it and the upload.
+
+| Sky | Cooked | Prefiltered at load | Chain in the pak |
+| --- | --- | --- | --- |
+| 512 x 256 | 19 ms | 162 ms | 1.33 MiB |
+| 1024 x 512 | 50 ms | 361 ms | 5.33 MiB |
+| 2048 x 1024 | 50 ms | 203 ms | 5.33 MiB |
+| 4096 x 2048 | 35 ms | 271 ms | 5.33 MiB |
+
+**What the numbers say.**
+- **About 7 to 8 times faster, 130 to 800 ms saved per sky.** The fallback column is noisy (one 1024 run took 807 ms; the others
+  311 and 361). The cooked column is not free either: 20 to 70 ms covering the pak read, the checks and the upload. I did not
+  break that down.
+- **The chain is capped at 1024 wide,** so the cost in the pak does not grow with the source: 5.33 MiB (half-float, before the pak
+  compresses it) for any sky from 1024 up. I did not measure the compressed size of the entry.
+- **The cooked data is bit-identical** to what the player builds itself (`Cook_BuildsAnEnvironmentForAnHdrSky`), and a frame lit by
+  it is pixel-identical to one lit by the load-time prefilter (`Player_ACookedSkyLooksTheSameAsOnePrefilteredAtLoad`).
+- **Not covered:** LDR skies (PNG, JPG) stay prefiltered at load, because the cooker can't tell a sky from any other texture; a sky
+  with a non-zero rotation; and a cook of the same project for a platform with other prefilter settings (the file would be refused,
+  and the player would prefilter).
+
+## Clustered forward lighting, 8 November 2026
+
+Render roadmap step 5 replaces the frame constants' **nearest 8 point and 4 spot lights** with clustered lights.
+- **The grid:** the view frustum is cut into 16 x 9 screen tiles by 24 depth slices, spaced exponentially from the near plane to
+  the far plane (`player/src/light_clusters.h`).
+- **CPU binning, every frame:** each light in view is binned into every cell its bounding sphere reaches. A spot's sphere bounds
+  its cone, not its whole range.
+- **What the shader reads:** the lights, a per-cell `(first, count)` table and a 16-bit index list, from a new RHI frame read
+  buffer (`PipelineDesc::frame_read_buffer`, a root SRV on D3D12).
+- **What the scene shader does:** it finds its pixel's cell and shades only that cell's lights.
+- **Limits:** up to 1024 lights a frame, and 262 144 cell entries. Past either limit, the nearest lights stay.
+- **Switching back:** `AETHER_RENDER_CLUSTERED=0` restores the old path.
+
+Measured with a throwaway harness:
+- **GPU:** an offscreen D3D12 device draws 20 full-screen passes in one command list, timed fence to fence. Each figure is the
+  best of 10 lists after 2 warm-ups. Three rounds were run, and the tables give their range.
+- **Shading model:** each pixel is the ground plane seen from 3 m up, pitched 20 degrees down, with a 90 degree view. Each light
+  is shaded with GGX, using the scene shader's falloff and cone.
+- **Lights:** scattered over 80 x 88 m of ground ahead of the camera, each with 4 to 8 m of reach. Every fourth light is a spot
+  pointing down.
+- **The three columns:**
+  - "Fixed 8 + 4": the old loops over the frame constants. These shade at most 12 lights, so above 12 they are not the same
+    picture.
+  - "Clustered": the new path.
+  - "Brute": every light at every pixel.
+- **Hardware:** RTX 3050 Laptop GPU, RelWithDebInfo.
+
+| Lights | Resolution | Fixed 8 + 4 | Clustered | Brute |
+| --- | --- | --- | --- | --- |
+| 12 | 1280 x 720 | 0.119 - 0.153 ms | 0.038 - 0.047 ms | 0.123 - 0.151 ms |
+| 12 | 2560 x 1440 | 0.470 - 0.666 ms | 0.130 - 0.140 ms | 0.494 - 0.581 ms |
+| 64 | 1280 x 720 | 0.129 - 0.135 ms | 0.075 - 0.080 ms | 0.664 - 0.918 ms |
+| 64 | 2560 x 1440 | 0.493 - 0.643 ms | 0.278 - 0.338 ms | 2.79 - 3.39 ms |
+| 256 | 1280 x 720 | 0.126 - 0.131 ms | 0.163 - 0.188 ms | 2.75 - 3.62 ms |
+| 256 | 1920 x 1080 | 0.281 - 0.306 ms | 0.351 - 0.375 ms | 6.46 - 8.03 ms |
+| 256 | 2560 x 1440 | 0.502 - 0.608 ms | 0.656 - 0.772 ms | 11.7 - 14.7 ms |
+| 1024 | 1280 x 720 | 0.128 ms | 0.716 - 0.843 ms | 13.3 - 16.4 ms |
+| 1024 | 2560 x 1440 | 0.497 - 0.621 ms | 3.11 - 3.54 ms | 56.7 - 63.9 ms |
+
+Binning on the CPU, one thread, best of 20:
+
+| Lights | In view | Cell entries | Busiest cell | Time |
+| --- | --- | --- | --- | --- |
+| 12 | 10 | 427 | 4 | 0.020 ms |
+| 64 | 62 | 6 043 | 13 | 0.031 ms |
+| 256 | 249 | 22 376 | 36 | 0.070 ms |
+| 1024 | 1006 | 105 018 | 142 | 0.363 ms |
+
+**What the numbers say.**
+- **Clustering is cheaper even for a few lights.** With the same 12 lights, the clustered path costs about a third of the old
+  loops. They shaded all 12 at every pixel; a cell lists only the lights that can reach it. The lookup itself (a depth, a log,
+  one load) does not show.
+- **256 lights cost about what 12 used to.** At 1080p, 256 clustered lights take 0.35 ms where the old 12-light loop took
+  0.29 ms, and a brute loop over 256 takes 6.5 ms.
+- **The cost follows the lights per cell, not the lights in the scene.** At 1024 the ground is crowded: up to 142 lights reach
+  one cell, and the cost rises to about 1.7 ms at 1080p. That is still 20 times cheaper than the brute loop.
+- **Binning is cheap enough to do every frame on the CPU:** 0.07 ms for 256 lights and 0.36 ms for 1024. A compute pass could
+  take it over if a scene needs thousands.
+- **The first index budget was too small.** It was 65 536 entries at 32 bits each, and it dropped 832 of the 1024 lights. The
+  index list is now 16 bits an entry with four times the budget, in the same 512 KB.
+- **The buffers:** one read buffer per frame in flight, at 588 KB each (8 frames: 4.6 MB of upload heap). Each frame uploads
+  only the bytes it uses.
+
+**Checked visually** on the lantern scene. Its one point light renders identically with and without clustering. A variant with
+60 coloured lights on the ground shows all 60 pools with no seams at tile edges; the old path shows only the nearest 8.
+
+## Temporal anti-aliasing, 8 November 2026
+
+Render roadmap step 6 (`player/src/taa_pass.h`).
+- **Jitter:** each frame the projection moves by a sub-pixel offset from the Halton(2, 3) sequence, 8 frames long
+  (`renderer/post.h`'s `TaaJitter` and `JitterProjection`).
+- **The resolve,** after the scene colour pass:
+  - it reprojects last frame's history with the camera's motion, from the nearest depth in the 3x3 neighbourhood;
+  - it reads the history with a 5-tap Catmull-Rom filter;
+  - it clips the history to this frame's 3x3 colour box (YCoCg, mean +- 1.25 sigma);
+  - it blends 10% of the new frame in, both sides weighted by 1 / (1 + luma).
+- **Downstream:** bloom and the tone mapper read the resolved image (`PostPass::SetSource`).
+- **Switching it off:** `AETHER_RENDER_TAA=0`.
+
+Measured with a throwaway harness:
+- **Method:** an offscreen D3D12 device records 20 repetitions in one command list, timed fence to fence. Each figure is the best
+  of 10 lists after 2 warm-ups. Three rounds were run, and the table gives their range.
+- **Hardware:** RTX 3050 Laptop GPU, RelWithDebInfo.
+- **The steps:** the scene colour pass, cleared; then the scene depth copied in it (`CopySceneDepth`); then that plus the resolve.
+
+| Resolution | Clear | + depth copy | + resolve | Depth copy | Resolve |
+| --- | --- | --- | --- | --- | --- |
+| 1280 x 720 | 0.011 - 0.013 ms | 0.035 - 0.044 ms | 0.167 - 0.196 ms | 0.024 - 0.031 ms | 0.13 - 0.15 ms |
+| 1920 x 1080 | 0.022 - 0.024 ms | 0.074 - 0.081 ms | 0.381 - 0.409 ms | 0.052 - 0.059 ms | 0.31 - 0.33 ms |
+| 2560 x 1440 | 0.031 - 0.034 ms | 0.124 - 0.126 ms | 0.687 - 0.699 ms | 0.090 - 0.093 ms | 0.56 - 0.58 ms |
+
+**What the numbers say.**
+- **The resolve costs about 0.15 ms per megapixel,** and the depth copy about 0.03 to 0.04 ms more. At 1080p, TAA as a whole is
+  about 0.37 ms. Most of the resolve's cost is the 18 texel loads of the 3x3 neighbourhood (colour and depth). Sharing them
+  through group-shared memory in a compute pass is the obvious saving if this ever matters.
+- **A frame with soft particles or decals already copies the depth.** TAA copies it again at the end of the pass, so that the
+  copy includes the mesh particles.
+- **On a static camera, a hard edge settles within the 25 frames the test runs (10% a frame).** The resolve test draws a white-to-black edge 30% of the way
+  across a pixel. Two of the 8 offsets sample white, and the luma weighting deliberately pulls a bright-on-dark edge darker
+  (perceptual, not linear, averaging). The pixel settles at about 33 / 255 where the frame without TAA gives 0 or 255.
+- **Checked visually** on the lantern scene: the handle's and cap's stair-steps are gone and the checker ground keeps its
+  sharpness.
+- **Not checked visually:** a moving camera, because the player's screenshot mode holds the camera still.
+
+**Limits.**
+- **Motion was the camera's only** when this was written; the next section adds per-object motion.
+
+## TAA motion vectors for objects that move, 8 November 2026
+
+**What changed.** Each opaque node is drawn into a motion texture after the scene pass when its model transform differs from last
+frame's (`TaaTransformMoved`, `player/src/taa_pass.h`):
+- the scene renderer keeps every drawn node's previous transform, keyed by entity and node;
+- the motion pass rasterises the movers with this frame's jitter and keeps a pixel only where the mover is the surface in the scene
+  depth copy. It writes the UV offset to where that surface was last frame. It needs no second render target and no backend
+  changes;
+- the resolve follows that offset where the texture has one, read at the same nearest-depth neighbour as the depth, and keeps the
+  camera's reprojection everywhere else;
+- a still scene draws no motion pass at all;
+- switching it off: `AETHER_RENDER_TAA_MOTION=0`.
+
+**Measured** with a throwaway harness, using the method of the section above: an offscreen D3D12 device, 20 repetitions in one
+command list, fence to fence, best of 10 lists after 2 warm-ups. Three rounds; RTX 3050 Laptop GPU, RelWithDebInfo.
+- **The scene:** a 100 x 100 grid (20 000 triangles) covering about half the pixels; the scene pass and depth copy; then the
+  resolve; then the resolve with the grid as a mover.
+
+| Resolution | Scene | + resolve | + resolve with a mover | Motion pass |
+| --- | --- | --- | --- | --- |
+| 1280 x 720 | 0.117 - 0.140 ms | 0.273 - 0.322 ms | 0.355 - 0.375 ms | 0.03 - 0.10 ms |
+| 1920 x 1080 | 0.198 - 0.202 ms | 0.562 - 0.574 ms | 0.716 - 0.736 ms | 0.15 - 0.17 ms |
+
+**What the numbers say.**
+- **The motion pass costs about 0.15 ms at 1080p for a mover covering half the screen.** That is the clear of a half-float target
+  plus the movers' geometry a second time. It is paid only on frames where something moved.
+- **The test shows the difference** (`Taa_AMovingObjectKeepsItsDetailWithMotionVectors`, both backends): a bar of 2-pixel stripes
+  moving 2 pixels a frame stays exactly black and white with motion vectors. With the camera's reprojection alone, every pixel's
+  history is the opposite stripe, which the colour box does not reject, and the stripes wash out to 29 - 42 / 255.
+- **Checked visually** on the lantern swinging +-25 degrees: with motion vectors the moving cap and finial are anti-aliased and
+  clean. With the camera's reprojection alone their edges smear a little; with TAA off they stair-step. A mean-Laplacian sharpness
+  figure did not separate the three cleanly, because ghosted double edges also add high-frequency energy, so none is quoted.
+
+**Limits.**
+- **Transparent surfaces and particles** keep the camera's reprojection, as before.
+
+**Skinned deformation, 9 November 2026.** A skinned primitive is now a mover when its pose changes, even if its entity stays put:
+- the renderer keeps each skinned primitive's deformed positions from last frame, per entity;
+- it packs the changed ones into one read buffer per frame in flight, which the motion vertex shader indexes by vertex ID;
+- the RHI has one vertex stream, so the frame read buffer carries them instead. On D3D12 it is now visible to the vertex stage
+  too, as Vulkan's set 3 already was;
+- devices without frame read buffers keep the transform-only motion.
+- **Measured:** nothing new on the GPU beyond the motion pass above: a skinned mover is drawn there like any other, plus three
+  floats read per vertex. The CPU copies and compares each skinned primitive's positions once a frame. That cost is not timed:
+  the player's skinning is on the CPU already, and this adds less work per vertex than skinning does.
+- **The test** (`Taa_AMovingObjectKeepsItsDetailWithMotionVectors`, both backends) now also moves the striped bar by its
+  vertices with its transform still. It resolves to exactly the same pixels as the rigid move. Without last frame's positions
+  being read, it would wash out like the camera-only case.
+- **Checked in the player** with AETHER-01's Kael rig walking beside the lantern: both backends, motion on and off, no errors.
+- **Checked on a real character too:** the Aegis Vanguard (192,562 vertices, 4K textures) walking beside the lantern, on both
+  backends. It did not load at first: the player turned a model's binary data into base64 inside the glTF JSON, and the loader
+  caps JSON at 32 MiB, so a buffer over 24 MiB (this one is 39 MiB) was skipped with "Couldn't parse cooked model". Models now
+  reach the parser as a GLB (`player/src/model_glb.h`); a `.gltf` with one external buffer is turned into one in memory. A
+  test (`Material_ALargeBufferLoadsFromAGlbButNotAsADataUri`) loads a 28 MiB buffer that way and shows the old form refused.
+  GHOST-SHIFT and AETHER-01 load the same models as before and render the same.
+- **Entities sharing a skinned model, fixed 9 November 2026.** They used to share the model's per-frame vertex buffers, so every one
+  showed the pose written last (the GPU reads a frame's buffers after all its draws are recorded). Each draw of a skinned primitive in a
+  frame now has its own buffer: the first the primitive's per-frame one, the others made when first needed and kept. The cost is memory,
+  one copy of the primitive's vertices (48 bytes each) per simultaneous instance per frame in flight; an unmeasured CPU cost beyond
+  that is none. A test (`Skinned_EntitiesSharingAModelShowTheirOwnPoses`, both backends) cooks a project with two characters of one
+  model, one walking and one at the end of its Death clip, and checks that their heights differ (81 and 54 px; 81 and 80 without the fix).
+
+## Per-frame uploads without waiting for the GPU, 8 November 2026
+
+**What changed.** On D3D12, `UpdateFrameConstantBuffer` and `UpdateVertexBuffer` wait for the queues to drain before they write:
+- `UpdateFrameConstantBuffer` goes through `UpdateConstantBuffer` and `WithQueuesIdle`;
+- `UpdateVertexBuffer` goes through `WithGraphicsQueueIdle`.
+
+The player called them every frame for the frame constants, the clustered lights, skinned vertices and particle vertices. Each of
+those buffers is one per frame in flight, and `player/main.cpp` already waits on a frame's fence before it reuses that frame's
+slot. The wait was redundant, so the CPU stopped mid-frame until the GPU had finished the previous frame.
+
+`IDevice::WriteBufferUnsynchronized` writes such a buffer at once, on the caller's promise that nothing in flight reads it.
+Vulkan's `UpdateFrameConstantBuffer` already wrote without waiting. The old calls keep their behaviour for everyone else; the VFX
+GPU runtime rewrites one constant buffer each frame and relies on the wait.
+
+**Measured** with a throwaway harness: a frame loop like the player's, with 2 frames in flight, a busy CPU section standing in for
+the tick, then the upload, then a 1280 x 720 GPU workload. Two rounds; RTX 3050 Laptop GPU, RelWithDebInfo.
+
+| GPU alone | CPU | Waiting: frame | Waiting: blocked in upload | Unsynchronized: frame |
+| --- | --- | --- | --- | --- |
+| 2.7 - 3.1 ms | 1 ms | 2.60 - 2.68 ms | 1.50 - 1.58 ms | 2.29 - 2.39 ms |
+| 2.7 - 3.1 ms | 2 ms | 2.44 - 2.49 ms | 0.37 - 0.40 ms | 2.28 - 2.40 ms |
+| 2.7 - 3.1 ms | 4 ms | 4.06 - 4.09 ms | 0.00 ms | 4.08 - 4.09 ms |
+| 4.4 - 4.6 ms | 1 ms | 4.57 - 4.76 ms | 3.47 - 3.63 ms | 4.38 - 4.63 ms |
+| 4.4 - 4.6 ms | 2 ms | 4.87 - 5.49 ms | 2.74 - 3.27 ms | 4.78 - 4.90 ms |
+| 4.4 - 4.6 ms | 4 ms | 4.95 - 5.76 ms | 0.81 - 1.53 ms | 4.77 - 5.07 ms |
+
+**What the numbers say.**
+- **The wait blocked the CPU for up to 3.6 ms a frame.** That is the remainder of the previous frame's GPU work. The upload now
+  takes no measurable time.
+- **Frame time improves by only 0 to 12 percent,** and most of the gain is where CPU and GPU times are close. The tick before the
+  upload already overlapped most of the GPU's work. What the wait really cost was the GPU sitting idle while the frame after the
+  upload was recorded, and the CPU time lost in the upload.
+- **On the 60-light lantern scene, whole-process timings show no difference within their noise** (about +-20 percent from run to
+  run on this laptop).
+- **Worth keeping, but not a headline.** The CPU time freed in the upload is time the game can use.
+
+## Ray-traced sun shadows (a spike), 9 November 2026
+
+Render roadmap phase 4, the first use of the new acceleration structures (`IDevice::CreateBottomLevelAS` / `CreateTopLevelAS`,
+`PipelineDesc::acceleration_structure`, `shader_model_6`). With `AETHER_RENDER_RT_SHADOWS=1` the scene shader fires one inline ray per
+pixel toward the sun (`RayQuery` in the pixel shader, shader model 6.5) against the rigid casters' structure instead of reading the
+cascades or the virtual pages; no cascade is drawn. D3D12 needs nothing else; the player sets `AETHER_VK_RAY_TRACING=1` for Vulkan,
+which keeps the ray tracing extensions off otherwise (see below).
+- **What is in the structure:** every rigid, opaque caster, one bottom-level structure per primitive (made when first seen, freed with the
+  model), placed by the entity's transform in one top-level structure. A far-away dummy triangle keeps it valid when nothing casts.
+- **What is not:** skinned casters (they cast no shadow in this mode) and alpha-tested ones (they would shadow as solid). Shadows are
+  hard-edged: one ray, no filtering.
+- **When it is rebuilt:** only when a caster is new, gone or has moved, compared by its placement; the build is synchronous (the call
+  waits for the GPU), which is the cost of the "moving" column.
+- **Matches the cascades:** the same scene as the virtual shadow test, 1280 x 720: mean difference from the cascades' frame 0.04 on D3D12
+  and 0.04 on Vulkan (0.07 with the cube walking). With the ray's result forced to "lit" the difference is 0.48, which is what the test
+  threshold (0.2) separates.
+
+**Measured** as the virtual shadow maps were: a sunlit floor with two boxes and a small cube, the camera 1.6 m away, 200 frames, each
+recorded, submitted and waited on, the median of frames 60 to 200, the best of three rounds (the CPU frame time including the wait).
+RTX 3050 Laptop GPU, RelWithDebInfo. A small scene: four casters of a few hundred triangles.
+
+| Backend, size | Cascades only | Virtual pages | Ray traced, still | Ray traced, a caster moving |
+| --- | --- | --- | --- | --- |
+| D3D12 1280 x 720 | 1.02 ms | 1.34 ms | 0.94 ms | 2.43 ms |
+| D3D12 1920 x 1080 | 2.01 ms | 2.37 ms | 1.85 ms | 2.89 ms |
+| Vulkan 1280 x 720 | 1.02 ms | 1.25 ms | 0.99 ms | 1.19 ms |
+| Vulkan 1920 x 1080 | 2.06 ms | 2.40 ms | 2.08 ms | 2.35 ms |
+
+**What the numbers say.**
+- **A still scene costs no more than the cascades here,** and less on D3D12 (8 percent at both sizes): one ray against four small meshes is
+  cheaper than drawing four cascades, and the cascade pass is gone. This says little about a heavy scene, where a ray's cost grows with
+  the structure and the cascades' with the triangle count; that is not measured.
+- **A moving caster is the cost.** Each frame the cube moves, the structure is rebuilt and the CPU waits for it: +1.5 ms at 720p on D3D12
+  (+1.0 ms at 1080p) and +0.2 ms on Vulkan. An asynchronous build, or a refit of the top level, is what would make this usable for
+  anything that moves; skinned casters would need a refit of their bottom-level structure every frame as well.
+- **Vulkan ray tracing is opt-in (`AETHER_VK_RAY_TRACING=1`) by finding.** On the NVIDIA driver tried, merely enabling
+  `VK_KHR_acceleration_structure` on the device made the virtual shadow feedback test read zero depth in a third to a half of its
+  runs, with no ray tracing call made. Deferred host operations alone did not do it, no barrier in the depth copy explains it (a full
+  all-stages barrier, execution-only and memory-only variants all still failed). With the extension off the same test passed 40 of
+  40, and the virtual shadow tests 20 of 20 runs. In ray-traced mode the feedback pass is not used.
+- **The Khronos validation layer found one real bug on the way, and not the rest.** Render textures were created without
+  `VK_IMAGE_USAGE_TRANSFER_SRC_BIT` although `CopyRenderTextureToReadback` copies from them (three errors: the copy and two layout
+  barriers); fixed, and the extension-on failure rate fell from about 40 percent to about 13 (4 of 30). What remains fails with core
+  validation, synchronisation validation and GPU-assisted validation all enabled and silent (2 of 20 and 2 of 6 runs), so it is not an
+  API misuse the layer can see; the sampled depth image still reads exactly 0.0 in those runs. Treated as a driver problem; the
+  switch stays opt-in. The investigation is written up in the session notes (vulkan_acceleration_structure_flake.md).
+
 ## CPU skinning cost, 8 November 2026
 
 `player/src/scene_renderer.cpp` skins on the CPU: every vertex is blended against its joint matrices each frame and the
