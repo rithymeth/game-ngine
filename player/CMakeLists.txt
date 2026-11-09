@@ -71,3 +71,10 @@ if(AETHER_DXCOMPILER_DLL)
                 "${AETHER_DXCOMPILER_DLL}" "$<TARGET_FILE_DIR:aether_player>/dxcompiler.dll"
     )
 endif()
+# dxil.dll signs the shader-model-6 shaders (ray-traced shadows): D3D12 rejects them unsigned.
+if(AETHER_DXIL_DLL)
+    add_custom_command(TARGET aether_player POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${AETHER_DXIL_DLL}" "$<TARGET_FILE_DIR:aether_player>/dxil.dll"
+    )
+endif()

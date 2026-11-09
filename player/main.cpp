@@ -452,6 +452,14 @@ int main(int argc, char** argv) {
             rhi::Backend backend = rhi::Backend::Vulkan;
             void* native = window->PlatformWindow();
 #endif
+            // Ray-traced sun shadows need the Vulkan ray tracing extensions, which are off unless asked for as the device is made.
+            if (const char* rt_shadows = std::getenv("AETHER_RENDER_RT_SHADOWS"); rt_shadows != nullptr && std::string(rt_shadows) == "1") {
+#if defined(_WIN32)
+                _putenv_s("AETHER_VK_RAY_TRACING", "1");
+#else
+                setenv("AETHER_VK_RAY_TRACING", "1", 1);
+#endif
+            }
             device = rhi::CreateDevice(backend, config == cook::BuildConfiguration::Debug);
             if (device) {
                 // A swap chain smaller than the window is stretched to fit by D3D12's flip model; a Vulkan surface has to match the window.

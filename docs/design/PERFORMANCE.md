@@ -912,3 +912,44 @@ the tick, then the upload, then a 1280 x 720 GPU workload. Two rounds; RTX 3050 
 - **On the 60-light lantern scene, whole-process timings show no difference within their noise** (about +-20 percent from run to
   run on this laptop).
 - **Worth keeping, but not a headline.** The CPU time freed in the upload is time the game can use.
+
+## Ray-traced sun shadows (a spike), 9 November 2026
+
+Render roadmap phase 4, the first use of the new acceleration structures (`IDevice::CreateBottomLevelAS` / `CreateTopLevelAS`,
+`PipelineDesc::acceleration_structure`, `shader_model_6`). With `AETHER_RENDER_RT_SHADOWS=1` the scene shader fires one inline ray per
+pixel toward the sun (`RayQuery` in the pixel shader, shader model 6.5) against the rigid casters' structure instead of reading the
+cascades or the virtual pages; no cascade is drawn. D3D12 needs nothing else; the player sets `AETHER_VK_RAY_TRACING=1` for Vulkan,
+which keeps the ray tracing extensions off otherwise (see below).
+- **What is in the structure:** every rigid, opaque caster, one bottom-level structure per primitive (made when first seen, freed with the
+  model), placed by the entity's transform in one top-level structure. A far-away dummy triangle keeps it valid when nothing casts.
+- **What is not:** skinned casters (they cast no shadow in this mode) and alpha-tested ones (they would shadow as solid). Shadows are
+  hard-edged: one ray, no filtering.
+- **When it is rebuilt:** only when a caster is new, gone or has moved, compared by its placement; the build is synchronous (the call
+  waits for the GPU), which is the cost of the "moving" column.
+- **Matches the cascades:** the same scene as the virtual shadow test, 1280 x 720: mean difference from the cascades' frame 0.04 on D3D12
+  and 0.04 on Vulkan (0.07 with the cube walking). With the ray's result forced to "lit" the difference is 0.48, which is what the test
+  threshold (0.2) separates.
+
+**Measured** as the virtual shadow maps were: a sunlit floor with two boxes and a small cube, the camera 1.6 m away, 200 frames, each
+recorded, submitted and waited on, the median of frames 60 to 200, the best of three rounds (the CPU frame time including the wait).
+RTX 3050 Laptop GPU, RelWithDebInfo. A small scene: four casters of a few hundred triangles.
+
+| Backend, size | Cascades only | Virtual pages | Ray traced, still | Ray traced, a caster moving |
+| --- | --- | --- | --- | --- |
+| D3D12 1280 x 720 | 1.02 ms | 1.34 ms | 0.94 ms | 2.43 ms |
+| D3D12 1920 x 1080 | 2.01 ms | 2.37 ms | 1.85 ms | 2.89 ms |
+| Vulkan 1280 x 720 | 1.02 ms | 1.25 ms | 0.99 ms | 1.19 ms |
+| Vulkan 1920 x 1080 | 2.06 ms | 2.40 ms | 2.08 ms | 2.35 ms |
+
+**What the numbers say.**
+- **A still scene costs no more than the cascades here,** and less on D3D12 (8 percent at both sizes): one ray against four small meshes is
+  cheaper than drawing four cascades, and the cascade pass is gone. This says little about a heavy scene, where a ray's cost grows with
+  the structure and the cascades' with the triangle count; that is not measured.
+- **A moving caster is the cost.** Each frame the cube moves, the structure is rebuilt and the CPU waits for it: +1.5 ms at 720p on D3D12
+  (+1.0 ms at 1080p) and +0.2 ms on Vulkan. An asynchronous build, or a refit of the top level, is what would make this usable for
+  anything that moves; skinned casters would need a refit of their bottom-level structure every frame as well.
+- **Vulkan ray tracing is opt-in (`AETHER_VK_RAY_TRACING=1`) by finding.** On the NVIDIA driver tried, merely enabling
+  `VK_KHR_acceleration_structure` on the device made the virtual shadow feedback test read zero depth in a third to a half of its
+  runs, with no ray tracing call made. Deferred host operations alone did not do it, no barrier in the depth copy explains it (a full
+  all-stages barrier, execution-only and memory-only variants all still failed), and the cause is not found. With the extension off
+  the same test passed 40 of 40, and the virtual shadow tests 20 of 20 runs. In ray-traced mode the feedback pass is not used.

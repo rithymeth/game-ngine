@@ -4925,12 +4925,14 @@
   ~Game()
 [player/include/aether/player/scene_renderer.h] experimental
   type class SceneRenderer
+  type struct RayTracedShadowStats
   type struct VirtualShadowStats
+  RayTracedShadowStats RayTracedShadows()const
   SceneRenderer&operator=(const SceneRenderer&)=delete
   SceneRenderer(const SceneRenderer&)=delete
   VirtualShadowStats VirtualShadows()const
   public:SceneRenderer(gfx::rhi::IDevice&device,gfx::rhi::ISwapChain&swap_chain,const GamePackage&package)
-  std::string SceneShaderSource(bool with_frame_data,bool hdr_target=false)
+  std::string SceneShaderSource(bool with_frame_data,bool hdr_target=false,bool ray_traced_shadows=false)
   void Draw(Game&game,gfx::rhi::ICommandList&commands,u32 frame_index)
   void SetBloom(bool enabled)
   void SetDrawParticles(bool draw)

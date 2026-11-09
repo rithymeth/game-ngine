@@ -13,7 +13,7 @@ namespace aether::player {
 // shader, and with the frame-constants block when `with_frame_data` (what devices that support frame constants get). Here so a test can
 // compile the real source with glslang. With `hdr_target` the pixel shader writes linear light for the HDR scene colour target (the
 // post pass tone maps it) instead of tone mapping and encoding for the back buffer itself.
-std::string SceneShaderSource(bool with_frame_data, bool hdr_target = false);
+std::string SceneShaderSource(bool with_frame_data, bool hdr_target = false, bool ray_traced_shadows = false);
 
 // Draws the current game's cooked ModelRenderer entities through the same
 // cross-API RHI used by the renderer demos. The player owns this alongside
@@ -53,6 +53,14 @@ public:
         f64 cpu_ms = 0.0;       // the CPU's time in this frame's page work (feedback, allocation, the page table, recording the pages)
     };
     VirtualShadowStats VirtualShadows() const;
+    // Ray-traced sun shadows (AETHER_RENDER_RT_SHADOWS=1, needs ray tracing): whether they are on, how many rigid casters the last frame's
+    // acceleration structure placed, and how many times that structure has been rebuilt (it is rebuilt only when a caster is new, gone or moved).
+    struct RayTracedShadowStats {
+        bool enabled = false;
+        u32 instances = 0;
+        u32 rebuilds = 0;
+    };
+    RayTracedShadowStats RayTracedShadows() const;
 
 private:
     struct Impl;

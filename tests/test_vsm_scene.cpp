@@ -59,6 +59,7 @@ void SetEnvironmentVariableForTest(const char* name, const char* value) {
 struct SceneRun {
     std::vector<u8> pixels;
     player::SceneRenderer::VirtualShadowStats last;
+    player::SceneRenderer::RayTracedShadowStats rt;
     u32 max_resident = 0, drawn_pages = 0, max_requests = 0, suppressed = 0;
     std::vector<u32> drawn_by_frame; // pages drawn in each frame
 };
@@ -142,6 +143,7 @@ SceneRun RunScene(rhi::Backend backend, const fs::path& root, const fs::path& pa
             cmd->Close();
             device->WaitForFence(device->Submit(*cmd, target.get()));
             run.last = renderer.VirtualShadows();
+            run.rt = renderer.RayTracedShadows();
             run.max_resident = std::max(run.max_resident, run.last.resident);
             run.max_requests = std::max(run.max_requests, run.last.requests);
             run.suppressed = std::max(run.suppressed, run.last.suppressed);
@@ -302,3 +304,71 @@ static void Vsm_ADeformingCasterIsLeftToTheCascades(rhi::Backend backend) {
 
 AETHER_TEST(Vsm_ADeformingCasterIsLeftToTheCascades_D3D12) { Vsm_ADeformingCasterIsLeftToTheCascades(rhi::Backend::D3D12); }
 AETHER_TEST(Vsm_ADeformingCasterIsLeftToTheCascades_Vulkan) { Vsm_ADeformingCasterIsLeftToTheCascades(rhi::Backend::Vulkan); }
+
+// Ray-traced sun shadows (AETHER_RENDER_RT_SHADOWS=1) through the whole renderer: the scene shader traces a ray per pixel against the rigid
+// casters' acceleration structure instead of reading the cascades. The picture matches the cascades' (same shadows, hard edges), the structure
+// is built once for a still scene, and rebuilt as a caster moves. Vulkan needs its ray tracing extensions asked for as the device is made.
+static SceneRun RunRayTraced(rhi::Backend backend, const fs::path& root, const fs::path& pak, u32 frames,
+                             const std::function<void(player::Game&, u32)>& before_frame = {}) {
+    SetEnvironmentVariableForTest("AETHER_RENDER_RT_SHADOWS", "1");
+    SetEnvironmentVariableForTest("AETHER_VK_RAY_TRACING", "1");
+    const SceneRun run = RunScene(backend, root, pak, kWidth, kHeight, frames, before_frame);
+    SetEnvironmentVariableForTest("AETHER_RENDER_RT_SHADOWS", "");
+    SetEnvironmentVariableForTest("AETHER_VK_RAY_TRACING", "");
+    return run;
+}
+
+static void RtShadows_MatchTheCascadesAndRebuildOnlyWhenACasterMoves(rhi::Backend backend) {
+    if (!rhi::IsBackendAvailable(backend)) return;
+    const fs::path root = fs::temp_directory_path() / "aether_rt_scene" / assets::ToString(assets::NewAssetGuid());
+    const fs::path pak = CookScene(root, 1.6f);
+    if (pak.empty()) return;
+    constexpr u32 kFrames = 28, kMoveAt = 14;
+    SetEnvironmentVariableForTest("AETHER_RENDER_VSM", "0");
+    SetEnvironmentVariableForTest("AETHER_RENDER_RT_SHADOWS", "");
+    const SceneRun cascades = RunScene(backend, root, pak, kWidth, kHeight, kFrames);
+    SetEnvironmentVariableForTest("AETHER_RENDER_VSM", "");
+    const SceneRun still = RunRayTraced(backend, root, pak, kFrames);
+    if (!still.rt.enabled) {
+        std::printf("    %s: no ray tracing here, skipped\n", Name(backend));
+        std::error_code ignored;
+        fs::remove_all(root, ignored);
+        return;
+    }
+    AETHER_CHECK(still.rt.instances >= 3); // the floor, the two boxes and the cube
+    AETHER_CHECK(still.rt.rebuilds >= 1 && still.rt.rebuilds <= 2); // built when the casters appeared, not every frame
+    AETHER_CHECK(still.pixels.size() == cascades.pixels.size() && !still.pixels.empty());
+    if (still.pixels.size() != cascades.pixels.size() || still.pixels.empty()) return;
+    const double difference = MeanDifference(still.pixels, cascades.pixels);
+    std::printf("    %s: %u casters in the structure, %u builds; mean difference from the cascades %.3f\n", Name(backend), still.rt.instances,
+                still.rt.rebuilds, difference);
+    AETHER_CHECK(difference < 0.2); // the same shadows (without them the frame is 0.48 away)
+    AETHER_CHECK(difference > 0.0); // and it is not the cascades under another name
+
+    const auto move = [](player::Game& game, u32 frame) {
+        if (frame < kMoveAt) return;
+        const std::vector<Entity> movers = FindEntitiesWithTag(game.GetWorld(), "Mover");
+        if (movers.size() != 1) return;
+        if (Transform* transform = game.GetWorld().GetComponent<Transform>(movers.front())) {
+            transform->position.x = 0.3f + 0.05f * static_cast<f32>(frame - kMoveAt);
+        }
+    };
+    SetEnvironmentVariableForTest("AETHER_RENDER_VSM", "0");
+    const SceneRun cascades_moved = RunScene(backend, root, pak, kWidth, kHeight, kFrames, move);
+    SetEnvironmentVariableForTest("AETHER_RENDER_VSM", "");
+    const SceneRun moved = RunRayTraced(backend, root, pak, kFrames, move);
+    AETHER_CHECK(moved.rt.rebuilds >= still.rt.rebuilds + (kFrames - kMoveAt) - 2); // rebuilt about every frame the cube moves
+    if (moved.pixels.size() != cascades_moved.pixels.size() || moved.pixels.empty()) return;
+    const double moved_difference = MeanDifference(moved.pixels, cascades_moved.pixels);
+    std::printf("    %s: the cube moving: %u builds; mean difference from the cascades %.3f\n", Name(backend), moved.rt.rebuilds, moved_difference);
+    AETHER_CHECK(moved_difference < 0.25); // the shadow is where the cube is, not where it was
+    std::error_code ignored;
+    fs::remove_all(root, ignored);
+}
+
+AETHER_TEST(RtShadows_MatchTheCascadesAndRebuildOnlyWhenACasterMoves_D3D12) {
+    RtShadows_MatchTheCascadesAndRebuildOnlyWhenACasterMoves(rhi::Backend::D3D12);
+}
+AETHER_TEST(RtShadows_MatchTheCascadesAndRebuildOnlyWhenACasterMoves_Vulkan) {
+    RtShadows_MatchTheCascadesAndRebuildOnlyWhenACasterMoves(rhi::Backend::Vulkan);
+}

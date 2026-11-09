@@ -348,7 +348,31 @@ constexpr char kSceneShaderFrame[] = R"(
 // read with a 3x3 bilinear PCF of texel loads (4x4 texels, tent weights), so filtering needs no comparison sampler. The point is pushed
 // out along the surface normal by about a texel first (normal offset), and compared a texel's depth nearer, against acne; the caster
 // pipelines add a slope-scaled bias of their own. The last cascade fades out over its outer tenth instead of ending in a hard line.
+#ifdef AETHER_RT_SHADOWS
+// Ray-traced sun shadows (AETHER_RENDER_RT_SHADOWS=1): one inline ray from the surface toward the sun against the rigid casters' acceleration
+// structure, 1 lit and 0 shadowed. The origin is pushed off the surface along its normal against self-hits. Hard-edged, and blind to what is not in
+// the structure: skinned and alpha-tested casters.
+RaytracingAccelerationStructure g_RtScene : register(t0, space4);
+float RtSunShadow(float3 world_position, float3 geometric_normal, float3 sun_direction) {
+    if (g_Frame.shadow_info.x >= 128) return 1.0;
+    float n_dot_l = saturate(dot(geometric_normal, sun_direction));
+    float slope = sqrt(saturate(1.0 - n_dot_l * n_dot_l));
+    RayDesc ray;
+    ray.Origin = world_position + geometric_normal * (0.01 + 0.03 * slope);
+    ray.Direction = sun_direction;
+    ray.TMin = 0.005;
+    ray.TMax = 2000.0;
+    RayQuery<RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> query;
+    query.TraceRayInline(g_RtScene, 0, 0xFF, ray);
+    query.Proceed();
+    return query.CommittedStatus() == COMMITTED_TRIANGLE_HIT ? 0.0 : 1.0;
+}
+#endif
+
 float SunShadow(float3 world_position, float3 geometric_normal, float3 sun_direction) {
+#ifdef AETHER_RT_SHADOWS
+    return RtSunShadow(world_position, geometric_normal, sun_direction);
+#endif
     float virtual_shadow = VsmSunShadow(world_position, geometric_normal, sun_direction);
     if (virtual_shadow >= 0.0) return virtual_shadow;
     uint atlas = g_Frame.shadow_info.x;
@@ -749,6 +773,9 @@ struct SceneRenderer::Impl {
         BufferHandle vertices;
         BufferHandle indices;
         u32 index_count = 0;
+        u32 vertex_count = 0;
+        AccelerationStructureHandle blas; // ray-traced shadows: this rigid primitive's bottom-level structure, made when first needed
+        bool blas_failed = false;
         std::vector<BufferHandle> frame_vertex_buffers;
         // For a skinned primitive drawn more than once in a frame (entities sharing the model): the buffers of the second draw on, per
         // frame in flight, made when first needed. draws counts this frame's draws (draws_frame: which frame).
@@ -826,6 +853,15 @@ struct SceneRenderer::Impl {
     std::unique_ptr<VsmFeedback> vsm_feedback;
     std::unique_ptr<VsmPass> vsm_pass;
     std::unique_ptr<VsmPageAllocator> vsm_pages;
+    // Ray-traced sun shadows (AETHER_RENDER_RT_SHADOWS=1): the scene shader traces one ray per pixel against rt_tlas, rebuilt (synchronously) when
+    // the rigid casters' placement changes. rt_dummy_* is a far-away triangle that keeps the structure valid when nothing casts.
+    bool rt_shadows = false;
+    AccelerationStructureHandle rt_tlas;
+    AccelerationStructureHandle rt_dummy_blas;
+    BufferHandle rt_dummy_vertices, rt_dummy_indices;
+    std::vector<f32> rt_signature;
+    u32 rt_instances = 0;
+    u32 rt_rebuilds = 0;
     VsmLight vsm_light;
     bool vsm_have_light = false;
     u64 vsm_frame = 0;
@@ -931,6 +967,17 @@ struct SceneRenderer::Impl {
                 }
             }
         }
+        if (rt_tlas.IsValid()) device.DestroyAccelerationStructure(rt_tlas);
+        for (auto& [path, model] : models) {
+            for (auto& primitives : model.meshes) {
+                for (Primitive& primitive : primitives) {
+                    if (primitive.blas.IsValid()) device.DestroyAccelerationStructure(primitive.blas);
+                }
+            }
+        }
+        if (rt_dummy_blas.IsValid()) device.DestroyAccelerationStructure(rt_dummy_blas);
+        free_buffer(rt_dummy_vertices);
+        free_buffer(rt_dummy_indices);
         for (BufferHandle& buffer : frame_buffers) free_buffer(buffer);
         for (BufferHandle& buffer : light_buffers) free_buffer(buffer);
         for (BufferHandle& buffer : motion_position_buffers) free_buffer(buffer);
@@ -974,8 +1021,17 @@ struct SceneRenderer::Impl {
                 shadows = std::make_unique<ShadowPass>(device, swap_chain);
                 if (!shadows->Valid()) shadows.reset();
             }
+            // AETHER_RENDER_RT_SHADOWS=1: sun shadows by ray query instead of the cascades and virtual pages (needs ray tracing; Vulkan also needs
+            // AETHER_VK_RAY_TRACING=1 as the device is made, which the player sets).
+            const char* rt_setting = std::getenv("AETHER_RENDER_RT_SHADOWS");
+            if (shadows && device.SupportsRayTracing() && rt_setting != nullptr && std::strcmp(rt_setting, "1") == 0) {
+                rt_shadows = true;
+                desc.hlsl_source = SceneShaderSource(true, hdr, true);
+                desc.shader_model_6 = true;
+                desc.acceleration_structure = true;
+            }
             const char* vsm_setting = std::getenv("AETHER_RENDER_VSM");
-            if (shadows && hdr && device.SupportsReadback() && (vsm_setting == nullptr || std::strcmp(vsm_setting, "0") != 0)) {
+            if (shadows && !rt_shadows && hdr && device.SupportsReadback() && (vsm_setting == nullptr || std::strcmp(vsm_setting, "0") != 0)) {
                 if (const char* pool = std::getenv("AETHER_VSM_POOL")) vsm_pool = std::clamp<u32>(static_cast<u32>(std::atoi(pool)), 2u, 64u);
                 vsm_feedback = std::make_unique<VsmFeedback>(device, swap_chain);
                 vsm_pass = std::make_unique<VsmPass>(device, swap_chain);
@@ -1002,7 +1058,30 @@ struct SceneRenderer::Impl {
         desc.vertex_layout = VertexLayout::PositionNormalUvTangent;
         desc.enable_bindless_textures = true;
         desc.depth_test = true;
-        pipeline = device.CreatePipeline(desc, swap_chain);
+        if (rt_shadows) {
+            // The scene shader through DXC at shader model 6.5; if it will not build, the cascades stay.
+            try {
+                pipeline = device.CreatePipeline(desc, swap_chain);
+                std::vector<SceneVertex> dummy(3);
+                dummy[0].position[1] = dummy[1].position[1] = dummy[2].position[1] = -100000.0f;
+                dummy[1].position[0] = 1.0f;
+                dummy[2].position[2] = 1.0f;
+                const u32 dummy_indices[3] = {0, 1, 2};
+                rt_dummy_vertices = device.CreateVertexBuffer(dummy.data(), dummy.size() * sizeof(SceneVertex));
+                rt_dummy_indices = device.CreateIndexBuffer(dummy_indices, sizeof(dummy_indices), IndexFormat::UInt32);
+                rt_dummy_blas = device.CreateBottomLevelAS(rt_dummy_vertices, 3, sizeof(SceneVertex), rt_dummy_indices, 3);
+                if (!rt_dummy_blas.IsValid()) throw std::runtime_error("no acceleration structure");
+            } catch (const std::exception& error) {
+                AETHER_LOG_WARN("PlayerRenderer", "Ray-traced shadows unavailable (%s); the cascades stay", error.what());
+                rt_shadows = false;
+                if (pipeline.IsValid()) device.DestroyPipeline(pipeline);
+                pipeline = {};
+                desc.hlsl_source = SceneShaderSource(true, hdr);
+                desc.shader_model_6 = false;
+                desc.acceleration_structure = false;
+            }
+        }
+        if (!pipeline.IsValid()) pipeline = device.CreatePipeline(desc, swap_chain);
 
         PipelineDesc transparent_desc = desc;
         transparent_desc.enable_blending = true;
@@ -1877,6 +1956,7 @@ struct SceneRenderer::Impl {
                                     draw.frame_vertex_buffers.back().index);
                 } else {
                     draw.vertices = device.CreateVertexBuffer(vertices.data(), vertices.size() * sizeof(SceneVertex));
+                    draw.vertex_count = static_cast<u32>(vertices.size());
                     if (!vertices.empty()) {
                         Vec3 lo(vertices[0].position[0], vertices[0].position[1], vertices[0].position[2]), hi = lo;
                         for (const SceneVertex& v : vertices) {
@@ -2035,6 +2115,9 @@ void SceneRenderer::SetShadows(u32 resolution, u32 cascades) {
     }
 }
 SceneRenderer::VirtualShadowStats SceneRenderer::VirtualShadows() const { return impl_->vsm_stats; }
+SceneRenderer::RayTracedShadowStats SceneRenderer::RayTracedShadows() const {
+    return {impl_->rt_shadows, impl_->rt_instances, impl_->rt_rebuilds};
+}
 void SceneRenderer::SetBloom(bool enabled) {
     impl_->bloom = enabled;
     if (!enabled && impl_->post) impl_->post->ReleaseBloom(); // the chain's bindless slots go back to the table
@@ -2104,6 +2187,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
     std::vector<PendingTransparentDraw> transparent_draws;
     std::vector<PendingOpaqueDraw> opaque_draws;
     std::vector<ShadowCaster> shadow_casters;
+    std::vector<AccelerationInstance> rt_instances; // ray-traced shadows: the rigid opaque casters, placed
     std::vector<TaaMover> taa_movers; // opaque draws whose model transform or skinned pose changed since last frame
     struct DirtySphere {
         Vec3 center;
@@ -2473,6 +2557,27 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                                     caster.alpha_cutoff = primitive.alpha_cutoff;
                                     caster.deforming = uploaded_animation;
                                     shadow_casters.push_back(caster);
+                                    if (renderer.rt_shadows && !caster.deforming && !caster.alpha_tested && primitive.frame_vertex_buffers.empty()) {
+                                        if (!primitive.blas.IsValid() && !primitive.blas_failed) {
+                                            try {
+                                                primitive.blas = renderer.device.CreateBottomLevelAS(primitive.vertices, primitive.vertex_count,
+                                                                                                    sizeof(SceneVertex), primitive.indices, primitive.index_count);
+                                            } catch (const std::exception&) {
+                                            }
+                                            primitive.blas_failed = !primitive.blas.IsValid();
+                                        }
+                                        if (primitive.blas.IsValid()) {
+                                            AccelerationInstance instance;
+                                            instance.blas = primitive.blas;
+                                            for (usize row = 0; row < 3; ++row) {
+                                                for (usize column = 0; column < 4; ++column) {
+                                                    const Vec4& c = model_transform.cols[column];
+                                                    instance.transform[row * 4 + column] = row == 0 ? c.x : row == 1 ? c.y : c.z;
+                                                }
+                                            }
+                                            rt_instances.push_back(instance);
+                                        }
+                                    }
                                     if (renderer.vsm_pages) {
                                         // The caster's world sphere (a skinned one's from its bind pose, grown): the pages it touches are redrawn when it is
                                         // new, has moved, or deforms, both where it is now and where it was.
@@ -2539,7 +2644,33 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
         }
     }
     // The sun's shadow atlas, outside any pass; then this frame's constants (lights and cascades) and the scene pass itself.
-    if (sun_shadows) {
+    if (sun_shadows && renderer.rt_shadows) {
+        // The structure of this frame's rigid casters, rebuilt only when one is new, gone or has moved. The shader reads shadow_info.x < 128 as
+        // "shadows on"; no cascades are drawn.
+        if (rt_instances.empty()) {
+            AccelerationInstance instance;
+            instance.blas = renderer.rt_dummy_blas;
+            rt_instances.push_back(instance);
+        }
+        std::vector<f32> signature;
+        signature.reserve(rt_instances.size() * 13);
+        for (const AccelerationInstance& instance : rt_instances) {
+            signature.push_back(static_cast<f32>(instance.blas.index));
+            signature.insert(signature.end(), instance.transform, instance.transform + 12);
+        }
+        if (!renderer.rt_tlas.IsValid() || signature != renderer.rt_signature) {
+            const AccelerationStructureHandle made = renderer.device.CreateTopLevelAS(rt_instances);
+            if (made.IsValid()) {
+                if (renderer.rt_tlas.IsValid()) renderer.device.DestroyAccelerationStructure(renderer.rt_tlas);
+                renderer.rt_tlas = made;
+                renderer.rt_signature = std::move(signature);
+                ++renderer.rt_rebuilds;
+            }
+        }
+        renderer.rt_instances = static_cast<u32>(rt_instances.size());
+        frame_data.shadow_info[0] = 0u;
+        frame_data.shadow_info[1] = frame_data.shadow_info[2] = frame_data.shadow_info[3] = 0u;
+    } else if (sun_shadows) {
         const Vec3 light_travel(-frame_data.sun_direction[0], -frame_data.sun_direction[1], -frame_data.sun_direction[2]);
         const ShadowFrameData shadow = renderer.shadows->Render(commands, shadow_view, light_travel, shadow_casters);
         std::memcpy(frame_data.shadow_view_projection, shadow.view_projection, sizeof(shadow.view_projection));
@@ -2649,6 +2780,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                 commands.BindPipeline(cull ? renderer.culled_pipeline : renderer.pipeline);
                 if (frame_buffer.IsValid()) commands.BindFrameConstants(frame_buffer);
                 if (light_buffer.IsValid()) commands.BindFrameReadBuffer(light_buffer);
+                if (renderer.rt_shadows && renderer.rt_tlas.IsValid()) commands.BindAccelerationStructure(renderer.rt_tlas);
                 commands.BindBindlessTextures();
                 bound = true;
                 bound_cull = cull;
@@ -2682,6 +2814,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                 commands.BindPipeline(cull ? renderer.transparent_culled_pipeline : transparent_pipeline);
                 if (frame_buffer.IsValid()) commands.BindFrameConstants(frame_buffer);
                 if (light_buffer.IsValid()) commands.BindFrameReadBuffer(light_buffer);
+                if (renderer.rt_shadows && renderer.rt_tlas.IsValid()) commands.BindAccelerationStructure(renderer.rt_tlas);
                 commands.BindBindlessTextures();
                 bound = true;
                 bound_cull = cull;
@@ -2726,8 +2859,9 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
 }
 
 // The advanced PBR library (anisotropic GGX, sheen, clear coat) goes ahead of the scene shader.
-std::string SceneShaderSource(bool with_frame_data, bool hdr_target) {
+std::string SceneShaderSource(bool with_frame_data, bool hdr_target, bool ray_traced_shadows) {
     return std::string(with_frame_data ? "#define AETHER_FRAME_DATA 1\n" : "") + (hdr_target ? "#define AETHER_HDR_TARGET 1\n" : "") +
+           (with_frame_data && ray_traced_shadows ? "#define AETHER_RT_SHADOWS 1\n" : "") +
            mat::AdvancedPbrHlsl() + mat::ShadingModelsHlsl() + kSceneShader + (with_frame_data ? FrameDataHlsl() : "") +
            (with_frame_data ? VsmShaderLibrary() : "") + (with_frame_data ? kSceneShaderVsm : "") + kSceneShaderFrame;
 }
