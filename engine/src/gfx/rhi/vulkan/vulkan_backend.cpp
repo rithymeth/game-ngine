@@ -431,7 +431,7 @@ bool ProbeRayTracing(VkPhysicalDevice physical_device) {
 }
 
 VkDevice CreateLogicalDevice(VkPhysicalDevice physical_device, const PhysicalDeviceChoice& choice, bool& update_after_bind,
-                             bool& ray_tracing) {
+                             bool& ray_tracing, bool& host_query_reset) {
     f32 priorities[2] = {1.0f, 1.0f};
     std::vector<VkDeviceQueueCreateInfo> queue_infos;
 
@@ -456,6 +456,15 @@ VkDevice CreateLogicalDevice(VkPhysicalDevice physical_device, const PhysicalDev
 
     VkPhysicalDeviceVulkan12Features features_12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
     features_12.timelineSemaphore = VK_TRUE;
+    // Resetting query pools from the host (GPU timers) where the device can.
+    {
+        VkPhysicalDeviceVulkan12Features query_12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
+        VkPhysicalDeviceFeatures2 query_2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+        query_2.pNext = &query_12;
+        vkGetPhysicalDeviceFeatures2(physical_device, &query_2);
+        host_query_reset = query_12.hostQueryReset == VK_TRUE;
+        features_12.hostQueryReset = host_query_reset ? VK_TRUE : VK_FALSE;
+    }
     // An update-after-bind texture table where the device has one (VulkanDevice::bindless_update_after_bind_).
     VkPhysicalDeviceVulkan12Features supported_12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
     VkPhysicalDeviceFeatures2 supported_2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
@@ -546,7 +555,20 @@ VulkanDevice::VulkanDevice(bool enable_debug_layer) {
         compute_queue_family_index_ = choice.compute_family;
 
         bool update_after_bind = false;
-        device_ = CreateLogicalDevice(physical_device_, choice, update_after_bind, ray_tracing_supported_);
+        bool host_query_reset = false;
+        device_ = CreateLogicalDevice(physical_device_, choice, update_after_bind, ray_tracing_supported_, host_query_reset);
+        {
+            u32 family_count = 0;
+            vkGetPhysicalDeviceQueueFamilyProperties(physical_device_, &family_count, nullptr);
+            std::vector<VkQueueFamilyProperties> families(family_count);
+            vkGetPhysicalDeviceQueueFamilyProperties(physical_device_, &family_count, families.data());
+            VkPhysicalDeviceProperties properties{};
+            vkGetPhysicalDeviceProperties(physical_device_, &properties);
+            const u32 valid_bits = choice.graphics_family < family_count ? families[choice.graphics_family].timestampValidBits : 0u;
+            timestamp_period_ns_ = static_cast<f64>(properties.limits.timestampPeriod);
+            timestamp_mask_ = valid_bits >= 64 ? ~0ull : ((1ull << valid_bits) - 1ull);
+            gpu_timing_supported_ = host_query_reset && valid_bits > 0 && timestamp_period_ns_ > 0.0;
+        }
         VkPhysicalDeviceVulkan12Properties properties_12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_PROPERTIES};
         VkPhysicalDeviceProperties2 properties_2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
         properties_2.pNext = &properties_12;
@@ -816,6 +838,10 @@ void VulkanDevice::Destroy() noexcept {
         }
         if (frame_read_pool_ != VK_NULL_HANDLE) vkDestroyDescriptorPool(device_, frame_read_pool_, nullptr);
         if (frame_read_set_layout_ != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(device_, frame_read_set_layout_, nullptr);
+        for (const GpuTimerRecord& timer : gpu_timers_) {
+            if (timer.pool != VK_NULL_HANDLE) vkDestroyQueryPool(device_, timer.pool, nullptr);
+        }
+        gpu_timers_.clear();
         for (const AccelerationRecord& record : acceleration_structures_) {
             if (record.handle != VK_NULL_HANDLE) DestroyAccelerationStructureNow(record);
         }
@@ -2325,6 +2351,55 @@ AccelerationStructureHandle VulkanDevice::CreateTopLevelAS(std::span<const Accel
     return BuildAccelerationStructure(VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR, geometry, static_cast<u32>(instances.size()));
 }
 
+GpuTimerHandle VulkanDevice::CreateGpuTimer(u32 timestamp_count) {
+    if (!gpu_timing_supported_) return {};
+    if (timestamp_count == 0 || timestamp_count > 64) throw std::invalid_argument("A GPU timer holds 1 to 64 timestamps");
+    VkQueryPoolCreateInfo info{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
+    info.queryType = VK_QUERY_TYPE_TIMESTAMP;
+    info.queryCount = timestamp_count;
+    GpuTimerRecord record;
+    AETHER_VK_CHECK(vkCreateQueryPool(device_, &info, nullptr, &record.pool));
+    vkResetQueryPool(device_, record.pool, 0, timestamp_count); // a pool must be reset before the first write
+    record.count = timestamp_count;
+    u32 slot;
+    if (!free_gpu_timer_slots_.empty()) {
+        slot = free_gpu_timer_slots_.back();
+        free_gpu_timer_slots_.pop_back();
+        gpu_timers_[slot] = record;
+    } else {
+        slot = static_cast<u32>(gpu_timers_.size());
+        gpu_timers_.push_back(record);
+    }
+    return GpuTimerHandle{slot};
+}
+
+bool VulkanDevice::DestroyGpuTimer(GpuTimerHandle timer) {
+    if (!IsGpuTimerAlive(timer)) return false;
+    const VkQueryPool pool = gpu_timers_[timer.index].pool;
+    gpu_timers_[timer.index] = {};
+    free_gpu_timer_slots_.push_back(timer.index);
+    Retire([this, pool] { vkDestroyQueryPool(device_, pool, nullptr); });
+    DrainRetired();
+    return true;
+}
+
+bool VulkanDevice::ReadGpuTimer(GpuTimerHandle timer, std::span<f64> milliseconds) {
+    if (!IsGpuTimerAlive(timer)) return false;
+    GpuTimerRecord& record = gpu_timers_[timer.index];
+    if (record.fence == 0 || !IsFenceComplete(record.fence) || milliseconds.empty() || milliseconds.size() > record.count) return false;
+    u64 ticks[64] = {};
+    const u32 count = static_cast<u32>(milliseconds.size());
+    if (vkGetQueryPoolResults(device_, record.pool, 0, count, count * sizeof(u64), ticks, sizeof(u64), VK_QUERY_RESULT_64_BIT) != VK_SUCCESS) {
+        return false; // a slot was never written in that submission
+    }
+    for (u32 i = 0; i < count; ++i) {
+        milliseconds[i] = static_cast<f64>((ticks[i] - ticks[0]) & timestamp_mask_) * timestamp_period_ns_ / 1.0e6;
+    }
+    record.fence = 0;                                    // read once per use
+    vkResetQueryPool(device_, record.pool, 0, record.count); // ready for the next recording
+    return true;
+}
+
 bool VulkanDevice::DestroyAccelerationStructure(AccelerationStructureHandle handle) {
     if (!IsAccelerationStructureAlive(handle)) return false;
     const AccelerationRecord record = acceleration_structures_[handle.index];
@@ -2721,6 +2796,7 @@ u64 VulkanDevice::Submit(ICommandList& cmd, ISwapChain* wait_on_swap_chain) {
     AETHER_VK_CHECK(vkQueueSubmit(queue_, 1, &submit_info, VK_NULL_HANDLE));
     ++next_fence_value_;
     rhi_cmd->MarkSubmitted(fence_value);
+    NoteGpuTimersSubmitted(rhi_cmd->UsedGpuTimers(), fence_value);
     if (pending_graphics_wait_.valid) pending_graphics_wait_ = {};
     DrainRetired();
     return fence_value;
@@ -3838,6 +3914,7 @@ void VulkanCommandList::Reset() {
     }
     AETHER_VK_CHECK(vkResetCommandBuffer(command_buffer_, 0));
     last_submitted_fence_ = 0;
+    used_gpu_timers_.clear();
     render_pass_active_ = false;
     active_swap_chain_ = nullptr;
     graphics_pipeline_bound_ = false;
@@ -4323,6 +4400,19 @@ void VulkanCommandList::BindFrameReadBuffer(BufferHandle buffer) {
     const VkDescriptorSet set = device_.GetBuffer(buffer).read_set;
     vkCmdBindDescriptorSets(command_buffer_, VK_PIPELINE_BIND_POINT_GRAPHICS, bound_pipeline_layout_, 3, 1, &set, 0, nullptr);
 }
+bool VulkanCommandList::WriteGpuTimestamp(GpuTimerHandle timer, u32 index) {
+    if (!recording_ || compute_queue_ || !device_.IsGpuTimerAlive(timer) || index >= device_.GpuTimerCount(timer)) return false;
+    vkCmdWriteTimestamp(command_buffer_, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, device_.GpuTimerPool(timer), index);
+    return true;
+}
+
+bool VulkanCommandList::ResolveGpuTimer(GpuTimerHandle timer) {
+    // Nothing to copy: the host reads the query pool directly. This only notes the timer, so the submission's fence is what a read waits for.
+    if (!recording_ || compute_queue_ || render_pass_active_ || !device_.IsGpuTimerAlive(timer)) return false;
+    used_gpu_timers_.push_back(timer.index);
+    return true;
+}
+
 void VulkanCommandList::BindAccelerationStructure(AccelerationStructureHandle structure) {
     const VkDescriptorSet set = device_.AccelerationSet(structure);
     if (set == VK_NULL_HANDLE) {

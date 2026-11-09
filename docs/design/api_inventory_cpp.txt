@@ -1942,6 +1942,8 @@
   virtual bool BeginTexturePass(SampledTextureHandle,const ClearColor*)
   virtual bool CopyRenderTextureToReadback(SampledTextureHandle,BufferHandle)
   virtual bool CopySceneDepth()
+  virtual bool ResolveGpuTimer(GpuTimerHandle)
+  virtual bool WriteGpuTimestamp(GpuTimerHandle,u32)
   virtual void BeginRenderPass(ISwapChain&swap_chain,const ClearColor&clear_color)=0
   virtual void BindAccelerationStructure(AccelerationStructureHandle)
   virtual void BindBindlessTextures()=0
@@ -1973,6 +1975,7 @@
   type struct AccelerationRecord
   type struct ComputePipelineRecord
   type struct DepthTextureView
+  type struct GpuTimerRecord
   type struct PipelineRecord
   type struct RenderTextureView
   type struct RetiredResource
@@ -1996,8 +1999,11 @@
   D3D12_RESOURCE_STATES ToD3D12(ResourceState state)
   DepthTextureView FindDepthTexture(SampledTextureHandle handle)const
   DescriptorHeap&BindlessTextureHeap()
+  GpuTimerHandle CreateGpuTimer(u32 timestamp_count)override
   ID3D12DescriptorHeap*ComputeStorageHeap()const
+  ID3D12QueryHeap*GpuTimerHeap(GpuTimerHandle h)const
   ID3D12Resource*DepthResource(u32 index)const
+  ID3D12Resource*GpuTimerReadback(GpuTimerHandle h)const
   ID3D12Resource*SceneColorResource()const
   ID3D12Resource*SceneDepthCopy()const
   PipelineHandle CreatePipeline(const PipelineDesc&desc,ISwapChain&swap_chain)override
@@ -2026,6 +2032,7 @@
   bool DestroyAccelerationStructure(AccelerationStructureHandle handle)override
   bool DestroyBuffer(BufferHandle buffer)override
   bool DestroyComputePipeline(ComputePipelineHandle pipeline)override
+  bool DestroyGpuTimer(GpuTimerHandle timer)override
   bool DestroyPipeline(PipelineHandle pipeline)override
   bool DestroyTexture(SampledTextureHandle texture)override
   bool IsAccelerationStructureAlive(AccelerationStructureHandle h)const
@@ -2035,6 +2042,7 @@
   bool IsComputePipelineAlive(ComputePipelineHandle h)const
   bool IsConstantBuffer(BufferHandle handle)const
   bool IsFenceComplete(u64 fence_value)const override
+  bool IsGpuTimerAlive(GpuTimerHandle h)const
   bool IsIndexBuffer(BufferHandle handle,IndexFormat format)const
   bool IsPipelineAlive(PipelineHandle h)const
   bool IsReadyForSubmit()const
@@ -2043,18 +2051,23 @@
   bool IsTextureValid(TextureHandle handle)const
   bool IsVertexBuffer(BufferHandle handle)const
   bool ReadBack(std::vector<u8>&rgba8)override
+  bool ReadGpuTimer(GpuTimerHandle timer,std::span<f64>milliseconds)override
   bool ReadReadbackBuffer(BufferHandle buffer,void*out,u64 size_bytes,u64 offset=0)override
+  bool ResolveGpuTimer(GpuTimerHandle timer)override
   bool SceneColorEnabled()const
   bool SceneDepthEnabled()const
   bool SupportsCompressedTexture(CompressedTextureFormat f)const override
   bool SupportsFrameConstants()const override
+  bool SupportsGpuTiming()const override
   bool SupportsRayTracing()const override
   bool SupportsReadback()const override
   bool WriteBufferUnsynchronized(BufferHandle buffer,const void*data,u64 size_bytes,u64 offset=0)override
+  bool WriteGpuTimestamp(GpuTimerHandle timer,u32 index)override
   const ComputePipelineRecord&GetComputePipeline(ComputePipelineHandle handle)const
   const PipelineRecord&GetPipeline(PipelineHandle handle)const
   const TextureRecord&GetTexture(TextureHandle handle)const
   const gfx::Buffer&GetBuffer(BufferHandle handle)const
+  const std::vector<u32>&ResolvedGpuTimers()const
   gfx::Device&Native()
   gfx::SwapChain&Native()
   private:BufferHandle CreateBufferInternal(const void*data,u64 size_bytes,bool is_vertex,std::optional<IndexFormat>index_format=std::nullopt)
@@ -2069,6 +2082,7 @@
   std::unique_ptr<ISwapChain>CreateSwapChain(void*native_window_handle,u32 width,u32 height,u32 buffer_count)override
   u32 BufferCount()const override
   u32 CurrentIndex()const
+  u32 GpuTimerCount(GpuTimerHandle h)const
   u32 Height()const override
   u32 StoreBuffer(std::unique_ptr<gfx::Buffer>buffer,u32 storage_descriptor,bool is_constant,bool is_vertex,std::optional<IndexFormat>index_format)
   u32 StoreComputePipeline(ComputePipelineRecord&&record)
@@ -2106,6 +2120,7 @@
   void EndRenderPass()override
   void GraphicsQueueWaitOnCompute(u64 compute_fence_value)override
   void MarkSubmitted(u64 fence_value)
+  void NoteGpuTimersSubmitted(const std::vector<u32>&timers,u64 fence)
   void Present(bool vsync)override
   void ReleaseExternalBindlessSlot(SampledTextureHandle slot)
   void ReleaseRetiredResources()override
@@ -2148,6 +2163,7 @@
   virtual BufferHandle CreateStorageBuffer(u64 size_bytes,u32 element_stride_bytes=0,const void*initial_data=nullptr)=0
   virtual BufferHandle CreateVertexBuffer(const void*data,u64 size_bytes)=0
   virtual ComputePipelineHandle CreateComputePipeline(const ComputePipelineDesc&desc)=0
+  virtual GpuTimerHandle CreateGpuTimer(u32)
   virtual PipelineHandle CreatePipeline(const PipelineDesc&desc,ISwapChain&swap_chain)=0
   virtual ResourceStats GetResourceStats()const
   virtual SampledTextureHandle CreateCompressedTexture(CompressedTextureFormat,u32,u32,std::span<const CompressedMip>)
@@ -2160,13 +2176,16 @@
   virtual bool DestroyAccelerationStructure(AccelerationStructureHandle)
   virtual bool DestroyBuffer(BufferHandle)
   virtual bool DestroyComputePipeline(ComputePipelineHandle)
+  virtual bool DestroyGpuTimer(GpuTimerHandle)
   virtual bool DestroyPipeline(PipelineHandle)
   virtual bool DestroyTexture(SampledTextureHandle)
   virtual bool IsComputeFenceComplete(u64 fence_value)const=0
   virtual bool IsFenceComplete(u64 fence_value)const=0
+  virtual bool ReadGpuTimer(GpuTimerHandle,std::span<f64>)
   virtual bool ReadReadbackBuffer(BufferHandle,void*,u64,u64=0)
   virtual bool SupportsCompressedTexture(CompressedTextureFormat)const
   virtual bool SupportsFrameConstants()const
+  virtual bool SupportsGpuTiming()const
   virtual bool SupportsRayTracing()const
   virtual bool SupportsReadback()const
   virtual bool WriteBufferUnsynchronized(BufferHandle,const void*,u64,u64=0)
@@ -2210,6 +2229,7 @@
   type struct ClearColor
   type struct CompressedMip
   type struct ComputePipelineHandle
+  type struct GpuTimerHandle
   type struct PipelineHandle
   type struct Rect
   type struct SampledTextureHandle
@@ -2229,6 +2249,7 @@
   type struct BufferRecord
   type struct ComputePipelineRecord
   type struct DeferredCommandListResources
+  type struct GpuTimerRecord
   type struct ImageLevel
   type struct PendingWait
   type struct PipelineRecord
@@ -2248,6 +2269,7 @@
   BufferHandle CreateStorageBuffer(u64 size_bytes,u32 element_stride_bytes,const void*initial_data)override
   BufferHandle CreateVertexBuffer(const void*data,u64 size_bytes)override
   ComputePipelineHandle CreateComputePipeline(const ComputePipelineDesc&desc)override
+  GpuTimerHandle CreateGpuTimer(u32 timestamp_count)override
   PipelineHandle CreatePipeline(const PipelineDesc&desc,ISwapChain&swap_chain)override
   ResourceStats GetResourceStats()const override
   SampledTextureHandle CreateCompressedTexture(CompressedTextureFormat format,u32 width,u32 height,std::span<const CompressedMip>mips)override
@@ -2284,6 +2306,7 @@
   VkImageView ImageView(u32 index)const
   VkInstance Instance()const
   VkPhysicalDevice PhysicalDevice()const
+  VkQueryPool GpuTimerPool(GpuTimerHandle h)const
   VkQueue ComputeQueue()const
   VkQueue Queue()const
   VkRenderPass BeginRenderPassHandle()const
@@ -2305,6 +2328,7 @@
   bool DestroyAccelerationStructure(AccelerationStructureHandle handle)override
   bool DestroyBuffer(BufferHandle buffer)override
   bool DestroyComputePipeline(ComputePipelineHandle pipeline)override
+  bool DestroyGpuTimer(GpuTimerHandle timer)override
   bool DestroyPipeline(PipelineHandle pipeline)override
   bool DestroyTexture(SampledTextureHandle texture)override
   bool IsAccelerationStructureAlive(AccelerationStructureHandle h)const
@@ -2314,6 +2338,7 @@
   bool IsComputeList()const
   bool IsComputePipelineAlive(ComputePipelineHandle h)const
   bool IsFenceComplete(u64 fence_value)const override
+  bool IsGpuTimerAlive(GpuTimerHandle h)const
   bool IsIndexBuffer(BufferHandle handle,IndexFormat format)const
   bool IsOffscreen()const
   bool IsPipelineAlive(PipelineHandle h)const
@@ -2321,21 +2346,26 @@
   bool IsSubmissionInFlight()const
   bool IsVertexBuffer(BufferHandle handle)const
   bool ReadBack(std::vector<u8>&rgba8)override
+  bool ReadGpuTimer(GpuTimerHandle timer,std::span<f64>milliseconds)override
   bool ReadReadbackBuffer(BufferHandle buffer,void*out,u64 size_bytes,u64 offset=0)override
+  bool ResolveGpuTimer(GpuTimerHandle timer)override
   bool SceneColorEnabled()const
   bool SceneDepthEnabled()const
   bool SupportsCompressedTexture(CompressedTextureFormat format)const override
   bool SupportsFrameConstants()const override
+  bool SupportsGpuTiming()const override
   bool SupportsRayTracing()const override
   bool SupportsReadback()const override
   bool SupportsRenderTargets()const
   bool TextureTableFull()const
   bool WriteBufferUnsynchronized(BufferHandle buffer,const void*data,u64 size_bytes,u64 offset=0)override
+  bool WriteGpuTimestamp(GpuTimerHandle timer,u32 index)override
   const BufferRecord&GetBuffer(BufferHandle handle)const
   const ComputePipelineRecord&GetComputePipeline(ComputePipelineHandle handle)const
   const PipelineRecord&GetPipeline(PipelineHandle handle)const
   const SampledTextureRecord&GetSampledTexture(SampledTextureHandle handle)const
   const SampledTextureRecord*FindTarget(SampledTextureHandle handle,PassTarget target)const
+  const std::vector<u32>&UsedGpuTimers()const
   private:VkDescriptorPool CreateComputeDescriptorPool()
   private:void CreateSwapchainAndImages(u32 width,u32 height)
   public:VulkanSwapChain(VulkanDevice&device,void*native_window_handle,u32 width,u32 height,u32 buffer_count)
@@ -2352,6 +2382,7 @@
   u32 BufferCount()const override
   u32 ComputeQueueFamilyIndex()const
   u32 CurrentImageIndex()const
+  u32 GpuTimerCount(GpuTimerHandle h)const
   u32 Height()const override
   u32 QueueFamilyIndex()const
   u32 StoreTextureRecord(const SampledTextureRecord&record)
@@ -2406,6 +2437,7 @@
   void GraphicsQueueWaitOnCompute(u64 compute_fence_value)override
   void MakeShaderReadable(VkImage image,VkImageAspectFlags aspect,bool wait)
   void MarkSubmitted(u64 fence_value)
+  void NoteGpuTimersSubmitted(const std::vector<u32>&timers,u64 fence)
   void Present(bool vsync)override
   void ReclaimTextureSlots()
   void ReleaseExternalBindlessSlot(SampledTextureHandle slot)
@@ -4931,8 +4963,10 @@
   ~Game()
 [player/include/aether/player/scene_renderer.h] experimental
   type class SceneRenderer
+  type struct GpuTimings
   type struct RayTracedShadowStats
   type struct VirtualShadowStats
+  GpuTimings GpuFrameTimings()const
   RayTracedShadowStats RayTracedShadows()const
   SceneRenderer&operator=(const SceneRenderer&)=delete
   SceneRenderer(const SceneRenderer&)=delete

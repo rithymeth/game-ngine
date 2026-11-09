@@ -53,6 +53,18 @@ public:
         f64 cpu_ms = 0.0;       // the CPU's time in this frame's page work (feedback, allocation, the page table, recording the pages)
     };
     VirtualShadowStats VirtualShadows() const;
+    // How long the GPU spent on the newest frame whose submission has finished (a few frames old when the caller does not wait), by stage, in
+    // milliseconds: `shadows_ms` before the scene pass (cascades, virtual pages, ray tracing set-up), `scene_ms` the scene pass itself with its
+    // depth copy, `post_ms` what follows (feedback, TAA, bloom, tone mapping, HUD), `frame_ms` their sum. Not valid where the device has no GPU
+    // timing (IDevice::SupportsGpuTiming).
+    struct GpuTimings {
+        bool valid = false;
+        f32 frame_ms = 0.0f;
+        f32 shadows_ms = 0.0f;
+        f32 scene_ms = 0.0f;
+        f32 post_ms = 0.0f;
+    };
+    GpuTimings GpuFrameTimings() const;
     // Ray-traced sun shadows (AETHER_RENDER_RT_SHADOWS=1, needs ray tracing): whether they are on, how many rigid casters the last frame's
     // acceleration structure placed, and how many times that structure has been rebuilt (it is rebuilt only when a caster is new, gone or moved).
     struct RayTracedShadowStats {

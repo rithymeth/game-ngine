@@ -63,6 +63,12 @@ struct AccelerationStructureHandle {
     bool IsValid() const { return index != static_cast<u32>(-1); }
 };
 
+// A set of GPU timestamp slots (IDevice::CreateGpuTimer): what a command list writes to measure how long the GPU takes.
+struct GpuTimerHandle {
+    u32 index = static_cast<u32>(-1);
+    bool IsValid() const { return index != static_cast<u32>(-1); }
+};
+
 // One placed copy of a bottom-level structure in a top-level one. `transform` is the object-to-world matrix's upper three rows, row-major
 // (so transform[0..3] is the X row with its translation last); a ray sees the instance with this id as InstanceID().
 struct AccelerationInstance {

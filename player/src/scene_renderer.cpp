@@ -875,6 +875,46 @@ struct SceneRenderer::Impl {
         bool dynamic = false; // deforming: in the cascades, in no page
     };
     SceneRenderer::VirtualShadowStats vsm_stats;
+    // GPU timing: a timer of four timestamps (start, before the scene pass, after it, end) per frame in flight, read when its frame has finished.
+    static constexpr usize kGpuTimers = 4;
+    std::vector<GpuTimerHandle> gpu_timers;
+    bool gpu_timer_pending[kGpuTimers] = {};
+    u64 gpu_timer_frame[kGpuTimers] = {};
+    i32 gpu_timer_slot = -1; // this frame's, -1: not timed (still waiting to be read, or no timing)
+    SceneRenderer::GpuTimings gpu_timings;
+    u64 gpu_timings_frame = 0;
+    void GpuTimingBegin(ICommandList& commands, u64 frame) {
+        for (usize slot = 0; slot < gpu_timers.size(); ++slot) {
+            if (!gpu_timer_pending[slot]) continue;
+            f64 t[4] = {};
+            if (!device.ReadGpuTimer(gpu_timers[slot], t)) continue;
+            gpu_timer_pending[slot] = false;
+            if (gpu_timer_frame[slot] >= gpu_timings_frame) {
+                gpu_timings = {true, static_cast<f32>(t[3]), static_cast<f32>(t[1]), static_cast<f32>(t[2] - t[1]), static_cast<f32>(t[3] - t[2])};
+                gpu_timings.frame_ms = gpu_timings.shadows_ms + gpu_timings.scene_ms + gpu_timings.post_ms;
+                gpu_timings_frame = gpu_timer_frame[slot];
+            }
+        }
+        gpu_timer_slot = -1;
+        if (gpu_timers.empty()) return;
+        const usize slot = static_cast<usize>(frame % gpu_timers.size());
+        if (gpu_timer_pending[slot]) return; // its last frame has not finished: this one is not timed
+        gpu_timer_slot = static_cast<i32>(slot);
+        commands.WriteGpuTimestamp(gpu_timers[slot], 0);
+    }
+    void GpuStamp(ICommandList& commands, u32 index) {
+        if (gpu_timer_slot >= 0) commands.WriteGpuTimestamp(gpu_timers[static_cast<usize>(gpu_timer_slot)], index);
+    }
+    void GpuTimingEnd(ICommandList& commands, u64 frame) {
+        if (gpu_timer_slot < 0) return;
+        const usize slot = static_cast<usize>(gpu_timer_slot);
+        commands.WriteGpuTimestamp(gpu_timers[slot], 3);
+        if (commands.ResolveGpuTimer(gpu_timers[slot])) {
+            gpu_timer_pending[slot] = true;
+            gpu_timer_frame[slot] = frame;
+        }
+        gpu_timer_slot = -1;
+    }
     std::unique_ptr<TaaPass> taa;         // temporal anti-aliasing, with the HDR target (AETHER_RENDER_TAA=0 turns it off)
     // Each drawn node's model transform as of the frame it was last drawn, for TAA's motion pass: key (entity index, generation, node).
     struct PreviousTransform {
@@ -969,6 +1009,7 @@ struct SceneRenderer::Impl {
                 }
             }
         }
+        for (const GpuTimerHandle& timer : gpu_timers) device.DestroyGpuTimer(timer);
         if (rt_tlas.IsValid()) device.DestroyAccelerationStructure(rt_tlas);
         for (auto& [path, model] : models) {
             for (auto& primitives : model.meshes) {
@@ -1060,6 +1101,12 @@ struct SceneRenderer::Impl {
         desc.vertex_layout = VertexLayout::PositionNormalUvTangent;
         desc.enable_bindless_textures = true;
         desc.depth_test = true;
+        if (device.SupportsGpuTiming()) {
+            for (usize i = 0; i < kGpuTimers; ++i) {
+                const GpuTimerHandle timer = device.CreateGpuTimer(4);
+                if (timer.IsValid()) gpu_timers.push_back(timer);
+            }
+        }
         if (rt_shadows) {
             // The scene shader through DXC at shader model 6.5; if it will not build, the cascades stay.
             try {
@@ -2117,6 +2164,7 @@ void SceneRenderer::SetShadows(u32 resolution, u32 cascades) {
     }
 }
 SceneRenderer::VirtualShadowStats SceneRenderer::VirtualShadows() const { return impl_->vsm_stats; }
+SceneRenderer::GpuTimings SceneRenderer::GpuFrameTimings() const { return impl_->gpu_timings; }
 SceneRenderer::RayTracedShadowStats SceneRenderer::RayTracedShadows() const {
     return {impl_->rt_shadows, impl_->rt_instances, impl_->rt_rebuilds};
 }
@@ -2147,6 +2195,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
     };
 
     Impl& renderer = *impl_;
+    renderer.GpuTimingBegin(commands, renderer.transform_frame + 1);
     if (game.CriticalMemoryPressureEvents() != renderer.seen_critical_pressure) {
         renderer.seen_critical_pressure = game.CriticalMemoryPressureEvents();
         renderer.TrimTextures();
@@ -2713,6 +2762,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
         !renderer.device.WriteBufferUnsynchronized(light_buffer, renderer.clusters.bytes.data(), renderer.clusters.bytes.size())) {
         renderer.device.UpdateFrameConstantBuffer(light_buffer, renderer.clusters.bytes.data(), renderer.clusters.bytes.size());
     }
+    renderer.GpuStamp(commands, 1);
     if (renderer.hdr) {
         if (!commands.BeginSceneColorPass(renderer.swap_chain, kBackgroundLinear)) return;
     } else {
@@ -2785,6 +2835,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
         // in display space. Temporal anti-aliasing first blends it with the frames before (reading the depth copied here).
         const bool resolve = (renderer.taa || vsm_record) && have_camera && commands.CopySceneDepth();
         commands.EndRenderPass();
+        renderer.GpuStamp(commands, 2);
         if (resolve && vsm_record) renderer.vsm_feedback->Record(commands, vsm_feedback_params, frame_index);
         u32 resolved = 0;
         if (resolve && renderer.taa) {
@@ -2803,8 +2854,10 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
         commands.BeginRenderPass(renderer.swap_chain, kBackground);
         renderer.post->Draw(commands, post_settings);
     }
+    if (!renderer.hdr) renderer.GpuStamp(commands, 2); // one pass: the scene and the HUD end together
     renderer.DrawHud(game, commands);
     commands.EndRenderPass();
+    renderer.GpuTimingEnd(commands, renderer.transform_frame);
 }
 
 // The advanced PBR library (anisotropic GGX, sheen, clear coat) goes ahead of the scene shader.

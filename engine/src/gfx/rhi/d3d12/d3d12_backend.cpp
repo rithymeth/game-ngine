@@ -310,7 +310,10 @@ u64 D3D12Device::Submit(ICommandList& cmd, ISwapChain* wait_on_swap_chain) {
     auto* native = static_cast<ID3D12GraphicsCommandList*>(rhi_cmd->NativeHandle());
     ID3D12CommandList* lists[] = {native};
     const u64 fence_value = device_.Submit(lists, 1);
-    if (fence_value != 0) rhi_cmd->MarkSubmitted(fence_value);
+    if (fence_value != 0) {
+        rhi_cmd->MarkSubmitted(fence_value);
+        NoteGpuTimersSubmitted(rhi_cmd->ResolvedGpuTimers(), fence_value);
+    }
     DrainRetired();
     return fence_value;
 }
@@ -902,6 +905,56 @@ AccelerationStructureHandle D3D12Device::CreateTopLevelAS(std::span<const Accele
     inputs.NumDescs = static_cast<UINT>(descs.size());
     inputs.InstanceDescs = instance_buffer.GPUAddress();
     return BuildAccelerationStructure(inputs, true); // waits for the build, so the instance buffer may go out of scope
+}
+
+GpuTimerHandle D3D12Device::CreateGpuTimer(u32 timestamp_count) {
+    if (timestamp_count == 0 || timestamp_count > 64) throw std::invalid_argument("A GPU timer holds 1 to 64 timestamps");
+    D3D12_QUERY_HEAP_DESC heap_desc{};
+    heap_desc.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP;
+    heap_desc.Count = timestamp_count;
+    GpuTimerRecord record;
+    AETHER_D3D_CHECK(device_.Handle()->CreateQueryHeap(&heap_desc, IID_PPV_ARGS(&record.heap)));
+    record.readback = std::make_shared<gfx::Buffer>(device_, static_cast<u64>(timestamp_count) * sizeof(u64), gfx::BufferKind::Readback);
+    record.count = timestamp_count;
+    u32 slot;
+    if (!free_gpu_timer_slots_.empty()) {
+        slot = free_gpu_timer_slots_.back();
+        free_gpu_timer_slots_.pop_back();
+        gpu_timers_[slot] = std::move(record);
+    } else {
+        slot = static_cast<u32>(gpu_timers_.size());
+        gpu_timers_.push_back(std::move(record));
+    }
+    return GpuTimerHandle{slot};
+}
+
+bool D3D12Device::DestroyGpuTimer(GpuTimerHandle timer) {
+    if (!IsGpuTimerAlive(timer)) return false;
+    GpuTimerRecord record = std::move(gpu_timers_[timer.index]);
+    gpu_timers_[timer.index] = {};
+    free_gpu_timer_slots_.push_back(timer.index);
+    // The heap and the buffer stay alive until the GPU is done with a recording that may still use them.
+    Retire([heap = std::move(record.heap), readback = std::move(record.readback)]() mutable {
+        heap.Reset();
+        readback.reset();
+    });
+    DrainRetired();
+    return true;
+}
+
+bool D3D12Device::ReadGpuTimer(GpuTimerHandle timer, std::span<f64> milliseconds) {
+    if (!IsGpuTimerAlive(timer)) return false;
+    GpuTimerRecord& record = gpu_timers_[timer.index];
+    if (record.fence == 0 || !device_.IsFenceComplete(record.fence) || milliseconds.empty() || milliseconds.size() > record.count) return false;
+    UINT64 frequency = 0;
+    if (FAILED(device_.Queue()->GetTimestampFrequency(&frequency)) || frequency == 0) return false;
+    u64 ticks[64] = {};
+    record.readback->Read(ticks, milliseconds.size() * sizeof(u64));
+    for (usize i = 0; i < milliseconds.size(); ++i) {
+        milliseconds[i] = static_cast<f64>(ticks[i] - ticks[0]) * 1000.0 / static_cast<f64>(frequency);
+    }
+    record.fence = 0; // read once per use
+    return true;
 }
 
 bool D3D12Device::DestroyAccelerationStructure(AccelerationStructureHandle handle) {
@@ -1743,6 +1796,7 @@ void D3D12CommandList::Reset() {
     }
     cmd_.Reset();
     last_submitted_fence_ = 0;
+    resolved_gpu_timers_.clear();
     recording_ = true;
     has_closed_recording_ = false;
     render_pass_active_ = false;
@@ -2203,6 +2257,20 @@ void D3D12CommandList::BindFrameReadBuffer(BufferHandle buffer) {
     }
     cmd_.Get()->SetGraphicsRootShaderResourceView(frame_read_root_index_, device_.GetBuffer(buffer).GPUAddress());
 }
+bool D3D12CommandList::WriteGpuTimestamp(GpuTimerHandle timer, u32 index) {
+    if (!recording_ || IsComputeList() || !device_.IsGpuTimerAlive(timer) || index >= device_.GpuTimerCount(timer)) return false;
+    cmd_.Get()->EndQuery(device_.GpuTimerHeap(timer), D3D12_QUERY_TYPE_TIMESTAMP, index);
+    return true;
+}
+
+bool D3D12CommandList::ResolveGpuTimer(GpuTimerHandle timer) {
+    if (!recording_ || IsComputeList() || render_pass_active_ || !device_.IsGpuTimerAlive(timer)) return false;
+    cmd_.Get()->ResolveQueryData(device_.GpuTimerHeap(timer), D3D12_QUERY_TYPE_TIMESTAMP, 0, device_.GpuTimerCount(timer),
+                                 device_.GpuTimerReadback(timer), 0);
+    resolved_gpu_timers_.push_back(timer.index);
+    return true;
+}
+
 void D3D12CommandList::BindAccelerationStructure(AccelerationStructureHandle structure) {
     if (acceleration_root_index_ == ~0u || !device_.IsAccelerationStructureAlive(structure)) {
         AETHER_LOG_ERROR("D3D12", "BindAccelerationStructure needs a pipeline made with acceleration_structure and a live structure");

@@ -60,6 +60,7 @@ struct SceneRun {
     std::vector<u8> pixels;
     player::SceneRenderer::VirtualShadowStats last;
     player::SceneRenderer::RayTracedShadowStats rt;
+    player::SceneRenderer::GpuTimings gpu;
     u32 max_resident = 0, drawn_pages = 0, max_requests = 0, suppressed = 0;
     std::vector<u32> drawn_by_frame; // pages drawn in each frame
 };
@@ -144,6 +145,7 @@ SceneRun RunScene(rhi::Backend backend, const fs::path& root, const fs::path& pa
             device->WaitForFence(device->Submit(*cmd, target.get()));
             run.last = renderer.VirtualShadows();
             run.rt = renderer.RayTracedShadows();
+            if (const auto timings = renderer.GpuFrameTimings(); timings.valid) run.gpu = timings;
             run.max_resident = std::max(run.max_resident, run.last.resident);
             run.max_requests = std::max(run.max_requests, run.last.requests);
             run.suppressed = std::max(run.suppressed, run.last.suppressed);
@@ -372,3 +374,26 @@ AETHER_TEST(RtShadows_MatchTheCascadesAndRebuildOnlyWhenACasterMoves_D3D12) {
 AETHER_TEST(RtShadows_MatchTheCascadesAndRebuildOnlyWhenACasterMoves_Vulkan) {
     RtShadows_MatchTheCascadesAndRebuildOnlyWhenACasterMoves(rhi::Backend::Vulkan);
 }
+
+// The renderer's own GPU timing: each frame is timed by stage on the GPU and read back when its submission has finished.
+static void GpuTiming_TheRendererReportsGpuTimePerStage(rhi::Backend backend) {
+    if (!rhi::IsBackendAvailable(backend)) return;
+    const fs::path root = fs::temp_directory_path() / "aether_gpu_timing" / assets::ToString(assets::NewAssetGuid());
+    const fs::path pak = CookScene(root, 1.6f);
+    if (pak.empty()) return;
+    const SceneRun run = RunScene(backend, root, pak, kWidth, kHeight, 30);
+    if (!run.gpu.valid) {
+        std::printf("    %s: no GPU timing here, skipped\n", Name(backend));
+        return;
+    }
+    std::printf("    %s: the GPU took %.3f ms a frame: shadows %.3f, the scene %.3f, post and the rest %.3f\n", Name(backend), run.gpu.frame_ms,
+                run.gpu.shadows_ms, run.gpu.scene_ms, run.gpu.post_ms);
+    AETHER_CHECK(run.gpu.frame_ms > 0.0f && run.gpu.frame_ms < 100.0f);
+    AETHER_CHECK(run.gpu.shadows_ms >= 0.0f && run.gpu.scene_ms > 0.0f && run.gpu.post_ms >= 0.0f);
+    AETHER_CHECK(std::fabs(run.gpu.frame_ms - (run.gpu.shadows_ms + run.gpu.scene_ms + run.gpu.post_ms)) < 0.01f);
+    std::error_code ignored;
+    fs::remove_all(root, ignored);
+}
+
+AETHER_TEST(GpuTiming_TheRendererReportsGpuTimePerStage_D3D12) { GpuTiming_TheRendererReportsGpuTimePerStage(rhi::Backend::D3D12); }
+AETHER_TEST(GpuTiming_TheRendererReportsGpuTimePerStage_Vulkan) { GpuTiming_TheRendererReportsGpuTimePerStage(rhi::Backend::Vulkan); }
