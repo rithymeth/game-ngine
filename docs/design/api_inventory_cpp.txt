@@ -2034,6 +2034,7 @@
   bool SceneDepthEnabled()const
   bool SupportsCompressedTexture(CompressedTextureFormat f)const override
   bool SupportsFrameConstants()const override
+  bool SupportsRayTracing()const override
   bool SupportsReadback()const override
   bool WriteBufferUnsynchronized(BufferHandle buffer,const void*data,u64 size_bytes,u64 offset=0)override
   const ComputePipelineRecord&GetComputePipeline(ComputePipelineHandle handle)const
@@ -2148,6 +2149,7 @@
   virtual bool ReadReadbackBuffer(BufferHandle,void*,u64,u64=0)
   virtual bool SupportsCompressedTexture(CompressedTextureFormat)const
   virtual bool SupportsFrameConstants()const
+  virtual bool SupportsRayTracing()const
   virtual bool SupportsReadback()const
   virtual bool WriteBufferUnsynchronized(BufferHandle,const void*,u64,u64=0)
   virtual std::unique_ptr<ICommandList>CreateCommandList()=0
@@ -2297,6 +2299,7 @@
   bool SceneDepthEnabled()const
   bool SupportsCompressedTexture(CompressedTextureFormat format)const override
   bool SupportsFrameConstants()const override
+  bool SupportsRayTracing()const override
   bool SupportsReadback()const override
   bool SupportsRenderTargets()const
   bool TextureTableFull()const

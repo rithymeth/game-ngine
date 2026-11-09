@@ -85,6 +85,7 @@ public:
     void UpdateFrameConstantBuffer(BufferHandle buffer, const void* data, u64 size_bytes) override { UpdateConstantBuffer(buffer, data, size_bytes, 0); }
     bool WriteBufferUnsynchronized(BufferHandle buffer, const void* data, u64 size_bytes, u64 offset = 0) override;
     bool SupportsReadback() const override { return true; }
+    bool SupportsRayTracing() const override;
     BufferHandle CreateReadbackBuffer(u64 size_bytes) override;
     bool ReadReadbackBuffer(BufferHandle buffer, void* out, u64 size_bytes, u64 offset = 0) override;
     const gfx::Buffer& GetBuffer(BufferHandle handle) const { return *buffers_[handle.index]; }

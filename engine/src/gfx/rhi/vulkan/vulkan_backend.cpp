@@ -401,6 +401,34 @@ PhysicalDeviceChoice PickPhysicalDevice(VkInstance instance) {
     return best;
 }
 
+// Inline ray queries need the acceleration-structure and ray-query extensions, their features, and deferred host operations (a dependency of
+// the first). Probed here, not enabled: nothing in the RHI builds an acceleration structure yet.
+bool ProbeRayTracing(VkPhysicalDevice physical_device) {
+    u32 count = 0;
+    vkEnumerateDeviceExtensionProperties(physical_device, nullptr, &count, nullptr);
+    std::vector<VkExtensionProperties> available(count);
+    vkEnumerateDeviceExtensionProperties(physical_device, nullptr, &count, available.data());
+    auto has = [&](const char* name) {
+        for (const VkExtensionProperties& ext : available) {
+            if (std::strcmp(ext.extensionName, name) == 0) return true;
+        }
+        return false;
+    };
+    if (!has(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME) || !has(VK_KHR_RAY_QUERY_EXTENSION_NAME) ||
+        !has(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME)) {
+        return false;
+    }
+    VkPhysicalDeviceAccelerationStructureFeaturesKHR acceleration{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR};
+    VkPhysicalDeviceRayQueryFeaturesKHR ray_query{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR};
+    VkPhysicalDeviceVulkan12Features features_12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
+    ray_query.pNext = &acceleration;
+    features_12.pNext = &ray_query;
+    VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+    features.pNext = &features_12;
+    vkGetPhysicalDeviceFeatures2(physical_device, &features);
+    return acceleration.accelerationStructure == VK_TRUE && ray_query.rayQuery == VK_TRUE && features_12.bufferDeviceAddress == VK_TRUE;
+}
+
 VkDevice CreateLogicalDevice(VkPhysicalDevice physical_device, const PhysicalDeviceChoice& choice, bool& update_after_bind) {
     f32 priorities[2] = {1.0f, 1.0f};
     std::vector<VkDeviceQueueCreateInfo> queue_infos;
@@ -507,6 +535,7 @@ VulkanDevice::VulkanDevice(bool enable_debug_layer) {
                                       properties_12.maxPerStageDescriptorUpdateAfterBindSampledImages >= kMaxBindlessTextures &&
                                       properties_12.maxDescriptorSetUpdateAfterBindSampledImages >= kMaxBindlessTextures &&
                                       properties_12.maxPerStageUpdateAfterBindResources >= kMaxBindlessTextures + 8;
+        ray_tracing_supported_ = ProbeRayTracing(physical_device_);
         render_targets_supported_ =
             bindless_update_after_bind_ &&
             HasFormatFeatures(physical_device_, kRenderTextureFormat,

@@ -266,6 +266,11 @@ public:
     // reads the bytes. The buffer's rows are ReadbackRowPitch(width, bytes per texel) apart. Devices without it (SupportsReadback false, the
     // default) return an invalid handle and false.
     virtual bool SupportsReadback() const { return false; }
+
+    // Whether the GPU can trace rays from a shader against an acceleration structure (inline ray queries: DXR tier 1.1 on D3D12, VK_KHR_ray_query
+    // plus VK_KHR_acceleration_structure on Vulkan). A probe only: the RHI has no acceleration-structure objects yet, and a device that says true
+    // has not had the Vulkan features enabled. Default false.
+    virtual bool SupportsRayTracing() const { return false; }
     virtual BufferHandle CreateReadbackBuffer(u64 /*size_bytes*/) { return {}; }
     // False (nothing read) for a buffer that is not a readback buffer, a dead handle or a range outside it. Only valid after the GPU has finished
     // the copy into it.

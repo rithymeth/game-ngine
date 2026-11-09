@@ -764,6 +764,14 @@ void D3D12Device::UpdateConstantBuffer(BufferHandle buffer, const void* data, u6
     device_.WithQueuesIdle([&] { buffers_[buffer.index]->Update(data, size_bytes, offset); });
 }
 
+bool D3D12Device::SupportsRayTracing() const {
+    // Inline ray queries (RayQuery<> in HLSL) are DXR tier 1.1.
+    D3D12_FEATURE_DATA_D3D12_OPTIONS5 options{};
+    ID3D12Device* device = device_.Handle();
+    return device && SUCCEEDED(device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS5, &options, sizeof(options))) &&
+           options.RaytracingTier >= D3D12_RAYTRACING_TIER_1_1;
+}
+
 bool D3D12Device::WriteBufferUnsynchronized(BufferHandle buffer, const void* data, u64 size_bytes, u64 offset) {
     // Constant and vertex buffers live in the upload heap, persistently mapped: a plain copy, ordered by the caller's fences.
     if (!(IsConstantBuffer(buffer) || IsVertexBuffer(buffer)) || buffer.index >= buffers_.size() || !data || size_bytes == 0 ||

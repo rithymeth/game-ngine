@@ -155,6 +155,7 @@ public:
     void UpdateFrameConstantBuffer(BufferHandle buffer, const void* data, u64 size_bytes) override;
     bool WriteBufferUnsynchronized(BufferHandle buffer, const void* data, u64 size_bytes, u64 offset = 0) override;
     bool SupportsReadback() const override { return true; }
+    bool SupportsRayTracing() const override { return ray_tracing_supported_; }
     BufferHandle CreateReadbackBuffer(u64 size_bytes) override;
     bool ReadReadbackBuffer(BufferHandle buffer, void* out, u64 size_bytes, u64 offset = 0) override;
     VkDescriptorSetLayout FrameConstantsSetLayout() const { return frame_constants_set_layout_; }
@@ -317,6 +318,7 @@ private:
     // The texture table is update-after-bind (with unused-while-pending) where the device has it: a slot nothing uses may be written while
     // recorded or submitted work uses the table, which is what lets render targets be made mid-frame.
     bool bindless_update_after_bind_ = false;
+    bool ray_tracing_supported_ = false;
     bool render_targets_supported_ = false;
     VkRenderPass target_passes_[2][2]{}; // [Texture, Depth][keep, clear]
     std::vector<std::unique_ptr<ICommandList>> pending_transitions_; // MakeShaderReadable's, kept until their submission completes
