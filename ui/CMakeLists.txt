@@ -1,4 +1,4 @@
-# Aether UI (Phase 18, docs/design/PHASE_SPECS.md): the runtime game UI - a
+# Aether UI (Phase 18): the runtime game UI - a
 # retained widget tree, layout, input and a draw list the renderer draws.
 # Engine-only, so it builds and tests headless on every platform.
 add_library(aether_ui STATIC

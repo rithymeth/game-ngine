@@ -11,7 +11,7 @@
 
 namespace aether {
 
-// Functional tests (Phase 23 step 5, docs/design/PHASE_SPECS.md §23.5):
+// Functional tests (Phase 23 step 5):
 // whole-game scenarios run headless - "load the scene, simulate 5 s,
 // assert that the entity tagged Player reached the box around the exit".
 //

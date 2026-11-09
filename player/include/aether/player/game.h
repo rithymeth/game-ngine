@@ -43,7 +43,7 @@ namespace aether::ui {
 class Viewport;
 }
 
-// The player's game runtime (Phase 25 step 4, docs/design/PHASE_SPECS.md
+// The player's game runtime (Phase 25 step 4
 // §25.4): a cooked game, without the editor. GamePackage mounts the cooked
 // .apak archives and reads their Manifest.json; Game loads the startup
 // scene from them (prefab instances resolved from the archives too) and

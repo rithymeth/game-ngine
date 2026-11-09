@@ -17,7 +17,7 @@
 
 namespace aether::audio {
 
-// The software mixer (Phase 17 step 1, docs/design/PHASE_SPECS.md §17.1):
+// The software mixer (Phase 17 step 1):
 // voices play sounds into buses, buses run their effects and mix into their
 // parents up to Master, and Render writes interleaved stereo. By default
 // everything happens on one thread; SetThreaded (step 5) splits it between

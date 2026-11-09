@@ -8,7 +8,7 @@
 
 namespace aether {
 
-// Crash handling (Phase 23 step 4, docs/design/PHASE_SPECS.md §23.4).
+// Crash handling (Phase 23 step 4).
 //
 // Install once at startup. On a crash - a fatal signal (SIGSEGV, SIGABRT,
 // SIGFPE, SIGILL, SIGBUS) on POSIX, an unhandled SEH exception on Windows,

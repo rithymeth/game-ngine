@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 
-// Plugins (Phase 26 step 1, docs/design/PHASE_SPECS.md §26.1). A plugin is
+// Plugins (Phase 26 step 1). A plugin is
 // a folder with a `<Name>.aplugin` descriptor (JSON), optional modules
 // (code: a runtime and/or an editor part) and optional content
 // (`Content/`). The engine's own optional modules (physics, audio, AI,

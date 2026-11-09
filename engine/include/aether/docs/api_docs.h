@@ -10,7 +10,7 @@
 #include <vector>
 
 // The API reference, generated from reflection (Phase 26 step 5,
-// docs/design/PHASE_SPECS.md §26.7). Every reflected type the program has
+// a retired planning doc). Every reflected type the program has
 // registered is documented from what the code already says: its fields with
 // their types, editing flags, ranges, units and tooltips, its functions with
 // their signatures, and an enum's values. Because it is generated, it can't

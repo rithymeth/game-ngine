@@ -5,7 +5,7 @@
 namespace aether::editor {
 
 // Draws a script's exposed variables for one entity (Phase 11 step 3,
-// docs/design/PHASE_SPECS.md §11.2): a number field (clamped to --@range),
+// a retired planning doc): a number field (clamped to --@range),
 // a checkbox, a text field or an X/Y/Z row per variable, showing the
 // script's default until the entity overrides it. Overridden rows are marked
 // like prefab overrides and have a right-click "Reset to Default". Editing a

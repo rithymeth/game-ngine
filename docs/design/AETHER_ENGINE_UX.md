@@ -2,7 +2,7 @@
 
 **Status:** Proposed product UX baseline for Aether Editor 2.0  
 **Audience:** game developers, technical artists, level designers, animators, audio designers, QA, and engine/plugin developers  
-**Related:** [Editor UI visual system](EDITOR_UI.md), [Editor workflow UX](EDITOR_UX_2.md), [UI toolkit migration ADR](EDITOR_UI_TOOLKIT_ADR.md)
+**Related:** [Editor UI visual system](EDITOR_UI.md), Editor workflow UX (removed), [UI toolkit migration ADR](EDITOR_UI_TOOLKIT_ADR.md)
 
 This document broadens the UX design from editor chrome to the complete
 Aether development experience: launching, creating projects, authoring,
@@ -90,7 +90,7 @@ resumable; it must not block opening an existing project.
 
 ## 4. Application navigation and shared shell
 
-Use the five-region shell described in EDITOR_UX_2.md:
+Use the five-region shell described in a retired planning doc:
 
 1. Application bar: project identity, menus, global search, dirty state.
 2. Workspace bar: task-oriented workspaces.

@@ -949,6 +949,9 @@ public:
         }
     }
 
+    // True once the renderer failed to start (see EnsureSurface); the self-test treats that as a failure.
+    bool SurfaceFailed() const { return surface_failed_; }
+
     void FitAll() {
         Bounds bounds;
         bool waiting_for_models = false;
@@ -1433,8 +1436,28 @@ private:
         }
     }
 
+    // Creating the device, swap chain and pipelines can throw (HLSL that does not compile, a device that cannot be created). This runs from
+    // Qt's show and resize events, where an exception nobody catches is std::terminate, so a renderer that cannot start disables the
+    // viewport and says why.
     void EnsureSurface() {
-        if (!isVisible() || width() < 1 || height() < 1) return;
+        if (surface_failed_ || !isVisible() || width() < 1 || height() < 1) return;
+        try {
+            CreateOrResizeSurface();
+        } catch (const std::exception& error) {
+            AETHER_LOG_ERROR("QtViewport", "The 3D viewport could not start and is disabled: %s", error.what());
+            surface_failed_ = true;
+            command_list_.reset();
+            swap_chain_.reset();
+            device_.reset();
+            scene_pipeline_ = rhi::PipelineHandle{};
+            nav_triangle_pipeline_ = rhi::PipelineHandle{};
+            model_pipeline_ = rhi::PipelineHandle{};
+            white_texture_ = rhi::SampledTextureHandle{};
+            textures_.clear();
+        }
+    }
+
+    void CreateOrResizeSurface() {
         if (!device_) {
             device_ = rhi::CreateDevice(rhi::Backend::D3D12, false);
             if (!device_) return;
@@ -1666,6 +1689,9 @@ float4 PSMain(VertexOut input) : SV_TARGET {
 
     QTimer timer_;
     QElapsedTimer navigation_clock_;
+    // Set when the renderer could not be created (a shader that will not compile, no usable D3D12 adapter): the viewport stays blank and
+    // the rest of the editor keeps working, instead of retrying on every frame or ending the process.
+    bool surface_failed_ = false;
     std::unique_ptr<rhi::IDevice> device_;
     std::unique_ptr<rhi::ISwapChain> swap_chain_;
     std::unique_ptr<rhi::ICommandList> command_list_;
@@ -2176,6 +2202,8 @@ public:
                                               mesh_inspector_.table->rowHeight(0) * static_cast<int>(s.lods.size()) + 4);
         mesh_inspector_.note->setText(QString::fromStdString(s.message));
     }
+
+    bool ViewportFailed() const { return viewport_ && viewport_->SurfaceFailed(); }
 
     bool RunSelfTest() {
         const auto require = [](bool condition, const char* message) {
@@ -5380,6 +5408,12 @@ int main(int argc, char** argv) {
                 for (int frame = 0; frame < 4; ++frame) {
                     app.processEvents();
                     QThread::msleep(16);
+                }
+                // A renderer that cannot start no longer ends the process (EnsureSurface disables the viewport), so the test has to
+                // ask, or it would pass with a blank viewport.
+                if (window.ViewportFailed()) {
+                    qCritical() << "The 3D viewport could not start; see the QtViewport and Shader errors above";
+                    passed = false;
                 }
                 window.close();
                 app.processEvents();

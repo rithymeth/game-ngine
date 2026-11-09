@@ -10,7 +10,7 @@
 
 #include <vector>
 
-// 2D lights (Phase 26 step 5, docs/design/PHASE_SPECS.md §26.6): global
+// 2D lights (Phase 26 step 5): global
 // ambient light, point lights and spot lights, with shadows cast by solid
 // tilemap cells and ShadowCaster2D boxes. The module computes the lighting
 // (the light at a point, a light map over a region, the visibility polygon

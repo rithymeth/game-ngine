@@ -30,7 +30,7 @@ struct PerceivedActor {
     Vec3 velocity;          // last sensed movement, for PredictLocation
 };
 
-// An AI's senses (Phase 20 step 5, docs/design/PHASE_SPECS.md §20.5):
+// An AI's senses (Phase 20 step 5):
 // sight (a cone from its eyes, a radius it notices within and a larger
 // one it keeps track within, blocked by walls), hearing (noises within
 // its radius, scaled by their loudness) and damage (it learns who hit it).

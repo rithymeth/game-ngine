@@ -1,4 +1,4 @@
-// aether_bp_bench: the Phase 12 Blueprint VM benchmark (ROADMAP.md §12.6,
+// aether_bp_bench: the Phase 12 Blueprint VM benchmark (Phase 12,
 // "10,000 BP instances ticking a 20-node graph costs under 2 ms").
 //
 //   aether_bp_bench [path/to/BP_Spinner.abp] [--count N] [--frames N] [--check MS]

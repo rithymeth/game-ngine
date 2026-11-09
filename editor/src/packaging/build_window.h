@@ -6,7 +6,7 @@
 #include <string>
 
 // The Build and Package window and the Project Settings panel (Phase 25
-// step 5, docs/design/PHASE_SPECS.md §25.5). Both draw into the current
+// step 5). Both draw into the current
 // ImGui window, like the editor's other panels.
 //
 // The cooking and packaging itself is PackageRunner, in the portable editor

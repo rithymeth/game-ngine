@@ -56,6 +56,7 @@ add_library(aether_engine STATIC
     src/assets/stb_image_impl.cpp
     src/assets/image.cpp
     src/assets/gltf_loader.cpp
+    src/assets/skinning.cpp
     src/assets/asset_database.cpp
     src/assets/derived_data_cache.cpp
     src/assets/importer.cpp

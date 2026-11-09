@@ -1,5 +1,5 @@
 // aether_docgen: writes the API reference from the reflection registry
-// (Phase 26 step 5, docs/design/PHASE_SPECS.md §26.7).
+// (Phase 26 step 5).
 //
 //   aether_docgen [--out <dir>] [--stdout] [--title <text>] [--with-scalars]
 //

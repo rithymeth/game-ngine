@@ -14,7 +14,7 @@ struct CompileResult {
 };
 
 // Validates, then lowers each event and function graph to bytecode (Phase
-// 12 step 2, docs/ROADMAP_DETAILS.md §C.3):
+// 12 step 2):
 // - exec links are walked from each entry; Branch becomes JMPF, Sequence
 //   runs its outputs in order, and an exec wire back into a node already on
 //   the path becomes a loop (the instruction budget guards it);

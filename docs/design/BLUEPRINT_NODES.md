@@ -11,7 +11,7 @@ written against.
 - **In** and **Out** list pins top to bottom as they appear on the node.
 - A node with no exec pins is **pure**: it runs when something reads its
   output, once per exec step (see
-  [ROADMAP_DETAILS.md §C.3](../ROADMAP_DETAILS.md)).
+  a retired planning doc (removed)).
 - *Latent* nodes finish later; their `▶ Completed` (or similar) output
   fires on a later frame.
 - Types: `bool`, `int` (i32), `float` (f32), `string`, `Text` (LocText),
@@ -205,7 +205,7 @@ physics through `BlueprintVM::SetPhysicsQueries`.
 | **Does Implement Interface** *(pure)* | `● object`, interface | `● return: bool` | |
 | **\<Interface function\> (message)** | `▶`, `● target`, params | `▶`, return | does nothing if the target doesn't implement it (no error) |
 | **Conversions** | auto-inserted as small "dot" nodes when connecting compatible pins: int→float, float→int (truncate, with warning), any→string, Name↔string, Vec3→string, bool→string, enum→string/Name, Rotator↔Quat | | |
-| **To Text / Format Text** | `● format: Text` with `{name}` placeholders | `● result: Text` | one input pin per placeholder (see [ROADMAP_DETAILS.md §D](../ROADMAP_DETAILS.md)) |
+| **To Text / Format Text** | `● format: Text` with `{name}` placeholders | `● result: Text` | one input pin per placeholder (see a retired planning doc (removed)) |
 
 ---
 

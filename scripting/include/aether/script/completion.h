@@ -33,7 +33,7 @@ struct CompletionResult {
 };
 
 // Code completion for the script editor (Phase 11 step 6,
-// docs/design/PHASE_SPECS.md §11.5). No type checker: it reads the text
+// a retired planning doc). No type checker: it reads the text
 // around `cursor` (a byte offset into `source`) and knows
 //   - the engine API: world, Input, Timer, Event and the Luau libraries;
 //   - components from reflection: `:Get("` lists component names, and a

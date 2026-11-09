@@ -1,4 +1,4 @@
-# Aether Save (Phase 28, docs/design/PHASE_SPECS.md §28): save slots.
+# Aether Save (Phase 28): save slots.
 # A game's reflected struct, saved to a slot as a versioned, checksummed
 # .asav file with an atomic write. Engine-only, so it builds and tests
 # headless on every platform.

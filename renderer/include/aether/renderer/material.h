@@ -13,7 +13,7 @@
 
 namespace aether::mat {
 
-// Materials (Phase 15 step 1, docs/design/PHASE_SPECS.md §15): node graphs
+// Materials (Phase 15 step 1): node graphs
 // with typed pins that compile to HLSL. This is the model, the node
 // library, type inference and validation.
 

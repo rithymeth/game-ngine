@@ -25,7 +25,7 @@ struct RpcStats {
 };
 
 // Routes remote calls over a NetHost (Phase 22 step 3,
-// docs/design/PHASE_SPECS.md §22.3). One is made on the server and one on
+// a retired planning doc). One is made on the server and one on
 // each client; it installs itself as its world's RemoteCallRouter, so calls
 // from C++ (CallFunction), Blueprints and Luau all come here:
 // - Fn_Server, called on a client: sent to the server when this client

@@ -13,7 +13,7 @@ class IDevice;
 
 namespace aether::gfx::parity {
 
-// Backend parity (Phase 39.2, docs/design/UPGRADE_PLAN.md): the same scene drawn through every RHI backend that is
+// Backend parity (Phase 39.2): the same scene drawn through every RHI backend that is
 // available and compared with a tolerance. Each scene is a full-screen draw whose every pixel the CPU can compute
 // exactly (ReferenceImage), so a backend is checked against the reference as well as against the other backends.
 // Lavapipe covers Vulkan in CI, the Windows job covers D3D12, the macOS job covers MoltenVK.

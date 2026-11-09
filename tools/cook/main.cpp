@@ -1,5 +1,5 @@
 // aether_cook: cooks a project's content for shipping (Phase 25 step 2,
-// docs/design/PHASE_SPECS.md §25.2).
+// a retired planning doc).
 //
 //   aether_cook <project.aproject> --out <dir> [--config debug|development|shipping]
 //               [--always <path-or-folder/>]... [--compression auto|lz4|zstd|none]

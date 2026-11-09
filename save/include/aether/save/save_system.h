@@ -16,7 +16,7 @@
 #include <thread>
 #include <vector>
 
-// Save games (Phase 28 step 1, docs/design/PHASE_SPECS.md §28.1): a game's
+// Save games (Phase 28 step 1): a game's
 // reflected struct (AETHER_REFLECT) saved to a named slot and loaded back.
 //
 //   struct MySave { i32 level = 1; f32 health = 100; std::string name; };

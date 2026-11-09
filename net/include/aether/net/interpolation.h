@@ -32,7 +32,7 @@ private:
 
 Quaternion NlerpShortest(const Quaternion& a, const Quaternion& b, f32 t);
 
-// Smooths what other machines own (Phase 22 step 4, docs/design/PHASE_SPECS.md
+// Smooths what other machines own (Phase 22 step 4
 // §22.4): every snapshot adds each replicated entity's Transform to its
 // buffer at the snapshot's server time, and every frame the entities are
 // shown as they were `delay` seconds ago in server time - between two

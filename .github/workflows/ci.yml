@@ -1,4 +1,4 @@
-# Continuous integration (Phase 24 step 1, docs/design/PHASE_SPECS.md §24.1).
+# Continuous integration (Phase 24 step 1).
 #
 # Linux: the portable engine, editor UI, scripting and tests with GCC,
 # Clang, ASan/UBSan and the physics module; runs unit, functional, checked-in
@@ -18,7 +18,11 @@ on:
   push:
     branches: [master]
     tags: ["v*"]
+    paths-ignore: ["docs/**", "**/*.md"]
   pull_request:
+  # Nightly: the slow lanes (macOS, iOS, Android, TSan, fuzz) run here and on release tags, not on every master push.
+  schedule:
+    - cron: "0 3 * * *"
   workflow_dispatch:
     inputs:
       release_tag:
@@ -36,10 +40,14 @@ concurrency:
 permissions:
   contents: read
 
+# Artifact retention: every upload sets retention-days (the default is 90). The repository's artifact storage hit its quota with ~29 GB live
+# from three days of runs, which made every later upload fail (Failed to CreateArtifact: Artifact storage quota has been hit). Hand-offs between
+# jobs of one run keep 2 days, release inputs 14, logs and reports 7. A new upload-artifact step needs its own retention-days.
 jobs:
   linux:
     name: Linux (GCC)
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     if: github.event_name == 'pull_request'
     # The pull-request gate keeps the portable GCC path: compile, unit and
     # functional behavior, API/format regressions, and Vulkan validation.
@@ -136,6 +144,7 @@ jobs:
   linux-full:
     name: Post-merge Linux (${{ matrix.name }})
     runs-on: ubuntu-24.04
+    timeout-minutes: 60
     if: github.event_name != 'pull_request'
     strategy:
       fail-fast: false
@@ -173,6 +182,15 @@ jobs:
             physics: "ON"
             assertions: "OFF"
     steps:
+      - name: Free disk space
+        # The ASan+UBSan lane links the test binary, the server and about forty fuzz-replay executables with the sanitizer runtimes, and the
+        # runner's free disk ran out at the last of them (step 937 of 941: "No space left on device"; runs 1960, 1966 and 1969), which also
+        # made the ccache save fail. The toolchains below ship on the image and none of these lanes uses them. The df lines are the evidence
+        # if this ever needs revisiting.
+        run: |
+          df -h / | tail -1
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          df -h / | tail -1
       - uses: actions/checkout@v4
       - name: Install tools
         # The X11 development packages build GLFW's window backend; Xvfb gives
@@ -227,6 +245,11 @@ jobs:
         run: |
           cmake --build build --parallel
           ccache --show-stats
+      - name: Disk use after the build
+        if: always()
+        run: |
+          df -h / | tail -1
+          du -sh build 2>/dev/null || true
       - name: Save compiled objects (ccache)
         # Saved even when a later step fails, so a red run still warms the cache.
         if: always() && steps.ccache.outputs.cache-hit != 'true'
@@ -247,6 +270,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: aether-sdk-linux-x64
+          retention-days: 2
           path: build/sdk-install
           if-no-files-found: error
       - name: Unit tests
@@ -331,6 +355,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: bench-report
+          retention-days: 14
           path: bench-report.json
           if-no-files-found: error
       - name: Pack the assets
@@ -396,6 +421,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: m87-cinematic-logs
+          retention-days: 7
           path: m87
           if-no-files-found: warn
       - name: Packaged character move set (M8.6)
@@ -411,6 +437,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: m86-character-logs
+          retention-days: 7
           path: m86
           if-no-files-found: warn
       - name: Package the dedicated server (M8.9)
@@ -425,6 +452,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: aether-server-linux-x64
+          retention-days: 14
           path: server-dist
           if-no-files-found: error
       - name: Build the AETHER-01 Linux release candidate, symbols and patch (M8.10)
@@ -440,6 +468,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: aether01-linux-x64-ship
+          retention-days: 2
           path: ship-dist
           if-no-files-found: error
       - name: Play AETHER-01 through Vulkan with the validation layer
@@ -487,6 +516,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: editor-screenshot-linux
+          retention-days: 7
           path: |
             editor-screenshot-linux.png
             editor-capture-linux.json
@@ -496,6 +526,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: functional-results-linux-${{ matrix.name }}
+          retention-days: 7
           path: functional-results.xml
           if-no-files-found: ignore
 
@@ -559,6 +590,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: dedicated-server-profile
+          retention-days: 7
           path: server-run
           if-no-files-found: ignore
 
@@ -595,13 +627,15 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: aether01-release-dry-run
+          retention-days: 2
           path: release-dry-run
           if-no-files-found: error
 
   macos:
     name: macOS (Apple Silicon, MoltenVK)
     runs-on: macos-15
-    if: github.event_name != 'pull_request'
+    timeout-minutes: 60
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
     steps:
       - uses: actions/checkout@v4
       - name: Install tools
@@ -646,6 +680,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: aether-server-macos-arm64
+          retention-days: 14
           path: server-dist
           if-no-files-found: error
       - name: Upload the server log and profile capture
@@ -653,6 +688,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: dedicated-server-profile-macos
+          retention-days: 7
           path: server-run/aether-server-macos-arm64/logs
           if-no-files-found: ignore
       - name: Build the AETHER-01 macOS release candidate, symbols and patch (M8.10)
@@ -677,6 +713,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: aether01-macos-arm64-ship
+          retention-days: 2
           path: ship-dist
           if-no-files-found: error
       - name: Screenshot the editor shell
@@ -696,6 +733,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: editor-screenshot-macos
+          retention-days: 7
           path: |
             editor-screenshot-macos.png
             editor-capture-macos.json
@@ -705,16 +743,31 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: functional-results-macos
+          retention-days: 7
           path: functional-results.xml
           if-no-files-found: ignore
 
   windows:
     name: Windows (MSVC, D3D12 editor)
-    runs-on: windows-2022
+    # Repository variable WINDOWS_RUNNER (e.g. ["self-hosted","windows"]) moves this job to your own machine; unset = GitHub-hosted.
+    runs-on: ${{ fromJSON(vars.WINDOWS_RUNNER || '"windows-2022"') }}
+    timeout-minutes: 75
     if: github.event_name != 'pull_request'
     steps:
       - uses: actions/checkout@v4
+      - name: Use the Qt 6.8.3 installed on the self-hosted runner
+        # Only when WINDOWS_RUNNER is set: the runner already has Qt, so skip the per-run download.
+        if: vars.WINDOWS_RUNNER != ''
+        shell: pwsh
+        run: |
+          $qt = 'C:/Qt/6.8.3/msvc2022_64'
+          if (-not (Test-Path "$qt/bin/Qt6Core.dll")) { throw "Qt 6.8.3 not found at $qt" }
+          "CMAKE_PREFIX_PATH=$qt" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "QT_ROOT_DIR=$qt" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "Qt6_DIR=$qt/lib/cmake/Qt6" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "$qt/bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
       - name: Install Qt 6.8.3
+        if: vars.WINDOWS_RUNNER == ''
         uses: jurplel/install-qt-action@v4
         with:
           version: '6.8.3'
@@ -752,12 +805,14 @@ jobs:
         # program, a held file, and the shortcuts. The installer is built by hand for releases, so nothing else would catch it breaking.
         run: .\tools\installer\test_installer.ps1
       - name: Editor session soak
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
         run: .\build\editor\Release\aether_editor.exe --self-test --self-test-repeats 4
       - name: Functional tests
         run: .\build\tools\functional\Release\aether_functional.exe --quiet --junit functional-results.xml
       - name: Registered regression tests
         run: ctest --test-dir build -C Release --output-on-failure --parallel 4 -R "^(fuzz_replay_.*|module_graph_catches_a_cycle|api_stability_annotations|api_freeze_checks|api_inventory|frozen_api_game|production_gate_table|m8_gate_table)$"
       - name: Long-running heap soak
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
         env:
           AETHER_SOAK_SCALE: "4"
         run: ctest --test-dir build -C Release --output-on-failure -R "^soak$"
@@ -780,6 +835,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: aether-server-windows-x64
+          retention-days: 14
           path: server-dist
           if-no-files-found: error
       - name: Upload the server log and profile capture
@@ -787,6 +843,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: dedicated-server-profile-windows
+          retention-days: 7
           path: server-run/aether-server-windows-x64/logs
           if-no-files-found: ignore
       - name: Verify repeat cook and incremental texture cache
@@ -830,6 +887,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: AETHER-01-rendered-proof
+          retention-days: 7
           path: build/aether01-proof-*.bmp
           if-no-files-found: ignore
       - name: Package the editor
@@ -875,6 +933,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: AetherEditor-windows-x64
+          retention-days: 14
           path: dist/AetherEditor-windows-x64.zip
       - name: Build the AETHER-01 Windows release candidate, symbols and patch (M8.10)
         # tools/ship/build_release.sh under Git Bash: strict shipping cook -> v1 .zip package (AETHER-01.exe +
@@ -902,6 +961,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: aether01-windows-x64-ship
+          retention-days: 2
           path: ship-dist
           if-no-files-found: error
       - name: Package and validate the standalone proof game
@@ -997,12 +1057,14 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: AETHER-01-windows-x64
+          retention-days: 14
           path: dist/AETHER-01-windows-x64.zip
           if-no-files-found: error
       - name: Upload package evidence
         uses: actions/upload-artifact@v4
         with:
           name: Aether-release-evidence
+          retention-days: 14
           path: |
             dist/RELEASE_MANIFEST.json
             dist/SHA256SUMS.txt
@@ -1033,6 +1095,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: editor-screenshot-windows
+          retention-days: 7
           path: |
             editor-screenshot.png
             editor-capture-windows.json
@@ -1042,13 +1105,15 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: functional-results-windows
+          retention-days: 7
           path: functional-results.xml
           if-no-files-found: ignore
 
   windows-package-validation:
     name: Windows packaged editor (clean runner)
     needs: windows
-    runs-on: windows-2022
+    # Repository variable WINDOWS_RUNNER (e.g. ["self-hosted","windows"]) moves this job to your own machine; unset = GitHub-hosted.
+    runs-on: ${{ fromJSON(vars.WINDOWS_RUNNER || '"windows-2022"') }}
     if: github.event_name != 'pull_request'
     timeout-minutes: 10
     steps:
@@ -1127,15 +1192,16 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Aether-release-assets
+          retention-days: 14
           path: dist/release-assets/*
           if-no-files-found: error
 
-  # Phase 37 step 6 (docs/design/UPGRADE_PLAN.md): extra analysis gates. They are advisory
+  # Phase 37 step 6 : extra analysis gates. They are advisory
   # (continue-on-error) until they have been clean for a while, then they become required.
   tsan:
     name: Linux (TSan, advisory)
     runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
@@ -1170,7 +1236,7 @@ jobs:
     # Required since it built clean on every master run; Android windowing and Vulkan are still missing.
     name: Android (arm64, Gradle APK)
     runs-on: ubuntu-24.04
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v5
@@ -1191,6 +1257,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: aether-android-arm64-debug
+          retention-days: 2
           path: platforms/android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
@@ -1200,7 +1267,7 @@ jobs:
     # checks "AETHER_RENDER PRESENTED" and that a screenshot shows the clear colour. Required.
     name: Android (x86_64 emulator, Lantern Run)
     runs-on: ubuntu-24.04
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -1336,6 +1403,7 @@ jobs:
         if: always()
         with:
           name: aether-android-emulator-logcat
+          retention-days: 7
           path: |
             emulator-logcat.txt
             emulator-screen.raw
@@ -1353,7 +1421,7 @@ jobs:
     # against the engine core. Signing and device execution remain out of scope.
     name: iOS (arm64, unsigned app)
     runs-on: macos-15
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
     steps:
       - uses: actions/checkout@v4
       - name: Cache fetched dependencies
@@ -1383,6 +1451,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: aether-ios-iphoneos-arm64
+          retention-days: 2
           path: dist/AetherEngine-iphoneos-arm64.zip
           if-no-files-found: error
 
@@ -1391,7 +1460,7 @@ jobs:
     # Required since it passed on every master run that got a runner.
     name: iOS (Simulator, Lantern Run)
     runs-on: macos-15
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -1434,6 +1503,7 @@ jobs:
         if: always()
         with:
           name: aether-ios-simulator-stdout
+          retention-days: 7
           path: simulator-stdout.txt
           if-no-files-found: ignore
 
@@ -1470,12 +1540,12 @@ jobs:
           if [ -z "$files" ]; then echo "no engine or kit sources changed"; exit 0; fi
           clang-tidy -p build $files
 
-  # Phase 47 steps 1-2 (docs/design/UPGRADE_PLAN.md): replay the checked-in corpus in every job and
+  # Phase 47 steps 1-2 : replay the checked-in corpus in every job and
   # run every available libFuzzer target for a bounded budget here. Advisory while fuzz coverage grows.
   fuzz:
     name: Fuzz (Clang, advisory)
     runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
@@ -1512,6 +1582,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: fuzz-crashes
+          retention-days: 30
           path: crash-*
           if-no-files-found: ignore
 

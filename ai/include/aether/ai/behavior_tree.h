@@ -7,7 +7,7 @@
 
 namespace aether::ai {
 
-// Behavior Tree assets (Phase 20 step 4, docs/design/PHASE_SPECS.md §20.4):
+// Behavior Tree assets (Phase 20 step 4):
 // composites choose among children, decorators gate them (and abort them
 // when a watched blackboard key changes), services run while a branch is
 // active, and tasks do the work. `.abt` files are JSON.

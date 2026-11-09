@@ -1,4 +1,4 @@
-# Aether benchmark harness (Phase 38 step 1, docs/design/UPGRADE_PLAN.md): a small runner for
+# Aether benchmark harness (Phase 38 step 1): a small runner for
 # micro and system benchmarks, with JSON reports and a baseline comparison that normalizes by a
 # calibration loop (so a slow or noisy machine doesn't fail the gate). aether_bench runs them:
 #   aether_bench [--filter text] [--repeat N] [--json report.json] [--baseline file.json] [--tolerance 1.5]
@@ -10,7 +10,7 @@ add_library(Aether::Bench ALIAS aether_bench_lib)
 
 # The benchmark sources go straight into the executable (not a static library, which would drop the
 # self-registering objects). Blueprint and Luau benchmarks are there when those modules are built.
-add_executable(aether_bench src/main.cpp src/bench_engine.cpp)
+add_executable(aether_bench src/main.cpp src/bench_engine.cpp src/bench_skinning.cpp)
 target_link_libraries(aether_bench PRIVATE Aether::Bench)
 if(CMAKE_CONFIGURATION_TYPES)
     set(_aether_bench_build_config "$<CONFIG>")

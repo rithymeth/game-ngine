@@ -24,7 +24,7 @@ struct AnimatorCommand {
 };
 
 // Plays an animation graph on an entity (Phase 16 step 4,
-// docs/design/PHASE_SPECS.md §16.5). The methods are Blueprint nodes (Set
+// a retired planning doc). The methods are Blueprint nodes (Set
 // Float Parameter, Play Montage, ...); they queue commands the animation
 // system applies before it evaluates.
 struct Animator {

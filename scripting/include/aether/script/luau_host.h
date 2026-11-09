@@ -81,7 +81,7 @@ private:
 };
 using NativeFunction = std::function<void(NativeCall&)>;
 
-// One Luau VM (Phase 11 step 1, docs/design/PHASE_SPECS.md §11.1-11.4).
+// One Luau VM (Phase 11 step 1.1-11.4).
 //
 // Sandbox (§11.4): the standard libraries math, string, table, bit32, utf8,
 // buffer, coroutine and vector; `os` only as os.clock; no `debug` unless

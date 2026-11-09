@@ -1,4 +1,4 @@
-# Aether Renderer (Phase 14, docs/design/PHASE_SPECS.md): the renderer's
+# Aether Renderer (Phase 14): the renderer's
 # CPU side (render scene extraction, views, culling, draw lists, and the
 # CPU references for the GPU passes). Engine-only, so it builds and tests
 # headless on every platform; the GPU passes on the RHI come later.

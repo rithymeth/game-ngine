@@ -2,7 +2,7 @@
 
 #include "aether/script/luau_host.h"
 
-// Luau's `SaveGames` table (Phase 28 step 4, docs/design/PHASE_SPECS.md §28.4):
+// Luau's `SaveGames` table (Phase 28 step 4):
 // the same functions as the Blueprint library (aether::save::SaveGames), on
 // the active SaveSystem:
 //

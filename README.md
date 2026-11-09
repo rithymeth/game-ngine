@@ -17,7 +17,7 @@ prerequisites, exact build commands, controls, and a first code change. The
 sample uses software rendering, so you do not need a graphics card.
 
 Other playable samples: [Gem Hop](samples/gem_hop/README.md),
-[Beacon Run](samples/beacon_run/README.md), and the cooked [Stardust Hop](games/STARDUST-HOP/README.md).
+[Beacon Run](samples/beacon_run/README.md), and the AETHER-01 proof game.
 
 **Evervale reboot** is the largest game built on Aether — a 288 × 192 valley with a farm, three villages,
 fifteen cave floors, four festivals and Khmer localization. It is a **separate repository**, checked out at
@@ -44,7 +44,7 @@ records what the game implements, what is verified, and what is still missing, a
 
 ## Status
 
-The live record is [the upgrade plan](docs/design/UPGRADE_PLAN.md), which is updated with each step and says what is
+The live record is [the upgrade plan], which is updated with each step and says what is
 done, what is blocked and why. This section deliberately summarises only what does not drift:
 
 - **Checks**: `ctest` runs 42 of them -- the engine test suite (over 1400 tests), the governance gates (API stability,
@@ -64,7 +64,7 @@ Phases 8–9 and 11–13 done on the engine side (asset system; prefabs and sche
 > The phase sections below are the build log as it was written at each step. They describe what was
 > done at the time, not what is true now: markers like "(in progress)" and "still to come" were
 > accurate when the section was written and are left in place rather than quietly rewritten.
-> [The upgrade plan](docs/design/UPGRADE_PLAN.md) is the current record.
+> [The upgrade plan] is the current record.
 
 - **Memory** (`engine/include/aether/memory`): `LinearAllocator` (bump-pointer
   arena), `PoolAllocator` (fixed-size free-list), `FrameAllocator`
@@ -1256,7 +1256,7 @@ run, all clean.
 ### Phase 6 — Reflection & Property System
 
 First step of the [roadmap](docs/ROADMAP.md)'s Phase 6 (build spec:
-[`docs/ROADMAP_DETAILS.md` §B](docs/ROADMAP_DETAILS.md)).
+[a retired planning doc]).
 `engine/include/aether/reflection/` lets the engine describe its own types at
 runtime, which the generic Inspector, versioned serialization, undo/redo,
 scripting and Blueprints all build on.
@@ -1446,7 +1446,7 @@ The macros use `##__VA_ARGS__` (already used by the log macros) rather than
 
 ### Phase 7 (in progress) — Editor Foundation
 
-Build spec: [`docs/design/PHASE_SPECS.md`](docs/design/PHASE_SPECS.md), Phase 7.
+Build spec: [a retired planning doc], Phase 7.
 
 **Step 1: permanent entity IDs** (`engine/include/aether/scene/entity_guid.h`).
 
@@ -1684,7 +1684,7 @@ the editor executable changed.
 
 ### Phase 8 (engine side done) — Asset System
 
-Build spec: [`docs/design/PHASE_SPECS.md`](docs/design/PHASE_SPECS.md), Phase 8.
+Build spec: [a retired planning doc], Phase 8.
 
 **Step 1: asset IDs, `.ameta` files and the asset database**
 (`engine/include/aether/assets/asset_database.h`).
@@ -1999,7 +1999,7 @@ Windows build.
 
 ### Phase 9 (engine side done) — Prefabs and scheduling
 
-Build spec: [`docs/design/PHASE_SPECS.md`](docs/design/PHASE_SPECS.md), Phase 9.
+Build spec: [a retired planning doc], Phase 9.
 
 **Step 1: prefab assets and resolving instances** (`scene/prefab.h`).
 
@@ -2314,7 +2314,7 @@ the Windows build along with the Phase 7 and 8 editor work.
 
 ### Phase 10 (in progress) — Input
 
-Build spec: [`docs/design/PHASE_SPECS.md`](docs/design/PHASE_SPECS.md), Phase 10.
+Build spec: [a retired planning doc], Phase 10.
 
 **Step 1: action mapping** (`input/keys.h`, `input/actions.h`).
 
@@ -2408,7 +2408,7 @@ Windows build.
 
 ### Phase 11 (done on the portable side) — Scripting (Luau)
 
-Build spec: [`docs/design/PHASE_SPECS.md`](docs/design/PHASE_SPECS.md), Phase 11.
+Build spec: [a retired planning doc], Phase 11.
 
 **Step 1: the Luau VM** (`scripting/`, the `Aether::Scripting` library).
 
@@ -2816,7 +2816,7 @@ Windows editor work.
 
 ### Phase 12 (done on the portable side) — Blueprints (visual scripting)
 
-Build spec: [`docs/design/PHASE_SPECS.md`](docs/design/PHASE_SPECS.md),
+Build spec: [a retired planning doc],
 Phase 12. The node reference is
 [`docs/design/BLUEPRINT_NODES.md`](docs/design/BLUEPRINT_NODES.md).
 
@@ -3471,7 +3471,7 @@ Phase 12 on the portable side.
 
 ### Phase 13 (done on the portable side) — Physics events and character movement
 
-Build spec: [`docs/design/PHASE_SPECS.md`](docs/design/PHASE_SPECS.md),
+Build spec: [a retired planning doc],
 Phase 13.
 
 **Step 1: collider components and the motion-only RigidBody** (§13.4).
@@ -3732,7 +3732,7 @@ Phase 13 on the portable side.
 
 ### Phase 14 (in progress) — The unified renderer
 
-Build spec: [`docs/design/PHASE_SPECS.md`](docs/design/PHASE_SPECS.md),
+Build spec: [a retired planning doc],
 Phase 14. The editor viewport and the player will share one renderer.
 Its CPU side lives in the new `Aether::Renderer` library (`renderer/`),
 which builds and tests headless; the GPU passes come later in the phase.
@@ -3896,7 +3896,7 @@ frame.
 
 ### Phase 15 (in progress) — Materials
 
-Build spec: [`docs/design/PHASE_SPECS.md`](docs/design/PHASE_SPECS.md),
+Build spec: [a retired planning doc],
 Phase 15. Materials are node graphs with typed pins that will compile to
 HLSL, like Unreal's material editor. They live in `Aether::Renderer`
 (`aether/renderer/material.h`, namespace `aether::mat`).
@@ -4109,7 +4109,7 @@ HLSL, like Unreal's material editor. They live in `Aether::Renderer`
 
 ### Phase 16 (in progress) — Animation
 
-Build spec: [`docs/design/PHASE_SPECS.md`](docs/design/PHASE_SPECS.md),
+Build spec: [a retired planning doc],
 Phase 16. The runtime is the new `Aether::Animation` library
 (`animation/`), which builds and tests headless.
 
@@ -4358,7 +4358,7 @@ Phase 16. The runtime is the new `Aether::Animation` library
 
 ### Phase 17 — Audio
 
-Build spec: [`docs/design/PHASE_SPECS.md`](docs/design/PHASE_SPECS.md),
+Build spec: [a retired planning doc],
 Phase 17. The engine side is the new `Aether::Audio` library (`audio/`).
 It is a software mixer that renders into buffers, so it is tested
 headless; the device output backend (miniaudio) pulls from it and comes
@@ -4673,7 +4673,7 @@ threaded mixer. Clean under ThreadSanitizer.
 
 ### Phase 18 (in progress) — Runtime game UI
 
-Build spec: [`docs/design/PHASE_SPECS.md`](docs/design/PHASE_SPECS.md),
+Build spec: [a retired planning doc],
 Phase 18. The engine side is the new `Aether::UI` library (`ui/`): a
 retained widget tree that paints into a draw list of clipped quads for the
 renderer, so its layout, input and styles are tested headless.
@@ -4955,7 +4955,7 @@ renderer, so its layout, input and styles are tested headless.
 
 The `Aether::VFX` library (`vfx/`): particle systems as stacks of modules,
 simulated on the CPU (the GPU path generates the same stack as a compute
-shader later). Spec: [PHASE_SPECS.md, Phase 19](docs/design/PHASE_SPECS.md).
+shader later). Spec: [a retired planning doc, Phase 19].
 
 **Step 1: emitters, modules and the CPU simulation** (§19.1).
 
@@ -5230,7 +5230,7 @@ shader later). Spec: [PHASE_SPECS.md, Phase 19](docs/design/PHASE_SPECS.md).
 The `Aether::Nav` library (`nav/`) bakes navigation meshes with Recast and
 queries them with Detour (recastnavigation 1.6, fetched by CMake). Crowds,
 Behavior Trees and perception come next. Spec:
-[PHASE_SPECS.md, Phase 20](docs/design/PHASE_SPECS.md).
+[a retired planning doc, Phase 20].
 
 **Step 1: navmesh baking and path queries** (§20.1).
 
@@ -5508,7 +5508,7 @@ Behavior Trees and perception come next. Spec:
 
 ### Phase 21 — World Building
 
-Build spec: [docs/design/PHASE_SPECS.md](docs/design/PHASE_SPECS.md), Phase 21.
+Build spec: [a retired planning doc], Phase 21.
 
 **Step 1: heightmap terrain** (`terrain/`).
 
@@ -5621,7 +5621,7 @@ in #96 and #97, which also fixed:
 ### Phase 22 (done) — Networking and multiplayer
 
 The `Aether::Net` library (`net/`). Spec:
-[PHASE_SPECS.md, Phase 22](docs/design/PHASE_SPECS.md).
+[a retired planning doc, Phase 22].
 
 **Step 1: the transport** (§22.1). It's our own small protocol over a
 datagram interface, so the same code runs over UDP and over a simulated
@@ -5804,7 +5804,7 @@ Unreal.
 
 ### Phase 23 (done) — Profiling, debugging and developer tools
 
-Spec: [PHASE_SPECS.md, Phase 23](docs/design/PHASE_SPECS.md).
+Spec: [a retired planning doc, Phase 23].
 
 **Step 1: console variables and the console** (§23.1).
 
@@ -5945,7 +5945,7 @@ Spec: [PHASE_SPECS.md, Phase 23](docs/design/PHASE_SPECS.md).
 
 ### Phase 24 — Cross-platform
 
-Spec: [PHASE_SPECS.md, Phase 24](docs/design/PHASE_SPECS.md).
+Spec: [a retired planning doc, Phase 24].
 
 **Step 1: continuous integration** (§24.1).
 
@@ -5998,7 +5998,7 @@ offscreen:
 
 ### Phase 25 (in progress) — Build, cook and package
 
-Spec: [PHASE_SPECS.md, Phase 25](docs/design/PHASE_SPECS.md).
+Spec: [a retired planning doc, Phase 25].
 
 **Step 1: .apak archives and the virtual file system** (§25.1).
 

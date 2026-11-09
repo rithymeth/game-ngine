@@ -20,7 +20,7 @@ struct AudioSourceCommand {
     std::string text;
 };
 
-// Plays a sound cue from an entity (Phase 17 step 4, docs/design/PHASE_SPECS.md
+// Plays a sound cue from an entity (Phase 17 step 4
 // §17.4). A spatial cue follows the entity's world position. The methods
 // are Blueprint nodes; they queue commands for the audio system.
 struct AudioSource {

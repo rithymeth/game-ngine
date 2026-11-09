@@ -17,7 +17,7 @@ struct ScriptProperty {
 };
 
 // Attaches a Luau script (a .luau asset) to an entity (Phase 11 step 3,
-// docs/design/PHASE_SPECS.md §11.2). The script module returns a table (the
+// a retired planning doc). The script module returns a table (the
 // "class"); each entity gets an instance of it, with the exposed variables
 // below applied. Defined in the engine so scenes save and load it without
 // the scripting module.

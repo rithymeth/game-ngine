@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-// A level sequence being edited (Phase 27 step 5, docs/design/PHASE_SPECS.md
+// A level sequence being edited (Phase 27 step 5
 // §27.6): tracks and keys added, moved, edited and removed, with undo and
 // redo (whole-sequence snapshots: a sequence is small), a dirty flag, and
 // the diagnostics. A drag is one undo step (BeginEdit .. EndEdit). Keys on a

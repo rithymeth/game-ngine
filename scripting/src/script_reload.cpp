@@ -1,4 +1,4 @@
-// Script hot reload (Phase 11 step 5, docs/design/PHASE_SPECS.md §11.3).
+// Script hot reload (Phase 11 step 5).
 
 #include "aether/script/script_system.h"
 

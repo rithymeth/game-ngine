@@ -13,7 +13,7 @@ struct ModelAssetResolveResult {
 };
 
 // Keeps every ModelRenderer's `model` GUID and `asset_path` consistent with
-// the asset database (docs/design/PHASE_SPECS.md §8.4 path -> GUID migration):
+// the asset database (a retired planning doc path -> GUID migration):
 // - `model` set and known: `asset_path` is updated to that asset's current
 //   path, so a renamed or moved model keeps rendering.
 // - `model` not set (or unknown) but the path is a known model asset:

@@ -13,7 +13,7 @@
 
 namespace aether::anim {
 
-// Animation graphs (Phase 16 step 3, docs/design/PHASE_SPECS.md §16.4): a
+// Animation graphs (Phase 16 step 3): a
 // DAG of pose nodes ending in the graph's output, driven by typed
 // variables, with state machines whose states are pose subgraphs.
 

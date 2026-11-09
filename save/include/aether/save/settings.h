@@ -13,7 +13,7 @@
 #include <string>
 #include <vector>
 
-// Settings (Phase 28 step 3, docs/design/PHASE_SPECS.md §28.3): what a player
+// Settings (Phase 28 step 3): what a player
 // sets in the options menu (graphics quality, audio volumes, key rebinds,
 // language), kept apart from the game's saves: its own file
 // (`<dir>/settings.asettings`, an "aether.settings" file, so a save slot can't

@@ -11,7 +11,7 @@
 #include <string_view>
 #include <vector>
 
-// Sprite atlases (Phase 26 step 5, docs/design/PHASE_SPECS.md §26.6): one
+// Sprite atlases (Phase 26 step 5): one
 // texture holding many named frames, with named animation clips over them.
 // Saved as a `.aatlas` JSON asset; the texture is referenced by GUID, so
 // the cooker follows it. Frame rectangles are in pixels, from the texture's

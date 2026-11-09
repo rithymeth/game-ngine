@@ -11,7 +11,7 @@
 #include <vector>
 
 // The editor's built-in undoable commands (Phase 7 step 3, see
-// docs/design/PHASE_SPECS.md §7.2). They work for any component, through the
+// a retired planning doc). They work for any component, through the
 // ECS's type-erased component registry and reflection, and refer to entities
 // only by EntityGuid.
 

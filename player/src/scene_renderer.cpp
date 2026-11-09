@@ -5,6 +5,8 @@
 #include "aether/renderer/decal.h"
 
 #include "aether/assets/gltf_loader.h"
+#include "aether/assets/skinning.h"
+#include "aether/job/job_system.h"
 #include "aether/assets/image.h"
 #include "aether/core/log.h"
 #include "aether/gameplay/attribute_set.h"
@@ -48,12 +50,10 @@ namespace {
 using namespace gfx::rhi;
 using json = nlohmann::json;
 
-struct SceneVertex {
-    f32 position[3];
-    f32 normal[3];
-    f32 uv[2];
-    f32 tangent[4];
-};
+// The skinner (assets/skinning.h) and the player share one vertex layout.
+using SceneVertex = assets::SkinVertex;
+// Skinned primitives at least this big are skinned across the job system (see bench_skinning).
+constexpr usize kParallelSkinVertices = 4096;
 static_assert(sizeof(SceneVertex) == sizeof(f32) * 12);
 
 struct DrawConstants {
@@ -923,6 +923,8 @@ struct SceneRenderer::Impl {
     bool clustered = true;
     LightClusters clusters;              // this frame's, reused
     std::vector<ClusterLight> cluster_lights;
+    // Skins big meshes in parallel (kParallelSkinVertices); made on first use by the rendering thread.
+    std::unique_ptr<JobSystem> skin_jobs;
     bool legacy_hud = false; // the AETHER-01 HUD, drawn when the game has no UI of its own
     SampledTextureHandle white_texture;
     SampledTextureHandle font_texture_handle;
@@ -2355,10 +2357,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                         const Mat4 normal_transform = BuildNormalTransform(model_transform);
                         std::vector<Mat4> skin_normal_matrices;
                         if (has_skin && !model->skin_matrices.empty()) {
-                            skin_normal_matrices.reserve(model->skin_matrices.size());
-                            for (const Mat4& skin_matrix : model->skin_matrices) {
-                                skin_normal_matrices.push_back(BuildNormalTransform(skin_matrix));
-                            }
+                            assets::ComputeSkinNormalMatrices(model->skin_matrices, skin_normal_matrices);
                         }
                         auto& draw_primitives = model->meshes[node.mesh_index];
                         const auto& source_primitives = model->scene.meshes[node.mesh_index].primitives;
@@ -2396,65 +2395,15 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                                 const auto& matrices = model->skin_matrices;
                                 if (!source.joint_indices.empty() && source.joint_indices.size() == primitive.bind_pose_vertices.size() &&
                                     source.joint_weights.size() == primitive.bind_pose_vertices.size() && !matrices.empty()) {
-                                    std::copy(primitive.bind_pose_vertices.begin(), primitive.bind_pose_vertices.end(),
-                                              primitive.animated_vertices.begin());
                                     std::vector<SceneVertex>& deformed = primitive.animated_vertices;
-                                    for (usize vertex_index = 0; vertex_index < deformed.size(); ++vertex_index) {
-                                        const auto& joints = source.joint_indices[vertex_index];
-                                        const auto& weights = source.joint_weights[vertex_index];
-                                        const Vec4 position{primitive.bind_pose_vertices[vertex_index].position[0],
-                                                            primitive.bind_pose_vertices[vertex_index].position[1],
-                                                            primitive.bind_pose_vertices[vertex_index].position[2], 1.0f};
-                                        const Vec4 normal{primitive.bind_pose_vertices[vertex_index].normal[0],
-                                                          primitive.bind_pose_vertices[vertex_index].normal[1],
-                                                          primitive.bind_pose_vertices[vertex_index].normal[2], 0.0f};
-                                        const Vec4 tangent{primitive.bind_pose_vertices[vertex_index].tangent[0],
-                                                           primitive.bind_pose_vertices[vertex_index].tangent[1],
-                                                           primitive.bind_pose_vertices[vertex_index].tangent[2], 0.0f};
-                                        f32 x = 0.0f, y = 0.0f, z = 0.0f;
-                                        f32 nx = 0.0f, ny = 0.0f, nz = 0.0f, total_weight = 0.0f;
-                                        f32 tx = 0.0f, ty = 0.0f, tz = 0.0f;
-                                        for (usize influence = 0; influence < 4; ++influence) {
-                                            const usize joint = joints[influence];
-                                            const f32 weight = weights[influence];
-                                            if (weight <= 0.0f || joint >= matrices.size()) continue;
-                                            const Vec4 skinned = matrices[joint] * position;
-                                            const Vec4 skinned_normal = skin_normal_matrices[joint] * normal;
-                                            const Vec4 skinned_tangent = matrices[joint] * tangent;
-                                            x += skinned.x * weight; y += skinned.y * weight; z += skinned.z * weight;
-                                            nx += skinned_normal.x * weight;
-                                            ny += skinned_normal.y * weight;
-                                            nz += skinned_normal.z * weight;
-                                            tx += skinned_tangent.x * weight;
-                                            ty += skinned_tangent.y * weight;
-                                            tz += skinned_tangent.z * weight;
-                                            total_weight += weight;
-                                        }
-                                        if (total_weight > 0.0f) {
-                                            deformed[vertex_index].position[0] = x / total_weight;
-                                            deformed[vertex_index].position[1] = y / total_weight;
-                                            deformed[vertex_index].position[2] = z / total_weight;
-                                            const Vec3 skinned_normal{nx / total_weight, ny / total_weight, nz / total_weight};
-                                            if (skinned_normal.LengthSq() > 1e-12f) {
-                                                const Vec3 normalized = skinned_normal.Normalized();
-                                                deformed[vertex_index].normal[0] = normalized.x;
-                                                deformed[vertex_index].normal[1] = normalized.y;
-                                                deformed[vertex_index].normal[2] = normalized.z;
-                                            }
-                                            Vec3 skinned_tangent{tx / total_weight, ty / total_weight, tz / total_weight};
-                                            const Vec3 normal_for_tangent{deformed[vertex_index].normal[0],
-                                                                          deformed[vertex_index].normal[1],
-                                                                          deformed[vertex_index].normal[2]};
-                                            skinned_tangent = skinned_tangent -
-                                                              normal_for_tangent * normal_for_tangent.Dot(skinned_tangent);
-                                            if (skinned_tangent.LengthSq() > 1e-12f) {
-                                                skinned_tangent = skinned_tangent.Normalized();
-                                                deformed[vertex_index].tangent[0] = skinned_tangent.x;
-                                                deformed[vertex_index].tangent[1] = skinned_tangent.y;
-                                                deformed[vertex_index].tangent[2] = skinned_tangent.z;
-                                            }
-                                        }
-                                    }
+                                    // Meshes big enough to be worth splitting go over the job system (made on first use, on this
+                                    // thread, which is the one that renders); small ones are cheaper to skin in place.
+                                    const bool split = deformed.size() >= kParallelSkinVertices;
+                                    if (split && !renderer.skin_jobs) renderer.skin_jobs = std::make_unique<JobSystem>(2);
+                                    assets::SkinVerticesParallel(
+                                        split ? renderer.skin_jobs.get() : nullptr, primitive.bind_pose_vertices.data(),
+                                        deformed.data(), source.joint_indices.data(), source.joint_weights.data(),
+                                        deformed.size(), matrices, skin_normal_matrices);
                                     if (!renderer.device.WriteBufferUnsynchronized(frame_vertex_buffer, deformed.data(),
                                                                                    deformed.size() * sizeof(SceneVertex))) {
                                         renderer.device.UpdateVertexBuffer(frame_vertex_buffer, deformed.data(),

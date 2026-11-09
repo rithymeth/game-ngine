@@ -14,7 +14,7 @@ namespace aether {
 
 class World;
 
-// Physics components (Phase 13 step 1, docs/design/PHASE_SPECS.md §13):
+// Physics components (Phase 13 step 1):
 // colliders give an entity its shape, RigidBody says how it moves. An
 // entity with colliders and no RigidBody is static. Several colliders on
 // one entity make one compound body.

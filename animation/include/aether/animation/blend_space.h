@@ -10,7 +10,7 @@
 
 namespace aether::anim {
 
-// Blend spaces (Phase 16 step 2, docs/design/PHASE_SPECS.md §16.3): clips
+// Blend spaces (Phase 16 step 2): clips
 // placed on a 1D line or a 2D plane of parameters (speed, direction);
 // the parameters pick the clips and their weights.
 

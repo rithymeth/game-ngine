@@ -8,7 +8,7 @@
 
 namespace aether {
 
-// Scene hierarchy (Phase 7, docs/design/PHASE_SPECS.md §7.2 ReparentCommand).
+// Scene hierarchy (Phase 7 ReparentCommand).
 // An entity with a Parent has a Transform relative to that parent. The link is
 // the parent's EntityGuid, not its Entity handle, so it survives the parent
 // being destroyed and recreated (undo, reload): while the parent doesn't

@@ -10,7 +10,7 @@
 
 namespace aether::ai {
 
-// State trees (Phase 40 step 4, docs/design/UPGRADE_PLAN.md): a hierarchy of states. Exactly one leaf is active;
+// State trees (Phase 40 step 4): a hierarchy of states. Exactly one leaf is active;
 // its ancestors are active with it. Each tick the active leaf's transitions are tried, then each ancestor's,
 // innermost first; the first whose conditions all hold fires. A transition exits the states it leaves (leaf
 // first), then enters the states it reaches (outermost first), and a transition to a state with children goes on

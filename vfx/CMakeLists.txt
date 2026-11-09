@@ -1,4 +1,4 @@
-# Aether VFX (Phase 19, docs/design/PHASE_SPECS.md): particle systems -
+# Aether VFX (Phase 19): particle systems -
 # emitter module stacks, curves and gradients, the CPU simulation, and draw
 # data for the renderer.
 # Engine-only, so it builds and tests headless on every platform.

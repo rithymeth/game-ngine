@@ -17,7 +17,7 @@ struct TypeInfo;
 
 namespace aether::bp {
 
-// Compiled Blueprints (Phase 12 step 2, docs/ROADMAP_DETAILS.md §C): typed
+// Compiled Blueprints (Phase 12 step 2): typed
 // register bytecode. A frame has two register banks: 16-byte value
 // registers (bool, int, float, Vec3, Quat, Entity) and string registers.
 // Opcodes are typed (AddF, AddI, AddV...), so the VM never inspects types

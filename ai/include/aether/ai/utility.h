@@ -10,7 +10,7 @@
 
 namespace aether::ai {
 
-// Utility AI (Phase 40 step 4, docs/design/UPGRADE_PLAN.md): each action is scored from considerations, each a
+// Utility AI (Phase 40 step 4): each action is scored from considerations, each a
 // blackboard number run through a response curve; the highest score wins. Scoring is a pure function of the
 // blackboard, so a choice is reproducible. The brain remembers its last choice and gives it a small bonus
 // (`inertia`) so two close scores do not make it flip back and forth every tick.

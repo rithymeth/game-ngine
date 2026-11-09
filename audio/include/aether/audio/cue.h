@@ -11,7 +11,7 @@
 
 namespace aether::audio {
 
-// Sound cues (Phase 17 step 3, docs/design/PHASE_SPECS.md §17.3): a small
+// Sound cues (Phase 17 step 3): a small
 // graph that decides what plays each time the cue is triggered: which
 // variation, at what volume and pitch, in what order and for how long.
 // Saved as `.acue` JSON. Evaluating a cue gives a plan of sounds with

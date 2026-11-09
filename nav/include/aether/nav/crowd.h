@@ -22,7 +22,7 @@ struct NavAgentCommand {
 };
 
 // Walks its entity over the navigation mesh (Phase 20 step 3,
-// docs/design/PHASE_SPECS.md §20.3): paths to a point or after another
+// a retired planning doc): paths to a point or after another
 // entity, steered with Detour's crowd (local avoidance of other agents,
 // corners anticipated), turned to face where it goes. It moves the
 // entity's Transform (as world space). The methods are Blueprint nodes

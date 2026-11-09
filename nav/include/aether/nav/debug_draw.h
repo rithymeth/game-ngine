@@ -6,7 +6,7 @@
 
 namespace aether::nav {
 
-// Navigation debug drawing (Phase 20 step 6, docs/design/PHASE_SPECS.md
+// Navigation debug drawing (Phase 20 step 6
 // §20.6): the mesh, links, volumes and paths as plain world-space lines
 // and triangles, so it's tested headless; the editor viewport (and a
 // game's debug overlay) draws them. Colours are ImGui order (ABGR).

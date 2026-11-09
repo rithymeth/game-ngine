@@ -1,5 +1,5 @@
 // Reflection-driven Luau bindings for the ECS (Phase 11 step 2,
-// docs/design/PHASE_SPECS.md §11.1).
+// a retired planning doc).
 
 #include "aether/script/luau_host.h"
 

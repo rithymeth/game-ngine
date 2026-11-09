@@ -3,7 +3,7 @@
 The quests kit tracks what a player has been asked to do: a list of objectives per quest,
 quests that unlock other quests, and rewards. It is an optional part of the build
 (`AETHER_KIT_QUESTS`, on by default) and doesn't depend on the other kits. The build spec is
-[PHASE_SPECS §30.10](../design/PHASE_SPECS.md).
+PHASE_SPECS §30.10 (removed).
 
 ## A quest
 

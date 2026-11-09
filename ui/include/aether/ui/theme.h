@@ -10,7 +10,7 @@
 
 namespace aether::ui {
 
-// Themes (Phase 18 step 3, docs/design/PHASE_SPECS.md §18.3), saved as
+// Themes (Phase 18 step 3), saved as
 // `.atheme` JSON: named colours, a style per control type and class
 // ("Button", "Button.Primary"), and text styles. Colours in the file are
 // "@name" (the palette), "#RRGGBB" / "#RRGGBBAA", or [r, g, b, a].

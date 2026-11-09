@@ -1,8 +1,0 @@
-{
-  "$type": "InputAction",
-  "data": {
-    "$v": 1,
-    "name": "Restart",
-    "value_type": "Bool"
-  }
-}

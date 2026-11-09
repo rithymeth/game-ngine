@@ -14,7 +14,7 @@
 #include <string>
 #include <vector>
 
-// The cooker (Phase 25 step 2, docs/design/PHASE_SPECS.md §25.2): turns a
+// The cooker (Phase 25 step 2): turns a
 // project's content into what a packaged game ships - only the assets the
 // game can reach, with editor-only data stripped, imported data alongside,
 // and a manifest - in one .apak archive.

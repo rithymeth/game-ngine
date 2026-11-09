@@ -3,7 +3,7 @@
 What Aether supports today, what it only *validates* today, and what it does not support yet — with
 what it would take to promote anything from one column to the next. This file is the one the
 readiness matrix and the top-level README point at; it consolidates statements that were previously
-only in `UPGRADE_PLAN.md` (phases 24, 44 and 45) and in `docs/design/AETHER_01_ENGINE_READINESS_MATRIX.md`.
+only in a retired planning doc (phases 24, 44 and 45) and in `docs/design/AETHER_01_ENGINE_READINESS_MATRIX.md`.
 
 ## The rule
 
@@ -31,7 +31,7 @@ Moving a platform up a tier needs, in order:
 3. **A packaged sample run**, not just a compiled executable.
 4. **Graphics parity** against the reference for anything that renders, using the parity harness
    rather than eyeballing a screenshot.
-5. **Device coverage** for mobile: the device farm in `UPGRADE_PLAN.md` 45.7 is the mechanism, and it
+5. **Device coverage** for mobile: the device farm in a retired planning doc 45.7 is the mechanism, and it
    needs an account for a paid service, which is an **open decision** — until it is made, mobile stays
    in the "shell only" tier no matter how well the shell builds.
 

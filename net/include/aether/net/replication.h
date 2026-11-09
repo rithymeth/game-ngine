@@ -96,7 +96,7 @@ struct NetProfile {
 };
 
 // Sends the world to clients as delta snapshots (Phase 22 step 2,
-// docs/design/PHASE_SPECS.md §22.2). Every send_interval each connected
+// a retired planning doc). Every send_interval each connected
 // client gets one snapshot holding, for the entities relevant to it, the
 // replicated fields that differ from the last snapshot it acknowledged -
 // so an idle world costs a few bytes, and a lost snapshot costs nothing

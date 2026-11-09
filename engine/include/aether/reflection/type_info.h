@@ -16,7 +16,7 @@ namespace aether::reflect {
 
 // What shape of data a TypeInfo describes. Container, asset-reference and
 // entity-reference kinds are added alongside the features that need them
-// (see docs/ROADMAP_DETAILS.md §B).
+// (see a retired planning doc).
 enum class TypeKind : u8 {
     Bool,
     Int,    // signed integer of `size` bytes

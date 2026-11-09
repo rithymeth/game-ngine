@@ -1,5 +1,5 @@
 // aether_loc: the localization gather step (Phase 29 step 4,
-// docs/design/PHASE_SPECS.md §29.4).
+// a retired planning doc).
 //
 //   aether_loc <project.aproject> [--strings <Content-relative .astrings>]
 //              [--source-language en] [--languages fr,de] [--po-out <dir>]

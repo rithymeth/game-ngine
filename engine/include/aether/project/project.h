@@ -11,7 +11,7 @@
 namespace aether {
 
 // A game project (Phase 7, docs/ROADMAP.md step 8; format in
-// docs/ROADMAP_DETAILS.md §A.1). The .aproject file holds these settings; the
+// a retired planning doc). The .aproject file holds these settings; the
 // folder around it holds the project's content:
 //
 //   MyGame/
