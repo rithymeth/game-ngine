@@ -1789,8 +1789,11 @@ SampledTextureHandle VulkanDevice::CreateTargetTexture(const char* what, PassTar
     image_info.arrayLayers = 1;
     image_info.samples = VK_SAMPLE_COUNT_1_BIT;
     image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
-    image_info.usage =
-        VK_IMAGE_USAGE_SAMPLED_BIT | (depth ? VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT : VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
+    // A colour render texture can be read back to the CPU (CopyRenderTextureToReadback copies it to a buffer), so it is a transfer source too;
+    // without that bit the copy and its layout barriers are invalid, and the copy returned wrong data in a third of the runs once the device
+    // enabled VK_KHR_acceleration_structure (found with the Khronos validation layer).
+    image_info.usage = VK_IMAGE_USAGE_SAMPLED_BIT | (depth ? VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT
+                                                           : (VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT));
     image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE; // graphics only
     image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     AETHER_VK_CHECK(vkCreateImage(device_, &image_info, nullptr, &record.image));

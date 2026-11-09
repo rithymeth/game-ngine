@@ -951,5 +951,11 @@ RTX 3050 Laptop GPU, RelWithDebInfo. A small scene: four casters of a few hundre
 - **Vulkan ray tracing is opt-in (`AETHER_VK_RAY_TRACING=1`) by finding.** On the NVIDIA driver tried, merely enabling
   `VK_KHR_acceleration_structure` on the device made the virtual shadow feedback test read zero depth in a third to a half of its
   runs, with no ray tracing call made. Deferred host operations alone did not do it, no barrier in the depth copy explains it (a full
-  all-stages barrier, execution-only and memory-only variants all still failed), and the cause is not found. With the extension off
-  the same test passed 40 of 40, and the virtual shadow tests 20 of 20 runs. In ray-traced mode the feedback pass is not used.
+  all-stages barrier, execution-only and memory-only variants all still failed). With the extension off the same test passed 40 of
+  40, and the virtual shadow tests 20 of 20 runs. In ray-traced mode the feedback pass is not used.
+- **The Khronos validation layer found one real bug on the way, and not the rest.** Render textures were created without
+  `VK_IMAGE_USAGE_TRANSFER_SRC_BIT` although `CopyRenderTextureToReadback` copies from them (three errors: the copy and two layout
+  barriers); fixed, and the extension-on failure rate fell from about 40 percent to about 13 (4 of 30). What remains fails with core
+  validation, synchronisation validation and GPU-assisted validation all enabled and silent (2 of 20 and 2 of 6 runs), so it is not an
+  API misuse the layer can see; the sampled depth image still reads exactly 0.0 in those runs. Treated as a driver problem; the
+  switch stays opt-in. The investigation is written up in the session notes (vulkan_acceleration_structure_flake.md).
