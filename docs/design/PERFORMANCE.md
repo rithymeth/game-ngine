@@ -1084,3 +1084,55 @@ RTX 3050 Laptop GPU, RelWithDebInfo), now in GPU milliseconds. "Pre-scene" is th
 - **Scope and caveats.** One scene of four rigid casters on one laptop GPU; the stage boundaries are three points in the frame, not
   per-pass; timer slots must all be written in the frame (a frame that returns early from a pass that cannot begin leaves its timer
   unresolved, and on Vulkan that slot is not reset for the next use).
+
+### Where the GPU time goes: the post stage in detail, and a heavy-character scene (9 November 2026)
+
+Measured with temporary finer timestamps (eight in a frame: not committed) through the post stage, in the small scene above and in the same
+kind of scene with one animated, high-detail character (the Aegis Vanguard: one skinned primitive of 192,562 vertices, CPU-skinned each frame).
+RTX 3050 Laptop GPU, RelWithDebInfo, medians of frames 60 to 200, virtual shadow pages on (the default).
+
+**The small scene's post stage** (GPU ms; the first number is D3D12, the second Vulkan):
+
+| Stage | 720p | 1080p |
+| --- | --- | --- |
+| Scene pass | 0.43 / 0.56 | 0.99 / 1.07 |
+| Virtual shadow feedback | 0.03 / 0.02 | 0.04 / 0.04 |
+| TAA (motion pass and resolve) | 0.16 / 0.18 | 0.36 / 0.35 |
+| Bloom | 0.10 / 0.13 | 0.21 / 0.22 |
+| Tone mapping | 0.12 / 0.14 | 0.28 / 0.27 |
+| HUD | 0.00 | 0.00 |
+
+The post stage is three similar-sized full-screen passes (TAA resolve, bloom, tone mapping), each 0.10 to 0.18 ms at 720p, scaling with pixels.
+No pass stands out; the gain from fusing them (a read and a write of the HDR target saved) would be a fraction of 0.1 to 0.3 ms.
+
+**The heavy scene is a different frame.** At 720p the GPU frame is 10 to 13 ms, against 0.9 to 1.1 ms for the small scene:
+
+| Stage (D3D12 / Vulkan, 720p) | Heavy scene |
+| --- | --- |
+| Before the scene pass (the cascades; virtual pages draw nothing for a deforming caster) | 5.8 to 6.4 / 6.3 to 7.9 ms |
+| Scene pass | 1.8 to 3.5 / 1.8 to 2.5 ms |
+| TAA (its motion pass draws the character again) | 2.3 to 2.5 / 1.7 to 2.9 ms |
+| Everything else (feedback, bloom, tone mapping, HUD) | 0.2 / 0.2 ms |
+| With shadows off, the whole frame | 4.2 to 4.9 ms |
+
+- **The cascade pass is more than the rest of the frame.** With shadows off the frame is 4.2 to 4.9 ms; with the cascades it is 10 to 12 ms. One
+  192,562-vertex character is drawn into all four cascades (the caster pass is 5.8 to 6.4 ms on D3D12 and does not change with resolution).
+  Virtual shadow pages add nothing here: the animated character is cascade-only, and the static pages are cached.
+- **The TAA motion pass redraws the whole character** (2 to 3 ms against 0.16 ms in the small scene), so this one mesh is drawn six times a frame:
+  four cascades, the motion pass and the scene pass.
+- **Rejected by measurement: cull a skinned caster by its bind-pose sphere.** A skinned caster has no bounding radius, so the cascades always
+  draw it; the sphere exists already (it sizes the virtual page invalidation). Giving it to the cascades changed nothing: four alternating rounds on
+  D3D12 read 6.19, 6.16, 6.27 and 6.10 ms of cascade pass without it and 6.40, 6.23, 6.16 and 6.31 with it, and Vulkan showed no consistent
+  difference either. The cascades are fitted to bounding spheres of their depth slices, and the character, three metres from the camera, is inside
+  every one of those spheres, so a sphere-against-sphere test culls nothing. Not kept.
+- **What would pay: draw the character only into the cascades it can shadow.** As an upper bound, drawing it into cascade 0 only took the cascade
+  pass from 6.0 and 6.2 ms to 1.4 and 1.6 ms on D3D12 (two clean rounds; GPU frame 12.0 to 5.6 ms and 12.7 to 7.2 ms) and from 7.9 ms to 2.2 ms
+  on Vulkan. That is a ceiling, not the gain: it loses the shadow the character casts onto the farther cascades' receivers, which is what a correct
+  test has to keep (the caster's volume extruded toward the sun against each cascade's receiving slice, instead of sphere against sphere).
+- **Noise.** The heavy scene's GPU frame varies by about 2 ms from run to run on this laptop (even the shadows-off frame ranged from 4.2 to
+  9.3 ms in one Vulkan sequence), so only rounds that agree with their neighbours are quoted above; the later, noisy rounds of the upper-bound
+  test were left out.
+
+What this points at, in order of size for a scene with a character like this: cull casters against the cascades' real receiving volumes (up to
+about 4 to 6 ms here); a level of detail for the shadow and motion passes, which would also cut the TAA motion pass (2 to 3 ms), since the
+engine has no mesh level of detail at all; then the small items (fusing the full-screen post passes). None of this is built.
