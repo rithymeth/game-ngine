@@ -98,6 +98,13 @@ if(WIN32)
                     "${AETHER_DXCOMPILER_DLL}" "$<TARGET_FILE_DIR:aether_tests>/dxcompiler.dll"
         )
     endif()
+    # dxil.dll signs the DXIL that CompileHLSLToDXIL produces; D3D12 rejects unsigned shaders.
+    if(AETHER_DXIL_DLL)
+        add_custom_command(TARGET aether_tests POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${AETHER_DXIL_DLL}" "$<TARGET_FILE_DIR:aether_tests>/dxil.dll"
+        )
+    endif()
 endif()
 
 if(TARGET Aether::Physics)

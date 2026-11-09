@@ -489,11 +489,15 @@ PipelineHandle D3D12Device::CreatePipeline(const PipelineDesc& desc, ISwapChain&
     // vs_5_1/ps_5_1, not 5_0: register spaces (used by the bindless texture
     // table's HLSL — see the "Unified mode's textured-quad pipeline"
     // comment in rhi_demo/main.cpp) are only valid from shader model 5.1.
-    gfx::ShaderBytecode vs = gfx::CompileHLSL(desc.hlsl_source, desc.vs_entry.c_str(), "vs_5_1", "rhi_pipeline_vs");
+    // desc.shader_model_6 sends both stages through DXC as DXIL 6.5 (a pipeline cannot mix DXBC and DXIL stages).
+    auto compile = [&](const std::string& entry, const char* fxc_profile, const char* dxc_profile, const char* name) {
+        return desc.shader_model_6 ? gfx::CompileHLSLToDXIL(desc.hlsl_source, entry.c_str(), dxc_profile, name)
+                                   : gfx::CompileHLSL(desc.hlsl_source, entry.c_str(), fxc_profile, name);
+    };
+    gfx::ShaderBytecode vs = compile(desc.vs_entry, "vs_5_1", "vs_6_5", "rhi_pipeline_vs");
     // A depth-only pipeline may have no pixel shader at all (opaque shadow casters).
     const bool has_pixel_shader = !(desc.depth_target && desc.ps_entry.empty());
-    gfx::ShaderBytecode ps = has_pixel_shader ? gfx::CompileHLSL(desc.hlsl_source, desc.ps_entry.c_str(), "ps_5_1", "rhi_pipeline_ps")
-                                              : gfx::ShaderBytecode{};
+    gfx::ShaderBytecode ps = has_pixel_shader ? compile(desc.ps_entry, "ps_5_1", "ps_6_5", "rhi_pipeline_ps") : gfx::ShaderBytecode{};
 
     // Keep POSITION / TEXCOORD as the default, with optional normal and
     // tangent elements for lit, normal-mapped model vertices.

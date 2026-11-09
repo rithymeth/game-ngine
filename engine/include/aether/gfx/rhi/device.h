@@ -55,6 +55,11 @@ struct PipelineDesc {
     // it in the push-constant block.
     bool enable_bindless_textures = false;
 
+    // Compiles the shaders as shader model 6.5 through DXC (DXIL) on D3D12 instead of FXC's 5.1, for HLSL that needs 6.x (inline ray queries).
+    // Needs dxcompiler.dll and dxil.dll beside the executable. Vulkan already compiles through DXC, so it ignores this. false (the default)
+    // keeps FXC for every existing pipeline.
+    bool shader_model_6 = false;
+
     // Depth test + write (LESS) against the swap chain's own per-image
     // depth buffer (see ISwapChain — both backends now always maintain one,
     // recreated alongside the color images on resize, regardless of whether

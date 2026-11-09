@@ -2419,6 +2419,7 @@
 [engine/include/aether/gfx/shader_compiler.h] experimental
   type struct ShaderBytecode
   ShaderBytecode CompileHLSL(const std::string&source,const char*entry_point,const char*target_profile,const char*debug_name="")
+  ShaderBytecode CompileHLSLToDXIL(const std::string&source,const char*entry_point,const char*target_profile,const char*debug_name="")
   ShaderBytecode CompileHLSLToSPIRV(const std::string&source,const char*entry_point,const char*target_profile,const char*debug_name="")
   const void*Data()const
   usize Size()const
