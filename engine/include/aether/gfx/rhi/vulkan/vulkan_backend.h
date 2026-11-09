@@ -161,6 +161,19 @@ public:
                                                     u32 index_count) override;
     AccelerationStructureHandle CreateTopLevelAS(std::span<const AccelerationInstance> instances) override;
     bool DestroyAccelerationStructure(AccelerationStructureHandle handle) override;
+    bool SupportsGpuTiming() const override { return gpu_timing_supported_; }
+    GpuTimerHandle CreateGpuTimer(u32 timestamp_count) override;
+    bool DestroyGpuTimer(GpuTimerHandle timer) override;
+    bool ReadGpuTimer(GpuTimerHandle timer, std::span<f64> milliseconds) override;
+    bool IsGpuTimerAlive(GpuTimerHandle h) const { return h.IsValid() && h.index < gpu_timers_.size() && gpu_timers_[h.index].pool != VK_NULL_HANDLE; }
+    VkQueryPool GpuTimerPool(GpuTimerHandle h) const { return gpu_timers_[h.index].pool; }
+    u32 GpuTimerCount(GpuTimerHandle h) const { return gpu_timers_[h.index].count; }
+    // The fence of the submission that used these timers: what ReadGpuTimer waits for.
+    void NoteGpuTimersSubmitted(const std::vector<u32>& timers, u64 fence) {
+        for (const u32 timer : timers) {
+            if (timer < gpu_timers_.size()) gpu_timers_[timer].fence = fence;
+        }
+    }
     bool IsAccelerationStructureAlive(AccelerationStructureHandle h) const {
         return h.IsValid() && h.index < acceleration_structures_.size() && acceleration_structures_[h.index].handle != VK_NULL_HANDLE;
     }
@@ -366,6 +379,18 @@ private:
     };
     std::vector<AccelerationRecord> acceleration_structures_;
     std::vector<u32> free_acceleration_slots_;
+
+    // GPU timers: a timestamp query pool, reset from the host (hostQueryReset) when made and after each read so the next recording can write it.
+    struct GpuTimerRecord {
+        VkQueryPool pool = VK_NULL_HANDLE;
+        u32 count = 0;
+        u64 fence = 0; // the submission that used it, 0: none yet (or already read)
+    };
+    std::vector<GpuTimerRecord> gpu_timers_;
+    std::vector<u32> free_gpu_timer_slots_;
+    bool gpu_timing_supported_ = false; // hostQueryReset, and timestamps on the graphics queue
+    f64 timestamp_period_ns_ = 0.0;
+    u64 timestamp_mask_ = 0;
     VkDescriptorSetLayout acceleration_set_layout_ = VK_NULL_HANDLE;
     VkDescriptorSetLayout empty_set_layout_ = VK_NULL_HANDLE; // fills the set indices an acceleration-structure pipeline does not use
     VkDescriptorPool acceleration_pool_ = VK_NULL_HANDLE;
@@ -588,6 +613,9 @@ public:
     void BindFrameConstants(BufferHandle buffer) override;
     void BindFrameReadBuffer(BufferHandle buffer) override;
     void BindAccelerationStructure(AccelerationStructureHandle structure) override;
+    bool WriteGpuTimestamp(GpuTimerHandle timer, u32 index) override;
+    bool ResolveGpuTimer(GpuTimerHandle timer) override;
+    const std::vector<u32>& UsedGpuTimers() const { return used_gpu_timers_; }
     bool CopySceneDepth() override;
     bool CopyRenderTextureToReadback(SampledTextureHandle texture, BufferHandle readback) override;
 
@@ -624,6 +652,7 @@ private:
     bool graphics_bindless_enabled_ = false;
     bool graphics_frame_read_buffer_ = false; // the bound pipeline has set 3 (PipelineDesc::frame_read_buffer)
     bool graphics_acceleration_structure_ = false; // the bound pipeline has set 4 (PipelineDesc::acceleration_structure)
+    std::vector<u32> used_gpu_timers_;             // the timers this recording resolves (ResolveGpuTimer); cleared by Reset
     bool graphics_bindless_bound_ = false;
     bool graphics_uses_vertex_buffer_ = false;
     u32 graphics_vertex_stride_bytes_ = 0;

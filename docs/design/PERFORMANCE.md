@@ -1030,3 +1030,57 @@ What this does and does not settle:
 - This is still CPU work plus a vertex-buffer upload every frame. GPU skinning would remove both, but needs a new vertex
   layout and a joint-palette binding in the graphics RHI on D3D12 and Vulkan. It is not justified by AETHER-01 (104 vertices)
   and not yet by these numbers for a single hero; revisit it when a real scene has a crowd.
+
+## GPU timing, 9 November 2026
+
+Every renderer number above this section was a CPU frame time: record, submit, wait. That cannot tell the GPU's work from the CPU's, nor
+show where in the frame the GPU spends it. The RHI now has GPU timers (`IDevice::CreateGpuTimer`, `ICommandList::WriteGpuTimestamp` and
+`ResolveGpuTimer`, `IDevice::ReadGpuTimer`: timestamp queries on both backends, read once the submission's fence has passed), and
+`SceneRenderer::GpuFrameTimings()` reports the newest finished frame by stage: before the scene pass (cascades, virtual pages, ray tracing
+set-up), the scene pass with its depth copy, and everything after it (virtual shadow feedback, TAA, bloom, tone mapping, HUD).
+- **Checked against the clock:** a heavy pass then a trivial one on a 1024 x 1024 target read 8.8 ms and 0.06 ms on D3D12 and 9.2 and
+  0.06 ms on Vulkan, with the whole recording inside the CPU's wall time.
+- **Cost:** four timestamps and one resolve a frame; a timer per frame in flight (four). Where the device cannot time (no
+  `hostQueryReset` or no valid timestamp bits on Vulkan) `GpuFrameTimings().valid` is false and nothing is recorded.
+
+**Measured** as the shadow comparisons above were (the same small scene, 200 frames, medians of frames 60 to 200, the best of three rounds,
+RTX 3050 Laptop GPU, RelWithDebInfo), now in GPU milliseconds. "Pre-scene" is the first stage, "scene" the second, "post" the third.
+
+| Backend, size, shadows | GPU frame | Pre-scene | Scene | Post | CPU frame |
+| --- | --- | --- | --- | --- | --- |
+| D3D12 720p, cascades | 0.77 ms | 0.04 | 0.35 | 0.39 | 1.38 ms |
+| D3D12 720p, virtual pages | 0.93 | 0.04 | 0.47 | 0.42 | 1.31 |
+| D3D12 720p, ray traced, still | 0.68 | 0.00 | 0.30 | 0.38 | 0.99 |
+| D3D12 720p, ray traced, caster moving | 0.66 | 0.00 | 0.29 | 0.38 | 2.40 |
+| D3D12 1080p, cascades | 1.65 | 0.04 | 0.76 | 0.84 | 2.20 |
+| D3D12 1080p, virtual pages | 1.83 | 0.04 | 0.93 | 0.86 | 2.72 |
+| D3D12 1080p, ray traced, still | 1.54 | 0.00 | 0.70 | 0.84 | 2.05 |
+| D3D12 1080p, ray traced, caster moving | 1.46 | 0.00 | 0.64 | 0.82 | 4.02 |
+| Vulkan 720p, cascades | 0.81 | 0.04 | 0.38 | 0.39 | 1.06 |
+| Vulkan 720p, virtual pages | 1.14 | 0.05 | 0.56 | 0.43 | 1.41 |
+| Vulkan 720p, ray traced, still | 0.80 | 0.00 | 0.41 | 0.39 | 1.08 |
+| Vulkan 720p, ray traced, caster moving | 0.78 | 0.00 | 0.39 | 0.39 | 1.37 |
+| Vulkan 1080p, cascades | 1.77 | 0.05 | 0.86 | 0.85 | 2.18 |
+| Vulkan 1080p, virtual pages | 2.03 | 0.05 | 1.08 | 0.90 | 2.60 |
+| Vulkan 1080p, ray traced, still | 1.86 | 0.00 | 0.98 | 0.88 | 2.12 |
+| Vulkan 1080p, ray traced, caster moving | 1.81 | 0.00 | 0.93 | 0.88 | 2.36 |
+
+**What the GPU numbers say.**
+- **Post-processing is about half of this frame.** Post (the feedback pass, TAA, bloom, tone mapping, HUD) costs 0.38 to 0.43 ms at
+  720p and 0.82 to 0.90 ms at 1080p, 47 to 56 percent of the GPU frame and as much as the whole scene pass. No CPU number showed that. It is the
+  first place to look for GPU time, and it needs a finer breakdown (which of TAA, bloom and tone mapping) before anything is changed.
+- **A moving caster costs the GPU nothing; the cost is all CPU.** The ray-traced GPU frame is the same with the cube walking (D3D12
+  0.66 against 0.68 ms at 720p) while the CPU frame grows from 0.99 to 2.40 ms: the synchronous structure rebuild, as the CPU numbers
+  suggested. The rebuild runs in its own submission, which these frame timers do not include.
+- **Ray-traced still-scene shadows against the cascades, on the GPU:** cheaper on D3D12 (12 percent at 720p, 0.68 against 0.77 ms; 6
+  percent at 1080p, 1.54 against 1.65), equal on Vulkan at 720p (0.80 against 0.81) and 6 percent dearer at 1080p (1.86 against 1.77). **That corrects the
+  section above**, which said ray-traced shadows cost no more than the cascades: true on D3D12, not on Vulkan at 1080p. The cascades'
+  own pass is small in this scene (0.04 ms for four casters), so the saving is the scene shader's, not the shadow pass's.
+- **Virtual shadow maps, on the GPU:** +0.16 ms (D3D12 720p) to +0.33 ms (Vulkan 720p), +0.19 to +0.26 ms at 1080p, mostly in the scene pass (the page lookup, about
+  +0.12 to +0.22 ms) and a little in post (the feedback pass, +0.02 to +0.05 ms); the page drawing itself is in the first stage and
+  is negligible once the pages are cached. This agrees with the CPU-measured overhead.
+- **The CPU frame is longer than the GPU frame everywhere** (0.99 to 1.38 ms against 0.68 to 0.93 ms at 720p on D3D12): in this small
+  scene the CPU, not the GPU, sets the frame time, so GPU savings would not show in a CPU-timed frame until the CPU side is cut.
+- **Scope and caveats.** One scene of four rigid casters on one laptop GPU; the stage boundaries are three points in the frame, not
+  per-pass; timer slots must all be written in the frame (a frame that returns early from a pass that cannot begin leaves its timer
+  unresolved, and on Vulkan that slot is not reset for the next use).

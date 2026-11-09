@@ -121,6 +121,13 @@ public:
     // acceleration_structure). Call after BindPipeline; the binding holds until the next BindPipeline. A no-op on devices without support.
     virtual void BindAccelerationStructure(AccelerationStructureHandle /*structure*/) {}
 
+    // GPU timing (IDevice::CreateGpuTimer): writes slot `index` of the timer with the time the GPU reaches this point (when everything before
+    // has finished), inside or outside a pass. ResolveGpuTimer, once at the end of the recording and outside any pass, makes the slots readable
+    // after the submission's fence. Graphics lists only; false (nothing recorded) for a dead timer, a slot out of range, a compute list or a
+    // device without timing.
+    virtual bool WriteGpuTimestamp(GpuTimerHandle /*timer*/, u32 /*index*/) { return false; }
+    virtual bool ResolveGpuTimer(GpuTimerHandle /*timer*/) { return false; }
+
     // Inside a BeginRenderPass pass: copies the depth drawn so far into the swap chain's SceneDepthTexture (which must already exist) and
     // continues the same pass, colour and depth kept (Vulkan ends the render pass, copies and begins a loading one; D3D12 copies between
     // barriers). The bound pipeline and its bindings are gone afterwards and the viewport and scissor are the full swap chain again, as after

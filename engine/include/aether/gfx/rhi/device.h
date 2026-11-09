@@ -296,6 +296,18 @@ public:
                                                             BufferHandle /*indices*/, u32 /*index_count*/) { return {}; }
     virtual AccelerationStructureHandle CreateTopLevelAS(std::span<const AccelerationInstance> /*instances*/) { return {}; }
     virtual bool DestroyAccelerationStructure(AccelerationStructureHandle /*handle*/) { return false; }
+
+    // GPU timing: how long the GPU takes, which CPU frame time (with its waits) cannot say. A timer owns `timestamp_count` (1 to 64) timestamp
+    // slots. A graphics command list writes them (ICommandList::WriteGpuTimestamp) and resolves the timer before it is closed
+    // (ResolveGpuTimer); once the submission carrying that has finished (WaitForFence / IsFenceComplete), ReadGpuTimer fills `milliseconds`
+    // (its size is how many slots are read, from slot 0) with each slot's time since slot 0, and so reads 0 for slot 0. Every slot read
+    // must have been written in that submission; a timer is used once per submission and read once per use, so keep one per frame in flight.
+    // ReadGpuTimer is false (and reads nothing) while the submission is unfinished, for a timer not resolved and submitted, or one already
+    // read. CreateGpuTimer returns an invalid handle where SupportsGpuTiming() is false, and throws std::invalid_argument for a bad count.
+    virtual bool SupportsGpuTiming() const { return false; }
+    virtual GpuTimerHandle CreateGpuTimer(u32 /*timestamp_count*/) { return {}; }
+    virtual bool DestroyGpuTimer(GpuTimerHandle /*timer*/) { return false; }
+    virtual bool ReadGpuTimer(GpuTimerHandle /*timer*/, std::span<f64> /*milliseconds*/) { return false; }
     virtual BufferHandle CreateReadbackBuffer(u64 /*size_bytes*/) { return {}; }
     // False (nothing read) for a buffer that is not a readback buffer, a dead handle or a range outside it. Only valid after the GPU has finished
     // the copy into it.

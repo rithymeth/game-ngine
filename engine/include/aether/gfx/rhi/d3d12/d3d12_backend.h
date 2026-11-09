@@ -91,6 +91,20 @@ public:
                                                     u32 index_count) override;
     AccelerationStructureHandle CreateTopLevelAS(std::span<const AccelerationInstance> instances) override;
     bool DestroyAccelerationStructure(AccelerationStructureHandle handle) override;
+    bool SupportsGpuTiming() const override { return true; }
+    GpuTimerHandle CreateGpuTimer(u32 timestamp_count) override;
+    bool DestroyGpuTimer(GpuTimerHandle timer) override;
+    bool ReadGpuTimer(GpuTimerHandle timer, std::span<f64> milliseconds) override;
+    bool IsGpuTimerAlive(GpuTimerHandle h) const { return h.IsValid() && h.index < gpu_timers_.size() && gpu_timers_[h.index].heap != nullptr; }
+    ID3D12QueryHeap* GpuTimerHeap(GpuTimerHandle h) const { return gpu_timers_[h.index].heap.Get(); }
+    u32 GpuTimerCount(GpuTimerHandle h) const { return gpu_timers_[h.index].count; }
+    ID3D12Resource* GpuTimerReadback(GpuTimerHandle h) const { return gpu_timers_[h.index].readback->Handle(); }
+    // The fence of the submission that resolved these timers: what ReadGpuTimer waits for.
+    void NoteGpuTimersSubmitted(const std::vector<u32>& timers, u64 fence) {
+        for (const u32 timer : timers) {
+            if (timer < gpu_timers_.size()) gpu_timers_[timer].fence = fence;
+        }
+    }
     bool IsAccelerationStructureAlive(AccelerationStructureHandle h) const {
         return h.IsValid() && h.index < acceleration_structures_.size() && acceleration_structures_[h.index].resource != nullptr;
     }
@@ -225,6 +239,16 @@ private:
     };
     std::vector<AccelerationRecord> acceleration_structures_;
     std::vector<u32> free_acceleration_slots_;
+
+    // GPU timers: a timestamp query heap, and a readback buffer the resolve copies it to.
+    struct GpuTimerRecord {
+        ComPtr<ID3D12QueryHeap> heap;
+        std::shared_ptr<gfx::Buffer> readback;
+        u32 count = 0;
+        u64 fence = 0; // the submission that resolved it, 0: not submitted (or already read)
+    };
+    std::vector<GpuTimerRecord> gpu_timers_;
+    std::vector<u32> free_gpu_timer_slots_;
     // Records a build on a throwaway command list, submits it and waits (see IDevice::CreateBottomLevelAS).
     AccelerationStructureHandle BuildAccelerationStructure(const D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS& inputs, bool top_level);
 
@@ -338,6 +362,9 @@ public:
     void BindVertexBuffer(BufferHandle buffer, u32 stride_bytes) override;
     void BindIndexBuffer(BufferHandle buffer, IndexFormat format) override;
     void BindAccelerationStructure(AccelerationStructureHandle structure) override;
+    bool WriteGpuTimestamp(GpuTimerHandle timer, u32 index) override;
+    bool ResolveGpuTimer(GpuTimerHandle timer) override;
+    const std::vector<u32>& ResolvedGpuTimers() const { return resolved_gpu_timers_; }
     void DrawIndexed(u32 index_count) override;
     void BindComputePipeline(ComputePipelineHandle pipeline) override;
     void BindComputeStorageBuffer(u32 slot, BufferHandle buffer) override;
@@ -378,6 +405,7 @@ private:
     u32 frame_constants_root_index_ = ~0u;        // of the pipeline BindPipeline last bound
     u32 frame_read_root_index_ = ~0u;             // likewise
     u32 acceleration_root_index_ = ~0u;           // likewise (PipelineDesc::acceleration_structure)
+    std::vector<u32> resolved_gpu_timers_;        // the timers this recording resolves (ResolveGpuTimer); cleared by Reset
     u32 compute_storage_buffer_count_ = 0;
     u32 compute_sampled_texture_count_ = 0;
     u32 compute_constant_buffer_count_ = 0;
