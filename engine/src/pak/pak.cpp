@@ -8,12 +8,14 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <limits>
 #include <random>
+#include <thread>
 
 namespace aether::pak {
 
@@ -26,6 +28,9 @@ constexpr usize kMinIndexEntrySize = 35; // length, non-empty path, and fixed me
 // Entries smaller than this get LZ4 under the Auto policy (fast to read,
 // and zstd's advantage is small there); larger ones get zstd.
 constexpr usize kAutoZstdThreshold = 16 * 1024;
+// Building an archive: entries are packed on threads only when there is at least this much to pack, and on no more than this many.
+constexpr u64 kParallelPackBytes = 1024 * 1024;
+constexpr usize kMaxPackThreads = 16;
 
 const std::array<u32, 256>& CrcTable() {
     static const std::array<u32, 256> table = [] {
@@ -322,12 +327,18 @@ std::vector<u8> PakWriter::Build() const {
     std::vector<u8> out(kHeaderSize, 0);
     std::vector<PakEntry> entries;
     entries.reserve(pending_.size());
-    for (const Pending& p : pending_) {
-        PakEntry e;
-        e.path = p.path;
-        e.size = p.bytes.size();
-        e.crc32 = Crc32(p.bytes);
-        std::vector<u8> packed;
+    // Checksums and compression are the slow part and each entry's are independent, so they run on several threads; the bytes are
+    // then laid out in the order the entries were added, which makes the archive the same whatever the thread count.
+    struct Packed {
+        u32 crc32 = 0;
+        Compression method = Compression::None;
+        std::vector<u8> bytes; // empty: stored as it is
+    };
+    std::vector<Packed> packed(pending_.size());
+    const auto pack = [&](usize i) {
+        const Pending& p = pending_[i];
+        Packed& out_entry = packed[i];
+        out_entry.crc32 = Crc32(p.bytes);
         Compression method = Compression::None;
         switch (policy_) {
             case CompressionPolicy::None: break;
@@ -337,17 +348,38 @@ std::vector<u8> PakWriter::Build() const {
                 method = p.bytes.size() >= kAutoZstdThreshold ? Compression::Zstd : Compression::LZ4;
                 break;
         }
-        if (method != Compression::None) packed = CompressWith(method, p.bytes, zstd_level_);
+        if (method != Compression::None) out_entry.bytes = CompressWith(method, p.bytes, zstd_level_);
+        if (!out_entry.bytes.empty()) out_entry.method = method;
+    };
+    u32 threads = threads_ != 0 ? threads_ : std::max(1u, std::thread::hardware_concurrency());
+    threads = static_cast<u32>(std::min<usize>({threads, pending_.size(), kMaxPackThreads}));
+    if (threads_ == 0 && OriginalBytes() < kParallelPackBytes) threads = 1; // not worth starting threads for
+    if (threads <= 1) {
+        for (usize i = 0; i < pending_.size(); ++i) pack(i);
+    } else {
+        std::atomic<usize> next{0};
+        const auto work = [&] {
+            for (usize i = next.fetch_add(1); i < pending_.size(); i = next.fetch_add(1)) pack(i);
+        };
+        std::vector<std::thread> workers;
+        workers.reserve(threads - 1);
+        for (u32 t = 1; t < threads; ++t) workers.emplace_back(work);
+        work();
+        for (std::thread& worker : workers) worker.join();
+    }
+
+    for (usize i = 0; i < pending_.size(); ++i) {
+        const Pending& p = pending_[i];
+        PakEntry e;
+        e.path = p.path;
+        e.size = p.bytes.size();
+        e.crc32 = packed[i].crc32;
+        e.compression = packed[i].method;
+        const std::vector<u8>& stored = packed[i].bytes.empty() ? p.bytes : packed[i].bytes;
         e.offset = out.size();
-        if (packed.empty()) {
-            e.compression = Compression::None;
-            e.stored_size = p.bytes.size();
-            out.insert(out.end(), p.bytes.begin(), p.bytes.end());
-        } else {
-            e.compression = method;
-            e.stored_size = packed.size();
-            out.insert(out.end(), packed.begin(), packed.end());
-        }
+        e.stored_size = stored.size();
+        out.insert(out.end(), stored.begin(), stored.end());
+        std::vector<u8>().swap(packed[i].bytes); // not needed again
         if (encrypt_) {
             ChaCha20Xor(key_, NonceFor(e.offset, "DATA"), 0,
                         std::span<u8>(out.data() + e.offset, static_cast<usize>(e.stored_size)));

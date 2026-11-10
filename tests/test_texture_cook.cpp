@@ -1,7 +1,10 @@
 #include "aether/cook/texture_cook.h"
 #include "test_framework.h"
 
+#include <chrono>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -246,4 +249,53 @@ AETHER_TEST(TextureCook_AutoPicksAstcForMobileAndKeepsBcForDesktop) {
     CHECK(ParseTextureFormat("ASTC4x4", parsed) && parsed == TextureFormat::ASTC_4x4 && ParseTextureFormat("astc8x8", parsed) && parsed == TextureFormat::ASTC_8x8);
     TextureTarget target;
     CHECK(ParseTextureTarget("Mobile", target) && target == TextureTarget::Mobile && !ParseTextureTarget("tablet", target));
+}
+
+// Blocks are compressed on several threads; the cooked bytes must not depend on how many.
+AETHER_TEST(TextureCook_ThreadCountDoesNotChangeTheBytes) {
+    // 300x280: not a multiple of four, and big enough (5,250 blocks) for the top mip to be split.
+    const u32 w = 300, h = 280;
+    std::vector<u8> image = Gradient(w, h, true);
+    u32 x = 0x9e3779b9u;
+    for (usize i = 0; i < image.size(); i += 7) { // some noise, so blocks are not all alike
+        x ^= x << 13, x ^= x >> 17, x ^= x << 5;
+        image[i] = static_cast<u8>(image[i] + (x & 31));
+    }
+    for (cook::TextureFormat format : {cook::TextureFormat::BC1, cook::TextureFormat::BC3, cook::TextureFormat::BC4,
+                                       cook::TextureFormat::BC5, cook::TextureFormat::BC7}) {
+        cook::TextureCookSettings settings;
+        settings.auto_format = false;
+        settings.format = format;
+        settings.quality = 1;
+        settings.threads = 1;
+        const std::vector<u8> serial = cook::SaveAtex(cook::CookTexture(image, w, h, settings));
+        CHECK(!serial.empty());
+        for (u32 threads : {2u, 5u, 0u, 1000u}) {
+            settings.threads = threads;
+            CHECK(cook::SaveAtex(cook::CookTexture(image, w, h, settings)) == serial);
+        }
+    }
+}
+
+// The numbers in docs/design/PERFORMANCE.md ("Texture cooking on several threads") come from this; it does nothing unless a size is given:
+//   AETHER_TEST_FILTER=TextureCook_Measure AETHER_TEXTURE_COOK_SIZE=1024 aether_tests
+AETHER_TEST(TextureCook_Measure) {
+    const char* text = std::getenv("AETHER_TEXTURE_COOK_SIZE");
+    const u32 size = text && *text ? static_cast<u32>(std::strtoul(text, nullptr, 10)) : 0;
+    if (size == 0) return;
+    const std::vector<u8> image = Gradient(size, size, true);
+    for (cook::TextureFormat format : {cook::TextureFormat::BC7, cook::TextureFormat::BC3, cook::TextureFormat::BC1, cook::TextureFormat::BC5}) {
+        for (u32 threads : {1u, 0u}) {
+            cook::TextureCookSettings settings;
+            settings.auto_format = false;
+            settings.format = format;
+            settings.threads = threads;
+            const auto start = std::chrono::steady_clock::now();
+            const cook::CookedTexture cooked = cook::CookTexture(image, size, size, settings);
+            const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+            CHECK(!cooked.mips.empty());
+            std::printf("%s %ux%u with mips, %s: %.1f ms\n", cook::TextureFormatName(format), size, size,
+                        threads == 1 ? "1 thread" : "all threads", ms);
+        }
+    }
 }

@@ -48,6 +48,9 @@ struct TextureCookSettings {
     bool srgb = true;         // colour data: mips are filtered in linear light
     bool normal_map = false;  // mips are renormalized; BC5 under auto
     u32 quality = 2;          // 0 (fastest) .. 4 (best), for BC7 and BC1/BC3
+    // Threads the BC formats are compressed on: 0 uses the machine's (for mips of 256x256 and up), 1 is serial. The cooked bytes are
+    // the same whatever the count, so this is not part of what identifies a cooked texture.
+    u32 threads = 0;
 };
 
 struct CookedMip {

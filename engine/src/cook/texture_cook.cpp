@@ -7,10 +7,12 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstring>
 #include <limits>
 #include <mutex>
+#include <thread>
 
 namespace aether::cook {
 
@@ -18,6 +20,10 @@ namespace {
 
 constexpr char kMagic[4] = {'A', 'T', 'E', 'X'};
 constexpr u32 kVersion = 1;
+// Block compression: a mip is encoded on threads only when it has at least this many blocks (256x256 texels), and on no more than
+// this many.
+constexpr u64 kParallelEncodeBlocks = 4096;
+constexpr u32 kMaxEncodeThreads = 16;
 
 void InitEncoders() {
     static std::once_flag once;
@@ -131,7 +137,7 @@ std::vector<u8> DecodeAstc(const CookedTexture& texture, const CookedMip& mip) {
     return status == ASTCENC_SUCCESS ? out : std::vector<u8>{};
 }
 
-std::vector<u8> EncodeMip(const CookedMip& mip, TextureFormat format, u32 quality, bool srgb, bool normal_map) {
+std::vector<u8> EncodeMip(const CookedMip& mip, TextureFormat format, u32 quality, bool srgb, bool normal_map, u32 threads) {
     if (format == TextureFormat::RGBA8) return mip.data;
     if (IsAstc(format)) return EncodeAstc(mip, format, quality, srgb, normal_map);
     const u32 bw = (mip.width + 3) / 4, bh = (mip.height + 3) / 4;
@@ -143,8 +149,10 @@ std::vector<u8> EncodeMip(const CookedMip& mip, TextureFormat format, u32 qualit
     bc7.m_max_partitions = quality == 0 ? 0 : BC7ENC_MAX_PARTITIONS;
     if (!srgb) bc7enc_compress_block_params_init_linear_weights(&bc7);
     const u32 level = std::min<u32>(quality * 4 + 2, 18); // rgbcx levels 0..18
-    u8 block[64];
-    for (u32 by = 0; by < bh; ++by) {
+    // Blocks are independent, so rows of them are encoded on several threads; each block is written to its own place, which makes
+    // the result the same whatever the thread count. Small mips are not worth starting threads for.
+    const auto encode_row = [&](u32 by) {
+        u8 block[64];
         for (u32 bx = 0; bx < bw; ++bx) {
             FetchBlock(mip.data, mip.width, mip.height, bx, by, block);
             u8* dst = &out[(static_cast<usize>(by) * bw + bx) * block_bytes];
@@ -160,6 +168,22 @@ std::vector<u8> EncodeMip(const CookedMip& mip, TextureFormat format, u32 qualit
                 case TextureFormat::ASTC_8x8: break;
             }
         }
+    };
+    if (threads == 0) threads = std::max(1u, std::thread::hardware_concurrency());
+    threads = std::min({threads, bh, kMaxEncodeThreads});
+    if (static_cast<u64>(bw) * bh < kParallelEncodeBlocks) threads = 1;
+    if (threads <= 1) {
+        for (u32 by = 0; by < bh; ++by) encode_row(by);
+    } else {
+        std::atomic<u32> next{0};
+        const auto work = [&] {
+            for (u32 by = next.fetch_add(1); by < bh; by = next.fetch_add(1)) encode_row(by);
+        };
+        std::vector<std::thread> workers;
+        workers.reserve(threads - 1);
+        for (u32 t = 1; t < threads; ++t) workers.emplace_back(work);
+        work();
+        for (std::thread& worker : workers) worker.join();
     }
     return out;
 }
@@ -330,7 +354,7 @@ CookedTexture CookTexture(std::span<const u8> rgba, u32 width, u32 height, const
         levels.push_back({width, height, std::vector<u8>(rgba.begin(), rgba.begin() + static_cast<usize>(width) * height * 4)});
     }
     for (CookedMip& level : levels) {
-        CookedMip mip{level.width, level.height, EncodeMip(level, texture.format, settings.quality, texture.srgb, settings.normal_map)};
+        CookedMip mip{level.width, level.height, EncodeMip(level, texture.format, settings.quality, texture.srgb, settings.normal_map, settings.threads)};
         texture.mips.push_back(std::move(mip));
     }
     return texture;
