@@ -39,7 +39,10 @@ class HotReloader {
 public:
     HotReloader(AssetDatabase& database, const ImporterRegistry& importers, DerivedDataCache& cache,
                 std::chrono::milliseconds debounce = std::chrono::milliseconds(200),
-                std::string platform = "default");
+                std::string platform = "default",
+                // Mode::Native has the OS report changes so an idle Update() does not walk the content folder: use it where Update() runs
+                // every frame (the editor). Polling stays the default.
+                FileWatcher::Mode watch_mode = FileWatcher::Mode::Poll);
 
     std::vector<AssetChange> Update(FileWatcher::Clock::time_point now);
 

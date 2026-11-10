@@ -1244,17 +1244,25 @@
 [engine/include/aether/assets/file_watcher.h] experimental
   type class FileWatcher
   type enum class Kind
+  type enum class Mode
   type struct FileChange
   type struct FileState
   type struct Pending
+  Clock::time_point last_scan_=Clock::now()
+  FileWatcher&operator=(FileWatcher&&)noexcept
+  FileWatcher(FileWatcher&&)noexcept
+  bool UsesNativeNotifications()const
   bool operator==(const FileState&o)const
   const std::filesystem::path&Root()const
-  explicit FileWatcher(std::filesystem::path root,std::chrono::milliseconds debounce=std::chrono::milliseconds(200))
+  explicit FileWatcher(std::filesystem::path root,std::chrono::milliseconds debounce=std::chrono::milliseconds(200),Mode mode=Mode::Poll)
   std::map<std::string,FileState>Snapshot()const
   std::vector<FileChange>Poll(Clock::time_point now)
+  std::vector<FileChange>SettledBy(Clock::time_point now)
   usize PendingCount()const
+  usize ScanCount()const
   void Note(const std::string&path,FileChange::Kind kind,Clock::time_point now)
   void Refresh(const std::string&path)
+  ~FileWatcher()
 [engine/include/aether/assets/gltf_loader.h] experimental
   type enum class GltfAnimationInterpolation
   type enum class GltfAnimationPath
@@ -1294,7 +1302,7 @@
   type enum class Kind
   type struct AssetChange
   FileWatcher&Watcher()
-  public:HotReloader(AssetDatabase&database,const ImporterRegistry&importers,DerivedDataCache&cache,std::chrono::milliseconds debounce=std::chrono::milliseconds(200),std::string platform="")
+  public:HotReloader(AssetDatabase&database,const ImporterRegistry&importers,DerivedDataCache&cache,std::chrono::milliseconds debounce=std::chrono::milliseconds(200),std::string platform="",FileWatcher::Mode watch_mode=FileWatcher::Mode::Poll)
   std::vector<AssetChange>Update(FileWatcher::Clock::time_point now)
 [engine/include/aether/assets/image.h] experimental
   type enum class MipFilter
