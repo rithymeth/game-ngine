@@ -193,3 +193,10 @@ runner, or the serialization.** CI is green on the same commit for that reason.
 
 Proof is one command in a plain shell, and it has to run **outside** this session, because the earlier outside run never reached
 these tests -- it died at the utility-loader crash first, which is now fixed.
+
+## Cooking: cooked meshes are cached
+
+A cook that changed nothing still rebuilt the LODs and meshlets of every mesh. They now go through the derived data cache like
+importer outputs and cooked textures, so a repeat cook of 1,000 models takes 3.9 s instead of 6.3 s (measured on Linux; the table
+and what is still slow are in `docs/design/PERFORMANCE.md`, "Cooking at scale"). `CookReport` gains `mesh_cache_hits` and
+`mesh_cache_misses`. The archive is unchanged byte for byte; delete `Intermediate/DerivedDataCache` to force a full rebuild.

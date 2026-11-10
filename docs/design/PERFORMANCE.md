@@ -1084,3 +1084,37 @@ RTX 3050 Laptop GPU, RelWithDebInfo), now in GPU milliseconds. "Pre-scene" is th
 - **Scope and caveats.** One scene of four rigid casters on one laptop GPU; the stage boundaries are three points in the frame, not
   per-pass; timer slots must all be written in the frame (a frame that returns early from a pass that cannot begin leaves its timer
   unresolved, and on Vulkan that slot is not reset for the next use).
+
+## Cooking at scale, 10 November 2026
+
+Roadmap priority 4 asks for cooks that stay incremental with thousands of assets. Nothing measured it, so a generated project did:
+2,000 textures (16x16 `.bmp`) and 1,000 models (a 33x33-vertex grid each, 1,089 vertices, 2,048 triangles, every one
+different), all cooked through `always_cook`. Shipping configuration, default compression, Linux x86_64, GCC 13 `RelWithDebInfo`,
+4 cores, three cooks in a row into different output folders. The second and third find everything in the derived data cache.
+Reproduce with `AETHER_TEST_FILTER=Cook_ScaleMeasure AETHER_COOK_SCALE_TEXTURES=2000 AETHER_COOK_SCALE_MODELS=1000 aether_tests`.
+
+| Project | Cold cook | Warm cook, before | Warm cook, after |
+|---|---|---|---|
+| 2,000 textures | 4.3 s | 0.24 s | 0.24 s (unchanged) |
+| 1,000 models | 8.2 s | 6.3 s | 3.9 s |
+| 2,000 textures + 1,000 models | 9.4 s | 6.7 to 6.9 s | 4.3 to 4.4 s |
+
+- **Textures were already incremental; models were not.** A warm cook of 2,000 textures takes 18 times less than a cold one. A warm
+  cook of 1,000 models took 76 percent of a cold one, although every import was a cache hit.
+- **The cause was the mesh cook.** LODs and meshlets (`CookMesh`) were rebuilt for every mesh on every cook; importer outputs,
+  cooked textures and cooked environments went through the derived data cache and cooked meshes did not. With `cook_meshes` off the
+  same warm cook takes 1.65 s, so the rebuild and the bytes it adds were 4.6 s of the 6.3 s.
+- **Fixed:** cooked meshes are cached, keyed by the imported mesh's bytes, every field of `MeshCookSettings` and the platform
+  (`mesh_cache_hits` and `mesh_cache_misses` in `CookReport`). The warm cook of 1,000 models went from 6.3 s to 3.9 s (1.6x), and
+  the mixed project from 6.8 s to 4.3 s. A cached mesh is checked with `LoadAmesh` before it is used, so a damaged entry is rebuilt.
+- **What is left is the archive, not the assets.** With compression off the same warm cook takes 2.0 to 2.2 s, so about 1.9 s of
+  the 3.9 s is compressing 252 MB on one thread, and the rest is reading the cache, checking it and writing the archive. A warm cook
+  still rewrites the whole archive whatever changed. Compressing entries on the job system, or reusing the previous archive's
+  compressed entries, is the next step; neither is built.
+- **Larger meshes:** 200 models of 129x129 vertices (16,641 each) cook cold in 24.7 s and warm in 13 s after the change; the
+  "before" time for that project was not taken, so no ratio is claimed for it.
+- **Not a result:** two cooks of the same generated project in different folders gave archives of different sizes. That is the
+  generator making new asset GUIDs for each project, not a path leaking into the archive (the entries that differ are named by GUID).
+- **Test:** `Cook_AtScaleIsIncrementalAndDeterministic` (300 textures, 150 models): the second cook redoes nothing and is byte
+  identical; changing one texture and one model's `.bin` redoes exactly those two and keeps every GUID; other mesh settings miss the
+  cache; a cook with the caches deleted, and one with every cache entry cut in half, give the same archive as the cached cook.
