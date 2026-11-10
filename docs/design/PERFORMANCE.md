@@ -1139,3 +1139,28 @@ and project as above (4 cores).
   size. Not measured beyond that.
 - **Still open:** the cook itself imports and cooks one asset at a time (the cold column), and a warm cook still reads every
   cached entry and rewrites the whole archive.
+
+## Texture cooking on several threads, 10 November 2026
+
+The first table in this file names texture cooking as the slowest thing measured, and the generated project above hides it: its
+textures are 16x16, where real ones are 1024 or 2048 square. Block compression treats every 4x4 block on its own, so `CookTexture`
+now encodes the rows of blocks of a mip on the machine's threads (at most 16, for mips of 4,096 blocks and up, which is 256x256
+texels). Same machine as above (4 cores); a gradient image with alpha, full mip chain, quality 2. Reproduce with
+`AETHER_TEST_FILTER=TextureCook_Measure AETHER_TEXTURE_COOK_SIZE=1024 aether_tests`.
+
+| Texture | 1 thread | All threads | Ratio |
+|---|---|---|---|
+| BC7 1024x1024 | 1,846 ms | 513 ms | 3.6x |
+| BC7 2048x2048 | 6,042 ms | 1,777 ms | 3.4x |
+| BC3 1024x1024 | 213 ms | 67 ms | 3.2x |
+| BC1 1024x1024 | 293 ms | 86 ms | 3.4x |
+| BC5 1024x1024 | 25 ms | 15 ms | 1.7x |
+
+- **BC7, the default for colour textures, scales with the cores**: 3.4 to 3.6x on 4. A hundred 2048 textures cooked cold went
+  from about ten minutes to about three on this machine (by multiplication, not measured as a project).
+- **BC5 gains least** because its encoder is cheap and the mip chain, still built on one thread, is most of what is left.
+- **The cooked bytes are the same at any thread count** (`TextureCook_ThreadCountDoesNotChangeTheBytes`: BC1, BC3, BC4, BC5 and
+  BC7 on 1, 2, 5, the machine's and 1,000 requested threads), so the thread count is not part of the cache key and cached
+  textures stay valid. `TextureCookSettings::threads = 1` forces the serial path.
+- **Not done:** ASTC (mobile) still encodes on one thread, mips are still generated on one thread, and the cook still takes one
+  asset at a time, so many small textures gain nothing from this.

@@ -206,3 +206,9 @@ and what is still slow are in `docs/design/PERFORMANCE.md`, "Cooking at scale").
 Writing an `.apak` checksums and compresses its entries on all of the machine's threads (up to 16). The archive is byte for byte
 what the single-threaded writer produced. On 4 cores a repeat cook of 1,000 models takes 1.65 s instead of 3.9 s, and a first
 cook 4.7 s instead of 7.3 to 9.2 s. `PakWriter::SetThreads(1)` restores the serial path.
+
+## Cooking: textures are compressed on several threads
+
+BC1, BC3, BC4, BC5 and BC7 textures of 256x256 and up are block-compressed on all of the machine's threads (up to 16). The cooked
+texture is byte for byte the same, so existing caches stay valid. On 4 cores a 2048x2048 BC7 texture cooks in 1.8 s instead of
+6.0 s. ASTC is unchanged. `TextureCookSettings::threads = 1` restores the serial path.
