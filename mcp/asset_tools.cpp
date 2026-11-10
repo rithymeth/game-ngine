@@ -2231,6 +2231,8 @@ void RegisterAssetTools(McpServer& server, std::shared_ptr<detail::AssetHost> ho
                      {"stripped_fields", r.stripped_fields},
                      {"texture_cache_hits", r.texture_cache_hits},
                      {"texture_cache_misses", r.texture_cache_misses},
+                     {"mesh_cache_hits", r.mesh_cache_hits},
+                     {"mesh_cache_misses", r.mesh_cache_misses},
                      {"plugins", r.plugins},
                      {"modules", r.modules},
                      {"warnings", r.warnings},

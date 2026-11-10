@@ -208,6 +208,28 @@ std::vector<AssetGuid> CollectCookSet(const AssetDatabase& database,
 }
 
 // --- Cook ------------------------------------------------------------------------
+namespace {
+
+// Bump when CookMesh or SaveAmesh gives different bytes for the same mesh and settings, so cached meshes from before are not reused.
+constexpr u32 kMeshCookCacheVersion = 1;
+
+// Everything in MeshCookSettings that decides the cooked bytes, for the derived data cache key.
+std::string MeshCookSettingsKey(const MeshCookSettings& s) {
+    return json{{"max_vertices", s.meshlets.max_vertices},
+                {"max_triangles", s.meshlets.max_triangles},
+                {"cone_weight", s.meshlets.cone_weight},
+                {"ratios", s.lods.ratios},
+                {"target_error", s.lods.target_error},
+                {"lock_border", s.lods.lock_border},
+                {"build_lods", s.build_lods},
+                {"build_meshlets", s.build_meshlets},
+                {"build_hlod", s.build_hlod},
+                {"hlod_cluster_radius", s.hlod_cluster_radius}}
+        .dump();
+}
+
+} // namespace
+
 
 CookReport Cook(const CookOptions& options) {
     CookReport report;
@@ -372,18 +394,35 @@ CookReport Cook(const CookOptions& options) {
                     report.original_bytes += sub.data.size();
                     sub_assets.push_back({{"guid", assets::ToString(sub.guid)}, {"key", sub.key}, {"importer", sub.importer}});
                     if (options.cook_meshes && sub.importer == "Mesh") {
-                        assets::MeshData mesh_data;
-                        CookedMesh cooked_mesh;
-                        std::string mesh_error;
+                        // LODs and meshlets are a pure function of the imported mesh and the settings, and they are most of a warm
+                        // cook's time when they are redone (docs/design/PERFORMANCE.md), so they go through the derived data cache.
                         MeshCookSettings mesh_settings;
                         mesh_settings.build_hlod = options.cook_hlod;
-                        if (!assets::DecodeMeshData(sub.data, mesh_data) ||
-                            !CookMesh(mesh_data, mesh_settings, cooked_mesh, &mesh_error)) {
-                            report.warnings.push_back(record.path + " (" + sub.key + "): can't cook mesh" +
-                                                      (mesh_error.empty() ? "" : ": " + mesh_error));
+                        const std::string key = assets::DerivedDataCache::MakeKey(
+                            "CookedMesh", kMeshCookCacheVersion,
+                            std::string_view(reinterpret_cast<const char*>(sub.data.data()), sub.data.size()),
+                            MeshCookSettingsKey(mesh_settings), options.platform);
+                        std::optional<std::vector<u8>> cached = cache.Get(key);
+                        CookedMesh cooked_mesh;
+                        std::vector<u8> amesh;
+                        if (cached && LoadAmesh(*cached, cooked_mesh)) {
+                            ++report.mesh_cache_hits;
+                            amesh = std::move(*cached);
                         } else {
-                            // cooked_mesh.warnings (skinned primitives) stay out of the report so strict_validation projects keep cooking.
-                            const std::vector<u8> amesh = SaveAmesh(cooked_mesh);
+                            ++report.mesh_cache_misses;
+                            assets::MeshData mesh_data;
+                            std::string mesh_error;
+                            if (!assets::DecodeMeshData(sub.data, mesh_data) ||
+                                !CookMesh(mesh_data, mesh_settings, cooked_mesh, &mesh_error)) {
+                                report.warnings.push_back(record.path + " (" + sub.key + "): can't cook mesh" +
+                                                          (mesh_error.empty() ? "" : ": " + mesh_error));
+                            } else {
+                                // cooked_mesh.warnings (skinned primitives) stay out of the report so strict_validation projects keep cooking.
+                                amesh = SaveAmesh(cooked_mesh);
+                                if (!cache.Put(key, amesh)) report.warnings.push_back("Can't cache cooked mesh " + record.path + " (" + sub.key + ")");
+                            }
+                        }
+                        if (!amesh.empty()) {
                             writer.Add("Cooked/" + assets::ToString(sub.guid) + ".amesh", amesh);
                             report.original_bytes += amesh.size();
                         }

@@ -9,7 +9,10 @@
 
 #include <nlohmann/json.hpp>
 
+#include <chrono>
+#include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -648,4 +651,230 @@ AETHER_TEST(Cook_HlodOptionCooks) {
     pak::PakReader reader;
     std::string error;
     CHECK(reader.Open((out / "Game.apak").string(), &error) && reader.Verify().empty());
+}
+
+// --- Cooking at scale -------------------------------------------------------------
+//
+// Roadmap priority 4: cooks stay deterministic and incremental with thousands of assets. The project is generated: `textures`
+// 16x16 .bmp files and `models` .gltf grids of `grid` x `grid` vertices, every one different, all kept by always_cook.
+
+namespace {
+
+void WriteBytes(const stdfs::path& file, const std::vector<u8>& bytes) {
+    stdfs::create_directories(file.parent_path());
+    std::ofstream(file, std::ios::binary).write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+}
+
+template <typename T> void Append(std::vector<u8>& out, const T& value) {
+    const u8* p = reinterpret_cast<const u8*>(&value);
+    out.insert(out.end(), p, p + sizeof(T));
+}
+
+// A 24-bit uncompressed .bmp whose pixels depend on `seed`.
+std::vector<u8> MakeBmp(u32 size, u32 seed) {
+    const u32 row = (size * 3 + 3) & ~3u;
+    std::vector<u8> out = {'B', 'M'};
+    Append<u32>(out, 54 + row * size);
+    Append<u32>(out, 0);
+    Append<u32>(out, 54);
+    Append<u32>(out, 40);
+    Append<i32>(out, static_cast<i32>(size));
+    Append<i32>(out, static_cast<i32>(size));
+    Append<u16>(out, 1);
+    Append<u16>(out, 24);
+    Append<u32>(out, 0);
+    Append<u32>(out, row * size);
+    Append<u32>(out, 2835);
+    Append<u32>(out, 2835);
+    Append<u32>(out, 0);
+    Append<u32>(out, 0);
+    u32 state = seed * 2654435761u + 1u;
+    for (u32 y = 0; y < size; ++y) {
+        for (u32 x = 0; x < row; ++x) {
+            state = state * 1664525u + 1013904223u;
+            out.push_back(x < size * 3 ? static_cast<u8>(state >> 24) : u8{0});
+        }
+    }
+    return out;
+}
+
+// A height-field grid as a .gltf with its .bin next to it; `seed` moves the heights.
+void WriteGridModel(const stdfs::path& folder, const std::string& stem, u32 grid, u32 seed) {
+    std::vector<u8> bin;
+    const u32 vertices = grid * grid;
+    for (u32 z = 0; z < grid; ++z) {
+        for (u32 x = 0; x < grid; ++x) {
+            const f32 fx = static_cast<f32>(x), fz = static_cast<f32>(z);
+            Append<f32>(bin, fx);
+            Append<f32>(bin, std::sin(fx * 0.37f + static_cast<f32>(seed)) * std::cos(fz * 0.23f) * 2.0f);
+            Append<f32>(bin, fz);
+        }
+    }
+    for (u32 i = 0; i < vertices; ++i) {
+        Append<f32>(bin, 0.0f);
+        Append<f32>(bin, 1.0f);
+        Append<f32>(bin, 0.0f);
+    }
+    const u32 index_offset = static_cast<u32>(bin.size());
+    u32 indices = 0;
+    for (u32 z = 0; z + 1 < grid; ++z) {
+        for (u32 x = 0; x + 1 < grid; ++x) {
+            const u32 a = z * grid + x, b = a + 1, c = a + grid, d = c + 1;
+            for (u32 i : {a, c, b, b, c, d}) Append<u32>(bin, i);
+            indices += 6;
+        }
+    }
+    WriteBytes(folder / (stem + ".bin"), bin);
+    const json gltf = {
+        {"asset", {{"version", "2.0"}}},
+        {"buffers", json::array({{{"uri", stem + ".bin"}, {"byteLength", bin.size()}}})},
+        {"bufferViews", json::array({{{"buffer", 0}, {"byteOffset", 0}, {"byteLength", vertices * 12}},
+                                     {{"buffer", 0}, {"byteOffset", vertices * 12}, {"byteLength", vertices * 12}},
+                                     {{"buffer", 0}, {"byteOffset", index_offset}, {"byteLength", indices * 4}}})},
+        {"accessors", json::array({{{"bufferView", 0}, {"componentType", 5126}, {"count", vertices}, {"type", "VEC3"}},
+                                   {{"bufferView", 1}, {"componentType", 5126}, {"count", vertices}, {"type", "VEC3"}},
+                                   {{"bufferView", 2}, {"componentType", 5125}, {"count", indices}, {"type", "SCALAR"}}})},
+        {"meshes", json::array({{{"name", stem},
+                                 {"primitives", json::array({{{"attributes", {{"POSITION", 0}, {"NORMAL", 1}}}, {"indices", 2}, {"mode", 4}}})}}})},
+        {"nodes", json::array({{{"name", stem}, {"mesh", 0}}})},
+        {"scenes", json::array({{{"nodes", json::array({0})}}})},
+        {"scene", 0},
+    };
+    WriteText(folder / (stem + ".gltf"), gltf.dump());
+}
+
+stdfs::path MakeScaleProject(const std::string& name, u32 textures, u32 models, u32 grid) {
+    const stdfs::path parent = stdfs::temp_directory_path() / "aether_cook_tests";
+    stdfs::remove_all(parent / name);
+    stdfs::create_directories(parent);
+    ProjectPaths paths;
+    std::string error;
+    AETHER_CHECK(CreateProject(parent, name, &paths, &error));
+    for (u32 i = 0; i < textures; ++i) {
+        WriteBytes(paths.content / "Textures" / ("d" + std::to_string(i % 16)) / ("t" + std::to_string(i) + ".bmp"), MakeBmp(16, i));
+    }
+    for (u32 i = 0; i < models; ++i) {
+        WriteGridModel(paths.content / "Models" / ("d" + std::to_string(i % 16)), "m" + std::to_string(i), grid, i);
+    }
+    ProjectSettings settings;
+    AETHER_CHECK(LoadProject(paths.file, settings, &error));
+    settings.always_cook = {"Textures/", "Models/"};
+    AETHER_CHECK(SaveProject(paths.file, settings, &error));
+    return paths.file;
+}
+
+u32 EnvCount(const char* name, u32 fallback) {
+    const char* text = std::getenv(name);
+    return text && *text ? static_cast<u32>(std::strtoul(text, nullptr, 10)) : fallback;
+}
+
+} // namespace
+
+// The numbers in docs/design/PERFORMANCE.md ("Cooking at scale") come from this; it does nothing unless a size is given:
+//   AETHER_TEST_FILTER=Cook_ScaleMeasure AETHER_COOK_SCALE_TEXTURES=2000 AETHER_COOK_SCALE_MODELS=1000 aether_tests
+AETHER_TEST(Cook_ScaleMeasure) {
+    const u32 textures = EnvCount("AETHER_COOK_SCALE_TEXTURES", 0);
+    const u32 models = EnvCount("AETHER_COOK_SCALE_MODELS", 0);
+    const u32 grid = EnvCount("AETHER_COOK_SCALE_GRID", 33);
+    if (textures + models == 0) return;
+    const stdfs::path project = MakeScaleProject("ScaleMeasure", textures, models, grid);
+    cook::CookOptions options;
+    options.project_file = project;
+    options.configuration = cook::BuildConfiguration::Shipping;
+    options.cook_meshes = EnvCount("AETHER_COOK_SCALE_MESHES", 1) != 0;
+    if (EnvCount("AETHER_COOK_SCALE_NOCOMPRESS", 0)) options.compression = pak::CompressionPolicy::None;
+    for (int pass = 0; pass < 3; ++pass) {
+        options.output_dir = project.parent_path() / ("Build" + std::to_string(pass));
+        const auto start = std::chrono::steady_clock::now();
+        const cook::CookReport r = cook::Cook(options);
+        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+        CHECK(r.ok);
+        std::printf("cook %d: %.0f ms, %zu assets, texture hit/miss %zu/%zu, import hit/miss %zu/%zu, mesh hit/miss %zu/%zu, pak %llu bytes\n",
+                    pass, ms, r.assets.size(), r.texture_cache_hits, r.texture_cache_misses, r.import_cache_hits,
+                    r.import_cache_misses, r.mesh_cache_hits, r.mesh_cache_misses, static_cast<unsigned long long>(r.pak_bytes));
+    }
+}
+
+// 450 assets: a second cook redoes nothing and gives the same bytes; changing two sources redoes those two only and keeps every
+// GUID; and what the caches hand back is what a cook with no cache builds.
+AETHER_TEST(Cook_AtScaleIsIncrementalAndDeterministic) {
+    const u32 textures = 300, models = 150, grid = 17;
+    const stdfs::path project = MakeScaleProject("AtScale", textures, models, grid);
+    const stdfs::path root = project.parent_path();
+    const auto read_bytes = [](const stdfs::path& path) {
+        std::ifstream in(path, std::ios::binary);
+        AETHER_CHECK(in.good());
+        return std::vector<char>(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    };
+    cook::CookOptions options;
+    options.project_file = project;
+    options.configuration = cook::BuildConfiguration::Shipping;
+
+    options.output_dir = root / "BuildOne";
+    const cook::CookReport first = cook::Cook(options);
+    CHECK(first.ok);
+    CHECK(first.assets.size() == textures + models);
+    CHECK(first.texture_cache_hits == 0 && first.texture_cache_misses == textures);
+    CHECK(first.mesh_cache_hits == 0 && first.mesh_cache_misses == models);
+    CHECK(first.import_cache_hits == 0 && first.import_cache_misses == textures + models);
+
+    options.output_dir = root / "BuildTwo";
+    const cook::CookReport second = cook::Cook(options);
+    CHECK(second.ok);
+    CHECK(second.texture_cache_hits == textures && second.texture_cache_misses == 0);
+    CHECK(second.mesh_cache_hits == models && second.mesh_cache_misses == 0);
+    CHECK(second.import_cache_hits == textures + models && second.import_cache_misses == 0);
+    CHECK(read_bytes(first.pak_file) == read_bytes(second.pak_file));
+    CHECK(read_bytes(first.manifest_file) == read_bytes(second.manifest_file));
+
+    // One texture and one model change. The model's .gltf is the same text: only the .bin beside it differs.
+    WriteBytes(root / "Content/Textures/d7/t7.bmp", MakeBmp(16, 9007));
+    WriteGridModel(root / "Content/Models/d3", "m3", grid, 9003);
+    options.output_dir = root / "BuildThree";
+    const cook::CookReport third = cook::Cook(options);
+    CHECK(third.ok);
+    CHECK(third.texture_cache_hits == textures - 1 && third.texture_cache_misses == 1);
+    CHECK(third.mesh_cache_hits == models - 1 && third.mesh_cache_misses == 1);
+    CHECK(third.import_cache_hits == textures + models - 2 && third.import_cache_misses == 2);
+    CHECK(read_bytes(first.pak_file) != read_bytes(third.pak_file));
+    CHECK(third.assets.size() == first.assets.size());
+    if (third.assets.size() == first.assets.size()) {
+        bool same_identity = true;
+        for (usize i = 0; i < first.assets.size(); ++i) {
+            same_identity = same_identity && first.assets[i].guid == third.assets[i].guid && first.assets[i].path == third.assets[i].path;
+        }
+        CHECK(same_identity);
+    }
+
+    // Different mesh settings are a different cache entry, not a stale hit.
+    options.cook_hlod = true;
+    options.output_dir = root / "BuildHlod";
+    const cook::CookReport hlod = cook::Cook(options);
+    CHECK(hlod.ok);
+    CHECK(hlod.mesh_cache_hits == 0 && hlod.mesh_cache_misses == models);
+    options.cook_hlod = false;
+
+    // Without the caches the cook builds the same archive the caches gave.
+    stdfs::remove_all(root / "Intermediate");
+    options.output_dir = root / "BuildFresh";
+    const cook::CookReport fresh = cook::Cook(options);
+    CHECK(fresh.ok);
+    CHECK(fresh.mesh_cache_hits == 0 && fresh.texture_cache_hits == 0 && fresh.import_cache_hits == 0);
+    CHECK(read_bytes(third.pak_file) == read_bytes(fresh.pak_file));
+    CHECK(read_bytes(third.manifest_file) == read_bytes(fresh.manifest_file));
+
+    // A damaged cache entry is rebuilt, not shipped.
+    usize damaged = 0;
+    for (const auto& entry : stdfs::recursive_directory_iterator(root / "Intermediate")) {
+        if (!entry.is_regular_file() || entry.path().extension() != ".ddc") continue;
+        std::error_code ec;
+        stdfs::resize_file(entry.path(), entry.file_size() / 2, ec);
+        if (!ec) ++damaged;
+    }
+    CHECK(damaged > 0);
+    options.output_dir = root / "BuildRepaired";
+    const cook::CookReport repaired = cook::Cook(options);
+    CHECK(repaired.ok);
+    CHECK(repaired.mesh_cache_hits == 0 && repaired.texture_cache_hits == 0);
+    CHECK(read_bytes(third.pak_file) == read_bytes(repaired.pak_file));
 }

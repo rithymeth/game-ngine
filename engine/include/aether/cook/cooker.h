@@ -98,6 +98,8 @@ struct CookReport {
     usize environment_cache_hits = 0;         // cooked environments reused from the derived data cache
     usize texture_cache_hits = 0;             // cooked textures reused from the derived data cache
     usize texture_cache_misses = 0;           // cooked textures generated or regenerated
+    usize mesh_cache_hits = 0;                // cooked meshes (LODs and meshlets) reused from the derived data cache
+    usize mesh_cache_misses = 0;              // cooked meshes built again (new, or the imported mesh or the settings changed)
     usize import_cache_hits = 0;              // importer outputs reused from the derived data cache
     usize import_cache_misses = 0;            // assets imported again (new, or their source or a dependency changed)
     u64 original_bytes = 0;                   // content as stored, before compression
