@@ -77,6 +77,14 @@ the active node and nodes visited in the latest trace batch.
 Dedicated Qt interaction
 automation for this Blueprint slice is still pending.
 
+The Tilemap Paint dock opens `.atilemap` assets from the Content Browser and
+loads their referenced tileset from the project asset database. It supports
+tile and autotile brushes, layer selection, paint, erase, fill, rectangle, and
+pick tools, undo/redo, wheel zoom, middle-drag pan, and saving both assets.
+Tilemap and tileset edits prompt before changing documents or closing the
+editor; the canvas currently uses deterministic tile swatches rather than
+texture thumbnails.
+
 The Behavior Tree dock opens and saves `.abt` assets, shows the validated
 hierarchy, adds children to composites, duplicates/removes/reorders nodes,
 edits node fields, and reports validation issues. Its Blackboard tab creates,

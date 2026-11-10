@@ -1,5 +1,6 @@
 add_executable(aether_editor_qt WIN32 main.cpp editor_play_runtime.cpp physics_component_panel.cpp behavior_tree_editor_widget.cpp navigation_editor_widget.cpp output_panel.cpp hierarchy_panel.cpp content_browser.cpp editor_helpers.cpp inspector_panel.cpp
     animation_editor_widget.cpp anim_graph_editor_widget.cpp blend_space_editor_widget.cpp montage_editor_widget.cpp sound_cue_editor_widget.cpp blueprint_editor_widget.cpp material_editor_widget.cpp vfx_editor_widget.cpp
+    tilemap_editor_widget.cpp ../src/sprite2d/tilemap_document.cpp
     ../src/graph/blueprint_graph_ops.cpp ../src/graph/blueprint_document.cpp
     ../src/graph/material_document.cpp ../src/audio/cue_document.cpp ../src/vfx/vfx_document.cpp ../src/vfx/vfx_preview.cpp ../src/ai/bt_document.cpp
     ../src/anim/anim_document.cpp ../src/anim/blend_space_document.cpp)
@@ -14,6 +15,7 @@ target_link_libraries(aether_editor_qt PRIVATE
     Aether::Sequencer
     Aether::Blueprint
     Aether::VFX
+    Aether::Sprite2D
     aether_editor_core
     Qt6::Widgets
 )
@@ -37,7 +39,7 @@ if(TARGET Aether::Quests)
 else()
     target_compile_definitions(aether_editor_qt PRIVATE AETHER_QT_KIT_QUESTS=0)
 endif()
-target_compile_features(aether_editor_qt PRIVATE cxx_std_17)
+target_compile_features(aether_editor_qt PRIVATE cxx_std_20)
 target_compile_definitions(aether_editor_qt PRIVATE
     AETHER_QT_TEST_MODEL_PATH="${CMAKE_SOURCE_DIR}/assets/models/test_textured_cube.gltf"
 )
