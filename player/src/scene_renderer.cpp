@@ -29,6 +29,7 @@
 #include "aether/ui/viewport.h"
 #include "aether/vfx/particle_system.h"
 #include "aether/sprite2d/batch.h"
+#include "aether/sprite2d/lights2d.h"
 
 #include <nlohmann/json.hpp>
 
@@ -2345,6 +2346,15 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                 const Vec3 center{camera_world.cols[3].x, camera_world.cols[3].y, camera_world.cols[3].z};
                 sprite_view = sprite2d::ViewRect{center.x - half_x, center.y - half_y, center.x + half_x, center.y + half_y};
             }
+            std::optional<sprite2d::LightMap> sprite_lighting;
+            bool has_sprite_lights = false;
+            world.ForEach<Transform, sprite2d::Light2D>([&](Transform&, sprite2d::Light2D& light) {
+                has_sprite_lights = has_sprite_lights || (light.enabled && std::isfinite(light.intensity) && light.intensity > 0.0f);
+            });
+            if (sprite_view && has_sprite_lights) {
+                sprite_lighting = sprite2d::BuildLightMap(
+                    world, resolvers, {sprite_view->min_x, sprite_view->min_y}, {sprite_view->max_x, sprite_view->max_y}, 0.5f);
+            }
             for (const sprite2d::SpriteBatch& source :
                  sprite2d::BuildSpriteBatches(world, resolvers, sprite_view ? &*sprite_view : nullptr)) {
                 vfx::SpriteBatch batch;
@@ -2364,6 +2374,12 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                     sprite.uv = {tl.u, tl.v, tr.u - tl.u, bl.v - tl.v};
                     sprite.uv_next = sprite.uv;
                     sprite.color = {tl.r, tl.g, tl.b, tl.a};
+                    if (sprite_lighting) {
+                        const sprite2d::LightColor light = sprite_lighting->Sample(sprite.center.x, sprite.center.y);
+                        sprite.color.r *= light.r;
+                        sprite.color.g *= light.g;
+                        sprite.color.b *= light.b;
+                    }
                     batch.instances.push_back(sprite);
                 }
                 if (!batch.instances.empty()) renderer.particle_data.sprites.push_back(std::move(batch));

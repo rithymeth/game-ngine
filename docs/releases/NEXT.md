@@ -256,3 +256,8 @@ pass. This closes the gap where 2D template scenes loaded and simulated correctl
 
 First Person, Third Person, Top Down, and Vehicle projects now include a procedural sky light. Their first scene has an environment
 background and ambient image-based lighting without relying on an imported sky texture.
+
+## Sprite2D draws authored 2D lighting
+
+The packaged renderer now samples the Sprite2D light map for sprites and tilemaps when a scene contains enabled 2D lights. Point,
+spot, and global ambient lights affect the packaged Sprite2D pass, with tilemap occlusion and box shadow casters applied by the light map.
