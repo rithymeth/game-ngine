@@ -220,8 +220,10 @@ all children in one pass (`ChildIndex`, also available to games): destroying a 2
 238 ms, and 50,000 entities 12 ms instead of 1.7 s. A parent cycle in damaged data now ends instead of looping. `SubtreeOf`
 returns an entity and everything under it.
 
-## Rendering: the render scene of a deep hierarchy is extracted about twice as fast
+## Rendering: drawing entities in a hierarchy costs less transform work
 
-`ExtractRenderScene` reads each entity once a frame instead of once for every object under it: 10,000 objects in a tree take
-3.1 ms instead of 5.7 ms, and flat scenes are slightly faster. Transforms and active states are bit for bit what they were.
-`HierarchySnapshot` (`scene/gameplay.h`) is available to games that ask about many entities at once.
+The player's draw loop reads each entity's local transform once a frame instead of once for every drawn entity under it. For
+10,000 entities in a tree the transform work falls from about 2.0 ms to 1.3 ms a frame; scenes without hierarchies cost what
+they did. Transforms are bit for bit the same, with or without interpolated physics poses. `ExtractRenderScene` (used by tools
+and tests, not by the player) got the same treatment: 10,000 objects in a tree, 5.7 ms to about 3 ms. `HierarchySnapshot`
+(`scene/gameplay.h`) is available to games that ask about many entities at once.

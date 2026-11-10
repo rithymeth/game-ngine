@@ -1193,7 +1193,12 @@ entity (i - 1) / 8 (same machine as above); reproduce with
 
 ## Extracting the render scene, 10 November 2026
 
-`ExtractRenderScene` runs every frame. For each object and light it called `IsActiveInHierarchy` and `ComputeWorldTransform`, and
+**Correction, same day:** this section first said `ExtractRenderScene` runs every frame. It does not run at all in the shipping
+player: its only callers are tests, and the player draws through its own loop in `player/src/scene_renderer.cpp`. The numbers
+below are right for the function; what they bought a game was nothing until the next section. The mistake was a search for the
+function's definition without a search for its callers.
+
+For each object and light `ExtractRenderScene` called `IsActiveInHierarchy` and `ComputeWorldTransform`, and
 each of those walks up the parent chain looking up the entity's `Active`, `Transform` and `Parent` (and the parent's GUID in the
 index) at every level: an entity near the root is read again for everything under it. Same machine as above; every entity has a
 `ModelRenderer`; "one tree" is entity i under entity (i - 1) / 8, five or six levels deep; best of five runs. Reproduce with
@@ -1222,3 +1227,32 @@ index) at every level: an entity near the root is read again for everything unde
   mesh key and material lookups and building the object list.
 - **Not changed:** the player's own per-draw transform walk (`ComputeRenderWorldTransform`), lights and UI, which still walk the
   chain per entity.
+
+## The player's draw loop, 10 November 2026
+
+The loop that actually draws a game's models (`SceneRenderer`, `player/src/scene_renderer.cpp`) called
+`ComputeRenderWorldTransform` for every entity with a model, every frame: the same walk up the parent chain as
+`ComputeWorldTransform`, asking the render-pose sampler (interpolated physics bodies) at every level. It now takes the transform
+from a `HierarchySnapshot` that is reset once a frame and given the sampler. Measured on the transform alone, because the loop
+needs a GPU device; same machine and tree as above, best of five, and the machine was noisier than for the earlier tables (the
+"walk" column moved between 0.22 and 0.45 ms across runs of the flat case). Reproduce with
+`AETHER_TEST_FILTER=Player_RenderTransformMeasure AETHER_RENDER_TRANSFORM_ENTITIES=10000 aether_tests`.
+
+| Scene | Per-entity walk | Snapshot, first version | Snapshot, kept |
+|---|---|---|---|
+| 10,000 entities, flat | 0.22 to 0.25 ms | 0.30 ms | 0.24 ms |
+| 10,000 entities, one tree | 1.90 to 2.05 ms | 1.03 ms | 1.25 to 1.31 ms |
+| 50,000 entities, flat | 1.42 to 1.46 ms | 2.04 ms | 1.38 ms |
+| 50,000 entities, one tree | 11.98 to 12.32 ms | 6.26 ms | 7.14 ms |
+
+- **Rejected: the snapshot as it was for `ExtractRenderScene`.** Used for transforms alone it made flat scenes, which is most
+  scenes, 36 to 40 percent slower: every root paid for a node it never shared with anyone.
+- **Kept:** an entity with no `Parent` component is computed directly, as the walk does, and never stored; local matrices are
+  made only when a transform is asked for (an active-state query does not need one). Flat scenes cost what they did and trees are
+  1.5 to 1.7 times faster. The first version was faster on trees (2x) and is not worth the flat regression.
+- **Bit for bit the same**, with and without a sampler (`Player_SnapshotTransformsMatchTheRenderPoseWalk`, 400 entities). The
+  sampler is now asked at most twice for an entity in a frame instead of once for every drawn entity under it.
+- **Not measured: the frame.** This is the transform's share only. The same loop also looks every model up by its path string,
+  searches the player list and builds a clip name string for each entity; those are untouched and unmeasured.
+- **`ExtractRenderScene` after these changes** (three runs, 10,000 objects): flat 1.51 to 1.78 ms, tree 2.94 to 3.79 ms, against
+  1.91 and 5.71 ms before any of this.
