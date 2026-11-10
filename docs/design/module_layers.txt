@@ -66,6 +66,7 @@ aether_templates 3
 aether_ui 3
 aether_ai 4
 aether_module_Navigation 4
+aether_new 4
 aether_netclient 4
 aether_replay_gameplay 4
 aether_replay_ui 4

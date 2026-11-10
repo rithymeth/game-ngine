@@ -676,6 +676,8 @@ add_subdirectory(tools/pak)
 add_subdirectory(tools/plugin)
 add_subdirectory(tools/cook)
 add_subdirectory(tools/package)
+# A project from a template without the editor (docs/manual/01-getting-started.md).
+add_subdirectory(tools/new)
 add_subdirectory(tools/server)
 add_subdirectory(tools/docgen)
 add_subdirectory(tools/loc)
@@ -795,7 +797,7 @@ aether_generate_package_config()
 # Applications and tools, installed alongside the SDK so an installed tree can author and run a game rather than only link
 # against the engine. Each is guarded by its target so a lean configuration that leaves one out still installs.
 set(_aether_install_apps
-    aether_editor_qt aether_player aether_package aether_cook aether_pak
+    aether_editor_qt aether_player aether_package aether_cook aether_pak aether_new
     aether_plugin aether_loc aether_symbolicate aether_server)
 foreach(_aether_app IN LISTS _aether_install_apps)
     if(TARGET ${_aether_app})

@@ -1,4 +1,7 @@
 #include "aether/assets/asset_database.h"
+#include "aether/scene/hierarchy.h"
+#include "aether/scene/components.h"
+#include "aether/assets/gltf_loader.h"
 #include "aether/blueprint/graph.h"
 #include "aether/blueprint/system.h"
 #include "aether/cook/cooker.h"
@@ -21,6 +24,7 @@
 #endif
 #include "test_framework.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
@@ -139,6 +143,50 @@ AETHER_TEST(Templates_EachCreatesAProjectThatCooksAndLoads) {
             CHECK(world.HasComponent<bp::BlueprintInstance>(pickup));
         }
 
+        // Something to see. A template used to be entities with no models, and a new project opened on a black window: the
+        // floor, every pickup and (unless the player is the camera) the player's body carry a model that the database knows
+        // under that GUID and that loads as a closed, outward-facing cube.
+        const auto models = [&](const char* tag) {
+            usize count = 0;
+            for (const Entity e : FindEntitiesWithTag(world, tag)) {
+                const ModelRenderer* renderer = world.GetComponent<ModelRenderer>(e);
+                AETHER_CHECK(renderer != nullptr);
+                if (renderer == nullptr) continue;
+                const assets::AssetRecord* record = db.Find(renderer->model.guid);
+                AETHER_CHECK(record != nullptr && record->path == renderer->asset_path && record->importer == "Model");
+                ++count;
+            }
+            return count;
+        };
+        CHECK(models("Ground") == 1 && models("Pickup") >= 6);
+        CHECK(models("PlayerBody") == (id == "first_person" ? 0u : 1u));
+        for (const Entity body : FindEntitiesWithTag(world, "PlayerBody")) {
+            const Parent* parent = world.GetComponent<Parent>(body);
+            const IdComponent* player_id = world.GetComponent<IdComponent>(player);
+            CHECK(parent != nullptr && player_id != nullptr && parent->parent == player_id->guid);
+        }
+        for (const char* file : {"Models/Floor.gltf", "Models/Player.gltf", "Models/Pickup.gltf"}) {
+            assets::GltfScene gltf;
+            CHECK(assets::LoadGltf((paths.content / file).string(), gltf));
+            CHECK(gltf.meshes.size() == 1 && gltf.meshes[0].primitives.size() == 1 && gltf.materials.size() == 1);
+            if (gltf.meshes.size() != 1 || gltf.meshes[0].primitives.size() != 1) continue;
+            const assets::GltfPrimitive& cube = gltf.meshes[0].primitives[0];
+            CHECK(cube.vertices.size() == 24 && cube.indices.size() == 36);
+            bool outward = cube.indices.size() == 36;
+            for (usize i = 0; i + 2 < cube.indices.size() && outward; i += 3) {
+                const auto at = [&](usize k) {
+                    const assets::GltfVertex& v = cube.vertices[cube.indices[i + k]];
+                    return Vec3(v.position[0], v.position[1], v.position[2]);
+                };
+                const assets::GltfVertex& first = cube.vertices[cube.indices[i]];
+                const Vec3 normal(first.normal[0], first.normal[1], first.normal[2]);
+                const Vec3 face = (at(1) - at(0)).Cross(at(2) - at(0));
+                // Counter-clockwise seen from outside, the stored normal agreeing, and the face on the cube's surface.
+                outward = face.Dot(normal) > 0.0f && at(0).Dot(normal) > 0.49f;
+            }
+            CHECK(outward);
+        }
+
         // Cooked, with everything the game needs, and the player loads it.
         cook::CookOptions options;
         options.project_file = paths.file;
@@ -150,6 +198,9 @@ AETHER_TEST(Templates_EachCreatesAProjectThatCooksAndLoads) {
         for (const cook::CookedAsset& a : report.assets) cooked.push_back(a.path);
         const auto has = [&](const std::string& p) { return std::find(cooked.begin(), cooked.end(), p) != cooked.end(); };
         CHECK(has("Scenes/Main.ascene") && has("Blueprints/BP_Pickup.abp") && has("Input/Gameplay.amapping"));
+        // The models come along because the scene uses them, and the buffer they share comes with them.
+        CHECK(has("Models/Floor.gltf") && has("Models/Pickup.gltf") && has("Models/Player.gltf") == (id != "first_person"));
+        CHECK(std::find(report.extra_files.begin(), report.extra_files.end(), "Models/Cube.bin") != report.extra_files.end());
         CHECK(std::count_if(cooked.begin(), cooked.end(), [](const std::string& p) { return p.rfind("Scripts/", 0) == 0; }) == 1);
         player::GamePackage package;
         CHECK(package.Mount(report.pak_file.string()) && package.LoadManifest(&error));

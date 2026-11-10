@@ -57,6 +57,33 @@ map and change one `C` (coin) to `.` (empty space). Rebuild with the same
 updated map. This is the sample's gameplay source; its simulation is separate
 from the Windows window and renderer.
 
+## Start your own project
+
+Three commands take you from nothing to your own game running, without the editor. They were run for every template on
+Linux; the tools build on Windows and macOS too, where this path has not been run yet. Build the
+tools once (`aether_new`, `aether_package` and `aether_player` are ordinary targets of the engine build; they are in `bin/` of an
+installed SDK), then:
+
+```
+aether_new MyGame --template third_person
+aether_package MyGame/MyGame.aproject --out MyGame/Build
+MyGame/Build/MyGame
+```
+
+`aether_new --list` shows the templates. `aether_new` prints the other two commands with the real paths when it has made the
+project, so there is nothing to remember. What you get is a project folder you own: `Content/Scenes/Main.ascene`, a controller
+script in `Content/Scripts/`, input bindings, a Blueprint for the pickups, and three greybox models in `Content/Models/`.
+
+What each template shows when it runs:
+
+| Template | First frame |
+|---|---|
+| `first_person`, `third_person`, `top_down`, `vehicle` | A grey floor, gold pickups that spin, and (except in first person) a blue box for the player. The sky is black: the templates place no sky light. |
+| `blank` | An empty, dark window. It has a camera and a start point and nothing else, on purpose. |
+| `platformer_2d` | An empty, dark window. The level, physics and controller run, but the packaged player does not draw sprites or tilemaps yet; use the editor to see this one. |
+
+To change something, edit the controller script or move an entity in `Main.ascene`, run `aether_package` again and start the game.
+
 ## If the build does not launch
 
 - If CMake cannot download a dependency, check the network connection and
