@@ -1164,3 +1164,61 @@ texels). Same machine as above (4 cores); a gradient image with alpha, full mip 
   textures stay valid. `TextureCookSettings::threads = 1` forces the serial path.
 - **Not done:** ASTC (mobile) still encodes on one thread, mips are still generated on one thread, and the cook still takes one
   asset at a time, so many small textures gain nothing from this.
+
+## Subtrees in large scenes, 10 November 2026
+
+Roadmap priority 2 names a stress scene of 10,000 entities and more. Parenting is by GUID, and `ChildrenOf` finds an entity's
+children by scanning every parented entity in the world. `Lifecycle::Destroy` and `MakePrefab` called it once for each entity of
+the subtree they walk, so their cost was the subtree's size times the world's. Measured on one tree where entity i's parent is
+entity (i - 1) / 8 (same machine as above); reproduce with
+`AETHER_TEST_FILTER=Hierarchy_Measure AETHER_HIERARCHY_ENTITIES=20000 aether_tests`.
+
+| Entities | `Lifecycle::Destroy` of the root, before | after | `MakePrefab` of the root, before | after |
+|---|---|---|---|---|
+| 5,000 | 15.2 ms | 1.2 ms | 23.0 ms | 14.2 ms |
+| 20,000 | 237.8 ms | 5.7 ms | 316.4 ms | 60.3 ms |
+| 50,000 | 1,704.7 ms | 11.6 ms | 1,645.4 ms | 152.9 ms |
+
+- **It was quadratic:** four times the entities cost sixteen times as long (15 ms to 238 ms). Destroying a 20,000-entity subtree,
+  which is what unloading a streamed cell does, took fourteen 60 Hz frames.
+- **Fixed:** `ChildIndex` (`scene/hierarchy.h`) collects every entity's children in one pass over the world, and both callers build
+  one instead of calling `ChildrenOf` per entity. Destroy is now linear: 147 times faster at 50,000 entities. What is left of
+  `MakePrefab` is serializing every component to JSON, which is its job.
+- **Also fixed, by the same loop:** two entities that are each other's parent (bad data) made both walks push each other for
+  ever. That is from reading the old loops, not from running them; the new ones visit each entity once
+  (`Hierarchy_ACycleEndsInsteadOfLooping`).
+- **Not the problem:** the world position of every entity, which walks up the parent chain through the GUID index, is linear
+  (1.1 ms at 5,000 entities, 11.3 ms at 50,000). It is still recomputed from scratch for each entity each time it is asked for.
+- **Left alone:** `ChildrenOf` itself (a single call is one scan, which is fine) and its two callers in the MCP tools.
+
+## Extracting the render scene, 10 November 2026
+
+`ExtractRenderScene` runs every frame. For each object and light it called `IsActiveInHierarchy` and `ComputeWorldTransform`, and
+each of those walks up the parent chain looking up the entity's `Active`, `Transform` and `Parent` (and the parent's GUID in the
+index) at every level: an entity near the root is read again for everything under it. Same machine as above; every entity has a
+`ModelRenderer`; "one tree" is entity i under entity (i - 1) / 8, five or six levels deep; best of five runs. Reproduce with
+`AETHER_TEST_FILTER=Renderer_ExtractMeasure AETHER_EXTRACT_ENTITIES=10000 aether_tests`.
+
+| Scene | Before | First attempt | After |
+|---|---|---|---|
+| 10,000 objects, flat | 1.91 ms | 2.22 ms | 1.76 ms |
+| 10,000 objects, one tree | 5.71 ms | 3.16 ms | 3.05 ms |
+| 50,000 objects, flat | 7.46 ms | 10.24 ms | 6.50 ms |
+| 50,000 objects, one tree | 27.96 ms | 19.08 ms | 13.41 ms |
+
+- **A hierarchy tripled the cost**: 5.7 ms a frame for 10,000 objects in a tree against 1.9 ms flat, a third of a 60 Hz frame
+  before anything is drawn.
+- **Rejected: a snapshot of the whole world built in one pass each frame** (the "first attempt" column). It helped the tree and
+  made flat scenes 16 to 37 percent slower: it read every entity whether or not anything asked about it, and it allocated and
+  cleared a world-sized array every frame.
+- **Kept: `HierarchySnapshot`** (`scene/gameplay.h`), which reads an entity the first time it is on a chain, keeps its local
+  matrix, parent and active state, and is reset in constant time and reused between frames. The tree is 1.9 to 2.1 times faster
+  and flat scenes 8 to 13 percent faster.
+- **The results are bit for bit the same** as the per-entity walks, because the snapshot multiplies the same matrices in the same
+  order (`Hierarchy_SnapshotMatchesThePerEntityWalks`: 580 entities with rotation and scale, inactive ancestors, an ancestor
+  without a Transform, a missing parent, a chain deeper than the limit and a parent cycle). Caching each entity's finished world
+  matrix would be faster still, but it multiplies in a different order and so changes the low bits; not done.
+- **What is left is not the hierarchy:** about 175 ns an object in the flat case goes to collecting and sorting the entities, the
+  mesh key and material lookups and building the object list.
+- **Not changed:** the player's own per-draw transform walk (`ComputeRenderWorldTransform`), lights and UI, which still walk the
+  chain per entity.

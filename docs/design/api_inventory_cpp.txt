@@ -2491,6 +2491,7 @@
   ShaderBytecode CompileHLSL(const std::string&source,const char*entry_point,const char*target_profile,const char*debug_name="")
   ShaderBytecode CompileHLSLToDXIL(const std::string&source,const char*entry_point,const char*target_profile,const char*debug_name="")
   ShaderBytecode CompileHLSLToSPIRV(const std::string&source,const char*entry_point,const char*target_profile,const char*debug_name="")
+  bool CanCompileRayQueriesToSPIRV()
   const void*Data()const
   usize Size()const
 [engine/include/aether/gfx/swap_chain.h] experimental
@@ -3264,12 +3265,14 @@
   void Clear()
   void Remove(const EntityGuid&guid)
 [engine/include/aether/scene/gameplay.h] experimental
+  type class HierarchySnapshot
   type enum class Projection
   type struct Active
   type struct Camera
   type struct CineCamera
   type struct CollisionMatrix
   type struct Layer
+  type struct Node
   type struct Tags
   ))AETHER_ENUM(aether::Projection,1,AETHER_ENUM_VALUE(Perspective),AETHER_ENUM_VALUE(Orthographic))AETHER_REFLECT(aether::Camera,1,AETHER_FIELD(projection,Field_EditAnywhere),AETHER_FIELD(fov_degrees,Field_EditAnywhere,
   ))AETHER_REFLECT(aether::CineCamera,1,AETHER_FIELD(focal_length_mm,Field_EditAnywhere,
@@ -3287,11 +3290,14 @@
   CollisionMatrix MakeCollisionMatrix(const ProjectSettings&settings)
   CollisionMatrix()
   Entity FindActiveCamera(const World&world,const GuidIndex&guids)
+  HierarchySnapshot(const World&world,const GuidIndex&guids)
   LayerMask CollidesWith(u8 layer)const
   LayerMask MakeLayerMask(const ProjectSettings&settings,const std::vector<std::string>&names,std::vector<std::string>*unknown=nullptr)
   Mat4 CameraProjection(const Camera&camera,f32 aspect)
   Mat4 CameraView(const World&world,const GuidIndex&guids,Entity entity)
   Mat4 OrthographicRH(f32 width,f32 height,f32 z_near,f32 z_far)
+  Mat4 WorldTransform(Entity entity)
+  bool ActiveInHierarchy(Entity entity)
   bool AddTag(World&world,Entity entity,const std::string&tag)
   bool HasTag(const World&world,Entity entity,std::string_view tag)
   bool IsActiveInHierarchy(const World&world,const GuidIndex&guids,Entity entity)
@@ -3299,13 +3305,17 @@
   bool RemoveTag(World&world,Entity entity,std::string_view tag)
   bool SetLayersCollide(ProjectSettings&settings,u8 a,u8 b,bool collide)
   bool ShouldCollide(u8 a,u8 b)const
+  const Node*Find(Entity entity)
   f32 CineFovDegrees(const CineCamera&camera)
   i32 FindLayer(const ProjectSettings&settings,std::string_view name)
+  public:HierarchySnapshot()=default
   std::vector<Entity>FindEntitiesWithTag(const World&world,std::string_view tag)
   u8 LayerOf(const World&world,Entity entity)
   usize ApplyCineCameras(World&world)
+  void Reset(const World&world,const GuidIndex&guids)
   void Set(u8 a,u8 b,bool collide)
 [engine/include/aether/scene/hierarchy.h] experimental
+  type class ChildIndex
   type struct Parent
   AETHER_REFLECT(aether::Parent,1,AETHER_FIELD(parent,Field_ReadOnly,
   Entity GetParent(const World&world,const GuidIndex&guids,Entity entity)
@@ -3313,7 +3323,10 @@
   Mat4 LocalTransformMatrix(const Transform&transform)
   Vec3 WorldPosition(const World&world,const GuidIndex&guids,Entity entity)
   bool WouldCreateCycle(const World&world,const GuidIndex&guids,Entity entity,Entity new_parent)
+  public:explicit ChildIndex(const World&world)
+  std::span<const Entity>Children(const World&world,Entity entity)const
   std::vector<Entity>ChildrenOf(const World&world,const GuidIndex&guids,Entity entity)
+  std::vector<Entity>SubtreeOf(const World&world,Entity root)
 [engine/include/aether/scene/level_instance.h] experimental
   type struct LevelInstance
   type struct LevelInstanceReport

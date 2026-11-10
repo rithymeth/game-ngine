@@ -72,6 +72,51 @@ void StripPushConstantBindings(std::vector<unsigned int>& words) {
 
 } // namespace
 
+bool CanCompileRayQueriesToSPIRV() {
+    // Parsed once, with the settings CompileHLSLToSPIRV uses, and without its error log: a front end that cannot do this is a
+    // fact about the build, reported once below, not an error in a shader.
+    static const bool can = [] {
+        InitializeOnce();
+        static const char kProbe[] =
+            "RaytracingAccelerationStructure g_Scene : register(t0, space4);\n"
+            "float4 PSMain(float4 position : SV_Position) : SV_Target {\n"
+            "    RayDesc ray;\n"
+            "    ray.Origin = float3(position.x, position.y, 0.0);\n"
+            "    ray.Direction = float3(0.0, 0.0, 1.0);\n"
+            "    ray.TMin = 0.001;\n"
+            "    ray.TMax = 10.0;\n"
+            "    RayQuery<RAY_FLAG_NONE> query;\n"
+            "    query.TraceRayInline(g_Scene, RAY_FLAG_NONE, 0xFF, ray);\n"
+            "    query.Proceed();\n"
+            "    return query.CommittedStatus() == COMMITTED_TRIANGLE_HIT ? float4(1, 0, 0, 1) : float4(0, 0, 0, 1);\n"
+            "}\n";
+        glslang::TShader shader(EShLangFragment);
+        const char* text = kProbe;
+        const int length = static_cast<int>(sizeof(kProbe) - 1);
+        const char* name = "ray_query_probe";
+        shader.setStringsWithLengthsAndNames(&text, &length, &name, 1);
+        shader.setPreamble("#define __spirv__ 1\n");
+        shader.setEntryPoint("PSMain");
+        shader.setSourceEntryPoint("PSMain");
+        shader.setEnvInput(glslang::EShSourceHlsl, EShLangFragment, glslang::EShClientVulkan, 100);
+        shader.setEnvClient(glslang::EShClientVulkan, glslang::EShTargetVulkan_1_2);
+        shader.setEnvTarget(glslang::EShTargetSpv, glslang::EShTargetSpv_1_5);
+        const EShMessages messages = static_cast<EShMessages>(EShMsgSpvRules | EShMsgVulkanRules | EShMsgReadHlsl);
+        bool ok = shader.parse(GetDefaultResources(), 100, false, messages);
+        if (ok) {
+            glslang::TProgram program;
+            program.addShader(&shader);
+            ok = program.link(messages);
+        }
+        if (!ok) {
+            AETHER_LOG_INFO("Shader", "This build's HLSL-to-SPIR-V compiler (glslang) cannot compile ray queries; "
+                                      "Vulkan ray tracing is reported as unsupported");
+        }
+        return ok;
+    }();
+    return can;
+}
+
 ShaderBytecode CompileHLSL(const std::string&, const char* entry_point, const char*, const char* debug_name) {
     AETHER_LOG_ERROR("Shader", "CompileHLSL (\"%s\", %s): DXBC needs D3DCompiler, which only exists on Windows",
                      debug_name, entry_point);

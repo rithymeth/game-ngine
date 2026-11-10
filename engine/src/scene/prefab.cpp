@@ -508,10 +508,16 @@ PrefabData MakePrefab(const World& world, const GuidIndex& guids, Entity root) {
         Entity entity;
         PrefabLocalId parent;
     };
+    (void)guids; // children are found through their Parent component, not the index
+    const ChildIndex child_index(world); // one pass, not a scan of the world for every entity
+    std::unordered_set<u32> seen;
     std::vector<Item> stack{{root, 0}};
     while (!stack.empty()) {
         const Item item = stack.back();
         stack.pop_back();
+        if (!seen.insert(item.entity.index).second) {
+            continue; // a cycle in bad data
+        }
         PrefabEntity entity;
         entity.id = next_id++;
         entity.parent = item.parent;
@@ -533,10 +539,9 @@ PrefabData MakePrefab(const World& world, const GuidIndex& guids, Entity root) {
         }
         prefab.entities.push_back(std::move(entity));
         // Children in entity order; pushed reversed so they pop in order.
-        std::vector<Entity> children = ChildrenOf(world, guids, item.entity);
-        std::sort(children.begin(), children.end(), [](Entity a, Entity b) { return a.index > b.index; });
-        for (Entity child : children) {
-            stack.push_back({child, prefab.entities.back().id});
+        const std::span<const Entity> children = child_index.Children(world, item.entity);
+        for (usize i = children.size(); i-- > 0;) {
+            stack.push_back({children[i], prefab.entities.back().id});
         }
     }
     return prefab;

@@ -170,6 +170,10 @@ ShaderBytecode CompileHLSLToSPIRV(const std::string& source, const char* entry_p
     return CompileWithDxc(source, entry_point, target_profile, debug_name, true);
 }
 
+bool CanCompileRayQueriesToSPIRV() {
+    return true; // DXC compiles shader model 6.5 ray queries to SPIR-V
+}
+
 ShaderBytecode CompileHLSLToDXIL(const std::string& source, const char* entry_point, const char* target_profile,
                                  const char* debug_name) {
     return CompileWithDxc(source, entry_point, target_profile, debug_name, false);

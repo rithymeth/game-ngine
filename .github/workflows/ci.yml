@@ -50,7 +50,9 @@ jobs:
   linux:
     name: Linux (GCC)
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    # 20 minutes was not enough: the job was cancelled while still compiling on almost every pull-request run of 9 and 10 November 2026
+    # (step 516 of 919 at the limit on a cold cache), so the gate rarely reported anything. A run that completes takes about 17.
+    timeout-minutes: 45
     if: github.event_name == 'pull_request'
     # The pull-request gate keeps the portable GCC path: compile, unit and
     # functional behavior, API/format regressions, and Vulkan validation.

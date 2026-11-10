@@ -3,7 +3,12 @@
 #include "aether/scene/hierarchy.h"
 #include "test_framework.h"
 
+#include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <vector>
 
 using namespace aether;
 
@@ -185,4 +190,30 @@ AETHER_TEST(Renderer_PostProcessVolumesBlend) {
     p = BlendPostProcess(scene, Vec3(0, 0, 0)); // far away: only the global volume
     AETHER_CHECK(std::fabs(p.exposure_compensation - 1.0f) < 1e-5f && p.bloom_intensity == 0.05f);
     AETHER_CHECK(BlendPostProcess(RenderScene{}, Vec3(0, 0, 0)).exposure_compensation == 0.0f); // defaults
+}
+
+// The numbers in docs/design/PERFORMANCE.md ("Extracting the render scene") come from this; it does nothing unless a size is given:
+//   AETHER_TEST_FILTER=Renderer_ExtractMeasure AETHER_EXTRACT_ENTITIES=20000 aether_tests
+AETHER_TEST(Renderer_ExtractMeasure) {
+    const char* text = std::getenv("AETHER_EXTRACT_ENTITIES");
+    const u32 count = text && *text ? static_cast<u32>(std::strtoul(text, nullptr, 10)) : 0;
+    if (count == 0) return;
+    for (const bool tree : {false, true}) {
+        Scene s;
+        std::vector<Entity> entities;
+        for (u32 i = 0; i < count; ++i) {
+            entities.push_back(s.Mesh(Vec3(static_cast<f32>(i % 100), 0, static_cast<f32>(i / 100)), (i % 2) ? "models/a.gltf" : "models/b.gltf"));
+            // One tree, entity i under entity (i - 1) / 8: five or six levels at these sizes.
+            if (tree && i > 0) s.world.AddComponent(entities[i], Parent{s.world.GetComponent<IdComponent>(entities[(i - 1) / 8])->guid});
+        }
+        double best = 1e30;
+        usize objects = 0;
+        for (int run = 0; run < 5; ++run) {
+            const auto start = std::chrono::steady_clock::now();
+            const RenderScene scene = ExtractRenderScene(s.world, s.guids);
+            best = std::min(best, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count());
+            objects = scene.objects.size();
+        }
+        std::printf("%u entities, %s: ExtractRenderScene %.2f ms (%zu objects)\n", count, tree ? "one tree" : "flat", best, objects);
+    }
 }

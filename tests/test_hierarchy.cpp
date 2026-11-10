@@ -1,10 +1,20 @@
+#include "aether/scene/gameplay.h"
 #include "aether/scene/hierarchy.h"
+#include "aether/scene/lifecycle.h"
+#include "aether/scene/prefab.h"
 #include "aether/scene/serialization.h"
 #include "aether/scene/world_origin.h"
 #include "test_framework.h"
 
+#include <chrono>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <filesystem>
+#include <span>
+#include <unordered_map>
+#include <vector>
 
 using namespace aether;
 
@@ -211,4 +221,217 @@ AETHER_TEST(WorldOrigin_LoaderReportsTheOrigin) {
     AETHER_CHECK_NEAR(used.x, 100000.0, 1e-6);
     AETHER_CHECK_NEAR(used.z, 200000.0, 1e-6);
     std::filesystem::remove(path);
+}
+
+// The numbers in docs/design/PERFORMANCE.md ("Subtrees in large scenes") come from this; it does nothing unless a size is given:
+//   AETHER_TEST_FILTER=Hierarchy_Measure AETHER_HIERARCHY_ENTITIES=20000 aether_tests
+AETHER_TEST(Hierarchy_Measure) {
+    const char* text = std::getenv("AETHER_HIERARCHY_ENTITIES");
+    const u32 count = text && *text ? static_cast<u32>(std::strtoul(text, nullptr, 10)) : 0;
+    if (count == 0) return;
+    const auto ms_since = [](std::chrono::steady_clock::time_point start) {
+        return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+    };
+    // One tree: entity i's parent is entity (i - 1) / 8, so every entity is under entity 0.
+    const auto build = [&](Scene& s, std::vector<Entity>& entities) {
+        for (u32 i = 0; i < count; ++i) {
+            entities.push_back(s.Make(Vec3(static_cast<f32>(i), 0, 0)));
+            if (i > 0) s.Attach(entities[i], entities[(i - 1) / 8]);
+        }
+    };
+    {
+        Scene s;
+        std::vector<Entity> entities;
+        build(s, entities);
+        auto start = std::chrono::steady_clock::now();
+        Vec3 sum(0, 0, 0);
+        for (Entity e : entities) sum = sum + WorldPosition(s.world, s.guids, e);
+        std::printf("%u entities: world position of every entity: %.1f ms (checksum %.0f)\n", count, ms_since(start), sum.x);
+        start = std::chrono::steady_clock::now();
+        const PrefabData prefab = MakePrefab(s.world, s.guids, entities[0]);
+        std::printf("%u entities: MakePrefab of the root: %.1f ms (%zu entities)\n", count, ms_since(start), prefab.entities.size());
+    }
+    {
+        Scene s;
+        std::vector<Entity> entities;
+        build(s, entities);
+        Lifecycle lifecycle(s.world, s.guids);
+        const auto start = std::chrono::steady_clock::now();
+        lifecycle.Destroy(entities[0]);
+        std::printf("%u entities: Lifecycle::Destroy of the root: %.1f ms (%zu left)\n", count, ms_since(start),
+                    static_cast<usize>(s.world.EntityCount()));
+    }
+}
+
+// ChildIndex answers what ChildrenOf answers, for every entity of a forest with the awkward cases in it.
+AETHER_TEST(Hierarchy_ChildIndexMatchesChildrenOf) {
+    Scene s;
+    std::vector<Entity> entities;
+    u32 x = 0x2545f491u;
+    const auto next = [&] {
+        x ^= x << 13, x ^= x >> 17, x ^= x << 5;
+        return x;
+    };
+    for (u32 i = 0; i < 600; ++i) {
+        entities.push_back(s.Make(Vec3(static_cast<f32>(i), 0, 0)));
+        if (i > 0 && next() % 5 != 0) s.Attach(entities[i], entities[next() % i]); // one in five stays a root
+    }
+    // A parent that does not exist, a null parent, and a parent destroyed after its children were attached.
+    s.world.AddComponent(s.Make(Vec3(0, 0, 0)), Parent{EntityGuid{123, 456}});
+    s.world.AddComponent(s.Make(Vec3(0, 0, 0)), Parent{EntityGuid{}});
+    s.world.DestroyEntity(entities[7]);
+    entities.erase(entities.begin() + 7);
+
+    const ChildIndex index(s.world);
+    usize with_children = 0;
+    for (Entity e : entities) {
+        const std::vector<Entity> expected = ChildrenOf(s.world, s.guids, e);
+        const std::span<const Entity> got = index.Children(s.world, e);
+        AETHER_CHECK(std::vector<Entity>(got.begin(), got.end()) == expected);
+        with_children += expected.empty() ? 0 : 1;
+    }
+    AETHER_CHECK(with_children > 50);
+    AETHER_CHECK(index.Children(s.world, kNullEntity).empty());
+}
+
+AETHER_TEST(Hierarchy_SubtreeIsParentsFirstInEntityOrder) {
+    Scene s;
+    //        a
+    //      b   c
+    //     d e   f      and g apart
+    Entity a = s.Make(Vec3(0, 0, 0)), b = s.Make(Vec3(0, 0, 0)), c = s.Make(Vec3(0, 0, 0)), d = s.Make(Vec3(0, 0, 0));
+    Entity e = s.Make(Vec3(0, 0, 0)), f = s.Make(Vec3(0, 0, 0)), g = s.Make(Vec3(0, 0, 0));
+    s.Attach(f, c);
+    s.Attach(e, b);
+    s.Attach(c, a);
+    s.Attach(d, b);
+    s.Attach(b, a);
+    AETHER_CHECK(SubtreeOf(s.world, a) == std::vector<Entity>({a, b, d, e, c, f}));
+    AETHER_CHECK(SubtreeOf(s.world, b) == std::vector<Entity>({b, d, e}));
+    AETHER_CHECK(SubtreeOf(s.world, g) == std::vector<Entity>({g}));
+    AETHER_CHECK(SubtreeOf(s.world, kNullEntity).empty());
+}
+
+// Bad data can make two entities each other's parent. Walking from one of them has to end, with each entity once.
+AETHER_TEST(Hierarchy_ACycleEndsInsteadOfLooping) {
+    {
+        Scene s;
+        Entity a = s.Make(Vec3(1, 0, 0)), b = s.Make(Vec3(2, 0, 0)), c = s.Make(Vec3(3, 0, 0));
+        s.Attach(a, b);
+        s.Attach(b, a);
+        s.Attach(c, b);
+        AETHER_CHECK(SubtreeOf(s.world, a) == std::vector<Entity>({a, b, c}));
+        AETHER_CHECK(MakePrefab(s.world, s.guids, a).entities.size() == 3);
+        Lifecycle lifecycle(s.world, s.guids);
+        lifecycle.Destroy(a);
+        AETHER_CHECK(!s.world.IsAlive(a) && !s.world.IsAlive(b) && !s.world.IsAlive(c));
+    }
+}
+
+// A large subtree: everything under the root goes, children before their parents, and nothing else does.
+AETHER_TEST(Hierarchy_DestroyingALargeSubtreeTakesExactlyThatSubtree) {
+    Scene s;
+    std::vector<Entity> entities;
+    const u32 count = 4000;
+    for (u32 i = 0; i < count; ++i) {
+        entities.push_back(s.Make(Vec3(static_cast<f32>(i), 0, 0)));
+        if (i > 1) s.Attach(entities[i], entities[(i - 2) / 6 + (i % 2)]); // two trees, rooted at 0 and 1
+    }
+    const std::vector<Entity> doomed = SubtreeOf(s.world, entities[0]);
+    const std::vector<Entity> kept = SubtreeOf(s.world, entities[1]);
+    AETHER_CHECK(doomed.size() + kept.size() == count && doomed.size() > 100 && kept.size() > 100);
+
+    std::vector<EntityGuid> destroyed; // in the order OnDestroy ran
+    Lifecycle lifecycle(s.world, s.guids);
+    LifecycleCallbacks callbacks;
+    callbacks.on_destroy = [&](Entity entity) {
+        if (const IdComponent* id = s.world.GetComponent<IdComponent>(entity)) destroyed.push_back(id->guid);
+    };
+    lifecycle.Register<Transform>(callbacks);
+    lifecycle.BeginPlay();
+    std::unordered_map<EntityGuid, EntityGuid> parent_of;
+    for (Entity e : doomed) {
+        if (const Parent* p = s.world.GetComponent<Parent>(e)) parent_of[s.world.GetComponent<IdComponent>(e)->guid] = p->parent;
+    }
+    lifecycle.Destroy(entities[0]);
+
+    AETHER_CHECK(destroyed.size() == doomed.size());
+    std::unordered_map<EntityGuid, usize> position;
+    for (usize i = 0; i < destroyed.size(); ++i) position[destroyed[i]] = i;
+    bool children_first = true;
+    for (const auto& [child, parent] : parent_of) {
+        children_first = children_first && position.count(child) && position.count(parent) && position[child] < position[parent];
+    }
+    AETHER_CHECK(children_first);
+    for (Entity e : doomed) AETHER_CHECK(!s.world.IsAlive(e));
+    for (Entity e : kept) AETHER_CHECK(s.world.IsAlive(e));
+    AETHER_CHECK(s.world.EntityCount() == kept.size());
+}
+
+// HierarchySnapshot gives, bit for bit, what ComputeWorldTransform and IsActiveInHierarchy give for every entity, with the awkward
+// cases in the world: rotation and scale, inactive ancestors, an ancestor without a Transform, a parent that does not exist,
+// a chain longer than the depth limit, a parent cycle, and an entity destroyed after the snapshot's world was built.
+AETHER_TEST(Hierarchy_SnapshotMatchesThePerEntityWalks) {
+    Scene s;
+    std::vector<Entity> entities;
+    u32 x = 0x1234abcdu;
+    const auto next = [&] {
+        x ^= x << 13, x ^= x >> 17, x ^= x << 5;
+        return x;
+    };
+    const auto unit = [&] { return static_cast<f32>(next() % 2000) / 1000.0f - 1.0f; };
+    for (u32 i = 0; i < 500; ++i) {
+        Transform t;
+        t.position = Vec3(unit() * 50, unit() * 50, unit() * 50);
+        t.rotation = Quaternion::FromAxisAngle(Vec3(0, 1, 0), unit() * 3.0f);
+        t.scale = Vec3(1.0f + unit() * 0.5f, 1.0f + unit() * 0.5f, 1.0f + unit() * 0.5f);
+        const Entity e = s.world.CreateEntity(t);
+        EnsureGuid(s.world, e, &s.guids);
+        entities.push_back(e);
+        if (i > 0 && next() % 6 != 0) s.Attach(e, entities[next() % i]);
+        if (next() % 9 == 0) s.world.AddComponent(e, Active{next() % 2 == 0});
+    }
+    // A chain of 80, deeper than kMaxHierarchyDepth.
+    Entity link = entities[0];
+    for (int i = 0; i < 80; ++i) {
+        const Entity e = s.Make(Vec3(1, 0.5f, 0));
+        s.Attach(e, link);
+        entities.push_back(link = e);
+    }
+    // An ancestor without a Transform, with a child under it.
+    const Entity bare = s.world.CreateEntity(IdComponent{NewEntityGuid()});
+    s.guids.Add(s.world.GetComponent<IdComponent>(bare)->guid, bare);
+    s.world.AddComponent(bare, Parent{s.world.GetComponent<IdComponent>(entities[3])->guid});
+    const Entity under_bare = s.Make(Vec3(2, 3, 4));
+    s.Attach(under_bare, bare);
+    entities.push_back(bare);
+    entities.push_back(under_bare);
+    // A parent that does not exist, and two entities that are each other's parent.
+    const Entity orphan = s.Make(Vec3(7, 8, 9));
+    s.world.AddComponent(orphan, Parent{EntityGuid{11, 22}});
+    const Entity loop_a = s.Make(Vec3(1, 2, 3)), loop_b = s.Make(Vec3(4, 5, 6));
+    s.Attach(loop_a, loop_b);
+    s.Attach(loop_b, loop_a);
+    entities.insert(entities.end(), {orphan, loop_a, loop_b});
+    // A parent destroyed after its children were attached.
+    s.world.DestroyEntity(entities[5]);
+
+    HierarchySnapshot snapshot(s.world, s.guids);
+    usize inactive = 0, compared = 0;
+    for (Entity e : entities) {
+        if (!s.world.IsAlive(e)) continue;
+        const Mat4 expected = ComputeWorldTransform(s.world, s.guids, e);
+        const Mat4 got = snapshot.WorldTransform(e);
+        AETHER_CHECK(std::memcmp(&expected, &got, sizeof(Mat4)) == 0);
+        const bool active = IsActiveInHierarchy(s.world, s.guids, e);
+        AETHER_CHECK(snapshot.ActiveInHierarchy(e) == active);
+        inactive += active ? 0 : 1;
+        ++compared;
+    }
+    AETHER_CHECK(compared > 550 && inactive > 20 && inactive < compared);
+    // Entities the snapshot does not hold answer as the walks do for a dead entity.
+    const Mat4 identity = Mat4::Identity();
+    const Mat4 dead = snapshot.WorldTransform(entities[5]);
+    AETHER_CHECK(std::memcmp(&identity, &dead, sizeof(Mat4)) == 0);
+    AETHER_CHECK(snapshot.ActiveInHierarchy(entities[5]) && snapshot.ActiveInHierarchy(kNullEntity));
 }

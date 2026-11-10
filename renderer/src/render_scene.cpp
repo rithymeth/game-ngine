@@ -69,7 +69,11 @@ Aabb Aabb::Transformed(const Mat4& m) const {
 
 RenderScene ExtractRenderScene(const World& world, const GuidIndex& guids, const ExtractOptions& options) {
     RenderScene scene;
-    auto active = [&](Entity e) { return IsActiveInHierarchy(world, guids, e); };
+    // Each entity is read once instead of at every level of every chain it is on, for every object and light: the same
+    // transforms and active states (docs/design/PERFORMANCE.md, "Extracting the render scene").
+    static thread_local HierarchySnapshot hierarchy; // kept between frames for its memory
+    hierarchy.Reset(world, guids);
+    auto active = [&](Entity e) { return hierarchy.ActiveInHierarchy(e); };
     for (Entity e : EntitiesWith<ModelRenderer>(world)) {
         if (!active(e)) continue;
         const ModelRenderer& mesh = *world.GetComponent<ModelRenderer>(e);
@@ -77,7 +81,7 @@ RenderScene ExtractRenderScene(const World& world, const GuidIndex& guids, const
         if (options.mesh_bounds && !options.mesh_bounds(mesh, local)) local = Aabb{Vec3(-0.5f, -0.5f, -0.5f), Vec3(0.5f, 0.5f, 0.5f)};
         RenderObject object;
         object.entity = e;
-        object.world = ComputeWorldTransform(world, guids, e);
+        object.world = hierarchy.WorldTransform(e);
         object.bounds = local.Transformed(object.world);
         object.mesh_key = MeshKey(mesh);
         if (const MaterialParameters* params = world.GetComponent<MaterialParameters>(e)) {
@@ -92,19 +96,19 @@ RenderScene ExtractRenderScene(const World& world, const GuidIndex& guids, const
     for (Entity e : EntitiesWith<DirectionalLight>(world)) {
         if (!active(e)) continue;
         const DirectionalLight& l = *world.GetComponent<DirectionalLight>(e);
-        const Mat4 m = ComputeWorldTransform(world, guids, e);
+        const Mat4 m = hierarchy.WorldTransform(e);
         scene.directional_lights.push_back({e, Direction(m, Vec3(0, 0, -1)), l.color * l.intensity, l.cast_shadows});
     }
     for (Entity e : EntitiesWith<PointLight>(world)) {
         if (!active(e)) continue;
         const PointLight& l = *world.GetComponent<PointLight>(e);
-        const Mat4 m = ComputeWorldTransform(world, guids, e);
+        const Mat4 m = hierarchy.WorldTransform(e);
         scene.point_lights.push_back({e, Point(m, Vec3(0, 0, 0)), l.color * l.intensity, std::max(l.range, 0.0f), l.cast_shadows});
     }
     for (Entity e : EntitiesWith<SpotLight>(world)) {
         if (!active(e)) continue;
         const SpotLight& l = *world.GetComponent<SpotLight>(e);
-        const Mat4 m = ComputeWorldTransform(world, guids, e);
+        const Mat4 m = hierarchy.WorldTransform(e);
         const f32 outer = std::clamp(l.outer_angle_degrees, 0.0f, 89.0f);
         const f32 inner = std::clamp(l.inner_angle_degrees, 0.0f, outer);
         scene.spot_lights.push_back({e, Point(m, Vec3(0, 0, 0)), Direction(m, Vec3(0, 0, -1)), l.color * l.intensity,

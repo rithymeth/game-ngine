@@ -29,6 +29,41 @@ struct Active {
 // False if the entity or any ancestor has Active{false}.
 bool IsActiveInHierarchy(const World& world, const GuidIndex& guids, Entity entity);
 
+// World transforms and active states for code that asks about many entities at once (a frame's render scene).
+// ComputeWorldTransform and IsActiveInHierarchy look up an entity's Transform, Parent and Active again at every level of the parent
+// chain, for every entity asked about; this reads each entity once, the first time it is on a chain, and then answers with the
+// same loops over what it holds, so the results are bit for bit theirs. It reads the world when asked, so it is valid until
+// entities or their Transform, Parent or Active components change: call Reset then. Keep one and Reset it each frame rather than
+// making a new one, so its memory is reused.
+class HierarchySnapshot {
+public:
+    HierarchySnapshot() = default;
+    HierarchySnapshot(const World& world, const GuidIndex& guids) { Reset(world, guids); }
+
+    // Forgets everything read so far and looks at `world` from now on. Constant time.
+    void Reset(const World& world, const GuidIndex& guids);
+
+    // What ComputeWorldTransform(world, guids, entity) returns.
+    Mat4 WorldTransform(Entity entity);
+    // What IsActiveInHierarchy(world, guids, entity) returns.
+    bool ActiveInHierarchy(Entity entity);
+
+private:
+    struct Node {
+        Mat4 local;
+        Entity parent;         // the live parent, or kNullEntity
+        u32 epoch = 0;         // read in this Reset when it equals epoch_
+        bool has_transform = false;
+        bool inactive = false; // has Active{false}
+    };
+    const Node* Find(Entity entity);
+
+    const World* world_ = nullptr;
+    const GuidIndex* guids_ = nullptr;
+    std::vector<Node> nodes_; // by entity index
+    u32 epoch_ = 0;
+};
+
 // ---------------------------------------------------------------------------
 // Camera
 // ---------------------------------------------------------------------------
