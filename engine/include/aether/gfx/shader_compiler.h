@@ -35,4 +35,10 @@ ShaderBytecode CompileHLSLToSPIRV(const std::string& source, const char* entry_p
 ShaderBytecode CompileHLSLToDXIL(const std::string& source, const char* entry_point, const char* target_profile,
                                  const char* debug_name = "shader");
 
+// Whether CompileHLSLToSPIRV can compile HLSL that uses inline ray queries (RaytracingAccelerationStructure, RayQuery). DXC can.
+// The glslang HLSL front end, which stands in for DXC off Windows, could not in any version tried, so there this is the result of
+// compiling a small ray-query shader once. The Vulkan device reports ray tracing only where this is true: a GPU with ray queries is
+// no use to a build that cannot compile the shaders for them.
+bool CanCompileRayQueriesToSPIRV();
+
 } // namespace aether::gfx

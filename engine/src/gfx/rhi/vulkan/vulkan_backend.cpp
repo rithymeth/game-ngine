@@ -480,7 +480,10 @@ VkDevice CreateLogicalDevice(VkPhysicalDevice physical_device, const PhysicalDev
     // feedback test read zero depth in a third to a half of its runs, with no ray tracing call ever made; nothing found in the depth copy's
     // barriers explains it, so the extension is not enabled unless asked for.
     const char* opt_in = std::getenv("AETHER_VK_RAY_TRACING");
-    ray_tracing = opt_in != nullptr && std::strcmp(opt_in, "1") == 0 && ProbeRayTracing(physical_device);
+    // And only where the shaders for it can be compiled: lavapipe has ray queries, and off Windows the HLSL front end that stands in
+    // for DXC does not, which left a device that said it supported ray tracing and could build no pipeline that used it.
+    ray_tracing = opt_in != nullptr && std::strcmp(opt_in, "1") == 0 && ProbeRayTracing(physical_device) &&
+                  gfx::CanCompileRayQueriesToSPIRV();
     VkPhysicalDeviceAccelerationStructureFeaturesKHR acceleration_features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR};
     VkPhysicalDeviceRayQueryFeaturesKHR ray_query_features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR};
     if (ray_tracing) {
