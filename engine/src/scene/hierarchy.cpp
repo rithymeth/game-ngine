@@ -1,6 +1,7 @@
 #include "aether/scene/hierarchy.h"
 
 #include <algorithm>
+#include <unordered_set>
 
 namespace aether {
 
@@ -70,6 +71,60 @@ std::vector<Entity> ChildrenOf(const World& world, const GuidIndex& guids, Entit
     (void)guids;
     std::sort(children.begin(), children.end(), [](Entity a, Entity b) { return a.index < b.index; });
     return children;
+}
+
+ChildIndex::ChildIndex(const World& world) {
+    const ComponentId parent_id = GetComponentId<Parent>();
+    world.ForEachArchetype([&](const Archetype& archetype) {
+        if (!archetype.Has(parent_id)) {
+            return;
+        }
+        for (usize c = 0; c < archetype.ChunkCount(); ++c) {
+            const Entity* entities = archetype.EntityArray(c);
+            const auto* parents = static_cast<const Parent*>(archetype.ComponentArray(c, parent_id));
+            for (u32 row = 0; row < archetype.ChunkEntityCount(c); ++row) {
+                if (!parents[row].parent.IsNull()) {
+                    children_[parents[row].parent].push_back(entities[row]);
+                }
+            }
+        }
+    });
+    for (auto& [guid, children] : children_) {
+        (void)guid;
+        std::sort(children.begin(), children.end(), [](Entity a, Entity b) { return a.index < b.index; });
+    }
+}
+
+std::span<const Entity> ChildIndex::Children(const World& world, Entity entity) const {
+    const IdComponent* id = world.IsAlive(entity) ? world.GetComponent<IdComponent>(entity) : nullptr;
+    if (id == nullptr || id->guid.IsNull()) {
+        return {};
+    }
+    const auto it = children_.find(id->guid);
+    return it == children_.end() ? std::span<const Entity>() : std::span<const Entity>(it->second);
+}
+
+std::vector<Entity> SubtreeOf(const World& world, Entity root) {
+    std::vector<Entity> subtree;
+    if (!world.IsAlive(root)) {
+        return subtree;
+    }
+    const ChildIndex index(world);
+    std::unordered_set<u32> seen;
+    std::vector<Entity> stack{root};
+    while (!stack.empty()) {
+        const Entity entity = stack.back();
+        stack.pop_back();
+        if (!seen.insert(entity.index).second) {
+            continue; // a cycle in bad data
+        }
+        subtree.push_back(entity);
+        const std::span<const Entity> children = index.Children(world, entity);
+        for (usize i = children.size(); i-- > 0;) { // reversed, so they pop in entity order
+            stack.push_back(children[i]);
+        }
+    }
+    return subtree;
 }
 
 } // namespace aether

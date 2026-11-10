@@ -1164,3 +1164,29 @@ texels). Same machine as above (4 cores); a gradient image with alpha, full mip 
   textures stay valid. `TextureCookSettings::threads = 1` forces the serial path.
 - **Not done:** ASTC (mobile) still encodes on one thread, mips are still generated on one thread, and the cook still takes one
   asset at a time, so many small textures gain nothing from this.
+
+## Subtrees in large scenes, 10 November 2026
+
+Roadmap priority 2 names a stress scene of 10,000 entities and more. Parenting is by GUID, and `ChildrenOf` finds an entity's
+children by scanning every parented entity in the world. `Lifecycle::Destroy` and `MakePrefab` called it once for each entity of
+the subtree they walk, so their cost was the subtree's size times the world's. Measured on one tree where entity i's parent is
+entity (i - 1) / 8 (same machine as above); reproduce with
+`AETHER_TEST_FILTER=Hierarchy_Measure AETHER_HIERARCHY_ENTITIES=20000 aether_tests`.
+
+| Entities | `Lifecycle::Destroy` of the root, before | after | `MakePrefab` of the root, before | after |
+|---|---|---|---|---|
+| 5,000 | 15.2 ms | 1.2 ms | 23.0 ms | 14.2 ms |
+| 20,000 | 237.8 ms | 5.7 ms | 316.4 ms | 60.3 ms |
+| 50,000 | 1,704.7 ms | 11.6 ms | 1,645.4 ms | 152.9 ms |
+
+- **It was quadratic:** four times the entities cost sixteen times as long (15 ms to 238 ms). Destroying a 20,000-entity subtree,
+  which is what unloading a streamed cell does, took fourteen 60 Hz frames.
+- **Fixed:** `ChildIndex` (`scene/hierarchy.h`) collects every entity's children in one pass over the world, and both callers build
+  one instead of calling `ChildrenOf` per entity. Destroy is now linear: 147 times faster at 50,000 entities. What is left of
+  `MakePrefab` is serializing every component to JSON, which is its job.
+- **Also fixed, by the same loop:** two entities that are each other's parent (bad data) made both walks push each other for
+  ever. That is from reading the old loops, not from running them; the new ones visit each entity once
+  (`Hierarchy_ACycleEndsInsteadOfLooping`).
+- **Not the problem:** the world position of every entity, which walks up the parent chain through the GUID index, is linear
+  (1.1 ms at 5,000 entities, 11.3 ms at 50,000). It is still recomputed from scratch for each entity each time it is asked for.
+- **Left alone:** `ChildrenOf` itself (a single call is one scan, which is fine) and its two callers in the MCP tools.

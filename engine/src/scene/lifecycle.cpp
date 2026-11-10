@@ -3,6 +3,7 @@
 #include "aether/scene/gameplay.h"
 #include "aether/scene/hierarchy.h"
 
+#include <unordered_set>
 #include <algorithm>
 
 namespace aether {
@@ -217,12 +218,19 @@ void Lifecycle::FinishPass() {
 void Lifecycle::DestroyNow(Entity root) {
     // The entity and its descendants, children first.
     std::vector<std::pair<u32, Entity>> doomed;
+    // The children come from one pass over the world: asking ChildrenOf for each entity made destroying a large subtree cost its
+    // size times the world's (docs/design/PERFORMANCE.md).
+    const ChildIndex children(world_);
+    std::unordered_set<u32> seen;
     std::vector<std::pair<u32, Entity>> stack{{0, root}};
     while (!stack.empty()) {
         const auto [depth, entity] = stack.back();
         stack.pop_back();
+        if (!seen.insert(entity.index).second) {
+            continue; // a cycle in bad data
+        }
         doomed.push_back({depth, entity});
-        for (Entity child : ChildrenOf(world_, guids_, entity)) {
+        for (Entity child : children.Children(world_, entity)) {
             stack.push_back({depth + 1, child});
         }
     }

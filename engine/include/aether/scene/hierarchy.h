@@ -4,6 +4,8 @@
 #include "aether/scene/components.h"
 #include "aether/scene/entity_guid.h"
 
+#include <span>
+#include <unordered_map>
 #include <vector>
 
 namespace aether {
@@ -39,6 +41,23 @@ bool WouldCreateCycle(const World& world, const GuidIndex& guids, Entity entity,
 
 // Live children of `entity`, in entity-index order.
 std::vector<Entity> ChildrenOf(const World& world, const GuidIndex& guids, Entity entity);
+
+// The children of every entity, found in one pass over the world. ChildrenOf scans the whole world on each call, so walking a
+// subtree with it costs (entities in the subtree) x (entities in the world): build one of these instead when asking about more
+// than a few entities. It is a snapshot; build it again after entities or Parent components change.
+class ChildIndex {
+public:
+    explicit ChildIndex(const World& world);
+    // Live children of `entity`, in entity-index order: what ChildrenOf returns.
+    std::span<const Entity> Children(const World& world, Entity entity) const;
+
+private:
+    std::unordered_map<EntityGuid, std::vector<Entity>> children_;
+};
+
+// `root` and every live entity under it, each once, a parent before its children and siblings in entity-index order. One pass
+// over the world whatever the size of the subtree, and a cycle in bad data ends instead of looping.
+std::vector<Entity> SubtreeOf(const World& world, Entity root);
 
 } // namespace aether
 

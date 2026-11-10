@@ -212,3 +212,10 @@ cook 4.7 s instead of 7.3 to 9.2 s. `PakWriter::SetThreads(1)` restores the seri
 BC1, BC3, BC4, BC5 and BC7 textures of 256x256 and up are block-compressed on all of the machine's threads (up to 16). The cooked
 texture is byte for byte the same, so existing caches stay valid. On 4 cores a 2048x2048 BC7 texture cooks in 1.8 s instead of
 6.0 s. ASTC is unchanged. `TextureCookSettings::threads = 1` restores the serial path.
+
+## Scenes: destroying or making a prefab from a large subtree is no longer quadratic
+
+`Lifecycle::Destroy` and `MakePrefab` scanned the whole world once for every entity under the one they were given. They now find
+all children in one pass (`ChildIndex`, also available to games): destroying a 20,000-entity subtree takes 5.7 ms instead of
+238 ms, and 50,000 entities 12 ms instead of 1.7 s. A parent cycle in damaged data now ends instead of looping. `SubtreeOf`
+returns an entity and everything under it.

@@ -3306,6 +3306,7 @@
   usize ApplyCineCameras(World&world)
   void Set(u8 a,u8 b,bool collide)
 [engine/include/aether/scene/hierarchy.h] experimental
+  type class ChildIndex
   type struct Parent
   AETHER_REFLECT(aether::Parent,1,AETHER_FIELD(parent,Field_ReadOnly,
   Entity GetParent(const World&world,const GuidIndex&guids,Entity entity)
@@ -3313,7 +3314,10 @@
   Mat4 LocalTransformMatrix(const Transform&transform)
   Vec3 WorldPosition(const World&world,const GuidIndex&guids,Entity entity)
   bool WouldCreateCycle(const World&world,const GuidIndex&guids,Entity entity,Entity new_parent)
+  public:explicit ChildIndex(const World&world)
+  std::span<const Entity>Children(const World&world,Entity entity)const
   std::vector<Entity>ChildrenOf(const World&world,const GuidIndex&guids,Entity entity)
+  std::vector<Entity>SubtreeOf(const World&world,Entity root)
 [engine/include/aether/scene/level_instance.h] experimental
   type struct LevelInstance
   type struct LevelInstanceReport
