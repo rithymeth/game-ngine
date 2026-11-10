@@ -227,3 +227,12 @@ The player's draw loop reads each entity's local transform once a frame instead 
 they did. Transforms are bit for bit the same, with or without interpolated physics poses. `ExtractRenderScene` (used by tools
 and tests, not by the player) got the same treatment: 10,000 objects in a tree, 5.7 ms to about 3 ms. `HierarchySnapshot`
 (`scene/gameplay.h`) is available to games that ask about many entities at once.
+
+## Onboarding: a project from the command line, and templates that show something
+
+`aether_new <Name> --template <id>` creates a project from a template without the editor (`aether_new --list` shows them) and
+prints the two commands that package and run it. A project made from the First Person, Third Person, Top Down or Vehicle template
+used to run to a black window, because the templates held no models: they now generate a floor, a player body and pickups from one
+cube in three colours. All six templates were created, packaged and run this way on Linux. Two still open on a dark window: Blank,
+by design, and 2D Platformer, because the packaged player does not draw sprites or tilemaps. The getting-started page has the
+three commands.

@@ -13,6 +13,7 @@
 #include "aether/scene/components.h"
 #include "aether/scene/entity_guid.h"
 #include "aether/scene/gameplay.h"
+#include "aether/scene/hierarchy.h"
 #include "aether/scene/script_component.h"
 #include "aether/sprite2d/components.h"
 #include "aether/sprite2d/physics2d.h"
@@ -214,6 +215,85 @@ bp::Blueprint PickupBlueprint() {
     return blueprint;
 }
 
+// --- Greybox models ---------------------------------------------------------------
+
+// A model a template's scene shows: where it is in the project and the GUID the asset database gave it.
+struct GreyboxModel {
+    std::string path;
+    assets::AssetGuid guid;
+};
+
+template <typename T> void AppendBytes(std::vector<u8>& out, const T& value) {
+    const u8* bytes = reinterpret_cast<const u8*>(&value);
+    out.insert(out.end(), bytes, bytes + sizeof(T));
+}
+
+// Models/Cube.bin (a unit cube about the origin: 24 vertices with normals and UVs, 36 indices) and three .gltf files that
+// draw it in different colours. Generated, like the rest of a template, so there is no art to ship or to go missing: the
+// floor, the player and the pickups are scaled cubes until the game's own models replace them.
+bool WriteGreyboxModels(const stdfs::path& content, std::string* error) {
+    std::vector<u8> positions, normals, uvs, indices;
+    // For each face: its normal and the two axes that span it, so that u x v points along the normal (counter-clockwise).
+    const Vec3 faces[6][3] = {{Vec3(1, 0, 0), Vec3(0, 0, -1), Vec3(0, 1, 0)},  {Vec3(-1, 0, 0), Vec3(0, 0, 1), Vec3(0, 1, 0)},
+                              {Vec3(0, 1, 0), Vec3(1, 0, 0), Vec3(0, 0, -1)},  {Vec3(0, -1, 0), Vec3(1, 0, 0), Vec3(0, 0, 1)},
+                              {Vec3(0, 0, 1), Vec3(1, 0, 0), Vec3(0, 1, 0)},   {Vec3(0, 0, -1), Vec3(-1, 0, 0), Vec3(0, 1, 0)}};
+    for (u16 f = 0; f < 6; ++f) {
+        const Vec3 n = faces[f][0], u = faces[f][1], v = faces[f][2];
+        const f32 corner[4][2] = {{-1, -1}, {1, -1}, {1, 1}, {-1, 1}};
+        for (const auto& c : corner) {
+            const Vec3 p = (n + u * c[0] + v * c[1]) * 0.5f;
+            for (f32 x : {p.x, p.y, p.z}) AppendBytes(positions, x);
+            for (f32 x : {n.x, n.y, n.z}) AppendBytes(normals, x);
+            AppendBytes(uvs, (c[0] + 1.0f) * 0.5f);
+            AppendBytes(uvs, 1.0f - (c[1] + 1.0f) * 0.5f);
+        }
+        for (u16 i : {0, 1, 2, 0, 2, 3}) AppendBytes(indices, static_cast<u16>(f * 4 + i));
+    }
+    std::vector<u8> bin = positions;
+    bin.insert(bin.end(), normals.begin(), normals.end());
+    bin.insert(bin.end(), uvs.begin(), uvs.end());
+    bin.insert(bin.end(), indices.begin(), indices.end());
+    std::error_code ec;
+    stdfs::create_directories(content / "Models", ec);
+    if (!fs::WriteFileBytes((content / "Models/Cube.bin").string(), bin.data(), bin.size())) {
+        return Fail(error, "Couldn't write " + (content / "Models/Cube.bin").string());
+    }
+    struct Look {
+        const char* file;
+        const char* material;
+        f32 r, g, b;
+    };
+    for (const Look& look : {Look{"Floor", "GreyboxFloor", 0.45f, 0.47f, 0.50f}, Look{"Player", "GreyboxPlayer", 0.16f, 0.45f, 0.85f},
+                             Look{"Pickup", "GreyboxPickup", 0.95f, 0.72f, 0.12f}}) {
+        const json gltf = {
+            {"asset", {{"version", "2.0"}, {"generator", "Aether project template"}}},
+            {"buffers", json::array({{{"uri", "Cube.bin"}, {"byteLength", bin.size()}}})},
+            {"bufferViews", json::array({{{"buffer", 0}, {"byteOffset", 0}, {"byteLength", positions.size()}},
+                                         {{"buffer", 0}, {"byteOffset", positions.size()}, {"byteLength", normals.size()}},
+                                         {{"buffer", 0}, {"byteOffset", positions.size() + normals.size()}, {"byteLength", uvs.size()}},
+                                         {{"buffer", 0}, {"byteOffset", positions.size() + normals.size() + uvs.size()}, {"byteLength", indices.size()}}})},
+            {"accessors", json::array({{{"bufferView", 0}, {"componentType", 5126}, {"count", 24}, {"type", "VEC3"},
+                                        {"min", {-0.5, -0.5, -0.5}}, {"max", {0.5, 0.5, 0.5}}},
+                                       {{"bufferView", 1}, {"componentType", 5126}, {"count", 24}, {"type", "VEC3"}},
+                                       {{"bufferView", 2}, {"componentType", 5126}, {"count", 24}, {"type", "VEC2"}},
+                                       {{"bufferView", 3}, {"componentType", 5123}, {"count", 36}, {"type", "SCALAR"}}})},
+            {"materials", json::array({{{"name", look.material},
+                                        {"pbrMetallicRoughness",
+                                         {{"baseColorFactor", {look.r, look.g, look.b, 1.0}}, {"metallicFactor", 0.0}, {"roughnessFactor", 0.8}}}}})},
+            {"meshes", json::array({{{"name", look.file},
+                                     {"primitives", json::array({{{"attributes", {{"POSITION", 0}, {"NORMAL", 1}, {"TEXCOORD_0", 2}}},
+                                                                  {"indices", 3}, {"material", 0}, {"mode", 4}}})}}})},
+            {"nodes", json::array({{{"name", look.file}, {"mesh", 0}}})},
+            {"scenes", json::array({{{"nodes", json::array({0})}}})},
+            {"scene", 0},
+        };
+        const std::string text = gltf.dump(2) + "\n";
+        const stdfs::path file = content / "Models" / (std::string(look.file) + ".gltf");
+        if (!fs::WriteFileBytes(file.string(), text.data(), text.size())) return Fail(error, "Couldn't write " + file.string());
+    }
+    return true;
+}
+
 // --- The scene ------------------------------------------------------------------
 
 struct SceneBuilder {
@@ -221,8 +301,16 @@ struct SceneBuilder {
 
     // One entity: a transform, tags, and optionally a camera, a script and a Blueprint.
     void Add(Vec3 position, Quaternion rotation, const std::vector<std::string>& tags, bool camera = false,
-             const assets::AssetGuid& script = {}, const assets::AssetGuid& blueprint = {}, bool character = false) {
-        json components = {{"Transform", reflect::ToJson(Transform{position, rotation})}};
+             const assets::AssetGuid& script = {}, const assets::AssetGuid& blueprint = {}, bool character = false,
+             const GreyboxModel* model = nullptr, Vec3 scale = Vec3(1.0f, 1.0f, 1.0f)) {
+        json components = {{"Transform", reflect::ToJson(Transform{position, rotation, scale})}};
+        if (model != nullptr) {
+            // Something to see: without a model an entity is a point in space, and a new project opened on a black window.
+            ModelRenderer renderer;
+            renderer.model.guid = model->guid;
+            SetModelPath(renderer, model->path);
+            components["ModelRenderer"] = reflect::ToJson(renderer);
+        }
         if (!tags.empty()) {
             Tags t;
             t.names = tags;
@@ -257,13 +345,28 @@ struct SceneBuilder {
     }
 #endif
 
+    // A model under the entity added last (parenting is by GUID): the visible body of an entity whose own transform a
+    // controller script drives.
+    void AddChildOfLast(Vec3 local_position, const std::vector<std::string>& tags, const GreyboxModel& model, Vec3 scale) {
+        const std::string parent = entities.back()["guid"].get<std::string>();
+        Add(local_position, Quaternion::Identity(), tags, false, {}, {}, false, &model, scale);
+        Parent link;
+        if (ParseEntityGuid(parent, link.parent)) entities.back()["components"]["Parent"] = reflect::ToJson(link);
+    }
+
     // `count` pickups on a circle of `radius` about (cx, y, cz).
-    void Ring(const assets::AssetGuid& blueprint, int count, f32 radius, f32 cx, f32 y, f32 cz) {
+    void Ring(const assets::AssetGuid& blueprint, const GreyboxModel& model, int count, f32 radius, f32 cx, f32 y, f32 cz) {
         for (int i = 0; i < count; ++i) {
             const f32 a = 2.0f * kPi * static_cast<f32>(i) / static_cast<f32>(count);
             Add(Vec3(cx + radius * std::sin(a), y, cz - radius * std::cos(a)), Quaternion::Identity(), {"Pickup"}, false, {},
-                blueprint);
+                blueprint, false, &model, Vec3(0.5f, 0.5f, 0.5f));
         }
+    }
+
+    // A slab to stand on, its top at y = 0. Scenery only: collision, where the build has physics, is AddGround's.
+    void Floor(const GreyboxModel& model, f32 half_size) {
+        Add(Vec3(0.0f, -0.1f, 0.0f), Quaternion::Identity(), {"Ground"}, false, {}, {}, false, &model,
+            Vec3(half_size * 2.0f, 0.2f, half_size * 2.0f));
     }
 
     bool Write(const stdfs::path& file, std::string* error) const {
@@ -474,11 +577,19 @@ bool CreateProjectFromTemplate(const stdfs::path& parent_dir, const std::string&
         if (!WriteInput(content, look, look, error)) return false;
     }
 
+    if (kind != Kind::Blank && !WriteGreyboxModels(content, error)) return false;
+
     // The scene refers to them by GUID, which the asset database gives them.
     assets::AssetGuid script, pickup;
+    GreyboxModel floor_model{"Models/Floor.gltf", {}}, player_model{"Models/Player.gltf", {}}, pickup_model{"Models/Pickup.gltf", {}};
     if (kind != Kind::Blank) {
         assets::AssetDatabase database(content);
         database.Scan();
+        for (GreyboxModel* model : {&floor_model, &player_model, &pickup_model}) {
+            const assets::AssetRecord* record = database.FindByPath(model->path);
+            if (!record) return Fail(error, "The template's models weren't picked up by the asset database");
+            model->guid = record->guid;
+        }
         const assets::AssetRecord* s = database.FindByPath(script_path);
         const assets::AssetRecord* p = database.FindByPath("Blueprints/BP_Pickup.abp");
         if (!s || !p) return Fail(error, "The template's assets weren't picked up by the asset database");
@@ -495,29 +606,39 @@ bool CreateProjectFromTemplate(const stdfs::path& parent_dir, const std::string&
         case Kind::FirstPerson:
             // The player is the camera, at eye height; the pickups ring it.
             scene.Add(Vec3(0, 1.7f, 0), Quaternion::Identity(), {"Player", "MainCamera"}, true, script);
-            scene.Ring(pickup, 8, 6.0f, 0, 1.2f, 0);
+            scene.Floor(floor_model, 20.0f);
+            scene.Ring(pickup, pickup_model, 8, 6.0f, 0, 1.2f, 0);
             break;
         case Kind::ThirdPerson:
+            // The entity stands at its feet; the body is a child so the box sits on the ground, not half in it.
             scene.Add(Vec3(0, 0, 0), Quaternion::Identity(), {"Player"}, false, script, {}, true);
+            scene.AddChildOfLast(Vec3(0, 0.9f, 0), {"PlayerBody"}, player_model, Vec3(0.6f, 1.8f, 0.6f));
             scene.Add(Vec3(0, 3, 6), PitchDown(0.3f), {"MainCamera"}, true);
+            scene.Floor(floor_model, 20.0f);
 #if AETHER_TEMPLATE_HAS_PHYSICS
             scene.AddGround();
 #endif
-            scene.Ring(pickup, 8, 7.0f, 0, 1.0f, 0);
+            scene.Ring(pickup, pickup_model, 8, 7.0f, 0, 1.0f, 0);
             break;
         case Kind::TopDown:
             scene.Add(Vec3(0, 0, 0), Quaternion::Identity(), {"Player"}, false, script);
+            scene.AddChildOfLast(Vec3(0, 0.9f, 0), {"PlayerBody"}, player_model, Vec3(0.6f, 1.8f, 0.6f));
             scene.Add(Vec3(0, 16, 8), PitchDown(1.1f), {"MainCamera"}, true);
-            scene.Ring(pickup, 6, 6.0f, 0, 0.8f, 0);
-            scene.Ring(pickup, 10, 12.0f, 0, 0.8f, 0);
+            scene.Floor(floor_model, 20.0f);
+            scene.Ring(pickup, pickup_model, 6, 6.0f, 0, 0.8f, 0);
+            scene.Ring(pickup, pickup_model, 10, 12.0f, 0, 0.8f, 0);
             break;
         case Kind::Vehicle:
             scene.Add(Vec3(0, 0.5f, 0), Quaternion::Identity(), {"Player"}, false, script);
+            scene.AddChildOfLast(Vec3(0, 0.1f, 0), {"PlayerBody"}, player_model, Vec3(1.8f, 1.0f, 4.0f));
             scene.Add(Vec3(0, 4, 9), PitchDown(0.35f), {"MainCamera"}, true);
+            // A road long enough for the markers ahead.
+            scene.Add(Vec3(0.0f, -0.1f, -50.0f), Quaternion::Identity(), {"Ground"}, false, {}, {}, false, &floor_model,
+                      Vec3(30.0f, 0.2f, 140.0f));
             // A line of markers ahead to drive through.
             for (int i = 1; i <= 8; ++i) {
                 scene.Add(Vec3((i % 2 == 0 ? 3.0f : -3.0f), 1.0f, -12.0f * static_cast<f32>(i)), Quaternion::Identity(),
-                          {"Pickup"}, false, {}, pickup);
+                          {"Pickup"}, false, {}, pickup, false, &pickup_model, Vec3(0.5f, 0.5f, 0.5f));
             }
             break;
     }

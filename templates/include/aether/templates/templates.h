@@ -11,9 +11,10 @@
 // controller script, input bindings and a Blueprint, so the first thing you
 // see is a game that's wired up, not an empty folder.
 //
-// Every template is generated in code (no art: the scenes are entities with
-// transforms, tags, a camera, a script and a Blueprint), so what a template
-// holds is always a legal project of this engine version.
+// Every template is generated in code, its art included (the floor, the player
+// and the pickups are one generated cube in three colours), so what a template
+// holds is always a legal project of this engine version and shows something
+// when it runs.
 
 namespace aether::templates {
 
@@ -39,6 +40,7 @@ const ProjectTemplate* FindProjectTemplate(const std::string& id);
 //   Content/Scripts/<Controller>.luau   the controller (see the template)
 //   Content/Blueprints/BP_Pickup.abp    a spinning pickup, placed in the scene
 //   Content/Input/*.aaction, Gameplay.amapping   Move, Look and Jump bindings
+//   Content/Models/Floor|Player|Pickup.gltf, Cube.bin   the greybox models the scene shows
 // Blank has only the scene. The project's startup scene is Main, and
 // `always_cook` lists Input/ (nothing in a scene refers to it).
 // False, with `error`, for an unknown or unavailable template, or whatever
