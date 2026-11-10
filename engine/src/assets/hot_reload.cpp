@@ -37,9 +37,9 @@ std::vector<AssetGuid> DependentsOf(const AssetDatabase& database, const AssetGu
 } // namespace
 
 HotReloader::HotReloader(AssetDatabase& database, const ImporterRegistry& importers, DerivedDataCache& cache,
-                         std::chrono::milliseconds debounce, std::string platform)
+                         std::chrono::milliseconds debounce, std::string platform, FileWatcher::Mode watch_mode)
     : database_(database), importers_(importers), cache_(cache), platform_(std::move(platform)),
-      watcher_(database.ContentRoot(), debounce) {
+      watcher_(database.ContentRoot(), debounce, watch_mode) {
     const std::vector<const AssetRecord*> records = database_.AllUnsorted();
     settings_.reserve(records.size());
     hashes_.reserve(records.size());

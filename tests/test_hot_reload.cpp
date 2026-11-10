@@ -3,8 +3,11 @@
 #include "aether/assets/texture_importer.h"
 #include "test_framework.h"
 
+#include <chrono>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <thread>
 
 using namespace aether;
 using namespace aether::assets;
@@ -45,20 +48,25 @@ const AssetChange* FindChange(const std::vector<AssetChange>& changes, AssetChan
     return nullptr;
 }
 
-} // namespace
 
-AETHER_TEST(FileWatcher_DebouncesAndReportsSettledChanges) {
-    stdfs::path dir = FreshFolder("aether_test_watcher");
+// The one scenario both modes must report identically: debouncing, merged saves, temp-file-and-rename, removal, hidden files, Refresh.
+void RunWatcherScenario(bool native) {
+    stdfs::path dir = FreshFolder(native ? "aether_test_watcher_native" : "aether_test_watcher");
     WriteFile(dir / "existing.txt", "old", 1);
     WriteFile(dir / ".git/HEAD", "ref", 1);
-    FileWatcher watcher(dir, 200ms);
+    FileWatcher watcher(dir, 200ms, native ? FileWatcher::Mode::Native : FileWatcher::Mode::Poll);
+    // Native notifications reach the watcher a moment after the write on some systems (Windows): give them that moment.
+    const auto poll = [&](FileWatcher::Clock::time_point t) {
+        if (native) std::this_thread::sleep_for(60ms);
+        return watcher.Poll(t);
+    };
     const auto t0 = FileWatcher::Clock::now();
-    AETHER_CHECK(watcher.Poll(t0).empty()); // the starting files aren't changes
+    AETHER_CHECK(poll(t0).empty()); // the starting files aren't changes
 
     WriteFile(dir / "sub/new.txt", "hello", 2);
-    AETHER_CHECK(watcher.Poll(t0 + 10ms).empty() && watcher.PendingCount() == 1);
-    AETHER_CHECK(watcher.Poll(t0 + 150ms).empty()); // not settled yet
-    std::vector<FileChange> added = watcher.Poll(t0 + 210ms);
+    AETHER_CHECK(poll(t0 + 10ms).empty() && watcher.PendingCount() == 1);
+    AETHER_CHECK(poll(t0 + 150ms).empty()); // not settled yet
+    std::vector<FileChange> added = poll(t0 + 210ms);
     AETHER_CHECK(added.size() == 1);
     if (added.size() == 1) {
         AETHER_CHECK(added[0].path == "sub/new.txt" && added[0].kind == FileChange::Kind::Added);
@@ -66,21 +74,21 @@ AETHER_TEST(FileWatcher_DebouncesAndReportsSettledChanges) {
 
     // Two saves in quick succession are one change, reported 200 ms after the last.
     WriteFile(dir / "existing.txt", "new", 3);
-    AETHER_CHECK(watcher.Poll(t0 + 300ms).empty());
+    AETHER_CHECK(poll(t0 + 300ms).empty());
     WriteFile(dir / "existing.txt", "newer", 4);
-    AETHER_CHECK(watcher.Poll(t0 + 450ms).empty());
-    AETHER_CHECK(watcher.Poll(t0 + 600ms).empty()); // 150 ms after the second save
-    std::vector<FileChange> modified = watcher.Poll(t0 + 700ms);
+    AETHER_CHECK(poll(t0 + 450ms).empty());
+    AETHER_CHECK(poll(t0 + 600ms).empty()); // 150 ms after the second save
+    std::vector<FileChange> modified = poll(t0 + 700ms);
     AETHER_CHECK(modified.size() == 1 && modified[0].kind == FileChange::Kind::Modified);
 
     // Save via temp file + rename: only the original is reported, as Modified.
     WriteFile(dir / "existing.txt.tmp", "atomic", 5);
-    AETHER_CHECK(watcher.Poll(t0 + 800ms).empty());
+    AETHER_CHECK(poll(t0 + 800ms).empty());
     stdfs::remove(dir / "existing.txt");
-    AETHER_CHECK(watcher.Poll(t0 + 850ms).empty());
+    AETHER_CHECK(poll(t0 + 850ms).empty());
     stdfs::rename(dir / "existing.txt.tmp", dir / "existing.txt");
-    AETHER_CHECK(watcher.Poll(t0 + 1000ms).empty()); // the rename is itself a change: wait again
-    std::vector<FileChange> replaced = watcher.Poll(t0 + 1250ms);
+    AETHER_CHECK(poll(t0 + 1000ms).empty()); // the rename is itself a change: wait again
+    std::vector<FileChange> replaced = poll(t0 + 1250ms);
     AETHER_CHECK(replaced.size() == 1);
     if (replaced.size() == 1) {
         AETHER_CHECK(replaced[0].path == "existing.txt" && replaced[0].kind == FileChange::Kind::Modified);
@@ -91,9 +99,9 @@ AETHER_TEST(FileWatcher_DebouncesAndReportsSettledChanges) {
     WriteFile(dir / ".git/HEAD", "other", 6);
     WriteFile(dir / "mine.txt", "written by us", 6);
     watcher.Refresh("mine.txt");
-    std::vector<FileChange> removed = watcher.Poll(t0 + 1300ms);
+    std::vector<FileChange> removed = poll(t0 + 1300ms);
     AETHER_CHECK(removed.empty() && watcher.PendingCount() == 1);
-    removed = watcher.Poll(t0 + 1600ms);
+    removed = poll(t0 + 1600ms);
     AETHER_CHECK(removed.size() == 1);
     if (removed.size() == 1) {
         AETHER_CHECK(removed[0].kind == FileChange::Kind::Removed && removed[0].path == "sub/new.txt");
@@ -101,10 +109,72 @@ AETHER_TEST(FileWatcher_DebouncesAndReportsSettledChanges) {
 
     // Created then deleted before settling: nothing.
     WriteFile(dir / "blip.txt", "x", 7);
-    watcher.Poll(t0 + 1700ms);
+    poll(t0 + 1700ms);
     stdfs::remove(dir / "blip.txt");
-    AETHER_CHECK(watcher.Poll(t0 + 2000ms).empty() && watcher.PendingCount() == 0);
+    AETHER_CHECK(poll(t0 + 2000ms).empty() && watcher.PendingCount() == 0);
     stdfs::remove_all(dir);
+}
+
+} // namespace
+
+AETHER_TEST(FileWatcher_DebouncesAndReportsSettledChanges) { RunWatcherScenario(false); }
+
+AETHER_TEST(FileWatcher_NativeNotificationsReportTheSameChanges) {
+    {
+        stdfs::path probe_dir = FreshFolder("aether_test_watcher_probe");
+        FileWatcher probe(probe_dir, 200ms, FileWatcher::Mode::Native);
+        if (!probe.UsesNativeNotifications()) {
+            std::printf("  (no native file notifications on this platform: Mode::Native polls here)\n");
+        }
+    }
+    RunWatcherScenario(true); // falls back to polling where there is no native backend, and must still pass
+}
+
+AETHER_TEST(FileWatcher_NativeNotificationsStopTheIdleWalk) {
+    stdfs::path dir = FreshFolder("aether_test_watcher_idle");
+    for (int i = 0; i < 40; ++i) WriteFile(dir / ("d" + std::to_string(i % 4)) / ("f" + std::to_string(i) + ".txt"), "x", 1);
+
+    // Polling walks the whole tree on every call.
+    FileWatcher polling(dir, 200ms);
+    const auto t0 = FileWatcher::Clock::now();
+    for (int i = 0; i < 50; ++i) polling.Poll(t0 + std::chrono::milliseconds(i));
+    AETHER_CHECK(polling.ScanCount() == 50 && !polling.UsesNativeNotifications());
+
+    FileWatcher native(dir, 200ms, FileWatcher::Mode::Native);
+    if (!native.UsesNativeNotifications()) return; // no native backend here; nothing more to prove
+    for (int i = 0; i < 50; ++i) AETHER_CHECK(native.Poll(t0 + std::chrono::milliseconds(i)).empty());
+    AETHER_CHECK(native.ScanCount() == 0); // nothing changed, so nothing was walked
+
+    // A change makes exactly the next Poll walk, and is reported once it settles.
+    WriteFile(dir / "d1" / "new.txt", "hello", 2);
+    std::this_thread::sleep_for(60ms);
+    AETHER_CHECK(native.Poll(t0 + 100ms).empty() && native.ScanCount() == 1 && native.PendingCount() == 1);
+    AETHER_CHECK(native.Poll(t0 + 200ms).empty() && native.ScanCount() == 1); // quiet again: no new walk, change still settling
+    const std::vector<FileChange> settled = native.Poll(t0 + 400ms);
+    AETHER_CHECK(settled.size() == 1 && settled[0].path == "d1/new.txt" && settled[0].kind == FileChange::Kind::Added);
+    AETHER_CHECK(native.ScanCount() == 1);
+
+    // The safety rescan walks even when the OS said nothing, so a missed event is found within kSafetyRescan.
+    native.Poll(t0 + FileWatcher::kSafetyRescan + 1s);
+    AETHER_CHECK(native.ScanCount() == 2);
+}
+
+AETHER_TEST(FileWatcher_NativeNotificationsFollowNewSubfolders) {
+    stdfs::path dir = FreshFolder("aether_test_watcher_subfolders");
+    WriteFile(dir / "keep.txt", "x", 1);
+    FileWatcher watcher(dir, 100ms, FileWatcher::Mode::Native);
+    const auto t0 = FileWatcher::Clock::now();
+    // A folder that did not exist when the watcher started, several levels deep, then a file written into it later.
+    stdfs::create_directories(dir / "later" / "a" / "b");
+    std::this_thread::sleep_for(60ms);
+    watcher.Poll(t0 + 10ms);
+    const usize scans_before = watcher.ScanCount();
+    WriteFile(dir / "later" / "a" / "b" / "deep.txt", "deep", 2);
+    std::this_thread::sleep_for(60ms);
+    watcher.Poll(t0 + 50ms);
+    if (watcher.UsesNativeNotifications()) AETHER_CHECK(watcher.ScanCount() == scans_before + 1); // the file in the new folder was noticed by the OS
+    const std::vector<FileChange> settled = watcher.Poll(t0 + 300ms);
+    AETHER_CHECK(settled.size() == 1 && settled[0].path == "later/a/b/deep.txt" && settled[0].kind == FileChange::Kind::Added);
 }
 
 AETHER_TEST(AssetStore_HandlesSeeReloadsThroughGenerations) {
