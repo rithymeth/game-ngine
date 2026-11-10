@@ -1,3 +1,4 @@
+#include "aether/scene/gameplay.h"
 #include "aether/scene/hierarchy.h"
 #include "aether/scene/lifecycle.h"
 #include "aether/scene/prefab.h"
@@ -9,6 +10,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <span>
 #include <unordered_map>
@@ -364,4 +366,72 @@ AETHER_TEST(Hierarchy_DestroyingALargeSubtreeTakesExactlyThatSubtree) {
     for (Entity e : doomed) AETHER_CHECK(!s.world.IsAlive(e));
     for (Entity e : kept) AETHER_CHECK(s.world.IsAlive(e));
     AETHER_CHECK(s.world.EntityCount() == kept.size());
+}
+
+// HierarchySnapshot gives, bit for bit, what ComputeWorldTransform and IsActiveInHierarchy give for every entity, with the awkward
+// cases in the world: rotation and scale, inactive ancestors, an ancestor without a Transform, a parent that does not exist,
+// a chain longer than the depth limit, a parent cycle, and an entity destroyed after the snapshot's world was built.
+AETHER_TEST(Hierarchy_SnapshotMatchesThePerEntityWalks) {
+    Scene s;
+    std::vector<Entity> entities;
+    u32 x = 0x1234abcdu;
+    const auto next = [&] {
+        x ^= x << 13, x ^= x >> 17, x ^= x << 5;
+        return x;
+    };
+    const auto unit = [&] { return static_cast<f32>(next() % 2000) / 1000.0f - 1.0f; };
+    for (u32 i = 0; i < 500; ++i) {
+        Transform t;
+        t.position = Vec3(unit() * 50, unit() * 50, unit() * 50);
+        t.rotation = Quaternion::FromAxisAngle(Vec3(0, 1, 0), unit() * 3.0f);
+        t.scale = Vec3(1.0f + unit() * 0.5f, 1.0f + unit() * 0.5f, 1.0f + unit() * 0.5f);
+        const Entity e = s.world.CreateEntity(t);
+        EnsureGuid(s.world, e, &s.guids);
+        entities.push_back(e);
+        if (i > 0 && next() % 6 != 0) s.Attach(e, entities[next() % i]);
+        if (next() % 9 == 0) s.world.AddComponent(e, Active{next() % 2 == 0});
+    }
+    // A chain of 80, deeper than kMaxHierarchyDepth.
+    Entity link = entities[0];
+    for (int i = 0; i < 80; ++i) {
+        const Entity e = s.Make(Vec3(1, 0.5f, 0));
+        s.Attach(e, link);
+        entities.push_back(link = e);
+    }
+    // An ancestor without a Transform, with a child under it.
+    const Entity bare = s.world.CreateEntity(IdComponent{NewEntityGuid()});
+    s.guids.Add(s.world.GetComponent<IdComponent>(bare)->guid, bare);
+    s.world.AddComponent(bare, Parent{s.world.GetComponent<IdComponent>(entities[3])->guid});
+    const Entity under_bare = s.Make(Vec3(2, 3, 4));
+    s.Attach(under_bare, bare);
+    entities.push_back(bare);
+    entities.push_back(under_bare);
+    // A parent that does not exist, and two entities that are each other's parent.
+    const Entity orphan = s.Make(Vec3(7, 8, 9));
+    s.world.AddComponent(orphan, Parent{EntityGuid{11, 22}});
+    const Entity loop_a = s.Make(Vec3(1, 2, 3)), loop_b = s.Make(Vec3(4, 5, 6));
+    s.Attach(loop_a, loop_b);
+    s.Attach(loop_b, loop_a);
+    entities.insert(entities.end(), {orphan, loop_a, loop_b});
+    // A parent destroyed after its children were attached.
+    s.world.DestroyEntity(entities[5]);
+
+    HierarchySnapshot snapshot(s.world, s.guids);
+    usize inactive = 0, compared = 0;
+    for (Entity e : entities) {
+        if (!s.world.IsAlive(e)) continue;
+        const Mat4 expected = ComputeWorldTransform(s.world, s.guids, e);
+        const Mat4 got = snapshot.WorldTransform(e);
+        AETHER_CHECK(std::memcmp(&expected, &got, sizeof(Mat4)) == 0);
+        const bool active = IsActiveInHierarchy(s.world, s.guids, e);
+        AETHER_CHECK(snapshot.ActiveInHierarchy(e) == active);
+        inactive += active ? 0 : 1;
+        ++compared;
+    }
+    AETHER_CHECK(compared > 550 && inactive > 20 && inactive < compared);
+    // Entities the snapshot does not hold answer as the walks do for a dead entity.
+    const Mat4 identity = Mat4::Identity();
+    const Mat4 dead = snapshot.WorldTransform(entities[5]);
+    AETHER_CHECK(std::memcmp(&identity, &dead, sizeof(Mat4)) == 0);
+    AETHER_CHECK(snapshot.ActiveInHierarchy(entities[5]) && snapshot.ActiveInHierarchy(kNullEntity));
 }

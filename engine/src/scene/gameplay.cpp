@@ -17,6 +17,65 @@ bool IsActiveInHierarchy(const World& world, const GuidIndex& guids, Entity enti
     return true;
 }
 
+void HierarchySnapshot::Reset(const World& world, const GuidIndex& guids) {
+    world_ = &world;
+    guids_ = &guids;
+    if (++epoch_ == 0) { // wrapped: nothing read before may look current
+        nodes_.clear();
+        epoch_ = 1;
+    }
+}
+
+const HierarchySnapshot::Node* HierarchySnapshot::Find(Entity entity) {
+    if (world_ == nullptr || !world_->IsAlive(entity)) {
+        return nullptr;
+    }
+    if (entity.index >= nodes_.size()) {
+        nodes_.resize(std::max<usize>(static_cast<usize>(entity.index) + 1, nodes_.size() * 2));
+    }
+    Node& node = nodes_[entity.index];
+    if (node.epoch != epoch_) {
+        node.epoch = epoch_;
+        const Transform* transform = world_->GetComponent<Transform>(entity);
+        node.has_transform = transform != nullptr;
+        if (transform != nullptr) {
+            node.local = LocalTransformMatrix(*transform);
+        }
+        const Active* active = world_->GetComponent<Active>(entity);
+        node.inactive = active != nullptr && !active->active;
+        node.parent = GetParent(*world_, *guids_, entity);
+    }
+    return &node;
+}
+
+Mat4 HierarchySnapshot::WorldTransform(Entity entity) {
+    // The loop of ComputeWorldTransform, over what the snapshot holds.
+    Mat4 result = Mat4::Identity();
+    for (int depth = 0; depth < kMaxHierarchyDepth; ++depth) {
+        const Node* node = Find(entity);
+        if (node == nullptr || !node->has_transform) {
+            break;
+        }
+        result = node->local * result;
+        entity = node->parent; // Find may move the nodes: nothing of `node` is used after this
+    }
+    return result;
+}
+
+bool HierarchySnapshot::ActiveInHierarchy(Entity entity) {
+    for (int depth = 0; depth <= kMaxHierarchyDepth; ++depth) {
+        const Node* node = Find(entity);
+        if (node == nullptr) {
+            break;
+        }
+        if (node->inactive) {
+            return false;
+        }
+        entity = node->parent;
+    }
+    return true;
+}
+
 Mat4 OrthographicRH(f32 width, f32 height, f32 z_near, f32 z_far) {
     Mat4 m;
     m.cols[0] = Vec4(2.0f / width, 0, 0, 0);
