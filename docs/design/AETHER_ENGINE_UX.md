@@ -47,6 +47,32 @@ diagnostics, asset context, and project status work consistently everywhere.
 - **Remain useful offline.** Core editor, project, build, and debug flows must
   not depend on network services or AI.
 
+## 2.1 Product references translated into Aether decisions
+
+These engines are useful references for specific strengths. Aether should
+adopt the underlying outcomes while keeping its own architecture, workflows,
+and visual identity.
+
+| Reference | Product outcome to learn from | Aether decision |
+|---|---|---|
+| **Godot** | A first-time developer can install, open a project, understand the editor, and reach a small working result quickly. | Keep the first-run path short, local, and resumable. Prefer one clear project model, useful defaults, plain language, and complete documentation over setup choices that can wait. |
+| **Unity** | Projects move through platform-specific build, device, asset, and package workflows with clear tool support. | Make platform and target visible project context. Integrate build, cook, deploy, logs, device requirements, and package history; explain unsupported steps before work starts. |
+| **Unreal** | Artists and animators can author high-quality materials, lighting, animation graphs, and previews with professional feedback. | Treat visual quality and authoring tools as one system. Preview the runtime result, expose graph and render diagnostics in context, and validate parity across supported backends. |
+| **O3DE** | Large native systems can be organized into modules with explicit ownership and C++ extension points. | Keep dependencies and module boundaries visible, allow projects to opt into systems, document native extension contracts, and make examples build against installed SDKs. |
+
+Use these references as review questions for product changes:
+
+- **First-use clarity:** Can a new developer discover the next action and reach a visible result without learning internal engine terms first?
+- **Platform continuity:** Can a developer inspect requirements, build, launch, diagnose, and package for the selected target in one connected workflow?
+- **Authoring confidence:** Can a technical artist preview the authored result and trace a problem to the asset, node, shader, or animation state that caused it?
+- **Native extensibility:** Can a C++ developer add or replace a system through a documented module boundary without depending on editor internals?
+- **Proven scope:** Does the workflow distinguish a working feature from a proposal, partial host, or CI-only check?
+
+The references do not imply that Aether should reproduce another engine's
+interface, project format, scripting model, or module graph. Aether keeps its
+data-oriented ECS and native C++ core, while making the common path easier to
+learn and its tool boundaries easier to understand.
+
 ## 3. Product surfaces
 
 ### Project Hub

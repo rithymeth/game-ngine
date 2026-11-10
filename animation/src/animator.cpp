@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iterator>
+#include <unordered_set>
 
 namespace aether {
 
@@ -67,6 +68,7 @@ struct AnimationSystem::Runtime {
     GroundTrace foot_trace;
     bool apply_foot_placement = false;
     std::string foot_problem;
+    std::unordered_set<std::string> command_problems;
     std::string montage_slot = "Default"; // of the last montage it played
     u64 seen = 0;
 };
@@ -249,11 +251,25 @@ void AnimationSystem::Update(f32 dt, JobSystem* jobs) {
         if (r.instance) {
             r.instance->SetRootMotion(a.root_motion);
             for (const AnimatorCommand& c : a.commands) {
+                bool accepted = true;
+                const char* expected = "parameter";
                 switch (c.kind) {
-                case AnimatorCommand::Kind::SetFloat: r.instance->SetFloat(c.name, c.value); break;
-                case AnimatorCommand::Kind::SetBool: r.instance->SetBool(c.name, c.value != 0.0f); break;
-                case AnimatorCommand::Kind::SetInt: r.instance->SetInt(c.name, static_cast<i32>(std::lround(c.value))); break;
-                case AnimatorCommand::Kind::SetTrigger: r.instance->SetTrigger(c.name); break;
+                case AnimatorCommand::Kind::SetFloat:
+                    expected = "float or int";
+                    accepted = r.instance->SetFloat(c.name, c.value);
+                    break;
+                case AnimatorCommand::Kind::SetBool:
+                    expected = "bool";
+                    accepted = r.instance->SetBool(c.name, c.value != 0.0f);
+                    break;
+                case AnimatorCommand::Kind::SetInt:
+                    expected = "int";
+                    accepted = r.instance->SetInt(c.name, static_cast<i32>(std::lround(c.value)));
+                    break;
+                case AnimatorCommand::Kind::SetTrigger:
+                    expected = "trigger";
+                    accepted = r.instance->SetTrigger(c.name);
+                    break;
                 case AnimatorCommand::Kind::PlayMontage: {
                     const Montage* m = library_.montage ? library_.montage(c.name) : nullptr;
                     if (m == nullptr || !r.instance->PlayMontage(*m, c.value > 0.0f ? c.value : 1.0f)) {
@@ -265,6 +281,11 @@ void AnimationSystem::Update(f32 dt, JobSystem* jobs) {
                 }
                 case AnimatorCommand::Kind::StopMontage: r.instance->StopMontage(r.montage_slot); break;
                 case AnimatorCommand::Kind::JumpToSection: r.instance->JumpToSection(c.name, r.montage_slot); break;
+                }
+                if (!accepted && c.kind <= AnimatorCommand::Kind::SetTrigger) {
+                    const std::string problem = "entity " + std::to_string(e.index) + ": animation parameter '" + c.name +
+                                                "' is missing or is not a " + expected;
+                    if (r.command_problems.insert(problem).second) problems_.push_back(problem);
                 }
             }
             active.push_back(&r);

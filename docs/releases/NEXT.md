@@ -236,3 +236,8 @@ used to run to a black window, because the templates held no models: they now ge
 cube in three colours. All six templates were created, packaged and run this way on Linux. Two still open on a dark window: Blank,
 by design, and 2D Platformer, because the packaged player does not draw sprites or tilemaps. The getting-started page has the
 three commands.
+
+## Animation: mistyped graph parameters are diagnosed
+
+Invalid animation graph parameter commands now report the entity, parameter name, and expected type once per distinct problem.
+Repeated gameplay requests no longer fail silently or flood the diagnostics list.
