@@ -15,6 +15,13 @@
 #include <functional>
 #include <string>
 
+// Where a shell command's output goes to be dropped. ">nul" on Linux and macOS creates a file called nul in the working directory.
+#ifdef _WIN32
+#define AETHER_TEST_NULL_DEVICE "nul"
+#else
+#define AETHER_TEST_NULL_DEVICE "/dev/null"
+#endif
+
 // Version control status in the Content Browser (Phase 26 step 5, §26.7).
 
 using namespace aether;
@@ -296,9 +303,9 @@ AETHER_TEST(Vcs_ContentBrowserPanelReportsAssetIssues) {
 AETHER_TEST(Vcs_StageAndCommitRecordAnEdit) {
     const stdfs::path dir = Dir("commit");
     const std::string quoted = "\"" + dir.string() + "\"";
-    if (std::system(("git -C " + quoted + " init -q >nul 2>&1").c_str()) != 0) return;
-    std::system(("git -C " + quoted + " config user.email t@example.com >nul 2>&1").c_str());
-    std::system(("git -C " + quoted + " config user.name t >nul 2>&1").c_str());
+    if (std::system(("git -C " + quoted + " init -q >" AETHER_TEST_NULL_DEVICE " 2>&1").c_str()) != 0) return;
+    std::system(("git -C " + quoted + " config user.email t@example.com >" AETHER_TEST_NULL_DEVICE " 2>&1").c_str());
+    std::system(("git -C " + quoted + " config user.name t >" AETHER_TEST_NULL_DEVICE " 2>&1").c_str());
     Write(dir / "a.txt", "hello");
 
     std::string error;
@@ -323,9 +330,9 @@ AETHER_TEST(Vcs_ContentBrowserPanelCommitsContent) {
     std::string error;
     CHECK(CreateProject(dir, "Game", &paths, &error));
     const std::string quoted = "\"" + dir.string() + "\"";
-    if (std::system(("git -C " + quoted + " init -q >nul 2>&1").c_str()) != 0) return;
-    std::system(("git -C " + quoted + " config user.email t@example.com >nul 2>&1").c_str());
-    std::system(("git -C " + quoted + " config user.name t >nul 2>&1").c_str());
+    if (std::system(("git -C " + quoted + " init -q >" AETHER_TEST_NULL_DEVICE " 2>&1").c_str()) != 0) return;
+    std::system(("git -C " + quoted + " config user.email t@example.com >" AETHER_TEST_NULL_DEVICE " 2>&1").c_str());
+    std::system(("git -C " + quoted + " config user.name t >" AETHER_TEST_NULL_DEVICE " 2>&1").c_str());
     Write(paths.content / "Notes.txt", "hello");
 
     ContentBrowserPanel panel(paths.file);
