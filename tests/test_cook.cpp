@@ -1,6 +1,7 @@
 #include "aether/assets/environment.h"
 #include "aether/assets/image.h"
 #include "aether/cook/cooker.h"
+#include "aether/core/log.h"
 #include "aether/cook/texture_cook.h"
 #include "aether/pak/pak.h"
 #include "aether/project/project.h"
@@ -763,6 +764,14 @@ stdfs::path MakeScaleProject(const std::string& name, u32 textures, u32 models, 
     return paths.file;
 }
 
+// The scale cooks log three lines for every model on every cook, which was most of a test run's output: warnings and errors only
+// while one of these is alive.
+struct QuietLog {
+    LogLevel before = Logger::Instance().MinLevel();
+    QuietLog() { Logger::Instance().SetMinLevel(LogLevel::Warn); }
+    ~QuietLog() { Logger::Instance().SetMinLevel(before); }
+};
+
 u32 EnvCount(const char* name, u32 fallback) {
     const char* text = std::getenv(name);
     return text && *text ? static_cast<u32>(std::strtoul(text, nullptr, 10)) : fallback;
@@ -773,6 +782,7 @@ u32 EnvCount(const char* name, u32 fallback) {
 // The numbers in docs/design/PERFORMANCE.md ("Cooking at scale") come from this; it does nothing unless a size is given:
 //   AETHER_TEST_FILTER=Cook_ScaleMeasure AETHER_COOK_SCALE_TEXTURES=2000 AETHER_COOK_SCALE_MODELS=1000 aether_tests
 AETHER_TEST(Cook_ScaleMeasure) {
+    const QuietLog quiet;
     const u32 textures = EnvCount("AETHER_COOK_SCALE_TEXTURES", 0);
     const u32 models = EnvCount("AETHER_COOK_SCALE_MODELS", 0);
     const u32 grid = EnvCount("AETHER_COOK_SCALE_GRID", 33);
@@ -798,6 +808,7 @@ AETHER_TEST(Cook_ScaleMeasure) {
 // 450 assets: a second cook redoes nothing and gives the same bytes; changing two sources redoes those two only and keeps every
 // GUID; and what the caches hand back is what a cook with no cache builds.
 AETHER_TEST(Cook_AtScaleIsIncrementalAndDeterministic) {
+    const QuietLog quiet;
     const u32 textures = 300, models = 150, grid = 17;
     const stdfs::path project = MakeScaleProject("AtScale", textures, models, grid);
     const stdfs::path root = project.parent_path();
