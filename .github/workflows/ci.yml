@@ -755,6 +755,18 @@ jobs:
     if: github.event_name != 'pull_request'
     steps:
       - uses: actions/checkout@v4
+      - name: Make bash mean Git Bash
+        # Three steps below use `shell: bash` (the dedicated server, the release candidate and its smoke). On a hosted runner `bash` is Git Bash;
+        # on a self-hosted one System32\bash.exe, the WSL launcher, is found first and fails without a distro installed
+        # ("WSL ERROR: execvpe(/bin/bash) failed"), which turned this job red at "Package and smoke the dedicated server" and skipped the
+        # packaged-editor job after it. Putting Git's bin directory first on the path fixes it on both.
+        shell: pwsh
+        run: |
+          $git = (Get-Command git -ErrorAction Stop).Source
+          $bin = Join-Path (Split-Path (Split-Path $git -Parent) -Parent) 'bin'
+          if (-not (Test-Path (Join-Path $bin 'bash.exe'))) { throw "Git Bash was not found at $bin (git is $git); install Git for Windows" }
+          Add-Content -Path $env:GITHUB_PATH -Value $bin
+          Write-Host "bash will be $bin\bash.exe"
       - name: Use the Qt 6.8.3 installed on the self-hosted runner
         # Only when WINDOWS_RUNNER is set: the runner already has Qt, so skip the per-run download.
         if: vars.WINDOWS_RUNNER != ''
