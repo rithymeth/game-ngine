@@ -239,3 +239,48 @@ AETHER_TEST(Pak_VirtualFileSystemOverrides) {
     CHECK(!dlc.Exists("maps/arena.json") && dlc.List("dlc") == std::vector<std::string>{"dlc/arena_pack/maps/arena.json"});
     std::filesystem::remove_all(dir);
 }
+
+// Entries are checksummed and compressed on several threads; the archive must not depend on how many.
+AETHER_TEST(Pak_ThreadCountDoesNotChangeTheBytes) {
+    PakKey key;
+    AETHER_CHECK(PakKey::FromHex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f", key));
+    for (const bool encrypted : {false, true}) {
+        const auto build = [&](u32 threads) {
+            PakWriter writer;
+            if (encrypted) writer.SetEncryption(key);
+            writer.SetThreads(threads);
+            // 400 entries, about 5 MB: zstd, LZ4, stored raw and empty ones, in an order that mixes them.
+            for (u32 i = 0; i < 400; ++i) {
+                std::vector<u8> bytes;
+                switch (i % 4) {
+                    case 0: bytes = Repetitive(20000 + i * 37); break;
+                    case 1: bytes = Repetitive(100 + i); break;
+                    case 2: bytes = Noise(9000 + i * 11); break;
+                    default: break;
+                }
+                for (usize k = 0; k < bytes.size(); k += 97) bytes[k] = static_cast<u8>(bytes[k] + i); // every entry differs
+                AETHER_CHECK(writer.Add("data/" + std::to_string(i % 7) + "/entry" + std::to_string(i) + ".bin", bytes));
+            }
+            return writer.Build();
+        };
+        const std::vector<u8> serial = build(1);
+        CHECK(build(2) == serial);
+        CHECK(build(7) == serial);
+        CHECK(build(0) == serial); // the machine's count
+        CHECK(build(1000) == serial); // more than there are entries or the limit allows
+
+        PakReader reader;
+        std::string error;
+        CHECK(reader.OpenMemory(build(0), &error, std::span<const PakKey>(&key, 1)));
+        CHECK(reader.Entries().size() == 400 && reader.IsEncrypted() == encrypted);
+        CHECK(reader.Verify().empty());
+        CHECK(reader.Find("data/0/entry0.bin") && reader.Find("data/0/entry0.bin")->compression == Compression::Zstd);
+        CHECK(reader.Find("data/1/entry1.bin") && reader.Find("data/1/entry1.bin")->compression == Compression::LZ4);
+        CHECK(reader.Find("data/2/entry2.bin") && reader.Find("data/2/entry2.bin")->compression == Compression::None);
+    }
+    // An empty archive and a single entry take the serial path whatever is asked for.
+    PakWriter empty;
+    empty.SetThreads(8);
+    PakReader reader;
+    CHECK(reader.OpenMemory(empty.Build()) && reader.Entries().empty());
+}

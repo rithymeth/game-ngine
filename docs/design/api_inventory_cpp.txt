@@ -2859,6 +2859,7 @@
   usize EntryCount()const
   void ChaCha20Xor(const PakKey&key,const std::array<u8,12>&nonce,u32 counter,std::span<u8>data)
   void SetEncryption(const PakKey&key)
+  void SetThreads(u32 threads)
 [engine/include/aether/pak/vfs.h] stable
   type class VirtualFileSystem
   type struct MountEntry

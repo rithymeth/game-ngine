@@ -80,6 +80,10 @@ public:
         encrypt_ = true;
     }
 
+    // How many threads Build and Write checksum and compress entries on: 0 (the default) uses the machine's, for archives big
+    // enough to gain from it; 1 is serial. The archive's bytes are the same whatever the count.
+    void SetThreads(u32 threads) { threads_ = threads; }
+
     // Adds (or replaces) an entry. False for an invalid path.
     bool Add(const std::string& path, std::span<const u8> bytes);
     bool Add(const std::string& path, const std::string& text);
@@ -104,6 +108,7 @@ private:
     CompressionPolicy policy_;
     int zstd_level_;
     std::vector<Pending> pending_;
+    u32 threads_ = 0;
     PakKey key_;
     bool encrypt_ = false;
 };

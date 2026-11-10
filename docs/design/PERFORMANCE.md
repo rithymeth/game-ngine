@@ -1118,3 +1118,24 @@ Reproduce with `AETHER_TEST_FILTER=Cook_ScaleMeasure AETHER_COOK_SCALE_TEXTURES=
 - **Test:** `Cook_AtScaleIsIncrementalAndDeterministic` (300 textures, 150 models): the second cook redoes nothing and is byte
   identical; changing one texture and one model's `.bin` redoes exactly those two and keeps every GUID; other mesh settings miss the
   cache; a cook with the caches deleted, and one with every cache entry cut in half, give the same archive as the cached cook.
+
+## Packing the archive on several threads, 10 November 2026
+
+The section above left the archive as what a warm cook spends its time on: `PakWriter::Build` checksummed and compressed every
+entry on one thread. Each entry's checksum and compression are independent, so they now run on the machine's threads (at most 16,
+and only for archives of 1 MB or more) and the bytes are laid out afterwards in the order the entries were added. Same machine
+and project as above (4 cores).
+
+| Project | Cold cook, before | Cold cook, after | Warm cook, before | Warm cook, after |
+|---|---|---|---|---|
+| 1,000 models | 7.3 to 9.2 s | 4.7 s | 3.9 s | 1.65 s |
+| 2,000 textures + 1,000 models | 9.4 to 11.2 s | 8.2 s | 4.3 s | 2.0 to 2.2 s |
+
+- **The warm cook of 1,000 models is 2.4x faster** (3.9 s to 1.65 s), and 3.8x faster than before the mesh cache (6.3 s). The cold
+  cook gains less because importing and cooking the assets, still on one thread, is most of it.
+- **The archive is the same bytes at any thread count** (`Pak_ThreadCountDoesNotChangeTheBytes`: 400 mixed entries, plain and
+  encrypted, on 1, 2, 7, the machine's and 1,000 requested threads). `PakWriter::SetThreads(1)` forces the serial path.
+- **Cost:** the compressed entries are held until they are laid out, so peak memory during a build grows by about the archive's
+  size. Not measured beyond that.
+- **Still open:** the cook itself imports and cooks one asset at a time (the cold column), and a warm cook still reads every
+  cached entry and rewrites the whole archive.

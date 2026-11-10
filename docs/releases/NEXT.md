@@ -200,3 +200,9 @@ A cook that changed nothing still rebuilt the LODs and meshlets of every mesh. T
 importer outputs and cooked textures, so a repeat cook of 1,000 models takes 3.9 s instead of 6.3 s (measured on Linux; the table
 and what is still slow are in `docs/design/PERFORMANCE.md`, "Cooking at scale"). `CookReport` gains `mesh_cache_hits` and
 `mesh_cache_misses`. The archive is unchanged byte for byte; delete `Intermediate/DerivedDataCache` to force a full rebuild.
+
+## Packaging: archives are packed on several threads
+
+Writing an `.apak` checksums and compresses its entries on all of the machine's threads (up to 16). The archive is byte for byte
+what the single-threaded writer produced. On 4 cores a repeat cook of 1,000 models takes 1.65 s instead of 3.9 s, and a first
+cook 4.7 s instead of 7.3 to 9.2 s. `PakWriter::SetThreads(1)` restores the serial path.
