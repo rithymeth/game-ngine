@@ -6,9 +6,12 @@
 #include "aether/scene/serialization.h"
 #include "test_framework.h"
 
+#include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <set>
 #include <string>
+#include <vector>
 
 using namespace aether;
 using namespace aether::editor;
@@ -457,4 +460,214 @@ AETHER_TEST(LevelInstance_LoadSceneAsPrefabTakesEveryRoot) {
                                     missing, missing_error));
     AETHER_CHECK(!missing_error.empty());
     AETHER_CHECK(missing.entities.empty());
+}
+namespace {
+
+// What one entity must look like after a save and reload, keyed by its GUID (an Entity handle does not survive a reload).
+struct ExpectedEntity {
+    EntityGuid guid;
+    std::string name;
+    Vec3 position, scale;
+    Quaternion rotation;
+    EntityGuid parent; // null: a root
+};
+
+EntityGuid GuidOf(const SceneDocument& document, Entity entity) {
+    if (entity.IsNull() || !document.GetWorld().IsAlive(entity)) return EntityGuid{}; // a root's parent is the null entity
+    const IdComponent* id = document.GetWorld().GetComponent<IdComponent>(entity);
+    return id ? id->guid : EntityGuid{};
+}
+
+bool Close(f32 a, f32 b) { return std::fabs(a - b) < 1e-5f; }
+
+// Every expected entity is present with the same name, transform and parent, and nothing else was added or lost.
+void ExpectScene(SceneDocument& document, const std::vector<ExpectedEntity>& expected, usize total, const char* what) {
+    AETHER_CHECK(document.Entities().size() == total);
+    usize wrong = 0;
+    for (const ExpectedEntity& want : expected) {
+        const Entity entity = document.Guids().Find(document.GetWorld(), want.guid);
+        if (entity.IsNull()) {
+            ++wrong;
+            continue;
+        }
+        const Transform* t = document.GetWorld().GetComponent<Transform>(entity);
+        const bool ok = t != nullptr && document.Name(entity) == want.name && Close(t->position.x, want.position.x) &&
+                        Close(t->position.y, want.position.y) && Close(t->position.z, want.position.z) &&
+                        Close(t->scale.x, want.scale.x) && Close(t->scale.y, want.scale.y) && Close(t->scale.z, want.scale.z) &&
+                        Close(t->rotation.x, want.rotation.x) && Close(t->rotation.y, want.rotation.y) &&
+                        Close(t->rotation.z, want.rotation.z) && Close(t->rotation.w, want.rotation.w) &&
+                        GuidOf(document, document.ParentOf(entity)) == want.parent;
+        if (!ok) ++wrong;
+    }
+    if (wrong != 0) std::printf("    %s: %zu of %zu entities differ\n", what, static_cast<size_t>(wrong), expected.size());
+    AETHER_CHECK(wrong == 0);
+}
+
+std::filesystem::path FreshSceneDir(const char* name) {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / name;
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+    std::filesystem::create_directories(dir, ec);
+    return dir;
+}
+
+} // namespace
+
+// M9.1: a scene of 100 entities in a three-level hierarchy, edited through the document's own commands, keeps every GUID, name, transform
+// and parent link across save and reload (JSON and binary), and its edits undo and redo.
+AETHER_TEST(SceneDocument_HundredEntitiesKeepIdsHierarchyAndTransformsAcrossSaveReload) {
+    SceneDocument document;
+    document.NewScene();
+    const usize starting = document.Entities().size();
+
+    std::vector<Entity> made;
+    std::vector<Entity> groups, children;
+    for (int g = 0; g < 10; ++g) groups.push_back(document.CreateEntity("Group " + std::to_string(g)));
+    for (int c = 0; c < 80; ++c) children.push_back(document.CreateEntity("Prop " + std::to_string(c), SceneEntityKind::Empty, {}, groups[c % 10]));
+    std::vector<Entity> grandchildren;
+    for (int g = 0; g < 10; ++g) grandchildren.push_back(document.CreateEntity("Detail " + std::to_string(g), SceneEntityKind::Empty, {}, children[g]));
+    made.insert(made.end(), groups.begin(), groups.end());
+    made.insert(made.end(), children.begin(), children.end());
+    made.insert(made.end(), grandchildren.begin(), grandchildren.end());
+    AETHER_CHECK(made.size() == 100 && document.Entities().size() == starting + 100);
+
+    // Distinct transforms, and a rename on some, so a swapped or reset entity cannot go unnoticed.
+    for (usize i = 0; i < made.size(); ++i) {
+        const f32 f = static_cast<f32>(i);
+        AETHER_CHECK(document.SetPosition(made[i], Vec3{f, f * 0.5f + 1.0f, -f * 0.25f}, true));
+        AETHER_CHECK(document.SetRotation(made[i], Quaternion::FromAxisAngle(Vec3{0.0f, 1.0f, 0.0f}, 0.01f * (f + 1.0f)), true));
+        AETHER_CHECK(document.SetScale(made[i], Vec3{1.0f + f * 0.01f, 2.0f, 0.5f + f * 0.02f}, true));
+        if (i % 7 == 0) AETHER_CHECK(document.Rename(made[i], "Renamed " + std::to_string(i)));
+    }
+    AETHER_CHECK(document.IsDirty());
+
+    // The GUIDs are unique and non-null, and the hierarchy is what was built.
+    std::set<std::string> guids;
+    for (Entity e : document.Entities()) guids.insert(ToString(GuidOf(document, e)));
+    AETHER_CHECK(guids.size() == document.Entities().size());
+    AETHER_CHECK(document.ParentOf(children[13]) == groups[3] && document.ParentOf(grandchildren[4]) == children[4]);
+
+    std::vector<ExpectedEntity> expected;
+    for (Entity e : document.Entities()) {
+        const Transform* t = document.GetWorld().GetComponent<Transform>(e);
+        AETHER_CHECK(t != nullptr);
+        if (!t) continue;
+        expected.push_back({GuidOf(document, e), document.Name(e), t->position, t->scale, t->rotation, GuidOf(document, document.ParentOf(e))});
+    }
+    const usize total = document.Entities().size();
+
+    const std::filesystem::path dir = FreshSceneDir("aether_test_hundred_entities");
+    const std::filesystem::path json_path = dir / "forest.ascene", binary_path = dir / "forest.aesc";
+    AETHER_CHECK(document.Save(json_path) && !document.IsDirty());
+    AETHER_CHECK(document.Save(binary_path));
+
+    SceneDocument from_json;
+    AETHER_CHECK(from_json.Load(json_path));
+    ExpectScene(from_json, expected, total, "JSON reload");
+    SceneDocument from_binary;
+    AETHER_CHECK(from_binary.Load(binary_path));
+    ExpectScene(from_binary, expected, total, "binary reload");
+    AETHER_CHECK(!from_json.IsDirty() && !from_json.CanUndo()); // a freshly opened scene has no history to undo into
+
+    // Saving the reloaded scene again changes nothing: the round trip is stable, not just one-way.
+    const std::filesystem::path second_path = dir / "forest_again.ascene";
+    AETHER_CHECK(from_json.Save(second_path));
+    SceneDocument again;
+    AETHER_CHECK(again.Load(second_path));
+    ExpectScene(again, expected, total, "second JSON reload");
+
+    // Ten more committed edits undo one by one back to the saved state, and redo forward again.
+    std::vector<Vec3> before;
+    for (int i = 0; i < 10; ++i) {
+        const Entity e = document.Guids().Find(document.GetWorld(), expected[static_cast<usize>(i)].guid);
+        before.push_back(document.GetWorld().GetComponent<Transform>(e)->position);
+        AETHER_CHECK(document.SetPosition(e, Vec3{100.0f + static_cast<f32>(i), 0.0f, 0.0f}, true));
+    }
+    AETHER_CHECK(document.IsDirty());
+    for (int i = 0; i < 10; ++i) AETHER_CHECK(document.Undo());
+    AETHER_CHECK(!document.IsDirty()); // back at the saved state
+    ExpectScene(document, expected, total, "after undoing ten edits");
+    for (int i = 0; i < 10; ++i) AETHER_CHECK(document.Redo());
+    const Entity moved = document.Guids().Find(document.GetWorld(), expected[9].guid);
+    AETHER_CHECK(Close(document.GetWorld().GetComponent<Transform>(moved)->position.x, 109.0f));
+}
+
+// M9.1: an interrupted editing session. The last saved scene is untouched, the unsaved work is offered back from the autosave, recovering
+// it leaves the scene dirty (so it is not silently treated as saved), and saving afterwards writes it to the real file.
+AETHER_TEST(SceneDocument_AutosaveRecoversUnsavedWorkAndLeavesTheSavedSceneIntact) {
+    const std::filesystem::path dir = FreshSceneDir("aether_test_autosave_recovery");
+    const std::filesystem::path saved = dir / "level.ascene", autosave = dir / "Saved" / "Autosaves" / "level.ascene";
+
+    SceneDocument session;
+    session.NewScene();
+    const Entity crate = session.CreateEntity("Crate");
+    AETHER_CHECK(session.SetPosition(crate, Vec3{1.0f, 2.0f, 3.0f}, true));
+    AETHER_CHECK(session.Save(saved));
+    const usize saved_count = session.Entities().size();
+    const EntityGuid crate_guid = GuidOf(session, crate);
+
+    // Unsaved work after the last save: a move, a rename, and a new entity.
+    AETHER_CHECK(session.SetPosition(crate, Vec3{9.0f, 9.0f, 9.0f}, true));
+    AETHER_CHECK(session.Rename(crate, "Crate (moved)"));
+    session.CreateEntity("Lamp");
+    AETHER_CHECK(session.IsDirty() && session.Entities().size() == saved_count + 1);
+
+    // The autosave is written, creating its folder; it is refused (with a reason) during Play, when the world is not the document.
+    std::string error;
+    session.Play();
+    AETHER_CHECK(!session.SaveAutosave(autosave, &error) && !error.empty());
+    session.Stop();
+    AETHER_CHECK(session.SaveAutosave(autosave, &error));
+    AETHER_CHECK(std::filesystem::exists(autosave));
+
+    // The editor dies here. Reopening the scene shows the last SAVED state, with none of the unsaved work.
+    SceneDocument reopened;
+    AETHER_CHECK(reopened.Load(saved));
+    AETHER_CHECK(reopened.Entities().size() == saved_count && !reopened.IsDirty());
+    Entity old_crate = reopened.Guids().Find(reopened.GetWorld(), crate_guid);
+    AETHER_CHECK(!old_crate.IsNull());
+    if (!old_crate.IsNull()) {
+        AETHER_CHECK(reopened.Name(old_crate) == "Crate");
+        AETHER_CHECK(Close(reopened.GetWorld().GetComponent<Transform>(old_crate)->position.x, 1.0f));
+    }
+
+    // Restoring the autosave brings the unsaved work back, still attached to the real file and still unsaved.
+    SceneDocument recovered;
+    AETHER_CHECK(recovered.LoadAutosave(autosave, saved, &error));
+    AETHER_CHECK(recovered.Entities().size() == saved_count + 1);
+    AETHER_CHECK(recovered.IsDirty()); // not silently treated as saved
+    AETHER_CHECK(recovered.FilePath() == saved);
+    Entity back = recovered.Guids().Find(recovered.GetWorld(), crate_guid);
+    AETHER_CHECK(!back.IsNull());
+    if (!back.IsNull()) {
+        AETHER_CHECK(recovered.Name(back) == "Crate (moved)");
+        AETHER_CHECK(Close(recovered.GetWorld().GetComponent<Transform>(back)->position.x, 9.0f));
+    }
+
+    // The real file still holds the old scene until the user saves; saving then makes the recovered work permanent.
+    SceneDocument unchanged;
+    AETHER_CHECK(unchanged.Load(saved) && unchanged.Entities().size() == saved_count);
+    AETHER_CHECK(recovered.Save() && !recovered.IsDirty());
+    SceneDocument final_state;
+    AETHER_CHECK(final_state.Load(saved) && final_state.Entities().size() == saved_count + 1);
+}
+
+// A save that cannot be written does not touch the last good scene (the writer goes through a temporary file), and says so.
+AETHER_TEST(SceneDocument_FailedSaveKeepsTheLastSavedSceneLoadable) {
+    const std::filesystem::path dir = FreshSceneDir("aether_test_failed_save");
+    const std::filesystem::path saved = dir / "level.ascene";
+    SceneDocument document;
+    document.NewScene();
+    document.CreateEntity("Keep me");
+    AETHER_CHECK(document.Save(saved));
+    const usize count = document.Entities().size();
+
+    document.CreateEntity("Unsaved");
+    // A path whose parent is an ordinary file cannot be created, whatever the user's permissions are.
+    std::string error;
+    AETHER_CHECK(!document.Save(saved / "inside_a_file.ascene", &error));
+    AETHER_CHECK(document.IsDirty()); // the failed save did not mark the work as saved
+
+    SceneDocument reloaded;
+    AETHER_CHECK(reloaded.Load(saved) && reloaded.Entities().size() == count);
 }
