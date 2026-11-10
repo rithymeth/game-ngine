@@ -31,7 +31,10 @@ on:
         default: ""
 
 concurrency:
-  group: ci-${{ github.ref }}
+  # The event is part of the key, so the nightly (schedule) and manual runs queue apart from pushes. They used to share master's slot: a
+  # nightly run whose Windows job waited for an offline self-hosted runner sat queued for 16 hours and held it, which kept every later
+  # master push pending and got all but the newest cancelled (runs 1982 and 1984 never ran). A stuck nightly can no longer block pushes.
+  group: ci-${{ github.ref }}-${{ github.event_name }}
   # A newer push to a pull request supersedes the older run. Runs on master are never cancelled: they are the only full verification of what
   # was merged (the pull-request gate is a fast subset), and when several merges land close together a cancelling policy leaves most of them
   # without a result. A run already going on master finishes; if more merges arrive meanwhile, the newest waits and the rest are skipped.
