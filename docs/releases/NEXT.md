@@ -251,3 +251,8 @@ interrupted, the original scene remains intact; the previous version can also be
 
 The packaged player now turns scene sprites and tilemap layers into the same textured quad batches used by the renderer's particle
 pass. This closes the gap where 2D template scenes loaded and simulated correctly but their sprites and tiles were invisible at runtime.
+
+## 3D templates start with procedural environment lighting
+
+First Person, Third Person, Top Down, and Vehicle projects now include a procedural sky light. Their first scene has an environment
+background and ambient image-based lighting without relying on an imported sky texture.

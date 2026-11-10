@@ -300,6 +300,14 @@ bool WriteGreyboxModels(const stdfs::path& content, std::string* error) {
 struct SceneBuilder {
     json entities = json::array();
 
+    // Give the 3D starter scenes a procedural background and environment light without requiring imported assets.
+    void AddProceduralSky() {
+        const json sky = {{"$v", 1}, {"color", json::array({1.0f, 1.0f, 1.0f})}, {"intensity", 1.0f}};
+        entities.push_back({{"guid", ToString(NewEntityGuid())},
+                            {"components", {{"Transform", reflect::ToJson(Transform{Vec3(0, 0, 0), Quaternion::Identity()})},
+                                             {"SkyLight", sky}}}});
+    }
+
     // One entity: a transform, tags, and optionally a camera, a script and a Blueprint.
     void Add(Vec3 position, Quaternion rotation, const std::vector<std::string>& tags, bool camera = false,
              const assets::AssetGuid& script = {}, const assets::AssetGuid& blueprint = {}, bool character = false,
@@ -618,6 +626,7 @@ bool CreateProjectFromTemplate(const stdfs::path& parent_dir, const std::string&
     }
 
     SceneBuilder scene;
+    if (kind != Kind::Blank && kind != Kind::Platformer2D) scene.AddProceduralSky();
     switch (kind) {
         case Kind::Blank:
             scene.Add(Vec3(0, 3, 8), PitchDown(0.3f), {"MainCamera"}, true);

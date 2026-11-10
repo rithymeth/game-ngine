@@ -24,6 +24,8 @@
 #endif
 #include "test_framework.h"
 
+#include <nlohmann/json.hpp>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -110,6 +112,25 @@ AETHER_TEST(Templates_BlankIsAnEmptyLevelWithACamera) {
     CHECK(world.EntityCount() == 2 && CountTagged(world, "MainCamera") == 1 && CountTagged(world, "PlayerStart") == 1);
     const Entity camera = FindEntitiesWithTag(world, "MainCamera")[0];
     CHECK(world.HasComponent<Camera>(camera));
+}
+
+AETHER_TEST(Templates_3DProjectsStartWithAProceduralSky) {
+    for (const std::string& id : kPlayable) {
+        const ProjectPaths paths = Create(id, "Sky_" + id);
+        std::ifstream stream(paths.content / "Scenes/Main.ascene");
+        nlohmann::json scene;
+        stream >> scene;
+        bool found_sky = false;
+        for (const auto& entity : scene.at("entities")) {
+            const auto& components = entity.at("components");
+            const auto sky = components.find("SkyLight");
+            if (sky == components.end()) continue;
+            found_sky = true;
+            CHECK(sky->at("intensity").get<f32>() > 0.0f);
+            CHECK(!sky->contains("environment") || sky->at("environment").get<std::string>().empty());
+        }
+        CHECK(found_sky);
+    }
 }
 
 AETHER_TEST(Templates_EachCreatesAProjectThatCooksAndLoads) {
