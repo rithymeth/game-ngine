@@ -22,6 +22,11 @@
 #include "aether/ui/widget_system.h"
 #include "aether/reflection/serialize.h"
 #include "test_framework.h"
+#include <vector>
+#include <algorithm>
+#include <functional>
+#include <cstdlib>
+#include <cstring>
 
 #if AETHER_TEST_PLAYER_PHYSICS
 #include "aether/physics/components.h"
@@ -1606,6 +1611,107 @@ AETHER_TEST(Player_RenderPoseHierarchyIsVisualOnly) {
     CHECK(std::fabs(world.GetComponent<Transform>(child)->position.x - 1.0f) < 1e-4f);
     const Mat4 offline = ComputeRenderWorldTransform(world, guids, child, {});
     CHECK(std::fabs(offline.cols[3].x - original.cols[3].x) < 1e-4f);
+}
+
+// The player's draw loop takes each entity's transform from a HierarchySnapshot. It has to be, bit for bit, what
+// ComputeRenderWorldTransform gives, with and without a pose sampler, for a hierarchy of some size.
+AETHER_TEST(Player_SnapshotTransformsMatchTheRenderPoseWalk) {
+    World world;
+    GuidIndex guids;
+    std::vector<Entity> entities;
+    u32 x = 0x7f4a7c15u;
+    const auto next = [&] {
+        x ^= x << 13, x ^= x >> 17, x ^= x << 5;
+        return x;
+    };
+    const auto unit = [&] { return static_cast<f32>(next() % 2000) / 1000.0f - 1.0f; };
+    for (u32 i = 0; i < 400; ++i) {
+        Transform t;
+        t.position = Vec3(unit() * 20, unit() * 20, unit() * 20);
+        t.rotation = Quaternion::FromAxisAngle(Vec3(0, 1, 0), unit() * 3.0f);
+        t.scale = Vec3(1.0f + unit() * 0.5f, 1.0f + unit() * 0.5f, 1.0f + unit() * 0.5f);
+        const Entity e = world.CreateEntity(IdComponent{EntityGuid{1000 + i, 7}}, t);
+        if (i > 0 && next() % 5 != 0) world.AddComponent(e, Parent{EntityGuid{1000 + next() % i, 7}});
+        entities.push_back(e);
+    }
+    guids.Rebuild(world);
+    // Moves every third entity and turns it; tries to change scale, which a sampler may not.
+    u32 asked = 0;
+    const HierarchySnapshot::PoseSampler sampler = [&](Entity entity, Transform& pose) {
+        ++asked;
+        if (entity.index % 3 != 0) return false;
+        pose.position = pose.position + Vec3(0.25f, 0.5f, -0.125f);
+        pose.rotation = Quaternion::FromAxisAngle(Vec3(1, 0, 0), 0.3f);
+        pose.scale = Vec3(99, 99, 99);
+        return true;
+    };
+    const HierarchySnapshot::PoseSampler none;
+    HierarchySnapshot snapshot;
+    for (const HierarchySnapshot::PoseSampler* active : {&sampler, &none}) {
+        snapshot.Reset(world, guids, active);
+        asked = 0;
+        bool same = true;
+        for (Entity e : entities) {
+            const Mat4 expected = ComputeRenderWorldTransform(world, guids, e, *active);
+            const Mat4 got = snapshot.WorldTransform(e);
+            same = same && std::memcmp(&expected, &got, sizeof(Mat4)) == 0;
+        }
+        CHECK(same);
+    }
+    // The snapshot asks the sampler at most twice for an entity, not once for every chain the entity is on.
+    snapshot.Reset(world, guids, &sampler);
+    asked = 0;
+    for (Entity e : entities) (void)snapshot.WorldTransform(e);
+    CHECK(asked >= entities.size() && asked <= 2 * entities.size());
+    // The second Reset above forgot the sampled poses: nothing from the first pass leaked into the pass without a sampler.
+    snapshot.Reset(world, guids);
+    const Mat4 plain = ComputeWorldTransform(world, guids, entities[399]);
+    const Mat4 after = snapshot.WorldTransform(entities[399]);
+    CHECK(std::memcmp(&plain, &after, sizeof(Mat4)) == 0);
+}
+
+// The numbers in docs/design/PERFORMANCE.md ("The player's draw loop") come from this; it does nothing unless a size is given:
+//   AETHER_TEST_FILTER=Player_RenderTransformMeasure AETHER_RENDER_TRANSFORM_ENTITIES=10000 aether_tests
+AETHER_TEST(Player_RenderTransformMeasure) {
+    const char* text = std::getenv("AETHER_RENDER_TRANSFORM_ENTITIES");
+    const u32 count = text && *text ? static_cast<u32>(std::strtoul(text, nullptr, 10)) : 0;
+    if (count == 0) return;
+    const std::function<bool(Entity, Transform&)> sampler = [](Entity entity, Transform& pose) {
+        if (entity.index % 16 != 0) return false; // a few interpolated bodies among static ones
+        pose.position = pose.position + Vec3(0.01f, 0, 0);
+        return true;
+    };
+    const std::function<bool(Entity, Transform&)> none;
+    for (const bool tree : {false, true}) {
+        World world;
+        GuidIndex guids;
+        std::vector<Entity> entities;
+        for (u32 i = 0; i < count; ++i) {
+            const Entity e = world.CreateEntity(IdComponent{EntityGuid{1 + i, 9}}, Transform{Vec3(static_cast<f32>(i % 100), 0, static_cast<f32>(i / 100))});
+            if (tree && i > 0) world.AddComponent(e, Parent{EntityGuid{1 + (i - 1) / 8, 9}});
+            entities.push_back(e);
+        }
+        guids.Rebuild(world);
+        HierarchySnapshot snapshot;
+        for (const auto* active : {&none, &sampler}) {
+            double walk = 1e30, snap = 1e30;
+            f32 sum_walk = 0, sum_snap = 0;
+            for (int run = 0; run < 5; ++run) {
+                auto start = std::chrono::steady_clock::now();
+                sum_walk = 0;
+                for (Entity e : entities) sum_walk += ComputeRenderWorldTransform(world, guids, e, *active).cols[3].x;
+                walk = std::min(walk, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count());
+                start = std::chrono::steady_clock::now();
+                snapshot.Reset(world, guids, active);
+                sum_snap = 0;
+                for (Entity e : entities) sum_snap += snapshot.WorldTransform(e).cols[3].x;
+                snap = std::min(snap, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count());
+            }
+            CHECK(sum_walk == sum_snap);
+            std::printf("%u entities, %s, %s: per-entity walk %.2f ms, snapshot %.2f ms\n", count, tree ? "one tree" : "flat",
+                        *active ? "pose sampler" : "no sampler", walk, snap);
+        }
+    }
 }
 
 AETHER_TEST(Player_StageOrderSnapshot) {

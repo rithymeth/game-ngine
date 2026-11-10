@@ -17,14 +17,32 @@ bool IsActiveInHierarchy(const World& world, const GuidIndex& guids, Entity enti
     return true;
 }
 
-void HierarchySnapshot::Reset(const World& world, const GuidIndex& guids) {
+void HierarchySnapshot::Reset(const World& world, const GuidIndex& guids, const PoseSampler* sampler) {
     world_ = &world;
     guids_ = &guids;
+    sampler_ = sampler != nullptr && *sampler ? sampler : nullptr;
     if (++epoch_ == 0) { // wrapped: nothing read before may look current
         nodes_.clear();
         epoch_ = 1;
     }
 }
+
+namespace {
+
+// An entity's local matrix as the snapshot uses it: the stored Transform, with the sampler's position and rotation if it gives any.
+Mat4 PoseMatrix(const Transform& transform, Entity entity, const HierarchySnapshot::PoseSampler* sampler) {
+    Transform pose = transform;
+    if (sampler != nullptr) {
+        Transform sampled = pose;
+        if ((*sampler)(entity, sampled)) { // position and rotation only: scale stays the world's
+            pose.position = sampled.position;
+            pose.rotation = sampled.rotation;
+        }
+    }
+    return LocalTransformMatrix(pose);
+}
+
+} // namespace
 
 const HierarchySnapshot::Node* HierarchySnapshot::Find(Entity entity) {
     if (world_ == nullptr || !world_->IsAlive(entity)) {
@@ -36,11 +54,8 @@ const HierarchySnapshot::Node* HierarchySnapshot::Find(Entity entity) {
     Node& node = nodes_[entity.index];
     if (node.epoch != epoch_) {
         node.epoch = epoch_;
-        const Transform* transform = world_->GetComponent<Transform>(entity);
-        node.has_transform = transform != nullptr;
-        if (transform != nullptr) {
-            node.local = LocalTransformMatrix(*transform);
-        }
+        node.has_transform = world_->HasComponent<Transform>(entity);
+        node.has_local = false; // the matrix is made when a transform is first asked for: active states do not need it
         const Active* active = world_->GetComponent<Active>(entity);
         node.inactive = active != nullptr && !active->active;
         node.parent = GetParent(*world_, *guids_, entity);
@@ -49,12 +64,23 @@ const HierarchySnapshot::Node* HierarchySnapshot::Find(Entity entity) {
 }
 
 Mat4 HierarchySnapshot::WorldTransform(Entity entity) {
+    // An entity with no Parent component is its own chain, and most entities of most scenes are that: nothing would be saved by
+    // keeping it, so it is computed as the walk computes it (the multiplication by the identity included, for the same bits).
+    if (world_ != nullptr && world_->IsAlive(entity) && world_->GetComponent<Parent>(entity) == nullptr) {
+        const Transform* transform = world_->GetComponent<Transform>(entity);
+        return transform != nullptr ? PoseMatrix(*transform, entity, sampler_) * Mat4::Identity() : Mat4::Identity();
+    }
     // The loop of ComputeWorldTransform, over what the snapshot holds.
     Mat4 result = Mat4::Identity();
     for (int depth = 0; depth < kMaxHierarchyDepth; ++depth) {
         const Node* node = Find(entity);
         if (node == nullptr || !node->has_transform) {
             break;
+        }
+        if (!node->has_local) {
+            Node& fill = nodes_[entity.index];
+            fill.local = PoseMatrix(*world_->GetComponent<Transform>(entity), entity, sampler_);
+            fill.has_local = true;
         }
         result = node->local * result;
         entity = node->parent; // Find may move the nodes: nothing of `node` is used after this

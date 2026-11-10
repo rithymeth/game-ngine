@@ -975,6 +975,8 @@ struct SceneRenderer::Impl {
     u32 seen_critical_pressure = 0;
     f32 view_distance = 0.0f;
     std::function<bool(Entity, Transform&)> render_pose_sampler;
+    // Each entity's local matrix and parent, read once a frame instead of once for every drawn entity under it.
+    HierarchySnapshot hierarchy;
     Entity animated_player;
     Vec3 previous_player_position{};
     f64 previous_animation_time = 0.0;
@@ -2334,6 +2336,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
             }
         }
         if (renderer.particles) renderer.particles->SetLighting(particle_lighting);
+        renderer.hierarchy.Reset(world, guids, &renderer.render_pose_sampler);
         world.ForEachArchetype([&](const Archetype& archetype) {
             if (!archetype.Mask().test(GetComponentId<Transform>()) || !archetype.Mask().test(GetComponentId<ModelRenderer>())) return;
             for (usize chunk = 0; chunk < archetype.ChunkCount(); ++chunk) {
@@ -2344,7 +2347,8 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                 for (usize row = 0; row < count; ++row) {
                     Impl::Model* model = renderer.FindModel(models[row].asset_path);
                     if (!model) continue;
-                    const Mat4 entity_transform = ComputeRenderWorldTransform(world, guids, entities[row], renderer.render_pose_sampler);
+                    // What ComputeRenderWorldTransform(world, guids, entity, sampler) returns, bit for bit.
+                    const Mat4 entity_transform = renderer.hierarchy.WorldTransform(entities[row]);
                     (void)transforms; // ComputeWorldTransform also includes any parent chain.
                     const bool is_player = std::find(player_entities.begin(), player_entities.end(), entities[row]) != player_entities.end();
                     std::string selected_clip = is_player ? locomotion_clip : "Enemy_Idle";

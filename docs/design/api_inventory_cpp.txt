@@ -3290,6 +3290,7 @@
   CollisionMatrix MakeCollisionMatrix(const ProjectSettings&settings)
   CollisionMatrix()
   Entity FindActiveCamera(const World&world,const GuidIndex&guids)
+  HierarchySnapshot()=default
   HierarchySnapshot(const World&world,const GuidIndex&guids)
   LayerMask CollidesWith(u8 layer)const
   LayerMask MakeLayerMask(const ProjectSettings&settings,const std::vector<std::string>&names,std::vector<std::string>*unknown=nullptr)
@@ -3308,11 +3309,11 @@
   const Node*Find(Entity entity)
   f32 CineFovDegrees(const CineCamera&camera)
   i32 FindLayer(const ProjectSettings&settings,std::string_view name)
-  public:HierarchySnapshot()=default
+  public:using PoseSampler=std::function<bool(Entity,Transform&transform)>
   std::vector<Entity>FindEntitiesWithTag(const World&world,std::string_view tag)
   u8 LayerOf(const World&world,Entity entity)
   usize ApplyCineCameras(World&world)
-  void Reset(const World&world,const GuidIndex&guids)
+  void Reset(const World&world,const GuidIndex&guids,const PoseSampler*sampler=nullptr)
   void Set(u8 a,u8 b,bool collide)
 [engine/include/aether/scene/hierarchy.h] experimental
   type class ChildIndex

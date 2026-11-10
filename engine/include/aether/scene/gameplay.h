@@ -3,9 +3,11 @@
 #include "aether/math/math.h"
 #include "aether/project/project.h"
 #include "aether/reflection/reflection.h"
+#include "aether/scene/components.h"
 #include "aether/scene/entity_guid.h"
 
 #include <array>
+#include <functional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -37,11 +39,17 @@ bool IsActiveInHierarchy(const World& world, const GuidIndex& guids, Entity enti
 // making a new one, so its memory is reused.
 class HierarchySnapshot {
 public:
+    // May replace an entity's position and rotation (not its scale) for what the snapshot computes, without touching the world:
+    // return true after changing `transform`. Asked at most twice for an entity between two Resets (once as itself if it has no
+    // parent, once as somebody's ancestor), so it should answer the same both times.
+    using PoseSampler = std::function<bool(Entity, Transform& transform)>;
+
     HierarchySnapshot() = default;
     HierarchySnapshot(const World& world, const GuidIndex& guids) { Reset(world, guids); }
 
-    // Forgets everything read so far and looks at `world` from now on. Constant time.
-    void Reset(const World& world, const GuidIndex& guids);
+    // Forgets everything read so far and looks at `world` from now on. Constant time. With `sampler` (which must outlive the
+    // snapshot's use, and may be empty), WorldTransform composes the sampled poses up the chain instead of the stored ones.
+    void Reset(const World& world, const GuidIndex& guids, const PoseSampler* sampler = nullptr);
 
     // What ComputeWorldTransform(world, guids, entity) returns.
     Mat4 WorldTransform(Entity entity);
@@ -54,12 +62,14 @@ private:
         Entity parent;         // the live parent, or kNullEntity
         u32 epoch = 0;         // read in this Reset when it equals epoch_
         bool has_transform = false;
+        bool has_local = false; // `local` has been computed
         bool inactive = false; // has Active{false}
     };
     const Node* Find(Entity entity);
 
     const World* world_ = nullptr;
     const GuidIndex* guids_ = nullptr;
+    const PoseSampler* sampler_ = nullptr;
     std::vector<Node> nodes_; // by entity index
     u32 epoch_ = 0;
 };
