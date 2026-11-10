@@ -365,18 +365,25 @@ AETHER_TEST(Animator_ComponentSystemAndBlueprints) {
     world.GetComponent<Animator>(actors[0])->SetFloatParameter("UnknownParameter", 1.0f);
     world.GetComponent<Animator>(actors[1])->PlayMontage("Combo", 1.0f);
     world.GetComponent<Animator>(actors[2])->PlayMontage("Nope", 1.0f);
+    world.GetComponent<Animator>(actors[2])->JumpToSection("MissingSection");
     system.Update(0.05f);
     AETHER_CHECK(world.GetComponent<Animator>(actors[0])->commands.empty());
     AETHER_CHECK(system.InstanceOf(actors[0])->CurrentState(2) == "Walk" && system.InstanceOf(actors[1])->IsPlayingMontage());
-    AETHER_CHECK(system.Problems().size() == 4);
+    AETHER_CHECK(system.Problems().size() == 5);
     AETHER_CHECK(system.Problems()[1].find("Speed") != std::string::npos && system.Problems()[1].find("bool") != std::string::npos);
     AETHER_CHECK(system.Problems()[2].find("UnknownParameter") != std::string::npos);
+    AETHER_CHECK(system.Problems()[3].find("can't play the montage 'Nope'") != std::string::npos);
+    AETHER_CHECK(system.Problems()[4].find("MissingSection") != std::string::npos);
     bool changed = false, started = false;
     for (const EntityAnimEvent& e : system.Events()) {
         if (e.entity == actors[0] && e.event.type == AnimEventType::StateChanged && e.event.name == "Walk") changed = true;
         if (e.entity == actors[1] && e.event.type == AnimEventType::MontageStarted) started = true;
     }
     AETHER_CHECK(changed && started);
+    world.GetComponent<Animator>(actors[2])->PlayMontage("Nope", 1.0f);
+    world.GetComponent<Animator>(actors[2])->JumpToSection("MissingSection");
+    system.Update(0.05f);
+    AETHER_CHECK(system.Problems().size() == 5); // repeated bad commands stay deduplicated
 
     // Parallel evaluation gives the same poses as serial.
     World twin;

@@ -15,6 +15,7 @@
 #include "aether/scene/gameplay.h"
 #include "aether/scene/hierarchy.h"
 #include "aether/scene/script_component.h"
+#include "aether/sprite2d/atlas.h"
 #include "aether/sprite2d/components.h"
 #include "aether/sprite2d/physics2d.h"
 #include "aether/sprite2d/platformer.h"
@@ -486,11 +487,30 @@ bool WritePlatformer(const ProjectPaths& paths, std::string* error) {
     renderer.tilemap.guid = map_guid;
     renderer.pixels_per_unit = 16.0f;
     add(Vec3(0, 0, 0), "Level", {{"TilemapRenderer", reflect::ToJson(renderer)}});
+    // A textureless atlas still renders as a tinted box in the player. This gives a new project a
+    // visible, editable character placeholder before the user imports art.
+    sprite2d::SpriteAtlas player_atlas;
+    player_atlas.width = 16;
+    player_atlas.height = 16;
+    player_atlas.frames.push_back({"idle", 0, 0, 13, 16, 0.5f, 0.5f});
+    std::error_code atlas_ec;
+    stdfs::create_directories(content / "Sprites", atlas_ec);
+    if (!sprite2d::SaveAtlas(content / "Sprites/Player.aatlas", player_atlas, error)) return false;
+    assets::AssetDatabase atlas_database(content);
+    atlas_database.Scan();
+    const assets::AssetRecord* player_atlas_asset = atlas_database.FindByPath("Sprites/Player.aatlas");
+    if (!player_atlas_asset) return Fail(error, "The player sprite atlas wasn't picked up by the asset database");
+    sprite2d::Sprite player_sprite;
+    player_sprite.atlas.guid = player_atlas_asset->guid;
+    sprite2d::SetSpriteFrame(player_sprite, "idle");
+    player_sprite.color = {0.16f, 0.45f, 0.85f, 1.0f};
+    player_sprite.order = 1;
     Collider2D body;
     body.half_extents = {0.4f, 0.5f};
     body.friction = 0.0f; // the controller sets the speed, so the floor shouldn't fight it
     add(Vec3(3, 3, 0), "Player",
-        {{"Rigidbody2D", reflect::ToJson(Rigidbody2D{})},
+        {{"Sprite", reflect::ToJson(player_sprite)},
+         {"Rigidbody2D", reflect::ToJson(Rigidbody2D{})},
          {"Collider2D", reflect::ToJson(body)},
          {"PlatformerController2D", reflect::ToJson(PlatformerController2D{})}});
     if (!scene.Write(content / "Scenes/Main.ascene", error)) return false;

@@ -251,6 +251,10 @@ void AnimationSystem::Update(f32 dt, JobSystem* jobs) {
         if (r.instance) {
             r.instance->SetRootMotion(a.root_motion);
             for (const AnimatorCommand& c : a.commands) {
+                const auto report_command_problem = [&](const std::string& message) {
+                    const std::string problem = "entity " + std::to_string(e.index) + ": " + message;
+                    if (r.command_problems.insert(problem).second) problems_.push_back(problem);
+                };
                 bool accepted = true;
                 const char* expected = "parameter";
                 switch (c.kind) {
@@ -273,19 +277,21 @@ void AnimationSystem::Update(f32 dt, JobSystem* jobs) {
                 case AnimatorCommand::Kind::PlayMontage: {
                     const Montage* m = library_.montage ? library_.montage(c.name) : nullptr;
                     if (m == nullptr || !r.instance->PlayMontage(*m, c.value > 0.0f ? c.value : 1.0f)) {
-                        problems_.push_back("entity " + std::to_string(e.index) + ": can't play the montage '" + c.name + "'");
+                        report_command_problem("can't play the montage '" + c.name + "'");
                     } else {
                         r.montage_slot = m->slot;
                     }
                     break;
                 }
                 case AnimatorCommand::Kind::StopMontage: r.instance->StopMontage(r.montage_slot); break;
-                case AnimatorCommand::Kind::JumpToSection: r.instance->JumpToSection(c.name, r.montage_slot); break;
+                case AnimatorCommand::Kind::JumpToSection:
+                    if (!r.instance->JumpToSection(c.name, r.montage_slot)) {
+                        report_command_problem("can't jump to section '" + c.name + "' in montage slot '" + r.montage_slot + "'");
+                    }
+                    break;
                 }
                 if (!accepted && c.kind <= AnimatorCommand::Kind::SetTrigger) {
-                    const std::string problem = "entity " + std::to_string(e.index) + ": animation parameter '" + c.name +
-                                                "' is missing or is not a " + expected;
-                    if (r.command_problems.insert(problem).second) problems_.push_back(problem);
+                    report_command_problem("animation parameter '" + c.name + "' is missing or is not a " + expected);
                 }
             }
             active.push_back(&r);

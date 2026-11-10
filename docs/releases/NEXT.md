@@ -239,5 +239,15 @@ three commands.
 
 ## Animation: mistyped graph parameters are diagnosed
 
-Invalid animation graph parameter commands now report the entity, parameter name, and expected type once per distinct problem.
-Repeated gameplay requests no longer fail silently or flood the diagnostics list.
+Invalid animation graph parameter commands, failed montage playback, and unavailable montage-section jumps now report the
+entity and request once per distinct problem. Repeated gameplay requests no longer fail silently or flood the diagnostics list.
+
+## Scene saves keep a recoverable previous version
+
+Binary and JSON scene saves now replace their target atomically and retain the prior file as `<scene>.bak`. If a save is
+interrupted, the original scene remains intact; the previous version can also be loaded directly for recovery.
+
+## Packaged projects render Sprite2D content
+
+The packaged player now turns scene sprites and tilemap layers into the same textured quad batches used by the renderer's particle
+pass. This closes the gap where 2D template scenes loaded and simulated correctly but their sprites and tiles were invisible at runtime.

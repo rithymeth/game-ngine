@@ -317,6 +317,7 @@ AETHER_TEST(Templates_PlatformerIsACompleteTilemapGame) {
     db.Scan();
     CHECK(db.FindByPath("Tiles/Level.atileset") && db.FindByPath("Tiles/Level.atileset")->importer == "Tileset");
     CHECK(db.FindByPath("Tiles/Level1.atilemap") && db.FindByPath("Tiles/Level1.atilemap")->importer == "Tilemap");
+    CHECK(db.FindByPath("Sprites/Player.aatlas") && db.FindByPath("Sprites/Player.aatlas")->importer == "SpriteAtlas");
     CHECK(db.FindByPath("Input/Move.aaction") && db.FindByPath("Input/Jump.aaction") && db.FindByPath("Input/Gameplay.amapping"));
     CHECK(!db.FindByPath("Input/Look.aaction") && !stdfs::exists(paths.content / "Scripts") && !stdfs::exists(paths.content / "Blueprints"));
     // The tilemap names its tileset, which the database sees as a dependency.
@@ -333,7 +334,7 @@ AETHER_TEST(Templates_PlatformerIsACompleteTilemapGame) {
     CHECK(LoadSceneJson(world, (paths.content / "Scenes/Main.ascene").string()));
     CHECK(CountTagged(world, "Player") == 1 && CountTagged(world, "Level") == 1 && CountTagged(world, "MainCamera") == 1);
     const Entity hero = FindEntitiesWithTag(world, "Player")[0];
-    CHECK(world.HasComponent<sprite2d::Rigidbody2D>(hero) && world.HasComponent<sprite2d::Collider2D>(hero) &&
+    CHECK(world.HasComponent<sprite2d::Sprite>(hero) && world.HasComponent<sprite2d::Rigidbody2D>(hero) && world.HasComponent<sprite2d::Collider2D>(hero) &&
           world.HasComponent<sprite2d::PlatformerController2D>(hero));
     const Entity camera = FindEntitiesWithTag(world, "MainCamera")[0];
     CHECK(world.GetComponent<Camera>(camera)->projection == Projection::Orthographic);
