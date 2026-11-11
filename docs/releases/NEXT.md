@@ -321,3 +321,5 @@ blurred, and thin geometry does not occlude.
 `PostProcessVolume::fog_density` (1 / m, default 0: off) fades the scene toward the sky's colour with distance from the camera, `1 -
 exp(-density * distance)`, in the post pass from the scene depth copy. It blends between volumes like the other settings. The sky is
 left alone. No height fog or sun in-scatter yet, and transparent draws are not fogged (they are not in the depth copy).
+
+Fog also takes the sun's light toward the sun (in-scatter), as 10 % of its colour by default; `AETHER_RENDER_FOG_SUN` changes the share.

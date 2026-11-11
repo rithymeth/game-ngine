@@ -39,8 +39,10 @@ struct PostConstants {
     f32 proj_y = 1.0f;
     f32 fog_density = 0.0f;     // 1 / m
     f32 fog_color[4] = {0, 0, 0, 0}; // linear, the sky's
+    f32 sun_view[4] = {0, 0, 0, 0};  // xyz: the unit vector toward the sun in view space; w: 1 when there is a sun to scatter
+    f32 sun_color[4] = {0, 0, 0, 0}; // rgb: the sun's light the fog takes toward the sun (linear)
 };
-static_assert(sizeof(PostConstants) == 80);
+static_assert(sizeof(PostConstants) == 112);
 
 // The bloom passes' push constants: 32 bytes.
 struct BloomConstants {
@@ -93,6 +95,8 @@ public:
     void SetAmbientOcclusion(const AmbientOcclusion& ao) { ao_ = ao; }
     // The sky colour distance fog fades toward, for the next Draw (with the depth from SetAmbientOcclusion, whose strength may be 0).
     void SetFogColor(const Vec3& color) { fog_color_ = color; }
+    // The sun's in-scatter in the fog, for the next Draw: toward the sun (`direction_view`, a unit vector in view space) the fog takes `color`.
+    void SetFogSun(const Vec3& direction_view, const Vec3& color) { sun_view_ = direction_view; sun_color_ = color; sun_set_ = true; }
     // Records the full-screen draw inside the current back-buffer render pass, after the scene colour pass has ended. Composites the
     // bloom chain when RenderBloom drew it since the last Draw.
     void Draw(gfx::rhi::ICommandList& commands, const PostProcessSettings& settings);
@@ -122,6 +126,8 @@ private:
     u32 bloom_width_ = 0, bloom_height_ = 0; // the scene size the chain was made for
     AmbientOcclusion ao_;
     Vec3 fog_color_{0, 0, 0};
+    Vec3 sun_view_{0, 0, 1}, sun_color_{0, 0, 0};
+    bool sun_set_ = false;
     bool bloom_ready_ = false;               // RenderBloom drew since the last Draw
     bool bloom_warned_ = false;              // the full-table warning, once
 };
