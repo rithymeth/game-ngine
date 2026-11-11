@@ -305,3 +305,13 @@ environment drew as nothing, with only an `[ERROR] glTF` line in the log. It is 
 the builder's output was already identical to what was committed). The builder also wound the river ribbon facing down, so the
 meltwater was culled from above; it faces up now. `games/AETHER-01/tools/validate_assets.py`, which catches the length mismatch,
 now runs as the `aether01_assets_validate` check; before, nothing ran it.
+
+## Screen-space ambient occlusion
+
+The player's post pass darkens the HDR scene where the depth copy shows nearby surfaces closing in: 12 golden-angle taps in a sphere
+of 2.5 m, normals rebuilt from depth, strength 0.9, applied before exposure and the tone mapper. It needs the HDR path and the scene
+depth copy (the same one temporal anti-aliasing reads). `AETHER_RENDER_AO=0` turns it off; `AETHER_RENDER_AO_STRENGTH` (0 to 1) and
+`AETHER_RENDER_AO_RADIUS` (metres) tune it. It is measured only by eye on the LastLight Valley under lavapipe (0.4 of a level off the
+mean, 1 to 2 % of pixels visibly changed, at the cliff base, under rocks and on the bridge); there is no GPU-time figure yet and no
+automated test of the image. Known limits: it also darkens directly lit surfaces (it multiplies the final colour), the noise is not
+blurred, and thin geometry does not occlude.

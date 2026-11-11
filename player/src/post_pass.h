@@ -30,8 +30,16 @@ struct PostConstants {
     u32 bloom = 0xffffffffu;    // bindless index of the bloom chain's top level, or none (anything >= kMaxBindlessTextures)
     f32 bloom_intensity = 0.0f; // 0..1, the composite's lerp weight
     f32 bloom_scale = 1.0f;     // 1 / levels: the accumulated chain back to the scene's brightness
+    u32 depth = 0xffffffffu;    // bindless index of the scene depth copy, or none: ambient occlusion off
+    f32 ao_strength = 0.0f;     // 0..1
+    f32 ao_radius = 1.0f;       // metres
+    f32 near_plane = 0.1f;
+    f32 far_plane = 1000.0f;
+    f32 proj_x = 1.0f;          // the projection's [0][0] and [1][1] (1 / (aspect * tan(fov/2)), 1 / tan(fov/2))
+    f32 proj_y = 1.0f;
+    f32 padding = 0.0f;
 };
-static_assert(sizeof(PostConstants) == 32);
+static_assert(sizeof(PostConstants) == 64);
 
 // The bloom passes' push constants: 32 bytes.
 struct BloomConstants {
@@ -75,6 +83,13 @@ public:
     // anti-aliasing's resolve), or 0 for the scene colour target itself (the default).
     void SetSource(u32 index) { source_ = index; }
     u32 Source() const { return source_ != 0 ? source_ : scene_color_; }
+    // Screen-space ambient occlusion for the next Draw only: the scene colour is darkened where the depth copy shows nearby surfaces closing
+    // in (a sphere of `radius` metres, up to `strength` 0..1), before exposure and the tone mapper. `projection` is the camera's.
+    struct AmbientOcclusion {
+        u32 depth = 0xffffffffu;
+        f32 strength = 0.0f, radius = 1.0f, near_plane = 0.1f, far_plane = 1000.0f, proj_x = 1.0f, proj_y = 1.0f;
+    };
+    void SetAmbientOcclusion(const AmbientOcclusion& ao) { ao_ = ao; }
     // Records the full-screen draw inside the current back-buffer render pass, after the scene colour pass has ended. Composites the
     // bloom chain when RenderBloom drew it since the last Draw.
     void Draw(gfx::rhi::ICommandList& commands, const PostProcessSettings& settings);
@@ -102,6 +117,7 @@ private:
     std::vector<gfx::rhi::SampledTextureHandle> bloom_levels_;
     std::vector<Extent> bloom_extents_;
     u32 bloom_width_ = 0, bloom_height_ = 0; // the scene size the chain was made for
+    AmbientOcclusion ao_;
     bool bloom_ready_ = false;               // RenderBloom drew since the last Draw
     bool bloom_warned_ = false;              // the full-table warning, once
 };

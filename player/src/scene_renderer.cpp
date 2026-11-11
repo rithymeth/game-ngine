@@ -936,6 +936,9 @@ struct SceneRenderer::Impl {
     std::vector<BufferHandle> motion_position_buffers;
     std::vector<u64> motion_position_capacity;
     u64 transform_frame = 0;
+    // Screen-space ambient occlusion in the post pass (AETHER_RENDER_AO=0 turns it off; AETHER_RENDER_AO_STRENGTH and _RADIUS tune it).
+    bool ssao = false;
+    f32 ao_strength = 0.9f, ao_radius = 2.5f;
     bool taa_motion = false; // the motion pass (AETHER_RENDER_TAA_MOTION=0 turns it off)
     std::unique_ptr<SkyPass> sky;        // where the device has frame constants and half-float textures (D3D12)
     bool hdr = false;
@@ -1042,6 +1045,10 @@ struct SceneRenderer::Impl {
             const char* motion_setting = std::getenv("AETHER_RENDER_TAA_MOTION"); // 0: the camera's reprojection alone, for comparison
             taa_motion = taa && (motion_setting == nullptr || std::strcmp(motion_setting, "0") != 0);
         }
+        const char* ao_setting = std::getenv("AETHER_RENDER_AO");
+        ssao = hdr && (ao_setting == nullptr || std::strcmp(ao_setting, "0") != 0);
+        if (const char* v = std::getenv("AETHER_RENDER_AO_STRENGTH")) ao_strength = std::clamp(static_cast<f32>(std::atof(v)), 0.0f, 1.0f);
+        if (const char* v = std::getenv("AETHER_RENDER_AO_RADIUS")) ao_radius = std::clamp(static_cast<f32>(std::atof(v)), 0.05f, 20.0f);
         PipelineDesc desc;
         desc.hlsl_source = SceneShaderSource(false, hdr);
         desc.scene_color_target = hdr;
@@ -2257,6 +2264,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
     bool draw_particles = false;
     bool draw_sprite2d = false;
     Mat4 decal_view_projection;
+    f32 ao_proj_x = 1.0f, ao_proj_y = 1.0f, ao_near = 0.1f, ao_far = 1000.0f; // the camera's, for the post pass's occlusion
     Mat4 taa_view_projection; // without the jitter
     Vec3 decal_camera_position;
     bool have_camera = false;
@@ -2273,6 +2281,10 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
             projection = JitterProjection(steady_projection, jitter_x, jitter_y, renderer.swap_chain.Width(), renderer.swap_chain.Height());
         }
         taa_view_projection = steady_projection * camera_view;
+        ao_proj_x = steady_projection.cols[0].x;
+        ao_proj_y = steady_projection.cols[1].y;
+        ao_near = std::max(LimitViewDistance(*camera, renderer.view_distance).near_plane, 1e-4f);
+        ao_far = std::max(LimitViewDistance(*camera, renderer.view_distance).far_plane, ao_near * 1.001f);
         const Mat4 view_projection = projection * camera_view;
         particle_view_projection = view_projection;
         particle_projection = projection;
@@ -2929,7 +2941,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
     if (renderer.hdr) {
         // The lit scene is in the HDR target: tone map it into the back buffer under the post volumes at the camera, then the HUD on top
         // in display space. Temporal anti-aliasing first blends it with the frames before (reading the depth copied here).
-        const bool resolve = (renderer.taa || vsm_record) && have_camera && commands.CopySceneDepth();
+        const bool resolve = (renderer.taa || vsm_record || renderer.ssao) && have_camera && commands.CopySceneDepth();
         commands.EndRenderPass();
         renderer.GpuStamp(commands, 2);
         if (resolve && vsm_record) renderer.vsm_feedback->Record(commands, vsm_feedback_params, frame_index);
@@ -2942,6 +2954,10 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
             renderer.taa->Reset();
         }
         renderer.post->SetSource(resolved);
+        if (resolve && renderer.ssao && renderer.swap_chain.SceneDepthTexture().IsValid()) {
+            renderer.post->SetAmbientOcclusion({renderer.swap_chain.SceneDepthTexture().index, renderer.ao_strength, renderer.ao_radius, ao_near,
+                                                ao_far, ao_proj_x, ao_proj_y});
+        }
         RenderScene volumes;
         volumes.post_volumes = ExtractPostVolumes(world, guids);
         const PostProcessSettings post_settings = BlendPostProcess(volumes, have_camera ? decal_camera_position : Vec3(0, 0, 0));
