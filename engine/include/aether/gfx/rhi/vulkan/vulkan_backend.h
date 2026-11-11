@@ -31,7 +31,7 @@ struct TextureRecord {
 
 // What a render pass draws into, and so which pass a pipeline is made for (PipelineDesc's scene_color_target, render_texture_target and
 // depth_target): pipelines and passes of different kinds aren't render-pass compatible, so BindPipeline refuses a mismatch.
-enum class PassTarget : u8 { BackBuffer, SceneColor, Texture, Depth };
+enum class PassTarget : u8 { BackBuffer, SceneColor, Texture, Depth, TextureDepth };
 
 struct PipelineRecord {
     VkPipelineLayout layout = VK_NULL_HANDLE;
@@ -85,6 +85,10 @@ struct SampledTextureRecord {
     PassTarget target = PassTarget::BackBuffer;
     VkFramebuffer framebuffer = VK_NULL_HANDLE;
     u32 width = 0, height = 0;
+    // TextureDepth: the depth attachment that goes with the colour image (never sampled, cleared by every pass).
+    VkImage depth_image = VK_NULL_HANDLE;
+    VkDeviceMemory depth_memory = VK_NULL_HANDLE;
+    VkImageView depth_view = VK_NULL_HANDLE;
 };
 
 // Vulkan counterpart to d3d12_backend::D3D12Device. Notably: this
@@ -189,6 +193,7 @@ public:
     // some mid-frame (TAA's history, bloom's levels), which writes the bindless table while a recorded frame uses it: that needs the table
     // to be update-after-bind, so a device without it has neither (invalid handles; the player then draws without HDR, shadows or TAA).
     SampledTextureHandle CreateRenderTexture(u32 width, u32 height) override;
+    SampledTextureHandle CreateRenderTextureWithDepth(u32 width, u32 height) override;
     SampledTextureHandle CreateDepthTexture(u32 width, u32 height) override;
     SampledTextureHandle CreateHalfFloatTexture(u32 width, u32 height, u32 mip_count, const u16* halves) override;
     SampledTextureHandle CreateTextureWithMips(u32 width, u32 height, u32 mip_count, const u8* rgba8_levels) override;
@@ -345,7 +350,7 @@ private:
     bool bindless_update_after_bind_ = false;
     bool ray_tracing_supported_ = false;
     bool render_targets_supported_ = false;
-    VkRenderPass target_passes_[2][2]{}; // [Texture, Depth][keep, clear]
+    VkRenderPass target_passes_[3][2]{}; // [Texture, Depth, TextureDepth][keep, clear]
     std::vector<std::unique_ptr<ICommandList>> pending_transitions_; // MakeShaderReadable's, kept until their submission completes
     void CreateTargetPasses();
     SampledTextureHandle CreateTargetTexture(const char* what, PassTarget target, u32 width, u32 height);

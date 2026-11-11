@@ -1740,12 +1740,13 @@ void VulkanDevice::CreateTargetPasses() {
     for (u32 clear = 0; clear < 2; ++clear) {
         target_passes_[0][clear] = CreateTargetRenderPass(device_, kRenderTextureFormat, VK_FORMAT_UNDEFINED, false, clear != 0);
         target_passes_[1][clear] = CreateTargetRenderPass(device_, VK_FORMAT_UNDEFINED, kDepthTextureFormat, true, clear != 0);
+        target_passes_[2][clear] = CreateTargetRenderPass(device_, kRenderTextureFormat, kDepthTextureFormat, false, clear != 0); // colour, with depth that is only tested
     }
 }
 
 VkRenderPass VulkanDevice::TargetPass(PassTarget target, bool clear) const {
-    if (target != PassTarget::Texture && target != PassTarget::Depth) return VK_NULL_HANDLE;
-    return target_passes_[target == PassTarget::Depth ? 1 : 0][clear ? 1 : 0];
+    if (target != PassTarget::Texture && target != PassTarget::Depth && target != PassTarget::TextureDepth) return VK_NULL_HANDLE;
+    return target_passes_[target == PassTarget::Depth ? 1 : target == PassTarget::TextureDepth ? 2 : 0][clear ? 1 : 0];
 }
 
 const SampledTextureRecord* VulkanDevice::FindTarget(SampledTextureHandle handle, PassTarget target) const {
@@ -1786,6 +1787,10 @@ void VulkanDevice::MakeShaderReadable(VkImage image, VkImageAspectFlags aspect, 
 
 SampledTextureHandle VulkanDevice::CreateRenderTexture(u32 width, u32 height) {
     return CreateTargetTexture("CreateRenderTexture", PassTarget::Texture, width, height);
+}
+
+SampledTextureHandle VulkanDevice::CreateRenderTextureWithDepth(u32 width, u32 height) {
+    return CreateTargetTexture("CreateRenderTextureWithDepth", PassTarget::TextureDepth, width, height);
 }
 
 SampledTextureHandle VulkanDevice::CreateDepthTexture(u32 width, u32 height) {
@@ -1840,9 +1845,31 @@ SampledTextureHandle VulkanDevice::CreateTargetTexture(const char* what, PassTar
     view_info.subresourceRange = {aspect, 0, 1, 0, 1};
     AETHER_VK_CHECK(vkCreateImageView(device_, &view_info, nullptr, &record.view));
     VkFramebufferCreateInfo framebuffer_info{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+    VkImageView framebuffer_views[2] = {record.view, VK_NULL_HANDLE};
+    if (target == PassTarget::TextureDepth) {
+        // The depth attachment of a render texture with depth: its own image, D32, tested and written by the pass and never sampled.
+        VkImageCreateInfo depth_info = image_info;
+        depth_info.format = kDepthTextureFormat;
+        depth_info.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+        AETHER_VK_CHECK(vkCreateImage(device_, &depth_info, nullptr, &record.depth_image));
+        VkMemoryRequirements depth_reqs{};
+        vkGetImageMemoryRequirements(device_, record.depth_image, &depth_reqs);
+        VkMemoryAllocateInfo depth_alloc{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        depth_alloc.allocationSize = depth_reqs.size;
+        depth_alloc.memoryTypeIndex = FindMemoryType(physical_device_, depth_reqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        AETHER_VK_CHECK(vkAllocateMemory(device_, &depth_alloc, nullptr, &record.depth_memory));
+        AETHER_VK_CHECK(vkBindImageMemory(device_, record.depth_image, record.depth_memory, 0));
+        VkImageViewCreateInfo depth_view_info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        depth_view_info.image = record.depth_image;
+        depth_view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        depth_view_info.format = kDepthTextureFormat;
+        depth_view_info.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+        AETHER_VK_CHECK(vkCreateImageView(device_, &depth_view_info, nullptr, &record.depth_view));
+        framebuffer_views[1] = record.depth_view;
+    }
     framebuffer_info.renderPass = TargetPass(target, true);
-    framebuffer_info.attachmentCount = 1;
-    framebuffer_info.pAttachments = &record.view;
+    framebuffer_info.attachmentCount = target == PassTarget::TextureDepth ? 2u : 1u;
+    framebuffer_info.pAttachments = framebuffer_views;
     framebuffer_info.width = width;
     framebuffer_info.height = height;
     framebuffer_info.layers = 1;
@@ -1885,8 +1912,11 @@ bool VulkanDevice::DestroyTexture(SampledTextureHandle texture) {
     Retire([this, record, position, index = texture.index] {
         WriteBindlessTexture(index, dummy_texture_);
         if (record.framebuffer != VK_NULL_HANDLE) vkDestroyFramebuffer(device_, record.framebuffer, nullptr);
+        if (record.depth_view != VK_NULL_HANDLE) vkDestroyImageView(device_, record.depth_view, nullptr);
         vkDestroyImageView(device_, record.view, nullptr);
+        if (record.depth_image != VK_NULL_HANDLE) vkDestroyImage(device_, record.depth_image, nullptr);
         vkDestroyImage(device_, record.image, nullptr);
+        if (record.depth_memory != VK_NULL_HANDLE) vkFreeMemory(device_, record.depth_memory, nullptr);
         vkFreeMemory(device_, record.memory, nullptr);
         std::lock_guard<std::mutex> lock(retire_mutex_);
         released_texture_slots_.push_back(position);
@@ -2523,7 +2553,7 @@ PipelineHandle VulkanDevice::CreatePipeline(const PipelineDesc& desc, ISwapChain
     }
     auto& vk_swap = *vk_swap_ptr;
     const PassTarget target = desc.depth_target           ? PassTarget::Depth
-                              : desc.render_texture_target ? PassTarget::Texture
+                              : desc.render_texture_target ? (desc.render_texture_depth ? PassTarget::TextureDepth : PassTarget::Texture)
                               : desc.scene_color_target    ? PassTarget::SceneColor
                                                            : PassTarget::BackBuffer;
     const VkRenderPass render_pass = target == PassTarget::BackBuffer   ? vk_swap.DefaultRenderPass()
@@ -2691,7 +2721,7 @@ PipelineHandle VulkanDevice::CreatePipeline(const PipelineDesc& desc, ISwapChain
     // of testing/writing against it.
     VkPipelineDepthStencilStateCreateInfo depth_stencil{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
     // A depth pass always tests and writes; a render-texture pass has no depth attachment.
-    const bool depth_tested = target == PassTarget::Depth || (target != PassTarget::Texture && desc.depth_test);
+    const bool depth_tested = target == PassTarget::Depth || (target != PassTarget::Texture && desc.depth_test); // a TextureDepth pass tests like the scene's
     const bool depth_written = target == PassTarget::Depth || (depth_tested && desc.depth_write);
     depth_stencil.depthTestEnable = depth_tested ? VK_TRUE : VK_FALSE;
     depth_stencil.depthWriteEnable = depth_written ? VK_TRUE : VK_FALSE;
@@ -4111,34 +4141,40 @@ bool VulkanCommandList::BeginSceneColorPass(ISwapChain& swap_chain, const ClearC
 }
 
 bool VulkanCommandList::BeginTexturePass(SampledTextureHandle target, const ClearColor* clear_color) {
-    const SampledTextureRecord* record = device_.FindTarget(target, PassTarget::Texture);
+    const SampledTextureRecord* with_depth = device_.FindTarget(target, PassTarget::TextureDepth);
+    const SampledTextureRecord* record = with_depth ? with_depth : device_.FindTarget(target, PassTarget::Texture);
     if (!recording_ || compute_queue_ || render_pass_active_ || !record || (clear_color && !IsFiniteClearColor(*clear_color))) {
         AETHER_LOG_ERROR("Vulkan", "BeginTexturePass requires a recording list outside any pass and a live render texture of this device");
         return false;
     }
-    VkClearValue clear{};
+    // A texture with depth always clears (colour to `clear_color`, or transparent black when null; depth to far): its depth has no contents to keep.
+    const bool clears = clear_color != nullptr || with_depth != nullptr;
+    VkClearValue clear[2]{};
     if (clear_color) {
-        clear.color.float32[0] = clear_color->r;
-        clear.color.float32[1] = clear_color->g;
-        clear.color.float32[2] = clear_color->b;
-        clear.color.float32[3] = clear_color->a;
+        clear[0].color.float32[0] = clear_color->r;
+        clear[0].color.float32[1] = clear_color->g;
+        clear[0].color.float32[2] = clear_color->b;
+        clear[0].color.float32[3] = clear_color->a;
     }
+    clear[1].depthStencil.depth = 1.0f;
+    const PassTarget kind = with_depth ? PassTarget::TextureDepth : PassTarget::Texture;
     VkRenderPassBeginInfo rp_begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
-    rp_begin.renderPass = device_.TargetPass(PassTarget::Texture, clear_color != nullptr);
+    rp_begin.renderPass = device_.TargetPass(kind, clears);
     rp_begin.framebuffer = record->framebuffer;
     rp_begin.renderArea.extent = {record->width, record->height};
-    rp_begin.clearValueCount = clear_color ? 1u : 0u;
-    rp_begin.pClearValues = &clear;
+    rp_begin.clearValueCount = with_depth ? 2u : (clear_color ? 1u : 0u);
+    rp_begin.pClearValues = clear;
     vkCmdBeginRenderPass(command_buffer_, &rp_begin, VK_SUBPASS_CONTENTS_INLINE);
     render_pass_active_ = true;
     active_swap_chain_ = nullptr;
-    active_target_ = PassTarget::Texture;
+    active_target_ = kind;
     SetFullViewport(record->width, record->height);
     return true;
 }
 
 bool VulkanCommandList::CopyRenderTextureToReadback(SampledTextureHandle texture, BufferHandle readback) {
-    const SampledTextureRecord* record = device_.FindTarget(texture, PassTarget::Texture);
+    const SampledTextureRecord* colour_only = device_.FindTarget(texture, PassTarget::Texture);
+    const SampledTextureRecord* record = colour_only ? colour_only : device_.FindTarget(texture, PassTarget::TextureDepth);
     if (!recording_ || compute_queue_ || render_pass_active_ || !record || !device_.IsBufferAlive(readback) ||
         !device_.GetBuffer(readback).is_readback) {
         AETHER_LOG_ERROR("Vulkan", "CopyRenderTextureToReadback requires a recording graphics list outside any pass, a live render texture and a readback buffer");

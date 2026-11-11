@@ -2228,6 +2228,7 @@
   virtual SampledTextureHandle CreateHalfFloatTexture(u32,u32,u32,const u16*)
   virtual SampledTextureHandle CreateR32FloatTexture(u32 width,u32 height,const f32*values)=0
   virtual SampledTextureHandle CreateRenderTexture(u32,u32)
+  virtual SampledTextureHandle CreateRenderTextureWithDepth(u32,u32)
   virtual SampledTextureHandle CreateTexture(u32 width,u32 height,const u8*rgba8_pixels)=0
   virtual SampledTextureHandle CreateTextureWithMips(u32 width,u32 height,u32 mip_count,const u8*rgba8_levels)
   virtual bool DestroyAccelerationStructure(AccelerationStructureHandle)
@@ -2335,6 +2336,7 @@
   SampledTextureHandle CreateMippedTexture(const char*what,VkFormat format,u32 texel_bytes,u32 width,u32 height,u32 mip_count,const void*levels)
   SampledTextureHandle CreateR32FloatTexture(u32 width,u32 height,const f32*values)override
   SampledTextureHandle CreateRenderTexture(u32 width,u32 height)override
+  SampledTextureHandle CreateRenderTextureWithDepth(u32 width,u32 height)override
   SampledTextureHandle CreateTargetTexture(const char*what,PassTarget target,u32 width,u32 height)
   SampledTextureHandle CreateTexture(u32 width,u32 height,const u8*rgba8_pixels)override
   SampledTextureHandle CreateTextureWithMips(u32 width,u32 height,u32 mip_count,const u8*rgba8_levels)override
