@@ -471,3 +471,8 @@ no Wind component has the default breeze, so its water now has a gentle swell; s
 ## Whitecaps
 
 Swells foam on their crests in a strong wind (a wind strength over about 0.7). No setting beyond the Wind component.
+
+## Filming a scene's sequences
+
+`aether_player --record-dir <dir> [--record-fps <n>] --frames <n>` writes the frames of a normal run at the film's frame rate, so a scene's own sequences are filmed
+without a camera path. `--camera-path` still works alone or with it.
