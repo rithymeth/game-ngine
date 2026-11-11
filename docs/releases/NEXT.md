@@ -289,3 +289,11 @@ editor's Plugins window makes) used to declare a runtime module named after the 
 enabled it got "The module 'Coins' isn't built into this player" at every launch. It is content only now; `--module`, or
 `CreatePluginScaffold(..., with_module = true)`, declares the module for a plugin that has code. A plugin scaffolded before this
 change keeps the module line in its `.aplugin`; delete it if the plugin has no code.
+
+## Rendering: drawing many entities is about 15 percent cheaper on the CPU
+
+The player built each drawn node's normal matrix by inverting its whole 4x4 transform, every frame. It now computes the
+inverse transpose of the linear part directly, about 40 times fewer instructions. Recording a frame of 20,000 identical entities
+fell from 21.8 to 18.8 ms on the software Vulkan driver (1,000 entities: 1.05 to 0.90 ms). Lighting is unchanged to within
+rounding of the packed half floats the normals are sent as; the matrix agrees with the old one to 2e-5. A frame of 20,000
+drawn entities still costs more than a 60 Hz frame: each entity is its own draw call, and the RHI has no instanced draw yet.

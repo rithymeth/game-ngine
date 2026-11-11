@@ -14,6 +14,7 @@
 #include "aether/scene/hierarchy.h"
 #include "frame_lights.h"
 #include "model_glb.h"
+#include "normal_transform.h"
 #include "render_pose.h"
 #include "particle_pass.h"
 #include "decal_pass.h"
@@ -149,19 +150,6 @@ void PackNormalMatrix(const Mat4& matrix, u32 packed[5]) {
         const f32 high = first + 1 < 9 ? rows[first + 1] : 0.0f;
         packed[pair] = PackHalfPair(low, high);
     }
-}
-
-Mat4 BuildNormalTransform(const Mat4& model_transform) {
-    Mat4 inverse;
-    if (!model_transform.TryInverse(inverse)) return Mat4::Identity();
-
-    // Normals transform by the inverse transpose of the model's linear part.
-    Mat4 normal_transform;
-    normal_transform.cols[0] = Vec4(inverse.cols[0].x, inverse.cols[1].x, inverse.cols[2].x, 0.0f);
-    normal_transform.cols[1] = Vec4(inverse.cols[0].y, inverse.cols[1].y, inverse.cols[2].y, 0.0f);
-    normal_transform.cols[2] = Vec4(inverse.cols[0].z, inverse.cols[1].z, inverse.cols[2].z, 0.0f);
-    normal_transform.cols[3] = Vec4(0.0f, 0.0f, 0.0f, 1.0f);
-    return normal_transform;
 }
 
 constexpr char kSceneShader[] = R"(
