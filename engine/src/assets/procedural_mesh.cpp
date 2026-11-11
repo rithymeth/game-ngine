@@ -1252,16 +1252,34 @@ std::vector<u8> EncodeGlb(const ProceduralMesh& mesh) {
         primitives += "{\"attributes\":{\"POSITION\":" + std::to_string(a_pos) + ",\"NORMAL\":" + std::to_string(a_nor) + ",\"TEXCOORD_0\":" + std::to_string(a_uv) +
                       ",\"TANGENT\":" + std::to_string(a_tan) + "},\"indices\":" + std::to_string(a_idx) + ",\"material\":" + std::to_string(std::max(p.material, 0)) + "}";
     }
+    // Textures: each distinct base colour image becomes an image, a texture on it, and the material's baseColorTexture. The uri is the path as given
+    // (relative to the .glb), which is how the player finds it in the package.
+    std::vector<std::string> images;
     for (usize mi = 0; mi < mesh.materials.size(); ++mi) {
         const MaterialData& m = mesh.materials[mi];
         if (mi > 0) materials += ",";
+        std::string texture;
+        if (!m.base_color_texture.empty()) {
+            usize index = 0;
+            while (index < images.size() && images[index] != m.base_color_texture) ++index;
+            if (index == images.size()) images.push_back(m.base_color_texture);
+            texture = ",\"baseColorTexture\":{\"index\":" + std::to_string(index) + "}";
+        }
         materials += "{\"name\":\"material" + std::to_string(mi) + "\",\"pbrMetallicRoughness\":{\"baseColorFactor\":[" + Num(m.base_color.x) + "," + Num(m.base_color.y) + "," +
-                     Num(m.base_color.z) + "," + Num(m.base_color.w) + "],\"metallicFactor\":" + Num(m.metallic) + ",\"roughnessFactor\":" + Num(m.roughness) + "}}";
+                     Num(m.base_color.z) + "," + Num(m.base_color.w) + "],\"metallicFactor\":" + Num(m.metallic) + ",\"roughnessFactor\":" + Num(m.roughness) + texture + "}}";
+    }
+    std::string image_json, texture_json;
+    for (usize i = 0; i < images.size(); ++i) {
+        std::string escaped;
+        for (const char c : images[i]) { if (c == '"' || c == '\\') escaped += '\\'; escaped += c; }
+        image_json += (i ? "," : "") + std::string("{\"uri\":\"") + escaped + "\"}";
+        texture_json += (i ? "," : "") + std::string("{\"source\":") + std::to_string(i) + "}";
     }
     Pad4(bin, 0);
     std::string json = "{\"asset\":{\"version\":\"2.0\",\"generator\":\"Aether procedural mesh\"},\"scene\":0,\"scenes\":[{\"nodes\":[0]}],\"nodes\":[{\"mesh\":0}],"
                        "\"meshes\":[{\"primitives\":[" + primitives + "]}],";
     if (!materials.empty()) json += "\"materials\":[" + materials + "],";
+    if (!images.empty()) json += "\"images\":[" + image_json + "],\"textures\":[" + texture_json + "],";
     json += "\"accessors\":[" + accessors + "],\"bufferViews\":[" + views + "],\"buffers\":[{\"byteLength\":" + std::to_string(bin.size()) + "}]}";
     while (json.size() % 4 != 0) json.push_back(' ');
     std::vector<u8> out;

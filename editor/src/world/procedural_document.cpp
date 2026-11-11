@@ -1,5 +1,6 @@
 #include "world/procedural_document.h"
 
+#include "aether/assets/png_writer.h"
 #include "aether/scene/components.h"
 #include "aether/scene/serialization.h"
 
@@ -293,6 +294,65 @@ ProceduralMesh ProceduralWorldDocument::BuildTerrainModel(const GeneratedTerrain
     return out;
 }
 
+ProceduralMesh ProceduralWorldDocument::BuildTexturedTerrainModel(const GeneratedTerrain& t, u32 max_grid, const std::string& texture_uri) {
+    ProceduralMesh out;
+    const u32 w = t.Width(), h = t.Height();
+    if (w < 2 || h < 2) return out;
+    const u32 step = std::max(1u, (std::max(w, h) - 1 + std::max(max_grid, 2u) - 1) / std::max(max_grid, 2u));
+    std::vector<u32> xs, zs;
+    for (u32 x = 0; x < w - 1; x += step) xs.push_back(x);
+    xs.push_back(w - 1);
+    for (u32 z = 0; z < h - 1; z += step) zs.push_back(z);
+    zs.push_back(h - 1);
+    const f32 cell = t.heightmap.cell_size;
+    auto height_at = [&](u32 x, u32 z) { return t.heightmap.heights[t.Index(x, z)]; };
+    auto water_at = [&](u32 x, u32 z) {
+        const usize i = t.Index(x, z);
+        if (i < t.lake.size() && t.lake[i] && i < t.fill_height.size()) return t.fill_height[i];
+        if (t.heightmap.heights[i] <= t.sea_height) return t.sea_height;
+        return t.heightmap.heights[i];
+    };
+    MeshBuilder ground, water;
+    // The ground is a grid of shared vertices (smooth normals), its UV the position over the map.
+    std::vector<u32> grid(xs.size() * zs.size());
+    for (usize zi = 0; zi < zs.size(); ++zi)
+        for (usize xi = 0; xi < xs.size(); ++xi)
+            grid[zi * xs.size() + xi] = ground.Vertex(Vec3(static_cast<f32>(xs[xi]) * cell, height_at(xs[xi], zs[zi]), static_cast<f32>(zs[zi]) * cell),
+                                                      static_cast<f32>(xs[xi]) / static_cast<f32>(w - 1), static_cast<f32>(zs[zi]) / static_cast<f32>(h - 1));
+    for (usize zi = 0; zi + 1 < zs.size(); ++zi) {
+        for (usize xi = 0; xi + 1 < xs.size(); ++xi) {
+            const u32 i00 = grid[zi * xs.size() + xi], i10 = grid[zi * xs.size() + xi + 1], i01 = grid[(zi + 1) * xs.size() + xi], i11 = grid[(zi + 1) * xs.size() + xi + 1];
+            ground.Triangle(i00, i01, i10); // counter-clockwise from above: the ground faces up
+            ground.Triangle(i10, i01, i11);
+            const u32 x0 = xs[xi], x1 = xs[xi + 1], z0 = zs[zi], z1 = zs[zi + 1];
+            // Water geometry for lakes and the sea only; the rivers are in the ground texture.
+            const usize centre = t.Index((x0 + x1) / 2, (z0 + z1) / 2);
+            if (!(t.lake[centre] || t.heightmap.heights[centre] <= t.sea_height)) continue;
+            const f32 fx0 = static_cast<f32>(x0) * cell, fx1 = static_cast<f32>(x1) * cell, fz0 = static_cast<f32>(z0) * cell, fz1 = static_cast<f32>(z1) * cell;
+            const u32 j00 = water.Vertex(Vec3(fx0, water_at(x0, z0), fz0)), j10 = water.Vertex(Vec3(fx1, water_at(x1, z0), fz0));
+            const u32 j01 = water.Vertex(Vec3(fx0, water_at(x0, z1), fz1)), j11 = water.Vertex(Vec3(fx1, water_at(x1, z1), fz1));
+            water.Triangle(j00, j01, j10);
+            water.Triangle(j10, j01, j11);
+        }
+    }
+    assets::MaterialData ground_material;
+    ground_material.base_color = Vec4(1, 1, 1, 1);
+    ground_material.roughness = 0.9f;
+    ground_material.metallic = 0.0f;
+    ground_material.base_color_texture = texture_uri;
+    out.materials.push_back(ground_material);
+    out.mesh.primitives.push_back(ground.Finish(Shading::Smooth, UvMode::Given, 0));
+    if (!water.Empty()) {
+        assets::MaterialData m;
+        m.base_color = Vec4(0.14f, 0.34f, 0.60f, 1.0f);
+        m.roughness = 0.15f;
+        m.metallic = 0.0f;
+        out.materials.push_back(m);
+        out.mesh.primitives.push_back(water.Finish(Shading::Smooth, UvMode::BoxProjected, 1));
+    }
+    return out;
+}
+
 bool ProceduralWorldDocument::ApplyToTerrain(TerrainEditDocument& target, u32 splat_resolution) const {
     if (!generated_) return false;
     TerrainSettings settings;
@@ -341,7 +401,16 @@ BakeReport ProceduralWorldDocument::Bake(const std::string& content_root, const 
         return true;
     };
 
-    const ProceduralMesh ground = BuildTerrainModel(terrain_, options.terrain_grid);
+    ProceduralMesh ground;
+    if (options.terrain_texture > 0) {
+        // The texture sits beside the model, named in it by its file name (the player finds it in the package from the model's own folder).
+        const u32 size = std::clamp(options.terrain_texture, 16u, 4096u);
+        const std::vector<u8> pixels = RenderTerrainTexture(terrain_, generated_terrain_settings_, size);
+        if (!write(name + "_terrain.png", assets::EncodePngRgb8(size, size, pixels))) return report;
+        ground = BuildTexturedTerrainModel(terrain_, options.terrain_grid, name + "_terrain.png");
+    } else {
+        ground = BuildTerrainModel(terrain_, options.terrain_grid);
+    }
     if (!write(name + "_terrain.glb", EncodeGlb(ground))) return report;
 
     // One .glb per mesh variant that a rule with a mesh can place.

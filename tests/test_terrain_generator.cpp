@@ -233,3 +233,57 @@ AETHER_TEST(TerrainPreviewAndTiming) {
         }
     }
 }
+
+AETHER_TEST(TerrainTextureBlendsSmoothlyAndColoursTheGroundByWhatIsThere) {
+    const TerrainGenSettings s = Small();
+    const GeneratedTerrain t = GenerateTerrain(s);
+    const u32 size = 256;
+    const std::vector<u8> a = RenderTerrainTexture(t, s, size), b = RenderTerrainTexture(t, s, size);
+    AETHER_CHECK(a.size() == static_cast<usize>(size) * size * 3 && a == b);
+    AETHER_CHECK(RenderTerrainTexture(GeneratedTerrain{}, s, 16).size() == 16u * 16u * 3);
+    auto luma = [&](u32 px, u32 py) {
+        const u8* p = &a[(static_cast<usize>(py) * size + px) * 3];
+        return 0.299f * p[0] + 0.587f * p[1] + 0.114f * p[2];
+    };
+    // Smooth: neighbouring texels differ little on average (a staircase of cells would put the whole jump between two texels).
+    double sum = 0.0;
+    usize count = 0;
+    for (u32 y = 0; y < size; ++y)
+        for (u32 x = 0; x + 1 < size; ++x) { sum += std::fabs(luma(x, y) - luma(x + 1, y)); ++count; }
+    AETHER_CHECK(sum / static_cast<double>(count) < 6.0);
+    // The same terrain at four times the texels has the same colours at the same places: the picture is a function of the world, not of the size.
+    const std::vector<u8> fine = RenderTerrainTexture(t, s, size * 2);
+    double diff = 0.0;
+    for (u32 y = 0; y < size; ++y)
+        for (u32 x = 0; x < size; ++x)
+            for (int c = 0; c < 3; ++c) diff += std::fabs(static_cast<double>(a[(static_cast<usize>(y) * size + x) * 3 + c]) - fine[(static_cast<usize>(y) * 2 * size * 2 + x * 2) * 3 + c]);
+    AETHER_CHECK(diff / (static_cast<double>(size) * size * 3) < 8.0);
+
+    // What colours what: a river is blue, a steep face is grey.
+    const f32 cell = t.heightmap.cell_size;
+    auto texel_of = [&](u32 cx, u32 cz) {
+        // The texel whose centre is on the sample point of cell (cx, cz): texel k sits at (k + 0.5) / size of the map, sample c at c / (cells - 1).
+        return std::pair<u32, u32>{std::min(static_cast<u32>(std::lround(static_cast<f32>(cx) / static_cast<f32>(t.Width() - 1) * static_cast<f32>(size) - 0.5f)), size - 1),
+                                   std::min(static_cast<u32>(std::lround(static_cast<f32>(cz) / static_cast<f32>(t.Height() - 1) * static_cast<f32>(size) - 0.5f)), size - 1)};
+    };
+    (void)cell;
+    usize rivers = 0, grounds = 0, blue_rivers = 0;
+    for (u32 z = 2; z + 2 < t.Height(); ++z)
+        for (u32 x = 2; x + 2 < t.Width(); ++x) {
+            const usize i = t.Index(x, z);
+            const auto [px, py] = texel_of(x, z);
+            if (t.river[i] && !t.lake[i] && t.heightmap.heights[i] > t.sea_height) {
+                const u8* q = &a[(static_cast<usize>(py) * size + px) * 3];
+                ++rivers;
+                blue_rivers += q[2] > q[0] + 30; // a painted river is blue
+            } else if (t.biome[i] == Biome::Grassland || t.biome[i] == Biome::Forest) { ++grounds; }
+        }
+    AETHER_CHECK(rivers > 0 && grounds > 0);
+    AETHER_CHECK(blue_rivers * 10 > rivers * 7); // most of the cells a river runs through are painted blue
+    // A steep cell is rock-grey: its channels are close together.
+    const usize steep = static_cast<usize>(std::max_element(t.slope.begin(), t.slope.end()) - t.slope.begin());
+    const auto [sx, sy] = texel_of(static_cast<u32>(steep % t.Width()), static_cast<u32>(steep / t.Width()));
+    const u8* p = &a[(static_cast<usize>(sy) * size + sx) * 3];
+    const int spread = std::max({p[0], p[1], p[2]}) - std::min({p[0], p[1], p[2]});
+    AETHER_CHECK(spread < 60);
+}

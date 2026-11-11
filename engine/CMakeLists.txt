@@ -62,6 +62,7 @@ add_library(aether_engine STATIC
     src/assets/importer.cpp
     src/assets/texture_importer.cpp
     src/assets/model_importer.cpp
+    src/assets/png_writer.cpp
     src/assets/procedural_mesh.cpp
     src/assets/file_watcher.cpp
     src/assets/hot_reload.cpp

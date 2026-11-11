@@ -98,6 +98,12 @@ SplatmapData BuildTerrainSplatmap(const GeneratedTerrain& terrain, const Terrain
 // Rock, grass, sand and snow as terrain layers with plain colours, for terrain with no textures yet.
 std::vector<TerrainLayer> DefaultTerrainLayers();
 
+// The ground's colour as an RGB8 texture, `size` x `size` over the whole terrain (texel (0, 0) is the corner at x = 0, z = 0; the picture's row is z).
+// Each texel samples height, slope, moisture and temperature bilinearly in world space, so a border between grass and rock, sand and snow is a
+// smooth blend and not a staircase of cells, with a little noise on top so a flat ground is not one colour. Water beds are darkened (the water itself
+// is drawn over them as geometry; a river is painted in, blue). The colours are display (sRGB) colours as an artist would pick them, which is how a colour texture is read, and no lighting is baked: the renderer lights it.
+std::vector<u8> RenderTerrainTexture(const GeneratedTerrain& terrain, const TerrainGenSettings& settings, u32 size);
+
 // A shaded-relief picture, RGB8 row-major `width * height * 3` bytes: biome colours lit from the north-west, rivers blue. For the editor's
 // preview and for checking a generator setting by eye.
 std::vector<u8> RenderTerrainPreview(const GeneratedTerrain& terrain);

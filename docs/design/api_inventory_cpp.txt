@@ -1356,6 +1356,8 @@
   public:const char*Name()const override
   std::vector<u8>EncodeMeshData(const MeshData&mesh)
   u32 Version()const override
+[engine/include/aether/assets/png_writer.h] experimental
+  std::vector<u8>EncodePngRgb8(u32 width,u32 height,std::span<const u8>rgb)
 [engine/include/aether/assets/procedural_mesh.h] experimental
   type class MeshBuilder
   type enum class ModularKind
@@ -6194,6 +6196,7 @@
   std::vector<TerrainLayer>DefaultTerrainLayers()
   std::vector<f32>BuildMaterialWeights(const GeneratedTerrain&terrain,const TerrainGenSettings&settings,u32 resolution)
   std::vector<u8>RenderTerrainPreview(const GeneratedTerrain&terrain)
+  std::vector<u8>RenderTerrainTexture(const GeneratedTerrain&terrain,const TerrainGenSettings&settings,u32 size)
   u32 Height()const
   u32 Width()const
   usize Index(u32 x,u32 z)const

@@ -1,4 +1,7 @@
 #include "aether/assets/gltf_loader.h"
+#include "aether/assets/gltf_references.h"
+#include "aether/assets/image.h"
+#include "aether/assets/png_writer.h"
 #include "aether/assets/procedural_mesh.h"
 #include "test_framework.h"
 
@@ -6,6 +9,9 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
+#include <optional>
 #include <cstdlib>
 #include <cstring>
 #include <set>
@@ -342,4 +348,89 @@ AETHER_TEST(ProceduralPlantsHaveTheirShapeAndParts) {
     AETHER_CHECK(Extent(ComputeStats(armed.mesh)).x > 0.6f || Extent(ComputeStats(armed.mesh)).z > 0.6f);
     std::string error;
     AETHER_CHECK(ValidateMesh(armed, &error) && ValidateMesh(g, &error) && ValidateMesh(r, &error) && ValidateMesh(a, &error));
+}
+
+AETHER_TEST(ProceduralPngWriterRoundTripsLosslessly) {
+    // A small gradient, and one bigger than a stored deflate block (65,535 bytes), so the block splitting is covered.
+    for (const auto [w, h] : {std::pair<u32, u32>{5, 3}, std::pair<u32, u32>{1, 1}, std::pair<u32, u32>{300, 220}}) {
+        std::vector<u8> rgb(static_cast<usize>(w) * h * 3);
+        u32 state = 12345u;
+        for (usize i = 0; i < rgb.size(); ++i) {
+            state = state * 1664525u + 1013904223u;
+            rgb[i] = static_cast<u8>(state >> 24);
+        }
+        const std::vector<u8> png = assets::EncodePngRgb8(w, h, rgb);
+        AETHER_CHECK(png.size() > 40 && png[0] == 0x89 && png[1] == 'P' && png[2] == 'N' && png[3] == 'G');
+        assets::ImageData image;
+        AETHER_CHECK(assets::DecodeImageFromMemory(png, image));
+        AETHER_CHECK(image.width == w && image.height == h && image.pixels.size() == static_cast<usize>(w) * h * 4);
+        bool same = true;
+        for (usize p = 0; p < static_cast<usize>(w) * h && same; ++p)
+            same = image.pixels[p * 4] == rgb[p * 3] && image.pixels[p * 4 + 1] == rgb[p * 3 + 1] && image.pixels[p * 4 + 2] == rgb[p * 3 + 2] && image.pixels[p * 4 + 3] == 255;
+        AETHER_CHECK(same);
+    }
+    AETHER_CHECK(assets::EncodePngRgb8(0, 4, {}).empty() && assets::EncodePngRgb8(4, 4, std::vector<u8>(10)).empty());
+}
+
+AETHER_TEST(ProceduralGlbCarriesTheBaseColorTextureOfAMaterial) {
+    ProceduralMesh m = GenerateVariant(ProceduralKind::Rock, 1, 3);
+    m.materials[0].base_color_texture = "rock_color.png";
+    const std::vector<u8> glb = EncodeGlb(m);
+    std::string json;
+    std::vector<u8> bin;
+    AETHER_CHECK(ReadGlbChunks(glb, json, bin) && json.find("\"images\":[{\"uri\":\"rock_color.png\"}]") != std::string::npos && json.find("\"baseColorTexture\"") != std::string::npos);
+    // Loaded from a file (the loader refuses external texture paths from memory), the texture path is the uri joined to the file's folder.
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "aether_procedural_glb";
+    std::filesystem::create_directories(dir);
+    {
+        std::ofstream f(dir / "rock.glb", std::ios::binary);
+        f.write(reinterpret_cast<const char*>(glb.data()), static_cast<std::streamsize>(glb.size()));
+    }
+    GltfScene scene;
+    AETHER_CHECK(LoadGltf((dir / "rock.glb").string(), scene));
+    AETHER_CHECK(scene.materials.size() == 1 && scene.materials[0].base_color_texture.size() > 13 &&
+                 scene.materials[0].base_color_texture.rfind("rock_color.png") == scene.materials[0].base_color_texture.size() - 14);
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+    // Without a texture there is no image in the file.
+    ProceduralMesh plain = GenerateVariant(ProceduralKind::Rock, 1, 3);
+    std::string plain_json;
+    AETHER_CHECK(ReadGlbChunks(EncodeGlb(plain), plain_json, bin) && plain_json.find("images") == std::string::npos);
+}
+
+AETHER_TEST(ProceduralGlbTexturesAreFoundByTheCookAndFollowedByMoves) {
+    // A textured .glb in a content folder: its image is a file beside it. GltfFileReferences used to return nothing for a .glb, so the cook left
+    // such a texture out of the package, and a move of the folder did not keep the model pointing at it.
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "aether_glb_refs";
+    std::error_code ec;
+    std::filesystem::remove_all(root, ec);
+    std::filesystem::create_directories(root / "Models", ec);
+    ProceduralMesh m = GenerateVariant(ProceduralKind::Rock, 2, 5);
+    m.materials[0].base_color_texture = "skin.png";
+    const std::vector<u8> glb = EncodeGlb(m);
+    {
+        std::ofstream f(root / "Models/rock.glb", std::ios::binary);
+        f.write(reinterpret_cast<const char*>(glb.data()), static_cast<std::streamsize>(glb.size()));
+    }
+    const std::vector<assets::GltfFileReference> refs = assets::GltfFileReferences(root, "Models/rock.glb");
+    AETHER_CHECK(refs.size() == 1 && refs[0].uri == "skin.png" && refs[0].path == "Models/skin.png");
+    AETHER_CHECK(assets::GltfFileReferences(root, "Models/missing.glb").empty());
+    // A glb with no image has nothing to list (its buffer is embedded).
+    {
+        const std::vector<u8> plain = EncodeGlb(GenerateVariant(ProceduralKind::Rock, 2, 5));
+        std::ofstream f(root / "Models/plain.glb", std::ios::binary);
+        f.write(reinterpret_cast<const char*>(plain.data()), static_cast<std::streamsize>(plain.size()));
+    }
+    AETHER_CHECK(assets::GltfFileReferences(root, "Models/plain.glb").empty());
+
+    // Rewriting the uri repacks the file: same geometry, the new path.
+    std::string error;
+    const int changed = assets::RewriteGltfUris(root / "Models/rock.glb", [](const std::string& uri) -> std::optional<std::string> { return uri == "skin.png" ? std::optional<std::string>("../Skins/skin_v2.png") : std::nullopt; }, &error);
+    AETHER_CHECK(changed == 1);
+    GltfScene scene;
+    AETHER_CHECK(LoadGltf((root / "Models/rock.glb").string(), scene));
+    AETHER_CHECK(scene.meshes.size() == 1 && scene.meshes[0].primitives[0].vertices.size() == m.mesh.primitives[0].vertices.size() && scene.meshes[0].primitives[0].indices == m.mesh.primitives[0].indices);
+    AETHER_CHECK(scene.materials[0].base_color_texture.find("skin_v2.png") != std::string::npos);
+    AETHER_CHECK(assets::RewriteGltfUris(root / "Models/rock.glb", [](const std::string&) -> std::optional<std::string> { return std::nullopt; }, &error) == 0);
+    std::filesystem::remove_all(root, ec);
 }
