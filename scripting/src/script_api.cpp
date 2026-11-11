@@ -424,7 +424,30 @@ void ScriptSystem::InstallKitApi(const std::string& kit_name) {
     else if (kit_name == "Quests") InstallQuestsApi(host_);
 }
 
+std::string ScriptSystem::DescribeEntity(Entity entity) const {
+    std::string described = "entity";
+    if (!world_.IsAlive(entity)) return described + " (destroyed)";
+    if (const EntityName* name = world_.GetComponent<EntityName>(entity); name != nullptr && !name->value.empty()) described += " \"" + name->value + "\"";
+    if (const IdComponent* id = world_.GetComponent<IdComponent>(entity)) described += " " + ToString(id->guid).substr(0, 8);
+    return described;
+}
+
 void ScriptSystem::RecordError(const std::string& error) {
+    // The same error again (the one a broken OnUpdate raises every frame): counted, not stored again, and logged only at 1, 10, 100... so neither the list nor the log fills up.
+    if (auto seen = error_seen_.find(error); seen != error_seen_.end()) {
+        SeenError& entry = seen->second;
+        ++entry.count;
+        if (entry.index < errors_.size()) errors_[entry.index] = entry.text + " (repeated " + std::to_string(entry.count) + " times)";
+        for (u32 threshold = 10; threshold <= entry.count; threshold *= 10)
+            if (entry.count == threshold) AETHER_LOG_ERROR("Script", "%s (repeated %u times)", error.c_str(), entry.count);
+        return;
+    }
+    if (errors_.size() >= kMaxDistinctErrors) {
+        ++errors_dropped_;
+        AETHER_LOG_ERROR("Script", "%s (not listed: %zu distinct errors are already recorded)", error.c_str(), kMaxDistinctErrors);
+        return;
+    }
+    error_seen_[error] = {errors_.size(), 1, error};
     errors_.push_back(error);
     AETHER_LOG_ERROR("Script", "%s", error.c_str());
 }
@@ -630,7 +653,7 @@ bool ScriptSystem::SendEvent(Entity entity, const std::string& method, const std
     }
     ScriptResult result = CallMethod(entity, method, args);
     if (!result.ok) {
-        RecordError(result.error + " (in " + method + ")");
+        RecordError(result.error + " (in " + method + ", on " + DescribeEntity(entity) + ")");
     }
     return true;
 }

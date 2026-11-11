@@ -91,7 +91,8 @@ AETHER_TEST(ScriptApi_EventsConnectFireDisconnect) {
         return count
     )");
     AETHER_CHECK(r.ok && AsNumber(r.values[0]) == 21.0);
-    AETHER_CHECK(scripts.Errors().size() == 2 && scripts.Errors()[0].find("handler blew up") != std::string::npos);
+    // The same failure on both fires is one entry that says it happened twice, not two entries.
+    AETHER_CHECK(scripts.Errors().size() == 1 && scripts.Errors()[0].find("handler blew up") != std::string::npos && scripts.Errors()[0].find("(repeated 2 times)") != std::string::npos);
     AETHER_CHECK(!f.host.Run("Event.new():Connect(42)").ok); // needs a function
 }
 
