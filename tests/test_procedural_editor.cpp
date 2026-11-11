@@ -190,7 +190,8 @@ AETHER_TEST(ProceduralEditor_TheTexturedTerrainIsOneGroundSurfaceAndTheWater) {
     const assets::procedural::ProceduralMesh model = ProceduralWorldDocument::BuildTexturedTerrainModel(t, 64, "ground.png");
     std::string error;
     CHECK(assets::procedural::ValidateMesh(model, &error));
-    CHECK(model.mesh.primitives.size() >= 1 && model.mesh.primitives.size() <= 2 && model.materials[0].base_color_texture == "ground.png");
+    CHECK(model.mesh.primitives.size() >= 1 && model.mesh.primitives.size() <= 24 && // the ground, the skirt (if any), and one flat sheet of water per level
+           model.materials[0].base_color_texture == "ground.png");
     // The ground's UV is the position over the map: 0 to 1 on both axes, corner to corner.
     f32 u_min = 1e9f, u_max = -1e9f, v_min = 1e9f, v_max = -1e9f;
     for (const auto& v : model.mesh.primitives[0].vertices) { u_min = std::min(u_min, v.uv[0]); u_max = std::max(u_max, v.uv[0]); v_min = std::min(v_min, v.uv[1]); v_max = std::max(v_max, v.uv[1]); }

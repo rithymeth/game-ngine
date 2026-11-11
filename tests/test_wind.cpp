@@ -76,7 +76,7 @@ AETHER_TEST(Wind_IsASceneComponentAndTheLayoutKeepsInStepWithTheShader) {
     std::error_code ignored;
     std::filesystem::remove(file, ignored);
     // The CPU struct and the HLSL one have the wind in the same place: the last members, a float4 each after the time.
-    AETHER_CHECK(offsetof(FrameData, wind) == 1232 && offsetof(FrameData, wind_gusts) == 1248 && sizeof(FrameData) == 1376);
+    AETHER_CHECK(offsetof(FrameData, wind) == 1232 && offsetof(FrameData, wind_gusts) == 1248 && sizeof(FrameData) == 1392);
     const std::string hlsl = FrameDataHlsl();
     const usize at_time = hlsl.find("float4 time;"), at_wind = hlsl.find("float4 wind;"), at_gusts = hlsl.find("float4 wind_gusts;");
     AETHER_CHECK(at_time != std::string::npos && at_wind != std::string::npos && at_gusts != std::string::npos && at_time < at_wind && at_wind < at_gusts);

@@ -44,7 +44,7 @@ void SetEnvironmentVariableForTest(const char* name, const char* value) {
 }
 
 // A flat quad 12 m across facing up, with a periodic ripple normal map (a few crossing sine waves), a glossy blue material, and the water flag as asked.
-fs::path CookWaterScene(const fs::path& root, bool water) {
+fs::path CookWaterScene(const fs::path& root, bool water, bool pillar = false) {
     fs::create_directories(root / "Content/models");
     fs::create_directories(root / "Content/Scenes");
     const fs::path games = fs::path(AETHER_REPO_ASSETS_DIR).parent_path() / "games/AETHER-01";
@@ -92,7 +92,7 @@ fs::path CookWaterScene(const fs::path& root, bool water) {
     const std::vector<u8> glb = EncodeGlb(mesh);
     std::ofstream(root / "Content/models/water.glb", std::ios::binary).write(reinterpret_cast<const char*>(glb.data()), static_cast<std::streamsize>(glb.size()));
 
-    const reflect::Json entities = {
+    reflect::Json entities = {
         SceneEntity({{"Transform", TransformJson({0.0f, 5.5f, 9.0f}, {-0.30f, 0.0f, 0.0f, 0.954f})},
                      {"Camera", {{"$v", 1}, {"projection", "Perspective"}, {"fov_degrees", 50.0f}, {"near_plane", 0.1f}, {"far_plane", 100.0f},
                                  {"ortho_height", 10.0f}, {"priority", 0}}}}),
@@ -101,6 +101,21 @@ fs::path CookWaterScene(const fs::path& root, bool water) {
         SceneEntity({{"Transform", TransformJson({0, 0, 0})},
                      {"SkyLight", {{"$v", 1}, {"color", {1.0f, 1.0f, 1.0f}}, {"intensity", 1.0f}, {"environment", ""}, {"environment_rotation_degrees", 0.0f}}}}),
         SceneEntity({{"Transform", TransformJson({0, 0, 0})}, {"ModelRenderer", {{"$v", 1}, {"model", ""}, {"asset_path", "models/water.glb"}}}})};
+    if (pillar) {
+        // A red pillar standing at the water's far edge: where the water mirrors it, the water turns red.
+        MeshBuilder box;
+        box.Box(Vec3(-1.5f, 0.0f, -7.0f), Vec3(1.5f, 6.0f, -6.0f));
+        ProceduralMesh pillar_mesh;
+        assets::MaterialData red;
+        red.base_color = Vec4(0.9f, 0.05f, 0.05f, 1.0f);
+        red.roughness = 0.9f;
+        red.metallic = 0.0f;
+        pillar_mesh.materials.push_back(red);
+        pillar_mesh.mesh.primitives.push_back(box.Finish(Shading::Flat, UvMode::BoxProjected, 0));
+        const std::vector<u8> pillar_glb = EncodeGlb(pillar_mesh);
+        std::ofstream(root / "Content/models/pillar.glb", std::ios::binary).write(reinterpret_cast<const char*>(pillar_glb.data()), static_cast<std::streamsize>(pillar_glb.size()));
+        entities.push_back(SceneEntity({{"Transform", TransformJson({0, 0, 0})}, {"ModelRenderer", {{"$v", 1}, {"model", ""}, {"asset_path", "models/pillar.glb"}}}}));
+    }
     const reflect::Json scene = {{"$type", "Scene"}, {"$version", 1}, {"entities", entities}};
     std::ofstream(root / "Content/Scenes/Main.ascene") << scene.dump(2);
     cook::CookOptions options;
@@ -227,6 +242,41 @@ static void Water_RipplesMoveWithTheGameTimeAndOnlyOnWater(rhi::Backend backend)
 
 AETHER_TEST(Water_RipplesMoveWithTheGameTimeAndOnlyOnWater_D3D12) { Water_RipplesMoveWithTheGameTimeAndOnlyOnWater(rhi::Backend::D3D12); }
 AETHER_TEST(Water_RipplesMoveWithTheGameTimeAndOnlyOnWater_Vulkan) { Water_RipplesMoveWithTheGameTimeAndOnlyOnWater(rhi::Backend::Vulkan); }
+
+// The water mirrors what stands beside it: a red pillar at the far edge of a lake turns the water in front of it red, and with the reflection off
+// (AETHER_RENDER_REFLECTIONS=0) it does not. Devices without render textures with depth (D3D12 for now) draw no reflection, and the test says so.
+static void Water_MirrorsThePillarBesideIt(rhi::Backend backend) {
+    if (!rhi::IsBackendAvailable(backend)) return;
+    SetEnvironmentVariableForTest("AETHER_RENDER_TAA", "0");
+    constexpr u32 W = 640, H = 360;
+    const fs::path root = fs::temp_directory_path() / "aether_water_mirror" / assets::ToString(assets::NewAssetGuid());
+    const fs::path pak = CookWaterScene(root / "scene", true, true);
+    if (pak.empty()) return;
+    const auto mirrored = FrameAfter(backend, root / "scene", pak, 0, W, H);
+    SetEnvironmentVariableForTest("AETHER_RENDER_REFLECTIONS", "0");
+    const auto plain = FrameAfter(backend, root / "scene", pak, 0, W, H);
+    SetEnvironmentVariableForTest("AETHER_RENDER_REFLECTIONS", "");
+    SetEnvironmentVariableForTest("AETHER_RENDER_TAA", "");
+    const usize bytes = static_cast<usize>(W) * H * 4;
+    if (mirrored.size() != bytes || plain.size() != bytes) {
+        AETHER_CHECK(false);
+        return;
+    }
+    const auto reds = [&](const std::vector<u8>& frame) {
+        usize count = 0;
+        for (usize i = 0; i < static_cast<usize>(W) * H; ++i) count += frame[i * 4] > frame[i * 4 + 1] + 40 && frame[i * 4] > frame[i * 4 + 2] + 40;
+        return count;
+    };
+    const usize on = reds(mirrored), off = reds(plain);
+    std::printf("    %s: red pixels with the reflection %zu, without %zu\n", backend == rhi::Backend::Vulkan ? "vulkan" : "d3d12", on, off);
+    AETHER_CHECK(off > 200);                       // the pillar itself is red either way
+    if (backend == rhi::Backend::Vulkan) AETHER_CHECK(on > off + 300); // and the water in front of it, mirrored, adds more
+    else AETHER_CHECK(on >= off);
+    std::error_code ignored;
+    fs::remove_all(root, ignored);
+}
+AETHER_TEST(Water_MirrorsThePillarBesideIt_D3D12) { Water_MirrorsThePillarBesideIt(rhi::Backend::D3D12); }
+AETHER_TEST(Water_MirrorsThePillarBesideIt_Vulkan) { Water_MirrorsThePillarBesideIt(rhi::Backend::Vulkan); }
 
 // Wind: a grass material with the extension sways with the game's time, one without does not, and the same time is the same picture.
 static void Wind_GrassSwaysWithTheGameTimeAndOnlyWhenFlagged(rhi::Backend backend) {

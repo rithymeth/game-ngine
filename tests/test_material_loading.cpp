@@ -190,7 +190,8 @@ AETHER_TEST(Material_GltfDoubleSidedIsRead) {
 AETHER_TEST(Material_SceneShaderLightsDoubleSidedBackFaces) {
     const std::string source = player::SceneShaderSource(true, true);
     AETHER_CHECK(source.find("bool is_front : SV_IsFrontFace") != std::string::npos);
-    AETHER_CHECK(source.find("((g_PC.g_AlphaOptions >> 10) & 1) != 0 && is_front == (NormalDeterminant() < 0.0)") != std::string::npos);
+    AETHER_CHECK(source.find("((g_PC.g_AlphaOptions >> 10) & 1) != 0 && facing_front == (NormalDeterminant() < 0.0)") != std::string::npos);
+    AETHER_CHECK(source.find("g_Frame.reflection.y != 0") != std::string::npos); // the water's mirror pass turns the winding round: the same test, with the facing reversed
 }
 
 // The scene shader's normal-matrix coefficients, read in a pixel shader with an index that is not a compile-time constant. Indexing the

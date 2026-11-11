@@ -10,6 +10,7 @@
 #include <cmath>
 #include <filesystem>
 #include <limits>
+#include <map>
 #include <fstream>
 #include <set>
 
@@ -315,7 +316,8 @@ ProceduralMesh ProceduralWorldDocument::BuildTexturedTerrainModel(const Generate
         if (t.heightmap.heights[i] <= t.sea_height) return t.sea_height;
         return -std::numeric_limits<f32>::infinity();
     };
-    MeshBuilder ground, water;
+    MeshBuilder ground;
+    std::map<i64, MeshBuilder> water_by_level; // one flat sheet per water level (millimetres), so each lake is a primitive of its own and the player can mirror it
     // The ground is a grid of shared vertices (smooth normals), its UV the position over the map.
     std::vector<u32> grid(xs.size() * zs.size());
     for (usize zi = 0; zi < zs.size(); ++zi)
@@ -336,6 +338,7 @@ ProceduralMesh ProceduralWorldDocument::BuildTexturedTerrainModel(const Generate
             const f32 fx0 = static_cast<f32>(x0) * cell, fx1 = static_cast<f32>(x1) * cell, fz0 = static_cast<f32>(z0) * cell, fz1 = static_cast<f32>(z1) * cell;
             // The water's UV is the position over the map, like the ground's, so the water texture lines up with the ground it covers.
             const f32 u0 = static_cast<f32>(x0) / static_cast<f32>(w - 1), u1 = static_cast<f32>(x1) / static_cast<f32>(w - 1), v0 = static_cast<f32>(z0) / static_cast<f32>(h - 1), v1 = static_cast<f32>(z1) / static_cast<f32>(h - 1);
+            MeshBuilder& water = water_by_level[static_cast<i64>(std::llround(level * 1000.0f))];
             const u32 j00 = water.Vertex(Vec3(fx0, level, fz0), u0, v0), j10 = water.Vertex(Vec3(fx1, level, fz0), u1, v0);
             const u32 j01 = water.Vertex(Vec3(fx0, level, fz1), u0, v1), j11 = water.Vertex(Vec3(fx1, level, fz1), u1, v1);
             water.Triangle(j00, j01, j10);
@@ -371,7 +374,7 @@ ProceduralMesh ProceduralWorldDocument::BuildTexturedTerrainModel(const Generate
         }
         out.mesh.primitives.push_back(skirt.Finish(Shading::Flat, UvMode::Given, 0));
     }
-    if (!water.Empty()) {
+    if (!water_by_level.empty()) {
         assets::MaterialData m;
         // With a water texture the colour comes from it (white factor); without, one flat blue.
         m.base_color = water_texture_uri.empty() ? Vec4(0.14f, 0.34f, 0.60f, 1.0f) : Vec4(1, 1, 1, 1);
@@ -383,7 +386,7 @@ ProceduralMesh ProceduralWorldDocument::BuildTexturedTerrainModel(const Generate
         // With a texture its alpha is the water's opacity (the glTF material blends); without one, the water is a solid colour.
         if (!water_texture_uri.empty()) m.alpha_mode = assets::MaterialAlphaMode::Blend;
         out.materials.push_back(m);
-        out.mesh.primitives.push_back(water.Finish(Shading::Smooth, UvMode::Given, 1));
+        for (const auto& [millimetres, sheet] : water_by_level) out.mesh.primitives.push_back(sheet.Finish(Shading::Smooth, UvMode::Given, 1));
     }
     return out;
 }

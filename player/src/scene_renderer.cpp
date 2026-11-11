@@ -59,6 +59,8 @@ using SceneVertex = assets::SkinVertex;
 constexpr usize kParallelSkinVertices = 4096;
 static_assert(sizeof(SceneVertex) == sizeof(f32) * 12);
 
+f32 Dot4(const Vec4& a, const Vec4& b) { return a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w; }
+
 struct DrawConstants {
     Mat4 mvp;
     // The base colour factor as four halves, then the emissive colour as three halves (r|g, b) with the emissive texture's index (63 =
@@ -561,7 +563,12 @@ R"(
 float4 PSMain(PSInput input, bool is_front : SV_IsFrontFace) : SV_TARGET {
     // A double-sided material's back face is lit from its own side: the normal reversed. (A mirrored model turns its faces' winding
     // round, so the face toward the camera is the front when exactly one of the two says so.)
-    if (((g_PC.g_AlphaOptions >> 10) & 1) != 0 && is_front == (NormalDeterminant() < 0.0)) input.normal = -input.normal;
+    bool facing_front = is_front;
+#ifdef AETHER_FRAME_DATA
+    // The water's mirror pass draws the world with its winding turned round: what faces the camera there is a back face.
+    if (g_Frame.reflection.y != 0) facing_front = !facing_front;
+#endif
+    if (((g_PC.g_AlphaOptions >> 10) & 1) != 0 && facing_front == (NormalDeterminant() < 0.0)) input.normal = -input.normal;
     float4 material_color = float4(f16tof32(g_PC.g_ColorPacked.x), f16tof32(g_PC.g_ColorPacked.x >> 16),
                                    f16tof32(g_PC.g_ColorPacked.y), f16tof32(g_PC.g_ColorPacked.y >> 16));
     uint base_index = g_PC.g_MaterialTextures & 255;
@@ -695,6 +702,22 @@ float4 PSMain(PSInput input, bool is_front : SV_IsFrontFace) : SV_TARGET {
     uint emissive_index = (g_PC.g_Emissive.y >> 16) & 255;
     if (emissive_index < 128) emissive *= SRGBToLinear(g_Textures[emissive_index].Sample(g_Sampler, input.uv).rgb);
     color += emissive;
+#ifdef AETHER_FRAME_DATA
+    // Water (AETHER_materials_water) mirrors the scene: the frame's reflection texture is the world drawn mirrored about the water's plane from this same
+    // camera, so a water pixel finds its reflection at its own screen position, nudged by how far the ripples tilt the normal. Fresnel decides how much of it
+    // shows (more at grazing angles), and where the mirror drew nothing (alpha 0, the sky) the sky lighting above stays.
+    if (((g_PC.g_AlphaOptions >> 11) & 1) != 0 && g_Frame.reflection.x < 128) {
+        float2 reflection_size = float2(g_Frame.reflection.z, g_Frame.reflection.w);
+        float2 ripple = (normal.xz - normalize(input.normal).xz) * 0.05;
+        float2 reflection_uv = saturate(input.position.xy / reflection_size + ripple);
+        float4 mirrored = g_Textures[g_Frame.reflection.x].SampleLevel(g_Sampler, reflection_uv, 0);
+        float facing = saturate(dot(normal, view_direction));
+        float fresnel = 0.04 + 0.96 * pow(1.0 - facing, 5.0);
+        float mirror_weight = saturate(fresnel * 1.5 + 0.12) * mirrored.a;
+        color = lerp(color, mirrored.rgb, mirror_weight);
+        surface_alpha = lerp(surface_alpha, 1.0, mirror_weight);
+    }
+#endif
 #ifdef AETHER_HDR_TARGET
     // Linear light into the HDR scene colour target; the post pass applies exposure, the tone mapper and the sRGB encoding.
     return float4(max(color, 0.0), surface_alpha);
@@ -850,6 +873,7 @@ struct SceneRenderer::Impl {
         // A bounding sphere of the bind pose in model space, for culling shadow casters; radius < 0 for skinned primitives (always drawn).
         f32 bounds_center[3] = {0, 0, 0};
         f32 bounds_radius = -1.0f;
+        f32 bounds_height = 0.0f; // the bounds' extent in y: a flat sheet of water has almost none
         // A skinned primitive's bind-pose bounding sphere, grown by half for its poses: what a virtual shadow page redraws when it moves.
         f32 skin_bounds_center[3] = {0, 0, 0};
         f32 skin_bounds_radius = -1.0f;
@@ -880,6 +904,15 @@ struct SceneRenderer::Impl {
     PipelineHandle pipeline;
     PipelineHandle transparent_pipeline;
     PipelineHandle culled_pipeline;             // `pipeline` with back faces culled (single-sided materials)
+    // The water's reflection (AETHER_RENDER_REFLECTIONS=0 turns it off): the scene drawn mirrored about the water's plane into a render texture with
+    // depth, the size of the swap chain, which the water shader samples. Where the device has no such texture (D3D12 for now) there is none.
+    bool reflections = true;
+    PipelineDesc reflection_desc;               // the scene pipeline for that pass, set where `pipeline` is made
+    PipelineHandle reflection_pipeline;         // made when the first water draws
+    bool reflection_failed = false;
+    SampledTextureHandle reflection_texture;
+    std::vector<BufferHandle> reflection_frame_buffers; // the frame constants again for the mirror pass (reflection.y = 1), one per frame in flight
+    u32 reflection_width = 0, reflection_height = 0;
     PipelineHandle transparent_culled_pipeline; // likewise for `transparent_pipeline`
     PipelineHandle hud_pipeline;
     // The particle pass (M8.7), drawn after the scene's surfaces.
@@ -1072,12 +1105,14 @@ struct SceneRenderer::Impl {
         free_buffer(rt_dummy_vertices);
         free_buffer(rt_dummy_indices);
         for (BufferHandle& buffer : frame_buffers) free_buffer(buffer);
+        for (BufferHandle& buffer : reflection_frame_buffers) free_buffer(buffer);
         for (BufferHandle& buffer : light_buffers) free_buffer(buffer);
         for (BufferHandle& buffer : motion_position_buffers) free_buffer(buffer);
         for (auto& [path, texture] : textures) free_texture(texture);
         free_texture(font_texture_handle);
         free_texture(white_texture);
-        for (PipelineHandle* handle : {&pipeline, &transparent_pipeline, &culled_pipeline, &transparent_culled_pipeline, &hud_pipeline}) {
+        if (reflection_texture.IsValid()) device.DestroyTexture(reflection_texture);
+        for (PipelineHandle* handle : {&pipeline, &transparent_pipeline, &culled_pipeline, &transparent_culled_pipeline, &hud_pipeline, &reflection_pipeline}) {
             if (handle->IsValid()) device.DestroyPipeline(*handle);
             *handle = {};
         }
@@ -1196,6 +1231,15 @@ struct SceneRenderer::Impl {
         culled_pipeline = device.CreatePipeline(culled_desc, swap_chain);
         transparent_desc.cull_back_face = true;
         transparent_culled_pipeline = device.CreatePipeline(transparent_desc, swap_chain);
+        if (const char* v = std::getenv("AETHER_RENDER_REFLECTIONS")) reflections = std::strcmp(v, "0") != 0;
+        if (hdr && !rt_shadows && !frame_buffers.empty()) {
+            reflection_desc = desc;
+            reflection_desc.scene_color_target = false;
+            reflection_desc.render_texture_target = true;
+            reflection_desc.render_texture_depth = true;
+        } else {
+            reflections = false;
+        }
         if (!transparent_pipeline.IsValid()) {
             AETHER_LOG_WARN("PlayerRenderer", "Transparent material pipeline unavailable; blended materials draw opaque");
         }
@@ -2075,6 +2119,7 @@ struct SceneRenderer::Impl {
                         }
                         draw.bounds_center[0] = center.x, draw.bounds_center[1] = center.y, draw.bounds_center[2] = center.z;
                         draw.bounds_radius = radius;
+                        draw.bounds_height = hi.y - lo.y;
                     }
                 }
                 draw.indices = device.CreateIndexBuffer(primitive.indices.data(), primitive.indices.size() * sizeof(u32),
@@ -2250,6 +2295,8 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
         u32 index_count = 0;
         DrawConstants constants;
         bool cull = false;
+        Mat4 model;           // for the water reflection's pass, which draws it again with another matrix
+        bool reflect = false; // drawn into the water's reflection: still, single-sided, opaque surfaces (not plants, skinned meshes or water); double-sided ones too, with the mirror pass's own frame constants flagging it
     };
 
     Impl& renderer = *impl_;
@@ -2321,6 +2368,11 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
     bool draw_sprite2d = false;
     Mat4 decal_view_projection;
     Mat4 post_camera_view; // the camera's view matrix, for the fog's sun in-scatter
+    Mat4 water_projection; // the camera's steady projection (the water reflection's pass)
+    bool have_water = false;  // a water surface was drawn this frame, at its first one's height
+    f32 water_level = 0.0f;
+    f32 water_radius = 0.0f;
+    Vec3 water_camera;
     f32 ao_proj_x = 1.0f, ao_proj_y = 1.0f, ao_near = 0.1f, ao_far = 1000.0f; // the camera's, for the post pass's occlusion
     Mat4 taa_view_projection; // without the jitter
     Vec3 decal_camera_position;
@@ -2330,6 +2382,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                            static_cast<f32>(std::max(renderer.swap_chain.Height(), 1u));
         const Mat4 camera_view = CameraView(world, guids, camera_entity);
         post_camera_view = camera_view;
+        water_projection = CameraProjection(LimitViewDistance(*camera, renderer.view_distance), aspect);
         const Mat4 steady_projection = CameraProjection(LimitViewDistance(*camera, renderer.view_distance), aspect);
         // Temporal anti-aliasing moves every draw by this frame's sub-pixel offset; its resolve reprojects without it.
         Mat4 projection = steady_projection;
@@ -2681,6 +2734,13 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                                 primitive.occlusion_texture, primitive.has_occlusion_texture);
                             constants.material_factors_0 = PackHalfPair(primitive.metallic, primitive.roughness);
                             constants.material_factors_1 = PackHalfPair(primitive.normal_scale, primitive.occlusion_strength);
+                            if (primitive.water && primitive.bounds_radius >= 0.0f && primitive.bounds_height < 0.1f && (!have_water || primitive.bounds_radius > water_radius)) {
+                                // A flat sheet: the world height of its bounds' centre is its level; the biggest sheet drawn is the one mirrored.
+                                water_radius = primitive.bounds_radius;
+                                const Vec4 centre = model_transform * Vec4(primitive.bounds_center[0], primitive.bounds_center[1], primitive.bounds_center[2], 1.0f);
+                                have_water = true;
+                                water_level = centre.y;
+                            }
                             const u32 wind_zone_bits = primitive.wind_level != 0 && !wind_zones.empty()
                                                            ? WindZoneBitsAt(wind_zones, Vec3(model_transform.cols[3].x, model_transform.cols[3].y, model_transform.cols[3].z))
                                                            : 0u;
@@ -2706,7 +2766,8 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                                 transparent_draws.push_back({frame_vertex_buffer, primitive.indices, primitive.index_count,
                                                              constants, dx * dx + dy * dy + dz * dz, cull});
                             } else {
-                                opaque_draws.push_back({frame_vertex_buffer, primitive.indices, primitive.index_count, constants, cull});
+                                opaque_draws.push_back({frame_vertex_buffer, primitive.indices, primitive.index_count, constants, cull, model_transform,
+                                                        primitive.wind_level == 0 && !primitive.water && !uploaded_animation});
                                 if (transform_moved || previous_positions != kTaaNoPreviousPositions) {
                                     taa_movers.push_back({frame_vertex_buffer, primitive.indices, primitive.index_count,
                                                           static_cast<u32>(sizeof(SceneVertex)), model_transform,
@@ -2948,13 +3009,99 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
         }
     }
     renderer.vsm_stats.cpu_ms = std::chrono::duration<f64, std::milli>(std::chrono::steady_clock::now() - vsm_start).count();
+    // The water's reflection: when water was drawn and the camera is above it, the texture exists (the swap chain's size) and the frame constants name it; the pass
+    // that draws it is recorded below, before the scene's.
+    bool draw_reflection = false;
+    if (renderer.reflections && have_water && have_camera && frame_buffer.IsValid() && decal_camera_position.y > water_level + 0.05f &&
+        std::any_of(opaque_draws.begin(), opaque_draws.end(), [](const PendingOpaqueDraw& draw) { return draw.reflect; })) {
+        const u32 width = renderer.swap_chain.Width(), height = renderer.swap_chain.Height();
+        if (!renderer.reflection_texture.IsValid() || renderer.reflection_width != width || renderer.reflection_height != height) {
+            if (renderer.reflection_texture.IsValid()) renderer.device.DestroyTexture(renderer.reflection_texture);
+            renderer.reflection_texture = renderer.device.CreateRenderTextureWithDepth(width, height);
+            renderer.reflection_width = width;
+            renderer.reflection_height = height;
+            if (!renderer.reflection_texture.IsValid()) renderer.reflections = false; // this device cannot: no reflections, and no retry each frame
+        }
+        if (renderer.reflections && !renderer.reflection_pipeline.IsValid() && !renderer.reflection_failed) {
+            try {
+                renderer.reflection_pipeline = renderer.device.CreatePipeline(renderer.reflection_desc, renderer.swap_chain);
+            } catch (const std::exception& error) {
+                AETHER_LOG_WARN("PlayerRenderer", "Water reflections unavailable (%s)", error.what());
+            }
+            renderer.reflection_failed = !renderer.reflection_pipeline.IsValid();
+        }
+        if (renderer.reflections && renderer.reflection_frame_buffers.empty()) {
+            for (usize i = 0; i < renderer.frame_buffers.size(); ++i) renderer.reflection_frame_buffers.push_back(renderer.device.CreateFrameConstantBuffer(sizeof(FrameData)));
+        }
+        draw_reflection = renderer.reflections && renderer.reflection_texture.IsValid() && renderer.reflection_pipeline.IsValid() &&
+                          !renderer.reflection_frame_buffers.empty() && renderer.reflection_frame_buffers[0].IsValid();
+        if (draw_reflection) {
+            frame_data.reflection[0] = renderer.reflection_texture.index;
+            frame_data.reflection[2] = width; // the texture is the swap chain's size: a pixel's position over it is its place in the texture
+            frame_data.reflection[3] = height;
+        }
+    }
     // This frame's slot: the frame loop waited on its fence, so it is written without waiting for the GPU (WriteBufferUnsynchronized).
     if (frame_buffer.IsValid() && !renderer.device.WriteBufferUnsynchronized(frame_buffer, &frame_data, sizeof(frame_data))) {
         renderer.device.UpdateFrameConstantBuffer(frame_buffer, &frame_data, sizeof(frame_data));
     }
+    BufferHandle reflection_frame_buffer;
+    if (draw_reflection) {
+        reflection_frame_buffer = renderer.reflection_frame_buffers[frame_index % renderer.reflection_frame_buffers.size()];
+        FrameData mirror_frame = frame_data;
+        mirror_frame.reflection[1] = 1u; // the mirror pass
+        if (!renderer.device.WriteBufferUnsynchronized(reflection_frame_buffer, &mirror_frame, sizeof(mirror_frame))) {
+            renderer.device.UpdateFrameConstantBuffer(reflection_frame_buffer, &mirror_frame, sizeof(mirror_frame));
+        }
+    }
     if (light_buffer.IsValid() && frame_data.cluster_info[3] != 0 && !renderer.clusters.bytes.empty() &&
         !renderer.device.WriteBufferUnsynchronized(light_buffer, renderer.clusters.bytes.data(), renderer.clusters.bytes.size())) {
         renderer.device.UpdateFrameConstantBuffer(light_buffer, renderer.clusters.bytes.data(), renderer.clusters.bytes.size());
+    }
+    if (draw_reflection) {
+        // The world mirrored about y = water_level, seen from the real camera (so a water pixel finds its reflection at its own screen position), with the
+        // projection's near plane tilted onto the water's plane so nothing below it is drawn (an oblique frustum, as for depth [0, 1]: the third row of the
+        // projection is the clip plane, scaled so the far plane stays where it was). Lit as the real surfaces are: only where they are drawn is mirrored.
+        const f32 level = water_level;
+        Mat4 mirror;
+        mirror.cols[0] = Vec4(1.0f, 0.0f, 0.0f, 0.0f);
+        mirror.cols[2] = Vec4(0.0f, 0.0f, 1.0f, 0.0f);
+        mirror.cols[1] = Vec4(0.0f, -1.0f, 0.0f, 0.0f);
+        mirror.cols[3] = Vec4(0.0f, 2.0f * level, 0.0f, 1.0f);
+        Mat4 inverse_view, inverse_projection;
+        Mat4 projection = water_projection;
+        if (post_camera_view.TryInverse(inverse_view) && water_projection.TryInverse(inverse_projection)) {
+            // The kept side, in the mirrored world's coordinates: y' <= level (a little below the water too, so the shore has no gap).
+            const Vec4 plane_world(0.0f, -1.0f, 0.0f, level + 0.05f);
+            const Vec4 plane(Dot4(inverse_view.cols[0], plane_world), Dot4(inverse_view.cols[1], plane_world), Dot4(inverse_view.cols[2], plane_world),
+                             Dot4(inverse_view.cols[3], plane_world));
+            const Vec4 corner = inverse_projection * Vec4(plane.x >= 0.0f ? 1.0f : -1.0f, plane.y >= 0.0f ? 1.0f : -1.0f, 1.0f, 1.0f);
+            const f32 scale = Dot4(plane, corner);
+            if (std::abs(scale) > 1e-6f) {
+                projection.cols[0].z = plane.x / scale;
+                projection.cols[1].z = plane.y / scale;
+                projection.cols[2].z = plane.z / scale;
+                projection.cols[3].z = plane.w / scale;
+            }
+        }
+        const Mat4 mirrored_view_projection = projection * post_camera_view * mirror;
+        const ClearColor clear{0.0f, 0.0f, 0.0f, 0.0f};
+        if (commands.BeginTexturePass(renderer.reflection_texture, &clear)) {
+            commands.BindPipeline(renderer.reflection_pipeline);
+            commands.BindFrameConstants(reflection_frame_buffer);
+            if (light_buffer.IsValid()) commands.BindFrameReadBuffer(light_buffer);
+            commands.BindBindlessTextures();
+            for (const PendingOpaqueDraw& draw : opaque_draws) {
+                if (!draw.reflect) continue;
+                DrawConstants constants = draw.constants;
+                constants.mvp = mirrored_view_projection * draw.model;
+                commands.BindVertexBuffer(draw.vertices, sizeof(SceneVertex));
+                commands.BindIndexBuffer(draw.indices, IndexFormat::UInt32);
+                commands.SetPushConstants(&constants, sizeof(constants));
+                commands.DrawIndexed(draw.index_count);
+            }
+            commands.EndRenderPass();
+        }
     }
     renderer.GpuStamp(commands, 1);
     if (renderer.hdr) {
