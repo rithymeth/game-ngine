@@ -3,6 +3,13 @@
 #include "aether/assets/image.h"
 
 #include <array>
+#include <initializer_list>
+#include <vector>
+#include <string>
+#include <fstream>
+#include <filesystem>
+#include <cstdio>
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <limits>
@@ -161,6 +168,74 @@ bool DecodeTextureData(const std::vector<u8>& bytes, TextureData& out) {
     return true;
 }
 
+namespace {
+
+// Says why a file would not decode, from its first bytes: what it is (a Git LFS pointer, an HTML page, a format this engine does not read, text) or, for a PNG, a JPEG or a BMP, how big it
+// says it is (to tell "too big" from "damaged"). The decoder itself only says no. `bytes` is as much of the start of the file as was read; `file_size` its whole size.
+std::string WhyNotAnImage(std::span<const u8> bytes, u64 file_size, u64 max_pixels) {
+    auto starts = [&](const char* text) { const usize n = std::strlen(text); return bytes.size() >= n && std::memcmp(bytes.data(), text, n) == 0; };
+    auto u32be = [&](usize at) { return (static_cast<u64>(bytes[at]) << 24) | (static_cast<u64>(bytes[at + 1]) << 16) | (static_cast<u64>(bytes[at + 2]) << 8) | bytes[at + 3]; };
+    auto u32le = [&](usize at) { return (static_cast<u64>(bytes[at + 3]) << 24) | (static_cast<u64>(bytes[at + 2]) << 16) | (static_cast<u64>(bytes[at + 1]) << 8) | bytes[at]; };
+    auto too_big = [&](const char* format, u64 width, u64 height) {
+        return std::string(format) + " is " + std::to_string(width) + " x " + std::to_string(height) + " (" + std::to_string(width * height / 1000000) + " megapixels), over the budget of " +
+               std::to_string(max_pixels / 1000000) + " megapixels: make it smaller";
+    };
+    if (file_size == 0 || bytes.empty()) return "the file is empty (0 bytes): the export or the copy did not finish";
+    if (starts("version https://git-lfs")) return "this is a Git LFS pointer file (a few lines of text), not the image: run \"git lfs pull\" to fetch the real file";
+    if (starts("<!DOCTYPE") || starts("<html") || starts("<HTML") || starts("<?xml")) return "this is a web page or XML document, not an image (a failed download, or a link saved as a file?)";
+    if (starts("\x89PNG\r\n\x1a\n")) {
+        if (bytes.size() >= 24) {
+            const u64 w = u32be(16), h = u32be(20);
+            if (w == 0 || h == 0) return "this is a PNG whose header says it is " + std::to_string(w) + " x " + std::to_string(h) + ": damaged";
+            if (w * h > max_pixels) return too_big("this PNG", w, h);
+            return "this is a " + std::to_string(w) + " x " + std::to_string(h) + " PNG that cannot be decoded: it is truncated or damaged (" + std::to_string(file_size) + " bytes)";
+        }
+        return "this starts like a PNG but ends inside its header (" + std::to_string(file_size) + " bytes): it is truncated";
+    }
+    if (bytes.size() >= 3 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF) {
+        for (usize at = 2; at + 9 < bytes.size();) { // walk the markers to the frame header, which holds the size
+            if (bytes[at] != 0xFF) break;
+            const u8 marker = bytes[at + 1];
+            if ((marker >= 0xC0 && marker <= 0xCF) && marker != 0xC4 && marker != 0xC8 && marker != 0xCC) {
+                const u64 h = (static_cast<u64>(bytes[at + 5]) << 8) | bytes[at + 6], w = (static_cast<u64>(bytes[at + 7]) << 8) | bytes[at + 8];
+                if (w * h > max_pixels) return too_big("this JPEG", w, h);
+                return "this is a " + std::to_string(w) + " x " + std::to_string(h) + " JPEG that cannot be decoded: it is truncated or damaged (" + std::to_string(file_size) + " bytes)" +
+                       ((marker == 0xC2) ? "; it is a progressive JPEG, which may be what the decoder dislikes: re-save it as a baseline JPEG" : "");
+            }
+            at += 2 + ((static_cast<usize>(bytes[at + 2]) << 8) | bytes[at + 3]);
+        }
+        return "this is a JPEG that cannot be decoded: it is truncated or damaged (" + std::to_string(file_size) + " bytes)";
+    }
+    if (starts("BM") && bytes.size() >= 26) {
+        const u64 w = u32le(18), h = u32le(22);
+        if (w * h > max_pixels) return too_big("this BMP", w, h);
+        return "this is a BMP that cannot be decoded: it is truncated, damaged, or uses a compression this engine does not read (re-save it as PNG)";
+    }
+    auto bytes_are = [&](std::initializer_list<u8> expected) { return bytes.size() >= expected.size() && std::equal(expected.begin(), expected.end(), bytes.begin()); };
+    const char* unsupported = starts("RIFF") && bytes.size() >= 12 && std::memcmp(bytes.data() + 8, "WEBP", 4) == 0 ? "WebP"
+                              : bytes_are({'I', 'I', '*', 0}) || bytes_are({'M', 'M', 0, '*'}) ? "TIFF"
+                              : starts("DDS ") ? "DDS" : starts("8BPS") ? "Photoshop (PSD)" : bytes_are({0, 0, 1, 0}) ? "ICO"
+                              : starts("%PDF") ? "PDF" : starts("KTX ") || bytes_are({0xAB, 'K', 'T', 'X'}) ? "KTX" : nullptr;
+    if (unsupported != nullptr) return std::string("the file is in ") + unsupported + " format, which this engine does not import: convert it to PNG, JPEG, BMP or TGA";
+    // Plain text (a script, a config, a note renamed to .png) or unknown bytes.
+    bool printable = true;
+    const usize look = std::min<usize>(bytes.size(), 64);
+    for (usize i = 0; i < look; ++i)
+        if (!((bytes[i] >= 32 && bytes[i] < 127) || bytes[i] == '\n' || bytes[i] == '\r' || bytes[i] == '\t')) printable = false;
+    if (printable) {
+        std::string head(reinterpret_cast<const char*>(bytes.data()), std::min<usize>(bytes.size(), 24));
+        std::replace(head.begin(), head.end(), '\n', ' ');
+        std::replace(head.begin(), head.end(), '\r', ' ');
+        return "this is a text file, not an image (it starts with \"" + head + "\")";
+    }
+    std::string hex;
+    char two[4];
+    for (usize i = 0; i < std::min<usize>(bytes.size(), 8); ++i) { std::snprintf(two, sizeof(two), "%02X ", bytes[i]); hex += two; }
+    return "this is not a recognised image (it starts with bytes " + hex + "): the engine reads PNG, JPEG, BMP, TGA, GIF, PSD, PIC and PNM";
+}
+
+} // namespace
+
 nlohmann::json TextureImporter::DefaultSettings() const {
     return {{"srgb", true}, {"generate_mips", true}, {"max_size", 0}};
 }
@@ -169,7 +244,16 @@ ImportResult TextureImporter::Import(const ImportContext& context) const {
     ImageData image;
     if (!DecodeImageFile(context.source.string(), image, 16 * 1024 * 1024)) {
         ImportResult result;
-        result.error = "not a readable image";
+        // Why, from the first bytes of the file.
+        std::ifstream in(context.source, std::ios::binary);
+        const bool opened = in.is_open();
+        std::vector<u8> head(64 * 1024);
+        in.read(reinterpret_cast<char*>(head.data()), static_cast<std::streamsize>(head.size()));
+        head.resize(static_cast<usize>(in.gcount()));
+        std::error_code size_error;
+        const u64 file_size = std::filesystem::file_size(context.source, size_error);
+        result.error = opened ? WhyNotAnImage(head, size_error ? head.size() : file_size, 16 * 1024 * 1024) : "the file could not be opened (" + context.source.string() + "): it is missing or not readable";
+        if (!opened && !std::filesystem::exists(context.source)) result.error = "the file is missing: " + context.source.string();
         return result;
     }
     return ImportDecoded(std::move(image), context.settings);
@@ -179,7 +263,7 @@ ImportResult TextureImporter::ImportFromMemory(std::span<const u8> bytes, const 
     ImageData image;
     if (!DecodeImageFromMemory(bytes, image, max_pixels)) {
         ImportResult result;
-        result.error = "not a readable image or exceeds the pixel budget";
+        result.error = WhyNotAnImage(bytes.first(std::min<usize>(bytes.size(), 64 * 1024)), bytes.size(), max_pixels);
         return result;
     }
     return ImportDecoded(std::move(image), settings);

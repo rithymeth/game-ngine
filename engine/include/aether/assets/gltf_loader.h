@@ -201,6 +201,10 @@ struct GltfScene {
     std::vector<usize> root_nodes;
     std::vector<GltfSkin> skins;
     std::vector<GltfAnimation> animations;
+
+    // What was left out or ignored while loading, one sentence each, naming the mesh and primitive and the reason ("mesh 2 \"Rock\" primitive 0 skipped: POSITION accessor 4 reads past the
+    // end of its bufferView"). The load still succeeded: these are things an artist would want to know about a file that "imported fine". Empty for a clean file.
+    std::vector<std::string> warnings;
 };
 
 // Reusable result and scratch storage for one sampled animation. Keeping a
@@ -280,6 +284,8 @@ void ComputeSkinMatrices(const GltfScene& scene, const GltfAnimation* animation,
 // first buffer is its BIN chunk. External file URIs are refused; data URIs
 // remain available. JSON is capped at 32 MiB for untrusted data.
 [[nodiscard]] bool LoadGltfFromMemory(std::span<const u8> json, GltfScene& out_scene);
+// As above; on failure `error` (if given) gets the first reason (a parse error with its line and column, a missing buffer, a bad accessor).
+[[nodiscard]] bool LoadGltfFromMemory(std::span<const u8> json, GltfScene& out_scene, std::string* error);
 // Splits a .glb (the glTF 2.0 binary container: header, JSON chunk, optional
 // BIN chunk) into its JSON text and its BIN chunk (left empty when it has
 // none). LoadGltf and LoadGltfFromMemory read .glb files themselves; this is
