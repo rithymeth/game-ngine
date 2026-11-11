@@ -10,6 +10,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 // The player's particle pass, CPU side (player/src/particle_pass.h): sprites become two camera-facing triangles in the
 // alpha or additive stream, alpha-blended sprites sort back to front across batches, premultiplied colours become
@@ -690,3 +691,52 @@ AETHER_TEST(PlayerParticles_SoftSpritesFadeNearOpaqueDepthOnVulkan) { PlayerPart
 AETHER_TEST(PlayerParticles_SoftSpritesFadeNearOpaqueDepthOnD3D12) { PlayerParticles_SoftSpritesFadeNearOpaqueDepth(gfx::rhi::Backend::D3D12); }
 AETHER_TEST(PlayerParticles_LitMeshParticlesShadeByNormalOnVulkan) { PlayerParticles_LitMeshParticlesShadeByNormal(gfx::rhi::Backend::Vulkan); }
 AETHER_TEST(PlayerParticles_LitMeshParticlesShadeByNormalOnD3D12) { PlayerParticles_LitMeshParticlesShadeByNormal(gfx::rhi::Backend::D3D12); }
+
+// 2D sprites and tilemaps ride the particle pass: each quad of a batch becomes two ribbon-kind triangles carrying the batch's
+// texture index, in the batches' order (which is the draw order).
+AETHER_TEST(PlayerParticles_SpriteBatchesBecomeRibbonQuadsInOrder) {
+    const assets::AssetGuid picture = assets::NewAssetGuid();
+    sprite2d::SpriteBatch plain, textured, broken;
+    const auto quad = [](sprite2d::SpriteBatch& batch, f32 x, f32 z, f32 red) {
+        const u32 base = static_cast<u32>(batch.vertices.size());
+        batch.vertices.push_back({x, 1, z, 0, 0, red, 0.5f, 0.25f, 1});
+        batch.vertices.push_back({x + 1, 1, z, 1, 0, red, 0.5f, 0.25f, 1});
+        batch.vertices.push_back({x + 1, 0, z, 1, 1, red, 0.5f, 0.25f, 1});
+        batch.vertices.push_back({x, 0, z, 0, 1, red, 0.5f, 0.25f, 1});
+        for (u32 i : {0u, 1u, 2u, 0u, 2u, 3u}) batch.indices.push_back(base + i);
+    };
+    quad(plain, 0, 1, 0.1f);
+    quad(plain, 2, 1, 0.2f);
+    textured.texture = picture;
+    quad(textured, 4, 2, 0.3f);
+    quad(broken, 6, 3, 0.4f);
+    broken.indices[4] = 99; // one corner of the second triangle points nowhere
+
+    u32 asked = 0;
+    std::vector<ParticleQuadVertex> out(7); // cleared first
+    PackSpriteBatchVertices({plain, textured, broken}, [&](const assets::AssetGuid& guid) -> u32 {
+        ++asked;
+        return guid == picture ? 9u : 0u;
+    }, out);
+    AETHER_CHECK(asked == 1); // only the batch that has a texture
+    // Two quads, one quad, and the broken batch's first triangle only: its second lost a corner and goes whole.
+    AETHER_CHECK(out.size() == 12 + 6 + 3);
+    if (out.size() != 21) return;
+    for (usize i = 0; i < out.size(); ++i) {
+        AETHER_CHECK(!ParticleVertexIsSprite(out[i])); // the ribbon kind: flat colour or colour times texture, no round falloff
+        AETHER_CHECK(ParticleVertexTexture(out[i]) == (i >= 12 && i < 18 ? 9u : 0u));
+        AETHER_CHECK(out[i].color[3] == 1.0f && out[i].color[1] == 0.5f);
+    }
+    AETHER_CHECK(out[0].position[0] == 0.0f && out[6].position[0] == 2.0f && out[12].position[0] == 4.0f && out[18].position[0] == 6.0f);
+    AETHER_CHECK(out[0].color[0] == 0.1f && out[6].color[0] == 0.2f && out[12].color[0] == 0.3f);
+    AETHER_CHECK(out[1].uv[0] == 1.0f && out[2].uv[1] == 1.0f && out[12].position[2] == 2.0f);
+    // The pass draws each run of one texture on its own: untextured, the picture, untextured again.
+    std::vector<ParticleDrawRun> runs;
+    ParticleTextureRuns(out, runs);
+    AETHER_CHECK(runs.size() == 3 && runs[0].vertex_count == 12 && runs[1].texture == 9 && runs[1].vertex_count == 6 && runs[2].vertex_count == 3);
+    // Without a resolver nothing is textured, and no batches give no vertices.
+    PackSpriteBatchVertices({textured}, {}, out);
+    AETHER_CHECK(out.size() == 6 && ParticleVertexTexture(out[0]) == 0);
+    PackSpriteBatchVertices({}, {}, out);
+    AETHER_CHECK(out.empty());
+}

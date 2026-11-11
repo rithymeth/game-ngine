@@ -236,3 +236,11 @@ used to run to a black window, because the templates held no models: they now ge
 cube in three colours. All six templates were created, packaged and run this way on Linux. Two still open on a dark window: Blank,
 by design, and 2D Platformer, because the packaged player does not draw sprites or tilemaps. The getting-started page has the
 three commands.
+
+## 2D: the packaged player draws sprites and tilemaps
+
+A 2D game ran its level, physics and controller in the packaged player and drew nothing: no part of the player turned `Sprite`
+and `TilemapRenderer` components into draws. The scene renderer now builds the sprite batches each frame and draws them, back to
+front, over the 3D scene and the particles, with the tileset's or atlas's texture, or as flat colours when there is none. The 2D
+Platformer template gained a sprite for its player and now opens on its level. Not yet: `SpriteAnimator` clips do not advance in
+the player, sprites are not culled to the view, and their colours go through the scene's tone mapping like everything else.

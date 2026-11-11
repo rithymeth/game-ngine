@@ -975,6 +975,7 @@ struct SceneRenderer::Impl {
     u32 seen_critical_pressure = 0;
     f32 view_distance = 0.0f;
     std::function<bool(Entity, Transform&)> render_pose_sampler;
+    std::vector<ParticleQuadVertex> sprite_vertices; // the frame's 2D quads, kept for its capacity
     // Each entity's local matrix and parent, read once a frame instead of once for every drawn entity under it.
     HierarchySnapshot hierarchy;
     Entity animated_player;
@@ -2833,6 +2834,20 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
     // particles; the HUD below binds its own pipeline.
     if (draw_particles) {
         renderer.particles->Draw(commands, renderer.particle_data, particle_camera, particle_view_projection, particle_projection, frame_index);
+    }
+    // 2D: the scene's sprites and tilemaps, back to front, over the opaque scene and the particles. They go through the particle
+    // pass's alpha pipeline (a 2D quad is a ribbon to it); without this a 2D game ran its level, physics and controller and drew
+    // nothing.
+    if (have_camera && renderer.particles && renderer.particles->Valid()) {
+        const std::vector<sprite2d::SpriteBatch> batches = sprite2d::BuildSpriteBatches(world, game.Resolvers2D());
+        if (!batches.empty()) {
+            PackSpriteBatchVertices(batches, [&](const assets::AssetGuid& guid) -> u32 {
+                const GameManifest::Asset* asset = renderer.package.FindAssetByGuid(assets::ToString(guid));
+                SampledTextureHandle texture;
+                return asset && renderer.LoadTexture(asset->path, texture) ? texture.index : 0u;
+            }, renderer.sprite_vertices);
+            renderer.particles->DrawQuads(commands, renderer.sprite_vertices, particle_view_projection, frame_index);
+        }
     }
     if (renderer.hdr) {
         // The lit scene is in the HDR target: tone map it into the back buffer under the post volumes at the camera, then the HUD on top

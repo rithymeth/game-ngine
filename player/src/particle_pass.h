@@ -1,6 +1,7 @@
 #pragma once
 
 #include "aether/gfx/rhi/device.h"
+#include "aether/sprite2d/batch.h"
 #include "aether/vfx/render.h"
 
 #include <array>
@@ -127,6 +128,14 @@ void PackParticleVertices(const vfx::ParticleRenderData& data, const vfx::Partic
                           const ParticleTextureResolver& textures = {}, const ParticleMeshResolver& meshes = {},
                           const ParticleLighting* sprite_lighting = nullptr);
 
+// 2D: a frame's sprites and tilemaps (sprite2d::BuildSpriteBatches, already in draw order) as vertices for the alpha pipeline. Each
+// quad becomes two triangles of the ribbon kind, which the shader draws as its colour times its texture, or as the flat colour when
+// the batch has no texture (a tileset or atlas without an image still shows its shapes). `texture` gives a batch's texture GUID its
+// bindless index (0: none). `out` is cleared first and keeps its capacity.
+using SpriteTextureResolver = std::function<u32(const assets::AssetGuid& texture)>;
+void PackSpriteBatchVertices(const std::vector<sprite2d::SpriteBatch>& batches, const SpriteTextureResolver& texture,
+                             std::vector<ParticleQuadVertex>& out);
+
 // The GPU side: an opaque (mesh particles, writing depth), an alpha-blended and an additive pipeline (one HLSL source, compiled by the RHI for each backend, sampling the bindless
 // texture table), depth-tested against the
 // swap chain's depth without writing it (soft sprites also read its SceneDepthTexture copy), and per frame in flight a vertex buffer for each stream (grown to the largest frame seen, never
@@ -157,6 +166,10 @@ public:
     // The swap chain's scene depth (0 when the backend has none: soft sprites draw hard-edged).
     u32 SceneDepthTexture() const { return scene_depth_; }
     const ParticleVertexStreams& Vertices() const { return vertices_; } // the last Draw's
+    // Records `vertices` (PackSpriteBatchVertices) through the alpha pipeline, in their order, inside the current render pass. For the
+    // scene's 2D sprites and tilemaps; call it after Draw when both are drawn, so particles and sprites blend over the opaque scene.
+    void DrawQuads(gfx::rhi::ICommandList& commands, const std::vector<ParticleQuadVertex>& vertices, const Mat4& view_projection,
+                   u32 frame_index);
 
 private:
     struct Buffer {
@@ -168,7 +181,7 @@ private:
 
     gfx::rhi::IDevice& device_;
     gfx::rhi::PipelineHandle alpha_pipeline_, additive_pipeline_, opaque_pipeline_;
-    std::array<std::array<Buffer, 3>, kFrameSlots> buffers_{};
+    std::array<std::array<Buffer, 4>, kFrameSlots> buffers_{}; // alpha, additive, opaque, 2D quads
     ParticleVertexStreams vertices_;
     std::vector<ParticleDrawRun> runs_;
     u32 scene_depth_ = 0;

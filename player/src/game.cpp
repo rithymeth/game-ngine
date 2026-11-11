@@ -486,6 +486,7 @@ bool Game::LoadScene(const std::string& path, std::string* error) {
     // 2D physics: the scene's tilemaps are read from the package when first needed.
     tilemaps_.clear();
     tilesets_.clear();
+    atlases_.clear();
     sprite2d::Resolvers2D tiles;
     const auto read_json = [this](const assets::AssetGuid& guid) -> nlohmann::json {
         const GameManifest::Asset* asset = package_.FindAssetByGuid(assets::ToString(guid));
@@ -515,6 +516,18 @@ bool Game::LoadScene(const std::string& path, std::string* error) {
         }
         return it->second.get();
     };
+    tiles.atlases = [this, read_json](const assets::AssetGuid& guid) -> const sprite2d::SpriteAtlas* {
+        auto it = atlases_.find(guid);
+        if (it == atlases_.end()) {
+            auto atlas = std::make_unique<sprite2d::SpriteAtlas>();
+            const nlohmann::json data = read_json(guid);
+            std::string why;
+            if (data.is_discarded() || data.is_null() || !sprite2d::AtlasFromJson(data, *atlas, &why)) atlas.reset();
+            it = atlases_.emplace(guid, std::move(atlas)).first;
+        }
+        return it->second.get();
+    };
+    resolvers2d_ = tiles; // the renderer's copy: the same caches
     physics2d_ = std::make_unique<sprite2d::Physics2D>(*world_, std::move(tiles));
 #if AETHER_GAME_PHYSICS
     physics_ = std::make_unique<Physics>();
