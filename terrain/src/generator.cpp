@@ -609,20 +609,39 @@ std::vector<u8> RenderWaterNormalMap(const GeneratedTerrain& t, const TerrainGen
     std::vector<u8> rgb(static_cast<usize>(size) * size * 3, 0);
     const u32 w = t.Width(), h = t.Height();
     if (w < 2 || h < 2) return rgb;
-    const f32 cell = t.heightmap.cell_size;
-    // A ripple height at a world position: three scales of smooth noise (wavelengths of about 0.7, 2 and 6 m).
-    auto ripple = [&](f32 x, f32 z) {
-        return 1.0f * ValueNoise(x * 1.45f, z * 1.45f, s.seed ^ 0x3C6EF372u) + 0.55f * ValueNoise(x * 0.5f + 17.0f, z * 0.5f - 9.0f, s.seed ^ 0xA54FF53Au) +
-               0.30f * ValueNoise(x * 0.17f - 5.0f, z * 0.17f + 23.0f, s.seed ^ 0x510E527Fu);
-    };
-    const f32 eps = 0.12f; // metres, for the gradient
-    const f32 k = std::max(strength, 0.0f) * 0.22f;
+    const f32 extent = static_cast<f32>(std::max(w, h) - 1) * t.heightmap.cell_size;
+    // The ripples are a sum of waves, each with a whole number of crests across the map in each direction, so the map is periodic: it tiles, and the scene
+    // shader can scroll it (the sampler wraps) without a seam running through the water. Three scales (about 0.7, 2 and 6 m from crest to crest).
+    struct Wave { f32 kx, kz, phase, amplitude; };
+    std::vector<Wave> waves;
+    i32 draw = 0;
+    auto unit = [&]() { return static_cast<f32>(LatticeHash(draw++, 7, s.seed ^ 0x9E3779B9u) >> 8) / 16777216.0f; };
+    const f32 wavelengths[3] = {0.7f, 2.0f, 6.0f};
+    const u32 counts[3] = {6, 5, 4};
+    for (int scale = 0; scale < 3; ++scale) {
+        for (u32 i = 0; i < counts[scale]; ++i) {
+            const f32 angle = unit() * 6.2831853f, cycles = extent / wavelengths[scale];
+            f32 kx = std::round(std::cos(angle) * cycles), kz = std::round(std::sin(angle) * cycles);
+            if (kx == 0.0f && kz == 0.0f) kx = 1.0f;
+            // Amplitude in proportion to the wavelength: every wave has the same slope, whatever its scale.
+            waves.push_back({kx, kz, unit() * 6.2831853f, wavelengths[scale]});
+        }
+    }
+    // Each wave's slope is about 2 pi times the cosine of its direction (its amplitude is its wavelength); fifteen of them at random phases add to a slope
+    // of about 12 of that, so 0.0125 gives a surface that leans about 0.15 (8 degrees) at strength 1.
+    const f32 k = std::max(strength, 0.0f) * 0.0125f;
     for (u32 py = 0; py < size; ++py) {
         for (u32 px = 0; px < size; ++px) {
-            const f32 wx = (static_cast<f32>(px) + 0.5f) / static_cast<f32>(size) * static_cast<f32>(w - 1) * cell;
-            const f32 wz = (static_cast<f32>(py) + 0.5f) / static_cast<f32>(size) * static_cast<f32>(h - 1) * cell;
-            const f32 dx = (ripple(wx + eps, wz) - ripple(wx - eps, wz)) / (2.0f * eps) * k;
-            const f32 dz = (ripple(wx, wz + eps) - ripple(wx, wz - eps)) / (2.0f * eps) * k;
+            const f32 u = (static_cast<f32>(px) + 0.5f) / static_cast<f32>(size), v = (static_cast<f32>(py) + 0.5f) / static_cast<f32>(size);
+            // The height's slope in x and z (metres per metre): each wave's derivative, the 2 pi k / extent of its phase times its amplitude.
+            f32 dx = 0.0f, dz = 0.0f;
+            for (const Wave& wave : waves) {
+                const f32 c = std::cos(6.2831853f * (wave.kx * u + wave.kz * v) + wave.phase) * wave.amplitude * 6.2831853f / extent;
+                dx += c * wave.kx;
+                dz += c * wave.kz;
+            }
+            dx *= k;
+            dz *= k;
             const f32 inv = 1.0f / std::sqrt(dx * dx + dz * dz + 1.0f);
             // A tangent-space normal: x and y lean against the slope of the ripple, z is up out of the surface.
             u8* out = &rgb[(static_cast<usize>(py) * size + px) * 3];

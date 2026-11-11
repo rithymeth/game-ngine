@@ -403,6 +403,20 @@ AETHER_TEST(ProceduralGlbWritesBlendModeAndNormalTextures) {
                  scene.materials[0].base_color_texture.find("water.png") != std::string::npos);
     std::error_code ec;
     std::filesystem::remove_all(dir, ec);
+    // The water flag: an extension on the material, listed as used, and the loader sets GltfMaterial::water.
+    ProceduralMesh wet = GenerateVariant(ProceduralKind::Rock, 1, 3);
+    wet.materials[0].water = true;
+    {
+        std::string wet_json;
+        std::vector<u8> wet_bin;
+        const std::vector<u8> wet_glb = EncodeGlb(wet);
+        AETHER_CHECK(ReadGlbChunks(wet_glb, wet_json, wet_bin));
+        AETHER_CHECK(wet_json.find("\"extensionsUsed\":[\"AETHER_materials_water\"]") != std::string::npos && wet_json.find("\"AETHER_materials_water\":{}") != std::string::npos);
+        GltfScene wet_scene;
+        AETHER_CHECK(LoadGltfFromMemory(wet_glb, wet_scene) && wet_scene.materials[0].water);
+        GltfScene dry_scene;
+        AETHER_CHECK(LoadGltfFromMemory(EncodeGlb(GenerateVariant(ProceduralKind::Rock, 1, 3)), dry_scene) && !dry_scene.materials[0].water);
+    }
     // An opaque material writes no alpha mode.
     ProceduralMesh plain = GenerateVariant(ProceduralKind::Rock, 1, 3);
     AETHER_CHECK(ReadGlbChunks(EncodeGlb(plain), json, bin) && json.find("alphaMode") == std::string::npos);

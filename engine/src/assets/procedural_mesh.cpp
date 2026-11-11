@@ -1255,6 +1255,7 @@ std::vector<u8> EncodeGlb(const ProceduralMesh& mesh) {
     // Textures: each distinct base colour image becomes an image, a texture on it, and the material's baseColorTexture. The uri is the path as given
     // (relative to the .glb), which is how the player finds it in the package.
     std::vector<std::string> images;
+    bool any_water = false;
     for (usize mi = 0; mi < mesh.materials.size(); ++mi) {
         const MaterialData& m = mesh.materials[mi];
         if (mi > 0) materials += ",";
@@ -1269,8 +1270,10 @@ std::vector<u8> EncodeGlb(const ProceduralMesh& mesh) {
         if (!m.normal_texture.empty()) normal = ",\"normalTexture\":{\"index\":" + std::to_string(image_index(m.normal_texture)) + ",\"scale\":" + Num(m.normal_scale) + "}";
         if (m.alpha_mode == MaterialAlphaMode::Blend) alpha = ",\"alphaMode\":\"BLEND\"";
         else if (m.alpha_mode == MaterialAlphaMode::Mask) alpha = ",\"alphaMode\":\"MASK\",\"alphaCutoff\":" + Num(m.alpha_cutoff);
+        if (m.water) any_water = true;
+        const std::string extensions = m.water ? ",\"extensions\":{\"AETHER_materials_water\":{}}" : "";
         materials += "{\"name\":\"material" + std::to_string(mi) + "\",\"pbrMetallicRoughness\":{\"baseColorFactor\":[" + Num(m.base_color.x) + "," + Num(m.base_color.y) + "," +
-                     Num(m.base_color.z) + "," + Num(m.base_color.w) + "],\"metallicFactor\":" + Num(m.metallic) + ",\"roughnessFactor\":" + Num(m.roughness) + texture + "}" + normal + alpha + "}";
+                     Num(m.base_color.z) + "," + Num(m.base_color.w) + "],\"metallicFactor\":" + Num(m.metallic) + ",\"roughnessFactor\":" + Num(m.roughness) + texture + "}" + normal + alpha + extensions + "}";
     }
     std::string image_json, texture_json;
     for (usize i = 0; i < images.size(); ++i) {
@@ -1280,7 +1283,7 @@ std::vector<u8> EncodeGlb(const ProceduralMesh& mesh) {
         texture_json += (i ? "," : "") + std::string("{\"source\":") + std::to_string(i) + "}";
     }
     Pad4(bin, 0);
-    std::string json = "{\"asset\":{\"version\":\"2.0\",\"generator\":\"Aether procedural mesh\"},\"scene\":0,\"scenes\":[{\"nodes\":[0]}],\"nodes\":[{\"mesh\":0}],"
+    std::string json = std::string("{\"asset\":{\"version\":\"2.0\",\"generator\":\"Aether procedural mesh\"},") + (any_water ? "\"extensionsUsed\":[\"AETHER_materials_water\"]," : "") + "\"scene\":0,\"scenes\":[{\"nodes\":[0]}],\"nodes\":[{\"mesh\":0}],"
                        "\"meshes\":[{\"primitives\":[" + primitives + "]}],";
     if (!materials.empty()) json += "\"materials\":[" + materials + "],";
     if (!images.empty()) json += "\"images\":[" + image_json + "],\"textures\":[" + texture_json + "],";

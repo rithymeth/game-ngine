@@ -52,8 +52,9 @@ struct FrameData {
     i32 vsm_window[3][4]{};       // the window's first page, (x, y) for each level, two levels to a row: x0 y0 x1 y1 / x2 y2 x3 y3 / x4 y4 x5 y5
     u32 vsm_info[4]{255u, 0u, 0u, 0u}; // x: the page atlas's bindless index (255: none); y: pages per side of the pool; z: the page table's byte offset
     f32 vsm_params[4]{};          // x: a pixel's footprint that does not depend on distance (an orthographic camera's)
+    f32 time[4]{};                // x: the game's time in seconds (the scene shader's water scrolls its ripples with it)
 };
-static_assert(sizeof(FrameData) % 16 == 0 && sizeof(FrameData) == 1216);
+static_assert(sizeof(FrameData) % 16 == 0 && sizeof(FrameData) == 1232);
 
 // The HLSL for FrameData (the layout above), its constant buffer g_Frame (register b0, space2), and the sky helpers that read it:
 // EnvironmentRadiance(direction, lod), SkyIrradiance(normal) and SkyLighting(...), the split-sum image-based lighting. Needs g_Textures

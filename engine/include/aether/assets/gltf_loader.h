@@ -36,6 +36,8 @@ struct GltfMaterial {
     MaterialAlphaMode alpha_mode = MaterialAlphaMode::Opaque;
     // glTF's doubleSided: both faces drawn, the back lit with its normal reversed. Single-sided materials have their back faces culled.
     bool double_sided = false;
+    // AETHER_materials_water: the scene shader scrolls two layers of this material's normal map with the game's time (ripples that move).
+    bool water = false;
     std::string base_color_texture;
     std::string normal_texture;
     std::string metallic_roughness_texture;

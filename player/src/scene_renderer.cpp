@@ -125,11 +125,11 @@ f32 ModelDeterminant(const Mat4& m) {
 }
 
 u32 PackMaterialOptions(assets::MaterialAlphaMode mode, f32 cutoff, const SampledTextureHandle& extension, bool has_extension,
-                        bool double_sided = false) {
-    // The alpha mode in bits 0-1, the surface-extension texture's index in bits 2-9, double-sided in bit 10 and the cutoff as a half
-    // in bits 16-31.
+                        bool double_sided = false, bool water = false) {
+    // The alpha mode in bits 0-1, the surface-extension texture's index in bits 2-9, double-sided in bit 10, water in bit 11 and the cutoff
+    // as a half in bits 16-31.
     return (static_cast<u32>(FloatToHalf(std::clamp(cutoff, 0.0f, 1.0f))) << 16) | (TextureSlot(extension, has_extension) << 2) |
-           (double_sided ? 1u << 10 : 0u) | (static_cast<u32>(mode) & 3u);
+           (double_sided ? 1u << 10 : 0u) | (water ? 1u << 11 : 0u) | (static_cast<u32>(mode) & 3u);
 }
 
 void PackEmissive(const f32 emissive[3], const SampledTextureHandle& texture, bool has_texture, u32 packed[2]) {
@@ -556,6 +556,17 @@ float4 PSMain(PSInput input, bool is_front : SV_IsFrontFace) : SV_TARGET {
     float3 tangent = normalize(input.tangent - normal * dot(normal, input.tangent));
     if (normal_index < 128) {
         float3 tangent_normal = g_Textures[normal_index].Sample(g_Sampler, input.uv).xyz * 2.0 - 1.0;
+        if (((g_PC.g_AlphaOptions >> 11) & 1) != 0) {
+            // Water (AETHER_materials_water): the same ripples again, scrolled the other way at another scale, so the two layers slide through each other and the
+            // surface moves. The speeds are in UV a second; the shared sampler wraps. Without the frame constants there is no time, and the water stands still.
+            float water_time = 0.0;
+#ifdef AETHER_FRAME_DATA
+            water_time = g_Frame.time.x;
+#endif
+            float3 second = g_Textures[normal_index].Sample(g_Sampler, input.uv * 1.37 + float2(-0.0031, 0.0023) * water_time + 0.37).xyz * 2.0 - 1.0;
+            float3 first = g_Textures[normal_index].Sample(g_Sampler, input.uv + float2(0.0022, 0.0034) * water_time).xyz * 2.0 - 1.0;
+            tangent_normal = float3((first.xy + second.xy) * 0.5, 0.5 * (first.z + second.z));
+        }
         tangent_normal.xy *= normal_scale;
         tangent_normal = normalize(tangent_normal);
         float3 bitangent = normalize(cross(normal, tangent)) * input.tangent_sign;
@@ -783,6 +794,7 @@ struct SceneRenderer::Impl {
         f32 alpha_cutoff = 0.5f;
         assets::MaterialAlphaMode alpha_mode = assets::MaterialAlphaMode::Opaque;
         bool double_sided = false; // glTF doubleSided: drawn without culling, the back face lit from behind
+        bool water = false;        // AETHER_materials_water: the normal map scrolls with the game's time
         SampledTextureHandle base_color_texture;
         SampledTextureHandle normal_texture;
         SampledTextureHandle metallic_roughness_texture;
@@ -2040,6 +2052,7 @@ struct SceneRenderer::Impl {
                     draw.alpha_cutoff = material.alpha_cutoff;
                     draw.alpha_mode = material.alpha_mode;
                     draw.double_sided = material.double_sided;
+                    draw.water = material.water;
                     const usize material_index = static_cast<usize>(primitive.material_index);
                     if (material.HasSurfaceExtension()) {
                         if (extension_textures.size() < out.scene.materials.size()) extension_textures.resize(out.scene.materials.size());
@@ -2409,6 +2422,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
             // The sun, sky and nearby point and spot lights of this scene (the previous use of this slot's frame has finished).
             frame_buffer = renderer.frame_buffers[frame_index % renderer.frame_buffers.size()];
             frame_data = BuildFrameData(world, guids, camera_position);
+            frame_data.time[0] = static_cast<f32>(std::fmod(std::max(game_time, 0.0), 3600.0)); // wraps hourly: a float keeps its precision for the ripples' scroll
             if (draw_particles) AddParticleLights(frame_data, renderer.particle_data.lights, camera_position);
             if (!renderer.light_buffers.empty()) {
                 light_buffer = renderer.light_buffers[frame_index % renderer.light_buffers.size()];
@@ -2619,7 +2633,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                             constants.material_factors_0 = PackHalfPair(primitive.metallic, primitive.roughness);
                             constants.material_factors_1 = PackHalfPair(primitive.normal_scale, primitive.occlusion_strength);
                             constants.alpha_options = PackMaterialOptions(primitive.alpha_mode, primitive.alpha_cutoff, primitive.extension_texture,
-                                                                          primitive.has_extension_texture, primitive.double_sided);
+                                                                          primitive.has_extension_texture, primitive.double_sided, primitive.water);
                             // Single-sided materials cull their back faces, except on a mirrored model (a negative scale turns the
                             // winding round): that draws both faces, as every model did before.
                             const bool cull = !primitive.double_sided && ModelDeterminant(model_transform) > 0.0f;

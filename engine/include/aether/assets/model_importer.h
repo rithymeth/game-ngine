@@ -54,6 +54,9 @@ struct MaterialData {
     f32 occlusion_strength = 1.0f;
     f32 alpha_cutoff = 0.5f;
     MaterialAlphaMode alpha_mode = MaterialAlphaMode::Opaque;
+    // AETHER_materials_water: written to a .glb by the procedural mesh exporter and read into GltfMaterial::water by the loader. Not part of the Material
+    // sub-asset's serialised form (an imported model's Material asset does not keep it).
+    bool water = false;
     std::string base_color_texture;
     std::string normal_texture;
     std::string metallic_roughness_texture;

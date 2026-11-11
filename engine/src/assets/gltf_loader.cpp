@@ -970,6 +970,7 @@ static bool ParseGltfText(const std::string& text, const std::string& path, bool
                     }
                     material.sheen_roughness = sheen->value("sheenRoughnessFactor", 0.0f);
                 }
+                if (object_of("AETHER_materials_water") != nullptr) material.water = true;
                 if (const Json* hair = object_of("AETHER_materials_hair")) {
                     material.hair = true;
                     material.hair_shift = hair->value("hairShift", 0.0f);
