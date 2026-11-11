@@ -51,6 +51,16 @@ struct Wind {
     f32 gustiness = 0.4f;          // 0 to 1: how much of the sway is the slow, uneven swell that varies along an object (0 is a steady sway)
 };
 
+// A sphere of different wind around the entity: inside it the wind is this zone's own (direction, strength and gust speed), fading back to the world's
+// Wind over the outer `falloff` share of the radius. An object takes the zone it is most inside (by where its origin stands); up to 7 zones are used.
+struct WindZone {
+    f32 radius = 20.0f;            // metres
+    f32 direction_degrees = 27.0f; // as Wind::direction_degrees
+    f32 strength = 1.0f;           // 0 (a sheltered hollow) to 4 (a gale on a ridge): replaces the world's strength inside
+    f32 gust_speed = 1.0f;
+    f32 falloff = 0.5f;            // 0 to 1: the share of the radius, from the edge in, over which the zone fades
+};
+
 enum class Tonemapper : u8 { ACES, AgX, None };
 
 // Post-processing settings. A global volume applies everywhere; a bounded one
@@ -119,6 +129,13 @@ AETHER_REFLECT(aether::Wind, 1,
     AETHER_FIELD(strength, Field_EditAnywhere, {.tooltip = "0 calm, 1 a breeze, 4 a gale: multiplies every material's sway", .range_min = 0.0, .range_max = 4.0}),
     AETHER_FIELD(gust_speed, Field_EditAnywhere, {.tooltip = "How fast the swells come and go", .range_min = 0.1, .range_max = 4.0}),
     AETHER_FIELD(gustiness, Field_EditAnywhere, {.tooltip = "How much of the sway is the slow, uneven swell (0 is a steady sway)", .range_min = 0.0, .range_max = 1.0})
+)
+AETHER_REFLECT(aether::WindZone, 1,
+    AETHER_FIELD(radius, Field_EditAnywhere, {.tooltip = "Metres around the entity where the zone's wind blows", .range_min = 0.5, .range_max = 2000.0, .units = "m"}),
+    AETHER_FIELD(direction_degrees, Field_EditAnywhere, {.tooltip = "The way the wind blows inside: 0 toward +X, 90 toward +Z", .range_min = -360.0, .range_max = 360.0, .units = "deg"}),
+    AETHER_FIELD(strength, Field_EditAnywhere, {.tooltip = "Replaces the world's strength inside: 0 calm, 4 a gale", .range_min = 0.0, .range_max = 4.0}),
+    AETHER_FIELD(gust_speed, Field_EditAnywhere, {.tooltip = "How fast the swells come and go inside", .range_min = 0.1, .range_max = 4.0}),
+    AETHER_FIELD(falloff, Field_EditAnywhere, {.tooltip = "The share of the radius, from the edge in, over which the zone fades out", .range_min = 0.0, .range_max = 1.0})
 )
 AETHER_ENUM(aether::Tonemapper, 1, AETHER_ENUM_VALUE(ACES), AETHER_ENUM_VALUE(AgX), AETHER_ENUM_VALUE(None))
 AETHER_REFLECT(aether::PostProcessVolume, 1,

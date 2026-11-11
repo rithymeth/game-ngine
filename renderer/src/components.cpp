@@ -11,6 +11,7 @@ void RegisterRenderComponents() {
     (void)GetComponentId<SpotLight>();
     (void)GetComponentId<SkyLight>();
     (void)GetComponentId<Wind>();
+    (void)GetComponentId<WindZone>();
     (void)GetComponentId<PostProcessVolume>();
     (void)GetComponentId<Decal>();
     (void)GetComponentId<MaterialParameters>();

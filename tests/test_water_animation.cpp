@@ -158,7 +158,8 @@ double MeanDifference(const std::vector<u8>& a, const std::vector<u8>& b) {
 } // namespace
 
 // A tuft of grass close to the camera on a lit ground quad, with the wind flag as asked; the grass is scaled up (a tuft is half a metre) so it fills the view.
-fs::path CookGrassScene(const fs::path& root, bool wind, f32 model_yaw_degrees = 0.0f, const reflect::Json* wind_component = nullptr, bool with_model = true) {
+fs::path CookGrassScene(const fs::path& root, bool wind, f32 model_yaw_degrees = 0.0f, const reflect::Json* wind_component = nullptr, bool with_model = true,
+                         const reflect::Json* zone_component = nullptr) {
     fs::create_directories(root / "Content/models");
     fs::create_directories(root / "Content/Scenes");
     const fs::path games = fs::path(AETHER_REPO_ASSETS_DIR).parent_path() / "games/AETHER-01";
@@ -189,6 +190,7 @@ fs::path CookGrassScene(const fs::path& root, bool wind, f32 model_yaw_degrees =
     reflect::Json all = entities;
     if (!with_model) all.erase(all.size() - 1);
     if (wind_component != nullptr) all.push_back(SceneEntity({{"Transform", TransformJson({0, 0, 0})}, {"Wind", *wind_component}}));
+    if (zone_component != nullptr) all.push_back(SceneEntity({{"Transform", TransformJson({0, 0, 0})}, {"WindZone", *zone_component}}));
     const reflect::Json scene = {{"$type", "Scene"}, {"$version", 1}, {"entities", all}};
     std::ofstream(root / "Content/Scenes/Main.ascene") << scene.dump(2);
     cook::CookOptions options;
@@ -308,6 +310,37 @@ static void Wind_TheComponentBlowsInTheWorldWhicheverWayAnObjectFaces(rhi::Backe
     std::error_code ignored;
     fs::remove_all(root, ignored);
 }
+
+// A wind zone replaces the world's wind where an object stands in it: an east wind everywhere, a zone around the tuft that blows toward the camera, and only the
+// tuft inside the zone loses its sideways sway; a zone elsewhere changes nothing.
+static void Wind_AZoneChangesTheWindOnlyWhereTheObjectStands(rhi::Backend backend) {
+    if (!rhi::IsBackendAvailable(backend)) return;
+    SetEnvironmentVariableForTest("AETHER_RENDER_TAA", "0");
+    constexpr u32 W = 640, H = 360;
+    const fs::path root = fs::temp_directory_path() / "aether_wind_zone" / assets::ToString(assets::NewAssetGuid());
+    const reflect::Json east = {{"$v", 1}, {"direction_degrees", 0.0f}, {"strength", 2.0f}, {"gust_speed", 1.0f}, {"gustiness", 0.4f}};
+    const reflect::Json here = {{"$v", 1}, {"radius", 5.0f}, {"direction_degrees", 90.0f}, {"strength", 2.0f}, {"gust_speed", 1.0f}, {"falloff", 0.0f}};
+    const fs::path plain_pak = CookGrassScene(root / "plain", true, 0.0f, &east), zoned_pak = CookGrassScene(root / "zoned", true, 0.0f, &east, true, &here);
+    const fs::path empty_pak = CookGrassScene(root / "empty", true, 0.0f, &east, false);
+    if (plain_pak.empty() || zoned_pak.empty() || empty_pak.empty()) return;
+    const auto background = FrameAfter(backend, root / "empty", empty_pak, 0, W, H);
+    const auto plain_a = FrameAfter(backend, root / "plain", plain_pak, 0, W, H), plain_b = FrameAfter(backend, root / "plain", plain_pak, 40, W, H);
+    const auto zoned_a = FrameAfter(backend, root / "zoned", zoned_pak, 0, W, H), zoned_b = FrameAfter(backend, root / "zoned", zoned_pak, 40, W, H);
+    SetEnvironmentVariableForTest("AETHER_RENDER_TAA", "");
+    if (background.empty() || plain_a.size() != background.size() || plain_b.size() != background.size() || zoned_a.size() != background.size() || zoned_b.size() != background.size()) {
+        AETHER_CHECK(false);
+        return;
+    }
+    const Shift p = CentroidShift(plain_a, plain_b, background, W, H), z = CentroidShift(zoned_a, zoned_b, background, W, H);
+    std::printf("    %s: sideways sway with the world's east wind %.2f px, with a toward-the-camera zone around the tuft %.2f px\n", backend == rhi::Backend::Vulkan ? "vulkan" : "d3d12", p.x, z.x);
+    AETHER_CHECK(p.weight > 0.0 && z.weight > 0.0);
+    AETHER_CHECK(std::fabs(p.x) > 1.0);
+    AETHER_CHECK(std::fabs(z.x) < std::fabs(p.x) * 0.5);
+    std::error_code ignored;
+    fs::remove_all(root, ignored);
+}
+AETHER_TEST(Wind_AZoneChangesTheWindOnlyWhereTheObjectStands_D3D12) { Wind_AZoneChangesTheWindOnlyWhereTheObjectStands(rhi::Backend::D3D12); }
+AETHER_TEST(Wind_AZoneChangesTheWindOnlyWhereTheObjectStands_Vulkan) { Wind_AZoneChangesTheWindOnlyWhereTheObjectStands(rhi::Backend::Vulkan); }
 
 AETHER_TEST(Wind_TheComponentBlowsInTheWorldWhicheverWayAnObjectFaces_D3D12) { Wind_TheComponentBlowsInTheWorldWhicheverWayAnObjectFaces(rhi::Backend::D3D12); }
 AETHER_TEST(Wind_TheComponentBlowsInTheWorldWhicheverWayAnObjectFaces_Vulkan) { Wind_TheComponentBlowsInTheWorldWhicheverWayAnObjectFaces(rhi::Backend::Vulkan); }

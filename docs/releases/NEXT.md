@@ -407,3 +407,8 @@ old breeze. The direction is in the world whatever way an object faces, and the 
 
 `BakeOptions` gained `add_wind`, `wind_direction_degrees` and `wind_strength` (on by default); the baked scene gets one
 `Wind` entity. The Procedural World panel exposes them on the Output tab.
+
+## Wind zones
+
+New `WindZone` component: a sphere with its own wind that replaces the world's `Wind` inside it, fading over `falloff`. Up
+to 7 zones; `FrameData` is now 1376 bytes. An alpha-mask material's cutoff is stored in 8 bits instead of a half.
