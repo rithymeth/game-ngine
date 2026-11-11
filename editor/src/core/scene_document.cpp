@@ -7,10 +7,12 @@
 #include "core/commands.h"
 
 #include <algorithm>
+#include <string>
 #include <cctype>
 #include <cmath>
 #include <cstring>
 #include <memory>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace aether::editor {
@@ -103,13 +105,22 @@ bool SceneDocument::Load(const std::filesystem::path& file, std::string* error) 
     }
     const std::string path = file.string();
     World candidate;
-    const SceneLoadOptions editor_load_options{.reject_unknown_components = true};
+    std::vector<std::string> unknown_components;
+    const SceneLoadOptions editor_load_options{.reject_unknown_components = true, .unknown_components = &unknown_components};
     Vec3d loaded_origin;
     const bool loaded = file.extension() == ".ascene"
         ? LoadSceneJson(candidate, path, editor_load_options, &loaded_origin)
         : LoadScene(candidate, path, editor_load_options);
     if (!loaded) {
-        if (error) *error = "The scene couldn't be loaded safely. Check the Output panel for the unsupported component.";
+        if (error) {
+            if (unknown_components.empty()) {
+                *error = "The scene couldn't be loaded: " + path + " is damaged or not a scene this version reads. Check the Output panel for the reason.";
+            } else {
+                std::string names;
+                for (const std::string& name : unknown_components) names += (names.empty() ? "" : ", ") + name;
+                *error = "The scene was not opened: it has components this build does not know (" + names + "), and saving it would delete them from the file. Open it in a build that has them (a plugin that is not loaded, or a newer engine).";
+            }
+        }
         return false;
     }
     origin_ = loaded_origin;
@@ -125,22 +136,26 @@ bool SceneDocument::Load(const std::filesystem::path& file, std::string* error) 
         }
     });
     std::sort(entities.begin(), entities.end(), [](Entity a, Entity b) { return a.index < b.index; });
-    std::unordered_set<std::string> used_names;
+    // How many entities hold each name, so one that is about to be renamed can let go of its own first.
+    std::unordered_map<std::string, u32> name_counts;
     for (Entity entity : entities) {
         if (const auto* name = candidate.GetComponent<EntityName>(entity); name && !name->value.empty())
-            used_names.insert(name->value);
+            ++name_counts[name->value];
     }
     for (Entity entity : entities) {
         auto* existing_name = candidate.GetComponent<EntityName>(entity);
         const std::string legacy_placeholder = "Entity " + std::to_string(entity.index);
         if (existing_name && !existing_name->value.empty() && existing_name->value != legacy_placeholder) continue;
         const std::string base = SuggestedEntityName(candidate, entity);
+        // An entity that already has the placeholder name lets go of it before the name is chosen: otherwise its own name counts as taken and it is renamed
+        // to "Entity 2 2" the second time the scene is opened (a placeholder saved by the first open), though nothing else has that name.
+        if (existing_name && !existing_name->value.empty()) --name_counts[existing_name->value];
         std::string unique = base;
-        for (u32 suffix = 2; used_names.contains(unique); ++suffix)
+        for (u32 suffix = 2; name_counts[unique] > 0; ++suffix)
             unique = base + " " + std::to_string(suffix);
         if (existing_name) existing_name->value = unique;
         else candidate.AddComponent(entity, EntityName{unique});
-        used_names.insert(std::move(unique));
+        ++name_counts[unique];
     }
     world_ = std::move(candidate);
     guids_ = std::move(candidate_guids);

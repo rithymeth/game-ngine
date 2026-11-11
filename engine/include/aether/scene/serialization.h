@@ -13,6 +13,9 @@ struct SceneLoadOptions {
     // Editors should reject a scene they cannot fully understand so a later
     // save cannot silently discard components owned by unavailable plugins.
     bool reject_unknown_components = false;
+    // When given, filled with the name of every component the file has that this build does not know (or cannot read as text), each once, whether the load skips them or, with
+    // reject_unknown_components, fails because of them: so a tool can say which components are missing instead of "couldn't load".
+    std::vector<std::string>* unknown_components = nullptr;
     // Phase 42.1: the scene's absolute origin. Loaded root Transforms are shifted
     // by -origin, so a scene authored far from (0,0,0) loads into small
     // origin-relative coordinates. Zero (the default) uses the origin recorded in

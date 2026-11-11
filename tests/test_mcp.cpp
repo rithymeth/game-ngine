@@ -6,6 +6,7 @@
 
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <map>
 #include <set>
 #include <sstream>
@@ -234,6 +235,39 @@ AETHER_TEST(Mcp_SaveAndLoadScene) {
     AETHER_CHECK(h2.Call("load_scene", {{"path", path}, {"replace", true}}).value["entities"] == 1);
     AETHER_CHECK(h2.Call("load_scene", {{"path", "/definitely/not/here.json"}}).is_error);
     std::filesystem::remove(path);
+}
+
+// A scene file can hold a component this server has never heard of (a plugin's, or one a newer engine wrote). Loading it used to skip that component with a log line and say "loaded", and a later
+// save_scene then overwrote the file without it: the data was gone for good, and the agent never saw a warning. The editor already refuses such a scene; the tools now do too.
+AETHER_TEST(Mcp_ASceneWithAnUnknownComponentIsRefusedNotQuietlyStripped) {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "aether_mcp_unknown_component";
+    std::filesystem::create_directories(dir);
+    const std::filesystem::path file = dir / "future.json";
+    const std::string original =
+        R"({"$type":"Scene","$version":1,"entities":[)"
+        R"({"guid":"a0000000-0000-4000-8000-000000000001","components":{"Transform":{"$v":2,"position":[1,2,3],"rotation":[0,0,0,1],"scale":[1,1,1]},"FutureHologram":{"$v":1,"intensity":3.5}}},)"
+        R"({"guid":"a0000000-0000-4000-8000-000000000002","components":{"Transform":{"$v":2,"position":[4,5,6],"rotation":[0,0,0,1],"scale":[1,1,1]},"AnotherPluginThing":{"$v":1}}}]})";
+    { std::ofstream(file, std::ios::binary) << original; }
+    auto bytes_of = [&] { std::ifstream in(file, std::ios::binary); return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>()); };
+
+    Harness h;
+    h.session.scene_root = dir;
+    // Refused by default, naming every component it does not know, and nothing was half-loaded.
+    const auto refused = h.Call("load_scene", {{"path", "future.json"}});
+    AETHER_CHECK(refused.is_error);
+    AETHER_CHECK(refused.text.find("FutureHologram") != std::string::npos && refused.text.find("AnotherPluginThing") != std::string::npos);
+    AETHER_CHECK(refused.text.find("allow_unknown_components") != std::string::npos); // and how to go on knowingly
+    AETHER_CHECK(h.Call("list_entities").value["count"] == 0);
+    AETHER_CHECK(bytes_of() == original); // the file was not touched
+    // Opting in loads what is understood, and says what was left out and what saving will do about it.
+    const auto allowed = h.Call("load_scene", {{"path", "future.json"}, {"allow_unknown_components", true}});
+    AETHER_CHECK(!allowed.is_error);
+    AETHER_CHECK(allowed.value["entities"] == 2);
+    AETHER_CHECK(allowed.value.contains("skipped_components") && allowed.value["skipped_components"].size() == 2);
+    AETHER_CHECK(allowed.value.contains("warning") && allowed.value["warning"].get<std::string>().find("save_scene") != std::string::npos);
+    AETHER_CHECK(bytes_of() == original); // loading never writes
+    std::error_code ignored;
+    std::filesystem::remove_all(dir, ignored);
 }
 
 AETHER_TEST(Mcp_PlayModeRestoresTheScene) {
