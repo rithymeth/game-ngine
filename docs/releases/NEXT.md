@@ -402,3 +402,8 @@ none). Shadows do not sway yet.
 
 A `Wind` component (direction in degrees about up, strength 0 to 4, gust speed, gustiness) sets the wind every swaying material follows; the first in the world is used, a world without one keeps the
 old breeze. The direction is in the world whatever way an object faces, and the sway is in world metres whatever its scale (a scaled-up tuft used to sway further).
+
+## Baked procedural worlds include a Wind
+
+`BakeOptions` gained `add_wind`, `wind_direction_degrees` and `wind_strength` (on by default); the baked scene gets one
+`Wind` entity. The Procedural World panel exposes them on the Output tab.

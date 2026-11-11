@@ -45,6 +45,9 @@ struct BakeOptions {
     u32 terrain_grid = 256;         // the terrain mesh's quads per side at most
     f32 terrain_skirt = 6.0f;       // metres the terrain's edges are carried down below its lowest ground (0: an open edge)
     u32 water_texture = 512;        // the water's depth-tinted, foam-edged texture in texels (0: one flat colour)
+    bool add_wind = true;           // a Wind entity in the baked scene, so the swaying plants blow the way the world is set to
+    f32 wind_direction_degrees = 27.0f;
+    f32 wind_strength = 1.0f;
     u32 terrain_texture = 1024;     // the ground texture's size in texels (0: no texture, the six flat-coloured surfaces instead)
 };
 
