@@ -261,3 +261,10 @@ background and ambient image-based lighting without relying on an imported sky t
 
 The packaged renderer now samples the Sprite2D light map for sprites and tilemaps when a scene contains enabled 2D lights. Point,
 spot, and global ambient lights affect the packaged Sprite2D pass, with tilemap occlusion and box shadow casters applied by the light map.
+
+## 2D: sprite animation clips play in packaged games
+
+A `SpriteAnimator` did nothing in the packaged player: no stage advanced it, so an animated sprite stayed on one frame. The game
+now runs `Player.SpriteAnimation` each frame after scripts and Blueprints, reading sprite atlases from the package on first use.
+Looping clips loop, a clip that does not loop stops on its last frame and sets `finished`, and a clip the atlas lacks leaves the
+sprite as it is.

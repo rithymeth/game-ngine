@@ -486,6 +486,7 @@ bool Game::LoadScene(const std::string& path, std::string* error) {
     // 2D physics: the scene's tilemaps are read from the package when first needed.
     tilemaps_.clear();
     tilesets_.clear();
+    atlases_.clear();
     sprite2d::Resolvers2D tiles;
     const auto read_json = [this](const assets::AssetGuid& guid) -> nlohmann::json {
         const GameManifest::Asset* asset = package_.FindAssetByGuid(assets::ToString(guid));
@@ -1333,6 +1334,32 @@ void Game::BuildFrame() {
         if (runtime_ && runtime_->blueprints) runtime_->blueprints->Update(frame.dt);
     };
     scheduler_.Add(std::move(scripting));
+    // Sprite clips advance after scripts and Blueprints, so a clip one of them starts this frame shows its first frame this
+    // frame. Without this stage a SpriteAnimator did nothing in a packaged game: the sprite stayed on whatever frame it had.
+    SystemDesc sprite_animation;
+    sprite_animation.name = "Player.SpriteAnimation";
+    sprite_animation.phase = SystemPhase::Update;
+    sprite_animation.after = {"Player.Scripting"};
+    sprite_animation.main_thread_only = true;
+    sprite_animation.run = [this](World& world, const FrameContext& frame) {
+        const sprite2d::AtlasResolver atlases = [this](const assets::AssetGuid& guid) -> const sprite2d::SpriteAtlas* {
+            auto it = atlases_.find(guid);
+            if (it == atlases_.end()) {
+                auto atlas = std::make_unique<sprite2d::SpriteAtlas>();
+                const GameManifest::Asset* asset = package_.FindAssetByGuid(assets::ToString(guid));
+                std::vector<u8> bytes;
+                const nlohmann::json data = asset && package_.ReadContent(asset->path, bytes)
+                                                ? nlohmann::json::parse(bytes.begin(), bytes.end(), nullptr, false)
+                                                : nlohmann::json();
+                if (data.is_discarded() || data.is_null() || !sprite2d::AtlasFromJson(data, *atlas)) atlas.reset();
+                it = atlases_.emplace(guid, std::move(atlas)).first;
+            }
+            return it->second.get();
+        };
+        sprite2d::UpdateSpriteAnimations(world, atlases, frame.dt);
+    };
+    scheduler_.Add(std::move(sprite_animation));
+
     SystemDesc late;
     late.name = "Player.LateUpdate";
     late.phase = SystemPhase::LateUpdate;
