@@ -217,6 +217,10 @@ void ProceduralWorldPanel::Draw() {
             if (ImGui::InputText("Name", name, sizeof(name))) bake_options.name = name;
             int cap = static_cast<int>(bake_options.max_scene_instances);
             if (ImGui::SliderInt("Objects in the scene", &cap, 100, 20000)) bake_options.max_scene_instances = static_cast<u32>(cap);
+            ImGui::Checkbox("Walkable ground (collision, and walls at the map's edge)", &bake_options.terrain_collision);
+            ImGui::BeginDisabled(!bake_options.terrain_collision);
+            ImGui::Checkbox("Playable: a player, camera, sun and sky", &bake_options.add_player);
+            ImGui::EndDisabled();
             ImGui::Checkbox("Add a Wind to the scene", &bake_options.add_wind);
             if (bake_options.add_wind) {
                 ImGui::SliderFloat("Wind direction", &bake_options.wind_direction_degrees, -180.0f, 180.0f, "%.0f deg");
@@ -231,6 +235,11 @@ void ProceduralWorldPanel::Draw() {
                 status_ = line;
             }
             ImGui::EndDisabled();
+            if (bake_.ok && !bake_.always_cook.empty()) {
+                std::string folders;
+                for (const std::string& f : bake_.always_cook) folders += (folders.empty() ? "" : ", ") + f;
+                ImGui::TextWrapped("The player's bindings live in %s: add it to the project's always-cook folders, or the packaged game has no controls.", folders.c_str());
+            }
             if (bake_.ok && !bake_.rules_without_mesh.empty()) {
                 std::string list;
                 for (const std::string& n : bake_.rules_without_mesh) list += (list.empty() ? "" : ", ") + n;

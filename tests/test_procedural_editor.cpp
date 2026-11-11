@@ -326,6 +326,8 @@ AETHER_TEST(ProceduralEditor_BakeWritesTheTerrainMeshesAndASceneThePlayerLoads) 
     ProceduralWorldDocument doc(Small());
     doc.AddRule(ScatterRule{.name = "Fern"}); // a rule of the user's own starts with no mesh family
     BakeOptions options;
+    options.terrain_collision = false; // this test counts the terrain, the Wind and the objects; collision and a player have tests of their own (test_procedural_walk, test_procedural_player)
+    options.add_player = false;
     options.name = "Test World!";
     options.terrain_texture = 128;
     options.water_texture = 64;
@@ -371,11 +373,7 @@ AETHER_TEST(ProceduralEditor_BakeWritesTheTerrainMeshesAndASceneThePlayerLoads) 
     // The scene loads: the terrain plus one entity per baked object, each naming a model that was written.
     World loaded;
     CHECK(LoadSceneJson(loaded, (root / report.scene).string()));
-#if AETHER_EDITOR_NET_PHYSICS
-    CHECK(loaded.EntityCount() == 43); // the terrain, its collision, the Wind, and the 40 objects
-#else
-    CHECK(loaded.EntityCount() == 42); // the terrain, the Wind, and the 40 objects (no physics in this build: no collision)
-#endif
+    CHECK(loaded.EntityCount() == 42); // the terrain, the Wind, and the 40 objects
     {
         usize winds = 0;
         loaded.ForEachArchetype([&](const Archetype& archetype) {

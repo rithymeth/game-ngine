@@ -44,6 +44,7 @@ struct BakeOptions {
     u32 max_scene_instances = 5000; // the player draws one call per object; the rest are left out and counted
     u32 terrain_grid = 256;         // the terrain mesh's quads per side at most
     u32 terrain_tiles = 8;          // the ground cut into this many tiles a side, each its own draw the player can cull (1: one piece)
+    bool add_player = true;         // a playable world: a Player (a CharacterMovement capsule with the third-person controller and its body), a camera, a sun and a sky, on dry walkable land; needs the collision above and physics in the build
     bool terrain_collision = true;  // a static triangle-mesh collider over the ground (the very triangles drawn), so a character can walk on it; built only where the editor has physics
     u32 terrain_collision_grid = 192; // the collision mesh's quads per side at most (a coarser grid than the drawn one loads faster; see PERFORMANCE.md for how far it strays)
     f32 terrain_skirt = 6.0f;       // metres the terrain's edges are carried down below its lowest ground (0: an open edge)
@@ -59,6 +60,9 @@ struct BakeReport {
     std::string error;
     std::vector<std::string> files;             // as written, relative to the content root
     std::string scene;                          // the .ascene, relative to the content root
+    bool player_added = false;                  // a Player, camera, sun and sky are in the scene
+    Vec3 spawn{0, 0, 0};                        // where the player stands (its feet) when it is
+    std::vector<std::string> always_cook;       // folders the project must cook though no scene names them: add these to its always-cook list ("Input/" when a player was added)
     u32 instances_in_scene = 0;
     u32 instances_left_out = 0;                 // over max_scene_instances, or of a rule with no mesh
     std::vector<std::string> rules_without_mesh;
@@ -112,6 +116,12 @@ public:
         std::vector<u32> indices;
     };
     static CollisionMesh BuildTerrainCollisionMesh(const terrain::GeneratedTerrain& terrain, u32 max_grid);
+
+    // Where a player starts: dry land (well above the sea) on a gentle slope with gentle, dry ground round it, the closest such place to the middle of the map; else the highest
+    // sample. The y is the ground's height there. Needs a generated terrain.
+    static Vec3 FindSpawnPoint(const terrain::GeneratedTerrain& terrain);
+    // A figure about 1.8 m tall standing on y = 0, facing -z, from a few primitives in four colours (a jacket, trousers, skin and a pack); under 700 triangles.
+    static assets::procedural::ProceduralMesh BuildPlayerModel();
 
     // Into the other editors: the terrain editor takes the heightmap, layers and splatmap (the sculpt tools carry on from it); the foliage editor takes
     // the instances as a layer with one type per rule (one undo step). False when nothing is generated.

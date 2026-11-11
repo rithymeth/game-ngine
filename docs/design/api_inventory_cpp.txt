@@ -6187,6 +6187,7 @@
 [templates/include/aether/templates/templates.h] experimental
   type struct ProjectTemplate
   bool CreateProjectFromTemplate(const std::filesystem::path&parent_dir,const std::string&name,const std::string&template_id,ProjectPaths*out_paths=nullptr,std::string*error=nullptr)
+  bool InstallThirdPersonKit(const std::filesystem::path&content,std::string*error=nullptr,std::string*script_path=nullptr)
   const ProjectTemplate*FindProjectTemplate(const std::string&id)
   const std::vector<ProjectTemplate>&ProjectTemplates()
 [terrain/include/aether/terrain/foliage.h] experimental
