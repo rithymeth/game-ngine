@@ -74,6 +74,11 @@ Controller.distance = 6
 --@range 0 5
 --@tooltip How high above the feet the camera looks
 Controller.height = 1.6
+--@tooltip The camera stops short of a wall or a hill between it and the character (needs physics)
+Controller.camera_collision = true
+--@range 0.05 1
+--@tooltip How big the camera is for that: a sphere of this radius, metres
+Controller.camera_radius = 0.3
 --@range 0 20
 Controller.jump_speed = 5.5
 --@range -60 0
@@ -85,6 +90,7 @@ function Controller:OnCreate()
     self.vy = 0
     self.floor = self.entity:Get("Transform").position.y
     self.camera = world:EntitiesWith("Camera")[1]
+    self.camera_now = self.distance -- how far behind it is now (it comes in at once and goes back out gently)
     @@CHARACTER_MOVEMENT_LOOKUP@@
     if self.character ~= nil then
         self.character.walk_speed = self.speed
@@ -141,7 +147,16 @@ function Controller:OnUpdate(dt)
         local forward = vector.create(-sy * math.cos(self.pitch), math.sin(self.pitch), -cy * math.cos(self.pitch))
         local target = t.position + vector.create(0, self.height, 0)
         local ct = self.camera:Get("Transform")
-        ct.position = target - forward * self.distance
+        -- Something between the character's head and where the camera wants to be (a hill, a wall): a sphere swept back from the head stops short of it.
+        local clear = self.distance
+        if self.camera_collision then
+            local back = vector.create(-forward.x, -forward.y, -forward.z)
+            local ok, hit, _, _, _, hit_distance = pcall(function() return Physics.SphereCast(target, back, self.camera_radius, self.distance, self.entity) end)
+            if ok and hit then clear = math.max(hit_distance, 0.3) end
+        end
+        if clear < self.camera_now then self.camera_now = clear
+        else self.camera_now = self.camera_now + (clear - self.camera_now) * math.min(1, 6 * dt) end
+        ct.position = target - forward * self.camera_now
         ct.rotation = Quat(self.yaw, self.pitch)
     end
 end
@@ -268,6 +283,52 @@ function Vehicle:OnUpdate(dt)
 end
 
 return Vehicle
+)LUA";
+
+// A limb that swings with the pace of the character tagged Player (the one with a CharacterMovement): put it on a limb's entity, which pivots at its own origin (a hip, a shoulder).
+const char* const kLimbSwingScript = R"LUA(-- Swings its entity about its own X axis in step with how fast the Player is going: still when it stands, a walk cycle when it moves. Put it on an arm or a leg that is a child of the
+-- character, its origin at the joint. A leg and the arm on the other side take phases half a cycle apart.
+local Limb = {}
+
+--@range 0 90
+--@tooltip How far the limb swings each way at a run, degrees
+Limb.swing = 35
+--@range -6.3 6.3
+--@tooltip Where in the cycle this limb is, radians (a leg and its opposite arm share one, the other pair is 3.14 later)
+Limb.phase = 0
+--@range 0 2
+--@tooltip Cycles of the walk per metre travelled
+Limb.stride = 0.5
+--@range 0 10
+--@tooltip The speed (metres per second) at which the swing is complete
+Limb.full_speed = 3
+
+function Limb:OnCreate()
+    self.player = world:EntitiesWith("CharacterMovement")[1]
+    self.last = nil
+    self.cycle = 0
+    self.amount = 0
+end
+
+function Limb:OnUpdate(dt)
+    local speed = 0
+    if self.player ~= nil and self.player:IsValid() then
+        local p = self.player:Get("Transform").position
+        if self.last ~= nil and dt > 0.0001 then
+            local dx, dz = p.x - self.last.x, p.z - self.last.z
+            speed = math.sqrt(dx * dx + dz * dz) / dt
+        end
+        self.last = p
+    end
+    self.cycle = self.cycle + speed * dt * self.stride
+    -- Ease the swing in and out, so a stop settles and a start does not jerk.
+    local wanted = math.min(1, speed / self.full_speed)
+    self.amount = self.amount + (wanted - self.amount) * math.min(1, 10 * dt)
+    local angle = math.rad(self.swing) * self.amount * math.sin(self.cycle * 6.2831853 + self.phase)
+    self.entity:Get("Transform").rotation = {math.sin(angle / 2), 0, 0, math.cos(angle / 2)}
+end
+
+return Limb
 )LUA";
 
 } // namespace aether::templates

@@ -364,31 +364,47 @@ Vec3 ProceduralWorldDocument::FindSpawnPoint(const GeneratedTerrain& t) {
     return Vec3(static_cast<f32>(best_x) * cell, height(best_x, best_z), static_cast<f32>(best_z) * cell);
 }
 
-ProceduralMesh ProceduralWorldDocument::BuildPlayerModel() {
-    // Four builders, one per colour; the figure stands on y = 0 and faces -z.
+Vec3 ProceduralWorldDocument::PlayerJoint(PlayerPart part) {
+    switch (part) {
+    case PlayerPart::LegLeft: return Vec3(-0.12f, 0.88f, 0.0f);
+    case PlayerPart::LegRight: return Vec3(0.12f, 0.88f, 0.0f);
+    case PlayerPart::ArmLeft: return Vec3(-0.27f, 1.38f, 0.0f);
+    case PlayerPart::ArmRight: return Vec3(0.27f, 1.38f, 0.0f);
+    default: return Vec3(0, 0, 0);
+    }
+}
+
+ProceduralMesh ProceduralWorldDocument::BuildPlayerModel(PlayerPart part) {
+    // Four builders, one per colour; the figure stands on y = 0 and faces -z. A part builds only what it is made of.
     MeshBuilder jacket, trousers, skin, pack;
-    auto limb = [&](MeshBuilder& b, const Vec3& from, const Vec3& to, f32 radius_from, f32 radius_to) {
-        b.Tube({from, to}, {radius_from, radius_to}, 8, true, true);
-    };
-    limb(trousers, Vec3(-0.12f, 0.02f, 0.0f), Vec3(-0.12f, 0.88f, 0.0f), 0.085f, 0.105f); // legs
-    limb(trousers, Vec3(0.12f, 0.02f, 0.0f), Vec3(0.12f, 0.88f, 0.0f), 0.085f, 0.105f);
-    limb(jacket, Vec3(0.0f, 0.86f, 0.0f), Vec3(0.0f, 1.42f, 0.0f), 0.19f, 0.215f);          // torso
-    limb(jacket, Vec3(-0.27f, 1.38f, 0.0f), Vec3(-0.31f, 0.92f, -0.04f), 0.065f, 0.055f);   // arms
-    limb(jacket, Vec3(0.27f, 1.38f, 0.0f), Vec3(0.31f, 0.92f, -0.04f), 0.065f, 0.055f);
-    const u32 head = skin.IcoSphere(2);
-    for (u32 i = head; i < skin.VertexCount(); ++i) skin.Position(i) = skin.Position(i) * 0.115f + Vec3(0.0f, 1.62f, -0.01f);
-    limb(skin, Vec3(0.0f, 1.42f, 0.0f), Vec3(0.0f, 1.52f, 0.0f), 0.05f, 0.05f);             // neck
-    pack.Box(Vec3(-0.15f, 0.95f, 0.17f), Vec3(0.15f, 1.38f, 0.33f));                         // a pack on the back (+z)
+    const bool whole = part == PlayerPart::Whole, body = whole || part == PlayerPart::Body;
+    auto limb = [&](MeshBuilder& b, const Vec3& from, const Vec3& to, f32 radius_from, f32 radius_to) { b.Tube({from, to}, {radius_from, radius_to}, 8, true, true); };
+    if (whole || part == PlayerPart::LegLeft) limb(trousers, Vec3(-0.12f, 0.02f, 0.0f), Vec3(-0.12f, 0.88f, 0.0f), 0.085f, 0.105f);
+    if (whole || part == PlayerPart::LegRight) limb(trousers, Vec3(0.12f, 0.02f, 0.0f), Vec3(0.12f, 0.88f, 0.0f), 0.085f, 0.105f);
+    if (body) limb(jacket, Vec3(0.0f, 0.86f, 0.0f), Vec3(0.0f, 1.42f, 0.0f), 0.19f, 0.215f); // torso
+    if (whole || part == PlayerPart::ArmLeft) limb(jacket, Vec3(-0.27f, 1.38f, 0.0f), Vec3(-0.31f, 0.92f, -0.04f), 0.065f, 0.055f);
+    if (whole || part == PlayerPart::ArmRight) limb(jacket, Vec3(0.27f, 1.38f, 0.0f), Vec3(0.31f, 0.92f, -0.04f), 0.065f, 0.055f);
+    if (body) {
+        const u32 head = skin.IcoSphere(2);
+        for (u32 i = head; i < skin.VertexCount(); ++i) skin.Position(i) = skin.Position(i) * 0.115f + Vec3(0.0f, 1.62f, -0.01f);
+        limb(skin, Vec3(0.0f, 1.42f, 0.0f), Vec3(0.0f, 1.52f, 0.0f), 0.05f, 0.05f);             // neck
+        pack.Box(Vec3(-0.15f, 0.95f, 0.17f), Vec3(0.15f, 1.38f, 0.33f));                         // a pack on the back (+z)
+    }
+    // A jointed part has its origin at its joint: its vertices are moved up to it.
+    const Vec3 joint = PlayerJoint(part);
+    for (MeshBuilder* b : {&jacket, &trousers, &skin, &pack})
+        for (u32 i = 0; i < b->VertexCount(); ++i) b->Position(i) = b->Position(i) - joint;
     ProceduralMesh out;
     struct Part { MeshBuilder* builder; Vec3 colour; f32 roughness; };
-    for (const Part& part : {Part{&jacket, Vec3(0.86f, 0.42f, 0.12f), 0.85f}, Part{&trousers, Vec3(0.16f, 0.20f, 0.30f), 0.9f}, Part{&skin, Vec3(0.80f, 0.60f, 0.46f), 0.7f},
-                             Part{&pack, Vec3(0.30f, 0.26f, 0.20f), 0.95f}}) {
+    for (const Part& p : {Part{&jacket, Vec3(0.86f, 0.42f, 0.12f), 0.85f}, Part{&trousers, Vec3(0.16f, 0.20f, 0.30f), 0.9f}, Part{&skin, Vec3(0.80f, 0.60f, 0.46f), 0.7f},
+                          Part{&pack, Vec3(0.30f, 0.26f, 0.20f), 0.95f}}) {
+        if (p.builder->Empty()) continue;
         assets::MaterialData m;
-        m.base_color = Vec4(part.colour.x, part.colour.y, part.colour.z, 1.0f);
-        m.roughness = part.roughness;
+        m.base_color = Vec4(p.colour.x, p.colour.y, p.colour.z, 1.0f);
+        m.roughness = p.roughness;
         m.metallic = 0.0f;
         out.materials.push_back(m);
-        out.mesh.primitives.push_back(part.builder->Finish(Shading::Smooth, UvMode::BoxProjected, static_cast<i32>(out.materials.size() - 1)));
+        out.mesh.primitives.push_back(p.builder->Finish(Shading::Smooth, UvMode::BoxProjected, static_cast<i32>(out.materials.size() - 1)));
     }
     return out;
 }
@@ -627,7 +643,14 @@ BakeReport ProceduralWorldDocument::Bake(const std::string& content_root, const 
         database.Scan();
         const assets::AssetRecord* script = database.FindByPath(script_path);
         if (!script) { report.error = "The third-person script was not picked up by the asset database"; return report; }
-        if (!write(name + "_player.glb", EncodeGlb(BuildPlayerModel()))) return report;
+        const assets::AssetRecord* swing = database.FindByPath("Scripts/LimbSwing.luau");
+        if (!swing) { report.error = "The limb swing script was not picked up by the asset database"; return report; }
+        struct Piece { PlayerPart part; const char* file; const char* tag; f32 phase; f32 swing_degrees; };
+        const Piece pieces[] = {{PlayerPart::Body, "_player_body.glb", nullptr, 0.0f, 0.0f},        {PlayerPart::LegLeft, "_player_leg_left.glb", "LegLeft", 0.0f, 40.0f},
+                                {PlayerPart::LegRight, "_player_leg_right.glb", "LegRight", 3.14159265f, 40.0f}, {PlayerPart::ArmLeft, "_player_arm_left.glb", "ArmLeft", 3.14159265f, 30.0f},
+                                {PlayerPart::ArmRight, "_player_arm_right.glb", "ArmRight", 0.0f, 30.0f}};
+        for (const Piece& piece : pieces)
+            if (!write(name + piece.file, EncodeGlb(BuildPlayerModel(piece.part)))) return report;
         const Vec3 spawn = FindSpawnPoint(terrain_);
         const EntityGuid player_guid = NewEntityGuid();
         ScriptComponent controller;
@@ -635,9 +658,23 @@ BakeReport ProceduralWorldDocument::Bake(const std::string& content_root, const 
         Tags player_tags;
         player_tags.names = {"Player"};
         world.CreateEntity(Transform{spawn, Quaternion::Identity()}, IdComponent{player_guid}, player_tags, controller, CharacterMovement{});
-        ModelRenderer body;
-        SetModelPath(body, relative + "/" + name + "_player.glb");
-        world.CreateEntity(Transform{Vec3(0, 0, 0), Quaternion::Identity()}, body, Parent{player_guid});
+        // The figure: a body, and four limbs that each swing at their joint with the player's pace (LimbSwing, a leg opposite the arm on its own side).
+        for (const Piece& piece : pieces) {
+            ModelRenderer renderer;
+            SetModelPath(renderer, relative + "/" + name + piece.file);
+            const Transform local{PlayerJoint(piece.part), Quaternion::Identity()};
+            if (piece.tag == nullptr) {
+                world.CreateEntity(local, renderer, Parent{player_guid});
+                continue;
+            }
+            ScriptComponent limb_script;
+            limb_script.script.guid = swing->guid;
+            limb_script.SetProperty("phase", piece.phase);
+            limb_script.SetProperty("swing", piece.swing_degrees);
+            Tags limb_tags;
+            limb_tags.names = {piece.tag};
+            world.CreateEntity(local, renderer, Parent{player_guid}, limb_script, limb_tags);
+        }
         Tags camera_tags;
         camera_tags.names = {"MainCamera"};
         Camera camera;

@@ -704,6 +704,7 @@ bool InstallThirdPersonKit(const stdfs::path& content, std::string* error, std::
         stdfs::create_directories((content / relative).parent_path(), ec);
         if (!WriteText(content / relative, script.c_str(), error)) return false;
     }
+    if (!stdfs::exists(content / "Scripts/LimbSwing.luau") && !WriteText(content / "Scripts/LimbSwing.luau", kLimbSwingScript, error)) return false;
     if (!stdfs::exists(content / "Input/Gameplay.amapping") && !WriteInput(content, true, true, error)) return false;
     if (script_path) *script_path = relative;
     return true;

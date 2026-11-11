@@ -509,8 +509,20 @@ struct Run {
         life.reset();
     }
 
-    explicit Run(const std::string& id) {
+    // `patch_from` -> `patch_to` is replaced once in the project's controller script before it is scanned (a test of a script's option sets it this way).
+    explicit Run(const std::string& id, const std::string& patch_from = "", const std::string& patch_to = "") {
         paths = Create(id, "Run");
+        if (!patch_from.empty()) {
+            for (const auto& entry : stdfs::directory_iterator(paths.content / "Scripts")) {
+                std::ifstream in(entry.path());
+                std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+                in.close();
+                if (const usize at = text.find(patch_from); at != std::string::npos) {
+                    text.replace(at, patch_from.size(), patch_to);
+                    std::ofstream(entry.path(), std::ios::binary) << text;
+                }
+            }
+        }
         db = std::make_unique<assets::AssetDatabase>(paths.content);
         db->Scan();
 #if AETHER_TEST_HAS_PHYSICS
@@ -530,6 +542,9 @@ struct Run {
         life = std::make_unique<Lifecycle>(world, guids);
         scripts = std::make_unique<script::ScriptSystem>(host, world, guids, script::ScriptSystem::DatabaseLoader(*db));
         scripts->Register(*life);
+#if AETHER_TEST_HAS_PHYSICS
+        scripts->BindPhysicsScene(physics_scene.get()); // what the player does: scripts can cast rays and spheres (the third person camera does)
+#endif
         library.Load(*db);
         library.RegisterActions(input);
         AETHER_CHECK(library.Activate(input, "Gameplay", 0));
@@ -662,6 +677,50 @@ AETHER_TEST(Templates_ThirdPersonOrbitsAndFacesTheWayItRuns) {
     CHECK(Near(std::sqrt((cam.x - target.x) * (cam.x - target.x) + (cam.y - target.y) * (cam.y - target.y) +
                          (cam.z - target.z) * (cam.z - target.z)), 6.0f, 0.1f));
 }
+
+#if AETHER_TEST_HAS_PHYSICS
+AETHER_TEST(Templates_ThirdPersonCameraStopsShortOfAWallBehindTheCharacter) {
+    Run r("third_person");
+    r.Frames(60);
+    const Vec3 p = r.Position(r.player);
+    const Vec3 head(p.x, p.y + 1.6f, p.z);
+    auto camera_distance = [&] {
+        const Vec3 c = r.Position(r.camera);
+        return std::sqrt((c.x - head.x) * (c.x - head.x) + (c.y - head.y) * (c.y - head.y) + (c.z - head.z) * (c.z - head.z));
+    };
+    CHECK(Near(camera_distance(), 6.0f, 0.1f)); // nothing in the way: its full distance
+    // A wall 3 m behind the character, across the line to the camera (which is behind and above: about +z).
+    BoxCollider box;
+    box.half_extents = Vec3(4.0f, 3.0f, 0.2f);
+    const Entity wall = r.world.CreateEntity(Transform{Vec3(p.x, 2.0f, p.z + 3.0f), Quaternion::Identity()}, box);
+    r.physics_scene->Sync();
+    r.Frames(30);
+    const Vec3 c = r.Position(r.camera);
+    std::printf("    the camera is %.2f m from the character's head with a wall 3 m behind it (z %.2f; the wall's face is at z %.2f)\n", camera_distance(), c.z, p.z + 2.8f);
+    CHECK(c.z < p.z + 2.8f);            // in front of the wall's face, not behind it or in it
+    CHECK(camera_distance() < 3.2f && camera_distance() > 1.5f); // pulled in to the wall, not all the way to the head
+    // Away again: it comes back out gently.
+    r.world.DestroyEntity(wall);
+    r.physics_scene->Sync();
+    r.Frames(10);
+    const f32 partway = camera_distance();
+    r.Frames(120);
+    CHECK(partway > 3.0f && partway < 5.9f); // on its way, not there at once
+    CHECK(Near(camera_distance(), 6.0f, 0.1f));
+}
+
+AETHER_TEST(Templates_ThirdPersonCameraCollisionCanBeSwitchedOff) {
+    Run r("third_person", "Controller.camera_collision = true", "Controller.camera_collision = false");
+    r.Frames(30);
+    BoxCollider box;
+    box.half_extents = Vec3(4.0f, 3.0f, 0.2f);
+    const Vec3 p = r.Position(r.player);
+    r.world.CreateEntity(Transform{Vec3(p.x, 2.0f, p.z + 3.0f), Quaternion::Identity()}, box);
+    r.physics_scene->Sync();
+    r.Frames(30);
+    CHECK(r.Position(r.camera).z > p.z + 5.0f); // straight through it, as it was before the option
+}
+#endif
 
 AETHER_TEST(Templates_TopDownMovesOnTheMapAndTheCameraFollows) {
     Run r("top_down");
