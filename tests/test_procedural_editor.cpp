@@ -216,6 +216,59 @@ AETHER_TEST(ProceduralEditor_TheTexturedTerrainIsOneGroundSurfaceAndTheWater) {
     }
 }
 
+AETHER_TEST(ProceduralEditor_ShorelinesFollowTheGroundAndTheEdgeHasASkirt) {
+    ProceduralWorldDocument doc(Small(WorldPreset::Islands));
+    doc.Generate();
+    const GeneratedTerrain& t = doc.Terrain();
+    const f32 cell = t.heightmap.cell_size;
+    const assets::procedural::ProceduralMesh model = ProceduralWorldDocument::BuildTexturedTerrainModel(t, 64, "g.png", 5.0f);
+    CHECK(model.mesh.primitives.size() == 3); // ground, skirt (the ground's material again), water
+    const assets::MeshPrimitiveData& skirt = model.mesh.primitives[1];
+    const assets::MeshPrimitiveData& water = model.mesh.primitives[2];
+    CHECK(skirt.material == 0 && water.material == 1);
+
+    // The water: flat quads at the sea's level or a lake's fill level, which run on under the dry corners of a shore quad (so the shoreline is where the
+    // ground crosses the water, not a staircase of whole quads).
+    std::set<f32> levels = {t.sea_height};
+    for (usize i = 0; i < t.lake.size(); ++i) if (t.lake[i]) levels.insert(t.fill_height[i]);
+    usize under_land = 0, covered_wet = 0, wet = 0;
+    std::set<std::pair<i32, i32>> water_xz;
+    for (const auto& v : water.vertices) {
+        CHECK(levels.count(v.position[1]) == 1);
+        const u32 gx = static_cast<u32>(std::lround(v.position[0] / cell)), gz = static_cast<u32>(std::lround(v.position[2] / cell));
+        water_xz.insert({static_cast<i32>(gx), static_cast<i32>(gz)});
+        under_land += t.heightmap.heights[t.Index(gx, gz)] > v.position[1] + 0.01f;
+    }
+    for (u32 z = 0; z < t.Height(); ++z)
+        for (u32 x = 0; x < t.Width(); ++x) {
+            const usize i = t.Index(x, z);
+            if (!(t.lake[i] || t.heightmap.heights[i] <= t.sea_height)) continue;
+            ++wet;
+            covered_wet += water_xz.count({static_cast<i32>(x), static_cast<i32>(z)});
+        }
+    CHECK(wet > 100 && covered_wet == wet); // every wet sample has water over it
+    CHECK(under_land > 0);                  // and the plane runs on under the shore
+
+    // The skirt: from the ground's edge down to 5 m under its lowest point, facing outward, flat shaded (a normal per face, none sloping).
+    f32 lowest = 1e9f, highest = -1e9f;
+    for (const auto& v : skirt.vertices) { lowest = std::min(lowest, v.position[1]); highest = std::max(highest, v.position[1]); }
+    CHECK(std::fabs(lowest - (t.height_min - 5.0f)) < 1e-3f && highest <= t.height_max + 1e-3f);
+    CHECK(skirt.indices.size() / 3 == 4u * 64u * 2u);
+    const f32 extent = static_cast<f32>(t.Width() - 1) * cell;
+    usize outward = 0;
+    for (const auto& v : skirt.vertices) {
+        CHECK(std::fabs(v.normal[1]) < 1e-3f);
+        const bool west = v.position[0] < 1e-3f, east = v.position[0] > extent - 1e-3f, north = v.position[2] < 1e-3f, south = v.position[2] > extent - 1e-3f;
+        const bool ok = (west && v.normal[0] < -0.9f) || (east && v.normal[0] > 0.9f) || (north && v.normal[2] < -0.9f) || (south && v.normal[2] > 0.9f);
+        outward += ok;
+    }
+    CHECK(outward == skirt.vertices.size() || outward * 100 > skirt.vertices.size() * 99); // corners belong to two edges; all else faces out
+    // No skirt unless asked for.
+    CHECK(ProceduralWorldDocument::BuildTexturedTerrainModel(t, 64, "g.png").mesh.primitives.size() == 2);
+    std::string error;
+    CHECK(assets::procedural::ValidateMesh(model, &error));
+}
+
 AETHER_TEST(ProceduralEditor_SeaAndLakeSurfacesAreFlat) {
     ProceduralWorldDocument doc(Small(WorldPreset::Islands));
     doc.Generate();

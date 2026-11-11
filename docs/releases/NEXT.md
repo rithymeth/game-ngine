@@ -369,3 +369,8 @@ A bake paints the terrain: `terrain::RenderTerrainTexture` colours it by height,
 dark), and the baked model is the textured ground plus flat water for lakes and the sea (`BakeOptions::terrain_texture`, 1024 by default, 0 for the old flat
 surfaces). `assets::EncodePngRgb8` writes PNGs. Engine fix: the cook, the importer cache key and content moves now follow a `.glb`'s external images (they
 only did for `.gltf`), and `RewriteGltfUris` can repack a `.glb`.
+
+## Shorelines and a terrain skirt
+
+In baked worlds the water of a lake or the sea runs on under the shore, so the visible shoreline follows the ground's real contour instead of whole quads, and the terrain
+gets a skirt (`BakeOptions::terrain_skirt`, 6 m by default, 0 to leave the edge open) that carries its edges down to a base, so it reads as a block.

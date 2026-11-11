@@ -513,7 +513,17 @@ std::vector<u8> RenderTerrainTexture(const GeneratedTerrain& t, const TerrainGen
             const f32 temp = bilinear([&](u32 x, u32 z) { return t.temperature[t.Index(x, z)]; }, fx, fz);
             // Standing water (a lake or the sea) is drawn over its bed as geometry; a river is painted into the ground, since a ribbon of water is too thin
             // to lie flat on the steep, carved ground it runs over.
-            const f32 still = bilinear([&](u32 x, u32 z) { const usize i = t.Index(x, z); return (t.lake[i] || t.heightmap.heights[i] <= t.sea_height) ? 1.0f : 0.0f; }, fx, fz);
+            // How far under the water's surface the ground is, in metres: the highest level among the four samples round the texel (a lake's fill level, or the
+            // sea's) minus the ground's height there, so the bed starts where the ground crosses the water, the same line the water geometry's edge follows.
+            const u32 gx = std::min(static_cast<u32>(std::max(fx, 0.0f)), w - 2), gz = std::min(static_cast<u32>(std::max(fz, 0.0f)), h - 2);
+            f32 level = -1.0e30f;
+            for (u32 oz = 0; oz < 2; ++oz)
+                for (u32 ox = 0; ox < 2; ++ox) {
+                    const usize i = t.Index(gx + ox, gz + oz);
+                    if (t.lake[i] && i < t.fill_height.size()) level = std::max(level, t.fill_height[i]);
+                    else if (t.heightmap.heights[i] <= t.sea_height) level = std::max(level, t.sea_height);
+                }
+            const f32 still = level > -1.0e29f ? Smoothstep(0.0f, 0.35f, level - height) : 0.0f;
             const f32 stream = bilinear([&](u32 x, u32 z) { const usize i = t.Index(x, z); return (t.river[i] && !t.lake[i] && t.heightmap.heights[i] > t.sea_height) ? 1.0f : 0.0f; }, fx, fz);
 
             const f32 rock_w = std::clamp(Smoothstep(s.rock_slope * 0.6f, s.rock_slope, slope) + 0.6f * Smoothstep(s.tree_line, s.tree_line + 0.15f, normalized) * (1.0f - moist), 0.0f, 1.0f);
