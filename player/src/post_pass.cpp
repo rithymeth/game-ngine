@@ -29,7 +29,8 @@ struct PushConstants {
     float g_Far;
     float g_ProjX;
     float g_ProjY;
-    float g_Padding;
+    float g_FogDensity;
+    float4 g_FogColor;
 };
 #ifdef __spirv__
 [[vk::push_constant]]
@@ -137,6 +138,14 @@ float4 PSMain(float4 position : SV_POSITION) : SV_TARGET {
     g_Textures[g_PC.g_SceneColor].GetDimensions(width, height);
     float3 c = g_Textures[g_PC.g_SceneColor].Load(int3(int2(position.xy), 0)).rgb;
     if (g_PC.g_Depth < 128 && g_PC.g_AoStrength > 0.0) c *= AmbientOcclusion(int2(position.xy), float2(width, height));
+    if (g_PC.g_Depth < 128 && g_PC.g_FogDensity > 0.0) {
+        // Distance haze: the scene fades toward the sky's colour with the distance from the camera (the sky itself is left alone).
+        float d = AoDepth(int2(position.xy), float2(width, height));
+        if (d < 1.0) {
+            float distance = length(AoViewPosition(int2(position.xy), float2(width, height), d));
+            c = lerp(c, g_PC.g_FogColor.rgb, 1.0 - exp(-g_PC.g_FogDensity * distance));
+        }
+    }
     if (g_PC.g_Bloom < 128 && g_PC.g_BloomIntensity > 0.0) {
         // The chain's top level, half the screen's size, read with the same 3x3 tent the upsample uses.
         uint bloom_width, bloom_height;
@@ -373,7 +382,11 @@ void PostPass::Draw(gfx::rhi::ICommandList& commands, const PostProcessSettings&
         constants.bloom_scale = 1.0f / static_cast<f32>(bloom_levels_.size());
     }
     bloom_ready_ = false;
-    if (ao_.strength > 0.0f && ao_.depth < gfx::rhi::kMaxBindlessTextures) {
+    if (ao_.depth < gfx::rhi::kMaxBindlessTextures) {
+        constants.fog_density = std::isfinite(settings.fog_density) ? std::clamp(settings.fog_density, 0.0f, 1.0f) : 0.0f;
+        constants.fog_color[0] = fog_color_.x;
+        constants.fog_color[1] = fog_color_.y;
+        constants.fog_color[2] = fog_color_.z;
         constants.depth = ao_.depth;
         constants.ao_strength = ao_.strength;
         constants.ao_radius = ao_.radius;
