@@ -68,6 +68,7 @@ struct PostProcessSettings {
     f32 vignette = 0.0f;
     f32 saturation = 1.0f;
     Tonemapper tonemapper = Tonemapper::ACES;
+    f32 fog_density = 0.0f; // 1 / m
 };
 
 // What the renderer draws, copied from the ECS each frame (Phase 14 §14.1)

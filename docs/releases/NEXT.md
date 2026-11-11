@@ -315,3 +315,9 @@ depth copy (the same one temporal anti-aliasing reads). `AETHER_RENDER_AO=0` tur
 mean, 1 to 2 % of pixels visibly changed, at the cliff base, under rocks and on the bridge); there is no GPU-time figure yet and no
 automated test of the image. Known limits: it also darkens directly lit surfaces (it multiplies the final colour), the noise is not
 blurred, and thin geometry does not occlude.
+
+## Distance fog
+
+`PostProcessVolume::fog_density` (1 / m, default 0: off) fades the scene toward the sky's colour with distance from the camera, `1 -
+exp(-density * distance)`, in the post pass from the scene depth copy. It blends between volumes like the other settings. The sky is
+left alone. No height fog or sun in-scatter yet, and transparent draws are not fogged (they are not in the depth copy).

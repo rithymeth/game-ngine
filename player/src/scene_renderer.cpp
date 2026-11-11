@@ -2941,7 +2941,10 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
     if (renderer.hdr) {
         // The lit scene is in the HDR target: tone map it into the back buffer under the post volumes at the camera, then the HUD on top
         // in display space. Temporal anti-aliasing first blends it with the frames before (reading the depth copied here).
-        const bool resolve = (renderer.taa || vsm_record || renderer.ssao) && have_camera && commands.CopySceneDepth();
+        RenderScene volumes;
+        volumes.post_volumes = ExtractPostVolumes(world, guids);
+        const PostProcessSettings post_settings = BlendPostProcess(volumes, have_camera ? decal_camera_position : Vec3(0, 0, 0));
+        const bool resolve = (renderer.taa || vsm_record || renderer.ssao || post_settings.fog_density > 0.0f) && have_camera && commands.CopySceneDepth();
         commands.EndRenderPass();
         renderer.GpuStamp(commands, 2);
         if (resolve && vsm_record) renderer.vsm_feedback->Record(commands, vsm_feedback_params, frame_index);
@@ -2954,13 +2957,11 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
             renderer.taa->Reset();
         }
         renderer.post->SetSource(resolved);
-        if (resolve && renderer.ssao && renderer.swap_chain.SceneDepthTexture().IsValid()) {
-            renderer.post->SetAmbientOcclusion({renderer.swap_chain.SceneDepthTexture().index, renderer.ao_strength, renderer.ao_radius, ao_near,
-                                                ao_far, ao_proj_x, ao_proj_y});
+        if (resolve && (renderer.ssao || post_settings.fog_density > 0.0f) && renderer.swap_chain.SceneDepthTexture().IsValid()) {
+            renderer.post->SetAmbientOcclusion({renderer.swap_chain.SceneDepthTexture().index, renderer.ssao ? renderer.ao_strength : 0.0f,
+                                                renderer.ao_radius, ao_near, ao_far, ao_proj_x, ao_proj_y});
+            renderer.post->SetFogColor(Vec3(frame_data.sky_color[0], frame_data.sky_color[1], frame_data.sky_color[2]));
         }
-        RenderScene volumes;
-        volumes.post_volumes = ExtractPostVolumes(world, guids);
-        const PostProcessSettings post_settings = BlendPostProcess(volumes, have_camera ? decal_camera_position : Vec3(0, 0, 0));
         // Bloom reads the finished scene colour into its own chain of render textures, between the two passes.
         if (renderer.bloom) renderer.post->RenderBloom(commands, post_settings);
         commands.BeginRenderPass(renderer.swap_chain, kBackground);

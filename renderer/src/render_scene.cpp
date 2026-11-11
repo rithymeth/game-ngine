@@ -155,6 +155,7 @@ PostProcessSettings BlendPostProcess(const RenderScene& scene, const Vec3& posit
         out.bloom_intensity = Lerp(out.bloom_intensity, s.bloom_intensity, w);
         out.vignette = Lerp(out.vignette, s.vignette, w);
         out.saturation = Lerp(out.saturation, s.saturation, w);
+        out.fog_density = Lerp(out.fog_density, s.fog_density, w);
         if (w >= 0.5f) out.tonemapper = s.tonemapper; // a choice, not a blend
     }
     return out;

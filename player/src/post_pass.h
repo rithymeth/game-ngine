@@ -37,9 +37,10 @@ struct PostConstants {
     f32 far_plane = 1000.0f;
     f32 proj_x = 1.0f;          // the projection's [0][0] and [1][1] (1 / (aspect * tan(fov/2)), 1 / tan(fov/2))
     f32 proj_y = 1.0f;
-    f32 padding = 0.0f;
+    f32 fog_density = 0.0f;     // 1 / m
+    f32 fog_color[4] = {0, 0, 0, 0}; // linear, the sky's
 };
-static_assert(sizeof(PostConstants) == 64);
+static_assert(sizeof(PostConstants) == 80);
 
 // The bloom passes' push constants: 32 bytes.
 struct BloomConstants {
@@ -90,6 +91,8 @@ public:
         f32 strength = 0.0f, radius = 1.0f, near_plane = 0.1f, far_plane = 1000.0f, proj_x = 1.0f, proj_y = 1.0f;
     };
     void SetAmbientOcclusion(const AmbientOcclusion& ao) { ao_ = ao; }
+    // The sky colour distance fog fades toward, for the next Draw (with the depth from SetAmbientOcclusion, whose strength may be 0).
+    void SetFogColor(const Vec3& color) { fog_color_ = color; }
     // Records the full-screen draw inside the current back-buffer render pass, after the scene colour pass has ended. Composites the
     // bloom chain when RenderBloom drew it since the last Draw.
     void Draw(gfx::rhi::ICommandList& commands, const PostProcessSettings& settings);
@@ -118,6 +121,7 @@ private:
     std::vector<Extent> bloom_extents_;
     u32 bloom_width_ = 0, bloom_height_ = 0; // the scene size the chain was made for
     AmbientOcclusion ao_;
+    Vec3 fog_color_{0, 0, 0};
     bool bloom_ready_ = false;               // RenderBloom drew since the last Draw
     bool bloom_warned_ = false;              // the full-table warning, once
 };
