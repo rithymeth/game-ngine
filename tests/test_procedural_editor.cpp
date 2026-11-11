@@ -265,14 +265,16 @@ AETHER_TEST(ProceduralEditor_ShorelinesFollowTheGroundAndTheEdgeHasASkirt) {
     CHECK(outward == skirt.vertices.size() || outward * 100 > skirt.vertices.size() * 99); // corners belong to two edges; all else faces out
     // A water texture: the water's UV is the position over the map (0 to 1 on both axes), its material takes the texture with a white factor.
     {
-        const assets::procedural::ProceduralMesh textured = ProceduralWorldDocument::BuildTexturedTerrainModel(t, 64, "g.png", 5.0f, "w.png");
+        const assets::procedural::ProceduralMesh textured = ProceduralWorldDocument::BuildTexturedTerrainModel(t, 64, "g.png", 5.0f, "w.png", "wn.png");
         const assets::MeshPrimitiveData& wp = textured.mesh.primitives[2];
         CHECK(textured.materials[1].base_color_texture == "w.png" && textured.materials[1].base_color.x == 1.0f && textured.materials[0].base_color_texture == "g.png");
+        // The water blends (its texture's alpha is the opacity) and takes the ripple normal map; the ground stays opaque.
+        CHECK(textured.materials[1].alpha_mode == assets::MaterialAlphaMode::Blend && textured.materials[1].normal_texture == "wn.png" && textured.materials[0].alpha_mode == assets::MaterialAlphaMode::Opaque);
         f32 lo = 1e9f, hi = -1e9f;
         for (const auto& v : wp.vertices) { lo = std::min({lo, v.uv[0], v.uv[1]}); hi = std::max({hi, v.uv[0], v.uv[1]}); }
         CHECK(lo >= 0.0f && hi <= 1.0f + 1e-5f && hi > 0.5f);
         // The flat colour when there is no water texture.
-        CHECK(model.materials[1].base_color_texture.empty() && model.materials[1].base_color.z > model.materials[1].base_color.x);
+        CHECK(model.materials[1].base_color_texture.empty() && model.materials[1].base_color.z > model.materials[1].base_color.x && model.materials[1].alpha_mode == assets::MaterialAlphaMode::Opaque);
     }
     // No skirt unless asked for.
     CHECK(ProceduralWorldDocument::BuildTexturedTerrainModel(t, 64, "g.png").mesh.primitives.size() == 2);
@@ -350,6 +352,14 @@ AETHER_TEST(ProceduralEditor_BakeWritesTheTerrainMeshesAndASceneThePlayerLoads) 
         CHECK(std::find(report.files.begin(), report.files.end(), water_png) != report.files.end());
         assets::ImageData water_image;
         CHECK(assets::DecodeImageFile((root / water_png).string(), water_image) && water_image.width == options.water_texture);
+        // Its alpha channel is real: not all of it is opaque (the shallows), and not all transparent.
+        usize translucent = 0, solid = 0;
+        for (usize p = 0; p < static_cast<usize>(water_image.width) * water_image.height; ++p) { translucent += water_image.pixels[p * 4 + 3] < 200; solid += water_image.pixels[p * 4 + 3] > 200; }
+        CHECK(translucent > 0 && solid > 0);
+        const std::string normal_png = "Generated/Test_World_/Test_World__water_normal.png";
+        CHECK(std::find(report.files.begin(), report.files.end(), normal_png) != report.files.end());
+        assets::ImageData normal_image;
+        CHECK(assets::DecodeImageFile((root / normal_png).string(), normal_image) && normal_image.width == options.terrain_texture);
     }
     CHECK(std::any_of(report.files.begin(), report.files.end(), [](const std::string& f) { return f.find("_terrain.glb") != std::string::npos; }));
     CHECK(std::find(report.rules_without_mesh.begin(), report.rules_without_mesh.end(), "Fern") != report.rules_without_mesh.end());

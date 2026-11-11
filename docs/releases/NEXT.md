@@ -379,3 +379,9 @@ gets a skirt (`BakeOptions::terrain_skirt`, 6 m by default, 0 to leave the edge 
 
 A baked world's lakes and sea carry a texture (`terrain::RenderWaterTexture`, `BakeOptions::water_texture`, 512 by default, 0 for flat blue): turquoise shallows to dark blue
 deep by the water's real depth, and a lacy white foam line along the shore. No renderer change.
+
+## See-through, rippled water
+
+A baked world's water blends (RGBA texture: 30 percent opaque in the shallows to 93 in the deep, foam solid) and carries a ripple normal map (`RenderWaterNormalMap`), both
+through the renderer's existing BLEND and normal-map support. `EncodePngRgba8` writes RGBA PNGs; `EncodeGlb` writes `alphaMode` and `normalTexture`. The water does not
+move yet: that needs a time input in the scene shader.

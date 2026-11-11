@@ -38,14 +38,16 @@ void Chunk(std::vector<u8>& out, const char type[4], const std::vector<u8>& data
 
 } // namespace
 
-std::vector<u8> EncodePngRgb8(u32 width, u32 height, std::span<const u8> rgb) {
-    if (width == 0 || height == 0 || rgb.size() < static_cast<usize>(width) * height * 3) return {};
+namespace {
+std::vector<u8> EncodePng(u32 width, u32 height, std::span<const u8> pixels, u32 channels) {
+    const std::span<const u8> rgb = pixels;
+    if (width == 0 || height == 0 || rgb.size() < static_cast<usize>(width) * height * channels) return {};
     // The scanlines: a filter byte (0, none) before each row.
     std::vector<u8> raw;
-    raw.reserve((static_cast<usize>(width) * 3 + 1) * height);
+    raw.reserve((static_cast<usize>(width) * channels + 1) * height);
     for (u32 y = 0; y < height; ++y) {
         raw.push_back(0);
-        raw.insert(raw.end(), rgb.begin() + static_cast<std::ptrdiff_t>(static_cast<usize>(y) * width * 3), rgb.begin() + static_cast<std::ptrdiff_t>((static_cast<usize>(y) + 1) * width * 3));
+        raw.insert(raw.end(), rgb.begin() + static_cast<std::ptrdiff_t>(static_cast<usize>(y) * width * channels), rgb.begin() + static_cast<std::ptrdiff_t>((static_cast<usize>(y) + 1) * width * channels));
     }
     // zlib stream: header, stored deflate blocks of at most 65,535 bytes, the Adler-32 of the data.
     std::vector<u8> z = {0x78, 0x01};
@@ -71,11 +73,15 @@ std::vector<u8> EncodePngRgb8(u32 width, u32 height, std::span<const u8> rgb) {
     std::vector<u8> header;
     Put32(header, width);
     Put32(header, height);
-    header.insert(header.end(), {8, 2, 0, 0, 0}); // 8 bits, colour type 2 (RGB), deflate, no filter method, no interlace
+    header.insert(header.end(), {8, static_cast<u8>(channels == 4 ? 6 : 2), 0, 0, 0}); // 8 bits, colour type 2 (RGB) or 6 (RGBA), deflate, no filter method, no interlace
     Chunk(png, "IHDR", header);
     Chunk(png, "IDAT", z);
     Chunk(png, "IEND", {});
     return png;
 }
+} // namespace
+
+std::vector<u8> EncodePngRgb8(u32 width, u32 height, std::span<const u8> rgb) { return EncodePng(width, height, rgb, 3); }
+std::vector<u8> EncodePngRgba8(u32 width, u32 height, std::span<const u8> rgba) { return EncodePng(width, height, rgba, 4); }
 
 } // namespace aether::assets

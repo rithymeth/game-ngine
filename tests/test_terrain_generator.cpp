@@ -295,14 +295,14 @@ AETHER_TEST(TerrainWaterTextureTintsByDepthAndFoamsTheShore) {
     const GeneratedTerrain t = GenerateTerrain(s);
     const u32 size = 256;
     const std::vector<u8> a = RenderWaterTexture(t, s, size);
-    AETHER_CHECK(a.size() == static_cast<usize>(size) * size * 3 && a == RenderWaterTexture(t, s, size));
-    AETHER_CHECK(RenderWaterTexture(GeneratedTerrain{}, s, 16).size() == 16u * 16u * 3);
+    AETHER_CHECK(a.size() == static_cast<usize>(size) * size * 4 && a == RenderWaterTexture(t, s, size));
+    AETHER_CHECK(RenderWaterTexture(GeneratedTerrain{}, s, 16).size() == 16u * 16u * 4);
     auto texel_of = [&](u32 cx, u32 cz) {
         return std::pair<u32, u32>{std::min(static_cast<u32>(std::lround(static_cast<f32>(cx) / static_cast<f32>(t.Width() - 1) * static_cast<f32>(size) - 0.5f)), size - 1),
                                    std::min(static_cast<u32>(std::lround(static_cast<f32>(cz) / static_cast<f32>(t.Height() - 1) * static_cast<f32>(size) - 0.5f)), size - 1)};
     };
-    double foam_luma = 0.0, deep_luma = 0.0;
-    usize foam = 0, deep = 0, deep_blue = 0;
+    double foam_luma = 0.0, deep_luma = 0.0, foam_alpha = 0.0, deep_alpha = 0.0, mid_alpha = 0.0;
+    usize foam = 0, deep = 0, deep_blue = 0, mid = 0;
     for (u32 z = 2; z + 2 < t.Height(); ++z)
         for (u32 x = 2; x + 2 < t.Width(); ++x) {
             const usize i = t.Index(x, z);
@@ -311,12 +311,51 @@ AETHER_TEST(TerrainWaterTextureTintsByDepthAndFoamsTheShore) {
             const f32 level = t.lake[i] ? t.fill_height[i] : t.sea_height;
             const f32 depth = level - t.heightmap.heights[i];
             const auto [px, py] = texel_of(x, z);
-            const u8* p = &a[(static_cast<usize>(py) * size + px) * 3];
+            const u8* p = &a[(static_cast<usize>(py) * size + px) * 4];
             const double luma = 0.299 * p[0] + 0.587 * p[1] + 0.114 * p[2];
-            if (depth < 0.2f) { foam_luma += luma; ++foam; }
-            else if (depth > 4.0f) { deep_luma += luma; ++deep; deep_blue += p[2] > p[0] + 40; }
+            if (depth < 0.2f) { foam_luma += luma; foam_alpha += p[3]; ++foam; }
+            else if (depth > 4.0f) { deep_luma += luma; deep_alpha += p[3]; ++deep; deep_blue += p[2] > p[0] + 40; }
+            else if (depth > 0.9f && depth < 1.6f) { mid_alpha += p[3]; ++mid; }
         }
     AETHER_CHECK(foam > 5 && deep > 5);
     AETHER_CHECK(foam_luma / static_cast<double>(foam) > deep_luma / static_cast<double>(deep) + 60.0); // the shore is foam-bright, the deep is dark
     AETHER_CHECK(deep_blue * 10 > deep * 9);                                                            // and blue
+    // The alpha is the opacity: foam is nearly solid, the deep is mostly opaque, and the shallows in between let the bed show (less opaque than either).
+    AETHER_CHECK(foam_alpha / static_cast<double>(foam) > 0.6 * 255.0 && deep_alpha / static_cast<double>(deep) > 0.85 * 255.0);
+    if (mid > 3) AETHER_CHECK(mid_alpha / static_cast<double>(mid) < deep_alpha / static_cast<double>(deep) - 20.0);
+}
+
+AETHER_TEST(TerrainWaterNormalMapHasUnitNormalsPointingUpWithRipples) {
+    TerrainGenSettings s = Small();
+    const GeneratedTerrain t = GenerateTerrain(s);
+    const u32 size = 192;
+    const std::vector<u8> n = RenderWaterNormalMap(t, s, size, 1.0f);
+    AETHER_CHECK(n.size() == static_cast<usize>(size) * size * 3 && n == RenderWaterNormalMap(t, s, size, 1.0f));
+    double worst = 0.0, mean_x = 0.0, var_x = 0.0;
+    usize up = 0;
+    const usize count = static_cast<usize>(size) * size;
+    for (usize i = 0; i < count; ++i) {
+        const double x = n[i * 3] / 255.0 * 2.0 - 1.0, y = n[i * 3 + 1] / 255.0 * 2.0 - 1.0, z = n[i * 3 + 2] / 255.0 * 2.0 - 1.0;
+        worst = std::max(worst, std::fabs(std::sqrt(x * x + y * y + z * z) - 1.0));
+        up += z > 0.5;
+        mean_x += x;
+    }
+    mean_x /= static_cast<double>(count);
+    for (usize i = 0; i < count; ++i) { const double x = n[i * 3] / 255.0 * 2.0 - 1.0; var_x += (x - mean_x) * (x - mean_x); }
+    var_x /= static_cast<double>(count);
+    AETHER_CHECK(worst < 0.03);              // unit length, to 8-bit precision
+    AETHER_CHECK(up == count);               // out of the surface
+    AETHER_CHECK(var_x > 1e-4 && std::fabs(mean_x) < 0.1); // rippled, with no overall lean
+    // Strength 0 is a flat surface; a stronger setting is rougher.
+    const std::vector<u8> flat = RenderWaterNormalMap(t, s, 16, 0.0f);
+    bool all_flat = true;
+    for (usize i = 0; i < 16u * 16u; ++i) all_flat = all_flat && std::abs(flat[i * 3] - 128) <= 1 && std::abs(flat[i * 3 + 1] - 128) <= 1 && flat[i * 3 + 2] >= 254;
+    AETHER_CHECK(all_flat);
+    auto spread = [&](f32 strength) {
+        const std::vector<u8> m = RenderWaterNormalMap(t, s, 96, strength);
+        double sum = 0.0;
+        for (usize i = 0; i < 96u * 96u; ++i) sum += std::fabs(m[i * 3] - 128.0);
+        return sum;
+    };
+    AETHER_CHECK(spread(2.0f) > spread(0.5f) * 2.0);
 }

@@ -12,4 +12,7 @@ namespace aether::assets {
 // it ships, so the size only matters on disk during authoring). Empty when the size is zero or `rgb` is shorter than it says.
 std::vector<u8> EncodePngRgb8(u32 width, u32 height, std::span<const u8> rgb);
 
+// The same for 8-bit RGBA, `width * height * 4` bytes (a water texture's alpha is its opacity).
+std::vector<u8> EncodePngRgba8(u32 width, u32 height, std::span<const u8> rgba);
+
 } // namespace aether::assets

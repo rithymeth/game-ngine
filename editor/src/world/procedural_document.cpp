@@ -295,7 +295,7 @@ ProceduralMesh ProceduralWorldDocument::BuildTerrainModel(const GeneratedTerrain
     return out;
 }
 
-ProceduralMesh ProceduralWorldDocument::BuildTexturedTerrainModel(const GeneratedTerrain& t, u32 max_grid, const std::string& texture_uri, f32 skirt_depth, const std::string& water_texture_uri) {
+ProceduralMesh ProceduralWorldDocument::BuildTexturedTerrainModel(const GeneratedTerrain& t, u32 max_grid, const std::string& texture_uri, f32 skirt_depth, const std::string& water_texture_uri, const std::string& water_normal_uri) {
     ProceduralMesh out;
     const u32 w = t.Width(), h = t.Height();
     if (w < 2 || h < 2) return out;
@@ -377,6 +377,9 @@ ProceduralMesh ProceduralWorldDocument::BuildTexturedTerrainModel(const Generate
         m.roughness = 0.1f;
         m.metallic = 0.0f;
         m.base_color_texture = water_texture_uri;
+        m.normal_texture = water_normal_uri;
+        // With a texture its alpha is the water's opacity (the glTF material blends); without one, the water is a solid colour.
+        if (!water_texture_uri.empty()) m.alpha_mode = assets::MaterialAlphaMode::Blend;
         out.materials.push_back(m);
         out.mesh.primitives.push_back(water.Finish(Shading::Smooth, UvMode::Given, 1));
     }
@@ -437,13 +440,17 @@ BakeReport ProceduralWorldDocument::Bake(const std::string& content_root, const 
         const u32 size = std::clamp(options.terrain_texture, 16u, 4096u);
         const std::vector<u8> pixels = RenderTerrainTexture(terrain_, generated_terrain_settings_, size);
         if (!write(name + "_terrain.png", assets::EncodePngRgb8(size, size, pixels))) return report;
-        std::string water_uri;
+        std::string water_uri, water_normal_uri;
         if (options.water_texture > 0) {
             const u32 water_size = std::clamp(options.water_texture, 16u, 4096u);
-            if (!write(name + "_water.png", assets::EncodePngRgb8(water_size, water_size, RenderWaterTexture(terrain_, generated_terrain_settings_, water_size)))) return report;
+            if (!write(name + "_water.png", assets::EncodePngRgba8(water_size, water_size, RenderWaterTexture(terrain_, generated_terrain_settings_, water_size)))) return report;
             water_uri = name + "_water.png";
+            // The ripples' normal map, over the same map; it wants more texels than the colour (a ripple is about 0.7 m), so it follows the terrain texture's size.
+            const u32 normal_size = std::clamp(options.terrain_texture, 16u, 4096u);
+            if (!write(name + "_water_normal.png", assets::EncodePngRgb8(normal_size, normal_size, RenderWaterNormalMap(terrain_, generated_terrain_settings_, normal_size)))) return report;
+            water_normal_uri = name + "_water_normal.png";
         }
-        ground = BuildTexturedTerrainModel(terrain_, options.terrain_grid, name + "_terrain.png", options.terrain_skirt, water_uri);
+        ground = BuildTexturedTerrainModel(terrain_, options.terrain_grid, name + "_terrain.png", options.terrain_skirt, water_uri, water_normal_uri);
     } else {
         ground = BuildTerrainModel(terrain_, options.terrain_grid);
     }
