@@ -433,3 +433,8 @@ water primitive per level. `AETHER_RENDER_REFLECTIONS=0` disables it.
 
 `aether_player --camera-path <json> --record-dir <dir>`: the scene's camera follows keyframes and every frame is written
 (see `player/src/camera_path.h` for the format).
+
+## Fixed: a second, lower water surface inside the sea
+
+A basin under the sea that spilled lower than the sea had its own lower water level, which left a band of ground standing
+out of the sea. Its water now stands at the sea's level. Worlds baked before this need a re-bake.
