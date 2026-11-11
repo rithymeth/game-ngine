@@ -481,6 +481,35 @@ AETHER_TEST(ProceduralEditor_OptInBakeOfAFullSizeWorld) {
     // Opt-in: bake a full-size world into AETHER_PROCEDURAL_BAKE_DIR (a content root) for a look in the player.
     const char* dir = std::getenv("AETHER_PROCEDURAL_BAKE_DIR");
     if (dir == nullptr) return;
+    // A larger, more dramatic world than the presets: 576 m across, alpine ridges above a sea, lakes and a dense forest line.
+    {
+        ProceduralWorldSettings hero = MakePreset(WorldPreset::Alpine);
+        hero.terrain.width = hero.terrain.height = 385;
+        hero.terrain.cell_size = 1.5f;
+        hero.terrain.seed = 11;
+        hero.terrain.height_scale = 150.0f;
+        hero.terrain.ridge_amount = 0.7f;
+        hero.terrain.frequency = 2.2f;
+        hero.terrain.sea_level = 0.17f;
+        hero.terrain.snow_line = 0.74f;
+        hero.terrain.tree_line = 0.6f;
+        hero.terrain.hydraulic_droplets = 150000;
+        hero.terrain.river_min_catchment = 700;
+        hero.scatter.seed = 5;
+        ProceduralWorldDocument doc(hero);
+        doc.Generate();
+        BakeOptions options;
+        options.name = "HeroValley";
+        options.max_scene_instances = 6000;
+        options.terrain_grid = 384;
+        options.terrain_texture = 2048;
+        options.water_texture = 1024;
+        options.wind_strength = 1.3f;
+        const BakeReport report = doc.Bake(dir, options);
+        std::printf("[bake] HeroValley: %s, %zu files, %u objects in the scene (%u left out), generated in %.0f ms\n", report.ok ? "ok" : report.error.c_str(),
+                    report.files.size(), report.instances_in_scene, report.instances_left_out, doc.GenerateMilliseconds());
+        CHECK(report.ok);
+    }
     for (const WorldPreset preset : {WorldPreset::Temperate, WorldPreset::Alpine}) {
         ProceduralWorldDocument doc(MakePreset(preset));
         doc.Generate();

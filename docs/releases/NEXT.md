@@ -428,3 +428,8 @@ depth attachment, cleared by every `BeginTexturePass`. Vulkan only for now; D3D1
 
 Water mirrors terrain and non-swaying objects (Vulkan). `FrameData` is 1392 bytes. The procedural world baker writes one
 water primitive per level. `AETHER_RENDER_REFLECTIONS=0` disables it.
+
+## Recording from the player
+
+`aether_player --camera-path <json> --record-dir <dir>`: the scene's camera follows keyframes and every frame is written
+(see `player/src/camera_path.h` for the format).
