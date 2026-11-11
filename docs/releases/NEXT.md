@@ -391,3 +391,9 @@ move yet: that needs a time input in the scene shader.
 The scene shader's frame constants carry the game's time. A glTF material with the `AETHER_materials_water` extension scrolls two layers of its normal map with it, so baked
 water ripples and glints. The exporter writes the extension, the bake sets it, and the ripple map tiles so there is no seam. Other effects (swaying grass, flicker) can
 read `g_Frame.time.x` too.
+
+## Swaying vegetation
+
+A glTF material with the `AETHER_materials_wind` extension (metres of sway at the top, 0 to 0.3) sways in the vertex shader with the game's time, weighted by height so roots stay put,
+with a phase from where each instance stands so a field moves like a gust. The procedural generators set it on grass, reeds, shrub and tree leaves (a `sway` setting on each, 0 for
+none). Shadows do not sway yet.

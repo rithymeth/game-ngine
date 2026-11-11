@@ -125,11 +125,11 @@ f32 ModelDeterminant(const Mat4& m) {
 }
 
 u32 PackMaterialOptions(assets::MaterialAlphaMode mode, f32 cutoff, const SampledTextureHandle& extension, bool has_extension,
-                        bool double_sided = false, bool water = false) {
-    // The alpha mode in bits 0-1, the surface-extension texture's index in bits 2-9, double-sided in bit 10, water in bit 11 and the cutoff
-    // as a half in bits 16-31.
+                        bool double_sided = false, bool water = false, u32 wind_level = 0) {
+    // The alpha mode in bits 0-1, the surface-extension texture's index in bits 2-9, double-sided in bit 10, water in bit 11, the wind strength in
+    // bits 12-15 and the cutoff as a half in bits 16-31.
     return (static_cast<u32>(FloatToHalf(std::clamp(cutoff, 0.0f, 1.0f))) << 16) | (TextureSlot(extension, has_extension) << 2) |
-           (double_sided ? 1u << 10 : 0u) | (water ? 1u << 11 : 0u) | (static_cast<u32>(mode) & 3u);
+           (double_sided ? 1u << 10 : 0u) | (water ? 1u << 11 : 0u) | ((wind_level & 15u) << 12) | (static_cast<u32>(mode) & 3u);
 }
 
 void PackEmissive(const f32 emissive[3], const SampledTextureHandle& texture, bool has_texture, u32 packed[2]) {
@@ -234,9 +234,30 @@ float3 ApplyModelTransform(float3 value) {
     return transformed / determinant;
 }
 
+)";
+// The vertex shader, after the frame constants (so it can read the game's time) and before the rest of the frame-data code.
+constexpr char kSceneShaderVertex[] = R"(
 PSInput VSMain(VSInput input) {
     PSInput output;
-    output.position = mul(g_PC.g_Mvp, float4(input.position, 1.0));
+    float3 position = input.position;
+    // AETHER_materials_wind: the vegetation sways. The strength is four bits of the packed options (0.02 m of sway a step), the phase rides in the colour's alpha
+    // lane (an opaque material does not use it: the renderer packs a phase from the instance's place in the world, so a field of grass does not sway as one),
+    // and the weight grows with height above the object's base, so the roots stay put. Needs the frame constants for the time; without them nothing sways.
+    uint wind_level = (g_PC.g_AlphaOptions >> 12) & 15;
+#ifdef AETHER_FRAME_DATA
+    if (wind_level != 0) {
+        float phase = f16tof32(g_PC.g_ColorPacked.y >> 16);
+        float t = g_Frame.time.x;
+        float height = max(position.y, 0.0);
+        float weight = height / (height + 0.3);
+        // Two slow swells, one of them varying along the object a little so its parts do not move in step.
+        float gust = sin(t * 1.9 + phase) * 0.6 + sin(t * 0.83 + phase * 1.7 + position.x * 2.0 + position.z * 1.3) * 0.4;
+        float amount = float(wind_level) * 0.02 * weight * gust;
+        position.x += amount;
+        position.z += amount * 0.5;
+    }
+#endif
+    output.position = mul(g_PC.g_Mvp, float4(position, 1.0));
     output.uv = input.uv;
     output.normal = ApplyNormalTransform(input.normal);
     output.tangent = normalize(ApplyModelTransform(input.tangent.xyz));
@@ -795,6 +816,7 @@ struct SceneRenderer::Impl {
         assets::MaterialAlphaMode alpha_mode = assets::MaterialAlphaMode::Opaque;
         bool double_sided = false; // glTF doubleSided: drawn without culling, the back face lit from behind
         bool water = false;        // AETHER_materials_water: the normal map scrolls with the game's time
+        u32 wind_level = 0;        // AETHER_materials_wind: 0 to 15, 0.02 m of sway a step (the vertex shader sways the vegetation)
         SampledTextureHandle base_color_texture;
         SampledTextureHandle normal_texture;
         SampledTextureHandle metallic_roughness_texture;
@@ -2053,6 +2075,7 @@ struct SceneRenderer::Impl {
                     draw.alpha_mode = material.alpha_mode;
                     draw.double_sided = material.double_sided;
                     draw.water = material.water;
+                    draw.wind_level = static_cast<u32>(std::clamp(std::lround(material.wind / 0.02f), 0l, 15l));
                     const usize material_index = static_cast<usize>(primitive.material_index);
                     if (material.HasSurfaceExtension()) {
                         if (extension_textures.size() < out.scene.materials.size()) extension_textures.resize(out.scene.materials.size());
@@ -2622,7 +2645,14 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                             DrawConstants constants;
                             constants.mvp = mvp;
                             constants.color_packed[0] = PackHalfPair(primitive.color[0], primitive.color[1]);
-                            constants.color_packed[1] = PackHalfPair(primitive.color[2], primitive.color[3]);
+                            // A wind material that is opaque has no use for its alpha: it carries the instance's phase instead (from where it stands in the world,
+                            // so the sway travels across a field like a gust and not in step), in radians.
+                            f32 alpha_or_phase = primitive.color[3];
+                            if (primitive.wind_level != 0 && primitive.alpha_mode == assets::MaterialAlphaMode::Opaque) {
+                                alpha_or_phase = static_cast<f32>(std::fmod(static_cast<f64>(model_transform.cols[3].x) * 0.35 + static_cast<f64>(model_transform.cols[3].z) * 0.27, 6.283185307179586));
+                                if (alpha_or_phase < 0.0f) alpha_or_phase += 6.2831853f;
+                            }
+                            constants.color_packed[1] = PackHalfPair(primitive.color[2], alpha_or_phase);
                             PackEmissive(primitive.emissive, primitive.emissive_texture, primitive.has_emissive_texture, constants.emissive_packed);
                             PackNormalMatrix(normal_transform, constants.normal_matrix_packed);
                             constants.material_textures = PackMaterialTextures(
@@ -2633,7 +2663,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                             constants.material_factors_0 = PackHalfPair(primitive.metallic, primitive.roughness);
                             constants.material_factors_1 = PackHalfPair(primitive.normal_scale, primitive.occlusion_strength);
                             constants.alpha_options = PackMaterialOptions(primitive.alpha_mode, primitive.alpha_cutoff, primitive.extension_texture,
-                                                                          primitive.has_extension_texture, primitive.double_sided, primitive.water);
+                                                                          primitive.has_extension_texture, primitive.double_sided, primitive.water, primitive.wind_level);
                             // Single-sided materials cull their back faces, except on a mirrored model (a negative scale turns the
                             // winding round): that draws both faces, as every model did before.
                             const bool cull = !primitive.double_sided && ModelDeterminant(model_transform) > 0.0f;
@@ -3000,7 +3030,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
 std::string SceneShaderSource(bool with_frame_data, bool hdr_target, bool ray_traced_shadows) {
     return std::string(with_frame_data ? "#define AETHER_FRAME_DATA 1\n" : "") + (hdr_target ? "#define AETHER_HDR_TARGET 1\n" : "") +
            (with_frame_data && ray_traced_shadows ? "#define AETHER_RT_SHADOWS 1\n" : "") +
-           mat::AdvancedPbrHlsl() + mat::ShadingModelsHlsl() + kSceneShader + (with_frame_data ? FrameDataHlsl() : "") +
+           mat::AdvancedPbrHlsl() + mat::ShadingModelsHlsl() + kSceneShader + (with_frame_data ? FrameDataHlsl() : "") + kSceneShaderVertex +
            (with_frame_data ? VsmShaderLibrary() : "") + (with_frame_data ? kSceneShaderVsm : "") + kSceneShaderFrame;
 }
 

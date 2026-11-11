@@ -108,6 +108,12 @@ MaterialData Material(const Vec3& color, f32 roughness, f32 metallic = 0.0f) {
     return m;
 }
 
+// The material with its wind sway set (metres at the top; 0 for none).
+MaterialData Swaying(MaterialData material, f32 sway) {
+    material.wind = std::clamp(sway, 0.0f, 0.3f);
+    return material;
+}
+
 // Appends a primitive for `builder` (skipped when it has no triangles) and returns whether it did.
 void AddPrimitive(ProceduralMesh& out, const MeshBuilder& builder, Shading shading, UvMode uv, const MaterialData& material) {
     if (builder.Empty()) return;
@@ -622,7 +628,7 @@ ProceduralMesh GenerateTree(const TreeParams& in, u32 seed) {
 
     ProceduralMesh out;
     AddPrimitive(out, wood, Shading::Smooth, UvMode::Given, Material(in.bark_color, 0.95f));
-    AddPrimitive(out, leaves, Shading::Smooth, UvMode::BoxProjected, Material(in.leaf_color, 0.8f));
+    AddPrimitive(out, leaves, Shading::Smooth, UvMode::BoxProjected, Swaying(Material(in.leaf_color, 0.8f), in.sway));
     return out;
 }
 
@@ -664,7 +670,7 @@ ProceduralMesh GenerateShrub(const ShrubParams& in, u32 seed) {
     FitHeight(height, {&leaves, &wood});
     ProceduralMesh out;
     AddPrimitive(out, wood, Shading::Smooth, UvMode::Given, Material(in.stem_color, 0.95f));
-    AddPrimitive(out, leaves, Shading::Smooth, UvMode::BoxProjected, Material(in.leaf_color, 0.8f));
+    AddPrimitive(out, leaves, Shading::Smooth, UvMode::BoxProjected, Swaying(Material(in.leaf_color, 0.8f), in.sway));
     return out;
 }
 
@@ -698,7 +704,7 @@ ProceduralMesh GenerateGrass(const GrassParams& in, u32 seed) {
         }
     }
     ProceduralMesh out;
-    AddPrimitive(out, b, Shading::Flat, UvMode::Given, Material(in.color, 0.85f));
+    AddPrimitive(out, b, Shading::Flat, UvMode::Given, Swaying(Material(in.color, 0.85f), in.sway));
     return out;
 }
 
@@ -728,8 +734,8 @@ ProceduralMesh GenerateReeds(const ReedParams& in, u32 seed) {
         }
     }
     ProceduralMesh out;
-    AddPrimitive(out, stalks, Shading::Smooth, UvMode::Given, Material(in.stem_color, 0.8f));
-    AddPrimitive(out, heads, Shading::Smooth, UvMode::Given, Material(in.head_color, 0.9f));
+    AddPrimitive(out, stalks, Shading::Smooth, UvMode::Given, Swaying(Material(in.stem_color, 0.8f), in.sway));
+    AddPrimitive(out, heads, Shading::Smooth, UvMode::Given, Swaying(Material(in.head_color, 0.9f), in.sway));
     return out;
 }
 
@@ -1255,7 +1261,7 @@ std::vector<u8> EncodeGlb(const ProceduralMesh& mesh) {
     // Textures: each distinct base colour image becomes an image, a texture on it, and the material's baseColorTexture. The uri is the path as given
     // (relative to the .glb), which is how the player finds it in the package.
     std::vector<std::string> images;
-    bool any_water = false;
+    bool any_water = false, any_wind = false;
     for (usize mi = 0; mi < mesh.materials.size(); ++mi) {
         const MaterialData& m = mesh.materials[mi];
         if (mi > 0) materials += ",";
@@ -1270,8 +1276,10 @@ std::vector<u8> EncodeGlb(const ProceduralMesh& mesh) {
         if (!m.normal_texture.empty()) normal = ",\"normalTexture\":{\"index\":" + std::to_string(image_index(m.normal_texture)) + ",\"scale\":" + Num(m.normal_scale) + "}";
         if (m.alpha_mode == MaterialAlphaMode::Blend) alpha = ",\"alphaMode\":\"BLEND\"";
         else if (m.alpha_mode == MaterialAlphaMode::Mask) alpha = ",\"alphaMode\":\"MASK\",\"alphaCutoff\":" + Num(m.alpha_cutoff);
-        if (m.water) any_water = true;
-        const std::string extensions = m.water ? ",\"extensions\":{\"AETHER_materials_water\":{}}" : "";
+        std::string extensions_body;
+        if (m.water) { any_water = true; extensions_body += "\"AETHER_materials_water\":{}"; }
+        if (m.wind > 0.0f) { any_wind = true; extensions_body += std::string(extensions_body.empty() ? "" : ",") + "\"AETHER_materials_wind\":{\"strength\":" + Num(m.wind) + "}"; }
+        const std::string extensions = extensions_body.empty() ? "" : ",\"extensions\":{" + extensions_body + "}";
         materials += "{\"name\":\"material" + std::to_string(mi) + "\",\"pbrMetallicRoughness\":{\"baseColorFactor\":[" + Num(m.base_color.x) + "," + Num(m.base_color.y) + "," +
                      Num(m.base_color.z) + "," + Num(m.base_color.w) + "],\"metallicFactor\":" + Num(m.metallic) + ",\"roughnessFactor\":" + Num(m.roughness) + texture + "}" + normal + alpha + extensions + "}";
     }
@@ -1283,7 +1291,7 @@ std::vector<u8> EncodeGlb(const ProceduralMesh& mesh) {
         texture_json += (i ? "," : "") + std::string("{\"source\":") + std::to_string(i) + "}";
     }
     Pad4(bin, 0);
-    std::string json = std::string("{\"asset\":{\"version\":\"2.0\",\"generator\":\"Aether procedural mesh\"},") + (any_water ? "\"extensionsUsed\":[\"AETHER_materials_water\"]," : "") + "\"scene\":0,\"scenes\":[{\"nodes\":[0]}],\"nodes\":[{\"mesh\":0}],"
+    std::string json = std::string("{\"asset\":{\"version\":\"2.0\",\"generator\":\"Aether procedural mesh\"},") + (any_water || any_wind ? std::string("\"extensionsUsed\":[") + (any_water ? "\"AETHER_materials_water\"" : "") + (any_water && any_wind ? "," : "") + (any_wind ? "\"AETHER_materials_wind\"" : "") + "]," : std::string()) + "\"scene\":0,\"scenes\":[{\"nodes\":[0]}],\"nodes\":[{\"mesh\":0}],"
                        "\"meshes\":[{\"primitives\":[" + primitives + "]}],";
     if (!materials.empty()) json += "\"materials\":[" + materials + "],";
     if (!images.empty()) json += "\"images\":[" + image_json + "],\"textures\":[" + texture_json + "],";

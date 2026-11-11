@@ -484,3 +484,44 @@ AETHER_TEST(ProceduralGlbTexturesAreFoundByTheCookAndFollowedByMoves) {
     AETHER_CHECK(assets::RewriteGltfUris(root / "Models/rock.glb", [](const std::string&) -> std::optional<std::string> { return std::nullopt; }, &error) == 0);
     std::filesystem::remove_all(root, ec);
 }
+
+AETHER_TEST(ProceduralVegetationSwaysAndStoneAndBarkDoNot) {
+    // Grass, reeds, shrub leaves and tree leaves carry a wind strength; trunks, stems of a shrub, rocks and cacti do not.
+    auto wind_of = [](const ProceduralMesh& m, usize material) { return m.materials[material].wind; };
+    const ProceduralMesh grass = GenerateGrass(GrassParams{}, 1);
+    AETHER_CHECK(grass.materials.size() == 1 && std::fabs(wind_of(grass, 0) - 0.14f) < 1e-6f);
+    const ProceduralMesh reeds = GenerateReeds(ReedParams{}, 1);
+    AETHER_CHECK(reeds.materials.size() == 2 && wind_of(reeds, 0) > 0.0f && wind_of(reeds, 1) > 0.0f);
+    const ProceduralMesh shrub = GenerateShrub(ShrubParams{}, 1); // stems first, then leaves
+    AETHER_CHECK(shrub.materials.size() == 2 && wind_of(shrub, 0) == 0.0f && wind_of(shrub, 1) > 0.0f);
+    for (const TreeSpecies species : {TreeSpecies::Pine, TreeSpecies::Broadleaf}) {
+        TreeParams p;
+        p.species = species;
+        const ProceduralMesh tree = GenerateTree(p, 2); // bark first, then leaves
+        AETHER_CHECK(tree.materials.size() == 2 && wind_of(tree, 0) == 0.0f && wind_of(tree, 1) > 0.0f);
+    }
+    AETHER_CHECK(wind_of(GenerateRock(RockParams{}, 1), 0) == 0.0f && wind_of(GenerateCactus(CactusParams{}, 1), 0) == 0.0f);
+    GrassParams still;
+    still.sway = 0.0f;
+    AETHER_CHECK(wind_of(GenerateGrass(still, 1), 0) == 0.0f);
+    GrassParams gale;
+    gale.sway = 5.0f; // clamped to what the packed strength can carry (0.3 m)
+    AETHER_CHECK(wind_of(GenerateGrass(gale, 1), 0) <= 0.3f + 1e-6f);
+
+    // The extension in a .glb: the strength, listed as used (beside water when both are there), read back by the loader and absent for a plain material.
+    ProceduralMesh both = GenerateGrass(GrassParams{}, 1);
+    both.materials[0].water = true;
+    std::string json;
+    std::vector<u8> bin;
+    const std::vector<u8> glb = EncodeGlb(both);
+    AETHER_CHECK(ReadGlbChunks(glb, json, bin));
+    AETHER_CHECK(json.find("\"extensionsUsed\":[\"AETHER_materials_water\",\"AETHER_materials_wind\"]") != std::string::npos);
+    AETHER_CHECK(json.find("\"AETHER_materials_wind\":{\"strength\":0.14") != std::string::npos);
+    GltfScene scene;
+    AETHER_CHECK(LoadGltfFromMemory(glb, scene) && scene.materials[0].water && std::fabs(scene.materials[0].wind - 0.14f) < 1e-5f);
+    GltfScene plain;
+    AETHER_CHECK(LoadGltfFromMemory(EncodeGlb(GenerateRock(RockParams{}, 1)), plain) && plain.materials[0].wind == 0.0f && !plain.materials[0].water);
+    AETHER_CHECK(ReadGlbChunks(EncodeGlb(GenerateRock(RockParams{}, 1)), json, bin) && json.find("extensionsUsed") == std::string::npos);
+    // Wind alone lists only itself.
+    AETHER_CHECK(ReadGlbChunks(EncodeGlb(GenerateGrass(GrassParams{}, 1)), json, bin) && json.find("\"extensionsUsed\":[\"AETHER_materials_wind\"]") != std::string::npos);
+}
