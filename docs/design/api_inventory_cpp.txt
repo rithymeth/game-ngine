@@ -1282,6 +1282,7 @@
   [[nodiscard]]bool LoadGltf(const std::string&path,GltfScene&out_scene)
   [[nodiscard]]bool LoadGltf(const std::string&path,GltfScene&out_scene,std::string*error)
   [[nodiscard]]bool LoadGltfFromMemory(std::span<const u8>json,GltfScene&out_scene)
+  [[nodiscard]]bool LoadGltfFromMemory(std::span<const u8>json,GltfScene&out_scene,std::string*error)
   [[nodiscard]]bool ReadGlbChunks(std::span<const u8>bytes,std::string&json,std::vector<u8>&bin)
   bool HasSurfaceExtension()const
   usize ComponentsPerKey()const

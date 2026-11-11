@@ -197,6 +197,9 @@ ImportResult ImportScene(const GltfScene& scene, const nlohmann::json& settings,
     const bool import_animations = SettingOr(settings, "import_animations", true, result.warnings);
 
     ModelData model;
+    // What the loader left out or ignored (a skipped primitive, a dropped attribute): the file imported, and these are what an artist would want to know about it.
+    result.warnings.insert(result.warnings.end(), scene.warnings.begin(), scene.warnings.end());
+    if (scene.meshes.empty()) result.warnings.push_back("the file contains no meshes: there is nothing in it to render");
 
     if (import_materials) {
         for (usize i = 0; i < scene.materials.size(); ++i) {
@@ -220,9 +223,31 @@ ImportResult ImportScene(const GltfScene& scene, const nlohmann::json& settings,
         }
     }
 
+    usize drawable_primitives = 0;
     for (usize i = 0; i < scene.meshes.size(); ++i) {
         MeshData mesh;
+        usize primitive_number = 0;
         for (const GltfPrimitive& source : scene.meshes[i].primitives) {
+            const std::string where = "mesh " + std::to_string(i) + " primitive " + std::to_string(primitive_number++);
+            // Indices past the vertices would read garbage (or past the buffer) on the GPU: the import is refused, naming the first.
+            usize bad_indices = 0;
+            u32 first_bad = 0;
+            for (const u32 index : source.indices)
+                if (index >= source.vertices.size() && bad_indices++ == 0) first_bad = index;
+            if (bad_indices > 0) {
+                result.error = where + " has " + std::to_string(bad_indices) + " index(es) past its " + std::to_string(source.vertices.size()) + " vertices (the first is " + std::to_string(first_bad) +
+                               "): the file's index data does not match its vertex data, so it is corrupt or was exported wrongly";
+                result.ok = false;
+                return result;
+            }
+            if (source.indices.size() % 3 != 0)
+                result.warnings.push_back(where + " has " + std::to_string(source.indices.size()) + " indices, not a multiple of three: the last " + std::to_string(source.indices.size() % 3) + " are ignored");
+            if (!source.vertices.empty() && source.indices.empty()) result.warnings.push_back(where + " has vertices but no indices: it draws nothing");
+            usize non_finite = 0;
+            for (const GltfVertex& v : source.vertices)
+                if (!std::isfinite(v.position[0]) || !std::isfinite(v.position[1]) || !std::isfinite(v.position[2])) ++non_finite;
+            if (non_finite > 0) result.warnings.push_back(where + " has " + std::to_string(non_finite) + " vertex position(s) that are NaN or infinite: its bounds, culling and lighting will be wrong");
+            if (!source.vertices.empty() && source.indices.size() >= 3) ++drawable_primitives;
             MeshPrimitiveData primitive;
             primitive.vertices.resize(source.vertices.size());
             static_assert(sizeof(MeshVertex) == sizeof(GltfVertex));
@@ -250,6 +275,9 @@ ImportResult ImportScene(const GltfScene& scene, const nlohmann::json& settings,
         model.meshes.push_back(Key("mesh", i));
         result.sub_assets.push_back({model.meshes.back(), "Mesh", EncodeMeshData(mesh), {}});
     }
+
+    if (!scene.meshes.empty() && drawable_primitives == 0)
+        result.warnings.push_back("the file has " + std::to_string(scene.meshes.size()) + " mesh(es) but not one drawable primitive: it will import as an empty model (see the warnings above for why)");
 
     if (import_animations) {
         for (usize i = 0; i < scene.animations.size(); ++i) {
@@ -321,9 +349,10 @@ ImportResult ModelImporter::Import(const ImportContext& context) const {
 
 ImportResult ModelImporter::ImportFromMemory(std::span<const u8> bytes, const nlohmann::json& settings) const {
     GltfScene scene;
-    if (!LoadGltfFromMemory(bytes, scene)) {
+    std::string load_error;
+    if (!LoadGltfFromMemory(bytes, scene, &load_error)) {
         ImportResult result;
-        result.error = "Couldn't load the self-contained glTF document";
+        result.error = load_error;
         return result;
     }
     // The memory loader rejects filesystem URIs. These stable placeholder paths

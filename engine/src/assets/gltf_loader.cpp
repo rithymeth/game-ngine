@@ -7,6 +7,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <filesystem>
 #include <cstdarg>
 #include <cstdio>
 #include <array>
@@ -19,6 +20,7 @@ namespace aether::assets {
 
 namespace {
 
+namespace stdfs = std::filesystem;
 using Json = nlohmann::json;
 
 // The first error of the current LoadGltf on this thread, for callers that report it (the cooker).
@@ -32,6 +34,27 @@ void GltfError(const char* fmt, ...) {
     va_end(args);
     if (t_first_error.empty()) t_first_error = text;
     AETHER_LOG_ERROR("glTF", "%s", text);
+}
+// Why the last ResolveAccessor on this thread said no, for the warning of the primitive that was skipped or the attribute that was ignored because of it.
+thread_local std::string t_accessor_problem;
+bool AccessorProblem(const char* fmt, ...) {
+    char text[512];
+    va_list args;
+    va_start(args, fmt);
+    std::vsnprintf(text, sizeof(text), fmt, args);
+    va_end(args);
+    t_accessor_problem = text;
+    return false;
+}
+// A warning on the scene being loaded, and in the log.
+void SceneWarning(GltfScene& scene, const char* fmt, ...) {
+    char text[768];
+    va_list args;
+    va_start(args, fmt);
+    std::vsnprintf(text, sizeof(text), fmt, args);
+    va_end(args);
+    scene.warnings.push_back(text);
+    AETHER_LOG_WARN("glTF", "%s", text);
 }
 constexpr usize kMaxJsonBytes = 32 * 1024 * 1024;
 constexpr usize kMaxBufferBytes = 512 * 1024 * 1024;
@@ -208,15 +231,25 @@ bool ResolveBufferData(const Json& buffer_json, const std::string& base_dir, boo
     if (uri.rfind("data:", 0) == 0) {
         usize comma = uri.find(',');
         if (comma == std::string::npos) {
+            GltfError("A buffer's data: uri has no comma: it should look like data:application/octet-stream;base64,<data>");
             return false;
         }
         out_data = DecodeBase64(uri.substr(comma + 1));
         return true;
     }
-    if (!allow_external) return false;
+    if (!allow_external) {
+        GltfError("The buffer \"%s\" is an external file, which a self-contained import does not read: embed it, or use a .glb", uri.c_str());
+        return false;
+    }
     std::string path = JoinPath(base_dir, UriDecode(uri));
     if (!fs::ReadFileBytes(path, out_data, remaining_budget)) {
-        GltfError("Can't read the buffer \"%s\" (missing, unreadable or over the size budget)", uri.c_str());
+        std::error_code exists_error;
+        if (!stdfs::exists(path, exists_error))
+            GltfError("The buffer file \"%s\" is missing: looked for %s (copy it next to the model, or re-export with the buffer embedded or as a .glb)", uri.c_str(), path.c_str());
+        else if (std::error_code size_error; stdfs::file_size(path, size_error) > remaining_budget && !size_error)
+            GltfError("The buffer file \"%s\" is too big: %zu bytes against the %zu left of the model's budget", uri.c_str(), static_cast<usize>(stdfs::file_size(path)), remaining_budget);
+        else
+            GltfError("The buffer file \"%s\" exists but could not be read (permissions, or the file is locked by another program)", uri.c_str());
         return false;
     }
     if (buffer_json.contains("byteLength")) {
@@ -270,15 +303,12 @@ struct AccessorInfo {
 
 bool ResolveAccessor(const Json& gltf, usize accessor_index, const std::vector<std::vector<u8>>& buffers,
                       AccessorInfo& out) {
-    if (!gltf.is_object() || !gltf.contains("accessors") || !gltf["accessors"].is_array() ||
-        !gltf.contains("bufferViews") || !gltf["bufferViews"].is_array() ||
-        accessor_index >= gltf["accessors"].size()) {
-        return false;
-    }
+    t_accessor_problem.clear();
+    if (!gltf.is_object() || !gltf.contains("accessors") || !gltf["accessors"].is_array()) return AccessorProblem("the file has no \"accessors\" array");
+    if (!gltf.contains("bufferViews") || !gltf["bufferViews"].is_array()) return AccessorProblem("the file has no \"bufferViews\" array");
+    if (accessor_index >= gltf["accessors"].size()) return AccessorProblem("accessor %zu does not exist (the file has %zu)", accessor_index, gltf["accessors"].size());
     const Json& accessor = gltf["accessors"][accessor_index];
-    if (!accessor.is_object()) {
-        return false;
-    }
+    if (!accessor.is_object()) return AccessorProblem("accessor %zu is not an object", accessor_index);
     out.count = accessor.value("count", static_cast<usize>(0));
     out.component_type = accessor.value("componentType", 0);
     out.normalized = accessor.value("normalized", false);
@@ -288,16 +318,12 @@ bool ResolveAccessor(const Json& gltf, usize accessor_index, const std::vector<s
     if (!accessor.contains("bufferView")) {
         GltfError("Accessor %zu has no bufferView (sparse-only accessors are not supported)",
                           accessor_index);
-        return false;
+        return AccessorProblem("accessor %zu has no bufferView (sparse-only accessors are not supported)", accessor_index);
     }
     usize bv_index = accessor["bufferView"].get<usize>();
-    if (bv_index >= gltf["bufferViews"].size()) {
-        return false;
-    }
+    if (bv_index >= gltf["bufferViews"].size()) return AccessorProblem("accessor %zu names bufferView %zu, which does not exist (the file has %zu)", accessor_index, bv_index, gltf["bufferViews"].size());
     const Json& buffer_view = gltf["bufferViews"][bv_index];
-    if (!buffer_view.is_object()) {
-        return false;
-    }
+    if (!buffer_view.is_object()) return AccessorProblem("bufferView %zu is not an object", bv_index);
     usize buffer_index = buffer_view.value("buffer", static_cast<usize>(0));
     usize bv_byte_offset = buffer_view.value("byteOffset", static_cast<usize>(0));
     usize bv_byte_length = buffer_view.value("byteLength", static_cast<usize>(0));
@@ -306,37 +332,29 @@ bool ResolveAccessor(const Json& gltf, usize accessor_index, const std::vector<s
     usize element_size = component_size * out.num_components;
     if (component_size == 0 || out.num_components == 0) {
         GltfError("Accessor %zu has an unrecognized componentType/type", accessor_index);
-        return false;
+        return AccessorProblem("accessor %zu has an unrecognized componentType (%d) or type (\"%s\")", accessor_index, out.component_type, accessor.value("type", std::string()).c_str());
     }
     out.stride = buffer_view.value("byteStride", element_size);
-    if (out.stride < element_size) {
-        return false;
-    }
+    if (out.stride < element_size) return AccessorProblem("bufferView %zu has a byteStride of %zu, smaller than the %zu bytes of one element of accessor %zu", bv_index, out.stride, element_size, accessor_index);
 
-    if (buffer_index >= buffers.size()) {
-        return false;
-    }
+    if (buffer_index >= buffers.size()) return AccessorProblem("bufferView %zu names buffer %zu, which does not exist (the file has %zu)", bv_index, buffer_index, buffers.size());
     constexpr usize max_size = std::numeric_limits<usize>::max();
     usize required_size = 0;
     if (out.count > 0) {
         const usize preceding_elements = out.count - 1;
-        if (preceding_elements > (max_size - element_size) / out.stride) {
-            return false;
-        }
+        if (preceding_elements > (max_size - element_size) / out.stride) return AccessorProblem("accessor %zu has an impossibly large count (%zu)", accessor_index, out.count);
         required_size = preceding_elements * out.stride + element_size;
     }
     if (accessor_byte_offset > bv_byte_length || required_size > bv_byte_length - accessor_byte_offset) {
         GltfError("Accessor %zu reads past the end of its bufferView", accessor_index);
-        return false;
+        return AccessorProblem("accessor %zu reads past the end of its bufferView (%zu elements of %zu bytes at offset %zu, in a view of %zu bytes)", accessor_index, out.count, out.stride, accessor_byte_offset, bv_byte_length);
     }
     const usize buffer_size = buffers[buffer_index].size();
     if (bv_byte_offset > buffer_size || bv_byte_length > buffer_size - bv_byte_offset) {
         GltfError("Accessor %zu references a bufferView past the end of its buffer", accessor_index);
-        return false;
+        return AccessorProblem("accessor %zu is in bufferView %zu, which runs past the end of buffer %zu (%zu bytes at offset %zu, in a buffer of %zu)", accessor_index, bv_index, buffer_index, bv_byte_length, bv_byte_offset, buffer_size);
     }
-    if (accessor_byte_offset > max_size - bv_byte_offset) {
-        return false;
-    }
+    if (accessor_byte_offset > max_size - bv_byte_offset) return AccessorProblem("accessor %zu has an impossible byteOffset", accessor_index);
     const usize total_offset = bv_byte_offset + accessor_byte_offset;
     out.data = buffers[buffer_index].data() + total_offset;
     return true;
@@ -850,8 +868,51 @@ static bool ParseGltfText(const std::string& text, const std::string& path, bool
     // document.
     Json gltf = Json::parse(text, nullptr, /*allow_exceptions=*/false);
     if (gltf.is_discarded()) {
-        GltfError("Failed to parse \"%s\": not valid JSON", path.c_str());
+        if (text.find_first_not_of(" \t\r\n") == std::string::npos) {
+            GltfError("Failed to parse \"%s\": the file is empty", path.c_str());
+            return false;
+        }
+        // Where and what: the parser's own message (line and column), taken through a handler that stops at the first error and so throws nothing.
+        struct ParseProbe : Json::json_sax_t {
+            std::string message;
+            bool null() override { return true; }
+            bool boolean(bool) override { return true; }
+            bool number_integer(Json::number_integer_t) override { return true; }
+            bool number_unsigned(Json::number_unsigned_t) override { return true; }
+            bool number_float(Json::number_float_t, const std::string&) override { return true; }
+            bool string(std::string&) override { return true; }
+            bool binary(Json::binary_t&) override { return true; }
+            bool start_object(std::size_t) override { return true; }
+            bool key(std::string&) override { return true; }
+            bool end_object() override { return true; }
+            bool start_array(std::size_t) override { return true; }
+            bool end_array() override { return true; }
+            bool parse_error(std::size_t, const std::string&, const nlohmann::detail::exception& ex) override { message = ex.what(); return false; }
+        } probe;
+        Json::sax_parse(text, &probe);
+        GltfError("Failed to parse \"%s\": not valid JSON (%s)", path.c_str(), probe.message.empty() ? "unknown error" : probe.message.c_str());
         return false;
+    }
+    if (!gltf.is_object()) {
+        GltfError("\"%s\" is not a glTF file: its top level is not a JSON object", path.c_str());
+        return false;
+    }
+    {
+        // glTF requires an "asset" with a version; this reads 2.x only.
+        const Json* asset = gltf.contains("asset") && gltf["asset"].is_object() ? &gltf["asset"] : nullptr;
+        if (asset == nullptr) {
+            GltfError("\"%s\" is not a glTF 2.0 file: it has no \"asset\" object (every glTF file has one; is this a different JSON file?)", path.c_str());
+            return false;
+        }
+        const std::string version = asset->contains("version") && (*asset)["version"].is_string() ? (*asset)["version"].get<std::string>() : std::string();
+        if (version.empty()) {
+            GltfError("\"%s\" has no asset.version: expected glTF 2.0", path.c_str());
+            return false;
+        }
+        if (version[0] != '2') {
+            GltfError("\"%s\" is glTF %s; this engine reads glTF 2.0 only (re-export it from your tool as glTF 2.0)", path.c_str(), version.c_str());
+            return false;
+        }
     }
 
     std::string base_dir = allow_external ? fs::ParentPath(path) : std::string();
@@ -1000,49 +1061,65 @@ static bool ParseGltfText(const std::string& text, const std::string& path, bool
     }
 
     if (gltf.contains("meshes")) {
+        usize mesh_number = 0;
         for (const auto& mesh_json : gltf["meshes"]) {
+            const usize this_mesh = mesh_number++;
             GltfMesh mesh;
+            const std::string mesh_name = mesh_json.is_object() && mesh_json.contains("name") && mesh_json["name"].is_string() ? mesh_json["name"].get<std::string>() : std::string();
+            const std::string mesh_label = "mesh " + std::to_string(this_mesh) + (mesh_name.empty() ? std::string() : " \"" + mesh_name + "\"");
             if (!mesh_json.contains("primitives")) {
+                SceneWarning(out_scene, "%s has no \"primitives\": nothing to draw", mesh_label.c_str());
                 out_scene.meshes.push_back(std::move(mesh));
                 continue;
             }
+            if (mesh_json["primitives"].is_array() && mesh_json["primitives"].empty()) SceneWarning(out_scene, "%s has an empty \"primitives\" list: nothing to draw", mesh_label.c_str());
+            usize primitive_number = 0;
             for (const auto& prim_json : mesh_json["primitives"]) {
+                const std::string label = mesh_label + " primitive " + std::to_string(primitive_number++);
                 int mode = prim_json.value("mode", 4);
                 if (mode != 4) { // 4 == TRIANGLES; fans/strips/points/lines out of scope
-                    AETHER_LOG_WARN("glTF", "Skipping primitive with unsupported mode %d (only TRIANGLES)", mode);
+                    SceneWarning(out_scene, "%s skipped: draw mode %d is not supported (triangle lists only; re-export with triangles)", label.c_str(), mode);
                     continue;
                 }
                 if (!prim_json.contains("attributes") || !prim_json["attributes"].contains("POSITION")) {
-                    AETHER_LOG_WARN("glTF", "Skipping primitive with no POSITION attribute");
+                    SceneWarning(out_scene, "%s skipped: it has no POSITION attribute", label.c_str());
                     continue;
                 }
                 const Json& attributes = prim_json["attributes"];
 
                 AccessorInfo position_info;
                 if (!ResolveAccessor(gltf, attributes["POSITION"].get<usize>(), buffers, position_info)) {
-                    AETHER_LOG_WARN("glTF", "Skipping primitive: failed to resolve POSITION accessor");
+                    SceneWarning(out_scene, "%s skipped: POSITION unusable (%s)", label.c_str(), t_accessor_problem.empty() ? "unknown reason" : t_accessor_problem.c_str());
                     continue;
                 }
 
+                // An optional attribute that is there but unusable is dropped, and said so (the mesh then draws without it).
+                auto optional_attribute = [&](const char* name, usize components, bool allow_unsigned, AccessorInfo& info) {
+                    if (!attributes.contains(name)) return false;
+                    if (!ResolveAccessor(gltf, attributes[name].get<usize>(), buffers, info)) {
+                        SceneWarning(out_scene, "%s: %s ignored (%s)", label.c_str(), name, t_accessor_problem.empty() ? "unknown reason" : t_accessor_problem.c_str());
+                        return false;
+                    }
+                    if (info.num_components != components || !IsFloatOrNormalized(info, allow_unsigned)) {
+                        SceneWarning(out_scene, "%s: %s ignored (it needs %zu %s components, and has %zu of type %d%s)", label.c_str(), name, components,
+                                     allow_unsigned ? "float or normalized integer" : "float or normalized signed integer", info.num_components, info.component_type, info.normalized ? " (normalized)" : "");
+                        return false;
+                    }
+                    if (info.count != position_info.count) {
+                        SceneWarning(out_scene, "%s: %s ignored (it has %zu entries for %zu positions)", label.c_str(), name, info.count, position_info.count);
+                        return false;
+                    }
+                    return true;
+                };
                 AccessorInfo normal_info;
-                bool has_normal =
-                    attributes.contains("NORMAL") &&
-                    ResolveAccessor(gltf, attributes["NORMAL"].get<usize>(), buffers, normal_info) &&
-                    normal_info.num_components == 3 && IsFloatOrNormalized(normal_info, false) &&
-                    normal_info.count == position_info.count;
+                bool has_normal = optional_attribute("NORMAL", 3, false, normal_info);
+                if (!has_normal && !attributes.contains("NORMAL")) SceneWarning(out_scene, "%s has no NORMAL attribute: it is lit as if it faced up (export normals, or smooth it in your tool)", label.c_str());
 
                 AccessorInfo uv_info;
-                bool has_uv = attributes.contains("TEXCOORD_0") &&
-                              ResolveAccessor(gltf, attributes["TEXCOORD_0"].get<usize>(), buffers, uv_info) &&
-                              uv_info.num_components == 2 && IsFloatOrNormalized(uv_info, true) &&
-                              uv_info.count == position_info.count;
+                bool has_uv = optional_attribute("TEXCOORD_0", 2, true, uv_info);
 
                 AccessorInfo tangent_info;
-                const bool has_tangent_attribute =
-                    attributes.contains("TANGENT") &&
-                    ResolveAccessor(gltf, attributes["TANGENT"].get<usize>(), buffers, tangent_info) &&
-                    tangent_info.num_components == 4 && IsFloatOrNormalized(tangent_info, false) &&
-                    tangent_info.count == position_info.count;
+                const bool has_tangent_attribute = optional_attribute("TANGENT", 4, false, tangent_info);
 
                 AccessorInfo joints_info;
                 AccessorInfo weights_info;
@@ -1051,6 +1128,8 @@ static bool ParseGltfText(const std::string& text, const std::string& path, bool
                                     ResolveAccessor(gltf, attributes["WEIGHTS_0"].get<usize>(), buffers, weights_info) &&
                                     IsValidJoints(joints_info, position_info.count) &&
                                     IsValidWeights(weights_info, position_info.count);
+                if (!has_skinning && (attributes.contains("JOINTS_0") || attributes.contains("WEIGHTS_0")))
+                    SceneWarning(out_scene, "%s: skinning ignored (JOINTS_0 and WEIGHTS_0 must both be there, one entry per position, joints 4 unsigned byte or short, weights 4 float or normalized): it draws unposed", label.c_str());
 
                 GltfPrimitive primitive;
                 primitive.vertices.resize(position_info.count);
@@ -1205,6 +1284,19 @@ bool ReadGlbChunks(std::span<const u8> bytes, std::string& json, std::vector<u8>
     bool has_bin = false;
     bin.clear();
     return SplitGlb(bytes, json, bin, has_bin);
+}
+
+bool LoadGltfFromMemory(std::span<const u8> json, GltfScene& out_scene, std::string* error) {
+    t_first_error.clear();
+    const bool ok = LoadGltfFromMemory(json, out_scene);
+    if (!ok && error != nullptr) {
+        if (!t_first_error.empty()) *error = t_first_error;
+        else if (json.empty()) *error = "the document is empty";
+        else if (json.size() > kMaxJsonBytes) *error = "the document is larger than the glTF JSON limit";
+        else *error = "Couldn't load the self-contained glTF document";
+    }
+    t_first_error.clear();
+    return ok;
 }
 
 bool LoadGltfFromMemory(std::span<const u8> json, GltfScene& out_scene) {

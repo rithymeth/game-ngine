@@ -19,7 +19,7 @@ add_executable(aether_tests
     test_asset_database.cpp
     test_asset_refs.cpp
     test_importers.cpp
-    test_model_importer.cpp
+    test_model_importer.cpp test_import_diagnostics.cpp
     test_hot_reload.cpp
     test_content_browser.cpp
     test_prefab.cpp
