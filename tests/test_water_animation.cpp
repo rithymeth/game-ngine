@@ -9,6 +9,7 @@
 #include "aether/reflection/serialize.h"
 #include "test_framework.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
@@ -310,6 +311,100 @@ static void Wind_TheComponentBlowsInTheWorldWhicheverWayAnObjectFaces(rhi::Backe
     std::error_code ignored;
     fs::remove_all(root, ignored);
 }
+
+// A tuft on a grey ground with the sun low and shadows on, the wind blowing east: where the grass's shadow falls, as the centroid of the ground darkened by it.
+fs::path CookShadowScene(const fs::path& root, bool wind) {
+    fs::create_directories(root / "Content/models");
+    fs::create_directories(root / "Content/Scenes");
+    const fs::path games = fs::path(AETHER_REPO_ASSETS_DIR).parent_path() / "games/AETHER-01";
+    reflect::Json project = reflect::Json::parse(std::ifstream(games / "AETHER-01.aproject"));
+    project["name"] = "WaterScene";
+    project["startup_scene"] = "Scenes/Main.ascene";
+    project["always_cook"] = reflect::Json::array();
+    std::ofstream(root / "WaterScene.aproject") << project.dump(2);
+    GrassParams grass;
+    grass.blades = 30;
+    grass.height = 0.6f;
+    grass.spread = 0.12f;
+    grass.curl = 0.4f;
+    grass.sway = wind ? 0.30f : 0.0f;
+    const std::vector<u8> glb = EncodeGlb(GenerateGrass(grass, 4));
+    std::ofstream(root / "Content/models/grass.glb", std::ios::binary).write(reinterpret_cast<const char*>(glb.data()), static_cast<std::streamsize>(glb.size()));
+    MeshBuilder quad;
+    quad.Quad(quad.Vertex(Vec3(-6, 0, 6), 0, 1), quad.Vertex(Vec3(6, 0, 6), 1, 1), quad.Vertex(Vec3(6, 0, -6), 1, 0), quad.Vertex(Vec3(-6, 0, -6), 0, 0));
+    ProceduralMesh ground;
+    assets::MaterialData material;
+    material.base_color = Vec4(0.6f, 0.6f, 0.6f, 1.0f);
+    material.roughness = 0.9f;
+    material.metallic = 0.0f;
+    ground.materials.push_back(material);
+    ground.mesh.primitives.push_back(quad.Finish(Shading::Smooth, UvMode::Given, 0));
+    const std::vector<u8> ground_glb = EncodeGlb(ground);
+    std::ofstream(root / "Content/models/ground.glb", std::ios::binary).write(reinterpret_cast<const char*>(ground_glb.data()), static_cast<std::streamsize>(ground_glb.size()));
+    const reflect::Json east = {{"$v", 1}, {"direction_degrees", 0.0f}, {"strength", 2.0f}, {"gust_speed", 1.0f}, {"gustiness", 0.4f}};
+    const reflect::Json entities = {
+        SceneEntity({{"Transform", TransformJson({0.0f, 6.0f, 3.0f}, {-0.5f, 0.0f, 0.0f, 0.866f})},
+                     {"Camera", {{"$v", 1}, {"projection", "Perspective"}, {"fov_degrees", 50.0f}, {"near_plane", 0.1f}, {"far_plane", 60.0f},
+                                 {"ortho_height", 10.0f}, {"priority", 0}}}}),
+        SceneEntity({{"Transform", TransformJson({0, 0, 0}, {-0.3007f, 0.0f, 0.0f, 0.9537f})},
+                     {"DirectionalLight", {{"$v", 1}, {"color", {1.0f, 0.95f, 0.88f}}, {"intensity", 3.0f}, {"cast_shadows", true}}}}),
+        SceneEntity({{"Transform", TransformJson({0, 0, 0})},
+                     {"SkyLight", {{"$v", 1}, {"color", {1.0f, 1.0f, 1.0f}}, {"intensity", 0.4f}, {"environment", ""}, {"environment_rotation_degrees", 0.0f}}}}),
+        SceneEntity({{"Transform", TransformJson({0, 0, 0})}, {"ModelRenderer", {{"$v", 1}, {"model", ""}, {"asset_path", "models/ground.glb"}}}}),
+        SceneEntity({{"Transform", {{"$v", 1}, {"position", {0.0f, 0.0f, 0.0f}}, {"rotation", {0.0f, 0.0f, 0.0f, 1.0f}}, {"scale", {6.0f, 6.0f, 6.0f}}}},
+                     {"ModelRenderer", {{"$v", 1}, {"model", ""}, {"asset_path", "models/grass.glb"}}}}),
+        SceneEntity({{"Transform", TransformJson({0, 0, 0})}, {"Wind", east}})};
+    const reflect::Json scene = {{"$type", "Scene"}, {"$version", 1}, {"entities", entities}};
+    std::ofstream(root / "Content/Scenes/Main.ascene") << scene.dump(2);
+    cook::CookOptions options;
+    options.project_file = root / "WaterScene.aproject";
+    options.output_dir = root / "cooked";
+    const auto cooked = cook::Cook(options);
+    AETHER_CHECK(cooked.ok);
+    return cooked.ok ? cooked.pak_file : fs::path();
+}
+// The centroid of the ground's shadow: the pixels the sky tints blue (the lit ground is neutral grey, the grass is green), and how many there are.
+struct ShadowCentroid { double x = 0.0, y = 0.0; usize pixels = 0; };
+ShadowCentroid GroundShadow(const std::vector<u8>& frame, u32 width, u32 height) {
+    ShadowCentroid out;
+    for (u32 y = 0; y < height; ++y)
+        for (u32 x = 0; x < width; ++x) {
+            const usize i = (static_cast<usize>(y) * width + x) * 4;
+            const int r = frame[i], g = frame[i + 1], b = frame[i + 2];
+            if (b > r + 12 && b >= g) { out.x += x; out.y += y; ++out.pixels; }
+        }
+    if (out.pixels > 0) { out.x /= static_cast<double>(out.pixels); out.y /= static_cast<double>(out.pixels); }
+    return out;
+}
+
+// The grass's shadow moves with the wind: the sun's shadow of a swaying tuft is where the tuft is drawn, so it shifts with the game's time, and a tuft with no
+// sway casts one that stays put.
+static void Wind_TheShadowSwaysWithTheGrass(rhi::Backend backend) {
+    if (!rhi::IsBackendAvailable(backend)) return;
+    SetEnvironmentVariableForTest("AETHER_RENDER_TAA", "0");
+    constexpr u32 W = 640, H = 360;
+    const fs::path root = fs::temp_directory_path() / "aether_wind_shadow" / assets::ToString(assets::NewAssetGuid());
+    const fs::path windy_pak = CookShadowScene(root / "windy", true), still_pak = CookShadowScene(root / "still", false);
+    if (windy_pak.empty() || still_pak.empty()) return;
+    const auto windy_a = FrameAfter(backend, root / "windy", windy_pak, 0, W, H), windy_b = FrameAfter(backend, root / "windy", windy_pak, 40, W, H);
+    const auto still_a = FrameAfter(backend, root / "still", still_pak, 0, W, H), still_b = FrameAfter(backend, root / "still", still_pak, 40, W, H);
+    SetEnvironmentVariableForTest("AETHER_RENDER_TAA", "");
+    const usize bytes = static_cast<usize>(W) * H * 4;
+    if (windy_a.size() != bytes || windy_b.size() != bytes || still_a.size() != bytes || still_b.size() != bytes) {
+        AETHER_CHECK(false);
+        return;
+    }
+    const ShadowCentroid wa = GroundShadow(windy_a, W, H), wb = GroundShadow(windy_b, W, H), sa = GroundShadow(still_a, W, H), sb = GroundShadow(still_b, W, H);
+    std::printf("    %s: shadow centroid x %.2f -> %.2f px swaying (%zu px), %.2f -> %.2f still (%zu px)\n", backend == rhi::Backend::Vulkan ? "vulkan" : "d3d12",
+                wa.x, wb.x, wa.pixels, sa.x, sb.x, sa.pixels);
+    AETHER_CHECK(wa.pixels > 200 && wb.pixels > 200 && sa.pixels > 200 && sb.pixels > 200); // there is a shadow to measure
+    AETHER_CHECK(std::fabs(sb.x - sa.x) < 0.5);          // no sway, no movement
+    AETHER_CHECK(std::fabs(wb.x - wa.x) > 4.0);          // the shadow moved with the wind
+    std::error_code ignored;
+    fs::remove_all(root, ignored);
+}
+AETHER_TEST(Wind_TheShadowSwaysWithTheGrass_D3D12) { Wind_TheShadowSwaysWithTheGrass(rhi::Backend::D3D12); }
+AETHER_TEST(Wind_TheShadowSwaysWithTheGrass_Vulkan) { Wind_TheShadowSwaysWithTheGrass(rhi::Backend::Vulkan); }
 
 // A wind zone replaces the world's wind where an object stands in it: an east wind everywhere, a zone around the tuft that blows toward the camera, and only the
 // tuft inside the zone loses its sideways sway; a zone elsewhere changes nothing.

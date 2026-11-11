@@ -190,6 +190,25 @@ std::vector<WindZoneSite> CollectWindZones(const World& world, const GuidIndex& 
     return sites;
 }
 
+WindSample WindForDraw(const FrameData& frame, u32 zone_bits) {
+    WindSample out;
+    out.direction[0] = frame.wind[0];
+    out.direction[1] = frame.wind[1];
+    out.strength = frame.wind[2];
+    out.gust_speed = frame.wind[3];
+    const u32 slot = zone_bits & 7u;
+    if (slot != 0 && slot <= kMaxWindZones) {
+        const f32 blend = static_cast<f32>((zone_bits >> 3) & 31u) / 31.0f;
+        const f32* zone = frame.wind_zones[slot - 1];
+        const f32 bx = frame.wind[0] * frame.wind[2] + (zone[0] * zone[2] - frame.wind[0] * frame.wind[2]) * blend;
+        const f32 bz = frame.wind[1] * frame.wind[2] + (zone[1] * zone[2] - frame.wind[1] * frame.wind[2]) * blend;
+        out.strength = std::sqrt(bx * bx + bz * bz);
+        if (out.strength > 1e-5f) { out.direction[0] = bx / out.strength; out.direction[1] = bz / out.strength; }
+        out.gust_speed = frame.wind[3] + (zone[3] - frame.wind[3]) * blend;
+    }
+    return out;
+}
+
 u32 WindZoneBitsAt(const std::vector<WindZoneSite>& zones, const Vec3& position) {
     u32 best = 0;
     f32 best_weight = 0.0f;

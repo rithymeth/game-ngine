@@ -83,6 +83,13 @@ struct WindZoneSite {
     f32 radius = 1.0f;
     f32 falloff = 0.5f;
 };
+// The wind an object takes: the world's, or its zone's blended in by how far inside the zone it stands (`zone_bits` from WindZoneBitsAt); what the scene shader does.
+struct WindSample {
+    f32 direction[2]{1.0f, 0.0f}; // x, z, unit length
+    f32 strength = 0.0f;
+    f32 gust_speed = 1.0f;
+};
+WindSample WindForDraw(const FrameData& frame, u32 zone_bits);
 std::vector<WindZoneSite> CollectWindZones(const World& world, const GuidIndex& guids);
 // The zone an object at `position` is most inside, packed for the draw: bits 0-2 the zone's number plus one (0: none, the world's wind), bits 3-7 how far
 // inside it is (0 at the edge to 31 in the core). 0 where no zone reaches the point.

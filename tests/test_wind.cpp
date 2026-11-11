@@ -105,3 +105,18 @@ AETHER_TEST(WindZone_AnObjectTakesTheZoneItIsMostInsideAndTheFrameDataCarriesThe
     for (int i = 0; i < 10; ++i) crowded.CreateEntity(Transform{Vec3(static_cast<f32>(i) * 50.0f, 0, 0), Quaternion::Identity()}, WindZone{});
     AETHER_CHECK(CollectWindZones(crowded, guids).size() == kMaxWindZones);
 }
+
+AETHER_TEST(WindZone_AnObjectsWindBlendsTheZonesWithTheWorlds) {
+    World world;
+    GuidIndex guids;
+    world.CreateEntity(Wind{0.0f, 2.0f, 1.0f, 0.4f});                     // the world: east, strength 2
+    world.CreateEntity(Transform{Vec3(0, 0, 0), Quaternion::Identity()}, WindZone{10.0f, 90.0f, 2.0f, 3.0f, 0.5f}); // the zone: +Z, strength 2, gusts 3
+    const FrameData data = BuildFrameData(world, guids, Vec3(0, 0, 0));
+    const WindSample outside = WindForDraw(data, 0);
+    AETHER_CHECK(std::fabs(outside.direction[0] - 1.0f) < 1e-5f && std::fabs(outside.strength - 2.0f) < 1e-5f && outside.gust_speed == 1.0f);
+    const WindSample inside = WindForDraw(data, 1u | (31u << 3));          // the core: all the zone's
+    AETHER_CHECK(std::fabs(inside.direction[1] - 1.0f) < 1e-5f && std::fabs(inside.direction[0]) < 1e-5f && std::fabs(inside.strength - 2.0f) < 1e-5f && inside.gust_speed == 3.0f);
+    const WindSample half = WindForDraw(data, 1u | (16u << 3));            // between: a mix, in between in direction, and weaker where the two disagree
+    AETHER_CHECK(half.direction[0] > 0.3f && half.direction[1] > 0.3f && half.strength < 2.0f && half.strength > 1.0f && half.gust_speed > 1.0f && half.gust_speed < 3.0f);
+    AETHER_CHECK(WindForDraw(data, 7u).strength == 2.0f);                  // a slot with no zone behind it is the world's wind
+}

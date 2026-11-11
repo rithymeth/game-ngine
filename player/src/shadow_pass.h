@@ -21,8 +21,10 @@ struct ShadowCasterConstants {
     f32 alpha = 1.0f;             // the material's base colour alpha
     f32 alpha_cutoff = 0.5f;
     f32 padding = 0.0f;
+    f32 sway[4]{};      // xyz: the wind's sway at a full-height vertex, in the model's own space (metres); w: the instance's phase (the scene shader's)
+    f32 sway_time[4]{}; // x: the game's time times the gust speed; y: gustiness
 };
-static_assert(sizeof(ShadowCasterConstants) == 80);
+static_assert(sizeof(ShadowCasterConstants) == 112);
 
 // One shadow-casting draw: an opaque or alpha-tested (MASK) primitive. Blended surfaces don't cast.
 struct ShadowCaster {
@@ -37,6 +39,8 @@ struct ShadowCaster {
     u32 base_color_texture = 255;
     f32 alpha = 1.0f;
     f32 alpha_cutoff = 0.5f;
+    f32 sway[4]{};      // AETHER_materials_wind: see ShadowCasterConstants (all zero: not swaying)
+    f32 sway_time[4]{};
 };
 
 // What the scene shader reads (the shadow part of FrameData, player/src/frame_lights.h).

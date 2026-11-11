@@ -18,6 +18,8 @@ struct PushConstants {
     float g_Alpha;
     float g_Cutoff;
     float g_Padding;
+    float4 g_Sway;
+    float4 g_SwayTime;
 };
 #ifdef __spirv__
 [[vk::push_constant]]
@@ -39,7 +41,16 @@ struct PSInput {
 
 PSInput VSMain(VSInput input) {
     PSInput output;
-    output.position = mul(g_PC.g_LightMvp, float4(input.position, 1.0));
+    // The wind's sway, as the scene shader does it (a caster that sways casts the shadow of where it is drawn): the weight grows with height, the gust is
+    // two swells, and the sway vector is already in the model's space.
+    float3 position = input.position;
+    float height = max(position.y, 0.0);
+    float weight = height / (height + 0.3);
+    float phase = g_PC.g_Sway.w;
+    float gust = sin(g_PC.g_SwayTime.x * 1.9 + phase) * (1.0 - g_PC.g_SwayTime.y) +
+                 sin(g_PC.g_SwayTime.x * 0.83 + phase * 1.7 + position.x * 2.0 + position.z * 1.3) * g_PC.g_SwayTime.y;
+    position += g_PC.g_Sway.xyz * (weight * gust);
+    output.position = mul(g_PC.g_LightMvp, float4(position, 1.0));
     output.uv = input.uv;
     return output;
 }
@@ -193,6 +204,8 @@ ShadowFrameData ShadowPass::Render(gfx::rhi::ICommandList& commands, const View&
                 constants.base_color_texture = caster.base_color_texture < gfx::rhi::kMaxBindlessTextures ? caster.base_color_texture : 255u;
                 constants.alpha = caster.alpha;
                 constants.alpha_cutoff = caster.alpha_cutoff;
+                std::copy(std::begin(caster.sway), std::end(caster.sway), constants.sway);
+                std::copy(std::begin(caster.sway_time), std::end(caster.sway_time), constants.sway_time);
                 commands.BindVertexBuffer(caster.vertices, 48);
                 commands.BindIndexBuffer(caster.indices, gfx::rhi::IndexFormat::UInt32);
                 commands.SetPushConstants(&constants, sizeof(constants));

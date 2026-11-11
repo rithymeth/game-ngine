@@ -2681,14 +2681,18 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                                 primitive.occlusion_texture, primitive.has_occlusion_texture);
                             constants.material_factors_0 = PackHalfPair(primitive.metallic, primitive.roughness);
                             constants.material_factors_1 = PackHalfPair(primitive.normal_scale, primitive.occlusion_strength);
+                            const u32 wind_zone_bits = primitive.wind_level != 0 && !wind_zones.empty()
+                                                           ? WindZoneBitsAt(wind_zones, Vec3(model_transform.cols[3].x, model_transform.cols[3].y, model_transform.cols[3].z))
+                                                           : 0u;
                             constants.alpha_options = PackMaterialOptions(primitive.alpha_mode, primitive.alpha_cutoff, primitive.extension_texture,
                                                                           primitive.has_extension_texture, primitive.double_sided, primitive.water, primitive.wind_level,
-                                                                          primitive.wind_level != 0 && !wind_zones.empty() ? WindZoneBitsAt(wind_zones, Vec3(model_transform.cols[3].x, model_transform.cols[3].y, model_transform.cols[3].z)) : 0u);
+                                                                          wind_zone_bits);
                             // Single-sided materials cull their back faces, except on a mirrored model (a negative scale turns the
                             // winding round): that draws both faces, as every model did before.
                             const bool cull = !primitive.double_sided && ModelDeterminant(model_transform) > 0.0f;
                             Mat4 inverse_model_transform;
-                            if (model_transform.TryInverse(inverse_model_transform)) {
+                            const bool have_inverse = model_transform.TryInverse(inverse_model_transform);
+                            if (have_inverse) {
                                 const Vec4 local_camera = inverse_model_transform *
                                                           Vec4(camera_position.x, camera_position.y, camera_position.z, 1.0f);
                                 constants.camera_local[0] = local_camera.x;
@@ -2730,6 +2734,20 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                                     caster.alpha = primitive.color[3];
                                     caster.alpha_cutoff = primitive.alpha_cutoff;
                                     caster.deforming = uploaded_animation;
+                                    // Vegetation that sways casts the shadow of where it is drawn: the sway vector in the model's space goes to the shadow shader, and the
+                                    // caster is drawn into the cascades only (the pages hold what stands still), its bounds grown by the most it can move.
+                                    if (primitive.wind_level != 0 && have_inverse && !renderer.frame_buffers.empty()) {
+                                        const WindSample wind = WindForDraw(frame_data, wind_zone_bits);
+                                        const f32 amplitude = static_cast<f32>(primitive.wind_level) * 0.02f * wind.strength;
+                                        const Vec4 local = inverse_model_transform * Vec4(wind.direction[0] * amplitude, 0.0f, wind.direction[1] * amplitude, 0.0f);
+                                        caster.sway[0] = local.x; caster.sway[1] = local.y; caster.sway[2] = local.z; caster.sway[3] = alpha_or_phase;
+                                        caster.sway_time[0] = frame_data.time[0] * wind.gust_speed;
+                                        caster.sway_time[1] = frame_data.wind_gusts[0];
+                                        if (amplitude > 0.0f) {
+                                            caster.deforming = true;
+                                            if (caster.bounds_radius >= 0.0f) caster.bounds_radius += amplitude * 1.01f + 0.01f;
+                                        }
+                                    }
                                     shadow_casters.push_back(caster);
                                     if (renderer.rt_shadows && !caster.deforming && !caster.alpha_tested && primitive.frame_vertex_buffers.empty()) {
                                         if (!primitive.blas.IsValid() && !primitive.blas_failed) {
@@ -2770,7 +2788,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                                                                                             static_cast<u32>(node.node_index),
                                                                                             static_cast<u32>(primitive_index) + 1}];
                                         const bool seen = state.frame + 1 == transform_frame;
-                                        const bool dynamic = uploaded_animation;
+                                        const bool dynamic = caster.deforming; // a posed skin, or vegetation swaying in the wind: the cascades have it, the pages do not
                                         if (sphere_radius >= 0.0f) {
                                             // A deforming caster is in no page (the cascades have it), and the pages under it are left out of the
                                             // table; one that starts or stops deforming changes what its pages hold, so they are redrawn.
