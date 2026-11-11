@@ -159,7 +159,9 @@ AETHER_TEST(ScriptSystem_ErrorsDontStopPlay) {
     // and every other script keeps running.
     life.Update(0.1f);
     life.Update(0.1f);
-    AETHER_CHECK(scripts.Errors().size() == 2 && scripts.Errors()[0].find("Broken.luau:3") != std::string::npos);
+    // One entry, not one per frame: where it is, what it is, in which callback, on which entity, and how often.
+    AETHER_CHECK(scripts.Errors().size() == 1 && scripts.Errors()[0].find("Broken.luau:3") != std::string::npos);
+    AETHER_CHECK(scripts.Errors()[0].find("(in OnUpdate, on entity ") != std::string::npos && scripts.Errors()[0].find("(repeated 2 times)") != std::string::npos);
     AETHER_CHECK(Number(scripts.GetField(good, "count")) == 2.0);
     AETHER_CHECK(f.world.IsAlive(bad));
     life.EndPlay();
@@ -173,4 +175,69 @@ AETHER_TEST(ScriptSystem_ErrorsDontStopPlay) {
     const ScriptComponent* component = loaded.GetComponent<ScriptComponent>(copy);
     AETHER_CHECK(component != nullptr && component->script.guid == f.spin && component->properties.size() == 2);
     AETHER_CHECK(component->FindProperty("speed")->value == "\"very\"");
+}
+
+// A known mistake in a script has to say where it is and which entity it happened on (with forty doors in a level, "Door.luau:4" alone does not say which), an endless loop has to say where it
+// was stuck, and a script that fails every frame must not fill the list or the log for as long as the game runs.
+AETHER_TEST(ScriptSystem_ErrorsSayWhichEntityAndWhereAndDoNotFloodTheList) {
+    Fixture f;
+    f.host.Run("events = {}");
+    const Entity door = f.Make(f.broken);
+    f.world.AddComponent(door, EntityName{"Front Door"});
+    const Entity other = f.Make(f.broken);
+    f.world.AddComponent(other, EntityName{"Back Door"});
+    Lifecycle life(f.world, f.guids);
+    ScriptSystem scripts(f.host, f.world, f.guids, f.Loader());
+    scripts.Register(life);
+    life.BeginPlay();
+    life.Update(0.1f);
+    // Two entities running the same broken script are two entries, each naming its entity.
+    AETHER_CHECK(scripts.Errors().size() == 2);
+    std::string all;
+    for (const std::string& e : scripts.Errors()) all += e + "\n";
+    AETHER_CHECK(all.find("\"Front Door\"") != std::string::npos && all.find("\"Back Door\"") != std::string::npos);
+    AETHER_CHECK(all.find("attempt to index nil with 'boom'") != std::string::npos && all.find("Broken.luau:3") != std::string::npos);
+    // A thousand more frames add no entries; the counts go up.
+    for (int i = 0; i < 1000; ++i) life.Update(0.016f);
+    AETHER_CHECK(scripts.Errors().size() == 2 && scripts.DroppedErrors() == 0);
+    AETHER_CHECK(scripts.Errors()[0].find("(repeated 1001 times)") != std::string::npos);
+    // Clearing starts the count again.
+    scripts.ClearErrors();
+    life.Update(0.016f);
+    AETHER_CHECK(scripts.Errors().size() == 2 && scripts.Errors()[0].find("(repeated") == std::string::npos);
+}
+
+AETHER_TEST(ScriptSystem_TheNumberOfDistinctErrorsIsBounded) {
+    // Every frame a different message (a counter in the text): the list stops at its limit and the rest are counted, not stored.
+    Fixture f;
+    f.host.Run("events = {}");
+    f.scripts[f.broken] = {"local Broken = {}\nlocal n = 0\nfunction Broken:OnUpdate(dt)\n  n += 1\n  error('failure number ' .. n)\nend\nreturn Broken\n", "Counter.luau"};
+    f.Make(f.broken);
+    Lifecycle life(f.world, f.guids);
+    ScriptSystem scripts(f.host, f.world, f.guids, f.Loader());
+    scripts.Register(life);
+    life.BeginPlay();
+    const int frames = static_cast<int>(ScriptSystem::kMaxDistinctErrors) + 50;
+    for (int i = 0; i < frames; ++i) life.Update(0.016f);
+    AETHER_CHECK(scripts.Errors().size() == ScriptSystem::kMaxDistinctErrors);
+    AETHER_CHECK(scripts.DroppedErrors() == 50);
+}
+
+AETHER_TEST(ScriptSystem_AnEndlessLoopSaysWhereItWasStuck) {
+    Fixture f;
+    f.host.Run("events = {}");
+    f.scripts[f.broken] = {"local Loop = {}\nfunction Loop:OnUpdate(dt)\n  local i = 0\n  while true do i += 1 end\nend\nreturn Loop\n", "Spinner.luau"};
+    f.Make(f.broken);
+    Lifecycle life(f.world, f.guids);
+    ScriptSystem scripts(f.host, f.world, f.guids, f.Loader());
+    scripts.Register(life);
+    life.BeginPlay();
+    life.Update(0.1f);
+    AETHER_CHECK(scripts.Errors().size() == 1);
+    const std::string& error = scripts.Errors()[0];
+    AETHER_CHECK(error.find("Spinner.luau:4:") == 0);                                   // the line of the loop, in the form every other error has
+    AETHER_CHECK(error.find("instruction budget") != std::string::npos && error.find("endless loop") != std::string::npos);
+    AETHER_CHECK(error.find("(in OnUpdate, on entity") != std::string::npos);
+    const ScriptError parsed = ScriptError::Parse(error); // so the editor and the MCP tools can point at it
+    AETHER_CHECK(parsed.chunk == "Spinner.luau" && parsed.line == 4);
 }

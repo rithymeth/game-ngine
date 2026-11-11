@@ -135,7 +135,11 @@ void LuauHost::Interrupt(lua_State* L, int gc) {
     LuauHost* host = HostOf(L);
     if (host->options_.instruction_budget != 0 && ++host->ticks_ > host->options_.instruction_budget) {
         host->budget_exceeded_ = true;
-        luaL_error(L, "script exceeded its instruction budget (%llu); is there an endless loop?",
+        // Where it was when the budget ran out, in the same "<script>:<line>:" form as every other script error (an interrupt has no Lua caller for luaL_error to take it from).
+        lua_Debug where;
+        char location[256] = "";
+        if (lua_getinfo(L, 0, "sl", &where) != 0 && where.currentline > 0) std::snprintf(location, sizeof(location), "%s:%d: ", where.short_src, where.currentline);
+        luaL_error(L, "%sscript exceeded its instruction budget (%llu); is there an endless loop? (a while or repeat loop that never ends, or a recursion with no end)", location,
                    static_cast<unsigned long long>(host->options_.instruction_budget));
     }
 }

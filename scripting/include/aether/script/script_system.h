@@ -124,8 +124,13 @@ public:
     usize InstanceCount() const { return instances_.size(); }
     // The AI debugger's data (AI.SetDebugState, Nav.MoveTowards' paths; ai_api.h). Never null.
     const AiDebugStore& AiDebug() const { return *ai_debug_; }
+    // What went wrong while play ran, one entry per distinct error: "<script>:<line>: <message> (in OnUpdate, on entity "Door" a0b1c2d3)". An error that happens again (a broken OnUpdate fails
+    // every frame) is not added again: its entry gains " (repeated N times)", so the list stays readable and does not grow for as long as the game runs. At most kMaxDistinctErrors entries are kept;
+    // further distinct errors are counted in DroppedErrors() (they are still logged).
+    static constexpr usize kMaxDistinctErrors = 200;
     const std::vector<std::string>& Errors() const { return errors_; }
-    void ClearErrors() { errors_.clear(); }
+    usize DroppedErrors() const { return errors_dropped_; }
+    void ClearErrors() { errors_.clear(); error_seen_.clear(); errors_dropped_ = 0; }
 
     // Loads a class from source into `host` and describes it, without
     // creating any instances. `ref` receives the class table's registry
@@ -180,6 +185,8 @@ private:
     void InstallApi(bool install_kit_apis);
     void ReleaseOwner(u64 owner);
     void RecordError(const std::string& error);
+    // `entity` as a person would name it: "entity \"Door\" a0b1c2d3" (the name when it has one, and the start of its id).
+    std::string DescribeEntity(Entity entity) const;
 
     Class* LoadClass(const assets::AssetGuid& script);
     void Create(Entity entity);
@@ -194,6 +201,9 @@ private:
     std::unordered_map<assets::AssetGuid, Class> classes_;
     std::unordered_map<EntityGuid, Instance> instances_;
     std::vector<std::string> errors_;
+    struct SeenError { usize index = 0; u32 count = 0; std::string text; };
+    std::unordered_map<std::string, SeenError> error_seen_; // by the error as first recorded: where it is in errors_ and how often it happened
+    usize errors_dropped_ = 0;
 
     std::unordered_map<u32, EventData> events_;
     std::vector<Timer> timers_;

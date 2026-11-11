@@ -285,7 +285,7 @@ void ScriptSystem::Invoke(Entity entity, const char* method, const f32* dt) {
     const u64 previous_owner = current_owner_;
     current_owner_ = instance->owner; // what it connects is its own
     if (!host_.ProtectedCall(args, 0, &error)) {
-        RecordError(error + " (in " + method + ")");
+        RecordError(error + " (in " + std::string(method) + ", on " + DescribeEntity(entity) + ")");
     }
     current_owner_ = previous_owner;
     lua_settop(L, top);

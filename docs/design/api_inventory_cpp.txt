@@ -5754,6 +5754,7 @@
   type struct Instance
   type struct ReloadResult
   type struct ScriptError
+  type struct SeenError
   type struct Timer
   ::aether::PhysicsScene*BoundPhysicsScene()const
   Class*LoadClass(const assets::AssetGuid&script)
@@ -5780,10 +5781,12 @@
   static ScriptClassInfo DescribeSource(LuauHost&host,const std::string&source,const std::string&name,int*ref=nullptr)
   static ScriptError Parse(const std::string&text)
   static SourceLoader DatabaseLoader(const assets::AssetDatabase&database)
+  std::string DescribeEntity(Entity entity)const
   u32 Connect(u32 event,int function_ref)
   u32 InputEvent(const std::string&action,input::ActionEvent event)
   u32 StartTimer(f64 seconds,bool repeat,int function_ref)
   usize ConnectionCount()const
+  usize DroppedErrors()const
   usize InstanceCount()const
   usize ReloadChanged(const std::vector<assets::AssetChange>&changes)
   usize TimerCount()const
