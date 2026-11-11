@@ -6177,6 +6177,17 @@
   void UpdateDirty(const TerrainData&data,const TerrainSettings&settings)
   void UpdateLOD(const TerrainData&data,const TerrainSettings&settings,const Vec3&camera_position)
   ~TerrainRenderer()
+[terrain/include/aether/terrain/scatter.h] experimental
+  type struct ScatterInstance
+  type struct ScatterRule
+  type struct ScatterSettings
+  Vec3 TerrainNormalAt(const Heightmap&heightmap,f32 world_x,f32 world_z)
+  inline constexpr u32 BiomeBit(Biome biome)
+  std::vector<FoliageInstance>ToFoliageInstances(std::span<const ScatterInstance>instances,f32 chunk_world_size)
+  std::vector<ScatterInstance>Scatter(const GeneratedTerrain&terrain,const TerrainGenSettings&terrain_settings,std::span<const ScatterRule>rules,const ScatterSettings&settings)
+  std::vector<ScatterRule>DefaultScatterRules()
+  std::vector<f32>WaterDistanceField(const GeneratedTerrain&terrain)
+  void OverlayScatterPreview(std::vector<u8>&rgb,const GeneratedTerrain&terrain,std::span<const ScatterInstance>instances)
 [terrain/include/aether/terrain/splat.h] experimental
   type struct SplatmapData
   type struct SplatmapLayer
