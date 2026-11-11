@@ -43,6 +43,7 @@ struct BakeOptions {
     std::string name = "Generated";
     u32 max_scene_instances = 5000; // the player draws one call per object; the rest are left out and counted
     u32 terrain_grid = 256;         // the terrain mesh's quads per side at most
+    u32 terrain_tiles = 8;          // the ground cut into this many tiles a side, each its own draw the player can cull (1: one piece)
     f32 terrain_skirt = 6.0f;       // metres the terrain's edges are carried down below its lowest ground (0: an open edge)
     u32 water_texture = 512;        // the water's depth-tinted, foam-edged texture in texels (0: one flat colour)
     bool add_wind = true;           // a Wind entity in the baked scene, so the swaying plants blow the way the world is set to
@@ -97,10 +98,10 @@ public:
     // The terrain as one model: a primitive each for water, sand, grass, forest, rock and snow, by the biome under each triangle.
     static assets::procedural::ProceduralMesh BuildTerrainModel(const terrain::GeneratedTerrain& terrain, u32 max_grid);
 
-    // The terrain as up to three primitives (the skirt, when `skirt_depth` is above 0, carries the four edges down that far below the lowest ground): the ground, one surface textured by `texture_uri` (a path relative to the .glb; RenderTerrainTexture makes the picture) so
+    // The terrain as the ground (cut into `tiles_per_side` by `tiles_per_side` primitives, 1 for one piece), the skirt and the water (the skirt, when `skirt_depth` is above 0, carries the four edges down that far below the lowest ground): the ground, one surface textured by `texture_uri` (a path relative to the .glb; RenderTerrainTexture makes the picture) so
     // biome borders blend and rivers have banks, and the water, flat on every lake and the sea (rivers a hair above their carved beds).
     static assets::procedural::ProceduralMesh BuildTexturedTerrainModel(const terrain::GeneratedTerrain& terrain, u32 max_grid, const std::string& texture_uri, f32 skirt_depth = 0.0f,
-                                                                           const std::string& water_texture_uri = "", const std::string& water_normal_uri = "");
+                                                                           const std::string& water_texture_uri = "", const std::string& water_normal_uri = "", u32 tiles_per_side = 1);
 
     // Into the other editors: the terrain editor takes the heightmap, layers and splatmap (the sculpt tools carry on from it); the foliage editor takes
     // the instances as a layer with one type per rule (one undo step). False when nothing is generated.

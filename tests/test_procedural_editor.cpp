@@ -583,3 +583,24 @@ AETHER_TEST(ProceduralEditor_OptInBakeOfAFullSizeWorld) {
         CHECK(report.ok);
     }
 }
+
+AETHER_TEST(ProceduralEditor_TheGroundCanBeCutIntoTilesWithoutAChangeToItsShape) {
+    ProceduralWorldDocument doc(Small());
+    doc.Generate();
+    const GeneratedTerrain& t = doc.Terrain();
+    const assets::procedural::ProceduralMesh whole = ProceduralWorldDocument::BuildTexturedTerrainModel(t, 64, "g.png", 5.0f, "", "", 1);
+    const assets::procedural::ProceduralMesh tiled = ProceduralWorldDocument::BuildTexturedTerrainModel(t, 64, "g.png", 5.0f, "", "", 4);
+    std::string error;
+    CHECK(assets::procedural::ValidateMesh(tiled, &error));
+    CHECK(tiled.mesh.primitives.size() > whole.mesh.primitives.size()); // the ground is in pieces, the rest as it was
+    CHECK(tiled.TriangleCount() == whole.TriangleCount());              // not a triangle more or less
+    CHECK(tiled.materials.size() == whole.materials.size());
+    // The ground's tiles each have bounds a fraction of the map (so the player can cull them); the skirt, the thin wall round the edge, is still one piece the width of it.
+    f32 map_width = 0.0f;
+    for (const auto& p : whole.mesh.primitives) map_width = std::max(map_width, p.bounds_max.x - p.bounds_min.x);
+    u32 narrow = 0;
+    for (const auto& p : tiled.mesh.primitives)
+        if (p.material == 0 && p.bounds_max.x - p.bounds_min.x < map_width * 0.6f) ++narrow;
+    std::printf("    map %.0f m wide; %u ground tiles under 60%% of it\n", map_width, narrow);
+    CHECK(map_width > 0.0f && narrow >= 10);
+}

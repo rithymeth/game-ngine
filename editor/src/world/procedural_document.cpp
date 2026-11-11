@@ -298,7 +298,7 @@ ProceduralMesh ProceduralWorldDocument::BuildTerrainModel(const GeneratedTerrain
     return out;
 }
 
-ProceduralMesh ProceduralWorldDocument::BuildTexturedTerrainModel(const GeneratedTerrain& t, u32 max_grid, const std::string& texture_uri, f32 skirt_depth, const std::string& water_texture_uri, const std::string& water_normal_uri) {
+ProceduralMesh ProceduralWorldDocument::BuildTexturedTerrainModel(const GeneratedTerrain& t, u32 max_grid, const std::string& texture_uri, f32 skirt_depth, const std::string& water_texture_uri, const std::string& water_normal_uri, u32 tiles_per_side) {
     ProceduralMesh out;
     const u32 w = t.Width(), h = t.Height();
     if (w < 2 || h < 2) return out;
@@ -353,7 +353,8 @@ ProceduralMesh ProceduralWorldDocument::BuildTexturedTerrainModel(const Generate
     ground_material.base_color_texture = texture_uri;
     ground_material.detail = 0.85f; // a micro-surface over the stretched texture, so the ground stays rough up close
     out.materials.push_back(ground_material);
-    out.mesh.primitives.push_back(ground.Finish(Shading::Smooth, UvMode::Given, 0));
+    // Cut into tiles: one primitive has one bounding sphere around the whole map, so it is never culled, by the camera or by a shadow cascade.
+    for (assets::MeshPrimitiveData& tile : SplitIntoTiles(ground.Finish(Shading::Smooth, UvMode::Given, 0), tiles_per_side, tiles_per_side)) out.mesh.primitives.push_back(std::move(tile));
     // The skirt: the four edges carried down to `skirt_depth` below the lowest ground, so the terrain is a block with its soil showing and not a sheet
     // with an open lip. It is flat shaded, textured by the edge of the ground texture (stretched down), and drawn with the ground's material.
     MeshBuilder skirt;
@@ -457,7 +458,7 @@ BakeReport ProceduralWorldDocument::Bake(const std::string& content_root, const 
             if (!write(name + "_water_normal.png", assets::EncodePngRgb8(normal_size, normal_size, RenderWaterNormalMap(terrain_, generated_terrain_settings_, normal_size)))) return report;
             water_normal_uri = name + "_water_normal.png";
         }
-        ground = BuildTexturedTerrainModel(terrain_, options.terrain_grid, name + "_terrain.png", options.terrain_skirt, water_uri, water_normal_uri);
+        ground = BuildTexturedTerrainModel(terrain_, options.terrain_grid, name + "_terrain.png", options.terrain_skirt, water_uri, water_normal_uri, options.terrain_tiles);
     } else {
         ground = BuildTerrainModel(terrain_, options.terrain_grid);
     }
