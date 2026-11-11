@@ -39,6 +39,9 @@ struct ProceduralWorldSettings {
 
 ProceduralWorldSettings MakePreset(WorldPreset preset);
 
+// The parts the player's figure is built from (ProceduralWorldDocument::BuildPlayerModel).
+enum class PlayerPart : u8 { Whole, Body, LegLeft, LegRight, ArmLeft, ArmRight };
+
 struct BakeOptions {
     std::string name = "Generated";
     u32 max_scene_instances = 5000; // the player draws one call per object; the rest are left out and counted
@@ -120,8 +123,11 @@ public:
     // Where a player starts: dry land (well above the sea) on a gentle slope with gentle, dry ground round it, the closest such place to the middle of the map; else the highest
     // sample. The y is the ground's height there. Needs a generated terrain.
     static Vec3 FindSpawnPoint(const terrain::GeneratedTerrain& terrain);
-    // A figure about 1.8 m tall standing on y = 0, facing -z, from a few primitives in four colours (a jacket, trousers, skin and a pack); under 700 triangles.
-    static assets::procedural::ProceduralMesh BuildPlayerModel();
+    // A figure about 1.8 m tall standing on y = 0, facing -z, from a few primitives in four colours (a jacket, trousers, skin and a pack); under 700 triangles in all.
+    // `Whole` is all of it in one piece; the others are its jointed parts: `Body` (torso, neck, head, pack) with its origin at the feet, and an arm or a leg with its origin at the
+    // shoulder or the hip (`PlayerJoint`), hanging down from there, so rotating the part's entity about X swings it.
+    static assets::procedural::ProceduralMesh BuildPlayerModel(PlayerPart part = PlayerPart::Whole);
+    static Vec3 PlayerJoint(PlayerPart part); // where a part's origin is, relative to the feet (zero for Whole and Body)
 
     // Into the other editors: the terrain editor takes the heightmap, layers and splatmap (the sculpt tools carry on from it); the foliage editor takes
     // the instances as a layer with one type per rule (one undo step). False when nothing is generated.

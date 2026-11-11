@@ -79,6 +79,29 @@ AETHER_TEST(ProceduralPlayer_ThePlayerModelIsAFigureStandingOnTheGround) {
     AETHER_CHECK(half_width < 0.5f);           // narrower than the character's capsule is tall
 }
 
+AETHER_TEST(ProceduralPlayer_TheJointedPartsMakeUpTheWholeFigureAndPivotAtTheirJoints) {
+    const PlayerPart parts[] = {PlayerPart::Body, PlayerPart::LegLeft, PlayerPart::LegRight, PlayerPart::ArmLeft, PlayerPart::ArmRight};
+    u32 triangles = 0;
+    for (const PlayerPart part : parts) {
+        const assets::procedural::ProceduralMesh m = ProceduralWorldDocument::BuildPlayerModel(part);
+        std::string error;
+        AETHER_CHECK(assets::procedural::ValidateMesh(m, &error));
+        AETHER_CHECK(m.TriangleCount() > 0);
+        triangles += m.TriangleCount();
+        f32 lo = 1e9f, hi = -1e9f;
+        for (const auto& p : m.mesh.primitives)
+            for (const auto& v : p.vertices) { lo = std::min(lo, v.position[1]); hi = std::max(hi, v.position[1]); }
+        if (part == PlayerPart::Body) {
+            AETHER_CHECK(lo > 0.8f && hi > 1.6f); // still at the figure's own height: its origin is the feet
+        } else {
+            AETHER_CHECK(hi < 0.12f && lo < -0.3f); // a limb hangs down from its joint, which is its origin
+            const Vec3 joint = ProceduralWorldDocument::PlayerJoint(part);
+            AETHER_CHECK(joint.y > 0.8f && std::fabs(joint.x) > 0.1f);
+        }
+    }
+    AETHER_CHECK(triangles == ProceduralWorldDocument::BuildPlayerModel(PlayerPart::Whole).TriangleCount()); // nothing lost, nothing doubled
+}
+
 #if AETHER_TEST_HAS_SCRIPTING && AETHER_TEST_HAS_PHYSICS && AETHER_EDITOR_NET_PHYSICS
 namespace {
 
@@ -133,6 +156,7 @@ struct Play {
         life = std::make_unique<Lifecycle>(world, guids);
         scripts = std::make_unique<script::ScriptSystem>(host, world, guids, script::ScriptSystem::DatabaseLoader(*db));
         scripts->Register(*life);
+        scripts->BindPhysicsScene(physics_scene.get()); // as the player does: the third person camera casts a sphere
         library.Load(*db);
         library.RegisterActions(input);
         if (!library.Activate(input, "Gameplay", 0)) { *why = "the Gameplay bindings did not activate"; return false; }
@@ -143,7 +167,9 @@ struct Play {
         camera = cameras[0];
         life->BeginPlay();
         for (const std::string& e : scripts->Errors()) std::printf("    script error: %s\n", e.c_str());
-        return scripts->Errors().empty() && scripts->InstanceCount() == 1;
+        if (!scripts->Errors().empty()) { *why = "a script failed"; return false; }
+        if (scripts->InstanceCount() != 5) { *why = "expected 5 scripts (the controller and four limbs), found " + std::to_string(scripts->InstanceCount()); return false; }
+        return true;
     }
     void Frames(int n, f32 dt = 1.0f / 60.0f) {
         for (int i = 0; i < n; ++i) {
@@ -201,7 +227,7 @@ AETHER_TEST(ProceduralPlayer_ABakedWorldCanBePlayed) {
 
     // It walks: W, D, S and A in turn (relative to where the camera looks), a second and a half each. At least one way is open for a few metres;
     // none puts it through the ground.
-    f32 best_distance = 0.0f, lowest = 1e9f;
+    f32 best_distance = 0.0f, lowest = 1e9f, camera_lowest = 1e9f;
     for (const input::Key key : {input::Key::W, input::Key::D, input::Key::S, input::Key::A}) {
         const Vec3 from = play.Position(play.player);
         play.state.SetButton(key, true);
@@ -209,6 +235,8 @@ AETHER_TEST(ProceduralPlayer_ABakedWorldCanBePlayed) {
             play.Frames(1);
             const Vec3 p = play.Position(play.player);
             lowest = std::min(lowest, p.y - play.Ground(p));
+            const Vec3 cam = play.Position(play.camera);
+            camera_lowest = std::min(camera_lowest, cam.y - play.Ground(cam));
         }
         play.state.SetButton(key, false);
         const Vec3 to = play.Position(play.player);
@@ -218,12 +246,56 @@ AETHER_TEST(ProceduralPlayer_ABakedWorldCanBePlayed) {
     std::printf("    the best direction covered %.1f m; the lowest the feet went below the ground: %.2f m\n", best_distance, lowest);
     AETHER_CHECK(best_distance > 3.0f);
     AETHER_CHECK(lowest > -0.4f);
+    std::printf("    the camera's lowest clearance over the ground while walking: %.2f m\n", camera_lowest);
+    AETHER_CHECK(camera_lowest > -0.1f); // the camera never goes into a hill
 
     // The camera followed: a few metres from the character, not inside the ground.
     const Vec3 p = play.Position(play.player), c = play.Position(play.camera);
     const f32 distance = std::sqrt((c.x - p.x) * (c.x - p.x) + (c.y - (p.y + 1.6f)) * (c.y - (p.y + 1.6f)) + (c.z - p.z) * (c.z - p.z));
     std::printf("    the camera is %.1f m from the character, %.2f m above the ground under it\n", distance, c.y - play.Ground(c));
     AETHER_CHECK(distance > 4.0f && distance < 8.0f);
+    stdfs::remove_all(play.root);
+}
+
+AETHER_TEST(ProceduralPlayer_TheFigureSwingsItsLimbsWhenItWalksAndSettlesWhenItStops) {
+    ProceduralWorldDocument doc(Hills());
+    doc.Generate();
+    Play play;
+    std::string why;
+    const bool loaded = play.Load(doc, stdfs::temp_directory_path() / "aether_procedural_swing", &why);
+    if (!loaded) std::printf("    %s\n", why.c_str());
+    AETHER_CHECK(loaded);
+    if (!loaded) return;
+    auto limb = [&](const char* tag) {
+        const std::vector<Entity> found = FindEntitiesWithTag(play.world, tag);
+        return found.empty() ? kNullEntity : found[0];
+    };
+    const Entity leg_left = limb("LegLeft"), leg_right = limb("LegRight"), arm_left = limb("ArmLeft"), arm_right = limb("ArmRight");
+    AETHER_CHECK(!leg_left.IsNull() && !leg_right.IsNull() && !arm_left.IsNull() && !arm_right.IsNull());
+    if (leg_left.IsNull() || leg_right.IsNull() || arm_left.IsNull() || arm_right.IsNull()) return;
+    auto swing = [&](Entity e) { return play.world.GetComponent<Transform>(e)->rotation.x; }; // sin of half the angle about X
+    // Standing: every limb is still.
+    play.Frames(120);
+    for (const Entity e : {leg_left, leg_right, arm_left, arm_right}) AETHER_CHECK(std::fabs(swing(e)) < 0.02f);
+    // Walking (whichever way is open): the legs swing, a leg against the other, and each arm against the leg on its side.
+    f32 widest = 0.0f, other_leg = 0.0f, same_side_arm = 0.0f;
+    for (const input::Key key : {input::Key::W, input::Key::D, input::Key::S, input::Key::A}) {
+        play.state.SetButton(key, true);
+        for (int i = 0; i < 90; ++i) {
+            play.Frames(1);
+            if (std::fabs(swing(leg_left)) > widest) { widest = std::fabs(swing(leg_left)); other_leg = swing(leg_right) * swing(leg_left); same_side_arm = swing(arm_left) * swing(leg_left); }
+        }
+        play.state.SetButton(key, false);
+        if (widest > 0.15f) break;
+        play.Frames(30);
+    }
+    std::printf("    widest leg swing: sin(half angle) %.2f (%.0f degrees), against the other leg %.3f, against its own-side arm %.3f\n", widest, 2.0f * std::asin(std::min(widest, 1.0f)) * 57.29578f, other_leg, same_side_arm);
+    AETHER_CHECK(widest > 0.15f);        // a swing of over 17 degrees
+    AETHER_CHECK(other_leg < 0.0f);      // the legs go opposite ways
+    AETHER_CHECK(same_side_arm < 0.0f);  // an arm against the leg on its side
+    // Stopped: it settles.
+    play.Frames(120);
+    for (const Entity e : {leg_left, leg_right, arm_left, arm_right}) AETHER_CHECK(std::fabs(swing(e)) < 0.05f);
     stdfs::remove_all(play.root);
 }
 #endif

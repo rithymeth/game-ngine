@@ -10,6 +10,7 @@ namespace aether::templates {
 
 extern const char* const kFirstPersonScript;
 extern const char* const kThirdPersonScript;
+extern const char* const kLimbSwingScript;
 extern const char* const kTopDownScript;
 extern const char* const kVehicleScript;
 
