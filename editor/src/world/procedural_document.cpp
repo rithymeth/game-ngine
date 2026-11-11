@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cmath>
 #include <filesystem>
+#include <limits>
 #include <fstream>
 #include <set>
 
@@ -294,7 +295,7 @@ ProceduralMesh ProceduralWorldDocument::BuildTerrainModel(const GeneratedTerrain
     return out;
 }
 
-ProceduralMesh ProceduralWorldDocument::BuildTexturedTerrainModel(const GeneratedTerrain& t, u32 max_grid, const std::string& texture_uri) {
+ProceduralMesh ProceduralWorldDocument::BuildTexturedTerrainModel(const GeneratedTerrain& t, u32 max_grid, const std::string& texture_uri, f32 skirt_depth) {
     ProceduralMesh out;
     const u32 w = t.Width(), h = t.Height();
     if (w < 2 || h < 2) return out;
@@ -306,11 +307,12 @@ ProceduralMesh ProceduralWorldDocument::BuildTexturedTerrainModel(const Generate
     zs.push_back(h - 1);
     const f32 cell = t.heightmap.cell_size;
     auto height_at = [&](u32 x, u32 z) { return t.heightmap.heights[t.Index(x, z)]; };
-    auto water_at = [&](u32 x, u32 z) {
+    // The water at a sample: a lake's fill level, the sea's level, or none (a negative infinity).
+    auto water_level = [&](u32 x, u32 z) -> f32 {
         const usize i = t.Index(x, z);
         if (i < t.lake.size() && t.lake[i] && i < t.fill_height.size()) return t.fill_height[i];
         if (t.heightmap.heights[i] <= t.sea_height) return t.sea_height;
-        return t.heightmap.heights[i];
+        return -std::numeric_limits<f32>::infinity();
     };
     MeshBuilder ground, water;
     // The ground is a grid of shared vertices (smooth normals), its UV the position over the map.
@@ -325,12 +327,14 @@ ProceduralMesh ProceduralWorldDocument::BuildTexturedTerrainModel(const Generate
             ground.Triangle(i00, i01, i10); // counter-clockwise from above: the ground faces up
             ground.Triangle(i10, i01, i11);
             const u32 x0 = xs[xi], x1 = xs[xi + 1], z0 = zs[zi], z1 = zs[zi + 1];
-            // Water geometry for lakes and the sea only; the rivers are in the ground texture.
-            const usize centre = t.Index((x0 + x1) / 2, (z0 + z1) / 2);
-            if (!(t.lake[centre] || t.heightmap.heights[centre] <= t.sea_height)) continue;
+            // Water geometry for lakes and the sea only (the rivers are in the ground texture). A quad with any corner in the water gets a flat quad at that
+            // water's level, which runs on under the dry corners: the ground hides it there, so the visible shoreline is where the ground really crosses the
+            // water level, not a staircase of whole quads.
+            const f32 level = std::max({water_level(x0, z0), water_level(x1, z0), water_level(x0, z1), water_level(x1, z1)});
+            if (!std::isfinite(level)) continue;
             const f32 fx0 = static_cast<f32>(x0) * cell, fx1 = static_cast<f32>(x1) * cell, fz0 = static_cast<f32>(z0) * cell, fz1 = static_cast<f32>(z1) * cell;
-            const u32 j00 = water.Vertex(Vec3(fx0, water_at(x0, z0), fz0)), j10 = water.Vertex(Vec3(fx1, water_at(x1, z0), fz0));
-            const u32 j01 = water.Vertex(Vec3(fx0, water_at(x0, z1), fz1)), j11 = water.Vertex(Vec3(fx1, water_at(x1, z1), fz1));
+            const u32 j00 = water.Vertex(Vec3(fx0, level, fz0)), j10 = water.Vertex(Vec3(fx1, level, fz0));
+            const u32 j01 = water.Vertex(Vec3(fx0, level, fz1)), j11 = water.Vertex(Vec3(fx1, level, fz1));
             water.Triangle(j00, j01, j10);
             water.Triangle(j10, j01, j11);
         }
@@ -342,6 +346,28 @@ ProceduralMesh ProceduralWorldDocument::BuildTexturedTerrainModel(const Generate
     ground_material.base_color_texture = texture_uri;
     out.materials.push_back(ground_material);
     out.mesh.primitives.push_back(ground.Finish(Shading::Smooth, UvMode::Given, 0));
+    // The skirt: the four edges carried down to `skirt_depth` below the lowest ground, so the terrain is a block with its soil showing and not a sheet
+    // with an open lip. It is flat shaded, textured by the edge of the ground texture (stretched down), and drawn with the ground's material.
+    MeshBuilder skirt;
+    if (skirt_depth > 0.0f) {
+        const f32 base = t.height_min - skirt_depth;
+        auto column = [&](u32 x, u32 z) {
+            const f32 fx = static_cast<f32>(x) * cell, fz = static_cast<f32>(z) * cell, u = static_cast<f32>(x) / static_cast<f32>(w - 1), v = static_cast<f32>(z) / static_cast<f32>(h - 1);
+            return std::pair<u32, u32>{skirt.Vertex(Vec3(fx, height_at(x, z), fz), u, v), skirt.Vertex(Vec3(fx, base, fz), u, v)};
+        };
+        // North (z = 0, facing -z) and south (z = max, facing +z) edges along x; west (x = 0, facing -x) and east (x = max, facing +x) along z.
+        for (usize xi = 0; xi + 1 < xs.size(); ++xi) {
+            const auto a = column(xs[xi], 0), b = column(xs[xi + 1], 0), c = column(xs[xi], h - 1), d = column(xs[xi + 1], h - 1);
+            skirt.Quad(a.first, b.first, b.second, a.second);
+            skirt.Quad(d.first, c.first, c.second, d.second);
+        }
+        for (usize zi = 0; zi + 1 < zs.size(); ++zi) {
+            const auto a = column(0, zs[zi]), b = column(0, zs[zi + 1]), c = column(w - 1, zs[zi]), d = column(w - 1, zs[zi + 1]);
+            skirt.Quad(b.first, a.first, a.second, b.second);
+            skirt.Quad(c.first, d.first, d.second, c.second);
+        }
+        out.mesh.primitives.push_back(skirt.Finish(Shading::Flat, UvMode::Given, 0));
+    }
     if (!water.Empty()) {
         assets::MaterialData m;
         m.base_color = Vec4(0.14f, 0.34f, 0.60f, 1.0f);
@@ -407,7 +433,7 @@ BakeReport ProceduralWorldDocument::Bake(const std::string& content_root, const 
         const u32 size = std::clamp(options.terrain_texture, 16u, 4096u);
         const std::vector<u8> pixels = RenderTerrainTexture(terrain_, generated_terrain_settings_, size);
         if (!write(name + "_terrain.png", assets::EncodePngRgb8(size, size, pixels))) return report;
-        ground = BuildTexturedTerrainModel(terrain_, options.terrain_grid, name + "_terrain.png");
+        ground = BuildTexturedTerrainModel(terrain_, options.terrain_grid, name + "_terrain.png", options.terrain_skirt);
     } else {
         ground = BuildTerrainModel(terrain_, options.terrain_grid);
     }
