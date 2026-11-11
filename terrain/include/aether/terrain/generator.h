@@ -110,8 +110,9 @@ std::vector<u8> RenderTerrainTexture(const GeneratedTerrain& terrain, const Terr
 // colour is the shallow one (the water plane's geometry is hidden under the ground there). Rivers are not here: they are painted into the ground.
 std::vector<u8> RenderWaterTexture(const GeneratedTerrain& terrain, const TerrainGenSettings& settings, u32 size);
 
-// A tangent-space normal map (RGB8) of ripples over the same map, in the same layout: three scales of smooth noise (about 0.7, 2 and 6 m across), `strength` 1 for a
-// gentle ripple. It is still: the engine's scene shader has no time input, so the water does not move, but the sun and the sky glint on the ripples.
+// A tangent-space normal map (RGB8) of ripples over the same map, in the same layout: a sum of waves at three scales (about 0.7, 2 and 6 m from crest to crest),
+// `strength` 1 for a gentle ripple. Each wave has a whole number of crests across the map, so the map is periodic: it tiles, and the scene shader's water
+// (AETHER_materials_water) can scroll it with the game's time without a seam.
 std::vector<u8> RenderWaterNormalMap(const GeneratedTerrain& terrain, const TerrainGenSettings& settings, u32 size, f32 strength = 1.0f);
 
 // A shaded-relief picture, RGB8 row-major `width * height * 3` bytes: biome colours lit from the north-west, rivers blue. For the editor's

@@ -40,6 +40,7 @@ struct FrameData {
     int4 vsm_window[3];       // the window's first page per level, two levels to a row
     uint4 vsm_info;           // x: the page atlas's bindless index (255: none); y: pages per side of the pool; z: the page table's byte offset
     float4 vsm_params;        // x: a footprint that does not depend on distance
+    float4 time;              // x: the game's time in seconds
 };
 ConstantBuffer<FrameData> g_Frame : register(b0, space2);
 

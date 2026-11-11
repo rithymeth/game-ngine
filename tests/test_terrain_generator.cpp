@@ -358,4 +358,25 @@ AETHER_TEST(TerrainWaterNormalMapHasUnitNormalsPointingUpWithRipples) {
         return sum;
     };
     AETHER_CHECK(spread(2.0f) > spread(0.5f) * 2.0);
+
+    // Periodic: the map tiles, so scrolling it (the sampler wraps) shows no seam. The step across the wrap, from the last column to the first, is no bigger than
+    // the steps between neighbouring columns elsewhere.
+    auto normal_at = [&](u32 x, u32 y, int c) { return static_cast<double>(n[(static_cast<usize>(y) * size + x) * 3 + static_cast<usize>(c)]); };
+    double seam = 0.0, inside = 0.0;
+    for (u32 y = 0; y < size; ++y)
+        for (u32 x = 0; x + 1 < size; ++x) {
+            for (int c = 0; c < 2; ++c) {
+                inside += std::fabs(normal_at(x, y, c) - normal_at(x + 1, y, c));
+            }
+        }
+    for (u32 y = 0; y < size; ++y)
+        for (int c = 0; c < 2; ++c) seam += std::fabs(normal_at(size - 1, y, c) - normal_at(0, y, c));
+    inside /= static_cast<double>(size) * (size - 1) * 2.0;
+    seam /= static_cast<double>(size) * 2.0;
+    AETHER_CHECK(seam < inside * 1.6 + 0.5);
+    double seam_rows = 0.0;
+    for (u32 x = 0; x < size; ++x)
+        for (int c = 0; c < 2; ++c) seam_rows += std::fabs(normal_at(x, size - 1, c) - normal_at(x, 0, c));
+    seam_rows /= static_cast<double>(size) * 2.0;
+    AETHER_CHECK(seam_rows < inside * 1.6 + 0.5);
 }

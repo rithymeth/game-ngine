@@ -378,6 +378,7 @@ ProceduralMesh ProceduralWorldDocument::BuildTexturedTerrainModel(const Generate
         m.metallic = 0.0f;
         m.base_color_texture = water_texture_uri;
         m.normal_texture = water_normal_uri;
+        m.water = !water_normal_uri.empty(); // the ripples move: the scene shader scrolls this material's normal map with the game's time
         // With a texture its alpha is the water's opacity (the glTF material blends); without one, the water is a solid colour.
         if (!water_texture_uri.empty()) m.alpha_mode = assets::MaterialAlphaMode::Blend;
         out.materials.push_back(m);
