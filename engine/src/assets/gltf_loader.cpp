@@ -976,6 +976,11 @@ static bool ParseGltfText(const std::string& text, const std::string& path, bool
                     const f32 strength = it != wind->end() && it->is_number() ? it->get<f32>() : 0.1f;
                     material.wind = std::isfinite(strength) ? std::clamp(strength, 0.0f, 0.3f) : 0.0f;
                 }
+                if (const Json* detail = object_of("AETHER_materials_detail")) {
+                    const auto it = detail->find("strength");
+                    const f32 strength = it != detail->end() && it->is_number() ? it->get<f32>() : 0.6f;
+                    material.detail = std::isfinite(strength) ? std::clamp(strength, 0.0f, 1.0f) : 0.0f;
+                }
                 if (const Json* hair = object_of("AETHER_materials_hair")) {
                     material.hair = true;
                     material.hair_shift = hair->value("hairShift", 0.0f);

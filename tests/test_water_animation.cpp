@@ -363,7 +363,7 @@ static void Wind_TheComponentBlowsInTheWorldWhicheverWayAnObjectFaces(rhi::Backe
 }
 
 // A tuft on a grey ground with the sun low and shadows on, the wind blowing east: where the grass's shadow falls, as the centroid of the ground darkened by it.
-fs::path CookShadowScene(const fs::path& root, bool wind) {
+fs::path CookShadowScene(const fs::path& root, bool wind, f32 detail = 0.0f, bool with_grass = true) {
     fs::create_directories(root / "Content/models");
     fs::create_directories(root / "Content/Scenes");
     const fs::path games = fs::path(AETHER_REPO_ASSETS_DIR).parent_path() / "games/AETHER-01";
@@ -387,6 +387,7 @@ fs::path CookShadowScene(const fs::path& root, bool wind) {
     material.base_color = Vec4(0.6f, 0.6f, 0.6f, 1.0f);
     material.roughness = 0.9f;
     material.metallic = 0.0f;
+    material.detail = detail;
     ground.materials.push_back(material);
     ground.mesh.primitives.push_back(quad.Finish(Shading::Smooth, UvMode::Given, 0));
     const std::vector<u8> ground_glb = EncodeGlb(ground);
@@ -404,7 +405,9 @@ fs::path CookShadowScene(const fs::path& root, bool wind) {
         SceneEntity({{"Transform", {{"$v", 1}, {"position", {0.0f, 0.0f, 0.0f}}, {"rotation", {0.0f, 0.0f, 0.0f, 1.0f}}, {"scale", {6.0f, 6.0f, 6.0f}}}},
                      {"ModelRenderer", {{"$v", 1}, {"model", ""}, {"asset_path", "models/grass.glb"}}}}),
         SceneEntity({{"Transform", TransformJson({0, 0, 0})}, {"Wind", east}})};
-    const reflect::Json scene = {{"$type", "Scene"}, {"$version", 1}, {"entities", entities}};
+    reflect::Json all_entities = entities;
+    if (!with_grass) all_entities.erase(4); // the tuft (after the camera, the sun, the sky and the ground)
+    const reflect::Json scene = {{"$type", "Scene"}, {"$version", 1}, {"entities", all_entities}};
     std::ofstream(root / "Content/Scenes/Main.ascene") << scene.dump(2);
     cook::CookOptions options;
     options.project_file = root / "WaterScene.aproject";
@@ -455,6 +458,43 @@ static void Wind_TheShadowSwaysWithTheGrass(rhi::Backend backend) {
 }
 AETHER_TEST(Wind_TheShadowSwaysWithTheGrass_D3D12) { Wind_TheShadowSwaysWithTheGrass(rhi::Backend::D3D12); }
 AETHER_TEST(Wind_TheShadowSwaysWithTheGrass_Vulkan) { Wind_TheShadowSwaysWithTheGrass(rhi::Backend::Vulkan); }
+
+// The detail layer: a flat grey ground lit by the sun is smooth, and with AETHER_materials_detail on its material the same ground shows a fine micro-surface, so the
+// pixel-to-pixel variation of its brightness is much larger. Measured as the mean difference between neighbouring pixels over the middle of the picture (a smooth
+// gradient has almost none).
+static void Detail_AGroundWithTheLayerIsRoughUpClose(rhi::Backend backend) {
+    if (!rhi::IsBackendAvailable(backend)) return;
+    SetEnvironmentVariableForTest("AETHER_RENDER_TAA", "0");
+    constexpr u32 W = 640, H = 360;
+    const fs::path root = fs::temp_directory_path() / "aether_detail" / assets::ToString(assets::NewAssetGuid());
+    const fs::path smooth_pak = CookShadowScene(root / "smooth", false, 0.0f, false), rough_pak = CookShadowScene(root / "rough", false, 1.0f, false);
+    if (smooth_pak.empty() || rough_pak.empty()) return;
+    const auto smooth = FrameAfter(backend, root / "smooth", smooth_pak, 0, W, H), rough = FrameAfter(backend, root / "rough", rough_pak, 0, W, H);
+    SetEnvironmentVariableForTest("AETHER_RENDER_TAA", "");
+    const usize bytes = static_cast<usize>(W) * H * 4;
+    if (smooth.size() != bytes || rough.size() != bytes) {
+        AETHER_CHECK(false);
+        return;
+    }
+    const auto roughness = [&](const std::vector<u8>& frame) {
+        double total = 0.0;
+        usize count = 0;
+        for (u32 y = 120; y < 280; ++y)
+            for (u32 x = 160; x < 480; ++x) {
+                const usize i = (static_cast<usize>(y) * W + x) * 4, j = i + 4;
+                total += std::abs(static_cast<int>(frame[i + 1]) - static_cast<int>(frame[j + 1]));
+                ++count;
+            }
+        return total / static_cast<double>(count);
+    };
+    const double flat = roughness(smooth), grainy = roughness(rough);
+    std::printf("    %s: the mean step between neighbouring pixels is %.3f without the layer and %.3f with it\n", backend == rhi::Backend::Vulkan ? "vulkan" : "d3d12", flat, grainy);
+    AETHER_CHECK(grainy > flat * 4.0 + 0.3);
+    std::error_code ignored;
+    fs::remove_all(root, ignored);
+}
+AETHER_TEST(Detail_AGroundWithTheLayerIsRoughUpClose_D3D12) { Detail_AGroundWithTheLayerIsRoughUpClose(rhi::Backend::D3D12); }
+AETHER_TEST(Detail_AGroundWithTheLayerIsRoughUpClose_Vulkan) { Detail_AGroundWithTheLayerIsRoughUpClose(rhi::Backend::Vulkan); }
 
 // A wind zone replaces the world's wind where an object stands in it: an east wind everywhere, a zone around the tuft that blows toward the camera, and only the
 // tuft inside the zone loses its sideways sway; a zone elsewhere changes nothing.

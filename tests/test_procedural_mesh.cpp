@@ -524,4 +524,18 @@ AETHER_TEST(ProceduralVegetationSwaysAndStoneAndBarkDoNot) {
     AETHER_CHECK(ReadGlbChunks(EncodeGlb(GenerateRock(RockParams{}, 1)), json, bin) && json.find("extensionsUsed") == std::string::npos);
     // Wind alone lists only itself.
     AETHER_CHECK(ReadGlbChunks(EncodeGlb(GenerateGrass(GrassParams{}, 1)), json, bin) && json.find("\"extensionsUsed\":[\"AETHER_materials_wind\"]") != std::string::npos);
+
+    // The detail layer: an extension on the material (listed after the others), read back clamped, and absent from a plain one.
+    ProceduralMesh rough = GenerateRock(RockParams{}, 1);
+    rough.materials[0].detail = 0.75f;
+    GltfScene rough_scene;
+    const std::vector<u8> rough_glb = EncodeGlb(rough);
+    AETHER_CHECK(ReadGlbChunks(rough_glb, json, bin) && json.find("\"extensionsUsed\":[\"AETHER_materials_detail\"]") != std::string::npos);
+    AETHER_CHECK(json.find("\"AETHER_materials_detail\":{\"strength\":0.75") != std::string::npos);
+    AETHER_CHECK(LoadGltfFromMemory(rough_glb, rough_scene) && std::fabs(rough_scene.materials[0].detail - 0.75f) < 1e-5f && rough_scene.materials[0].wind == 0.0f);
+    rough.materials[0].detail = 7.0f; // out of range in a hand-made file: the loader clamps
+    rough.materials[0].wind = 0.1f;
+    AETHER_CHECK(ReadGlbChunks(EncodeGlb(rough), json, bin) && json.find("\"extensionsUsed\":[\"AETHER_materials_wind\",\"AETHER_materials_detail\"]") != std::string::npos);
+    AETHER_CHECK(LoadGltfFromMemory(EncodeGlb(rough), rough_scene) && rough_scene.materials[0].detail == 1.0f);
+    AETHER_CHECK(plain.materials[0].detail == 0.0f);
 }

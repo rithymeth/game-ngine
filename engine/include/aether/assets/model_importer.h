@@ -58,6 +58,7 @@ struct MaterialData {
     // sub-asset's serialised form (an imported model's Material asset does not keep it).
     bool water = false;
     f32 wind = 0.0f; // AETHER_materials_wind: metres of sway at the top (0 to 0.3), also not part of the serialised Material asset
+    f32 detail = 0.0f; // AETHER_materials_detail: 0 to 1, a micro-surface from world position, likewise not serialised
     std::string base_color_texture;
     std::string normal_texture;
     std::string metallic_roughness_texture;
