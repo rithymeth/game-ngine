@@ -5164,8 +5164,10 @@
   type struct PostProcessVolume
   type struct SkyLight
   type struct SpotLight
+  type struct Wind
   ))AETHER_ENUM(aether::Tonemapper,1,AETHER_ENUM_VALUE(ACES),AETHER_ENUM_VALUE(AgX),AETHER_ENUM_VALUE(None))AETHER_REFLECT(aether::PostProcessVolume,1,AETHER_FIELD(global,Field_EditAnywhere,
   ))AETHER_REFLECT(aether::Decal,1,AETHER_FIELD(texture,Field_EditAnywhere,
+  ))AETHER_REFLECT(aether::Wind,1,AETHER_FIELD(direction_degrees,Field_EditAnywhere,
   ),AETHER_FIELD(angle_fade_end,Field_EditAnywhere,
   ),AETHER_FIELD(angle_fade_start,Field_EditAnywhere,
   ),AETHER_FIELD(blend_distance,Field_EditAnywhere,
@@ -5179,6 +5181,8 @@
   ),AETHER_FIELD(environment_rotation_degrees,Field_EditAnywhere,
   ),AETHER_FIELD(exposure_compensation,Field_EditAnywhere,
   ),AETHER_FIELD(extents,Field_EditAnywhere,
+  ),AETHER_FIELD(gust_speed,Field_EditAnywhere,
+  ),AETHER_FIELD(gustiness,Field_EditAnywhere,
   ),AETHER_FIELD(inner_angle_degrees,Field_EditAnywhere,
   ),AETHER_FIELD(outer_angle_degrees,Field_EditAnywhere,
   ),AETHER_FIELD(priority,Field_EditAnywhere,
@@ -5186,6 +5190,7 @@
   ),AETHER_FIELD(saturation,Field_EditAnywhere,
   ),AETHER_FIELD(size,Field_EditAnywhere,
   ),AETHER_FIELD(sort_order,Field_EditAnywhere,
+  ),AETHER_FIELD(strength,Field_EditAnywhere,
   ),AETHER_FIELD(tonemapper,Field_EditAnywhere),AETHER_FIELD(fog_density,Field_EditAnywhere,
   ),AETHER_FIELD(vignette,Field_EditAnywhere,
   ),AETHER_FIELD(weight,Field_EditAnywhere,

@@ -397,3 +397,8 @@ read `g_Frame.time.x` too.
 A glTF material with the `AETHER_materials_wind` extension (metres of sway at the top, 0 to 0.3) sways in the vertex shader with the game's time, weighted by height so roots stay put,
 with a phase from where each instance stands so a field moves like a gust. The procedural generators set it on grass, reeds, shrub and tree leaves (a `sway` setting on each, 0 for
 none). Shadows do not sway yet.
+
+## A global Wind
+
+A `Wind` component (direction in degrees about up, strength 0 to 4, gust speed, gustiness) sets the wind every swaying material follows; the first in the world is used, a world without one keeps the
+old breeze. The direction is in the world whatever way an object faces, and the sway is in world metres whatever its scale (a scaled-up tuft used to sway further).

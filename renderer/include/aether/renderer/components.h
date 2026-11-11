@@ -42,6 +42,15 @@ struct SkyLight {
     f32 environment_rotation_degrees = 0.0f;
 };
 
+// Wind over the scene: what the vegetation's sway (a material with AETHER_materials_wind) follows. The first Wind in the world is used; a world without one has a
+// gentle breeze from the west-southwest (27 degrees, strength 1), which is what the sway was before there was a Wind component.
+struct Wind {
+    f32 direction_degrees = 27.0f; // the way the wind blows, about +Y: 0 toward +X, 90 toward +Z (a direction in the world, whatever way an object is turned)
+    f32 strength = 1.0f;           // 0 is calm, 1 a breeze, up to 4 a gale: it multiplies every material's sway
+    f32 gust_speed = 1.0f;         // how fast the swells come and go, 0.1 to 4 times the usual
+    f32 gustiness = 0.4f;          // 0 to 1: how much of the sway is the slow, uneven swell that varies along an object (0 is a steady sway)
+};
+
 enum class Tonemapper : u8 { ACES, AgX, None };
 
 // Post-processing settings. A global volume applies everywhere; a bounded one
@@ -104,6 +113,12 @@ AETHER_REFLECT(aether::SkyLight, 1,
     AETHER_FIELD(intensity, Field_EditAnywhere, {.range_min = 0.0, .range_max = 1000.0}),
     AETHER_FIELD(environment, Field_EditAnywhere, {.tooltip = "An equirectangular sky image in the package (.hdr or LDR); empty uses a procedural sky"}),
     AETHER_FIELD(environment_rotation_degrees, Field_EditAnywhere, {.tooltip = "Turns the sky image about the up axis", .range_min = -360.0, .range_max = 360.0, .units = "deg"})
+)
+AETHER_REFLECT(aether::Wind, 1,
+    AETHER_FIELD(direction_degrees, Field_EditAnywhere, {.tooltip = "The way the wind blows: 0 toward +X, 90 toward +Z", .range_min = -360.0, .range_max = 360.0, .units = "deg"}),
+    AETHER_FIELD(strength, Field_EditAnywhere, {.tooltip = "0 calm, 1 a breeze, 4 a gale: multiplies every material's sway", .range_min = 0.0, .range_max = 4.0}),
+    AETHER_FIELD(gust_speed, Field_EditAnywhere, {.tooltip = "How fast the swells come and go", .range_min = 0.1, .range_max = 4.0}),
+    AETHER_FIELD(gustiness, Field_EditAnywhere, {.tooltip = "How much of the sway is the slow, uneven swell (0 is a steady sway)", .range_min = 0.0, .range_max = 1.0})
 )
 AETHER_ENUM(aether::Tonemapper, 1, AETHER_ENUM_VALUE(ACES), AETHER_ENUM_VALUE(AgX), AETHER_ENUM_VALUE(None))
 AETHER_REFLECT(aether::PostProcessVolume, 1,

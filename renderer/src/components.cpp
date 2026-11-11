@@ -10,6 +10,7 @@ void RegisterRenderComponents() {
     (void)GetComponentId<PointLight>();
     (void)GetComponentId<SpotLight>();
     (void)GetComponentId<SkyLight>();
+    (void)GetComponentId<Wind>();
     (void)GetComponentId<PostProcessVolume>();
     (void)GetComponentId<Decal>();
     (void)GetComponentId<MaterialParameters>();

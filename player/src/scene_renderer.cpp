@@ -247,14 +247,18 @@ PSInput VSMain(VSInput input) {
 #ifdef AETHER_FRAME_DATA
     if (wind_level != 0) {
         float phase = f16tof32(g_PC.g_ColorPacked.y >> 16);
-        float t = g_Frame.time.x;
+        float t = g_Frame.time.x * g_Frame.wind.w;
         float height = max(position.y, 0.0);
         float weight = height / (height + 0.3);
-        // Two slow swells, one of them varying along the object a little so its parts do not move in step.
-        float gust = sin(t * 1.9 + phase) * 0.6 + sin(t * 0.83 + phase * 1.7 + position.x * 2.0 + position.z * 1.3) * 0.4;
-        float amount = float(wind_level) * 0.02 * weight * gust;
-        position.x += amount;
-        position.z += amount * 0.5;
+        // Two swells: a steady one, and a slower, uneven one that varies along the object so its parts do not move in step. Gustiness is the share of the second.
+        float gust = sin(t * 1.9 + phase) * (1.0 - g_Frame.wind_gusts.x) + sin(t * 0.83 + phase * 1.7 + position.x * 2.0 + position.z * 1.3) * g_Frame.wind_gusts.x;
+        // The wind blows in the world; the sway is added to a position in the object's own space, so the world direction goes through the inverse of the model's
+        // linear part (the stored normal matrix is its inverse transpose, so the inverse is that matrix transposed). It also divides out the object's scale: a
+        // metre of sway is a metre in the world however big the model is made.
+        float3 world_sway = float3(g_Frame.wind.x, 0.0, g_Frame.wind.y) * (float(wind_level) * 0.02 * weight * gust * g_Frame.wind.z);
+        position += float3(GetNormalCoefficient(0) * world_sway.x + GetNormalCoefficient(3) * world_sway.y + GetNormalCoefficient(6) * world_sway.z,
+                           GetNormalCoefficient(1) * world_sway.x + GetNormalCoefficient(4) * world_sway.y + GetNormalCoefficient(7) * world_sway.z,
+                           GetNormalCoefficient(2) * world_sway.x + GetNormalCoefficient(5) * world_sway.y + GetNormalCoefficient(8) * world_sway.z);
     }
 #endif
     output.position = mul(g_PC.g_Mvp, float4(position, 1.0));
