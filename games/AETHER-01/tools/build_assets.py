@@ -145,7 +145,7 @@ for j in range(M):
  z=-size/2+size*j/(M-1); x=7*math.sin(z*.095)+3*math.sin(z*.21); y=height(x,z)+.16; width=1.8+1.0*(.5+.5*math.sin(z*.14))
  rv.extend(((x-width,y,z),(x+width,y,z)))
  if j:
-  q=2*j;rf.extend(((q-2,q-1,q),(q-1,q+1,q)))
+  q=2*j;rf.extend(((q-2,q,q-1),(q-1,q,q+1))) # counter-clockwise seen from above, so the surface faces up
 e.geom('Glacier meltwater',rv,rf,water)
 # Random but deterministic rock formations with multi-tier tapered octagonal columns and debris field
 import random
