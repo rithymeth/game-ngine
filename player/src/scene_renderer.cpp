@@ -24,6 +24,7 @@
 #include "sky_pass.h"
 #include "taa_pass.h"
 #include "view_cull.h"
+#include "mesh_lod.h"
 #include "virtual_shadow.h"
 #include "vsm_pass.h"
 #include "package_textures.h"
@@ -959,6 +960,9 @@ struct SceneRenderer::Impl {
         f32 bounds_center[3] = {0, 0, 0};
         f32 bounds_radius = -1.0f;
         f32 bounds_height = 0.0f; // the bounds' extent in y: a flat sheet of water has almost none
+        // A cheaper index list over the same vertices, drawn when the primitive covers few pixels (mesh_lod.h); only swaying plants have one.
+        BufferHandle lod_indices;
+        u32 lod_index_count = 0;
         // A skinned primitive's bind-pose bounding sphere, grown by half for its poses: what a virtual shadow page redraws when it moves.
         f32 skin_bounds_center[3] = {0, 0, 0};
         f32 skin_bounds_radius = -1.0f;
@@ -1173,6 +1177,7 @@ struct SceneRenderer::Impl {
                         primitive.vertices = {};
                     }
                     free_buffer(primitive.indices);
+                    if (primitive.lod_indices.IsValid()) free_buffer(primitive.lod_indices);
                     free_texture(primitive.extension_texture);
                 }
             }
@@ -2224,6 +2229,18 @@ struct SceneRenderer::Impl {
                     draw.water = material.water;
                     draw.detail_level = static_cast<u32>(std::clamp(std::lround(material.detail * 7.0f), 0l, 7l));
                     draw.wind_level = static_cast<u32>(std::clamp(std::lround(material.wind / 0.02f), 0l, 15l));
+                    // A plant far away needs fewer triangles: its far level shares the vertex buffer, so it costs one index buffer.
+                    static const bool lod_enabled = [] { const char* v = std::getenv("AETHER_RENDER_LOD"); return !(v && v[0] == '0'); }();
+                    if (lod_enabled && draw.wind_level != 0 && !has_skinning && primitive.indices.size() >= 3 * 100) {
+                        std::vector<Vec3> positions;
+                        positions.reserve(vertices.size());
+                        for (const SceneVertex& v : vertices) positions.push_back(Vec3(v.position[0], v.position[1], v.position[2]));
+                        const std::vector<u32> lod = SimplifyIndices(positions, primitive.indices, LodTargetRatio(primitive.indices.size() / 3));
+                        if (!lod.empty()) {
+                            draw.lod_indices = device.CreateIndexBuffer(lod.data(), lod.size() * sizeof(u32), IndexFormat::UInt32);
+                            draw.lod_index_count = static_cast<u32>(lod.size());
+                        }
+                    }
                     const usize material_index = static_cast<usize>(primitive.material_index);
                     if (material.HasSurfaceExtension()) {
                         if (extension_textures.size() < out.scene.materials.size()) extension_textures.resize(out.scene.materials.size());
@@ -2366,6 +2383,7 @@ void SceneRenderer::SetRenderPoseSampler(std::function<bool(Entity, Transform&)>
 }
 
 void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
+    constexpr f32 kFarLevelPixels = 24.0f; // a primitive whose bounding sphere is under this many pixels in radius draws its far level
     struct PendingTransparentDraw {
         BufferHandle vertices;
         BufferHandle indices;
@@ -2857,15 +2875,17 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                             }
                             // Out of the main camera's view and too small to cover a pixel: not drawn into the scene. Skinned and animated meshes and the water
                             // are always drawn (their bounds do not hold what the vertex shader does to them); a plant's bounds grow by the most it sways.
-                            bool in_view = true;
-                            if (cull_to_view && have_camera && primitive.bounds_radius >= 0.0f && primitive.frame_vertex_buffers.empty() && !uploaded_animation && !primitive.water) {
+                            bool in_view = true, far_level = false;
+                            if ((cull_to_view || primitive.lod_index_count != 0) && have_camera && primitive.bounds_radius >= 0.0f && primitive.frame_vertex_buffers.empty() && !uploaded_animation && !primitive.water) {
                                 const Vec4 centre = model_transform * Vec4(primitive.bounds_center[0], primitive.bounds_center[1], primitive.bounds_center[2], 1.0f);
                                 const f32 scale = std::max({Vec3(model_transform.cols[0].x, model_transform.cols[0].y, model_transform.cols[0].z).Length(),
                                                             Vec3(model_transform.cols[1].x, model_transform.cols[1].y, model_transform.cols[1].z).Length(),
                                                             Vec3(model_transform.cols[2].x, model_transform.cols[2].y, model_transform.cols[2].z).Length()});
                                 f32 radius = primitive.bounds_radius * scale;
                                 if (primitive.wind_level != 0) radius += static_cast<f32>(primitive.wind_level) * 0.02f * WindForDraw(frame_data, wind_zone_bits).strength * 1.01f + 0.01f;
-                                in_view = SphereVisible(view_frustum, Vec3(centre.x, centre.y, centre.z), radius * 1.05f + 0.05f, 0.25f);
+                                if (cull_to_view) in_view = SphereVisible(view_frustum, Vec3(centre.x, centre.y, centre.z), radius * 1.05f + 0.05f, 0.25f);
+                                // A plant that covers few pixels takes its far level; the shadow casters keep the full mesh.
+                                if (primitive.lod_index_count != 0) far_level = ProjectedRadiusPixels(view_frustum, Vec3(centre.x, centre.y, centre.z), radius) < kFarLevelPixels;
                             }
                             if (primitive.alpha_mode == assets::MaterialAlphaMode::Blend) {
                                 if (!in_view) continue;
@@ -2877,7 +2897,8 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                             } else {
                                 const bool reflect = primitive.wind_level == 0 && !primitive.water && !uploaded_animation;
                                 if (in_view || reflect) {
-                                    opaque_draws.push_back({frame_vertex_buffer, primitive.indices, primitive.index_count, constants, cull, model_transform, reflect, in_view});
+                                    opaque_draws.push_back({frame_vertex_buffer, far_level ? primitive.lod_indices : primitive.indices, far_level ? primitive.lod_index_count : primitive.index_count,
+                                                            constants, cull, model_transform, reflect, in_view});
                                 }
                                 if (transform_moved || previous_positions != kTaaNoPreviousPositions) {
                                     taa_movers.push_back({frame_vertex_buffer, primitive.indices, primitive.index_count,
@@ -2919,6 +2940,12 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                                             caster.deforming = true;
                                             if (caster.bounds_radius >= 0.0f) caster.bounds_radius += amplitude * 1.01f + 0.01f;
                                         }
+                                    }
+                                    // A swaying plant casts into the cascades only (the pages hold what stands still), so its far level can stand in for it there without
+                                    // a page holding the other one; the shadow of a plant that small on screen is a few texels.
+                                    if (far_level && caster.deforming) {
+                                        caster.indices = primitive.lod_indices;
+                                        caster.index_count = primitive.lod_index_count;
                                     }
                                     shadow_casters.push_back(caster);
                                     if (renderer.rt_shadows && !caster.deforming && !caster.alpha_tested && primitive.frame_vertex_buffers.empty()) {

@@ -59,4 +59,12 @@ inline bool SphereVisible(const ViewFrustum& frustum, const Vec3& centre, f32 ra
     return true;
 }
 
+// The sphere's radius on screen in pixels; a sphere behind the camera (or a frustum with no pixel scale) reads as huge, so nothing is taken for far when its distance is unknown.
+inline f32 ProjectedRadiusPixels(const ViewFrustum& frustum, const Vec3& centre, f32 radius) {
+    constexpr f32 kHuge = 1e9f;
+    if (frustum.pixels_per_unit_at_one <= 0.0f) return kHuge;
+    const f32 w = frustum.row3.x * centre.x + frustum.row3.y * centre.y + frustum.row3.z * centre.z + frustum.row3.w;
+    return w > 0.0f ? radius * frustum.pixels_per_unit_at_one / w : kHuge;
+}
+
 } // namespace aether::player

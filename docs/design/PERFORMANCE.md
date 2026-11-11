@@ -1363,3 +1363,28 @@ fixed film clock the frames are byte-identical with culling on and off (test `Pl
 - **Not measured:** a real GPU, where vertex shading is cheap next to fill and the saving will be smaller; a camera that sees most of the world (the saving here is
   about half the draws behind and beside the camera); D3D12 (the same code runs, nothing measured). The mirror pass is not culled to its own view.
 - **Still the lever for distant forests:** mesh LOD for the instanced plants (a shrub is 270 triangles at any distance). Nothing in the player has it.
+
+## Far levels for plants, and a correction to the culling number (2026-11-11)
+
+**Correction.** The 266 to 156 ms (-41%) in the culling section above came from a camera that, it turned out, had *no plant in view* (every placed plant was behind or
+beside it), so culling removed all 4,000 plants and what was left was terrain. It is a best case, not a typical one. With the camera moved to the middle of the plants
+(4,214 shrubs and pines, 960 x 540, Epic, software Vulkan, GPU timestamps by stage, 12 frames averaged; `AETHER_PLAYER_GPU_TIMING=1` prints them):
+
+| | frame | shadows | scene pass | post |
+|---|---|---|---|---|
+| no culling, no far levels | 732 ms | 398 | 293 | 41 |
+| culling | 689 ms (-6%) | 401 | 248 (-15%) | 40 |
+| culling and far levels at 48 px | 625 ms (-15%) | 370 | 218 | 38 |
+| culling and far levels at 24 px (what ships) | 664 ms (-9%) | 390 | 230 | 43 |
+
+**Far levels** (`player/src/mesh_lod.h`): a swaying plant of 100 or more triangles gets a second index list over the same vertices (greedy edge collapse, 40% of a small
+mesh's triangles, 25% of one over 1,000; the more extreme end of an edge survives and a vertex on the mesh's bounding box keeps a triangle, so a tree keeps its height and its
+trunk its foot), drawn when the bounding sphere is under 24 pixels in radius; a swaying plant's cascade shadow uses it too. `AETHER_RENDER_LOD=0` turns it off.
+
+- **At 48 px it saves more and shows.** The tips of distant pines come out as thin needles (the tip is kept and the rings around it are not), visible as dark specks on the
+  ridge; 11.9% of the picture differs. At 24 px 3.8% of the picture differs and 0.08% by more than 24 of 255, and the needles are gone. The 24 px level is what ships.
+- **The gain is modest on this renderer: the scene pass -7%, the frame -4%.** The mesh is not what this frame is bound by.
+- **The shadow pass is 58% of the frame (390 of 664 ms)** and far levels barely touch it (398 to 390). That, not vertex counts in the scene pass, is the next lever; it
+  was not examined (resolution, cascade count, whether the 4,000 casters are drawn into every cascade are the questions).
+- **Not measured:** a real GPU; the pop when a plant crosses 24 px (there is no cross-fade; a moving camera shows the swap on a shrub, barely); the grass tufts and
+  anything under 100 triangles, which have no far level.
