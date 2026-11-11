@@ -3130,6 +3130,8 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
         const Mat4 mirrored_view_projection = projection * post_camera_view * mirror;
         const ClearColor clear{0.0f, 0.0f, 0.0f, 0.0f};
         if (commands.BeginTexturePass(renderer.reflection_texture, &clear)) {
+            // The sky first (clouds and the sun as the water mirrors them), then the surfaces over it.
+            if (draw_sky) renderer.sky->DrawMirrored(commands, shadow_view, reflection_frame_buffer);
             commands.BindPipeline(renderer.reflection_pipeline);
             commands.BindFrameConstants(reflection_frame_buffer);
             if (light_buffer.IsValid()) commands.BindFrameReadBuffer(light_buffer);
