@@ -1,0 +1,288 @@
+#include "aether/assets/gltf_loader.h"
+#include "aether/assets/procedural_mesh.h"
+#include "test_framework.h"
+
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <set>
+
+using namespace aether;
+using namespace aether::assets;
+using namespace aether::assets::procedural;
+
+namespace {
+
+u64 HashMesh(const ProceduralMesh& m) {
+    u64 h = 1469598103934665603ull;
+    auto mix = [&](const void* data, usize size) {
+        const u8* p = static_cast<const u8*>(data);
+        for (usize i = 0; i < size; ++i) h = (h ^ p[i]) * 1099511628211ull;
+    };
+    for (const MeshPrimitiveData& p : m.mesh.primitives) {
+        mix(p.vertices.data(), p.vertices.size() * sizeof(MeshVertex));
+        mix(p.indices.data(), p.indices.size() * sizeof(u32));
+    }
+    return h;
+}
+
+constexpr ProceduralKind kAllKinds[] = {ProceduralKind::Rock, ProceduralKind::Cliff, ProceduralKind::PineTree, ProceduralKind::BroadleafTree,
+                                        ProceduralKind::DeadTree, ProceduralKind::House, ProceduralKind::Tower, ProceduralKind::Wall,
+                                        ProceduralKind::Pillar, ProceduralKind::Arch, ProceduralKind::Stairs};
+
+Vec3 Extent(const MeshStats& s) { return s.bounds_max - s.bounds_min; }
+
+} // namespace
+
+AETHER_TEST(ProceduralEveryKindMakesValidMeshes) {
+    static_assert(sizeof(kAllKinds) / sizeof(kAllKinds[0]) == kProceduralKindCount);
+    for (const ProceduralKind kind : kAllKinds) {
+        for (u32 variant = 0; variant < 24; ++variant) {
+            const ProceduralMesh m = GenerateVariant(kind, variant, 99);
+            std::string error;
+            const bool valid = ValidateMesh(m, &error);
+            if (!valid) std::printf("    %s variant %u: %s\n", ProceduralKindName(kind), variant, error.c_str());
+            AETHER_CHECK(valid);
+            if (m.mesh.primitives.empty()) { AETHER_CHECK(false); continue; }
+            AETHER_CHECK(m.TriangleCount() > 8);
+            // A budget per kind: what a game can place by the hundred.
+            const u32 budget = kind == ProceduralKind::BroadleafTree ? 12000u : kind == ProceduralKind::DeadTree ? 8000u : kind == ProceduralKind::Cliff ? 12000u
+                               : kind == ProceduralKind::PineTree ? 1500u : kind == ProceduralKind::Rock ? 2000u : (kind == ProceduralKind::House || kind == ProceduralKind::Tower) ? 6000u : 600u;
+            if (m.TriangleCount() > budget) std::printf("    %s variant %u: %u triangles, budget %u\n", ProceduralKindName(kind), variant, m.TriangleCount(), budget);
+            AETHER_CHECK(m.TriangleCount() <= budget);
+            AETHER_CHECK(m.VertexCount() > 8);
+            const MeshStats s = ComputeStats(m.mesh);
+            const Vec3 e = Extent(s);
+            AETHER_CHECK(e.x > 0.1f && e.y > 0.1f && e.z > 0.05f && e.x < 100.0f && e.y < 100.0f && e.z < 100.0f);
+            AETHER_CHECK(s.bounds_min.y > -0.5f && s.bounds_min.y < 0.2f); // stands on the ground
+            for (const MeshPrimitiveData& p : m.mesh.primitives) {
+                AETHER_CHECK(p.bounds_min.x <= p.bounds_max.x && p.material >= 0 && static_cast<usize>(p.material) < m.materials.size());
+            }
+        }
+    }
+    AETHER_CHECK(std::string(ProceduralKindName(ProceduralKind::Arch)) == "Arch");
+}
+
+AETHER_TEST(ProceduralIsDeterministicAndVariantsAreUnique) {
+    for (const ProceduralKind kind : kAllKinds) {
+        AETHER_CHECK(HashMesh(GenerateVariant(kind, 5, 1)) == HashMesh(GenerateVariant(kind, 5, 1)));
+        AETHER_CHECK(HashMesh(GenerateVariant(kind, 5, 1)) != HashMesh(GenerateVariant(kind, 6, 1)));
+        AETHER_CHECK(HashMesh(GenerateVariant(kind, 5, 1)) != HashMesh(GenerateVariant(kind, 5, 2)));
+    }
+    // Hundreds of different rocks and trees: not one repeat in 300.
+    for (const ProceduralKind kind : {ProceduralKind::Rock, ProceduralKind::BroadleafTree, ProceduralKind::PineTree}) {
+        std::set<u64> seen;
+        for (u32 v = 0; v < 300; ++v) seen.insert(HashMesh(GenerateVariant(kind, v, 7)));
+        AETHER_CHECK(seen.size() == 300);
+    }
+}
+
+AETHER_TEST(ProceduralSolidsAreClosedAndWindOutward) {
+    for (const ProceduralKind kind : {ProceduralKind::Rock, ProceduralKind::Pillar, ProceduralKind::Stairs, ProceduralKind::Arch, ProceduralKind::Wall, ProceduralKind::Cliff}) {
+        for (u32 v = 0; v < 12; ++v) {
+            const ProceduralMesh m = GenerateVariant(kind, v, 3);
+            const MeshStats s = ComputeStats(m.mesh);
+            if (s.open_edges != 0) std::printf("    %s variant %u has %u open edges\n", ProceduralKindName(kind), v, s.open_edges);
+            AETHER_CHECK(s.open_edges == 0);
+            AETHER_CHECK(s.volume > 0.0f); // positive signed volume: the triangles face outward
+        }
+    }
+    // A flat-roofed tower has no gable triangles, so it is closed too.
+    for (u32 v = 0; v < 8; ++v) {
+        const ProceduralMesh m = GenerateVariant(ProceduralKind::Tower, v, 3);
+        AETHER_CHECK(ComputeStats(m.mesh).open_edges == 0 && ComputeStats(m.mesh).volume > 0.0f);
+    }
+    // And smooth and flat rocks both: normals point away from the centre.
+    for (const Shading shading : {Shading::Smooth, Shading::Flat}) {
+        RockParams p;
+        p.shading = shading;
+        const ProceduralMesh m = GenerateRock(p, 4);
+        const MeshStats s = ComputeStats(m.mesh);
+        const Vec3 centre = (s.bounds_min + s.bounds_max) * 0.5f;
+        usize outward = 0, total = 0;
+        for (const MeshVertex& v : m.mesh.primitives[0].vertices) {
+            const Vec3 d = Vec3(v.position[0], v.position[1], v.position[2]) - centre;
+            outward += d.Dot(Vec3(v.normal[0], v.normal[1], v.normal[2])) > 0.0f;
+            ++total;
+        }
+        AETHER_CHECK(outward * 100 > total * 90);
+    }
+}
+
+AETHER_TEST(ProceduralRocksHaveTheRequestedSizeAndSitOnTheGround) {
+    for (const f32 size : {0.4f, 1.0f, 2.5f}) {
+        RockParams p;
+        p.size = size;
+        p.elongation = 0.6f;
+        const MeshStats s = ComputeStats(GenerateRock(p, 11).mesh);
+        const Vec3 e = Extent(s);
+        const f32 widest = std::max({e.x, e.y, e.z});
+        AETHER_CHECK(std::fabs(widest - size) < size * 0.01f);
+        AETHER_CHECK(std::fabs(s.bounds_min.y) < 1e-3f);
+        AETHER_CHECK(std::fabs((s.bounds_min.x + s.bounds_max.x) * 0.5f) < 1e-3f && std::fabs((s.bounds_min.z + s.bounds_max.z) * 0.5f) < 1e-3f);
+    }
+    RockParams coarse, fine;
+    coarse.subdivisions = 2;
+    fine.subdivisions = 4;
+    AETHER_CHECK(GenerateRock(fine, 1).TriangleCount() > GenerateRock(coarse, 1).TriangleCount() * 8);
+    // More cuts, flatter faces: the cut rock has fewer distinct normal directions per area, here just a different shape.
+    RockParams cut = coarse;
+    cut.cuts = 0;
+    AETHER_CHECK(HashMesh(GenerateRock(cut, 1)) != HashMesh(GenerateRock(coarse, 1)));
+}
+
+AETHER_TEST(ProceduralCliffStandsAgainstItsBackPlane) {
+    CliffParams p;
+    p.width = 10.0f;
+    p.height = 6.0f;
+    p.depth = 3.0f;
+    const ProceduralMesh m = GenerateCliff(p, 5);
+    const MeshStats s = ComputeStats(m.mesh);
+    AETHER_CHECK(std::fabs(s.bounds_min.z) < 1e-3f);                   // the back is at z = 0
+    AETHER_CHECK(s.bounds_max.z > 0.3f * p.depth && s.bounds_max.z <= 1.25f * p.depth);
+    AETHER_CHECK(std::fabs(Extent(s).x - p.width) < 1e-3f && std::fabs(Extent(s).y - p.height) < 1e-3f);
+    AETHER_CHECK(m.TriangleCount() > 2u * p.columns * p.rows);
+    // Ledges: a profile up the middle of the face is not monotone.
+    CliffParams flat = p;
+    flat.overhang = 0.0f;
+    flat.roughness = 0.0f;
+    AETHER_CHECK(HashMesh(GenerateCliff(flat, 5)) != HashMesh(m));
+}
+
+AETHER_TEST(ProceduralTreesHaveTheirHeightBarkAndLeaves) {
+    for (const TreeSpecies species : {TreeSpecies::Pine, TreeSpecies::Broadleaf, TreeSpecies::Dead}) {
+        TreeParams p;
+        p.species = species;
+        p.height = 9.0f;
+        const ProceduralMesh m = GenerateTree(p, 21);
+        const MeshStats s = ComputeStats(m.mesh);
+        AETHER_CHECK(std::fabs(s.bounds_max.y - p.height) < 1e-3f); // the tip is at the height asked for
+        AETHER_CHECK(s.bounds_min.y < 0.0f && s.bounds_min.y > -0.5f); // roots sunk a little
+        AETHER_CHECK(m.mesh.primitives.size() == (species == TreeSpecies::Dead ? 1u : 2u)); // bark, then leaves (a dead tree has none)
+    }
+    TreeParams few, many;
+    few.branch_levels = 1;
+    many.branch_levels = 4;
+    AETHER_CHECK(GenerateTree(many, 3).TriangleCount() > GenerateTree(few, 3).TriangleCount() * 2);
+    TreeParams sparse, dense;
+    sparse.foliage = 0.3f;
+    dense.foliage = 1.5f;
+    AETHER_CHECK(GenerateTree(dense, 3).VertexCount() > GenerateTree(sparse, 3).VertexCount());
+}
+
+AETHER_TEST(ProceduralBuildingsScaleWithTheirBaysAndFloors) {
+    BuildingParams p;
+    p.floors = 2;
+    p.bays_x = 3;
+    p.bays_z = 2;
+    p.bay_size = 3.0f;
+    p.floor_height = 3.0f;
+    p.roof = RoofType::Flat;
+    const MeshStats s = ComputeStats(GenerateBuilding(p, 1).mesh);
+    AETHER_CHECK(std::fabs(Extent(s).x - 9.0f) < 0.5f); // the roof overhangs a little
+    AETHER_CHECK(std::fabs(Extent(s).z - 6.0f) < 1.5f); // the front step adds depth
+    AETHER_CHECK(Extent(s).y > 6.0f && Extent(s).y < 7.5f);
+    BuildingParams taller = p;
+    taller.floors = 4;
+    AETHER_CHECK(ComputeStats(GenerateBuilding(taller, 1).mesh).bounds_max.y > s.bounds_max.y + 5.0f);
+    // Glass is the third primitive; more windows, more panes.
+    const ProceduralMesh a = GenerateBuilding(p, 1);
+    BuildingParams wide = p;
+    wide.bays_x = 6;
+    const ProceduralMesh b = GenerateBuilding(wide, 1);
+    AETHER_CHECK(a.mesh.primitives.size() == 4 && b.mesh.primitives.size() == 4);
+    AETHER_CHECK(b.mesh.primitives[2].vertices.size() > a.mesh.primitives[2].vertices.size());
+    // A gable roof is higher than a flat one.
+    BuildingParams gable = p;
+    gable.roof = RoofType::Gable;
+    AETHER_CHECK(ComputeStats(GenerateBuilding(gable, 1).mesh).bounds_max.y > s.bounds_max.y + 0.5f);
+    // Materials follow the colours asked for.
+    AETHER_CHECK(std::fabs(a.materials[0].base_color.x - p.wall_color.x) < 1e-5f && std::fabs(a.materials[1].base_color.x - p.roof_color.x) < 1e-5f);
+}
+
+AETHER_TEST(ProceduralBuilderPrimitivesAreCorrect) {
+    MeshBuilder box;
+    box.Box(Vec3(0, 0, 0), Vec3(2, 3, 4));
+    const MeshPrimitiveData prim = box.Finish(Shading::Flat, UvMode::Given, 0);
+    ProceduralMesh m;
+    m.materials.push_back(MaterialData{});
+    m.mesh.primitives.push_back(prim);
+    const MeshStats s = ComputeStats(m.mesh);
+    AETHER_CHECK(std::fabs(s.volume - 24.0f) < 1e-3f && s.open_edges == 0 && s.triangles == 12 && s.vertices == 36);
+    std::string error;
+    AETHER_CHECK(ValidateMesh(m, &error));
+    // A sphere is closed and has the volume of a sphere (a little under 4/3 pi).
+    MeshBuilder ball;
+    ball.IcoSphere(3);
+    ProceduralMesh sphere;
+    sphere.materials.push_back(MaterialData{});
+    sphere.mesh.primitives.push_back(ball.Finish(Shading::Smooth, UvMode::BoxProjected, 0));
+    const MeshStats ss = ComputeStats(sphere.mesh);
+    AETHER_CHECK(ss.open_edges == 0 && ss.triangles == 1280 && std::fabs(ss.volume - 4.18879f) < 0.15f);
+    // ValidateMesh finds what is wrong.
+    ProceduralMesh bad = sphere;
+    bad.mesh.primitives[0].indices[0] = 1u << 20;
+    AETHER_CHECK(!ValidateMesh(bad, &error) && error.find("index") != std::string::npos);
+    bad = sphere;
+    bad.mesh.primitives[0].vertices[3].normal[0] = std::nanf("");
+    AETHER_CHECK(!ValidateMesh(bad, &error));
+    bad = sphere;
+    bad.mesh.primitives[0].material = 5;
+    AETHER_CHECK(!ValidateMesh(bad, &error) && error.find("material") != std::string::npos);
+}
+
+AETHER_TEST(ProceduralMeshRoundTripsThroughAmshAndGlb) {
+    const ProceduralMesh m = GenerateVariant(ProceduralKind::BroadleafTree, 3, 8);
+    // The engine's own mesh format.
+    MeshData decoded;
+    AETHER_CHECK(DecodeMeshData(EncodeMeshData(m.mesh), decoded));
+    AETHER_CHECK(decoded.primitives.size() == m.mesh.primitives.size());
+    for (usize i = 0; i < decoded.primitives.size(); ++i) {
+        AETHER_CHECK(decoded.primitives[i].indices == m.mesh.primitives[i].indices);
+        AETHER_CHECK(decoded.primitives[i].vertices.size() == m.mesh.primitives[i].vertices.size());
+        AETHER_CHECK(std::memcmp(decoded.primitives[i].vertices.data(), m.mesh.primitives[i].vertices.data(), decoded.primitives[i].vertices.size() * sizeof(MeshVertex)) == 0);
+    }
+    // glb: the loader reads it back with the same geometry and materials.
+    const std::vector<u8> glb = EncodeGlb(m);
+    std::string json;
+    std::vector<u8> bin;
+    AETHER_CHECK(ReadGlbChunks(glb, json, bin) && !json.empty() && !bin.empty());
+    GltfScene scene;
+    AETHER_CHECK(LoadGltfFromMemory(glb, scene));
+    AETHER_CHECK(scene.meshes.size() == 1 && scene.meshes[0].primitives.size() == m.mesh.primitives.size());
+    AETHER_CHECK(scene.materials.size() == m.materials.size() && !scene.node_instances.empty());
+    for (usize i = 0; i < m.mesh.primitives.size(); ++i) {
+        const GltfPrimitive& g = scene.meshes[0].primitives[i];
+        AETHER_CHECK(g.vertices.size() == m.mesh.primitives[i].vertices.size() && g.indices == m.mesh.primitives[i].indices);
+        AETHER_CHECK(std::fabs(g.vertices[7].position[1] - m.mesh.primitives[i].vertices[7].position[1]) < 1e-6f);
+    }
+    for (usize i = 0; i < m.materials.size(); ++i) {
+        AETHER_CHECK(std::fabs(scene.materials[i].base_color[1] - m.materials[i].base_color.y) < 1e-6f);
+        AETHER_CHECK(std::fabs(scene.materials[i].roughness - m.materials[i].roughness) < 1e-6f);
+    }
+}
+
+AETHER_TEST(ProceduralGenerationSpeed) {
+    const auto begin = std::chrono::steady_clock::now();
+    usize triangles = 0;
+    for (u32 v = 0; v < 200; ++v) {
+        triangles += GenerateVariant(ProceduralKind::Rock, v, 1).TriangleCount();
+        triangles += GenerateVariant(ProceduralKind::BroadleafTree, v, 1).TriangleCount();
+        triangles += GenerateVariant(ProceduralKind::House, v, 1).TriangleCount();
+    }
+    const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - begin).count();
+    std::printf("[procedural] 600 pieces (200 rocks, trees, houses), %zu triangles: %.0f ms\n", triangles, ms);
+    AETHER_CHECK(triangles > 100000);
+    if (const char* dir = std::getenv("AETHER_PROCEDURAL_GALLERY_DIR")) {
+        // Opt-in: a gallery of GLBs for a look in the player.
+        for (const ProceduralKind kind : kAllKinds)
+            for (u32 v = 0; v < 6; ++v) {
+                const std::vector<u8> glb = EncodeGlb(GenerateVariant(kind, v, 2026));
+                const std::string path = std::string(dir) + "/" + ProceduralKindName(kind) + "_" + std::to_string(v) + ".glb";
+                if (FILE* f = std::fopen(path.c_str(), "wb")) { std::fwrite(glb.data(), 1, glb.size(), f); std::fclose(f); }
+            }
+    }
+}

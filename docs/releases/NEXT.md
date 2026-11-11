@@ -340,3 +340,11 @@ terrain by rules: biomes, height, slope, distance from water, a patchiness noise
 footprint each object takes (later rules keep clear of earlier ones). Deterministic from the seed; each rule has its own random stream.
 `DefaultScatterRules()` is a starter set; `ToFoliageInstances` converts the result for the foliage layer. About 44,000 instances in
 38 ms on a 513 x 513 terrain. No MCP tool or rule asset yet.
+
+## Procedural meshes
+
+`aether::assets::procedural` generates rocks, cliff faces, pine, broadleaf and dead trees, houses and towers, and modular walls, pillars, arches
+and stairs from parameters and a seed, as the engine's own `MeshData` (bark, leaves, glass and so on as separate primitives with materials).
+`GenerateVariant(kind, index, seed)` makes a different piece for every index, so hundreds of unique rocks or trees are a loop. Deterministic;
+triangle budgets per kind (a pine about 400, a broadleaf about 5,000, a rock 300 to 1,300). `EncodeGlb` writes a `.glb`; `ValidateMesh` and
+`ComputeStats` check a mesh. 600 pieces in about 0.8 s. No LODs, no MCP tool yet.
