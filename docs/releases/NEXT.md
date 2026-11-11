@@ -418,3 +418,8 @@ to 7 zones; `FrameData` is now 1376 bytes. An alpha-mask material's cutoff is st
 `ShadowCaster` and `ShadowCasterConstants` carry the sway (112 bytes of push constants). Wind-flagged casters with a
 non-zero wind are drawn into the shadow cascades only, like skinned meshes; virtual shadow pages under them fall back to
 the cascades.
+
+## Render textures with depth
+
+`IDevice::CreateRenderTextureWithDepth` and `PipelineDesc::render_texture_depth`: a colour render texture with its own D32
+depth attachment, cleared by every `BeginTexturePass`. Vulkan only for now; D3D12 returns an invalid handle.

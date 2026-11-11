@@ -114,6 +114,9 @@ struct PipelineDesc {
     // and EndRenderPass: for post-processing chains such as bloom's. Depth testing and writing are off whatever depth_test and
     // depth_write say. Takes precedence over scene_color_target.
     bool render_texture_target = false;
+    // With render_texture_target: for a render texture made with IDevice::CreateRenderTextureWithDepth. Depth testing and writing follow depth_test and
+    // depth_write (LESS, as the scene's), where without this they are off. Not compatible with passes of textures that have no depth.
+    bool render_texture_depth = false;
 
     // Renders depth only into depth textures (IDevice::CreateDepthTexture, D32) between ICommandList::BeginDepthPass and EndRenderPass:
     // shadow maps. No colour target; depth tested (LESS) and written whatever depth_test and depth_write say. An empty ps_entry builds
@@ -374,6 +377,10 @@ public:
     // bind it). No GPU wait: callable between passes while recording. Invalid when the table is full and on devices without support
     // (the default); invalid sizes (zero, or over the device's 2D limit) throw std::invalid_argument.
     virtual SampledTextureHandle CreateRenderTexture(u32 /*width*/, u32 /*height*/) { return {}; }
+    // As CreateRenderTexture, with a depth attachment of its own (D32, cleared to far by every ICommandList::BeginTexturePass on it, which also
+    // clears the colour: to its clear colour, or to transparent black when none is given). Draw with pipelines made with render_texture_target and
+    // render_texture_depth; sample the colour like any texture. Invalid where the device cannot (the default; D3D12 does not yet).
+    virtual SampledTextureHandle CreateRenderTextureWithDepth(u32 /*width*/, u32 /*height*/) { return {}; }
     // A depth texture a pass renders into and later passes read with a texel load (.r, 0 near .. 1 far): D32, width x height, in the
     // bindless table, contents undefined until an ICommandList::BeginDepthPass clears or draws them. Draw into it with pipelines made
     // with PipelineDesc::depth_target. Otherwise as CreateRenderTexture (freed with DestroyTexture, graphics only, invalid when the table
