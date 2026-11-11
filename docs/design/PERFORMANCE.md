@@ -1388,3 +1388,38 @@ trunk its foot), drawn when the bounding sphere is under 24 pixels in radius; a 
   was not examined (resolution, cascade count, whether the 4,000 casters are drawn into every cascade are the questions).
 - **Not measured:** a real GPU; the pop when a plant crosses 24 px (there is no cross-fade; a moving camera shows the swap on a shrub, barely); the grass tufts and
   anything under 100 triangles, which have no far level.
+
+## What is in the shadow pass? Terrain, drawn whole, four times (2026-11-11)
+
+The shadow pass was 58% of a plant-heavy frame (390 of 664 ms, Epic, software Vulkan). Resolution is not the cost: shadows take 243 ms at Low (2 cascades of 1,024), 268 Medium
+(3 of 1,024), 315 High (4 of 2,048) and 402 Epic (4 of 4,096), so going from 2,048 to 4,096 (four times the texels) is +87 ms and most of the rest is geometry. Counting what
+the cascades draw in HeroValley (10,268 casters):
+
+| cascade | draws | triangles |
+|---|---|---|
+| 0 (texel 4 mm) | 7 | 299,298 |
+| 1 | 48 | 308,587 |
+| 2 | 525 | 376,241 |
+| 3 (texel 49 mm) | 3,595 | 749,621 |
+
+1.73 M triangles, and the first three rows are almost all **one draw: the terrain**. The baked ground was a single primitive of 294,912 triangles, so its bounding sphere is the
+whole map: no camera, and no cascade's box, can ever cull it, and it went into every cascade whole. (It also drew whole in the main pass.)
+
+**Tried and dropped:** leaving out casters under one texel of a cascade (`2 * radius < texel_size`). It dropped nothing here (the draw counts were identical): a texel is 4 to 49 mm, and
+the smallest caster is a grass tuft. The 410 to 374 ms the first run showed was noise; run to run the same build varies by 30 ms.
+
+**What was done:** `SplitIntoTiles` (`engine/.../procedural_mesh.h`) cuts a primitive into tiles by where each triangle's centre falls, copying the vertices on a cut with the normals
+made over the whole (no seam); the baker cuts the ground into 8 x 8 (`BakeOptions::terrain_tiles`, 1 for the old single piece). Same HeroValley bake, same camera and player, GPU
+timestamps, 12 frames averaged, two repetitions:
+
+| | frame | shadows | scene pass |
+|---|---|---|---|
+| one ground primitive | 633 / 654 ms | 373 / 386 | 221 / 228 |
+| 8 x 8 tiles | 566 / 565 ms (-11 to -14%) | 320 / 324 (-14%) | 205 / 201 (-8%) |
+
+and the picture is byte-identical (0 of 518,400 pixels differ on the film clock). The terrain has 8 x 8 draws instead of one, which is nothing next to 10,000 plants.
+
+- **Not measured:** a real GPU; other tile counts (8 was the first guess: tiles of 72 m on this 576 m map; smaller tiles cull better and cost more draws); a terrain
+  that is already chunked (the terrain editor's own chunks, `terrain/`, are not touched by this and are not what the baker's `.glb` uses).
+- **Left:** the rest of the shadow pass is the plants, 3,595 draws in the far cascade; the far levels already cover those that sway. The skirt (the wall round the map's edge,
+  a few thousand triangles) is one piece and still spans the map; the water is not drawn into the cascades.

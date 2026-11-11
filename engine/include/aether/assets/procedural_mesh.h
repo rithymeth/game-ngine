@@ -179,6 +179,12 @@ const char* ProceduralKindName(ProceduralKind kind);
 // a mesh seed from the same stream. Different variants differ in shape, not only in scale; the same (kind, variant, seed) is the same piece.
 ProceduralMesh GenerateVariant(ProceduralKind kind, u32 variant, u32 seed);
 
+// Cuts a primitive into up to `tiles_x` by `tiles_z` primitives of the same material, each triangle going to the tile its centre falls in over the x and z bounds
+// of the whole. A vertex on a cut is copied into both tiles with the very same normal and UV (the normals were made over the whole), so no seam shows. Every triangle
+// lands in exactly one tile; empty tiles are left out; `tiles_x` or `tiles_z` of 1 each returns the primitive itself. Why: one big primitive has one bounding
+// sphere around all of it, so it is never culled (not by the camera, nor by a shadow cascade) however little of it is seen; tiles are. A skinned primitive is not split.
+std::vector<MeshPrimitiveData> SplitIntoTiles(const MeshPrimitiveData& primitive, u32 tiles_x, u32 tiles_z);
+
 // ---------------------------------------------------------------------------------------------------------------------------------------
 // Checks and export.
 

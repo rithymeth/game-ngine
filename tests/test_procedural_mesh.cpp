@@ -6,6 +6,9 @@
 #include "test_framework.h"
 
 #include <algorithm>
+#include <array>
+#include <tuple>
+#include <map>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -555,4 +558,58 @@ AETHER_TEST(ProceduralOakIsABroaderTreeThanTheBirch) {
     birch_ratio /= kVariants;
     std::printf("    crown width / height: oak %.2f, birch %.2f\n", oak_ratio, birch_ratio);
     AETHER_CHECK(oak_ratio > birch_ratio * 1.15f);
+}
+
+AETHER_TEST(ProceduralSplitIntoTilesKeepsEveryTriangleAndEveryNormal) {
+    // A 40 x 40 grid of hills, smooth normals made over the whole.
+    MeshBuilder ground;
+    constexpr u32 n = 41;
+    std::vector<u32> grid(n * n);
+    for (u32 z = 0; z < n; ++z)
+        for (u32 x = 0; x < n; ++x) grid[z * n + x] = ground.Vertex(Vec3(static_cast<f32>(x), 3.0f * std::sin(0.4f * static_cast<f32>(x)) * std::cos(0.3f * static_cast<f32>(z)), static_cast<f32>(z)), static_cast<f32>(x) / 40.0f, static_cast<f32>(z) / 40.0f);
+    for (u32 z = 0; z + 1 < n; ++z)
+        for (u32 x = 0; x + 1 < n; ++x) {
+            ground.Triangle(grid[z * n + x], grid[(z + 1) * n + x], grid[z * n + x + 1]);
+            ground.Triangle(grid[z * n + x + 1], grid[(z + 1) * n + x], grid[(z + 1) * n + x + 1]);
+        }
+    const MeshPrimitiveData whole = ground.Finish(Shading::Smooth, UvMode::Given, 3);
+    const std::vector<MeshPrimitiveData> tiles = SplitIntoTiles(whole, 4, 4);
+    AETHER_CHECK(tiles.size() == 16);
+    usize triangles = 0;
+    for (const MeshPrimitiveData& t : tiles) {
+        AETHER_CHECK(t.material == 3);
+        triangles += t.indices.size() / 3;
+        const Vec3 e = t.bounds_max - t.bounds_min;
+        AETHER_CHECK(e.x < 11.5f && e.z < 11.5f); // a quarter of the map (40 m) and a triangle's width
+        for (const u32 i : t.indices) AETHER_CHECK(i < t.vertices.size());
+    }
+    AETHER_CHECK(triangles == whole.indices.size() / 3);
+    // Every vertex of every tile is one of the whole's (same place, normal and UV): no seam shows between tiles.
+    std::map<std::tuple<i64, i64, i64>, const MeshVertex*> by_place;
+    const auto key = [](const MeshVertex& v) { return std::make_tuple(std::llround(v.position[0] * 1000.0f), std::llround(v.position[1] * 1000.0f), std::llround(v.position[2] * 1000.0f)); };
+    for (const MeshVertex& v : whole.vertices) by_place[key(v)] = &v;
+    usize matched = 0, total = 0;
+    for (const MeshPrimitiveData& t : tiles)
+        for (const MeshVertex& v : t.vertices) {
+            ++total;
+            const auto it = by_place.find(key(v));
+            if (it == by_place.end()) continue;
+            const MeshVertex& w = *it->second;
+            if (std::fabs(v.normal[0] - w.normal[0]) < 1e-5f && std::fabs(v.normal[1] - w.normal[1]) < 1e-5f && std::fabs(v.normal[2] - w.normal[2]) < 1e-5f &&
+                std::fabs(v.uv[0] - w.uv[0]) < 1e-6f && std::fabs(v.uv[1] - w.uv[1]) < 1e-6f) ++matched;
+        }
+    AETHER_CHECK(total > 0 && matched == total);
+    // One tile is the primitive itself; a single-tile map or skinning is left alone.
+    AETHER_CHECK(SplitIntoTiles(whole, 1, 1).size() == 1 && SplitIntoTiles(whole, 1, 1)[0].indices.size() == whole.indices.size());
+    MeshPrimitiveData skinned = whole;
+    skinned.joints.assign(whole.vertices.size(), std::array<u16, 4>{0, 0, 0, 0});
+    AETHER_CHECK(SplitIntoTiles(skinned, 4, 4).size() == 1);
+    // A triangle with an index out of range is skipped, not read.
+    MeshPrimitiveData broken = whole;
+    broken.indices.push_back(999999);
+    broken.indices.push_back(0);
+    broken.indices.push_back(1);
+    usize kept = 0;
+    for (const MeshPrimitiveData& t : SplitIntoTiles(broken, 4, 4)) kept += t.indices.size() / 3;
+    AETHER_CHECK(kept == whole.indices.size() / 3);
 }

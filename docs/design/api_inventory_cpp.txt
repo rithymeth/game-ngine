@@ -1396,6 +1396,7 @@
   const Vec3&Position(u32 i)const
   const char*ProceduralKindName(ProceduralKind kind)
   public:u32 Vertex(const Vec3&position,f32 u=0.0f,f32 v=0.0f)
+  std::vector<MeshPrimitiveData>SplitIntoTiles(const MeshPrimitiveData&primitive,u32 tiles_x,u32 tiles_z)
   std::vector<u8>EncodeGlb(const ProceduralMesh&mesh)
   u32 IcoSphere(u32 subdivisions)
   u32 TriangleCount()const

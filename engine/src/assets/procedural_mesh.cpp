@@ -1327,4 +1327,47 @@ std::vector<u8> EncodeGlb(const ProceduralMesh& mesh) {
     return out;
 }
 
+std::vector<MeshPrimitiveData> SplitIntoTiles(const MeshPrimitiveData& primitive, u32 tiles_x, u32 tiles_z) {
+    tiles_x = std::clamp(tiles_x, 1u, 64u);
+    tiles_z = std::clamp(tiles_z, 1u, 64u);
+    if ((tiles_x == 1 && tiles_z == 1) || primitive.vertices.empty() || primitive.indices.size() < 3 || !primitive.joints.empty() || !primitive.weights.empty()) return {primitive};
+    f32 lo_x = 1e30f, hi_x = -1e30f, lo_z = 1e30f, hi_z = -1e30f;
+    for (const MeshVertex& v : primitive.vertices) {
+        lo_x = std::min(lo_x, v.position[0]); hi_x = std::max(hi_x, v.position[0]);
+        lo_z = std::min(lo_z, v.position[2]); hi_z = std::max(hi_z, v.position[2]);
+    }
+    const f32 span_x = std::max(hi_x - lo_x, 1e-6f), span_z = std::max(hi_z - lo_z, 1e-6f);
+    struct Tile { MeshPrimitiveData data; std::unordered_map<u32, u32> remap; };
+    std::vector<Tile> tiles(static_cast<usize>(tiles_x) * tiles_z);
+    for (usize t = 0; t + 2 < primitive.indices.size(); t += 3) {
+        const u32 corner[3] = {primitive.indices[t], primitive.indices[t + 1], primitive.indices[t + 2]};
+        if (corner[0] >= primitive.vertices.size() || corner[1] >= primitive.vertices.size() || corner[2] >= primitive.vertices.size()) continue;
+        f32 cx = 0.0f, cz = 0.0f;
+        for (const u32 i : corner) { cx += primitive.vertices[i].position[0]; cz += primitive.vertices[i].position[2]; }
+        cx /= 3.0f; cz /= 3.0f;
+        const u32 tx = std::min(static_cast<u32>(std::max(0.0f, (cx - lo_x) / span_x * static_cast<f32>(tiles_x))), tiles_x - 1);
+        const u32 tz = std::min(static_cast<u32>(std::max(0.0f, (cz - lo_z) / span_z * static_cast<f32>(tiles_z))), tiles_z - 1);
+        Tile& tile = tiles[static_cast<usize>(tz) * tiles_x + tx];
+        for (const u32 i : corner) {
+            const auto [it, added] = tile.remap.try_emplace(i, static_cast<u32>(tile.data.vertices.size()));
+            if (added) tile.data.vertices.push_back(primitive.vertices[i]);
+            tile.data.indices.push_back(it->second);
+        }
+    }
+    std::vector<MeshPrimitiveData> out;
+    for (Tile& tile : tiles) {
+        if (tile.data.indices.empty()) continue;
+        tile.data.material = primitive.material;
+        Vec3 lo(1e30f, 1e30f, 1e30f), hi(-1e30f, -1e30f, -1e30f);
+        for (const MeshVertex& v : tile.data.vertices) {
+            lo = Vec3(std::min(lo.x, v.position[0]), std::min(lo.y, v.position[1]), std::min(lo.z, v.position[2]));
+            hi = Vec3(std::max(hi.x, v.position[0]), std::max(hi.y, v.position[1]), std::max(hi.z, v.position[2]));
+        }
+        tile.data.bounds_min = lo;
+        tile.data.bounds_max = hi;
+        out.push_back(std::move(tile.data));
+    }
+    return out.empty() ? std::vector<MeshPrimitiveData>{primitive} : out;
+}
+
 } // namespace aether::assets::procedural
