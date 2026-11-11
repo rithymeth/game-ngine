@@ -1258,15 +1258,19 @@ std::vector<u8> EncodeGlb(const ProceduralMesh& mesh) {
     for (usize mi = 0; mi < mesh.materials.size(); ++mi) {
         const MaterialData& m = mesh.materials[mi];
         if (mi > 0) materials += ",";
-        std::string texture;
-        if (!m.base_color_texture.empty()) {
+        auto image_index = [&](const std::string& path) {
             usize index = 0;
-            while (index < images.size() && images[index] != m.base_color_texture) ++index;
-            if (index == images.size()) images.push_back(m.base_color_texture);
-            texture = ",\"baseColorTexture\":{\"index\":" + std::to_string(index) + "}";
-        }
+            while (index < images.size() && images[index] != path) ++index;
+            if (index == images.size()) images.push_back(path);
+            return index;
+        };
+        std::string texture, normal, alpha;
+        if (!m.base_color_texture.empty()) texture = ",\"baseColorTexture\":{\"index\":" + std::to_string(image_index(m.base_color_texture)) + "}";
+        if (!m.normal_texture.empty()) normal = ",\"normalTexture\":{\"index\":" + std::to_string(image_index(m.normal_texture)) + ",\"scale\":" + Num(m.normal_scale) + "}";
+        if (m.alpha_mode == MaterialAlphaMode::Blend) alpha = ",\"alphaMode\":\"BLEND\"";
+        else if (m.alpha_mode == MaterialAlphaMode::Mask) alpha = ",\"alphaMode\":\"MASK\",\"alphaCutoff\":" + Num(m.alpha_cutoff);
         materials += "{\"name\":\"material" + std::to_string(mi) + "\",\"pbrMetallicRoughness\":{\"baseColorFactor\":[" + Num(m.base_color.x) + "," + Num(m.base_color.y) + "," +
-                     Num(m.base_color.z) + "," + Num(m.base_color.w) + "],\"metallicFactor\":" + Num(m.metallic) + ",\"roughnessFactor\":" + Num(m.roughness) + texture + "}}";
+                     Num(m.base_color.z) + "," + Num(m.base_color.w) + "],\"metallicFactor\":" + Num(m.metallic) + ",\"roughnessFactor\":" + Num(m.roughness) + texture + "}" + normal + alpha + "}";
     }
     std::string image_json, texture_json;
     for (usize i = 0; i < images.size(); ++i) {

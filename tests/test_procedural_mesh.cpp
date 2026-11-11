@@ -372,6 +372,42 @@ AETHER_TEST(ProceduralPngWriterRoundTripsLosslessly) {
     AETHER_CHECK(assets::EncodePngRgb8(0, 4, {}).empty() && assets::EncodePngRgb8(4, 4, std::vector<u8>(10)).empty());
 }
 
+AETHER_TEST(ProceduralPngWriterWritesRgbaWithItsAlphaIntact) {
+    std::vector<u8> rgba(static_cast<usize>(40) * 30 * 4);
+    for (usize i = 0; i < 40u * 30u; ++i) { rgba[i * 4] = static_cast<u8>(i); rgba[i * 4 + 1] = static_cast<u8>(i * 3); rgba[i * 4 + 2] = 77; rgba[i * 4 + 3] = static_cast<u8>(i % 251); }
+    const std::vector<u8> png = assets::EncodePngRgba8(40, 30, rgba);
+    assets::ImageData image;
+    AETHER_CHECK(!png.empty() && assets::DecodeImageFromMemory(png, image) && image.width == 40 && image.height == 30 && image.pixels == rgba);
+    AETHER_CHECK(assets::EncodePngRgba8(4, 4, std::vector<u8>(4 * 4 * 3)).empty()); // too short for RGBA
+}
+
+AETHER_TEST(ProceduralGlbWritesBlendModeAndNormalTextures) {
+    ProceduralMesh m = GenerateVariant(ProceduralKind::Rock, 1, 3);
+    m.materials[0].base_color_texture = "water.png";
+    m.materials[0].normal_texture = "ripples.png";
+    m.materials[0].alpha_mode = MaterialAlphaMode::Blend;
+    std::string json;
+    std::vector<u8> bin;
+    AETHER_CHECK(ReadGlbChunks(EncodeGlb(m), json, bin));
+    AETHER_CHECK(json.find("\"alphaMode\":\"BLEND\"") != std::string::npos && json.find("\"normalTexture\"") != std::string::npos && json.find("\"baseColorTexture\"") != std::string::npos);
+    AETHER_CHECK(json.find("water.png") != std::string::npos && json.find("ripples.png") != std::string::npos);
+    // Two distinct images, each once, even though two slots name them.
+    AETHER_CHECK(json.find("\"textures\":[{\"source\":0},{\"source\":1}]") != std::string::npos);
+    // The loader reads it back: both textures, and the blend mode.
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "aether_procedural_blend";
+    std::filesystem::create_directories(dir);
+    { const std::vector<u8> glb = EncodeGlb(m); std::ofstream f(dir / "m.glb", std::ios::binary); f.write(reinterpret_cast<const char*>(glb.data()), static_cast<std::streamsize>(glb.size())); }
+    GltfScene scene;
+    AETHER_CHECK(LoadGltf((dir / "m.glb").string(), scene));
+    AETHER_CHECK(scene.materials[0].alpha_mode == MaterialAlphaMode::Blend && scene.materials[0].normal_texture.find("ripples.png") != std::string::npos &&
+                 scene.materials[0].base_color_texture.find("water.png") != std::string::npos);
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+    // An opaque material writes no alpha mode.
+    ProceduralMesh plain = GenerateVariant(ProceduralKind::Rock, 1, 3);
+    AETHER_CHECK(ReadGlbChunks(EncodeGlb(plain), json, bin) && json.find("alphaMode") == std::string::npos);
+}
+
 AETHER_TEST(ProceduralGlbCarriesTheBaseColorTextureOfAMaterial) {
     ProceduralMesh m = GenerateVariant(ProceduralKind::Rock, 1, 3);
     m.materials[0].base_color_texture = "rock_color.png";

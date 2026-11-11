@@ -97,7 +97,7 @@ public:
     // The terrain as up to three primitives (the skirt, when `skirt_depth` is above 0, carries the four edges down that far below the lowest ground): the ground, one surface textured by `texture_uri` (a path relative to the .glb; RenderTerrainTexture makes the picture) so
     // biome borders blend and rivers have banks, and the water, flat on every lake and the sea (rivers a hair above their carved beds).
     static assets::procedural::ProceduralMesh BuildTexturedTerrainModel(const terrain::GeneratedTerrain& terrain, u32 max_grid, const std::string& texture_uri, f32 skirt_depth = 0.0f,
-                                                                           const std::string& water_texture_uri = "");
+                                                                           const std::string& water_texture_uri = "", const std::string& water_normal_uri = "");
 
     // Into the other editors: the terrain editor takes the heightmap, layers and splatmap (the sculpt tools carry on from it); the foliage editor takes
     // the instances as a layer with one type per rule (one undo step). False when nothing is generated.
