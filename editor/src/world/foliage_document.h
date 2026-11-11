@@ -40,6 +40,8 @@ public:
     void SetDensity(f32 per_square_metre);
     void SetMaxInstances(u32 max);
     void Clear(); // every instance
+    // Swaps in another layer (a scattered one) as one undo step.
+    void ReplaceLayer(terrain::FoliageLayer layer);
 
     std::vector<usize> CountsByType() const;
 

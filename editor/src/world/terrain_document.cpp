@@ -25,6 +25,19 @@ const char* TerrainToolName(TerrainTool tool) {
 TerrainEditDocument::TerrainEditDocument(TerrainData data, TerrainSettings settings, SplatmapData splatmap)
     : data_(std::move(data)), settings_(settings), splat_(std::move(splatmap)) {}
 
+void TerrainEditDocument::Replace(TerrainData data, TerrainSettings settings, SplatmapData splatmap) {
+    data_ = std::move(data);
+    settings_ = settings;
+    splat_ = std::move(splatmap);
+    in_stroke_ = false;
+    undo_.clear();
+    redo_.clear();
+    dirty_.clear();
+    for (u32 z = 0; z < data_.chunk_count_z; ++z)
+        for (u32 x = 0; x < data_.chunk_count_x; ++x) dirty_.insert({static_cast<i32>(x), static_cast<i32>(z)});
+    ++revision_;
+}
+
 f32 TerrainEditDocument::WorldWidth() const {
     const Heightmap& h = data_.heightmap;
     return h.width > 1 ? static_cast<f32>(h.width - 1) * h.cell_size : 0.0f;

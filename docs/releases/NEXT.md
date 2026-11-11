@@ -348,3 +348,11 @@ and stairs from parameters and a seed, as the engine's own `MeshData` (bark, lea
 `GenerateVariant(kind, index, seed)` makes a different piece for every index, so hundreds of unique rocks or trees are a loop. Deterministic;
 triangle budgets per kind (a pine about 400, a broadleaf about 5,000, a rock 300 to 1,300). `EncodeGlb` writes a `.glb`; `ValidateMesh` and
 `ComputeStats` check a mesh. 600 pieces in about 0.8 s. No LODs, no MCP tool yet.
+
+## Procedural World editor
+
+A new World panel, **Procedural World**: every setting of the terrain generator and the scatter rules as sliders with a live preview, four presets (temperate,
+alpine, desert, islands), a seed box and dice, undo, and a mesh family per scatter rule. **Apply** sends the generated terrain to the Terrain editor and the scatter
+to the Foliage editor; **Bake** writes `Content/Generated/<name>/` with the terrain as a model, a `.glb` per mesh variant and a scene of model entities the player
+loads. The generator got three fixes found by rendering a bake (less spiky erosion, flat lakes and sea, a smoothing setting). Grass, reeds and cacti have no mesh
+generator yet and bake as nothing.

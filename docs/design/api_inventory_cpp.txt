@@ -7279,6 +7279,8 @@
 [editor/src/workspace/editor_workspace.h] internal-tooling
 [editor/src/world/data_layer_panel.h] internal-tooling
 [editor/src/world/foliage_document.h] internal-tooling
+[editor/src/world/procedural_document.h] internal-tooling
+[editor/src/world/procedural_panel.h] internal-tooling
 [editor/src/world/spline_document.h] internal-tooling
 [editor/src/world/terrain_document.h] internal-tooling
 [editor/src/world/world_panels.h] internal-tooling

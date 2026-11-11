@@ -38,6 +38,9 @@ public:
     // Begin + Dab + End.
     void DabOnce(f32 world_x, f32 world_z);
 
+    // Swaps in another terrain (a generated one): the undo history goes, every chunk is dirty, the revision moves on.
+    void Replace(terrain::TerrainData data, terrain::TerrainSettings settings, terrain::SplatmapData splatmap);
+
     bool Undo();
     bool Redo();
     bool CanUndo() const { return !undo_.empty(); }

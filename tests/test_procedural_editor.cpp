@@ -1,0 +1,323 @@
+#include "aether/scene/components.h"
+#include "aether/scene/serialization.h"
+#include "test_framework.h"
+#include "world/procedural_panel.h"
+
+#include <imgui.h>
+
+#include <algorithm>
+#include <filesystem>
+#include <fstream>
+#include <cstdio>
+#include <cstdlib>
+#include <functional>
+#include <set>
+
+// The visual generation editor: the document (presets, undo, generation, the hand-off to the terrain and foliage editors, baking to files) and the
+// panel, drawn headless.
+
+using namespace aether;
+using namespace aether::editor;
+using namespace aether::terrain;
+namespace fs = std::filesystem;
+
+#define CHECK(...) AETHER_CHECK((__VA_ARGS__))
+
+namespace {
+
+class HeadlessImGui {
+public:
+    HeadlessImGui() {
+        context_ = ImGui::CreateContext();
+        ImGuiIO& io = ImGui::GetIO();
+        io.IniFilename = nullptr;
+        io.DisplaySize = ImVec2(1200, 900);
+        io.DeltaTime = 1.0f / 60.0f;
+        unsigned char* pixels = nullptr;
+        int w = 0, h = 0;
+        io.Fonts->GetTexDataAsRGBA32(&pixels, &w, &h);
+    }
+    ~HeadlessImGui() { ImGui::DestroyContext(context_); }
+    void Frame(const std::function<void()>& body) {
+        ImGui::NewFrame();
+        ImGui::SetNextWindowPos(ImVec2(0, 0));
+        ImGui::SetNextWindowSize(ImVec2(1200, 900));
+        ImGui::Begin("Procedural", nullptr, ImGuiWindowFlags_NoMove);
+        body();
+        ImGui::End();
+        ImGui::Render();
+    }
+
+private:
+    ImGuiContext* context_ = nullptr;
+};
+
+// A world small enough to generate in a few milliseconds.
+ProceduralWorldSettings Small(WorldPreset preset = WorldPreset::Temperate) {
+    ProceduralWorldSettings s = MakePreset(preset);
+    s.terrain.width = s.terrain.height = 65;
+    s.terrain.hydraulic_droplets = 3000;
+    s.terrain.river_min_catchment = 60;
+    // Dense enough in the rules that have meshes that a bake has something to choose from; the meshless grass kept light.
+    for (usize i = 0; i < s.rules.size(); ++i) s.rules[i].density *= s.slots[i].enabled ? 8.0f : 0.1f;
+    return s;
+}
+
+TerrainEditDocument FlatTerrainDocument() {
+    Heightmap hm;
+    hm.width = hm.height = 63;
+    hm.cell_size = 1.0f;
+    hm.heights.assign(63u * 63u, 0.0f);
+    TerrainSettings settings;
+    settings.verts_per_chunk = 32;
+    TerrainData data;
+    InitTerrainData(data, hm, settings);
+    return TerrainEditDocument(data, settings);
+}
+
+fs::path ScratchDir(const char* name) {
+    const fs::path dir = fs::temp_directory_path() / name;
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir, ec);
+    return dir;
+}
+
+} // namespace
+
+AETHER_TEST(ProceduralEditor_PresetsAreDifferentWorldsWithTheirOwnMeshFamilies) {
+    std::set<std::vector<f32>> shapes;
+    for (u32 p = 0; p < kWorldPresetCount; ++p) {
+        ProceduralWorldSettings s = Small(static_cast<WorldPreset>(p));
+        ProceduralWorldDocument doc(s);
+        doc.Generate();
+        CHECK(doc.Generated() && !doc.Stale());
+        shapes.insert(doc.Terrain().heightmap.heights);
+        CHECK(s.slots.size() == s.rules.size());
+    }
+    CHECK(shapes.size() == kWorldPresetCount);
+    const ProceduralWorldSettings s = MakePreset(WorldPreset::Temperate);
+    // The pine rule places pines, grass has no mesh yet.
+    for (usize i = 0; i < s.rules.size(); ++i) {
+        if (s.rules[i].name == "Pine") CHECK(s.slots[i].enabled && s.slots[i].kind == assets::procedural::ProceduralKind::PineTree);
+        if (s.rules[i].name == "Grass") CHECK(!s.slots[i].enabled);
+    }
+    CHECK(std::string(WorldPresetName(WorldPreset::Alpine)) == "Alpine");
+}
+
+AETHER_TEST(ProceduralEditor_EditingUndoSeedsAndRules) {
+    ProceduralWorldDocument doc(Small());
+    doc.Generate();
+    CHECK(!doc.Stale());
+    const u64 revision = doc.Revision();
+    ProceduralWorldSettings s = doc.Settings();
+    s.terrain.height_scale = 90.0f;
+    doc.Checkpoint();
+    doc.Set(s);
+    CHECK(doc.Stale() && doc.Revision() > revision && doc.CanUndo());
+    CHECK(doc.Undo() && doc.Settings().terrain.height_scale == 60.0f && doc.CanRedo());
+    CHECK(doc.Redo() && doc.Settings().terrain.height_scale == 90.0f);
+    CHECK(doc.Undo());
+
+    // A preset keeps the seeds and is one undo step; the dice change the seeds and are one too.
+    const u32 seed = doc.Settings().terrain.seed;
+    doc.LoadPreset(WorldPreset::Alpine);
+    CHECK(doc.Settings().terrain.seed == seed && doc.Settings().terrain.height_scale == 120.0f);
+    CHECK(doc.Undo() && doc.Settings().terrain.height_scale == 60.0f);
+    doc.RandomizeSeed();
+    CHECK(doc.Settings().terrain.seed != seed && doc.Settings().scatter.seed != 1u);
+    CHECK(doc.Undo() && doc.Settings().terrain.seed == seed);
+
+    // Rules and their mesh slots stay in step.
+    const usize n = doc.Settings().rules.size();
+    doc.AddRule(ScatterRule{.name = "Fern"});
+    CHECK(doc.Settings().rules.size() == n + 1 && doc.Settings().slots.size() == n + 1 && !doc.Settings().slots.back().enabled);
+    CHECK(doc.DuplicateRule(0) && doc.Settings().rules[1].name == "Pine copy" && doc.Settings().slots[1].enabled);
+    CHECK(doc.RemoveRule(1) && doc.Settings().rules.size() == n + 1 && doc.Settings().slots.size() == n + 1);
+    CHECK(!doc.RemoveRule(999) && !doc.DuplicateRule(999));
+    CHECK(doc.Undo() && doc.Undo() && doc.Undo() && doc.Settings().rules.size() == n);
+}
+
+AETHER_TEST(ProceduralEditor_GenerationIsDeterministicWithCountsAndPreview) {
+    ProceduralWorldDocument a(Small()), b(Small());
+    a.Generate();
+    b.Generate();
+    CHECK(a.Terrain().heightmap.heights == b.Terrain().heightmap.heights);
+    CHECK(a.Instances().size() == b.Instances().size() && !a.Instances().empty());
+    const std::vector<usize> counts = a.CountsByRule();
+    usize total = 0;
+    for (const usize c : counts) total += c;
+    CHECK(counts.size() == a.Settings().rules.size() && total == a.Instances().size());
+    u32 w = 0, h = 0;
+    const std::vector<u8> preview = a.Preview(32, w, h);
+    CHECK(w == 32 && h == 32 && preview.size() == 32u * 32u * 3 && std::any_of(preview.begin(), preview.end(), [](u8 v) { return v > 80; }));
+    ProceduralWorldDocument fresh(Small());
+    CHECK(fresh.Preview(32, w, h).empty() && w == 0 && fresh.Stale() && !fresh.Generated());
+    CHECK(fresh.BuildMesh(0, 0).mesh.primitives.size() >= 1);
+    CHECK(fresh.BuildMesh(3, 0).mesh.primitives.empty()); // grass: no mesh family
+}
+
+AETHER_TEST(ProceduralEditor_TheTerrainBecomesAModelWithSixSurfaces) {
+    ProceduralWorldDocument doc(Small());
+    doc.Generate();
+    const assets::procedural::ProceduralMesh model = ProceduralWorldDocument::BuildTerrainModel(doc.Terrain(), 64);
+    std::string error;
+    CHECK(assets::procedural::ValidateMesh(model, &error));
+    CHECK(!model.mesh.primitives.empty() && model.mesh.primitives.size() <= 6 && model.materials.size() == model.mesh.primitives.size());
+    const assets::procedural::MeshStats s = assets::procedural::ComputeStats(model.mesh);
+    const f32 extent = static_cast<f32>(doc.Terrain().Width() - 1) * doc.Terrain().heightmap.cell_size;
+    CHECK(std::fabs(s.bounds_max.x - extent) < 1e-3f && std::fabs(s.bounds_max.z - extent) < 1e-3f && std::fabs(s.bounds_min.x) < 1e-3f);
+    CHECK(std::fabs(s.bounds_max.y - doc.Terrain().height_max) < 1e-2f);
+    // The ground faces up: the normals' mean y is clearly positive.
+    double ny = 0.0;
+    usize n = 0;
+    for (const auto& p : model.mesh.primitives) for (const auto& v : p.vertices) { ny += v.normal[1]; ++n; }
+    CHECK(ny / static_cast<double>(n) > 0.6);
+    // A coarser grid has fewer triangles.
+    const auto coarse = ProceduralWorldDocument::BuildTerrainModel(doc.Terrain(), 16);
+    CHECK(coarse.TriangleCount() < model.TriangleCount() / 4);
+    CHECK(ProceduralWorldDocument::BuildTerrainModel(GeneratedTerrain{}, 64).mesh.primitives.empty());
+}
+
+AETHER_TEST(ProceduralEditor_SeaAndLakeSurfacesAreFlat) {
+    ProceduralWorldDocument doc(Small(WorldPreset::Islands));
+    doc.Generate();
+    const GeneratedTerrain& t = doc.Terrain();
+    const assets::procedural::ProceduralMesh model = ProceduralWorldDocument::BuildTerrainModel(t, 64);
+    // The water is the first primitive when there is any (it is drawn from the biome under each quad); an islands world is mostly sea.
+    CHECK(!model.mesh.primitives.empty() && model.materials[0].base_color.z > model.materials[0].base_color.x); // blue
+    const assets::MeshPrimitiveData& water = model.mesh.primitives[0];
+    usize at_sea = 0;
+    for (const auto& v : water.vertices) at_sea += std::fabs(v.position[1] - t.sea_height) < 1e-3f;
+    CHECK(!water.vertices.empty() && at_sea * 10 > water.vertices.size() * 6); // most of the water is on the flat sea surface
+    // And nothing of the sea rises above the sea level.
+    for (const auto& v : water.vertices) CHECK(v.position[1] <= t.sea_height + 1e-3f || v.position[1] <= t.height_max);
+}
+
+AETHER_TEST(ProceduralEditor_ApplyReplacesTheTerrainAndFoliageEditorsContent) {
+    ProceduralWorldDocument doc(Small());
+    TerrainEditDocument terrain = FlatTerrainDocument();
+    FoliagePaintDocument foliage(FoliageLayer{});
+    CHECK(!doc.ApplyToTerrain(terrain) && !doc.ApplyToFoliage(foliage)); // nothing generated yet
+    doc.Generate();
+    const u64 revision = terrain.Revision();
+    CHECK(doc.ApplyToTerrain(terrain, 64));
+    CHECK(terrain.Data().heightmap.heights == doc.Terrain().heightmap.heights);
+    CHECK(terrain.Data().layers.size() == 4 && terrain.Splatmap().width == 64 && terrain.Revision() > revision);
+    CHECK(!terrain.CanUndo() && terrain.DirtyCount() == static_cast<usize>(terrain.Data().chunk_count_x) * terrain.Data().chunk_count_z);
+    // The sculpt tools carry on from the generated ground.
+    const f32 before = terrain.Data().heightmap.heights[10 * terrain.Data().heightmap.width + 10];
+    terrain.tool = TerrainTool::Raise;
+    terrain.brush.radius = 4.0f;
+    terrain.DabOnce(10.0f, 10.0f);
+    CHECK(terrain.Data().heightmap.heights[10 * terrain.Data().heightmap.width + 10] != before && terrain.CanUndo());
+
+    CHECK(doc.ApplyToFoliage(foliage));
+    CHECK(foliage.Layer().instances.size() == doc.Instances().size() && foliage.Layer().types.size() == doc.Settings().rules.size());
+    CHECK(foliage.Undo() && foliage.Layer().instances.empty()); // one step back
+}
+
+AETHER_TEST(ProceduralEditor_BakeWritesTheTerrainMeshesAndASceneThePlayerLoads) {
+    ProceduralWorldDocument doc(Small());
+    BakeOptions options;
+    options.name = "Test World!";
+    const fs::path root = ScratchDir("aether_procedural_bake");
+    CHECK(!doc.Bake(root.string(), options).ok && !doc.Bake(root.string(), options).error.empty()); // nothing generated
+    doc.Generate();
+    {
+        usize eligible = 0;
+        const std::vector<usize> counts = doc.CountsByRule();
+        for (usize r = 0; r < counts.size(); ++r) if (doc.Settings().slots[r].enabled) eligible += counts[r];
+        CHECK(eligible > 40); // enough objects with a mesh that the cap below is what limits the scene
+    }
+    options.max_scene_instances = 40;
+    const BakeReport report = doc.Bake(root.string(), options);
+    CHECK(report.ok && report.error.empty());
+    CHECK(report.instances_in_scene == 40 && report.instances_left_out == doc.Instances().size() - 40);
+    CHECK(report.scene == "Generated/Test_World_/Test_World_.ascene");
+    for (const std::string& file : report.files) CHECK(fs::exists(root / file) && fs::file_size(root / file) > 100);
+    CHECK(std::any_of(report.files.begin(), report.files.end(), [](const std::string& f) { return f.find("_terrain.glb") != std::string::npos; }));
+    CHECK(std::find(report.rules_without_mesh.begin(), report.rules_without_mesh.end(), "Grass") != report.rules_without_mesh.end());
+    CHECK(std::find(report.rules_without_mesh.begin(), report.rules_without_mesh.end(), "Pine") == report.rules_without_mesh.end());
+
+    // The scene loads: the terrain plus one entity per baked object, each naming a model that was written.
+    World loaded;
+    CHECK(LoadSceneJson(loaded, (root / report.scene).string()));
+    CHECK(loaded.EntityCount() == 41);
+    usize with_scale = 0;
+    loaded.ForEachArchetype([&](const Archetype& archetype) {
+        if (!archetype.Mask().test(GetComponentId<ModelRenderer>()) || !archetype.Mask().test(GetComponentId<Transform>())) return;
+        for (usize chunk = 0; chunk < archetype.ChunkCount(); ++chunk) {
+            const auto* models = static_cast<const ModelRenderer*>(archetype.ComponentArray(chunk, GetComponentId<ModelRenderer>()));
+            const auto* transforms = static_cast<const Transform*>(archetype.ComponentArray(chunk, GetComponentId<Transform>()));
+            for (usize row = 0; row < archetype.ChunkEntityCount(chunk); ++row) {
+                CHECK(fs::exists(root / models[row].asset_path));
+                with_scale += transforms[row].scale.x > 0.0f;
+            }
+        }
+    });
+    CHECK(with_scale == 41);
+
+    // A lower cap bakes fewer; an unwritable folder is reported, not thrown.
+    options.max_scene_instances = 5;
+    CHECK(doc.Bake(root.string(), options).instances_in_scene == 5);
+    const fs::path blocked = root / "blocked";
+    { std::ofstream f(blocked); f << "a file where a folder should go"; }
+    const BakeReport bad = doc.Bake(blocked.string(), options);
+    CHECK(!bad.ok && !bad.error.empty());
+    std::error_code ec;
+    fs::remove_all(root, ec);
+}
+
+AETHER_TEST(ProceduralEditor_PanelDrawsEditsAndRegeneratesHeadless) {
+    HeadlessImGui ui;
+    ProceduralWorldDocument doc(Small());
+    TerrainEditDocument terrain = FlatTerrainDocument();
+    FoliagePaintDocument foliage(FoliageLayer{});
+    ProceduralWorldPanel panel(doc, &terrain, &foliage);
+    ui.Frame([&] { panel.Draw(); });
+    CHECK(!doc.Generated()); // drawing alone generates nothing
+    doc.Generate();
+    for (int i = 0; i < 3; ++i) ui.Frame([&] { panel.Draw(); });
+    CHECK(doc.Generated() && !doc.Stale());
+    // A settings change while the panel is open regenerates once the edit has settled.
+    ProceduralWorldSettings s = doc.Settings();
+    s.terrain.height_scale = 75.0f;
+    doc.Checkpoint();
+    doc.Set(s);
+    CHECK(doc.Stale());
+    ui.Frame([&] { panel.Draw(); });
+    CHECK(!doc.Stale() && doc.Terrain().height_max <= 75.0f + 1e-3f);
+    // Auto-regeneration off: it waits for the button.
+    panel.auto_generate = false;
+    s.terrain.height_scale = 40.0f;
+    doc.Set(s);
+    ui.Frame([&] { panel.Draw(); });
+    CHECK(doc.Stale());
+    // No targets, no rules: still draws.
+    ProceduralWorldSettings none = Small();
+    none.rules.clear();
+    none.slots.clear();
+    ProceduralWorldDocument bare(none);
+    bare.Generate();
+    ProceduralWorldPanel solo(bare);
+    ui.Frame([&] { solo.Draw(); });
+    CHECK(bare.Instances().empty() && solo.Status().empty());
+}
+
+AETHER_TEST(ProceduralEditor_OptInBakeOfAFullSizeWorld) {
+    // Opt-in: bake a full-size world into AETHER_PROCEDURAL_BAKE_DIR (a content root) for a look in the player.
+    const char* dir = std::getenv("AETHER_PROCEDURAL_BAKE_DIR");
+    if (dir == nullptr) return;
+    for (const WorldPreset preset : {WorldPreset::Temperate, WorldPreset::Alpine}) {
+        ProceduralWorldDocument doc(MakePreset(preset));
+        doc.Generate();
+        BakeOptions options;
+        options.name = WorldPresetName(preset);
+        options.max_scene_instances = 3000;
+        const BakeReport report = doc.Bake(dir, options);
+        std::printf("[bake] %s: %s, %zu files, %u objects in the scene (%u left out), generated in %.0f ms\n", WorldPresetName(preset), report.ok ? "ok" : report.error.c_str(),
+                    report.files.size(), report.instances_in_scene, report.instances_left_out, doc.GenerateMilliseconds());
+        CHECK(report.ok);
+    }
+}
