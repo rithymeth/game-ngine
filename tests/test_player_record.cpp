@@ -70,6 +70,9 @@ fs::path CookSlidingBox(const fs::path& root) {
                 {"Camera", {{"$v", 1}, {"projection", "Perspective"}, {"fov_degrees", 50.0f}, {"near_plane", 0.1f}, {"far_plane", 50.0f}, {"ortho_height", 10.0f}, {"priority", 0}}}}),
         Entity(assets::ToString(assets::NewAssetGuid()), {{"Transform", At({0, 0, 0}, {-0.3f, 0.2f, 0.05f, 0.93f})},
                                                           {"DirectionalLight", {{"$v", 1}, {"color", {1.0f, 1.0f, 1.0f}}, {"intensity", 3.0f}, {"cast_shadows", false}}}}),
+        // Two more boxes the camera cannot see (far to the side, and behind it): drawn or left out, the picture is the same.
+        Entity(assets::ToString(assets::NewAssetGuid()), {{"Transform", At({60.0f, 0.0f, 0.0f})}, {"ModelRenderer", {{"$v", 1}, {"model", ""}, {"asset_path", "models/box.glb"}}}}),
+        Entity(assets::ToString(assets::NewAssetGuid()), {{"Transform", At({0.0f, 0.0f, 20.0f})}, {"ModelRenderer", {{"$v", 1}, {"model", ""}, {"asset_path", "models/box.glb"}}}}),
         Entity(box_guid, {{"Transform", At({-2.5f, 0.0f, 0.0f})}, {"ModelRenderer", {{"$v", 1}, {"model", ""}, {"asset_path", "models/box.glb"}}}}),
         Entity(assets::ToString(assets::NewAssetGuid()),
                {{"Transform", At({0, 0, 0})},
@@ -102,7 +105,33 @@ int RedCentreColumn(const fs::path& file, int& width) {
     return count > 20 ? static_cast<int>(sum / static_cast<double>(count)) : -1;
 }
 
+std::vector<unsigned char> ReadAll(const fs::path& file) {
+    std::ifstream in(file, std::ios::binary);
+    return std::vector<unsigned char>((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+}
+
 } // namespace
+
+AETHER_TEST(PlayerRecord_LeavingOutWhatTheCameraCannotSeeDoesNotChangeThePicture) {
+    const fs::path root = fs::temp_directory_path() / "aether_player_cull" / assets::ToString(assets::NewAssetGuid());
+    const fs::path pak = CookSlidingBox(root);
+    if (pak.empty()) return;
+    // The same film twice on the fixed film clock: with the view culling off (AETHER_RENDER_CULLING=0) and on. Every frame is the same bytes.
+    for (const char* mode : {"0", "1"}) {
+        const std::string run = std::string("AETHER_RENDER_CULLING=") + mode + " \"" + AETHER_TEST_PLAYER_PATH + "\" --pak \"" + pak.string() + "\" --size 160x90 --user-dir \"" +
+                                (root / "user").string() + "\" --record-dir \"" + (root / (std::string("cull") + mode)).string() + "\" --record-fps 8 --frames 6 > /dev/null 2>&1";
+        AETHER_CHECK(std::system(run.c_str()) == 0);
+    }
+    for (int i = 0; i < 6; ++i) {
+        char name[32];
+        std::snprintf(name, sizeof(name), "frame_%05d.bmp", i);
+        const std::vector<unsigned char> off = ReadAll(root / "cull0" / name), on = ReadAll(root / "cull1" / name);
+        AETHER_CHECK(!off.empty());
+        AETHER_CHECK(off == on);
+    }
+    std::error_code ignored;
+    fs::remove_all(root, ignored);
+}
 
 AETHER_TEST(PlayerRecord_ASceneSequenceIsFilmedFrameByFrame) {
     const fs::path root = fs::temp_directory_path() / "aether_player_record" / assets::ToString(assets::NewAssetGuid());

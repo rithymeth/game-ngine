@@ -1336,3 +1336,30 @@ and the CPU time to record the mirror pass alone (a timer around it, 12 frames):
   drawing only what the water can show: nothing lower than the water's plane and nothing beyond the fog.
 - **Not measured:** the GPU's cost of the second pass (the software rasterizer is fill-rate bound and says nothing about it; a world with a small lake sends the
   same 4,268 draws as one with a sea), and D3D12 (it has no mirror yet).
+
+## Terrain LOD, or what the camera never sees? (2026-11-11)
+
+Before building terrain LOD, what is a baked world's frame made of? HeroValley baked with the editor's starter rules: 6,001 draws, 2.25 M triangles.
+
+| | triangles | share |
+|---|---|---|
+| shrubs (3,257 placed) | 879,520 | 39.2% |
+| terrain | 402,588 | 17.9% |
+| pines | 368,472 | 16.4% |
+| birches | 308,831 | 13.8% |
+| grass | 286,188 | 12.7% |
+
+Taking things out of the scene on the software rasterizer (960 x 540, Epic, one camera, frames 6 and 22 so the load cancels): 244 ms a frame with everything,
+202 ms without the shrubs (-17%), 244 ms without the grass (no change). So the triangles that cost are the ones the vertex shader runs, and the terrain is not the
+lever: shrubs and trees are. **Terrain LOD was not built.**
+
+What the numbers also showed: the main pass had no frustum or size culling at all, so every one of the 6,001 draws was submitted and its vertices shaded whether
+or not the camera could see them (a GPU clips them after the vertex stage). Leaving out the draws whose bounding sphere is wholly outside the camera's view, or
+under a quarter of a pixel in radius, took the same shot from **266 ms to 156 ms a frame (-41%)** (frames 6 and 22; `AETHER_RENDER_CULLING=0` turns it off). On the
+fixed film clock the frames are byte-identical with culling on and off (test `PlayerRecord_LeavingOutWhatTheCameraCannotSeeDoesNotChangeThePicture`).
+
+- **What is left in:** skinned and animated meshes and the water (their bounds do not hold what the vertex shader does to them), shadow casters (a caster out of
+  view still casts into view), and, for the water's mirror pass, every still opaque draw (the mirror shows what is above the top of the picture).
+- **Not measured:** a real GPU, where vertex shading is cheap next to fill and the saving will be smaller; a camera that sees most of the world (the saving here is
+  about half the draws behind and beside the camera); D3D12 (the same code runs, nothing measured). The mirror pass is not culled to its own view.
+- **Still the lever for distant forests:** mesh LOD for the instanced plants (a shrub is 270 triangles at any distance). Nothing in the player has it.
