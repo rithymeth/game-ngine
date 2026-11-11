@@ -97,10 +97,11 @@ AETHER_TEST(ProceduralEditor_PresetsAreDifferentWorldsWithTheirOwnMeshFamilies) 
     }
     CHECK(shapes.size() == kWorldPresetCount);
     const ProceduralWorldSettings s = MakePreset(WorldPreset::Temperate);
-    // The pine rule places pines, grass has no mesh yet.
+    // The pine rule places pines, grass places tufts: every starter rule has a mesh family now.
     for (usize i = 0; i < s.rules.size(); ++i) {
         if (s.rules[i].name == "Pine") CHECK(s.slots[i].enabled && s.slots[i].kind == assets::procedural::ProceduralKind::PineTree);
-        if (s.rules[i].name == "Grass") CHECK(!s.slots[i].enabled);
+        if (s.rules[i].name == "Grass") CHECK(s.slots[i].enabled && s.slots[i].kind == assets::procedural::ProceduralKind::Grass);
+        if (s.rules[i].name == "Cactus") CHECK(s.slots[i].enabled && s.slots[i].kind == assets::procedural::ProceduralKind::Cactus);
     }
     CHECK(std::string(WorldPresetName(WorldPreset::Alpine)) == "Alpine");
 }
@@ -154,7 +155,7 @@ AETHER_TEST(ProceduralEditor_GenerationIsDeterministicWithCountsAndPreview) {
     ProceduralWorldDocument fresh(Small());
     CHECK(fresh.Preview(32, w, h).empty() && w == 0 && fresh.Stale() && !fresh.Generated());
     CHECK(fresh.BuildMesh(0, 0).mesh.primitives.size() >= 1);
-    CHECK(fresh.BuildMesh(3, 0).mesh.primitives.empty()); // grass: no mesh family
+    CHECK(!fresh.BuildMesh(3, 0).mesh.primitives.empty() && fresh.BuildMesh(999, 0).mesh.primitives.empty()); // grass has tufts; no such rule has nothing
 }
 
 AETHER_TEST(ProceduralEditor_TheTerrainBecomesAModelWithSixSurfaces) {
@@ -219,6 +220,7 @@ AETHER_TEST(ProceduralEditor_ApplyReplacesTheTerrainAndFoliageEditorsContent) {
 
 AETHER_TEST(ProceduralEditor_BakeWritesTheTerrainMeshesAndASceneThePlayerLoads) {
     ProceduralWorldDocument doc(Small());
+    doc.AddRule(ScatterRule{.name = "Fern"}); // a rule of the user's own starts with no mesh family
     BakeOptions options;
     options.name = "Test World!";
     const fs::path root = ScratchDir("aether_procedural_bake");
@@ -237,7 +239,8 @@ AETHER_TEST(ProceduralEditor_BakeWritesTheTerrainMeshesAndASceneThePlayerLoads) 
     CHECK(report.scene == "Generated/Test_World_/Test_World_.ascene");
     for (const std::string& file : report.files) CHECK(fs::exists(root / file) && fs::file_size(root / file) > 100);
     CHECK(std::any_of(report.files.begin(), report.files.end(), [](const std::string& f) { return f.find("_terrain.glb") != std::string::npos; }));
-    CHECK(std::find(report.rules_without_mesh.begin(), report.rules_without_mesh.end(), "Grass") != report.rules_without_mesh.end());
+    CHECK(std::find(report.rules_without_mesh.begin(), report.rules_without_mesh.end(), "Fern") != report.rules_without_mesh.end());
+    CHECK(std::find(report.rules_without_mesh.begin(), report.rules_without_mesh.end(), "Grass") == report.rules_without_mesh.end());
     CHECK(std::find(report.rules_without_mesh.begin(), report.rules_without_mesh.end(), "Pine") == report.rules_without_mesh.end());
 
     // The scene loads: the terrain plus one entity per baked object, each naming a model that was written.
@@ -265,6 +268,38 @@ AETHER_TEST(ProceduralEditor_BakeWritesTheTerrainMeshesAndASceneThePlayerLoads) 
     { std::ofstream f(blocked); f << "a file where a folder should go"; }
     const BakeReport bad = doc.Bake(blocked.string(), options);
     CHECK(!bad.ok && !bad.error.empty());
+    std::error_code ec;
+    fs::remove_all(root, ec);
+}
+
+AETHER_TEST(ProceduralEditor_ABakeKeepsTheTreesAndThinsTheGrass) {
+    ProceduralWorldDocument doc(Small());
+    doc.Generate();
+    const std::vector<usize> counts = doc.CountsByRule();
+    // Rule 0 (pine) is first in the pecking order; budget for all of it plus 25 more objects.
+    CHECK(counts[0] > 5 && counts[3] > 100); // pines, and plenty of grass to compete with
+    BakeOptions options;
+    options.name = "Budget";
+    options.max_scene_instances = static_cast<u32>(counts[0] + counts[1] + counts[2] + 25);
+    const fs::path root = ScratchDir("aether_procedural_budget");
+    const BakeReport report = doc.Bake(root.string(), options);
+    CHECK(report.ok && report.instances_in_scene == options.max_scene_instances);
+    World loaded;
+    CHECK(LoadSceneJson(loaded, (root / report.scene).string()));
+    usize pines = 0, grass = 0;
+    loaded.ForEachArchetype([&](const Archetype& archetype) {
+        if (!archetype.Mask().test(GetComponentId<ModelRenderer>())) return;
+        for (usize chunk = 0; chunk < archetype.ChunkCount(); ++chunk) {
+            const auto* models = static_cast<const ModelRenderer*>(archetype.ComponentArray(chunk, GetComponentId<ModelRenderer>()));
+            for (usize row = 0; row < archetype.ChunkEntityCount(chunk); ++row) {
+                const std::string path = models[row].asset_path;
+                pines += path.find("_Pine_") != std::string::npos;
+                grass += path.find("_Grass_") != std::string::npos;
+            }
+        }
+    });
+    CHECK(pines == counts[0]); // every pine survived
+    CHECK(grass <= 25 + counts[4] + counts[5] + counts[6] + counts[7] + counts[8]); // the grass got what was left, not a share of everything
     std::error_code ec;
     fs::remove_all(root, ec);
 }

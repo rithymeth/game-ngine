@@ -1365,18 +1365,26 @@
   type enum class TreeSpecies
   type enum class UvMode
   type struct BuildingParams
+  type struct CactusParams
   type struct CliffParams
+  type struct GrassParams
   type struct MeshStats
   type struct ModularParams
   type struct ProceduralMesh
+  type struct ReedParams
   type struct RockParams
+  type struct ShrubParams
   type struct TreeParams
   MeshPrimitiveData Finish(Shading shading,UvMode uv_mode,i32 material)const
   MeshStats ComputeStats(const MeshData&mesh)
   ProceduralMesh GenerateBuilding(const BuildingParams&params,u32 seed)
+  ProceduralMesh GenerateCactus(const CactusParams&params,u32 seed)
   ProceduralMesh GenerateCliff(const CliffParams&params,u32 seed)
+  ProceduralMesh GenerateGrass(const GrassParams&params,u32 seed)
   ProceduralMesh GenerateModular(const ModularParams&params,u32 seed)
+  ProceduralMesh GenerateReeds(const ReedParams&params,u32 seed)
   ProceduralMesh GenerateRock(const RockParams&params,u32 seed)
+  ProceduralMesh GenerateShrub(const ShrubParams&params,u32 seed)
   ProceduralMesh GenerateTree(const TreeParams&params,u32 seed)
   ProceduralMesh GenerateVariant(ProceduralKind kind,u32 variant,u32 seed)
   Vec3&Position(u32 i)
