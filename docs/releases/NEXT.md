@@ -462,3 +462,8 @@ Off by default. `FrameData` is 1408 bytes.
 ## Clouds in the water
 
 `SkyPass::DrawMirrored`: the sky (clouds, sun) is drawn into the water's reflection, so the sea mirrors the clouds. Vulkan only.
+
+## Water swells
+
+Water (`AETHER_materials_water`) lifts and tilts with the wind's strength: three travelling swells in the vertex shader. A world with
+no Wind component has the default breeze, so its water now has a gentle swell; set the Wind's strength to 0 for flat water.

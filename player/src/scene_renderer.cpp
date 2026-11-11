@@ -277,9 +277,35 @@ PSInput VSMain(VSInput input) {
                            GetNormalCoefficient(2) * world_sway.x + GetNormalCoefficient(5) * world_sway.y + GetNormalCoefficient(8) * world_sway.z);
     }
 #endif
+    // Water (AETHER_materials_water): swells. Three sine waves, about 17, 10 and 6.5 m from crest to crest, travelling along the world's wind (and a little to either side)
+    // at the speed deep water gives each wavelength, lift the surface and tilt its normal. The height scales with the wind's strength (strength 2 and over is full, none is a
+    // flat sheet), so a calm world has calm water. The phase is in the model's own space, with up along its +Y; the fine ripples of the normal map ride on top.
+    float3 surface_normal = input.normal;
+#ifdef AETHER_FRAME_DATA
+    if (((g_PC.g_AlphaOptions >> 11) & 1) != 0) {
+        float swell = saturate(g_Frame.wind.z * 0.5);
+        if (swell > 0.0) {
+            float base_angle = atan2(g_Frame.wind.y, g_Frame.wind.x);
+            float height = 0.0;
+            float2 slope = float2(0.0, 0.0);
+            [unroll] for (int w = 0; w < 3; ++w) {
+                float wavelength = w == 0 ? 17.0 : (w == 1 ? 10.0 : 6.5);
+                float amplitude = (w == 0 ? 0.32 : (w == 1 ? 0.15 : 0.06)) * swell;
+                float angle = base_angle + (w == 0 ? 0.0 : (w == 1 ? 0.55 : -0.8));
+                float2 direction = float2(cos(angle), sin(angle));
+                float k = 6.2831853 / wavelength;
+                float phase = k * dot(direction, position.xz) - sqrt(9.81 * k) * g_Frame.time.x + float(w) * 1.7;
+                height += amplitude * sin(phase);
+                slope += amplitude * k * cos(phase) * direction;
+            }
+            position.y += height;
+            surface_normal = normalize(float3(-slope.x, 1.0, -slope.y));
+        }
+    }
+#endif
     output.position = mul(g_PC.g_Mvp, float4(position, 1.0));
     output.uv = input.uv;
-    output.normal = ApplyNormalTransform(input.normal);
+    output.normal = ApplyNormalTransform(surface_normal);
     output.tangent = normalize(ApplyModelTransform(input.tangent.xyz));
     output.tangent_sign = input.tangent.w * (NormalDeterminant() < 0.0 ? -1.0 : 1.0);
     output.local_position = input.position;
