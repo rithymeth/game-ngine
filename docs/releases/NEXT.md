@@ -362,3 +362,10 @@ generator yet and bake as nothing.
 `procedural_mesh.h` gains shrubs, grass tufts, reeds with cattail heads and saguaro-style cacti (`GenerateShrub`, `GenerateGrass`, `GenerateReeds`, `GenerateCactus`,
 and the kinds `Shrub`, `Grass`, `Reeds`, `Cactus` for `GenerateVariant`). The Procedural World editor's starter scatter rules now bake with them. A bake's object
 budget goes to the rules in order, so trees keep every instance and the grass is thinned to fit what is left.
+
+## Textured terrain in baked worlds
+
+A bake paints the terrain: `terrain::RenderTerrainTexture` colours it by height, slope, moisture and temperature with smooth blends (rivers painted blue, lake and sea beds
+dark), and the baked model is the textured ground plus flat water for lakes and the sea (`BakeOptions::terrain_texture`, 1024 by default, 0 for the old flat
+surfaces). `assets::EncodePngRgb8` writes PNGs. Engine fix: the cook, the importer cache key and content moves now follow a `.glb`'s external images (they
+only did for `.gltf`), and `RewriteGltfUris` can repack a `.glb`.

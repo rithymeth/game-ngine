@@ -43,6 +43,7 @@ struct BakeOptions {
     std::string name = "Generated";
     u32 max_scene_instances = 5000; // the player draws one call per object; the rest are left out and counted
     u32 terrain_grid = 256;         // the terrain mesh's quads per side at most
+    u32 terrain_texture = 1024;     // the ground texture's size in texels (0: no texture, the six flat-coloured surfaces instead)
 };
 
 struct BakeReport {
@@ -90,6 +91,10 @@ public:
     assets::procedural::ProceduralMesh BuildMesh(usize rule, u32 variant) const;
     // The terrain as one model: a primitive each for water, sand, grass, forest, rock and snow, by the biome under each triangle.
     static assets::procedural::ProceduralMesh BuildTerrainModel(const terrain::GeneratedTerrain& terrain, u32 max_grid);
+
+    // The terrain as two primitives: the ground, one surface textured by `texture_uri` (a path relative to the .glb; RenderTerrainTexture makes the picture) so
+    // biome borders blend and rivers have banks, and the water, flat on every lake and the sea (rivers a hair above their carved beds).
+    static assets::procedural::ProceduralMesh BuildTexturedTerrainModel(const terrain::GeneratedTerrain& terrain, u32 max_grid, const std::string& texture_uri);
 
     // Into the other editors: the terrain editor takes the heightmap, layers and splatmap (the sculpt tools carry on from it); the foliage editor takes
     // the instances as a layer with one type per rule (one undo step). False when nothing is generated.

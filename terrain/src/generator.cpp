@@ -480,6 +480,69 @@ std::vector<TerrainLayer> DefaultTerrainLayers() {
     return layers;
 }
 
+namespace {
+// Smooth hash noise in 2D, 0..1, for the colour's grain.
+f32 Grain(f32 x, f32 z, u32 seed) { return ValueNoise(x, z, seed) * 0.5f + 0.5f; }
+} // namespace
+
+std::vector<u8> RenderTerrainTexture(const GeneratedTerrain& t, const TerrainGenSettings& requested, u32 size) {
+    const TerrainGenSettings s = SanitizeSettings(requested);
+    size = std::clamp(size, 1u, 8192u);
+    std::vector<u8> rgb(static_cast<usize>(size) * size * 3, 0);
+    const u32 w = t.Width(), h = t.Height();
+    if (w < 2 || h < 2 || t.biome.size() != static_cast<usize>(w) * h) return rgb;
+    const f32 range = std::max(t.height_max - t.height_min, 1e-4f);
+    const f32 cell = t.heightmap.cell_size;
+    // A field at fractional cell coordinates, bilinear.
+    auto bilinear = [&](auto value, f32 fx, f32 fz) {
+        const f32 x = std::clamp(fx, 0.0f, static_cast<f32>(w - 1)), z = std::clamp(fz, 0.0f, static_cast<f32>(h - 1));
+        const u32 x0 = std::min(static_cast<u32>(x), w - 2), z0 = std::min(static_cast<u32>(z), h - 2);
+        const f32 tx = x - static_cast<f32>(x0), tz = z - static_cast<f32>(z0);
+        const f32 a = value(x0, z0), b = value(x0 + 1, z0), c = value(x0, z0 + 1), d = value(x0 + 1, z0 + 1);
+        return (a * (1 - tx) + b * tx) * (1 - tz) + (c * (1 - tx) + d * tx) * tz;
+    };
+    const Vec3 grass(0.30f, 0.46f, 0.18f), forest(0.15f, 0.30f, 0.12f), rock(0.41f, 0.39f, 0.37f), sand(0.76f, 0.68f, 0.46f), snow(0.93f, 0.95f, 0.98f), bed(0.30f, 0.27f, 0.20f), river_blue(0.17f, 0.38f, 0.62f);
+    for (u32 py = 0; py < size; ++py) {
+        for (u32 px = 0; px < size; ++px) {
+            const f32 fx = (static_cast<f32>(px) + 0.5f) / static_cast<f32>(size) * static_cast<f32>(w - 1);
+            const f32 fz = (static_cast<f32>(py) + 0.5f) / static_cast<f32>(size) * static_cast<f32>(h - 1);
+            const f32 height = bilinear([&](u32 x, u32 z) { return t.heightmap.heights[t.Index(x, z)]; }, fx, fz);
+            const f32 normalized = (height - t.height_min) / range;
+            const f32 slope = bilinear([&](u32 x, u32 z) { return t.slope[t.Index(x, z)]; }, fx, fz);
+            const f32 moist = bilinear([&](u32 x, u32 z) { return t.moisture[t.Index(x, z)]; }, fx, fz);
+            const f32 temp = bilinear([&](u32 x, u32 z) { return t.temperature[t.Index(x, z)]; }, fx, fz);
+            // Standing water (a lake or the sea) is drawn over its bed as geometry; a river is painted into the ground, since a ribbon of water is too thin
+            // to lie flat on the steep, carved ground it runs over.
+            const f32 still = bilinear([&](u32 x, u32 z) { const usize i = t.Index(x, z); return (t.lake[i] || t.heightmap.heights[i] <= t.sea_height) ? 1.0f : 0.0f; }, fx, fz);
+            const f32 stream = bilinear([&](u32 x, u32 z) { const usize i = t.Index(x, z); return (t.river[i] && !t.lake[i] && t.heightmap.heights[i] > t.sea_height) ? 1.0f : 0.0f; }, fx, fz);
+
+            const f32 rock_w = std::clamp(Smoothstep(s.rock_slope * 0.6f, s.rock_slope, slope) + 0.6f * Smoothstep(s.tree_line, s.tree_line + 0.15f, normalized) * (1.0f - moist), 0.0f, 1.0f);
+            const f32 snow_w = Smoothstep(s.snow_line - 0.04f, s.snow_line + 0.04f, normalized) * (1.0f - 0.85f * rock_w);
+            const f32 beach = 1.0f - Smoothstep(s.sea_level + s.beach_band * 0.5f, s.sea_level + s.beach_band * 1.5f, normalized);
+            const f32 dry = (1.0f - Smoothstep(0.28f, 0.4f, moist)) * Smoothstep(0.45f, 0.55f, temp);
+            const f32 sand_w = std::max(beach, dry) * (1.0f - rock_w) * (1.0f - snow_w);
+            const f32 forest_w = Smoothstep(0.42f, 0.55f, moist) * (1.0f - Smoothstep(s.tree_line - 0.06f, s.tree_line, normalized)) * (1.0f - rock_w) * (1.0f - snow_w) * (1.0f - sand_w);
+            const f32 grass_w = std::max(1.0f - rock_w - snow_w - sand_w - forest_w, 0.0f);
+            const f32 total = std::max(rock_w + snow_w + sand_w + forest_w + grass_w, 1e-4f);
+            Vec3 c = (rock * rock_w + snow * snow_w + sand * sand_w + forest * forest_w + grass * grass_w) * (1.0f / total);
+
+            // Grain: broad patches and fine speckle, in metres (so it does not change with the cell size).
+            const f32 wx = fx * cell, wz = fz * cell;
+            const f32 grain = 0.86f + 0.30f * (0.65f * Grain(wx * 0.18f, wz * 0.18f, s.seed ^ 0x51ED270Bu) + 0.35f * Grain(wx * 1.3f, wz * 1.3f, s.seed ^ 0x2545F491u));
+            c = c * grain;
+            // The bed of a lake or the sea: dark, so the water over it reads as water. A river: the water's own colour, with soft banks.
+            c = c + (bed * grain - c) * Smoothstep(0.35f, 0.75f, still);
+            c = c + (river_blue * (0.9f + 0.1f * grain) - c) * (Smoothstep(0.2f, 0.6f, stream) * (1.0f - Smoothstep(0.35f, 0.75f, still)));
+            // The colours above are display (sRGB) colours, as an artist picks them; the renderer reads a colour texture as sRGB and lights its linear value.
+            u8* out = &rgb[(static_cast<usize>(py) * size + px) * 3];
+            out[0] = static_cast<u8>(std::clamp(c.x, 0.0f, 1.0f) * 255.0f + 0.5f);
+            out[1] = static_cast<u8>(std::clamp(c.y, 0.0f, 1.0f) * 255.0f + 0.5f);
+            out[2] = static_cast<u8>(std::clamp(c.z, 0.0f, 1.0f) * 255.0f + 0.5f);
+        }
+    }
+    return rgb;
+}
+
 std::vector<u8> RenderTerrainPreview(const GeneratedTerrain& terrain) {
     const u32 w = terrain.Width(), h = terrain.Height();
     std::vector<u8> rgb(static_cast<usize>(w) * h * 3, 0);

@@ -1,3 +1,5 @@
+#include "aether/assets/gltf_loader.h"
+#include "aether/assets/image.h"
 #include "aether/scene/components.h"
 #include "aether/scene/serialization.h"
 #include "test_framework.h"
@@ -180,6 +182,40 @@ AETHER_TEST(ProceduralEditor_TheTerrainBecomesAModelWithSixSurfaces) {
     CHECK(ProceduralWorldDocument::BuildTerrainModel(GeneratedTerrain{}, 64).mesh.primitives.empty());
 }
 
+AETHER_TEST(ProceduralEditor_TheTexturedTerrainIsOneGroundSurfaceAndTheWater) {
+    ProceduralWorldDocument doc(Small());
+    doc.Generate();
+    const GeneratedTerrain& t = doc.Terrain();
+    const assets::procedural::ProceduralMesh model = ProceduralWorldDocument::BuildTexturedTerrainModel(t, 64, "ground.png");
+    std::string error;
+    CHECK(assets::procedural::ValidateMesh(model, &error));
+    CHECK(model.mesh.primitives.size() >= 1 && model.mesh.primitives.size() <= 2 && model.materials[0].base_color_texture == "ground.png");
+    // The ground's UV is the position over the map: 0 to 1 on both axes, corner to corner.
+    f32 u_min = 1e9f, u_max = -1e9f, v_min = 1e9f, v_max = -1e9f;
+    for (const auto& v : model.mesh.primitives[0].vertices) { u_min = std::min(u_min, v.uv[0]); u_max = std::max(u_max, v.uv[0]); v_min = std::min(v_min, v.uv[1]); v_max = std::max(v_max, v.uv[1]); }
+    CHECK(u_min == 0.0f && v_min == 0.0f && std::fabs(u_max - 1.0f) < 1e-5f && std::fabs(v_max - 1.0f) < 1e-5f);
+    // The ground faces up, and the model loads (with its texture named) through the glTF loader.
+    double ny = 0.0;
+    for (const auto& v : model.mesh.primitives[0].vertices) ny += v.normal[1];
+    CHECK(ny / static_cast<double>(model.mesh.primitives[0].vertices.size()) > 0.6);
+    {
+        // From a file, so the loader resolves the texture: the uri joined to the model's folder.
+        const fs::path dir = ScratchDir("aether_procedural_textured");
+        const std::vector<u8> glb = assets::procedural::EncodeGlb(model);
+        { std::ofstream f(dir / "terrain.glb", std::ios::binary); f.write(reinterpret_cast<const char*>(glb.data()), static_cast<std::streamsize>(glb.size())); }
+        assets::GltfScene scene;
+        CHECK(assets::LoadGltf((dir / "terrain.glb").string(), scene) && !scene.materials[0].base_color_texture.empty());
+        CHECK(scene.materials[0].base_color_texture.find("ground.png") != std::string::npos);
+        std::error_code ec;
+        fs::remove_all(dir, ec);
+    }
+    // The water is above the ground it covers (rivers a hair, lakes and the sea by their depth).
+    if (model.mesh.primitives.size() == 2) {
+        CHECK(model.materials[1].base_color.z > model.materials[1].base_color.x);
+        for (const auto& v : model.mesh.primitives[1].vertices) CHECK(v.position[1] >= t.height_min - 1e-3f && v.position[1] <= t.height_max + 0.05f);
+    }
+}
+
 AETHER_TEST(ProceduralEditor_SeaAndLakeSurfacesAreFlat) {
     ProceduralWorldDocument doc(Small(WorldPreset::Islands));
     doc.Generate();
@@ -223,6 +259,7 @@ AETHER_TEST(ProceduralEditor_BakeWritesTheTerrainMeshesAndASceneThePlayerLoads) 
     doc.AddRule(ScatterRule{.name = "Fern"}); // a rule of the user's own starts with no mesh family
     BakeOptions options;
     options.name = "Test World!";
+    options.terrain_texture = 128;
     const fs::path root = ScratchDir("aether_procedural_bake");
     CHECK(!doc.Bake(root.string(), options).ok && !doc.Bake(root.string(), options).error.empty()); // nothing generated
     doc.Generate();
@@ -238,6 +275,13 @@ AETHER_TEST(ProceduralEditor_BakeWritesTheTerrainMeshesAndASceneThePlayerLoads) 
     CHECK(report.instances_in_scene == 40 && report.instances_left_out == doc.Instances().size() - 40);
     CHECK(report.scene == "Generated/Test_World_/Test_World_.ascene");
     for (const std::string& file : report.files) CHECK(fs::exists(root / file) && fs::file_size(root / file) > 100);
+    // The ground texture is a PNG that decodes at the size asked for, named in the terrain model beside it.
+    {
+        const std::string png = "Generated/Test_World_/Test_World__terrain.png";
+        CHECK(std::find(report.files.begin(), report.files.end(), png) != report.files.end());
+        assets::ImageData image;
+        CHECK(assets::DecodeImageFile((root / png).string(), image) && image.width == options.terrain_texture && image.height == options.terrain_texture);
+    }
     CHECK(std::any_of(report.files.begin(), report.files.end(), [](const std::string& f) { return f.find("_terrain.glb") != std::string::npos; }));
     CHECK(std::find(report.rules_without_mesh.begin(), report.rules_without_mesh.end(), "Fern") != report.rules_without_mesh.end());
     CHECK(std::find(report.rules_without_mesh.begin(), report.rules_without_mesh.end(), "Grass") == report.rules_without_mesh.end());
@@ -280,6 +324,7 @@ AETHER_TEST(ProceduralEditor_ABakeKeepsTheTreesAndThinsTheGrass) {
     CHECK(counts[0] > 5 && counts[3] > 100); // pines, and plenty of grass to compete with
     BakeOptions options;
     options.name = "Budget";
+    options.terrain_texture = 32;
     options.max_scene_instances = static_cast<u32>(counts[0] + counts[1] + counts[2] + 25);
     const fs::path root = ScratchDir("aether_procedural_budget");
     const BakeReport report = doc.Bake(root.string(), options);

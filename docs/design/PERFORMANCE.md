@@ -1301,3 +1301,20 @@ RelWithDebInfo, one run of several that agreed within 2 percent). A 129 x 129 te
 - Not measured: a split of the time by stage (the droplets are most of it by construction, the priority flood and the sort are
   O(n log n) in the cell count), a 2049 x 2049 terrain, or any threading. The droplets write to shared heights, so threading them
   would change the result by thread timing unless they are split into independent tiles first: the determinism guarantee comes first.
+
+## Is instancing needed for baked worlds? (2026-11-17)
+
+The Procedural World editor bakes up to 5,000 objects into a scene (default cap), one entity and one draw call each, and the RHI has no instanced draw. Before
+building one, `Templates_StressMeasure` (same machine and method as the stress-scene section above) at the sizes a bake produces:
+
+| Entities | `SceneRenderer::Draw` | with shadows off |
+|---|---|---|
+| 1,000 | 0.96 ms | |
+| 3,000 | 2.43 ms | |
+| 5,000 | 4.34 to 4.69 ms | 3.88 ms |
+
+- **No.** A 5,000-object world records in under 5 ms against a 16.7 ms frame, shadows included (they add about 0.8 ms at 5,000 casters), so the cap holds with room to
+  spare and instancing is not needed for what the editor bakes. It becomes the next real step past about 20,000 objects, as the stress-scene section says.
+- **Not measured:** a real GPU, D3D12, different models (the stress scene is one model repeated), or shadow cascades that cover the whole camera view. The
+  baked world run through the player on the software rasterizer manages about 4 frames a second, which is the rasterizer's fill rate and says nothing about CPU
+  recording; no GPU figure is claimed.
