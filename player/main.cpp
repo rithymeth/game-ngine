@@ -31,6 +31,7 @@
 #include "aether/player/game.h"
 #include "aether/platform/platform_plugin.h"
 #include "aether/player/scene_renderer.h"
+#include "../src/camera_path.h"
 
 #if AETHER_PLAYER_NETCLIENT && AETHER_PLAYER_PHYSICS
 #include "aether/server/dedicated_server.h"
@@ -81,6 +82,8 @@ struct Options {
     std::vector<std::string> keys;
     std::vector<std::string> pressed; // keys held for the whole run (headless runs, smoke tests)
     std::string screenshot;
+    std::string camera_path;  // --camera-path: a JSON file of camera keyframes the scene's camera follows (src/camera_path.h)
+    std::string record_dir;   // --record-dir: write every frame of the camera path here as frame_00000.bmp, ...
     std::string replay_input;          // recorded input for deterministic package verification
     bool report = false;              // print where the Player-tagged entity ended up
     std::string server; // empty: offline single-player (the default)
@@ -93,6 +96,7 @@ void Usage() {
                  "usage: aether_player [--pak <file|dir>]... [--scene <path>] [--frames <n>] [--headless]\n"
                  "                     [--backend d3d12|vulkan] [--size <w>x<h>] [--quality <preset>]\n"
                  "                     [--key <64 hex digits>] [--press <Key>]... [--screenshot <file.bmp>]\n"
+                 "                     [--camera-path <file.json> [--record-dir <dir>]]\n"
                  "                     [--report] [--user-dir <dir>] [--replay-input <file.json>]\n"
                  "                     [--server <ip:port>] [--name <text>] [--password <text>]\n"
                  "                     [--token <join token>] [--build-id <n>] (opt-in UDP + Jolt)\n");
@@ -114,6 +118,10 @@ bool ParseArgs(int argc, char** argv, Options& o) {
             o.pressed.push_back(argv[++i]);
         } else if (a == "--screenshot" && has_value) {
             o.screenshot = argv[++i];
+        } else if (a == "--camera-path" && has_value) {
+            o.camera_path = argv[++i];
+        } else if (a == "--record-dir" && has_value) {
+            o.record_dir = argv[++i];
         } else if (a == "--report") {
             o.report = true;
         } else if (a == "--replay-input" && has_value) {
@@ -512,6 +520,23 @@ int main(int argc, char** argv) {
         }
         if (window && !game.StartAudioOutput(&error)) AETHER_LOG_WARN("Player", "Audio output: %s", error.c_str());
         game.BeginPlay();
+        // A camera path: the scene's camera follows it, game time advances one film frame a frame, and with --record-dir every frame is written. A few
+        // frames at the first pose come first (not recorded) so resources are in and the temporal filter has settled.
+        CameraPath camera_path;
+        constexpr i64 kRecordWarmup = 4;
+        if (!options.camera_path.empty()) {
+            std::ifstream file(options.camera_path);
+            const std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+            std::string path_error;
+            if (!file || !ParseCameraPath(text, camera_path, &path_error)) {
+                std::fprintf(stderr, "aether_player: %s: %s\n", options.camera_path.c_str(), file ? path_error.c_str() : "cannot read it");
+                return 2;
+            }
+            if (options.frames < 0) options.frames = kRecordWarmup + camera_path.FrameCount();
+            if (!options.record_dir.empty()) std::filesystem::create_directories(options.record_dir);
+            AETHER_LOG_INFO("Player", "Camera path: %.2f s at %.0f fps, %u frames%s", camera_path.Duration(), camera_path.fps, camera_path.FrameCount(),
+                            options.record_dir.empty() ? "" : ", recording");
+        }
         u32 frame_slot = 0;
         bool screenshot_written = false;
         bool screenshot_failed = false;
@@ -573,7 +598,22 @@ int main(int argc, char** argv) {
                 }
             }
 #endif
-            game.Tick(dt);
+            f32 tick_dt = dt;
+            if (!camera_path.keys.empty()) {
+                const i64 film_frame = std::max<i64>(frame - kRecordWarmup, 0);
+                const f32 film_time = static_cast<f32>(film_frame) / camera_path.fps;
+                const CameraKey pose = SampleCameraPath(camera_path, film_time);
+                bool placed = false;
+                game.GetWorld().ForEach<Transform, Camera>([&](Transform& transform, Camera& camera) {
+                    if (placed) return;
+                    placed = true;
+                    transform.position = pose.position;
+                    transform.rotation = CameraPoseRotation(pose);
+                    if (pose.fov_degrees > 0.0f) camera.fov_degrees = pose.fov_degrees;
+                });
+                tick_dt = frame < kRecordWarmup ? 0.0f : 1.0f / camera_path.fps; // the film's clock: water and wind move 1 / fps a frame
+            }
+            game.Tick(tick_dt);
             if (game.ExitRequested()) break;
 #if AETHER_PLAYER_NETCLIENT && AETHER_PLAYER_PHYSICS
             if (render_interpolation)
@@ -608,6 +648,15 @@ int main(int argc, char** argv) {
                         AETHER_LOG_INFO("Player", "Saved rendered frame to %s", options.screenshot.c_str());
                     } else {
                         AETHER_LOG_ERROR("Player", "Couldn't read back or save rendered frame to %s", options.screenshot.c_str());
+                        screenshot_failed = true;
+                    }
+                }
+                if (!options.record_dir.empty() && !camera_path.keys.empty() && frame >= kRecordWarmup) {
+                    std::vector<u8> rgba;
+                    char name[32];
+                    std::snprintf(name, sizeof(name), "frame_%05lld.bmp", static_cast<long long>(frame - kRecordWarmup));
+                    if (!swap_chain->ReadBack(rgba) || !SaveScreenshotBmp((std::filesystem::path(options.record_dir) / name).string(), swap_chain->Width(), swap_chain->Height(), rgba)) {
+                        AETHER_LOG_ERROR("Player", "Couldn't record frame %s", name);
                         screenshot_failed = true;
                     }
                 }
