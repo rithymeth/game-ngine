@@ -496,6 +496,95 @@ static void Detail_AGroundWithTheLayerIsRoughUpClose(rhi::Backend backend) {
 AETHER_TEST(Detail_AGroundWithTheLayerIsRoughUpClose_D3D12) { Detail_AGroundWithTheLayerIsRoughUpClose(rhi::Backend::D3D12); }
 AETHER_TEST(Detail_AGroundWithTheLayerIsRoughUpClose_Vulkan) { Detail_AGroundWithTheLayerIsRoughUpClose(rhi::Backend::Vulkan); }
 
+// Height fog: mist that pools low. A tall red pillar 30 m away fades into the mist at its foot and stands clear of it higher up: with the fog on, the foot has lost
+// more of its colour than the top, relative to the same scene with no fog. (Fog colour is the sky's, near white here, so loss of colour is loss of redness.)
+fs::path CookHeightFogScene(const fs::path& root, bool fog) {
+    fs::create_directories(root / "Content/models");
+    fs::create_directories(root / "Content/Scenes");
+    const fs::path games = fs::path(AETHER_REPO_ASSETS_DIR).parent_path() / "games/AETHER-01";
+    reflect::Json project = reflect::Json::parse(std::ifstream(games / "AETHER-01.aproject"));
+    project["name"] = "WaterScene";
+    project["startup_scene"] = "Scenes/Main.ascene";
+    project["always_cook"] = reflect::Json::array();
+    std::ofstream(root / "WaterScene.aproject") << project.dump(2);
+    MeshBuilder box;
+    box.Box(Vec3(-2.0f, 0.0f, -32.0f), Vec3(2.0f, 70.0f, -30.0f));
+    ProceduralMesh pillar;
+    assets::MaterialData red;
+    red.base_color = Vec4(0.9f, 0.05f, 0.05f, 1.0f);
+    red.roughness = 0.9f;
+    red.metallic = 0.0f;
+    pillar.materials.push_back(red);
+    pillar.mesh.primitives.push_back(box.Finish(Shading::Flat, UvMode::BoxProjected, 0));
+    const std::vector<u8> glb = EncodeGlb(pillar);
+    std::ofstream(root / "Content/models/pillar.glb", std::ios::binary).write(reinterpret_cast<const char*>(glb.data()), static_cast<std::streamsize>(glb.size()));
+    const reflect::Json volume = {{"$v", 1}, {"global", true}, {"extents", {5.0f, 5.0f, 5.0f}}, {"blend_distance", 1.0f}, {"weight", 1.0f}, {"priority", 0},
+                                  {"exposure_compensation", 0.0f}, {"bloom_intensity", 0.0f}, {"vignette", 0.0f}, {"saturation", 1.0f}, {"tonemapper", "ACES"},
+                                  {"fog_density", 0.0f}, {"height_fog_density", fog ? 0.06f : 0.0f}, {"height_fog_falloff", 0.12f}, {"height_fog_base", 0.0f}};
+    const reflect::Json entities = {
+        SceneEntity({{"Transform", TransformJson({0.0f, 3.0f, 0.0f}, {0.0998f, 0.0f, 0.0f, 0.995f})},
+                     {"Camera", {{"$v", 1}, {"projection", "Perspective"}, {"fov_degrees", 50.0f}, {"near_plane", 0.1f}, {"far_plane", 200.0f}, {"ortho_height", 10.0f}, {"priority", 0}}}}),
+        SceneEntity({{"Transform", TransformJson({0, 0, 0}, {-0.3007f, 0.0f, 0.0f, 0.9537f})},
+                     {"DirectionalLight", {{"$v", 1}, {"color", {1.0f, 0.95f, 0.88f}}, {"intensity", 3.0f}, {"cast_shadows", false}}}}),
+        SceneEntity({{"Transform", TransformJson({0, 0, 0})}, {"SkyLight", {{"$v", 1}, {"color", {1.0f, 1.0f, 1.0f}}, {"intensity", 1.0f}, {"environment", ""}, {"environment_rotation_degrees", 0.0f}}}}),
+        SceneEntity({{"Transform", TransformJson({0, 0, 0})}, {"ModelRenderer", {{"$v", 1}, {"model", ""}, {"asset_path", "models/pillar.glb"}}}}),
+        SceneEntity({{"Transform", TransformJson({0, 0, 0})}, {"PostProcessVolume", volume}})};
+    const reflect::Json scene = {{"$type", "Scene"}, {"$version", 1}, {"entities", entities}};
+    std::ofstream(root / "Content/Scenes/Main.ascene") << scene.dump(2);
+    cook::CookOptions options;
+    options.project_file = root / "WaterScene.aproject";
+    options.output_dir = root / "cooked";
+    const auto cooked = cook::Cook(options);
+    AETHER_CHECK(cooked.ok);
+    return cooked.ok ? cooked.pak_file : fs::path();
+}
+
+static void Fog_HeightFogThickensLowAndThinsWithHeight(rhi::Backend backend) {
+    if (!rhi::IsBackendAvailable(backend)) return;
+    SetEnvironmentVariableForTest("AETHER_RENDER_TAA", "0");
+    constexpr u32 W = 640, H = 360;
+    const fs::path root = fs::temp_directory_path() / "aether_height_fog" / assets::ToString(assets::NewAssetGuid());
+    const fs::path foggy_pak = CookHeightFogScene(root / "foggy", true), clear_pak = CookHeightFogScene(root / "clear", false);
+    if (foggy_pak.empty() || clear_pak.empty()) return;
+    const auto foggy = FrameAfter(backend, root / "foggy", foggy_pak, 0, W, H), clear = FrameAfter(backend, root / "clear", clear_pak, 0, W, H);
+    SetEnvironmentVariableForTest("AETHER_RENDER_TAA", "");
+    const usize bytes = static_cast<usize>(W) * H * 4;
+    if (foggy.size() != bytes || clear.size() != bytes) {
+        AETHER_CHECK(false);
+        return;
+    }
+    // The pillar's rows in the clear frame (its red pixels), then the redness (r - g) of its lowest and highest tenth of those rows in each frame.
+    u32 first = H, last = 0;
+    for (u32 y = 0; y < H; ++y)
+        for (u32 x = 0; x < W; ++x) {
+            const usize i = (static_cast<usize>(y) * W + x) * 4;
+            if (clear[i] > clear[i + 1] + 60) { first = std::min(first, y); last = std::max(last, y); }
+        }
+    AETHER_CHECK(last > first + 40);
+    if (!(last > first + 40)) return;
+    const u32 band = (last - first) / 10;
+    const auto redness = [&](const std::vector<u8>& frame, u32 from, u32 to) {
+        double total = 0.0;
+        usize count = 0;
+        for (u32 y = from; y < to; ++y)
+            for (u32 x = W / 2 - 20; x < W / 2 + 20; ++x) {
+                const usize i = (static_cast<usize>(y) * W + x) * 4;
+                total += static_cast<int>(frame[i]) - static_cast<int>(frame[i + 1]);
+                ++count;
+            }
+        return total / static_cast<double>(count);
+    };
+    const double top_kept = redness(foggy, first, first + band) / std::max(redness(clear, first, first + band), 1.0);
+    const double foot_kept = redness(foggy, last - band, last) / std::max(redness(clear, last - band, last), 1.0);
+    std::printf("    %s: share of the pillar's colour kept with the fog: top %.2f, foot %.2f\n", backend == rhi::Backend::Vulkan ? "vulkan" : "d3d12", top_kept, foot_kept);
+    AETHER_CHECK(foot_kept < 0.85);            // the mist at its foot hides it
+    AETHER_CHECK(top_kept > foot_kept + 0.12); // and it stands clearer higher up
+    std::error_code ignored;
+    fs::remove_all(root, ignored);
+}
+AETHER_TEST(Fog_HeightFogThickensLowAndThinsWithHeight_D3D12) { Fog_HeightFogThickensLowAndThinsWithHeight(rhi::Backend::D3D12); }
+AETHER_TEST(Fog_HeightFogThickensLowAndThinsWithHeight_Vulkan) { Fog_HeightFogThickensLowAndThinsWithHeight(rhi::Backend::Vulkan); }
+
 // A wind zone replaces the world's wind where an object stands in it: an east wind everywhere, a zone around the tuft that blows toward the camera, and only the
 // tuft inside the zone loses its sideways sway; a zone elsewhere changes nothing.
 static void Wind_AZoneChangesTheWindOnlyWhereTheObjectStands(rhi::Backend backend) {

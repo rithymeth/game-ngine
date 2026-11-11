@@ -93,7 +93,7 @@ bool Compiles(const std::string& hlsl, const char* stage, const char* entry) {
 } // namespace
 
 AETHER_TEST(Bloom_ConstantsAndChain) {
-    static_assert(sizeof(player::BloomConstants) == 32 && sizeof(player::PostConstants) == 112);
+    static_assert(sizeof(player::BloomConstants) == 32 && sizeof(player::PostConstants) == 128);
     PostProcessSettings s;
     player::PostConstants c = player::PackPostConstants(s, 3);
     // Off until RenderBloom has drawn: no bloom index, the setting's intensity kept (0.05 by default) for Draw to use.

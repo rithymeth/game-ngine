@@ -33,6 +33,7 @@ struct PushConstants {
     float4 g_FogColor;
     float4 g_SunView;
     float4 g_SunColor;
+    float4 g_HeightFog;
 };
 #ifdef __spirv__
 [[vk::push_constant]]
@@ -140,7 +141,7 @@ float4 PSMain(float4 position : SV_POSITION) : SV_TARGET {
     g_Textures[g_PC.g_SceneColor].GetDimensions(width, height);
     float3 c = g_Textures[g_PC.g_SceneColor].Load(int3(int2(position.xy), 0)).rgb;
     if (g_PC.g_Depth < 128 && g_PC.g_AoStrength > 0.0) c *= AmbientOcclusion(int2(position.xy), float2(width, height));
-    if (g_PC.g_Depth < 128 && g_PC.g_FogDensity > 0.0) {
+    if (g_PC.g_Depth < 128 && (g_PC.g_FogDensity > 0.0 || g_PC.g_FogColor.w > 0.0)) {
         // Distance haze: the scene fades toward the sky's colour with the distance from the camera (the sky itself is left alone).
         float d = AoDepth(int2(position.xy), float2(width, height));
         if (d < 1.0) {
@@ -152,7 +153,18 @@ float4 PSMain(float4 position : SV_POSITION) : SV_TARGET {
                 float toward = saturate(dot(normalize(ray), g_PC.g_SunView.xyz));
                 fog += g_PC.g_SunColor.rgb * pow(toward, 8.0);
             }
-            c = lerp(c, fog, 1.0 - exp(-g_PC.g_FogDensity * distance));
+            float optical_depth = g_PC.g_FogDensity * distance;
+            if (g_PC.g_FogColor.w > 0.0) {
+                // Exponential height fog: the density falls as exp(-k h) with height h above the base, and the optical depth along the ray from the camera to this pixel
+                // has a closed form, (1 - exp(-k dy D)) / (k dy) times the density at the camera, where dy is how much the ray climbs (the limit D when it is level).
+                float3 ray_view = AoViewPosition(int2(position.xy), float2(width, height), d);
+                float climb = dot(normalize(ray_view), g_PC.g_HeightFog.xyz);
+                float k = max(g_PC.g_SunColor.w, 1e-5);
+                float x = k * climb * distance;
+                float run = abs(x) > 1e-3 ? (1.0 - exp(-x)) / (k * climb) : distance * (1.0 - 0.5 * x);
+                optical_depth += g_PC.g_FogColor.w * exp(-k * g_PC.g_HeightFog.w) * run;
+            }
+            c = lerp(c, fog, 1.0 - exp(-optical_depth));
         }
     }
     if (g_PC.g_Bloom < 128 && g_PC.g_BloomIntensity > 0.0) {
@@ -396,6 +408,12 @@ void PostPass::Draw(gfx::rhi::ICommandList& commands, const PostProcessSettings&
         constants.fog_color[0] = fog_color_.x;
         constants.fog_color[1] = fog_color_.y;
         constants.fog_color[2] = fog_color_.z;
+        constants.fog_color[3] = std::isfinite(settings.height_fog_density) ? std::clamp(settings.height_fog_density, 0.0f, 1.0f) : 0.0f;
+        constants.sun_color[3] = std::isfinite(settings.height_fog_falloff) ? std::clamp(settings.height_fog_falloff, 1e-4f, 1.0f) : 0.02f;
+        constants.height_fog[0] = fog_up_view_.x;
+        constants.height_fog[1] = fog_up_view_.y;
+        constants.height_fog[2] = fog_up_view_.z;
+        constants.height_fog[3] = fog_camera_height_;
         constants.depth = ao_.depth;
         constants.ao_strength = ao_.strength;
         constants.ao_radius = ao_.radius;

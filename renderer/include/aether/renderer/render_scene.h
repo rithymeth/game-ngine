@@ -69,6 +69,9 @@ struct PostProcessSettings {
     f32 saturation = 1.0f;
     Tonemapper tonemapper = Tonemapper::ACES;
     f32 fog_density = 0.0f; // 1 / m
+    f32 height_fog_density = 0.0f; // 1 / m at height_fog_base
+    f32 height_fog_falloff = 0.02f;
+    f32 height_fog_base = 0.0f;
 };
 
 // What the renderer draws, copied from the ECS each frame (Phase 14 §14.1)

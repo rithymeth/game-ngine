@@ -240,3 +240,31 @@ AETHER_TEST(PostPass_SceneColorPassIsRefusedWithoutATarget_D3D12) { PostPass_Sce
 AETHER_TEST(PostPass_SceneColorPassIsRefusedWithoutATarget_Vulkan) { PostPass_SceneColorPassIsRefusedWithoutATarget(gfx::rhi::Backend::Vulkan); }
 AETHER_TEST(PostPass_ParticleAndDecalPassesBuildHdrPipelines_D3D12) { PostPass_ParticleAndDecalPassesBuildHdrPipelines(gfx::rhi::Backend::D3D12); }
 AETHER_TEST(PostPass_ParticleAndDecalPassesBuildHdrPipelines_Vulkan) { PostPass_ParticleAndDecalPassesBuildHdrPipelines(gfx::rhi::Backend::Vulkan); }
+
+// Height fog is a post volume setting like the distance haze: it blends by weight, and a bounded volume gives it only inside.
+AETHER_TEST(PostVolume_HeightFogBlendsLikeTheOtherSettings) {
+    RenderScene scene;
+    PostProcessVolume base;
+    base.global = true;
+    base.height_fog_density = 0.04f;
+    base.height_fog_falloff = 0.1f;
+    base.height_fog_base = 10.0f;
+    scene.post_volumes.push_back({Vec3(0, 0, 0), base});
+    const PostProcessSettings all = BlendPostProcess(scene, Vec3(500, 0, 0));
+    const auto near = [](f32 a, f32 b) { return std::fabs(a - b) < 1e-5f; };
+    AETHER_CHECK(near(all.height_fog_density, 0.04f) && near(all.height_fog_falloff, 0.1f) && near(all.height_fog_base, 10.0f));
+    PostProcessVolume local;
+    local.global = false;
+    local.extents = Vec3(5, 5, 5);
+    local.blend_distance = 0.0f;
+    local.height_fog_density = 0.2f;
+    local.height_fog_falloff = 0.3f;
+    local.height_fog_base = 30.0f;
+    local.priority = 1;
+    scene.post_volumes.push_back({Vec3(0, 0, 0), local});
+    const PostProcessSettings inside = BlendPostProcess(scene, Vec3(0, 0, 0)), outside = BlendPostProcess(scene, Vec3(500, 0, 0));
+    AETHER_CHECK(near(inside.height_fog_density, 0.2f) && near(inside.height_fog_base, 30.0f));
+    AETHER_CHECK(near(outside.height_fog_density, 0.04f) && near(outside.height_fog_base, 10.0f));
+    // A plain default volume has no height fog.
+    AETHER_CHECK(PostProcessVolume{}.height_fog_density == 0.0f);
+}
