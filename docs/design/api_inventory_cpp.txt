@@ -6137,6 +6137,20 @@
   void GenerateInstances(FoliageLayer&layer,const DensityMap&density,span<const Vec3>sample_positions,span<const Vec3>sample_normals,std::mt19937&rng)
   void PaintInstances(FoliageLayer&layer,const DensityMap&density,const Vec3&center,f32 brush_radius,std::mt19937&rng)
   void RemoveInstancesNear(FoliageLayer&layer,const Vec3&position,f32 radius)
+[terrain/include/aether/terrain/generator.h] experimental
+  type enum class Biome
+  type struct GeneratedTerrain
+  type struct TerrainGenSettings
+  GeneratedTerrain GenerateTerrain(const TerrainGenSettings&settings)
+  SplatmapData BuildTerrainSplatmap(const GeneratedTerrain&terrain,const TerrainGenSettings&settings,std::span<const SplatmapLayer>layers,u32 resolution)
+  TerrainGenSettings SanitizeSettings(const TerrainGenSettings&settings)
+  const char*BiomeName(Biome biome)
+  std::vector<TerrainLayer>DefaultTerrainLayers()
+  std::vector<f32>BuildMaterialWeights(const GeneratedTerrain&terrain,const TerrainGenSettings&settings,u32 resolution)
+  std::vector<u8>RenderTerrainPreview(const GeneratedTerrain&terrain)
+  u32 Height()const
+  u32 Width()const
+  usize Index(u32 x,u32 z)const
 [terrain/include/aether/terrain/renderer.h] experimental
   type class TerrainGpu
   type class TerrainRenderer
