@@ -1423,3 +1423,23 @@ and the picture is byte-identical (0 of 518,400 pixels differ on the film clock)
   that is already chunked (the terrain editor's own chunks, `terrain/`, are not touched by this and are not what the baker's `.glb` uses).
 - **Left:** the rest of the shadow pass is the plants, 3,595 draws in the far cascade; the far levels already cover those that sway. The skirt (the wall round the map's edge,
   a few thousand triangles) is one piece and still spans the map; the water is not drawn into the cascades.
+
+### The shadow pass after the terrain tiles: what is left (2026-11-11)
+
+Counted again on the tiled HeroValley (same camera, GPU timestamps, 12 frames averaged, software Vulkan), by quality preset:
+
+| preset | cascades x texels | frame | shadows | scene | cascade draws | cascade triangles |
+|---|---|---|---|---|---|---|
+| Low | 2 x 1,024 | 410 ms | 202 | 181 | 48 / 3,928 | 36 k / 616 k |
+| Medium | 3 x 1,024 | 448 | 209 | 199 | 14 / 267 / 3,753 | 19 k / 79 k / 574 k |
+| High | 4 x 2,048 | 474 | 235 | 199 | 9 / 52 / 533 / 3,618 | 18 k / 37 k / 123 k / 552 k |
+| Epic | 4 x 4,096 | 619 | 361 | 216 | the same as High | the same as High |
+
+- **Triangles are no longer the cost.** The cascades draw 730 k triangles at High, down from 1.73 M before the tiles, and shadows took only 14% off. What is left has two parts.
+- **A floor of about 200 ms that no preset moves: the draws.** About 4,200 cascade draws cost about 200 ms at every setting, around 50 microseconds a draw. That is the software rasterizer's
+  per-draw work and says little about a GPU (the CPU's own recording of 5,000 draws is under 5 ms, above).
+- **Epic's extra 126 ms over High is fill:** the same draws and triangles into four times the texels (67 M depth writes a frame). Also a software-rasterizer cost; a GPU clears and fills
+  that at memory bandwidth.
+- **Instancing is the lever that would remain** (the 3,600 far-cascade draws are a few shrub and tree meshes placed thousands of times), but nothing here can show it helps: the machine has
+  no GPU. It is not built. The next measurement worth making is one on a real GPU, for these two numbers: the GPU time of the shadow pass at Epic, and of the scene pass, on the tiled
+  HeroValley, with `AETHER_PLAYER_GPU_TIMING=1`.
