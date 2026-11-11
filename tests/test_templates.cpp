@@ -401,11 +401,48 @@ AETHER_TEST(Templates_PlatformerRunsJumpsAndFalls) {
     full.Frames(60);
     CHECK(full.Grounded() && Near(full.Position().y, 2.5f, 0.05f)); // it comes back down
 
-    // Into the pit: running right without jumping, it falls through the gap and keeps falling.
+    // Into the pit: running right without jumping, it falls through the gap. With the respawn switched off (the engine's
+    // default; the template turns it on) it keeps falling.
+    r.game->GetWorld().GetComponent<sprite2d::PlatformerController2D>(r.hero)->respawn_on_fall = false;
     r.Hold(input::Key::D, true);
     r.Frames(240);
     CHECK(r.Position().y < -5.0f);
     CHECK(r.Velocity().y < -5.0f);
+    CHECK(r.game->GetWorld().GetComponent<sprite2d::PlatformerController2D>(r.hero)->respawns == 0);
+}
+
+// The template's level has a pit, and a first-time player holding right walks straight into it. The hero used to fall for ever
+// and never be seen again; the template now turns on the controller's respawn, which puts it back where it started.
+AETHER_TEST(Templates_PlatformerPutsTheHeroBackAfterAFall) {
+    PlatformerRun r;
+    r.Frames(90);
+    const Vec3 start = r.Position();
+    const auto controller = [&] { return r.game->GetWorld().GetComponent<sprite2d::PlatformerController2D>(r.hero); };
+    CHECK(controller()->respawn_on_fall && controller()->respawns == 0);
+    const f32 limit = controller()->fall_limit_y;
+
+    r.Hold(input::Key::D, true);
+    f32 lowest = start.y;
+    int frames = 0;
+    for (; frames < 600 && controller()->respawns == 0; ++frames) {
+        r.Frames(1);
+        lowest = std::min(lowest, r.Position().y);
+    }
+    r.Hold(input::Key::D, false);
+    CHECK(controller()->respawns == 1 && frames < 600);
+    // It fell past the limit by no more than one step's fall, then was put back at its start, at rest.
+    CHECK(lowest > limit - 1.0f);
+    CHECK(Near(r.Position().x, 3.0f, 0.3f) && r.Position().y > 2.0f && r.Position().y < 3.2f);
+    r.Frames(90);
+    CHECK(r.Grounded() && Near(r.Position().y, start.y, 0.05f) && Near(r.Position().x, 3.0f, 0.3f));
+    CHECK(std::fabs(r.Velocity().x) < 0.1f && controller()->respawns == 1);
+
+    // A limit above where the character started would put it back every step for ever: that is refused, and it just plays.
+    PlatformerRun high;
+    high.game->GetWorld().GetComponent<sprite2d::PlatformerController2D>(high.hero)->fall_limit_y = 100.0f;
+    high.Frames(90);
+    CHECK(high.game->GetWorld().GetComponent<sprite2d::PlatformerController2D>(high.hero)->respawns == 0);
+    CHECK(high.Grounded() && Near(high.Position().y, start.y, 0.05f));
 }
 
 AETHER_TEST(Templates_PlatformerStopsAtTheStepAndFacesWhereItRuns) {

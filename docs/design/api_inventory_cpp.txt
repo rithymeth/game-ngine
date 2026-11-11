@@ -6006,6 +6006,7 @@
   ),AETHER_FIELD(air_acceleration,Field_EditAnywhere,
   ),AETHER_FIELD(coyote_time,Field_EditAnywhere,
   ),AETHER_FIELD(fall_gravity_scale,Field_EditAnywhere,
+  ),AETHER_FIELD(fall_limit_y,Field_EditAnywhere,
   ),AETHER_FIELD(ground_acceleration,Field_EditAnywhere,
   ),AETHER_FIELD(input_move,Field_ReadOnly),AETHER_FIELD(input_jump,Field_ReadOnly),AETHER_FIELD(grounded,Field_ReadOnly),AETHER_FIELD(facing,Field_ReadOnly))
   ),AETHER_FIELD(jump_buffer,Field_EditAnywhere,
@@ -6014,6 +6015,7 @@
   ),AETHER_FIELD(max_bounds,Field_EditAnywhere,
   ),AETHER_FIELD(max_fall_speed,Field_EditAnywhere,
   ),AETHER_FIELD(offset,Field_EditAnywhere,
+  ),AETHER_FIELD(respawn_on_fall,Field_EditAnywhere,
   ),AETHER_FIELD(use_bounds,Field_EditAnywhere),AETHER_FIELD(min_bounds,Field_EditAnywhere,
   AETHER_REFLECT(aether::sprite2d::CameraFollow2D,1,AETHER_FIELD(smoothing,Field_EditAnywhere,
   void RegisterPlatformerComponents()

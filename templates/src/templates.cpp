@@ -513,6 +513,10 @@ bool WritePlatformer(const ProjectPaths& paths, std::string* error) {
     sprite2d::SetSpriteFrame(player_sprite, "idle");
     player_sprite.color = {0.16f, 0.45f, 0.85f, 1.0f};
     player_sprite.order = 1;
+    // The level has a pit: falling into it puts the player back at the start instead of losing it for good.
+    PlatformerController2D hero_controller;
+    hero_controller.respawn_on_fall = true;
+    hero_controller.fall_limit_y = -4.0f;
     Collider2D body;
     body.half_extents = {0.4f, 0.5f};
     body.friction = 0.0f; // the controller sets the speed, so the floor shouldn't fight it
@@ -520,7 +524,7 @@ bool WritePlatformer(const ProjectPaths& paths, std::string* error) {
         {{"Sprite", reflect::ToJson(player_sprite)},
          {"Rigidbody2D", reflect::ToJson(Rigidbody2D{})},
          {"Collider2D", reflect::ToJson(body)},
-         {"PlatformerController2D", reflect::ToJson(PlatformerController2D{})}});
+         {"PlatformerController2D", reflect::ToJson(hero_controller)}});
     if (!scene.Write(content / "Scenes/Main.ascene", error)) return false;
 
     ProjectSettings settings;
