@@ -40,9 +40,10 @@ struct PostConstants {
     f32 fog_density = 0.0f;     // 1 / m
     f32 fog_color[4] = {0, 0, 0, 0}; // linear, the sky's
     f32 sun_view[4] = {0, 0, 0, 0};  // xyz: the unit vector toward the sun in view space; w: 1 when there is a sun to scatter
-    f32 sun_color[4] = {0, 0, 0, 0}; // rgb: the sun's light the fog takes toward the sun (linear)
+    f32 sun_color[4] = {0, 0, 0, 0}; // rgb: the sun's light the fog takes toward the sun (linear); w: the height fog's falloff, 1 / m
+    f32 height_fog[4] = {0, 1, 0, 0}; // xyz: world up in view space; w: the camera's height above the height fog's base, metres (fog_color.w: its density at the base)
 };
-static_assert(sizeof(PostConstants) == 112);
+static_assert(sizeof(PostConstants) == 128);
 
 // The bloom passes' push constants: 32 bytes.
 struct BloomConstants {
@@ -95,6 +96,8 @@ public:
     void SetAmbientOcclusion(const AmbientOcclusion& ao) { ao_ = ao; }
     // The sky colour distance fog fades toward, for the next Draw (with the depth from SetAmbientOcclusion, whose strength may be 0).
     void SetFogColor(const Vec3& color) { fog_color_ = color; }
+    // Where the camera is relative to the height fog: world up in view space and the camera's height above the fog's base (the pass needs them to know how high each pixel is).
+    void SetHeightFogView(const Vec3& up_view, f32 camera_height_above_base) { fog_up_view_ = up_view; fog_camera_height_ = camera_height_above_base; }
     // The sun's in-scatter in the fog, for the next Draw: toward the sun (`direction_view`, a unit vector in view space) the fog takes `color`.
     void SetFogSun(const Vec3& direction_view, const Vec3& color) { sun_view_ = direction_view; sun_color_ = color; sun_set_ = true; }
     // Records the full-screen draw inside the current back-buffer render pass, after the scene colour pass has ended. Composites the
@@ -128,6 +131,8 @@ private:
     Vec3 fog_color_{0, 0, 0};
     Vec3 sun_view_{0, 0, 1}, sun_color_{0, 0, 0};
     bool sun_set_ = false;
+    Vec3 fog_up_view_{0, 1, 0};
+    f32 fog_camera_height_ = 0.0f;
     bool bloom_ready_ = false;               // RenderBloom drew since the last Draw
     bool bloom_warned_ = false;              // the full-table warning, once
 };

@@ -78,6 +78,11 @@ struct PostProcessVolume {
     f32 saturation = 1.0f;
     Tonemapper tonemapper = Tonemapper::ACES;
     f32 fog_density = 0.0f; // 1 / m: distance haze toward the sky's colour, 1 - exp(-density * distance); 0 is off
+    // Exponential height fog: mist that pools in valleys and thins with altitude, density `height_fog_density` at `height_fog_base` and falling by e every
+    // 1 / `height_fog_falloff` metres above it (it adds to the distance haze above; 0 density is off).
+    f32 height_fog_density = 0.0f; // 1 / m
+    f32 height_fog_falloff = 0.02f; // 1 / m: 0.02 halves the density about every 35 m of height
+    f32 height_fog_base = 0.0f;     // m: the world height where the density is `height_fog_density`
 };
 
 // A decal (Phase 39.4): a box, `size` metres across, at the entity's transform, that paints `texture` onto whatever opaque surfaces are inside it,
@@ -149,7 +154,10 @@ AETHER_REFLECT(aether::PostProcessVolume, 1,
     AETHER_FIELD(vignette, Field_EditAnywhere, {.range_min = 0.0, .range_max = 1.0}),
     AETHER_FIELD(saturation, Field_EditAnywhere, {.range_min = 0.0, .range_max = 2.0}),
     AETHER_FIELD(tonemapper, Field_EditAnywhere),
-    AETHER_FIELD(fog_density, Field_EditAnywhere, {.tooltip = "Distance haze toward the sky colour: 1 - exp(-density * distance)", .range_min = 0.0, .range_max = 1.0, .units = "1/m"})
+    AETHER_FIELD(fog_density, Field_EditAnywhere, {.tooltip = "Distance haze toward the sky colour: 1 - exp(-density * distance)", .range_min = 0.0, .range_max = 1.0, .units = "1/m"}),
+    AETHER_FIELD(height_fog_density, Field_EditAnywhere, {.tooltip = "Mist that pools low: this thick at the base height, thinner above it (adds to the distance haze)", .range_min = 0.0, .range_max = 1.0, .units = "1/m"}),
+    AETHER_FIELD(height_fog_falloff, Field_EditAnywhere, {.tooltip = "How fast the mist thins with height: it falls by e every 1 / this many metres", .range_min = 0.0, .range_max = 1.0, .units = "1/m"}),
+    AETHER_FIELD(height_fog_base, Field_EditAnywhere, {.tooltip = "The world height where the mist is as thick as its density", .units = "m"})
 )
 AETHER_REFLECT(aether::Decal, 1,
     AETHER_FIELD(texture, Field_EditAnywhere, {.tooltip = "A texture in the package; empty draws a flat tint"}),

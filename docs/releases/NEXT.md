@@ -443,3 +443,8 @@ out of the sea. Its water now stands at the sea's level. Worlds baked before thi
 
 New glTF extension `AETHER_materials_detail` (`strength` 0 to 1): a procedural micro-normal and brightness variation from world
 position, fading out with distance. Procedural-world terrain uses it. An alpha-mask cutoff is now 5 bits.
+
+## Height fog
+
+`PostProcessVolume::height_fog_density`, `height_fog_falloff`, `height_fog_base`: exponential height fog that pools in valleys and
+over water. The post pass's push constants are 128 bytes.

@@ -3217,7 +3217,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
         RenderScene volumes;
         volumes.post_volumes = ExtractPostVolumes(world, guids);
         const PostProcessSettings post_settings = BlendPostProcess(volumes, have_camera ? decal_camera_position : Vec3(0, 0, 0));
-        const bool resolve = (renderer.taa || vsm_record || renderer.ssao || post_settings.fog_density > 0.0f) && have_camera && commands.CopySceneDepth();
+        const bool resolve = (renderer.taa || vsm_record || renderer.ssao || post_settings.fog_density > 0.0f || post_settings.height_fog_density > 0.0f) && have_camera && commands.CopySceneDepth();
         commands.EndRenderPass();
         renderer.GpuStamp(commands, 2);
         if (resolve && vsm_record) renderer.vsm_feedback->Record(commands, vsm_feedback_params, frame_index);
@@ -3230,10 +3230,12 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
             renderer.taa->Reset();
         }
         renderer.post->SetSource(resolved);
-        if (resolve && (renderer.ssao || post_settings.fog_density > 0.0f) && renderer.swap_chain.SceneDepthTexture().IsValid()) {
+        if (resolve && (renderer.ssao || post_settings.fog_density > 0.0f || post_settings.height_fog_density > 0.0f) && renderer.swap_chain.SceneDepthTexture().IsValid()) {
             renderer.post->SetAmbientOcclusion({renderer.swap_chain.SceneDepthTexture().index, renderer.ssao ? renderer.ao_strength : 0.0f,
                                                 renderer.ao_radius, ao_near, ao_far, ao_proj_x, ao_proj_y});
             renderer.post->SetFogColor(Vec3(frame_data.sky_color[0], frame_data.sky_color[1], frame_data.sky_color[2]));
+            const Vec4 up_view = post_camera_view * Vec4(0.0f, 1.0f, 0.0f, 0.0f);
+            renderer.post->SetHeightFogView(Vec3(up_view.x, up_view.y, up_view.z), decal_camera_position.y - post_settings.height_fog_base);
             if (frame_data.sun_direction[3] > 0.0f) {
                 const Vec4 to_sun = post_camera_view * Vec4(frame_data.sun_direction[0], frame_data.sun_direction[1], frame_data.sun_direction[2], 0.0f);
                 const Vec3 direction = Vec3(to_sun.x, to_sun.y, to_sun.z).Normalized();
