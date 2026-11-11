@@ -1,4 +1,7 @@
 #include "aether/assets/asset_database.h"
+#include "aether/gfx/rhi/command_list.h"
+#include "aether/gfx/rhi/device.h"
+#include "aether/player/scene_renderer.h"
 #include "aether/scene/hierarchy.h"
 #include "aether/scene/components.h"
 #include "aether/assets/gltf_loader.h"
@@ -28,6 +31,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <stdexcept>
+#include <memory>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -775,3 +780,46 @@ AETHER_TEST(Templates_FirstPersonLooksFromWindowEvents) {
 }
 
 #endif // AETHER_TEST_HAS_SCRIPTING
+
+// The packaged player draws the 2D Platformer: rendered from the cooked template, the frame has the level's light tiles, the
+// hero's colour and the dark background in it. Before sprites and tilemaps were drawn it was one dark colour.
+AETHER_TEST(Templates_ThePlayerDrawsThePlatformer2D) {
+    namespace rhi = aether::gfx::rhi;
+    if (!rhi::IsBackendAvailable(rhi::Backend::Vulkan)) return;
+    std::unique_ptr<rhi::IDevice> device;
+    try {
+        device = rhi::CreateDevice(rhi::Backend::Vulkan, false);
+    } catch (const std::exception&) {
+    }
+    if (!device) return;
+    PlatformerRun run;
+    const u32 width = 320, height = 180;
+    std::unique_ptr<rhi::ISwapChain> target = device->CreateSwapChain(nullptr, width, height, 2);
+    std::vector<u8> pixels;
+    {
+        player::SceneRenderer renderer(*device, *target, run.package);
+        std::unique_ptr<rhi::ICommandList> cmd = device->CreateCommandList();
+        for (u32 frame = 0; frame < 12; ++frame) {
+            run.Frames(1);
+            target->AcquireNextImage();
+            cmd->Reset();
+            renderer.Draw(*run.game, *cmd, frame % 2);
+            cmd->Close();
+            device->WaitForFence(device->Submit(*cmd, target.get()));
+            if (frame == 11) CHECK(target->ReadBack(pixels) && pixels.size() == static_cast<usize>(width) * height * 4);
+            target->Present(false);
+        }
+    }
+    if (pixels.size() != static_cast<usize>(width) * height * 4) return;
+    usize tiles = 0, hero = 0, dark = 0;
+    for (usize i = 0; i < pixels.size(); i += 4) {
+        const int a = pixels[i], g = pixels[i + 1], c = pixels[i + 2];
+        const int low = std::min({a, g, c}), high = std::max({a, g, c});
+        if (low > 110 && high - low < 40) ++tiles;
+        else if (high > 140 && high - low > 60) ++hero; // strongly coloured, whichever of red and blue the read-back puts first
+        else if (high < 50) ++dark;
+    }
+    const usize total = static_cast<usize>(width) * height;
+    std::printf("    2D platformer frame: %zu tile, %zu hero and %zu dark pixels of %zu\n", tiles, hero, dark, total);
+    CHECK(tiles > total / 20 && hero > 20 && dark > total / 3);
+}
