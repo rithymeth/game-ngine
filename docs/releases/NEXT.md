@@ -467,3 +467,7 @@ Off by default. `FrameData` is 1408 bytes.
 
 Water (`AETHER_materials_water`) lifts and tilts with the wind's strength: three travelling swells in the vertex shader. A world with
 no Wind component has the default breeze, so its water now has a gentle swell; set the Wind's strength to 0 for flat water.
+
+## Whitecaps
+
+Swells foam on their crests in a strong wind (a wind strength over about 0.7). No setting beyond the Wind component.

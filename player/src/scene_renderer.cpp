@@ -186,6 +186,7 @@ struct PSInput {
     float3 tangent : TEXCOORD2;
     float tangent_sign : TEXCOORD3;
     float3 local_position : TEXCOORD4;
+    float crest : TEXCOORD5; // water: how near a swell's crest this point is, 0 to 1 (whitecap foam); 0 elsewhere
 };
 Texture2D g_Textures[128] : register(t0, space0);
 SamplerState g_Sampler : register(s0, space1);
@@ -281,6 +282,7 @@ PSInput VSMain(VSInput input) {
     // at the speed deep water gives each wavelength, lift the surface and tilt its normal. The height scales with the wind's strength (strength 2 and over is full, none is a
     // flat sheet), so a calm world has calm water. The phase is in the model's own space, with up along its +Y; the fine ripples of the normal map ride on top.
     float3 surface_normal = input.normal;
+    float crest = 0.0;
 #ifdef AETHER_FRAME_DATA
     if (((g_PC.g_AlphaOptions >> 11) & 1) != 0) {
         float swell = saturate(g_Frame.wind.z * 0.5);
@@ -300,12 +302,15 @@ PSInput VSMain(VSInput input) {
             }
             position.y += height;
             surface_normal = normalize(float3(-slope.x, 1.0, -slope.y));
+            // Whitecaps: the upper part of the tallest swells, and only in a strong wind (none below about a wind strength of 0.7).
+            crest = saturate((height / (0.53 * swell) - 0.62) / 0.3) * saturate((swell - 0.35) * 2.5);
         }
     }
 #endif
     output.position = mul(g_PC.g_Mvp, float4(position, 1.0));
     output.uv = input.uv;
     output.normal = ApplyNormalTransform(surface_normal);
+    output.crest = crest;
     output.tangent = normalize(ApplyModelTransform(input.tangent.xyz));
     output.tangent_sign = input.tangent.w * (NormalDeterminant() < 0.0 ? -1.0 : 1.0);
     output.local_position = input.position;
@@ -783,6 +788,19 @@ float4 PSMain(PSInput input, bool is_front : SV_IsFrontFace) : SV_TARGET {
         surface_alpha = lerp(surface_alpha, 1.0, mirror_weight);
     }
 #endif
+    if (((g_PC.g_AlphaOptions >> 11) & 1) != 0 && input.crest > 0.0) {
+        // Whitecap foam on the swells' crests, broken up by moving noise so it is lace and not a stripe: the water goes toward a sun-lit white and opaque.
+#ifdef AETHER_FRAME_DATA
+        float foam_time = g_Frame.time.x;
+#else
+        float foam_time = 0.0;
+#endif
+        float lace = DetailNoise(float3(input.local_position.x * 1.6, foam_time * 0.5, input.local_position.z * 1.6));
+        float foam = saturate(input.crest * (0.4 + 1.2 * lace) - 0.15);
+        float3 foam_color = min(ambient + sun_radiance * (0.35 * sun_visibility), 3.0);
+        color = lerp(color, foam_color, foam * 0.85);
+        surface_alpha = lerp(surface_alpha, 1.0, foam);
+    }
 #ifdef AETHER_HDR_TARGET
     // Linear light into the HDR scene colour target; the post pass applies exposure, the tone mapper and the sRGB encoding.
     return float4(max(color, 0.0), surface_alpha);

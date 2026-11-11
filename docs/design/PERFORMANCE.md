@@ -1318,3 +1318,21 @@ building one, `Templates_StressMeasure` (same machine and method as the stress-s
 - **Not measured:** a real GPU, D3D12, different models (the stress scene is one model repeated), or shadow cascades that cover the whole camera view. The
   baked world run through the player on the software rasterizer manages about 4 frames a second, which is the rasterizer's fill rate and says nothing about CPU
   recording; no GPU figure is claimed.
+
+## What does the water's mirror pass cost? (2026-11-11)
+
+The mirror draws the opaque, non-swaying surfaces a second time (`draw.reflect`), so a world with water roughly adds those draws to the frame. Measured in
+HeroValley (576 m, 6,000 placed objects: 10,268 draws a frame, of which 4,268 go into the mirror), 960 x 408, Epic, on the software Vulkan rasterizer:
+
+| | per frame (40 frames, load subtracted) |
+|---|---|
+| `AETHER_RENDER_REFLECTIONS=0` | 1.16 s |
+| reflections on | 1.21 s (+5%) |
+
+and the CPU time to record the mirror pass alone (a timer around it, 12 frames): **1.0 to 1.5 ms** for the 4,268 draws.
+
+- **No culling needed yet.** Recording the mirror costs about a fifth of a frame's 5 ms of draw recording at this size, which is nothing next to a 16.7 ms
+  frame, so culling the mirror's draws (below the water, far away) is not worth building now. The way to make it cheaper if a world ever needs it is the mirror
+  drawing only what the water can show: nothing lower than the water's plane and nothing beyond the fog.
+- **Not measured:** the GPU's cost of the second pass (the software rasterizer is fill-rate bound and says nothing about it; a world with a small lake sends the
+  same 4,268 draws as one with a sea), and D3D12 (it has no mirror yet).
