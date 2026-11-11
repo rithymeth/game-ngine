@@ -83,7 +83,8 @@ struct Options {
     std::vector<std::string> pressed; // keys held for the whole run (headless runs, smoke tests)
     std::string screenshot;
     std::string camera_path;  // --camera-path: a JSON file of camera keyframes the scene's camera follows (src/camera_path.h)
-    std::string record_dir;   // --record-dir: write every frame of the camera path here as frame_00000.bmp, ...
+    std::string record_dir;   // --record-dir: write every frame here as frame_00000.bmp, ... (of the camera path, or of --frames frames of a normal run)
+    f32 record_fps = 24.0f;   // --record-fps: the film's frame rate when recording without a camera path (a camera path has its own)
     std::string replay_input;          // recorded input for deterministic package verification
     bool report = false;              // print where the Player-tagged entity ended up
     std::string server; // empty: offline single-player (the default)
@@ -96,7 +97,7 @@ void Usage() {
                  "usage: aether_player [--pak <file|dir>]... [--scene <path>] [--frames <n>] [--headless]\n"
                  "                     [--backend d3d12|vulkan] [--size <w>x<h>] [--quality <preset>]\n"
                  "                     [--key <64 hex digits>] [--press <Key>]... [--screenshot <file.bmp>]\n"
-                 "                     [--camera-path <file.json> [--record-dir <dir>]]\n"
+                 "                     [--camera-path <file.json>] [--record-dir <dir> [--record-fps <n>]]\n"
                  "                     [--report] [--user-dir <dir>] [--replay-input <file.json>]\n"
                  "                     [--server <ip:port>] [--name <text>] [--password <text>]\n"
                  "                     [--token <join token>] [--build-id <n>] (opt-in UDP + Jolt)\n");
@@ -122,6 +123,8 @@ bool ParseArgs(int argc, char** argv, Options& o) {
             o.camera_path = argv[++i];
         } else if (a == "--record-dir" && has_value) {
             o.record_dir = argv[++i];
+        } else if (a == "--record-fps" && has_value) {
+            o.record_fps = std::clamp(static_cast<f32>(std::atof(argv[++i])), 1.0f, 240.0f);
         } else if (a == "--report") {
             o.report = true;
         } else if (a == "--replay-input" && has_value) {
@@ -537,6 +540,19 @@ int main(int argc, char** argv) {
             AETHER_LOG_INFO("Player", "Camera path: %.2f s at %.0f fps, %u frames%s", camera_path.Duration(), camera_path.fps, camera_path.FrameCount(),
                             options.record_dir.empty() ? "" : ", recording");
         }
+        // Recording without a camera path films a normal run: the scene's own sequences, animation and physics play at the film's frame rate, a frame of game time
+        // each, so a cutscene made with the sequencer comes out frame by frame. --frames says how many frames to write.
+        const bool recording = !options.record_dir.empty();
+        const f32 film_fps = camera_path.keys.empty() ? options.record_fps : camera_path.fps;
+        if (recording && camera_path.keys.empty()) {
+            if (options.frames <= 0) {
+                std::fprintf(stderr, "aether_player: --record-dir without a camera path needs --frames <n>, the number of frames to write\n");
+                return 2;
+            }
+            options.frames += kRecordWarmup;
+            std::filesystem::create_directories(options.record_dir);
+            AETHER_LOG_INFO("Player", "Recording %lld frames at %.0f fps", static_cast<long long>(options.frames - kRecordWarmup), film_fps);
+        }
         u32 frame_slot = 0;
         bool screenshot_written = false;
         bool screenshot_failed = false;
@@ -611,8 +627,8 @@ int main(int argc, char** argv) {
                     transform.rotation = CameraPoseRotation(pose);
                     if (pose.fov_degrees > 0.0f) camera.fov_degrees = pose.fov_degrees;
                 });
-                tick_dt = frame < kRecordWarmup ? 0.0f : 1.0f / camera_path.fps; // the film's clock: water and wind move 1 / fps a frame
             }
+            if (recording || !camera_path.keys.empty()) tick_dt = frame < kRecordWarmup ? 0.0f : 1.0f / film_fps; // the film's clock: water, wind and sequences move 1 / fps a frame
             game.Tick(tick_dt);
             if (game.ExitRequested()) break;
 #if AETHER_PLAYER_NETCLIENT && AETHER_PLAYER_PHYSICS
@@ -651,7 +667,7 @@ int main(int argc, char** argv) {
                         screenshot_failed = true;
                     }
                 }
-                if (!options.record_dir.empty() && !camera_path.keys.empty() && frame >= kRecordWarmup) {
+                if (recording && frame >= kRecordWarmup) {
                     std::vector<u8> rgba;
                     char name[32];
                     std::snprintf(name, sizeof(name), "frame_%05lld.bmp", static_cast<long long>(frame - kRecordWarmup));
