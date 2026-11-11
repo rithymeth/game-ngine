@@ -12,6 +12,7 @@ without a server or network connection.
 | [devlog/2026-11-11.md](devlog/2026-11-11.md) | Devlog: dated progress entries, newest last in `docs/devlog/` |
 | [devlog/2026-11-12.md](devlog/2026-11-12.md) | Devlog: dated progress entries, newest last in `docs/devlog/` |
 | [devlog/2026-11-13.md](devlog/2026-11-13.md) | Devlog: dated progress entries, newest last in `docs/devlog/` |
+| [devlog/2026-11-14.md](devlog/2026-11-14.md) | Devlog: dated progress entries, newest last in `docs/devlog/` |
 | [ROADMAP.md](ROADMAP.md) | Current direction and priorities; the old phase-by-phase plan lives in git history |
 | [design/M8_PRODUCTION_TECHNOLOGY.md](design/M8_PRODUCTION_TECHNOLOGY.md) | Improvement-only M8: harden and tune existing engine systems and workflows without adding feature families |
 | [design/ENGINE_FOUNDATION_PLAN.md](design/ENGINE_FOUNDATION_PLAN.md) | Capability-gap roadmap and evidence gates to make the engine ready for AETHER-01 |
