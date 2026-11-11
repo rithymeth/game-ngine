@@ -3022,7 +3022,7 @@
   [[nodiscard]]bool Resolve(const std::vector<std::string>&requested,std::string*error=nullptr,std::vector<std::string>*warnings=nullptr)
   [[nodiscard]]bool ResolveProjectPlugins(const std::filesystem::path&project_file,PluginManager&out,std::string*error=nullptr,std::vector<std::string>*warnings=nullptr)
   [[nodiscard]]bool SavePluginDescriptor(const std::filesystem::path&file,const PluginDescriptor&descriptor,std::string*error=nullptr)
-  bool CreatePluginScaffold(const std::filesystem::path&parent,const std::string&name,std::filesystem::path*descriptor_file=nullptr,std::string*error=nullptr)
+  bool CreatePluginScaffold(const std::filesystem::path&parent,const std::string&name,std::filesystem::path*descriptor_file=nullptr,std::string*error=nullptr,bool with_module=false)
   bool Has(const std::string&name)const
   bool IsValidPluginName(const std::string&name)
   const PluginInfo*Find(const std::string&name)const

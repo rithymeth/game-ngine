@@ -9,6 +9,21 @@ Networking are plugins. A module is a class registered with `AETHER_MODULE`
 with `Startup` and `Shutdown`; dependencies start first, and a cycle is
 reported.
 
+### Make your own plugin
+
+```
+aether_plugin new Coins --dir MyGame/Plugins
+```
+
+creates `MyGame/Plugins/Coins/Coins.aplugin` and an empty `Content/` beside it. Put scenes, scripts, Blueprints and assets in
+`Content/`, add `"Coins"` to the project's `plugins` list, and `aether_package` ships them under `Content/Plugins/Coins/`. Run
+`aether_plugin package MyGame/Plugins/Coins -o Coins.apkg` to share it with another project.
+
+A plugin made this way is **content only**: it declares no module, because there is no code to start. `--module` also declares a
+runtime module of the same name, for a plugin whose C++ registers `AETHER_MODULE(Coins, ...)`; that class has to be built into
+the player, or the player warns that the module isn't built in every time it starts. The editor's Plugins window makes the same
+content-only scaffold.
+
 ## Extending the editor
 
 The editor's **extension registry** takes four kinds of addition, each owned by

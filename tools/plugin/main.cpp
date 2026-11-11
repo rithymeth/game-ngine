@@ -15,6 +15,7 @@ namespace {
 int Usage() {
     std::fprintf(stderr,
                  "usage:\n"
+                 "  aether_plugin new <Name> [--dir <parent folder>] [--module]\n"
                  "  aether_plugin package <plugin_dir> -o <file.apkg>\n"
                  "  aether_plugin inspect <file.apkg>\n"
                  "  aether_plugin install <file.apkg> --plugins-dir <dir> [--replace]\n");
@@ -44,6 +45,35 @@ int main(int argc, char** argv) {
     if (argc < 2) return Usage();
     const std::string command = argv[1];
     std::string error;
+
+    if (command == "new") {
+        // The scaffold the editor's plugin window makes (plugin::CreatePluginScaffold), without the editor: <dir>/<Name>/<Name>.aplugin
+        // and an empty Content/. Put it in a project's Plugins/ folder and it is that project's.
+        std::string name;
+        fs::path parent = ".";
+        bool with_module = false;
+        for (int i = 2; i < argc; ++i) {
+            if (std::strcmp(argv[i], "--dir") == 0 && i + 1 < argc) parent = argv[++i];
+            else if (std::strcmp(argv[i], "--module") == 0) with_module = true;
+            else if (name.empty() && argv[i][0] != '-') name = argv[i];
+            else return Usage();
+        }
+        if (name.empty()) return Usage();
+        fs::path descriptor_file;
+        if (!plugin::CreatePluginScaffold(parent, name, &descriptor_file, &error, with_module)) {
+            std::fprintf(stderr, "new failed: %s\n", error.c_str());
+            return 1;
+        }
+        std::printf("Created %s\n", descriptor_file.string().c_str());
+        std::printf("Put its content (scenes, scripts, Blueprints) in %s,\n", (descriptor_file.parent_path() / "Content").string().c_str());
+        std::printf("and the folder in a project's Plugins/ to use it there.\n");
+        if (with_module) {
+            std::printf("It declares a runtime module '%s': a class registered with AETHER_MODULE(%s, ...) has to be built into\n"
+                        "the player, or the player warns that the module isn't built in at every launch.\n", name.c_str(), name.c_str());
+        }
+        std::printf("  aether_plugin package %s -o %s.apkg    (to share it)\n", descriptor_file.parent_path().string().c_str(), name.c_str());
+        return 0;
+    }
 
     if (command == "package") {
         if (argc < 4) return Usage();

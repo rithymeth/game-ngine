@@ -1,4 +1,5 @@
 #include "aether/cook/cooker.h"
+#include "aether/core/log.h"
 #include "aether/core/version.h"
 #include "aether/pak/pak.h"
 #include "aether/player/game.h"
@@ -105,7 +106,12 @@ AETHER_TEST(Plugin_DescriptorsAndVersions) {
     PluginDescriptor made;
     stdfs::path file;
     CHECK(CreatePluginScaffold(dir, "Weather", &file, &error) && LoadPluginDescriptor(file, made));
-    CHECK(made.has_content && made.modules.size() == 1 && made.modules[0].name == "Weather" && stdfs::is_directory(dir / "Weather/Content"));
+    // Content only by default: a plugin with no code declares no module (it would be "not built into this player" at every launch).
+    CHECK(made.has_content && made.modules.empty() && stdfs::is_directory(dir / "Weather/Content"));
+    PluginDescriptor coded;
+    stdfs::path coded_file;
+    CHECK(CreatePluginScaffold(dir, "Coded", &coded_file, &error, /*with_module=*/true) && LoadPluginDescriptor(coded_file, coded));
+    CHECK(coded.modules.size() == 1 && coded.modules[0].name == "Coded" && coded.modules[0].type == ModuleType::Runtime);
     CHECK(!CreatePluginScaffold(dir, "Weather", nullptr, &error) && error.find("already exists") != std::string::npos);
     CHECK(!CreatePluginScaffold(dir, "no way", nullptr, &error));
 }
@@ -274,7 +280,7 @@ AETHER_TEST(Plugin_ThroughTheCookIntoThePlayer) {
     std::ofstream(paths.content / "Scenes/main.ascene") << scene.dump();
     // A project plugin with a module and content.
     stdfs::path file;
-    CHECK(CreatePluginScaffold(paths.root / "Plugins", "Coins", &file, &error));
+    CHECK(CreatePluginScaffold(paths.root / "Plugins", "Coins", &file, &error, /*with_module=*/true));
     PluginDescriptor coins;
     CHECK(LoadPluginDescriptor(file, coins));
     coins.dependencies.push_back({"Audio", "1.0", false});
@@ -316,6 +322,75 @@ AETHER_TEST(Plugin_ThroughTheCookIntoThePlayer) {
     CHECK(events.back() == "stop Coins");
     g_events = nullptr;
     ModuleRegistry::Get().UnregisterForTesting("Coins");
+}
+
+// What a newcomer's first plugin does: a scaffold with no code, a script in its Content, enabled in the project. It cooks, its
+// content ships under Plugins/<name>/, and the player starts without a warning about a module it was never going to have.
+AETHER_TEST(Plugin_AContentOnlyPluginRunsWithoutWarnings) {
+    const stdfs::path parent = Dir("ContentOnly");
+    ProjectPaths paths;
+    std::string error;
+    CHECK(CreateProject(parent, "Plain", &paths, &error));
+    Tags tags;
+    tags.names = {"Start"};
+    const json scene = {{"$type", "Scene"}, {"$version", 1},
+                        {"entities", json::array({{{"components", {{"Tags", reflect::ToJson(tags)}}}}})}};
+    stdfs::create_directories(paths.content / "Scenes");
+    std::ofstream(paths.content / "Scenes/main.ascene") << scene.dump();
+    stdfs::path file;
+    CHECK(CreatePluginScaffold(paths.root / "Plugins", "Notes", &file, &error));
+    std::ofstream(paths.root / "Plugins/Notes/Content/readme.txt") << "hello";
+    ProjectSettings settings;
+    CHECK(LoadProject(paths.file, settings, &error));
+    settings.startup_scene = "Scenes/main.ascene";
+    settings.plugins = {"Notes"};
+    CHECK(SaveProject(paths.file, settings, &error));
+
+    cook::CookOptions options;
+    options.project_file = paths.file;
+    options.output_dir = parent / "Paks";
+    const cook::CookReport report = cook::Cook(options);
+    CHECK(report.ok && Has(report.plugins, "Notes") && !Has(report.modules, "Notes"));
+    player::GamePackage package;
+    CHECK(package.Mount(report.pak_file.string()) && package.LoadManifest(&error));
+    std::string text;
+    CHECK(package.Files().ReadText("Content/Plugins/Notes/readme.txt", text) && text == "hello");
+    // The player reports a module it cannot find by logging it, so listen to the log while the scene loads.
+    std::vector<std::string> not_built;
+    const int sink = Logger::Instance().AddSink([&](const LogLine& line) {
+        if (line.message.find("isn't built into this player") != std::string::npos) not_built.push_back(line.message);
+    });
+    {
+        player::Game game(package);
+        CHECK(game.LoadStartupScene(&error));
+        CHECK(!Has(game.StartedModules(), "Notes"));
+    }
+    Logger::Instance().RemoveSink(sink);
+    for (const std::string& line : not_built) CHECK(line.find("Notes") == std::string::npos);
+
+    // The same project with the scaffold that declares a module nobody built: the warning is exactly what the log says.
+    settings.plugins = {"Notes"};
+    CHECK(SaveProject(paths.file, settings, &error));
+    PluginDescriptor declared;
+    CHECK(LoadPluginDescriptor(file, declared));
+    declared.modules.push_back({"Notes", ModuleType::Runtime, LoadingPhase::Default});
+    CHECK(SavePluginDescriptor(file, declared));
+    options.output_dir = parent / "PaksWithModule";
+    const cook::CookReport with_module = cook::Cook(options);
+    CHECK(with_module.ok && Has(with_module.modules, "Notes"));
+    player::GamePackage package2;
+    CHECK(package2.Mount(with_module.pak_file.string()) && package2.LoadManifest(&error));
+    not_built.clear();
+    const int sink2 = Logger::Instance().AddSink([&](const LogLine& line) {
+        if (line.message.find("isn't built into this player") != std::string::npos) not_built.push_back(line.message);
+    });
+    {
+        player::Game game2(package2);
+        CHECK(game2.LoadStartupScene(&error));
+    }
+    Logger::Instance().RemoveSink(sink2);
+    // (Physics is not built into every test configuration, so it may be named too: look for ours.)
+    CHECK(std::count_if(not_built.begin(), not_built.end(), [](const std::string& line) { return line.find("'Notes'") != std::string::npos; }) == 1);
 }
 
 AETHER_TEST(Plugin_AbiMustMatchTheEngine) {
