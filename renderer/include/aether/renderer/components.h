@@ -58,6 +58,7 @@ struct PostProcessVolume {
     f32 vignette = 0.0f;
     f32 saturation = 1.0f;
     Tonemapper tonemapper = Tonemapper::ACES;
+    f32 fog_density = 0.0f; // 1 / m: distance haze toward the sky's colour, 1 - exp(-density * distance); 0 is off
 };
 
 // A decal (Phase 39.4): a box, `size` metres across, at the entity's transform, that paints `texture` onto whatever opaque surfaces are inside it,
@@ -115,7 +116,8 @@ AETHER_REFLECT(aether::PostProcessVolume, 1,
     AETHER_FIELD(bloom_intensity, Field_EditAnywhere, {.range_min = 0.0, .range_max = 10.0}),
     AETHER_FIELD(vignette, Field_EditAnywhere, {.range_min = 0.0, .range_max = 1.0}),
     AETHER_FIELD(saturation, Field_EditAnywhere, {.range_min = 0.0, .range_max = 2.0}),
-    AETHER_FIELD(tonemapper, Field_EditAnywhere)
+    AETHER_FIELD(tonemapper, Field_EditAnywhere),
+    AETHER_FIELD(fog_density, Field_EditAnywhere, {.tooltip = "Distance haze toward the sky colour: 1 - exp(-density * distance)", .range_min = 0.0, .range_max = 1.0, .units = "1/m"})
 )
 AETHER_REFLECT(aether::Decal, 1,
     AETHER_FIELD(texture, Field_EditAnywhere, {.tooltip = "A texture in the package; empty draws a flat tint"}),
