@@ -80,7 +80,7 @@ What each template shows when it runs:
 |---|---|
 | `first_person`, `third_person`, `top_down`, `vehicle` | A grey floor, gold pickups that spin, and (except in first person) a blue box for the player. The sky is black: the templates place no sky light. |
 | `blank` | An empty, dark window. It has a camera and a start point and nothing else, on purpose. |
-| `platformer_2d` | A grey tile level with platforms and a blue box for the player, seen side-on. The template ships no images, so tiles and the player draw as flat colours until you give the tileset and the atlas a texture. |
+| `platformer_2d` | An empty, dark window. The level, physics and controller run, but the packaged player does not draw sprites or tilemaps yet; use the editor to see this one. |
 
 To change something, edit the controller script or move an entity in `Main.ascene`, run `aether_package` again and start the game.
 

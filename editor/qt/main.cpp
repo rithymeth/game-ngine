@@ -49,6 +49,7 @@
 #include "blend_space_editor_widget.h"
 #include "montage_editor_widget.h"
 #include "sound_cue_editor_widget.h"
+#include "tilemap_editor_widget.h"
 #if defined(AETHER_QT_EDITOR_SCRIPTING)
 #include "script_component_editor.h"
 #include "script_editor_widget.h"
@@ -1851,6 +1852,9 @@ public:
         material_editor_widget_ = new aether::editor::qt::MaterialEditorWidget;
         material_editor_dock_ = MakeDock("MATERIAL Â· GRAPH EDITOR", material_editor_widget_, *this,
                                            Qt::BottomDockWidgetArea, "materialEditorDock");
+        tilemap_editor_widget_ = new aether::editor::qt::TilemapEditorWidget;
+        tilemap_editor_dock_ = MakeDock("2D Â· TILEMAP PAINT", tilemap_editor_widget_, *this,
+                                         Qt::BottomDockWidgetArea, "tilemapEditorDock");
         vfx_editor_widget_ = new aether::editor::qt::VfxEditorWidget;
         vfx_editor_dock_ = MakeDock("VFX Â· PARTICLE EDITOR", vfx_editor_widget_, *this,
                                      Qt::BottomDockWidgetArea, "vfxEditorDock");
@@ -4275,6 +4279,7 @@ private:
         if (confirm_changes && (!ConfirmDiscardSequenceChanges() || !ConfirmDiscardSceneChanges())) return;
         if (confirm_changes && !blueprint_editor_widget_->ConfirmDiscardChanges(this)) return;
         if (confirm_changes && !material_editor_widget_->ConfirmDiscardChanges(this)) return;
+        if (confirm_changes && !tilemap_editor_widget_->ConfirmDiscardChanges(this)) return;
         if (confirm_changes && !vfx_editor_widget_->ConfirmDiscardChanges(this)) return;
         if (confirm_changes && !anim_graph_editor_widget_->ConfirmDiscardChanges(this)) return;
         if (confirm_changes && !blend_space_editor_widget_->ConfirmDiscardChanges(this)) return;
@@ -4339,6 +4344,7 @@ private:
         MaybeRestoreAutosave(AutosaveSourcePath());
         blueprint_editor_widget_->ClearDocument();
         material_editor_widget_->ClearDocument();
+        tilemap_editor_widget_->ClearDocument();
         vfx_editor_widget_->ClearDocument();
         anim_graph_editor_widget_->ClearDocument();
         blend_space_editor_widget_->ClearDocument();
@@ -4432,6 +4438,22 @@ private:
     void OpenContentAsset(const QString& path) {
         const QFileInfo info(path);
         const QString suffix = info.suffix().toLower();
+        if (suffix == "atilemap") {
+            if (project_file_.empty()) {
+                QMessageBox::warning(this, "Open Tilemap", "Open a project before editing tilemaps.");
+                return;
+            }
+            const auto content_root = aether::ProjectPaths::ForFile(project_file_).content;
+            if (tilemap_editor_widget_->OpenFile(std::filesystem::path(path.toStdWString()), content_root)) {
+                tilemap_editor_dock_->show();
+                tilemap_editor_dock_->raise();
+                statusBar()->showMessage("Opened Tilemap · paint cells, then save", 4000);
+            } else if (!tilemap_editor_widget_->dirty()) {
+                tilemap_editor_dock_->show();
+                tilemap_editor_dock_->raise();
+            }
+            return;
+        }
         if (suffix == "ascene" || suffix == "aesc") {
             OpenScene(std::filesystem::path(path.toStdWString()));
             return;
@@ -4940,7 +4962,8 @@ private:
     void closeEvent(QCloseEvent* event) override {
         if (scene_document_.PlayState() != aether::editor::PlaySession::State::Editing) StopPlay();
         StopSequencePreview();
-        if (!animation_editor_widget_->ConfirmDiscardChanges(this) ||
+        if (!tilemap_editor_widget_->ConfirmDiscardChanges(this) ||
+            !animation_editor_widget_->ConfirmDiscardChanges(this) ||
             !montage_editor_widget_->ConfirmDiscardChanges(this) ||
             !sound_cue_editor_widget_->ConfirmDiscardChanges(this) ||
             !ConfirmDiscardSequenceChanges() || !ConfirmDiscardSceneChanges()) {
@@ -5233,6 +5256,8 @@ private:
     aether::editor::qt::BlueprintEditorWidget* blueprint_editor_widget_ = nullptr;
     QDockWidget* material_editor_dock_ = nullptr;
     aether::editor::qt::MaterialEditorWidget* material_editor_widget_ = nullptr;
+    QDockWidget* tilemap_editor_dock_ = nullptr;
+    aether::editor::qt::TilemapEditorWidget* tilemap_editor_widget_ = nullptr;
     QDockWidget* vfx_editor_dock_ = nullptr;
     aether::editor::qt::VfxEditorWidget* vfx_editor_widget_ = nullptr;
     QDockWidget* behavior_tree_editor_dock_ = nullptr;

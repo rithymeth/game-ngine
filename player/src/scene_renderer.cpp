@@ -28,6 +28,8 @@
 #include "aether/ui/font.h"
 #include "aether/ui/viewport.h"
 #include "aether/vfx/particle_system.h"
+#include "aether/sprite2d/batch.h"
+#include "aether/sprite2d/lights2d.h"
 
 #include <nlohmann/json.hpp>
 
@@ -970,12 +972,14 @@ struct SceneRenderer::Impl {
     SampledTextureHandle font_texture_handle;
     std::unique_ptr<ui::SdfFont> hud_font;
     std::unordered_map<std::string, Model> models;
+    std::unordered_map<std::string, sprite2d::SpriteAtlas> sprite_atlases;
+    std::unordered_map<std::string, sprite2d::Tileset> sprite_tilesets;
+    std::unordered_map<std::string, sprite2d::TilemapData> sprite_tilemaps;
     std::unordered_map<std::string, SampledTextureHandle> textures;
     u32 sampled_texture_count = 0;
     u32 seen_critical_pressure = 0;
     f32 view_distance = 0.0f;
     std::function<bool(Entity, Transform&)> render_pose_sampler;
-    std::vector<ParticleQuadVertex> sprite_vertices; // the frame's 2D quads, kept for its capacity
     // Each entity's local matrix and parent, read once a frame instead of once for every drawn entity under it.
     HierarchySnapshot hierarchy;
     Entity animated_player;
@@ -1162,6 +1166,7 @@ struct SceneRenderer::Impl {
         decals = std::make_unique<DecalPass>(device, swap_chain, hdr);
         // Particle materials are textures in the package, through the same cache as the models' (0: untextured, drawn procedurally).
         particles->SetTextureResolver([this](const std::string& material) -> u32 {
+            if (material == "@aether-white") return white_texture.index;
             SampledTextureHandle texture;
             return LoadTexture(material, texture) ? texture.index : 0u;
         });
@@ -2262,6 +2267,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
     Mat4 particle_view_projection, particle_projection;
     vfx::ParticleCamera particle_camera;
     bool draw_particles = false;
+    bool draw_sprite2d = false;
     Mat4 decal_view_projection;
     Mat4 taa_view_projection; // without the jitter
     Vec3 decal_camera_position;
@@ -2282,11 +2288,108 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
         const Mat4 view_projection = projection * camera_view;
         particle_view_projection = view_projection;
         particle_projection = projection;
-        if (renderer.draw_particles && game.Particles()) {
+        // Sprite2D and tilemaps share the particle pass's textured-quad GPU path. Their CPU batch builder
+        // handles sorting, atlas UVs, map layers and camera culling; this adapter preserves those batches
+        // as camera-facing particle sprites so package assets use the same texture cache and device limits.
+        {
             particle_camera = vfx::ParticleCamera::FromView(camera_view);
             renderer.particle_data.Clear();
-            game.Particles()->BuildRenderData(particle_camera, renderer.particle_data, &view_projection);
-            draw_particles = true;
+            if (renderer.draw_particles && game.Particles())
+                game.Particles()->BuildRenderData(particle_camera, renderer.particle_data, &view_projection);
+            sprite2d::Resolvers2D resolvers;
+            const auto read_json = [&renderer](const assets::AssetGuid& guid) -> nlohmann::json {
+                const GameManifest::Asset* asset = renderer.package.FindAssetByGuid(assets::ToString(guid));
+                std::vector<u8> bytes;
+                if (!asset || !renderer.package.ReadContent(asset->path, bytes)) return {};
+                return nlohmann::json::parse(bytes.begin(), bytes.end(), nullptr, false);
+            };
+            resolvers.atlases = [&renderer, &read_json](const assets::AssetGuid& guid) -> const sprite2d::SpriteAtlas* {
+                const std::string key = assets::ToString(guid);
+                auto it = renderer.sprite_atlases.find(key);
+                if (it == renderer.sprite_atlases.end()) {
+                    sprite2d::SpriteAtlas atlas;
+                    const nlohmann::json json = read_json(guid);
+                    if (json.is_discarded() || json.is_null() || !sprite2d::AtlasFromJson(json, atlas)) return nullptr;
+                    it = renderer.sprite_atlases.emplace(key, std::move(atlas)).first;
+                }
+                return &it->second;
+            };
+            resolvers.tilesets = [&renderer, &read_json](const assets::AssetGuid& guid) -> const sprite2d::Tileset* {
+                const std::string key = assets::ToString(guid);
+                auto it = renderer.sprite_tilesets.find(key);
+                if (it == renderer.sprite_tilesets.end()) {
+                    sprite2d::Tileset tileset;
+                    const nlohmann::json json = read_json(guid);
+                    if (json.is_discarded() || json.is_null() || !sprite2d::TilesetFromJson(json, tileset)) return nullptr;
+                    it = renderer.sprite_tilesets.emplace(key, std::move(tileset)).first;
+                }
+                return &it->second;
+            };
+            resolvers.tilemaps = [&renderer, &read_json](const assets::AssetGuid& guid) -> const sprite2d::TilemapData* {
+                const std::string key = assets::ToString(guid);
+                auto it = renderer.sprite_tilemaps.find(key);
+                if (it == renderer.sprite_tilemaps.end()) {
+                    sprite2d::TilemapData map;
+                    const nlohmann::json json = read_json(guid);
+                    if (json.is_discarded() || json.is_null() || !sprite2d::TilemapFromJson(json, map)) return nullptr;
+                    it = renderer.sprite_tilemaps.emplace(key, std::move(map)).first;
+                }
+                return &it->second;
+            };
+            std::optional<sprite2d::ViewRect> sprite_view;
+            if (camera->projection == Projection::Orthographic) {
+                const Mat4 camera_world = ComputeWorldTransform(world, guids, camera_entity);
+                const f32 half_h = std::max(camera->ortho_height, 0.0f) * 0.5f;
+                const f32 half_w = half_h * aspect;
+                const f32 half_x = std::abs(camera_world.cols[0].x) * half_w + std::abs(camera_world.cols[1].x) * half_h;
+                const f32 half_y = std::abs(camera_world.cols[0].y) * half_w + std::abs(camera_world.cols[1].y) * half_h;
+                const Vec3 center{camera_world.cols[3].x, camera_world.cols[3].y, camera_world.cols[3].z};
+                sprite_view = sprite2d::ViewRect{center.x - half_x, center.y - half_y, center.x + half_x, center.y + half_y};
+            }
+            std::optional<sprite2d::LightMap> sprite_lighting;
+            bool has_sprite_lights = false;
+            world.ForEach<Transform, sprite2d::Light2D>([&](Transform&, sprite2d::Light2D& light) {
+                has_sprite_lights = has_sprite_lights || (light.enabled && std::isfinite(light.intensity) && light.intensity > 0.0f);
+            });
+            if (sprite_view && has_sprite_lights) {
+                sprite_lighting = sprite2d::BuildLightMap(
+                    world, resolvers, {sprite_view->min_x, sprite_view->min_y}, {sprite_view->max_x, sprite_view->max_y}, 0.5f);
+            }
+            for (const sprite2d::SpriteBatch& source :
+                 sprite2d::BuildSpriteBatches(world, resolvers, sprite_view ? &*sprite_view : nullptr)) {
+                vfx::SpriteBatch batch;
+                const GameManifest::Asset* texture = renderer.package.FindAssetByGuid(assets::ToString(source.texture));
+                batch.material = texture ? texture->path : "@aether-white";
+                batch.blend = vfx::BlendMode::Alpha;
+                for (usize i = 0; i + 3 < source.vertices.size(); i += 4) {
+                    const auto& tl = source.vertices[i];
+                    const auto& tr = source.vertices[i + 1];
+                    const auto& br = source.vertices[i + 2];
+                    const auto& bl = source.vertices[i + 3];
+                    vfx::SpriteInstance sprite;
+                    sprite.center = {(tl.x + tr.x + br.x + bl.x) * 0.25f, (tl.y + tr.y + br.y + bl.y) * 0.25f,
+                                     (tl.z + tr.z + br.z + bl.z) * 0.25f};
+                    sprite.right = {(tr.x - tl.x) * 0.5f, (tr.y - tl.y) * 0.5f, (tr.z - tl.z) * 0.5f};
+                    sprite.up = {(tl.x - bl.x) * 0.5f, (tl.y - bl.y) * 0.5f, (tl.z - bl.z) * 0.5f};
+                    sprite.uv = {tl.u, tl.v, tr.u - tl.u, bl.v - tl.v};
+                    sprite.uv_next = sprite.uv;
+                    sprite.color = {tl.r, tl.g, tl.b, tl.a};
+                    if (sprite_lighting) {
+                        const sprite2d::LightColor light = sprite_lighting->Sample(sprite.center.x, sprite.center.y);
+                        sprite.color.r *= light.r;
+                        sprite.color.g *= light.g;
+                        sprite.color.b *= light.b;
+                    }
+                    batch.instances.push_back(sprite);
+                }
+                if (!batch.instances.empty()) renderer.particle_data.sprites.push_back(std::move(batch));
+            }
+            draw_particles = renderer.draw_particles && game.Particles() &&
+                             (!renderer.particle_data.sprites.empty() || !renderer.particle_data.meshes.empty() ||
+                              !renderer.particle_data.ribbons.empty());
+            draw_sprite2d = !renderer.particle_data.sprites.empty() &&
+                            std::any_of(renderer.particle_data.sprites.begin(), renderer.particle_data.sprites.end(),
+                                        [](const vfx::SpriteBatch& batch) { return !batch.instances.empty(); });
         }
         const Mat4 camera_transform = ComputeWorldTransform(world, guids, camera_entity);
         const Vec3 camera_position{camera_transform.cols[3].x, camera_transform.cols[3].y, camera_transform.cols[3].z};
@@ -2832,22 +2935,8 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
     // Particles after every surface (they test against its depth without writing it). Soft sprites make the pass copy the depth
     // (ICommandList::CopySceneDepth): the transparent surfaces above don't write depth, so the copy is the opaque scene plus the mesh
     // particles; the HUD below binds its own pipeline.
-    if (draw_particles) {
+    if (draw_particles || draw_sprite2d) {
         renderer.particles->Draw(commands, renderer.particle_data, particle_camera, particle_view_projection, particle_projection, frame_index);
-    }
-    // 2D: the scene's sprites and tilemaps, back to front, over the opaque scene and the particles. They go through the particle
-    // pass's alpha pipeline (a 2D quad is a ribbon to it); without this a 2D game ran its level, physics and controller and drew
-    // nothing.
-    if (have_camera && renderer.particles && renderer.particles->Valid()) {
-        const std::vector<sprite2d::SpriteBatch> batches = sprite2d::BuildSpriteBatches(world, game.Resolvers2D());
-        if (!batches.empty()) {
-            PackSpriteBatchVertices(batches, [&](const assets::AssetGuid& guid) -> u32 {
-                const GameManifest::Asset* asset = renderer.package.FindAssetByGuid(assets::ToString(guid));
-                SampledTextureHandle texture;
-                return asset && renderer.LoadTexture(asset->path, texture) ? texture.index : 0u;
-            }, renderer.sprite_vertices);
-            renderer.particles->DrawQuads(commands, renderer.sprite_vertices, particle_view_projection, frame_index);
-        }
     }
     if (renderer.hdr) {
         // The lit scene is in the HDR target: tone map it into the back buffer under the post volumes at the camera, then the HUD on top

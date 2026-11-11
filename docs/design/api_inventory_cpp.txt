@@ -4920,7 +4920,6 @@
   const input::InputAssetLibrary&InputAssets()const
   const pak::VirtualFileSystem&Files()const
   const seq::LevelSequence*FindSequence(const std::string&path)
-  const sprite2d::Resolvers2D&Resolvers2D()const
   const std::string&SceneName()const
   const std::string&Subtitle()const
   const std::string&SubtitleSpeaker()const

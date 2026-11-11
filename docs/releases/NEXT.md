@@ -237,10 +237,27 @@ cube in three colours. All six templates were created, packaged and run this way
 by design, and 2D Platformer, because the packaged player does not draw sprites or tilemaps. The getting-started page has the
 three commands.
 
-## 2D: the packaged player draws sprites and tilemaps
+## Animation: mistyped graph parameters are diagnosed
 
-A 2D game ran its level, physics and controller in the packaged player and drew nothing: no part of the player turned `Sprite`
-and `TilemapRenderer` components into draws. The scene renderer now builds the sprite batches each frame and draws them, back to
-front, over the 3D scene and the particles, with the tileset's or atlas's texture, or as flat colours when there is none. The 2D
-Platformer template gained a sprite for its player and now opens on its level. Not yet: `SpriteAnimator` clips do not advance in
-the player, sprites are not culled to the view, and their colours go through the scene's tone mapping like everything else.
+Invalid animation graph parameter commands, failed montage playback, and unavailable montage-section jumps now report the
+entity and request once per distinct problem. Repeated gameplay requests no longer fail silently or flood the diagnostics list.
+
+## Scene saves keep a recoverable previous version
+
+Binary and JSON scene saves now replace their target atomically and retain the prior file as `<scene>.bak`. If a save is
+interrupted, the original scene remains intact; the previous version can also be loaded directly for recovery.
+
+## Packaged projects render Sprite2D content
+
+The packaged player now turns scene sprites and tilemap layers into the same textured quad batches used by the renderer's particle
+pass. This closes the gap where 2D template scenes loaded and simulated correctly but their sprites and tiles were invisible at runtime.
+
+## 3D templates start with procedural environment lighting
+
+First Person, Third Person, Top Down, and Vehicle projects now include a procedural sky light. Their first scene has an environment
+background and ambient image-based lighting without relying on an imported sky texture.
+
+## Sprite2D draws authored 2D lighting
+
+The packaged renderer now samples the Sprite2D light map for sprites and tilemaps when a scene contains enabled 2D lights. Point,
+spot, and global ambient lights affect the packaged Sprite2D pass, with tilemap occlusion and box shadow casters applied by the light map.

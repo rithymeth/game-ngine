@@ -205,7 +205,7 @@ std::vector<u8> SaveSceneToMemory(const World& world) {
 
 bool SaveScene(const World& world, const std::string& path) {
     std::vector<u8> buffer = SaveSceneToMemory(world);
-    if (!fs::WriteFileBytes(path, buffer.data(), buffer.size())) {
+    if (!fs::WriteFileAtomicWithBackup(path, buffer.data(), buffer.size())) {
         AETHER_LOG_ERROR("Scene", "Failed to write scene file: %s", path.c_str());
         return false;
     }
@@ -414,7 +414,7 @@ bool SaveSceneJson(const World& world, const std::string& path, const SceneSaveO
         scene["origin"] = {{"x", options.origin.x}, {"y", options.origin.y}, {"z", options.origin.z}};
     std::string text = scene.dump(2);
     text.push_back('\n');
-    if (!fs::WriteFileAtomic(path, text.data(), text.size())) {
+    if (!fs::WriteFileAtomicWithBackup(path, text.data(), text.size())) {
         AETHER_LOG_ERROR("Scene", "Failed to write scene file: %s", path.c_str());
         return false;
     }

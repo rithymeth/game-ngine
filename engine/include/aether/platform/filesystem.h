@@ -27,6 +27,11 @@ namespace aether::fs {
 // temporary file and leaves the target as it was.
 [[nodiscard]] bool WriteFileAtomic(const std::string& path, const void* data, usize size_bytes);
 
+// Like WriteFileAtomic, but first preserves the previous file at "<path>.bak".
+// The previous file remains available for recovery after each successful save.
+// If staging the backup or new file fails, the current target is left intact.
+[[nodiscard]] bool WriteFileAtomicWithBackup(const std::string& path, const void* data, usize size_bytes);
+
 // The names (not paths) of the regular files in a folder, sorted; empty if
 // the folder doesn't exist.
 std::vector<std::string> ListDirectory(const std::string& directory);

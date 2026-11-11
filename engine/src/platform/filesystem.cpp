@@ -93,6 +93,50 @@ bool WriteFileAtomic(const std::string& path, const void* data, usize size_bytes
     return true;
 }
 
+bool WriteFileAtomicWithBackup(const std::string& path, const void* data, usize size_bytes) {
+    const stdfs::path target(path);
+    const stdfs::path backup = target.string() + ".bak";
+    std::error_code ec;
+    if (!target.parent_path().empty()) stdfs::create_directories(target.parent_path(), ec);
+    if (ec) return false;
+
+    stdfs::path temp = target;
+    temp += ".tmp";
+    if (!WriteFileBytes(temp.string(), data, size_bytes)) {
+        stdfs::remove(temp, ec);
+        return false;
+    }
+
+    const bool target_exists = stdfs::exists(target, ec);
+    if (ec) {
+        stdfs::remove(temp, ec);
+        return false;
+    }
+    if (target_exists) {
+        stdfs::path backup_temp = backup;
+        backup_temp += ".tmp";
+        stdfs::copy_file(target, backup_temp, stdfs::copy_options::overwrite_existing, ec);
+        if (ec) {
+            stdfs::remove(temp, ec);
+            stdfs::remove(backup_temp, ec);
+            return false;
+        }
+        stdfs::rename(backup_temp, backup, ec);
+        if (ec) {
+            stdfs::remove(temp, ec);
+            stdfs::remove(backup_temp, ec);
+            return false;
+        }
+    }
+
+    stdfs::rename(temp, target, ec);
+    if (ec) {
+        stdfs::remove(temp, ec);
+        return false;
+    }
+    return true;
+}
+
 std::vector<std::string> ListDirectory(const std::string& directory) {
     std::vector<std::string> names;
     std::error_code ec;

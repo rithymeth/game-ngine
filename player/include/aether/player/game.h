@@ -29,7 +29,6 @@
 #include "aether/scene/prefab.h"
 #include "aether/scene/scheduler.h"
 #include "aether/sequencer/sequence.h"
-#include "aether/sprite2d/batch.h"
 #include "aether/sprite2d/tilemap.h"
 
 #include <array>
@@ -224,9 +223,6 @@ public:
     // PlatformerController2D entities are driven by the "Move" (x axis) and
     // "Jump" actions. Null before a scene is loaded.
     sprite2d::Physics2D* Physics2D() { return physics2d_.get(); }
-    // The 2D assets the scene's sprites and tilemaps refer to (atlases, tilesets, tilemaps), read from the package when first
-    // asked for and kept until another scene loads. The renderer draws with them; the 2D physics reads the same ones.
-    const sprite2d::Resolvers2D& Resolvers2D() const { return resolvers2d_; }
     // 3D scene queries (when the Physics module is linked); null until a
     // scene is loaded or when this player was built without Physics.
     PhysicsScene* PhysicsQueries();
@@ -403,8 +399,6 @@ private:
     std::unique_ptr<sprite2d::Physics2D> physics2d_;
     std::unordered_map<assets::AssetGuid, std::unique_ptr<sprite2d::TilemapData>> tilemaps_;
     std::unordered_map<assets::AssetGuid, std::unique_ptr<sprite2d::Tileset>> tilesets_;
-    std::unordered_map<assets::AssetGuid, std::unique_ptr<sprite2d::SpriteAtlas>> atlases_;
-    sprite2d::Resolvers2D resolvers2d_;
     std::vector<std::pair<std::string, std::unique_ptr<plugin::IModule>>> modules_;
     bool modules_started_ = false;
 

@@ -255,23 +255,6 @@ void ParticleTextureRuns(const std::vector<ParticleQuadVertex>& vertices, std::v
     }
 }
 
-void PackSpriteBatchVertices(const std::vector<sprite2d::SpriteBatch>& batches, const SpriteTextureResolver& texture,
-                             std::vector<ParticleQuadVertex>& out) {
-    out.clear();
-    for (const sprite2d::SpriteBatch& batch : batches) {
-        const u32 index = texture && !batch.texture.IsNull() ? texture(batch.texture) : 0u;
-        // 4 * the texture's index plus 0.25: the ribbon kind, drawn as colour times texture with no round falloff.
-        const f32 kind = 4.0f * static_cast<f32>(index) + 0.25f;
-        for (const u32 i : batch.indices) {
-            if (i >= batch.vertices.size()) continue; // a batch from elsewhere with a bad index: leave the corner out
-            const sprite2d::SpriteVertex& v = batch.vertices[i];
-            out.push_back({{v.x, v.y, v.z}, {kind, 0.0f, 0.0f}, {v.u, v.v}, {v.r, v.g, v.b, v.a}});
-        }
-        // Whole triangles only, so a dropped corner cannot shift the triangles that follow.
-        out.resize(out.size() - out.size() % 3);
-    }
-}
-
 bool ParticleVertexStreams::AnySoft() const {
     const auto any = [](const std::vector<f32>& v) { return std::any_of(v.begin(), v.end(), [](f32 f) { return f > 0.0f; }); };
     return any(alpha_soft) || any(additive_soft);
@@ -406,7 +389,7 @@ ParticlePass::ParticlePass(gfx::rhi::IDevice& device, gfx::rhi::ISwapChain& swap
 }
 
 ParticlePass::~ParticlePass() {
-    for (std::array<Buffer, 4>& slot : buffers_) {
+    for (std::array<Buffer, 3>& slot : buffers_) {
         for (Buffer& buffer : slot) {
             if (buffer.handle.IsValid()) device_.DestroyBuffer(buffer.handle);
             buffer = {};
@@ -421,7 +404,7 @@ void ParticlePass::Draw(gfx::rhi::ICommandList& commands, const vfx::ParticleRen
                         const Mat4& view_projection, const Mat4& projection, u32 frame_index) {
     PackParticleVertices(data, camera, vertices_, textures_, meshes_, &lighting_);
     depth_to_view_ = ParticleDepthToView(projection);
-    std::array<Buffer, 4>& slot = buffers_[frame_index % kFrameSlots];
+    std::array<Buffer, 3>& slot = buffers_[frame_index % kFrameSlots];
     // Opaque mesh particles first (writing depth), alpha-blended back to front next, then additive light on top.
     DrawStream(commands, opaque_pipeline_, vertices_.opaque, nullptr, slot[2], view_projection, 0, lighting_.lit);
     // The scene's depth so far (surfaces and mesh particles) for the soft sprites, only on frames that have some; the blended draws after
@@ -430,11 +413,6 @@ void ParticlePass::Draw(gfx::rhi::ICommandList& commands, const vfx::ParticleRen
     if (scene_depth_ != 0 && vertices_.AnySoft() && commands.CopySceneDepth()) scene_depth = scene_depth_;
     DrawStream(commands, alpha_pipeline_, vertices_.alpha, &vertices_.alpha_soft, slot[0], view_projection, scene_depth);
     DrawStream(commands, additive_pipeline_, vertices_.additive, &vertices_.additive_soft, slot[1], view_projection, scene_depth);
-}
-
-void ParticlePass::DrawQuads(gfx::rhi::ICommandList& commands, const std::vector<ParticleQuadVertex>& vertices, const Mat4& view_projection,
-                             u32 frame_index) {
-    DrawStream(commands, alpha_pipeline_, vertices, nullptr, buffers_[frame_index % kFrameSlots][3], view_projection, 0);
 }
 
 void ParticlePass::DrawStream(gfx::rhi::ICommandList& commands, gfx::rhi::PipelineHandle pipeline, const std::vector<ParticleQuadVertex>& vertices,

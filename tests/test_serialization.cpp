@@ -55,6 +55,35 @@ AETHER_TEST(Serialization_RoundTripsComponentsAcrossWorlds) {
     std::filesystem::remove(path);
 }
 
+AETHER_TEST(Serialization_BinarySaveKeepsPreviousVersionForRecovery) {
+    const std::string path = (std::filesystem::temp_directory_path() / "aether_test_scene_recovery.aesc").string();
+    World world;
+    world.CreateEntity(Position{1, 2, 3});
+    AETHER_CHECK(SaveScene(world, path));
+    world.CreateEntity(Position{4, 5, 6});
+    AETHER_CHECK(SaveScene(world, path));
+
+    const std::string backup = path + ".bak";
+    AETHER_CHECK(std::filesystem::exists(backup));
+    World recovered;
+    AETHER_CHECK(LoadScene(recovered, backup));
+    AETHER_CHECK(recovered.EntityCount() == 1);
+    recovered.ForEach<Position>([](Position& position) {
+        AETHER_CHECK(position.x == 1 && position.y == 2 && position.z == 3);
+    });
+    World latest;
+    AETHER_CHECK(LoadScene(latest, path) && latest.EntityCount() == 2);
+    world.CreateEntity(Position{7, 8, 9});
+    AETHER_CHECK(SaveScene(world, path));
+    World previous;
+    AETHER_CHECK(LoadScene(previous, backup) && previous.EntityCount() == 2);
+    World newest;
+    AETHER_CHECK(LoadScene(newest, path) && newest.EntityCount() == 3);
+    AETHER_CHECK(!std::filesystem::exists(path + ".tmp") && !std::filesystem::exists(backup + ".tmp"));
+    std::filesystem::remove(path);
+    std::filesystem::remove(backup);
+}
+
 AETHER_TEST(Serialization_RejectsMissingFile) {
     World world;
     AETHER_CHECK(!LoadScene(world, "this_scene_file_should_not_exist_98765.aesc"));
@@ -324,6 +353,37 @@ AETHER_TEST(SceneJson_RoundTripsReflectedComponents) {
 
     std::filesystem::remove(path);
     std::filesystem::remove(resaved);
+}
+
+AETHER_TEST(SceneJson_SaveKeepsPreviousVersionForRecovery) {
+    const std::string path = TempScenePath("aether_test_scene_json_recovery.ascene");
+    World world;
+    scene_test::Stamina initial;
+    initial.current = 25.0f;
+    world.CreateEntity(initial);
+    AETHER_CHECK(SaveSceneJson(world, path));
+    world.ForEach<scene_test::Stamina>([](scene_test::Stamina& stamina) { stamina.current = 75.0f; });
+    AETHER_CHECK(SaveSceneJson(world, path));
+
+    const std::string backup = path + ".bak";
+    AETHER_CHECK(std::filesystem::exists(backup));
+    World recovered;
+    AETHER_CHECK(LoadSceneJson(recovered, backup));
+    recovered.ForEach<scene_test::Stamina>([](scene_test::Stamina& stamina) { AETHER_CHECK(stamina.current == 25.0f); });
+    World latest;
+    AETHER_CHECK(LoadSceneJson(latest, path));
+    latest.ForEach<scene_test::Stamina>([](scene_test::Stamina& stamina) { AETHER_CHECK(stamina.current == 75.0f); });
+    world.ForEach<scene_test::Stamina>([](scene_test::Stamina& stamina) { stamina.current = 50.0f; });
+    AETHER_CHECK(SaveSceneJson(world, path));
+    World previous;
+    AETHER_CHECK(LoadSceneJson(previous, backup));
+    previous.ForEach<scene_test::Stamina>([](scene_test::Stamina& stamina) { AETHER_CHECK(stamina.current == 75.0f); });
+    World newest;
+    AETHER_CHECK(LoadSceneJson(newest, path));
+    newest.ForEach<scene_test::Stamina>([](scene_test::Stamina& stamina) { AETHER_CHECK(stamina.current == 50.0f); });
+    AETHER_CHECK(!std::filesystem::exists(path + ".tmp") && !std::filesystem::exists(backup + ".tmp"));
+    std::filesystem::remove(path);
+    std::filesystem::remove(backup);
 }
 
 AETHER_TEST(SceneJson_ToleratesUnknownComponentsAndRejectsNonScenes) {

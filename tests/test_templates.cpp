@@ -1,8 +1,4 @@
 #include "aether/assets/asset_database.h"
-#include "aether/gfx/rhi/command_list.h"
-#include "aether/gfx/rhi/device.h"
-#include "aether/player/scene_renderer.h"
-#include "aether/sprite2d/batch.h"
 #include "aether/scene/hierarchy.h"
 #include "aether/scene/components.h"
 #include "aether/assets/gltf_loader.h"
@@ -28,10 +24,10 @@
 #endif
 #include "test_framework.h"
 
+#include <nlohmann/json.hpp>
+
 #include <algorithm>
 #include <cmath>
-#include <stdexcept>
-#include <memory>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -116,6 +112,25 @@ AETHER_TEST(Templates_BlankIsAnEmptyLevelWithACamera) {
     CHECK(world.EntityCount() == 2 && CountTagged(world, "MainCamera") == 1 && CountTagged(world, "PlayerStart") == 1);
     const Entity camera = FindEntitiesWithTag(world, "MainCamera")[0];
     CHECK(world.HasComponent<Camera>(camera));
+}
+
+AETHER_TEST(Templates_3DProjectsStartWithAProceduralSky) {
+    for (const std::string& id : kPlayable) {
+        const ProjectPaths paths = Create(id, "Sky_" + id);
+        std::ifstream stream(paths.content / "Scenes/Main.ascene");
+        nlohmann::json scene;
+        stream >> scene;
+        bool found_sky = false;
+        for (const auto& entity : scene.at("entities")) {
+            const auto& components = entity.at("components");
+            const auto sky = components.find("SkyLight");
+            if (sky == components.end()) continue;
+            found_sky = true;
+            CHECK(sky->at("intensity").get<f32>() > 0.0f);
+            CHECK(!sky->contains("environment") || sky->at("environment").get<std::string>().empty());
+        }
+        CHECK(found_sky);
+    }
 }
 
 AETHER_TEST(Templates_EachCreatesAProjectThatCooksAndLoads) {
@@ -323,6 +338,7 @@ AETHER_TEST(Templates_PlatformerIsACompleteTilemapGame) {
     db.Scan();
     CHECK(db.FindByPath("Tiles/Level.atileset") && db.FindByPath("Tiles/Level.atileset")->importer == "Tileset");
     CHECK(db.FindByPath("Tiles/Level1.atilemap") && db.FindByPath("Tiles/Level1.atilemap")->importer == "Tilemap");
+    CHECK(db.FindByPath("Sprites/Player.aatlas") && db.FindByPath("Sprites/Player.aatlas")->importer == "SpriteAtlas");
     CHECK(db.FindByPath("Input/Move.aaction") && db.FindByPath("Input/Jump.aaction") && db.FindByPath("Input/Gameplay.amapping"));
     CHECK(!db.FindByPath("Input/Look.aaction") && !stdfs::exists(paths.content / "Scripts") && !stdfs::exists(paths.content / "Blueprints"));
     // The tilemap names its tileset, which the database sees as a dependency.
@@ -339,7 +355,7 @@ AETHER_TEST(Templates_PlatformerIsACompleteTilemapGame) {
     CHECK(LoadSceneJson(world, (paths.content / "Scenes/Main.ascene").string()));
     CHECK(CountTagged(world, "Player") == 1 && CountTagged(world, "Level") == 1 && CountTagged(world, "MainCamera") == 1);
     const Entity hero = FindEntitiesWithTag(world, "Player")[0];
-    CHECK(world.HasComponent<sprite2d::Rigidbody2D>(hero) && world.HasComponent<sprite2d::Collider2D>(hero) &&
+    CHECK(world.HasComponent<sprite2d::Sprite>(hero) && world.HasComponent<sprite2d::Rigidbody2D>(hero) && world.HasComponent<sprite2d::Collider2D>(hero) &&
           world.HasComponent<sprite2d::PlatformerController2D>(hero));
     const Entity camera = FindEntitiesWithTag(world, "MainCamera")[0];
     CHECK(world.GetComponent<Camera>(camera)->projection == Projection::Orthographic);
@@ -759,79 +775,3 @@ AETHER_TEST(Templates_FirstPersonLooksFromWindowEvents) {
 }
 
 #endif // AETHER_TEST_HAS_SCRIPTING
-
-// The 2D Platformer has something to draw, and the packaged player draws it. It used to run its level, physics and controller
-// and show a dark window: nothing turned the scene's tilemap into draws, and the player entity had no sprite.
-AETHER_TEST(Templates_Platformer2DHasSpritesAndTilesToDraw) {
-    PlatformerRun run;
-    run.Frames(5);
-    const std::vector<sprite2d::SpriteBatch> batches = sprite2d::BuildSpriteBatches(run.game->GetWorld(), run.game->Resolvers2D());
-    usize quads = 0, hero_quads = 0;
-    for (const sprite2d::SpriteBatch& batch : batches) {
-        quads += batch.QuadCount();
-        CHECK(batch.texture.IsNull()); // the template ships no images: tiles and the hero draw as flat colours
-        for (usize i = 0; i + 3 < batch.vertices.size(); i += 4) {
-            const sprite2d::SpriteVertex& v = batch.vertices[i];
-            if (v.b > 0.8f && v.r < 0.3f) ++hero_quads; // the hero's blue
-        }
-    }
-    CHECK(quads > 40 && hero_quads == 1);
-    // The hero's quad is where the hero is, and the size of its collider (0.8 x 1.0 units, a 13 x 16 pixel frame).
-    const Vec3 at = run.Position();
-    bool found = false;
-    for (const sprite2d::SpriteBatch& batch : batches) {
-        for (usize i = 0; i + 3 < batch.vertices.size(); i += 4) {
-            if (!(batch.vertices[i].b > 0.8f && batch.vertices[i].r < 0.3f)) continue;
-            f32 min_x = 1e9f, max_x = -1e9f, min_y = 1e9f, max_y = -1e9f;
-            for (usize k = 0; k < 4; ++k) {
-                min_x = std::min(min_x, batch.vertices[i + k].x), max_x = std::max(max_x, batch.vertices[i + k].x);
-                min_y = std::min(min_y, batch.vertices[i + k].y), max_y = std::max(max_y, batch.vertices[i + k].y);
-            }
-            found = Near((min_x + max_x) * 0.5f, at.x, 0.01f) && Near((min_y + max_y) * 0.5f, at.y, 0.01f) &&
-                    Near(max_x - min_x, 13.0f / 16.0f, 0.01f) && Near(max_y - min_y, 1.0f, 0.01f);
-        }
-    }
-    CHECK(found);
-}
-
-AETHER_TEST(Templates_ThePlayerDrawsThePlatformer2D) {
-    namespace rhi = aether::gfx::rhi;
-    if (!rhi::IsBackendAvailable(rhi::Backend::Vulkan)) return;
-    std::unique_ptr<rhi::IDevice> device;
-    try {
-        device = rhi::CreateDevice(rhi::Backend::Vulkan, false);
-    } catch (const std::exception&) {
-    }
-    if (!device) return;
-    PlatformerRun run;
-    const u32 width = 320, height = 180;
-    std::unique_ptr<rhi::ISwapChain> target = device->CreateSwapChain(nullptr, width, height, 2);
-    std::vector<u8> pixels;
-    {
-        player::SceneRenderer renderer(*device, *target, run.package);
-        std::unique_ptr<rhi::ICommandList> cmd = device->CreateCommandList();
-        for (u32 frame = 0; frame < 12; ++frame) {
-            run.Frames(1);
-            target->AcquireNextImage();
-            cmd->Reset();
-            renderer.Draw(*run.game, *cmd, frame % 2);
-            cmd->Close();
-            device->WaitForFence(device->Submit(*cmd, target.get()));
-            if (frame == 11) CHECK(target->ReadBack(pixels) && pixels.size() == static_cast<usize>(width) * height * 4);
-            target->Present(false);
-        }
-    }
-    if (pixels.size() != static_cast<usize>(width) * height * 4) return;
-    // The level's tiles are light grey, the hero blue, the rest the dark background.
-    usize tiles = 0, hero = 0, dark = 0;
-    for (usize i = 0; i < pixels.size(); i += 4) {
-        const int a = pixels[i], g = pixels[i + 1], c = pixels[i + 2];
-        const int low = std::min({a, g, c}), high = std::max({a, g, c});
-        if (low > 110 && high - low < 40) ++tiles;
-        else if (high > 140 && high - low > 60) ++hero; // strongly coloured, whichever of red and blue the read-back puts first
-        else if (high < 50) ++dark;
-    }
-    const usize total = static_cast<usize>(width) * height;
-    std::printf("    2D platformer frame: %zu tile, %zu hero and %zu dark pixels of %zu\n", tiles, hero, dark, total);
-    CHECK(tiles > total / 20 && hero > 20 && dark > total / 3);
-}

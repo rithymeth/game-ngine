@@ -43,6 +43,8 @@ struct SceneSaveOptions {
 // should do before allowing a scene to be saved. Version 1 files (written
 // before the component registry could exceed 64 types) still load, including
 // their raw-byte components into types that have since become reflected.
+// Replaces the scene atomically and preserves the previous version at
+// "<path>.bak" when one exists, so an interrupted or damaged edit is recoverable.
 [[nodiscard]] bool SaveScene(const World& world, const std::string& path);
 
 // Loads entities from a file written by SaveScene into `world` (which is not
@@ -70,6 +72,7 @@ std::vector<u8> SaveSceneToMemory(const World& world);
 // default and unknown fields in all modes. JSON entities are collected before
 // appending to the destination world, so parse failures and strict unknown-
 // component rejection do not partially load a scene.
+// Writes JSON scenes atomically and keeps the previous version at "<path>.bak".
 [[nodiscard]] bool SaveSceneJson(const World& world, const std::string& path);
 // Phase 42.1: records an origin and writes absolute positions (see SceneSaveOptions).
 [[nodiscard]] bool SaveSceneJson(const World& world, const std::string& path, const SceneSaveOptions& options);
