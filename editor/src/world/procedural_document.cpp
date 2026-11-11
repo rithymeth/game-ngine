@@ -3,8 +3,15 @@
 #include "aether/assets/png_writer.h"
 #include "aether/renderer/components.h"
 #include "aether/scene/components.h"
+#include "aether/assets/asset_database.h"
+#include "aether/scene/entity_guid.h"
+#include "aether/scene/gameplay.h"
+#include "aether/scene/hierarchy.h"
+#include "aether/scene/script_component.h"
 #include "aether/scene/serialization.h"
+#include "aether/templates/templates.h"
 #if AETHER_EDITOR_NET_PHYSICS
+#include "aether/physics/character.h"
 #include "aether/physics/components.h"
 #endif
 
@@ -311,6 +318,81 @@ ProceduralMesh ProceduralWorldDocument::BuildTerrainModel(const GeneratedTerrain
     return out;
 }
 
+Vec3 ProceduralWorldDocument::FindSpawnPoint(const GeneratedTerrain& t) {
+    const u32 w = t.Width(), h = t.Height();
+    if (w < 8 || h < 8) return Vec3(0, 0, 0);
+    const f32 cell = t.heightmap.cell_size;
+    auto height = [&](u32 x, u32 z) { return t.heightmap.heights[t.Index(x, z)]; };
+    const f32 mid_x = 0.5f * static_cast<f32>(w - 1), mid_z = 0.5f * static_cast<f32>(h - 1);
+    u32 best_x = 0, best_z = 0;
+    bool found = false;
+    const u32 margin = 6;
+    // The gentlest ground first: a slope under 15 degrees, and if the world has none (an alpine one may not), under 20, 25, 30 and 35 (a character stands on up to 45). The place found is
+    // the closest such one to the middle of the map.
+    for (const f32 slope_limit : {0.27f, 0.36f, 0.47f, 0.58f, 0.70f}) {
+        auto gentle_enough = [&](u32 x, u32 z) {
+            const f32 dx = (height(x + 1, z) - height(x - 1, z)) / (2.0f * cell), dz = (height(x, z + 1) - height(x, z - 1)) / (2.0f * cell);
+            return std::sqrt(dx * dx + dz * dz) < slope_limit;
+        };
+        f32 best_distance = std::numeric_limits<f32>::max();
+        for (u32 z = margin; z + margin < h; z += 2)
+            for (u32 x = margin; x + margin < w; x += 2) {
+                if (height(x, z) < t.sea_height + 3.0f || !gentle_enough(x, z)) continue;
+                // Dry, gentle ground round it too (a few samples each way), not a lone flat spot on a ridge.
+                bool ground_round = true;
+                for (int dz = -4; dz <= 4 && ground_round; dz += 2)
+                    for (int dx = -4; dx <= 4 && ground_round; dx += 2) {
+                        const u32 sx = static_cast<u32>(static_cast<int>(x) + dx), sz = static_cast<u32>(static_cast<int>(z) + dz);
+                        ground_round = height(sx, sz) > t.sea_height + 1.5f && gentle_enough(sx, sz);
+                    }
+                if (!ground_round) continue;
+                const f32 d = (static_cast<f32>(x) - mid_x) * (static_cast<f32>(x) - mid_x) + (static_cast<f32>(z) - mid_z) * (static_cast<f32>(z) - mid_z);
+                if (d < best_distance) { best_distance = d; best_x = x; best_z = z; found = true; }
+            }
+        if (found) break;
+    }
+    if (!found) { // not even that: the gentlest dry sample
+        f32 gentlest = std::numeric_limits<f32>::max();
+        for (u32 z = 1; z + 1 < h; ++z)
+            for (u32 x = 1; x + 1 < w; ++x) {
+                if (height(x, z) < t.sea_height + 1.0f) continue;
+                const f32 dx = (height(x + 1, z) - height(x - 1, z)) / (2.0f * cell), dz = (height(x, z + 1) - height(x, z - 1)) / (2.0f * cell);
+                const f32 slope = std::sqrt(dx * dx + dz * dz);
+                if (slope < gentlest) { gentlest = slope; best_x = x; best_z = z; }
+            }
+    }
+    return Vec3(static_cast<f32>(best_x) * cell, height(best_x, best_z), static_cast<f32>(best_z) * cell);
+}
+
+ProceduralMesh ProceduralWorldDocument::BuildPlayerModel() {
+    // Four builders, one per colour; the figure stands on y = 0 and faces -z.
+    MeshBuilder jacket, trousers, skin, pack;
+    auto limb = [&](MeshBuilder& b, const Vec3& from, const Vec3& to, f32 radius_from, f32 radius_to) {
+        b.Tube({from, to}, {radius_from, radius_to}, 8, true, true);
+    };
+    limb(trousers, Vec3(-0.12f, 0.02f, 0.0f), Vec3(-0.12f, 0.88f, 0.0f), 0.085f, 0.105f); // legs
+    limb(trousers, Vec3(0.12f, 0.02f, 0.0f), Vec3(0.12f, 0.88f, 0.0f), 0.085f, 0.105f);
+    limb(jacket, Vec3(0.0f, 0.86f, 0.0f), Vec3(0.0f, 1.42f, 0.0f), 0.19f, 0.215f);          // torso
+    limb(jacket, Vec3(-0.27f, 1.38f, 0.0f), Vec3(-0.31f, 0.92f, -0.04f), 0.065f, 0.055f);   // arms
+    limb(jacket, Vec3(0.27f, 1.38f, 0.0f), Vec3(0.31f, 0.92f, -0.04f), 0.065f, 0.055f);
+    const u32 head = skin.IcoSphere(2);
+    for (u32 i = head; i < skin.VertexCount(); ++i) skin.Position(i) = skin.Position(i) * 0.115f + Vec3(0.0f, 1.62f, -0.01f);
+    limb(skin, Vec3(0.0f, 1.42f, 0.0f), Vec3(0.0f, 1.52f, 0.0f), 0.05f, 0.05f);             // neck
+    pack.Box(Vec3(-0.15f, 0.95f, 0.17f), Vec3(0.15f, 1.38f, 0.33f));                         // a pack on the back (+z)
+    ProceduralMesh out;
+    struct Part { MeshBuilder* builder; Vec3 colour; f32 roughness; };
+    for (const Part& part : {Part{&jacket, Vec3(0.86f, 0.42f, 0.12f), 0.85f}, Part{&trousers, Vec3(0.16f, 0.20f, 0.30f), 0.9f}, Part{&skin, Vec3(0.80f, 0.60f, 0.46f), 0.7f},
+                             Part{&pack, Vec3(0.30f, 0.26f, 0.20f), 0.95f}}) {
+        assets::MaterialData m;
+        m.base_color = Vec4(part.colour.x, part.colour.y, part.colour.z, 1.0f);
+        m.roughness = part.roughness;
+        m.metallic = 0.0f;
+        out.materials.push_back(m);
+        out.mesh.primitives.push_back(part.builder->Finish(Shading::Smooth, UvMode::BoxProjected, static_cast<i32>(out.materials.size() - 1)));
+    }
+    return out;
+}
+
 ProceduralWorldDocument::CollisionMesh ProceduralWorldDocument::BuildTerrainCollisionMesh(const GeneratedTerrain& t, u32 max_grid) {
     CollisionMesh out;
     const u32 w = t.Width(), h = t.Height();
@@ -520,6 +602,60 @@ BakeReport ProceduralWorldDocument::Bake(const std::string& content_root, const 
         collider.indices = std::move(mesh.indices);
         collider.friction = 0.8f;
         world.CreateEntity(Transform{Vec3(0, 0, 0), Quaternion::Identity()}, collider);
+        // The edge of the world: four invisible walls just outside the map, from below its lowest ground to well above its highest, so a character cannot walk off it and fall for ever.
+        const f32 extent_x = static_cast<f32>(terrain_.Width() - 1) * terrain_.heightmap.cell_size, extent_z = static_cast<f32>(terrain_.Height() - 1) * terrain_.heightmap.cell_size;
+        const f32 floor_y = terrain_.height_min - 20.0f, top_y = terrain_.height_max + 200.0f, centre_y = 0.5f * (floor_y + top_y), half_y = 0.5f * (top_y - floor_y);
+        constexpr f32 kWall = 2.0f; // half the wall's thickness; its inner face is on the map's edge
+        struct Wall { Vec3 centre, half; };
+        for (const Wall& wall : {Wall{Vec3(-kWall, centre_y, 0.5f * extent_z), Vec3(kWall, half_y, 0.5f * extent_z + 2.0f * kWall)},
+                                 Wall{Vec3(extent_x + kWall, centre_y, 0.5f * extent_z), Vec3(kWall, half_y, 0.5f * extent_z + 2.0f * kWall)},
+                                 Wall{Vec3(0.5f * extent_x, centre_y, -kWall), Vec3(0.5f * extent_x + 2.0f * kWall, half_y, kWall)},
+                                 Wall{Vec3(0.5f * extent_x, centre_y, extent_z + kWall), Vec3(0.5f * extent_x + 2.0f * kWall, half_y, kWall)}}) {
+            BoxCollider box;
+            box.half_extents = wall.half;
+            world.CreateEntity(Transform{wall.centre, Quaternion::Identity()}, box);
+        }
+    }
+#endif
+#if AETHER_EDITOR_NET_PHYSICS
+    if (options.add_player) {
+        // Playable: the third-person controller and bindings into the project's content, the player's model beside the others, then a Player on dry walkable land with its body, a camera
+        // behind it, a sun and a sky (a baked scene had none of those: it was a place to look at, not to be in).
+        std::string kit_error, script_path;
+        if (!templates::InstallThirdPersonKit(fs::path(content_root), &kit_error, &script_path)) { report.error = kit_error; return report; }
+        assets::AssetDatabase database{fs::path(content_root)};
+        database.Scan();
+        const assets::AssetRecord* script = database.FindByPath(script_path);
+        if (!script) { report.error = "The third-person script was not picked up by the asset database"; return report; }
+        if (!write(name + "_player.glb", EncodeGlb(BuildPlayerModel()))) return report;
+        const Vec3 spawn = FindSpawnPoint(terrain_);
+        const EntityGuid player_guid = NewEntityGuid();
+        ScriptComponent controller;
+        controller.script.guid = script->guid;
+        Tags player_tags;
+        player_tags.names = {"Player"};
+        world.CreateEntity(Transform{spawn, Quaternion::Identity()}, IdComponent{player_guid}, player_tags, controller, CharacterMovement{});
+        ModelRenderer body;
+        SetModelPath(body, relative + "/" + name + "_player.glb");
+        world.CreateEntity(Transform{Vec3(0, 0, 0), Quaternion::Identity()}, body, Parent{player_guid});
+        Tags camera_tags;
+        camera_tags.names = {"MainCamera"};
+        Camera camera;
+        camera.far_plane = 2500.0f;
+        world.CreateEntity(Transform{spawn + Vec3(0.0f, 3.0f, 6.0f), Quaternion::FromAxisAngle(Vec3(1, 0, 0), -0.3f)}, camera, camera_tags);
+        DirectionalLight sun;
+        sun.color = Vec3(1.0f, 0.80f, 0.58f);
+        sun.intensity = 5.2f;
+        sun.cast_shadows = true;
+        const f32 deg = 0.017453292f;
+        world.CreateEntity(Transform{Vec3(0, 0, 0), Quaternion::FromAxisAngle(Vec3(0, 1, 0), 215.0f * deg) * Quaternion::FromAxisAngle(Vec3(1, 0, 0), -24.0f * deg)}, sun);
+        SkyLight sky;
+        sky.color = Vec3(0.55f, 0.72f, 1.0f);
+        sky.cloud_coverage = 0.55f;
+        world.CreateEntity(Transform{Vec3(0, 0, 0), Quaternion::Identity()}, sky);
+        report.player_added = true;
+        report.spawn = spawn;
+        report.always_cook.push_back("Input/");
     }
 #endif
     if (options.add_wind) {

@@ -689,4 +689,24 @@ bool CreateProjectFromTemplate(const stdfs::path& parent_dir, const std::string&
     return true;
 }
 
+bool InstallThirdPersonKit(const stdfs::path& content, std::string* error, std::string* script_path) {
+    const std::string relative = "Scripts/ThirdPersonController.luau";
+    std::string script = kThirdPersonScript;
+    constexpr const char* marker = "@@CHARACTER_MOVEMENT_LOOKUP@@";
+#if AETHER_TEMPLATE_HAS_PHYSICS
+    constexpr const char* lookup = "self.character = self.entity:Get(\"CharacterMovement\")";
+#else
+    constexpr const char* lookup = "self.character = nil";
+#endif
+    if (const usize at = script.find(marker); at != std::string::npos) script.replace(at, std::char_traits<char>::length(marker), lookup);
+    std::error_code ec;
+    if (!stdfs::exists(content / relative)) {
+        stdfs::create_directories((content / relative).parent_path(), ec);
+        if (!WriteText(content / relative, script.c_str(), error)) return false;
+    }
+    if (!stdfs::exists(content / "Input/Gameplay.amapping") && !WriteInput(content, true, true, error)) return false;
+    if (script_path) *script_path = relative;
+    return true;
+}
+
 } // namespace aether::templates

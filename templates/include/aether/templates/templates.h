@@ -49,4 +49,12 @@ bool CreateProjectFromTemplate(const std::filesystem::path& parent_dir, const st
                                const std::string& template_id, ProjectPaths* out_paths = nullptr,
                                std::string* error = nullptr);
 
+// The Third Person template's controller and bindings alone, for a project that has its own scene (the Procedural World baker uses it to make a baked
+// world playable): under `content`, Scripts/ThirdPersonController.luau and Input/Move.aaction, Look.aaction, Jump.aaction and Gameplay.amapping (WASD and the
+// left stick move relative to the camera, the mouse and right stick orbit it, Space and the A button jump, Shift and the stick click sprint). A file that is
+// already there is left as it is, so a user's edits to the script or the bindings stay. `script_path`, when given, is the script's path relative to `content`.
+// The scene it goes with needs an entity tagged "Player" carrying a ScriptComponent for the script and a CharacterMovement, and one with a Camera. The project must
+// cook Input/ (nothing in a scene refers to it): list it in the project's always-cook folders. False, with `error`, when a file can't be written.
+bool InstallThirdPersonKit(const std::filesystem::path& content, std::string* error = nullptr, std::string* script_path = nullptr);
+
 } // namespace aether::templates
