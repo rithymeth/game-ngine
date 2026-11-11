@@ -5774,6 +5774,7 @@
   bool IsConnected(u32 event,u32 connection)const
   bool SendEvent(Entity entity,const std::string&method,const std::vector<ScriptValue>&args=
   const AiDebugStore&AiDebug()const
+  const input::InputState*BoundInputState()const
   const std::unordered_map<assets::AssetGuid,ScriptError>&ReloadErrors()const
   const std::vector<std::string>&Errors()const
   input::InputSystem*BoundInput()
@@ -5793,6 +5794,7 @@
   usize ReloadChanged(const std::vector<assets::AssetChange>&changes)
   usize TimerCount()const
   void BindInput(input::InputSystem*input)
+  void BindInputState(const input::InputState*state)
   void BindPhysicsScene(::aether::PhysicsScene*scene)
   void ClearErrors()
   void Create(Entity entity)
