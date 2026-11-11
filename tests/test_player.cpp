@@ -9,6 +9,7 @@
 #include "aether/scene/gameplay.h"
 #include "aether/platform/window.h"
 #include "../player/src/package_textures.h"
+#include "../player/src/normal_transform.h"
 #include "../player/src/render_pose.h"
 #include "aether/cook/texture_cook.h"
 #include "aether/scene/script_component.h"
@@ -22,6 +23,7 @@
 #include "aether/ui/widget_system.h"
 #include "aether/reflection/serialize.h"
 #include "test_framework.h"
+#include <limits>
 #include <vector>
 #include <algorithm>
 #include <functional>
@@ -1748,4 +1750,69 @@ AETHER_TEST(Player_StageOrderSnapshot) {
 #else
     CHECK(order.find("Player.Scripting") != std::string::npos);
 #endif
+}
+
+// BuildNormalTransform used to invert the whole 4x4 (Mat4::TryInverse) and transpose its upper 3x3; it now takes the linear part's
+// inverse transpose from its cofactors. Same answer, for the matrices a model gets and for the ones that are refused.
+AETHER_TEST(Player_NormalTransformMatchesTheGeneralInverse) {
+    const auto reference = [](const Mat4& model) {
+        Mat4 inverse;
+        if (!model.TryInverse(inverse)) return Mat4::Identity();
+        Mat4 normal;
+        normal.cols[0] = Vec4(inverse.cols[0].x, inverse.cols[1].x, inverse.cols[2].x, 0.0f);
+        normal.cols[1] = Vec4(inverse.cols[0].y, inverse.cols[1].y, inverse.cols[2].y, 0.0f);
+        normal.cols[2] = Vec4(inverse.cols[0].z, inverse.cols[1].z, inverse.cols[2].z, 0.0f);
+        normal.cols[3] = Vec4(0.0f, 0.0f, 0.0f, 1.0f);
+        return normal;
+    };
+    const auto close = [](const Mat4& a, const Mat4& b, f32 relative) {
+        for (int c = 0; c < 4; ++c) {
+            const f32 x[4] = {a.cols[c].x, a.cols[c].y, a.cols[c].z, a.cols[c].w};
+            const f32 y[4] = {b.cols[c].x, b.cols[c].y, b.cols[c].z, b.cols[c].w};
+            for (int i = 0; i < 4; ++i) {
+                if (std::fabs(x[i] - y[i]) > relative * std::max({1.0f, std::fabs(x[i]), std::fabs(y[i])})) return false;
+            }
+        }
+        return true;
+    };
+    u32 state = 0x51ed270bu;
+    const auto next = [&] {
+        state ^= state << 13, state ^= state >> 17, state ^= state << 5;
+        return static_cast<f32>(state % 20001) / 10000.0f - 1.0f; // -1 .. 1
+    };
+    u32 mirrored = 0, tiny = 0, huge = 0;
+    for (int i = 0; i < 2000; ++i) {
+        Transform t;
+        t.position = Vec3(next() * 100.0f, next() * 100.0f, next() * 100.0f);
+        t.rotation = Quaternion::FromAxisAngle(Vec3(next(), next() + 1.5f, next()).Normalized(), next() * 3.1f);
+        f32 s[3] = {1.0f + next() * 0.9f, 1.0f + next() * 0.9f, 1.0f + next() * 0.9f};
+        if (i % 7 == 0) s[0] = -s[0], ++mirrored;                              // a mirrored model
+        if (i % 11 == 0) s[1] *= 1e-3f, ++tiny;                                // a squashed one
+        if (i % 13 == 0) s[2] *= 1e3f, ++huge;                                 // and a stretched one
+        t.scale = Vec3(s[0], s[1], s[2]);
+        const Mat4 model = LocalTransformMatrix(t);
+        CHECK(close(BuildNormalTransform(model), reference(model), 2e-5f));
+    }
+    CHECK(mirrored > 100 && tiny > 100 && huge > 100);
+    // What the matrix is for: a normal comes out perpendicular to the surface it was perpendicular to, however it is scaled.
+    Transform squash;
+    squash.scale = Vec3(4.0f, 0.5f, 1.0f);
+    squash.rotation = Quaternion::FromAxisAngle(Vec3(0, 0, 1), 0.6f);
+    const Mat4 model = LocalTransformMatrix(squash);
+    const Mat4 normal = BuildNormalTransform(model);
+    const Vec3 tangent = Vec3(1, 1, 0) * 1.0f; // lies in the surface whose normal is (1, -1, 0)
+    const Vec4 t_world = model * Vec4(tangent.x, tangent.y, tangent.z, 0.0f);
+    const Vec4 n_world = normal * Vec4(1.0f, -1.0f, 0.0f, 0.0f);
+    CHECK(std::fabs(t_world.x * n_world.x + t_world.y * n_world.y + t_world.z * n_world.z) < 1e-4f);
+
+    // Refused as before: a zero scale on an axis, a non-finite entry. Not affine: the general path.
+    Transform flat;
+    flat.scale = Vec3(1.0f, 0.0f, 1.0f);
+    CHECK(close(BuildNormalTransform(LocalTransformMatrix(flat)), Mat4::Identity(), 0.0f));
+    Mat4 broken = LocalTransformMatrix(Transform{});
+    broken.cols[1].y = std::numeric_limits<f32>::quiet_NaN();
+    CHECK(close(BuildNormalTransform(broken), Mat4::Identity(), 0.0f));
+    Mat4 projective = LocalTransformMatrix(Transform{});
+    projective.cols[0].w = 0.25f;
+    CHECK(close(BuildNormalTransform(projective), reference(projective), 1e-6f));
 }

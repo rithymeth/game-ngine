@@ -1256,3 +1256,39 @@ needs a GPU device; same machine and tree as above, best of five, and the machin
   searches the player list and builds a clip name string for each entity; those are untouched and unmeasured.
 - **`ExtractRenderScene` after these changes** (three runs, 10,000 objects): flat 1.51 to 1.78 ms, tree 2.94 to 3.79 ms, against
   1.91 and 5.71 ms before any of this.
+
+## A stress scene through the player, 11 November 2026
+
+Roadmap priority 2 asks for a stress scene of 10,000 entities and more that meets a frame budget. Nothing drew one through the
+real renderer, so `Templates_StressMeasure` does: a Third Person project whose scene is N copies of its pickup (one model, so the
+cost is the player's per-entity work, not geometry) on a grid in front of the camera, drawn by `SceneRenderer` at 640x360 on the
+software Vulkan driver. It reports the CPU time of `SceneRenderer::Draw` (recording the frame) and `Game::Tick`; a software
+rasterizer's GPU time says nothing about a GPU, so none is reported. Median of 20 frames after 4 warm-up frames, same machine as
+above (4 cores). Reproduce with `AETHER_TEST_FILTER=Templates_StressMeasure AETHER_STRESS_ENTITIES=10000 aether_tests`.
+
+| Entities | `Draw`, before | `Draw`, after | `Game::Tick` |
+|---|---|---|---|
+| 1,000 | 1.05 ms | 0.90 ms | 0.14 ms |
+| 5,000 | 4.85 ms | 4.05 ms | 0.20 ms |
+| 20,000 | 21.8 ms | 18.8 ms | 0.40 ms |
+
+Three runs each, before and after, built one after the other from the same tree.
+
+- **It is linear and about 1 microsecond an entity**, so 20,000 drawn entities cost more than a 60 Hz frame (16.7 ms) in recording
+  alone, before any GPU work or game logic. Ten thousand fit, with little to spare. The simulation (`Game::Tick`) is not the
+  problem at this size.
+- **Where it went, from a callgrind profile at 3,000 entities:** `Mat4::TryInverse` was the largest Aether function at 29 percent
+  of `Draw`'s instructions: about 2,490 instructions a call, once per drawn node per frame, to build the normal matrix by
+  inverting the whole 4x4 in double with pivoted Gauss-Jordan.
+- **Fixed:** a model transform is affine, so the normal matrix (the inverse transpose of its linear part) comes from cofactors,
+  about 64 instructions (`player/src/normal_transform.h`). `Draw` falls 14 to 17 percent in time and 15 percent in instructions.
+  The old path remains for a matrix that is not affine, and a degenerate transform gives the identity as before.
+  `Player_NormalTransformMatchesTheGeneralInverse` compares the two on 2,000 random transforms (mirrored, squashed and stretched
+  ones included) to 2e-5 relative: this is **not bit for bit** the old answer, unlike the other changes in this file, because
+  the cofactors round differently from elimination. Normals are packed to half floats afterwards.
+- **What is left is not one thing.** After the fix the biggest Aether function in the draw loop is `FloatToHalf` at about 6
+  percent, and roughly half of `Draw`'s instructions are the recording of the draws themselves in the RHI and the driver. Getting
+  past 20,000 entities a frame needs fewer, larger draws: the RHI has no instance-rate vertex input or instanced draw
+  (`particle_pass.h` says the same), so every entity is its own draw call. That is the next real step and it is an RHI change on
+  both backends, not a tuning pass.
+- **Not measured:** a real GPU, D3D12, shadows over this many casters, or entities that are different models.

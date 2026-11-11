@@ -1,4 +1,6 @@
 #include "aether/assets/asset_database.h"
+#include "aether/scene/entity_guid.h"
+#include "aether/core/log.h"
 #include "aether/sprite2d/atlas.h"
 #include "aether/reflection/serialize.h"
 #include "aether/gfx/rhi/command_list.h"
@@ -932,4 +934,98 @@ AETHER_TEST(Templates_SpriteClipsPlayInThePackagedGame) {
     const usize warnings = game.Warnings().size();
     for (int tick = 0; tick < 5; ++tick) game.Tick(1.0f / 60.0f);
     CHECK(frame() == "idle" && game.Warnings().size() == warnings);
+}
+
+// The numbers in docs/design/PERFORMANCE.md ("A stress scene through the player") come from this; it does nothing unless a size is given:
+//   AETHER_TEST_FILTER=Templates_StressMeasure AETHER_STRESS_ENTITIES=10000 aether_tests
+// A Third Person project whose scene is `count` copies of its pickup (one model, so the cost is the per-entity work of the player's
+// draw loop, not geometry) on a grid in front of the camera, drawn by SceneRenderer on the software Vulkan driver. Only the CPU time
+// of recording a frame is reported: a software rasterizer's GPU time says nothing about a GPU.
+AETHER_TEST(Templates_StressMeasure) {
+    namespace rhi = aether::gfx::rhi;
+    const char* text = std::getenv("AETHER_STRESS_ENTITIES");
+    const u32 count = text && *text ? static_cast<u32>(std::strtoul(text, nullptr, 10)) : 0;
+    if (count == 0 || !rhi::IsBackendAvailable(rhi::Backend::Vulkan)) return;
+    struct QuietLog { // warnings and errors only: the cook and the loader log a line for every model
+        LogLevel before = Logger::Instance().MinLevel();
+        QuietLog() { Logger::Instance().SetMinLevel(LogLevel::Warn); }
+        ~QuietLog() { Logger::Instance().SetMinLevel(before); }
+    } quiet;
+    ProjectPaths paths;
+    std::string error;
+    AETHER_CHECK(CreateProjectFromTemplate(Dir("stress_" + std::to_string(count)), "Stress", "third_person", &paths, &error));
+    const std::filesystem::path scene_file = paths.content / "Scenes/Main.ascene";
+    nlohmann::json scene;
+    {
+        std::ifstream in(scene_file);
+        in >> scene;
+    }
+    nlohmann::json pickup;
+    for (const auto& entity : scene["entities"]) {
+        if (entity["components"].contains("ModelRenderer") && entity["components"].contains("Tags") &&
+            entity["components"]["Tags"]["names"][0] == "Pickup") {
+            pickup = entity;
+            break;
+        }
+    }
+    AETHER_CHECK(!pickup.is_null());
+    if (pickup.is_null()) return;
+    pickup["components"].erase("BlueprintInstance"); // spinning pickups would add Blueprint work to what is measured
+    const u32 side = static_cast<u32>(std::ceil(std::sqrt(static_cast<f64>(count))));
+    for (u32 i = 0; i < count; ++i) {
+        nlohmann::json entity = pickup;
+        entity["guid"] = ToString(NewEntityGuid());
+        const f32 x = (static_cast<f32>(i % side) - static_cast<f32>(side) * 0.5f) * 0.6f;
+        const f32 z = -2.0f - static_cast<f32>(i / side) * 0.6f;
+        entity["components"]["Transform"] = reflect::ToJson(Transform{Vec3(x, 0.5f, z), Quaternion::Identity(), Vec3(0.4f, 0.4f, 0.4f)});
+        scene["entities"].push_back(std::move(entity));
+    }
+    {
+        std::ofstream out(scene_file, std::ios::binary);
+        out << scene.dump();
+    }
+    cook::CookOptions options;
+    options.project_file = paths.file;
+    options.output_dir = paths.root / "Paks";
+    options.configuration = cook::BuildConfiguration::Shipping;
+    const cook::CookReport report = cook::Cook(options);
+    AETHER_CHECK(report.ok);
+    std::unique_ptr<rhi::IDevice> device;
+    try {
+        device = rhi::CreateDevice(rhi::Backend::Vulkan, false);
+    } catch (const std::exception&) {
+    }
+    if (!device || !report.ok) return;
+    player::GamePackage package;
+    AETHER_CHECK(package.Mount(report.pak_file.string()) && package.LoadManifest(&error));
+    player::Game game(package);
+    AETHER_CHECK(game.LoadStartupScene(&error));
+    game.BeginPlay();
+    std::unique_ptr<rhi::ISwapChain> target = device->CreateSwapChain(nullptr, 640, 360, 2);
+    std::vector<double> record_ms, tick_ms;
+    {
+        player::SceneRenderer renderer(*device, *target, package);
+        std::unique_ptr<rhi::ICommandList> cmd = device->CreateCommandList();
+        for (u32 frame = 0; frame < 24; ++frame) {
+            const auto t0 = std::chrono::steady_clock::now();
+            game.Tick(1.0f / 60.0f);
+            const auto t1 = std::chrono::steady_clock::now();
+            target->AcquireNextImage();
+            cmd->Reset();
+            const auto t2 = std::chrono::steady_clock::now();
+            renderer.Draw(game, *cmd, frame % 2);
+            const auto t3 = std::chrono::steady_clock::now();
+            cmd->Close();
+            device->WaitForFence(device->Submit(*cmd, target.get()));
+            target->Present(false);
+            if (frame >= 4) { // the first frames load textures and make buffers
+                tick_ms.push_back(std::chrono::duration<double, std::milli>(t1 - t0).count());
+                record_ms.push_back(std::chrono::duration<double, std::milli>(t3 - t2).count());
+            }
+        }
+    }
+    std::sort(record_ms.begin(), record_ms.end());
+    std::sort(tick_ms.begin(), tick_ms.end());
+    std::printf("%u entities: SceneRenderer::Draw %.2f ms (median of %zu frames, worst %.2f), Game::Tick %.2f ms\n", count,
+                record_ms[record_ms.size() / 2], record_ms.size(), record_ms.back(), tick_ms[tick_ms.size() / 2]);
 }
