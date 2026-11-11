@@ -41,6 +41,8 @@ struct FrameData {
     uint4 vsm_info;           // x: the page atlas's bindless index (255: none); y: pages per side of the pool; z: the page table's byte offset
     float4 vsm_params;        // x: a footprint that does not depend on distance
     float4 time;              // x: the game's time in seconds
+    float4 wind;              // xy: the wind's direction in the world (x, z); z: strength; w: gust speed
+    float4 wind_gusts;        // x: gustiness
 };
 ConstantBuffer<FrameData> g_Frame : register(b0, space2);
 
@@ -165,6 +167,13 @@ const SkyLight* FindSkyLight(const World& world) {
     return nullptr;
 }
 
+const Wind* FindWind(const World& world) {
+    for (const Entity e : EntitiesWith<Wind>(world)) {
+        if (const Wind* wind = world.GetComponent<Wind>(e)) return wind;
+    }
+    return nullptr;
+}
+
 FrameData BuildFrameData(const World& world, const GuidIndex& guids, const Vec3& camera_position) {
     FrameData data;
     Set4(data.camera_world, camera_position.x, camera_position.y, camera_position.z, 1.0f);
@@ -173,6 +182,15 @@ FrameData BuildFrameData(const World& world, const GuidIndex& guids, const Vec3&
     Set4(data.sun_direction, default_sun.x, default_sun.y, default_sun.z, 0.0f);
     Set4(data.sun_color, 3.0f, 3.0f, 3.0f, 0.0f);
     Set4(data.sky_color, 1.0f, 1.0f, 1.0f, 0.0f);
+    // The wind: a breeze from 27 degrees unless the world has a Wind. A direction and the numbers are cleaned, so a bad value cannot throw a shader off.
+    {
+        Wind wind;
+        if (const Wind* set = FindWind(world)) wind = *set;
+        const auto finite = [](f32 v, f32 fallback) { return std::isfinite(v) ? v : fallback; };
+        const f32 radians = finite(wind.direction_degrees, 27.0f) * 3.14159265f / 180.0f;
+        Set4(data.wind, std::cos(radians), std::sin(radians), std::clamp(finite(wind.strength, 1.0f), 0.0f, 4.0f), std::clamp(finite(wind.gust_speed, 1.0f), 0.1f, 4.0f));
+        Set4(data.wind_gusts, std::clamp(finite(wind.gustiness, 0.4f), 0.0f, 1.0f), 0.0f, 0.0f, 0.0f);
+    }
 
     for (const Entity e : EntitiesWith<DirectionalLight>(world)) {
         const DirectionalLight* light = world.GetComponent<DirectionalLight>(e);

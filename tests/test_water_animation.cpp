@@ -158,7 +158,7 @@ double MeanDifference(const std::vector<u8>& a, const std::vector<u8>& b) {
 } // namespace
 
 // A tuft of grass close to the camera on a lit ground quad, with the wind flag as asked; the grass is scaled up (a tuft is half a metre) so it fills the view.
-fs::path CookGrassScene(const fs::path& root, bool wind) {
+fs::path CookGrassScene(const fs::path& root, bool wind, f32 model_yaw_degrees = 0.0f, const reflect::Json* wind_component = nullptr, bool with_model = true) {
     fs::create_directories(root / "Content/models");
     fs::create_directories(root / "Content/Scenes");
     const fs::path games = fs::path(AETHER_REPO_ASSETS_DIR).parent_path() / "games/AETHER-01";
@@ -183,9 +183,13 @@ fs::path CookGrassScene(const fs::path& root, bool wind) {
                      {"DirectionalLight", {{"$v", 1}, {"color", {1.0f, 0.95f, 0.88f}}, {"intensity", 3.0f}, {"cast_shadows", false}}}}),
         SceneEntity({{"Transform", TransformJson({0, 0, 0})},
                      {"SkyLight", {{"$v", 1}, {"color", {1.0f, 1.0f, 1.0f}}, {"intensity", 1.0f}, {"environment", ""}, {"environment_rotation_degrees", 0.0f}}}}),
-        SceneEntity({{"Transform", {{"$v", 1}, {"position", {0.0f, 0.0f, 0.0f}}, {"rotation", {0, 0, 0, 1}}, {"scale", {2.0f, 2.0f, 2.0f}}}},
+        SceneEntity({{"Transform", {{"$v", 1}, {"position", {0.0f, 0.0f, 0.0f}}, {"rotation", {0.0f, std::sin(model_yaw_degrees * 3.14159265f / 360.0f), 0.0f, std::cos(model_yaw_degrees * 3.14159265f / 360.0f)}},
+                                    {"scale", {2.0f, 2.0f, 2.0f}}}},
                      {"ModelRenderer", {{"$v", 1}, {"model", ""}, {"asset_path", "models/grass.glb"}}}})};
-    const reflect::Json scene = {{"$type", "Scene"}, {"$version", 1}, {"entities", entities}};
+    reflect::Json all = entities;
+    if (!with_model) all.erase(all.size() - 1);
+    if (wind_component != nullptr) all.push_back(SceneEntity({{"Transform", TransformJson({0, 0, 0})}, {"Wind", *wind_component}}));
+    const reflect::Json scene = {{"$type", "Scene"}, {"$version", 1}, {"entities", all}};
     std::ofstream(root / "Content/Scenes/Main.ascene") << scene.dump(2);
     cook::CookOptions options;
     options.project_file = root / "WaterScene.aproject";
@@ -247,3 +251,63 @@ static void Wind_GrassSwaysWithTheGameTimeAndOnlyWhenFlagged(rhi::Backend backen
 
 AETHER_TEST(Wind_GrassSwaysWithTheGameTimeAndOnlyWhenFlagged_D3D12) { Wind_GrassSwaysWithTheGameTimeAndOnlyWhenFlagged(rhi::Backend::D3D12); }
 AETHER_TEST(Wind_GrassSwaysWithTheGameTimeAndOnlyWhenFlagged_Vulkan) { Wind_GrassSwaysWithTheGameTimeAndOnlyWhenFlagged(rhi::Backend::Vulkan); }
+
+// Where the grass's picture changed between two game times, as the centroid of what differs from the same scene without the grass: how far it moved along the
+// screen's x and y, in pixels (the signed shift of the weighted centre).
+struct Shift { double x = 0.0, y = 0.0, weight = 0.0; };
+Shift CentroidShift(const std::vector<u8>& before, const std::vector<u8>& after, const std::vector<u8>& background, u32 width, u32 height) {
+    auto centroid = [&](const std::vector<u8>& frame, double& cx, double& cy, double& total) {
+        cx = cy = total = 0.0;
+        for (u32 y = 0; y < height; ++y)
+            for (u32 x = 0; x < width; ++x) {
+                const usize i = (static_cast<usize>(y) * width + x) * 4;
+                int d = 0;
+                for (usize c = 0; c < 3; ++c) d = std::max(d, std::abs(static_cast<int>(frame[i + c]) - static_cast<int>(background[i + c])));
+                if (d < 12) continue; // the ground and its light, not the grass
+                cx += static_cast<double>(x) * d;
+                cy += static_cast<double>(y) * d;
+                total += d;
+            }
+        if (total > 0.0) { cx /= total; cy /= total; }
+    };
+    double ax, ay, at, bx, by, bt;
+    centroid(before, ax, ay, at);
+    centroid(after, bx, by, bt);
+    return {bx - ax, by - ay, std::min(at, bt)};
+}
+
+// The wind is a direction in the world: a tuft turned half way round sways the same way on screen as one that is not, and turning the wind turns the sway.
+static void Wind_TheComponentBlowsInTheWorldWhicheverWayAnObjectFaces(rhi::Backend backend) {
+    if (!rhi::IsBackendAvailable(backend)) return;
+    SetEnvironmentVariableForTest("AETHER_RENDER_TAA", "0");
+    constexpr u32 W = 640, H = 360;
+    const fs::path root = fs::temp_directory_path() / "aether_wind_direction" / assets::ToString(assets::NewAssetGuid());
+    const reflect::Json east = {{"$v", 1}, {"direction_degrees", 0.0f}, {"strength", 2.0f}, {"gust_speed", 1.0f}, {"gustiness", 0.4f}};
+    const reflect::Json toward_camera = {{"$v", 1}, {"direction_degrees", 90.0f}, {"strength", 2.0f}, {"gust_speed", 1.0f}, {"gustiness", 0.4f}};
+    const fs::path east_pak = CookGrassScene(root / "east", true, 0.0f, &east), turned_pak = CookGrassScene(root / "turned", true, 180.0f, &east);
+    const fs::path south_pak = CookGrassScene(root / "south", true, 0.0f, &toward_camera), empty_pak = CookGrassScene(root / "empty", true, 0.0f, &east, false);
+    if (east_pak.empty() || turned_pak.empty() || south_pak.empty() || empty_pak.empty()) return;
+    const auto background = FrameAfter(backend, root / "empty", empty_pak, 0, W, H);
+    // Two game times far enough apart in the gust that the tips are on different sides of their rest.
+    const auto east_a = FrameAfter(backend, root / "east", east_pak, 0, W, H), east_b = FrameAfter(backend, root / "east", east_pak, 40, W, H);
+    const auto turned_a = FrameAfter(backend, root / "turned", turned_pak, 0, W, H), turned_b = FrameAfter(backend, root / "turned", turned_pak, 40, W, H);
+    const auto south_a = FrameAfter(backend, root / "south", south_pak, 0, W, H), south_b = FrameAfter(backend, root / "south", south_pak, 40, W, H);
+    SetEnvironmentVariableForTest("AETHER_RENDER_TAA", "");
+    AETHER_CHECK(background.size() == static_cast<usize>(W) * H * 4 && east_a.size() == background.size() && turned_b.size() == background.size() && south_b.size() == background.size());
+    if (background.empty() || east_a.size() != background.size() || east_b.size() != background.size() || turned_a.size() != background.size() || turned_b.size() != background.size() ||
+        south_a.size() != background.size() || south_b.size() != background.size())
+        return;
+    const Shift e = CentroidShift(east_a, east_b, background, W, H), t = CentroidShift(turned_a, turned_b, background, W, H), s = CentroidShift(south_a, south_b, background, W, H);
+    std::printf("    %s: sway along the screen's x, east wind %.2f px, the tuft turned half round %.2f px, wind toward the camera %.2f px (y %.2f)\n",
+                backend == rhi::Backend::Vulkan ? "vulkan" : "d3d12", e.x, t.x, s.x, s.y);
+    AETHER_CHECK(e.weight > 0.0 && t.weight > 0.0 && s.weight > 0.0);
+    AETHER_CHECK(std::fabs(e.x) > 1.0);                              // an east wind moves the grass sideways on the screen
+    AETHER_CHECK(e.x * t.x > 0.0);                                   // and the turned tuft the same way, not the mirror image
+    AETHER_CHECK(t.x > e.x * 0.5 && t.x < e.x * 2.0);                // by about as much
+    AETHER_CHECK(std::fabs(s.x) < std::fabs(e.x) * 0.5);             // a wind toward the camera moves it little sideways
+    std::error_code ignored;
+    fs::remove_all(root, ignored);
+}
+
+AETHER_TEST(Wind_TheComponentBlowsInTheWorldWhicheverWayAnObjectFaces_D3D12) { Wind_TheComponentBlowsInTheWorldWhicheverWayAnObjectFaces(rhi::Backend::D3D12); }
+AETHER_TEST(Wind_TheComponentBlowsInTheWorldWhicheverWayAnObjectFaces_Vulkan) { Wind_TheComponentBlowsInTheWorldWhicheverWayAnObjectFaces(rhi::Backend::Vulkan); }

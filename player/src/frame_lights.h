@@ -53,8 +53,10 @@ struct FrameData {
     u32 vsm_info[4]{255u, 0u, 0u, 0u}; // x: the page atlas's bindless index (255: none); y: pages per side of the pool; z: the page table's byte offset
     f32 vsm_params[4]{};          // x: a pixel's footprint that does not depend on distance (an orthographic camera's)
     f32 time[4]{};                // x: the game's time in seconds (the scene shader's water scrolls its ripples with it)
+    f32 wind[4]{};                // xy: the wind's direction in the world (x, z), unit length; z: strength; w: gust speed (the vegetation's sway)
+    f32 wind_gusts[4]{};          // x: gustiness
 };
-static_assert(sizeof(FrameData) % 16 == 0 && sizeof(FrameData) == 1232);
+static_assert(sizeof(FrameData) % 16 == 0 && sizeof(FrameData) == 1264);
 
 // The HLSL for FrameData (the layout above), its constant buffer g_Frame (register b0, space2), and the sky helpers that read it:
 // EnvironmentRadiance(direction, lod), SkyIrradiance(normal) and SkyLighting(...), the split-sum image-based lighting. Needs g_Textures
@@ -70,6 +72,8 @@ Camera LimitViewDistance(const Camera& camera, f32 view_distance);
 FrameData BuildFrameData(const World& world, const GuidIndex& guids, const Vec3& camera_position);
 // The first SkyLight in the world (the one BuildFrameData uses), or null.
 const SkyLight* FindSkyLight(const World& world);
+// The first Wind in the world (the one BuildFrameData uses), or null.
+const Wind* FindWind(const World& world);
 
 // Particle lights (vfx::ParticleLight: fire, sparks, explosions) join the point lights: the scene's and the particles' are pooled and the
 // kMaxPointLights nearest to `camera_position` stay, except that the scene's nearest four keep their slots however many particle lights
