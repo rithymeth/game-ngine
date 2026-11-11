@@ -39,15 +39,57 @@ PSInput VSMain(uint id : SV_VertexID) {
     return output;
 }
 
+// Clouds: a flat deck seen from below, in value-noise fBm. The ray is projected onto the deck (its x and z over how far it climbs, so the clouds close up toward
+// the horizon), the deck drifts with the world's wind, and a second tap of the noise a step toward the sun says which side of a cloud the sun is on: the near
+// side is lit and the far side is shaded. They fade out toward the horizon, where the projection runs away.
+float CloudHash(float2 p) {
+    p = frac(p * float2(0.1031, 0.1030));
+    p += dot(p, p.yx + 33.33);
+    return frac((p.x + p.y) * p.x);
+}
+float CloudNoise(float2 x) {
+    float2 i = floor(x);
+    float2 f = frac(x);
+    f = f * f * (3.0 - 2.0 * f);
+    return lerp(lerp(CloudHash(i), CloudHash(i + float2(1, 0)), f.x), lerp(CloudHash(i + float2(0, 1)), CloudHash(i + float2(1, 1)), f.x), f.y);
+}
+float CloudFbm(float2 p) {
+    float amplitude = 0.5, sum = 0.0;
+    [unroll] for (int i = 0; i < 5; ++i) {
+        sum += amplitude * CloudNoise(p);
+        p = p * 2.03 + float2(17.1, 9.2);
+        amplitude *= 0.5;
+    }
+    return sum;
+}
+
 // The environment's level 0 in the view ray's direction, tinted like the lighting, with the sun's disc (half a degree across, a soft
 // edge) where a DirectionalLight is: its colour times intensity spread over the disc, capped inside half-float range.
 float4 PSMain(PSInput input) : SV_TARGET {
     float3 direction = normalize(g_PC.right.xyz * input.ndc.x + g_PC.up.xyz * input.ndc.y + g_PC.forward.xyz);
     float3 color = EnvironmentRadiance(direction, 0.0) * g_Frame.sky_color.rgb;
+    float clear = 1.0; // how much of the sun's disc shows through the clouds
+    if (g_Frame.clouds.x > 0.0 && direction.y > 0.0) {
+        float coverage = g_Frame.clouds.x;
+        float2 plane = direction.xz / max(direction.y, 0.03) * g_Frame.clouds.z;
+        float2 drift = g_Frame.wind.xy * (g_Frame.time.x * g_Frame.clouds.y);
+        float2 q = plane + drift;
+        float n = CloudFbm(q);
+        float density = smoothstep(1.0 - coverage - 0.12, 1.0 - coverage + 0.18, n);
+        float3 sun_toward = normalize(g_Frame.sun_direction.xyz);
+        float toward = CloudFbm(q + sun_toward.xz * 0.14);
+        float lit = g_Frame.sun_direction.w > 0.5 ? saturate(0.5 + (n - toward) * 3.5) : 0.0;
+        float3 ambient = EnvironmentRadiance(float3(0, 1, 0), 0.0) * g_Frame.sky_color.rgb;
+        float3 cloud = ambient * 0.8 + g_Frame.sun_color.rgb * (0.3 * lit);
+        float fade = smoothstep(0.0, 0.2, direction.y);
+        float amount = density * fade;
+        color = lerp(color, cloud, amount);
+        clear = 1.0 - amount;
+    }
     if (g_Frame.sun_direction.w > 0.5) {
         float cosine = dot(direction, normalize(g_Frame.sun_direction.xyz));
         float disc = smoothstep(0.999962, 0.999990, cosine); // 0.5 to 0.26 degrees from its centre
-        color += min(g_Frame.sun_color.rgb * 4000.0, 20000.0) * disc;
+        color += min(g_Frame.sun_color.rgb * 4000.0, 20000.0) * disc * clear;
     }
     return float4(color, 1.0);
 }

@@ -55,10 +55,11 @@ struct FrameData {
     f32 time[4]{};                // x: the game's time in seconds (the scene shader's water scrolls its ripples with it)
     f32 wind[4]{};                // xy: the wind's direction in the world (x, z), unit length; z: strength; w: gust speed (the vegetation's sway)
     f32 wind_gusts[4]{};          // x: gustiness
+    f32 clouds[4]{};              // x: the cloud deck's coverage (0 none); y: its drift speed; z: its scale (the sky shader's procedural clouds)
     u32 reflection[4]{255u, 0u, 0u, 0u}; // x: the water reflection's bindless index (255: none); the scene mirrored about the water's plane, alpha 0 where nothing was drawn
     f32 wind_zones[7][4]{};       // the WindZones (kMaxWindZones): xy direction (x, z), z strength, w gust speed; an object names its zone and how far inside it is
 };
-static_assert(sizeof(FrameData) % 16 == 0 && sizeof(FrameData) == 1392);
+static_assert(sizeof(FrameData) % 16 == 0 && sizeof(FrameData) == 1408);
 
 // The HLSL for FrameData (the layout above), its constant buffer g_Frame (register b0, space2), and the sky helpers that read it:
 // EnvironmentRadiance(direction, lod), SkyIrradiance(normal) and SkyLighting(...), the split-sum image-based lighting. Needs g_Textures

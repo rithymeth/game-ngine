@@ -76,7 +76,7 @@ AETHER_TEST(Wind_IsASceneComponentAndTheLayoutKeepsInStepWithTheShader) {
     std::error_code ignored;
     std::filesystem::remove(file, ignored);
     // The CPU struct and the HLSL one have the wind in the same place: the last members, a float4 each after the time.
-    AETHER_CHECK(offsetof(FrameData, wind) == 1232 && offsetof(FrameData, wind_gusts) == 1248 && sizeof(FrameData) == 1392);
+    AETHER_CHECK(offsetof(FrameData, wind) == 1232 && offsetof(FrameData, wind_gusts) == 1248 && sizeof(FrameData) == 1408);
     const std::string hlsl = FrameDataHlsl();
     const usize at_time = hlsl.find("float4 time;"), at_wind = hlsl.find("float4 wind;"), at_gusts = hlsl.find("float4 wind_gusts;");
     AETHER_CHECK(at_time != std::string::npos && at_wind != std::string::npos && at_gusts != std::string::npos && at_time < at_wind && at_wind < at_gusts);
@@ -143,4 +143,27 @@ AETHER_TEST(InstanceTint_IsSteadyBoundedAndVariesWithThePlace) {
     AETHER_CHECK(std::fabs(sum / 4000.0 - 1.0) < 0.02);   // and no brighter or darker on average
     AETHER_CHECK(distinct > 3500);                        // really different from place to place
     AETHER_CHECK(high - low > 0.25);                      // with a visible spread
+}
+
+AETHER_TEST(SkyLight_CloudSettingsReachTheFrameDataCleaned) {
+    GuidIndex guids;
+    World none;
+    AETHER_CHECK(BuildFrameData(none, guids, Vec3(0, 0, 0)).clouds[0] == 0.0f); // no SkyLight: no clouds
+    World world;
+    SkyLight sky;
+    sky.cloud_coverage = 0.4f;
+    sky.cloud_scale = 1.5f;
+    sky.cloud_speed = 0.1f;
+    world.CreateEntity(sky);
+    const FrameData data = BuildFrameData(world, guids, Vec3(0, 0, 0));
+    AETHER_CHECK(data.clouds[0] == 0.4f && data.clouds[1] == 0.1f && data.clouds[2] == 1.5f);
+    World wild;
+    SkyLight bad;
+    bad.cloud_coverage = 9.0f;
+    bad.cloud_scale = std::numeric_limits<f32>::quiet_NaN();
+    bad.cloud_speed = -3.0f;
+    wild.CreateEntity(bad);
+    const FrameData clamped = BuildFrameData(wild, guids, Vec3(0, 0, 0));
+    AETHER_CHECK(clamped.clouds[0] == 1.0f && clamped.clouds[1] == 0.0f && clamped.clouds[2] == 0.7f);
+    AETHER_CHECK(SkyLight{}.cloud_coverage == 0.0f); // off by default
 }

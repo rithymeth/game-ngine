@@ -5179,6 +5179,9 @@
   ),AETHER_FIELD(cast_shadows,Field_EditAnywhere))AETHER_REFLECT(aether::PointLight,1,AETHER_FIELD(color,Field_EditAnywhere),AETHER_FIELD(intensity,Field_EditAnywhere,
   ),AETHER_FIELD(cast_shadows,Field_EditAnywhere))AETHER_REFLECT(aether::SkyLight,1,AETHER_FIELD(color,Field_EditAnywhere),AETHER_FIELD(intensity,Field_EditAnywhere,
   ),AETHER_FIELD(cast_shadows,Field_EditAnywhere))AETHER_REFLECT(aether::SpotLight,1,AETHER_FIELD(color,Field_EditAnywhere),AETHER_FIELD(intensity,Field_EditAnywhere,
+  ),AETHER_FIELD(cloud_coverage,Field_EditAnywhere,
+  ),AETHER_FIELD(cloud_scale,Field_EditAnywhere,
+  ),AETHER_FIELD(cloud_speed,Field_EditAnywhere,
   ),AETHER_FIELD(color,Field_EditAnywhere),AETHER_FIELD(opacity,Field_EditAnywhere,
   ),AETHER_FIELD(direction_degrees,Field_EditAnywhere,
   ),AETHER_FIELD(enabled,Field_EditAnywhere))
