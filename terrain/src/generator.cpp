@@ -400,6 +400,11 @@ GeneratedTerrain GenerateTerrain(const TerrainGenSettings& requested) {
     out.height_max = *hi;
     const f32 range = std::max(out.height_max - out.height_min, 1e-4f);
     out.sea_height = out.height_min + s.sea_level * range;
+    // A basin under the sea that spills lower than the sea is part of the sea: its water stands at the sea's level, not at its own spill height. (Left at
+    // its own, the sea had a second, lower surface inside it, and the ground between the two levels stood dry as a brown band through open water.)
+    for (usize i = 0; i < h.size(); ++i) {
+        if (h[i] <= out.sea_height && out.fill_height[i] < out.sea_height) out.fill_height[i] = out.sea_height;
+    }
     Slopes(s, h, out.slope);
 
     // Moisture: noise, plus water nearby (a blurred river map), plus low ground.

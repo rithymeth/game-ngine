@@ -380,3 +380,29 @@ AETHER_TEST(TerrainWaterNormalMapHasUnitNormalsPointingUpWithRipples) {
     seam_rows /= static_cast<double>(size) * 2.0;
     AETHER_CHECK(seam_rows < inside * 1.6 + 0.5);
 }
+
+// The sea has one surface. A basin under the sea that spills lower than the sea once had a surface of its own at its spill height, below the sea's, and the
+// ground between the two levels stood dry in the middle of open water (a brown band through the sea in a 576 m world, seed 11). Every cell at or under the sea
+// is now covered at least to the sea's level, whatever its basin spills at.
+AETHER_TEST(TerrainSeaHasOneSurfaceEvenOverBasinsThatSpillLower) {
+    TerrainGenSettings s;
+    s.width = s.height = 385;
+    s.cell_size = 1.5f;
+    s.seed = 11;
+    s.height_scale = 150.0f;
+    s.ridge_amount = 0.7f;
+    s.frequency = 2.2f;
+    s.sea_level = 0.17f;
+    s.hydraulic_droplets = 150000;
+    s.river_min_catchment = 700;
+    const GeneratedTerrain t = GenerateTerrain(s);
+    usize under = 0, lakes_under = 0;
+    for (usize i = 0; i < t.heightmap.heights.size(); ++i) {
+        if (t.heightmap.heights[i] > t.sea_height) continue;
+        ++under;
+        lakes_under += t.lake[i] ? 1 : 0;
+        AETHER_CHECK(t.fill_height[i] >= t.sea_height); // covered to the sea's level at least
+    }
+    AETHER_CHECK(under > 1000);
+    AETHER_CHECK(lakes_under > 0); // the case is really there: lake cells under the sea
+}
