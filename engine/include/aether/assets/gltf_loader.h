@@ -40,6 +40,9 @@ struct GltfMaterial {
     bool water = false;
     // AETHER_materials_wind: metres of sway at the top of the vegetation (the vertex shader's gust, scaled by height); 0 for none.
     f32 wind = 0.0f;
+    // AETHER_materials_detail: a procedural rock-and-soil micro-surface laid over the material in the pixel shader from world position (a fine normal and a
+    // little brightness variation, fading out with distance): 0 none, 1 full. For terrain, where one texture stretched over hundreds of metres goes soft close up.
+    f32 detail = 0.0f;
     std::string base_color_texture;
     std::string normal_texture;
     std::string metallic_roughness_texture;

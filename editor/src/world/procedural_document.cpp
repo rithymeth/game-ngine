@@ -350,6 +350,7 @@ ProceduralMesh ProceduralWorldDocument::BuildTexturedTerrainModel(const Generate
     ground_material.roughness = 0.9f;
     ground_material.metallic = 0.0f;
     ground_material.base_color_texture = texture_uri;
+    ground_material.detail = 0.85f; // a micro-surface over the stretched texture, so the ground stays rough up close
     out.materials.push_back(ground_material);
     out.mesh.primitives.push_back(ground.Finish(Shading::Smooth, UvMode::Given, 0));
     // The skirt: the four edges carried down to `skirt_depth` below the lowest ground, so the terrain is a block with its soil showing and not a sheet

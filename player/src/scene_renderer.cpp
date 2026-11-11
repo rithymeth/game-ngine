@@ -127,10 +127,10 @@ f32 ModelDeterminant(const Mat4& m) {
 }
 
 u32 PackMaterialOptions(assets::MaterialAlphaMode mode, f32 cutoff, const SampledTextureHandle& extension, bool has_extension,
-                        bool double_sided = false, bool water = false, u32 wind_level = 0, u32 wind_zone = 0) {
+                        bool double_sided = false, bool water = false, u32 wind_level = 0, u32 wind_zone = 0, u32 detail_level = 0) {
     // The alpha mode in bits 0-1, the surface-extension texture's index in bits 2-9, double-sided in bit 10, water in bit 11, the wind strength in
-    // bits 12-15, the cutoff as 8 bits in bits 16-23 and the wind zone (WindZoneBitsAt) in bits 24-31.
-    return ((wind_zone & 255u) << 24) | (static_cast<u32>(std::lround(std::clamp(cutoff, 0.0f, 1.0f) * 255.0f)) << 16) | (TextureSlot(extension, has_extension) << 2) |
+    // bits 12-15, the cutoff as 5 bits in bits 16-20, the detail strength (0 to 7) in bits 21-23 and the wind zone (WindZoneBitsAt) in bits 24-31.
+    return ((wind_zone & 255u) << 24) | ((detail_level & 7u) << 21) | (static_cast<u32>(std::lround(std::clamp(cutoff, 0.0f, 1.0f) * 31.0f)) << 16) | (TextureSlot(extension, has_extension) << 2) |
            (double_sided ? 1u << 10 : 0u) | (water ? 1u << 11 : 0u) | ((wind_level & 15u) << 12) | (static_cast<u32>(mode) & 3u);
 }
 
@@ -560,6 +560,22 @@ float3 SurfaceLightEx(float3 light_direction, float3 normal, float3 view_directi
 
 )" // split: MSVC caps one string literal at 16 KB
 R"(
+// AETHER_materials_detail: a procedural micro-surface from world position, so a texture stretched over hundreds of metres does not go soft close up. Three scales
+// of value noise (about 0.4, 1.3 and 4.5 m) make a height; its slope tilts the normal, and a little brightness variation rides on it. No texture to load.
+float DetailHash(float3 p) {
+    p = frac(p * 0.3183099 + 0.1);
+    p *= 17.0;
+    return frac(p.x * p.y * p.z * (p.x + p.y + p.z));
+}
+float DetailNoise(float3 x) {
+    float3 i = floor(x);
+    float3 f = frac(x);
+    f = f * f * (3.0 - 2.0 * f);
+    return lerp(lerp(lerp(DetailHash(i + float3(0, 0, 0)), DetailHash(i + float3(1, 0, 0)), f.x), lerp(DetailHash(i + float3(0, 1, 0)), DetailHash(i + float3(1, 1, 0)), f.x), f.y),
+                lerp(lerp(DetailHash(i + float3(0, 0, 1)), DetailHash(i + float3(1, 0, 1)), f.x), lerp(DetailHash(i + float3(0, 1, 1)), DetailHash(i + float3(1, 1, 1)), f.x), f.y), f.z);
+}
+float DetailHeight(float3 p) { return 0.5 * DetailNoise(p / 0.4) + 0.3 * DetailNoise(p / 1.3) + 0.2 * DetailNoise(p / 4.5); }
+
 float4 PSMain(PSInput input, bool is_front : SV_IsFrontFace) : SV_TARGET {
     // A double-sided material's back face is lit from its own side: the normal reversed. (A mirrored model turns its faces' winding
     // round, so the face toward the camera is the front when exactly one of the two says so.)
@@ -581,7 +597,7 @@ float4 PSMain(PSInput input, bool is_front : SV_IsFrontFace) : SV_TARGET {
     uint alpha_mode = g_PC.g_AlphaOptions & 3;
     float surface_alpha = saturate(base_sample.a * material_color.a);
     if (alpha_mode == 1) {
-        clip(surface_alpha - float((g_PC.g_AlphaOptions >> 16) & 255) / 255.0);
+        clip(surface_alpha - float((g_PC.g_AlphaOptions >> 16) & 31) / 31.0);
         surface_alpha = 1.0;
     } else if (alpha_mode == 0) {
         surface_alpha = 1.0;
@@ -616,6 +632,28 @@ float4 PSMain(PSInput input, bool is_front : SV_IsFrontFace) : SV_TARGET {
         tangent_normal = normalize(tangent_normal);
         float3 bitangent = normalize(cross(normal, tangent)) * input.tangent_sign;
         normal = normalize(tangent * tangent_normal.x + bitangent * tangent_normal.y + normal * tangent_normal.z);
+    }
+
+    uint detail_level = (g_PC.g_AlphaOptions >> 21) & 7;
+    if (detail_level != 0) {
+        float3 detail_position = input.local_position;
+        float detail_fade = 1.0;
+#ifdef AETHER_FRAME_DATA
+        // In world space, so the micro-surface does not move with the object, and fading out with distance (where it would only shimmer).
+        float3 detail_view = ApplyModelTransform(g_PC.g_CameraLocal - input.local_position);
+        detail_position = g_Frame.camera_world.xyz - detail_view;
+        detail_fade = saturate((170.0 - length(detail_view)) / 130.0);
+#endif
+        float detail_strength = float(detail_level) / 7.0 * detail_fade;
+        if (detail_strength > 0.0) {
+            const float eps = 0.06;
+            float h0 = DetailHeight(detail_position);
+            float3 slope = float3(DetailHeight(detail_position + float3(eps, 0, 0)) - h0, DetailHeight(detail_position + float3(0, eps, 0)) - h0,
+                                  DetailHeight(detail_position + float3(0, 0, eps)) - h0) / eps;
+            slope -= normal * dot(slope, normal);
+            normal = normalize(normal - slope * (0.22 * detail_strength));
+            base_color *= 1.0 + detail_strength * (0.9 * (DetailNoise(detail_position / 0.9) - 0.5) + 0.5 * (DetailNoise(detail_position / 9.0) - 0.5));
+        }
     }
 
     float ambient_occlusion = 1.0;
@@ -856,6 +894,7 @@ struct SceneRenderer::Impl {
         assets::MaterialAlphaMode alpha_mode = assets::MaterialAlphaMode::Opaque;
         bool double_sided = false; // glTF doubleSided: drawn without culling, the back face lit from behind
         bool water = false;        // AETHER_materials_water: the normal map scrolls with the game's time
+        u32 detail_level = 0;      // AETHER_materials_detail: 0 to 7 (the micro-surface's strength, in sevenths)
         u32 wind_level = 0;        // AETHER_materials_wind: 0 to 15, 0.02 m of sway a step (the vertex shader sways the vegetation)
         SampledTextureHandle base_color_texture;
         SampledTextureHandle normal_texture;
@@ -2137,6 +2176,7 @@ struct SceneRenderer::Impl {
                     draw.alpha_mode = material.alpha_mode;
                     draw.double_sided = material.double_sided;
                     draw.water = material.water;
+                    draw.detail_level = static_cast<u32>(std::clamp(std::lround(material.detail * 7.0f), 0l, 7l));
                     draw.wind_level = static_cast<u32>(std::clamp(std::lround(material.wind / 0.02f), 0l, 15l));
                     const usize material_index = static_cast<usize>(primitive.material_index);
                     if (material.HasSurfaceExtension()) {
@@ -2746,7 +2786,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                                                            : 0u;
                             constants.alpha_options = PackMaterialOptions(primitive.alpha_mode, primitive.alpha_cutoff, primitive.extension_texture,
                                                                           primitive.has_extension_texture, primitive.double_sided, primitive.water, primitive.wind_level,
-                                                                          wind_zone_bits);
+                                                                          wind_zone_bits, primitive.detail_level);
                             // Single-sided materials cull their back faces, except on a mirrored model (a negative scale turns the
                             // winding round): that draws both faces, as every model did before.
                             const bool cull = !primitive.double_sided && ModelDeterminant(model_transform) > 0.0f;

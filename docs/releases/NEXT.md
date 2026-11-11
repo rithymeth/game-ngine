@@ -438,3 +438,8 @@ water primitive per level. `AETHER_RENDER_REFLECTIONS=0` disables it.
 
 A basin under the sea that spilled lower than the sea had its own lower water level, which left a band of ground standing
 out of the sea. Its water now stands at the sea's level. Worlds baked before this need a re-bake.
+
+## Terrain detail layer
+
+New glTF extension `AETHER_materials_detail` (`strength` 0 to 1): a procedural micro-normal and brightness variation from world
+position, fading out with distance. Procedural-world terrain uses it. An alpha-mask cutoff is now 5 bits.
