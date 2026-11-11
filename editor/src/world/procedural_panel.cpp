@@ -217,6 +217,11 @@ void ProceduralWorldPanel::Draw() {
             if (ImGui::InputText("Name", name, sizeof(name))) bake_options.name = name;
             int cap = static_cast<int>(bake_options.max_scene_instances);
             if (ImGui::SliderInt("Objects in the scene", &cap, 100, 20000)) bake_options.max_scene_instances = static_cast<u32>(cap);
+            ImGui::Checkbox("Add a Wind to the scene", &bake_options.add_wind);
+            if (bake_options.add_wind) {
+                ImGui::SliderFloat("Wind direction", &bake_options.wind_direction_degrees, -180.0f, 180.0f, "%.0f deg");
+                ImGui::SliderFloat("Wind strength", &bake_options.wind_strength, 0.0f, 4.0f, "%.2f");
+            }
             ImGui::BeginDisabled(!doc_.Generated());
             if (ImGui::Button("Bake to files")) {
                 bake_ = doc_.Bake(content_root, bake_options);

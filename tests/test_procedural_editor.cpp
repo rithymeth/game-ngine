@@ -1,5 +1,6 @@
 #include "aether/assets/gltf_loader.h"
 #include "aether/assets/image.h"
+#include "aether/renderer/components.h"
 #include "aether/scene/components.h"
 #include "aether/scene/serialization.h"
 #include "test_framework.h"
@@ -369,7 +370,18 @@ AETHER_TEST(ProceduralEditor_BakeWritesTheTerrainMeshesAndASceneThePlayerLoads) 
     // The scene loads: the terrain plus one entity per baked object, each naming a model that was written.
     World loaded;
     CHECK(LoadSceneJson(loaded, (root / report.scene).string()));
-    CHECK(loaded.EntityCount() == 41);
+    CHECK(loaded.EntityCount() == 42); // the terrain, the Wind, and the 40 objects
+    {
+        usize winds = 0;
+        loaded.ForEachArchetype([&](const Archetype& archetype) {
+            if (!archetype.Mask().test(GetComponentId<Wind>())) return;
+            for (usize chunk = 0; chunk < archetype.ChunkCount(); ++chunk) {
+                const auto* w = static_cast<const Wind*>(archetype.ComponentArray(chunk, GetComponentId<Wind>()));
+                for (usize row = 0; row < archetype.ChunkEntityCount(chunk); ++row) { ++winds; CHECK(w[row].strength == options.wind_strength && w[row].direction_degrees == options.wind_direction_degrees); }
+            }
+        });
+        CHECK(winds == 1);
+    }
     usize with_scale = 0;
     loaded.ForEachArchetype([&](const Archetype& archetype) {
         if (!archetype.Mask().test(GetComponentId<ModelRenderer>()) || !archetype.Mask().test(GetComponentId<Transform>())) return;

@@ -1,6 +1,7 @@
 #include "world/procedural_document.h"
 
 #include "aether/assets/png_writer.h"
+#include "aether/renderer/components.h"
 #include "aether/scene/components.h"
 #include "aether/scene/serialization.h"
 
@@ -475,6 +476,12 @@ BakeReport ProceduralWorldDocument::Bake(const std::string& content_root, const 
         ModelRenderer renderer;
         SetModelPath(renderer, relative + "/" + name + "_terrain.glb");
         world.CreateEntity(Transform{Vec3(0, 0, 0), Quaternion::Identity()}, renderer);
+    }
+    if (options.add_wind) {
+        Wind wind;
+        wind.direction_degrees = options.wind_direction_degrees;
+        wind.strength = options.wind_strength;
+        world.CreateEntity(Transform{Vec3(0, 0, 0), Quaternion::Identity()}, wind);
     }
     // The budget goes to the rules in order, as the scatter's own pecking order does: the trees keep every instance while there is room and the
     // grass between them is what is thinned (evenly) to fit what is left.
