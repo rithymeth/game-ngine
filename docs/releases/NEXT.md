@@ -478,3 +478,5 @@ Swells foam on their crests in a strong wind (a wind strength over about 0.7). N
 without a camera path. `--camera-path` still works alone or with it.
 
 **A real oak.** `ProceduralKind::OakTree` (and `TreeParams::crown_spread`, 1 for the old behaviour) makes a short thick-trunked tree whose limbs reach sideways before they rise, so the crown is wider than the tree is tall. The Procedural World editor's starter set has an "Oak" rule that uses it. It is a new kind, appended, so existing documents keep their kinds. Across 12 variants the oak's crown is 1.58 times as wide as it is tall and the birch's 1.31 (test `ProceduralOakIsABroaderTreeThanTheBirch`).
+
+**The player stops drawing what the camera cannot see.** The scene pass used to submit every draw every frame. It now leaves out a draw whose bounding sphere is outside the camera's view or smaller than a quarter of a pixel (`player/src/view_cull.h`); skinned meshes, water, shadow casters and the water mirror's draws are not affected. A baked HeroValley (6,001 draws) goes from 266 to 156 ms a frame on the software rasterizer with identical output; a GPU is not measured. `AETHER_RENDER_CULLING=0` turns it off.

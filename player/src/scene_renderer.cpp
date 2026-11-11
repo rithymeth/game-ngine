@@ -23,6 +23,7 @@
 #include "shadow_pass.h"
 #include "sky_pass.h"
 #include "taa_pass.h"
+#include "view_cull.h"
 #include "virtual_shadow.h"
 #include "vsm_pass.h"
 #include "package_textures.h"
@@ -2382,6 +2383,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
         bool cull = false;
         Mat4 model;           // for the water reflection's pass, which draws it again with another matrix
         bool reflect = false; // drawn into the water's reflection: still, single-sided, opaque surfaces (not plants, skinned meshes or water); double-sided ones too, with the mirror pass's own frame constants flagging it
+        bool in_view = true;  // the main camera can see it; a draw it cannot is kept only for the mirror pass, which sees what the camera does not
     };
 
     Impl& renderer = *impl_;
@@ -2462,6 +2464,8 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
     Mat4 taa_view_projection; // without the jitter
     Vec3 decal_camera_position;
     bool have_camera = false;
+    ViewFrustum view_frustum; // the main camera's, for leaving out draws it cannot see (AETHER_RENDER_CULLING=0 keeps every draw)
+    bool cull_to_view = false;
     if (camera) {
         const f32 aspect = static_cast<f32>(renderer.swap_chain.Width()) /
                            static_cast<f32>(std::max(renderer.swap_chain.Height(), 1u));
@@ -2590,6 +2594,11 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
         const Mat4 camera_transform = ComputeWorldTransform(world, guids, camera_entity);
         const Vec3 camera_position{camera_transform.cols[3].x, camera_transform.cols[3].y, camera_transform.cols[3].z};
         decal_view_projection = view_projection;
+        {
+            static const bool culling_enabled = [] { const char* v = std::getenv("AETHER_RENDER_CULLING"); return !(v && v[0] == '0'); }();
+            cull_to_view = culling_enabled;
+            view_frustum = MakeViewFrustum(view_projection, projection.cols[1].y, static_cast<f32>(renderer.swap_chain.Height()));
+        }
         decal_camera_position = camera_position;
         have_camera = true;
         shadow_view = MakeView(LimitViewDistance(*camera, renderer.view_distance), camera_transform, aspect);
@@ -2846,15 +2855,30 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                                 constants.camera_local[1] = local_camera.y;
                                 constants.camera_local[2] = local_camera.z;
                             }
+                            // Out of the main camera's view and too small to cover a pixel: not drawn into the scene. Skinned and animated meshes and the water
+                            // are always drawn (their bounds do not hold what the vertex shader does to them); a plant's bounds grow by the most it sways.
+                            bool in_view = true;
+                            if (cull_to_view && have_camera && primitive.bounds_radius >= 0.0f && primitive.frame_vertex_buffers.empty() && !uploaded_animation && !primitive.water) {
+                                const Vec4 centre = model_transform * Vec4(primitive.bounds_center[0], primitive.bounds_center[1], primitive.bounds_center[2], 1.0f);
+                                const f32 scale = std::max({Vec3(model_transform.cols[0].x, model_transform.cols[0].y, model_transform.cols[0].z).Length(),
+                                                            Vec3(model_transform.cols[1].x, model_transform.cols[1].y, model_transform.cols[1].z).Length(),
+                                                            Vec3(model_transform.cols[2].x, model_transform.cols[2].y, model_transform.cols[2].z).Length()});
+                                f32 radius = primitive.bounds_radius * scale;
+                                if (primitive.wind_level != 0) radius += static_cast<f32>(primitive.wind_level) * 0.02f * WindForDraw(frame_data, wind_zone_bits).strength * 1.01f + 0.01f;
+                                in_view = SphereVisible(view_frustum, Vec3(centre.x, centre.y, centre.z), radius * 1.05f + 0.05f, 0.25f);
+                            }
                             if (primitive.alpha_mode == assets::MaterialAlphaMode::Blend) {
+                                if (!in_view) continue;
                                 const f32 dx = model_transform.cols[3].x - camera_position.x;
                                 const f32 dy = model_transform.cols[3].y - camera_position.y;
                                 const f32 dz = model_transform.cols[3].z - camera_position.z;
                                 transparent_draws.push_back({frame_vertex_buffer, primitive.indices, primitive.index_count,
                                                              constants, dx * dx + dy * dy + dz * dz, cull});
                             } else {
-                                opaque_draws.push_back({frame_vertex_buffer, primitive.indices, primitive.index_count, constants, cull, model_transform,
-                                                        primitive.wind_level == 0 && !primitive.water && !uploaded_animation});
+                                const bool reflect = primitive.wind_level == 0 && !primitive.water && !uploaded_animation;
+                                if (in_view || reflect) {
+                                    opaque_draws.push_back({frame_vertex_buffer, primitive.indices, primitive.index_count, constants, cull, model_transform, reflect, in_view});
+                                }
                                 if (transform_moved || previous_positions != kTaaNoPreviousPositions) {
                                     taa_movers.push_back({frame_vertex_buffer, primitive.indices, primitive.index_count,
                                                           static_cast<u32>(sizeof(SceneVertex)), model_transform,
@@ -3204,6 +3228,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
         std::stable_partition(opaque_draws.begin(), opaque_draws.end(), [](const PendingOpaqueDraw& draw) { return draw.cull; });
         bool bound = false, bound_cull = false;
         for (const PendingOpaqueDraw& draw : opaque_draws) {
+            if (!draw.in_view) continue;
             const bool cull = draw.cull && renderer.culled_pipeline.IsValid();
             if (!bound || cull != bound_cull) {
                 commands.BindPipeline(cull ? renderer.culled_pipeline : renderer.pipeline);
