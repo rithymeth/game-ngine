@@ -96,7 +96,7 @@ bool SavePluginDescriptor(const stdfs::path& file, const PluginDescriptor& descr
 }
 
 bool CreatePluginScaffold(const stdfs::path& parent, const std::string& name, stdfs::path* descriptor_file,
-                          std::string* error) {
+                          std::string* error, bool with_module) {
     if (!IsValidPluginName(name)) return Fail(error, "'" + name + "' isn't a valid plugin name (a letter, then letters, digits and _)");
     const stdfs::path dir = parent / name;
     std::error_code ec;
@@ -108,7 +108,7 @@ bool CreatePluginScaffold(const stdfs::path& parent, const std::string& name, st
     d.engine_version = kEngineVersion;
     d.abi = kPluginAbi;
     d.has_content = true;
-    d.modules.push_back({name, ModuleType::Runtime, LoadingPhase::Default});
+    if (with_module) d.modules.push_back({name, ModuleType::Runtime, LoadingPhase::Default});
     const stdfs::path file = dir / (name + kPluginExtension);
     if (!SavePluginDescriptor(file, d, error)) return false;
     stdfs::create_directories(dir / "Content", ec);

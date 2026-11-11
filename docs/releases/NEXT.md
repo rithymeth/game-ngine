@@ -281,3 +281,11 @@ character for good.
 `aether_player --press <Key>` set its keys once at start. A window that loses the keyboard clears every held key, which always
 happens under a virtual display, so windowed smoke runs had no input after their first frame. The keys are now set again every
 frame, as "held for the whole run" says.
+
+## Plugins: `aether_plugin new`, and a scaffold that no longer warns at every launch
+
+`aether_plugin new <Name> [--dir <parent>] [--module]` creates a plugin folder without the editor. The scaffold (also what the
+editor's Plugins window makes) used to declare a runtime module named after the plugin, although it had no code: a project that
+enabled it got "The module 'Coins' isn't built into this player" at every launch. It is content only now; `--module`, or
+`CreatePluginScaffold(..., with_module = true)`, declares the module for a plugin that has code. A plugin scaffolded before this
+change keeps the module line in its `.aplugin`; delete it if the plugin has no code.

@@ -80,11 +80,13 @@ bool IsValidPluginName(const std::string& name);
 // Compares dotted versions ("1.10.0" > "1.9"); missing parts count as 0.
 int CompareVersions(const std::string& a, const std::string& b);
 
-// A new plugin: <parent>/<name>/<name>.aplugin (one runtime module named
-// after it, not enabled by default) and an empty Content/ folder. False if
-// the name isn't valid or the folder exists.
+// A new plugin: <parent>/<name>/<name>.aplugin (not enabled by default) and an empty Content/ folder. By default it declares no
+// modules: it is content (scenes, scripts, Blueprints, assets), which needs no code and starts nothing. `with_module` also
+// declares one runtime module named after it, for a plugin whose code registers an AETHER_MODULE of that name; a player that
+// was not built with that module warns "The module 'X' isn't built into this player" at every launch, which is why a plugin
+// that has no code must not declare one. False if the name isn't valid or the folder exists.
 bool CreatePluginScaffold(const std::filesystem::path& parent, const std::string& name,
-                          std::filesystem::path* descriptor_file = nullptr, std::string* error = nullptr);
+                          std::filesystem::path* descriptor_file = nullptr, std::string* error = nullptr, bool with_module = false);
 
 // The plugins a project gets: the engine's (EnginePluginsDir) and its own
 // (<project>/Plugins), discovered and resolved against its `plugins` list.
