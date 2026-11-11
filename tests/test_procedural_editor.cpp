@@ -510,6 +510,67 @@ AETHER_TEST(ProceduralEditor_OptInBakeOfAFullSizeWorld) {
                     report.files.size(), report.instances_in_scene, report.instances_left_out, doc.GenerateMilliseconds());
         CHECK(report.ok);
     }
+    // A woodland: gentler ground under oak, birch and the odd dead tree, with few pines (the world above is mostly pine).
+    {
+        ProceduralWorldSettings wood = MakePreset(WorldPreset::Temperate);
+        wood.terrain.width = wood.terrain.height = 385;
+        wood.terrain.cell_size = 1.5f;
+        wood.terrain.seed = 23;
+        wood.terrain.height_scale = 85.0f;
+        wood.terrain.ridge_amount = 0.35f;
+        wood.terrain.frequency = 2.6f;
+        wood.terrain.sea_level = 0.2f;
+        wood.terrain.tree_line = 0.85f;
+        wood.terrain.snow_line = 0.99f;
+        wood.terrain.hydraulic_droplets = 120000;
+        wood.terrain.river_min_catchment = 900;
+        wood.scatter.seed = 9;
+        terrain::ScatterRule birch_rule;
+        for (terrain::ScatterRule& rule : wood.rules) {
+            if (rule.name == "Pine") rule.density = 0.9f;
+            if (rule.name == "Birch") { rule.density = 1.5f; rule.patch_threshold = 0.4f; birch_rule = rule; }
+            if (rule.name == "Shrub") rule.max_instances = 1800; // the object budget goes to the rules in order: keep the undergrowth from eating it
+        }
+        terrain::ScatterRule oak = birch_rule;
+        oak.name = "Oak";
+        oak.density = 1.8f;
+        oak.clump_size = 3;
+        oak.clump_radius = 7.0f;
+        oak.scale_min = 0.9f;
+        oak.scale_max = 1.6f;
+        oak.footprint = 2.4f;
+        terrain::ScatterRule dead = birch_rule;
+        dead.name = "DeadTree";
+        dead.density = 0.06f;
+        dead.clump_size = 1;
+        dead.scale_min = 0.8f;
+        dead.scale_max = 1.2f;
+        dead.footprint = 1.6f;
+        MeshSlot oak_slot, dead_slot;
+        oak_slot.enabled = true;
+        oak_slot.kind = assets::procedural::ProceduralKind::BroadleafTree;
+        oak_slot.variants = 8;
+        oak_slot.scale = 0.8f;
+        dead_slot.enabled = true;
+        dead_slot.kind = assets::procedural::ProceduralKind::DeadTree;
+        dead_slot.variants = 4;
+        // First in the list: a bake's object budget goes to the rules in order, and the big trees are what the picture is of.
+        wood.rules.insert(wood.rules.begin(), {oak, dead});
+        wood.slots.insert(wood.slots.begin(), {oak_slot, dead_slot});
+        ProceduralWorldDocument doc(wood);
+        doc.Generate();
+        BakeOptions options;
+        options.name = "Woodland";
+        options.max_scene_instances = 6000;
+        options.terrain_grid = 384;
+        options.terrain_texture = 2048;
+        options.water_texture = 1024;
+        options.wind_strength = 1.2f;
+        const BakeReport report = doc.Bake(dir, options);
+        std::printf("[bake] Woodland: %s, %zu files, %u objects in the scene (%u left out), generated in %.0f ms\n", report.ok ? "ok" : report.error.c_str(),
+                    report.files.size(), report.instances_in_scene, report.instances_left_out, doc.GenerateMilliseconds());
+        CHECK(report.ok);
+    }
     for (const WorldPreset preset : {WorldPreset::Temperate, WorldPreset::Alpine}) {
         ProceduralWorldDocument doc(MakePreset(preset));
         doc.Generate();

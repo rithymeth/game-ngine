@@ -44,7 +44,7 @@ void SetEnvironmentVariableForTest(const char* name, const char* value) {
 }
 
 // A flat quad 12 m across facing up, with a periodic ripple normal map (a few crossing sine waves), a glossy blue material, and the water flag as asked.
-fs::path CookWaterScene(const fs::path& root, bool water, bool pillar = false, f32 clouds = 0.0f) {
+fs::path CookWaterScene(const fs::path& root, bool water, bool pillar = false, f32 clouds = 0.0f, f32 wind_strength = -1.0f) {
     fs::create_directories(root / "Content/models");
     fs::create_directories(root / "Content/Scenes");
     const fs::path games = fs::path(AETHER_REPO_ASSETS_DIR).parent_path() / "games/AETHER-01";
@@ -115,6 +115,10 @@ fs::path CookWaterScene(const fs::path& root, bool water, bool pillar = false, f
         const std::vector<u8> pillar_glb = EncodeGlb(pillar_mesh);
         std::ofstream(root / "Content/models/pillar.glb", std::ios::binary).write(reinterpret_cast<const char*>(pillar_glb.data()), static_cast<std::streamsize>(pillar_glb.size()));
         entities.push_back(SceneEntity({{"Transform", TransformJson({0, 0, 0})}, {"ModelRenderer", {{"$v", 1}, {"model", ""}, {"asset_path", "models/pillar.glb"}}}}));
+    }
+    if (wind_strength >= 0.0f) {
+        const reflect::Json wind = {{"$v", 1}, {"direction_degrees", 90.0f}, {"strength", wind_strength}, {"gust_speed", 1.0f}, {"gustiness", 0.4f}};
+        entities.push_back(SceneEntity({{"Transform", TransformJson({0, 0, 0})}, {"Wind", wind}}));
     }
     const reflect::Json scene = {{"$type", "Scene"}, {"$version", 1}, {"entities", entities}};
     std::ofstream(root / "Content/Scenes/Main.ascene") << scene.dump(2);
@@ -677,6 +681,52 @@ static void Water_MirrorsTheCloudsToo(rhi::Backend backend) {
 }
 AETHER_TEST(Water_MirrorsTheCloudsToo_D3D12) { Water_MirrorsTheCloudsToo(rhi::Backend::D3D12); }
 AETHER_TEST(Water_MirrorsTheCloudsToo_Vulkan) { Water_MirrorsTheCloudsToo(rhi::Backend::Vulkan); }
+
+// Swells: a water sheet lifts and tilts with the wind's strength. In a calm world (Wind strength 0) it is a flat sheet under the fine ripples; in a windy one it carries
+// large swells, which shows as a change in the picture of the same water, and the swells move with the game's time (the water's own picture changes more between two
+// times than a calm one's).
+static void Water_SwellsFollowTheWind(rhi::Backend backend) {
+    if (!rhi::IsBackendAvailable(backend)) return;
+    SetEnvironmentVariableForTest("AETHER_RENDER_TAA", "0");
+    constexpr u32 W = 640, H = 360;
+    const fs::path root = fs::temp_directory_path() / "aether_swells" / assets::ToString(assets::NewAssetGuid());
+    const fs::path calm_pak = CookWaterScene(root / "calm", true, false, 0.0f, 0.0f), windy_pak = CookWaterScene(root / "windy", true, false, 0.0f, 2.0f);
+    if (calm_pak.empty() || windy_pak.empty()) return;
+    const auto calm_a = FrameAfter(backend, root / "calm", calm_pak, 30, W, H), windy_a = FrameAfter(backend, root / "windy", windy_pak, 30, W, H);
+    const auto calm_b = FrameAfter(backend, root / "calm", calm_pak, 330, W, H), windy_b = FrameAfter(backend, root / "windy", windy_pak, 330, W, H);
+    SetEnvironmentVariableForTest("AETHER_RENDER_TAA", "");
+    const usize bytes = static_cast<usize>(W) * H * 4;
+    if (calm_a.size() != bytes || windy_a.size() != bytes || calm_b.size() != bytes || windy_b.size() != bytes) {
+        AETHER_CHECK(false);
+        return;
+    }
+    // Compare the shape of the water's brightness at a coarse scale (the means of 16x16 blocks), so the fine ripples, which move in both worlds, do not count.
+    const auto coarse_difference = [&](const std::vector<u8>& a, const std::vector<u8>& b) {
+        double total = 0.0;
+        usize blocks = 0;
+        for (u32 by = 160; by < 352; by += 16)
+            for (u32 bx = 32; bx < 608; bx += 16) {
+                double sa = 0.0, sb = 0.0;
+                for (u32 y = by; y < by + 16; ++y)
+                    for (u32 x = bx; x < bx + 16; ++x) {
+                        const usize i = (static_cast<usize>(y) * W + x) * 4;
+                        sa += a[i] + a[i + 1] + a[i + 2];
+                        sb += b[i] + b[i + 1] + b[i + 2];
+                    }
+                total += std::abs(sa - sb) / (16.0 * 16.0 * 3.0);
+                ++blocks;
+            }
+        return total / static_cast<double>(blocks);
+    };
+    const double flat_vs_swell = coarse_difference(calm_a, windy_a), calm_moves = coarse_difference(calm_a, calm_b), swell_moves = coarse_difference(windy_a, windy_b);
+    std::printf("    %s: coarse picture difference: calm vs windy %.3f; calm over 5 s %.3f, windy over 5 s %.3f\n", backend == rhi::Backend::Vulkan ? "vulkan" : "d3d12", flat_vs_swell, calm_moves, swell_moves);
+    AETHER_CHECK(flat_vs_swell > 0.8);              // the wind lifts the water
+    AETHER_CHECK(swell_moves > calm_moves + 0.5);   // and the swells travel
+    std::error_code ignored;
+    fs::remove_all(root, ignored);
+}
+AETHER_TEST(Water_SwellsFollowTheWind_D3D12) { Water_SwellsFollowTheWind(rhi::Backend::D3D12); }
+AETHER_TEST(Water_SwellsFollowTheWind_Vulkan) { Water_SwellsFollowTheWind(rhi::Backend::Vulkan); }
 
 // A wind zone replaces the world's wind where an object stands in it: an east wind everywhere, a zone around the tuft that blows toward the camera, and only the
 // tuft inside the zone loses its sideways sway; a zone elsewhere changes nothing.
