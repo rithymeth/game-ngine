@@ -19,6 +19,13 @@ void FoliagePaintDocument::Record() {
     redo_.clear();
 }
 
+void FoliagePaintDocument::ReplaceLayer(FoliageLayer layer) {
+    if (in_stroke_) EndStroke();
+    Record();
+    layer_ = std::move(layer);
+    Changed();
+}
+
 void FoliagePaintDocument::BeginStroke() {
     if (in_stroke_) EndStroke();
     in_stroke_ = true;

@@ -17,6 +17,7 @@ namespace terrain {
 // The stages, in order (each can be switched off by its setting):
 //   1. Shape: domain-warped fractal noise blended with ridged noise (the ridges are the mountain chains), normalised to 0..1, then
 //      scaled by `height_scale` metres.
+//      A few light blur passes follow (`smoothing`), so the finest octaves give texture and not needles.
 //   2. Thermal erosion: material slides off slopes steeper than `talus` into lower neighbours, which rounds the noise's spikes into scree.
 //   3. Hydraulic erosion: `hydraulic_droplets` droplets run downhill, pick up sediment on steep ground and drop it where they slow, which
 //      carves gullies and fills the valley floors.
@@ -42,6 +43,7 @@ struct TerrainGenSettings {
     f32 ridge_amount = 0.55f;  // 0 rolling hills, 1 all mountain chains
     f32 warp = 0.25f;          // how far the noise coordinates are bent (a share of the map width), for winding rather than grid-aligned features
     f32 lowland_power = 1.4f;  // above 1 flattens the valleys and keeps the peaks
+    u32 smoothing = 2;         // 3x3 blur passes over the shaped heights, before erosion: they take out the one- and two-sample needles the finest octaves leave
 
     // Erosion.
     u32 thermal_iterations = 20;
@@ -68,6 +70,7 @@ struct GeneratedTerrain {
     std::vector<f32> flow;       // cells upstream of each cell, itself included
     std::vector<u8> river;       // 1 where a river runs
     std::vector<u8> lake;        // 1 where a depression holds standing water (not cut: the water sits level)
+    std::vector<f32> fill_height; // the height each cell's depression fills to (metres): above `heights` inside a lake, level with them elsewhere
     std::vector<f32> moisture;   // 0..1
     std::vector<f32> temperature; // 0..1
     std::vector<Biome> biome;

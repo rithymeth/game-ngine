@@ -125,13 +125,38 @@ void AddAt(const Grid& g, std::vector<f32>& h, i32 x0, i32 z0, f32 fx, f32 fz, f
     h[g.At(static_cast<u32>(x0) + 1, static_cast<u32>(z0) + 1)] += amount * fx * fz;
 }
 
+// Takes `amount` of earth from a disc round the cell nearest (px, pz), weighted toward its centre (a cone, radius 3 cells) and normalised over
+// the cells that are on the map, so the total taken is exactly `amount`. Digging at one cell (or four) leaves a pit and a spike for every
+// droplet; spread over a disc each droplet only leaves a shallow scoop.
+void ErodeDisc(const Grid& g, std::vector<f32>& h, f32 px, f32 pz, f32 amount) {
+    constexpr i32 radius = 3;
+    const i32 cx = static_cast<i32>(px + 0.5f), cz = static_cast<i32>(pz + 0.5f);
+    f32 weights[(2 * radius + 1) * (2 * radius + 1)];
+    f32 total = 0.0f;
+    i32 k = 0;
+    for (i32 oz = -radius; oz <= radius; ++oz) {
+        for (i32 ox = -radius; ox <= radius; ++ox, ++k) {
+            const f32 w = g.In(cx + ox, cz + oz) ? std::max(0.0f, static_cast<f32>(radius) - std::sqrt(static_cast<f32>(ox * ox + oz * oz))) : 0.0f;
+            weights[k] = w;
+            total += w;
+        }
+    }
+    if (total <= 0.0f) return;
+    k = 0;
+    for (i32 oz = -radius; oz <= radius; ++oz)
+        for (i32 ox = -radius; ox <= radius; ++ox, ++k)
+            if (weights[k] > 0.0f) h[g.At(static_cast<u32>(cx + ox), static_cast<u32>(cz + oz))] -= amount * weights[k] / total;
+}
+
 // Particle erosion: a droplet follows the slope (with a little inertia), carries sediment up to a capacity that grows with speed, water and
 // slope, takes from the ground when under capacity and gives back when over it or when it climbs.
 void Hydraulic(const TerrainGenSettings& s, std::vector<f32>& h) {
     const Grid g{s.width, s.height};
     std::mt19937 rng(s.seed ^ 0x9E3779B1u);
     std::uniform_real_distribution<f32> unit(0.0f, 1.0f);
-    constexpr f32 inertia = 0.05f, capacity_factor = 4.0f, min_capacity = 0.01f, erode_rate = 0.3f, deposit_rate = 0.3f, evaporate = 0.015f,
+    // Capacity is in metres of earth per metre of slope: 4 (the usual figure for a 0..1 height range) carries metres per droplet on a 60 m
+    // terrain and leaves needles; 0.5 leaves the roughness near the shaped terrain's own and still cuts gullies.
+    constexpr f32 inertia = 0.05f, capacity_factor = 0.5f, min_capacity = 0.01f, erode_rate = 0.3f, deposit_rate = 0.3f, evaporate = 0.015f,
                   gravity = 4.0f;
     constexpr u32 lifetime = 40;
     const f32 max_x = static_cast<f32>(s.width - 1) - 1e-3f, max_z = static_cast<f32>(s.height - 1) - 1e-3f;
@@ -159,7 +184,7 @@ void Hydraulic(const TerrainGenSettings& s, std::vector<f32>& h) {
             } else {
                 const f32 amount = std::min((capacity - sediment) * erode_rate, -drop);
                 sediment += amount;
-                AddAt(g, h, x0, z0, fx, fz, -amount);
+                ErodeDisc(g, h, px, pz, amount);
             }
             speed = std::sqrt(std::max(speed * speed - drop * gravity, 0.0f));
             water *= 1.0f - evaporate;
@@ -300,6 +325,7 @@ TerrainGenSettings SanitizeSettings(const TerrainGenSettings& in) {
     s.ridge_amount = std::clamp(finite(s.ridge_amount, 0.55f), 0.0f, 1.0f);
     s.warp = std::clamp(finite(s.warp, 0.25f), 0.0f, 1.0f);
     s.lowland_power = std::clamp(finite(s.lowland_power, 1.4f), 0.2f, 4.0f);
+    s.smoothing = std::min(s.smoothing, 16u);
     s.thermal_iterations = std::min(s.thermal_iterations, 500u);
     s.talus = std::clamp(finite(s.talus, 0.8f), 0.05f, 10.0f);
     s.hydraulic_droplets = std::min(s.hydraulic_droplets, 5'000'000u);
@@ -324,6 +350,7 @@ GeneratedTerrain GenerateTerrain(const TerrainGenSettings& requested) {
 
     std::vector<f32>& h = out.heightmap.heights;
     Shape(s, h);
+    BoxBlur(g, h, s.smoothing);
     Thermal(s, h);
     Hydraulic(s, h);
 
@@ -335,6 +362,7 @@ GeneratedTerrain GenerateTerrain(const TerrainGenSettings& requested) {
     Accumulate(filled, next, out.flow);
     out.river.assign(h.size(), 0);
     out.lake.assign(h.size(), 0);
+    out.fill_height = filled; // the surface of a lake is where its basin spills; kept for drawing the water level
     for (usize i = 0; i < h.size(); ++i) {
         if (filled[i] - h[i] > s.lake_depth) {
             out.lake[i] = 1;
