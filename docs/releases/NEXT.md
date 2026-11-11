@@ -332,3 +332,11 @@ cuts rivers where enough water collects, and classifies the result into biomes (
 height, slope, moisture and temperature. `BuildTerrainSplatmap` turns that into the four-layer weights the terrain renderer takes (grass,
 rock, sand, snow); `RenderTerrainPreview` draws a shaded biome picture. Same settings and seed, same terrain, on any machine. About
 700 ms for 513 x 513 with 200,000 droplets, single-threaded. No MCP tool or asset format yet.
+
+## Environment scatter
+
+`aether::terrain::Scatter(terrain, settings, rules, scatter_settings)` places trees, shrubs, grass, rocks and debris over a generated
+terrain by rules: biomes, height, slope, distance from water, a patchiness noise, density, clumping, scale, tilt to the ground, and the
+footprint each object takes (later rules keep clear of earlier ones). Deterministic from the seed; each rule has its own random stream.
+`DefaultScatterRules()` is a starter set; `ToFoliageInstances` converts the result for the foliage layer. About 44,000 instances in
+38 ms on a 513 x 513 terrain. No MCP tool or rule asset yet.
