@@ -2,7 +2,7 @@
 # aether_game is its runtime (mounting the paks, loading the startup scene,
 # the frame loop); aether_player is the executable around it.
 add_library(aether_game STATIC src/game.cpp src/game_kits.cpp src/user_paths.cpp src/settings_apply.cpp src/bindings_migrate.cpp
-                               src/scene_renderer.cpp src/frame_lights.cpp src/camera_path.cpp src/package_textures.cpp
+                               src/scene_renderer.cpp src/frame_lights.cpp src/camera_path.cpp src/instance_variation.cpp src/package_textures.cpp
                                src/particle_pass.cpp src/decal_pass.cpp src/post_pass.cpp src/shadow_pass.cpp src/sky_pass.cpp
                                src/light_clusters.cpp src/taa_pass.cpp src/virtual_shadow.cpp src/vsm_pages.cpp src/vsm_pass.cpp)
 target_include_directories(aether_game PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)

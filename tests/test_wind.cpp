@@ -120,3 +120,27 @@ AETHER_TEST(WindZone_AnObjectsWindBlendsTheZonesWithTheWorlds) {
     AETHER_CHECK(half.direction[0] > 0.3f && half.direction[1] > 0.3f && half.strength < 2.0f && half.strength > 1.0f && half.gust_speed > 1.0f && half.gust_speed < 3.0f);
     AETHER_CHECK(WindForDraw(data, 7u).strength == 2.0f);                  // a slot with no zone behind it is the world's wind
 }
+
+// Per-instance colour variation of foliage (player/src/instance_variation.h).
+#include "../player/src/instance_variation.h"
+AETHER_TEST(InstanceTint_IsSteadyBoundedAndVariesWithThePlace) {
+    const Vec3 here(12.3f, 4.0f, -7.7f);
+    const Vec3 a = player::InstanceTint(here), b = player::InstanceTint(here);
+    AETHER_CHECK(a.x == b.x && a.y == b.y && a.z == b.z); // the same place is the same tint
+    const Vec3 nudged = player::InstanceTint(Vec3(here.x + 0.01f, here.y, here.z));
+    AETHER_CHECK(std::fabs(nudged.y - a.y) < 1e-6f);      // a hair of movement keeps the colour (a decimetre grid)
+    double sum = 0.0, low = 10.0, high = 0.0;
+    usize distinct = 0;
+    f32 last = -1.0f;
+    for (int i = 0; i < 4000; ++i) {
+        const Vec3 t = player::InstanceTint(Vec3(static_cast<f32>(i) * 1.7f, 2.0f, static_cast<f32>(i % 61) * 3.1f));
+        for (const f32 c : {t.x, t.y, t.z}) { low = std::min<double>(low, c); high = std::max<double>(high, c); }
+        sum += t.y;
+        if (std::fabs(t.y - last) > 1e-3f) ++distinct;
+        last = t.y;
+    }
+    AETHER_CHECK(low >= 0.78 && high <= 1.22);            // never far from the material's own colour
+    AETHER_CHECK(std::fabs(sum / 4000.0 - 1.0) < 0.02);   // and no brighter or darker on average
+    AETHER_CHECK(distinct > 3500);                        // really different from place to place
+    AETHER_CHECK(high - low > 0.25);                      // with a visible spread
+}
