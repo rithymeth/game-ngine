@@ -45,6 +45,7 @@ struct BakeOptions {
     u32 terrain_grid = 256;         // the terrain mesh's quads per side at most
     u32 terrain_tiles = 8;          // the ground cut into this many tiles a side, each its own draw the player can cull (1: one piece)
     bool terrain_collision = true;  // a static triangle-mesh collider over the ground (the very triangles drawn), so a character can walk on it; built only where the editor has physics
+    u32 terrain_collision_grid = 192; // the collision mesh's quads per side at most (a coarser grid than the drawn one loads faster; see PERFORMANCE.md for how far it strays)
     f32 terrain_skirt = 6.0f;       // metres the terrain's edges are carried down below its lowest ground (0: an open edge)
     u32 water_texture = 512;        // the water's depth-tinted, foam-edged texture in texels (0: one flat colour)
     bool add_wind = true;           // a Wind entity in the baked scene, so the swaying plants blow the way the world is set to

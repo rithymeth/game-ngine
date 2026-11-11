@@ -148,3 +148,33 @@ AETHER_TEST(ProceduralWalk_TheBakedSceneCarriesTheCollisionAndItsSizeIsKnown) {
     AETHER_CHECK(none == 0);
     std::filesystem::remove_all(root, ignored);
 }
+
+AETHER_TEST(ProceduralWalk_HowFarACoarserCollisionMeshStraysFromTheGround) {
+    // The collision mesh is the ground on a grid of at most `max_grid` quads a side, so between its vertices it is a flat triangle where the ground is not. At the middle of each quad
+    // (where the two triangles meet) it is the average of two corners; the ground's own height there is the heightmap's. The gap is the most a foot can sink or float.
+    ProceduralWorldSettings s = MakePreset(WorldPreset::Temperate); // the default 193 x 193 map
+    s.terrain.hydraulic_droplets = 8000;
+    ProceduralWorldDocument doc(s);
+    doc.Generate();
+    const GeneratedTerrain& t = doc.Terrain();
+    f32 previous_worst = 1e9f;
+    for (const u32 grid : {48u, 96u, 192u}) {
+        const ProceduralWorldDocument::CollisionMesh mesh = ProceduralWorldDocument::BuildTerrainCollisionMesh(t, grid);
+        const u32 per_side = static_cast<u32>(std::lround(std::sqrt(static_cast<double>(mesh.vertices.size())))) ;
+        f32 worst = 0.0f, sum = 0.0f;
+        usize count = 0;
+        for (u32 z = 0; z + 1 < per_side; ++z)
+            for (u32 x = 0; x + 1 < per_side; ++x) {
+                const Vec3 &a = mesh.vertices[z * per_side + x + 1], &b = mesh.vertices[(z + 1) * per_side + x]; // the corners the shared diagonal joins
+                const f32 on_mesh = 0.5f * (a.y + b.y);
+                const f32 on_ground = t.heightmap.SampleLinear(0.5f * (a.x + b.x), 0.5f * (a.z + b.z));
+                const f32 gap = std::fabs(on_mesh - on_ground);
+                worst = std::max(worst, gap);
+                sum += gap;
+                ++count;
+            }
+        std::printf("    collision grid %3u: %6zu triangles, mean gap %.3f m, worst %.2f m (%u m cells)\n", grid, mesh.indices.size() / 3, sum / static_cast<f32>(count), worst, static_cast<u32>(t.heightmap.cell_size * static_cast<f32>(t.Width() / per_side + 1)));
+        AETHER_CHECK(worst <= previous_worst + 1e-3f); // a finer grid never strays more
+        previous_worst = worst;
+    }
+}

@@ -514,7 +514,7 @@ BakeReport ProceduralWorldDocument::Bake(const std::string& content_root, const 
 #if AETHER_EDITOR_NET_PHYSICS
     if (options.terrain_collision) {
         // Static: a mesh collider on an entity with no RigidBody. It follows the drawn ground triangle for triangle (the same grid), so a character's feet meet what is seen.
-        CollisionMesh mesh = BuildTerrainCollisionMesh(terrain_, options.terrain_grid);
+        CollisionMesh mesh = BuildTerrainCollisionMesh(terrain_, options.terrain_collision_grid);
         MeshCollider collider;
         collider.vertices = std::move(mesh.vertices);
         collider.indices = std::move(mesh.indices);
