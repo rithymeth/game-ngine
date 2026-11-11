@@ -52,7 +52,13 @@ public:
     // table are left bound to the sky's; the caller binds its own next.
     void Draw(gfx::rhi::ICommandList& commands, const View& view, gfx::rhi::BufferHandle frame_constants);
 
+    // The background as the water's mirror sees it: the same sky with the view's axes reflected about a horizontal plane, drawn into a render texture with depth
+    // (the reflection pass's), so the clouds and the sun show in the water. Made on first use; false where its pipeline cannot be made. As Draw, it leaves its own
+    // pipeline and bindings in place.
+    bool DrawMirrored(gfx::rhi::ICommandList& commands, const View& view, gfx::rhi::BufferHandle frame_constants);
+
     static SkyConstants MakeConstants(const View& view);
+    static SkyConstants MakeMirroredConstants(const View& view); // the axes' y components negated
     static const char* ShaderSource();
 
 private:
@@ -60,6 +66,10 @@ private:
     bool Upload(PrefilteredEnvironment&& environment, std::chrono::steady_clock::time_point start);
 
     gfx::rhi::IDevice& device_;
+    gfx::rhi::ISwapChain& swap_chain_;
+    bool hdr_target_ = false;
+    bool mirror_failed_ = false;
+    gfx::rhi::PipelineHandle mirror_pipeline_;
     bool supported_ = false;
     gfx::rhi::PipelineHandle pipeline_;
     gfx::rhi::SampledTextureHandle texture_;

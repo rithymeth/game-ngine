@@ -44,7 +44,7 @@ void SetEnvironmentVariableForTest(const char* name, const char* value) {
 }
 
 // A flat quad 12 m across facing up, with a periodic ripple normal map (a few crossing sine waves), a glossy blue material, and the water flag as asked.
-fs::path CookWaterScene(const fs::path& root, bool water, bool pillar = false) {
+fs::path CookWaterScene(const fs::path& root, bool water, bool pillar = false, f32 clouds = 0.0f) {
     fs::create_directories(root / "Content/models");
     fs::create_directories(root / "Content/Scenes");
     const fs::path games = fs::path(AETHER_REPO_ASSETS_DIR).parent_path() / "games/AETHER-01";
@@ -99,7 +99,7 @@ fs::path CookWaterScene(const fs::path& root, bool water, bool pillar = false) {
         SceneEntity({{"Transform", TransformJson({0, 0, 0}, {-0.26f, 0.9f, 0.1f, 0.34f})},
                      {"DirectionalLight", {{"$v", 1}, {"color", {1.0f, 0.95f, 0.88f}}, {"intensity", 3.0f}, {"cast_shadows", false}}}}),
         SceneEntity({{"Transform", TransformJson({0, 0, 0})},
-                     {"SkyLight", {{"$v", 1}, {"color", {1.0f, 1.0f, 1.0f}}, {"intensity", 1.0f}, {"environment", ""}, {"environment_rotation_degrees", 0.0f}}}}),
+                     {"SkyLight", {{"$v", 1}, {"color", {1.0f, 1.0f, 1.0f}}, {"intensity", 1.0f}, {"environment", ""}, {"environment_rotation_degrees", 0.0f}, {"cloud_coverage", clouds}}}}),
         SceneEntity({{"Transform", TransformJson({0, 0, 0})}, {"ModelRenderer", {{"$v", 1}, {"model", ""}, {"asset_path", "models/water.glb"}}}})};
     if (pillar) {
         // A red pillar standing at the water's far edge: where the water mirrors it, the water turns red.
@@ -636,6 +636,47 @@ static void Sky_CloudsAddDetailAndDriftWithTime(rhi::Backend backend) {
 }
 AETHER_TEST(Sky_CloudsAddDetailAndDriftWithTime_D3D12) { Sky_CloudsAddDetailAndDriftWithTime(rhi::Backend::D3D12); }
 AETHER_TEST(Sky_CloudsAddDetailAndDriftWithTime_Vulkan) { Sky_CloudsAddDetailAndDriftWithTime(rhi::Backend::Vulkan); }
+
+// The water mirrors the sky's clouds: the same lake and the same view, with and without clouds in the sky and the reflection on in both, differs in the water
+// in front of the camera (where it reflects the sky): its mean colour difference there is measurable, and with the reflection off (AETHER_RENDER_REFLECTIONS=0)
+// the same two skies leave the water almost the same (it only lights from the sky then).
+static void Water_MirrorsTheCloudsToo(rhi::Backend backend) {
+    if (!rhi::IsBackendAvailable(backend)) return;
+    SetEnvironmentVariableForTest("AETHER_RENDER_TAA", "0");
+    constexpr u32 W = 640, H = 360;
+    const fs::path root = fs::temp_directory_path() / "aether_water_clouds" / assets::ToString(assets::NewAssetGuid());
+    const fs::path clear_pak = CookWaterScene(root / "clear", true, true, 0.0f), cloudy_pak = CookWaterScene(root / "cloudy", true, true, 0.8f); // the pillar gives the mirror pass something to draw
+    if (clear_pak.empty() || cloudy_pak.empty()) return;
+    const auto clear = FrameAfter(backend, root / "clear", clear_pak, 0, W, H), cloudy = FrameAfter(backend, root / "cloudy", cloudy_pak, 0, W, H);
+    SetEnvironmentVariableForTest("AETHER_RENDER_REFLECTIONS", "0");
+    const auto clear_off = FrameAfter(backend, root / "clear", clear_pak, 0, W, H), cloudy_off = FrameAfter(backend, root / "cloudy", cloudy_pak, 0, W, H);
+    SetEnvironmentVariableForTest("AETHER_RENDER_REFLECTIONS", "");
+    SetEnvironmentVariableForTest("AETHER_RENDER_TAA", "");
+    const usize bytes = static_cast<usize>(W) * H * 4;
+    if (clear.size() != bytes || cloudy.size() != bytes || clear_off.size() != bytes || cloudy_off.size() != bytes) {
+        AETHER_CHECK(false);
+        return;
+    }
+    const auto difference = [&](const std::vector<u8>& a, const std::vector<u8>& b) {
+        double total = 0.0;
+        usize count = 0;
+        for (u32 y = 250; y < 340; ++y)
+            for (u32 x = 80; x < 560; ++x) {
+                const usize i = (static_cast<usize>(y) * W + x) * 4;
+                for (usize c = 0; c < 3; ++c) total += std::abs(static_cast<int>(a[i + c]) - static_cast<int>(b[i + c]));
+                count += 3;
+            }
+        return total / static_cast<double>(count);
+    };
+    const double with_mirror = difference(clear, cloudy), without = difference(clear_off, cloudy_off);
+    std::printf("    %s: the water differs between a clear and a cloudy sky by %.3f with the mirror and %.3f without it\n", backend == rhi::Backend::Vulkan ? "vulkan" : "d3d12", with_mirror, without);
+    if (backend == rhi::Backend::Vulkan) AETHER_CHECK(with_mirror > without + 1.0); // the clouds are in the mirror, beyond the sky's lighting
+    else AETHER_CHECK(with_mirror <= without + 0.05);                              // no mirror there yet
+    std::error_code ignored;
+    fs::remove_all(root, ignored);
+}
+AETHER_TEST(Water_MirrorsTheCloudsToo_D3D12) { Water_MirrorsTheCloudsToo(rhi::Backend::D3D12); }
+AETHER_TEST(Water_MirrorsTheCloudsToo_Vulkan) { Water_MirrorsTheCloudsToo(rhi::Backend::Vulkan); }
 
 // A wind zone replaces the world's wind where an object stands in it: an east wind everywhere, a zone around the tuft that blows toward the camera, and only the
 // tuft inside the zone loses its sideways sway; a zone elsewhere changes nothing.

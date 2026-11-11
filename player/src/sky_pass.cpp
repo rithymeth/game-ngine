@@ -113,7 +113,15 @@ SkyConstants SkyPass::MakeConstants(const View& view) {
     return c;
 }
 
-SkyPass::SkyPass(gfx::rhi::IDevice& device, gfx::rhi::ISwapChain& swap_chain, bool hdr_target) : device_(device) {
+SkyConstants SkyPass::MakeMirroredConstants(const View& view) {
+    SkyConstants c = MakeConstants(view);
+    c.right[1] = -c.right[1];
+    c.up[1] = -c.up[1];
+    c.forward[1] = -c.forward[1];
+    return c;
+}
+
+SkyPass::SkyPass(gfx::rhi::IDevice& device, gfx::rhi::ISwapChain& swap_chain, bool hdr_target) : device_(device), swap_chain_(swap_chain), hdr_target_(hdr_target) {
     if (!device.SupportsFrameConstants()) return;
     // Probe for half-float textures with a 1x1 one.
     const u16 probe_texel[4] = {0, 0, 0, 0x3C00};
@@ -140,6 +148,7 @@ SkyPass::SkyPass(gfx::rhi::IDevice& device, gfx::rhi::ISwapChain& swap_chain, bo
 SkyPass::~SkyPass() {
     Release();
     if (pipeline_.IsValid()) device_.DestroyPipeline(pipeline_);
+    if (mirror_pipeline_.IsValid()) device_.DestroyPipeline(mirror_pipeline_);
 }
 
 void SkyPass::Release() {
@@ -197,6 +206,36 @@ void SkyPass::Draw(gfx::rhi::ICommandList& commands, const View& view, gfx::rhi:
     commands.BindBindlessTextures();
     commands.SetPushConstants(&constants, sizeof(constants));
     commands.Draw(3);
+}
+
+bool SkyPass::DrawMirrored(gfx::rhi::ICommandList& commands, const View& view, gfx::rhi::BufferHandle frame_constants) {
+    if (!supported_ || !hdr_target_ || !texture_.IsValid() || !frame_constants.IsValid() || mirror_failed_) return false;
+    if (!mirror_pipeline_.IsValid()) {
+        gfx::rhi::PipelineDesc desc;
+        desc.hlsl_source = ShaderSource();
+        desc.push_constant_size_bytes = sizeof(SkyConstants);
+        desc.frame_constants_size_bytes = sizeof(FrameData);
+        desc.enable_bindless_textures = true;
+        desc.render_texture_target = true;
+        desc.render_texture_depth = true;
+        desc.depth_test = false;
+        desc.depth_write = false;
+        try {
+            mirror_pipeline_ = device_.CreatePipeline(desc, swap_chain_);
+        } catch (const std::exception&) {
+        }
+        if (!mirror_pipeline_.IsValid()) {
+            mirror_failed_ = true;
+            return false;
+        }
+    }
+    const SkyConstants constants = MakeMirroredConstants(view);
+    commands.BindPipeline(mirror_pipeline_);
+    commands.BindFrameConstants(frame_constants);
+    commands.BindBindlessTextures();
+    commands.SetPushConstants(&constants, sizeof(constants));
+    commands.Draw(3);
+    return true;
 }
 
 } // namespace aether::player
