@@ -356,3 +356,9 @@ alpine, desert, islands), a seed box and dice, undo, and a mesh family per scatt
 to the Foliage editor; **Bake** writes `Content/Generated/<name>/` with the terrain as a model, a `.glb` per mesh variant and a scene of model entities the player
 loads. The generator got three fixes found by rendering a bake (less spiky erosion, flat lakes and sea, a smoothing setting). Grass, reeds and cacti have no mesh
 generator yet and bake as nothing.
+
+## Plants
+
+`procedural_mesh.h` gains shrubs, grass tufts, reeds with cattail heads and saguaro-style cacti (`GenerateShrub`, `GenerateGrass`, `GenerateReeds`, `GenerateCactus`,
+and the kinds `Shrub`, `Grass`, `Reeds`, `Cactus` for `GenerateVariant`). The Procedural World editor's starter scatter rules now bake with them. A bake's object
+budget goes to the rules in order, so trees keep every instance and the grass is thinned to fit what is left.

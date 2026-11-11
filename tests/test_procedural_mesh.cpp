@@ -31,7 +31,8 @@ u64 HashMesh(const ProceduralMesh& m) {
 
 constexpr ProceduralKind kAllKinds[] = {ProceduralKind::Rock, ProceduralKind::Cliff, ProceduralKind::PineTree, ProceduralKind::BroadleafTree,
                                         ProceduralKind::DeadTree, ProceduralKind::House, ProceduralKind::Tower, ProceduralKind::Wall,
-                                        ProceduralKind::Pillar, ProceduralKind::Arch, ProceduralKind::Stairs};
+                                        ProceduralKind::Pillar, ProceduralKind::Arch, ProceduralKind::Stairs, ProceduralKind::Shrub, ProceduralKind::Grass,
+                                        ProceduralKind::Reeds, ProceduralKind::Cactus};
 
 Vec3 Extent(const MeshStats& s) { return s.bounds_max - s.bounds_min; }
 
@@ -50,7 +51,8 @@ AETHER_TEST(ProceduralEveryKindMakesValidMeshes) {
             AETHER_CHECK(m.TriangleCount() > 8);
             // A budget per kind: what a game can place by the hundred.
             const u32 budget = kind == ProceduralKind::BroadleafTree ? 12000u : kind == ProceduralKind::DeadTree ? 8000u : kind == ProceduralKind::Cliff ? 12000u
-                               : kind == ProceduralKind::PineTree ? 1500u : kind == ProceduralKind::Rock ? 2000u : (kind == ProceduralKind::House || kind == ProceduralKind::Tower) ? 6000u : 600u;
+                               : kind == ProceduralKind::PineTree ? 1500u : kind == ProceduralKind::Rock ? 2000u : (kind == ProceduralKind::House || kind == ProceduralKind::Tower) ? 6000u
+                               : kind == ProceduralKind::Shrub ? 1500u : (kind == ProceduralKind::Grass || kind == ProceduralKind::Reeds || kind == ProceduralKind::Cactus) ? 900u : 600u;
             if (m.TriangleCount() > budget) std::printf("    %s variant %u: %u triangles, budget %u\n", ProceduralKindName(kind), variant, m.TriangleCount(), budget);
             AETHER_CHECK(m.TriangleCount() <= budget);
             AETHER_CHECK(m.VertexCount() > 8);
@@ -285,4 +287,59 @@ AETHER_TEST(ProceduralGenerationSpeed) {
                 if (FILE* f = std::fopen(path.c_str(), "wb")) { std::fwrite(glb.data(), 1, glb.size(), f); std::fclose(f); }
             }
     }
+}
+
+AETHER_TEST(ProceduralPlantsHaveTheirShapeAndParts) {
+    // Shrubs: the height asked for, a stem primitive and a leaf one; more masses, more triangles.
+    ShrubParams shrub;
+    shrub.height = 1.3f;
+    const ProceduralMesh a = GenerateShrub(shrub, 4);
+    AETHER_CHECK(std::fabs(ComputeStats(a.mesh).bounds_max.y - 1.3f) < 1e-3f && a.mesh.primitives.size() == 2);
+    ShrubParams many = shrub;
+    many.masses = 12;
+    AETHER_CHECK(GenerateShrub(many, 4).TriangleCount() > a.TriangleCount());
+    ShrubParams bare = shrub;
+    bare.stems = 0.0f;
+    AETHER_CHECK(GenerateShrub(bare, 4).mesh.primitives.size() == 1);
+
+    // Grass: blades are two-sided ribbons (six triangles a blade a side), tapering, within the tuft's radius and height.
+    GrassParams grass;
+    grass.blades = 12;
+    grass.height = 0.6f;
+    grass.spread = 0.2f;
+    const ProceduralMesh g = GenerateGrass(grass, 9);
+    AETHER_CHECK(g.TriangleCount() == 12u * 3u * 2u * 2u);
+    const MeshStats gs = ComputeStats(g.mesh);
+    AETHER_CHECK(gs.bounds_max.y <= 0.6f + 1e-3f && gs.bounds_max.y > 0.3f && std::fabs(gs.bounds_min.y) < 1e-4f);
+    AETHER_CHECK(Extent(gs).x < 0.2f * 2.0f + 0.6f * 0.4f && Extent(gs).z < 0.2f * 2.0f + 0.6f * 0.4f);
+    // Both faces: for every triangle there is one on the same corners facing the other way (normals opposite).
+    usize facing_up = 0, facing_down = 0;
+    for (const MeshVertex& v : g.mesh.primitives[0].vertices) (v.normal[1] >= 0.0f ? facing_up : facing_down)++;
+    AETHER_CHECK(facing_up > 0 && facing_down > 0);
+    GrassParams more = grass;
+    more.blades = 30;
+    AETHER_CHECK(GenerateGrass(more, 9).TriangleCount() > g.TriangleCount() * 2);
+
+    // Reeds: stalks and (with heads) a second primitive; the tallest stem is within the height.
+    ReedParams reeds;
+    reeds.height = 1.8f;
+    const ProceduralMesh r = GenerateReeds(reeds, 2);
+    AETHER_CHECK(ComputeStats(r.mesh).bounds_max.y <= 1.8f + 0.05f && ComputeStats(r.mesh).bounds_max.y > 1.0f);
+    ReedParams plain = reeds;
+    plain.heads = false;
+    AETHER_CHECK(GenerateReeds(plain, 2).mesh.primitives.size() == 1);
+
+    // Cacti: the height asked for (the rounded top included), arms add geometry and reach out past the column.
+    CactusParams cactus;
+    cactus.height = 3.0f;
+    cactus.radius = 0.2f;
+    cactus.arms = 0;
+    const MeshStats plain_cactus = ComputeStats(GenerateCactus(cactus, 5).mesh);
+    AETHER_CHECK(std::fabs(plain_cactus.bounds_max.y - 3.0f) < 1e-3f && Extent(plain_cactus).x < 0.5f);
+    cactus.arms = 3;
+    const ProceduralMesh armed = GenerateCactus(cactus, 5);
+    AETHER_CHECK(armed.TriangleCount() > GenerateCactus(CactusParams{.height = 3.0f, .radius = 0.2f, .arms = 0}, 5).TriangleCount() * 2);
+    AETHER_CHECK(Extent(ComputeStats(armed.mesh)).x > 0.6f || Extent(ComputeStats(armed.mesh)).z > 0.6f);
+    std::string error;
+    AETHER_CHECK(ValidateMesh(armed, &error) && ValidateMesh(g, &error) && ValidateMesh(r, &error) && ValidateMesh(a, &error));
 }

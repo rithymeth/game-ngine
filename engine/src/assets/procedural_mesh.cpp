@@ -627,6 +627,145 @@ ProceduralMesh GenerateTree(const TreeParams& in, u32 seed) {
 }
 
 // ======================================================================================================================================
+// Plants
+
+namespace {
+// Scales every vertex of the builders about the origin so the highest point is at `height`.
+void FitHeight(f32 height, std::initializer_list<MeshBuilder*> builders) {
+    f32 top = 1e-3f;
+    for (MeshBuilder* b : builders)
+        for (u32 i = 0; i < b->VertexCount(); ++i) top = std::max(top, b->Position(i).y);
+    const f32 k = height / top;
+    for (MeshBuilder* b : builders)
+        for (u32 i = 0; i < b->VertexCount(); ++i) b->Position(i) = b->Position(i) * k;
+}
+} // namespace
+
+ProceduralMesh GenerateShrub(const ShrubParams& in, u32 seed) {
+    Rng rng(Mix(seed, 0x53485242u)); // "SHRB"
+    const f32 height = std::max(in.height, 0.1f);
+    const u32 masses = std::clamp(in.masses, 3u, 14u);
+    const f32 radius = height * std::max(in.spread, 0.3f) * 0.5f;
+    MeshBuilder leaves, wood;
+    std::vector<Vec3> centres;
+    for (u32 i = 0; i < masses; ++i) {
+        // Low and wide: masses ring the clump, a few rise at the middle.
+        const f32 a = rng.Range(0.0f, 2.0f * kPi), r = std::sqrt(rng.Unit()) * radius;
+        const f32 y = height * rng.Range(0.3f, 0.75f) * (1.0f - 0.5f * r / std::max(radius, 1e-3f) + 0.5f);
+        centres.push_back(Vec3(std::cos(a) * r, y, std::sin(a) * r));
+        LeafBlob(leaves, centres.back(), height * rng.Range(0.22f, 0.36f), std::min(in.detail, 1u), rng);
+    }
+    const u32 stems = static_cast<u32>(std::max(in.stems, 0.0f));
+    for (u32 s = 0; s < stems; ++s) {
+        const Vec3 target = centres[s % centres.size()];
+        const Vec3 base(target.x * 0.3f, -0.03f, target.z * 0.3f);
+        wood.Tube({base, Lerp(base, target, 0.5f) + Vec3(rng.Range(-0.04f, 0.04f), 0, rng.Range(-0.04f, 0.04f)), target}, {height * 0.025f, height * 0.018f, height * 0.01f}, 4, false, true);
+    }
+    FitHeight(height, {&leaves, &wood});
+    ProceduralMesh out;
+    AddPrimitive(out, wood, Shading::Smooth, UvMode::Given, Material(in.stem_color, 0.95f));
+    AddPrimitive(out, leaves, Shading::Smooth, UvMode::BoxProjected, Material(in.leaf_color, 0.8f));
+    return out;
+}
+
+ProceduralMesh GenerateGrass(const GrassParams& in, u32 seed) {
+    Rng rng(Mix(seed, 0x47524153u)); // "GRAS"
+    const f32 height = std::max(in.height, 0.05f);
+    const u32 blades = std::clamp(in.blades, 3u, 40u);
+    MeshBuilder b;
+    constexpr u32 rows = 3; // segments up each blade
+    for (u32 k = 0; k < blades; ++k) {
+        const f32 a = rng.Range(0.0f, 2.0f * kPi), r = std::sqrt(rng.Unit()) * in.spread;
+        const Vec3 root(std::cos(a) * r, 0.0f, std::sin(a) * r);
+        const f32 h = height * rng.Range(0.55f, 1.0f);
+        const f32 facing = rng.Range(0.0f, 2.0f * kPi);
+        const Vec3 lean_dir(std::cos(facing), 0.0f, std::sin(facing));
+        const Vec3 side(-lean_dir.z, 0.0f, lean_dir.x);
+        const f32 lean = h * in.curl * rng.Range(0.3f, 1.0f), w = in.width * rng.Range(0.7f, 1.2f);
+        // A ribbon whose centre line bends over: up first, then more and more along its lean.
+        std::vector<u32> left, right;
+        for (u32 s = 0; s <= rows; ++s) {
+            const f32 t = static_cast<f32>(s) / static_cast<f32>(rows);
+            const Vec3 centre = root + lean_dir * (lean * t * t) + Vec3(0, h * (1.0f - 0.25f * t * t) * t, 0);
+            const f32 half = 0.5f * w * (1.0f - 0.92f * t); // tapering to a point
+            left.push_back(b.Vertex(centre - side * half, 0.0f, t));
+            right.push_back(b.Vertex(centre + side * half, 1.0f, t));
+        }
+        for (u32 s = 0; s < rows; ++s) {
+            // Both faces, so the blade shows from either side whatever the culling.
+            b.Quad(left[s], right[s], right[s + 1], left[s + 1]);
+            b.Quad(left[s], left[s + 1], right[s + 1], right[s]);
+        }
+    }
+    ProceduralMesh out;
+    AddPrimitive(out, b, Shading::Flat, UvMode::Given, Material(in.color, 0.85f));
+    return out;
+}
+
+ProceduralMesh GenerateReeds(const ReedParams& in, u32 seed) {
+    Rng rng(Mix(seed, 0x52454544u)); // "REED"
+    const f32 height = std::max(in.height, 0.2f);
+    const u32 stems = std::clamp(in.stems, 2u, 20u);
+    MeshBuilder stalks, heads;
+    for (u32 k = 0; k < stems; ++k) {
+        const f32 a = rng.Range(0.0f, 2.0f * kPi), r = std::sqrt(rng.Unit()) * in.spread;
+        const Vec3 root(std::cos(a) * r, -0.02f, std::sin(a) * r);
+        const f32 h = height * rng.Range(0.6f, 1.0f);
+        const f32 lean_a = rng.Range(0.0f, 2.0f * kPi), lean = h * rng.Range(0.02f, 0.14f);
+        const Vec3 lean_dir(std::cos(lean_a), 0, std::sin(lean_a));
+        std::vector<Vec3> path;
+        std::vector<f32> radii;
+        for (u32 s = 0; s <= 4; ++s) {
+            const f32 t = static_cast<f32>(s) / 4.0f;
+            path.push_back(root + lean_dir * (lean * t * t) + Vec3(0, h * t, 0));
+            radii.push_back(0.012f * (1.0f - 0.55f * t));
+        }
+        stalks.Tube(path, radii, 4, false, true);
+        if (in.heads && rng.Chance(0.55f)) {
+            // A cattail: a short fat cylinder just under the tip.
+            const Vec3 top = path.back(), below = path[3] + (path[4] - path[3]) * 0.35f;
+            heads.Tube({below, top}, {0.028f, 0.02f}, 6, true, true);
+        }
+    }
+    ProceduralMesh out;
+    AddPrimitive(out, stalks, Shading::Smooth, UvMode::Given, Material(in.stem_color, 0.8f));
+    AddPrimitive(out, heads, Shading::Smooth, UvMode::Given, Material(in.head_color, 0.9f));
+    return out;
+}
+
+ProceduralMesh GenerateCactus(const CactusParams& in, u32 seed) {
+    Rng rng(Mix(seed, 0x43414354u)); // "CACT"
+    const f32 height = std::max(in.height, 0.3f), radius = std::clamp(in.radius, 0.02f, height * 0.4f);
+    const u32 sides = std::clamp(in.sides, 5u, 16u);
+    MeshBuilder b;
+    // The column: a rounded top (the radius closes over the last rings).
+    std::vector<Vec3> path;
+    std::vector<f32> radii;
+    const u32 rings = 9;
+    for (u32 i = 0; i <= rings; ++i) {
+        const f32 t = static_cast<f32>(i) / static_cast<f32>(rings);
+        path.push_back(Vec3(0, t * height, 0));
+        const f32 cap = t > 0.85f ? std::sqrt(std::max(1.0f - (t - 0.85f) / 0.15f * (t - 0.85f) / 0.15f * 0.97f, 0.0f)) : 1.0f;
+        radii.push_back(radius * cap * (1.0f + 0.12f * std::exp(-t * 14.0f)));
+    }
+    b.Tube(path, radii, sides, false, true);
+    const u32 arms = std::min(in.arms, 4u);
+    for (u32 k = 0; k < arms; ++k) {
+        // An arm leaves the column sideways and turns upward: out, a bend, then up.
+        const f32 a = (static_cast<f32>(k) + rng.Range(-0.25f, 0.25f)) / static_cast<f32>(std::max(arms, 1u)) * 2.0f * kPi;
+        const Vec3 out_dir(std::cos(a), 0, std::sin(a));
+        const f32 y0 = height * rng.Range(0.3f, 0.6f), reach = height * rng.Range(0.18f, 0.3f), rise = height * rng.Range(0.2f, 0.34f), ar = radius * rng.Range(0.55f, 0.7f);
+        const Vec3 start = out_dir * (radius * 0.4f) + Vec3(0, y0, 0);
+        const std::vector<Vec3> arm = {start, start + out_dir * (reach * 0.6f), start + out_dir * reach + Vec3(0, rise * 0.1f, 0), start + out_dir * (reach + ar * 0.5f) + Vec3(0, rise * 0.55f, 0),
+                                       start + out_dir * (reach + ar * 0.5f) + Vec3(0, rise, 0)};
+        b.Tube(arm, {ar, ar, ar, ar * 0.95f, ar * 0.6f}, std::max(sides - 2, 5u), false, true);
+    }
+    ProceduralMesh out;
+    AddPrimitive(out, b, Shading::Smooth, UvMode::Given, Material(in.color, 0.7f));
+    return out;
+}
+
+// ======================================================================================================================================
 // Buildings and modular pieces
 
 namespace {
@@ -867,6 +1006,10 @@ const char* ProceduralKindName(ProceduralKind kind) {
     case ProceduralKind::Pillar: return "Pillar";
     case ProceduralKind::Arch: return "Arch";
     case ProceduralKind::Stairs: return "Stairs";
+    case ProceduralKind::Shrub: return "Shrub";
+    case ProceduralKind::Grass: return "Grass";
+    case ProceduralKind::Reeds: return "Reeds";
+    case ProceduralKind::Cactus: return "Cactus";
     }
     return "Unknown";
 }
@@ -934,6 +1077,44 @@ ProceduralMesh GenerateVariant(ProceduralKind kind, u32 variant, u32 seed) {
         p.wall_color = Tint(Lerp(Vec3(0.78f, 0.72f, 0.62f), Vec3(0.62f, 0.58f, 0.55f), rng.Unit()), rng, 0.1f);
         p.roof_color = Tint(Lerp(Vec3(0.45f, 0.20f, 0.15f), Vec3(0.28f, 0.28f, 0.32f), rng.Unit()), rng, 0.15f);
         return GenerateBuilding(p, mesh_seed);
+    }
+    case ProceduralKind::Shrub: {
+        ShrubParams p;
+        p.height = rng.Range(0.6f, 1.7f);
+        p.spread = rng.Range(0.8f, 1.5f);
+        p.masses = static_cast<u32>(rng.Int(4, 10));
+        p.detail = rng.Chance(0.4f) ? 1u : 0u;
+        p.stems = static_cast<f32>(rng.Int(2, 6));
+        p.leaf_color = Tint(Lerp(Vec3(0.20f, 0.40f, 0.14f), Vec3(0.38f, 0.48f, 0.16f), rng.Unit()), rng, 0.12f);
+        return GenerateShrub(p, mesh_seed);
+    }
+    case ProceduralKind::Grass: {
+        GrassParams p;
+        p.height = rng.Range(0.3f, 0.8f);
+        p.blades = static_cast<u32>(rng.Int(10, 22));
+        p.width = rng.Range(0.03f, 0.06f);
+        p.spread = rng.Range(0.12f, 0.25f);
+        p.curl = rng.Range(0.15f, 0.5f);
+        p.color = Tint(Lerp(Vec3(0.30f, 0.50f, 0.16f), Vec3(0.50f, 0.54f, 0.22f), rng.Unit()), rng, 0.1f);
+        return GenerateGrass(p, mesh_seed);
+    }
+    case ProceduralKind::Reeds: {
+        ReedParams p;
+        p.height = rng.Range(1.0f, 2.3f);
+        p.stems = static_cast<u32>(rng.Int(4, 10));
+        p.spread = rng.Range(0.18f, 0.35f);
+        p.heads = rng.Chance(0.75f);
+        p.stem_color = Tint(Vec3(0.36f, 0.48f, 0.20f), rng, 0.15f);
+        return GenerateReeds(p, mesh_seed);
+    }
+    case ProceduralKind::Cactus: {
+        CactusParams p;
+        p.height = rng.Range(1.2f, 4.5f);
+        p.radius = p.height * rng.Range(0.05f, 0.085f);
+        p.arms = static_cast<u32>(rng.Int(0, 3));
+        p.sides = static_cast<u32>(rng.Int(6, 10));
+        p.color = Tint(Vec3(0.22f, 0.40f, 0.20f), rng, 0.15f);
+        return GenerateCactus(p, mesh_seed);
     }
     case ProceduralKind::Wall:
     case ProceduralKind::Pillar:

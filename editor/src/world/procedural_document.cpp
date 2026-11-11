@@ -27,6 +27,10 @@ MeshSlot DefaultSlotFor(const std::string& rule_name) {
     if (rule_name == "Birch") return Slot(ProceduralKind::BroadleafTree, 6, 0.6f);
     if (rule_name == "Boulder") return Slot(ProceduralKind::Rock, 6);
     if (rule_name == "DeadTree") return Slot(ProceduralKind::DeadTree, 4);
+    if (rule_name == "Shrub") return Slot(ProceduralKind::Shrub, 6);
+    if (rule_name == "Grass") return Slot(ProceduralKind::Grass, 8);
+    if (rule_name == "Reeds") return Slot(ProceduralKind::Reeds, 5);
+    if (rule_name == "Cactus") return Slot(ProceduralKind::Cactus, 5);
     if (rule_name == "SnowRock") return Slot(ProceduralKind::Rock, 4);
     return MeshSlot{};
 }
@@ -359,12 +363,24 @@ BakeReport ProceduralWorldDocument::Bake(const std::string& content_root, const 
         SetModelPath(renderer, relative + "/" + name + "_terrain.glb");
         world.CreateEntity(Transform{Vec3(0, 0, 0), Quaternion::Identity()}, renderer);
     }
-    std::vector<usize> eligible;
-    for (usize i = 0; i < instances_.size(); ++i)
-        if (instances_[i].rule < variant_paths.size() && !variant_paths[instances_[i].rule].empty()) eligible.push_back(i);
-    const usize cap = std::min<usize>(eligible.size(), options.max_scene_instances);
+    // The budget goes to the rules in order, as the scatter's own pecking order does: the trees keep every instance while there is room and the
+    // grass between them is what is thinned (evenly) to fit what is left.
+    std::vector<usize> chosen;
+    {
+        std::vector<std::vector<usize>> by_rule(settings_.rules.size());
+        for (usize i = 0; i < instances_.size(); ++i)
+            if (instances_[i].rule < variant_paths.size() && !variant_paths[instances_[i].rule].empty()) by_rule[instances_[i].rule].push_back(i);
+        usize left = options.max_scene_instances;
+        for (const std::vector<usize>& list : by_rule) {
+            if (left == 0) break;
+            const usize take = std::min(left, list.size());
+            for (usize k = 0; k < take; ++k) chosen.push_back(list[take >= list.size() ? k : k * list.size() / take]);
+            left -= take;
+        }
+    }
+    const usize cap = chosen.size();
     for (usize k = 0; k < cap; ++k) {
-        const usize pick = eligible[eligible.size() <= cap ? k : k * eligible.size() / cap];
+        const usize pick = chosen[k];
         const ScatterInstance& inst = instances_[pick];
         const std::vector<std::string>& paths = variant_paths[inst.rule];
         ModelRenderer renderer;

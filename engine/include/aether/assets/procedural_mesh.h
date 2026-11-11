@@ -112,6 +112,47 @@ struct BuildingParams {
 };
 ProceduralMesh GenerateBuilding(const BuildingParams& params, u32 seed);
 
+struct ShrubParams {
+    f32 height = 1.0f;       // metres
+    f32 spread = 1.1f;       // the clump's width as a share of its height
+    u32 masses = 6;          // leaf masses (3 to 14)
+    u32 detail = 0;          // icosphere splits per leaf mass, 0 or 1
+    f32 stems = 4.0f;        // thin stems from the ground to the masses (0 for none)
+    Vec3 leaf_color{0.24f, 0.42f, 0.16f};
+    Vec3 stem_color{0.30f, 0.22f, 0.14f};
+};
+ProceduralMesh GenerateShrub(const ShrubParams& params, u32 seed);
+
+struct GrassParams {
+    f32 height = 0.5f;       // metres, the tallest blade
+    u32 blades = 14;         // 3 to 40
+    f32 width = 0.045f;      // blade width at the root, metres
+    f32 spread = 0.18f;      // radius of the tuft, metres
+    f32 curl = 0.35f;        // how far the blades lean and bend, as a share of their height
+    Vec3 color{0.34f, 0.52f, 0.18f};
+};
+// Blades are two-sided ribbons (both windings), flat shaded, so they show from either side with a culled back face.
+ProceduralMesh GenerateGrass(const GrassParams& params, u32 seed);
+
+struct ReedParams {
+    f32 height = 1.5f;       // metres, the tallest stem
+    u32 stems = 7;           // 2 to 20
+    f32 spread = 0.25f;
+    bool heads = true;       // cattail heads on some stems
+    Vec3 stem_color{0.36f, 0.48f, 0.20f};
+    Vec3 head_color{0.30f, 0.18f, 0.10f};
+};
+ProceduralMesh GenerateReeds(const ReedParams& params, u32 seed);
+
+struct CactusParams {
+    f32 height = 2.5f;       // metres
+    f32 radius = 0.18f;      // the column's, metres
+    u32 arms = 2;            // 0 to 4
+    u32 sides = 8;
+    Vec3 color{0.22f, 0.40f, 0.20f};
+};
+ProceduralMesh GenerateCactus(const CactusParams& params, u32 seed);
+
 enum class ModularKind : u8 { Wall, Pillar, Arch, Stairs };
 struct ModularParams {
     ModularKind kind = ModularKind::Wall;
@@ -125,8 +166,8 @@ ProceduralMesh GenerateModular(const ModularParams& params, u32 seed);
 // ---------------------------------------------------------------------------------------------------------------------------------------
 // Variants.
 
-enum class ProceduralKind : u8 { Rock, Cliff, PineTree, BroadleafTree, DeadTree, House, Tower, Wall, Pillar, Arch, Stairs };
-inline constexpr u32 kProceduralKindCount = 11;
+enum class ProceduralKind : u8 { Rock, Cliff, PineTree, BroadleafTree, DeadTree, House, Tower, Wall, Pillar, Arch, Stairs, Shrub, Grass, Reeds, Cactus };
+inline constexpr u32 kProceduralKindCount = 15;
 const char* ProceduralKindName(ProceduralKind kind);
 
 // The `variant`th member of the family for `kind` under `seed`: parameters drawn from the kind's own ranges (sizes, proportions, colours) and
