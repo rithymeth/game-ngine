@@ -476,3 +476,5 @@ Swells foam on their crests in a strong wind (a wind strength over about 0.7). N
 
 `aether_player --record-dir <dir> [--record-fps <n>] --frames <n>` writes the frames of a normal run at the film's frame rate, so a scene's own sequences are filmed
 without a camera path. `--camera-path` still works alone or with it.
+
+**A real oak.** `ProceduralKind::OakTree` (and `TreeParams::crown_spread`, 1 for the old behaviour) makes a short thick-trunked tree whose limbs reach sideways before they rise, so the crown is wider than the tree is tall. The Procedural World editor's starter set has an "Oak" rule that uses it. It is a new kind, appended, so existing documents keep their kinds. Across 12 variants the oak's crown is 1.58 times as wide as it is tall and the birch's 1.31 (test `ProceduralOakIsABroaderTreeThanTheBirch`).

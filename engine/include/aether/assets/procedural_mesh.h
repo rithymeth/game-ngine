@@ -95,6 +95,7 @@ struct TreeParams {
     u32 foliage_detail = 1;     // icosphere splits per leaf mass (broadleaf), 0 to 2
     Vec3 bark_color{0.30f, 0.21f, 0.14f};
     Vec3 leaf_color{0.22f, 0.45f, 0.16f};
+    f32 crown_spread = 1.0f;    // broadleaf and dead: how far the main limbs reach sideways before they rise; above 1 is a broad crown, below a narrow one
     f32 sway = 0.08f;           // metres the leaves sway at the top in the wind (AETHER_materials_wind); the bark never does. 0 for none
 };
 ProceduralMesh GenerateTree(const TreeParams& params, u32 seed);
@@ -170,8 +171,8 @@ ProceduralMesh GenerateModular(const ModularParams& params, u32 seed);
 // ---------------------------------------------------------------------------------------------------------------------------------------
 // Variants.
 
-enum class ProceduralKind : u8 { Rock, Cliff, PineTree, BroadleafTree, DeadTree, House, Tower, Wall, Pillar, Arch, Stairs, Shrub, Grass, Reeds, Cactus };
-inline constexpr u32 kProceduralKindCount = 15;
+enum class ProceduralKind : u8 { Rock, Cliff, PineTree, BroadleafTree, DeadTree, House, Tower, Wall, Pillar, Arch, Stairs, Shrub, Grass, Reeds, Cactus, OakTree };
+inline constexpr u32 kProceduralKindCount = 16;
 const char* ProceduralKindName(ProceduralKind kind);
 
 // The `variant`th member of the family for `kind` under `seed`: parameters drawn from the kind's own ranges (sizes, proportions, colours) and
