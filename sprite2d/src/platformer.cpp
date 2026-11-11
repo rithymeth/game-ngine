@@ -48,6 +48,22 @@ void UpdatePlatformers(World& world, const Physics2D& physics, f32 dt) {
             !std::isfinite(pc.time_since_grounded) || pc.time_since_grounded < 0.0f ||
             !std::isfinite(pc.jump_buffer_timer) || pc.jump_buffer_timer < 0.0f ||
             !std::isfinite(rb.velocity.x) || !std::isfinite(rb.velocity.y)) continue;
+        // Where it started, remembered on its first step; a fall below the limit puts it back there at rest.
+        Transform& transform = *world.GetComponent<Transform>(e);
+        if (!pc.spawn_known && std::isfinite(transform.position.x) && std::isfinite(transform.position.y)) {
+            pc.spawn = {transform.position.x, transform.position.y};
+            pc.spawn_known = true;
+        }
+        if (pc.respawn_on_fall && pc.spawn_known && std::isfinite(pc.fall_limit_y) && transform.position.y < pc.fall_limit_y &&
+            pc.spawn.y >= pc.fall_limit_y) { // a start below the limit would respawn for ever
+            transform.position.x = pc.spawn.x;
+            transform.position.y = pc.spawn.y;
+            rb.velocity = {0.0f, 0.0f};
+            pc.jumping = false;
+            pc.jump_buffer_timer = 0.0f;
+            pc.time_since_grounded = 99.0f;
+            ++pc.respawns;
+        }
         pc.grounded = physics.IsGrounded(e);
         pc.time_since_grounded = pc.grounded ? 0.0f : std::min(pc.time_since_grounded + dt, 99.0f);
 

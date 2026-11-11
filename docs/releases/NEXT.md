@@ -268,3 +268,16 @@ A `SpriteAnimator` did nothing in the packaged player: no stage advanced it, so 
 now runs `Player.SpriteAnimation` each frame after scripts and Blueprints, reading sprite atlases from the package on first use.
 Looping clips loop, a clip that does not loop stops on its last frame and sets `finished`, and a clip the atlas lacks leaves the
 sprite as it is.
+
+## 2D: a character that falls out of the level can be put back
+
+`PlatformerController2D` has `respawn_on_fall` and `fall_limit_y`: with the first set, a character that drops below the limit is
+put back where it stood on its first step, at rest (`respawns` counts how often). It is off by default, so existing games are
+unchanged. The 2D Platformer template turns it on: its level has a pit, and a first-time player holding right used to lose the
+character for good.
+
+## Player: `--press` keys stay held in a windowed run
+
+`aether_player --press <Key>` set its keys once at start. A window that loses the keyboard clears every held key, which always
+happens under a virtual display, so windowed smoke runs had no input after their first frame. The keys are now set again every
+frame, as "held for the whole run" says.

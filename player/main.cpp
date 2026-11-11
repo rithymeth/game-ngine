@@ -497,12 +497,17 @@ int main(int argc, char** argv) {
             }
         }
 
+        // --press holds its keys for the whole run. They are set again every frame below: a window that loses the keyboard
+        // (always, under a virtual display; on a desktop, when another window is clicked) clears every held key, and setting
+        // them once here left a windowed smoke run with no input after its first focus event.
+        std::vector<input::Key> held_keys;
         for (const std::string& name : options.pressed) {
             const input::Key key = input::KeyFromName(name);
             if (key == input::Key::None) {
                 std::fprintf(stderr, "aether_player: no key named '%s'\n", name.c_str());
                 return 2;
             }
+            held_keys.push_back(key);
             game.Input().SetButton(key, true);
         }
         if (window && !game.StartAudioOutput(&error)) AETHER_LOG_WARN("Player", "Audio output: %s", error.c_str());
@@ -517,6 +522,7 @@ int main(int argc, char** argv) {
             if (window) {
                 if (!window->PumpMessages()) break;
                 ApplyWindowEvents(window->TakeEvents(), game.Input());
+                for (const input::Key key : held_keys) game.Input().SetButton(key, true);
                 if (window->IsMinimized()) continue;
             }
             const auto now = std::chrono::steady_clock::now();

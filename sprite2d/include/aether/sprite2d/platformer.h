@@ -24,6 +24,10 @@ struct PlatformerController2D {
     f32 jump_cut = 0.45f;           // vertical speed kept when the jump is released early
     f32 fall_gravity_scale = 1.6f;  // gravity while falling
     f32 max_fall_speed = 25.0f;     // m/s
+    // Falling out of the level: with `respawn_on_fall`, a character that drops below `fall_limit_y` is put back where it
+    // stood when it first ran, at rest. Off by default; without it a character that falls into a pit is simply gone.
+    bool respawn_on_fall = false;
+    f32 fall_limit_y = -10.0f;      // world y
 
     // Set by the host each frame from the player's input.
     f32 input_move = 0.0f;  // -1 left .. 1 right
@@ -36,6 +40,9 @@ struct PlatformerController2D {
     bool jumping = false; // rising from a jump (variable height applies)
     bool grounded = false;
     i32 facing = 1; // -1 or 1, the last way it was moved
+    bool spawn_known = false; // `spawn` holds the position of its first step
+    Vec2 spawn;
+    u32 respawns = 0;         // how many times it has been put back
 };
 
 // A camera that follows the first PlatformerController2D entity: it eases
@@ -78,6 +85,8 @@ AETHER_REFLECT(aether::sprite2d::PlatformerController2D, 1,
     AETHER_FIELD(jump_cut, Field_EditAnywhere, {.tooltip = "Share of the rising speed kept when the jump is released", .range_min = 0.0, .range_max = 1.0}),
     AETHER_FIELD(fall_gravity_scale, Field_EditAnywhere, {.range_min = 0.1, .range_max = 10.0}),
     AETHER_FIELD(max_fall_speed, Field_EditAnywhere, {.range_min = 1.0, .range_max = 200.0, .units = "m/s"}),
+    AETHER_FIELD(respawn_on_fall, Field_EditAnywhere, {.tooltip = "Put the character back at its start when it falls below the fall limit"}),
+    AETHER_FIELD(fall_limit_y, Field_EditAnywhere, {.tooltip = "World height below which the character counts as fallen", .units = "m"}),
     AETHER_FIELD(input_move, Field_ReadOnly),
     AETHER_FIELD(input_jump, Field_ReadOnly),
     AETHER_FIELD(grounded, Field_ReadOnly),
