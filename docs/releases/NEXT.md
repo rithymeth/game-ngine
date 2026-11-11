@@ -423,3 +423,8 @@ the cascades.
 
 `IDevice::CreateRenderTextureWithDepth` and `PipelineDesc::render_texture_depth`: a colour render texture with its own D32
 depth attachment, cleared by every `BeginTexturePass`. Vulkan only for now; D3D12 returns an invalid handle.
+
+## Water reflections
+
+Water mirrors terrain and non-swaying objects (Vulkan). `FrameData` is 1392 bytes. The procedural world baker writes one
+water primitive per level. `AETHER_RENDER_REFLECTIONS=0` disables it.

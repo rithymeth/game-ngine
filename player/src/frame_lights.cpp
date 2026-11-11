@@ -43,6 +43,7 @@ struct FrameData {
     float4 time;              // x: the game's time in seconds
     float4 wind;              // xy: the wind's direction in the world (x, z); z: strength; w: gust speed
     float4 wind_gusts;        // x: gustiness
+    uint4 reflection;         // x: the water reflection's bindless index (255: none)
     float4 wind_zones[7];     // the wind zones: xy direction (x, z), z strength, w gust speed
 };
 ConstantBuffer<FrameData> g_Frame : register(b0, space2);
