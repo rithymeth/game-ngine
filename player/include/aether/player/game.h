@@ -29,6 +29,7 @@
 #include "aether/scene/prefab.h"
 #include "aether/scene/scheduler.h"
 #include "aether/sequencer/sequence.h"
+#include "aether/sprite2d/atlas.h"
 #include "aether/sprite2d/tilemap.h"
 
 #include <array>
@@ -399,6 +400,8 @@ private:
     std::unique_ptr<sprite2d::Physics2D> physics2d_;
     std::unordered_map<assets::AssetGuid, std::unique_ptr<sprite2d::TilemapData>> tilemaps_;
     std::unordered_map<assets::AssetGuid, std::unique_ptr<sprite2d::Tileset>> tilesets_;
+    // Sprite atlases, read from the package when a SpriteAnimator first plays a clip of one (null: not an atlas).
+    std::unordered_map<assets::AssetGuid, std::unique_ptr<sprite2d::SpriteAtlas>> atlases_;
     std::vector<std::pair<std::string, std::unique_ptr<plugin::IModule>>> modules_;
     bool modules_started_ = false;
 

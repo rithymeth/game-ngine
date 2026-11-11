@@ -1,4 +1,6 @@
 #include "aether/assets/asset_database.h"
+#include "aether/sprite2d/atlas.h"
+#include "aether/reflection/serialize.h"
 #include "aether/gfx/rhi/command_list.h"
 #include "aether/gfx/rhi/device.h"
 #include "aether/player/scene_renderer.h"
@@ -822,4 +824,75 @@ AETHER_TEST(Templates_ThePlayerDrawsThePlatformer2D) {
     const usize total = static_cast<usize>(width) * height;
     std::printf("    2D platformer frame: %zu tile, %zu hero and %zu dark pixels of %zu\n", tiles, hero, dark, total);
     CHECK(tiles > total / 20 && hero > 20 && dark > total / 3);
+}
+
+// Sprite clips play in the packaged game. Nothing advanced a SpriteAnimator there, so an animated sprite stayed on one frame.
+// The 2D template's hero gets a two-frame looping clip and a one-shot one, is cooked, and is watched frame by frame.
+AETHER_TEST(Templates_SpriteClipsPlayInThePackagedGame) {
+    std::string error;
+    ProjectPaths paths;
+    AETHER_CHECK(CreateProjectFromTemplate(Dir("sprite_clips"), "Clips2D", "platformer_2d", &paths, &error));
+    sprite2d::SpriteAtlas atlas;
+    AETHER_CHECK(sprite2d::LoadAtlas(paths.content / "Sprites/Player.aatlas", atlas, &error));
+    atlas.frames.push_back({"step_a", 0, 0, 13, 16, 0.5f, 0.5f});
+    atlas.frames.push_back({"step_b", 0, 0, 13, 16, 0.5f, 0.5f});
+    atlas.clips.push_back({"run", {"step_a", "step_b"}, 10.0f, true});
+    atlas.clips.push_back({"land", {"step_b", "idle"}, 10.0f, false});
+    AETHER_CHECK(sprite2d::SaveAtlas(paths.content / "Sprites/Player.aatlas", atlas, &error));
+    // The hero plays "run" from the start.
+    const std::filesystem::path scene_file = paths.content / "Scenes/Main.ascene";
+    nlohmann::json scene;
+    {
+        std::ifstream in(scene_file);
+        in >> scene;
+    }
+    bool added = false;
+    for (auto& entity : scene["entities"]) {
+        if (!entity["components"].contains("Sprite")) continue;
+        sprite2d::SpriteAnimator animator;
+        sprite2d::PlayClip(animator, "run");
+        entity["components"]["SpriteAnimator"] = reflect::ToJson(animator);
+        added = true;
+    }
+    AETHER_CHECK(added);
+    {
+        std::ofstream out(scene_file, std::ios::binary);
+        out << scene.dump(2);
+    }
+    cook::CookOptions options;
+    options.project_file = paths.file;
+    options.output_dir = paths.root / "Paks";
+    options.configuration = cook::BuildConfiguration::Shipping;
+    const cook::CookReport report = cook::Cook(options);
+    AETHER_CHECK(report.ok);
+    player::GamePackage package;
+    AETHER_CHECK(package.Mount(report.pak_file.string()) && package.LoadManifest(&error));
+    player::Game game(package);
+    AETHER_CHECK(game.LoadStartupScene(&error));
+    const Entity hero = FindEntitiesWithTag(game.GetWorld(), "Player")[0];
+    game.BeginPlay();
+    const auto frame = [&] { return std::string(game.GetWorld().GetComponent<sprite2d::Sprite>(hero)->frame); };
+    const auto animator = [&] { return game.GetWorld().GetComponent<sprite2d::SpriteAnimator>(hero); };
+    AETHER_CHECK(animator() != nullptr);
+    if (animator() == nullptr) return;
+
+    // 10 frames a second at 60 Hz: six ticks a frame. The clip loops a, b, a, b.
+    std::string seen;
+    for (int tick = 0; tick < 24; ++tick) {
+        game.Tick(1.0f / 60.0f);
+        if (tick % 6 == 2) seen += frame() == "step_a" ? 'a' : frame() == "step_b" ? 'b' : '?';
+    }
+    CHECK(seen == "abab");
+    CHECK(animator()->playing && !animator()->finished);
+
+    // A clip that does not loop ends on its last frame and says so; a game script starts it the same way.
+    sprite2d::PlayClip(*animator(), "land");
+    for (int tick = 0; tick < 30; ++tick) game.Tick(1.0f / 60.0f);
+    CHECK(frame() == "idle" && animator()->finished && !animator()->playing);
+
+    // A clip the atlas does not have leaves the sprite as it is, and the game does not complain every frame.
+    sprite2d::PlayClip(*animator(), "no_such_clip");
+    const usize warnings = game.Warnings().size();
+    for (int tick = 0; tick < 5; ++tick) game.Tick(1.0f / 60.0f);
+    CHECK(frame() == "idle" && game.Warnings().size() == warnings);
 }
