@@ -1443,3 +1443,31 @@ Counted again on the tiled HeroValley (same camera, GPU timestamps, 12 frames av
 - **Instancing is the lever that would remain** (the 3,600 far-cascade draws are a few shrub and tree meshes placed thousands of times), but nothing here can show it helps: the machine has
   no GPU. It is not built. The next measurement worth making is one on a real GPU, for these two numbers: the GPU time of the shadow pass at Epic, and of the scene pass, on the tiled
   HeroValley, with `AETHER_PLAYER_GPU_TIMING=1`.
+
+## What does walkable terrain cost? (2026-11-11)
+
+A baked world gets a static triangle-mesh collider over its ground (`BakeOptions::terrain_collision`, `terrain_collision_grid`) so a `CharacterMovement` capsule can stand on it. The mesh is the
+ground on a grid of at most `terrain_collision_grid` quads a side, the same triangles the ground is drawn with when the grid equals the drawn one. Two costs, both measured:
+
+**Startup.** HeroValley (576 m, drawn grid 384, 6,000 plants), the packaged player on the software rasterizer, 480 x 270, cold start to the fourth frame, three runs each, the same assets:
+
+| collision grid | triangles | scene file | start to frame 4 |
+|---|---|---|---|
+| none | 0 | 3.5 MB | 3.4 to 3.9 s |
+| 192 (the default) | 73,728 | 11.1 MB | 4.1 to 4.4 s (+0.5 to 0.7 s) |
+| 384 (the drawn one) | 294,912 | 34.5 MB | 6.1 to 6.4 s (+2.4 s) |
+
+**Accuracy.** Where the two triangles of a quad meet the collision mesh is the average of two corner heights and the ground is the heightmap's (a Temperate 193 x 193 map; this is the gap between the
+mesh and the heightmap, the most a foot can sink into or float above it between the mesh's vertices):
+
+| collision grid | triangles | mean gap | worst gap |
+|---|---|---|---|
+| 48 | 4,608 | 0.41 m | 3.14 m |
+| 96 | 18,432 | 0.18 m | 2.30 m |
+| 192 | 73,728 | 0.056 m | 1.05 m |
+
+The worst gaps are on cliffs (steeper than a character's 45 degree limit, where it slides anyway). The 192 default has a mean gap of 6 cm, about a boot's thickness. On the character walking test (feet within 0.00 to 0.31 m of the ground along 46 m of walkable lines) the collision at the drawn grid was used.
+
+- **The scene file is the real cost.** The collider is JSON (a vertex is three numbers, a triangle three indices), 11 MB for HeroValley's 74 k triangles. The cooked pak is binary and smaller. A heightfield
+  collider (the heights alone, one number a sample) would be about a tenth of that and the way to go if worlds get bigger; Jolt has `HeightFieldShape`, the engine has no component for it yet.
+- **Not measured:** the Jolt mesh shape's build time on its own (it is in the +0.5 to 0.7 s), a real GPU (this is CPU work), the cooked pak's size difference.

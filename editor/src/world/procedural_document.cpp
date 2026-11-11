@@ -4,6 +4,9 @@
 #include "aether/renderer/components.h"
 #include "aether/scene/components.h"
 #include "aether/scene/serialization.h"
+#if AETHER_EDITOR_NET_PHYSICS
+#include "aether/physics/components.h"
+#endif
 
 #include <algorithm>
 #include <chrono>
@@ -38,6 +41,16 @@ MeshSlot DefaultSlotFor(const std::string& rule_name) {
     if (rule_name == "Cactus") return Slot(ProceduralKind::Cactus, 5);
     if (rule_name == "SnowRock") return Slot(ProceduralKind::Rock, 4);
     return MeshSlot{};
+}
+
+// The sample columns and rows the ground's mesh is built on: every `step`-th, so at most `max_grid` quads a side, and always the last. The drawn ground and the
+// collision mesh both come from here, so they are the same triangles.
+void TerrainGridLines(u32 w, u32 h, u32 max_grid, std::vector<u32>& xs, std::vector<u32>& zs) {
+    const u32 step = std::max(1u, (std::max(w, h) - 1 + std::max(max_grid, 2u) - 1) / std::max(max_grid, 2u));
+    for (u32 x = 0; x < w - 1; x += step) xs.push_back(x);
+    xs.push_back(w - 1);
+    for (u32 z = 0; z < h - 1; z += step) zs.push_back(z);
+    zs.push_back(h - 1);
 }
 
 std::string FileSafe(const std::string& name) {
@@ -298,16 +311,31 @@ ProceduralMesh ProceduralWorldDocument::BuildTerrainModel(const GeneratedTerrain
     return out;
 }
 
+ProceduralWorldDocument::CollisionMesh ProceduralWorldDocument::BuildTerrainCollisionMesh(const GeneratedTerrain& t, u32 max_grid) {
+    CollisionMesh out;
+    const u32 w = t.Width(), h = t.Height();
+    if (w < 2 || h < 2) return out;
+    std::vector<u32> xs, zs;
+    TerrainGridLines(w, h, max_grid, xs, zs);
+    const f32 cell = t.heightmap.cell_size;
+    out.vertices.reserve(xs.size() * zs.size());
+    for (const u32 z : zs)
+        for (const u32 x : xs) out.vertices.push_back(Vec3(static_cast<f32>(x) * cell, t.heightmap.heights[t.Index(x, z)], static_cast<f32>(z) * cell));
+    out.indices.reserve((xs.size() - 1) * (zs.size() - 1) * 6);
+    for (usize zi = 0; zi + 1 < zs.size(); ++zi)
+        for (usize xi = 0; xi + 1 < xs.size(); ++xi) {
+            const u32 i00 = static_cast<u32>(zi * xs.size() + xi), i10 = i00 + 1, i01 = static_cast<u32>((zi + 1) * xs.size() + xi), i11 = i01 + 1;
+            out.indices.insert(out.indices.end(), {i00, i01, i10, i10, i01, i11}); // the same two triangles, the same winding, as the drawn ground
+        }
+    return out;
+}
+
 ProceduralMesh ProceduralWorldDocument::BuildTexturedTerrainModel(const GeneratedTerrain& t, u32 max_grid, const std::string& texture_uri, f32 skirt_depth, const std::string& water_texture_uri, const std::string& water_normal_uri, u32 tiles_per_side) {
     ProceduralMesh out;
     const u32 w = t.Width(), h = t.Height();
     if (w < 2 || h < 2) return out;
-    const u32 step = std::max(1u, (std::max(w, h) - 1 + std::max(max_grid, 2u) - 1) / std::max(max_grid, 2u));
     std::vector<u32> xs, zs;
-    for (u32 x = 0; x < w - 1; x += step) xs.push_back(x);
-    xs.push_back(w - 1);
-    for (u32 z = 0; z < h - 1; z += step) zs.push_back(z);
-    zs.push_back(h - 1);
+    TerrainGridLines(w, h, max_grid, xs, zs);
     const f32 cell = t.heightmap.cell_size;
     auto height_at = [&](u32 x, u32 z) { return t.heightmap.heights[t.Index(x, z)]; };
     // The water at a sample: a lake's fill level, the sea's level, or none (a negative infinity).
@@ -483,6 +511,17 @@ BakeReport ProceduralWorldDocument::Bake(const std::string& content_root, const 
         SetModelPath(renderer, relative + "/" + name + "_terrain.glb");
         world.CreateEntity(Transform{Vec3(0, 0, 0), Quaternion::Identity()}, renderer);
     }
+#if AETHER_EDITOR_NET_PHYSICS
+    if (options.terrain_collision) {
+        // Static: a mesh collider on an entity with no RigidBody. It follows the drawn ground triangle for triangle (the same grid), so a character's feet meet what is seen.
+        CollisionMesh mesh = BuildTerrainCollisionMesh(terrain_, options.terrain_collision_grid);
+        MeshCollider collider;
+        collider.vertices = std::move(mesh.vertices);
+        collider.indices = std::move(mesh.indices);
+        collider.friction = 0.8f;
+        world.CreateEntity(Transform{Vec3(0, 0, 0), Quaternion::Identity()}, collider);
+    }
+#endif
     if (options.add_wind) {
         Wind wind;
         wind.direction_degrees = options.wind_direction_degrees;

@@ -371,7 +371,11 @@ AETHER_TEST(ProceduralEditor_BakeWritesTheTerrainMeshesAndASceneThePlayerLoads) 
     // The scene loads: the terrain plus one entity per baked object, each naming a model that was written.
     World loaded;
     CHECK(LoadSceneJson(loaded, (root / report.scene).string()));
-    CHECK(loaded.EntityCount() == 42); // the terrain, the Wind, and the 40 objects
+#if AETHER_EDITOR_NET_PHYSICS
+    CHECK(loaded.EntityCount() == 43); // the terrain, its collision, the Wind, and the 40 objects
+#else
+    CHECK(loaded.EntityCount() == 42); // the terrain, the Wind, and the 40 objects (no physics in this build: no collision)
+#endif
     {
         usize winds = 0;
         loaded.ForEachArchetype([&](const Archetype& archetype) {

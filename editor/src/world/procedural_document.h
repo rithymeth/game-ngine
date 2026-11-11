@@ -44,6 +44,8 @@ struct BakeOptions {
     u32 max_scene_instances = 5000; // the player draws one call per object; the rest are left out and counted
     u32 terrain_grid = 256;         // the terrain mesh's quads per side at most
     u32 terrain_tiles = 8;          // the ground cut into this many tiles a side, each its own draw the player can cull (1: one piece)
+    bool terrain_collision = true;  // a static triangle-mesh collider over the ground (the very triangles drawn), so a character can walk on it; built only where the editor has physics
+    u32 terrain_collision_grid = 192; // the collision mesh's quads per side at most (a coarser grid than the drawn one loads faster; see PERFORMANCE.md for how far it strays)
     f32 terrain_skirt = 6.0f;       // metres the terrain's edges are carried down below its lowest ground (0: an open edge)
     u32 water_texture = 512;        // the water's depth-tinted, foam-edged texture in texels (0: one flat colour)
     bool add_wind = true;           // a Wind entity in the baked scene, so the swaying plants blow the way the world is set to
@@ -102,6 +104,14 @@ public:
     // biome borders blend and rivers have banks, and the water, flat on every lake and the sea (rivers a hair above their carved beds).
     static assets::procedural::ProceduralMesh BuildTexturedTerrainModel(const terrain::GeneratedTerrain& terrain, u32 max_grid, const std::string& texture_uri, f32 skirt_depth = 0.0f,
                                                                            const std::string& water_texture_uri = "", const std::string& water_normal_uri = "", u32 tiles_per_side = 1);
+
+    // The triangles a character walks on: the ground as `BuildTexturedTerrainModel` draws it (the same grid for the same `max_grid`, so the feet meet the
+    // surface that is seen), without the skirt or the water. Positions are in the map's space, three indices a triangle, counter-clockwise from above.
+    struct CollisionMesh {
+        std::vector<Vec3> vertices;
+        std::vector<u32> indices;
+    };
+    static CollisionMesh BuildTerrainCollisionMesh(const terrain::GeneratedTerrain& terrain, u32 max_grid);
 
     // Into the other editors: the terrain editor takes the heightmap, layers and splatmap (the sculpt tools carry on from it); the foliage editor takes
     // the instances as a layer with one type per rule (one undo step). False when nothing is generated.
