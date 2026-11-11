@@ -448,3 +448,8 @@ position, fading out with distance. Procedural-world terrain uses it. An alpha-m
 
 `PostProcessVolume::height_fog_density`, `height_fog_falloff`, `height_fog_base`: exponential height fog that pools in valleys and
 over water. The post pass's push constants are 128 bytes.
+
+## Foliage tint variation
+
+Plants (materials with wind) take a small per-instance colour tint from their world position, so forests and grass fields are not
+one colour. No setting.

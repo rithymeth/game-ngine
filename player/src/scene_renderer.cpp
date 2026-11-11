@@ -13,6 +13,7 @@
 #include "aether/scene/gameplay.h"
 #include "aether/scene/hierarchy.h"
 #include "frame_lights.h"
+#include "instance_variation.h"
 #include "model_glb.h"
 #include "normal_transform.h"
 #include "render_pose.h"
@@ -2756,7 +2757,9 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                             }
                             DrawConstants constants;
                             constants.mvp = mvp;
-                            constants.color_packed[0] = PackHalfPair(primitive.color[0], primitive.color[1]);
+                            // The plants take a small tint from where each stands, so a forest of one tree is not one colour (instance_variation.h).
+                            const Vec3 tint = primitive.wind_level != 0 ? InstanceTint(Vec3(model_transform.cols[3].x, model_transform.cols[3].y, model_transform.cols[3].z)) : Vec3(1, 1, 1);
+                            constants.color_packed[0] = PackHalfPair(primitive.color[0] * tint.x, primitive.color[1] * tint.y);
                             // A wind material that is opaque has no use for its alpha: it carries the instance's phase instead (from where it stands in the world,
                             // so the sway travels across a field like a gust and not in step), in radians.
                             f32 alpha_or_phase = primitive.color[3];
@@ -2764,7 +2767,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                                 alpha_or_phase = static_cast<f32>(std::fmod(static_cast<f64>(model_transform.cols[3].x) * 0.35 + static_cast<f64>(model_transform.cols[3].z) * 0.27, 6.283185307179586));
                                 if (alpha_or_phase < 0.0f) alpha_or_phase += 6.2831853f;
                             }
-                            constants.color_packed[1] = PackHalfPair(primitive.color[2], alpha_or_phase);
+                            constants.color_packed[1] = PackHalfPair(primitive.color[2] * tint.z, alpha_or_phase);
                             PackEmissive(primitive.emissive, primitive.emissive_texture, primitive.has_emissive_texture, constants.emissive_packed);
                             PackNormalMatrix(normal_transform, constants.normal_matrix_packed);
                             constants.material_textures = PackMaterialTextures(
