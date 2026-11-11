@@ -15,6 +15,7 @@
 #include "aether/nav/crowd.h"
 #include "aether/renderer/components.h"
 #include "aether/sequencer/sequence_system.h"
+#include "aether/sprite2d/components.h"
 #include "aether/sprite2d/lights2d.h"
 #include "aether/sprite2d/physics2d.h"
 #include "aether/sprite2d/platformer.h"
@@ -67,6 +68,7 @@ void RegisterBuiltinComponents() {
     RegisterNavAgentComponents();
     RegisterRenderComponents();
     RegisterSequenceComponents();
+    sprite2d::RegisterSprite2DComponents();
     sprite2d::RegisterPlatformerComponents();
     GetComponentId<sprite2d::Rigidbody2D>();
     GetComponentId<sprite2d::Collider2D>();
