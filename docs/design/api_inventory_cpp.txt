@@ -2885,6 +2885,7 @@
   [[nodiscard]]bool ReadFileBytes(const std::string&path,std::vector<u8>&out_bytes,usize max_bytes)
   [[nodiscard]]bool ReadFileText(const std::string&path,std::string&out_text)
   [[nodiscard]]bool WriteFileAtomic(const std::string&path,const void*data,usize size_bytes)
+  [[nodiscard]]bool WriteFileAtomicWithBackup(const std::string&path,const void*data,usize size_bytes)
   [[nodiscard]]bool WriteFileBytes(const std::string&path,const void*data,usize size_bytes)
   std::string Extension(const std::string&path)
   std::string ParentPath(const std::string&path)
