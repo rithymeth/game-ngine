@@ -104,6 +104,11 @@ std::vector<TerrainLayer> DefaultTerrainLayers();
 // is drawn over them as geometry; a river is painted in, blue). The colours are display (sRGB) colours as an artist would pick them, which is how a colour texture is read, and no lighting is baked: the renderer lights it.
 std::vector<u8> RenderTerrainTexture(const GeneratedTerrain& terrain, const TerrainGenSettings& settings, u32 size);
 
+// The water's colour as an RGB8 texture over the whole terrain, laid out like RenderTerrainTexture's: from the water's depth at each point (the level of the lake or the
+// sea minus the ground's height), turquoise in the shallows to dark blue in the deep, with a broken white foam band along the shore. Where the ground is dry the
+// colour is the shallow one (the water plane's geometry is hidden under the ground there). Rivers are not here: they are painted into the ground.
+std::vector<u8> RenderWaterTexture(const GeneratedTerrain& terrain, const TerrainGenSettings& settings, u32 size);
+
 // A shaded-relief picture, RGB8 row-major `width * height * 3` bytes: biome colours lit from the north-west, rivers blue. For the editor's
 // preview and for checking a generator setting by eye.
 std::vector<u8> RenderTerrainPreview(const GeneratedTerrain& terrain);
