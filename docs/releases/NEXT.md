@@ -412,3 +412,9 @@ old breeze. The direction is in the world whatever way an object faces, and the 
 
 New `WindZone` component: a sphere with its own wind that replaces the world's `Wind` inside it, fading over `falloff`. Up
 to 7 zones; `FrameData` is now 1376 bytes. An alpha-mask material's cutoff is stored in 8 bits instead of a half.
+
+## Swaying vegetation casts a swaying shadow
+
+`ShadowCaster` and `ShadowCasterConstants` carry the sway (112 bytes of push constants). Wind-flagged casters with a
+non-zero wind are drawn into the shadow cascades only, like skinned meshes; virtual shadow pages under them fall back to
+the cascades.
