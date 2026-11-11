@@ -43,6 +43,7 @@ struct FrameData {
     float4 time;              // x: the game's time in seconds
     float4 wind;              // xy: the wind's direction in the world (x, z); z: strength; w: gust speed
     float4 wind_gusts;        // x: gustiness
+    float4 wind_zones[7];     // the wind zones: xy direction (x, z), z strength, w gust speed
 };
 ConstantBuffer<FrameData> g_Frame : register(b0, space2);
 
@@ -174,6 +175,37 @@ const Wind* FindWind(const World& world) {
     return nullptr;
 }
 
+std::vector<WindZoneSite> CollectWindZones(const World& world, const GuidIndex& guids) {
+    std::vector<WindZoneSite> sites;
+    for (const Entity e : EntitiesWith<WindZone>(world)) {
+        if (sites.size() >= kMaxWindZones) break;
+        const WindZone* zone = world.GetComponent<WindZone>(e);
+        if (zone == nullptr) continue;
+        WindZoneSite site;
+        if (world.HasComponent<Transform>(e)) site.center = Vec3(ComputeWorldTransform(world, guids, e).cols[3].x, ComputeWorldTransform(world, guids, e).cols[3].y, ComputeWorldTransform(world, guids, e).cols[3].z);
+        site.radius = std::isfinite(zone->radius) ? std::clamp(zone->radius, 0.5f, 2000.0f) : 20.0f;
+        site.falloff = std::isfinite(zone->falloff) ? std::clamp(zone->falloff, 0.0f, 1.0f) : 0.5f;
+        sites.push_back(site);
+    }
+    return sites;
+}
+
+u32 WindZoneBitsAt(const std::vector<WindZoneSite>& zones, const Vec3& position) {
+    u32 best = 0;
+    f32 best_weight = 0.0f;
+    for (usize i = 0; i < zones.size() && i < kMaxWindZones; ++i) {
+        const WindZoneSite& z = zones[i];
+        const Vec3 d = position - z.center;
+        const f32 distance = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+        if (!(distance < z.radius)) continue;
+        const f32 fade = z.radius * z.falloff;                       // metres from the edge over which it fades
+        const f32 weight = fade <= 0.0f ? 1.0f : std::clamp((z.radius - distance) / fade, 0.0f, 1.0f);
+        if (weight > best_weight) { best_weight = weight; best = static_cast<u32>(i) + 1u; }
+    }
+    if (best == 0) return 0;
+    return best | (static_cast<u32>(std::lround(best_weight * 31.0f)) << 3);
+}
+
 FrameData BuildFrameData(const World& world, const GuidIndex& guids, const Vec3& camera_position) {
     FrameData data;
     Set4(data.camera_world, camera_position.x, camera_position.y, camera_position.z, 1.0f);
@@ -190,6 +222,14 @@ FrameData BuildFrameData(const World& world, const GuidIndex& guids, const Vec3&
         const f32 radians = finite(wind.direction_degrees, 27.0f) * 3.14159265f / 180.0f;
         Set4(data.wind, std::cos(radians), std::sin(radians), std::clamp(finite(wind.strength, 1.0f), 0.0f, 4.0f), std::clamp(finite(wind.gust_speed, 1.0f), 0.1f, 4.0f));
         Set4(data.wind_gusts, std::clamp(finite(wind.gustiness, 0.4f), 0.0f, 1.0f), 0.0f, 0.0f, 0.0f);
+        u32 slot = 0;
+        for (const Entity e : EntitiesWith<WindZone>(world)) {
+            if (slot >= kMaxWindZones) break;
+            const WindZone* zone = world.GetComponent<WindZone>(e);
+            if (zone == nullptr) continue;
+            const f32 zr = finite(zone->direction_degrees, 27.0f) * 3.14159265f / 180.0f;
+            Set4(data.wind_zones[slot++], std::cos(zr), std::sin(zr), std::clamp(finite(zone->strength, 1.0f), 0.0f, 4.0f), std::clamp(finite(zone->gust_speed, 1.0f), 0.1f, 4.0f));
+        }
     }
 
     for (const Entity e : EntitiesWith<DirectionalLight>(world)) {

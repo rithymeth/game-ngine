@@ -76,8 +76,32 @@ AETHER_TEST(Wind_IsASceneComponentAndTheLayoutKeepsInStepWithTheShader) {
     std::error_code ignored;
     std::filesystem::remove(file, ignored);
     // The CPU struct and the HLSL one have the wind in the same place: the last members, a float4 each after the time.
-    AETHER_CHECK(offsetof(FrameData, wind) == 1232 && offsetof(FrameData, wind_gusts) == 1248 && sizeof(FrameData) == 1264);
+    AETHER_CHECK(offsetof(FrameData, wind) == 1232 && offsetof(FrameData, wind_gusts) == 1248 && sizeof(FrameData) == 1376);
     const std::string hlsl = FrameDataHlsl();
     const usize at_time = hlsl.find("float4 time;"), at_wind = hlsl.find("float4 wind;"), at_gusts = hlsl.find("float4 wind_gusts;");
     AETHER_CHECK(at_time != std::string::npos && at_wind != std::string::npos && at_gusts != std::string::npos && at_time < at_wind && at_wind < at_gusts);
+}
+
+AETHER_TEST(WindZone_AnObjectTakesTheZoneItIsMostInsideAndTheFrameDataCarriesTheTable) {
+    World world;
+    GuidIndex guids;
+    world.CreateEntity(Transform{Vec3(0, 0, 0), Quaternion::Identity()}, WindZone{10.0f, 90.0f, 3.0f, 2.0f, 0.5f});
+    world.CreateEntity(Transform{Vec3(100, 0, 0), Quaternion::Identity()}, WindZone{10.0f, 180.0f, 0.0f, 1.0f, 0.0f});
+    const std::vector<WindZoneSite> zones = CollectWindZones(world, guids);
+    AETHER_CHECK(zones.size() == 2);
+    if (zones.size() != 2) return;
+    AETHER_CHECK(zones[1].center.x == 100.0f);
+    AETHER_CHECK(WindZoneBitsAt(zones, Vec3(0, 0, 0)) == (1u | (31u << 3)));        // the core of the first
+    AETHER_CHECK(WindZoneBitsAt(zones, Vec3(50, 0, 0)) == 0);                       // between them: the world's wind
+    AETHER_CHECK(WindZoneBitsAt(zones, Vec3(100, 0, 7)) == (2u | (31u << 3)));      // the second has no fade
+    const u32 faded = WindZoneBitsAt(zones, Vec3(7.5f, 0, 0));                      // half way through the first one's fade
+    AETHER_CHECK((faded & 7u) == 1u && (faded >> 3) > 10u && (faded >> 3) < 21u);
+    AETHER_CHECK(WindZoneBitsAt({}, Vec3(0, 0, 0)) == 0);
+    const FrameData data = BuildFrameData(world, guids, Vec3(0, 0, 0));
+    AETHER_CHECK(std::fabs(data.wind_zones[0][1] - 1.0f) < 1e-5f && data.wind_zones[0][2] == 3.0f && data.wind_zones[0][3] == 2.0f);
+    AETHER_CHECK(data.wind_zones[1][2] == 0.0f);
+    // Only seven are used.
+    World crowded;
+    for (int i = 0; i < 10; ++i) crowded.CreateEntity(Transform{Vec3(static_cast<f32>(i) * 50.0f, 0, 0), Quaternion::Identity()}, WindZone{});
+    AETHER_CHECK(CollectWindZones(crowded, guids).size() == kMaxWindZones);
 }

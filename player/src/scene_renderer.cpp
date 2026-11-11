@@ -125,10 +125,10 @@ f32 ModelDeterminant(const Mat4& m) {
 }
 
 u32 PackMaterialOptions(assets::MaterialAlphaMode mode, f32 cutoff, const SampledTextureHandle& extension, bool has_extension,
-                        bool double_sided = false, bool water = false, u32 wind_level = 0) {
+                        bool double_sided = false, bool water = false, u32 wind_level = 0, u32 wind_zone = 0) {
     // The alpha mode in bits 0-1, the surface-extension texture's index in bits 2-9, double-sided in bit 10, water in bit 11, the wind strength in
-    // bits 12-15 and the cutoff as a half in bits 16-31.
-    return (static_cast<u32>(FloatToHalf(std::clamp(cutoff, 0.0f, 1.0f))) << 16) | (TextureSlot(extension, has_extension) << 2) |
+    // bits 12-15, the cutoff as 8 bits in bits 16-23 and the wind zone (WindZoneBitsAt) in bits 24-31.
+    return ((wind_zone & 255u) << 24) | (static_cast<u32>(std::lround(std::clamp(cutoff, 0.0f, 1.0f) * 255.0f)) << 16) | (TextureSlot(extension, has_extension) << 2) |
            (double_sided ? 1u << 10 : 0u) | (water ? 1u << 11 : 0u) | ((wind_level & 15u) << 12) | (static_cast<u32>(mode) & 3u);
 }
 
@@ -247,7 +247,20 @@ PSInput VSMain(VSInput input) {
 #ifdef AETHER_FRAME_DATA
     if (wind_level != 0) {
         float phase = f16tof32(g_PC.g_ColorPacked.y >> 16);
-        float t = g_Frame.time.x * g_Frame.wind.w;
+        // An object inside a wind zone takes the zone's wind, blended with the world's by how far inside it stands (the packed zone: number plus one, then 5 bits).
+        float2 wind_direction = g_Frame.wind.xy;
+        float wind_strength = g_Frame.wind.z;
+        float gust_speed = g_Frame.wind.w;
+        uint zone_bits = g_PC.g_AlphaOptions >> 24;
+        if ((zone_bits & 7) != 0) {
+            float4 zone = g_Frame.wind_zones[(zone_bits & 7) - 1];
+            float blend = float(zone_bits >> 3) / 31.0;
+            float2 blended = lerp(g_Frame.wind.xy * g_Frame.wind.z, zone.xy * zone.z, blend);
+            wind_strength = length(blended);
+            wind_direction = wind_strength > 1e-5 ? blended / wind_strength : g_Frame.wind.xy;
+            gust_speed = lerp(g_Frame.wind.w, zone.w, blend);
+        }
+        float t = g_Frame.time.x * gust_speed;
         float height = max(position.y, 0.0);
         float weight = height / (height + 0.3);
         // Two swells: a steady one, and a slower, uneven one that varies along the object so its parts do not move in step. Gustiness is the share of the second.
@@ -255,7 +268,7 @@ PSInput VSMain(VSInput input) {
         // The wind blows in the world; the sway is added to a position in the object's own space, so the world direction goes through the inverse of the model's
         // linear part (the stored normal matrix is its inverse transpose, so the inverse is that matrix transposed). It also divides out the object's scale: a
         // metre of sway is a metre in the world however big the model is made.
-        float3 world_sway = float3(g_Frame.wind.x, 0.0, g_Frame.wind.y) * (float(wind_level) * 0.02 * weight * gust * g_Frame.wind.z);
+        float3 world_sway = float3(wind_direction.x, 0.0, wind_direction.y) * (float(wind_level) * 0.02 * weight * gust * wind_strength);
         position += float3(GetNormalCoefficient(0) * world_sway.x + GetNormalCoefficient(3) * world_sway.y + GetNormalCoefficient(6) * world_sway.z,
                            GetNormalCoefficient(1) * world_sway.x + GetNormalCoefficient(4) * world_sway.y + GetNormalCoefficient(7) * world_sway.z,
                            GetNormalCoefficient(2) * world_sway.x + GetNormalCoefficient(5) * world_sway.y + GetNormalCoefficient(8) * world_sway.z);
@@ -561,7 +574,7 @@ float4 PSMain(PSInput input, bool is_front : SV_IsFrontFace) : SV_TARGET {
     uint alpha_mode = g_PC.g_AlphaOptions & 3;
     float surface_alpha = saturate(base_sample.a * material_color.a);
     if (alpha_mode == 1) {
-        clip(surface_alpha - f16tof32(g_PC.g_AlphaOptions >> 16));
+        clip(surface_alpha - float((g_PC.g_AlphaOptions >> 16) & 255) / 255.0);
         surface_alpha = 1.0;
     } else if (alpha_mode == 0) {
         surface_alpha = 1.0;
@@ -2294,6 +2307,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
     const u64 transform_frame = ++renderer.transform_frame;
     renderer.motion_positions.clear();
     FrameData frame_data;
+    std::vector<WindZoneSite> wind_zones; // the world's wind zones (an object picks the one it stands in)
     View shadow_view;
     bool sun_shadows = false;
     bool draw_sky = false;
@@ -2449,6 +2463,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
             // The sun, sky and nearby point and spot lights of this scene (the previous use of this slot's frame has finished).
             frame_buffer = renderer.frame_buffers[frame_index % renderer.frame_buffers.size()];
             frame_data = BuildFrameData(world, guids, camera_position);
+            wind_zones = CollectWindZones(world, guids);
             frame_data.time[0] = static_cast<f32>(std::fmod(std::max(game_time, 0.0), 3600.0)); // wraps hourly: a float keeps its precision for the ripples' scroll
             if (draw_particles) AddParticleLights(frame_data, renderer.particle_data.lights, camera_position);
             if (!renderer.light_buffers.empty()) {
@@ -2667,7 +2682,8 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                             constants.material_factors_0 = PackHalfPair(primitive.metallic, primitive.roughness);
                             constants.material_factors_1 = PackHalfPair(primitive.normal_scale, primitive.occlusion_strength);
                             constants.alpha_options = PackMaterialOptions(primitive.alpha_mode, primitive.alpha_cutoff, primitive.extension_texture,
-                                                                          primitive.has_extension_texture, primitive.double_sided, primitive.water, primitive.wind_level);
+                                                                          primitive.has_extension_texture, primitive.double_sided, primitive.water, primitive.wind_level,
+                                                                          primitive.wind_level != 0 && !wind_zones.empty() ? WindZoneBitsAt(wind_zones, Vec3(model_transform.cols[3].x, model_transform.cols[3].y, model_transform.cols[3].z)) : 0u);
                             // Single-sided materials cull their back faces, except on a mirrored model (a negative scale turns the
                             // winding round): that draws both faces, as every model did before.
                             const bool cull = !primitive.double_sided && ModelDeterminant(model_transform) > 0.0f;
