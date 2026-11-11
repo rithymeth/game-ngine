@@ -28,6 +28,7 @@ MeshSlot Slot(ProceduralKind kind, u32 variants, f32 scale = 1.0f) { return Mesh
 // The mesh family for each of the starter rules, by name; any other rule starts with none.
 MeshSlot DefaultSlotFor(const std::string& rule_name) {
     if (rule_name == "Pine") return Slot(ProceduralKind::PineTree, 6);
+    if (rule_name == "Oak") return Slot(ProceduralKind::OakTree, 6, 0.8f);
     if (rule_name == "Birch") return Slot(ProceduralKind::BroadleafTree, 6, 0.6f);
     if (rule_name == "Boulder") return Slot(ProceduralKind::Rock, 6);
     if (rule_name == "DeadTree") return Slot(ProceduralKind::DeadTree, 4);

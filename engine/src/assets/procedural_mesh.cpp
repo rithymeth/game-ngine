@@ -611,7 +611,7 @@ ProceduralMesh GenerateTree(const TreeParams& in, u32 seed) {
             const usize idx = std::min(static_cast<usize>(along * static_cast<f32>(segments)), static_cast<usize>(segments));
             const f32 a = (static_cast<f32>(m) + rng.Range(-0.3f, 0.3f)) / static_cast<f32>(mains) * 2.0f * kPi;
             const f32 up = rng.Range(0.5f, 1.1f);
-            const Vec3 dir = Vec3(std::cos(a), up, std::sin(a)).Normalized();
+            const Vec3 dir = Vec3(std::cos(a) * in.crown_spread, up, std::sin(a) * in.crown_spread).Normalized();
             GrowBranch(ctx, trunk[idx], dir, crown * rng.Range(0.7f, 1.0f) + height * 0.12f, radius[idx] * 0.6f, 0);
         }
         // The leader: the trunk's own continuation, with a mass of leaves on top.
@@ -1016,6 +1016,7 @@ const char* ProceduralKindName(ProceduralKind kind) {
     case ProceduralKind::Grass: return "Grass";
     case ProceduralKind::Reeds: return "Reeds";
     case ProceduralKind::Cactus: return "Cactus";
+    case ProceduralKind::OakTree: return "OakTree";
     }
     return "Unknown";
 }
@@ -1049,6 +1050,22 @@ ProceduralMesh GenerateVariant(ProceduralKind kind, u32 variant, u32 seed) {
         p.overhang = rng.Range(0.05f, 0.4f);
         p.color = Tint(Vec3(0.45f, 0.40f, 0.34f), rng, 0.2f);
         return GenerateCliff(p, mesh_seed);
+    }
+    case ProceduralKind::OakTree: {
+        // Not a taller birch: a short, thick trunk under a crown wider than the tree is tall, deep green and dense.
+        TreeParams p;
+        p.species = TreeSpecies::Broadleaf;
+        p.height = rng.Range(6.5f, 11.0f);
+        p.trunk_radius = p.height * rng.Range(0.05f, 0.07f);
+        p.sides = static_cast<u32>(rng.Int(8, 12));
+        p.branch_levels = 3;
+        p.crown_spread = rng.Range(2.2f, 2.8f);
+        p.foliage = rng.Range(0.9f, 1.25f);
+        p.lean = rng.Range(0.0f, 0.05f);
+        p.foliage_detail = 1;
+        p.bark_color = Tint(Vec3(0.24f, 0.18f, 0.13f), rng, 0.2f);
+        p.leaf_color = Tint(Lerp(Vec3(0.13f, 0.30f, 0.10f), Vec3(0.26f, 0.40f, 0.10f), rng.Range(0.0f, 1.0f)), rng, 0.12f);
+        return GenerateTree(p, mesh_seed);
     }
     case ProceduralKind::PineTree:
     case ProceduralKind::BroadleafTree:

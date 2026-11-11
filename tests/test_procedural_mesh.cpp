@@ -38,7 +38,7 @@ u64 HashMesh(const ProceduralMesh& m) {
 constexpr ProceduralKind kAllKinds[] = {ProceduralKind::Rock, ProceduralKind::Cliff, ProceduralKind::PineTree, ProceduralKind::BroadleafTree,
                                         ProceduralKind::DeadTree, ProceduralKind::House, ProceduralKind::Tower, ProceduralKind::Wall,
                                         ProceduralKind::Pillar, ProceduralKind::Arch, ProceduralKind::Stairs, ProceduralKind::Shrub, ProceduralKind::Grass,
-                                        ProceduralKind::Reeds, ProceduralKind::Cactus};
+                                        ProceduralKind::Reeds, ProceduralKind::Cactus, ProceduralKind::OakTree};
 
 Vec3 Extent(const MeshStats& s) { return s.bounds_max - s.bounds_min; }
 
@@ -56,7 +56,7 @@ AETHER_TEST(ProceduralEveryKindMakesValidMeshes) {
             if (m.mesh.primitives.empty()) { AETHER_CHECK(false); continue; }
             AETHER_CHECK(m.TriangleCount() > 8);
             // A budget per kind: what a game can place by the hundred.
-            const u32 budget = kind == ProceduralKind::BroadleafTree ? 12000u : kind == ProceduralKind::DeadTree ? 8000u : kind == ProceduralKind::Cliff ? 12000u
+            const u32 budget = (kind == ProceduralKind::BroadleafTree || kind == ProceduralKind::OakTree) ? 12000u : kind == ProceduralKind::DeadTree ? 8000u : kind == ProceduralKind::Cliff ? 12000u
                                : kind == ProceduralKind::PineTree ? 1500u : kind == ProceduralKind::Rock ? 2000u : (kind == ProceduralKind::House || kind == ProceduralKind::Tower) ? 6000u
                                : kind == ProceduralKind::Shrub ? 1500u : (kind == ProceduralKind::Grass || kind == ProceduralKind::Reeds || kind == ProceduralKind::Cactus) ? 900u : 600u;
             if (m.TriangleCount() > budget) std::printf("    %s variant %u: %u triangles, budget %u\n", ProceduralKindName(kind), variant, m.TriangleCount(), budget);
@@ -538,4 +538,21 @@ AETHER_TEST(ProceduralVegetationSwaysAndStoneAndBarkDoNot) {
     AETHER_CHECK(ReadGlbChunks(EncodeGlb(rough), json, bin) && json.find("\"extensionsUsed\":[\"AETHER_materials_wind\",\"AETHER_materials_detail\"]") != std::string::npos);
     AETHER_CHECK(LoadGltfFromMemory(EncodeGlb(rough), rough_scene) && rough_scene.materials[0].detail == 1.0f);
     AETHER_CHECK(plain.materials[0].detail == 0.0f);
+}
+
+AETHER_TEST(ProceduralOakIsABroaderTreeThanTheBirch) {
+    // Averaged over variants, the oak's crown is wider than it is tall and the birch's is not, and the oak's mesh is
+    // stockier: a different silhouette, not the same tree at another scale.
+    f32 oak_ratio = 0.0f, birch_ratio = 0.0f;
+    constexpr u32 kVariants = 12;
+    for (u32 v = 0; v < kVariants; ++v) {
+        const Vec3 o = Extent(ComputeStats(GenerateVariant(ProceduralKind::OakTree, v, 5).mesh));
+        const Vec3 b = Extent(ComputeStats(GenerateVariant(ProceduralKind::BroadleafTree, v, 5).mesh));
+        oak_ratio += std::max(o.x, o.z) / o.y;
+        birch_ratio += std::max(b.x, b.z) / b.y;
+    }
+    oak_ratio /= kVariants;
+    birch_ratio /= kVariants;
+    std::printf("    crown width / height: oak %.2f, birch %.2f\n", oak_ratio, birch_ratio);
+    AETHER_CHECK(oak_ratio > birch_ratio * 1.15f);
 }

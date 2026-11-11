@@ -548,7 +548,7 @@ AETHER_TEST(ProceduralEditor_OptInBakeOfAFullSizeWorld) {
         dead.footprint = 1.6f;
         MeshSlot oak_slot, dead_slot;
         oak_slot.enabled = true;
-        oak_slot.kind = assets::procedural::ProceduralKind::BroadleafTree;
+        oak_slot.kind = assets::procedural::ProceduralKind::OakTree;
         oak_slot.variants = 8;
         oak_slot.scale = 0.8f;
         dead_slot.enabled = true;
