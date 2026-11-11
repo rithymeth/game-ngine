@@ -62,32 +62,43 @@ AETHER_TEST(ProceduralWalk_ACharacterStandsOnTheBakedGroundAndWalksItsHills) {
     collider.indices = mesh.indices;
     w.world.CreateEntity(Transform{Vec3(0, 0, 0), Quaternion::Identity()}, collider);
 
-    // Dry land well above the sea, a few spread across the map; a walk from each one.
+    // A walk that is walkable: dry land well above the sea, and a line of 10 m ahead (sampled every metre) that never climbs or drops more than 0.45 m between samples (a character slides
+    // down what is steeper than its 45 degree limit, and a ledge is a fall, as they should be), a few spread across the map.
     const f32 cell = t.heightmap.cell_size;
-    struct Spot { f32 x, z; };
-    std::vector<Spot> spots;
-    for (u32 z = 16; z + 16 < t.Height() && spots.size() < 4; z += 29)
-        for (u32 x = 16; x + 16 < t.Width() && spots.size() < 4; x += 31) {
-            const f32 height = t.heightmap.heights[t.Index(x, z)];
-            if (height > t.sea_height + 4.0f) spots.push_back({static_cast<f32>(x) * cell, static_cast<f32>(z) * cell});
+    struct Walk1 { f32 x, z, dx, dz; };
+    std::vector<Walk1> candidates, spots;
+    const f32 extent = static_cast<f32>(t.Width() - 1) * cell;
+    for (u32 z = 12; z + 12 < t.Height(); z += 5)
+        for (u32 x = 12; x + 12 < t.Width(); x += 5) {
+            const f32 wx = static_cast<f32>(x) * cell, wz = static_cast<f32>(z) * cell;
+            if (t.heightmap.SampleLinear(wx, wz) < t.sea_height + 4.0f) continue;
+            for (int k = 0; k < 8; ++k) {
+                const f32 angle = static_cast<f32>(k) * 0.7853982f, dx = std::cos(angle), dz = std::sin(angle);
+                bool ok = wx + 11.0f * dx > 0 && wx + 11.0f * dx < extent && wz + 11.0f * dz > 0 && wz + 11.0f * dz < extent;
+                f32 last = t.heightmap.SampleLinear(wx, wz);
+                for (int m = 1; ok && m <= 11; ++m) {
+                    const f32 h = t.heightmap.SampleLinear(wx + static_cast<f32>(m) * dx, wz + static_cast<f32>(m) * dz);
+                    ok = std::fabs(h - last) < 0.45f && h > t.sea_height + 1.0f;
+                    last = h;
+                }
+                if (ok) { candidates.push_back({wx, wz, dx, dz}); break; }
+            }
         }
-    std::printf("    %zu dry spots on a %ux%u map (%.0f m)\n", spots.size(), t.Width(), t.Height(), static_cast<f32>(t.Width() - 1) * cell);
+    for (usize i = 0; i < candidates.size() && spots.size() < 4; i += std::max<usize>(candidates.size() / 4, 1)) spots.push_back(candidates[i]);
+    std::printf("    %zu walkable lines among %zu candidates on a %ux%u map (%.0f m)\n", spots.size(), candidates.size(), t.Width(), t.Height(), extent);
     AETHER_CHECK(spots.size() >= 2);
 
     f32 worst_below = 0.0f, worst_above = 0.0f, total_walked = 0.0f;
-    for (const Spot& spot : spots) {
+    for (const Walk1& spot : spots) {
         const f32 ground = t.heightmap.SampleLinear(spot.x, spot.z);
         const Entity c = w.world.CreateEntity(Transform{Vec3(spot.x, ground + 3.0f, spot.z), Quaternion::Identity()}, CharacterMovement{});
         for (int i = 0; i < 120; ++i) w.Step(); // falls and lands
         const CharacterMovement* m = w.world.GetComponent<CharacterMovement>(c);
-        AETHER_CHECK(m && m->grounded);
         const Vec3 start = w.world.GetComponent<Transform>(c)->position;
+        std::printf("    spot (%.0f, %.0f): ground %.2f, feet %.2f, grounded %d, mode %d, slope normal y %.2f\n", spot.x, spot.z, ground, start.y, m ? (m->grounded ? 1 : 0) : -1, m ? static_cast<int>(m->mode) : -1, m ? m->ground_normal.y : 0.0f);
+        AETHER_CHECK(m && m->grounded);
         AETHER_CHECK(std::fabs(start.y - ground) < 0.35f); // standing on the surface, within a triangle's slope of the sampled height
-        // Three seconds of walking toward the middle of the map.
-        const f32 centre = static_cast<f32>(t.Width() - 1) * cell * 0.5f;
-        Vec3 toward(centre - spot.x, 0.0f, centre - spot.z);
-        const f32 len = std::sqrt(toward.x * toward.x + toward.z * toward.z);
-        if (len > 1e-3f) toward = Vec3(toward.x / len, 0, toward.z / len);
+        const Vec3 toward(spot.dx, 0.0f, spot.dz);
         for (int i = 0; i < 180; ++i) {
             w.world.GetComponent<CharacterMovement>(c)->AddInput(toward);
             w.Step();
@@ -100,9 +111,9 @@ AETHER_TEST(ProceduralWalk_ACharacterStandsOnTheBakedGroundAndWalksItsHills) {
         total_walked += std::sqrt((end.x - start.x) * (end.x - start.x) + (end.z - start.z) * (end.z - start.z));
     }
     std::printf("    feet over the ground while walking: %.2f m lowest, %.2f m highest; walked %.1f m in all\n", worst_below, worst_above, total_walked);
-    AETHER_CHECK(worst_below > -0.4f); // never through it
-    AETHER_CHECK(worst_above < 1.5f);  // never floating (a jump or a drop off a ledge is not in this walk)
-    AETHER_CHECK(total_walked > 4.0f * static_cast<f32>(spots.size())); // it moved: the ground did not stop it dead
+    AETHER_CHECK(worst_below > -0.35f); // never through it
+    AETHER_CHECK(worst_above < 0.8f);  // never floating (no jump, no ledge on these lines)
+    AETHER_CHECK(total_walked > 7.0f * static_cast<f32>(spots.size())); // 3 s at 4 m/s is up to 12 m: the ground did not stop it
 }
 
 AETHER_TEST(ProceduralWalk_TheBakedSceneCarriesTheCollisionAndItsSizeIsKnown) {
@@ -121,7 +132,7 @@ AETHER_TEST(ProceduralWalk_TheBakedSceneCarriesTheCollisionAndItsSizeIsKnown) {
     World loaded;
     AETHER_CHECK(LoadSceneJson(loaded, (root / report.scene).string()));
     usize colliders = 0, triangles = 0;
-    loaded.Each<MeshCollider>([&](Entity, MeshCollider& m) { ++colliders; triangles += m.indices.size() / 3; });
+    loaded.ForEach<MeshCollider>([&](MeshCollider& m) { ++colliders; triangles += m.indices.size() / 3; });
     const auto bytes = std::filesystem::file_size(root / report.scene);
     std::printf("    baked scene: %zu mesh collider(s), %zu triangles, %.1f MB of json\n", colliders, triangles, static_cast<double>(bytes) / 1e6);
     AETHER_CHECK(colliders == 1 && triangles > 1000);
@@ -133,7 +144,7 @@ AETHER_TEST(ProceduralWalk_TheBakedSceneCarriesTheCollisionAndItsSizeIsKnown) {
     World without;
     AETHER_CHECK(LoadSceneJson(without, (root / off.scene).string()));
     usize none = 0;
-    without.Each<MeshCollider>([&](Entity, MeshCollider&) { ++none; });
+    without.ForEach<MeshCollider>([&](MeshCollider&) { ++none; });
     AETHER_CHECK(none == 0);
     std::filesystem::remove_all(root, ignored);
 }
