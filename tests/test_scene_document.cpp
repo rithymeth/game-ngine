@@ -671,3 +671,89 @@ AETHER_TEST(SceneDocument_FailedSaveKeepsTheLastSavedSceneLoadable) {
     SceneDocument reloaded;
     AETHER_CHECK(reloaded.Load(saved) && reloaded.Entities().size() == count);
 }
+
+// A scene with a component this build does not know is refused (the editor never strips it), the message names each one, and the file and the open document are exactly as they were.
+AETHER_TEST(SceneDocument_ASceneWithAnUnknownComponentIsRefusedByNameAndLeftAlone) {
+    const std::filesystem::path dir = FreshSceneDir("aether_test_unknown_component");
+    const std::filesystem::path future = dir / "future.ascene";
+    const std::string original =
+        R"({"$type":"Scene","$version":1,"entities":[{"guid":"a0000000-0000-4000-8000-000000000001","components":{"Transform":{"$v":2,"position":[1,2,3],"rotation":[0,0,0,1],"scale":[1,1,1]},"FutureHologram":{"$v":1}}}]})";
+    { std::ofstream(future, std::ios::binary) << original; }
+    SceneDocument document;
+    document.NewScene();
+    document.CreateEntity("Already open");
+    const usize before = document.Entities().size();
+    std::string error;
+    AETHER_CHECK(!document.Load(future, &error));
+    AETHER_CHECK(error.find("FutureHologram") != std::string::npos && error.find("would delete them") != std::string::npos);
+    AETHER_CHECK(document.Entities().size() == before); // the scene that was open is still open
+    std::ifstream in(future, std::ios::binary);
+    AETHER_CHECK(std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>()) == original); // and the file was not touched
+    // The same file with the component taken out opens.
+    const std::filesystem::path plain = dir / "plain.ascene";
+    { std::ofstream(plain, std::ios::binary) << R"({"$type":"Scene","$version":1,"entities":[{"guid":"a0000000-0000-4000-8000-000000000001","components":{"Transform":{"$v":2,"position":[1,2,3],"rotation":[0,0,0,1],"scale":[1,1,1]}}}]})"; }
+    AETHER_CHECK(document.Load(plain, &error));
+}
+
+// SceneLoadOptions::unknown_components names every component a file has that the build does not know, once each, whether the load skips them or refuses because of them, for both formats.
+AETHER_TEST(SceneSerialization_UnknownComponentsAreNamedOnceEachWhetherSkippedOrRefused) {
+    const std::filesystem::path dir = FreshSceneDir("aether_test_unknown_names");
+    const std::filesystem::path json = dir / "u.ascene";
+    const std::string text =
+        R"({"$type":"Scene","$version":1,"entities":[)"
+        R"({"guid":"a0000000-0000-4000-8000-000000000001","components":{"Transform":{"$v":2,"position":[0,0,0],"rotation":[0,0,0,1],"scale":[1,1,1]},"AlphaPlugin":{"$v":1},"BetaPlugin":{"$v":1}}},)"
+        R"({"guid":"a0000000-0000-4000-8000-000000000002","components":{"AlphaPlugin":{"$v":1}}}]})";
+    { std::ofstream(json, std::ios::binary) << text; }
+    {
+        World world;
+        std::vector<std::string> names;
+        AETHER_CHECK(LoadSceneJson(world, json.string(), SceneLoadOptions{.unknown_components = &names})); // skipped: the load succeeds
+        AETHER_CHECK(names.size() == 2 && names[0] == "AlphaPlugin" && names[1] == "BetaPlugin");
+        AETHER_CHECK(world.EntityCount() == 2);
+    }
+    {
+        World world;
+        std::vector<std::string> names;
+        AETHER_CHECK(!LoadSceneJson(world, json.string(), SceneLoadOptions{.reject_unknown_components = true, .unknown_components = &names})); // refused, with all of them named
+        AETHER_CHECK(names.size() == 2);
+        AETHER_CHECK(world.EntityCount() == 0); // nothing was added
+    }
+    {
+        World world;
+        AETHER_CHECK(LoadSceneJson(world, json.string())); // no list asked for: nothing breaks
+    }
+}
+
+// Older scenes have no entity names. The editor names them on open ("Entity 2"), and a name of that form is a placeholder it replaces on the next open: but the entity's own placeholder counted as a name
+// already taken, so the second open renamed it "Entity 2 2", and the user's scene changed every time it was opened and saved. Opening and saving must settle after the first time.
+AETHER_TEST(SceneDocument_UnnamedEntitiesKeepTheirNamesWhenTheSceneIsReopened) {
+    const std::filesystem::path dir = FreshSceneDir("aether_test_unnamed_entities");
+    const std::filesystem::path old_scene = dir / "old.ascene";
+    const std::string transform = R"("Transform":{"$v":2,"position":[0,0,0],"rotation":[0,0,0,1],"scale":[1,1,1]})";
+    { std::ofstream(old_scene, std::ios::binary) << R"({"$type":"Scene","$version":1,"entities":[)"
+        R"({"guid":"a0000000-0000-4000-8000-000000000001","components":{)" << transform << R"(}},)"
+        R"({"guid":"a0000000-0000-4000-8000-000000000002","components":{)" << transform << R"(}},)"
+        R"({"guid":"a0000000-0000-4000-8000-000000000003","components":{)" << transform << R"(,"EntityName":{"$v":1,"value":"Crate"}}}]})"; }
+    auto names_of = [](SceneDocument& document) {
+        std::vector<std::string> names;
+        for (const Entity e : document.Entities()) names.push_back(document.Name(e));
+        std::sort(names.begin(), names.end());
+        return names;
+    };
+    SceneDocument first;
+    AETHER_CHECK(first.Load(old_scene));
+    const std::vector<std::string> after_first_open = names_of(first);
+    AETHER_CHECK(after_first_open.size() == 3);
+    AETHER_CHECK(std::find(after_first_open.begin(), after_first_open.end(), "Crate") != after_first_open.end()); // a name the user gave is kept
+    AETHER_CHECK(std::set<std::string>(after_first_open.begin(), after_first_open.end()).size() == 3);            // and they are all different
+    // Save, reopen, save, reopen: the names never change again.
+    std::filesystem::path current = dir / "saved0.ascene";
+    AETHER_CHECK(first.Save(current));
+    for (int round = 1; round <= 3; ++round) {
+        SceneDocument again;
+        AETHER_CHECK(again.Load(current));
+        AETHER_CHECK(names_of(again) == after_first_open);
+        current = dir / ("saved" + std::to_string(round) + ".ascene");
+        AETHER_CHECK(again.Save(current));
+    }
+}

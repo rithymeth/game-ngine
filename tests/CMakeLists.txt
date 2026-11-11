@@ -51,7 +51,7 @@ if(TARGET gem_hop_game)
 endif()
 
 if(TARGET aether_mcp)
-    target_sources(aether_tests PRIVATE test_mcp.cpp)
+    target_sources(aether_tests PRIVATE test_mcp.cpp test_legacy_roundtrip.cpp)
     target_link_libraries(aether_tests PRIVATE aether_mcp)
 endif()
 # Phase 25 step 4: the player's runtime.

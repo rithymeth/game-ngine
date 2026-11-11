@@ -24,6 +24,13 @@ namespace {
 // Loading a scene can come before any code has touched them, so register the
 // engine's scene components first, or their data would be skipped as
 // unknown.
+// Notes an unknown component in the caller's list (once).
+void NoteUnknown(const SceneLoadOptions& options, const std::string& name) {
+    if (options.unknown_components == nullptr) return;
+    std::vector<std::string>& list = *options.unknown_components;
+    if (std::find(list.begin(), list.end(), name) == list.end()) list.push_back(name);
+}
+
 void RegisterSceneComponents() {
     (void)GetComponentId<IdComponent>();
     (void)GetComponentId<EntityName>();
@@ -259,6 +266,7 @@ bool LoadSceneFromMemory(World& world, std::span<const u8> buffer, const std::st
     }
 
     std::vector<PendingEntity> pending_entities;
+    bool rejected_for_unknown = false; // an unknown component was met while rejecting: finish reading to name them all, then refuse
     pending_entities.reserve(entity_count);
     for (u32 e = 0; e < entity_count; ++e) {
         u32 component_count = 0;
@@ -311,10 +319,13 @@ bool LoadSceneFromMemory(World& world, std::span<const u8> buffer, const std::st
 
             ComponentId resolved_id = FindComponentIdByName(name);
             if (resolved_id == kInvalidComponentId) {
+                NoteUnknown(options, name);
                 if (options.reject_unknown_components) {
+                    // Keep reading so every unknown component is named, then refuse (nothing has been added to the world yet).
                     AETHER_LOG_ERROR("Scene", "Cannot safely load unknown component '%s' from %s", name.c_str(),
                                      path.c_str());
-                    return false;
+                    rejected_for_unknown = true;
+                    continue;
                 }
                 AETHER_LOG_WARN("Scene", "Skipping unknown component '%s' while loading %s", name.c_str(),
                                 path.c_str());
@@ -342,6 +353,7 @@ bool LoadSceneFromMemory(World& world, std::span<const u8> buffer, const std::st
         return false;
     }
 
+    if (rejected_for_unknown) return false;
     // The file is fully parsed and all strict-unknown checks have passed.
     // Only now mutate the destination world, so malformed input cannot leave
     // a partially loaded scene behind.
@@ -500,6 +512,7 @@ bool LoadSceneJsonFromMemoryImpl(World& world, std::span<const u8> bytes, const 
         std::vector<std::pair<ComponentId, const Json*>> components;
     };
     std::vector<PendingJsonEntity> pending_entities;
+    bool rejected_for_unknown = false; // an unknown component was met while rejecting: finish reading to name them all, then refuse
     for (const Json& entity_json : *entities) {
         auto components = entity_json.find("components");
         if (!entity_json.is_object() || components == entity_json.end() || !components->is_object()) {
@@ -520,10 +533,12 @@ bool LoadSceneJsonFromMemoryImpl(World& world, std::span<const u8> bytes, const 
         for (auto it = components->begin(); it != components->end(); ++it) {
             ComponentId id = FindComponentIdByName(it.key());
             if (id == kInvalidComponentId || GetComponentInfo(id).reflected == nullptr) {
+                NoteUnknown(options, it.key());
                 if (options.reject_unknown_components) {
                     AETHER_LOG_ERROR("Scene", "Cannot safely load unknown or unreflected component '%s' from %s",
                                      it.key().c_str(), path.c_str());
-                    return false;
+                    rejected_for_unknown = true;
+                    continue;
                 }
                 AETHER_LOG_WARN("Scene", "Skipping unknown or unreflected component '%s' while loading %s",
                                 it.key().c_str(), path.c_str());
@@ -535,6 +550,7 @@ bool LoadSceneJsonFromMemoryImpl(World& world, std::span<const u8> bytes, const 
         pending_entities.push_back(std::move(pending_entity));
     }
 
+    if (rejected_for_unknown) return false;
     // Defer all world mutations until every entity and strict component check
     // has been processed. The Json document stays alive through this commit.
     for (const PendingJsonEntity& pending_entity : pending_entities) {

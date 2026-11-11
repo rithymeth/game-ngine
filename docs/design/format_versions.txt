@@ -38,6 +38,9 @@ PackageManifest      engine/src/cook/package.cpp             1        refused   
 # format gained an optional root "origin" in Phase 42.1: its Transforms are then written as local + origin and the
 # loader shifts them back. A file without the field loads with origin zero, so version 1 still covers both.
 #
+# Components a scene file has that the build does not know (a plugin's, or a newer engine's): the runtime skips them with a warning; the editor and the MCP tools refuse the scene, naming each one
+# (SceneLoadOptions::reject_unknown_components, unknown_components), because saving it afterwards would delete them from the file. Loading never writes.
+#
 # When a format bumps, keep a fixture of each supported older version and add a migration test next to it.
 #
 # Files from earlier tools: tests/fixtures/legacy/<baseline>/ holds real scenes, Blueprints, sequences, input assets, layouts,

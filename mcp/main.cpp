@@ -68,8 +68,13 @@ int main(int argc, char** argv) {
             build_dir = argv[++i];
         } else if (std::strcmp(argv[i], "--scene") == 0 && i + 1 < argc) {
             const char* path = argv[++i];
-            if (!LoadSceneJson(session.world, path)) {
-                std::fprintf(stderr, "aether_mcp_server: could not load scene %s\n", path);
+            // Refused (not quietly stripped) when the file has a component this server does not know: a later save_scene would delete it from the file.
+            std::vector<std::string> unknown;
+            if (!LoadSceneJson(session.world, path, SceneLoadOptions{.reject_unknown_components = true, .unknown_components = &unknown})) {
+                std::string names;
+                for (const std::string& n : unknown) names += (names.empty() ? "" : ", ") + n;
+                if (names.empty()) std::fprintf(stderr, "aether_mcp_server: could not load scene %s\n", path);
+                else std::fprintf(stderr, "aether_mcp_server: refusing scene %s: it has components this server does not know (%s), and saving it would delete them from the file\n", path, names.c_str());
                 return 1;
             }
             editor::EnsureAllGuids(session.world, session.guids);

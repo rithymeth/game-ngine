@@ -7513,8 +7513,11 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
 
     server.AddTool({"load_scene",
                     "Load a scene file (.json or .aesc). By default it is added to the current scene; with "
-                    "replace=true the current scene and undo history are cleared first.",
-                    Schema({{"path", {{"type", "string"}}}, {"replace", {{"type", "boolean"}}}}, {"path"}),
+                    "replace=true the current scene and undo history are cleared first. A scene that has a component this "
+                    "server does not know (a plugin's, or one a newer engine wrote) is refused, naming each one, because "
+                    "saving it afterwards would silently delete that data; allow_unknown_components=true loads what is "
+                    "understood anyway and lists what was left out.",
+                    Schema({{"path", {{"type", "string"}}}, {"replace", {{"type", "boolean"}}}, {"allow_unknown_components", {{"type", "boolean"}}}}, {"path"}),
                     [&s](const Json& args) -> Json {
                         if (!s.play.IsEditing()) {
                             throw ToolError("Stop play mode before loading a scene");
@@ -7522,6 +7525,24 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                         std::string error;
                         const std::string path = ResolveScenePath(s.scene_root, RequireString(args, "path"), error).string();
                         if (path.empty()) throw ToolError(error);
+                        const bool allow_unknown = args.value("allow_unknown_components", false);
+                        bool binary = path.size() >= 5 && path.compare(path.size() - 5, 5, ".aesc") == 0;
+                        // Look before touching the session: which components does the file have that this server does not know? Loading into a scratch world refuses
+                        // (naming them all) without having cleared anything or added anything half-loaded.
+                        std::vector<std::string> unknown;
+                        if (!allow_unknown) {
+                            World probe;
+                            const SceneLoadOptions strict{.reject_unknown_components = true, .unknown_components = &unknown};
+                            const bool understood = binary ? LoadScene(probe, path, strict) : LoadSceneJson(probe, path, strict);
+                            if (!understood && !unknown.empty()) {
+                                std::string names;
+                                for (const std::string& n : unknown) names += (names.empty() ? "" : ", ") + n;
+                                throw ToolError("Refusing to load " + path + ": it has components this server does not know (" + names + "). Saving the scene afterwards would delete them from the file. "
+                                                "Load it in a build that has them, or pass allow_unknown_components=true to load the rest knowingly.");
+                            }
+                            if (!understood) throw ToolError("Could not load " + path);
+                            unknown.clear();
+                        }
                         if (args.value("replace", false)) {
                             for (Entity e : AllEntities(s)) {
                                 s.world.DestroyEntity(e);
@@ -7529,14 +7550,19 @@ void RegisterEditorTools(McpServer& server, EditorSession& s) {
                             s.guids.Clear();
                             s.stack.Clear();
                         }
-                        bool binary = path.size() >= 5 && path.compare(path.size() - 5, 5, ".aesc") == 0;
-                        bool ok = binary ? LoadScene(s.world, path) : LoadSceneJson(s.world, path);
+                        const SceneLoadOptions options{.unknown_components = &unknown};
+                        bool ok = binary ? LoadScene(s.world, path, options) : LoadSceneJson(s.world, path, options);
                         if (!ok) {
                             throw ToolError("Could not load " + path);
                         }
                         editor::EnsureAllGuids(s.world, s.guids);
                         s.stack.MarkSaved();
-                        return {{"loaded", path}, {"entities", s.world.EntityCount()}};
+                        Json result = {{"loaded", path}, {"entities", s.world.EntityCount()}};
+                        if (!unknown.empty()) {
+                            result["skipped_components"] = unknown;
+                            result["warning"] = "These components were not loaded and will not be in the scene: if you save_scene over this file they are deleted from it. Save to a different path to keep the original.";
+                        }
+                        return result;
                     }});
 
     server.AddTool({"play",
