@@ -161,6 +161,9 @@ if(Python3_Interpreter_FOUND)
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_module_graph.py --dot ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/module_graph_cycle.dot --no-includes)
     set_tests_properties(module_graph_catches_a_cycle PROPERTIES WILL_FAIL TRUE)
     add_test(NAME api_stability_annotations COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_api_stability.py)
+    # The game's own asset check (buffer lengths against what each glTF declares, scene references, unique GUIDs). It was written and
+    # never run by anything, and the valley's buffer sat truncated in the repository: the environment loaded as nothing.
+    add_test(NAME aether01_assets_validate COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/games/AETHER-01/tools/validate_assets.py)
     # Two MCP files registering one tool name is neither a compile error nor a test failure -- the tools
     # live in separate translation units, so only the far end of the server ever sees both.
     add_test(NAME unlisted_sources COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_sources_listed.py)
