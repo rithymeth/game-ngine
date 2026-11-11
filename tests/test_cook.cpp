@@ -621,7 +621,7 @@ AETHER_TEST(Cook_InvalidSourcesAreReportedByPathWithTheReason) {
     CHECK(reported("Broken/not_an_image.png"));
     CHECK(reported("Broken/truncated.png"));
     CHECK(reported("Broken/malformed.gltf: Failed to parse"));
-    CHECK(reported("Can't read the buffer \"gone.bin\""));
+    CHECK(reported("Broken/missing_buffer.gltf: ") && reported("The buffer file \"gone.bin\" is missing")); // by path, with the buffer named and what is wrong with it
     CHECK(reported("Broken/noise.wav: the WAVE file has no fmt or data chunk"));
     CHECK(reported("Prefabs/broken.aprefab"));
     CHECK(reported("Textures/gone.png"));
