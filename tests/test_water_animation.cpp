@@ -722,6 +722,19 @@ static void Water_SwellsFollowTheWind(rhi::Backend backend) {
     std::printf("    %s: coarse picture difference: calm vs windy %.3f; calm over 5 s %.3f, windy over 5 s %.3f\n", backend == rhi::Backend::Vulkan ? "vulkan" : "d3d12", flat_vs_swell, calm_moves, swell_moves);
     AETHER_CHECK(flat_vs_swell > 0.8);              // the wind lifts the water
     AETHER_CHECK(swell_moves > calm_moves + 0.5);   // and the swells travel
+    // Whitecaps: in a strong wind the swells' crests foam, which shows as bright, unsaturated pixels in the water that a calm sea does not have.
+    const auto whites = [&](const std::vector<u8>& frame) {
+        usize count = 0;
+        for (u32 y = 160; y < 352; ++y)
+            for (u32 x = 32; x < 608; ++x) {
+                const usize i = (static_cast<usize>(y) * W + x) * 4;
+                count += std::min({frame[i], frame[i + 1], frame[i + 2]}) > 140;
+            }
+        return count;
+    };
+    const usize calm_white = std::max(whites(calm_a), whites(calm_b)), windy_white = std::max(whites(windy_a), whites(windy_b));
+    std::printf("    %s: bright unsaturated pixels in the water: calm %zu, windy %zu\n", backend == rhi::Backend::Vulkan ? "vulkan" : "d3d12", calm_white, windy_white);
+    AETHER_CHECK(windy_white > calm_white + 150);
     std::error_code ignored;
     fs::remove_all(root, ignored);
 }
