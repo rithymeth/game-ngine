@@ -1292,3 +1292,12 @@ Three runs each, before and after, built one after the other from the same tree.
   (`particle_pass.h` says the same), so every entity is its own draw call. That is the next real step and it is an RHI change on
   both backends, not a tuning pass.
 - **Not measured:** a real GPU, D3D12, shadows over this many casters, or entities that are different models.
+
+## Procedural terrain generation (2026-11-11)
+
+`GenerateTerrain` (`terrain/src/generator.cpp`), one thread, `AETHER_TERRAIN_PREVIEW_DIR=<dir> AETHER_TEST_FILTER=TerrainPreview`
+prints it: **513 x 513 samples, 200,000 droplets, 20 thermal iterations, rivers and biomes: about 700 ms** (lavapipe machine, CPU only,
+RelWithDebInfo, one run of several that agreed within 2 percent). A 129 x 129 terrain with 20,000 droplets is a few tens of ms.
+- Not measured: a split of the time by stage (the droplets are most of it by construction, the priority flood and the sort are
+  O(n log n) in the cell count), a 2049 x 2049 terrain, or any threading. The droplets write to shared heights, so threading them
+  would change the result by thread timing unless they are split into independent tiles first: the determinism guarantee comes first.

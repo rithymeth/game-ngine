@@ -938,6 +938,7 @@ struct SceneRenderer::Impl {
     u64 transform_frame = 0;
     // Screen-space ambient occlusion in the post pass (AETHER_RENDER_AO=0 turns it off; AETHER_RENDER_AO_STRENGTH and _RADIUS tune it).
     bool ssao = false;
+    f32 fog_sun_scatter = 0.1f; // the sun's light the fog takes toward the sun, as a share of its colour (AETHER_RENDER_FOG_SUN tunes it)
     f32 ao_strength = 0.9f, ao_radius = 2.5f;
     bool taa_motion = false; // the motion pass (AETHER_RENDER_TAA_MOTION=0 turns it off)
     std::unique_ptr<SkyPass> sky;        // where the device has frame constants and half-float textures (D3D12)
@@ -1047,6 +1048,7 @@ struct SceneRenderer::Impl {
         }
         const char* ao_setting = std::getenv("AETHER_RENDER_AO");
         ssao = hdr && (ao_setting == nullptr || std::strcmp(ao_setting, "0") != 0);
+        if (const char* v = std::getenv("AETHER_RENDER_FOG_SUN")) fog_sun_scatter = std::clamp(static_cast<f32>(std::atof(v)), 0.0f, 2.0f);
         if (const char* v = std::getenv("AETHER_RENDER_AO_STRENGTH")) ao_strength = std::clamp(static_cast<f32>(std::atof(v)), 0.0f, 1.0f);
         if (const char* v = std::getenv("AETHER_RENDER_AO_RADIUS")) ao_radius = std::clamp(static_cast<f32>(std::atof(v)), 0.05f, 20.0f);
         PipelineDesc desc;
@@ -2264,6 +2266,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
     bool draw_particles = false;
     bool draw_sprite2d = false;
     Mat4 decal_view_projection;
+    Mat4 post_camera_view; // the camera's view matrix, for the fog's sun in-scatter
     f32 ao_proj_x = 1.0f, ao_proj_y = 1.0f, ao_near = 0.1f, ao_far = 1000.0f; // the camera's, for the post pass's occlusion
     Mat4 taa_view_projection; // without the jitter
     Vec3 decal_camera_position;
@@ -2272,6 +2275,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
         const f32 aspect = static_cast<f32>(renderer.swap_chain.Width()) /
                            static_cast<f32>(std::max(renderer.swap_chain.Height(), 1u));
         const Mat4 camera_view = CameraView(world, guids, camera_entity);
+        post_camera_view = camera_view;
         const Mat4 steady_projection = CameraProjection(LimitViewDistance(*camera, renderer.view_distance), aspect);
         // Temporal anti-aliasing moves every draw by this frame's sub-pixel offset; its resolve reprojects without it.
         Mat4 projection = steady_projection;
@@ -2961,6 +2965,11 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
             renderer.post->SetAmbientOcclusion({renderer.swap_chain.SceneDepthTexture().index, renderer.ssao ? renderer.ao_strength : 0.0f,
                                                 renderer.ao_radius, ao_near, ao_far, ao_proj_x, ao_proj_y});
             renderer.post->SetFogColor(Vec3(frame_data.sky_color[0], frame_data.sky_color[1], frame_data.sky_color[2]));
+            if (frame_data.sun_direction[3] > 0.0f) {
+                const Vec4 to_sun = post_camera_view * Vec4(frame_data.sun_direction[0], frame_data.sun_direction[1], frame_data.sun_direction[2], 0.0f);
+                const Vec3 direction = Vec3(to_sun.x, to_sun.y, to_sun.z).Normalized();
+                renderer.post->SetFogSun(direction, Vec3(frame_data.sun_color[0], frame_data.sun_color[1], frame_data.sun_color[2]) * renderer.fog_sun_scatter);
+            }
         }
         // Bloom reads the finished scene colour into its own chain of render textures, between the two passes.
         if (renderer.bloom) renderer.post->RenderBloom(commands, post_settings);

@@ -5,6 +5,7 @@ add_library(aether_terrain STATIC
     src/foliage.cpp
     src/spline.cpp
     src/terrain_pass.cpp
+    src/generator.cpp
 )
 
 target_include_directories(aether_terrain PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)

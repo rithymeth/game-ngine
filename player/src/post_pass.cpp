@@ -31,6 +31,8 @@ struct PushConstants {
     float g_ProjY;
     float g_FogDensity;
     float4 g_FogColor;
+    float4 g_SunView;
+    float4 g_SunColor;
 };
 #ifdef __spirv__
 [[vk::push_constant]]
@@ -143,7 +145,14 @@ float4 PSMain(float4 position : SV_POSITION) : SV_TARGET {
         float d = AoDepth(int2(position.xy), float2(width, height));
         if (d < 1.0) {
             float distance = length(AoViewPosition(int2(position.xy), float2(width, height), d));
-            c = lerp(c, g_PC.g_FogColor.rgb, 1.0 - exp(-g_PC.g_FogDensity * distance));
+            float3 fog = g_PC.g_FogColor.rgb;
+            if (g_PC.g_SunView.w > 0.0) {
+                // Toward the sun the haze lights up: the cosine between the view ray and the sun, to a power, times the sun's light.
+                float3 ray = AoViewPosition(int2(position.xy), float2(width, height), d);
+                float toward = saturate(dot(normalize(ray), g_PC.g_SunView.xyz));
+                fog += g_PC.g_SunColor.rgb * pow(toward, 8.0);
+            }
+            c = lerp(c, fog, 1.0 - exp(-g_PC.g_FogDensity * distance));
         }
     }
     if (g_PC.g_Bloom < 128 && g_PC.g_BloomIntensity > 0.0) {
@@ -395,6 +404,16 @@ void PostPass::Draw(gfx::rhi::ICommandList& commands, const PostProcessSettings&
         constants.proj_x = ao_.proj_x;
         constants.proj_y = ao_.proj_y;
     }
+    if (sun_set_) {
+        constants.sun_view[0] = sun_view_.x;
+        constants.sun_view[1] = sun_view_.y;
+        constants.sun_view[2] = sun_view_.z;
+        constants.sun_view[3] = 1.0f;
+        constants.sun_color[0] = sun_color_.x;
+        constants.sun_color[1] = sun_color_.y;
+        constants.sun_color[2] = sun_color_.z;
+    }
+    sun_set_ = false;
     ao_ = {}; // for one frame
     commands.BindPipeline(pipeline_);
     commands.BindBindlessTextures();
