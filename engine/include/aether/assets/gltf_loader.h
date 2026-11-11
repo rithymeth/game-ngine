@@ -38,6 +38,8 @@ struct GltfMaterial {
     bool double_sided = false;
     // AETHER_materials_water: the scene shader scrolls two layers of this material's normal map with the game's time (ripples that move).
     bool water = false;
+    // AETHER_materials_wind: metres of sway at the top of the vegetation (the vertex shader's gust, scaled by height); 0 for none.
+    f32 wind = 0.0f;
     std::string base_color_texture;
     std::string normal_texture;
     std::string metallic_roughness_texture;

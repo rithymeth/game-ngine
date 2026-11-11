@@ -157,6 +157,44 @@ double MeanDifference(const std::vector<u8>& a, const std::vector<u8>& b) {
 
 } // namespace
 
+// A tuft of grass close to the camera on a lit ground quad, with the wind flag as asked; the grass is scaled up (a tuft is half a metre) so it fills the view.
+fs::path CookGrassScene(const fs::path& root, bool wind) {
+    fs::create_directories(root / "Content/models");
+    fs::create_directories(root / "Content/Scenes");
+    const fs::path games = fs::path(AETHER_REPO_ASSETS_DIR).parent_path() / "games/AETHER-01";
+    reflect::Json project = reflect::Json::parse(std::ifstream(games / "AETHER-01.aproject"));
+    project["name"] = "WaterScene";
+    project["startup_scene"] = "Scenes/Main.ascene";
+    project["always_cook"] = reflect::Json::array();
+    std::ofstream(root / "WaterScene.aproject") << project.dump(2);
+    GrassParams grass;
+    grass.blades = 30;
+    grass.height = 0.6f;
+    grass.spread = 0.12f;
+    grass.curl = 0.4f;
+    grass.sway = wind ? 0.30f : 0.0f; // the strongest the packed strength can carry
+    const std::vector<u8> glb = EncodeGlb(GenerateGrass(grass, 4));
+    std::ofstream(root / "Content/models/grass.glb", std::ios::binary).write(reinterpret_cast<const char*>(glb.data()), static_cast<std::streamsize>(glb.size()));
+    const reflect::Json entities = {
+        SceneEntity({{"Transform", TransformJson({0.0f, 0.5f, 1.7f}, {-0.12f, 0.0f, 0.0f, 0.993f})},
+                     {"Camera", {{"$v", 1}, {"projection", "Perspective"}, {"fov_degrees", 50.0f}, {"near_plane", 0.05f}, {"far_plane", 50.0f},
+                                 {"ortho_height", 10.0f}, {"priority", 0}}}}),
+        SceneEntity({{"Transform", TransformJson({0, 0, 0}, {-0.26f, 0.9f, 0.1f, 0.34f})},
+                     {"DirectionalLight", {{"$v", 1}, {"color", {1.0f, 0.95f, 0.88f}}, {"intensity", 3.0f}, {"cast_shadows", false}}}}),
+        SceneEntity({{"Transform", TransformJson({0, 0, 0})},
+                     {"SkyLight", {{"$v", 1}, {"color", {1.0f, 1.0f, 1.0f}}, {"intensity", 1.0f}, {"environment", ""}, {"environment_rotation_degrees", 0.0f}}}}),
+        SceneEntity({{"Transform", {{"$v", 1}, {"position", {0.0f, 0.0f, 0.0f}}, {"rotation", {0, 0, 0, 1}}, {"scale", {2.0f, 2.0f, 2.0f}}}},
+                     {"ModelRenderer", {{"$v", 1}, {"model", ""}, {"asset_path", "models/grass.glb"}}}})};
+    const reflect::Json scene = {{"$type", "Scene"}, {"$version", 1}, {"entities", entities}};
+    std::ofstream(root / "Content/Scenes/Main.ascene") << scene.dump(2);
+    cook::CookOptions options;
+    options.project_file = root / "WaterScene.aproject";
+    options.output_dir = root / "cooked";
+    const auto cooked = cook::Cook(options);
+    AETHER_CHECK(cooked.ok);
+    return cooked.ok ? cooked.pak_file : fs::path();
+}
+
 static void Water_RipplesMoveWithTheGameTimeAndOnlyOnWater(rhi::Backend backend) {
     if (!rhi::IsBackendAvailable(backend)) return;
     SetEnvironmentVariableForTest("AETHER_RENDER_TAA", "0"); // no sub-pixel jitter between frames: what differs is the water
@@ -182,3 +220,30 @@ static void Water_RipplesMoveWithTheGameTimeAndOnlyOnWater(rhi::Backend backend)
 
 AETHER_TEST(Water_RipplesMoveWithTheGameTimeAndOnlyOnWater_D3D12) { Water_RipplesMoveWithTheGameTimeAndOnlyOnWater(rhi::Backend::D3D12); }
 AETHER_TEST(Water_RipplesMoveWithTheGameTimeAndOnlyOnWater_Vulkan) { Water_RipplesMoveWithTheGameTimeAndOnlyOnWater(rhi::Backend::Vulkan); }
+
+// Wind: a grass material with the extension sways with the game's time, one without does not, and the same time is the same picture.
+static void Wind_GrassSwaysWithTheGameTimeAndOnlyWhenFlagged(rhi::Backend backend) {
+    if (!rhi::IsBackendAvailable(backend)) return;
+    SetEnvironmentVariableForTest("AETHER_RENDER_TAA", "0");
+    constexpr u32 W = 640, H = 360;
+    const fs::path root = fs::temp_directory_path() / "aether_wind_scene" / assets::ToString(assets::NewAssetGuid());
+    const fs::path windy_pak = CookGrassScene(root / "windy", true), calm_pak = CookGrassScene(root / "calm", false);
+    if (windy_pak.empty() || calm_pak.empty()) return;
+    const auto windy_a = FrameAfter(backend, root / "windy", windy_pak, 10, W, H), windy_a_again = FrameAfter(backend, root / "windy", windy_pak, 10, W, H);
+    const auto windy_b = FrameAfter(backend, root / "windy", windy_pak, 70, W, H);
+    const auto calm_a = FrameAfter(backend, root / "calm", calm_pak, 10, W, H), calm_b = FrameAfter(backend, root / "calm", calm_pak, 70, W, H);
+    SetEnvironmentVariableForTest("AETHER_RENDER_TAA", "");
+    AETHER_CHECK(windy_a.size() == static_cast<usize>(W) * H * 4 && windy_b.size() == windy_a.size() && calm_a.size() == windy_a.size() && calm_b.size() == windy_a.size());
+    if (windy_a.size() != windy_b.size() || calm_a.size() != windy_a.size() || calm_b.size() != windy_a.size() || windy_a.empty()) return;
+    const double repeat = MeanDifference(windy_a, windy_a_again), swayed = MeanDifference(windy_a, windy_b), still = MeanDifference(calm_a, calm_b);
+    std::printf("    %s: the same time twice differs by %.4f, flagged grass one second apart by %.3f, unflagged by %.4f\n",
+                backend == rhi::Backend::Vulkan ? "vulkan" : "d3d12", repeat, swayed, still);
+    AETHER_CHECK(repeat < 0.01);
+    AETHER_CHECK(swayed > 0.05);
+    AETHER_CHECK(swayed > still * 10.0 + 0.02);
+    std::error_code ignored;
+    fs::remove_all(root, ignored);
+}
+
+AETHER_TEST(Wind_GrassSwaysWithTheGameTimeAndOnlyWhenFlagged_D3D12) { Wind_GrassSwaysWithTheGameTimeAndOnlyWhenFlagged(rhi::Backend::D3D12); }
+AETHER_TEST(Wind_GrassSwaysWithTheGameTimeAndOnlyWhenFlagged_Vulkan) { Wind_GrassSwaysWithTheGameTimeAndOnlyWhenFlagged(rhi::Backend::Vulkan); }

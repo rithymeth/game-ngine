@@ -95,6 +95,7 @@ struct TreeParams {
     u32 foliage_detail = 1;     // icosphere splits per leaf mass (broadleaf), 0 to 2
     Vec3 bark_color{0.30f, 0.21f, 0.14f};
     Vec3 leaf_color{0.22f, 0.45f, 0.16f};
+    f32 sway = 0.08f;           // metres the leaves sway at the top in the wind (AETHER_materials_wind); the bark never does. 0 for none
 };
 ProceduralMesh GenerateTree(const TreeParams& params, u32 seed);
 
@@ -120,6 +121,7 @@ struct ShrubParams {
     f32 stems = 4.0f;        // thin stems from the ground to the masses (0 for none)
     Vec3 leaf_color{0.24f, 0.42f, 0.16f};
     Vec3 stem_color{0.30f, 0.22f, 0.14f};
+    f32 sway = 0.08f;        // metres the leaves sway at the top in the wind (0 for none)
 };
 ProceduralMesh GenerateShrub(const ShrubParams& params, u32 seed);
 
@@ -130,6 +132,7 @@ struct GrassParams {
     f32 spread = 0.18f;      // radius of the tuft, metres
     f32 curl = 0.35f;        // how far the blades lean and bend, as a share of their height
     Vec3 color{0.34f, 0.52f, 0.18f};
+    f32 sway = 0.14f;        // metres the blades sway at the top in the wind (0 for none)
 };
 // Blades are two-sided ribbons (both windings), flat shaded, so they show from either side with a culled back face.
 ProceduralMesh GenerateGrass(const GrassParams& params, u32 seed);
@@ -141,6 +144,7 @@ struct ReedParams {
     bool heads = true;       // cattail heads on some stems
     Vec3 stem_color{0.36f, 0.48f, 0.20f};
     Vec3 head_color{0.30f, 0.18f, 0.10f};
+    f32 sway = 0.12f;        // metres the stalks sway at the top in the wind (0 for none)
 };
 ProceduralMesh GenerateReeds(const ReedParams& params, u32 seed);
 

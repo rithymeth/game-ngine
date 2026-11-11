@@ -57,6 +57,7 @@ struct MaterialData {
     // AETHER_materials_water: written to a .glb by the procedural mesh exporter and read into GltfMaterial::water by the loader. Not part of the Material
     // sub-asset's serialised form (an imported model's Material asset does not keep it).
     bool water = false;
+    f32 wind = 0.0f; // AETHER_materials_wind: metres of sway at the top (0 to 0.3), also not part of the serialised Material asset
     std::string base_color_texture;
     std::string normal_texture;
     std::string metallic_roughness_texture;
