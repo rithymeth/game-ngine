@@ -48,6 +48,9 @@ fs::path CookSlidingBox(const fs::path& root) {
     mesh.mesh.primitives.push_back(box.Finish(Shading::Flat, UvMode::BoxProjected, 0));
     const std::vector<u8> glb = EncodeGlb(mesh);
     std::ofstream(root / "Content/models/box.glb", std::ios::binary).write(reinterpret_cast<const char*>(glb.data()), static_cast<std::streamsize>(glb.size()));
+    // A shrub (a swaying plant of a few hundred triangles) a few metres off: small enough on this 160 x 90 picture to take its far level.
+    const std::vector<u8> shrub_glb = EncodeGlb(GenerateVariant(ProceduralKind::Shrub, 1, 3));
+    std::ofstream(root / "Content/models/shrub.glb", std::ios::binary).write(reinterpret_cast<const char*>(shrub_glb.data()), static_cast<std::streamsize>(shrub_glb.size()));
     const std::string box_guid = "a0000000-0000-4000-8000-0000000000b1";
     // The sequence: the box's x goes from -2.5 to 2.5 over one second.
     seq::LevelSequence sequence;
@@ -73,6 +76,7 @@ fs::path CookSlidingBox(const fs::path& root) {
         // Two more boxes the camera cannot see (far to the side, and behind it): drawn or left out, the picture is the same.
         Entity(assets::ToString(assets::NewAssetGuid()), {{"Transform", At({60.0f, 0.0f, 0.0f})}, {"ModelRenderer", {{"$v", 1}, {"model", ""}, {"asset_path", "models/box.glb"}}}}),
         Entity(assets::ToString(assets::NewAssetGuid()), {{"Transform", At({0.0f, 0.0f, 20.0f})}, {"ModelRenderer", {{"$v", 1}, {"model", ""}, {"asset_path", "models/box.glb"}}}}),
+        Entity(assets::ToString(assets::NewAssetGuid()), {{"Transform", At({0.6f, -1.3f, -2.0f})}, {"ModelRenderer", {{"$v", 1}, {"model", ""}, {"asset_path", "models/shrub.glb"}}}}),
         Entity(box_guid, {{"Transform", At({-2.5f, 0.0f, 0.0f})}, {"ModelRenderer", {{"$v", 1}, {"model", ""}, {"asset_path", "models/box.glb"}}}}),
         Entity(assets::ToString(assets::NewAssetGuid()),
                {{"Transform", At({0, 0, 0})},
@@ -129,6 +133,30 @@ AETHER_TEST(PlayerRecord_LeavingOutWhatTheCameraCannotSeeDoesNotChangeThePicture
         AETHER_CHECK(!off.empty());
         AETHER_CHECK(off == on);
     }
+    std::error_code ignored;
+    fs::remove_all(root, ignored);
+}
+
+AETHER_TEST(PlayerRecord_APlantFarAwayTakesItsFarLevelAndLooksAlmostTheSame) {
+    const fs::path root = fs::temp_directory_path() / "aether_player_lod" / assets::ToString(assets::NewAssetGuid());
+    const fs::path pak = CookSlidingBox(root);
+    if (pak.empty()) return;
+    // The same film with far levels off (AETHER_RENDER_LOD=0) and on: the picture changes (the shrub is drawn from fewer triangles) and changes little.
+    for (const char* mode : {"0", "1"}) {
+        const std::string run = std::string("AETHER_RENDER_LOD=") + mode + " \"" + AETHER_TEST_PLAYER_PATH + "\" --pak \"" + pak.string() + "\" --size 160x90 --user-dir \"" +
+                                (root / "user").string() + "\" --record-dir \"" + (root / (std::string("lod") + mode)).string() + "\" --record-fps 8 --frames 3 > /dev/null 2>&1";
+        AETHER_CHECK(std::system(run.c_str()) == 0);
+    }
+    usize differing = 0, total = 0;
+    const std::vector<unsigned char> full = ReadAll(root / "lod0/frame_00002.bmp"), far = ReadAll(root / "lod1/frame_00002.bmp");
+    AETHER_CHECK(full.size() > 54 && full.size() == far.size());
+    for (usize i = 54; i + 3 < full.size() && i + 3 < far.size(); i += 4) {
+        ++total;
+        if (full[i] != far[i] || full[i + 1] != far[i + 1] || full[i + 2] != far[i + 2]) ++differing;
+    }
+    std::printf("    far level: %zu of %zu pixels differ (%.2f%%)\n", differing, total, total ? 100.0 * static_cast<double>(differing) / static_cast<double>(total) : 0.0);
+    AETHER_CHECK(differing > 0);            // the far level was drawn
+    AETHER_CHECK(differing * 10 < total);   // and under a tenth of the picture changed
     std::error_code ignored;
     fs::remove_all(root, ignored);
 }

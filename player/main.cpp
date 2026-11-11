@@ -649,6 +649,12 @@ int main(int argc, char** argv) {
                 cmd.Reset();
                 if (scene_renderer) {
                     scene_renderer->Draw(game, cmd, frame_slot);
+                    // AETHER_PLAYER_GPU_TIMING=1: the GPU's time by stage for the newest finished frame, one line a frame (a few frames behind the one just drawn).
+                    static const bool log_gpu_timing = std::getenv("AETHER_PLAYER_GPU_TIMING") != nullptr;
+                    if (log_gpu_timing) {
+                        const SceneRenderer::GpuTimings t = scene_renderer->GpuFrameTimings();
+                        if (t.valid) AETHER_LOG_INFO("Player", "GpuTiming frame %.2f ms: shadows %.2f, scene %.2f, post %.2f", t.frame_ms, t.shadows_ms, t.scene_ms, t.post_ms);
+                    }
                 } else {
                     cmd.BeginRenderPass(*swap_chain, {0.015f, 0.025f, 0.045f, 1.0f});
                     cmd.EndRenderPass();
