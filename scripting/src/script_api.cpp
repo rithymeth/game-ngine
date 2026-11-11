@@ -149,6 +149,25 @@ int InputGetAxis3D(lua_State* L) {
     return 1;
 }
 
+const input::InputState::Pointer& PointerOf(lua_State* L) {
+    static const input::InputState::Pointer kNone;
+    const i64 index = static_cast<i64>(luaL_optinteger(L, 1, 0));
+    const input::InputState* state = System(L).BoundInputState();
+    return state != nullptr && index >= 0
+        ? state->GetPointer(static_cast<usize>(index)) : kNone;
+}
+
+int InputGetPointerPosition(lua_State* L) {
+    const input::InputState::Pointer& pointer = PointerOf(L);
+    lua_pushvector(L, pointer.x, pointer.y, pointer.active ? 1.0f : 0.0f);
+    return 1;
+}
+
+int InputIsPointerDown(lua_State* L) {
+    lua_pushboolean(L, PointerOf(L).down ? 1 : 0);
+    return 1;
+}
+
 int InputEventOf(lua_State* L, input::ActionEvent kind) {
     const char* name = luaL_checkstring(L, 1);
     PushEvent(L, System(L).InputEvent(name, kind));
@@ -224,11 +243,13 @@ void ScriptSystem::InstallApi(bool install_kit_apis) {
     SetFunction(L, "Every", &TimerEvery);
     lua_setglobal(L, "Timer");
 
-    lua_createtable(L, 0, 10);
+    lua_createtable(L, 0, 12);
     SetFunction(L, "IsTriggered", &InputIsTriggered);
     SetFunction(L, "GetAxis1D", &InputGetAxis1D);
     SetFunction(L, "GetAxis2D", &InputGetAxis2D);
     SetFunction(L, "GetAxis3D", &InputGetAxis3D);
+    SetFunction(L, "GetPointerPosition", &InputGetPointerPosition);
+    SetFunction(L, "IsPointerDown", &InputIsPointerDown);
     SetFunction(L, "OnStarted", &InputOnStarted);
     SetFunction(L, "OnTriggered", &InputOnTriggered);
     SetFunction(L, "OnCompleted", &InputOnCompleted);

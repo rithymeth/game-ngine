@@ -16,6 +16,12 @@ In a script: `Input.GetAxis2D("Move")`, `Input.IsTriggered("Jump")`, or
 `Input.OnStarted("Jump")` for an event you connect to. In C++:
 `InputSystem::GetAxis2D`, `GetAction`.
 
+Scripts can also read the host pointer with `Input.GetPointerPosition(index?)`.
+It returns a vector whose `x` and `y` are window pixels and whose `z` is 1
+when that pointer is active; pointer 0 is the mouse. `Input.IsPointerDown(index?)`
+reports whether it is pressed. A press used by the UI is removed from its mapped
+gameplay action before scripts see it.
+
 Two conventions to know: a gamepad stick's Y is negative when pushed forward
 (so the templates negate it onto a forward axis), and mouse movement is positive
 right and down.

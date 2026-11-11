@@ -886,6 +886,7 @@ void Game::StartRuntime() {
         }, false);
     runtime_->scripts->Register(*lifecycle_);
     runtime_->scripts->BindInput(&input_);
+    runtime_->scripts->BindInputState(&input_state_);
 #if AETHER_GAME_PHYSICS
     runtime_->scripts->BindPhysicsScene(physics_ ? physics_->scene.get() : nullptr);
     if (physics_ && physics_->scene) {

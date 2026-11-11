@@ -176,6 +176,17 @@ AETHER_TEST(ScriptApi_InputFromScripts) {
         function ReadMove() return Input.GetAxis2D("Move").x, Input.IsTriggered("Move") end
     )").ok);
     input::InputState state;
+    state.SetPointer(0, 320.0f, 180.0f, true, true);
+    scripts.BindInputState(&state);
+    AETHER_CHECK(f.host.Run(R"(
+        local pointer = Input.GetPointerPosition()
+        pointer_x, pointer_y, pointer_active = pointer.x, pointer.y, pointer.z
+        pointer_down = Input.IsPointerDown()
+    )").ok);
+    const ScriptResult pointer_down = f.host.Run("return pointer_down");
+    AETHER_CHECK(f.Number("pointer_x") == 320.0 && f.Number("pointer_y") == 180.0 &&
+                 f.Number("pointer_active") == 1.0 && pointer_down.ok &&
+                 std::holds_alternative<bool>(pointer_down.values[0]) && std::get<bool>(pointer_down.values[0]));
     state.SetButton(input::Key::Space, true);
     state.SetButton(input::Key::D, true);
     input.Update(state, 0.1f);
@@ -185,6 +196,7 @@ AETHER_TEST(ScriptApi_InputFromScripts) {
     AETHER_CHECK(f.Number("jumps") == 1.0 && f.Number("released") == 1.0);
 
     scripts.BindInput(nullptr);
+    scripts.BindInputState(nullptr);
     state.SetButton(input::Key::Space, false);
     input.Update(state, 0.1f);
     state.SetButton(input::Key::Space, true);

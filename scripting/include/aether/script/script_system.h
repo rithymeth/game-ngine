@@ -50,6 +50,7 @@ struct ScriptError {
 //   Timer.After(seconds, fn)       -> timer with :Cancel()   (runs once)
 //   Timer.Every(seconds, fn)       -> timer with :Cancel()   (repeats)
 //   Input.IsTriggered(action), Input.GetAxis1D / GetAxis2D / GetAxis3D(action)
+//   Input.GetPointerPosition(index?), Input.IsPointerDown(index?)
 //   Input.OnStarted / OnTriggered / OnCompleted / OnCanceled(action) -> event (fired with the action's value)
 //   Physics.AddForce / AddImpulse / SetLinearVelocity(entity, vector)
 //   Physics.GetLinearVelocity(entity), Physics.Raycast(...), Physics.SphereCast(...)
@@ -81,6 +82,10 @@ public:
     // Connects the Input API to an input system (null to disconnect). The
     // system must outlive the binding.
     void BindInput(input::InputSystem* input);
+    // Exposes the host's raw pointer positions to scripts. The state must
+    // outlive the binding. UI-consumed clicks are removed from the matching
+    // action mapping before scripts observe them.
+    void BindInputState(const input::InputState* state) { input_state_ = state; }
     // Makes the current scene's ray queries and rigid-body controls available to Luau.
     void BindPhysicsScene(::aether::PhysicsScene* scene) { physics_scene_ = scene; }
     ::aether::PhysicsScene* BoundPhysicsScene() const { return physics_scene_; }
@@ -178,6 +183,7 @@ public:
     u32 StartTimer(f64 seconds, bool repeat, int function_ref);
     bool CancelTimer(u32 timer);
     input::InputSystem* BoundInput() { return input_; }
+    const input::InputState* BoundInputState() const { return input_state_; }
     u32 InputEvent(const std::string& action, input::ActionEvent event);
     void InstallKitApi(const std::string& kit_name);
 
@@ -212,6 +218,7 @@ private:
     std::unordered_map<EntityGuid, assets::AssetGuid> waiting_;
     std::unordered_map<std::string, u32> input_events_; // "action\nevent" -> event id
     input::InputSystem* input_ = nullptr;
+    const input::InputState* input_state_ = nullptr;
     ::aether::PhysicsScene* physics_scene_ = nullptr;
     std::vector<u32> input_subscriptions_;
     u32 next_id_ = 1;
