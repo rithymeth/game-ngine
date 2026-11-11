@@ -43,6 +43,7 @@ struct FrameData {
     float4 time;              // x: the game's time in seconds
     float4 wind;              // xy: the wind's direction in the world (x, z); z: strength; w: gust speed
     float4 wind_gusts;        // x: gustiness
+    float4 clouds;            // x: the cloud deck's coverage; y: drift speed; z: scale
     uint4 reflection;         // x: the water reflection's bindless index (255: none)
     float4 wind_zones[7];     // the wind zones: xy direction (x, z), z strength, w gust speed
 };
@@ -264,6 +265,9 @@ FrameData BuildFrameData(const World& world, const GuidIndex& guids, const Vec3&
     }
     if (const SkyLight* light = FindSkyLight(world)) {
         Set4(data.sky_color, light->color.x * light->intensity, light->color.y * light->intensity, light->color.z * light->intensity, 1.0f);
+        const auto finite = [](f32 v, f32 fallback) { return std::isfinite(v) ? v : fallback; };
+        Set4(data.clouds, std::clamp(finite(light->cloud_coverage, 0.0f), 0.0f, 1.0f), std::clamp(finite(light->cloud_speed, 0.02f), 0.0f, 1.0f),
+             std::clamp(finite(light->cloud_scale, 0.7f), 0.1f, 4.0f), 0.0f);
     }
 
     struct Near {

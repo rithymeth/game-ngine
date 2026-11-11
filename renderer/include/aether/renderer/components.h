@@ -40,6 +40,10 @@ struct SkyLight {
     f32 intensity = 1.0f;
     std::string environment;
     f32 environment_rotation_degrees = 0.0f;
+    // A deck of procedural clouds in the sky, lit by the sun and drifting with the world's Wind: 0 is a clear sky (the default), 1 overcast.
+    f32 cloud_coverage = 0.0f;
+    f32 cloud_scale = 0.7f;   // bigger makes smaller, more broken clouds
+    f32 cloud_speed = 0.02f;  // how fast the deck drifts with the wind (sky-widths a second)
 };
 
 // Wind over the scene: what the vegetation's sway (a material with AETHER_materials_wind) follows. The first Wind in the world is used; a world without one has a
@@ -127,7 +131,10 @@ AETHER_REFLECT(aether::SkyLight, 1,
     AETHER_FIELD(color, Field_EditAnywhere),
     AETHER_FIELD(intensity, Field_EditAnywhere, {.range_min = 0.0, .range_max = 1000.0}),
     AETHER_FIELD(environment, Field_EditAnywhere, {.tooltip = "An equirectangular sky image in the package (.hdr or LDR); empty uses a procedural sky"}),
-    AETHER_FIELD(environment_rotation_degrees, Field_EditAnywhere, {.tooltip = "Turns the sky image about the up axis", .range_min = -360.0, .range_max = 360.0, .units = "deg"})
+    AETHER_FIELD(environment_rotation_degrees, Field_EditAnywhere, {.tooltip = "Turns the sky image about the up axis", .range_min = -360.0, .range_max = 360.0, .units = "deg"}),
+    AETHER_FIELD(cloud_coverage, Field_EditAnywhere, {.tooltip = "A deck of procedural clouds: 0 clear (off), 1 overcast", .range_min = 0.0, .range_max = 1.0}),
+    AETHER_FIELD(cloud_scale, Field_EditAnywhere, {.tooltip = "Bigger makes smaller, more broken clouds", .range_min = 0.1, .range_max = 4.0}),
+    AETHER_FIELD(cloud_speed, Field_EditAnywhere, {.tooltip = "How fast the clouds drift with the wind", .range_min = 0.0, .range_max = 1.0})
 )
 AETHER_REFLECT(aether::Wind, 1,
     AETHER_FIELD(direction_degrees, Field_EditAnywhere, {.tooltip = "The way the wind blows: 0 toward +X, 90 toward +Z", .range_min = -360.0, .range_max = 360.0, .units = "deg"}),

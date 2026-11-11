@@ -498,7 +498,7 @@ AETHER_TEST(Detail_AGroundWithTheLayerIsRoughUpClose_Vulkan) { Detail_AGroundWit
 
 // Height fog: mist that pools low. A tall red pillar 30 m away fades into the mist at its foot and stands clear of it higher up: with the fog on, the foot has lost
 // more of its colour than the top, relative to the same scene with no fog. (Fog colour is the sky's, near white here, so loss of colour is loss of redness.)
-fs::path CookHeightFogScene(const fs::path& root, bool fog) {
+fs::path CookHeightFogScene(const fs::path& root, bool fog, f32 clouds = 0.0f) {
     fs::create_directories(root / "Content/models");
     fs::create_directories(root / "Content/Scenes");
     const fs::path games = fs::path(AETHER_REPO_ASSETS_DIR).parent_path() / "games/AETHER-01";
@@ -526,7 +526,7 @@ fs::path CookHeightFogScene(const fs::path& root, bool fog) {
                      {"Camera", {{"$v", 1}, {"projection", "Perspective"}, {"fov_degrees", 50.0f}, {"near_plane", 0.1f}, {"far_plane", 200.0f}, {"ortho_height", 10.0f}, {"priority", 0}}}}),
         SceneEntity({{"Transform", TransformJson({0, 0, 0}, {-0.3007f, 0.0f, 0.0f, 0.9537f})},
                      {"DirectionalLight", {{"$v", 1}, {"color", {1.0f, 0.95f, 0.88f}}, {"intensity", 3.0f}, {"cast_shadows", false}}}}),
-        SceneEntity({{"Transform", TransformJson({0, 0, 0})}, {"SkyLight", {{"$v", 1}, {"color", {1.0f, 1.0f, 1.0f}}, {"intensity", 1.0f}, {"environment", ""}, {"environment_rotation_degrees", 0.0f}}}}),
+        SceneEntity({{"Transform", TransformJson({0, 0, 0})}, {"SkyLight", {{"$v", 1}, {"color", {1.0f, 1.0f, 1.0f}}, {"intensity", 1.0f}, {"environment", ""}, {"environment_rotation_degrees", 0.0f}, {"cloud_coverage", clouds}}}}),
         SceneEntity({{"Transform", TransformJson({0, 0, 0})}, {"ModelRenderer", {{"$v", 1}, {"model", ""}, {"asset_path", "models/pillar.glb"}}}}),
         SceneEntity({{"Transform", TransformJson({0, 0, 0})}, {"PostProcessVolume", volume}})};
     const reflect::Json scene = {{"$type", "Scene"}, {"$version", 1}, {"entities", entities}};
@@ -584,6 +584,58 @@ static void Fog_HeightFogThickensLowAndThinsWithHeight(rhi::Backend backend) {
 }
 AETHER_TEST(Fog_HeightFogThickensLowAndThinsWithHeight_D3D12) { Fog_HeightFogThickensLowAndThinsWithHeight(rhi::Backend::D3D12); }
 AETHER_TEST(Fog_HeightFogThickensLowAndThinsWithHeight_Vulkan) { Fog_HeightFogThickensLowAndThinsWithHeight(rhi::Backend::Vulkan); }
+
+// Clouds: a clear sky is a smooth gradient, and with SkyLight::cloud_coverage the same view has cloud detail in the sky (large pixel-to-pixel variation up in
+// the sky rows), which drifts with the game's time (the same view ten seconds later is a different picture), where a clear sky does not change.
+static void Sky_CloudsAddDetailAndDriftWithTime(rhi::Backend backend) {
+    if (!rhi::IsBackendAvailable(backend)) return;
+    SetEnvironmentVariableForTest("AETHER_RENDER_TAA", "0");
+    constexpr u32 W = 640, H = 360;
+    const fs::path root = fs::temp_directory_path() / "aether_clouds" / assets::ToString(assets::NewAssetGuid());
+    const fs::path clear_pak = CookHeightFogScene(root / "clear", false, 0.0f), cloudy_pak = CookHeightFogScene(root / "cloudy", false, 0.6f);
+    if (clear_pak.empty() || cloudy_pak.empty()) return;
+    const auto clear_a = FrameAfter(backend, root / "clear", clear_pak, 0, W, H), clear_b = FrameAfter(backend, root / "clear", clear_pak, 600, W, H);
+    const auto cloudy_a = FrameAfter(backend, root / "cloudy", cloudy_pak, 0, W, H), cloudy_b = FrameAfter(backend, root / "cloudy", cloudy_pak, 600, W, H);
+    SetEnvironmentVariableForTest("AETHER_RENDER_TAA", "");
+    const usize bytes = static_cast<usize>(W) * H * 4;
+    if (clear_a.size() != bytes || clear_b.size() != bytes || cloudy_a.size() != bytes || cloudy_b.size() != bytes) {
+        AETHER_CHECK(false);
+        return;
+    }
+    // The sky rows are the top of the picture (the camera looks a little up and the pillar is a column in the middle).
+    const auto roughness = [&](const std::vector<u8>& frame) {
+        double total = 0.0;
+        usize count = 0;
+        for (u32 y = 4; y < 60; ++y)
+            for (u32 x = 4; x < 200; ++x) {
+                const usize i = (static_cast<usize>(y) * W + x) * 4;
+                total += std::abs(static_cast<int>(frame[i]) - static_cast<int>(frame[i + 4])) + std::abs(static_cast<int>(frame[i + 2]) - static_cast<int>(frame[i + 4 + 2]));
+                ++count;
+            }
+        return total / static_cast<double>(count);
+    };
+    const auto change = [&](const std::vector<u8>& a, const std::vector<u8>& b) {
+        double total = 0.0;
+        usize count = 0;
+        for (u32 y = 4; y < 60; ++y)
+            for (u32 x = 4; x < 200; ++x) {
+                const usize i = (static_cast<usize>(y) * W + x) * 4;
+                total += std::abs(static_cast<int>(a[i + 2]) - static_cast<int>(b[i + 2]));
+                ++count;
+            }
+        return total / static_cast<double>(count);
+    };
+    const double flat = roughness(clear_a), puffy = roughness(cloudy_a), still = change(clear_a, clear_b), drifted = change(cloudy_a, cloudy_b);
+    std::printf("    %s: sky step between neighbouring pixels %.3f clear, %.3f with clouds; change over 10 s %.3f clear, %.3f with clouds\n",
+                backend == rhi::Backend::Vulkan ? "vulkan" : "d3d12", flat, puffy, still, drifted);
+    AETHER_CHECK(puffy > flat * 3.0 + 0.2); // the clouds give the sky detail
+    AETHER_CHECK(still < 0.05);             // a clear sky does not change
+    AETHER_CHECK(drifted > 1.0);            // and the clouds move
+    std::error_code ignored;
+    fs::remove_all(root, ignored);
+}
+AETHER_TEST(Sky_CloudsAddDetailAndDriftWithTime_D3D12) { Sky_CloudsAddDetailAndDriftWithTime(rhi::Backend::D3D12); }
+AETHER_TEST(Sky_CloudsAddDetailAndDriftWithTime_Vulkan) { Sky_CloudsAddDetailAndDriftWithTime(rhi::Backend::Vulkan); }
 
 // A wind zone replaces the world's wind where an object stands in it: an east wind everywhere, a zone around the tuft that blows toward the camera, and only the
 // tuft inside the zone loses its sideways sway; a zone elsewhere changes nothing.

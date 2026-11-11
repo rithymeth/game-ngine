@@ -453,3 +453,8 @@ over water. The post pass's push constants are 128 bytes.
 
 Plants (materials with wind) take a small per-instance colour tint from their world position, so forests and grass fields are not
 one colour. No setting.
+
+## Clouds
+
+`SkyLight::cloud_coverage`, `cloud_scale`, `cloud_speed`: procedural clouds in the sky, lit by the sun and drifting with the Wind.
+Off by default. `FrameData` is 1408 bytes.
