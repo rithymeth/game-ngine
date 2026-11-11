@@ -22,6 +22,14 @@ struct PushConstants {
     uint g_Bloom;
     float g_BloomIntensity;
     float g_BloomScale;
+    uint g_Depth;
+    float g_AoStrength;
+    float g_AoRadius;
+    float g_Near;
+    float g_Far;
+    float g_ProjX;
+    float g_ProjY;
+    float g_Padding;
 };
 #ifdef __spirv__
 [[vk::push_constant]]
@@ -82,10 +90,53 @@ float3 BloomTap(uint index, float2 uv, float2 texel) {
     return g_Textures[index].SampleLevel(g_Sampler, clamp(uv, 0.5 * texel, 1.0 - 0.5 * texel), 0).rgb;
 }
 
+// Screen-space ambient occlusion from the depth copy alone: the view-space position of a pixel, and the occlusion at one (the share of a
+// ring of taps, spread over a sphere of g_AoRadius metres around it, that stand in front of its surface), 1 open to 0 enclosed.
+float3 AoViewPosition(int2 p, float2 size, float d) {
+    float z = g_PC.g_Far * g_PC.g_Near / (g_PC.g_Far - d * (g_PC.g_Far - g_PC.g_Near));
+    float2 ndc = float2(((float)p.x + 0.5) / size.x * 2.0 - 1.0, 1.0 - ((float)p.y + 0.5) / size.y * 2.0);
+    return float3(ndc.x * z / g_PC.g_ProjX, ndc.y * z / g_PC.g_ProjY, -z);
+}
+float AoDepth(int2 p, float2 size) {
+    return g_Textures[g_PC.g_Depth].Load(int3(clamp(p, int2(0, 0), int2(size) - 1), 0)).r;
+}
+float AmbientOcclusion(int2 pixel, float2 size) {
+    float d = AoDepth(pixel, size);
+    if (d >= 1.0) return 1.0; // the sky
+    float3 p = AoViewPosition(pixel, size, d);
+    // The normal from the nearer neighbour on each axis, so a silhouette does not fold the surface over its edge.
+    float3 pl = AoViewPosition(pixel + int2(-1, 0), size, AoDepth(pixel + int2(-1, 0), size));
+    float3 pr = AoViewPosition(pixel + int2(1, 0), size, AoDepth(pixel + int2(1, 0), size));
+    float3 pu = AoViewPosition(pixel + int2(0, -1), size, AoDepth(pixel + int2(0, -1), size));
+    float3 pd = AoViewPosition(pixel + int2(0, 1), size, AoDepth(pixel + int2(0, 1), size));
+    float3 dx = abs(pl.z - p.z) < abs(pr.z - p.z) ? p - pl : pr - p;
+    float3 dy = abs(pu.z - p.z) < abs(pd.z - p.z) ? p - pu : pd - p;
+    float3 n = normalize(cross(dx, dy));
+    if (n.z < 0.0) n = -n; // facing the camera
+    float radius = g_PC.g_AoRadius;
+    float pixels = clamp(radius * g_PC.g_ProjY * 0.5 * size.y / max(-p.z, 1e-3), 3.0, 96.0);
+    float noise = frac(52.9829189 * frac(dot(float2(pixel), float2(0.06711056, 0.00583715))));
+    float angle = noise * 6.2831853;
+    float occlusion = 0.0;
+    const int taps = 12;
+    [unroll] for (int i = 0; i < taps; ++i) {
+        float t = ((float)i + 0.5) / (float)taps;
+        float a = angle + (float)i * 2.3999632; // the golden angle: even coverage of the disc
+        int2 q = pixel + int2(round(float2(cos(a), sin(a)) * (t * t * 0.9 + 0.1) * pixels));
+        float3 s = AoViewPosition(q, size, AoDepth(q, size));
+        float3 v = s - p;
+        float len = length(v);
+        float facing = saturate(dot(n, v) / max(len, 1e-4) - 0.15);
+        occlusion += facing * saturate(1.0 - len / radius);
+    }
+    return saturate(1.0 - g_PC.g_AoStrength * occlusion * 2.0 / (float)taps);
+}
+
 float4 PSMain(float4 position : SV_POSITION) : SV_TARGET {
     uint width, height;
     g_Textures[g_PC.g_SceneColor].GetDimensions(width, height);
     float3 c = g_Textures[g_PC.g_SceneColor].Load(int3(int2(position.xy), 0)).rgb;
+    if (g_PC.g_Depth < 128 && g_PC.g_AoStrength > 0.0) c *= AmbientOcclusion(int2(position.xy), float2(width, height));
     if (g_PC.g_Bloom < 128 && g_PC.g_BloomIntensity > 0.0) {
         // The chain's top level, half the screen's size, read with the same 3x3 tent the upsample uses.
         uint bloom_width, bloom_height;
@@ -322,6 +373,16 @@ void PostPass::Draw(gfx::rhi::ICommandList& commands, const PostProcessSettings&
         constants.bloom_scale = 1.0f / static_cast<f32>(bloom_levels_.size());
     }
     bloom_ready_ = false;
+    if (ao_.strength > 0.0f && ao_.depth < gfx::rhi::kMaxBindlessTextures) {
+        constants.depth = ao_.depth;
+        constants.ao_strength = ao_.strength;
+        constants.ao_radius = ao_.radius;
+        constants.near_plane = ao_.near_plane;
+        constants.far_plane = ao_.far_plane;
+        constants.proj_x = ao_.proj_x;
+        constants.proj_y = ao_.proj_y;
+    }
+    ao_ = {}; // for one frame
     commands.BindPipeline(pipeline_);
     commands.BindBindlessTextures();
     commands.SetPushConstants(&constants, sizeof(constants));
