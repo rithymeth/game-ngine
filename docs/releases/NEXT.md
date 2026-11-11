@@ -374,3 +374,8 @@ only did for `.gltf`), and `RewriteGltfUris` can repack a `.glb`.
 
 In baked worlds the water of a lake or the sea runs on under the shore, so the visible shoreline follows the ground's real contour instead of whole quads, and the terrain
 gets a skirt (`BakeOptions::terrain_skirt`, 6 m by default, 0 to leave the edge open) that carries its edges down to a base, so it reads as a block.
+
+## Water with depth and foam
+
+A baked world's lakes and sea carry a texture (`terrain::RenderWaterTexture`, `BakeOptions::water_texture`, 512 by default, 0 for flat blue): turquoise shallows to dark blue
+deep by the water's real depth, and a lacy white foam line along the shore. No renderer change.

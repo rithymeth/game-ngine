@@ -295,7 +295,7 @@ ProceduralMesh ProceduralWorldDocument::BuildTerrainModel(const GeneratedTerrain
     return out;
 }
 
-ProceduralMesh ProceduralWorldDocument::BuildTexturedTerrainModel(const GeneratedTerrain& t, u32 max_grid, const std::string& texture_uri, f32 skirt_depth) {
+ProceduralMesh ProceduralWorldDocument::BuildTexturedTerrainModel(const GeneratedTerrain& t, u32 max_grid, const std::string& texture_uri, f32 skirt_depth, const std::string& water_texture_uri) {
     ProceduralMesh out;
     const u32 w = t.Width(), h = t.Height();
     if (w < 2 || h < 2) return out;
@@ -333,8 +333,10 @@ ProceduralMesh ProceduralWorldDocument::BuildTexturedTerrainModel(const Generate
             const f32 level = std::max({water_level(x0, z0), water_level(x1, z0), water_level(x0, z1), water_level(x1, z1)});
             if (!std::isfinite(level)) continue;
             const f32 fx0 = static_cast<f32>(x0) * cell, fx1 = static_cast<f32>(x1) * cell, fz0 = static_cast<f32>(z0) * cell, fz1 = static_cast<f32>(z1) * cell;
-            const u32 j00 = water.Vertex(Vec3(fx0, level, fz0)), j10 = water.Vertex(Vec3(fx1, level, fz0));
-            const u32 j01 = water.Vertex(Vec3(fx0, level, fz1)), j11 = water.Vertex(Vec3(fx1, level, fz1));
+            // The water's UV is the position over the map, like the ground's, so the water texture lines up with the ground it covers.
+            const f32 u0 = static_cast<f32>(x0) / static_cast<f32>(w - 1), u1 = static_cast<f32>(x1) / static_cast<f32>(w - 1), v0 = static_cast<f32>(z0) / static_cast<f32>(h - 1), v1 = static_cast<f32>(z1) / static_cast<f32>(h - 1);
+            const u32 j00 = water.Vertex(Vec3(fx0, level, fz0), u0, v0), j10 = water.Vertex(Vec3(fx1, level, fz0), u1, v0);
+            const u32 j01 = water.Vertex(Vec3(fx0, level, fz1), u0, v1), j11 = water.Vertex(Vec3(fx1, level, fz1), u1, v1);
             water.Triangle(j00, j01, j10);
             water.Triangle(j10, j01, j11);
         }
@@ -370,11 +372,13 @@ ProceduralMesh ProceduralWorldDocument::BuildTexturedTerrainModel(const Generate
     }
     if (!water.Empty()) {
         assets::MaterialData m;
-        m.base_color = Vec4(0.14f, 0.34f, 0.60f, 1.0f);
-        m.roughness = 0.15f;
+        // With a water texture the colour comes from it (white factor); without, one flat blue.
+        m.base_color = water_texture_uri.empty() ? Vec4(0.14f, 0.34f, 0.60f, 1.0f) : Vec4(1, 1, 1, 1);
+        m.roughness = 0.1f;
         m.metallic = 0.0f;
+        m.base_color_texture = water_texture_uri;
         out.materials.push_back(m);
-        out.mesh.primitives.push_back(water.Finish(Shading::Smooth, UvMode::BoxProjected, 1));
+        out.mesh.primitives.push_back(water.Finish(Shading::Smooth, UvMode::Given, 1));
     }
     return out;
 }
@@ -433,7 +437,13 @@ BakeReport ProceduralWorldDocument::Bake(const std::string& content_root, const 
         const u32 size = std::clamp(options.terrain_texture, 16u, 4096u);
         const std::vector<u8> pixels = RenderTerrainTexture(terrain_, generated_terrain_settings_, size);
         if (!write(name + "_terrain.png", assets::EncodePngRgb8(size, size, pixels))) return report;
-        ground = BuildTexturedTerrainModel(terrain_, options.terrain_grid, name + "_terrain.png", options.terrain_skirt);
+        std::string water_uri;
+        if (options.water_texture > 0) {
+            const u32 water_size = std::clamp(options.water_texture, 16u, 4096u);
+            if (!write(name + "_water.png", assets::EncodePngRgb8(water_size, water_size, RenderWaterTexture(terrain_, generated_terrain_settings_, water_size)))) return report;
+            water_uri = name + "_water.png";
+        }
+        ground = BuildTexturedTerrainModel(terrain_, options.terrain_grid, name + "_terrain.png", options.terrain_skirt, water_uri);
     } else {
         ground = BuildTerrainModel(terrain_, options.terrain_grid);
     }

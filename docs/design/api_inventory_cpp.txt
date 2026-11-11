@@ -6197,6 +6197,7 @@
   std::vector<f32>BuildMaterialWeights(const GeneratedTerrain&terrain,const TerrainGenSettings&settings,u32 resolution)
   std::vector<u8>RenderTerrainPreview(const GeneratedTerrain&terrain)
   std::vector<u8>RenderTerrainTexture(const GeneratedTerrain&terrain,const TerrainGenSettings&settings,u32 size)
+  std::vector<u8>RenderWaterTexture(const GeneratedTerrain&terrain,const TerrainGenSettings&settings,u32 size)
   u32 Height()const
   u32 Width()const
   usize Index(u32 x,u32 z)const

@@ -483,6 +483,21 @@ std::vector<TerrainLayer> DefaultTerrainLayers() {
 namespace {
 // Smooth hash noise in 2D, 0..1, for the colour's grain.
 f32 Grain(f32 x, f32 z, u32 seed) { return ValueNoise(x, z, seed) * 0.5f + 0.5f; }
+
+// The water's level round the point (fx, fz) in fractional cell coordinates: the highest among the four samples (a lake's fill level, or the sea's), or a
+// huge negative number where there is none. The ground under it is below that level exactly where the water covers it.
+f32 WaterLevelAround(const GeneratedTerrain& t, f32 fx, f32 fz) {
+    const u32 w = t.Width(), h = t.Height();
+    const u32 gx = std::min(static_cast<u32>(std::max(fx, 0.0f)), w - 2), gz = std::min(static_cast<u32>(std::max(fz, 0.0f)), h - 2);
+    f32 level = -1.0e30f;
+    for (u32 oz = 0; oz < 2; ++oz)
+        for (u32 ox = 0; ox < 2; ++ox) {
+            const usize i = t.Index(gx + ox, gz + oz);
+            if (t.lake[i] && i < t.fill_height.size()) level = std::max(level, t.fill_height[i]);
+            else if (t.heightmap.heights[i] <= t.sea_height) level = std::max(level, t.sea_height);
+        }
+    return level;
+}
 } // namespace
 
 std::vector<u8> RenderTerrainTexture(const GeneratedTerrain& t, const TerrainGenSettings& requested, u32 size) {
@@ -515,14 +530,7 @@ std::vector<u8> RenderTerrainTexture(const GeneratedTerrain& t, const TerrainGen
             // to lie flat on the steep, carved ground it runs over.
             // How far under the water's surface the ground is, in metres: the highest level among the four samples round the texel (a lake's fill level, or the
             // sea's) minus the ground's height there, so the bed starts where the ground crosses the water, the same line the water geometry's edge follows.
-            const u32 gx = std::min(static_cast<u32>(std::max(fx, 0.0f)), w - 2), gz = std::min(static_cast<u32>(std::max(fz, 0.0f)), h - 2);
-            f32 level = -1.0e30f;
-            for (u32 oz = 0; oz < 2; ++oz)
-                for (u32 ox = 0; ox < 2; ++ox) {
-                    const usize i = t.Index(gx + ox, gz + oz);
-                    if (t.lake[i] && i < t.fill_height.size()) level = std::max(level, t.fill_height[i]);
-                    else if (t.heightmap.heights[i] <= t.sea_height) level = std::max(level, t.sea_height);
-                }
+            const f32 level = WaterLevelAround(t, fx, fz);
             const f32 still = level > -1.0e29f ? Smoothstep(0.0f, 0.35f, level - height) : 0.0f;
             const f32 stream = bilinear([&](u32 x, u32 z) { const usize i = t.Index(x, z); return (t.river[i] && !t.lake[i] && t.heightmap.heights[i] > t.sea_height) ? 1.0f : 0.0f; }, fx, fz);
 
@@ -544,6 +552,44 @@ std::vector<u8> RenderTerrainTexture(const GeneratedTerrain& t, const TerrainGen
             c = c + (bed * grain - c) * Smoothstep(0.35f, 0.75f, still);
             c = c + (river_blue * (0.9f + 0.1f * grain) - c) * (Smoothstep(0.2f, 0.6f, stream) * (1.0f - Smoothstep(0.35f, 0.75f, still)));
             // The colours above are display (sRGB) colours, as an artist picks them; the renderer reads a colour texture as sRGB and lights its linear value.
+            u8* out = &rgb[(static_cast<usize>(py) * size + px) * 3];
+            out[0] = static_cast<u8>(std::clamp(c.x, 0.0f, 1.0f) * 255.0f + 0.5f);
+            out[1] = static_cast<u8>(std::clamp(c.y, 0.0f, 1.0f) * 255.0f + 0.5f);
+            out[2] = static_cast<u8>(std::clamp(c.z, 0.0f, 1.0f) * 255.0f + 0.5f);
+        }
+    }
+    return rgb;
+}
+
+std::vector<u8> RenderWaterTexture(const GeneratedTerrain& t, const TerrainGenSettings& requested, u32 size) {
+    const TerrainGenSettings s = SanitizeSettings(requested);
+    size = std::clamp(size, 1u, 8192u);
+    std::vector<u8> rgb(static_cast<usize>(size) * size * 3, 0);
+    const u32 w = t.Width(), h = t.Height();
+    if (w < 2 || h < 2 || t.biome.size() != static_cast<usize>(w) * h) return rgb;
+    const f32 cell = t.heightmap.cell_size;
+    auto height_at = [&](f32 fx, f32 fz) {
+        const f32 x = std::clamp(fx, 0.0f, static_cast<f32>(w - 1)), z = std::clamp(fz, 0.0f, static_cast<f32>(h - 1));
+        const u32 x0 = std::min(static_cast<u32>(x), w - 2), z0 = std::min(static_cast<u32>(z), h - 2);
+        const f32 tx = x - static_cast<f32>(x0), tz = z - static_cast<f32>(z0);
+        const f32 a = t.heightmap.heights[t.Index(x0, z0)], b = t.heightmap.heights[t.Index(x0 + 1, z0)], c = t.heightmap.heights[t.Index(x0, z0 + 1)], d = t.heightmap.heights[t.Index(x0 + 1, z0 + 1)];
+        return (a * (1 - tx) + b * tx) * (1 - tz) + (c * (1 - tx) + d * tx) * tz;
+    };
+    const Vec3 shallow(0.30f, 0.66f, 0.70f), deep(0.04f, 0.16f, 0.38f), foam(0.92f, 0.96f, 0.98f);
+    for (u32 py = 0; py < size; ++py) {
+        for (u32 px = 0; px < size; ++px) {
+            const f32 fx = (static_cast<f32>(px) + 0.5f) / static_cast<f32>(size) * static_cast<f32>(w - 1);
+            const f32 fz = (static_cast<f32>(py) + 0.5f) / static_cast<f32>(size) * static_cast<f32>(h - 1);
+            const f32 level = WaterLevelAround(t, fx, fz);
+            // How deep the water is here, in metres (negative where the ground is dry, which the water plane's own geometry hides).
+            const f32 depth = level > -1.0e29f ? level - height_at(fx, fz) : -1.0f;
+            // Turquoise in the shallows to dark blue in the deep: the colour follows the depth, quickly at first.
+            Vec3 c = shallow + (deep - shallow) * Smoothstep(0.0f, 5.0f, std::max(depth, 0.0f));
+            // Foam along the shore: a band a little over half a metre wide, broken up by noise so it is a lacy edge and not a stripe.
+            const f32 wx = fx * cell, wz = fz * cell;
+            const f32 lace = 0.35f + 0.65f * Grain(wx * 1.1f, wz * 1.1f, s.seed ^ 0x6A09E667u);
+            const f32 band = 1.0f - Smoothstep(0.0f, 0.7f, std::max(depth, 0.0f));
+            c = c + (foam - c) * std::clamp(band * lace * 1.4f, 0.0f, 1.0f);
             u8* out = &rgb[(static_cast<usize>(py) * size + px) * 3];
             out[0] = static_cast<u8>(std::clamp(c.x, 0.0f, 1.0f) * 255.0f + 0.5f);
             out[1] = static_cast<u8>(std::clamp(c.y, 0.0f, 1.0f) * 255.0f + 0.5f);

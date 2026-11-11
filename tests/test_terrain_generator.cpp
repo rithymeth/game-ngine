@@ -287,3 +287,36 @@ AETHER_TEST(TerrainTextureBlendsSmoothlyAndColoursTheGroundByWhatIsThere) {
     const int spread = std::max({p[0], p[1], p[2]}) - std::min({p[0], p[1], p[2]});
     AETHER_CHECK(spread < 60);
 }
+
+AETHER_TEST(TerrainWaterTextureTintsByDepthAndFoamsTheShore) {
+    TerrainGenSettings s = Small();
+    s.sea_level = 0.45f; // plenty of sea
+    s.lowland_power = 1.9f;
+    const GeneratedTerrain t = GenerateTerrain(s);
+    const u32 size = 256;
+    const std::vector<u8> a = RenderWaterTexture(t, s, size);
+    AETHER_CHECK(a.size() == static_cast<usize>(size) * size * 3 && a == RenderWaterTexture(t, s, size));
+    AETHER_CHECK(RenderWaterTexture(GeneratedTerrain{}, s, 16).size() == 16u * 16u * 3);
+    auto texel_of = [&](u32 cx, u32 cz) {
+        return std::pair<u32, u32>{std::min(static_cast<u32>(std::lround(static_cast<f32>(cx) / static_cast<f32>(t.Width() - 1) * static_cast<f32>(size) - 0.5f)), size - 1),
+                                   std::min(static_cast<u32>(std::lround(static_cast<f32>(cz) / static_cast<f32>(t.Height() - 1) * static_cast<f32>(size) - 0.5f)), size - 1)};
+    };
+    double foam_luma = 0.0, deep_luma = 0.0;
+    usize foam = 0, deep = 0, deep_blue = 0;
+    for (u32 z = 2; z + 2 < t.Height(); ++z)
+        for (u32 x = 2; x + 2 < t.Width(); ++x) {
+            const usize i = t.Index(x, z);
+            const bool sea = t.heightmap.heights[i] <= t.sea_height;
+            if (!sea && !t.lake[i]) continue;
+            const f32 level = t.lake[i] ? t.fill_height[i] : t.sea_height;
+            const f32 depth = level - t.heightmap.heights[i];
+            const auto [px, py] = texel_of(x, z);
+            const u8* p = &a[(static_cast<usize>(py) * size + px) * 3];
+            const double luma = 0.299 * p[0] + 0.587 * p[1] + 0.114 * p[2];
+            if (depth < 0.2f) { foam_luma += luma; ++foam; }
+            else if (depth > 4.0f) { deep_luma += luma; ++deep; deep_blue += p[2] > p[0] + 40; }
+        }
+    AETHER_CHECK(foam > 5 && deep > 5);
+    AETHER_CHECK(foam_luma / static_cast<double>(foam) > deep_luma / static_cast<double>(deep) + 60.0); // the shore is foam-bright, the deep is dark
+    AETHER_CHECK(deep_blue * 10 > deep * 9);                                                            // and blue
+}

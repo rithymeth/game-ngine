@@ -263,6 +263,17 @@ AETHER_TEST(ProceduralEditor_ShorelinesFollowTheGroundAndTheEdgeHasASkirt) {
         outward += ok;
     }
     CHECK(outward == skirt.vertices.size() || outward * 100 > skirt.vertices.size() * 99); // corners belong to two edges; all else faces out
+    // A water texture: the water's UV is the position over the map (0 to 1 on both axes), its material takes the texture with a white factor.
+    {
+        const assets::procedural::ProceduralMesh textured = ProceduralWorldDocument::BuildTexturedTerrainModel(t, 64, "g.png", 5.0f, "w.png");
+        const assets::MeshPrimitiveData& wp = textured.mesh.primitives[2];
+        CHECK(textured.materials[1].base_color_texture == "w.png" && textured.materials[1].base_color.x == 1.0f && textured.materials[0].base_color_texture == "g.png");
+        f32 lo = 1e9f, hi = -1e9f;
+        for (const auto& v : wp.vertices) { lo = std::min({lo, v.uv[0], v.uv[1]}); hi = std::max({hi, v.uv[0], v.uv[1]}); }
+        CHECK(lo >= 0.0f && hi <= 1.0f + 1e-5f && hi > 0.5f);
+        // The flat colour when there is no water texture.
+        CHECK(model.materials[1].base_color_texture.empty() && model.materials[1].base_color.z > model.materials[1].base_color.x);
+    }
     // No skirt unless asked for.
     CHECK(ProceduralWorldDocument::BuildTexturedTerrainModel(t, 64, "g.png").mesh.primitives.size() == 2);
     std::string error;
@@ -313,6 +324,7 @@ AETHER_TEST(ProceduralEditor_BakeWritesTheTerrainMeshesAndASceneThePlayerLoads) 
     BakeOptions options;
     options.name = "Test World!";
     options.terrain_texture = 128;
+    options.water_texture = 64;
     const fs::path root = ScratchDir("aether_procedural_bake");
     CHECK(!doc.Bake(root.string(), options).ok && !doc.Bake(root.string(), options).error.empty()); // nothing generated
     doc.Generate();
@@ -334,6 +346,10 @@ AETHER_TEST(ProceduralEditor_BakeWritesTheTerrainMeshesAndASceneThePlayerLoads) 
         CHECK(std::find(report.files.begin(), report.files.end(), png) != report.files.end());
         assets::ImageData image;
         CHECK(assets::DecodeImageFile((root / png).string(), image) && image.width == options.terrain_texture && image.height == options.terrain_texture);
+        const std::string water_png = "Generated/Test_World_/Test_World__water.png";
+        CHECK(std::find(report.files.begin(), report.files.end(), water_png) != report.files.end());
+        assets::ImageData water_image;
+        CHECK(assets::DecodeImageFile((root / water_png).string(), water_image) && water_image.width == options.water_texture);
     }
     CHECK(std::any_of(report.files.begin(), report.files.end(), [](const std::string& f) { return f.find("_terrain.glb") != std::string::npos; }));
     CHECK(std::find(report.rules_without_mesh.begin(), report.rules_without_mesh.end(), "Fern") != report.rules_without_mesh.end());
