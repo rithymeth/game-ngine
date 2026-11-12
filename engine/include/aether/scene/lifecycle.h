@@ -72,6 +72,10 @@ public:
     // How many (entity, registration) pairs are in play.
     usize TrackedCount() const { return tracked_.size(); }
 
+    // Brings tracking in line with the world now, instead of at the next update: new entries are created / enabled / started, removed components are destroyed
+    // (OnDisable, OnDestroy), activity changes enable or disable. For a host that changes a running world between updates and needs the callbacks to have run.
+    void Sync();
+
 private:
     struct Key {
         EntityGuid guid;
@@ -97,10 +101,6 @@ private:
         u32 depth;
     };
 
-    // Brings tracking in line with the world: new entries created / enabled /
-    // started, removed components destroyed, activity changes enabled or
-    // disabled.
-    void Sync();
     void RunUpdates(std::function<void(Entity, f32)> LifecycleCallbacks::*member, f32 dt);
     void FinishPass();
     void DestroyNow(Entity entity);

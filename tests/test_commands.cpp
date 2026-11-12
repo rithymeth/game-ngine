@@ -11,11 +11,13 @@
 #include "aether/scene/prefab.h"
 #include "world/data_layer_panel.h"
 #include "aether/scene/gameplay.h"
+#include "aether/scene/components.h"
 #include "test_framework.h"
 #include "ui/entity_inspector.h"
 #include "ui/reflected_inspector.h"
 
 #include <imgui.h>
+#include <imgui_internal.h>
 
 #include <string>
 
@@ -537,4 +539,60 @@ AETHER_TEST(Commands_RevertPrefabOverrideRefusesAMissingGuid) {
     AETHER_CHECK(!command.LastReport().ok);
     AETHER_CHECK(command.LastReport().error.find("GUID") != std::string::npos);
     command.Undo(ctx); // and neither must undo
+}
+// Picking another model in the Inspector's dropdown changes the reference and the path the renderer loads, as one undo step.
+AETHER_TEST(EntityInspector_PickingAModelMovesItsPathInOneUndoStep) {
+    HeadlessImGui ui;
+    World world;
+    GuidIndex guids;
+    CommandStack stack;
+    CommandContext ctx{world, guids};
+    const assets::AssetGuid first = assets::NewAssetGuid();
+    const assets::AssetGuid second = assets::NewAssetGuid();
+    ModelRenderer renderer;
+    SetModelPath(renderer, "models/a.gltf");
+    renderer.model.guid = first;
+    const Entity entity = world.CreateEntity(Transform{Vec3(), Quaternion::Identity()}, IdComponent{}, renderer);
+    EnsureAllGuids(world, guids);
+
+    ImVec2 combo(-1.0f, -1.0f); // where the dropdown is drawn, noted by the provider as it is asked just before the combo
+    SetAssetListProvider([&](const char*) {
+        combo = ImGui::GetCursorScreenPos();
+        return std::vector<AssetChoice>{{first, "models/a.gltf"}, {second, "models/b.gltf"}};
+    });
+    ImGuiIO& io = ImGui::GetIO();
+    auto frame = [&] { ui.Frame([&] { InspectEntity(ctx, stack, entity); }); };
+    frame();
+    AETHER_CHECK(combo.x >= 0.0f);
+    io.AddMousePosEvent(combo.x + 10.0f, combo.y + 8.0f);
+    frame();
+    io.AddMouseButtonEvent(0, true);
+    frame();
+    io.AddMouseButtonEvent(0, false);
+    frame();
+    frame();
+    ImGuiWindow* popup = nullptr;
+    for (ImGuiWindow* window : ImGui::GetCurrentContext()->Windows) {
+        if ((window->Flags & ImGuiWindowFlags_Popup) != 0 && window->WasActive) popup = window;
+    }
+    AETHER_CHECK(popup != nullptr);
+    if (popup != nullptr) {
+        const ImGuiStyle& style = ImGui::GetStyle();
+        const f32 row = ImGui::GetFontSize() + style.ItemSpacing.y;
+        io.AddMousePosEvent(popup->Pos.x + 20.0f, popup->Pos.y + style.WindowPadding.y + row * 2.5f); // "(none)", a, then b
+        frame();
+        frame();
+        io.AddMouseButtonEvent(0, true);
+        frame();
+        io.AddMouseButtonEvent(0, false);
+        frame();
+        frame();
+    }
+    ModelRenderer* now = world.GetComponent<ModelRenderer>(entity);
+    AETHER_CHECK(now != nullptr && now->model.guid == second && std::string(now->asset_path) == "models/b.gltf");
+    AETHER_CHECK(stack.UndoCount() == 1);
+    AETHER_CHECK(stack.Undo(ctx));
+    now = world.GetComponent<ModelRenderer>(entity);
+    AETHER_CHECK(now != nullptr && now->model.guid == first && std::string(now->asset_path) == "models/a.gltf");
+    SetAssetListProvider(nullptr);
 }

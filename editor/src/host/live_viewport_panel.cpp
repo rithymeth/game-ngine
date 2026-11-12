@@ -5,9 +5,12 @@
 #include "aether/scene/serialization.h"
 #include "core/scene_preview.h"
 
+#include <nlohmann/json.hpp>
 #include <imgui.h>
 
 #include <algorithm>
+#include <fstream>
+#include <iterator>
 
 namespace aether::editor {
 
@@ -25,6 +28,8 @@ std::vector<std::string> ModelPaths(const SceneDocument& document, const std::fi
             std::error_code ignored;
             if (value.is_texture && !value.texture.empty() && std::filesystem::is_regular_file(content / value.texture, ignored)) paths.push_back(value.texture);
         }
+        std::error_code ignored;
+        if (!overrides.material.empty() && std::filesystem::is_regular_file(content / overrides.material, ignored)) paths.push_back(overrides.material); // a graph the cook should carry
     });
     std::sort(paths.begin(), paths.end());
     paths.erase(std::unique(paths.begin(), paths.end()), paths.end());
@@ -32,6 +37,89 @@ std::vector<std::string> ModelPaths(const SceneDocument& document, const std::fi
 }
 
 } // namespace
+
+std::vector<std::string> LiveViewportPanel::GraphPaths() const {
+    std::vector<std::string> paths;
+    scene_.Document().GetWorld().ForEach<MaterialParameters>([&](const MaterialParameters& overrides) {
+        const std::string& material = overrides.material;
+        const bool graph = material.size() > 5 && (material.compare(material.size() - 5, 5, ".amat") == 0 || (material.size() > 6 && material.compare(material.size() - 6, 6, ".amati") == 0));
+        if (graph) paths.push_back(material);
+    });
+    std::sort(paths.begin(), paths.end());
+    paths.erase(std::unique(paths.begin(), paths.end()), paths.end());
+    return paths;
+}
+
+namespace {
+u64 HashBytes(const std::vector<char>& bytes) {
+    u64 hash = 1469598103934665603ull; // FNV-1a
+    for (const char c : bytes) hash = (hash ^ static_cast<u8>(c)) * 1099511628211ull;
+    return hash;
+}
+bool ReadFileBytes(const std::filesystem::path& file, std::vector<char>& out) {
+    std::ifstream stream(file, std::ios::binary);
+    if (!stream) return false;
+    out.assign(std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>());
+    return true;
+}
+} // namespace
+
+std::vector<std::string> LiveViewportPanel::GraphFiles() const {
+    std::vector<std::string> files = GraphPaths();
+    for (usize i = 0; i < files.size() && files.size() < 64; ++i) { // an instance's parents too, up its chain: editing the graph under it changes what is drawn
+        const std::string& file = files[i];
+        if (file.size() <= 6 || file.compare(file.size() - 6, 6, ".amati") != 0) continue;
+        std::vector<char> bytes;
+        if (!ReadFileBytes(scene_.ContentRoot() / file, bytes)) continue;
+        const nlohmann::json json = nlohmann::json::parse(bytes.begin(), bytes.end(), nullptr, /*allow_exceptions=*/false);
+        const std::string parent = json.is_object() ? json.value("parent", std::string()) : std::string();
+        if (!parent.empty() && std::find(files.begin(), files.end(), parent) == files.end()) files.push_back(parent);
+    }
+    return files;
+}
+
+bool LiveViewportPanel::SyncGraphFiles() {
+    bool changed = false;
+    for (const std::string& path : GraphFiles()) {
+        std::vector<char> bytes;
+        if (!ReadFileBytes(scene_.ContentRoot() / path, bytes)) continue; // not in the project's folder: the package's copy stands
+        const u64 hash = HashBytes(bytes);
+        const auto seen = graph_hashes_.find(path);
+        if (seen != graph_hashes_.end() && seen->second == hash) continue;
+        graph_hashes_[path] = hash; // new to the scene since the cook (the game has no copy), or saved since: the game gets this one
+        if (viewport_.SetGraphFile(path, std::vector<u8>(bytes.begin(), bytes.end()))) {
+            graph_reports_.clear(); // read again, as the game reads them
+            changed = true;
+        }
+    }
+    return changed;
+}
+
+std::vector<player::GraphMaterialReport> LiveViewportPanel::GraphMaterials() {
+    const std::vector<std::string> paths = GraphPaths();
+    std::vector<player::GraphMaterialReport> reports;
+    for (const std::string& path : paths) {
+        auto it = graph_reports_.find(path);
+        if (it == graph_reports_.end()) it = graph_reports_.emplace(path, viewport_.CompileGraphMaterial(path)).first; // read once per cook: a graph edited since shows after Reload
+        player::GraphMaterialReport report = it->second;
+        // An object that gives a value to a parameter the shader holds as a constant (it did not fit in the six values a draw carries) would be ignored without a word.
+        std::vector<std::string> ignored;
+        scene_.Document().GetWorld().ForEach<MaterialParameters>([&](const MaterialParameters& overrides) {
+            if (overrides.material != path) return;
+            for (const MaterialParameterValue& value : overrides.values) {
+                if (!value.is_texture && std::find(report.fixed_parameters.begin(), report.fixed_parameters.end(), value.name) != report.fixed_parameters.end() &&
+                    std::find(ignored.begin(), ignored.end(), value.name) == ignored.end()) ignored.push_back(value.name);
+            }
+        });
+        if (!ignored.empty()) {
+            report.message += " Not per object (over the six values a draw carries):";
+            for (const std::string& name : ignored) report.message += " " + name;
+            report.message += ".";
+        }
+        reports.push_back(std::move(report));
+    }
+    return reports;
+}
 
 usize LiveViewportPanel::UncookedModels() const {
     usize missing = 0;
@@ -63,6 +151,12 @@ bool LiveViewportPanel::Start() {
         return false;
     }
     note_.clear();
+    graph_reports_.clear();
+    graph_hashes_.clear(); // the graphs on disk are what was just cooked
+    for (const std::string& path : GraphFiles()) {
+        std::vector<char> bytes;
+        if (ReadFileBytes(scene_.ContentRoot() / path, bytes)) graph_hashes_[path] = HashBytes(bytes);
+    }
     cooked_models_ = models;
     last_revision_ = revision;
     last_structure_ = structure;
@@ -80,7 +174,7 @@ bool LiveViewportPanel::Advance(f32 dt) {
     if (!viewport_.Loaded()) return false;
     since_frame_ += dt;
     since_reload_ += dt;
-    bool reloaded = false;
+    bool reloaded = SyncGraphFiles(); // a material graph saved (or newly named) since the cook: the game has its shader built again, and shows it
     const SceneDocument& document = scene_.Document();
     if (document.Revision() != last_revision_ && since_reload_ >= reload_interval) {
         last_revision_ = document.Revision(); // taken before the copy, so an edit during it is seen next time
@@ -132,6 +226,7 @@ void LiveViewportPanel::Draw(f32 dt) {
     }
     else ImGui::TextDisabled("Runs the open scene with the real renderer, edits and all. Open the scene you want first.");
     if (!loaded) return;
+    for (const player::GraphMaterialReport& graph : GraphMaterials()) ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.4f, 1.0f), "%s: %s", graph.path.c_str(), graph.message.c_str());
     tools_.SetBounds(&scene_.ModelBounds());
     tools_.DrawToolbar();
     Advance(dt);
@@ -153,7 +248,11 @@ void LiveViewportPanel::Draw(f32 dt) {
     drop_.Accept(scene_.Document(), scene_.ContentRoot(), camera_, origin, size, tools_.MoveSnapStep());
     // The overlay uses the same camera and aspect as the picture, so it lands on what it marks.
     draw->PushClipRect(origin, end, true);
-    tools_.DrawSelectionOutlines(draw, scene_.Document(), camera_, origin, size, hovered);
+    const SceneDocument& document = scene_.Document();
+    tools_.DrawSelectionOutlines(draw, document, camera_, origin, size, hovered, [&](Entity entity, Vec3& position) {
+        const IdComponent* id = document.GetWorld().GetComponent<IdComponent>(entity);
+        return run_game && id != nullptr && viewport_.PositionOf(id->guid, position); // with the game stopped the picture follows the document
+    });
     drop_.DrawPreview(draw, camera_, origin, size);
     tools_.DrawGizmo(draw, scene_.Document(), camera_, origin, size, hovered);
     draw->PopClipRect();

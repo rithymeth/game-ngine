@@ -1,5 +1,6 @@
 #pragma once
 
+#include "aether/player/graph_material.h"
 #include "aether/gfx/rhi/command_list.h"
 #include "aether/gfx/rhi/device.h"
 #include "aether/gfx/rhi/swap_chain.h"
@@ -48,14 +49,17 @@ public:
     // the document created or destroyed since the viewport last synced (found by comparing the GUIDs it holds with the ones it last saw, so an
     // entity the game made by itself is left alone) are added or destroyed, each component in `edits` is set, added or removed as the document now has it,
     // and every Transform is copied, all matched by GUID. Only what the renderer reads each frame is done this way (lights, the sky, wind, post-process
-    // volumes, decals, models, names, and the parent and prefab links that tie entities together); the game keeps its own state (physics, scripts).
-    // False, having changed nothing, when a change involves anything else (a rigid body or a script is built into the running game when it loads, so
-    // an entity that carries one, or an edit to one, needs SetScene). Counted in PatchCount.
+    // volumes, decals, models, names, and the parent and prefab links that tie entities together); the game keeps its own state (physics, scripts). A script is made and
+    // ended by the game's lifecycle as its component comes and goes; an edit to one restarts that script alone (OnDestroy, then OnCreate and OnStart again).
+    // False, having changed nothing, when a change involves anything else (a character controller or an audio source is built into the running game when it
+    // loads, so an entity that carries one, or an edit to one, needs SetScene). Counted in PatchCount.
     bool PatchScene(const World& source, const std::vector<ComponentEdit>& edits);
     bool PatchTransforms(const World& source) { return PatchScene(source, {}); }
     // Whether a component of that type can be patched into a running scene (PatchScene), for the caller that wants to know before it tries.
     static bool IsPatchable(ComponentId component);
     u64 PatchCount() const;
+    // How many scripts a patch has restarted because their component was edited.
+    u64 ScriptRestarts() const;
     // How many times SetScene has succeeded since Load.
     u64 SceneReloads() const;
     void Unload();
@@ -74,6 +78,13 @@ public:
     usize EntityCount() const;
     // How many physics bodies the running game has (as of its last physics step: bodies follow the world's colliders and rigid bodies when the game steps).
     usize PhysicsBodyCount() const;
+    // Reads a material graph (.amat) from the running game's package and checks it (player/graph_material.h): whether the game could draw with it.
+    player::GraphMaterialReport CompileGraphMaterial(const std::string& path) const;
+    // Serves `bytes` as the content file `path` from now on (a material graph the person has just saved) and has the game's renderer build every graph's
+    // shader again, so the next frame shows it. False if nothing is loaded.
+    bool SetGraphFile(const std::string& path, std::vector<u8> bytes);
+    // How many script instances the running game has (one per entity with a working script).
+    usize ScriptInstanceCount() const;
     // Where an entity is in the running game (its Transform's position, which a simulated body moves), false if the game has no such entity.
     bool PositionOf(const EntityGuid& entity, Vec3& position) const;
 

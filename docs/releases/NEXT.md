@@ -86,8 +86,8 @@ fine for small and medium scenes.
 
 ## Cameras are patched live too
 
-A camera is found in the world every frame, like a light, so editing a camera's settings and adding or removing an object with a camera no longer loads the scene again in the Live Viewport (the viewport uses its own camera for the picture, so the edit does not change what you see). Only a script and a
-character controller are still set up once when the game starts and still load the scene again.
+A camera is found in the world every frame, like a light, so editing a camera's settings and adding or removing an object with a camera no longer loads the scene again in the Live Viewport (the viewport uses its own camera for the picture, so the edit does not change what you see). A script is made and ended as its component comes and goes, so adding or removing one needs no reload either, and editing one restarts that script alone. Only a
+character controller and an audio source are still set up once when the game starts and still load the scene again.
 
 ## Physics bodies are added, changed and removed live in the Live Viewport
 
@@ -104,7 +104,7 @@ or a character controller still loads the scene again when it is moved under ano
 
 A field that holds the path of an asset can take it from the Content Browser: drop a picture on a decal's texture, a sky light's environment image or a material parameter's texture, or a material (`.amat`, `.amati`) on a
 material parameter's material, and the path is set as one finished edit (one undo step). A field takes only the kinds it names (a model dropped on a texture does nothing, and a field that is plain text, such as an entity's name,
-takes nothing). A model on a model reference is not there yet. Developers: `Meta::asset_extensions` on a reflected string field says what it takes.
+takes nothing). A model can also be picked from the Inspector's model dropdown (the path the game loads follows it, in the same undo step). Developers: `Meta::asset_extensions` on a reflected string field says what it takes.
 
 ## Drop a model or a prefab onto the hierarchy
 
@@ -181,8 +181,13 @@ the Qt install steps in CI, the Qt coverage ledger and UX roadmap, and the Qt co
 classes stay (the ImGui panels and the MCP tools use them). Costs, stated plainly: no 3D viewport in the shell (a project: the scene renderer draws a cooked package through a running game into a swap
 chain), and the Windows package no longer contains an editor, only the build tools, the player and the assets (the hosted Windows
 runner has no Vulkan loader), so the package validation job now checks that those are present instead of launching an editor.
-`tools/installer` still looks for `bin\aether_editor.exe`; that name needs to change to `aether_editor_shell.exe` with a Windows
-run of `test_installer.ps1`, which could not be done here. The two sections below describe the Qt startup crash and are kept as the
+`tools/installer` looked for `bin\aether_editor.exe`, which no longer exists, so every installer built since the Qt editor went failed after unpacking
+("the installation is incomplete"). It now looks for `bin\aether_editor_shell.exe` (one constant, `EditorExe`, used for the check, the shortcuts and the
+launch), `test_installer.ps1` uses the same name for its stand-in, and `tools/build_installer.py` turns the Vulkan backend on explicitly, since the editor
+shell is only built with it. Checked here by compiling the installer with Mono's `mcs` and running its install logic (a fresh install, an upgrade that removes the
+old files and leaves no old folder behind, and the failure when the editor is missing from the payload); not checked here, because they are Windows only: the
+shortcuts, closing a running program, a held file, and a real Windows build of the payload (`python tools/build_installer.py --version <x>` on Windows, then
+`tools\installer\test_installer.ps1`). The two sections below describe the Qt startup crash and are kept as the
 record; the crash no longer applies.
 
 ## The Qt editor crashes at startup, and CI cannot see it
@@ -646,3 +651,11 @@ without a camera path. `--camera-path` still works alone or with it.
 **Script errors say which entity and where, and do not flood.** A Luau error now ends with the callback and the entity (`(in OnUpdate, on entity "Front Door" a0b1c2d3)`), so one broken script on forty doors can be told apart; the instruction-budget error for an endless loop says the file and line it was stuck on (`Spinner.luau:4:`), like every other script error; and an error that repeats (a broken `OnUpdate` fails every frame) is one entry that counts its repeats, logged at 1, 10, 100 times and so on, instead of one entry per frame for the whole session. `ScriptSystem::Errors()` keeps at most `kMaxDistinctErrors` (200) distinct errors; `DroppedErrors()` counts the rest.
 
 **The portable editor has a Scene tool.** `aether_editor_shell` (Dear ImGui over Vulkan, which runs wherever Vulkan does, headless included) gains **Scene**: a hierarchy tree (filter, select, rename, create, duplicate, copy and paste, delete, drag to parent, with cycles refused), an inspector (every reflected component, add and remove, all undoable) and a toolbar (new, open, save, undo, redo, play, with a prompt before discarding unsaved changes), on the same `SceneDocument` the Qt editor uses. `SceneDocument::Context()` and `Commands()` expose its command stack. The Qt editor is unchanged and still behind `AETHER_BUILD_QT_EDITOR`. No 3D viewport in the shell yet.
+
+A material graph (`.amat`) of constants and parameters, opaque and default-lit, is now drawn by the game and the Live Viewport: its base colour, metallic, roughness, occlusion and emissive replace the model's own, each graph through its own shader. A graph the renderer cannot draw yet (textures, translucency, other shading models, vertex offsets) says so under the Live Viewport's toolbar and shows the model's own surface.
+
+A material graph (`.amat`) that samples textures is now drawn too (up to four, read as the graph says, with no colour-space decode), and the cook carries a graph's textures with it when the graph is on the cook list.
+
+Saving a material graph now shows in the Live Viewport on the next frame, without pressing Reload (the graph's shader is built again; the scene is not loaded again). A graph newly assigned to a material shows without Reload too; its textures still need one.
+
+A material instance (`.amati`) is now drawn like its graph, and an object can give a graph its own value for a parameter by name in its Material Parameters (up to six values of float data per graph; a parameter past that limit is fixed in the shader and the Live Viewport says so). Saving the parent of an instance shows at once. Fixed: a material graph with two textures lit its surface with the second as a normal map.

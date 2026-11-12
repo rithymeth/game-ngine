@@ -66,6 +66,8 @@ struct AssetChoice {
 };
 using AssetListProvider = std::function<std::vector<AssetChoice>(const char* asset_type)>;
 void SetAssetListProvider(AssetListProvider provider);
+// The display name the provider gives `guid` among the assets of `asset_type` (for a model, its content path); empty with no provider or no such asset.
+std::string AssetNameOf(const char* asset_type, const assets::AssetGuid& guid);
 
 // True if InspectObject would show at least one field of `type`.
 bool HasInspectableFields(const reflect::TypeInfo& type);

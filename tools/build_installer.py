@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """Build the Windows application installer for a tagged release.
 
-Configures a Release tree (the editor and the dev tools, no tests), installs it to a staging prefix, zips the result and
+Configures a Release tree (the Dear ImGui editor, aether_editor_shell, with the Vulkan backend it draws through, and the dev tools, no tests), installs it to a staging prefix, zips the result and
 compiles a self-extracting installer with the .NET Framework compiler that ships with Windows. The payload is embedded as a
 managed resource, so the output is a single exe a user runs with no administrator rights. The installer's source is
 tools/installer/AetherInstaller.cs: it closes (with the user's consent) any Aether program running from the install folder, moves
-a previous installation aside (leaving it untouched if it is in use), checks that the editor is there after unpacking, makes the Start menu and
+a previous installation aside (leaving it untouched if it is in use), checks that bin\aether_editor_shell.exe is there after unpacking, makes the Start menu and
 Desktop shortcuts, and offers to start the editor. CI compiles and runs it on Windows (tools/installer/test_installer.ps1).
 
     python tools/build_installer.py --version 0.29.0
+
+It works from a plain prompt (CMake then uses the installed Visual Studio) and from a Visual Studio developer prompt (Ninja, as CI does).
 
 The result goes to dist/Aether-<version>-Windows-x64.exe.
 """
@@ -43,12 +45,15 @@ def main():
     tree = work / "build"
     stage = work / "stage"
     try:
-        run(["cmake", "-S", str(ROOT), "-B", str(tree), "-G", "Ninja",
-             "-DCMAKE_BUILD_TYPE=Release", "-DAETHER_BUILD_EDITOR=ON",
+        # Ninja needs a compiler on the PATH (a Visual Studio developer prompt, or CI's set-up step). From a plain prompt there is none, so let
+        # CMake choose the installed Visual Studio instead, which finds its own compiler.
+        generator = ["-G", "Ninja"] if shutil.which("cl") and shutil.which("ninja") else (["-A", "x64"] if sys.platform == "win32" else [])
+        run(["cmake", "-S", str(ROOT), "-B", str(tree), *generator,
+             "-DCMAKE_BUILD_TYPE=Release", "-DAETHER_BUILD_EDITOR=ON", "-DAETHER_BUILD_VULKAN=ON",
              "-DAETHER_BUILD_DEVTOOLS=ON", "-DAETHER_BUILD_BENCH=OFF",
              "-DAETHER_BUILD_FUZZERS=OFF", "-DAETHER_BUILD_TESTS=OFF"],
             stdout=subprocess.DEVNULL)
-        run(["cmake", "--build", str(tree), "--parallel", "2"], stdout=subprocess.DEVNULL)
+        run(["cmake", "--build", str(tree), "--config", "Release", "--parallel", "2"], stdout=subprocess.DEVNULL)
         run(["cmake", "--install", str(tree), "--prefix", str(stage), "--config", "Release"],
             stdout=subprocess.DEVNULL)
 

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <map>
+
 #include "host/live_viewport.h"
 #include "ui/image_texture.h"
 #include "world/scene_panel.h"
@@ -43,6 +45,15 @@ public:
     f32 FramesPerSecond() const { return fps_; }
     // Models the open scene names that the last cook did not include: they are not drawn until Reload.
     usize UncookedModels() const;
+    // What the game makes of each material graph (.amat) the scene's materials name: found, valid, and (not yet) drawn. Read once per Start.
+    std::vector<player::GraphMaterialReport> GraphMaterials();
+    // The paths of the material graphs the scene's materials name.
+    std::vector<std::string> GraphPaths() const;
+    // Those, and the parents of the instances among them, up each chain: every file whose edit changes what is drawn.
+    std::vector<std::string> GraphFiles() const;
+    // Looks at each of those files in the project's folder; one that differs from the copy the game has (saved since the cook) is handed to the game, which builds its
+    // shader again. True if any was.
+    bool SyncGraphFiles();
 
     u32 width = 960;
     u32 height = 540;
@@ -64,6 +75,8 @@ private:
     f32 fps_ = 0.0f;
     u64 last_revision_ = 0;               // the scene's revision when it was last handed to the viewport
     u64 last_structure_ = 0;              // and its structure revision: while that holds, a change was only to Transforms
+    std::map<std::string, player::GraphMaterialReport> graph_reports_;
+    std::map<std::string, u64> graph_hashes_; // a hash of each graph's file as last seen
     std::vector<std::string> cooked_models_; // the models the last cook was asked for
 };
 

@@ -4,6 +4,8 @@
 
 #include <imgui.h>
 
+#include <functional>
+
 namespace aether::editor {
 
 // The editing tools of a 3D view, shared by the Scene View (drawn over a wireframe) and the Live Viewport (drawn over the rendered picture):
@@ -35,9 +37,13 @@ public:
     void DrawGizmo(ImDrawList* draw, const SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, bool hovered) const;
     // An entity's outline: its box (the model's real extent with `bounds`, else a unit box) placed by its world transform. `thickness` > 1 for emphasis.
     static void DrawEntityBox(ImDrawList* draw, const SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size,
-                              Entity entity, ImU32 color, f32 thickness, const ModelBoundsCache* bounds = nullptr);
+                              Entity entity, ImU32 color, f32 thickness, const ModelBoundsCache* bounds = nullptr, const Vec3& shift = Vec3(0.0f, 0.0f, 0.0f));
     // The outline and the name of every selected entity (orange), and of the one under the mouse (white), for a view with no wireframe of its own.
-    void DrawSelectionOutlines(ImDrawList* draw, const SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, bool hovered) const;
+    // `live_position`, if given, says where an entity really is in a running game (false: no such entity); an outline is drawn there, so a body the physics
+    // is moving is outlined where it is drawn and not where the document left it.
+    using LivePosition = std::function<bool(Entity, Vec3&)>;
+    void DrawSelectionOutlines(ImDrawList* draw, const SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, bool hovered,
+                               const LivePosition& live_position = nullptr) const;
 
 private:
     TransformGizmo gizmo_;

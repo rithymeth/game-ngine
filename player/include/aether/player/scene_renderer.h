@@ -13,7 +13,9 @@ namespace aether::player {
 // shader, and with the frame-constants block when `with_frame_data` (what devices that support frame constants get). Here so a test can
 // compile the real source with glslang. With `hdr_target` the pixel shader writes linear light for the HDR scene colour target (the
 // post pass tone maps it) instead of tone mapping and encoding for the back buffer itself.
-std::string SceneShaderSource(bool with_frame_data, bool hdr_target = false, bool ray_traced_shadows = false);
+// With `graph_hlsl` (a drawable material graph's include, graph_material.h) the surface's base colour, metallic, roughness, occlusion and emissive come from
+// the graph's EvaluateMaterial instead of the model's own factors and textures.
+std::string SceneShaderSource(bool with_frame_data, bool hdr_target = false, bool ray_traced_shadows = false, const std::string& graph_hlsl = {});
 
 // Draws the current game's cooked ModelRenderer entities through the same
 // cross-API RHI used by the renderer demos. The player owns this alongside
@@ -28,6 +30,9 @@ public:
     // frame_index selects the fence-protected per-frame buffers for animated meshes.
     // A quality preset's view distance in metres: the camera's far plane is pulled in to it (0, the default, leaves cameras as authored).
     void SetViewDistance(f32 metres);
+    // Forgets every material graph's shader, so the next draw reads each graph again from the package and builds it afresh. The device must be idle (no frame in
+    // flight that still uses the old pipelines): between two frames of a host that waits for each.
+    void ReloadGraphMaterials();
     // Whether the particle pass draws the game's particle effects (Game::Particles()); on by default.
     void SetDrawParticles(bool draw);
     // Whether the post pass draws bloom (a quality preset's `bloom`); on by default. Only where there is an HDR scene colour target: the

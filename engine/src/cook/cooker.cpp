@@ -18,6 +18,8 @@
 #include <algorithm>
 #include <cstring>
 #include <deque>
+#include <fstream>
+#include <functional>
 #include <set>
 
 namespace aether::cook {
@@ -182,6 +184,35 @@ std::vector<AssetGuid> CollectCookSet(const AssetDatabase& database,
             } else {
                 include(record->guid, reason);
             }
+        } else if (std::error_code file_ec; std::filesystem::is_regular_file(content / root, file_ec)) {
+            extra.insert(root); // a file no importer claims (a material graph, a data file): carried as it is, like the files of a folder
+            // A material graph names its textures by asset GUID inside the file, which nothing else would follow: they come with it. So do an instance's
+            // parents (a path), up the chain, and the textures its overrides name.
+            const auto ends_with = [](const std::string& text, const char* suffix) { const usize n = std::strlen(suffix); return text.size() >= n && text.compare(text.size() - n, n, suffix) == 0; };
+            std::function<void(const std::string&, usize)> follow = [&](const std::string& file, usize depth) {
+                if (depth > 16 || !(ends_with(file, ".amat") || ends_with(file, ".amati"))) return;
+                std::ifstream stream(content / file, std::ios::binary);
+                const json graph = json::parse(stream, nullptr, /*allow_exceptions=*/false);
+                if (!graph.is_object()) return;
+                const auto texture = [&](const json& value) {
+                    AssetGuid guid;
+                    if (value.is_string() && assets::ParseAssetGuid(value.get<std::string>(), guid)) include(guid, "texture of " + file);
+                };
+                if (graph.contains("parameters") && graph["parameters"].is_array()) {
+                    for (const json& parameter : graph["parameters"]) {
+                        if (parameter.is_object() && parameter.value("type", "") == "texture" && parameter.contains("texture")) texture(parameter["texture"]);
+                    }
+                }
+                if (graph.contains("parameters") && graph["parameters"].is_object()) { // an instance: its overrides, and its parent
+                    for (const auto& entry : graph["parameters"].items()) {
+                        if (entry.value().is_object() && entry.value().contains("texture")) texture(entry.value()["texture"]);
+                    }
+                }
+                const std::string parent = graph.value("parent", "");
+                std::error_code parent_ec;
+                if (!parent.empty() && std::filesystem::is_regular_file(content / parent, parent_ec) && extra.insert(parent).second) follow(parent, depth + 1);
+            };
+            follow(root, 0);
         } else {
             warnings.push_back(root + " (" + reason + ") isn't an asset in the content folder");
         }
