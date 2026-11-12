@@ -31,6 +31,7 @@
 #include "uidesign/ui_designer.h"
 #include "vfx/vfx_editor.h"
 #include "world/procedural_panel.h"
+#include "world/scene_panel.h"
 #include "world/world_panels.h"
 
 #include "aether/blueprint/nodes.h"
@@ -237,6 +238,7 @@ struct EditorWorkspace::Impl {
     std::unique_ptr<FoliagePanel> foliage_panel;
     std::unique_ptr<ProceduralWorldDocument> procedural_doc;
     std::unique_ptr<ProceduralWorldPanel> procedural_panel;
+    std::unique_ptr<ScenePanel> scene_panel;
     std::unique_ptr<SplineEditDocument> spline_doc;
     std::unique_ptr<SplinePanel> spline_panel;
     streaming::PartitionResult partition;
@@ -303,6 +305,7 @@ struct EditorWorkspace::Impl {
             {"Sound Cue - SC_Blip", "Audio", [this] { cue_editor->Draw(); }},
             {"Mixer", "Audio", [this] { mixer_panel->Draw(); }},
             {"UI Designer - WBP_MainMenu", "UI", [this] { ui_designer->Draw(); }},
+            {"Scene", "Scene", [this] { scene_panel->Draw(); }},
             {"Terrain", "World", [this] { terrain_panel->Draw(); }},
             {"Foliage", "World", [this] { foliage_panel->Draw(); }},
             {"Procedural World", "World", [this] { procedural_panel->Draw(); }},
@@ -771,6 +774,7 @@ struct EditorWorkspace::Impl {
         foliage_doc = std::make_unique<FoliagePaintDocument>(foliage_layer);
         foliage_panel = std::make_unique<FoliagePanel>(*foliage_doc);
 
+        scene_panel = std::make_unique<ScenePanel>();
         procedural_doc = std::make_unique<ProceduralWorldDocument>();
         procedural_panel = std::make_unique<ProceduralWorldPanel>(*procedural_doc, terrain_doc.get(), foliage_doc.get());
 

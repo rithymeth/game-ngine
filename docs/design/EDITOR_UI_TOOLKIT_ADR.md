@@ -1,6 +1,7 @@
 # ADR: replace Dear ImGui as the Aether Editor UI framework
 
 - **Status:** Spike in progress; no production go/no-go decision yet.
+- **Update 2026-11-12:** the project owner reports that the Qt editor does not build for them, and asked for an editor that does. The Dear ImGui editor builds and runs everywhere Vulkan does (the portable shell, `aether_editor_shell`, runs headless in CI and in the sandbox this was written in; the Windows D3D12 host has the 3D viewport), so work now goes there first: the shell gained a **Scene** tool (hierarchy, inspector, new/open/save/undo/play) on the same `SceneDocument` the Qt editor uses, so a scene saved by either editor opens in the other. The Qt editor is untouched and stays behind `AETHER_BUILD_QT_EDITOR` (off by default); this is not a decision that Qt is wrong, only that the editor that works is the one being built on. Unreal (Slate), Unity (UI Toolkit, IMGUI before it) and Godot (its own Control nodes) all draw their editors with a UI framework of their own on their own renderer, which is closer to the ImGui approach than to Qt.
 - **Date:** 2026-10-07
 - **Scope:** Editor presentation and host only. Aether's engine RHI and runtime remain independent.
 
