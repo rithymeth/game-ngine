@@ -7,6 +7,7 @@
 #include "aether/scene/gameplay.h"
 
 #include <algorithm>
+#include <unordered_map>
 
 namespace aether::editor {
 
@@ -21,6 +22,7 @@ struct LiveViewport::Impl {
     std::unique_ptr<player::SceneRenderer> renderer;
     u64 frames = 0;
     u64 reloads = 0;
+    u64 patches = 0;
     std::string scene;
 };
 
@@ -39,6 +41,7 @@ u32 LiveViewport::Width() const { return impl_ && impl_->swap_chain ? impl_->swa
 u32 LiveViewport::Height() const { return impl_ && impl_->swap_chain ? impl_->swap_chain->Height() : 0; }
 u64 LiveViewport::FrameCount() const { return impl_ ? impl_->frames : 0; }
 u64 LiveViewport::SceneReloads() const { return impl_ ? impl_->reloads : 0; }
+u64 LiveViewport::PatchCount() const { return impl_ ? impl_->patches : 0; }
 usize LiveViewport::EntityCount() const { return impl_ && impl_->game ? impl_->game->GetWorld().EntityCount() : 0; }
 
 bool LiveViewport::SetScene(const std::vector<u8>& scene_bytes, std::string* error) {
@@ -53,6 +56,33 @@ bool LiveViewport::SetScene(const std::vector<u8>& scene_bytes, std::string* err
         return false;
     }
     ++impl_->reloads;
+    return true;
+}
+
+bool LiveViewport::PatchTransforms(const World& source) {
+    if (!impl_ || !impl_->game) return false;
+    struct Hash {
+        usize operator()(const EntityGuid& g) const noexcept { return static_cast<usize>(g.hi ^ (g.lo * 0x9e3779b97f4a7c15ull)); }
+    };
+    std::unordered_map<EntityGuid, Transform, Hash> wanted;
+    source.ForEach<IdComponent, Transform>([&](const IdComponent& id, const Transform& transform) {
+        if (!id.guid.IsNull()) wanted[id.guid] = transform;
+    });
+    World& running = impl_->game->GetWorld();
+    // Every identified entity of the running scene must be in `source` and the other way round, or something was added or removed: that is a reload's job.
+    usize found = 0;
+    bool same = true;
+    running.ForEach<IdComponent, Transform>([&](IdComponent& id, Transform&) {
+        if (id.guid.IsNull()) return;
+        if (wanted.find(id.guid) == wanted.end()) same = false;
+        else ++found;
+    });
+    if (!same || found != wanted.size()) return false;
+    running.ForEach<IdComponent, Transform>([&](IdComponent& id, Transform& transform) {
+        if (id.guid.IsNull()) return;
+        transform = wanted[id.guid];
+    });
+    ++impl_->patches;
     return true;
 }
 

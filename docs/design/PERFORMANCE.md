@@ -1471,3 +1471,25 @@ The worst gaps are on cliffs (steeper than a character's 45 degree limit, where 
 - **The scene file is the real cost.** The collider is JSON (a vertex is three numbers, a triangle three indices), 11 MB for HeroValley's 74 k triangles. The cooked pak is binary and smaller. A heightfield
   collider (the heights alone, one number a sample) would be about a tenth of that and the way to go if worlds get bigger; Jolt has `HeightFieldShape`, the engine has no component for it yet.
 - **Not measured:** the Jolt mesh shape's build time on its own (it is in the +0.5 to 0.7 s), a real GPU (this is CPU work), the cooked pak's size difference.
+
+## What does a live-viewport edit cost, and is patching a move worth it? (2026-11-12)
+
+Question: each change to the open scene loaded the whole scene into the Live Viewport's game again. Is that the cost of an edit, or is the frame? Measured with the real renderer on
+lavapipe (the CPU Vulkan driver), 20 edits each, the template scene (14 entities) and the same plus 2,000 empty entities:
+
+| | 14 entities | 2,014 entities |
+|---|---|---|
+| `SaveSceneToMemory` | 0.1 ms | 5 ms |
+| `SetScene` (the game loads it again) | 1 ms | 11.5 ms |
+| frame, plain, 160x90 | 4.3 ms | 4.3 ms |
+| frame right after a reload, 160x90 | 7.7 ms | 10.7 ms |
+| frame, plain, 960x540 | | 70 ms |
+| frame right after a reload, 960x540 | | 99.5 ms |
+| patch the Transforms in place | 0.2 ms | 0.3 ms |
+| frame right after a patch, 960x540 | | 76 ms |
+
+- **Reloading is a small share for small scenes, and the frame after it is the larger part.** A reload's cost is the load (1 to 12 ms) plus a frame that is 3 to 30 ms slower than a plain one (the renderer
+  takes the new world in). For 2,000 entities at 960x540 an edit was about 116 ms by reload (5 + 11.5 + 99.5) and about 77 ms by patch (0.3 + 76): a third less, and the frame after a patch is within 10% of a plain one.
+- **The bigger reason is the game's state.** A reload starts the world, physics and scripts over, so with **Run game** on a drag restarted them every frame. A patch does not.
+- **Not measured:** a real GPU (the frame would be a few ms there, so the load and the renderer's re-take of a new world would be most of an edit, and the patch worth more, not less), scenes of tens of thousands of entities,
+  patching other components than Transform (a light's colour still reloads).
