@@ -997,6 +997,79 @@ AETHER_TEST(LiveViewportPanel_ARealDragFromARowIsPlacedOnTheGroundAndPatchedInto
     AETHER_CHECK(panel.Viewport().SceneReloads() == reloads && panel.Viewport().EntityCount() == in_game);
 }
 
+AETHER_TEST(LiveViewportPanel_PhysicsBodiesAreAddedChangedAndRemovedWithoutReloading) {
+    std::unique_ptr<gfx::rhi::IDevice> device = TryDevice();
+    if (!device) {
+        std::printf("    (no Vulkan device: install a driver, or Mesa's lavapipe, to run this)\n");
+        return;
+    }
+    Context imgui;
+    const stdfs::path project = MakeProject("LivePhysics");
+    ScenePanel scene(project.parent_path() / "Content");
+    AETHER_CHECK(scene.OpenScene("Scenes/Main.ascene", true));
+    LiveViewportPanel panel(*device, scene, [&] { return project; });
+    panel.width = 160;
+    panel.height = 90;
+    panel.reload_interval = 0.0f;
+    panel.run_game = true; // the physics scene follows the world when the game steps
+    const ComponentId box = FindComponentIdByName("BoxCollider"), body = FindComponentIdByName("RigidBody"), character = FindComponentIdByName("CharacterMovement");
+    if (box == kInvalidComponentId || body == kInvalidComponentId || character == kInvalidComponentId) {
+        std::printf("    (no physics in this build)\n");
+        return;
+    }
+    AETHER_CHECK(panel.Start());
+    SceneDocument& document = scene.Document();
+    for (int i = 0; i < 4; ++i) panel.Advance(0.2f);
+    const usize bodies = panel.Viewport().PhysicsBodyCount();
+    const u64 reloads = panel.Viewport().SceneReloads();
+    AETHER_CHECK(bodies > 0);
+    document.Commands().Clear();
+    u64 patches = panel.Viewport().PatchCount();
+    auto patched = [&](const char* what) {
+        const bool ok = panel.Advance(0.2f) && panel.Viewport().SceneReloads() == reloads && panel.Viewport().PatchCount() == patches + 1;
+        if (!ok) std::fprintf(stderr, "    (not patched: %s)\n", what);
+        patches = panel.Viewport().PatchCount();
+        panel.Advance(0.2f); // a second step: the physics scene follows the world on the step after the change
+        return ok;
+    };
+
+    // An entity with a collider: the game gets a body for it, and the scene was not loaded again.
+    const Entity block = document.CreateEntity("Block");
+    document.SetPosition(block, Vec3(0.0f, 5.0f, 0.0f), true);
+    AETHER_CHECK(document.AddComponent(block, box));
+    AETHER_CHECK(patched("a collider on a new entity"));
+    AETHER_CHECK(panel.Viewport().PhysicsBodyCount() == bodies + 1);
+    // A rigid body on it rebuilds that body (still one), a changed collider rebuilds it again: patches, and no extra bodies.
+    AETHER_CHECK(document.AddComponent(block, body));
+    AETHER_CHECK(patched("a rigid body added"));
+    AETHER_CHECK(panel.Viewport().PhysicsBodyCount() == bodies + 1);
+    AETHER_CHECK(document.SetComponentField(block, box, "is_trigger", reflect::Any(true), true));
+    AETHER_CHECK(patched("a collider setting"));
+    AETHER_CHECK(panel.Viewport().PhysicsBodyCount() == bodies + 1);
+    // Undo and redo of that follow, and taking the entity away takes its body away.
+    AETHER_CHECK(document.Undo());
+    AETHER_CHECK(patched("undo of the setting"));
+    AETHER_CHECK(document.Undo());
+    AETHER_CHECK(patched("undo of the rigid body"));
+    AETHER_CHECK(panel.Viewport().PhysicsBodyCount() == bodies + 1);
+    AETHER_CHECK(document.Redo() && document.Redo());
+    AETHER_CHECK(patched("redo"));
+    AETHER_CHECK(document.DestroyEntity(block));
+    AETHER_CHECK(patched("the entity gone"));
+    AETHER_CHECK(panel.Viewport().PhysicsBodyCount() == bodies);
+    AETHER_CHECK(document.Undo());
+    AETHER_CHECK(patched("undo of the delete"));
+    AETHER_CHECK(panel.Viewport().PhysicsBodyCount() == bodies + 1);
+
+    // A character is not a body the physics scene follows: it sets up its own controller when the game starts, so that loads the scene again.
+    Entity again = kNullEntity; // the undo of the delete made it again, under a new handle
+    for (const Entity entity : document.Entities()) {
+        if (document.Name(entity) == "Block") again = entity;
+    }
+    AETHER_CHECK(again != kNullEntity && document.AddComponent(again, character));
+    AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().SceneReloads() == reloads + 1);
+}
+
 #endif
 
 AETHER_TEST(GamePackage_AContentOverrideIsReadInPlaceOfTheArchive) {
