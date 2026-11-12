@@ -4,6 +4,7 @@
 #if defined(AETHER_HAS_EDITOR_VULKAN)
 #include "host/live_viewport_panel.h"
 #endif
+#include "content/content_drag.h"
 #include "world/content_drop.h"
 #include "world/scene_preview_panel.h"
 
@@ -28,6 +29,7 @@
 #include <filesystem>
 #include <fstream>
 #include <imgui.h>
+#include <imgui_internal.h> // the drop target the mouse is over
 #include <memory>
 #include "aether/scene/serialization.h"
 #include <set>
@@ -899,6 +901,100 @@ AETHER_TEST(LiveViewportPanel_ReparentingAnObjectIsPatchedAndOnlyAnEntityWithACa
     AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().SceneReloads() == reloads + 1);
     AETHER_CHECK(document.ReparentEntity(camera, holder));
     AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().SceneReloads() == reloads + 2);
+}
+
+AETHER_TEST(LiveViewportPanel_ARealDragFromARowIsPlacedOnTheGroundAndPatchedIntoTheGame) {
+    std::unique_ptr<gfx::rhi::IDevice> device = TryDevice();
+    if (!device) {
+        std::printf("    (no Vulkan device: install a driver, or Mesa's lavapipe, to run this)\n");
+        return;
+    }
+    Context imgui;
+    const stdfs::path project = MakeProject("LiveDrop");
+    ScenePanel scene(project.parent_path() / "Content");
+    AETHER_CHECK(scene.OpenScene("Scenes/Main.ascene", true));
+    LiveViewportPanel panel(*device, scene, [&] { return project; });
+    panel.width = 160;
+    panel.height = 90;
+    panel.reload_interval = 0.0f;
+    AETHER_CHECK(panel.Start());
+    SceneDocument& document = scene.Document();
+    for (int i = 0; i < 4; ++i) panel.Advance(0.2f);
+    std::string model;
+    for (const Entity entity : document.Entities()) {
+        const ModelRenderer* renderer = document.GetWorld().GetComponent<ModelRenderer>(entity);
+        if (renderer && model.empty()) model = renderer->asset_path;
+    }
+    AETHER_CHECK(!model.empty());
+    if (model.empty()) return;
+    document.Commands().Clear();
+
+    // The panel is drawn in a window below a row that drags `model`, through real mouse events, a frame at a time.
+    auto step = [&](const ImVec2& mouse, bool down) {
+        ImGuiIO& io = ImGui::GetIO();
+        io.AddMousePosEvent(mouse.x, mouse.y);
+        io.AddMouseButtonEvent(0, down);
+        imgui.Frame();
+        ImGui::SetNextWindowPos(ImVec2(0, 0));
+        ImGui::SetNextWindowSize(ImVec2(1400, 900));
+        ImGui::Begin("live", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar);
+        ImGui::SetCursorScreenPos(ImVec2(10, 10));
+        ImGui::Button("row", ImVec2(120, 24));
+        if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None)) {
+            ImGui::SetDragDropPayload(kContentPathPayload, model.c_str(), model.size() + 1);
+            ImGui::TextUnformatted(model.c_str());
+            ImGui::EndDragDropSource();
+        }
+        panel.Draw(1.0f / 30.0f);
+        ImGui::End();
+    };
+    const ImVec2 source(20, 20);
+    step(ImVec2(0, 0), false);
+    step(source, false);
+    step(source, true);
+    step(ImVec2(source.x + 30.0f, source.y), true);
+    // Carry the mouse down the window until the picture is a place to drop: its rectangle is where the drop lands.
+    ImRect view;
+    bool found = false;
+    for (f32 y = 80.0f; y < 880.0f && !found; y += 10.0f) {
+        step(ImVec2(700.0f, y), true);
+        const ImGuiContext& g = *ImGui::GetCurrentContext();
+        if (g.DragDropTargetId != 0 && g.DragDropTargetRect.GetWidth() > 200.0f) {
+            view = g.DragDropTargetRect;
+            found = true;
+        }
+    }
+    AETHER_CHECK(found);
+    if (!found) return;
+    // Let go over where a known point of the ground is in the picture (found with the view's own camera and the rectangle just measured), so the right answer
+    // is known without asking the code under test.
+    const Vec3 ground_point(2.0f, 0.0f, 3.0f);
+    const ImVec2 view_size(view.GetWidth(), view.GetHeight());
+    ImVec2 release(-1, -1);
+    AETHER_CHECK(ProjectToViewport(panel.Camera().ViewProjection(view_size.x / view_size.y), ground_point, view.Min, view_size, release));
+    AETHER_CHECK(release.x > view.Min.x && release.x < view.Max.x && release.y > view.Min.y && release.y < view.Max.y);
+    const usize before = document.Entities().size();
+    const usize in_game = panel.Viewport().EntityCount();
+    const u64 reloads = panel.Viewport().SceneReloads();
+    const u64 patches = panel.Viewport().PatchCount();
+    step(release, true);  // over the picture, still holding
+    AETHER_CHECK(document.Entities().size() == before);                                       // nothing is placed until the mouse is let go
+    step(release, false);
+    AETHER_CHECK(document.Entities().size() == before + 1);
+    const Entity placed = document.Selection().empty() ? kNullEntity : document.Selection()[0];
+    AETHER_CHECK(placed != kNullEntity);
+    if (placed == kNullEntity) return;
+    // It is on the ground where the mouse let go, not at the camera's target.
+    const Transform* at = document.GetWorld().GetComponent<Transform>(placed);
+    AETHER_CHECK(at != nullptr && (at->position - ground_point).Length() < 0.1f);
+    AETHER_CHECK(at != nullptr && (at->position - panel.Camera().target).Length() > 0.5f);
+    // And it reaches the running game as a patch, no reload.
+    for (int i = 0; i < 3; ++i) step(release, false);
+    AETHER_CHECK(panel.Viewport().SceneReloads() == reloads && panel.Viewport().PatchCount() == patches + 1 && panel.Viewport().EntityCount() == in_game + 1);
+    // One undo takes it out again, and the game follows that too.
+    AETHER_CHECK(document.Undo() && document.Entities().size() == before);
+    for (int i = 0; i < 3; ++i) step(release, false);
+    AETHER_CHECK(panel.Viewport().SceneReloads() == reloads && panel.Viewport().EntityCount() == in_game);
 }
 
 #endif
