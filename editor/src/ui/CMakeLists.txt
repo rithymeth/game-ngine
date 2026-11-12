@@ -8,6 +8,7 @@ add_library(aether_editor_ui STATIC
     script_inspector.cpp
     error_overlay.cpp
     editor_theme.cpp
+    shell_layout.cpp
     code_document.cpp
     code_editor.cpp
     ../graph/graph_view.cpp

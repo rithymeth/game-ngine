@@ -2,6 +2,7 @@
 
 #include "core/commands.h"
 #include "ui/editor_theme.h"
+#include "ui/shell_layout.h"
 #include "workspace/editor_workspace.h"
 #include "aether/scene/gameplay.h"
 #include "aether/scene/hierarchy.h"
@@ -281,4 +282,34 @@ AETHER_TEST(ScenePanel_ListsTheScenesInTheContentFolder) {
     HeadlessImGui imgui;
     imgui.Frame([&] { panel.Draw(); });                        // the toolbar draws with the list available
     AETHER_CHECK(panel.OpenScene("Levels/Deep/a.ascene", true)); // and what it lists opens
+}
+
+// The shell's remembered layout: it round-trips, and a missing, damaged or out-of-range file never gets in the way.
+AETHER_TEST(ShellLayout_RoundTripsAndForgivesABadFile) {
+    const stdfs::path dir = Scratch("aether_shell_layout");
+    const stdfs::path file = dir / "nested" / "editor_layout.json";
+    ShellLayout layout;
+    AETHER_CHECK(!LoadShellLayout(file, layout));                       // missing: false, layout untouched
+    AETHER_CHECK(layout.side_fraction == 0.0f && layout.tool.empty());
+    layout.side_fraction = 0.42f;
+    layout.tool = "Terrain";
+    std::string error;
+    AETHER_CHECK(SaveShellLayout(file, layout, &error));                // makes the folder
+    AETHER_CHECK(!stdfs::exists(stdfs::path(file).concat(".tmp")));     // the temp file did not stay
+    ShellLayout back;
+    AETHER_CHECK(LoadShellLayout(file, back));
+    AETHER_CHECK(std::abs(back.side_fraction - 0.42f) < 1e-4f && back.tool == "Terrain");
+    auto write = [&](const std::string& text) { std::ofstream(file, std::ios::binary | std::ios::trunc) << text; };
+    write("{ this is not json");
+    ShellLayout damaged;
+    damaged.tool = "kept";
+    AETHER_CHECK(!LoadShellLayout(file, damaged) && damaged.tool == "kept");
+    write(R"({"side_fraction": 9.0, "tool": "Scene"})");                // a wild width falls back to the default, the tool survives
+    ShellLayout wild;
+    AETHER_CHECK(LoadShellLayout(file, wild));
+    AETHER_CHECK(wild.side_fraction == 0.0f && wild.tool == "Scene");
+    write(R"({"side_fraction": "wide", "tool": 7})");                   // wrong types are ignored, not fatal
+    ShellLayout typed;
+    AETHER_CHECK(LoadShellLayout(file, typed) && typed.side_fraction == 0.0f && typed.tool.empty());
+    AETHER_CHECK(!SaveShellLayout({}, layout, &error) && !error.empty()); // no path: refused, with a reason
 }
