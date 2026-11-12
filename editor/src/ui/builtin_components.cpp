@@ -82,6 +82,7 @@ void RegisterEditorComponents() {
     (void)GetComponentId<CapsuleCollider>();
     (void)GetComponentId<ConvexCollider>();
     (void)GetComponentId<MeshCollider>();
+    (void)GetComponentId<HeightfieldCollider>();
     (void)GetComponentId<CharacterMovement>();
 #endif
 #if AETHER_EDITOR_KIT_INVENTORY

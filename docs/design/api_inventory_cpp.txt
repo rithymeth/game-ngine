@@ -4680,28 +4680,34 @@
   type struct BoxCollider
   type struct CapsuleCollider
   type struct ConvexCollider
+  type struct HeightfieldCollider
   type struct MeshCollider
   type struct RigidBody
   type struct SphereCollider
   ))AETHER_REFLECT(aether::CapsuleCollider,1,AETHER_FIELD(radius,Field_EditAnywhere,
   ))AETHER_REFLECT(aether::ConvexCollider,1,AETHER_FIELD(points,Field_EditAnywhere,
+  ))AETHER_REFLECT(aether::HeightfieldCollider,1,AETHER_FIELD(samples,Field_EditAnywhere,
   ))AETHER_REFLECT(aether::MeshCollider,1,AETHER_FIELD(vertices,Field_ReadOnly,
   ))AETHER_REFLECT(aether::SphereCollider,1,AETHER_FIELD(radius,Field_EditAnywhere,
   ),AETHER_FIELD(angular_damping,Field_EditAnywhere,
+  ),AETHER_FIELD(cell_size,Field_EditAnywhere,
   ),AETHER_FIELD(center,Field_EditAnywhere,
   ),AETHER_FIELD(continuous_collision,Field_EditAnywhere,
   ),AETHER_FIELD(friction,Field_EditAnywhere,
   ),AETHER_FIELD(gravity_scale,Field_EditAnywhere,
   ),AETHER_FIELD(height,Field_EditAnywhere,
+  ),AETHER_FIELD(heights,Field_ReadOnly,
   ),AETHER_FIELD(indices,Field_ReadOnly,
   ),AETHER_FIELD(is_trigger,Field_EditAnywhere,
   ),AETHER_FIELD(linear_damping,Field_EditAnywhere,
   ),AETHER_FIELD(lock_rotation_x,Field_EditAnywhere),AETHER_FIELD(lock_rotation_y,Field_EditAnywhere),AETHER_FIELD(lock_rotation_z,Field_EditAnywhere),AETHER_FIELD(legacy_radius,Field_None))AETHER_REFLECT(aether::BoxCollider,1,AETHER_FIELD(half_extents,Field_EditAnywhere,
   ),AETHER_FIELD(mass,Field_EditAnywhere,
+  ),AETHER_FIELD(origin,Field_EditAnywhere,
   ),AETHER_FIELD(report_stay,Field_EditAnywhere,
   ),AETHER_FIELD(restitution,Field_EditAnywhere,
   AETHER_ENUM(aether::BodyMotion,1,AETHER_ENUM_VALUE(Static),AETHER_ENUM_VALUE(Kinematic),AETHER_ENUM_VALUE(Dynamic))AETHER_REFLECT(aether::RigidBody,2,AETHER_FIELD(motion,Field_EditAnywhere,
   bool HasCollider(const World&world,Entity entity)
+  static constexpr f32 kHole=std::numeric_limits<f32>::max()
   usize MigrateLegacyRigidBodies(World&world)
   void RegisterPhysicsComponentSerializers()
 [physics/include/aether/physics/constraints.h] experimental

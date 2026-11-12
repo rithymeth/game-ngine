@@ -7,6 +7,7 @@
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
+#include <Jolt/Physics/Collision/Shape/HeightFieldShape.h>
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/Shape/ScaledShape.h>
@@ -78,6 +79,7 @@ std::vector<u8> SettingsOf(const World& world, Entity e) {
     AppendSettings<CapsuleCollider>(world, e, 3, out);
     AppendSettings<ConvexCollider>(world, e, 4, out);
     AppendSettings<MeshCollider>(world, e, 5, out);
+    AppendSettings<HeightfieldCollider>(world, e, 9, out);
     AppendSettings<RigidBody>(world, e, 6, out);
     AppendSettings<Layer>(world, e, 7, out); // a layer change moves the body to another object layer
     if (const Transform* transform = world.GetComponent<Transform>(e)) {
@@ -194,6 +196,33 @@ bool PhysicsScene::Build(Entity e, Tracked& tracked, std::string& problem) {
         part.center = c->center, part.trigger = c->is_trigger, part.friction = c->friction, part.restitution = c->restitution;
         parts.push_back(std::move(part));
     }
+    if (const HeightfieldCollider* c = world_.GetComponent<HeightfieldCollider>(e)) {
+        Part part;
+        if (motion != BodyMotion::Static) {
+            problem = "Heightfield collider: only a static body can use it (a moving body cannot be terrain)";
+            return false;
+        }
+        const usize count = static_cast<usize>(c->samples) * c->samples;
+        if (c->samples < 4 || c->samples % 2 != 0) {
+            problem = "Heightfield collider: samples must be even and at least 4 (" + std::to_string(c->samples) + ")";
+            return false;
+        }
+        if (c->heights.size() != count) {
+            problem = "Heightfield collider: needs samples x samples heights (" + std::to_string(count) + "), it has " + std::to_string(c->heights.size());
+            return false;
+        }
+        if (!(c->cell_size > 0.0f)) {
+            problem = "Heightfield collider: cell_size must be above zero";
+            return false;
+        }
+        std::vector<f32> samples(c->heights);
+        for (f32& h : samples) {
+            if (!std::isfinite(h) || h >= HeightfieldCollider::kHole) h = JPH::HeightFieldShapeConstants::cNoCollisionValue; // a hole (kHole, or a value no scene file could keep)
+        }
+        if (!Make(JPH::HeightFieldShapeSettings(samples.data(), ToJolt(c->origin), JPH::Vec3(c->cell_size, 1.0f, c->cell_size), c->samples), part.shape, problem, "Heightfield collider")) return false;
+        part.center = Vec3(0, 0, 0), part.trigger = c->is_trigger, part.friction = c->friction, part.restitution = c->restitution;
+        parts.push_back(std::move(part));
+    }
     if (parts.empty()) {
         problem = "no collider";
         return false;
@@ -269,7 +298,7 @@ bool PhysicsScene::Build(Entity e, Tracked& tracked, std::string& problem) {
     physics_.SetReportStay(tracked.body, stay(world_.GetComponent<BoxCollider>(e)) || stay(world_.GetComponent<SphereCollider>(e)) ||
                                              stay(world_.GetComponent<CapsuleCollider>(e)) ||
                                              stay(world_.GetComponent<ConvexCollider>(e)) ||
-                                             stay(world_.GetComponent<MeshCollider>(e)));
+                                             stay(world_.GetComponent<MeshCollider>(e)) || stay(world_.GetComponent<HeightfieldCollider>(e)));
     if (RigidBody* body = world_.GetComponent<RigidBody>(e)) body->body_id = tracked.body;
     return true;
 }
@@ -282,6 +311,7 @@ void PhysicsScene::Sync() {
     colliders.set(GetComponentId<CapsuleCollider>());
     colliders.set(GetComponentId<ConvexCollider>());
     colliders.set(GetComponentId<MeshCollider>());
+    colliders.set(GetComponentId<HeightfieldCollider>());
     std::vector<Entity> entities;
     world_.ForEachArchetype([&](Archetype& archetype) {
         if ((archetype.Mask() & colliders).none()) return;

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <limits>
+
 #include "aether/math/math.h"
 #include "aether/reflection/reflection.h"
 #include "aether/scene/components.h" // Transform
@@ -100,6 +102,23 @@ struct MeshCollider {
     bool report_stay = false; // OnCollisionStay every step while touching (off by default: it's every step)
 };
 
+// A grid of heights: ground for a large level (terrain) without a triangle mesh in the scene. `samples` x `samples` heights, `cell_size` metres apart, row
+// major (heights[z * samples + x]); the sample at (0, 0) is at `origin` (local), x grows along the columns and z along the rows. Static only (a body that
+// moves cannot use it). `samples` must be even and at least 4, and `heights` must hold exactly samples * samples values; anything else is reported as a
+// problem by the physics scene and the entity gets no body. A height of `kHole` (the largest float) is a hole: nothing collides there. (Not infinity: a scene
+// saved as JSON cannot hold it.)
+struct HeightfieldCollider {
+    static constexpr f32 kHole = std::numeric_limits<f32>::max();
+    u32 samples = 0;
+    f32 cell_size = 1.0f;
+    Vec3 origin{0.0f, 0.0f, 0.0f};
+    std::vector<f32> heights;
+    bool is_trigger = false;
+    f32 friction = 0.5f;
+    f32 restitution = 0.0f;
+    bool report_stay = false; // OnCollisionStay every step while touching (off by default: it's every step)
+};
+
 // Installs RigidBody's custom binary (de)serializer and its JSON migration
 // from the pre-split format. Call once before any SaveScene/LoadScene that
 // may touch RigidBody entities.
@@ -165,6 +184,17 @@ AETHER_REFLECT(aether::CapsuleCollider, 1,
 AETHER_REFLECT(aether::ConvexCollider, 1,
     AETHER_FIELD(points, Field_EditAnywhere, {.tooltip = "The hull is built around these points", .units = "m"}),
     AETHER_FIELD(center, Field_EditAnywhere, {.units = "m"}),
+    AETHER_FIELD(is_trigger, Field_EditAnywhere, {.tooltip = "Reports overlaps (OnTriggerEnter/Exit) instead of colliding"}),
+    AETHER_FIELD(friction, Field_EditAnywhere, {.range_min = 0.0, .range_max = 2.0}),
+    AETHER_FIELD(restitution, Field_EditAnywhere, {.range_min = 0.0, .range_max = 1.0}),
+    AETHER_FIELD(report_stay, Field_EditAnywhere, {.tooltip = "Send OnCollisionStay every step while touching"})
+)
+
+AETHER_REFLECT(aether::HeightfieldCollider, 1,
+    AETHER_FIELD(samples, Field_EditAnywhere, {.tooltip = "Heights along each side of the grid: even, at least 4"}),
+    AETHER_FIELD(cell_size, Field_EditAnywhere, {.range_min = 0.01, .units = "m"}),
+    AETHER_FIELD(origin, Field_EditAnywhere, {.units = "m"}),
+    AETHER_FIELD(heights, Field_ReadOnly, {.tooltip = "samples x samples heights, row by row; the largest float is a hole", .units = "m"}),
     AETHER_FIELD(is_trigger, Field_EditAnywhere, {.tooltip = "Reports overlaps (OnTriggerEnter/Exit) instead of colliding"}),
     AETHER_FIELD(friction, Field_EditAnywhere, {.range_min = 0.0, .range_max = 2.0}),
     AETHER_FIELD(restitution, Field_EditAnywhere, {.range_min = 0.0, .range_max = 1.0}),
