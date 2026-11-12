@@ -1015,6 +1015,35 @@ void EditorWorkspace::DrawTool(usize tool) {
     ImGui::PopID();
 }
 
+ScenePanel& EditorWorkspace::Scene() { return *impl_->scene_panel; }
+
+void EditorWorkspace::DrawSceneFileItems() {
+    ScenePanel& scene = *impl_->scene_panel;
+    auto show_scene = [&] {
+        const i64 tool = FindTool("Scene");
+        if (tool >= 0) Select(static_cast<usize>(tool));
+    };
+    if (ImGui::MenuItem("New scene")) { scene.NewScene(false); show_scene(); }
+    if (ImGui::MenuItem("Open scene")) { scene.OpenScene(scene.Path(), false); show_scene(); }
+    if (ImGui::MenuItem("Save scene", "Ctrl+S")) { scene.SaveScene(); show_scene(); }
+    if (ImGui::MenuItem("Save scene as")) { scene.SaveScene(scene.Path()); show_scene(); }
+}
+
+void EditorWorkspace::DrawEditMenu() {
+    ScenePanel& scene = *impl_->scene_panel;
+    SceneDocument& doc = scene.Document();
+    if (!ImGui::BeginMenu("Edit")) return;
+    const std::string undo = doc.CanUndo() ? "Undo " + doc.UndoLabel() : std::string("Undo");
+    const std::string redo = doc.CanRedo() ? "Redo " + doc.RedoLabel() : std::string("Redo");
+    if (ImGui::MenuItem(undo.c_str(), "Ctrl+Z", false, doc.CanUndo())) doc.Undo();
+    if (ImGui::MenuItem(redo.c_str(), "Ctrl+Y", false, doc.CanRedo())) doc.Redo();
+    ImGui::Separator();
+    const bool any = !doc.Selection().empty();
+    if (ImGui::MenuItem("Duplicate", "Ctrl+D", false, any)) scene.DuplicateSelection();
+    if (ImGui::MenuItem("Delete", "Del", false, any)) scene.DeleteSelection();
+    ImGui::EndMenu();
+}
+
 void EditorWorkspace::DrawToolsMenu() {
     impl_->extensions.PollShortcuts();
     if (ImGui::BeginMenu("Tools")) {

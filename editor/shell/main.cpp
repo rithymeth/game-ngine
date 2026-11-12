@@ -52,9 +52,12 @@ void DrawEditor(EditorWorkspace& workspace, const char* backend_label, bool& qui
     const ImGuiIO& io = ImGui::GetIO();
     if (ImGui::BeginMainMenuBar()) {
         if (ImGui::BeginMenu("File")) {
+            workspace.DrawSceneFileItems();
+            ImGui::Separator();
             if (ImGui::MenuItem("Quit")) quit = true;
             ImGui::EndMenu();
         }
+        workspace.DrawEditMenu();
         workspace.DrawToolsMenu();
         ImGui::TextDisabled("   Aether Editor  -  %s  -  %zu tools", backend_label, workspace.ToolCount());
         ImGui::EndMainMenuBar();

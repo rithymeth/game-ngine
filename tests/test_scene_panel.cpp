@@ -2,6 +2,7 @@
 
 #include "core/commands.h"
 #include "ui/editor_theme.h"
+#include "workspace/editor_workspace.h"
 #include "aether/scene/gameplay.h"
 #include "aether/scene/hierarchy.h"
 #include "test_framework.h"
@@ -238,4 +239,25 @@ AETHER_TEST(EditorTheme_AppliesWithoutAFont) {
     AETHER_CHECK(style.Colors[ImGuiCol_Text].x > 0.8f);                  // light text on a dark window
     AETHER_CHECK(style.Colors[ImGuiCol_WindowBg].x < 0.2f);
     imgui.Frame([&] { ImGui::Begin("themed"); ImGui::Button("ok"); ImGui::End(); });
+}
+
+// The menu bar's File and Edit items act on the Scene tool's document, and draw in a menu bar headless.
+AETHER_TEST(EditorWorkspace_MenusReachTheSceneDocument) {
+    HeadlessImGui imgui;
+    EditorWorkspace workspace;
+    SceneDocument& document = workspace.Scene().Document();
+    const usize before = document.Entities().size();
+    const Entity thing = document.CreateEntity("Thing");
+    document.SetSelection({thing});
+    imgui.Frame([&] {
+        if (ImGui::BeginMainMenuBar()) {
+            if (ImGui::BeginMenu("File")) { workspace.DrawSceneFileItems(); ImGui::EndMenu(); }
+            workspace.DrawEditMenu();
+            ImGui::EndMainMenuBar();
+        }
+    });
+    AETHER_CHECK(document.Entities().size() == before + 1);
+    AETHER_CHECK(workspace.Scene().DuplicateSelection() == 1);   // what the Edit menu's Duplicate calls
+    AETHER_CHECK(document.CanUndo());
+    imgui.Frame([&] { if (ImGui::BeginMainMenuBar()) { workspace.DrawEditMenu(); ImGui::EndMainMenuBar(); } });
 }
