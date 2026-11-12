@@ -72,6 +72,8 @@ public:
     u64 FrameCount() const;
     // How many entities the loaded scene has.
     usize EntityCount() const;
+    // How many physics bodies the running game has (as of its last physics step: bodies follow the world's colliders and rigid bodies when the game steps).
+    usize PhysicsBodyCount() const;
 
 private:
     void RememberKnown(); // the identified entities of the running scene are what the document has

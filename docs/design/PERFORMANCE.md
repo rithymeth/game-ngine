@@ -1498,3 +1498,17 @@ lavapipe (the CPU Vulkan driver), 20 edits each, the template scene (14 entities
 
 `PatchScene` now builds a GUID map of both worlds on every call (to find which entities came and went), so it is worth checking it did not become the cost. 2,014 entities, the same machine: a patch that
 changes nothing 0.50 ms, one that adds an entity 0.52 ms, one that removes an entity 0.51 ms, 20 each. The reload it replaces is 5 ms to save plus 11.5 ms to load at that size, before the slower frame after it.
+
+## What does picking by triangles cost? (2026-11-12)
+
+The editor's pick (`PickEntity`) now refines a bounding-box hit with a ray against the model's triangles, and the Scene View runs it every frame for the hover outline, so the worst case is a big model under the mouse. Measured (release-like build, the pick called 200 times, mouse over the model and over empty space), one model of N triangles scaled up in the view:
+
+| triangles | pick over the model | pick over empty space |
+|---|---|---|
+| 1,280 | 0.006 ms | 0.001 ms |
+| 20,480 | 0.086 ms | under 0.001 ms |
+| 81,920 | 0.514 ms | under 0.001 ms |
+
+2,000 small models (12 triangles each) in one scene, the mouse over the middle: 0.44 ms (the box test over every entity, plus the origin test, dominates there, not the triangles).
+
+The cost is linear in the triangles (about 6 ns each), so the 300,000-triangle cap (`ModelBoundsCache::kMaxPickTriangles`) is about 2 ms for one pick over such a model, which is the most it can cost and only when the mouse is on it. No caching of the hover pick was built: nothing here needs it. A model with more than the cap is picked by its box. Not measured: several large models stacked under the mouse (each is tested, nearest first-ish), a real display's frame budget, and a faster test (a bounding-volume tree over a big model's triangles) if the cap ever has to rise.

@@ -74,6 +74,7 @@ u64 LiveViewport::FrameCount() const { return impl_ ? impl_->frames : 0; }
 u64 LiveViewport::SceneReloads() const { return impl_ ? impl_->reloads : 0; }
 u64 LiveViewport::PatchCount() const { return impl_ ? impl_->patches : 0; }
 usize LiveViewport::EntityCount() const { return impl_ && impl_->game ? impl_->game->GetWorld().EntityCount() : 0; }
+usize LiveViewport::PhysicsBodyCount() const { return impl_ && impl_->game ? impl_->game->Stats().physics_bodies : 0; }
 
 bool LiveViewport::SetScene(const std::vector<u8>& scene_bytes, std::string* error) {
     if (!impl_) {
@@ -96,10 +97,24 @@ void LiveViewport::RememberKnown() {
     for (const auto& entry : IdentifiedEntities(impl_->game->GetWorld())) impl_->known.insert(entry.first);
 }
 
+namespace {
+
+// The components the game's physics scene turns into bodies. It keeps them in step with the world itself (PhysicsScene::Sync, on every physics step: a new entity
+// gets a body, a changed collider or rigid body is rebuilt, a gone entity's body is destroyed), so putting one into the running world, taking it out or changing
+// it needs no reload. Found by name so the editor does not link the physics module.
+bool IsPhysicsBodyComponent(ComponentId component) {
+    const ComponentInfo& info = GetComponentInfo(component);
+    if (info.reflected == nullptr) return false;
+    const std::string name = info.reflected->name;
+    return name == "RigidBody" || name == "BoxCollider" || name == "SphereCollider" || name == "CapsuleCollider" || name == "ConvexCollider" || name == "MeshCollider";
+}
+
+} // namespace
+
 bool LiveViewport::IsPatchable(ComponentId component) {
-    // What the renderer only reads each frame and nothing else holds a copy of (a MaterialParameters is read per draw: player/src/material_overrides.h): a physics body, a script or an audio source is built from its
-    // component when the scene loads, so editing one of those needs the scene loaded again.
-    return component == GetComponentId<Transform>() || component == GetComponentId<EntityName>() || component == GetComponentId<ModelRenderer>() ||
+    // What the renderer reads each frame (a MaterialParameters per draw: player/src/material_overrides.h) and what the physics scene keeps in step with the world.
+    // A script, a character, an audio source or a camera is set up once when the game starts, so those need the scene loaded again.
+    return IsPhysicsBodyComponent(component) || component == GetComponentId<Transform>() || component == GetComponentId<EntityName>() || component == GetComponentId<ModelRenderer>() ||
            component == GetComponentId<DirectionalLight>() || component == GetComponentId<PointLight>() || component == GetComponentId<SpotLight>() ||
            component == GetComponentId<SkyLight>() || component == GetComponentId<Wind>() || component == GetComponentId<WindZone>() ||
            component == GetComponentId<PostProcessVolume>() || component == GetComponentId<Decal>() || component == GetComponentId<MaterialParameters>() || component == GetComponentId<Parent>();
