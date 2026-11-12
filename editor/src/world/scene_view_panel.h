@@ -13,7 +13,8 @@ namespace aether::editor {
 class SceneViewPanel {
 public:
     // Fills the current ImGui window, editing the selection of `document`. With `bounds`, objects are picked and outlined by their models' real extents.
-    void Draw(SceneDocument& document, const ModelBoundsCache* bounds = nullptr);
+    // `content_root` is the project's content folder, where a prefab dropped from the Content Browser is read from (empty: prefabs cannot be placed).
+    void Draw(SceneDocument& document, const ModelBoundsCache* bounds = nullptr, const std::filesystem::path& content_root = {});
     // Moves the camera's target to the selection (or the whole scene if nothing is selected) and backs off to fit.
     void FocusSelection(const SceneDocument& document);
     SceneViewCamera& Camera() { return camera_; }

@@ -39,6 +39,13 @@ certificate error), and `iexpress.exe` produced nothing usable, so the self-extr
 resource compiled with `csc.exe`. A Vulkan-enabled install also fails for a consumer that lacks the Vulkan SDK, because the
 generated `AetherConfig.cmake` requires it -- which is why the installer builds with Vulkan off.
 
+## Drop a prefab into the scene
+
+Dragging a prefab (`.aprefab`) from the Content Browser into the Scene View places an instance of it on the ground under the mouse, like a model: the crate and everything under it, as
+one undo step, selected, and still linked to the prefab asset (so later changes to the prefab reach it). The toolbar hint now says models and prefabs. A prefab that cannot be read, or
+a path that is not in the content folder, says why and changes nothing. A placed instance takes the drop position only (not the prefab's own rotation or scale), and dropping into the
+Live Viewport or onto the hierarchy is not there yet.
+
 ## Drag across a plane
 
 The Move gizmo has three small squares between its arrows: grab one to slide the object in two directions at once (along the floor, for example) in one drag. They follow the World/Local
