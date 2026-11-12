@@ -342,8 +342,11 @@ void ReadValue(lua_State* L, int index, const TypeInfo& type, void* ptr, const c
             mismatch("a vector");
         }
     }
-    if (lua_kind != LUA_TTABLE) {
-        mismatch("a table");
+    // Most compound fields are authored as tables. Asset and entity references
+    // are an important exception: their reflection JSON converters use their
+    // canonical string IDs, so scripts must be able to assign those IDs too.
+    if (lua_kind != LUA_TTABLE && lua_kind != LUA_TSTRING) {
+        mismatch("a table or serialized value");
     }
     reflect::LoadReport report;
     if (!reflect::FromJson(type, ptr, ToJson(L, index), &report)) {

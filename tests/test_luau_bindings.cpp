@@ -1,6 +1,7 @@
 #include "aether/scene/components.h"
 #include "aether/scene/entity_guid.h"
 #include "aether/script/luau_host.h"
+#include "aether/sprite2d/components.h"
 #include "test_framework.h"
 
 #include <algorithm>
@@ -154,6 +155,24 @@ AETHER_TEST(LuauBindings_MethodsEntitiesAndTheWorld) {
     // C++ passes entities in as arguments too.
     AETHER_CHECK(s.host.Run("function HealthOf(e) return e:Get('LuauHealth').current end").ok);
     AETHER_CHECK(Number(s.host.Call("HealthOf", {EntityRef{s.player}})) == 100.0);
+}
+
+AETHER_TEST(LuauBindings_AssignsAssetReferenceFromItsCanonicalString) {
+    Scene s;
+    (void)GetComponentId<sprite2d::Sprite>();
+    s.world.AddComponent<sprite2d::Sprite>(s.player, sprite2d::Sprite{});
+    constexpr const char* atlas_text = "8931261b-3b38-5c63-804c-b458e561dc1e";
+    assets::AssetGuid expected;
+    AETHER_CHECK(assets::ParseAssetGuid(atlas_text, expected));
+
+    ScriptResult r = s.host.Run(R"(
+        local sprite = player:Get("Sprite")
+        sprite.atlas = "8931261b-3b38-5c63-804c-b458e561dc1e"
+        return sprite.atlas
+    )");
+    AETHER_CHECK(r.ok && Text(r) == atlas_text);
+    AETHER_CHECK(s.world.GetComponent<sprite2d::Sprite>(s.player)->atlas.guid == expected);
+    AETHER_CHECK(!s.host.Run("player:Get('Sprite').atlas = 'not-a-guid'").ok);
 }
 
 AETHER_TEST(LuauBindings_HandlesAreSafe) {
