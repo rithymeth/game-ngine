@@ -78,6 +78,11 @@ project's scene file. The game's world is frozen by default so the view is the s
 since the last cook is said in the toolbar and appears after **Reload**. A move, a light edit or adding and removing objects is patched in place (see the next three sections); any other change reloads the whole scene (the world, physics and scripts start over), which is
 fine for small and medium scenes.
 
+## Moving an object under another in the hierarchy no longer reloads the Live Viewport
+
+Dragging an object under another in the hierarchy (or back out to the root), and undoing or redoing that, used to load the scene again. It is now patched like any other edit: the object follows its new parent in the picture at once and the game keeps its state. An object that carries a rigid body, a script
+or a camera still loads the scene again when it is moved under another, because the running game built it from where it stood when the scene loaded.
+
 ## Drop an asset onto a path field in the inspector
 
 A field that holds the path of an asset can take it from the Content Browser: drop a picture on a decal's texture, a sky light's environment image or a material parameter's texture, or a material (`.amat`, `.amati`) on a
