@@ -651,3 +651,93 @@ AETHER_TEST(SceneView_GroundPointAndPlacingAModel) {
     AETHER_CHECK(document.Redo());
     AETHER_CHECK(document.Entities().size() == before + 1);
 }
+
+// Several selected entities follow one drag, as one undo step; a selected child rides with its selected parent instead of moving twice.
+AETHER_TEST(TransformGizmo_SubjectsAreTheSelectedLeavingOutDescendants) {
+    SceneDocument document;
+    const Entity parent = document.CreateEntity("Parent");
+    const Entity child = document.CreateEntity("Child", SceneEntityKind::Empty, {}, parent);
+    const Entity grandchild = document.CreateEntity("Grandchild", SceneEntityKind::Empty, {}, child);
+    const Entity other = document.CreateEntity("Other");
+    document.SetSelection({grandchild, other, parent, child});
+    const std::vector<Entity> subjects = TransformGizmo::Subjects(document);
+    AETHER_CHECK(subjects.size() == 2);                                       // the parent and the unrelated one; the descendants ride along
+    if (subjects.size() == 2) AETHER_CHECK(subjects[0] == other && subjects[1] == parent);   // in the selection's order
+    document.SetSelection({child, other});
+    AETHER_CHECK(TransformGizmo::Subjects(document).size() == 2);             // a child whose parent is NOT selected is its own subject
+    document.DestroyEntity(other);
+    AETHER_CHECK(TransformGizmo::Subjects(document).size() == 1);             // a destroyed one is dropped
+    document.ClearSelection();
+    AETHER_CHECK(TransformGizmo::Subjects(document).empty() && TransformGizmo::Subject(document) == kNullEntity);
+}
+
+AETHER_TEST(TransformGizmo_MoveScaleAndRotateTakeEveryoneSelected) {
+    GizmoRig rig;
+    SceneDocument document;
+    const Entity a = document.CreateEntity("A"), b = document.CreateEntity("B"), c = document.CreateEntity("C");
+    document.SetPosition(b, Vec3(2, 0, 0), true);
+    document.SetPosition(c, Vec3(0, 0, 3), true);
+    document.SetScale(b, Vec3(2, 1, 1), true);
+    document.SetSelection({a, b, c});
+    document.Commands().Clear();
+    TransformGizmo gizmo;
+    const f32 half = rig.Length() * 0.5f;
+
+    // Move: every one shifts by the same 4 along X, in one undo step.
+    AETHER_CHECK(gizmo.Begin(document, rig.camera, rig.origin, rig.size, rig.Pixel(Vec3(half, 0, 0)), GizmoMode::Move));
+    gizmo.Update(document, rig.camera, rig.origin, rig.size, rig.Pixel(Vec3(half + 2.0f, 0, 0)), 0.0f);
+    AETHER_CHECK(!document.CanUndo());                                        // nothing is recorded while the mouse is down
+    gizmo.End(document, rig.camera, rig.origin, rig.size, rig.Pixel(Vec3(half + 4.0f, 0, 0)), 0.0f);
+    AETHER_CHECK(NearVec(WorldPositionOf(document, a), Vec3(4, 0, 0), 0.01f));
+    AETHER_CHECK(NearVec(WorldPositionOf(document, b), Vec3(6, 0, 0), 0.01f));
+    AETHER_CHECK(NearVec(WorldPositionOf(document, c), Vec3(4, 0, 3), 0.01f));
+    AETHER_CHECK(document.UndoLabel() == "Move 3 entities");
+    AETHER_CHECK(document.Undo() && !document.CanUndo());                     // all three come back together
+    AETHER_CHECK(NearVec(WorldPositionOf(document, a), Vec3(0, 0, 0)) && NearVec(WorldPositionOf(document, b), Vec3(2, 0, 0)) && NearVec(WorldPositionOf(document, c), Vec3(0, 0, 3)));
+
+    // Scale: one ratio for all (the first doubles; B was already 2 wide and goes to 4; Y and Z are untouched).
+    AETHER_CHECK(gizmo.Begin(document, rig.camera, rig.origin, rig.size, rig.Pixel(Vec3(half, 0, 0)), GizmoMode::Scale));
+    gizmo.End(document, rig.camera, rig.origin, rig.size, rig.Pixel(Vec3(half * 2.0f, 0, 0)), 0.0f);
+    const Transform* ta = document.GetWorld().GetComponent<Transform>(a);
+    const Transform* tb = document.GetWorld().GetComponent<Transform>(b);
+    AETHER_CHECK(ta && tb && std::fabs(ta->scale.x - 2.0f) < 0.02f && std::fabs(tb->scale.x - 4.0f) < 0.04f && std::fabs(tb->scale.y - 1.0f) < 1e-3f);
+    AETHER_CHECK(document.Undo() && !document.CanUndo());
+    tb = document.GetWorld().GetComponent<Transform>(b);
+    AETHER_CHECK(tb && std::fabs(tb->scale.x - 2.0f) < 1e-3f);
+
+    // Rotate: a quarter turn about +Y swings B and C round A's position and turns each, as one rigid group.
+    Vec3 ring[8];
+    TransformGizmo::RingPoints(Vec3(0, 0, 0), Vec3(0, 1, 0), rig.Length(), 8, ring);
+    AETHER_CHECK(gizmo.Begin(document, rig.camera, rig.origin, rig.size, rig.Pixel(ring[1]), GizmoMode::Rotate));
+    gizmo.Update(document, rig.camera, rig.origin, rig.size, rig.Pixel(ring[2]), 0.0f);
+    gizmo.End(document, rig.camera, rig.origin, rig.size, rig.Pixel(ring[3]), 0.0f);
+    AETHER_CHECK(NearVec(WorldPositionOf(document, a), Vec3(0, 0, 0), 0.01f));              // the pivot stays
+    AETHER_CHECK(NearVec(WorldPositionOf(document, b), Vec3(0, 0, -2), 0.02f));             // (2,0,0) a quarter turn about +Y is (0,0,-2)
+    AETHER_CHECK(NearVec(WorldPositionOf(document, c), Vec3(3, 0, 0), 0.02f));              // (0,0,3) is (3,0,0)
+    AETHER_CHECK(NearVec(WorldAxisOf(document, b, 0), Vec3(0, 0, -2), 0.05f));              // and each turned with it (B's X axis is 2 long)
+    AETHER_CHECK(document.Undo() && !document.CanUndo());
+    AETHER_CHECK(NearVec(WorldPositionOf(document, b), Vec3(2, 0, 0)) && NearVec(WorldPositionOf(document, c), Vec3(0, 0, 3)));
+}
+
+AETHER_TEST(TransformGizmo_AClickWithoutADragRecordsNothingAndAParentCarriesItsSelectedChild) {
+    GizmoRig rig;
+    SceneDocument document;
+    const Entity parent = document.CreateEntity("Parent");
+    const Entity child = document.CreateEntity("Child", SceneEntityKind::Empty, {}, parent);
+    document.SetPosition(child, Vec3(0, 0, 2), true);
+    document.SetSelection({child, parent}); // the child first: without leaving it out it would be moved against the parent's old position, then carried again
+    document.Commands().Clear();
+    TransformGizmo gizmo;
+    const f32 half = rig.Length() * 0.5f;
+    const ImVec2 grab = rig.Pixel(Vec3(half, 0, 0));
+    AETHER_CHECK(gizmo.Begin(document, rig.camera, rig.origin, rig.size, grab, GizmoMode::Move));
+    gizmo.End(document, rig.camera, rig.origin, rig.size, grab, 0.0f);       // pressed and released on the spot
+    AETHER_CHECK(!document.CanUndo() && !document.IsDirty());                // no undo entry, and the scene is not marked changed
+
+    AETHER_CHECK(gizmo.Begin(document, rig.camera, rig.origin, rig.size, grab, GizmoMode::Move));
+    gizmo.End(document, rig.camera, rig.origin, rig.size, rig.Pixel(Vec3(half + 3.0f, 0, 0)), 0.0f);
+    AETHER_CHECK(NearVec(WorldPositionOf(document, parent), Vec3(3, 0, 0), 0.02f));
+    AETHER_CHECK(NearVec(WorldPositionOf(document, child), Vec3(3, 0, 2), 0.02f));          // moved 3 once, not 6
+    const Transform* local = document.GetWorld().GetComponent<Transform>(child);
+    AETHER_CHECK(local && NearVec(local->position, Vec3(0, 0, 2), 1e-3f));                   // its own offset from the parent unchanged
+}

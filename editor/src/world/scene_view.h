@@ -7,6 +7,8 @@
 
 #include <imgui.h>
 
+#include <vector>
+
 namespace aether::editor {
 
 // An orbit camera around a target point, Y up: right-drag turns it, middle-drag (or shift + left-drag) pans, the wheel
@@ -52,15 +54,20 @@ enum class GizmoMode { Move, Rotate, Scale };
 
 // The transform gizmo on the first selected entity, in three modes. Move: arrows along world X, Y and Z. Rotate: a ring around
 // each world axis. Scale: handles along the entity's own (local) axes. A drag is one undoable edit however many frames it takes
-// (the document merges the uncommitted updates), works in world space even under a parent, and snaps to `snap_step`, which means
-// metres for Move, degrees for Rotate and a scale step for Scale (0 = off). Only the first selected entity changes; a multi-selection
-// edit needs the document to track more than one pending edit. No ImGui: the panel feeds it the mouse.
+// (however many entities it moves), works in world space even under a parent, and snaps to `snap_step`, which means metres for Move,
+// degrees for Rotate and a scale step for Scale (0 = off). With several entities selected they all follow: the handles sit on the first,
+// Move shifts them all by the same amount, Scale applies the same ratio to each, and Rotate turns each about the same world axis and
+// swings the others round the first's position. An entity whose ancestor is also selected is left to ride along with it. While the
+// mouse is down the live values are written straight into the components; releasing puts the originals back and records the result
+// inside one transaction, so it is one undo step. No ImGui: the panel feeds it the mouse.
 class TransformGizmo {
 public:
     // The handle length in world units, so it stays about the same size on screen at any zoom.
     static f32 HandleLength(const SceneViewCamera& camera) { return camera.distance * 0.18f; }
-    // The entity the gizmo is on (the first selected one with a Transform), or kNullEntity.
+    // The entity the gizmo is on (the first of Subjects), or kNullEntity.
     static Entity Subject(const SceneDocument& document);
+    // The entities a drag moves: the selected, living ones with a Transform, leaving out any whose ancestor is also selected.
+    static std::vector<Entity> Subjects(const SceneDocument& document);
     // The world-space direction of a handle: the world axis (Move, Rotate) or the entity's local axis (Scale).
     static Vec3 HandleDirection(const SceneDocument& document, Entity subject, GizmoAxis axis, GizmoMode mode);
     // Points of a rotate ring (a circle around `axis_direction`, radius `radius`, centred on `centre`), for drawing and hit-testing.
@@ -78,17 +85,24 @@ public:
     GizmoMode Mode() const { return mode_; }
 
 private:
-    bool Apply(SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, f32 snap_step, bool committed);
+    // Writes the live values for `mouse` into every subject's Transform (no commands).
+    bool Apply(SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, f32 snap_step);
+    // Puts the originals back and records the live values as commands in one transaction.
+    void Commit(SceneDocument& document, const std::vector<Transform>& live);
     // Move and Scale: where along the handle's line the mouse ray passes closest. Rotate: the angle of the mouse around the axis.
     bool Measure(const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, f32& value) const;
 
+    struct Held {
+        Entity entity = kNullEntity;
+        Transform before;           // its local Transform when the drag began
+        Vec3 start_world{0, 0, 0};  // its world position when the drag began
+    };
+
     GizmoAxis axis_ = GizmoAxis::None;
     GizmoMode mode_ = GizmoMode::Move;
-    Entity entity_ = kNullEntity;
-    Vec3 start_world_{0.0f, 0.0f, 0.0f};   // the subject's world position when the drag began
+    std::vector<Held> subjects_;            // the first is the one the handles are on
+    Vec3 start_world_{0.0f, 0.0f, 0.0f};   // the first subject's world position when the drag began
     Vec3 direction_{1.0f, 0.0f, 0.0f};     // the handle's world direction (the axis a ring turns about)
-    Vec3 start_scale_{1.0f, 1.0f, 1.0f};
-    Quaternion start_rotation_;            // the subject's local rotation when the drag began
     f32 grab_ = 0.0f;                      // Move/Scale: where along the handle the mouse took hold; Rotate: the angle it took hold at
 };
 

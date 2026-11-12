@@ -186,11 +186,25 @@ Vec3 LocalDirectionFor(const SceneDocument& document, Entity entity, const Vec3&
 
 } // namespace
 
-Entity TransformGizmo::Subject(const SceneDocument& document) {
+std::vector<Entity> TransformGizmo::Subjects(const SceneDocument& document) {
+    const World& world = document.GetWorld();
+    auto movable = [&](Entity e) { return world.IsAlive(e) && world.HasComponent<Transform>(e); };
+    std::vector<Entity> out;
     for (const Entity entity : document.Selection()) {
-        if (document.GetWorld().IsAlive(entity) && document.GetWorld().HasComponent<Transform>(entity)) return entity;
+        if (!movable(entity) || std::find(out.begin(), out.end(), entity) != out.end()) continue;
+        bool ancestor_selected = false; // walk up: a selected ancestor moves this one anyway
+        Entity up = document.ParentOf(entity);
+        for (int depth = 0; up != kNullEntity && depth < 256 && !ancestor_selected; ++depth, up = document.ParentOf(up)) {
+            ancestor_selected = document.IsSelected(up);
+        }
+        if (!ancestor_selected) out.push_back(entity);
     }
-    return kNullEntity;
+    return out;
+}
+
+Entity TransformGizmo::Subject(const SceneDocument& document) {
+    const std::vector<Entity> subjects = Subjects(document);
+    return subjects.empty() ? kNullEntity : subjects[0];
 }
 
 Vec3 TransformGizmo::HandleDirection(const SceneDocument& document, Entity subject, GizmoAxis axis, GizmoMode mode) {
@@ -262,17 +276,16 @@ bool TransformGizmo::Measure(const SceneViewCamera& camera, const ImVec2& origin
 bool TransformGizmo::Begin(const SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, GizmoMode mode) {
     const GizmoAxis axis = HitTest(document, camera, origin, size, mouse, mode);
     if (axis == GizmoAxis::None) return false;
-    const Entity subject = Subject(document);
-    const Transform* transform = document.GetWorld().GetComponent<Transform>(subject);
-    if (!transform) return false;
+    const std::vector<Entity> entities = Subjects(document);
+    if (entities.empty()) return false;
     // Set up the state the measurement needs, and take it back if the first measurement fails.
     const GizmoAxis old_axis = axis_;
     const GizmoMode old_mode = mode_;
     const Vec3 old_start = start_world_, old_direction = direction_;
     axis_ = axis;
     mode_ = mode;
-    start_world_ = WorldOrigin(document, subject);
-    direction_ = HandleDirection(document, subject, axis, mode);
+    start_world_ = WorldOrigin(document, entities[0]);
+    direction_ = HandleDirection(document, entities[0], axis, mode);
     f32 value = 0.0f;
     if (!Measure(camera, origin, size, mouse, value) || (mode != GizmoMode::Rotate && std::fabs(value) < 1e-3f)) {
         axis_ = old_axis;
@@ -281,53 +294,95 @@ bool TransformGizmo::Begin(const SceneDocument& document, const SceneViewCamera&
         direction_ = old_direction;
         return false;
     }
-    entity_ = subject;
-    start_scale_ = transform->scale;
-    start_rotation_ = transform->rotation;
+    subjects_.clear();
+    for (const Entity entity : entities) {
+        const Transform* transform = document.GetWorld().GetComponent<Transform>(entity);
+        if (!transform) continue;
+        subjects_.push_back({entity, *transform, WorldOrigin(document, entity)});
+    }
     grab_ = value;
+    return !subjects_.empty();
+}
+
+bool TransformGizmo::Apply(SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, f32 snap_step) {
+    if (!Dragging() || subjects_.empty()) return false;
+    f32 value = 0.0f;
+    if (!Measure(camera, origin, size, mouse, value)) return false;
+    const GizmoAxis axis = axis_;
+    const Held& first = subjects_[0];
+    // What the drag amounts to, once, for the first subject (snapped); the others follow it.
+    f32 along = 0.0f, ratio = 1.0f, angle = 0.0f;
+    if (mode_ == GizmoMode::Move) {
+        along = value - grab_;
+        if (snap_step > 0.0f) along = SnapScalar(AxisComponent(start_world_, axis) + along, snap_step) - AxisComponent(start_world_, axis);
+    } else if (mode_ == GizmoMode::Scale) {
+        ratio = std::max(value / grab_, 0.01f); // the handle's own distance from the origin, relative to where it was taken
+        const f32 start = AxisComponent(first.before.scale, axis);
+        if (snap_step > 0.0f && std::fabs(start) > 1e-6f) ratio = SnapScaleAxis(start * ratio, snap_step) / start;
+    } else {
+        // The angle from where the mouse took hold, as the short way round. A rotation repeats every full turn, so
+        // following the mouse through several would give the same result.
+        angle = value - grab_;
+        while (angle > kPi) angle -= 2.0f * kPi;
+        while (angle < -kPi) angle += 2.0f * kPi;
+        if (snap_step > 0.0f) angle = SnapRotationDegrees(angle * 180.0f / kPi, snap_step) * kPi / 180.0f;
+    }
+    const Vec3 k = direction_; // the axis a rotation turns about (unit length)
+    for (const Held& held : subjects_) {
+        if (!document.GetWorld().IsAlive(held.entity)) continue;
+        Transform* transform = document.GetWorld().GetComponent<Transform>(held.entity);
+        if (!transform) continue;
+        if (mode_ == GizmoMode::Move) {
+            transform->position = LocalPositionFor(document, held.entity, held.start_world + direction_ * along);
+        } else if (mode_ == GizmoMode::Scale) {
+            Vec3 scale = held.before.scale;
+            (axis == GizmoAxis::X ? scale.x : (axis == GizmoAxis::Y ? scale.y : scale.z)) *= ratio;
+            transform->scale = scale;
+        } else {
+            const Quaternion turn = Quaternion::FromAxisAngle(LocalDirectionFor(document, held.entity, direction_), angle);
+            transform->rotation = (turn * held.before.rotation).Normalized();
+            if (&held != &first) { // the others swing round the first one's position, as one rigid group
+                const Vec3 v = held.start_world - start_world_;
+                const f32 c = std::cos(angle), s = std::sin(angle);
+                const Vec3 turned = v * c + k.Cross(v) * s + k * (k.Dot(v) * (1.0f - c));
+                transform->position = LocalPositionFor(document, held.entity, start_world_ + turned);
+            }
+        }
+    }
     return true;
 }
 
-bool TransformGizmo::Apply(SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, f32 snap_step, bool committed) {
-    if (!Dragging() || !document.GetWorld().IsAlive(entity_)) return false;
-    f32 value = 0.0f;
-    if (!Measure(camera, origin, size, mouse, value)) return false;
-    switch (mode_) {
-        case GizmoMode::Move: {
-            f32 along = value - grab_;
-            if (snap_step > 0.0f) along = SnapScalar(AxisComponent(start_world_, axis_) + along, snap_step) - AxisComponent(start_world_, axis_);
-            return document.SetPosition(entity_, LocalPositionFor(document, entity_, start_world_ + direction_ * along), committed);
-        }
-        case GizmoMode::Scale: {
-            const f32 ratio = std::max(value / grab_, 0.01f); // the handle's own distance from the origin, relative to where it was taken
-            Vec3 scale = start_scale_;
-            f32 component = AxisComponent(start_scale_, axis_) * ratio;
-            if (snap_step > 0.0f) component = SnapScaleAxis(component, snap_step);
-            (axis_ == GizmoAxis::X ? scale.x : (axis_ == GizmoAxis::Y ? scale.y : scale.z)) = component;
-            return document.SetScale(entity_, scale, committed);
-        }
-        case GizmoMode::Rotate: {
-            // The angle from where the mouse took hold, as the short way round. A rotation repeats every full turn, so
-            // following the mouse through several would give the same result.
-            f32 angle = value - grab_;
-            while (angle > kPi) angle -= 2.0f * kPi;
-            while (angle < -kPi) angle += 2.0f * kPi;
-            if (snap_step > 0.0f) angle = SnapRotationDegrees(angle * 180.0f / kPi, snap_step) * kPi / 180.0f;
-            const Quaternion turn = Quaternion::FromAxisAngle(LocalDirectionFor(document, entity_, direction_), angle);
-            return document.SetRotation(entity_, (turn * start_rotation_).Normalized(), committed);
-        }
-    }
-    return false;
+bool TransformGizmo::Update(SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, f32 snap_step) {
+    return Apply(document, camera, origin, size, mouse, snap_step);
 }
 
-bool TransformGizmo::Update(SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, f32 snap_step) {
-    return Apply(document, camera, origin, size, mouse, snap_step, false);
+void TransformGizmo::Commit(SceneDocument& document, const std::vector<Transform>& live) {
+    const std::string what = mode_ == GizmoMode::Move ? "Move" : (mode_ == GizmoMode::Rotate ? "Rotate" : "Scale");
+    document.Commands().BeginTransaction(subjects_.size() > 1 ? what + " " + std::to_string(subjects_.size()) + " entities" : what + " " + document.Name(subjects_[0].entity));
+    for (usize i = 0; i < subjects_.size(); ++i) {
+        const Held& held = subjects_[i];
+        if (!document.GetWorld().IsAlive(held.entity)) continue;
+        if (Transform* transform = document.GetWorld().GetComponent<Transform>(held.entity)) *transform = held.before; // as it was, so each edit is recorded from there
+        // A command is recorded only for a field that differs from where it started.
+        document.SetPosition(held.entity, live[i].position, true);
+        document.SetRotation(held.entity, live[i].rotation, true);
+        document.SetScale(held.entity, live[i].scale, true);
+    }
+    document.Commands().EndTransaction();
 }
 
 void TransformGizmo::End(SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, f32 snap_step) {
-    Apply(document, camera, origin, size, mouse, snap_step, true);
+    if (Dragging() && !subjects_.empty()) {
+        Apply(document, camera, origin, size, mouse, snap_step); // the final position of the mouse
+        std::vector<Transform> live;
+        for (const Held& held : subjects_) {
+            const Transform* transform = document.GetWorld().IsAlive(held.entity) ? document.GetWorld().GetComponent<Transform>(held.entity) : nullptr;
+            live.push_back(transform ? *transform : held.before);
+        }
+        Commit(document, live);
+    }
     axis_ = GizmoAxis::None;
-    entity_ = kNullEntity;
+    subjects_.clear();
 }
 
 void SceneViewPanel::FocusSelection(const SceneDocument& document) {
