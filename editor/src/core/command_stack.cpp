@@ -57,25 +57,26 @@ void CommandStack::SetFrozen(bool frozen) {
     merge_open_ = false;
 }
 
-std::vector<CommandStack::ValueEdit> CommandStack::TakeValueEdits(bool* overflowed) {
-    std::vector<ValueEdit> taken;
-    taken.swap(value_edits_);
-    if (overflowed) *overflowed = value_edits_overflowed_;
-    value_edits_overflowed_ = false;
+std::vector<CommandStack::ComponentEdit> CommandStack::TakeComponentEdits(bool* overflowed) {
+    std::vector<ComponentEdit> taken;
+    taken.swap(component_edits_);
+    if (overflowed) *overflowed = component_edits_overflowed_;
+    component_edits_overflowed_ = false;
     return taken;
 }
 
 void CommandStack::Record(std::unique_ptr<ICommand> command, MergePolicy merge) {
     ++revision_;
+    if (command->EntitySetEdit()) ++entity_set_revision_;
     EntityGuid edited;
     ComponentId edited_component = 0;
-    if (command->ValueEditTarget(edited, edited_component)) {
-        ++value_revision_;
+    if (command->ComponentEditTarget(edited, edited_component)) {
+        ++component_revision_;
         constexpr usize kMaxKept = 1024; // a viewer that has not looked for this long rebuilds instead
-        const auto same = [&](const ValueEdit& e) { return e.entity == edited && e.component == edited_component; };
-        if (std::find_if(value_edits_.begin(), value_edits_.end(), same) == value_edits_.end()) {
-            if (value_edits_.size() < kMaxKept) value_edits_.push_back({edited, edited_component});
-            else value_edits_overflowed_ = true;
+        const auto same = [&](const ComponentEdit& e) { return e.entity == edited && e.component == edited_component; };
+        if (std::find_if(component_edits_.begin(), component_edits_.end(), same) == component_edits_.end()) {
+            if (component_edits_.size() < kMaxKept) component_edits_.push_back({edited, edited_component});
+            else component_edits_overflowed_ = true;
         }
     }
     if (command->Attribution().empty()) command->SetAttribution(attribution_);

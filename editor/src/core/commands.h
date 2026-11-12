@@ -46,7 +46,7 @@ public:
     std::string Label() const override;
     bool TryMerge(const ICommand& next) override;
     usize MemoryBytes() const override;
-    bool ValueEditTarget(EntityGuid& entity, ComponentId& component) const override {
+    bool ComponentEditTarget(EntityGuid& entity, ComponentId& component) const override {
         entity = entity_;
         component = component_;
         return true;
@@ -76,6 +76,7 @@ public:
     void Undo(CommandContext& ctx) override;
     std::string Label() const override { return label_; }
     usize MemoryBytes() const override { return sizeof(*this) + snapshot_.MemoryBytes(); }
+    bool EntitySetEdit() const override { return true; }
 
 private:
     EntitySnapshot snapshot_;
@@ -93,6 +94,7 @@ public:
     void Undo(CommandContext& ctx) override;
     std::string Label() const override { return label_; }
     usize MemoryBytes() const override { return sizeof(*this) + snapshot_.MemoryBytes(); }
+    bool EntitySetEdit() const override { return true; }
 
 private:
     EntityGuid guid_;
@@ -107,6 +109,11 @@ public:
     void Do(CommandContext& ctx) override;
     void Undo(CommandContext& ctx) override;
     std::string Label() const override;
+    bool ComponentEditTarget(EntityGuid& entity, ComponentId& component) const override {
+        entity = entity_;
+        component = component_;
+        return true;
+    }
 
 private:
     EntityGuid entity_;
@@ -121,6 +128,11 @@ public:
     void Undo(CommandContext& ctx) override;
     std::string Label() const override;
     usize MemoryBytes() const override { return sizeof(*this) + bytes_.size(); }
+    bool ComponentEditTarget(EntityGuid& entity, ComponentId& component) const override {
+        entity = entity_;
+        component = component_;
+        return true;
+    }
 
 private:
     EntityGuid entity_;

@@ -1493,3 +1493,8 @@ lavapipe (the CPU Vulkan driver), 20 edits each, the template scene (14 entities
 - **The bigger reason is the game's state.** A reload starts the world, physics and scripts over, so with **Run game** on a drag restarted them every frame. A patch does not.
 - **Not measured:** a real GPU (the frame would be a few ms there, so the load and the renderer's re-take of a new world would be most of an edit, and the patch worth more, not less), scenes of tens of thousands of entities,
   patching other components than Transform (a light's colour still reloads).
+
+### Patching in an entity (2026-11-12, addendum)
+
+`PatchScene` now builds a GUID map of both worlds on every call (to find which entities came and went), so it is worth checking it did not become the cost. 2,014 entities, the same machine: a patch that
+changes nothing 0.50 ms, one that adds an entity 0.52 ms, one that removes an entity 0.51 ms, 20 each. The reload it replaces is 5 ms to save plus 11.5 ms to load at that size, before the slower frame after it.

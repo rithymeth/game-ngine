@@ -79,9 +79,14 @@ public:
     // Approximate memory this entry holds, for the stack's memory budget.
     virtual usize MemoryBytes() const { return sizeof(*this); }
 
-    // True, naming what it changes, for a command that only sets a value inside a component an entity already has (SetFieldCommand): the stack counts
-    // those apart from structural changes (entities or components added or removed), so a viewer can take a value edit without rebuilding the scene.
-    virtual bool ValueEditTarget(EntityGuid& entity, ComponentId& component) const {
+    // True for a command that creates or destroys a whole entity (CreateEntityCommand, DestroyEntityCommand), counted like a component edit above: a
+    // viewer that knows which entities it has last seen can add or remove just those.
+    virtual bool EntitySetEdit() const { return false; }
+
+    // True, naming what it changes, for a command that only sets, adds or removes one component of an entity that stays (SetFieldCommand,
+    // AddComponentCommand, RemoveComponentCommand): the stack counts those apart from structural changes, so a viewer can bring that one component
+    // up to date (set, add or remove it, as the document now has it) without rebuilding the scene.
+    virtual bool ComponentEditTarget(EntityGuid& entity, ComponentId& component) const {
         (void)entity;
         (void)component;
         return false;
@@ -153,16 +158,18 @@ public:
     // Counts every change the stack has seen -- a command recorded (merged or not), an undo, a redo -- so a viewer can tell the scene moved
     // on since it last looked without comparing worlds. It only goes up.
     u64 Revision() const { return revision_; }
-    // How many of those changes were value edits (ICommand::ValueEditTarget) recorded as new commands. An undo or redo is never counted here, so
-    // Revision() - ValueRevision() moves on for those: a viewer treats them as structural.
-    u64 ValueRevision() const { return value_revision_; }
-    // The (entity, component) pairs of the value edits recorded since the last call, each once, and whether there were too many to keep (then the
+    // How many of those changes were component edits (ICommand::ComponentEditTarget) recorded as new commands, and how many created or destroyed an
+    // entity (ICommand::EntitySetEdit). An undo or redo is never counted in either, so Revision() less these moves on for those: a viewer treats them
+    // as structural.
+    u64 ComponentRevision() const { return component_revision_; }
+    u64 EntitySetRevision() const { return entity_set_revision_; }
+    // The (entity, component) pairs of the component edits recorded since the last call, each once, and whether there were too many to keep (then the
     // list is incomplete and the viewer should rebuild).
-    struct ValueEdit {
+    struct ComponentEdit {
         EntityGuid entity;
         ComponentId component = 0;
     };
-    std::vector<ValueEdit> TakeValueEdits(bool* overflowed = nullptr);
+    std::vector<ComponentEdit> TakeComponentEdits(bool* overflowed = nullptr);
     usize UndoCount() const { return undo_.size(); }
     usize RedoCount() const { return redo_.size(); }
     void Clear();
@@ -170,9 +177,10 @@ public:
 private:
     void PushUndo(std::unique_ptr<ICommand> command);
     u64 revision_ = 0;
-    u64 value_revision_ = 0;
-    std::vector<ValueEdit> value_edits_;
-    bool value_edits_overflowed_ = false;
+    u64 component_revision_ = 0;
+    u64 entity_set_revision_ = 0;
+    std::vector<ComponentEdit> component_edits_;
+    bool component_edits_overflowed_ = false;
     void EnforceBudget();
 
     std::vector<std::unique_ptr<ICommand>> undo_; // oldest first

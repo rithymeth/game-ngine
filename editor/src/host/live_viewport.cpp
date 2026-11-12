@@ -5,13 +5,40 @@
 #include "aether/player/scene_renderer.h"
 #include "aether/scene/components.h"
 #include "aether/reflection/serialize.h"
+#include "aether/scene/hierarchy.h"
+#include "aether/scene/prefab.h"
+#include "core/commands.h"
 #include "aether/renderer/components.h"
 #include "aether/scene/gameplay.h"
 
 #include <algorithm>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace aether::editor {
+
+namespace {
+
+struct GuidHash {
+    usize operator()(const EntityGuid& g) const noexcept { return static_cast<usize>(g.hi ^ (g.lo * 0x9e3779b97f4a7c15ull)); }
+};
+
+// Every identified entity of a world, by GUID.
+std::unordered_map<EntityGuid, Entity, GuidHash> IdentifiedEntities(const World& world) {
+    std::unordered_map<EntityGuid, Entity, GuidHash> found;
+    world.ForEachArchetype([&](const Archetype& archetype) {
+        for (usize chunk = 0; chunk < archetype.ChunkCount(); ++chunk) {
+            const Entity* array = archetype.EntityArray(chunk);
+            for (u32 row = 0; row < archetype.ChunkEntityCount(chunk); ++row) {
+                const IdComponent* id = world.GetComponent<IdComponent>(array[row]);
+                if (id != nullptr && !id->guid.IsNull()) found[id->guid] = array[row];
+            }
+        }
+    });
+    return found;
+}
+
+} // namespace
 
 // Members are declared in the order they must be destroyed in reverse: the renderer and the swap chain before the game, the game before the
 // package it reads.
@@ -25,6 +52,7 @@ struct LiveViewport::Impl {
     u64 frames = 0;
     u64 reloads = 0;
     u64 patches = 0;
+    std::unordered_set<EntityGuid, GuidHash> known; // the identified entities the document had when the scene was last loaded or patched
     std::string scene;
 };
 
@@ -58,81 +86,120 @@ bool LiveViewport::SetScene(const std::vector<u8>& scene_bytes, std::string* err
         return false;
     }
     ++impl_->reloads;
+    RememberKnown();
     return true;
 }
 
-bool LiveViewport::IsPatchable(ComponentId component) {
-    // Only what the renderer reads each frame and nothing else holds a copy of: a physics body, a script or an audio source is built from its component
-    // when the scene loads, so editing one of those needs the scene loaded again.
-    return component == GetComponentId<Transform>() || component == GetComponentId<DirectionalLight>() || component == GetComponentId<PointLight>() ||
-           component == GetComponentId<SpotLight>() || component == GetComponentId<SkyLight>() || component == GetComponentId<Wind>() ||
-           component == GetComponentId<WindZone>() || component == GetComponentId<PostProcessVolume>() || component == GetComponentId<Decal>();
+void LiveViewport::RememberKnown() {
+    impl_->known.clear();
+    for (const auto& entry : IdentifiedEntities(impl_->game->GetWorld())) impl_->known.insert(entry.first);
 }
+
+bool LiveViewport::IsPatchable(ComponentId component) {
+    // What the renderer only reads each frame and nothing else holds a copy of: a physics body, a script or an audio source is built from its
+    // component when the scene loads, so editing one of those needs the scene loaded again.
+    return component == GetComponentId<Transform>() || component == GetComponentId<EntityName>() || component == GetComponentId<ModelRenderer>() ||
+           component == GetComponentId<DirectionalLight>() || component == GetComponentId<PointLight>() || component == GetComponentId<SpotLight>() ||
+           component == GetComponentId<SkyLight>() || component == GetComponentId<Wind>() || component == GetComponentId<WindZone>() ||
+           component == GetComponentId<PostProcessVolume>() || component == GetComponentId<Decal>();
+}
+
+namespace {
+
+// What an entity may carry to be added to, or taken from, a running scene whole: the patchable components and the bookkeeping that ties it to
+// the scene and to a prefab.
+bool IsSpawnable(ComponentId component) {
+    return LiveViewport::IsPatchable(component) || component == GetComponentId<IdComponent>() || component == GetComponentId<Parent>() ||
+           component == GetComponentId<PrefabInstance>() || component == GetComponentId<PrefabLink>();
+}
+
+bool AllSpawnable(const World& world, Entity entity) {
+    for (ComponentId id = 0; id < RegisteredComponentCount(); ++id) {
+        if (world.HasComponentRaw(entity, id) && !IsSpawnable(id)) return false;
+    }
+    return true;
+}
+
+} // namespace
 
 bool LiveViewport::PatchScene(const World& source, const std::vector<ComponentEdit>& edits) {
     if (!impl_ || !impl_->game) return false;
-    struct Hash {
-        usize operator()(const EntityGuid& g) const noexcept { return static_cast<usize>(g.hi ^ (g.lo * 0x9e3779b97f4a7c15ull)); }
+    World& running = impl_->game->GetWorld();
+    const auto in_source = IdentifiedEntities(source);
+    const auto in_running = IdentifiedEntities(running);
+    // Which entities came and went since the scene was last loaded or patched: the document's against the ones this viewport knows. An entity the game
+    // made or destroyed by itself (a script spawning a coin) is neither: it was never the document's, so the patch leaves it alone.
+    std::vector<EntityGuid> added, removed;
+    for (const auto& entry : in_source) {
+        if (impl_->known.find(entry.first) == impl_->known.end()) added.push_back(entry.first);
+    }
+    for (const EntityGuid& guid : impl_->known) {
+        if (in_source.find(guid) == in_source.end()) removed.push_back(guid);
+    }
+    // Everything is checked before anything is changed, so a refusal leaves the running scene as it was.
+    for (const EntityGuid& guid : added) {
+        if (!AllSpawnable(source, in_source.at(guid))) return false;
+    }
+    for (const EntityGuid& guid : removed) {
+        const auto it = in_running.find(guid);
+        if (it != in_running.end() && !AllSpawnable(running, it->second)) return false;
+    }
+    const std::unordered_set<EntityGuid, GuidHash> added_set(added.begin(), added.end()), removed_set(removed.begin(), removed.end());
+    enum class Op { Copy, Add, Remove };
+    struct Change {
+        Entity target;
+        ComponentId component;
+        Op op;
+        nlohmann::json value;
     };
-    std::unordered_map<EntityGuid, Transform, Hash> wanted;
+    std::vector<Change> changes;
+    for (const ComponentEdit& edit : edits) {
+        if (edit.component == GetComponentId<Transform>() && !added_set.count(edit.entity) && !removed_set.count(edit.entity)) continue; // every Transform is copied below
+        if (added_set.count(edit.entity) || removed_set.count(edit.entity)) continue; // an entity that came or went is handled whole
+        if (!IsPatchable(edit.component)) return false;
+        const auto from = in_source.find(edit.entity);
+        const auto to = in_running.find(edit.entity);
+        if (from == in_source.end()) return false; // the document no longer has it, yet it was not seen to go: something this cannot place
+        if (to == in_running.end()) continue;      // the game destroyed it itself: nothing to edit
+        const ComponentInfo& info = GetComponentInfo(edit.component);
+        if (info.reflected == nullptr) return false;
+        const bool there = source.HasComponentRaw(from->second, edit.component), here = running.HasComponentRaw(to->second, edit.component);
+        if (there) changes.push_back({to->second, edit.component, here ? Op::Copy : Op::Add, reflect::ToJson(*info.reflected, source.GetComponentRaw(from->second, edit.component))});
+        else if (here) changes.push_back({to->second, edit.component, Op::Remove, {}});
+    }
+    std::unordered_map<EntityGuid, Transform, GuidHash> wanted;
     source.ForEach<IdComponent, Transform>([&](const IdComponent& id, const Transform& transform) {
         if (!id.guid.IsNull()) wanted[id.guid] = transform;
     });
-    World& running = impl_->game->GetWorld();
-    // Every identified entity of the running scene must be in `source` and the other way round, or something was added or removed: that is a reload's job.
-    usize found = 0;
-    bool same = true;
-    std::unordered_map<EntityGuid, Entity, Hash> running_entities;
-    running.ForEach<IdComponent, Transform>([&](IdComponent& id, Transform&) {
-        if (id.guid.IsNull()) return;
-        if (wanted.find(id.guid) == wanted.end()) same = false;
-        else ++found;
-    });
-    if (!same || found != wanted.size()) return false;
-    // The edited components, checked before anything is changed: both worlds must have the entity and the component, and the component must be patchable.
-    struct Copy {
-        Entity target;
-        const ComponentInfo* info;
-        nlohmann::json value;
-    };
-    std::vector<Copy> copies;
-    if (!edits.empty()) {
-        std::unordered_map<EntityGuid, Entity, Hash> in_source;
-        source.ForEachArchetype([&](const Archetype& archetype) {
-            for (usize chunk = 0; chunk < archetype.ChunkCount(); ++chunk) {
-                const Entity* array = archetype.EntityArray(chunk);
-                for (u32 row = 0; row < archetype.ChunkEntityCount(chunk); ++row) {
-                    if (const IdComponent* id = source.GetComponent<IdComponent>(array[row])) in_source[id->guid] = array[row];
-                }
-            }
-        });
-        running.ForEachArchetype([&](const Archetype& archetype) {
-            for (usize chunk = 0; chunk < archetype.ChunkCount(); ++chunk) {
-                const Entity* array = archetype.EntityArray(chunk);
-                for (u32 row = 0; row < archetype.ChunkEntityCount(chunk); ++row) {
-                    if (const IdComponent* id = running.GetComponent<IdComponent>(array[row])) running_entities[id->guid] = array[row];
-                }
-            }
-        });
-        for (const ComponentEdit& edit : edits) {
-            if (edit.component == GetComponentId<Transform>()) continue; // every Transform is copied below
-            if (!IsPatchable(edit.component)) return false;
-            const auto from = in_source.find(edit.entity);
-            const auto to = running_entities.find(edit.entity);
-            if (from == in_source.end() || to == running_entities.end()) return false;
-            const ComponentInfo& info = GetComponentInfo(edit.component);
-            if (info.reflected == nullptr || !source.HasComponentRaw(from->second, edit.component) || !running.HasComponentRaw(to->second, edit.component)) return false;
-            copies.push_back({to->second, &info, reflect::ToJson(*info.reflected, source.GetComponentRaw(from->second, edit.component))});
-        }
+    // Apply: entities that came, entities that went, then the components, then every Transform.
+    for (const EntityGuid& guid : added) {
+        const Entity made = EntitySnapshot::Capture(source, in_source.at(guid)).Restore(running);
+        if (made.IsNull()) continue;
+        impl_->game->Guids().Add(guid, made);
     }
-    for (const Copy& copy : copies) {
-        const ComponentId id = FindComponentIdByName(copy.info->reflected->name);
-        if (id == kInvalidComponentId || !reflect::FromJson(*copy.info->reflected, running.GetComponentRaw(copy.target, id), copy.value)) return false;
+    for (const EntityGuid& guid : removed) {
+        const auto it = in_running.find(guid);
+        if (it == in_running.end() || !running.IsAlive(it->second)) continue;
+        impl_->game->Guids().Remove(guid);
+        running.DestroyEntity(it->second);
+    }
+    for (const Change& change : changes) {
+        if (!running.IsAlive(change.target)) continue;
+        const ComponentInfo& info = GetComponentInfo(change.component);
+        if (change.op == Op::Remove) {
+            running.RemoveComponentRaw(change.target, change.component);
+            continue;
+        }
+        if (change.op == Op::Add) running.AddComponentRaw(change.target, change.component);
+        reflect::FromJson(*info.reflected, running.GetComponentRaw(change.target, change.component), change.value);
     }
     running.ForEach<IdComponent, Transform>([&](IdComponent& id, Transform& transform) {
         if (id.guid.IsNull()) return;
-        transform = wanted[id.guid];
+        const auto it = wanted.find(id.guid);
+        if (it != wanted.end()) transform = it->second;
     });
+    impl_->known.clear();
+    for (const auto& entry : in_source) impl_->known.insert(entry.first);
     ++impl_->patches;
     return true;
 }
@@ -166,6 +233,7 @@ bool LiveViewport::Load(const std::filesystem::path& cooked_dir, const std::stri
     impl->fences.assign(frame_count, 0);
     impl->renderer = std::make_unique<player::SceneRenderer>(device_, *impl->swap_chain, impl->package);
     impl_ = std::move(impl);
+    RememberKnown();
     return true;
 }
 

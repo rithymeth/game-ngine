@@ -45,13 +45,13 @@ public:
     void Touch() { ++local_revision_; }
     // Like Touch(), for a gizmo drag that writes only Transforms. It is a change (Revision goes up) but not a structural one.
     void TouchTransforms() { ++local_revision_; ++touched_revision_; }
-    // Revision() less the changes that were only to values inside components that entities already have: a field set through the inspector, SetPosition,
-    // SetRotation, SetScale or any other SetFieldCommand, and TouchTransforms. While it is unchanged between two looks, the scene has the same entities and
-    // components, so a viewer that already runs the scene can take just the new values (TakeValueEdits says which components; the Transforms it reads
-    // whole) instead of loading it again (LiveViewport::PatchScene). An undo or redo always counts as structural.
-    u64 StructureRevision() const { return Revision() - commands_.ValueRevision() - touched_revision_; }
-    // The (entity, component) pairs set since the last call (see CommandStack::TakeValueEdits); `overflowed` says the list is incomplete.
-    std::vector<CommandStack::ValueEdit> TakeValueEdits(bool* overflowed = nullptr) { return commands_.TakeValueEdits(overflowed); }
+    // Revision() less the changes a viewer that already runs the scene can take without loading it again (LiveViewport::PatchScene): a field set through
+    // the inspector, SetPosition, SetRotation, SetScale or any other SetFieldCommand, a component added or removed on an entity that stays, an entity
+    // created or destroyed, and TouchTransforms. TakeComponentEdits says which components; the Transforms the viewer reads whole, and the entities that came
+    // or went it finds by comparing with what it last saw. An undo or redo always counts as structural.
+    u64 StructureRevision() const { return Revision() - commands_.ComponentRevision() - commands_.EntitySetRevision() - touched_revision_; }
+    // The (entity, component) pairs set since the last call (see CommandStack::TakeComponentEdits); `overflowed` says the list is incomplete.
+    std::vector<CommandStack::ComponentEdit> TakeComponentEdits(bool* overflowed = nullptr) { return commands_.TakeComponentEdits(overflowed); }
     bool CanUndo() const { return commands_.CanUndo(); }
     bool CanRedo() const { return commands_.CanRedo(); }
     std::string UndoLabel() const { return commands_.UndoLabel(); }
