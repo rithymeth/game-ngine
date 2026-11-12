@@ -44,11 +44,11 @@ void SceneViewPanel::FocusSelection(const SceneDocument& document) {
     camera_.distance = std::clamp(std::max({extent.x, extent.y, extent.z}) * 1.6f + 5.0f, 3.0f, 1000.0f);
 }
 
-void SceneViewPanel::Draw(SceneDocument& document, const ModelBoundsCache* bounds) {
+void SceneViewPanel::Draw(SceneDocument& document, const ModelBoundsCache* bounds, const std::filesystem::path& content_root) {
     tools_.SetBounds(bounds);
     tools_.DrawToolbar();
     ImGui::SameLine();
-    ImGui::TextDisabled("%s", note_.empty() ? "drop a model from the Content Browser to place it" : note_.c_str());
+    ImGui::TextDisabled("%s", note_.empty() ? "drop a model or a prefab from the Content Browser to place it" : note_.c_str());
     const ImVec2 avail = ImGui::GetContentRegionAvail();
     const ImVec2 size(std::max(avail.x, 64.0f), std::max(avail.y, 64.0f));
     const ImVec2 origin = ImGui::GetCursorScreenPos();
@@ -64,11 +64,18 @@ void SceneViewPanel::Draw(SceneDocument& document, const ModelBoundsCache* bound
             const bool on_ground = GroundPoint(camera_.ViewProjection(size.x / size.y), origin, size, ImGui::GetIO().MousePos, ground);
             if (!on_ground) ground = camera_.target;
             if (tools_.SnapEnabled()) ground = SnapTranslation(ground, tools_.MoveSnapStep());
-            if (!IsPlaceableModel(path)) {
-                if (payload->IsDelivery()) note_ = "Only models (.gltf, .glb) can be placed in the scene.";
+            const bool is_prefab = IsPlaceablePrefab(path);
+            if (!IsPlaceableModel(path) && !is_prefab) {
+                if (payload->IsDelivery()) note_ = "Only models (.gltf, .glb) and prefabs (.aprefab) can be placed in the scene.";
             } else if (payload->IsDelivery()) {
-                const Entity placed = PlaceModelAsset(document, path, ground);
-                note_ = placed == kNullEntity ? "Could not place " + path : "Placed " + path;
+                if (is_prefab) {
+                    std::string problem;
+                    const Entity placed = content_root.empty() ? kNullEntity : PlacePrefabAsset(document, content_root, path, ground, &problem);
+                    note_ = placed != kNullEntity ? "Placed " + path : (problem.empty() ? "Could not place " + path : problem);
+                } else {
+                    const Entity placed = PlaceModelAsset(document, path, ground);
+                    note_ = placed == kNullEntity ? "Could not place " + path : "Placed " + path;
+                }
             } else {
                 drop_preview_ = true; // still being dragged: a marker where it would land, drawn with the rest below
                 drop_point_ = ground;
