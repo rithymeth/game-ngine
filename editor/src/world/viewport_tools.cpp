@@ -87,6 +87,20 @@ void ViewportTools::DrawGizmo(ImDrawList* draw, const SceneDocument& document, c
                                {GizmoAxis::Z, Color(80, 120, 230), Color(140, 175, 255)}};
     ImVec2 from;
     if (!ProjectToViewport(vp, at, origin, size, from)) return;
+    if (mode == GizmoMode::Move) { // the plane squares, each in the colour of the axis it is flat against
+        const struct { GizmoAxis plane; int r, g, b; } planes[3] = {{GizmoAxis::PlaneYZ, 210, 70, 70}, {GizmoAxis::PlaneXZ, 80, 190, 80}, {GizmoAxis::PlaneXY, 80, 120, 230}};
+        for (const auto& pl : planes) {
+            Vec3 corners[4];
+            TransformGizmo::PlaneCorners(document, subject, pl.plane, space, length, corners);
+            ImVec2 p[4];
+            bool visible = true;
+            for (int i = 0; i < 4 && visible; ++i) visible = ProjectToViewport(vp, corners[i], origin, size, p[i]);
+            if (!visible) continue;
+            const bool lit = pl.plane == hot;
+            draw->AddQuadFilled(p[0], p[1], p[2], p[3], Color(pl.r, pl.g, pl.b, lit ? 190 : 90));
+            draw->AddQuad(p[0], p[1], p[2], p[3], Color(pl.r, pl.g, pl.b, 255), lit ? 2.5f : 1.5f);
+        }
+    }
     for (const Handle& h : handles) {
         const ImU32 color = h.axis == hot ? h.bright : h.normal;
         const f32 thickness = h.axis == hot ? 4.0f : 3.0f;

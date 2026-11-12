@@ -39,6 +39,11 @@ certificate error), and `iexpress.exe` produced nothing usable, so the self-extr
 resource compiled with `csc.exe`. A Vulkan-enabled install also fails for a consumer that lacks the Vulkan SDK, because the
 generated `AetherConfig.cmake` requires it -- which is why the installer builds with Vulkan off.
 
+## Drag across a plane
+
+The Move gizmo has three small squares between its arrows: grab one to slide the object in two directions at once (along the floor, for example) in one drag. They follow the World/Local
+choice, snap each direction on its own, and are one undo step. A press right on an arrow still takes the arrow.
+
 ## Move and rotate along an object's own axes
 
 The Move arrows and Rotate rings can follow the object's own axes instead of the world's: the World/Local button in the viewport toolbar, or Q. A rotated object can now be

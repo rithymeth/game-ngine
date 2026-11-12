@@ -65,7 +65,8 @@ bool GroundPoint(const Mat4& view_projection, const ImVec2& origin, const ImVec2
 // and records the whole placement as one undoable step. Returns kNullEntity (and changes nothing) for a path that is not a glTF/GLB model.
 Entity PlaceModelAsset(SceneDocument& document, const std::string& content_path, const Vec3& position);
 
-enum class GizmoAxis { None, X, Y, Z };
+// X, Y and Z are the arrows; PlaneXY, PlaneXZ and PlaneYZ are the small squares (Move only) that slide the entity in that plane.
+enum class GizmoAxis { None, X, Y, Z, PlaneXY, PlaneXZ, PlaneYZ };
 enum class GizmoMode { Move, Rotate, Scale };
 // Whose axes the Move arrows and Rotate rings follow: the world's, or the entity's own (Scale always uses the entity's own).
 enum class GizmoSpace { World, Local };
@@ -89,6 +90,11 @@ public:
     // The world-space direction of a handle: the world axis (Move, Rotate) or the entity's local axis (Scale).
     // With GizmoSpace::Local, Move and Rotate use the entity's local axis too.
     static Vec3 HandleDirection(const SceneDocument& document, Entity subject, GizmoAxis axis, GizmoMode mode, GizmoSpace space = GizmoSpace::World);
+    static bool IsPlane(GizmoAxis axis) { return axis == GizmoAxis::PlaneXY || axis == GizmoAxis::PlaneXZ || axis == GizmoAxis::PlaneYZ; }
+    // The two axes a plane handle spans (PlaneXZ: X and Z) and the one it is flat against (Y).
+    static void PlaneAxes(GizmoAxis plane, GizmoAxis& first, GizmoAxis& second, GizmoAxis& normal);
+    // The four world-space corners of a plane handle square on `subject`, in order round the square: the quarter to the half of the handle length along both axes.
+    static void PlaneCorners(const SceneDocument& document, Entity subject, GizmoAxis plane, GizmoSpace space, f32 handle_length, Vec3* out);
     // Points of a rotate ring (a circle around `axis_direction`, radius `radius`, centred on `centre`), for drawing and hit-testing.
     static void RingPoints(const Vec3& centre, const Vec3& axis_direction, f32 radius, int count, Vec3* out);
 
@@ -111,6 +117,9 @@ private:
     void Commit(SceneDocument& document, const std::vector<Transform>& live);
     // Move and Scale: where along the handle's line the mouse ray passes closest. Rotate: the angle of the mouse around the axis.
     bool Measure(const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, f32& value) const;
+    // Plane handles: where the mouse ray meets the handle's plane through the drag's start.
+    bool MeasurePlane(const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, Vec3& point) const;
+    bool ApplyPlane(SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, f32 snap_step);
 
     struct Held {
         Entity entity = kNullEntity;
@@ -124,6 +133,7 @@ private:
     std::vector<Held> subjects_;            // the first is the one the handles are on
     Vec3 start_world_{0.0f, 0.0f, 0.0f};   // the first subject's world position when the drag began
     Vec3 direction_{1.0f, 0.0f, 0.0f};     // the handle's world direction (the axis a ring turns about)
+    Vec3 plane_u_{1, 0, 0}, plane_v_{0, 1, 0}, grab_point_{0, 0, 0}; // a plane drag: the handle's two world directions, and where the mouse took hold
     f32 grab_ = 0.0f;                      // Move/Scale: where along the handle the mouse took hold; Rotate: the angle it took hold at
 };
 
