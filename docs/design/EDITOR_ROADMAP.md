@@ -25,7 +25,7 @@ In priority order; each is a project of its own.
    and scripts start over), so it suits small and medium scenes; **Run game** is off by default so the view is the scene as authored; a model added since the
    last cook is not drawn until **Reload** (which cooks again), and the panel says so. The editing tools are shared with the Scene View and work on the rendered
    picture: click an object to select it, drag a gizmo handle to move, rotate or scale it (W, E, R), with the selection outlined, and the picture follows the drag.
-   Material *asset* edits (the Material editor's graph) are not pushed into the view yet; that is a cook of the changed asset. Objects are picked and outlined by their models' real bounding boxes (read from the glTF files; a ray through
+   A per-entity material override (a `MaterialParameters` component: base colour, metallic, roughness, emissive, a base colour texture) shows live, but Material *asset* edits (the Material editor's graph) are not pushed into the view: the player has no material graph, so that is renderer work, not a cook of the changed asset. Objects are picked and outlined by their models' real bounding boxes (read from the glTF files; a ray through
    the mouse picks the nearest box, and a camera or light in front of a model is picked over it), not by the pixels of their shape: that would need the renderer to write an
    object-id buffer, so clicking inside a box but beside a thin or concave shape still selects it.
 2. **Transform gizmos.** Move, rotate and scale are done (W, E and R): arrows along the world axes, a ring around each world axis, and

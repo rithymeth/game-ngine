@@ -1,6 +1,7 @@
 #include "host/live_viewport_panel.h"
 
 #include "aether/scene/components.h"
+#include "aether/renderer/material_instance.h"
 #include "aether/scene/serialization.h"
 #include "core/scene_preview.h"
 
@@ -12,11 +13,18 @@ namespace aether::editor {
 
 namespace {
 
-// The glTF models a scene's ModelRenderers name, once each, sorted.
-std::vector<std::string> ModelPaths(const SceneDocument& document) {
+// The assets a scene needs in the cook, once each, sorted: the glTF models its ModelRenderers name, and the images its MaterialParameters name as
+// texture parameters (a path that is not a file under `content` is left out, so a typo does not stop the cook).
+std::vector<std::string> ModelPaths(const SceneDocument& document, const std::filesystem::path& content) {
     std::vector<std::string> paths;
     document.GetWorld().ForEach<ModelRenderer>([&](const ModelRenderer& renderer) {
         if (renderer.asset_path[0] != '\0') paths.emplace_back(renderer.asset_path);
+    });
+    document.GetWorld().ForEach<MaterialParameters>([&](const MaterialParameters& overrides) {
+        for (const MaterialParameterValue& value : overrides.values) {
+            std::error_code ignored;
+            if (value.is_texture && !value.texture.empty() && std::filesystem::is_regular_file(content / value.texture, ignored)) paths.push_back(value.texture);
+        }
     });
     std::sort(paths.begin(), paths.end());
     paths.erase(std::unique(paths.begin(), paths.end()), paths.end());
@@ -27,7 +35,7 @@ std::vector<std::string> ModelPaths(const SceneDocument& document) {
 
 usize LiveViewportPanel::UncookedModels() const {
     usize missing = 0;
-    for (const std::string& path : ModelPaths(scene_.Document())) {
+    for (const std::string& path : ModelPaths(scene_.Document(), scene_.ContentRoot())) {
         if (!std::binary_search(cooked_models_.begin(), cooked_models_.end(), path)) ++missing;
     }
     return missing;
@@ -43,7 +51,7 @@ bool LiveViewportPanel::Start() {
     // models the scene uses (whose assets are in the project), and the scene itself goes to the game from memory.
     const SceneDocument& document = scene_.Document();
     scene_.ModelBounds().Clear(); // a model may have changed on disk since it was measured
-    const std::vector<std::string> models = ModelPaths(document);
+    const std::vector<std::string> models = ModelPaths(document, scene_.ContentRoot());
     const std::vector<u8> bytes = SaveSceneToMemory(document.GetWorld());
     const u64 revision = document.Revision();
     const u64 structure = document.StructureRevision();
@@ -117,7 +125,7 @@ void LiveViewportPanel::Draw(f32 dt) {
     ImGui::SameLine();
     const usize uncooked = loaded ? UncookedModels() : 0;
     if (!note_.empty()) ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.45f, 1.0f), "%s", note_.c_str());
-    else if (uncooked > 0) ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.4f, 1.0f), "%zu model(s) in the scene are not cooked yet: press Reload to see them", uncooked);
+    else if (uncooked > 0) ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.4f, 1.0f), "%zu model(s) or texture(s) in the scene are not cooked yet: press Reload to see them", uncooked);
     else if (loaded) ImGui::TextDisabled("%.0f fps  |  %zu entities  |  click: select  drag a handle: edit  W/E/R  |  right-drag: look  middle-drag: pan  wheel: zoom", fps_, viewport_.EntityCount());
     else ImGui::TextDisabled("Runs the open scene with the real renderer, edits and all. Open the scene you want first.");
     if (!loaded) return;

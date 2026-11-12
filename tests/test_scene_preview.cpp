@@ -8,7 +8,9 @@
 
 #include "aether/core/log.h"
 #include "aether/scene/components.h"
+#include "aether/assets/png_writer.h"
 #include "aether/renderer/components.h"
+#include "aether/renderer/material_instance.h"
 #include "aether/scene/gameplay.h"
 #include "aether/scene/hierarchy.h"
 #include "aether/scene/prefab.h"
@@ -23,6 +25,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <imgui.h>
 #include <memory>
 #include "aether/scene/serialization.h"
@@ -625,6 +628,85 @@ AETHER_TEST(LiveViewportPanel_AddingAndRemovingObjectsDoesNotRebuildTheWorld) {
     AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().SceneReloads() == reloads + 1);
     AETHER_CHECK(document.Undo());
     AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().SceneReloads() == reloads + 2);
+}
+
+AETHER_TEST(LiveViewportPanel_AMaterialOverrideShowsWithoutReloadingTheScene) {
+    std::unique_ptr<gfx::rhi::IDevice> device = TryDevice();
+    if (!device) {
+        std::printf("    (no Vulkan device: install a driver, or Mesa's lavapipe, to run this)\n");
+        return;
+    }
+    Context imgui;
+    const stdfs::path project = MakeProject("LiveMaterial");
+    ScenePanel scene(project.parent_path() / "Content");
+    AETHER_CHECK(scene.OpenScene("Scenes/Main.ascene", true));
+    LiveViewportPanel panel(*device, scene, [&] { return project; });
+    panel.width = 160;
+    panel.height = 90;
+    panel.reload_interval = 0.0f;
+    AETHER_CHECK(panel.Start());
+    for (int i = 0; i < 6; ++i) panel.Advance(0.2f);
+    SceneDocument& document = scene.Document();
+    const std::vector<u8> before = panel.Viewport().Pixels();
+    const u64 reloads = panel.Viewport().SceneReloads();
+    std::vector<Entity> models;
+    for (const Entity entity : document.Entities()) {
+        if (document.GetWorld().HasComponent<ModelRenderer>(entity)) models.push_back(entity);
+    }
+    AETHER_CHECK(models.size() >= 2);
+    const ComponentId overrides = GetComponentId<MaterialParameters>();
+    auto set_values = [&](const std::vector<MaterialParameterValue>& values) {
+        for (const Entity entity : models) {
+            AETHER_CHECK(document.SetComponentField(entity, overrides, "values", reflect::Any(values), true));
+        }
+    };
+
+    // A component added to every model with a red base colour: the models turn red in the picture, and the scene was not loaded again.
+    for (const Entity entity : models) AETHER_CHECK(document.AddComponent(entity, overrides));
+    MaterialParameterValue red;
+    red.name = "BaseColor";
+    red.value = Vec4(1.0f, 0.0f, 0.0f, 1.0f);
+    set_values({red});
+    AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().SceneReloads() == reloads && panel.Viewport().PatchCount() >= 1);
+    for (int i = 0; i < 4; ++i) panel.Advance(0.2f);
+    const std::vector<u8> reddened = panel.Viewport().Pixels();
+    AETHER_CHECK(DifferingPixels(before, reddened) > 160u * 90u / 50);
+    // Changing the value changes the picture again; taking the component away puts the model's own surface back.
+    red.value = Vec4(0.0f, 1.0f, 0.0f, 1.0f);
+    set_values({red});
+    AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().SceneReloads() == reloads);
+    for (int i = 0; i < 4; ++i) panel.Advance(0.2f);
+    AETHER_CHECK(DifferingPixels(reddened, panel.Viewport().Pixels()) > 160u * 90u / 50);
+    for (const Entity entity : models) AETHER_CHECK(document.RemoveComponent(entity, overrides));
+    AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().SceneReloads() == reloads);
+    for (int i = 0; i < 6; ++i) panel.Advance(0.2f);
+    AETHER_CHECK(DifferingPixels(before, panel.Viewport().Pixels()) * 5 < DifferingPixels(before, reddened));
+
+    // A texture the cook does not have yet is counted, Reload cooks it, and then the texture is on the models. (A path that is not a file is left out.)
+    const stdfs::path content = project.parent_path() / "Content";
+    stdfs::create_directories(content / "textures");
+    std::vector<u8> rgb(4 * 4 * 3);
+    for (usize i = 0; i < rgb.size(); i += 3) {
+        rgb[i] = 10;
+        rgb[i + 1] = 10;
+        rgb[i + 2] = 240;
+    }
+    const std::vector<u8> png = assets::EncodePngRgb8(4, 4, rgb);
+    std::ofstream(content / "textures" / "blue.png", std::ios::binary).write(reinterpret_cast<const char*>(png.data()), static_cast<std::streamsize>(png.size()));
+    MaterialParameterValue texture;
+    texture.name = "BaseColorTexture";
+    texture.is_texture = true;
+    texture.texture = "textures/blue.png";
+    MaterialParameterValue missing = texture;
+    missing.name = "Other";
+    missing.texture = "textures/not_there.png";
+    for (const Entity entity : models) AETHER_CHECK(document.AddComponent(entity, overrides));
+    set_values({texture, missing});
+    AETHER_CHECK(panel.UncookedModels() == 1);                               // the file there, not the typo
+    AETHER_CHECK(panel.Start() && panel.UncookedModels() == 0);
+    for (int i = 0; i < 6; ++i) panel.Advance(0.2f);
+    const std::vector<u8> textured = panel.Viewport().Pixels();
+    AETHER_CHECK(DifferingPixels(before, textured) > 160u * 90u / 50);
 }
 
 #endif

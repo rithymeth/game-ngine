@@ -2,6 +2,7 @@
 
 #include "aether/renderer/material_codegen.h"
 #include "aether/renderer/components.h"
+#include "material_overrides.h"
 #include "aether/renderer/decal.h"
 
 #include "aether/assets/gltf_loader.h"
@@ -2440,6 +2441,16 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
     world.ForEach<ModelRenderer>([&](const ModelRenderer& model) {
         if (model.asset_path[0] != '\0') renderer.FindModel(model.asset_path);
     });
+    // The base colour textures a MaterialParameters component names (player/src/material_overrides.h): loaded here for the same reason, then looked up per draw.
+    std::unordered_map<std::string, std::pair<SampledTextureHandle, bool>> override_textures;
+    world.ForEach<MaterialParameters>([&](const MaterialParameters& overrides) {
+        for (const MaterialParameterValue& entry : overrides.values) {
+            if (!entry.is_texture || entry.name != player::kOverrideBaseColorTexture || entry.texture.empty() || override_textures.count(entry.texture) != 0) continue;
+            SampledTextureHandle loaded;
+            const bool ok = renderer.LoadTexture(entry.texture, loaded);
+            override_textures[entry.texture] = {loaded, ok};
+        }
+    });
 
     // The background: the same display colour on both paths. In the HDR target it is the linear value that ACES at exposure 1 maps back to
     // (solved numerically: the curve's toe crushes the plain sRGB decode of these values to black). Other tone mappers or exposures shift it.
@@ -2826,27 +2837,44 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                                                                        primitive.bind_pose_vertices.size() * sizeof(SceneVertex));
                                 }
                             }
+                            // The model's surface, then this entity's own MaterialParameters over it (a colour, metallic, roughness, emissive or base colour texture).
+                            player::SurfaceValues surface;
+                            std::copy(primitive.color, primitive.color + 4, surface.color);
+                            surface.metallic = primitive.metallic;
+                            surface.roughness = primitive.roughness;
+                            std::copy(primitive.emissive, primitive.emissive + 3, surface.emissive);
+                            SampledTextureHandle base_color_texture = primitive.base_color_texture;
+                            bool has_base_color_texture = primitive.has_base_color_texture;
+                            if (const MaterialParameters* overrides = world.GetComponent<MaterialParameters>(entities[row])) {
+                                if (const std::string* path = player::ApplyMaterialOverrides(*overrides, surface)) {
+                                    const auto found = override_textures.find(*path);
+                                    if (found != override_textures.end() && found->second.second) {
+                                        base_color_texture = found->second.first;
+                                        has_base_color_texture = true;
+                                    }
+                                }
+                            }
                             DrawConstants constants;
                             constants.mvp = mvp;
                             // The plants take a small tint from where each stands, so a forest of one tree is not one colour (instance_variation.h).
                             const Vec3 tint = primitive.wind_level != 0 ? InstanceTint(Vec3(model_transform.cols[3].x, model_transform.cols[3].y, model_transform.cols[3].z)) : Vec3(1, 1, 1);
-                            constants.color_packed[0] = PackHalfPair(primitive.color[0] * tint.x, primitive.color[1] * tint.y);
+                            constants.color_packed[0] = PackHalfPair(surface.color[0] * tint.x, surface.color[1] * tint.y);
                             // A wind material that is opaque has no use for its alpha: it carries the instance's phase instead (from where it stands in the world,
                             // so the sway travels across a field like a gust and not in step), in radians.
-                            f32 alpha_or_phase = primitive.color[3];
+                            f32 alpha_or_phase = surface.color[3];
                             if (primitive.wind_level != 0 && primitive.alpha_mode == assets::MaterialAlphaMode::Opaque) {
                                 alpha_or_phase = static_cast<f32>(std::fmod(static_cast<f64>(model_transform.cols[3].x) * 0.35 + static_cast<f64>(model_transform.cols[3].z) * 0.27, 6.283185307179586));
                                 if (alpha_or_phase < 0.0f) alpha_or_phase += 6.2831853f;
                             }
-                            constants.color_packed[1] = PackHalfPair(primitive.color[2] * tint.z, alpha_or_phase);
-                            PackEmissive(primitive.emissive, primitive.emissive_texture, primitive.has_emissive_texture, constants.emissive_packed);
+                            constants.color_packed[1] = PackHalfPair(surface.color[2] * tint.z, alpha_or_phase);
+                            PackEmissive(surface.emissive, primitive.emissive_texture, primitive.has_emissive_texture, constants.emissive_packed);
                             PackNormalMatrix(normal_transform, constants.normal_matrix_packed);
                             constants.material_textures = PackMaterialTextures(
-                                primitive.base_color_texture, primitive.has_base_color_texture,
+                                base_color_texture, has_base_color_texture,
                                 primitive.normal_texture, primitive.has_normal_texture,
                                 primitive.metallic_roughness_texture, primitive.has_metallic_roughness_texture,
                                 primitive.occlusion_texture, primitive.has_occlusion_texture);
-                            constants.material_factors_0 = PackHalfPair(primitive.metallic, primitive.roughness);
+                            constants.material_factors_0 = PackHalfPair(surface.metallic, surface.roughness);
                             constants.material_factors_1 = PackHalfPair(primitive.normal_scale, primitive.occlusion_strength);
                             if (primitive.water && primitive.bounds_radius >= 0.0f && primitive.bounds_height < 0.1f && (!have_water || primitive.bounds_radius > water_radius)) {
                                 // A flat sheet: the world height of its bounds' centre is its level; the biggest sheet drawn is the one mirrored.
@@ -2921,10 +2949,10 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                                         caster.bounds_radius = primitive.bounds_radius * scale;
                                     }
                                     caster.alpha_tested = primitive.alpha_mode == assets::MaterialAlphaMode::Mask;
-                                    caster.base_color_texture = primitive.has_base_color_texture && primitive.base_color_texture.IsValid()
-                                                                    ? primitive.base_color_texture.index
+                                    caster.base_color_texture = has_base_color_texture && base_color_texture.IsValid()
+                                                                    ? base_color_texture.index
                                                                     : 255u;
-                                    caster.alpha = primitive.color[3];
+                                    caster.alpha = surface.color[3];
                                     caster.alpha_cutoff = primitive.alpha_cutoff;
                                     caster.deforming = uploaded_animation;
                                     // Vegetation that sways casts the shadow of where it is drawn: the sway vector in the model's space goes to the shadow shader, and the
