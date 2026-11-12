@@ -91,6 +91,8 @@ Attributes.GetMax function
 Attributes.GetMin function
 Attributes.Has function
 Attributes.SetBase function
+Camera table
+Camera.Shake function
 Draw table
 Draw.arrow function
 Draw.box function

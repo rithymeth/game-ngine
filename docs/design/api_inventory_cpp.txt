@@ -4937,6 +4937,18 @@
   std::vector<u8>Encode(const SnapshotChunk&message)
 [player/include/aether/player/bindings_migrate.h] experimental
   std::vector<std::string>MigrateLegacyBindings(const std::filesystem::path&saved_dir,save::SettingsStore<save::GameSettings>&store)
+[player/include/aether/player/camera_shake.h] experimental
+  type class CameraShake
+  type struct Pose
+  type struct Settings
+  Pose Evaluate()const
+  const Settings&GetSettings()const
+  f32 Trauma()const
+  void AddTrauma(f32 amount)
+  void Apply(World&world,Entity camera,f32 dt)
+  void Reset()
+  void Restore(World&world)
+  void SetSettings(const Settings&settings)
 [player/include/aether/player/game.h] experimental
   type class Game
   type class GamePackage
@@ -4993,6 +5005,7 @@
   loc::Localization&Localization()
   pak::VirtualFileSystem&Files()
   platform::PlatformLifecycle&Platform()
+  player::CameraShake&Shake()
   private:const PrefabData*FindPrefab(const assets::AssetGuid&guid)
   public:void AddKey(const pak::PakKey&key)
   save::SaveSystem*Saves()
@@ -5801,6 +5814,7 @@
   static SourceLoader DatabaseLoader(const assets::AssetDatabase&database)
   std::function<bool(const std::string&,const std::string&)>request
   std::function<std::string()>current
+  std::function<void(f32)>add_camera_trauma_
   std::string DescribeEntity(Entity entity)const
   u32 Connect(u32 event,int function_ref)
   u32 InputEvent(const std::string&action,input::ActionEvent event)
@@ -5810,6 +5824,7 @@
   usize InstanceCount()const
   usize ReloadChanged(const std::vector<assets::AssetChange>&changes)
   usize TimerCount()const
+  void BindCameraShake(std::function<void(f32)>add_trauma)
   void BindInput(input::InputSystem*input)
   void BindPhysicsScene(::aether::PhysicsScene*scene)
   void BindSceneHooks(SceneHooks hooks)

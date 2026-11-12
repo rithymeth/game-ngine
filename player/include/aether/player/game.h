@@ -1,6 +1,7 @@
 #pragma once
 
 #include "aether/cook/cooker.h"
+#include "aether/player/camera_shake.h"
 #include "aether/ecs/world.h"
 #include "aether/input/actions.h"
 #include "aether/kit/kit.h"
@@ -220,6 +221,8 @@ public:
 
     World& GetWorld() { return *world_; }
     GuidIndex& Guids() { return guids_; }
+    // The camera shake the scripts' Camera.Shake feeds; applied to the active camera after each frame's scripts (see camera_shake.h).
+    player::CameraShake& Shake() { return shake_; }
     Lifecycle& GetLifecycle() { return *lifecycle_; }
     // Add game systems here, before the first Tick.
     SystemScheduler& Systems() { return scheduler_; }
@@ -386,6 +389,7 @@ private:
     GamePackage& package_;
     std::unique_ptr<World> world_;
     GuidIndex guids_;
+    player::CameraShake shake_;
     std::unique_ptr<Lifecycle> lifecycle_;
     SystemScheduler scheduler_;
     kit::KitRegistry kits_; // the gameplay kits this build has (Phase 37 step 4)

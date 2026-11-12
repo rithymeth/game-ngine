@@ -435,6 +435,7 @@ bool Game::LoadScene(const std::string& path, std::string* error) {
     // The UDP client keeps a pointer to this World. Replacing it mid-session
     // would leave replication writing to freed ECS memory.
     if (authoritative_physics_client_) return Fail(error, "Can't replace a scene while authoritative multiplayer is active");
+    shake_.Reset(); // the world it shook is about to go
     StartModules(); // their components, before the scene names them
     bp::RegisterBlueprintComponents(); // BlueprintInstance, before scene deserialization
     ui::RegisterWidgetComponents(); // WidgetComponent (§18.4)
@@ -887,6 +888,7 @@ void Game::StartRuntime() {
         }, false);
     runtime_->scripts->Register(*lifecycle_);
     runtime_->scripts->BindInput(&input_);
+    runtime_->scripts->BindCameraShake([this](f32 amount) { shake_.AddTrauma(amount); });
     runtime_->scripts->BindSceneHooks({[this](const std::string& path, const std::string& spawn) { return RequestScene(path, spawn); }, [this]() { return scene_; }});
 #if AETHER_GAME_PHYSICS
     runtime_->scripts->BindPhysicsScene(physics_ ? physics_->scene.get() : nullptr);
@@ -1554,7 +1556,9 @@ FrameContext Game::Tick(f32 dt) {
         frame.dt = 0;
         return frame;
     }
+    shake_.Restore(*world_); // the scripts start from the camera they last set, not the shaken one
     const FrameContext frame = loop_->Tick(*world_, dt);
+    shake_.Apply(*world_, FindActiveCamera(*world_, guids_), frame.dt);
     input_state_.EndFrame();         // movement deltas are per frame; held keys stay
     if (proof_load_input_) { input_state_.SetButton(input::Key::F5, false); proof_load_input_ = false; }
     if (proof_new_input_) { input_state_.SetButton(input::Key::N, false); proof_new_input_ = false; }
