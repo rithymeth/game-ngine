@@ -12,8 +12,8 @@ namespace aether::editor {
 // headless; it shows where things are, not how they look (the Live Viewport shows that, with the same tools).
 class SceneViewPanel {
 public:
-    // Fills the current ImGui window, editing the selection of `document`.
-    void Draw(SceneDocument& document);
+    // Fills the current ImGui window, editing the selection of `document`. With `bounds`, objects are picked and outlined by their models' real extents.
+    void Draw(SceneDocument& document, const ModelBoundsCache* bounds = nullptr);
     // Moves the camera's target to the selection (or the whole scene if nothing is selected) and backs off to fit.
     void FocusSelection(const SceneDocument& document);
     SceneViewCamera& Camera() { return camera_; }

@@ -7,6 +7,8 @@
 #include "ui/shell_layout.h"
 #include "world/scene_view_panel.h"
 #include "world/viewport_tools.h"
+#include "world/model_bounds.h"
+#include "aether/assets/procedural_mesh.h"
 #include "workspace/editor_workspace.h"
 #include "aether/templates/templates.h"
 #include "aether/scene/gameplay.h"
@@ -934,4 +936,84 @@ AETHER_TEST(ViewportTools_DraggingAHandleWithTheMouseMovesTheSelectionInOneUndoS
     rig.Step(rig.Pixel(Vec3(half * 2.0f, 0, 0)), false);
     const Transform* t = rig.document.GetWorld().GetComponent<Transform>(thing);
     AETHER_CHECK(t && std::fabs(t->scale.x - 2.0f) < 0.11f);                     // doubled, on the 0.1 step
+}
+
+namespace {
+
+// A .glb of an axis-aligned box from `low` to `high`, written under `content`/`name`.
+void WriteBoxModel(const stdfs::path& content, const std::string& name, const Vec3& low, const Vec3& high) {
+    assets::procedural::MeshBuilder builder;
+    builder.Box(low, high);
+    assets::procedural::ProceduralMesh mesh;
+    mesh.materials.push_back(assets::MaterialData{});
+    mesh.mesh.primitives.push_back(builder.Finish(assets::procedural::Shading::Flat, assets::procedural::UvMode::BoxProjected, 0));
+    const std::vector<u8> glb = assets::procedural::EncodeGlb(mesh);
+    stdfs::create_directories((content / name).parent_path());
+    std::ofstream(content / name, std::ios::binary).write(reinterpret_cast<const char*>(glb.data()), static_cast<std::streamsize>(glb.size()));
+}
+
+} // namespace
+
+AETHER_TEST(ModelBounds_AModelsRealExtentIsReadOnceAndForgottenOnRequest) {
+    const stdfs::path content = Scratch("aether_model_bounds");
+    WriteBoxModel(content, "Models/crate.glb", Vec3(-1, 0, -2), Vec3(3, 4, 1));
+    ModelBoundsCache cache(content);
+    LocalBounds box;
+    AETHER_CHECK(cache.Get("Models/crate.glb", box));
+    AETHER_CHECK(NearVec(box.min, Vec3(-1, 0, -2), 1e-3f) && NearVec(box.max, Vec3(3, 4, 1), 1e-3f));
+    AETHER_CHECK(!cache.Get("Models/missing.glb", box) && !cache.Get("", box));       // not there: no box (and the answer is remembered)
+    AETHER_CHECK(cache.CachedCount() == 2);
+    WriteBoxModel(content, "Models/crate.glb", Vec3(-5, 0, -5), Vec3(5, 9, 5));       // changed on disk: the old box stays until it is asked to forget
+    AETHER_CHECK(cache.Get("Models/crate.glb", box) && NearVec(box.max, Vec3(3, 4, 1), 1e-3f));
+    cache.Clear();
+    AETHER_CHECK(cache.Get("Models/crate.glb", box) && NearVec(box.max, Vec3(5, 9, 5), 1e-3f));
+    cache.SetContentRoot(Scratch("aether_model_bounds_other"));                        // another project: nothing carries over
+    AETHER_CHECK(!cache.Get("Models/crate.glb", box) && cache.CachedCount() == 1);
+    ModelBoundsCache none;                                                              // no content root at all
+    AETHER_CHECK(!none.Get("Models/crate.glb", box));
+}
+
+AETHER_TEST(ModelBounds_APickedEntityIsFoundWhereverItsModelIsAndTheNearerOneWins) {
+    const stdfs::path content = Scratch("aether_model_pick");
+    WriteBoxModel(content, "Models/slab.glb", Vec3(-5, 0, -5), Vec3(5, 1, 5));      // a big, flat model
+    WriteBoxModel(content, "Models/crate.glb", Vec3(-0.5f, 0, -0.5f), Vec3(0.5f, 1, 0.5f));
+    ModelBoundsCache cache(content);
+    SceneDocument document;
+    const Entity slab = document.CreateEntity("Slab", SceneEntityKind::Model, "Models/slab.glb");
+    const Entity crate = document.CreateEntity("Crate", SceneEntityKind::Model, "Models/crate.glb");
+    const Entity camera_entity = document.CreateEntity("Camera", SceneEntityKind::Camera);
+    document.SetPosition(crate, Vec3(0, 1, 0), true);                                 // on top of the slab, at its middle
+    document.SetPosition(camera_entity, Vec3(8, 6, 8), true);
+    SceneViewCamera camera;
+    camera.target = Vec3(0, 0, 0);
+    camera.distance = 22.0f;
+    const ImVec2 origin(0, 0), size(800, 600);
+    const Mat4 vp = camera.ViewProjection(size.x / size.y);
+    auto pixel = [&](const Vec3& world) { ImVec2 at(-1, -1); ProjectToViewport(vp, world, origin, size, at); return at; };
+
+    const ImVec2 far_corner = pixel(Vec3(4, 0.5f, 4));                                // on the slab, nowhere near its origin (a long way in pixels)
+    AETHER_CHECK(PickEntity(document, camera, origin, size, far_corner) == kNullEntity);          // without bounds: only near an origin counts
+    AETHER_CHECK(PickEntity(document, camera, origin, size, far_corner, 14.0f, &cache) == slab);  // with them: anywhere on the model
+    AETHER_CHECK(PickEntity(document, camera, origin, size, pixel(Vec3(0, 1.5f, 0)), 14.0f, &cache) == crate); // the crate sits in front of the slab behind it
+    AETHER_CHECK(PickEntity(document, camera, origin, size, pixel(Vec3(0, 0.5f, 0)), 14.0f, &cache) != kNullEntity);
+    AETHER_CHECK(PickEntity(document, camera, origin, size, pixel(Vec3(8, 6, 8)), 14.0f, &cache) == camera_entity);   // no model: still found by its origin
+    AETHER_CHECK(PickEntity(document, camera, origin, size, ImVec2(5, 5), 14.0f, &cache) == kNullEntity);             // empty space
+}
+
+AETHER_TEST(ModelBounds_AnEntitysBoxFollowsItsScaleAndRotation) {
+    SceneDocument document;
+    const Entity thing = document.CreateEntity("Thing");                                // no model: a unit box
+    LocalBounds box = EntityBounds(document, thing, nullptr);
+    AETHER_CHECK(NearVec(box.min, Vec3(-0.5f, -0.5f, -0.5f)) && NearVec(box.max, Vec3(0.5f, 0.5f, 0.5f)));
+    const Vec3 up(0, 1, 0);
+    f32 distance = 0.0f;
+    const Vec3 along_z(0, 0, -1);
+    auto hits_at = [&](f32 x) { return RayHitsEntityBox(document, thing, EntityBounds(document, thing, nullptr), Vec3(x, 0, 10), along_z, distance); };
+    AETHER_CHECK(hits_at(0.4f) && !hits_at(0.6f));                                      // a unit box is 1 wide
+    document.SetScale(thing, Vec3(4, 1, 1), true);
+    AETHER_CHECK(hits_at(1.9f) && !hits_at(2.1f));                                      // scaled 4 wide
+    AETHER_CHECK(std::fabs(distance - 9.5f) < 1e-3f);                                   // the near face, 9.5 along the ray from z = 10
+    document.SetRotation(thing, Quaternion::FromAxisAngle(up, 3.14159265f * 0.5f), true);
+    AETHER_CHECK(!hits_at(1.9f) && hits_at(0.4f));                                      // turned a quarter: 4 deep instead, 1 wide in x
+    AETHER_CHECK(!RayHitsEntityBox(document, thing, EntityBounds(document, thing, nullptr), Vec3(0, 0, 10), Vec3(0, 0, 1), distance)); // pointing away from it
 }

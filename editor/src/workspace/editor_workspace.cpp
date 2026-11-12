@@ -312,7 +312,7 @@ struct EditorWorkspace::Impl {
             {"Mixer", "Audio", [this] { mixer_panel->Draw(); }},
             {"UI Designer - WBP_MainMenu", "UI", [this] { ui_designer->Draw(); }},
             {"Scene", "Scene", [this] { scene_panel->Draw(); }},
-            {"Scene View", "Scene", [this] { scene_view.Draw(scene_panel->Document()); }},
+            {"Scene View", "Scene", [this] { scene_view.Draw(scene_panel->Document(), &scene_panel->ModelBounds()); }},
             {"Render Preview", "Scene", [this] { scene_preview->Draw(); }},
             {"Terrain", "World", [this] { terrain_panel->Draw(); }},
             {"Foliage", "World", [this] { foliage_panel->Draw(); }},

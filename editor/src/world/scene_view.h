@@ -4,6 +4,7 @@
 #include "aether/math/mat4.h"
 #include "aether/math/quaternion.h"
 #include "core/scene_document.h"
+#include "world/model_bounds.h"
 
 #include <imgui.h>
 
@@ -37,9 +38,18 @@ void HandleCameraInput(SceneViewCamera& camera, bool hovered, bool active, const
 // Where a world point lands in a viewport rectangle (top-left `origin`, `size` pixels); false when it is behind the camera.
 bool ProjectToViewport(const Mat4& view_projection, const Vec3& world, const ImVec2& origin, const ImVec2& size, ImVec2& out, f32* depth = nullptr);
 
-// The entity whose origin is nearest `mouse` within `radius` pixels (the nearer to the camera on a tie within 2 pixels);
-// kNullEntity if none. Only entities with a Transform can be picked.
-Entity PickEntity(const SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, f32 radius = 14.0f);
+// An entity's box in its own space: the model's real extent if it has a ModelRenderer whose model `bounds` knows, else a unit box.
+LocalBounds EntityBounds(const SceneDocument& document, Entity entity, const ModelBoundsCache* bounds);
+
+// Where the mouse ray first meets an entity's box (the model's real bounds, placed by its world transform): the distance along the ray, false for a miss.
+bool RayHitsEntityBox(const SceneDocument& document, Entity entity, const LocalBounds& box, const Vec3& ray_origin, const Vec3& ray_direction, f32& distance);
+
+// The entity under `mouse`. With `bounds`, an entity whose model's box the mouse ray passes through is picked, the nearest along the ray first (so a big
+// model is selected by clicking anywhere on it, and one in front hides one behind). Otherwise, and for entities with no model (a camera, a light, an empty),
+// the one whose origin is nearest `mouse` within `radius` pixels (the nearer to the camera on a tie within 2 pixels). kNullEntity if none.
+// Only entities with a Transform can be picked.
+Entity PickEntity(const SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, f32 radius = 14.0f,
+                  const ModelBoundsCache* bounds = nullptr);
 
 // The mouse as a ray into the world (origin and unit direction); false if the view-projection can't be inverted.
 bool MouseRay(const Mat4& view_projection, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, Vec3& ray_origin, Vec3& ray_direction);

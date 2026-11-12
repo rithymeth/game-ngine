@@ -39,11 +39,19 @@ certificate error), and `iexpress.exe` produced nothing usable, so the self-extr
 resource compiled with `csc.exe`. A Vulkan-enabled install also fails for a consumer that lacks the Vulkan SDK, because the
 generated `AetherConfig.cmake` requires it -- which is why the installer builds with Vulkan off.
 
+## Click anywhere on a model to select it
+
+Picking was by an entity's origin (a click had to land within 14 pixels of it, so a big model could not be picked by clicking on it). The Scene View and the Live
+Viewport now read each model's bounding box from its glTF file (`ModelBoundsCache`, kept until the scene is opened or the viewport is (re)started) and pick by a ray
+through the mouse: the nearest box it passes through is selected, and an entity with no model (a camera, a light, an empty) is still picked by its origin, over a model behind it.
+The selection outline is the model's real box instead of a one-metre cube. It is still the box, not the shape: clicking beside a thin or concave model but inside its box selects it;
+pixel-exact picking would need the renderer to write an object-id buffer.
+
 ## Select and move things in the rendered view
 
 The Live Viewport takes the Scene View's editing tools: click an object in the rendered picture to select it (ctrl adds or removes), drag a gizmo handle to
 move, rotate or scale it (W, E, R, with snapping), and the selected object is outlined, all drawn over the real renderer's picture and following your drag. The tools
-are one shared piece (`ViewportTools`) used by both views, so they behave the same. Picking is by an entity's origin (click near it), not by the pixels of its shape.
+are one shared piece (`ViewportTools`) used by both views, so they behave the same. Objects are picked and outlined by their models' real bounding boxes (see the next section), not by the pixels of their shape.
 
 ## The Live Viewport shows your edits as you make them
 

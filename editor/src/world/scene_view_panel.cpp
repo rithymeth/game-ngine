@@ -44,7 +44,8 @@ void SceneViewPanel::FocusSelection(const SceneDocument& document) {
     camera_.distance = std::clamp(std::max({extent.x, extent.y, extent.z}) * 1.6f + 5.0f, 3.0f, 1000.0f);
 }
 
-void SceneViewPanel::Draw(SceneDocument& document) {
+void SceneViewPanel::Draw(SceneDocument& document, const ModelBoundsCache* bounds) {
+    tools_.SetBounds(bounds);
     tools_.DrawToolbar();
     ImGui::SameLine();
     ImGui::TextDisabled("%s", note_.empty() ? "drop a model from the Content Browser to place it" : note_.c_str());
@@ -106,14 +107,14 @@ void SceneViewPanel::Draw(SceneDocument& document) {
     // Each entity with a Transform: its box (the Transform's scale is the box's size), orange when selected, cyan for a camera.
     const World& world = document.GetWorld();
     Entity hovered_entity = kNullEntity;
-    if (hovered) hovered_entity = PickEntity(document, camera_, origin, size, io.MousePos);
+    if (hovered) hovered_entity = PickEntity(document, camera_, origin, size, io.MousePos, 14.0f, bounds);
     for (const Entity entity : document.Entities()) {
         if (!world.HasComponent<Transform>(entity)) continue;
         const Mat4 m = ComputeWorldTransform(world, document.Guids(), entity);
         const bool selected = document.IsSelected(entity);
         const bool is_camera = world.HasComponent<::aether::Camera>(entity);
         const ImU32 color = selected ? Color(255, 170, 40) : (entity == hovered_entity ? Color(255, 255, 255) : (is_camera ? Color(80, 200, 220) : Color(150, 158, 175)));
-        ViewportTools::DrawEntityBox(draw, document, camera_, origin, size, entity, color, selected ? 2.0f : 1.0f);
+        ViewportTools::DrawEntityBox(draw, document, camera_, origin, size, entity, color, selected ? 2.0f : 1.0f, bounds);
         const Vec3 origin_w(m.cols[3].x, m.cols[3].y, m.cols[3].z);
         if (selected) { // the axes of what is selected, in its own orientation
             const Vec3 x(m.cols[0].x, m.cols[0].y, m.cols[0].z), y(m.cols[1].x, m.cols[1].y, m.cols[1].z), z(m.cols[2].x, m.cols[2].y, m.cols[2].z);
