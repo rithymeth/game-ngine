@@ -5772,6 +5772,7 @@
   bool CancelTimer(u32 timer)
   bool Disconnect(u32 event,u32 connection)
   bool IsConnected(u32 event,u32 connection)const
+  bool RequestSceneLoad(const std::string&path)
   bool SendEvent(Entity entity,const std::string&method,const std::vector<ScriptValue>&args=
   const AiDebugStore&AiDebug()const
   const input::InputState*BoundInputState()const
@@ -5784,6 +5785,7 @@
   static ScriptClassInfo DescribeSource(LuauHost&host,const std::string&source,const std::string&name,int*ref=nullptr)
   static ScriptError Parse(const std::string&text)
   static SourceLoader DatabaseLoader(const assets::AssetDatabase&database)
+  std::function<bool(const std::string&)>scene_load_request_
   std::string DescribeEntity(Entity entity)const
   u32 Connect(u32 event,int function_ref)
   u32 InputEvent(const std::string&action,input::ActionEvent event)
@@ -5796,6 +5798,7 @@
   void BindInput(input::InputSystem*input)
   void BindInputState(const input::InputState*state)
   void BindPhysicsScene(::aether::PhysicsScene*scene)
+  void BindSceneLoadRequest(std::function<bool(const std::string&)>request)
   void ClearErrors()
   void Create(Entity entity)
   void Destroy(Entity entity)

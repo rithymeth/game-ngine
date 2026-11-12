@@ -388,6 +388,7 @@ private:
     std::unordered_map<assets::AssetGuid, std::unique_ptr<PrefabData>> prefabs_;
     std::unordered_map<std::string, std::unique_ptr<seq::LevelSequence>> sequences_;
     std::string scene_;
+    std::string pending_scene_load_;
     std::vector<std::string> warnings_;
     usize prefab_instances_ = 0;
     GameStats stats_;

@@ -162,6 +162,7 @@ ScriptSystem::ScriptSystem(LuauHost& host, World& world, GuidIndex& guids, Sourc
 ScriptSystem::~ScriptSystem() {
     BindInput(nullptr);
     BindInputState(nullptr);
+    BindSceneLoadRequest({});
     BindPhysicsScene(nullptr);
     lua_State* L = host_.State();
     // Scripts may still hold events or timers: they now report that no

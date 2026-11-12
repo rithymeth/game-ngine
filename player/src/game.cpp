@@ -887,6 +887,11 @@ void Game::StartRuntime() {
     runtime_->scripts->Register(*lifecycle_);
     runtime_->scripts->BindInput(&input_);
     runtime_->scripts->BindInputState(&input_state_);
+    runtime_->scripts->BindSceneLoadRequest([this](const std::string& path) {
+        if (path.empty() || path.find("..") != std::string::npos) return false;
+        pending_scene_load_ = path;
+        return true;
+    });
 #if AETHER_GAME_PHYSICS
     runtime_->scripts->BindPhysicsScene(physics_ ? physics_->scene.get() : nullptr);
     if (physics_ && physics_->scene) {
@@ -1494,6 +1499,15 @@ FrameContext Game::Tick(f32 dt) {
         return frame;
     }
     const FrameContext frame = loop_->Tick(*world_, dt);
+    if (!pending_scene_load_.empty()) {
+        const std::string requested = std::move(pending_scene_load_);
+        pending_scene_load_.clear();
+        std::string error;
+        if (!LoadScene(requested, &error)) {
+            warnings_.push_back("Scene request failed for " + requested + (error.empty() ? "" : ": " + error));
+            AETHER_LOG_ERROR("Player", "Scene request failed for %s: %s", requested.c_str(), error.c_str());
+        }
+    }
     input_state_.EndFrame();         // movement deltas are per frame; held keys stay
     if (proof_load_input_) { input_state_.SetButton(input::Key::F5, false); proof_load_input_ = false; }
     if (proof_new_input_) { input_state_.SetButton(input::Key::N, false); proof_new_input_ = false; }

@@ -429,6 +429,10 @@ void ScriptSystem::InstallApi(bool install_kit_apis) {
     InstallSaveApi(host_); // SaveGames (Phase 28 step 4)
     InstallLocApi(host_);  // Localization (Phase 29 step 2)
     InstallUiApi(host_);   // UI: text, bars and visibility by widget name
+    host_.RegisterNative("Scene", "Load", [this](NativeCall& call) {
+        if (!call.IsString(0)) return call.Fail("Scene.Load(path) expects a scene path string");
+        call.Return(RequestSceneLoad(call.String(0)));
+    });
     ai_debug_ = InstallAiApi(host_); // AI perception and Nav path queries (M8.8)
     if (install_kit_apis) {
         InstallKitApi("Quests");

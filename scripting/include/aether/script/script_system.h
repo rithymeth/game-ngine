@@ -51,6 +51,7 @@ struct ScriptError {
 //   Timer.Every(seconds, fn)       -> timer with :Cancel()   (repeats)
 //   Input.IsTriggered(action), Input.GetAxis1D / GetAxis2D / GetAxis3D(action)
 //   Input.GetPointerPosition(index?), Input.IsPointerDown(index?)
+//   Scene.Load(path) queues a scene replacement after the current frame
 //   Input.OnStarted / OnTriggered / OnCompleted / OnCanceled(action) -> event (fired with the action's value)
 //   Physics.AddForce / AddImpulse / SetLinearVelocity(entity, vector)
 //   Physics.GetLinearVelocity(entity), Physics.Raycast(...), Physics.SphereCast(...)
@@ -86,6 +87,9 @@ public:
     // outlive the binding. UI-consumed clicks are removed from the matching
     // action mapping before scripts observe them.
     void BindInputState(const input::InputState* state) { input_state_ = state; }
+    // A host supplies deferred scene replacement. Requests made in a script
+    // callback are queued by the player and applied only after that frame.
+    void BindSceneLoadRequest(std::function<bool(const std::string&)> request) { scene_load_request_ = std::move(request); }
     // Makes the current scene's ray queries and rigid-body controls available to Luau.
     void BindPhysicsScene(::aether::PhysicsScene* scene) { physics_scene_ = scene; }
     ::aether::PhysicsScene* BoundPhysicsScene() const { return physics_scene_; }
@@ -184,6 +188,7 @@ public:
     bool CancelTimer(u32 timer);
     input::InputSystem* BoundInput() { return input_; }
     const input::InputState* BoundInputState() const { return input_state_; }
+    bool RequestSceneLoad(const std::string& path) { return scene_load_request_ && scene_load_request_(path); }
     u32 InputEvent(const std::string& action, input::ActionEvent event);
     void InstallKitApi(const std::string& kit_name);
 
@@ -219,6 +224,7 @@ private:
     std::unordered_map<std::string, u32> input_events_; // "action\nevent" -> event id
     input::InputSystem* input_ = nullptr;
     const input::InputState* input_state_ = nullptr;
+    std::function<bool(const std::string&)> scene_load_request_;
     ::aether::PhysicsScene* physics_scene_ = nullptr;
     std::vector<u32> input_subscriptions_;
     u32 next_id_ = 1;
