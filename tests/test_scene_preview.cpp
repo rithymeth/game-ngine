@@ -748,6 +748,14 @@ AETHER_TEST(LiveViewportPanel_AMaterialOverrideShowsWithoutReloadingTheScene) {
     for (int i = 0; i < 6; ++i) panel.Advance(0.2f);
     const std::vector<u8> textured = panel.Viewport().Pixels();
     AETHER_CHECK(DifferingPixels(before, textured) > 160u * 90u / 50);
+
+    // Clearing the slot (an empty path) gives the model's own texture back, without a reload.
+    const u64 reloads_before_clear = panel.Viewport().SceneReloads();
+    texture.texture.clear();
+    set_values({texture});
+    AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().SceneReloads() == reloads_before_clear);
+    for (int i = 0; i < 6; ++i) panel.Advance(0.2f);
+    AETHER_CHECK(DifferingPixels(before, panel.Viewport().Pixels()) * 5 < DifferingPixels(before, textured));
 }
 
 AETHER_TEST(LiveViewportPanel_UndoAndRedoOfPatchableEditsAreNotReloads) {
