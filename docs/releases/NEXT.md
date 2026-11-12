@@ -79,6 +79,12 @@ project's scene file. The game's world is frozen by default so the view is the s
 since the last cook is said in the toolbar and appears after **Reload**. A move, a light edit or adding and removing objects is patched in place (see the next three sections); any other change reloads the whole scene (the world, physics and scripts start over), which is
 fine for small and medium scenes.
 
+## Undo and redo no longer restart the Live Viewport's scene
+
+Pressing undo (or redo) after a move, a light edit, a material override, or adding or deleting an object used to load the scene again, restarting physics and scripts. It is now patched like
+the edit it reverses: an undo or redo of something that only changes components that an object keeps, or creates or destroys an object the game can take live, shows at once and keeps the game's own
+state, and so does an undo of several edits grouped into one step. An undo that touches anything the running game builds when it loads (an object with a rigid body, a script or a camera) still loads the scene again.
+
 ## Material and texture changes on an object show in the game and in the Live Viewport
 
 A `MaterialParameters` component on an object (add it in the inspector, or from a Blueprint with Set Scalar, Vector or Texture Parameter) now changes how the player draws it: `BaseColor`, `Metallic`,
@@ -91,21 +97,21 @@ the Material editor's own graphs (`.amat`) are not drawn by the player, so editi
 Adding an object (a model, a light, an empty entity, a duplicate, a model dropped from the Content Browser, a prefab instance) or deleting one now shows in the Live Viewport at once, without
 loading the scene again, and so does adding or removing a light, a model or a name on an object that stays. The viewport compares the document's entities with the ones it last saw, so an
 object the game made by itself (a script spawning a coin) is left alone. What the running game builds when it loads is still not added or removed live: an entity with a rigid body, a script or a camera, or
-a change involving one, loads the scene afresh, as does an undo (this editor's undo of a create or delete counts as structural). A patch costs about half a millisecond at 2,000 entities, against about 17 ms for the reload alone.
+a change involving one, loads the scene afresh. Undo and redo of these edits are patched too (see the section on undo below). A patch costs about half a millisecond at 2,000 entities, against about 17 ms for the reload alone.
 
 ## Light edits show in the Live Viewport without restarting the scene
 
 Change a light's colour, intensity or shadows, the sky's, the wind's, a post-process volume's or a decal's settings in the inspector, or move or turn a light, and the Live
 Viewport shows it at once without loading the scene again (physics and scripts keep running). The document now says which component of which entity was set
 (`SceneDocument::TakeComponentEdits`) and the viewport copies just those into the running scene (`LiveViewport::PatchScene`). A component that is built into the game
-when it loads (a rigid body, a script, the camera) is not copied over a running game: editing one of those still loads the scene afresh, as does adding or removing an entity, and an undo.
+when it loads (a rigid body, a script, the camera) is not copied over a running game: editing one of those still loads the scene afresh.
 
 ## Dragging in the Live Viewport no longer restarts the game
 
 Every change used to load the whole scene again, so dragging an object with **Run game** on also restarted physics and scripts on every frame of the drag. Now, when only
 Transforms changed (a gizmo drag, a nudge, a typed position), the editor puts the new Transforms into the running scene (`LiveViewport::PatchTransforms`, matched by entity ID) and
 leaves everything else alone; the game keeps its own state. The document says which kind of change it was (`SceneDocument::StructureRevision`); adding or removing an
-entity, editing any other component, or an undo still loads the scene afresh. Measured, it also costs less: at 960x540 with 2,000 entities an edit takes about 77 ms instead of about 116 ms (see PERFORMANCE.md).
+entity, or editing any other component, still loaded the scene afresh at the time. Measured, it also costs less: at 960x540 with 2,000 entities an edit takes about 77 ms instead of about 116 ms (see PERFORMANCE.md).
 
 ## A live rendered viewport, and two fixes it needed
 

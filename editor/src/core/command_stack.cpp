@@ -39,6 +39,15 @@ public:
         }
         return total;
     }
+    // Patchable only if every command in it is; the components they touch are all reported.
+    bool PatchableChange(std::vector<CommandStackEdit>* targets) const override {
+        std::vector<CommandStackEdit> collected;
+        for (const auto& command : commands_) {
+            if (!command->PatchableChange(&collected)) return false;
+        }
+        if (targets) targets->insert(targets->end(), collected.begin(), collected.end());
+        return true;
+    }
 
 private:
     std::string label_;
@@ -65,20 +74,32 @@ std::vector<CommandStack::ComponentEdit> CommandStack::TakeComponentEdits(bool* 
     return taken;
 }
 
+bool ICommand::PatchableChange(std::vector<CommandStackEdit>* targets) const {
+    EntityGuid entity;
+    ComponentId component = 0;
+    if (ComponentEditTarget(entity, component)) {
+        if (targets) targets->push_back({entity, component});
+        return true;
+    }
+    return EntitySetEdit();
+}
+
+void CommandStack::NoteChange(const ICommand& command) {
+    std::vector<ComponentEdit> targets;
+    if (!command.PatchableChange(&targets)) return;
+    ++patchable_revision_;
+    constexpr usize kMaxKept = 1024; // a viewer that has not looked for this long rebuilds instead
+    for (const ComponentEdit& edited : targets) {
+        const auto same = [&](const ComponentEdit& e) { return e.entity == edited.entity && e.component == edited.component; };
+        if (std::find_if(component_edits_.begin(), component_edits_.end(), same) != component_edits_.end()) continue;
+        if (component_edits_.size() < kMaxKept) component_edits_.push_back(edited);
+        else component_edits_overflowed_ = true;
+    }
+}
+
 void CommandStack::Record(std::unique_ptr<ICommand> command, MergePolicy merge) {
     ++revision_;
-    if (command->EntitySetEdit()) ++entity_set_revision_;
-    EntityGuid edited;
-    ComponentId edited_component = 0;
-    if (command->ComponentEditTarget(edited, edited_component)) {
-        ++component_revision_;
-        constexpr usize kMaxKept = 1024; // a viewer that has not looked for this long rebuilds instead
-        const auto same = [&](const ComponentEdit& e) { return e.entity == edited && e.component == edited_component; };
-        if (std::find_if(component_edits_.begin(), component_edits_.end(), same) == component_edits_.end()) {
-            if (component_edits_.size() < kMaxKept) component_edits_.push_back({edited, edited_component});
-            else component_edits_overflowed_ = true;
-        }
-    }
+    NoteChange(*command);
     if (command->Attribution().empty()) command->SetAttribution(attribution_);
     if (frozen_) {
         return; // applied, but not part of the history (see SetFrozen)
@@ -127,6 +148,7 @@ bool CommandStack::Undo(CommandContext& ctx) {
         undo_.push_back(std::move(command));
         throw;
     }
+    NoteChange(*command);
     redo_.push_back(std::move(command));
     merge_open_ = false;
     ++revision_;
@@ -145,6 +167,7 @@ bool CommandStack::Redo(CommandContext& ctx) {
         redo_.push_back(std::move(command));
         throw;
     }
+    NoteChange(*command);
     PushUndo(std::move(command));
     merge_open_ = false;
     ++revision_;

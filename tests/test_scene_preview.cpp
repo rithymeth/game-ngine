@@ -449,13 +449,15 @@ AETHER_TEST(LiveViewportPanel_AMovedObjectIsPatchedInPlaceAndOnlyAChangeToTheSce
     AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().SceneReloads() == reloads + 2 && panel.Viewport().PatchCount() == 4);
     document.SetPosition(models[0], homes[0] + Vec3(1.0f, 0.0f, 0.0f), true);
     AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().PatchCount() == 5 && panel.Viewport().SceneReloads() == reloads + 2);
-    document.Undo();                                                                     // an undo is structural, even of a move
-    AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().SceneReloads() == reloads + 3 && panel.Viewport().PatchCount() == 5);
+    document.Undo();                                                                     // undoing a move is patched like the move
+    AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().SceneReloads() == reloads + 2 && panel.Viewport().PatchCount() == 6);
+    document.Undo();                                                                     // bringing back a model with a physics body is not: the scene loads again
+    AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().SceneReloads() == reloads + 3 && panel.Viewport().PatchCount() == 6);
 
     // An entity that carries something the running game builds when it loads (a camera here) is not added to it: that is a reload's job, and the
     // patch refuses, having changed nothing.
     document.CreateEntity("Extra", SceneEntityKind::Camera);
-    AETHER_CHECK(!panel.Viewport().PatchTransforms(document.GetWorld()) && panel.Viewport().PatchCount() == 5);
+    AETHER_CHECK(!panel.Viewport().PatchTransforms(document.GetWorld()) && panel.Viewport().PatchCount() == 6);
 }
 
 AETHER_TEST(LiveViewportPanel_ALightEditShowsWithoutReloadingTheScene) {
@@ -707,6 +709,110 @@ AETHER_TEST(LiveViewportPanel_AMaterialOverrideShowsWithoutReloadingTheScene) {
     for (int i = 0; i < 6; ++i) panel.Advance(0.2f);
     const std::vector<u8> textured = panel.Viewport().Pixels();
     AETHER_CHECK(DifferingPixels(before, textured) > 160u * 90u / 50);
+}
+
+AETHER_TEST(LiveViewportPanel_UndoAndRedoOfPatchableEditsAreNotReloads) {
+    std::unique_ptr<gfx::rhi::IDevice> device = TryDevice();
+    if (!device) {
+        std::printf("    (no Vulkan device: install a driver, or Mesa's lavapipe, to run this)\n");
+        return;
+    }
+    Context imgui;
+    const stdfs::path project = MakeProject("LiveUndo");
+    ScenePanel scene(project.parent_path() / "Content");
+    AETHER_CHECK(scene.OpenScene("Scenes/Main.ascene", true));
+    LiveViewportPanel panel(*device, scene, [&] { return project; });
+    panel.width = 160;
+    panel.height = 90;
+    panel.reload_interval = 0.0f;
+    AETHER_CHECK(panel.Start());
+    SceneDocument& document = scene.Document();
+    auto settle = [&] { for (int i = 0; i < 6; ++i) panel.Advance(0.2f); };
+    settle();
+    const u64 reloads = panel.Viewport().SceneReloads();
+    const usize count = panel.Viewport().EntityCount();
+    std::string model;
+    Entity sky = kNullEntity;
+    for (const Entity entity : document.Entities()) {
+        const ModelRenderer* renderer = document.GetWorld().GetComponent<ModelRenderer>(entity);
+        if (renderer && model.empty()) model = renderer->asset_path;
+        if (document.GetWorld().HasComponent<SkyLight>(entity)) sky = entity;
+    }
+    AETHER_CHECK(!model.empty() && sky != kNullEntity);
+    if (model.empty() || sky == kNullEntity) return;
+    document.Commands().Clear();
+    const std::vector<u8> start = panel.Viewport().Pixels();
+    u64 patches = panel.Viewport().PatchCount();
+    auto patched = [&](const char* what) {
+        const bool ok = panel.Advance(0.2f) && panel.Viewport().SceneReloads() == reloads && panel.Viewport().PatchCount() == patches + 1;
+        if (!ok) std::fprintf(stderr, "    (not patched: %s)\n", what);
+        patches = panel.Viewport().PatchCount();
+        return ok;
+    };
+
+    // A light edit, undone and redone: each is a patch, the picture goes dark and comes back.
+    AETHER_CHECK(document.SetComponentField(sky, GetComponentId<SkyLight>(), "intensity", reflect::Any(0.0f), true));
+    AETHER_CHECK(patched("the edit"));
+    settle();
+    const std::vector<u8> dark = panel.Viewport().Pixels();
+    AETHER_CHECK(DifferingPixels(start, dark) > 160u * 90u / 10);
+    AETHER_CHECK(document.Undo());
+    AETHER_CHECK(patched("undo of the edit"));
+    settle();
+    AETHER_CHECK(DifferingPixels(start, panel.Viewport().Pixels()) * 5 < DifferingPixels(start, dark));
+    AETHER_CHECK(document.Redo());
+    AETHER_CHECK(patched("redo of the edit"));
+    settle();
+    AETHER_CHECK(DifferingPixels(dark, panel.Viewport().Pixels()) * 5 < DifferingPixels(start, dark));
+    AETHER_CHECK(document.Undo());
+    AETHER_CHECK(patched("undo, to put it back"));
+
+    // An object added and undone, and redone: it leaves the running game and comes back.
+    document.CreateEntity("Boulder", SceneEntityKind::Model, model);
+    AETHER_CHECK(patched("the new object") && panel.Viewport().EntityCount() == count + 1);
+    AETHER_CHECK(document.Undo());
+    AETHER_CHECK(patched("undo of the new object") && panel.Viewport().EntityCount() == count);
+    AETHER_CHECK(document.Redo());
+    AETHER_CHECK(patched("redo of the new object") && panel.Viewport().EntityCount() == count + 1);
+
+    // A placed model is a create and a move in one entry: one undo, one patch.
+    const Entity placed = PlaceModelAsset(document, model, Vec3(2.0f, 0.0f, 0.0f));
+    AETHER_CHECK(placed != kNullEntity && patched("the placed model") && panel.Viewport().EntityCount() == count + 2);
+    AETHER_CHECK(document.Undo());
+    AETHER_CHECK(patched("undo of the placed model") && panel.Viewport().EntityCount() == count + 1);
+
+    // Two edits grouped as one step (a transaction) are undone together and patched together, the components they touch included.
+    const Entity sun = document.CreateEntity("Sun");
+    AETHER_CHECK(document.AddComponent(sun, GetComponentId<DirectionalLight>()));
+    AETHER_CHECK(patched("the sun"));
+    settle();
+    const std::vector<u8> before_group = panel.Viewport().Pixels();
+    document.Commands().BeginTransaction("Dim the sky");
+    AETHER_CHECK(document.SetComponentField(sky, GetComponentId<SkyLight>(), "intensity", reflect::Any(0.0f), true));
+    AETHER_CHECK(document.SetComponentField(sky, GetComponentId<SkyLight>(), "color", reflect::Any(Vec3(0.0f, 0.0f, 1.0f)), true));
+    document.Commands().EndTransaction();
+    AETHER_CHECK(patched("the grouped edit"));
+    settle();
+    const std::vector<u8> grouped = panel.Viewport().Pixels();
+    AETHER_CHECK(DifferingPixels(before_group, grouped) > 160u * 90u / 10);
+    AETHER_CHECK(document.Undo());
+    AETHER_CHECK(patched("undo of the grouped edit"));
+    settle();
+    AETHER_CHECK(DifferingPixels(before_group, panel.Viewport().Pixels()) * 5 < DifferingPixels(before_group, grouped)); // both fields are back
+
+    // A component added to an object and undone: taken off again.
+    const Entity lamp = document.CreateEntity("Lamp");
+    AETHER_CHECK(patched("the lamp"));
+    AETHER_CHECK(document.AddComponent(lamp, GetComponentId<PointLight>()));
+    AETHER_CHECK(patched("the lamp's light"));
+    AETHER_CHECK(document.Undo());
+    AETHER_CHECK(patched("undo of the lamp's light"));
+
+    // What the running game builds when it loads still loads the scene again, on undo too: an entity with a camera.
+    document.CreateEntity("Second Camera", SceneEntityKind::Camera);
+    AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().SceneReloads() == reloads + 1);
+    AETHER_CHECK(document.Undo());
+    AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().SceneReloads() == reloads + 2);
 }
 
 #endif
