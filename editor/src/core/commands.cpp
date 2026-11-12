@@ -274,6 +274,12 @@ void ReparentCommand::Do(CommandContext& ctx) {
 
 void ReparentCommand::Undo(CommandContext& ctx) { Attach(ctx, had_parent_, old_parent_); }
 
+bool ReparentCommand::ComponentEditTarget(EntityGuid& entity, ComponentId& component) const {
+    entity = entity_;
+    component = GetComponentId<Parent>();
+    return true;
+}
+
 std::string ReparentCommand::Label() const { return new_parent_.IsNull() ? "Unparent" : "Parent"; }
 
 bool CommitFieldEdit(CommandContext& ctx, CommandStack& stack, const EntityGuid& entity, ComponentId component,

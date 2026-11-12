@@ -149,6 +149,8 @@ public:
     void Do(CommandContext& ctx) override;
     void Undo(CommandContext& ctx) override;
     std::string Label() const override;
+    // A reparent adds, changes or removes one component of an entity that stays: its Parent.
+    bool ComponentEditTarget(EntityGuid& entity, ComponentId& component) const override;
 
 private:
     void Attach(CommandContext& ctx, bool has_parent, const EntityGuid& parent);

@@ -828,6 +828,79 @@ AETHER_TEST(LiveViewportPanel_UndoAndRedoOfPatchableEditsAreNotReloads) {
     AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().SceneReloads() == reloads + 2);
 }
 
+AETHER_TEST(LiveViewportPanel_ReparentingAnObjectIsPatchedAndOnlyAnEntityWithACameraReloads) {
+    std::unique_ptr<gfx::rhi::IDevice> device = TryDevice();
+    if (!device) {
+        std::printf("    (no Vulkan device: install a driver, or Mesa's lavapipe, to run this)\n");
+        return;
+    }
+    Context imgui;
+    const stdfs::path project = MakeProject("LiveReparent");
+    ScenePanel scene(project.parent_path() / "Content");
+    AETHER_CHECK(scene.OpenScene("Scenes/Main.ascene", true));
+    LiveViewportPanel panel(*device, scene, [&] { return project; });
+    panel.width = 160;
+    panel.height = 90;
+    panel.reload_interval = 0.0f;
+    AETHER_CHECK(panel.Start());
+    SceneDocument& document = scene.Document();
+    auto settle = [&] { for (int i = 0; i < 6; ++i) panel.Advance(0.2f); };
+    settle();
+    const u64 reloads = panel.Viewport().SceneReloads();
+    std::string model;
+    for (const Entity entity : document.Entities()) {
+        const ModelRenderer* renderer = document.GetWorld().GetComponent<ModelRenderer>(entity);
+        if (renderer && model.empty()) model = renderer->asset_path;
+    }
+    AETHER_CHECK(!model.empty());
+    if (model.empty()) return;
+    u64 patches = panel.Viewport().PatchCount();
+    auto patched = [&](const char* what) {
+        const bool ok = panel.Advance(0.2f) && panel.Viewport().SceneReloads() == reloads && panel.Viewport().PatchCount() == patches + 1;
+        if (!ok) std::fprintf(stderr, "    (not patched: %s)\n", what);
+        patches = panel.Viewport().PatchCount();
+        return ok;
+    };
+
+    // A holder far above the scene, and a big boulder at the origin that fills the view.
+    const Entity holder = document.CreateEntity("Holder");
+    document.SetPosition(holder, Vec3(0.0f, 40.0f, 0.0f), true);
+    const Entity boulder = document.CreateEntity("Boulder", SceneEntityKind::Model, model);
+    document.SetPosition(boulder, Vec3(0.0f, 2.0f, 0.0f), true);
+    document.SetScale(boulder, Vec3(6.0f, 6.0f, 6.0f), true);
+    AETHER_CHECK(patched("the two new objects"));
+    settle();
+    const std::vector<u8> at_origin = panel.Viewport().Pixels();
+    document.Commands().Clear();
+
+    // Put the boulder under the holder: it keeps its own transform, so it is now forty metres up, out of the picture. A patch, not a reload.
+    AETHER_CHECK(document.ReparentEntity(boulder, holder));
+    AETHER_CHECK(patched("the reparent"));
+    settle();
+    const std::vector<u8> lifted = panel.Viewport().Pixels();
+    AETHER_CHECK(DifferingPixels(at_origin, lifted) > 160u * 90u / 50);
+    // Undoing it, and doing it again, are patches too, and the picture follows each.
+    AETHER_CHECK(document.Undo());
+    AETHER_CHECK(patched("undo of the reparent"));
+    settle();
+    AETHER_CHECK(DifferingPixels(at_origin, panel.Viewport().Pixels()) * 5 < DifferingPixels(at_origin, lifted));
+    AETHER_CHECK(document.Redo());
+    AETHER_CHECK(patched("redo of the reparent"));
+    settle();
+    AETHER_CHECK(DifferingPixels(lifted, panel.Viewport().Pixels()) * 5 < DifferingPixels(at_origin, lifted));
+    // Taking it out from under the holder removes its Parent in the running game: back at the origin.
+    AETHER_CHECK(document.ReparentEntity(boulder, kNullEntity));
+    AETHER_CHECK(patched("unparenting"));
+    settle();
+    AETHER_CHECK(DifferingPixels(at_origin, panel.Viewport().Pixels()) * 5 < DifferingPixels(at_origin, lifted));
+
+    // An entity with a camera was built into the running game when it loaded, so moving it under another still loads the scene again.
+    const Entity camera = document.CreateEntity("Second Camera", SceneEntityKind::Camera);
+    AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().SceneReloads() == reloads + 1);
+    AETHER_CHECK(document.ReparentEntity(camera, holder));
+    AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().SceneReloads() == reloads + 2);
+}
+
 #endif
 
 AETHER_TEST(GamePackage_AContentOverrideIsReadInPlaceOfTheArchive) {

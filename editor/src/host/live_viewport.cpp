@@ -102,7 +102,7 @@ bool LiveViewport::IsPatchable(ComponentId component) {
     return component == GetComponentId<Transform>() || component == GetComponentId<EntityName>() || component == GetComponentId<ModelRenderer>() ||
            component == GetComponentId<DirectionalLight>() || component == GetComponentId<PointLight>() || component == GetComponentId<SpotLight>() ||
            component == GetComponentId<SkyLight>() || component == GetComponentId<Wind>() || component == GetComponentId<WindZone>() ||
-           component == GetComponentId<PostProcessVolume>() || component == GetComponentId<Decal>() || component == GetComponentId<MaterialParameters>();
+           component == GetComponentId<PostProcessVolume>() || component == GetComponentId<Decal>() || component == GetComponentId<MaterialParameters>() || component == GetComponentId<Parent>();
 }
 
 namespace {
@@ -164,6 +164,8 @@ bool LiveViewport::PatchScene(const World& source, const std::vector<ComponentEd
         if (to == in_running.end()) continue;      // the game destroyed it itself: nothing to edit
         const ComponentInfo& info = GetComponentInfo(edit.component);
         if (info.reflected == nullptr) return false;
+        // A new parent moves the entity in the world, and a physics body or a script was built from where it stood when the scene loaded: those load again.
+        if (edit.component == GetComponentId<Parent>() && !AllSpawnable(running, to->second)) return false;
         const bool there = source.HasComponentRaw(from->second, edit.component), here = running.HasComponentRaw(to->second, edit.component);
         if (there) changes.push_back({to->second, edit.component, here ? Op::Copy : Op::Add, reflect::ToJson(*info.reflected, source.GetComponentRaw(from->second, edit.component))});
         else if (here) changes.push_back({to->second, edit.component, Op::Remove, {}});
