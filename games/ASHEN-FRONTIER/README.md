@@ -22,7 +22,7 @@ and flat clearings at every point of interest. Models are low-poly placeholders 
 freighter, props, machines, mesas, spires, an arch), to be replaced by real art without touching the scenes. Kael walks it with the third-person controller on the engine's
 new `HeightfieldCollider`.
 
-Kael can take salvage (E or X: the nearest thing tagged Salvage within 3 m goes into his pack; `Interactor.luau`). A HUD (`Content/UI/Hud.aui`) shows the pack and a `[E] Take` prompt for what is in reach. The UI font (`Content/fonts/`) has to be in the package for any UI text to draw.
+Kael can take salvage (E or X: the nearest thing tagged Salvage within 3 m goes into his pack; `Interactor.luau`). A HUD (`Content/UI/Hud.aui`) shows the pack and a `[E] Take` prompt for what is in reach. MULE-3 (`Mule3.luau`) starts broken: Interact beside it spends 3 components from the pack, then it follows Kael, and Interact beside it toggles follow / hold. The UI font (`Content/fonts/`) has to be in the package for any UI text to draw.
 
 Not yet: most gameplay (scanner, prompts, MULE-3, crafting, power, missions, saves: the first sprint of DESIGN.md section 22), most interiors, audio, HUD. One interior exists (the Assembly Hall, reached by the door on the Iron Wastes hall; its exit puts Kael back outside the hall); the living dome and the reactor hall are next.
 

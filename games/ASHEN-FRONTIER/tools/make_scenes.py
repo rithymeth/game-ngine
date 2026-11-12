@@ -11,7 +11,7 @@ import random
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from scenelib import Scene, give_hands  # noqa: E402
+from scenelib import Scene, give_hands, mule  # noqa: E402
 import world  # noqa: E402
 import world_scene  # noqa: E402
 import interior_scene  # noqa: E402
@@ -103,7 +103,7 @@ def fallen_basin(playable=True):
         s.model(f"Pylon_{i}", "Pylon", position=(-2 - i * 8, 0, 8 - i * 6.5), rotation=(0, rng.uniform(-10, 10), 0), collider=((0, 2, 0), (0.4, 2, 0.4)))
 
     # the first machine, found in the wreckage, and the salvage sites
-    s.model("MULE3_Wreck", "MULE3", position=(-20, 0, -12), rotation=(0, 70, 8), tags=("Salvage", "MULE3"), collider=((0, 0.6, 0), (0.45, 0.5, 0.7)))
+    mule(s, "MULE3_Wreck", (-20, 0, -12), rotation=(0, 70, 8))
     for i, (x, z) in enumerate(((-28, -10), (30, -30), (-58, 26))):
         s.model(f"SalvageSite_{i}_Pile", "ScrapPile", position=(x, 0, z), rotation=(0, rng.uniform(0, 360), 0), tags=("Salvage",), collider=((0, 0.6, 0), (1.2, 0.7, 1.0)))
         s.model(f"SalvageSite_{i}_Crate", "SalvageCrate", position=(x + 2.4, 0, z + 1.2), rotation=(0, rng.uniform(0, 90), 0), tags=("Salvage",), collider=((0, 0.4, 0), (0.45, 0.4, 0.3)))
@@ -175,6 +175,18 @@ def salvage_test():
     s.save(OUT / "SalvageTest.ascene")
 
 
+def mule_test():
+    """Kael with three components beside the broken MULE-3, 2.9 m away on a floor: Interact repairs it and it walks up to him."""
+    s = Scene()
+    s.sky(1.2)
+    s.sun(yaw=-25, pitch=-38)
+    s.model("Ground", "Ground", position=(0, 0, 0), scale=(60, 1, 60), color=SAND, snap=False)
+    s.add("GroundCollider", {"BoxCollider": {"$v": 1, "center": [0, 0, 0], "friction": 0.8, "half_extents": [30, 0.5, 30], "is_trigger": False, "report_stay": False, "restitution": 0.0}}, position=(0, -0.5, 0))
+    mule(s, "Test_MULE3", (2.9, 0, 0), snap=False)
+    interior_scene.kael(s, (0, 0.1, 0), 0, script_guid("ThirdPersonController"), components=3)
+    s.save(OUT / "MuleTest.ascene")
+
+
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
     model_gallery()
@@ -184,6 +196,7 @@ def main():
     fallen_basin(False)
     open_world()
     salvage_test()
+    mule_test()
     print("wrote", OUT)
 
 

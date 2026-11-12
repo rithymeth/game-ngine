@@ -11,7 +11,7 @@ import numpy as np
 
 import terrain
 import world
-from scenelib import Scene, give_hands
+from scenelib import Scene, give_hands, mule
 
 LIGHT = lambda color, intensity, rng_: {"PointLight": {"$v": 1, "cast_shadows": False, "color": list(color), "intensity": intensity, "range": rng_}}
 BLUE, AMBER, GREEN = (0.2, 0.5, 1.0), (1.0, 0.5, 0.1), (0.3, 1.0, 0.6)
@@ -70,7 +70,7 @@ def basin(s, rng):
     x, z = world.poi_position("crash_site")
     s.model("Freighter", "Freighter", position=(x, -0.6, z), rotation=(0, 28, 0), tags=("Landmark",), collider=((0, 5, 6), (6.5, 5, 14)))
     x, z = world.poi_position("mule3_wreck")
-    s.model("MULE3_Wreck", "MULE3", position=(x, 0, z), rotation=(0, 70, 8), tags=("Salvage", "MULE3"), collider=((0, 0.6, 0), (0.45, 0.5, 0.7)))
+    mule(s, "MULE3_Wreck", (x, 0, z), rotation=(0, 70, 8))
     x, z = world.poi_position("homestead_ruins")
     for i, (dx, dz, yaw) in enumerate(((0, 0, 10), (6, 0, -4), (-2, 7, 92), (5, 8, 85))):
         s.model(f"Ruin_{i}", "RuinWall", position=(x + dx, 0, z + dz), rotation=(0, yaw, 0), collider=((0, 1.0, 0), (2.5, 1.0, 0.25)))

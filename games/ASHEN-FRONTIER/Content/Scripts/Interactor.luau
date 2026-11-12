@@ -6,6 +6,8 @@ local Interactor = {}
 --@range 0.5 8
 --@tooltip How far Kael can reach, metres
 Interactor.reach = 3
+--@tooltip Components already in the pack at the start (for test scenes)
+Interactor.start_components = 0
 
 -- What a salvage entity gives, by the words in its name. Anything else gives scrap.
 local YIELDS = {
@@ -15,7 +17,8 @@ local YIELDS = {
 }
 
 function Interactor:OnCreate()
-    self.pack = { scrap = 0, components = 0 }
+    self.pack = { scrap = 0, components = self.start_components }
+    Pack = self.pack -- shared with the other scripts (MULE-3 spends components from it)
     self.nearest = nil
     self.shown = nil
     self.player = world:EntitiesWith("CharacterMovement")[1]
