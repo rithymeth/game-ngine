@@ -201,6 +201,15 @@ std::unique_ptr<gfx::rhi::IDevice> TryDevice() {
     }
 }
 
+// An entity with a character controller, which the running game sets up once when it starts (so putting one in is a reload's job), or kNullEntity in a build
+// without physics. The entity and the component are both in the document when this returns.
+Entity MakeWalker(SceneDocument& document, const char* name) {
+    const ComponentId character = FindComponentIdByName("CharacterMovement");
+    if (character == kInvalidComponentId) return kNullEntity;
+    const Entity walker = document.CreateEntity(name);
+    return document.AddComponent(walker, character) ? walker : kNullEntity;
+}
+
 usize DifferingPixels(const std::vector<u8>& a, const std::vector<u8>& b) {
     usize differing = 0;
     for (usize i = 0; i + 3 < std::min(a.size(), b.size()); i += 4) {
@@ -457,10 +466,9 @@ AETHER_TEST(LiveViewportPanel_AMovedObjectIsPatchedInPlaceAndOnlyAChangeToTheSce
     document.Undo();                                                                     // bringing back a model with a physics body is not: the scene loads again
     AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().SceneReloads() == reloads + 3 && panel.Viewport().PatchCount() == 6);
 
-    // An entity that carries something the running game builds when it loads (a camera here) is not added to it: that is a reload's job, and the
+    // An entity that carries something the game sets up once when it starts (a character controller here) is not added to it: that is a reload's job, and the
     // patch refuses, having changed nothing.
-    document.CreateEntity("Extra", SceneEntityKind::Camera);
-    AETHER_CHECK(!panel.Viewport().PatchTransforms(document.GetWorld()) && panel.Viewport().PatchCount() == 6);
+    if (MakeWalker(document, "Extra") != kNullEntity) AETHER_CHECK(!panel.Viewport().PatchTransforms(document.GetWorld()) && panel.Viewport().PatchCount() == 6);
 }
 
 AETHER_TEST(LiveViewportPanel_ALightEditShowsWithoutReloadingTheScene) {
@@ -530,12 +538,19 @@ AETHER_TEST(LiveViewportPanel_ALightEditShowsWithoutReloadingTheScene) {
     AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().PatchCount() == patches + 1 && panel.Viewport().SceneReloads() == reloads_after_add);
     AETHER_CHECK(DifferingPixels(before_sky, panel.Viewport().Pixels()) > 160u * 90u / 10);
 
-    // A component that is built into the running game when it loads (here the camera) is not patched: the scene loads again.
+    // The camera is read from the world every frame, so editing it is a patch too (the viewport's own camera overrides its view and field of view, so the picture
+    // does not change).
     AETHER_CHECK(document.SetComponentField(camera, GetComponentId<Camera>(), "fov_degrees", reflect::Any(70.0f), true));
-    AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().PatchCount() == patches + 1 && panel.Viewport().SceneReloads() == reloads_after_add + 1);
-    // Undoing an edit is structural, so it reloads too, and the light is back where it was.
-    AETHER_CHECK(document.Undo());
-    AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().SceneReloads() == reloads_after_add + 2);
+    AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().PatchCount() == patches + 2 && panel.Viewport().SceneReloads() == reloads_after_add); // the sky's edit above was the first
+    // A component the game sets up once when it starts (a character controller) is not patched: the scene loads again, for the edit of it and for the undo.
+    if (const Entity walker = MakeWalker(document, "Walker"); walker != kNullEntity) {
+        const ComponentId character = FindComponentIdByName("CharacterMovement");
+        AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().SceneReloads() == reloads_after_add + 1);
+        AETHER_CHECK(document.SetComponentField(walker, character, "walk_speed", reflect::Any(5.0f), true));
+        AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().SceneReloads() == reloads_after_add + 2);
+        AETHER_CHECK(document.Undo());
+        AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().SceneReloads() == reloads_after_add + 3);
+    }
 }
 
 AETHER_TEST(LiveViewportPanel_AddingAndRemovingObjectsDoesNotRebuildTheWorld) {
@@ -640,11 +655,20 @@ AETHER_TEST(LiveViewportPanel_AddingAndRemovingObjectsDoesNotRebuildTheWorld) {
     for (int i = 0; i < 6; ++i) panel.Advance(0.2f);
     AETHER_CHECK(DifferingPixels(no_lamp, panel.Viewport().Pixels()) * 5 < DifferingPixels(no_lamp, lamp_on));
 
-    // What the running game builds when it loads is not patched in: an entity with a camera loads the scene again, and so does an undo.
+    // A second camera is read from the world every frame like any other object, so it is patched in too, and out again.
+    const usize with_camera = panel.Viewport().EntityCount();
+    const u64 patches_before = panel.Viewport().PatchCount();
     document.CreateEntity("Second Camera", SceneEntityKind::Camera);
-    AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().SceneReloads() == reloads + 1);
+    AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().SceneReloads() == reloads && panel.Viewport().PatchCount() == patches_before + 1);
+    AETHER_CHECK(panel.Viewport().EntityCount() == with_camera + 1);
     AETHER_CHECK(document.Undo());
-    AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().SceneReloads() == reloads + 2);
+    AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().SceneReloads() == reloads && panel.Viewport().EntityCount() == with_camera);
+    // What the game sets up once when it starts (a character controller) is not patched in: the scene loads again, and so does the undo.
+    if (MakeWalker(document, "Walker") != kNullEntity) {
+        AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().SceneReloads() == reloads + 1);
+        AETHER_CHECK(document.Undo());
+        AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().SceneReloads() == reloads + 2);
+    }
 }
 
 AETHER_TEST(LiveViewportPanel_AMaterialOverrideShowsWithoutReloadingTheScene) {
@@ -823,14 +847,15 @@ AETHER_TEST(LiveViewportPanel_UndoAndRedoOfPatchableEditsAreNotReloads) {
     AETHER_CHECK(document.Undo());
     AETHER_CHECK(patched("undo of the lamp's light"));
 
-    // What the running game builds when it loads still loads the scene again, on undo too: an entity with a camera.
-    document.CreateEntity("Second Camera", SceneEntityKind::Camera);
-    AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().SceneReloads() == reloads + 1);
-    AETHER_CHECK(document.Undo());
-    AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().SceneReloads() == reloads + 2);
+    // What the game sets up once when it starts still loads the scene again, on undo too: an entity with a character controller.
+    if (MakeWalker(document, "Walker") != kNullEntity) {
+        AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().SceneReloads() == reloads + 1);
+        AETHER_CHECK(document.Undo());
+        AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().SceneReloads() == reloads + 2);
+    }
 }
 
-AETHER_TEST(LiveViewportPanel_ReparentingAnObjectIsPatchedAndOnlyAnEntityWithACameraReloads) {
+AETHER_TEST(LiveViewportPanel_ReparentingAnObjectIsPatchedAndOnlyAnEntityWithACharacterReloads) {
     std::unique_ptr<gfx::rhi::IDevice> device = TryDevice();
     if (!device) {
         std::printf("    (no Vulkan device: install a driver, or Mesa's lavapipe, to run this)\n");
@@ -896,11 +921,12 @@ AETHER_TEST(LiveViewportPanel_ReparentingAnObjectIsPatchedAndOnlyAnEntityWithACa
     settle();
     AETHER_CHECK(DifferingPixels(at_origin, panel.Viewport().Pixels()) * 5 < DifferingPixels(at_origin, lifted));
 
-    // An entity with a camera was built into the running game when it loaded, so moving it under another still loads the scene again.
-    const Entity camera = document.CreateEntity("Second Camera", SceneEntityKind::Camera);
-    AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().SceneReloads() == reloads + 1);
-    AETHER_CHECK(document.ReparentEntity(camera, holder));
-    AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().SceneReloads() == reloads + 2);
+    // An entity with a character controller was set up when the game started, so moving it under another still loads the scene again.
+    if (const Entity walker = MakeWalker(document, "Walker"); walker != kNullEntity) {
+        AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().SceneReloads() == reloads + 1);
+        AETHER_CHECK(document.ReparentEntity(walker, holder));
+        AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().SceneReloads() == reloads + 2);
+    }
 }
 
 AETHER_TEST(LiveViewportPanel_ARealDragFromARowIsPlacedOnTheGroundAndPatchedIntoTheGame) {
