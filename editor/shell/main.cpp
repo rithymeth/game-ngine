@@ -33,6 +33,7 @@
 #include <chrono>
 #include <cctype>
 #include "ui/editor_theme.h"
+#include "ui/shell_layout.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -48,7 +49,7 @@ namespace rhi = aether::gfx::rhi;
 
 namespace {
 
-void DrawEditor(EditorWorkspace& workspace, const char* backend_label, bool& quit) {
+void DrawEditor(EditorWorkspace& workspace, ShellLayout& layout, const char* backend_label, bool& quit) {
     const ImGuiIO& io = ImGui::GetIO();
     if (ImGui::BeginMainMenuBar()) {
         if (ImGui::BeginMenu("File")) {
@@ -66,8 +67,8 @@ void DrawEditor(EditorWorkspace& workspace, const char* backend_label, bool& qui
     const f32 top = ImGui::GetFrameHeight();
     // The side panels' width is the user's to change: drag the divider. It is kept as a fraction so a
     // resized window keeps the proportion, and clamped so neither side can be dragged shut.
-    static f32 side_fraction = 0.0f;
-    if (side_fraction <= 0.0f) side_fraction = io.DisplaySize.x > 1100 ? 420.0f / io.DisplaySize.x : 0.35f;
+    f32& side_fraction = layout.side_fraction;
+    if (side_fraction <= 0.0f) side_fraction = io.DisplaySize.x > 1100 ? 420.0f / std::max(io.DisplaySize.x, 1.0f) : 0.35f;
     side_fraction = std::clamp(side_fraction, 0.15f, 0.6f);
     const f32 status_h = ImGui::GetFrameHeight();
     const f32 side = io.DisplaySize.x * side_fraction;
@@ -197,6 +198,14 @@ int main() {
 
         EditorWorkspace workspace;
         // AETHER_EDITOR_TAB picks the tool shown first (the start of its name, any case).
+        // What the last session left: the divider and the open tool. A headless run (tests, screenshots) neither
+        // reads nor writes it unless AETHER_EDITOR_LAYOUT names a file; AETHER_EDITOR_TAB wins over the remembered tool.
+        ShellLayout layout;
+        const std::filesystem::path layout_file = (headless && !std::getenv("AETHER_EDITOR_LAYOUT")) ? std::filesystem::path() : DefaultShellLayoutPath();
+        if (LoadShellLayout(layout_file, layout) && !layout.tool.empty()) {
+            const i64 tool = workspace.FindTool(layout.tool);
+            if (tool >= 0) workspace.Select(static_cast<usize>(tool));
+        }
         if (const char* tab = std::getenv("AETHER_EDITOR_TAB")) {
             const i64 tool = workspace.FindTool(tab);
             if (tool >= 0) workspace.Select(static_cast<usize>(tool));
@@ -230,7 +239,7 @@ int main() {
             host.NewFrame();
             ImGui::NewFrame();
             workspace.Update(io.DeltaTime);
-            DrawEditor(workspace, backend_label, quit);
+            DrawEditor(workspace, layout, backend_label, quit);
             ImGui::Render();
 
             device->WaitForFence(fence); // one command list: the last frame must be done with it
@@ -258,9 +267,18 @@ int main() {
                 }
             }
             swap_chain->Present(true);
+            if (frame % 120 == 0 && !layout_file.empty()) { // not only at exit: a crash should not lose the divider
+                layout.tool = workspace.ToolName(workspace.Selected());
+                SaveShellLayout(layout_file, layout);
+            }
             Profiler::Get().EndFrame();
         }
         device->WaitForFence(fence);
+        if (!layout_file.empty()) {
+            layout.tool = workspace.ToolName(workspace.Selected());
+            std::string layout_error;
+            if (!SaveShellLayout(layout_file, layout, &layout_error)) AETHER_LOG_WARN("Editor", "Couldn't remember the layout: %s", layout_error.c_str());
+        }
     } catch (const std::exception& e) {
         std::fprintf(stderr, "aether_editor_shell: %s\n", e.what());
         return 1;
