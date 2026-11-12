@@ -104,7 +104,7 @@ or a character controller still loads the scene again when it is moved under ano
 
 A field that holds the path of an asset can take it from the Content Browser: drop a picture on a decal's texture, a sky light's environment image or a material parameter's texture, or a material (`.amat`, `.amati`) on a
 material parameter's material, and the path is set as one finished edit (one undo step). A field takes only the kinds it names (a model dropped on a texture does nothing, and a field that is plain text, such as an entity's name,
-takes nothing). A model on a model reference is not there yet. Developers: `Meta::asset_extensions` on a reflected string field says what it takes.
+takes nothing). A model can also be picked from the Inspector's model dropdown (the path the game loads follows it, in the same undo step). Developers: `Meta::asset_extensions` on a reflected string field says what it takes.
 
 ## Drop a model or a prefab onto the hierarchy
 

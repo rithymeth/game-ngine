@@ -392,6 +392,14 @@ bool ContainsCaseInsensitive(std::string_view haystack, std::string_view needle)
 
 void SetAssetListProvider(AssetListProvider provider) { AssetProvider() = std::move(provider); }
 
+std::string AssetNameOf(const char* asset_type, const assets::AssetGuid& guid) {
+    if (!AssetProvider() || guid.IsNull()) return {};
+    for (const AssetChoice& choice : AssetProvider()(asset_type)) {
+        if (choice.guid == guid) return choice.name;
+    }
+    return {};
+}
+
 InspectResult InspectObject(const reflect::TypeInfo& type, void* object, const char* id) {
     return InspectObject(type, object, id, InspectOptions{});
 }

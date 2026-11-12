@@ -1,12 +1,14 @@
 #include "ui/entity_inspector.h"
 
 #include "aether/reflection/serialize.h"
+#include "aether/scene/components.h"
 #include "core/commands.h"
 #include "ui/reflected_inspector.h"
 
 #include <imgui.h>
 
 #include <algorithm>
+#include <cstring>
 #include <vector>
 
 namespace aether::editor {
@@ -83,8 +85,22 @@ void InspectEntity(CommandContext& ctx, CommandStack& stack, Entity entity) {
             }
             if (edit.Changed()) {
                 const reflect::FieldInfo& field = *edit.changed_field;
+                // Picking another model sets the permanent reference; the path the renderer loads from follows it in the same undo step.
+                const bool model_pick = id == GetComponentId<ModelRenderer>() && std::strcmp(field.name, "model") == 0;
+                if (model_pick) stack.BeginTransaction("Change model");
                 CommitFieldEdit(ctx, stack, guid, id, field, component,
                                 reflect::Any::CopyOf(*field.type, field.Ptr(before.Data())), edit.committed);
+                if (model_pick) {
+                    auto* renderer = ctx.world.GetComponent<ModelRenderer>(entity);
+                    const std::string path = renderer != nullptr ? AssetNameOf("Model", renderer->model.guid) : std::string();
+                    const auto path_field = std::find_if(type.fields.begin(), type.fields.end(), [](const reflect::FieldInfo& f) { return std::strcmp(f.name, "asset_path") == 0; });
+                    if (renderer != nullptr && !path.empty() && path != renderer->asset_path && path_field != type.fields.end()) {
+                        const reflect::Any old_path = path_field->Get(renderer);
+                        SetModelPath(*renderer, path);
+                        CommitFieldEdit(ctx, stack, guid, id, *path_field, renderer, old_path, true);
+                    }
+                    stack.EndTransaction();
+                }
             } else if (edit.committed) {
                 stack.BreakMergeChain();
             }
