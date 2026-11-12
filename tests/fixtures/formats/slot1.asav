@@ -1,0 +1,76 @@
+{
+  "$type": "aether.save",
+  "checksum": "9d937326",
+  "data": {
+    "$v": 1,
+    "entries": [
+      {
+        "$v": 1,
+        "b": false,
+        "f": 0.0,
+        "i": 7,
+        "key": "level",
+        "kind": 2,
+        "s": "",
+        "v": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "$v": 1,
+        "b": false,
+        "f": 0.0,
+        "i": 0,
+        "key": "checkpoint",
+        "kind": 4,
+        "s": "bridge",
+        "v": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "$v": 1,
+        "b": true,
+        "f": 0.0,
+        "i": 0,
+        "key": "met_the_guide",
+        "kind": 1,
+        "s": "",
+        "v": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "$v": 1,
+        "b": false,
+        "f": 62.5,
+        "i": 0,
+        "key": "health",
+        "kind": 3,
+        "s": "",
+        "v": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    ],
+    "has_world": false,
+    "world": {
+      "$v": 1,
+      "destroyed": [],
+      "entities": []
+    }
+  },
+  "format": 1,
+  "slot": "slot1",
+  "timestamp_utc": 1794447842,
+  "type": "SaveBag",
+  "type_version": 1
+}
