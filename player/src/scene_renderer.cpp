@@ -2441,14 +2441,19 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
     world.ForEach<ModelRenderer>([&](const ModelRenderer& model) {
         if (model.asset_path[0] != '\0') renderer.FindModel(model.asset_path);
     });
-    // The base colour textures a MaterialParameters component names (player/src/material_overrides.h): loaded here for the same reason, then looked up per draw.
+    // The textures a MaterialParameters component names (player/src/material_overrides.h): loaded here for the same reason, then looked up per draw. The same image in two
+    // slots is two textures, since a normal map and an sRGB colour are filtered differently when the mips are made.
+    const auto override_key = [](const std::string& path, usize slot) { return path + "#" + std::to_string(slot); };
+    const assets::MipFilter slot_filters[player::kTextureSlotCount] = {assets::MipFilter::Srgb, assets::MipFilter::NormalMap, assets::MipFilter::Linear, assets::MipFilter::Linear,
+                                                                       assets::MipFilter::Srgb};
     std::unordered_map<std::string, std::pair<SampledTextureHandle, bool>> override_textures;
     world.ForEach<MaterialParameters>([&](const MaterialParameters& overrides) {
         for (const MaterialParameterValue& entry : overrides.values) {
-            if (!entry.is_texture || entry.name != player::kOverrideBaseColorTexture || entry.texture.empty() || override_textures.count(entry.texture) != 0) continue;
+            const int slot = entry.is_texture ? player::TextureSlotOfName(entry.name) : -1;
+            if (slot < 0 || entry.texture.empty() || override_textures.count(override_key(entry.texture, static_cast<usize>(slot))) != 0) continue;
             SampledTextureHandle loaded;
-            const bool ok = renderer.LoadTexture(entry.texture, loaded);
-            override_textures[entry.texture] = {loaded, ok};
+            const bool ok = renderer.LoadTexture(entry.texture, loaded, slot_filters[slot]);
+            override_textures[override_key(entry.texture, static_cast<usize>(slot))] = {loaded, ok};
         }
     });
 
@@ -2843,15 +2848,22 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                             surface.metallic = primitive.metallic;
                             surface.roughness = primitive.roughness;
                             std::copy(primitive.emissive, primitive.emissive + 3, surface.emissive);
-                            SampledTextureHandle base_color_texture = primitive.base_color_texture;
-                            bool has_base_color_texture = primitive.has_base_color_texture;
+                            SampledTextureHandle base_color_texture = primitive.base_color_texture, normal_texture = primitive.normal_texture,
+                                                 metallic_roughness_texture = primitive.metallic_roughness_texture, occlusion_texture = primitive.occlusion_texture,
+                                                 emissive_texture = primitive.emissive_texture;
+                            bool has_base_color_texture = primitive.has_base_color_texture, has_normal_texture = primitive.has_normal_texture,
+                                 has_metallic_roughness_texture = primitive.has_metallic_roughness_texture, has_occlusion_texture = primitive.has_occlusion_texture,
+                                 has_emissive_texture = primitive.has_emissive_texture;
                             if (const MaterialParameters* overrides = world.GetComponent<MaterialParameters>(entities[row])) {
-                                if (const std::string* path = player::ApplyMaterialOverrides(*overrides, surface)) {
-                                    const auto found = override_textures.find(*path);
-                                    if (found != override_textures.end() && found->second.second) {
-                                        base_color_texture = found->second.first;
-                                        has_base_color_texture = true;
-                                    }
+                                const player::TextureOverrides images = player::ApplyMaterialOverrides(*overrides, surface);
+                                SampledTextureHandle* handles[player::kTextureSlotCount] = {&base_color_texture, &normal_texture, &metallic_roughness_texture, &occlusion_texture, &emissive_texture};
+                                bool* present[player::kTextureSlotCount] = {&has_base_color_texture, &has_normal_texture, &has_metallic_roughness_texture, &has_occlusion_texture, &has_emissive_texture};
+                                for (usize slot = 0; slot < player::kTextureSlotCount; ++slot) {
+                                    if (images.path[slot] == nullptr) continue;
+                                    const auto found = override_textures.find(override_key(*images.path[slot], slot));
+                                    if (found == override_textures.end() || !found->second.second) continue; // not in the package: the model's own stays
+                                    *handles[slot] = found->second.first;
+                                    *present[slot] = true;
                                 }
                             }
                             DrawConstants constants;
@@ -2867,13 +2879,13 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                                 if (alpha_or_phase < 0.0f) alpha_or_phase += 6.2831853f;
                             }
                             constants.color_packed[1] = PackHalfPair(surface.color[2] * tint.z, alpha_or_phase);
-                            PackEmissive(surface.emissive, primitive.emissive_texture, primitive.has_emissive_texture, constants.emissive_packed);
+                            PackEmissive(surface.emissive, emissive_texture, has_emissive_texture, constants.emissive_packed);
                             PackNormalMatrix(normal_transform, constants.normal_matrix_packed);
                             constants.material_textures = PackMaterialTextures(
                                 base_color_texture, has_base_color_texture,
-                                primitive.normal_texture, primitive.has_normal_texture,
-                                primitive.metallic_roughness_texture, primitive.has_metallic_roughness_texture,
-                                primitive.occlusion_texture, primitive.has_occlusion_texture);
+                                normal_texture, has_normal_texture,
+                                metallic_roughness_texture, has_metallic_roughness_texture,
+                                occlusion_texture, has_occlusion_texture);
                             constants.material_factors_0 = PackHalfPair(surface.metallic, surface.roughness);
                             constants.material_factors_1 = PackHalfPair(primitive.normal_scale, primitive.occlusion_strength);
                             if (primitive.water && primitive.bounds_radius >= 0.0f && primitive.bounds_height < 0.1f && (!have_water || primitive.bounds_radius > water_radius)) {

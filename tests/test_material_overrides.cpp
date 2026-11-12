@@ -36,7 +36,8 @@ AETHER_TEST(MaterialOverrides_TheNamedParametersReplaceTheModelsSurface) {
     surface.emissive[0] = 0.0f; surface.emissive[1] = 0.0f; surface.emissive[2] = 0.0f;
 
     // Nothing set: the model's own surface, and no texture.
-    AETHER_CHECK(player::ApplyMaterialOverrides(overrides, surface) == nullptr);
+    const player::TextureOverrides none = player::ApplyMaterialOverrides(overrides, surface);
+    AETHER_CHECK(none.path[0] == nullptr && none.path[1] == nullptr && none.path[2] == nullptr && none.path[3] == nullptr && none.path[4] == nullptr);
     AETHER_CHECK(surface.color[0] == 0.8f && surface.metallic == 0.1f && surface.roughness == 0.9f);
 
     overrides.SetVectorParameter(player::kOverrideBaseColor, Vec3(1.0f, 0.0f, 0.5f), 0.25f);
@@ -44,16 +45,30 @@ AETHER_TEST(MaterialOverrides_TheNamedParametersReplaceTheModelsSurface) {
     overrides.SetScalarParameter(player::kOverrideRoughness, 0.2f);
     overrides.SetVectorParameter(player::kOverrideEmissive, Vec3(0.0f, 2.0f, 0.0f), 1.0f);
     overrides.SetScalarParameter("SomethingElse", 7.0f); // a name the player does not know is left alone
-    AETHER_CHECK(player::ApplyMaterialOverrides(overrides, surface) == nullptr);
+    AETHER_CHECK(player::ApplyMaterialOverrides(overrides, surface).For(player::TextureSlot::BaseColor) == nullptr);
     AETHER_CHECK(surface.color[0] == 1.0f && surface.color[1] == 0.0f && surface.color[2] == 0.5f && surface.color[3] == 0.25f);
     AETHER_CHECK(surface.metallic == 1.0f && surface.roughness == 0.2f);
     AETHER_CHECK(surface.emissive[1] == 2.0f); // emission can go above 1: it is HDR
 
-    // A texture parameter is returned as the path to draw, and a texture under another name is not.
+    // A texture parameter is returned as the path to draw in its slot, each slot on its own, and a texture under another name is not.
     overrides.SetTextureParameter(player::kOverrideBaseColorTexture, "textures/brick.png");
-    overrides.SetTextureParameter("NormalTexture", "textures/other.png");
-    const std::string* path = player::ApplyMaterialOverrides(overrides, surface);
-    AETHER_CHECK(path != nullptr && *path == "textures/brick.png");
+    overrides.SetTextureParameter(player::kOverrideNormalTexture, "textures/n.png");
+    overrides.SetTextureParameter(player::kOverrideMetallicRoughnessTexture, "textures/mr.png");
+    overrides.SetTextureParameter(player::kOverrideOcclusionTexture, "textures/ao.png");
+    overrides.SetTextureParameter(player::kOverrideEmissiveTexture, "textures/glow.png");
+    overrides.SetTextureParameter("SomeOtherTexture", "textures/other.png");
+    overrides.SetTextureParameter("EmptyOne", "");
+    const player::TextureOverrides images = player::ApplyMaterialOverrides(overrides, surface);
+    AETHER_CHECK(images.For(player::TextureSlot::BaseColor) != nullptr && *images.For(player::TextureSlot::BaseColor) == "textures/brick.png");
+    AETHER_CHECK(images.For(player::TextureSlot::Normal) != nullptr && *images.For(player::TextureSlot::Normal) == "textures/n.png");
+    AETHER_CHECK(images.For(player::TextureSlot::MetallicRoughness) != nullptr && *images.For(player::TextureSlot::MetallicRoughness) == "textures/mr.png");
+    AETHER_CHECK(images.For(player::TextureSlot::Occlusion) != nullptr && *images.For(player::TextureSlot::Occlusion) == "textures/ao.png");
+    AETHER_CHECK(images.For(player::TextureSlot::Emissive) != nullptr && *images.For(player::TextureSlot::Emissive) == "textures/glow.png");
+    AETHER_CHECK(player::TextureSlotOfName("SomeOtherTexture") == -1 && player::TextureSlotOfName("NormalTexture") == 1);
+    // A texture with no path sets nothing.
+    MaterialParameters blank;
+    blank.SetTextureParameter(player::kOverrideNormalTexture, "");
+    AETHER_CHECK(player::ApplyMaterialOverrides(blank, surface).For(player::TextureSlot::Normal) == nullptr);
 }
 
 AETHER_TEST(MaterialOverrides_OutOfRangeIsClampedAndNotANumberIsIgnored) {
@@ -93,7 +108,7 @@ reflect::Json TransformJson(std::initializer_list<f32> position, std::initialize
 
 // A 2 m box in front of the camera on a plain grey material, with `parameters` (a MaterialParameters component, or null for none) on it, and a plain
 // blue 4 x 4 texture in the content folder for the texture case.
-fs::path CookBoxScene(const fs::path& root, const reflect::Json& parameters) {
+fs::path CookBoxScene(const fs::path& root, const reflect::Json& parameters, bool front_light = false) {
     fs::create_directories(root / "Content/models");
     fs::create_directories(root / "Content/textures");
     fs::create_directories(root / "Content/Scenes");
@@ -101,17 +116,26 @@ fs::path CookBoxScene(const fs::path& root, const reflect::Json& parameters) {
     reflect::Json project = reflect::Json::parse(std::ifstream(games / "AETHER-01.aproject"));
     project["name"] = "OverrideScene";
     project["startup_scene"] = "Scenes/Main.ascene";
-    project["always_cook"] = reflect::Json::array({"textures/blue.png"});
+    project["always_cook"] = reflect::Json::array({"textures/blue.png", "textures/green.png", "textures/black.png", "textures/mr.png", "textures/tilted.png"});
     std::ofstream(root / "OverrideScene.aproject") << project.dump(2);
 
-    std::vector<u8> rgb(4 * 4 * 3);
-    for (usize i = 0; i < rgb.size(); i += 3) {
-        rgb[i] = 10;
-        rgb[i + 1] = 10;
-        rgb[i + 2] = 240;
-    }
-    const std::vector<u8> png = assets::EncodePngRgb8(4, 4, rgb);
-    std::ofstream(root / "Content/textures/blue.png", std::ios::binary).write(reinterpret_cast<const char*>(png.data()), static_cast<std::streamsize>(png.size()));
+    // Plain 4 x 4 images: a blue one (a base colour), a green one (an emissive one), a black one (an occlusion map that shuts the ambient out), one that says
+    // metallic 1 and roughness 0.1 (blue 255, green 26), and a normal map tilted 45 degrees toward +X.
+    const auto write_image = [&](const char* name, u8 r, u8 g, u8 b) {
+        std::vector<u8> rgb(4 * 4 * 3);
+        for (usize i = 0; i < rgb.size(); i += 3) {
+            rgb[i] = r;
+            rgb[i + 1] = g;
+            rgb[i + 2] = b;
+        }
+        const std::vector<u8> png = assets::EncodePngRgb8(4, 4, rgb);
+        std::ofstream(root / "Content/textures" / name, std::ios::binary).write(reinterpret_cast<const char*>(png.data()), static_cast<std::streamsize>(png.size()));
+    };
+    write_image("blue.png", 10, 10, 240);
+    write_image("green.png", 10, 240, 10);
+    write_image("black.png", 0, 0, 0);
+    write_image("mr.png", 0, 26, 255);
+    write_image("tilted.png", 218, 128, 218);
 
     MeshBuilder box;
     box.Box(Vec3(-1.0f, -1.0f, -1.0f), Vec3(1.0f, 1.0f, 1.0f));
@@ -131,7 +155,9 @@ fs::path CookBoxScene(const fs::path& root, const reflect::Json& parameters) {
         SceneEntity({{"Transform", TransformJson({0.0f, 0.0f, 5.0f})},
                      {"Camera", {{"$v", 1}, {"projection", "Perspective"}, {"fov_degrees", 50.0f}, {"near_plane", 0.1f}, {"far_plane", 100.0f},
                                  {"ortho_height", 10.0f}, {"priority", 0}}}}),
-        SceneEntity({{"Transform", TransformJson({0, 0, 0}, {-0.26f, 0.9f, 0.1f, 0.34f})},
+        // The usual light comes from the side and does not reach the box's front face (which is lit by the sky alone); `front_light` shines nearly head-on, for the case
+        // that needs direct light (a normal map turning the face toward or away from it).
+        SceneEntity({{"Transform", front_light ? TransformJson({0, 0, 0}, {-0.0998f, 0.0f, 0.0f, 0.995f}) : TransformJson({0, 0, 0}, {-0.26f, 0.9f, 0.1f, 0.34f})},
                      {"DirectionalLight", {{"$v", 1}, {"color", {1.0f, 0.95f, 0.88f}}, {"intensity", 3.0f}, {"cast_shadows", false}}}}),
         SceneEntity({{"Transform", TransformJson({0, 0, 0})},
                      {"SkyLight", {{"$v", 1}, {"color", {1.0f, 1.0f, 1.0f}}, {"intensity", 1.0f}, {"environment", ""}, {"environment_rotation_degrees", 0.0f}}}}),
@@ -242,6 +268,21 @@ static void MaterialOverrides_ShowOnTheModelInTheRenderedPicture(rhi::Backend ba
     // A texture, by the content path of an image in the package, is drawn in place of the model's own: a blue image makes the face blue.
     const Colour blue = CentreOf(backend, root / "blue", CookBoxScene(root / "blue", Parameters({Texture("BaseColorTexture", "textures/blue.png")})), &ran);
     AETHER_CHECK(blue.b > blue.r + 40.0 && blue.b > blue.g + 40.0);
+
+    // The other slots, each on its own: an emissive image multiplies the emissive colour (green glow where the image is green), a metallic-roughness image
+    // multiplies the Metallic and Roughness values as in glTF (so with both at 1 the image alone decides, here a mirror, as the scalars made it), a black
+    // occlusion image shuts the sky's light out of this face (the sky is all that lights it), and a normal map tilted 45 degrees takes a head-on light's share
+    // off a face it lights directly.
+    const Colour image_glow = CentreOf(backend, root / "image_glow", CookBoxScene(root / "image_glow", Parameters({Vector("Emissive", 3.0f, 3.0f, 3.0f, 1.0f), Texture("EmissiveTexture", "textures/green.png")})), &ran);
+    AETHER_CHECK(image_glow.g > plain.g + 40.0 && image_glow.g > image_glow.r + 15.0);
+    const Colour image_metal = CentreOf(backend, root / "image_metal", CookBoxScene(root / "image_metal", Parameters({Scalar("Metallic", 1.0f), Scalar("Roughness", 1.0f), Texture("MetallicRoughnessTexture", "textures/mr.png")})), &ran);
+    AETHER_CHECK(image_metal.r + image_metal.g + image_metal.b > (plain.r + plain.g + plain.b) * 1.1);
+    const Colour shut_out = CentreOf(backend, root / "shut_out", CookBoxScene(root / "shut_out", Parameters({Texture("OcclusionTexture", "textures/black.png")})), &ran);
+    AETHER_CHECK(shut_out.r + shut_out.g + shut_out.b < (plain.r + plain.g + plain.b) * 0.5);
+    const Colour head_on = CentreOf(backend, root / "head_on", CookBoxScene(root / "head_on", nullptr, true), &ran);
+    const Colour tilted = CentreOf(backend, root / "tilted", CookBoxScene(root / "tilted", Parameters({Texture("NormalTexture", "textures/tilted.png")}), true), &ran);
+    AETHER_CHECK(head_on.r + head_on.g + head_on.b > (plain.r + plain.g + plain.b) * 1.3);                               // the head-on light does reach the face
+    AETHER_CHECK(tilted.r + tilted.g + tilted.b < (head_on.r + head_on.g + head_on.b) * 0.96);                           // and the tilted normal takes part of it off (about 7% after the tone curve)
 
     // A parameter under a name the player does not know changes nothing.
     const Colour other = CentreOf(backend, root / "other", CookBoxScene(root / "other", Parameters({Scalar("Wobble", 4.0f)})), &ran);

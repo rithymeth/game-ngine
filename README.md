@@ -4007,8 +4007,10 @@ HLSL, like Unreal's material editor. They live in `Aether::Renderer`
   Parameter, Get Scalar and Get Vector Parameter, and Clear Parameter.
   The player (`aether_player`, and the editor's Live Viewport) draws a model with the surface its glTF gives it, and this component changes that for one
   entity by these names: `BaseColor` (a vector, rgb and alpha), `Metallic` and `Roughness` (scalars, 0 to 1), `Emissive` (a vector, rgb, may go above 1)
-  and `BaseColorTexture` (a texture parameter: the content path of an image in the package). A name it does not know is ignored, and so is a value that is
-  not a finite number. The player has no material graph, so the `.amat` a component names is not read there.
+  and the texture parameters `BaseColorTexture`, `NormalTexture`, `MetallicRoughnessTexture`, `OcclusionTexture` and `EmissiveTexture` (the content path of an image
+  in the package, drawn in place of the model's own in that slot). As in glTF the metallic-roughness image (roughness in green, metallic in blue) multiplies the
+  `Metallic` and `Roughness` values, so set those to 1 to let the image decide, and the emissive image multiplies the `Emissive` colour, so give that a colour too. A name
+  it does not know is ignored, and so is a value that is not a finite number. The player has no material graph, so the `.amat` a component names is not read there.
 - **Rendering**: extraction carries each object's material key and
   overrides, and draw batches group by mesh and material.
 
