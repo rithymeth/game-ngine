@@ -3,6 +3,7 @@
 #include "aether/scene/components.h"
 #include "aether/scene/gameplay.h"
 #include "aether/scene/hierarchy.h"
+#include "core/snapping.h"
 
 #include <algorithm>
 #include <cmath>
@@ -85,6 +86,125 @@ Entity PickEntity(const SceneDocument& document, const SceneViewCamera& camera, 
     return best;
 }
 
+bool MouseRay(const Mat4& view_projection, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, Vec3& ray_origin, Vec3& ray_direction) {
+    if (size.x < 1.0f || size.y < 1.0f) return false;
+    Mat4 inverse;
+    if (!view_projection.TryInverse(inverse)) return false;
+    const f32 nx = (mouse.x - origin.x) / size.x * 2.0f - 1.0f;
+    const f32 ny = 1.0f - (mouse.y - origin.y) / size.y * 2.0f;
+    auto unproject = [&](f32 depth) {
+        const Vec4 p = inverse * Vec4(nx, ny, depth, 1.0f);
+        return Vec3(p.x / p.w, p.y / p.w, p.z / p.w);
+    };
+    const Vec3 near_point = unproject(0.0f), far_point = unproject(1.0f);
+    const Vec3 d = far_point - near_point;
+    if (!(d.Length() > 1e-6f)) return false;
+    ray_origin = near_point;
+    ray_direction = d.Normalized();
+    return true;
+}
+
+bool ClosestOnAxis(const Vec3& axis_origin, const Vec3& axis_direction, const Vec3& ray_origin, const Vec3& ray_direction, f32& distance) {
+    const Vec3 w0 = axis_origin - ray_origin;
+    const f32 b = axis_direction.Dot(ray_direction);
+    const f32 d = axis_direction.Dot(w0);
+    const f32 e = ray_direction.Dot(w0);
+    const f32 denominator = 1.0f - b * b; // both directions are unit length
+    if (std::fabs(denominator) < 1e-5f) return false;
+    distance = (b * e - d) / denominator;
+    return true;
+}
+
+namespace {
+
+Vec3 AxisDirection(GizmoAxis axis) {
+    return axis == GizmoAxis::X ? Vec3(1, 0, 0) : (axis == GizmoAxis::Y ? Vec3(0, 1, 0) : Vec3(0, 0, 1));
+}
+
+f32 AxisComponent(const Vec3& v, GizmoAxis axis) { return axis == GizmoAxis::X ? v.x : (axis == GizmoAxis::Y ? v.y : v.z); }
+
+f32 DistanceToSegment(const ImVec2& p, const ImVec2& a, const ImVec2& b) {
+    const f32 abx = b.x - a.x, aby = b.y - a.y;
+    const f32 length_sq = abx * abx + aby * aby;
+    const f32 t = length_sq > 1e-6f ? std::clamp(((p.x - a.x) * abx + (p.y - a.y) * aby) / length_sq, 0.0f, 1.0f) : 0.0f;
+    return std::hypot(p.x - (a.x + abx * t), p.y - (a.y + aby * t));
+}
+
+// A world position as the local position an entity under its parent would need to be there.
+Vec3 LocalPositionFor(const SceneDocument& document, Entity entity, const Vec3& world_position) {
+    const Entity parent = document.ParentOf(entity);
+    if (parent == kNullEntity) return world_position;
+    Mat4 inverse;
+    if (!ComputeWorldTransform(document.GetWorld(), document.Guids(), parent).TryInverse(inverse)) return world_position;
+    const Vec4 local = inverse * Vec4(world_position.x, world_position.y, world_position.z, 1.0f);
+    return Vec3(local.x, local.y, local.z);
+}
+
+} // namespace
+
+Entity TranslateGizmo::Subject(const SceneDocument& document) {
+    for (const Entity entity : document.Selection()) {
+        if (document.GetWorld().IsAlive(entity) && document.GetWorld().HasComponent<Transform>(entity)) return entity;
+    }
+    return kNullEntity;
+}
+
+GizmoAxis TranslateGizmo::HitTest(const SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse) const {
+    const Entity subject = Subject(document);
+    if (subject == kNullEntity || size.x < 1.0f || size.y < 1.0f) return GizmoAxis::None;
+    const Mat4 vp = camera.ViewProjection(size.x / size.y);
+    const Vec3 at = WorldOrigin(document, subject);
+    ImVec2 from;
+    if (!ProjectToViewport(vp, at, origin, size, from)) return GizmoAxis::None;
+    GizmoAxis best = GizmoAxis::None;
+    f32 best_distance = 9.0f; // pixels
+    for (const GizmoAxis axis : {GizmoAxis::X, GizmoAxis::Y, GizmoAxis::Z}) {
+        ImVec2 to;
+        if (!ProjectToViewport(vp, at + AxisDirection(axis) * HandleLength(camera), origin, size, to)) continue;
+        const f32 distance = DistanceToSegment(mouse, from, to);
+        if (distance < best_distance) { best_distance = distance; best = axis; }
+    }
+    return best;
+}
+
+bool TranslateGizmo::Begin(const SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse) {
+    const GizmoAxis axis = HitTest(document, camera, origin, size, mouse);
+    if (axis == GizmoAxis::None) return false;
+    Vec3 ray_origin, ray_direction;
+    const Entity subject = Subject(document);
+    const Vec3 at = WorldOrigin(document, subject);
+    f32 t = 0.0f;
+    if (!MouseRay(camera.ViewProjection(size.x / size.y), origin, size, mouse, ray_origin, ray_direction) ||
+        !ClosestOnAxis(at, AxisDirection(axis), ray_origin, ray_direction, t)) return false;
+    axis_ = axis;
+    entity_ = subject;
+    start_world_ = at;
+    grab_ = t;
+    return true;
+}
+
+bool TranslateGizmo::Apply(SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, f32 snap_step, bool committed) {
+    if (!Dragging() || !document.GetWorld().IsAlive(entity_)) return false;
+    Vec3 ray_origin, ray_direction;
+    f32 t = 0.0f;
+    const Vec3 direction = AxisDirection(axis_);
+    if (!MouseRay(camera.ViewProjection(size.x / size.y), origin, size, mouse, ray_origin, ray_direction) ||
+        !ClosestOnAxis(start_world_, direction, ray_origin, ray_direction, t)) return false;
+    f32 along = t - grab_;
+    if (snap_step > 0.0f) along = SnapScalar(AxisComponent(start_world_, axis_) + along, snap_step) - AxisComponent(start_world_, axis_);
+    return document.SetPosition(entity_, LocalPositionFor(document, entity_, start_world_ + direction * along), committed);
+}
+
+bool TranslateGizmo::Update(SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, f32 snap_step) {
+    return Apply(document, camera, origin, size, mouse, snap_step, false);
+}
+
+void TranslateGizmo::End(SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, f32 snap_step) {
+    Apply(document, camera, origin, size, mouse, snap_step, true);
+    axis_ = GizmoAxis::None;
+    entity_ = kNullEntity;
+}
+
 void SceneViewPanel::FocusSelection(const SceneDocument& document) {
     std::vector<Entity> subjects;
     for (const Entity entity : document.Selection()) {
@@ -108,6 +228,15 @@ void SceneViewPanel::FocusSelection(const SceneDocument& document) {
 }
 
 void SceneViewPanel::Draw(SceneDocument& document) {
+    ImGui::Checkbox("Snap", &snap_);
+    ImGui::SetItemTooltip("Round a gizmo move to the step");
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!snap_);
+    ImGui::SetNextItemWidth(90.0f);
+    ImGui::DragFloat("##snap_step", &snap_step_, 0.05f, 0.05f, 100.0f, "%.2f m");
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::TextDisabled("drag an arrow on the selected entity to move it");
     const ImVec2 avail = ImGui::GetContentRegionAvail();
     const ImVec2 size(std::max(avail.x, 64.0f), std::max(avail.y, 64.0f));
     const ImVec2 origin = ImGui::GetCursorScreenPos();
@@ -128,9 +257,15 @@ void SceneViewPanel::Draw(SceneDocument& document) {
     }
     if (hovered && io.MouseWheel != 0.0f) camera_.Zoom(io.MouseWheel);
     if (hovered && !io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_F)) FocusSelection(document);
+    const f32 snap_step = snap_ ? snap_step_ : 0.0f;
     if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
         press_ = io.MousePos;
         dragged_ = false;
+        if (!io.KeyShift && gizmo_.Begin(document, camera_, origin, size, io.MousePos)) dragged_ = true; // a gizmo press is not a pick
+    }
+    if (gizmo_.Dragging()) {
+        if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) gizmo_.Update(document, camera_, origin, size, io.MousePos, snap_step);
+        else gizmo_.End(document, camera_, origin, size, io.MousePos, snap_step);
     }
     if (active && ImGui::IsMouseDown(ImGuiMouseButton_Left) && (std::fabs(io.MousePos.x - press_.x) + std::fabs(io.MousePos.y - press_.y)) > 4.0f) dragged_ = true;
     if (hovered && ImGui::IsMouseReleased(ImGuiMouseButton_Left) && !dragged_ && !io.KeyShift) {
@@ -195,6 +330,27 @@ void SceneViewPanel::Draw(SceneDocument& document) {
         if (selected || entity == hovered_entity) {
             ImVec2 at;
             if (ProjectToViewport(vp, origin_w, origin, size, at)) draw->AddText(ImVec2(at.x + 8.0f, at.y - 18.0f), color, document.Name(entity).c_str());
+        }
+    }
+    // The move gizmo on the first selected entity: three arrows along world X, Y and Z, the one under the mouse (or being dragged) brighter.
+    if (const Entity subject = TranslateGizmo::Subject(document); subject != kNullEntity) {
+        const GizmoAxis hot = gizmo_.Dragging() ? gizmo_.Axis() : (hovered ? gizmo_.HitTest(document, camera_, origin, size, io.MousePos) : GizmoAxis::None);
+        const Vec3 at = WorldOrigin(document, subject);
+        const f32 length = TranslateGizmo::HandleLength(camera_);
+        struct Handle { GizmoAxis axis; Vec3 direction; ImU32 normal, bright; };
+        const Handle handles[3] = {{GizmoAxis::X, Vec3(1, 0, 0), Color(210, 70, 70), Color(255, 130, 120)},
+                                   {GizmoAxis::Y, Vec3(0, 1, 0), Color(80, 190, 80), Color(140, 255, 140)},
+                                   {GizmoAxis::Z, Vec3(0, 0, 1), Color(80, 120, 230), Color(140, 175, 255)}};
+        ImVec2 from;
+        if (ProjectToViewport(vp, at, origin, size, from)) {
+            for (const Handle& h : handles) {
+                ImVec2 to;
+                if (!ProjectToViewport(vp, at + h.direction * length, origin, size, to)) continue;
+                const ImU32 color = h.axis == hot ? h.bright : h.normal;
+                draw->AddLine(from, to, color, h.axis == hot ? 4.0f : 3.0f);
+                draw->AddCircleFilled(to, h.axis == hot ? 7.0f : 5.5f, color);
+            }
+            draw->AddCircleFilled(from, 3.5f, Color(235, 238, 245));
         }
     }
     draw->AddText(ImVec2(origin.x + 8.0f, end.y - 22.0f), Color(128, 135, 148),

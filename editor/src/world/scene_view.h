@@ -32,6 +32,45 @@ bool ProjectToViewport(const Mat4& view_projection, const Vec3& world, const ImV
 // kNullEntity if none. Only entities with a Transform can be picked.
 Entity PickEntity(const SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, f32 radius = 14.0f);
 
+// The mouse as a ray into the world (origin and unit direction); false if the view-projection can't be inverted.
+bool MouseRay(const Mat4& view_projection, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, Vec3& ray_origin, Vec3& ray_direction);
+
+// The distance along the line through `axis_origin` in unit direction `axis_direction` at which it passes closest to a ray;
+// false when the two are (nearly) parallel, where there is no such point.
+bool ClosestOnAxis(const Vec3& axis_origin, const Vec3& axis_direction, const Vec3& ray_origin, const Vec3& ray_direction, f32& distance);
+
+enum class GizmoAxis { None, X, Y, Z };
+
+// The move gizmo: three axis handles at the first selected entity, dragged along world X, Y or Z. A drag is one undoable
+// edit however many frames it takes (the document merges the uncommitted updates), moves the entity in world space even under
+// a parent, and snaps the dragged axis to `snap_step` (0 = off). Only the first selected entity moves; a multi-selection move
+// needs the document to track more than one pending edit. No ImGui: the panel feeds it the mouse.
+class TranslateGizmo {
+public:
+    // The handle length in world units, so it stays about the same size on screen at any zoom.
+    static f32 HandleLength(const SceneViewCamera& camera) { return camera.distance * 0.18f; }
+    // The entity the gizmo is on (the first selected one with a Transform), or kNullEntity.
+    static Entity Subject(const SceneDocument& document);
+
+    GizmoAxis HitTest(const SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse) const;
+    // Starts a drag if `mouse` is on a handle; true if it did.
+    bool Begin(const SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse);
+    // Moves the subject to follow the mouse, as an uncommitted edit; false if there is no drag (or the mouse ray is parallel to the axis).
+    bool Update(SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, f32 snap_step);
+    // Ends the drag, committing it as one edit.
+    void End(SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, f32 snap_step);
+    bool Dragging() const { return axis_ != GizmoAxis::None; }
+    GizmoAxis Axis() const { return axis_; }
+
+private:
+    bool Apply(SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, f32 snap_step, bool committed);
+
+    GizmoAxis axis_ = GizmoAxis::None;
+    Entity entity_ = kNullEntity;
+    Vec3 start_world_{0.0f, 0.0f, 0.0f}; // the subject's world position when the drag began
+    f32 grab_ = 0.0f;                    // where along the axis the mouse took hold, so the entity does not jump to the cursor
+};
+
 // A view of the open scene as boxes and axes over a ground grid, from an orbit camera, with click-to-select. It draws
 // with ImGui's own draw list (no renderer), so it works in the portable shell and headless; it shows where things are, not how they look.
 class SceneViewPanel {
@@ -45,8 +84,11 @@ public:
 
 private:
     SceneViewCamera camera_;
+    TranslateGizmo gizmo_;
     ImVec2 press_{0.0f, 0.0f};
     bool dragged_ = false;
+    bool snap_ = false;
+    f32 snap_step_ = 0.5f;
 };
 
 } // namespace aether::editor

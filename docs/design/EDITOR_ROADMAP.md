@@ -10,7 +10,7 @@ plan, not a status report: a line is only checked when it works and a test or a 
   Sound Cue, Mixer, UI Designer, Navigation, Behavior Tree, Particle Systems, Save Inspector, Build and Package and more.
 - A theme, dockable panels that remember their arrangement, File and Edit menus, a scene list, undo and redo on one command stack.
 - The **Scene** tool (hierarchy with drag-to-reparent, inspector on every reflected component) and the **Scene View**: a wireframe
-  view of the scene (ground grid, entity boxes, cameras, the selection's axes) with an orbit camera and click-to-select.
+  view of the scene (ground grid, entity boxes, cameras, the selection's axes) with an orbit camera, click-to-select and a move gizmo.
 
 ## What an advanced editor has that this does not
 
@@ -20,8 +20,9 @@ In priority order; each is a project of its own.
    in-memory scene into an offscreen texture that ImGui can show. Today `SceneRenderer` draws a cooked package through a running
    `Game` into a swap chain, and more than a dozen passes take the swap chain, so this is a rework of that boundary (stage 1: render a
    live scene offscreen with a pixel readback test; stage 2: show the texture in the shell).
-2. **Transform gizmos.** Move, rotate and scale handles in the Scene View, with snapping (the snapping maths exists in `core/snapping.h`),
-   on the selection as one undoable command.
+2. **Transform gizmos.** Move is done: three arrows on the first selected entity, dragged along world X, Y or Z with optional snapping, one
+   undoable edit per drag, correct under a parent. Still to do: rotate and scale handles (the snapping maths for both exists in
+   `core/snapping.h`), plane handles, and moving a multi-selection (the document tracks one pending drag edit at a time).
 3. **A content browser.** Browse and search the project's assets with thumbnails, drag an asset into the scene or a field. The asset
    database and importers exist; there is no panel for them.
 4. **Previews.** Material, mesh and animation previews that use the real renderer (needs item 1), so tuning a material shows the result.
