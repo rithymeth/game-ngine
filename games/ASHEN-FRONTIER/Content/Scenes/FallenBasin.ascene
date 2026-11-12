@@ -2462,23 +2462,6 @@
           "$v": 1,
           "asset_path": "Models/MULE3.glb"
         },
-        "BoxCollider": {
-          "$v": 1,
-          "center": [
-            0,
-            0.6,
-            0
-          ],
-          "friction": 0.6,
-          "half_extents": [
-            0.45,
-            0.5,
-            0.7
-          ],
-          "is_trigger": false,
-          "report_stay": false,
-          "restitution": 0.0
-        },
         "Transform": {
           "$v": 2,
           "position": [
@@ -2505,9 +2488,13 @@
         "Tags": {
           "$v": 1,
           "names": [
-            "Salvage",
             "MULE3"
           ]
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "properties": [],
+          "script": "278c431a-c7cb-41ea-87c1-0337dad6e636"
         }
       },
       "guid": "92860692-6953-52ba-ae66-2aee8d243856"

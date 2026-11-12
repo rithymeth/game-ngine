@@ -140,6 +140,20 @@ def salvage(work):
     check(not re.search(r"\[ERROR\]", text), "no errors while salvaging")
 
 
+def mule(work):
+    """Kael has three components beside the broken MULE-3 (2.9 m away) and presses Interact: it is repaired (the components are spent) and walks up to him."""
+    command = [str(BUILD / "player" / "aether_player"), "--pak", str(work / "cooked"), "--scene", "Scenes/MuleTest.ascene", "--frames", "200", "--size", "320x180",
+               "--press", "E", "--report", "--user-dir", str(work / "user4")]
+    if sys.platform.startswith("linux") and shutil.which("xvfb-run"):
+        command = ["xvfb-run", "-a"] + command
+    result = subprocess.run(command, capture_output=True, text=True, timeout=300)
+    text = result.stdout + result.stderr
+    check(result.returncode == 0, f"the player runs the MULE-3 test and exits cleanly (exit {result.returncode})")
+    check("MULE-3 repaired" in text, "Interact beside the broken MULE-3 with enough components repairs it")
+    check("MULE-3 reached Kael" in text, "the repaired MULE-3 follows Kael and comes up to him")
+    check(not re.search(r"\[ERROR\]", text), "no errors with MULE-3")
+
+
 def main():
     layout()
     if failures:
@@ -150,6 +164,7 @@ def main():
             play(work)
             interior(work)
             salvage(work)
+            mule(work)
     finally:
         shutil.rmtree(work, ignore_errors=True)
     print(f"{len(failures)} check(s) failed" if failures else "smoke test passed")

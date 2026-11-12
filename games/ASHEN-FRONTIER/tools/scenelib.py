@@ -97,7 +97,14 @@ def script_guid(name):
     return meta["guid"]
 
 
-def give_hands(scene):
+def give_hands(scene, components=0):
     """Puts the Interactor script on the entity added last (Kael's body): what lets him take salvage. Adds the HUD (pack counts, the prompt) too."""
-    scene.entities[-1]["components"]["ScriptComponent"] = {"$v": 1, "properties": [], "script": script_guid("Interactor")}
+    scene.entities[-1]["components"]["ScriptComponent"] = {"$v": 1, "properties": ([{"name": "start_components", "value": str(components)}] if components else []), "script": script_guid("Interactor")}
     scene.add("Hud", {"WidgetComponent": {"$v": 1, "layout": "UI/Hud.aui", "z": 0, "visible": True}})
+
+
+def mule(scene, name, position, rotation=(0, 0, 0), **kwargs):
+    """MULE-3, broken, with its script: repaired in play, then it follows Kael. (No collider: it moves.)"""
+    guid_ = scene.model(name, "MULE3", position=position, rotation=rotation, tags=("MULE3",), **kwargs)
+    scene.entities[-1]["components"]["ScriptComponent"] = {"$v": 1, "properties": [], "script": script_guid("Mule3")}
+    return guid_
