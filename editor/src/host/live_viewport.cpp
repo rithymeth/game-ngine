@@ -54,6 +54,7 @@ struct LiveViewport::Impl {
     u64 reloads = 0;
     u64 patches = 0;
     std::unordered_set<EntityGuid, GuidHash> known; // the identified entities the document had when the scene was last loaded or patched
+    std::unordered_map<EntityGuid, Transform, GuidHash> synced; // their Transforms as the document had them then: a patch copies only the ones that changed since
     std::string scene;
 };
 
@@ -94,7 +95,24 @@ bool LiveViewport::SetScene(const std::vector<u8>& scene_bytes, std::string* err
 
 void LiveViewport::RememberKnown() {
     impl_->known.clear();
-    for (const auto& entry : IdentifiedEntities(impl_->game->GetWorld())) impl_->known.insert(entry.first);
+    impl_->synced.clear();
+    const World& world = impl_->game->GetWorld();
+    for (const auto& entry : IdentifiedEntities(world)) {
+        impl_->known.insert(entry.first);
+        if (const Transform* transform = world.GetComponent<Transform>(entry.second)) impl_->synced[entry.first] = *transform; // just loaded: the document's
+    }
+}
+
+bool LiveViewport::PositionOf(const EntityGuid& entity, Vec3& position) const {
+    if (!impl_ || !impl_->game) return false;
+    const World& world = impl_->game->GetWorld();
+    const auto entities = IdentifiedEntities(world); // one map, kept for the lookup
+    const auto found = entities.find(entity);
+    if (found == entities.end()) return false;
+    const Transform* transform = world.GetComponent<Transform>(found->second);
+    if (transform == nullptr) return false;
+    position = transform->position;
+    return true;
 }
 
 namespace {
@@ -211,11 +229,20 @@ bool LiveViewport::PatchScene(const World& source, const std::vector<ComponentEd
         if (change.op == Op::Add) running.AddComponentRaw(change.target, change.component);
         reflect::FromJson(*info.reflected, running.GetComponentRaw(change.target, change.component), change.value);
     }
+    // Only the Transforms the document changed since the last sync: a body the physics scene is moving (with Run game on) keeps moving, instead of being put back
+    // where the document has it every time something else is edited.
+    const auto same = [](const Transform& a, const Transform& b) {
+        return a.position.x == b.position.x && a.position.y == b.position.y && a.position.z == b.position.z && a.rotation.x == b.rotation.x && a.rotation.y == b.rotation.y &&
+               a.rotation.z == b.rotation.z && a.rotation.w == b.rotation.w && a.scale.x == b.scale.x && a.scale.y == b.scale.y && a.scale.z == b.scale.z;
+    };
     running.ForEach<IdComponent, Transform>([&](IdComponent& id, Transform& transform) {
         if (id.guid.IsNull()) return;
         const auto it = wanted.find(id.guid);
-        if (it != wanted.end()) transform = it->second;
+        if (it == wanted.end()) return;
+        const auto before = impl_->synced.find(id.guid);
+        if (before == impl_->synced.end() || !same(before->second, it->second)) transform = it->second;
     });
+    impl_->synced = wanted;
     impl_->known.clear();
     for (const auto& entry : in_source) impl_->known.insert(entry.first);
     ++impl_->patches;
