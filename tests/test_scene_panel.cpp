@@ -1,6 +1,7 @@
 #include "world/scene_panel.h"
 
 #include "core/commands.h"
+#include "ui/editor_theme.h"
 #include "aether/scene/gameplay.h"
 #include "aether/scene/hierarchy.h"
 #include "test_framework.h"
@@ -224,4 +225,17 @@ AETHER_TEST(ScenePanel_DrawsEveryStateHeadless) {
     panel.SetPath("Scenes/x.ascene");
     frame();
     AETHER_CHECK(panel.Path() == "Scenes/x.ascene");
+}
+
+// The editor's theme: spacing and colors always apply; a missing font is reported, not fatal.
+AETHER_TEST(EditorTheme_AppliesWithoutAFont) {
+    HeadlessImGui imgui;
+    const bool loaded = ApplyEditorTheme(16.0f, Scratch("aether_theme_none") / "missing.ttf");
+    AETHER_CHECK(!loaded);
+    const ImGuiStyle& style = ImGui::GetStyle();
+    AETHER_CHECK(style.WindowRounding > 0.0f && style.FrameRounding > 0.0f);
+    AETHER_CHECK(style.ItemSpacing.y >= 5.0f);
+    AETHER_CHECK(style.Colors[ImGuiCol_Text].x > 0.8f);                  // light text on a dark window
+    AETHER_CHECK(style.Colors[ImGuiCol_WindowBg].x < 0.2f);
+    imgui.Frame([&] { ImGui::Begin("themed"); ImGui::Button("ok"); ImGui::End(); });
 }

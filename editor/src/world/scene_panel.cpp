@@ -163,30 +163,37 @@ void ScenePanel::DrawToolbar() {
         if (document_.IsDirty()) { pending_ = Pending::New; ImGui::OpenPopup("Unsaved changes"); }
         else NewScene(true);
     }
+    ImGui::SetItemTooltip("Start an empty scene");
     ImGui::SameLine();
     char buffer[256];
     std::snprintf(buffer, sizeof(buffer), "%s", path_.c_str());
-    ImGui::SetNextItemWidth(260.0f);
+    ImGui::SetNextItemWidth(200.0f);
     if (ImGui::InputText("##scene_path", buffer, sizeof(buffer))) path_ = buffer;
+    ImGui::SetItemTooltip("Scene file, relative to the content folder");
     ImGui::SameLine();
     if (ImGui::Button("Open")) {
         if (document_.IsDirty()) { pending_ = Pending::Open; ImGui::OpenPopup("Unsaved changes"); }
         else OpenScene(path_, true);
     }
+    ImGui::SetItemTooltip("Open the scene named in the box");
     ImGui::SameLine();
     if (ImGui::Button("Save")) SaveScene();
+    ImGui::SetItemTooltip("Save (Ctrl+S)");
     ImGui::SameLine();
     if (ImGui::Button("Save As")) SaveScene(path_);
+    ImGui::SetItemTooltip("Save to the name in the box");
     ImGui::SameLine();
     ImGui::TextDisabled("|");
     ImGui::SameLine();
     ImGui::BeginDisabled(!document_.CanUndo());
     if (ImGui::Button("Undo")) document_.Undo();
     ImGui::EndDisabled();
+    if (document_.CanUndo()) ImGui::SetItemTooltip("Undo %s (Ctrl+Z)", document_.UndoLabel().c_str());
     ImGui::SameLine();
     ImGui::BeginDisabled(!document_.CanRedo());
     if (ImGui::Button("Redo")) document_.Redo();
     ImGui::EndDisabled();
+    if (document_.CanRedo()) ImGui::SetItemTooltip("Redo %s (Ctrl+Y)", document_.RedoLabel().c_str());
     ImGui::SameLine();
     ImGui::TextDisabled("|");
     ImGui::SameLine();
@@ -201,9 +208,9 @@ void ScenePanel::DrawToolbar() {
         ImGui::SameLine();
         if (ImGui::Button("Stop")) document_.Stop();
     }
-    ImGui::SameLine();
     const std::string title = document_.FilePath().empty() ? std::string("(unsaved scene)") : document_.FilePath().filename().string();
     ImGui::TextDisabled("%s%s%s", title.c_str(), document_.IsDirty() ? " *" : "", state == PlaySession::State::Editing ? "" : "   [playing: edits are discarded on Stop]");
+    if (document_.IsDirty()) ImGui::SetItemTooltip("Unsaved changes");
     if (!status_.empty()) ImGui::TextWrapped("%s", status_.c_str());
     // Undo and redo from the keyboard, when no text box has it.
     const ImGuiIO& io = ImGui::GetIO();

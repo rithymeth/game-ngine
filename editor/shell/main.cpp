@@ -32,6 +32,8 @@
 #include <algorithm>
 #include <chrono>
 #include <cctype>
+#include "ui/editor_theme.h"
+
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -45,20 +47,6 @@ using namespace aether::editor;
 namespace rhi = aether::gfx::rhi;
 
 namespace {
-
-void ApplyEditorStyle() {
-    ImGui::StyleColorsDark();
-    ImGuiStyle& style = ImGui::GetStyle();
-    style.WindowRounding = 4.0f;
-    style.FrameRounding = 3.0f;
-    style.TabRounding = 3.0f;
-    style.WindowPadding = ImVec2(8, 8);
-    style.ItemSpacing = ImVec2(8, 5);
-    ImVec4* colors = style.Colors;
-    colors[ImGuiCol_TitleBgActive] = ImVec4(0.16f, 0.29f, 0.48f, 1.0f);
-    colors[ImGuiCol_Tab] = ImVec4(0.18f, 0.22f, 0.28f, 1.0f);
-    colors[ImGuiCol_TabSelected] = ImVec4(0.26f, 0.42f, 0.66f, 1.0f);
-}
 
 void DrawEditor(EditorWorkspace& workspace, const char* backend_label, bool& quit) {
     const ImGuiIO& io = ImGui::GetIO();
@@ -170,7 +158,7 @@ int main() {
         // Shortcuts use Ctrl everywhere: the engine's key set has no Cmd key
         // yet, so ImGui's macOS Ctrl/Cmd swap would leave none reachable.
         io.ConfigMacOSXBehaviors = false;
-        ApplyEditorStyle();
+        ApplyEditorTheme();
         ImGuiVulkanHost host(*device, *swap_chain);
 
         EditorWorkspace workspace;
