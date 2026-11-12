@@ -39,6 +39,11 @@ certificate error), and `iexpress.exe` produced nothing usable, so the self-extr
 resource compiled with `csc.exe`. A Vulkan-enabled install also fails for a consumer that lacks the Vulkan SDK, because the
 generated `AetherConfig.cmake` requires it -- which is why the installer builds with Vulkan off.
 
+## Move and rotate along an object's own axes
+
+The Move arrows and Rotate rings can follow the object's own axes instead of the world's: the World/Local button in the viewport toolbar, or Q. A rotated object can now be
+pushed along its own length with one arrow. With snapping on, Local snaps the distance moved (the world grid does not line up with a tilted axis). World is still the default.
+
 ## Click anywhere on a model to select it
 
 Picking was by an entity's origin (a click had to land within 14 pixels of it, so a big model could not be picked by clicking on it). The Scene View and the Live

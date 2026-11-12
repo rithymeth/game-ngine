@@ -12,6 +12,8 @@ namespace aether::editor {
 class ViewportTools {
 public:
     GizmoMode Mode() const { return mode_; }
+    GizmoSpace Space() const { return space_; }
+    void SetSpace(GizmoSpace space) { space_ = space; }
     bool SnapEnabled() const { return snap_; }
     // The step of the current mode, or 0 while snapping is off (metres for Move, degrees for Rotate, a scale step for Scale).
     f32 SnapStep() const { return !snap_ ? 0.0f : (mode_ == GizmoMode::Move ? snap_move_ : (mode_ == GizmoMode::Rotate ? snap_rotate_ : snap_scale_)); }
@@ -41,6 +43,7 @@ private:
     TransformGizmo gizmo_;
     const ModelBoundsCache* bounds_ = nullptr;
     GizmoMode mode_ = GizmoMode::Move;
+    GizmoSpace space_ = GizmoSpace::World;
     bool snap_ = false;
     f32 snap_move_ = 0.5f;
     f32 snap_rotate_ = 15.0f;
