@@ -84,16 +84,21 @@ project's scene file. The game's world is frozen by default so the view is the s
 since the last cook is said in the toolbar and appears after **Reload**. A move, a light edit or adding and removing objects is patched in place (see the next three sections); any other change reloads the whole scene (the world, physics and scripts start over), which is
 fine for small and medium scenes.
 
+## Cameras are patched live too
+
+A camera is found in the world every frame, like a light, so editing a camera's settings and adding or removing an object with a camera no longer loads the scene again in the Live Viewport (the viewport uses its own camera for the picture, so the edit does not change what you see). Only a script and a
+character controller are still set up once when the game starts and still load the scene again.
+
 ## Physics bodies are added, changed and removed live in the Live Viewport
 
 An object with a collider or a rigid body (box, sphere, capsule, convex or mesh collider) can now be added, changed or deleted in the Live Viewport without loading the scene again, and so can its colliders' settings: the game's physics scene keeps its bodies in step with
-the world on every physics step, so the body appears, is rebuilt or goes away on the next step of the running game. (While **Run game** is off the world is frozen and physics does not step, so bodies are made when you turn it on.) A script, a character controller and a camera are
+the world on every physics step, so the body appears, is rebuilt or goes away on the next step of the running game. (While **Run game** is off the world is frozen and physics does not step, so bodies are made when you turn it on.) A script and a character controller are
 still set up once when the game starts, so those still load the scene again. With **Run game** on, editing one thing no longer puts the other moving bodies back where the scene has them: only the transforms you changed are copied into the running game.
 
 ## Moving an object under another in the hierarchy no longer reloads the Live Viewport
 
 Dragging an object under another in the hierarchy (or back out to the root), and undoing or redoing that, used to load the scene again. It is now patched like any other edit: the object follows its new parent in the picture at once and the game keeps its state. An object that carries a script,
-a character controller or a camera still loads the scene again when it is moved under another, because the running game set it up when it started.
+or a character controller still loads the scene again when it is moved under another, because the running game set it up when it started.
 
 ## Drop an asset onto a path field in the inspector
 
@@ -116,7 +121,7 @@ cook is drawn after **Reload**, as before. What the last drop did ("Placed ..." 
 
 Pressing undo (or redo) after a move, a light edit, a material override, or adding or deleting an object used to load the scene again, restarting physics and scripts. It is now patched like
 the edit it reverses: an undo or redo of something that only changes components that an object keeps, or creates or destroys an object the game can take live, shows at once and keeps the game's own
-state, and so does an undo of several edits grouped into one step. An undo that touches anything the running game builds when it loads (an object with a script, a character controller or a camera) still loads the scene again.
+state, and so does an undo of several edits grouped into one step. An undo that touches anything the running game builds when it loads (an object with a script or a character controller) still loads the scene again.
 
 ## Material and texture changes on an object show in the game and in the Live Viewport
 
@@ -129,7 +134,7 @@ the Material editor's own graphs (`.amat`) are not drawn by the player, so editi
 
 Adding an object (a model, a light, an empty entity, a duplicate, a model dropped from the Content Browser, a prefab instance) or deleting one now shows in the Live Viewport at once, without
 loading the scene again, and so does adding or removing a light, a model or a name on an object that stays. The viewport compares the document's entities with the ones it last saw, so an
-object the game made by itself (a script spawning a coin) is left alone. What the running game sets up when it starts is still not added or removed live: an entity with a script, a character controller or a camera, or
+object the game made by itself (a script spawning a coin) is left alone. What the running game sets up when it starts is still not added or removed live: an entity with a script or a character controller, or
 a change involving one, loads the scene afresh. Undo and redo of these edits are patched too (see the section on undo below). A patch costs about half a millisecond at 2,000 entities, against about 17 ms for the reload alone.
 
 ## Light edits show in the Live Viewport without restarting the scene
@@ -137,7 +142,7 @@ a change involving one, loads the scene afresh. Undo and redo of these edits are
 Change a light's colour, intensity or shadows, the sky's, the wind's, a post-process volume's or a decal's settings in the inspector, or move or turn a light, and the Live
 Viewport shows it at once without loading the scene again (physics and scripts keep running). The document now says which component of which entity was set
 (`SceneDocument::TakeComponentEdits`) and the viewport copies just those into the running scene (`LiveViewport::PatchScene`). A component that is built into the game
-when it loads (a script, a character controller, the camera) is not copied over a running game: editing one of those still loads the scene afresh.
+when it loads (a script, a character controller) is not copied over a running game: editing one of those still loads the scene afresh.
 
 ## Dragging in the Live Viewport no longer restarts the game
 

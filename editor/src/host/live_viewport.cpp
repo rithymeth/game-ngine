@@ -131,11 +131,13 @@ bool IsPhysicsBodyComponent(ComponentId component) {
 
 bool LiveViewport::IsPatchable(ComponentId component) {
     // What the renderer reads each frame (a MaterialParameters per draw: player/src/material_overrides.h) and what the physics scene keeps in step with the world.
-    // A script, a character, an audio source or a camera is set up once when the game starts, so those need the scene loaded again.
+    // A script, a character controller or an audio source is set up once when the game starts, so those need the scene loaded again. (A camera is found in the world
+    // every frame, like a light.)
     return IsPhysicsBodyComponent(component) || component == GetComponentId<Transform>() || component == GetComponentId<EntityName>() || component == GetComponentId<ModelRenderer>() ||
            component == GetComponentId<DirectionalLight>() || component == GetComponentId<PointLight>() || component == GetComponentId<SpotLight>() ||
            component == GetComponentId<SkyLight>() || component == GetComponentId<Wind>() || component == GetComponentId<WindZone>() ||
-           component == GetComponentId<PostProcessVolume>() || component == GetComponentId<Decal>() || component == GetComponentId<MaterialParameters>() || component == GetComponentId<Parent>();
+           component == GetComponentId<PostProcessVolume>() || component == GetComponentId<Decal>() || component == GetComponentId<MaterialParameters>() || component == GetComponentId<Parent>() ||
+           component == GetComponentId<Camera>();
 }
 
 namespace {
