@@ -49,6 +49,7 @@ add_library(aether_editor_ui STATIC
     ../world/model_bounds.cpp
     ../world/viewport_tools.cpp
     ../world/scene_view_panel.cpp
+    ../world/content_drop.cpp
     ../world/scene_preview_panel.cpp
     ../world/data_layer_panel.cpp
     ../net/net_play.cpp

@@ -43,8 +43,8 @@ generated `AetherConfig.cmake` requires it -- which is why the installer builds 
 
 Dragging a prefab (`.aprefab`) from the Content Browser into the Scene View places an instance of it on the ground under the mouse, like a model: the crate and everything under it, as
 one undo step, selected, and still linked to the prefab asset (so later changes to the prefab reach it). The toolbar hint now says models and prefabs. A prefab that cannot be read, or
-a path that is not in the content folder, says why and changes nothing. A placed instance takes the drop position only (not the prefab's own rotation or scale), and dropping into the
-Live Viewport or onto the hierarchy is not there yet.
+a path that is not in the content folder, says why and changes nothing. A placed instance takes the drop position only (not the prefab's own rotation or scale), and dropping onto the
+hierarchy is not there yet (the Live Viewport takes drops too: see the next section).
 
 ## Drag across a plane
 
@@ -78,6 +78,12 @@ undo) reloads it a moment later (`SceneDocument::Revision` says when it changed;
 project's scene file. The game's world is frozen by default so the view is the scene as authored (**Run game** lets physics and scripts run); a model added
 since the last cook is said in the toolbar and appears after **Reload**. A move, a light edit or adding and removing objects is patched in place (see the next three sections); any other change reloads the whole scene (the world, physics and scripts start over), which is
 fine for small and medium scenes.
+
+## Drop a model or a prefab into the Live Viewport
+
+The Live Viewport takes what the Content Browser drags, as the Scene View does: drop a model (`.gltf`, `.glb`) or a prefab (`.aprefab`) on the rendered picture and it is placed on the ground under the mouse (rounded to the move
+step when Snap is on), selected, as one undo step, with a ring marking where it will land while you drag. It shows in the picture a moment later, without the scene being loaded again; a model that was not in the last
+cook is drawn after **Reload**, as before. What the last drop did ("Placed ..." or why not) is in the line above the picture.
 
 ## Undo and redo no longer restart the Live Viewport's scene
 

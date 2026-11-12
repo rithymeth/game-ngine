@@ -4,6 +4,7 @@
 #include "ui/image_texture.h"
 #include "world/scene_panel.h"
 #include "world/scene_view.h"
+#include "world/content_drop.h"
 #include "world/viewport_tools.h"
 
 #include <filesystem>
@@ -55,6 +56,7 @@ private:
     std::function<std::filesystem::path()> project_file_;
     SceneViewCamera camera_;
     ViewportTools tools_;
+    ContentDrop drop_; // a model or prefab dragged in from the Content Browser: where it would land, and what happened to the last one
     ImageTexture texture_;
     std::string note_;
     f32 since_frame_ = 0.0f;
