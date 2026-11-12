@@ -39,6 +39,21 @@ certificate error), and `iexpress.exe` produced nothing usable, so the self-extr
 resource compiled with `csc.exe`. A Vulkan-enabled install also fails for a consumer that lacks the Vulkan SDK, because the
 generated `AetherConfig.cmake` requires it -- which is why the installer builds with Vulkan off.
 
+## A live rendered viewport, and two fixes it needed
+
+The editor has a **Live Viewport** tool: the project's scene running under the real renderer inside the editor itself (the player's `Game` and
+`SceneRenderer` on the editor's own Vulkan device, an offscreen swap chain read back every frame), with the Scene View's orbit camera. **Start** saves the
+open scene, cooks the project and loads it; **Reload** does it again to see edits. It shows the project as last cooked (a running game, not a paused edit view).
+
+Two bugs this turned up, both in the Scene tool:
+
+- **Saving could replace the wrong scene.** A new, untitled scene saved to the default name (`Scenes/Main.ascene`) overwrote the project's real Main scene
+  without a word, and the Render and Start buttons save first, so pressing them in a project did it. A save now never replaces a file that exists and is not the
+  open scene: it is refused with a message, and only choosing Save As again on that name (or opening the scene first) goes ahead.
+- **The Scene tool could not open a template project's scene.** Components of the other modules (a `SkyLight`, Blueprint instances, colliders, scripts) were not
+  registered in the editor process, so the scene was refused (correctly, since dropping them would lose data on save). The editor now registers every
+  built-in component when it starts (`RegisterEditorComponents`).
+
 ## Top-down BMP images load
 
 A BMP stored top-down (negative height in the file, as the player writes its screenshots) was refused as "invalid" by `DecodeImageFile` and

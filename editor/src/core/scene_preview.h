@@ -21,6 +21,11 @@ struct PreviewImage {
     std::vector<u8> rgba; // width * height * 4, top row first
 };
 
+// Cooks `project_file` so that `scene` (a path relative to its Content folder) can be run, into `<work_dir>/Cooked`, which it makes. The scene is
+// cooked whether or not the project starts with it. False, with `error`, if the cook fails. Shared by the still preview and the live viewport.
+bool CookForPreview(const std::filesystem::path& project_file, const std::string& scene, const std::filesystem::path& work_dir,
+                    std::filesystem::path* cooked_dir, std::string* error);
+
 class ScenePreview {
 public:
     enum class State { Idle, Running, Done, Failed };

@@ -16,12 +16,13 @@ plan, not a status report: a line is only checked when it works and a test or a 
 
 In priority order; each is a project of its own.
 
-1. **A rendered viewport.** Partly there: **Render Preview** shows a still of the saved scene drawn by the real renderer (the project is cooked,
-   `aether_player` renders the scene and writes a screenshot, the editor shows it), in about two seconds, from the scene's own camera. It is
-   not live: nothing in the preview follows the Scene View camera or updates as you edit. A live viewport needs the scene renderer to draw an
-   in-memory scene into an offscreen texture; today `SceneRenderer` draws a cooked package through a running `Game` into a swap chain, and
-   more than a dozen passes take the swap chain, so that is a rework of that boundary (stage 1: render a live scene offscreen with a pixel
-   readback test; stage 2: show the texture in the shell; the texture side is now done and tested by the preview).
+1. **A rendered viewport.** Partly there, in two forms. **Render Preview** is a still of the saved scene from the real renderer (about two seconds, the
+   scene's own camera). **Live Viewport** runs the project's scene under the real renderer inside the editor's own process, drawn on the editor's device, with
+   the Scene View's orbit camera, at up to 30 frames a second (about 12 on a software driver). What it is not: it shows the project as last cooked, so an edit
+   appears after Reload (which saves, cooks and loads again), and the game runs (physics, scripts), it is not a paused edit view of the in-memory scene. That last
+   part needs the scene renderer to draw an in-memory scene: today `SceneRenderer` draws a cooked package through a running `Game`, and the Live Viewport is
+   built on exactly that, so the remaining rework is making the renderer take a `World` directly (and then selection, gizmos and picking can draw on the rendered
+   image instead of the wireframe).
 2. **Transform gizmos.** Move, rotate and scale are done (W, E and R): arrows along the world axes, a ring around each world axis, and
    handles along the entity's own axes; each drag is one undoable edit, works in world space under a parent, and snaps to a step. With several
    entities selected they all follow (the handles sit on the first; an entity whose ancestor is also selected rides along instead of moving twice).

@@ -1,0 +1,57 @@
+#pragma once
+
+#include "aether/gfx/rhi/command_list.h"
+#include "aether/gfx/rhi/device.h"
+#include "aether/gfx/rhi/swap_chain.h"
+#include "aether/math/quaternion.h"
+#include "aether/math/vec.h"
+
+#include <filesystem>
+#include <memory>
+#include <string>
+#include <vector>
+
+namespace aether::editor {
+
+namespace rhi = gfx::rhi;
+
+// A running scene drawn by the real renderer inside the editor's own process: the cooked project is mounted, its scene loaded into a
+// `Game` and drawn by the player's `SceneRenderer` into an offscreen swap chain on the editor's device, and each frame is read back as RGBA.
+// So it is live in the sense that the game runs (physics, scripts, water, wind, animation) and the camera can be moved freely, but it
+// shows the project as it was last cooked: an edit appears after the scene is saved and the viewport is loaded again. It does not
+// share the editor's in-memory scene (the renderer draws a cooked package through a running Game; that is the part a rework would change).
+class LiveViewport {
+public:
+    // `device` must outlive this, and be a Vulkan device.
+    explicit LiveViewport(rhi::IDevice& device);
+    ~LiveViewport(); // waits for the GPU
+
+    LiveViewport(const LiveViewport&) = delete;
+    LiveViewport& operator=(const LiveViewport&) = delete;
+
+    // Mounts the cooked folder and starts `scene` (a path relative to the project's Content folder) at `width` x `height`. Replaces any scene
+    // already loaded. False, with `error`, if it can't.
+    bool Load(const std::filesystem::path& cooked_dir, const std::string& scene, u32 width, u32 height, std::string* error = nullptr);
+    void Unload();
+    bool Loaded() const { return impl_ != nullptr; }
+    u32 Width() const;
+    u32 Height() const;
+
+    // Advances the game by `dt` seconds, puts the scene's camera at `position` looking as `rotation` (with `fov_degrees` if above zero),
+    // draws, and reads the picture back. False if nothing is loaded or the picture could not be read.
+    bool Frame(f32 dt, const Vec3& position, const Quaternion& rotation, f32 fov_degrees = 0.0f);
+    // The last picture: Width() * Height() * 4 bytes, top row first.
+    const std::vector<u8>& Pixels() const { return pixels_; }
+    // How many frames have been drawn since Load.
+    u64 FrameCount() const;
+    // How many entities the loaded scene has.
+    usize EntityCount() const;
+
+private:
+    struct Impl;
+    rhi::IDevice& device_;
+    std::unique_ptr<Impl> impl_;
+    std::vector<u8> pixels_;
+};
+
+} // namespace aether::editor

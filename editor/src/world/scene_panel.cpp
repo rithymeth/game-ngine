@@ -8,6 +8,7 @@
 #include <cctype>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <system_error>
 
 namespace aether::editor {
@@ -105,10 +106,21 @@ std::vector<std::string> ScenePanel::ListScenes() const {
     return scenes;
 }
 
-bool ScenePanel::SaveScene(const std::string& path) {
+bool ScenePanel::SaveScene(const std::string& path, bool overwrite) {
     std::string error;
     const bool to_new_path = !path.empty();
     const std::filesystem::path file = to_new_path ? Resolve(path) : (document_.FilePath().empty() ? Resolve(path_) : document_.FilePath());
+    std::error_code ec;
+    const bool is_open_file = !document_.FilePath().empty() &&
+                              (std::filesystem::equivalent(file, document_.FilePath(), ec) || file.lexically_normal() == document_.FilePath().lexically_normal());
+    if (!is_open_file && std::filesystem::exists(file, ec)) {
+        if (!overwrite && !(to_new_path && pending_overwrite_ == file)) {
+            pending_overwrite_ = file;
+            status_ = "\"" + file.string() + "\" already exists and is not the scene that is open, so it was not replaced. Open it, save under another name, or choose Save As again to replace it.";
+            return false;
+        }
+    }
+    pending_overwrite_.clear();
     if (!document_.Save(file, &error)) {
         status_ = error.empty() ? "The scene could not be saved to " + file.string() + "." : error;
         return false;
