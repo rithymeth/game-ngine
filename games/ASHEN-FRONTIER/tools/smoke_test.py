@@ -128,16 +128,21 @@ def interior(work):
 
 
 def salvage(work):
-    """Kael stands beside a salvage crate and presses Interact: the Interactor script takes it into the pack."""
-    command = [str(BUILD / "player" / "aether_player"), "--pak", str(work / "cooked"), "--scene", "Scenes/SalvageTest.ascene", "--frames", "60", "--size", "320x180",
-               "--press", "E", "--report", "--user-dir", str(work / "user3")]
-    if sys.platform.startswith("linux") and shutil.which("xvfb-run"):
-        command = ["xvfb-run", "-a"] + command
-    result = subprocess.run(command, capture_output=True, text=True, timeout=300)
-    text = result.stdout + result.stderr
+    """Kael stands beside a salvage crate and presses Interact: the Interactor script takes it into the pack. The pack is saved (SaveGames, the
+    "autosave" slot), so a second run in the same user directory starts with what the first one took."""
+    def run(frames):
+        command = [str(BUILD / "player" / "aether_player"), "--pak", str(work / "cooked"), "--scene", "Scenes/SalvageTest.ascene", "--frames", str(frames), "--size", "320x180",
+                   "--press", "E", "--report", "--user-dir", str(work / "user3")]
+        if sys.platform.startswith("linux") and shutil.which("xvfb-run"):
+            command = ["xvfb-run", "-a"] + command
+        result = subprocess.run(command, capture_output=True, text=True, timeout=300)
+        return result, result.stdout + result.stderr
+    result, text = run(60)
     check(result.returncode == 0, f"the player runs the salvage test and exits cleanly (exit {result.returncode})")
-    check("Salvaged Test_Crate: +2 components" in text, "pressing Interact beside a crate takes it (+2 components)")
+    check("Salvaged Test_Crate: +2 components (pack: 0 scrap, 2 components)" in text, "pressing Interact beside a crate takes it (+2 components)")
     check(not re.search(r"\[ERROR\]", text), "no errors while salvaging")
+    result, text = run(60)
+    check("Salvaged Test_Crate: +2 components (pack: 0 scrap, 4 components)" in text, "the pack was saved: the next run starts with the 2 components of the first")
 
 
 def mule(work):
