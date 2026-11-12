@@ -30,6 +30,7 @@ without a server or network connection.
 | [design/EDITOR_UI.md](design/EDITOR_UI.md) | Editor UI design system: color/type/spacing tokens, icons, layouts, widgets, panel specs, interaction rules, feedback, accessibility, and the plan for splitting editor/main.cpp |
 | [design/AETHER_ENGINE_UX.md](design/AETHER_ENGINE_UX.md) | Complete product UX architecture: Project Hub, editor workspaces, shared panels/services, core workflows, accessibility, toolkit boundary, migration, and acceptance criteria |
 | [design/EDITOR_UI_TOOLKIT_ADR.md](design/EDITOR_UI_TOOLKIT_ADR.md) | The editor UI framework decision: Dear ImGui is the editor, the Qt editor was removed, and why (the original Qt recommendation is kept as history) |
+| [design/EDITOR_ROADMAP.md](design/EDITOR_ROADMAP.md) | The gap between the ImGui editor and an advanced editor, in priority order: rendered viewport, gizmos, content browser, previews, prefab workflow |
 | [design/BLUEPRINT_NODES.md](design/BLUEPRINT_NODES.md) | Every node in the first Blueprint library with pins and behavior, compiler messages, and the node test plan |
 | [manual/README.md](manual/README.md) | The manual: getting started, projects and assets, scripting, input, 2D, packaging, plugins and editor extensions, and the generated API reference |
 | [manual/01-getting-started.md](manual/01-getting-started.md) | Windows path from a clean checkout to a playable sample game |
