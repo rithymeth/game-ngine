@@ -51,6 +51,12 @@ struct CommandContext {
     std::function<const PrefabData*(const assets::AssetGuid&)> find_prefab;
 };
 
+// A component of an entity, named by GUID (what a viewer is told was edited).
+struct CommandStackEdit {
+    EntityGuid entity;
+    ComponentId component = 0;
+};
+
 // One undoable editor action. Do() is called once when the command is first
 // executed and again on every redo; Undo() reverses it. Commands must refer to
 // entities by EntityGuid, never by Entity handle: undoing a delete recreates
@@ -82,6 +88,11 @@ public:
     // True for a command that creates or destroys a whole entity (CreateEntityCommand, DestroyEntityCommand), counted like a component edit above: a
     // viewer that knows which entities it has last seen can add or remove just those.
     virtual bool EntitySetEdit() const { return false; }
+
+    // Whether this entry is only component edits and entity creations or destructions, as above: if so it appends the (entity, component) pairs it
+    // sets, adds or removes to `targets` (null: just answers) and returns true; otherwise false and nothing is appended. A command inherits the answer
+    // from the two virtuals above; a transaction answers true only if every command in it does.
+    virtual bool PatchableChange(std::vector<CommandStackEdit>* targets) const;
 
     // True, naming what it changes, for a command that only sets, adds or removes one component of an entity that stays (SetFieldCommand,
     // AddComponentCommand, RemoveComponentCommand): the stack counts those apart from structural changes, so a viewer can bring that one component
@@ -158,17 +169,13 @@ public:
     // Counts every change the stack has seen -- a command recorded (merged or not), an undo, a redo -- so a viewer can tell the scene moved
     // on since it last looked without comparing worlds. It only goes up.
     u64 Revision() const { return revision_; }
-    // How many of those changes were component edits (ICommand::ComponentEditTarget) recorded as new commands, and how many created or destroyed an
-    // entity (ICommand::EntitySetEdit). An undo or redo is never counted in either, so Revision() less these moves on for those: a viewer treats them
-    // as structural.
-    u64 ComponentRevision() const { return component_revision_; }
-    u64 EntitySetRevision() const { return entity_set_revision_; }
+    // How many of those changes were patchable (ICommand::PatchableChange): a command recorded that edits one component of an entity that stays or creates
+    // or destroys a whole entity, and an undo or redo of an entry made only of such commands. A viewer that already runs the scene can bring itself up to
+    // date after these without loading it again, so Revision() less this is what it treats as a structural change.
+    u64 PatchableRevision() const { return patchable_revision_; }
     // The (entity, component) pairs of the component edits recorded since the last call, each once, and whether there were too many to keep (then the
     // list is incomplete and the viewer should rebuild).
-    struct ComponentEdit {
-        EntityGuid entity;
-        ComponentId component = 0;
-    };
+    using ComponentEdit = CommandStackEdit;
     std::vector<ComponentEdit> TakeComponentEdits(bool* overflowed = nullptr);
     usize UndoCount() const { return undo_.size(); }
     usize RedoCount() const { return redo_.size(); }
@@ -177,8 +184,8 @@ public:
 private:
     void PushUndo(std::unique_ptr<ICommand> command);
     u64 revision_ = 0;
-    u64 component_revision_ = 0;
-    u64 entity_set_revision_ = 0;
+    u64 patchable_revision_ = 0;
+    void NoteChange(const ICommand& command); // counts a patchable change and keeps which components it touched
     std::vector<ComponentEdit> component_edits_;
     bool component_edits_overflowed_ = false;
     void EnforceBudget();

@@ -48,8 +48,8 @@ public:
     // Revision() less the changes a viewer that already runs the scene can take without loading it again (LiveViewport::PatchScene): a field set through
     // the inspector, SetPosition, SetRotation, SetScale or any other SetFieldCommand, a component added or removed on an entity that stays, an entity
     // created or destroyed, and TouchTransforms. TakeComponentEdits says which components; the Transforms the viewer reads whole, and the entities that came
-    // or went it finds by comparing with what it last saw. An undo or redo always counts as structural.
-    u64 StructureRevision() const { return Revision() - commands_.ComponentRevision() - commands_.EntitySetRevision() - touched_revision_; }
+    // or went it finds by comparing with what it last saw. An undo or redo counts the same way when everything it undoes does.
+    u64 StructureRevision() const { return Revision() - commands_.PatchableRevision() - touched_revision_; }
     // The (entity, component) pairs set since the last call (see CommandStack::TakeComponentEdits); `overflowed` says the list is incomplete.
     std::vector<CommandStack::ComponentEdit> TakeComponentEdits(bool* overflowed = nullptr) { return commands_.TakeComponentEdits(overflowed); }
     bool CanUndo() const { return commands_.CanUndo(); }
