@@ -144,7 +144,7 @@ bool IsPhysicsBodyComponent(ComponentId component) {
     const ComponentInfo& info = GetComponentInfo(component);
     if (info.reflected == nullptr) return false;
     const std::string name = info.reflected->name;
-    return name == "RigidBody" || name == "BoxCollider" || name == "SphereCollider" || name == "CapsuleCollider" || name == "ConvexCollider" || name == "MeshCollider";
+    return name == "RigidBody" || name == "BoxCollider" || name == "SphereCollider" || name == "CapsuleCollider" || name == "ConvexCollider" || name == "MeshCollider" || name == "HeightfieldCollider";
 }
 
 } // namespace

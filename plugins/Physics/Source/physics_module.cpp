@@ -17,6 +17,7 @@ public:
         (void)GetComponentId<CapsuleCollider>();
         (void)GetComponentId<ConvexCollider>();
         (void)GetComponentId<MeshCollider>();
+        (void)GetComponentId<HeightfieldCollider>();
         (void)GetComponentId<CharacterMovement>();
         (void)GetComponentId<PhysicsJoint>();
         RegisterPhysicsComponentSerializers();

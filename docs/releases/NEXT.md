@@ -671,3 +671,6 @@ A material graph (`.amat`) that samples textures is now drawn too (up to four, r
 Saving a material graph now shows in the Live Viewport on the next frame, without pressing Reload (the graph's shader is built again; the scene is not loaded again). A graph newly assigned to a material shows without Reload too; its textures still need one.
 
 A material instance (`.amati`) is now drawn like its graph, and an object can give a graph its own value for a parameter by name in its Material Parameters (up to six values of float data per graph; a parameter past that limit is fixed in the shader and the Live Viewport says so). Saving the parent of an instance shows at once. Fixed: a material graph with two textures lit its surface with the second as a normal map.
+
+
+A new `HeightfieldCollider` component gives static terrain collision from a grid of heights (`samples` x `samples`, `cell_size`, `origin`), without a triangle mesh in the scene. The largest float (`HeightfieldCollider::kHole`) marks a hole. A grid that cannot be used is reported with the reason and gets no body.
