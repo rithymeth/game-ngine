@@ -45,6 +45,9 @@ public:
     // The scenes under the content folder (.ascene and .aesc), as paths relative to it with forward
     // slashes, sorted; what the toolbar's list offers instead of a path to type.
     std::vector<std::string> ListScenes() const;
+    // The folder scene paths are relative to (the open project's Content folder). Changing it leaves the open scene alone.
+    void SetContentRoot(std::filesystem::path content_root) { content_root_ = std::move(content_root); }
+    const std::filesystem::path& ContentRoot() const { return content_root_; }
     const std::string& Path() const { return path_; }
     void SetPath(const std::string& path) { path_ = path; }
 

@@ -32,6 +32,7 @@
 #include "vfx/vfx_editor.h"
 #include "world/procedural_panel.h"
 #include "world/scene_panel.h"
+#include "world/scene_preview_panel.h"
 #include "world/scene_view.h"
 #include "world/world_panels.h"
 
@@ -241,6 +242,7 @@ struct EditorWorkspace::Impl {
     std::unique_ptr<ProceduralWorldPanel> procedural_panel;
     std::unique_ptr<ScenePanel> scene_panel;
     SceneViewPanel scene_view;
+    std::unique_ptr<ScenePreviewPanel> scene_preview;
     std::unique_ptr<SplineEditDocument> spline_doc;
     std::unique_ptr<SplinePanel> spline_panel;
     streaming::PartitionResult partition;
@@ -309,6 +311,7 @@ struct EditorWorkspace::Impl {
             {"UI Designer - WBP_MainMenu", "UI", [this] { ui_designer->Draw(); }},
             {"Scene", "Scene", [this] { scene_panel->Draw(); }},
             {"Scene View", "Scene", [this] { scene_view.Draw(scene_panel->Document()); }},
+            {"Render Preview", "Scene", [this] { scene_preview->Draw(); }},
             {"Terrain", "World", [this] { terrain_panel->Draw(); }},
             {"Foliage", "World", [this] { foliage_panel->Draw(); }},
             {"Procedural World", "World", [this] { procedural_panel->Draw(); }},
@@ -778,6 +781,7 @@ struct EditorWorkspace::Impl {
         foliage_panel = std::make_unique<FoliagePanel>(*foliage_doc);
 
         scene_panel = std::make_unique<ScenePanel>();
+        scene_preview = std::make_unique<ScenePreviewPanel>(*scene_panel);
         procedural_doc = std::make_unique<ProceduralWorldDocument>();
         procedural_panel = std::make_unique<ProceduralWorldPanel>(*procedural_doc, terrain_doc.get(), foliage_doc.get());
 
@@ -854,6 +858,9 @@ struct EditorWorkspace::Impl {
         build_window = std::make_unique<BuildPackageWindow>(project_file);
         plugins_panel = std::make_unique<PluginsPanel>(project_file);
         content_browser = std::make_unique<ContentBrowserPanel>(project_file);
+        // The Scene tool works in the project's Content folder (its open scene is left as it is), and the preview renders that project.
+        if (scene_panel) scene_panel->SetContentRoot(ProjectPaths::ForFile(project_file).content);
+        if (scene_preview) scene_preview->SetProject(project_file);
         // The project's plugins: their runtime and editor modules run in the editor.
         if (plugin::ResolveProjectPlugins(project_file, plugins, &error)) plugins.StartModules(true, true);
         // The project's editor scripts (Content/Editor/*.luau, §26.5).

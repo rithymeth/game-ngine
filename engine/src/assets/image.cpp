@@ -39,6 +39,14 @@ bool PngChunksFitInput(std::span<const u8> bytes) {
     return false;
 }
 
+// stbi_info reports a top-down BMP's height as negative (the file stores it that way; stbi_load flips it positive). That is a valid
+// image, so the height is taken as its size; INT_MIN has no positive and stays rejected.
+bool NormalizeInfoHeight(int& height) {
+    if (height == std::numeric_limits<int>::min()) return false;
+    if (height < 0) height = -height;
+    return height > 0;
+}
+
 } // namespace
 
 
@@ -50,7 +58,7 @@ bool DecodeImageFile(const std::string& path, ImageData& out_image, u64 max_pixe
     int width = 0;
     int height = 0;
     int channels_in_file = 0;
-    if (!stbi_info(path.c_str(), &width, &height, &channels_in_file) || width <= 0 || height <= 0 ||
+    if (!stbi_info(path.c_str(), &width, &height, &channels_in_file) || width <= 0 || !NormalizeInfoHeight(height) ||
         static_cast<u64>(width) * static_cast<u64>(height) > max_pixels) {
         AETHER_LOG_ERROR("Assets", "Image \"%s\" is invalid or exceeds the pixel budget", path.c_str());
         return false;
@@ -187,7 +195,7 @@ bool DecodeImageFromMemory(std::span<const u8> bytes, ImageData& out_image, u64 
     int width = 0, height = 0, channels = 0;
     const auto* input = reinterpret_cast<const stbi_uc*>(bytes.data());
     const int input_size = static_cast<int>(bytes.size());
-    if (!stbi_info_from_memory(input, input_size, &width, &height, &channels) || width <= 0 || height <= 0) return false;
+    if (!stbi_info_from_memory(input, input_size, &width, &height, &channels) || width <= 0 || !NormalizeInfoHeight(height)) return false;
     const u64 pixel_count = static_cast<u64>(width) * static_cast<u64>(height);
     if (pixel_count > max_pixels || pixel_count > std::numeric_limits<usize>::max() / 4) return false;
 

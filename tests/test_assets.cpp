@@ -81,6 +81,49 @@ AETHER_TEST(Assets_DecodeImageRejectsTruncatedPngWithHugeIdatLength) {
     AETHER_CHECK(valid.width == 4 && valid.height == 4);
 }
 
+namespace {
+
+// A 2x2 32-bit BMP: top row red, green; bottom row blue, white. `top_down` stores the top row first with a negative height (what the
+// player's screenshots are); otherwise the usual bottom-up file.
+std::vector<u8> TinyBmp(bool top_down) {
+    auto put32 = [](std::vector<u8>& v, u32 x) { for (int i = 0; i < 4; ++i) v.push_back(static_cast<u8>(x >> (8 * i))); };
+    auto put16 = [](std::vector<u8>& v, u16 x) { v.push_back(static_cast<u8>(x)); v.push_back(static_cast<u8>(x >> 8)); };
+    std::vector<u8> v = {'B', 'M'};
+    put32(v, 54 + 16); put32(v, 0); put32(v, 54);                 // file size, reserved, pixel data offset
+    put32(v, 40); put32(v, 2); put32(v, static_cast<u32>(top_down ? -2 : 2)); put16(v, 1); put16(v, 32); // BITMAPINFOHEADER: 2 wide, +-2 high
+    put32(v, 0); put32(v, 16); put32(v, 2835); put32(v, 2835); put32(v, 0); put32(v, 0);
+    const u8 red[4] = {0, 0, 255, 255}, green[4] = {0, 255, 0, 255}, blue[4] = {255, 0, 0, 255}, white[4] = {255, 255, 255, 255}; // B G R A
+    auto row = [&](const u8* a, const u8* b) { v.insert(v.end(), a, a + 4); v.insert(v.end(), b, b + 4); };
+    if (top_down) { row(red, green); row(blue, white); } else { row(blue, white); row(red, green); }
+    return v;
+}
+
+void CheckTinyBmp(const ImageData& image) {
+    AETHER_CHECK(image.width == 2 && image.height == 2 && image.pixels.size() == 16);
+    if (image.pixels.size() != 16) return;
+    const u8* p = image.pixels.data(); // RGBA, top row first
+    AETHER_CHECK(p[0] == 255 && p[1] == 0 && p[2] == 0);           // top left: red
+    AETHER_CHECK(p[4] == 0 && p[5] == 255 && p[6] == 0);           // top right: green
+    AETHER_CHECK(p[8] == 0 && p[9] == 0 && p[10] == 255);          // bottom left: blue
+    AETHER_CHECK(p[12] == 255 && p[13] == 255 && p[14] == 255);    // bottom right: white
+}
+
+} // namespace
+
+// A top-down BMP (negative height in the file, as the player writes its screenshots) used to be refused as "invalid": stbi_info reports its height negative.
+AETHER_TEST(Assets_ABmpOfEitherOrientationDecodesTopRowFirst) {
+    for (const bool top_down : {false, true}) {
+        const std::vector<u8> bmp = TinyBmp(top_down);
+        ImageData from_memory;
+        AETHER_CHECK(DecodeImageFromMemory(bmp, from_memory));
+        CheckTinyBmp(from_memory);
+        const std::string path = WriteTempPng(top_down ? "aether_test_top_down.bmp" : "aether_test_bottom_up.bmp", bmp.data(), bmp.size());
+        ImageData from_file;
+        AETHER_CHECK(DecodeImageFile(path, from_file));
+        CheckTinyBmp(from_file);
+    }
+}
+
 AETHER_TEST(Assets_LoadImageMissingFileReturnsFalse) {
     ImageData image;
     AETHER_CHECK(!DecodeImageFile("does/not/exist.png", image));
