@@ -8,7 +8,7 @@ import json
 import math
 import random
 
-from scenelib import Scene
+from scenelib import Scene, give_hands
 import world_scene
 
 LIGHT, BLUE, AMBER = world_scene.LIGHT, world_scene.BLUE, world_scene.AMBER
@@ -42,6 +42,7 @@ def kael(s, position, yaw, script):
                               "ScriptComponent": {"$v": 1, "properties": [], "script": script}}, position=position, rotation=(0, yaw, 0), tags=("Player",))
     s.model("KaelBody", "Kael", position=(0, 0, 0), tags=("PlayerBody",), snap=False)
     s.entities[-1]["components"]["Parent"] = {"$v": 1, "parent": player}
+    give_hands(s)
     s.camera((position[0], 3.0, position[2] + 6), yaw=0, pitch=-12, fov=62, far=300)
 
 

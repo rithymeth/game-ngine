@@ -7,7 +7,8 @@
     "Scripts/",
     "Data/",
     "Textures/",
-    "Scenes/AssemblyHall.ascene"
+    "Scenes/AssemblyHall.ascene",
+    "Scenes/SalvageTest.ascene"
   ],
   "collision_matrix": [],
   "default_quality": "High",

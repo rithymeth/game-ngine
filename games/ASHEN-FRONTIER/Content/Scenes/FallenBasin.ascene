@@ -5925,6 +5925,11 @@
         "Parent": {
           "$v": 1,
           "parent": "5c1eb06f-7395-5b91-9ffa-44e00927933f"
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "properties": [],
+          "script": "6d7b68d8-bfbe-499f-a707-f9fc9f946089"
         }
       },
       "guid": "ebf58c1b-062b-55eb-841e-64e8875a17d1"
