@@ -5,6 +5,7 @@
 #include "ui/builtin_components.h"
 #include "ui/editor_theme.h"
 #include "ui/shell_layout.h"
+#include "world/content_drop.h"
 #include "world/scene_view_panel.h"
 #include "world/viewport_tools.h"
 #include "world/model_bounds.h"
@@ -1163,4 +1164,54 @@ AETHER_TEST(PrefabPlacement_ADroppedPrefabIsOneUndoableInstanceLinkedToTheAsset)
     error.clear();
     AETHER_CHECK(PlacePrefabAsset(document, content, "Prefabs/Missing.aprefab", Vec3(0, 0, 0), &error) == kNullEntity && !error.empty());
     AETHER_CHECK(document.Entities().size() == now);
+}
+
+// The drop both 3D views share (the Scene View and the Live Viewport): where an asset lands, and what placing it does.
+AETHER_TEST(ContentDrop_AnAssetLandsOnTheGroundUnderTheMouseOrAtTheCamerasTarget) {
+    SceneViewCamera camera;
+    camera.target = Vec3(1, 0, -2);
+    camera.distance = 12.0f;
+    const ImVec2 origin(0, 0), size(800, 600);
+    ImVec2 pixel;
+    AETHER_CHECK(ProjectToViewport(camera.ViewProjection(size.x / size.y), Vec3(3.0f, 0.0f, 2.0f), origin, size, pixel));
+    AETHER_CHECK(NearVec(DropPoint(camera, origin, size, pixel, 0.0f), Vec3(3.0f, 0.0f, 2.0f), 0.05f));   // the pixel a ground point projects to leads back to it
+    AETHER_CHECK(NearVec(DropPoint(camera, origin, size, pixel, 2.0f), Vec3(4.0f, 0.0f, 2.0f), 0.01f));   // rounded to the step (x: 3 to 4 on a step of 2, z stays)
+    camera.pitch = 0.0f;                                                                                   // looking along the ground: the middle never meets it
+    AETHER_CHECK(NearVec(DropPoint(camera, origin, size, ImVec2(400, 300), 0.0f), camera.target, 1e-4f));
+    AETHER_CHECK(NearVec(DropPoint(camera, origin, ImVec2(0, 0), ImVec2(400, 300), 0.0f), camera.target, 1e-4f)); // a view with no size
+}
+
+AETHER_TEST(ContentDrop_PlacingAModelOrAPrefabSaysWhatHappened) {
+    const stdfs::path content = Scratch("aether_content_drop");
+    WriteBoxModel(content, "Models/crate.glb", Vec3(-1, 0, -1), Vec3(1, 2, 1));
+    PrefabData prefab;
+    PrefabEntity top;
+    top.id = 1;
+    prefab.entities = {top};
+    stdfs::create_directories(content / "Prefabs");
+    AETHER_CHECK(SavePrefab(prefab, content / "Prefabs" / "Thing.aprefab"));
+
+    SceneDocument document;
+    document.Commands().Clear();
+    const usize before = document.Entities().size();
+    bool placed = true;
+    // A model: one entity, where it was dropped, selected, and it says so.
+    std::string said = PlaceContentAsset(document, content, "Models/crate.glb", Vec3(4, 0, 1), &placed);
+    AETHER_CHECK(placed && said == "Placed Models/crate.glb" && document.Entities().size() == before + 1);
+    AETHER_CHECK(document.Selection().size() == 1 && NearVec(WorldPositionOf(document, document.Selection()[0]), Vec3(4, 0, 1)));
+    // A prefab: an instance, and it says so.
+    said = PlaceContentAsset(document, content, "Prefabs/Thing.aprefab", Vec3(0, 0, 5), &placed);
+    AETHER_CHECK(placed && said == "Placed Prefabs/Thing.aprefab" && document.Entities().size() == before + 2);
+    // Each was one undo step.
+    AETHER_CHECK(document.Undo() && document.Undo() && !document.CanUndo() && document.Entities().size() == before);
+
+    // What cannot be placed changes nothing, says why, and reports not placed.
+    placed = true;
+    said = PlaceContentAsset(document, content, "Textures/brick.png", Vec3(0, 0, 0), &placed);
+    AETHER_CHECK(!placed && said.find("Only models") == 0);
+    said = PlaceContentAsset(document, content, "Prefabs/Missing.aprefab", Vec3(0, 0, 0), &placed);
+    AETHER_CHECK(!placed && !said.empty() && said.find("Placed") != 0);
+    said = PlaceContentAsset(document, stdfs::path(), "Prefabs/Thing.aprefab", Vec3(0, 0, 0), &placed);   // no content folder to read it from
+    AETHER_CHECK(!placed && said == "Could not place Prefabs/Thing.aprefab");
+    AETHER_CHECK(document.Entities().size() == before && !document.CanUndo());
 }

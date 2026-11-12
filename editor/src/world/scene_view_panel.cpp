@@ -1,4 +1,5 @@
 #include "world/scene_view_panel.h"
+#include "world/content_drop.h"
 
 #include "aether/scene/components.h"
 #include "aether/scene/gameplay.h"
@@ -48,41 +49,15 @@ void SceneViewPanel::Draw(SceneDocument& document, const ModelBoundsCache* bound
     tools_.SetBounds(bounds);
     tools_.DrawToolbar();
     ImGui::SameLine();
-    ImGui::TextDisabled("%s", note_.empty() ? "drop a model or a prefab from the Content Browser to place it" : note_.c_str());
+    ImGui::TextDisabled("%s", drop_.note.empty() ? "drop a model or a prefab from the Content Browser to place it" : drop_.note.c_str());
     const ImVec2 avail = ImGui::GetContentRegionAvail();
     const ImVec2 size(std::max(avail.x, 64.0f), std::max(avail.y, 64.0f));
     const ImVec2 origin = ImGui::GetCursorScreenPos();
     ImGui::InvisibleButton("##scene_view", size, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
     const bool hovered = ImGui::IsItemHovered();
     const bool active = ImGui::IsItemActive();
-    drop_preview_ = false;
-    // An asset dragged in from the Content Browser: a model is placed on the ground under the mouse (rounded to the move step if Snap is on).
-    if (ImGui::BeginDragDropTarget()) {
-        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kContentPathPayload, ImGuiDragDropFlags_AcceptBeforeDelivery)) {
-            const std::string path(static_cast<const char*>(payload->Data));
-            Vec3 ground;
-            const bool on_ground = GroundPoint(camera_.ViewProjection(size.x / size.y), origin, size, ImGui::GetIO().MousePos, ground);
-            if (!on_ground) ground = camera_.target;
-            if (tools_.SnapEnabled()) ground = SnapTranslation(ground, tools_.MoveSnapStep());
-            const bool is_prefab = IsPlaceablePrefab(path);
-            if (!IsPlaceableModel(path) && !is_prefab) {
-                if (payload->IsDelivery()) note_ = "Only models (.gltf, .glb) and prefabs (.aprefab) can be placed in the scene.";
-            } else if (payload->IsDelivery()) {
-                if (is_prefab) {
-                    std::string problem;
-                    const Entity placed = content_root.empty() ? kNullEntity : PlacePrefabAsset(document, content_root, path, ground, &problem);
-                    note_ = placed != kNullEntity ? "Placed " + path : (problem.empty() ? "Could not place " + path : problem);
-                } else {
-                    const Entity placed = PlaceModelAsset(document, path, ground);
-                    note_ = placed == kNullEntity ? "Could not place " + path : "Placed " + path;
-                }
-            } else {
-                drop_preview_ = true; // still being dragged: a marker where it would land, drawn with the rest below
-                drop_point_ = ground;
-            }
-        }
-        ImGui::EndDragDropTarget();
-    }
+    // An asset dragged in from the Content Browser: a model or a prefab is placed on the ground under the mouse (rounded to the move step if Snap is on).
+    drop_.Accept(document, content_root, camera_, origin, size, tools_.MoveSnapStep());
     const ImGuiIO& io = ImGui::GetIO();
 
     // Input: right-drag orbits, middle-drag or shift + left-drag pans, the wheel zooms, F focuses; the tools take the gizmo and the clicks.
@@ -135,13 +110,7 @@ void SceneViewPanel::Draw(SceneDocument& document, const ModelBoundsCache* bound
             if (ProjectToViewport(vp, origin_w, origin, size, at)) draw->AddText(ImVec2(at.x + 8.0f, at.y - 18.0f), color, document.Name(entity).c_str());
         }
     }
-    if (drop_preview_) {
-        ImVec2 at;
-        if (ProjectToViewport(vp, drop_point_, origin, size, at)) {
-            draw->AddCircle(at, 10.0f, Color(255, 200, 60), 24, 2.0f);
-            draw->AddCircleFilled(at, 3.0f, Color(255, 200, 60));
-        }
-    }
+    drop_.DrawPreview(draw, camera_, origin, size);
     tools_.DrawGizmo(draw, document, camera_, origin, size, hovered);
     draw->AddText(ImVec2(origin.x + 8.0f, end.y - 22.0f), Color(128, 135, 148),
                   "right-drag: look   middle-drag / shift+drag: pan   wheel: zoom   click: select   F: focus   W/E/R: move/rotate/scale");

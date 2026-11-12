@@ -126,7 +126,10 @@ void LiveViewportPanel::Draw(f32 dt) {
     const usize uncooked = loaded ? UncookedModels() : 0;
     if (!note_.empty()) ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.45f, 1.0f), "%s", note_.c_str());
     else if (uncooked > 0) ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.4f, 1.0f), "%zu model(s) or texture(s) in the scene are not cooked yet: press Reload to see them", uncooked);
-    else if (loaded) ImGui::TextDisabled("%.0f fps  |  %zu entities  |  click: select  drag a handle: edit  W/E/R  |  right-drag: look  middle-drag: pan  wheel: zoom", fps_, viewport_.EntityCount());
+    else if (loaded) {
+        if (!drop_.note.empty()) ImGui::TextDisabled("%s  |  %.0f fps  |  %zu entities", drop_.note.c_str(), fps_, viewport_.EntityCount()); // what the last drop did
+        else ImGui::TextDisabled("%.0f fps  |  %zu entities  |  click: select  drag a handle: edit  W/E/R  |  drop a model or prefab  |  right-drag: look  middle-drag: pan  wheel: zoom", fps_, viewport_.EntityCount());
+    }
     else ImGui::TextDisabled("Runs the open scene with the real renderer, edits and all. Open the scene you want first.");
     if (!loaded) return;
     tools_.SetBounds(&scene_.ModelBounds());
@@ -146,9 +149,12 @@ void LiveViewportPanel::Draw(f32 dt) {
     const bool active = ImGui::IsItemActive();
     HandleCameraInput(camera_, hovered, active, size);
     tools_.HandleInput(scene_.Document(), camera_, origin, size, hovered, active);
+    // A model or a prefab dragged in from the Content Browser is placed on the ground under the mouse, as in the Scene View, and shows in the picture a moment later.
+    drop_.Accept(scene_.Document(), scene_.ContentRoot(), camera_, origin, size, tools_.MoveSnapStep());
     // The overlay uses the same camera and aspect as the picture, so it lands on what it marks.
     draw->PushClipRect(origin, end, true);
     tools_.DrawSelectionOutlines(draw, scene_.Document(), camera_, origin, size, hovered);
+    drop_.DrawPreview(draw, camera_, origin, size);
     tools_.DrawGizmo(draw, scene_.Document(), camera_, origin, size, hovered);
     draw->PopClipRect();
 }

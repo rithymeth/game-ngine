@@ -1,5 +1,6 @@
 #pragma once
 
+#include "world/content_drop.h"
 #include "world/scene_view.h"
 #include "world/viewport_tools.h"
 
@@ -24,9 +25,7 @@ public:
 private:
     SceneViewCamera camera_;
     ViewportTools tools_;
-    std::string note_;          // the last thing the panel has to say (a drop it could not place)
-    bool drop_preview_ = false; // a model is being dragged over the view; where it would land
-    Vec3 drop_point_{0.0f, 0.0f, 0.0f};
+    ContentDrop drop_;          // an asset dragged in from the Content Browser: where it would land, and the last thing to say about a drop
 };
 
 } // namespace aether::editor
