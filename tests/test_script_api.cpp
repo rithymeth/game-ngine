@@ -203,3 +203,23 @@ AETHER_TEST(ScriptApi_InputFromScripts) {
     input.Update(state, 0.1f);
     AETHER_CHECK(f.Number("jumps") == 1.0); // unbound: no more events reach scripts
 }
+
+AETHER_TEST(ScriptApi_SceneLoadIsDeferredToTheHost) {
+    Fixture f;
+    ScriptSystem scripts(f.host, f.world, f.guids, f.Loader());
+    std::string requested;
+    scripts.BindSceneLoadRequest([&](const std::string& path) {
+        requested = path;
+        return path == "Scenes/Farmhouse.ascene";
+    });
+
+    ScriptResult result = f.host.Run("return Scene.Load('Scenes/Farmhouse.ascene')");
+    AETHER_CHECK(result.ok && result.values.size() == 1 && std::holds_alternative<bool>(result.values[0]) &&
+                 std::get<bool>(result.values[0]) && requested == "Scenes/Farmhouse.ascene");
+    AETHER_CHECK(!f.host.Run("Scene.Load(42)").ok);
+
+    scripts.BindSceneLoadRequest({});
+    result = f.host.Run("return Scene.Load('Scenes/Farmhouse.ascene')");
+    AETHER_CHECK(result.ok && result.values.size() == 1 && std::holds_alternative<bool>(result.values[0]) &&
+                 !std::get<bool>(result.values[0]));
+}
