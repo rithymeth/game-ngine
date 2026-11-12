@@ -261,3 +261,24 @@ AETHER_TEST(EditorWorkspace_MenusReachTheSceneDocument) {
     AETHER_CHECK(document.CanUndo());
     imgui.Frame([&] { if (ImGui::BeginMainMenuBar()) { workspace.DrawEditMenu(); ImGui::EndMainMenuBar(); } });
 }
+
+// The toolbar's scene list: what is in the content folder, sorted, with nothing else in it.
+AETHER_TEST(ScenePanel_ListsTheScenesInTheContentFolder) {
+    const stdfs::path root = Scratch("aether_scene_panel_list");
+    ScenePanel panel(root);
+    AETHER_CHECK(panel.ListScenes().empty());                  // no folder yet: an empty list, not an error
+    panel.Document().CreateEntity("A");
+    AETHER_CHECK(panel.SaveScene("Scenes/b.ascene"));
+    AETHER_CHECK(panel.SaveScene("Levels/Deep/a.ascene"));
+    stdfs::create_directories(root / "Textures");
+    std::ofstream(root / "Textures/not_a_scene.png") << "x";
+    const std::vector<std::string> scenes = panel.ListScenes();
+    AETHER_CHECK(scenes.size() == 2);
+    if (scenes.size() == 2) {
+        AETHER_CHECK(scenes[0] == "Levels/Deep/a.ascene");      // relative, forward slashes, sorted
+        AETHER_CHECK(scenes[1] == "Scenes/b.ascene");
+    }
+    HeadlessImGui imgui;
+    imgui.Frame([&] { panel.Draw(); });                        // the toolbar draws with the list available
+    AETHER_CHECK(panel.OpenScene("Levels/Deep/a.ascene", true)); // and what it lists opens
+}

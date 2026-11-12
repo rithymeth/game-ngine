@@ -42,6 +42,9 @@ public:
     // What the last action said ("Saved Scenes/Main.ascene", "The scene was not opened: ...").
     const std::string& Status() const { return status_; }
     // The path box's text.
+    // The scenes under the content folder (.ascene and .aesc), as paths relative to it with forward
+    // slashes, sorted; what the toolbar's list offers instead of a path to type.
+    std::vector<std::string> ListScenes() const;
     const std::string& Path() const { return path_; }
     void SetPath(const std::string& path) { path_ = path; }
 
