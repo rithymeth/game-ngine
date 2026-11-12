@@ -13,6 +13,7 @@
 #include "aether/assets/png_writer.h"
 #include "aether/renderer/components.h"
 #include "aether/renderer/material_instance.h"
+#include "aether/renderer/material.h"
 #include "aether/scene/gameplay.h"
 #include "aether/scene/hierarchy.h"
 #include "aether/scene/prefab.h"
@@ -1216,6 +1217,72 @@ AETHER_TEST(LiveViewportPanel_AScriptIsMadeRestartedAndEndedWithoutReloadingTheS
     AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().SceneReloads() == reloads);
     settle();
     AETHER_CHECK(panel.Viewport().SceneReloads() == reloads && panel.Viewport().ScriptInstanceCount() == instances + 1);
+}
+
+AETHER_TEST(LiveViewportPanel_SaysWhatItMakesOfAMaterialGraphItCannotDrawYet) {
+    std::unique_ptr<gfx::rhi::IDevice> device = TryDevice();
+    if (!device) {
+        std::printf("    (no Vulkan device: install a driver, or Mesa's lavapipe, to run this)\n");
+        return;
+    }
+    Context imgui;
+    const stdfs::path project = MakeProject("LiveGraph");
+    const stdfs::path content = project.parent_path() / "Content";
+    stdfs::create_directories(content / "Materials");
+    auto write = [&](const char* name, const nlohmann::json& json) { std::ofstream(content / "Materials" / name) << json.dump(); };
+    mat::Material tint; // a graph that is valid: a tint and a roughness into the outputs
+    tint.parameters.push_back({"Tint", mat::PinType::Float3, {1, 0.8f, 0.6f, 0}, "", "Surface"});
+    tint.parameters.push_back({"Roughness", mat::PinType::Float, {0.4f, 0, 0, 0}, "", ""});
+    const mat::NodeId out = tint.Add("Material.Output", {}, 600, 0);
+    const mat::NodeId color = tint.Add("Param.Vector:Tint");
+    const mat::NodeId rough = tint.Add("Param.Scalar:Roughness");
+    tint.Connect(color, "value", out, "BaseColor").Connect(rough, "value", out, "Roughness");
+    write("Tint.amat", mat::MaterialToJson(tint));
+    mat::Material broken; // no Material Output: not a graph the game can run
+    broken.Add("Const.Float", {{"value", 0.5f}});
+    write("Broken.amat", mat::MaterialToJson(broken));
+    write("Garbage.amat", nlohmann::json("not a graph"));
+
+    ScenePanel scene(project.parent_path() / "Content");
+    AETHER_CHECK(scene.OpenScene("Scenes/Main.ascene", true));
+    SceneDocument& document = scene.Document();
+    Entity model = kNullEntity;
+    for (const Entity entity : document.Entities()) {
+        if (document.GetWorld().HasComponent<ModelRenderer>(entity)) model = entity;
+    }
+    AETHER_CHECK(model != kNullEntity);
+    if (model == kNullEntity) return;
+    const ComponentId overrides = GetComponentId<MaterialParameters>();
+    AETHER_CHECK(document.AddComponent(model, overrides));
+    auto use = [&](const char* path) { AETHER_CHECK(document.SetComponentField(model, overrides, "material", reflect::Any(std::string(path)), true)); };
+    LiveViewportPanel panel(*device, scene, [&] { return project; });
+    panel.width = 160;
+    panel.height = 90;
+    panel.reload_interval = 0.0f;
+    use("Materials/Tint.amat");
+    AETHER_CHECK(panel.Start());
+    std::vector<player::GraphMaterialReport> reports = panel.GraphMaterials();
+    AETHER_CHECK(reports.size() == 1 && reports[0].found && reports[0].compiles && reports[0].parameters > 0 && reports[0].live_nodes == 2 && reports[0].permutation_key != 0);
+    AETHER_CHECK(reports.size() == 1 && reports[0].message.find("not drawn yet") != std::string::npos); // it says so, rather than showing the model's own surface unremarked
+
+    use("Materials/Broken.amat");
+    AETHER_CHECK(panel.Start());
+    reports = panel.GraphMaterials();
+    AETHER_CHECK(reports.size() == 1 && reports[0].found && !reports[0].compiles && !reports[0].message.empty());
+    use("Materials/Garbage.amat");
+    AETHER_CHECK(panel.Start());
+    reports = panel.GraphMaterials();
+    AETHER_CHECK(reports.size() == 1 && reports[0].found && !reports[0].compiles && reports[0].message.find("readable") != std::string::npos);
+    use("Materials/Missing.amat");
+    AETHER_CHECK(panel.Start());
+    reports = panel.GraphMaterials();
+    AETHER_CHECK(reports.size() == 1 && !reports[0].found && !reports[0].compiles && reports[0].message.find("Not in the package") != std::string::npos);
+    use("Materials/Skin.amati");
+    AETHER_CHECK(panel.Start());
+    reports = panel.GraphMaterials();
+    AETHER_CHECK(reports.size() == 1 && !reports[0].compiles && reports[0].message.find("instance") != std::string::npos);
+    use("");
+    AETHER_CHECK(panel.GraphMaterials().empty());                                 // no graph named: nothing said
 }
 
 #endif

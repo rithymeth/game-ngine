@@ -1,5 +1,6 @@
 #pragma once
 
+#include "aether/player/graph_material.h"
 #include "aether/gfx/rhi/command_list.h"
 #include "aether/gfx/rhi/device.h"
 #include "aether/gfx/rhi/swap_chain.h"
@@ -77,6 +78,8 @@ public:
     usize EntityCount() const;
     // How many physics bodies the running game has (as of its last physics step: bodies follow the world's colliders and rigid bodies when the game steps).
     usize PhysicsBodyCount() const;
+    // Reads a material graph (.amat) from the running game's package and checks it (player/graph_material.h): whether the game could draw with it.
+    player::GraphMaterialReport CompileGraphMaterial(const std::string& path) const;
     // How many script instances the running game has (one per entity with a working script).
     usize ScriptInstanceCount() const;
     // Where an entity is in the running game (its Transform's position, which a simulated body moves), false if the game has no such entity.
