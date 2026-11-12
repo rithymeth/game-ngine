@@ -16,17 +16,19 @@ plan, not a status report: a line is only checked when it works and a test or a 
 
 In priority order; each is a project of its own.
 
-1. **A rendered viewport.** The Scene View draws boxes, not the lit scene. A real one needs the scene renderer to draw a live
-   in-memory scene into an offscreen texture that ImGui can show. Today `SceneRenderer` draws a cooked package through a running
-   `Game` into a swap chain, and more than a dozen passes take the swap chain, so this is a rework of that boundary (stage 1: render a
-   live scene offscreen with a pixel readback test; stage 2: show the texture in the shell).
+1. **A rendered viewport.** Partly there: **Render Preview** shows a still of the saved scene drawn by the real renderer (the project is cooked,
+   `aether_player` renders the scene and writes a screenshot, the editor shows it), in about two seconds, from the scene's own camera. It is
+   not live: nothing in the preview follows the Scene View camera or updates as you edit. A live viewport needs the scene renderer to draw an
+   in-memory scene into an offscreen texture; today `SceneRenderer` draws a cooked package through a running `Game` into a swap chain, and
+   more than a dozen passes take the swap chain, so that is a rework of that boundary (stage 1: render a live scene offscreen with a pixel
+   readback test; stage 2: show the texture in the shell; the texture side is now done and tested by the preview).
 2. **Transform gizmos.** Move, rotate and scale are done (W, E and R): arrows along the world axes, a ring around each world axis, and
    handles along the entity's own axes; each drag is one undoable edit, works in world space under a parent, and snaps to a step. Still to
    do: plane handles, a local-space option for move and rotate, and editing a multi-selection (the document tracks one pending edit at a
    time, so only the first selected entity changes).
 3. **A better content browser.** One exists (Project > Content Browser: folders, search, git status badges, rename and move, references,
    asset validation, commit). Dragging a model from it into the Scene View places it on the ground under the mouse. Still to do: thumbnails
-   (need the renderer, item 1), dropping onto the hierarchy and onto inspector fields (a texture onto a material slot, a prefab into the scene),
+   (the preview is the way to render one today, a few seconds each, so thumbnails need a cache), dropping onto the hierarchy and onto inspector fields (a texture onto a material slot, a prefab into the scene),
    and prefab placement.
 4. **Previews.** Material, mesh and animation previews that use the real renderer (needs item 1), so tuning a material shows the result.
 5. **Multi-scene and prefab workflow.** Several scenes open at once, prefab instance overrides shown in the inspector, a prefab editing mode.

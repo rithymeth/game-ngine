@@ -8,6 +8,7 @@ add_library(aether_editor_ui STATIC
     script_inspector.cpp
     error_overlay.cpp
     editor_theme.cpp
+    image_texture.cpp
     shell_layout.cpp
     code_document.cpp
     code_editor.cpp
@@ -44,6 +45,7 @@ add_library(aether_editor_ui STATIC
     ../world/procedural_panel.cpp
     ../world/scene_panel.cpp
     ../world/scene_view.cpp
+    ../world/scene_preview_panel.cpp
     ../world/data_layer_panel.cpp
     ../net/net_play.cpp
     ../net/net_panels.cpp

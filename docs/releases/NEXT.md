@@ -39,6 +39,13 @@ certificate error), and `iexpress.exe` produced nothing usable, so the self-extr
 resource compiled with `csc.exe`. A Vulkan-enabled install also fails for a consumer that lacks the Vulkan SDK, because the
 generated `AetherConfig.cmake` requires it -- which is why the installer builds with Vulkan off.
 
+## Top-down BMP images load
+
+A BMP stored top-down (negative height in the file, as the player writes its screenshots) was refused as "invalid" by `DecodeImageFile` and
+`DecodeImageFromMemory` (stb's `stbi_info` reports that height negative), so a texture in that form could not be imported. It loads now, with
+the rows in the right order. Found while building the editor's **Render Preview**, which renders the open scene with the real renderer and
+shows the picture in the editor.
+
 ## The Qt editor is removed; the editor is Dear ImGui
 
 At the project owner's request the Qt editor (`editor/qt`, target `aether_editor_qt`, option `AETHER_BUILD_QT_EDITOR`) is gone, and

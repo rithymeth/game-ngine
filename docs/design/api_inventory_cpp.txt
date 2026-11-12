@@ -7271,6 +7271,7 @@
 [editor/src/core/play_session.h] internal-tooling
 [editor/src/core/recent_projects.h] internal-tooling
 [editor/src/core/scene_document.h] internal-tooling
+[editor/src/core/scene_preview.h] internal-tooling
 [editor/src/core/snapping.h] internal-tooling
 [editor/src/devtools/console_panel.h] internal-tooling
 [editor/src/devtools/crash_reporter.h] internal-tooling
@@ -7307,6 +7308,7 @@
 [editor/src/ui/entity_inspector.h] internal-tooling
 [editor/src/ui/error_overlay.h] internal-tooling
 [editor/src/ui/extensions.h] internal-tooling
+[editor/src/ui/image_texture.h] internal-tooling
 [editor/src/ui/reflected_inspector.h] internal-tooling
 [editor/src/ui/script_inspector.h] internal-tooling
 [editor/src/ui/shell_layout.h] internal-tooling
@@ -7322,6 +7324,7 @@
 [editor/src/world/procedural_document.h] internal-tooling
 [editor/src/world/procedural_panel.h] internal-tooling
 [editor/src/world/scene_panel.h] internal-tooling
+[editor/src/world/scene_preview_panel.h] internal-tooling
 [editor/src/world/scene_view.h] internal-tooling
 [editor/src/world/spline_document.h] internal-tooling
 [editor/src/world/terrain_document.h] internal-tooling
