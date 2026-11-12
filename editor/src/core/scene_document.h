@@ -85,6 +85,10 @@ public:
     bool SetCineCameraField(Entity entity, const std::string& field_name, const reflect::Any& value);
     bool Undo();
     bool Redo();
+    // For a tool panel that issues commands of its own (the entity inspector's field edits and component adds): they go through the document's own stack and
+    // context, so they are undoable with everything else and mark the scene as changed.
+    CommandContext& Context() { return context_; }
+    CommandStack& Commands() { return commands_; }
     PlaySession::State PlayState() const { return play_session_.GetState(); }
     void Play();
     void Pause();

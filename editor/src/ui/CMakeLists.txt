@@ -7,6 +7,7 @@ add_library(aether_editor_ui STATIC
     entity_inspector.cpp
     script_inspector.cpp
     error_overlay.cpp
+    editor_theme.cpp
     code_document.cpp
     code_editor.cpp
     ../graph/graph_view.cpp
@@ -40,6 +41,7 @@ add_library(aether_editor_ui STATIC
     ../world/world_panels.cpp
     ../world/procedural_document.cpp
     ../world/procedural_panel.cpp
+    ../world/scene_panel.cpp
     ../world/data_layer_panel.cpp
     ../net/net_play.cpp
     ../net/net_panels.cpp

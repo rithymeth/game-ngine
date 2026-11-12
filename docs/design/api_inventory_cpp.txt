@@ -7302,6 +7302,7 @@
 [editor/src/ui/code_document.h] internal-tooling
 [editor/src/ui/code_editor.h] internal-tooling
 [editor/src/ui/editor_scripts.h] internal-tooling
+[editor/src/ui/editor_theme.h] internal-tooling
 [editor/src/ui/entity_inspector.h] internal-tooling
 [editor/src/ui/error_overlay.h] internal-tooling
 [editor/src/ui/extensions.h] internal-tooling
@@ -7318,6 +7319,7 @@
 [editor/src/world/foliage_document.h] internal-tooling
 [editor/src/world/procedural_document.h] internal-tooling
 [editor/src/world/procedural_panel.h] internal-tooling
+[editor/src/world/scene_panel.h] internal-tooling
 [editor/src/world/spline_document.h] internal-tooling
 [editor/src/world/terrain_document.h] internal-tooling
 [editor/src/world/world_panels.h] internal-tooling
