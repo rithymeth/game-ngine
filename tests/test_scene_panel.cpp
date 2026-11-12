@@ -19,6 +19,7 @@
 #include "test_framework.h"
 
 #include <imgui.h>
+#include <imgui_internal.h> // the drag-drop target the mouse is over
 
 #include <algorithm>
 #include <filesystem>
@@ -1279,4 +1280,204 @@ AETHER_TEST(ContentDrop_APlacedAssetCanGoUnderAnEntityInOneStep) {
     AETHER_CHECK(placed && document.Entities().size() == now + 1);
     const Entity orphan = document.Selection().empty() ? kNullEntity : document.Selection()[0];
     AETHER_CHECK(orphan != kNullEntity && document.GetWorld().GetComponent<Parent>(orphan) == nullptr && NearVec(WorldPositionOf(document, orphan), Vec3(2, 0, 0)));
+}
+
+namespace {
+
+// A drag from one item to another through real mouse events, a frame at a time: a button that drags `path` the way the Content Browser's rows do, and a view
+// that takes the drop the way the Scene View and the Live Viewport do (ContentDrop::Accept).
+struct DropRig {
+    HeadlessImGui imgui;
+    SceneDocument document;
+    SceneViewCamera camera;
+    ContentDrop drop;
+    stdfs::path content;
+    std::string path;
+    f32 snap_step = 0.0f;
+    ImVec2 origin{0, 0}, size{800, 600}, source_at{20, 20};
+    DropRig() { camera.target = Vec3(0, 0, 0); camera.distance = 12.0f; Step(ImVec2(0, 0), false); }
+    void Step(const ImVec2& mouse, bool down) {
+        ImGuiIO& io = ImGui::GetIO();
+        io.AddMousePosEvent(mouse.x, mouse.y);
+        io.AddMouseButtonEvent(0, down);
+        imgui.Frame([&] {
+            ImGui::SetCursorScreenPos(ImVec2(10, 10));
+            ImGui::Button("row", ImVec2(120, 24));
+            if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None)) {
+                ImGui::SetDragDropPayload(kContentPathPayload, path.c_str(), path.size() + 1);
+                ImGui::TextUnformatted(path.c_str());
+                ImGui::EndDragDropSource();
+            }
+            ImGui::SetCursorScreenPos(ImVec2(200, 60));
+            origin = ImGui::GetCursorScreenPos();
+            ImGui::InvisibleButton("view", size, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
+            drop.Accept(document, content, camera, origin, size, snap_step);
+        });
+    }
+    ImVec2 Pixel(const Vec3& world) const {
+        ImVec2 at(-1, -1);
+        ProjectToViewport(camera.ViewProjection(size.x / size.y), world, origin, size, at);
+        return at;
+    }
+    // Presses on the row and carries the mouse to `to` in steps, still holding; the caller releases.
+    void DragTo(const ImVec2& to) {
+        Step(source_at, false);
+        Step(source_at, true);
+        Step(ImVec2(source_at.x + 30.0f, source_at.y), true);
+        for (int i = 1; i <= 6; ++i) Step(ImVec2(source_at.x + 30.0f + (to.x - source_at.x - 30.0f) * i / 6.0f, source_at.y + (to.y - source_at.y) * i / 6.0f), true);
+    }
+};
+
+} // namespace
+
+AETHER_TEST(ContentDrop_ARealDragFromARowIsPlacedWhereTheMouseIsReleased) {
+    DropRig rig;
+    rig.content = Scratch("aether_content_drop_drag");
+    WriteBoxModel(rig.content, "Models/crate.glb", Vec3(-1, 0, -1), Vec3(1, 2, 1));
+    rig.path = "Models/crate.glb";
+    rig.document.Commands().Clear();
+    const usize before = rig.document.Entities().size();
+    rig.Step(ImVec2(0, 0), false);
+    const ImVec2 over_ground = rig.Pixel(Vec3(3.0f, 0.0f, 2.0f));
+
+    // Mid-drag, over the view: nothing is placed yet, and a marker shows where it would land.
+    rig.DragTo(over_ground);
+    AETHER_CHECK(rig.drop.preview && NearVec(rig.drop.point, Vec3(3.0f, 0.0f, 2.0f), 0.05f));
+    AETHER_CHECK(rig.document.Entities().size() == before && rig.drop.note.empty());
+    // Letting go places it there, selected, in one undo step, and says so.
+    rig.Step(over_ground, false);
+    AETHER_CHECK(rig.document.Entities().size() == before + 1 && rig.drop.note == "Placed Models/crate.glb");
+    AETHER_CHECK(rig.document.Selection().size() == 1 && NearVec(WorldPositionOf(rig.document, rig.document.Selection()[0]), Vec3(3.0f, 0.0f, 2.0f), 0.05f));
+    rig.Step(over_ground, false);
+    AETHER_CHECK(!rig.drop.preview);                                         // the marker goes when the drag does
+    AETHER_CHECK(rig.document.Undo() && !rig.document.CanUndo() && rig.document.Entities().size() == before);
+
+    // Snapping rounds where it lands to the step.
+    rig.snap_step = 2.0f;
+    const ImVec2 near_four = rig.Pixel(Vec3(3.4f, 0.0f, 2.2f)); // not on the halfway point, where either neighbour is as good
+    rig.DragTo(near_four);
+    rig.Step(near_four, false);
+    AETHER_CHECK(rig.document.Entities().size() == before + 1);
+    AETHER_CHECK(NearVec(WorldPositionOf(rig.document, rig.document.Selection()[0]), Vec3(4.0f, 0.0f, 2.0f), 0.05f));
+    rig.snap_step = 0.0f;
+
+    // Letting go somewhere that is not the view places nothing.
+    const usize now = rig.document.Entities().size();
+    rig.DragTo(ImVec2(100.0f, 400.0f));
+    AETHER_CHECK(!rig.drop.preview);
+    rig.Step(ImVec2(100.0f, 400.0f), false);
+    AETHER_CHECK(rig.document.Entities().size() == now);
+
+    // Something that is not a model or a prefab shows no marker and is refused with a reason.
+    rig.path = "Textures/brick.png";
+    rig.DragTo(over_ground);
+    AETHER_CHECK(!rig.drop.preview);
+    rig.Step(over_ground, false);
+    AETHER_CHECK(rig.document.Entities().size() == now && rig.drop.note.find("Only models") == 0);
+}
+
+namespace {
+
+// The same real drag, onto the Scene tool's hierarchy: a row that drags `path`, and the whole panel drawn below it.
+struct HierarchyDropRig {
+    HeadlessImGui imgui;
+    ScenePanel panel;
+    std::string path = "Models/crate.glb";
+    Entity drag_entity = kNullEntity; // when set, the row drags this entity (as a hierarchy row does) instead of an asset path
+    ImVec2 source_at{20, 20};
+    explicit HierarchyDropRig(const stdfs::path& content) : panel(content) { Step(ImVec2(0, 0), false); }
+    void Step(const ImVec2& mouse, bool down) {
+        ImGuiIO& io = ImGui::GetIO();
+        io.AddMousePosEvent(mouse.x, mouse.y);
+        io.AddMouseButtonEvent(0, down);
+        imgui.Frame([&] {
+            ImGui::SetCursorScreenPos(ImVec2(10, 10));
+            ImGui::Button("row", ImVec2(120, 24));
+            if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None)) {
+                if (drag_entity != kNullEntity) ImGui::SetDragDropPayload("AETHER_ENTITY", &drag_entity, sizeof(Entity));
+                else ImGui::SetDragDropPayload(kContentPathPayload, path.c_str(), path.size() + 1);
+                ImGui::TextUnformatted(path.c_str());
+                ImGui::EndDragDropSource();
+            }
+            ImGui::SetCursorScreenPos(ImVec2(10, 50));
+            panel.Draw();
+        });
+    }
+    // Presses on the row and carries the mouse down the hierarchy at x = 80, still holding: the y of the middle of each place a drop would be taken, top to bottom, one per target rectangle.
+    std::vector<f32> Targets() {
+        Step(source_at, false);
+        Step(source_at, true);
+        Step(ImVec2(source_at.x + 30.0f, source_at.y), true);
+        std::vector<f32> found;
+        f32 last_top = -1.0f;
+        for (f32 y = 60.0f; y < 330.0f; y += 3.0f) {
+            Step(ImVec2(80.0f, y), true);
+            const ImGuiContext& g = *ImGui::GetCurrentContext();
+            if (g.DragDropTargetId == 0 || g.DragDropTargetRect.Min.y == last_top) continue;
+            last_top = g.DragDropTargetRect.Min.y; // a new rectangle: the middle of it is where to let go
+            found.push_back((g.DragDropTargetRect.Min.y + g.DragDropTargetRect.Max.y) * 0.5f);
+        }
+        return found;
+    }
+};
+
+} // namespace
+
+AETHER_TEST(ContentDrop_ARealDragOntoTheHierarchyPlacesUnderTheRowOrAtTheRoot) {
+    const stdfs::path content = Scratch("aether_content_drop_hierarchy");
+    WriteBoxModel(content, "Models/crate.glb", Vec3(-1, 0, -1), Vec3(1, 2, 1));
+    HierarchyDropRig rig(content);
+    SceneDocument& document = rig.panel.Document();
+    document.Commands().Clear();
+    const usize before = document.Entities().size();
+    const HierarchyIndex index(document);
+    const Entity first_row = index.Children(kNullEntity).front();
+    const EntityGuid first_guid = document.GetWorld().GetComponent<IdComponent>(first_row)->guid;
+    const Vec3 first_at = WorldPositionOf(document, first_row);
+
+    // Carrying the mouse down the list finds the places that take a drop: the heading, then each row, a distinct one each.
+    const std::vector<f32> targets = rig.Targets();
+    AETHER_CHECK(targets.size() >= 2);
+    if (targets.size() < 2) return;
+
+    // Let go over the first row: the model is placed under that entity, at its origin, in one step.
+    rig.Step(ImVec2(80.0f, targets[1]), true);  // over the row, still holding
+    rig.Step(ImVec2(80.0f, targets[1]), false);
+    AETHER_CHECK(document.Entities().size() == before + 1 && rig.panel.Status() == "Placed Models/crate.glb");
+    const Entity placed = document.Selection().empty() ? kNullEntity : document.Selection()[0];
+    AETHER_CHECK(placed != kNullEntity);
+    if (placed == kNullEntity) return;
+    const Parent* link = document.GetWorld().GetComponent<Parent>(placed);
+    AETHER_CHECK(link != nullptr && link->parent == first_guid);
+    AETHER_CHECK(NearVec(WorldPositionOf(document, placed), first_at, 0.05f));
+    AETHER_CHECK(document.Undo() && !document.CanUndo() && document.Entities().size() == before);
+
+    // Let go over the heading instead: placed at the root, at the origin.
+    const std::vector<f32> again = rig.Targets();
+    AETHER_CHECK(!again.empty());
+    if (again.empty()) return;
+    rig.Step(ImVec2(80.0f, again[0]), true);  // over the heading, still holding
+    rig.Step(ImVec2(80.0f, again[0]), false);
+    AETHER_CHECK(document.Entities().size() == before + 1);
+    const Entity at_root = document.Selection().empty() ? kNullEntity : document.Selection()[0];
+    AETHER_CHECK(at_root != kNullEntity && document.GetWorld().GetComponent<Parent>(at_root) == nullptr);
+    AETHER_CHECK(at_root != kNullEntity && NearVec(WorldPositionOf(document, at_root), Vec3(0, 0, 0), 0.05f));
+}
+
+AETHER_TEST(ScenePanel_ADragOfAnEntityOntoTheHeadingMakesItARootAgain) {
+    const stdfs::path content = Scratch("aether_hierarchy_heading");
+    HierarchyDropRig rig(content);
+    SceneDocument& document = rig.panel.Document();
+    const Entity parent = document.CreateEntity("Zz Parent");
+    const Entity child = document.CreateEntity("Zz Child", SceneEntityKind::Empty, {}, parent);
+    document.Commands().Clear();
+    AETHER_CHECK(document.ParentOf(child) == parent);
+    rig.drag_entity = child;
+    const std::vector<f32> targets = rig.Targets();
+    AETHER_CHECK(!targets.empty());
+    if (targets.empty()) return;
+    rig.Step(ImVec2(80.0f, targets[0]), true);  // over the heading, still holding
+    rig.Step(ImVec2(80.0f, targets[0]), false);
+    AETHER_CHECK(document.ParentOf(child).IsNull());
+    AETHER_CHECK(document.Undo() && document.ParentOf(child) == parent);
 }
