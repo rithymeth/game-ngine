@@ -7,6 +7,8 @@
     "Scripts/",
     "Data/",
     "Textures/",
+    "UI/",
+    "fonts/",
     "Scenes/AssemblyHall.ascene",
     "Scenes/SalvageTest.ascene"
   ],

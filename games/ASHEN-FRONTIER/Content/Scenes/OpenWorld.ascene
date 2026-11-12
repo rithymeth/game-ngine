@@ -29436,6 +29436,40 @@
     },
     {
       "components": {
+        "WidgetComponent": {
+          "$v": 1,
+          "layout": "UI/Hud.aui",
+          "z": 0,
+          "visible": true
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Hud"
+        }
+      },
+      "guid": "f77012ac-b6a7-555c-af5b-2f4dfb9daeea"
+    },
+    {
+      "components": {
         "Camera": {
           "$v": 1,
           "far_plane": 2500,

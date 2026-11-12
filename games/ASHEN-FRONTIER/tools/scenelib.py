@@ -98,5 +98,6 @@ def script_guid(name):
 
 
 def give_hands(scene):
-    """Puts the Interactor script on the entity added last (Kael's body): what lets him take salvage."""
+    """Puts the Interactor script on the entity added last (Kael's body): what lets him take salvage. Adds the HUD (pack counts, the prompt) too."""
     scene.entities[-1]["components"]["ScriptComponent"] = {"$v": 1, "properties": [], "script": script_guid("Interactor")}
+    scene.add("Hud", {"WidgetComponent": {"$v": 1, "layout": "UI/Hud.aui", "z": 0, "visible": True}})
