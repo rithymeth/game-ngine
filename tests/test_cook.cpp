@@ -315,6 +315,55 @@ AETHER_TEST(Cook_ACueReachedFromAScenePullsItsSound) {
     CHECK(std::find(cooked.begin(), cooked.end(), "Textures/unused.png") != cooked.end());
 }
 
+// A WAV the decoder refuses (here 6 channels) used to cook without a word and then fail to play. The cooker applies
+// the decoder's limits, so the warning names the file and the reason.
+AETHER_TEST(Cook_AWavTheEngineCannotPlayIsWarnedAbout) {
+    const stdfs::path project = MakeProject("SurroundWav");
+    const stdfs::path content = project.parent_path() / "Content";
+    auto le = [](std::string& out, u32 value, int bytes) { for (int i = 0; i < bytes; ++i) out.push_back(static_cast<char>((value >> (8 * i)) & 0xFF)); };
+    auto wav = [&](u32 channels) {
+        std::string w = "RIFF";
+        le(w, 36 + 16, 4);
+        w += "WAVEfmt ";
+        le(w, 16, 4); le(w, 1, 2); le(w, channels, 2); le(w, 48000, 4);
+        le(w, 48000 * channels * 2, 4); le(w, channels * 2, 2); le(w, 16, 2);
+        w += "data";
+        le(w, 16, 4);
+        w.append(16, '\0');
+        return w;
+    };
+    stdfs::create_directories(content / "Audio");
+    for (const auto& [name, channels] : {std::pair<const char*, u32>{"stereo.wav", 2}, {"surround.wav", 6}}) {
+        std::ofstream file(content / "Audio" / name, std::ios::binary);
+        const std::string bytes = wav(channels);
+        file.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    }
+    WriteText(content / "Audio/a.acue",
+              R"({"name":"a","nodes":[{"id":1,"pos":[0,0],"sound":"Audio/stereo.wav","type":"Wave"},)"
+              R"({"id":2,"pos":[0,0],"sound":"Audio/surround.wav","type":"Wave"}],"output":{},"root":1,"version":1})");
+    json scene = {{"$type", "Scene"}, {"$version", 1},
+                  {"entities", json::array({{{"components", {{"AudioSource", {{"cue", "Audio/a.acue"}}}}}}})}};
+    WriteText(content / "Scenes/sound.ascene", scene.dump(2));
+    ProjectSettings settings;
+    std::string error;
+    AETHER_CHECK(LoadProject(project, settings, &error));
+    settings.startup_scene = "Scenes/sound.ascene";
+    AETHER_CHECK(SaveProject(project, settings, &error));
+    cook::CookOptions options;
+    options.project_file = project;
+    options.output_dir = stdfs::temp_directory_path() / "aether_cook_tests/SurroundWav_out";
+    stdfs::remove_all(options.output_dir);
+    const cook::CookReport report = cook::Cook(options);
+    CHECK(report.ok);
+    bool surround = false, stereo = false;
+    for (const std::string& w : report.warnings) {
+        if (w.find("surround.wav") != std::string::npos && w.find("6 channels") != std::string::npos) surround = true;
+        if (w.find("stereo.wav") != std::string::npos) stereo = true;
+    }
+    CHECK(surround);
+    CHECK(!stereo); // a plain stereo file is fine
+}
+
 AETHER_TEST(Cook_MobileTargetCooksAstcAndCanStripTheSourceTextures) {
     const stdfs::path project = MakeProject("MobileCook");
     cook::CookOptions options;
