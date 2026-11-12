@@ -1,3 +1,4 @@
+#include "aether/audio/audio_system.h"
 #include "aether/input/actions.h"
 #include "aether/scene/components.h"
 #include "aether/script/script_system.h"
@@ -190,4 +191,44 @@ AETHER_TEST(ScriptApi_InputFromScripts) {
     state.SetButton(input::Key::Space, true);
     input.Update(state, 0.1f);
     AETHER_CHECK(f.Number("jumps") == 1.0); // unbound: no more events reach scripts
+}
+
+// Scripts play sounds through the active audio system: 2D and placed one-shots, bus volume, stop all; a missing cue or no system is false, not an error.
+AETHER_TEST(ScriptApi_AudioPlaysThroughTheActiveAudioSystem) {
+    using namespace aether::audio;
+    constexpr u32 kRate = 48000;
+    Mixer mixer(kRate);
+    mixer.AddDefaultBuses();
+    SoundBank bank;
+    SoundWave wave;
+    wave.sample_rate = kRate;
+    wave.samples.assign(kRate, 0.5f);
+    bank.Add("beep", wave);
+    std::map<std::string, SoundCue> cues;
+    SoundCue cue;
+    CueNode node;
+    node.id = 1;
+    node.sound = "beep";
+    cue.nodes.push_back(node);
+    cue.root = 1;
+    cues["Beep"] = cue;
+    Fixture f;
+    ScriptSystem scripts(f.host, f.world, f.guids, f.Loader());
+    {
+        AudioSystem system(f.world, mixer, bank, [&](const std::string& n) { const auto it = cues.find(n); return it == cues.end() ? nullptr : &it->second; });
+        const usize before = mixer.VoiceCount();
+        ScriptResult r = f.host.Run("return Audio.PlaySound2D('Beep', -6, 1.0), Audio.PlaySound2D('Nope'), Audio.PlaySoundAtLocation('Beep', 1, 2, 3), Audio.SetBusVolume('Master', -3), Audio.SetBusVolume('NoBus', 0)");
+        AETHER_CHECK(r.ok && r.values.size() == 5);
+        if (r.ok && r.values.size() == 5) {
+            AETHER_CHECK(std::get<bool>(r.values[0]) && !std::get<bool>(r.values[1]) && std::get<bool>(r.values[2]));
+            AETHER_CHECK(std::get<bool>(r.values[3]) && !std::get<bool>(r.values[4]));
+        }
+        AETHER_CHECK(mixer.VoiceCount() == before + 2);
+        AETHER_CHECK(f.host.Run("Audio.StopAll()").ok);
+        AETHER_CHECK(mixer.VoiceCount() == 0);
+        AETHER_CHECK(!f.host.Run("Audio.PlaySound2D(42)").ok); // wants a cue name
+    }
+    // With no audio system running, playing is false and harmless.
+    ScriptResult none = f.host.Run("return Audio.PlaySound2D('Beep')");
+    AETHER_CHECK(none.ok && !std::get<bool>(none.values[0]));
 }

@@ -2,6 +2,7 @@
 // :Connect, timers, and input.
 
 #include "aether/script/script_system.h"
+#include "aether/audio/audio_system.h"
 #include "aether/script/ai_api.h"
 #include "aether/script/gameplay_api.h"
 #include "aether/script/interaction_api.h"
@@ -410,6 +411,27 @@ void ScriptSystem::InstallApi(bool install_kit_apis) {
         if (!scene_hooks_.request) return call.Fail("Scene isn't bound to a running game");
         const std::string spawn = call.IsString(1) ? call.String(1) : std::string();
         call.Return(scene_hooks_.request(call.String(0), spawn));
+    });
+    // Audio acts on the game's active audio system (the same one the Blueprint nodes use); with none running, the calls report false and do nothing.
+    host_.RegisterNative("Audio", "PlaySound2D", [](NativeCall& call) {
+        if (!call.IsString(0)) return call.Fail("Audio.PlaySound2D(cue [, volume_db, pitch]) expected a cue name");
+        audio::AudioSystem* system = audio::AudioSystem::Active();
+        call.Return(system != nullptr && system->PlaySound2D(call.String(0), static_cast<f32>(call.Number(1, 0.0)), static_cast<f32>(call.Number(2, 1.0))) != 0);
+    });
+    host_.RegisterNative("Audio", "PlaySoundAtLocation", [](NativeCall& call) {
+        if (!call.IsString(0) || !call.IsNumber(1) || !call.IsNumber(2) || !call.IsNumber(3))
+            return call.Fail("Audio.PlaySoundAtLocation(cue, x, y, z [, volume_db, pitch]) expected a cue name and a position");
+        audio::AudioSystem* system = audio::AudioSystem::Active();
+        const Vec3 at(static_cast<f32>(call.Number(1)), static_cast<f32>(call.Number(2)), static_cast<f32>(call.Number(3)));
+        call.Return(system != nullptr && system->PlaySoundAtLocation(call.String(0), at, static_cast<f32>(call.Number(4, 0.0)), static_cast<f32>(call.Number(5, 1.0))) != 0);
+    });
+    host_.RegisterNative("Audio", "SetBusVolume", [](NativeCall& call) {
+        if (!call.IsString(0) || !call.IsNumber(1)) return call.Fail("Audio.SetBusVolume(bus, volume_db [, fade_seconds]) expected a bus name and a number");
+        audio::AudioSystem* system = audio::AudioSystem::Active();
+        call.Return(system != nullptr && system->SetBusVolume(call.String(0), static_cast<f32>(call.Number(1)), static_cast<f32>(call.Number(2, 0.0))));
+    });
+    host_.RegisterNative("Audio", "StopAll", [](NativeCall&) {
+        if (audio::AudioSystem* system = audio::AudioSystem::Active()) system->StopAll();
     });
     host_.RegisterNative("Camera", "Shake", [this](NativeCall& call) {
         if (!call.IsNumber(0)) return call.Fail("Camera.Shake(amount) expected a number from 0 to 1");
