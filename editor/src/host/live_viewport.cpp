@@ -9,6 +9,7 @@
 #include "aether/scene/prefab.h"
 #include "core/commands.h"
 #include "aether/renderer/components.h"
+#include "aether/renderer/material_instance.h"
 #include "aether/scene/gameplay.h"
 
 #include <algorithm>
@@ -96,12 +97,12 @@ void LiveViewport::RememberKnown() {
 }
 
 bool LiveViewport::IsPatchable(ComponentId component) {
-    // What the renderer only reads each frame and nothing else holds a copy of: a physics body, a script or an audio source is built from its
+    // What the renderer only reads each frame and nothing else holds a copy of (a MaterialParameters is read per draw: player/src/material_overrides.h): a physics body, a script or an audio source is built from its
     // component when the scene loads, so editing one of those needs the scene loaded again.
     return component == GetComponentId<Transform>() || component == GetComponentId<EntityName>() || component == GetComponentId<ModelRenderer>() ||
            component == GetComponentId<DirectionalLight>() || component == GetComponentId<PointLight>() || component == GetComponentId<SpotLight>() ||
            component == GetComponentId<SkyLight>() || component == GetComponentId<Wind>() || component == GetComponentId<WindZone>() ||
-           component == GetComponentId<PostProcessVolume>() || component == GetComponentId<Decal>();
+           component == GetComponentId<PostProcessVolume>() || component == GetComponentId<Decal>() || component == GetComponentId<MaterialParameters>();
 }
 
 namespace {
