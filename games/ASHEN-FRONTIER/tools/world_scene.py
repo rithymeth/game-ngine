@@ -90,7 +90,7 @@ def basin(s, rng):
     _scatter(s, rng, "fallen_basin", "BasinScrub", ["Scrub"], 34, scale=(1.0, 1.4), collide=False)
 
 
-def iron(s, rng):
+def iron(s, rng, door_script=None):
     x, z = world.poi_position("smelter_row")
     for i in range(3):
         s.model(f"Smelter_{i}", "SmelterStack", position=(x + i * 15, 0, z + (i % 2) * 6), rotation=(0, i * 30, 0), tags=("Landmark",), collider=((0, 9, 0), (4, 9, 4)))
@@ -105,6 +105,9 @@ def iron(s, rng):
     x, z = world.poi_position("assembly_hall")
     s.model("AssemblyHall", "AssemblyHall", position=(x, 0, z), rotation=(0, 90, 0), tags=("Dungeon",), collider=((0, 3.5, 0), (8, 3.5, 14)))
     s.add("AssemblyDoorGlow", LIGHT(BLUE, 14.0, 14.0), position=(x + 15, 2.5, z), snap=True)
+    if door_script:
+      s.add("AssemblyDoor", {"ScriptComponent": {"$v": 1, "script": door_script, "properties": [{"name": "target", "value": json.dumps("Scenes/AssemblyHall.ascene")}, {"name": "radius", "value": "2.5"}]}},
+            position=(x + 15.2, 0, z), snap=True)
     x, z = world.poi_position("warden_checkpoint")
     for i, (dx, dz) in enumerate(((-6, 0), (6, 0))):
         s.model(f"WardenSentinel_{i}", "SENTINEL4", position=(x + dx, 0, z + dz), rotation=(0, 180, 0), tags=("Enemy", "Warden"), collider=((0, 1.2, 0), (0.8, 1.2, 0.8)))
@@ -166,7 +169,7 @@ def hollow(s, rng):
     _scatter(s, rng, "hollow_core", "CoreRock", ["RockB", "RockA"], 14)
 
 
-def build(playable=True, camera=None):
+def build(playable=True, camera=None, door_script=None):
     rng = random.Random(21)
     s = Scene()
     s.ground = terrain.height
@@ -193,7 +196,7 @@ def build(playable=True, camera=None):
         t = i / 7
         s.model(f"GridPylon_{i}", "Pylon", position=(bx + (-9 - bx) * t, 0, bz + (9 - bz) * t), collider=((0, 2, 0), (0.4, 2, 0.4)))
     basin(s, rng)
-    iron(s, rng)
+    iron(s, rng, door_script)
     verdant(s, rng)
     hollow(s, rng)
     _outcrops(s, rng)

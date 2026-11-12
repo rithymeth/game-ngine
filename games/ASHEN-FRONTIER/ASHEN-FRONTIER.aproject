@@ -6,7 +6,8 @@
     "Models/",
     "Scripts/",
     "Data/",
-    "Textures/"
+    "Textures/",
+    "Scenes/AssemblyHall.ascene"
   ],
   "collision_matrix": [],
   "default_quality": "High",

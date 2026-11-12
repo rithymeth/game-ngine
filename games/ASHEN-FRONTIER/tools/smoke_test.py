@@ -108,6 +108,20 @@ def play(work):
         check(False, "the player wrote a screenshot")
 
 
+def interior(work):
+    """Kael starts in the Assembly Hall and walks out of its exit door: the Door script's Scene.Load takes the game to the open world."""
+    command = [str(BUILD / "player" / "aether_player"), "--pak", str(work / "cooked"), "--scene", "Scenes/AssemblyHall.ascene", "--frames", "400", "--size", "320x180",
+               "--press", "S", "--report", "--user-dir", str(work / "user2")]
+    if sys.platform.startswith("linux") and shutil.which("xvfb-run"):
+        command = ["xvfb-run", "-a"] + command
+    result = subprocess.run(command, capture_output=True, text=True, timeout=300)
+    text = result.stdout + result.stderr
+    check(result.returncode == 0, f"the player runs the hall and exits cleanly (exit {result.returncode})")
+    loads = re.findall(r"Loaded (Scenes/\S+\.ascene)", text)
+    check(loads[:2] == ["Scenes/AssemblyHall.ascene", "Scenes/OpenWorld.ascene"], f"the exit door leads from the hall to the open world (loaded: {loads})")
+    check(not re.search(r"\[ERROR\]", text), "no errors on the way through the door")
+
+
 def main():
     layout()
     if failures:
@@ -116,6 +130,7 @@ def main():
     try:
         if cook(work):
             play(work)
+            interior(work)
     finally:
         shutil.rmtree(work, ignore_errors=True)
     print(f"{len(failures)} check(s) failed" if failures else "smoke test passed")
