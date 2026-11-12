@@ -78,6 +78,15 @@ u64 LiveViewport::SceneReloads() const { return impl_ ? impl_->reloads : 0; }
 u64 LiveViewport::PatchCount() const { return impl_ ? impl_->patches : 0; }
 u64 LiveViewport::ScriptRestarts() const { return impl_ ? impl_->script_restarts : 0; }
 usize LiveViewport::EntityCount() const { return impl_ && impl_->game ? impl_->game->GetWorld().EntityCount() : 0; }
+player::GraphMaterialReport LiveViewport::CompileGraphMaterial(const std::string& path) const {
+    if (!impl_) {
+        player::GraphMaterialReport report;
+        report.path = path;
+        report.message = "Nothing is loaded.";
+        return report;
+    }
+    return player::CompileGraphMaterial(impl_->package, path);
+}
 usize LiveViewport::ScriptInstanceCount() const { return impl_ && impl_->game ? impl_->game->Stats().script_instances : 0; }
 usize LiveViewport::PhysicsBodyCount() const { return impl_ && impl_->game ? impl_->game->Stats().physics_bodies : 0; }
 

@@ -25,6 +25,8 @@ std::vector<std::string> ModelPaths(const SceneDocument& document, const std::fi
             std::error_code ignored;
             if (value.is_texture && !value.texture.empty() && std::filesystem::is_regular_file(content / value.texture, ignored)) paths.push_back(value.texture);
         }
+        std::error_code ignored;
+        if (!overrides.material.empty() && std::filesystem::is_regular_file(content / overrides.material, ignored)) paths.push_back(overrides.material); // a graph the cook should carry
     });
     std::sort(paths.begin(), paths.end());
     paths.erase(std::unique(paths.begin(), paths.end()), paths.end());
@@ -32,6 +34,24 @@ std::vector<std::string> ModelPaths(const SceneDocument& document, const std::fi
 }
 
 } // namespace
+
+std::vector<player::GraphMaterialReport> LiveViewportPanel::GraphMaterials() {
+    std::vector<std::string> paths;
+    scene_.Document().GetWorld().ForEach<MaterialParameters>([&](const MaterialParameters& overrides) {
+        const std::string& material = overrides.material;
+        const bool graph = material.size() > 5 && (material.compare(material.size() - 5, 5, ".amat") == 0 || material.compare(material.size() - 6, 6, ".amati") == 0);
+        if (graph) paths.push_back(material);
+    });
+    std::sort(paths.begin(), paths.end());
+    paths.erase(std::unique(paths.begin(), paths.end()), paths.end());
+    std::vector<player::GraphMaterialReport> reports;
+    for (const std::string& path : paths) {
+        auto it = graph_reports_.find(path);
+        if (it == graph_reports_.end()) it = graph_reports_.emplace(path, viewport_.CompileGraphMaterial(path)).first; // read once per cook: a graph edited since shows after Reload
+        reports.push_back(it->second);
+    }
+    return reports;
+}
 
 usize LiveViewportPanel::UncookedModels() const {
     usize missing = 0;
@@ -63,6 +83,7 @@ bool LiveViewportPanel::Start() {
         return false;
     }
     note_.clear();
+    graph_reports_.clear();
     cooked_models_ = models;
     last_revision_ = revision;
     last_structure_ = structure;
@@ -132,6 +153,7 @@ void LiveViewportPanel::Draw(f32 dt) {
     }
     else ImGui::TextDisabled("Runs the open scene with the real renderer, edits and all. Open the scene you want first.");
     if (!loaded) return;
+    for (const player::GraphMaterialReport& graph : GraphMaterials()) ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.4f, 1.0f), "%s: %s", graph.path.c_str(), graph.message.c_str());
     tools_.SetBounds(&scene_.ModelBounds());
     tools_.DrawToolbar();
     Advance(dt);

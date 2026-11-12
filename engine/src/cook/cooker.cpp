@@ -182,6 +182,8 @@ std::vector<AssetGuid> CollectCookSet(const AssetDatabase& database,
             } else {
                 include(record->guid, reason);
             }
+        } else if (std::error_code file_ec; std::filesystem::is_regular_file(content / root, file_ec)) {
+            extra.insert(root); // a file no importer claims (a material graph, a data file): carried as it is, like the files of a folder
         } else {
             warnings.push_back(root + " (" + reason + ") isn't an asset in the content folder");
         }
