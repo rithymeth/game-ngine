@@ -404,7 +404,7 @@ AETHER_TEST(SceneView_FocusAndDrawHeadless) {
 }
 
 // The move gizmo: the mouse ray, a drag along one axis as one undoable edit, snapping, and an entity under a parent.
-AETHER_TEST(TranslateGizmo_RayAndAxisMaths) {
+AETHER_TEST(TransformGizmo_RayAndAxisMaths) {
     SceneViewCamera camera;
     const ImVec2 origin(0.0f, 0.0f), size(800.0f, 600.0f);
     const Mat4 vp = camera.ViewProjection(size.x / size.y);
@@ -428,7 +428,7 @@ AETHER_TEST(TranslateGizmo_RayAndAxisMaths) {
     AETHER_CHECK(!MouseRay(vp, origin, ImVec2(0, 0), on_screen, ray_origin, ray_direction));     // a collapsed viewport has no ray
 }
 
-AETHER_TEST(TranslateGizmo_ADragIsOneUndoableMoveAlongOneAxis) {
+AETHER_TEST(TransformGizmo_ADragIsOneUndoableMoveAlongOneAxis) {
     SceneDocument document;
     const Entity thing = document.CreateEntity("Thing");
     document.SetPosition(thing, Vec3(1.0f, 2.0f, 3.0f), true);
@@ -438,19 +438,19 @@ AETHER_TEST(TranslateGizmo_ADragIsOneUndoableMoveAlongOneAxis) {
     camera.distance = 12.0f;
     const ImVec2 origin(0.0f, 0.0f), size(800.0f, 600.0f);
     const Mat4 vp = camera.ViewProjection(size.x / size.y);
-    TranslateGizmo gizmo;
+    TransformGizmo gizmo;
     ImVec2 handle_start;
-    AETHER_CHECK(ProjectToViewport(vp, Vec3(1.0f, 2.0f, 3.0f) + Vec3(TranslateGizmo::HandleLength(camera) * 0.5f, 0, 0), origin, size, handle_start));
-    AETHER_CHECK(gizmo.HitTest(document, camera, origin, size, handle_start) == GizmoAxis::None); // nothing selected: no gizmo to hit
+    AETHER_CHECK(ProjectToViewport(vp, Vec3(1.0f, 2.0f, 3.0f) + Vec3(TransformGizmo::HandleLength(camera) * 0.5f, 0, 0), origin, size, handle_start));
+    AETHER_CHECK(gizmo.HitTest(document, camera, origin, size, handle_start, GizmoMode::Move) == GizmoAxis::None); // nothing selected: no gizmo to hit
     document.SetSelection({thing});
-    AETHER_CHECK(gizmo.HitTest(document, camera, origin, size, handle_start) == GizmoAxis::X);   // the middle of the X handle
-    AETHER_CHECK(gizmo.HitTest(document, camera, origin, size, ImVec2(5.0f, 5.0f)) == GizmoAxis::None);
-    AETHER_CHECK(!gizmo.Begin(document, camera, origin, size, ImVec2(5.0f, 5.0f)) && !gizmo.Dragging());
+    AETHER_CHECK(gizmo.HitTest(document, camera, origin, size, handle_start, GizmoMode::Move) == GizmoAxis::X);   // the middle of the X handle
+    AETHER_CHECK(gizmo.HitTest(document, camera, origin, size, ImVec2(5.0f, 5.0f), GizmoMode::Move) == GizmoAxis::None);
+    AETHER_CHECK(!gizmo.Begin(document, camera, origin, size, ImVec2(5.0f, 5.0f), GizmoMode::Move) && !gizmo.Dragging());
     document.Commands().Clear();                                                                  // so the undo count below is only the drag
-    AETHER_CHECK(gizmo.Begin(document, camera, origin, size, handle_start) && gizmo.Dragging() && gizmo.Axis() == GizmoAxis::X);
+    AETHER_CHECK(gizmo.Begin(document, camera, origin, size, handle_start, GizmoMode::Move) && gizmo.Dragging() && gizmo.Axis() == GizmoAxis::X);
 
     // Drag the grabbed point 4 units along world X, over several frames; the mouse path is a straight line on the screen.
-    const Vec3 grab_world = Vec3(1.0f, 2.0f, 3.0f) + Vec3(TranslateGizmo::HandleLength(camera) * 0.5f, 0, 0);
+    const Vec3 grab_world = Vec3(1.0f, 2.0f, 3.0f) + Vec3(TransformGizmo::HandleLength(camera) * 0.5f, 0, 0);
     ImVec2 target_pixel;
     AETHER_CHECK(ProjectToViewport(vp, grab_world + Vec3(4.0f, 0, 0), origin, size, target_pixel));
     ImVec2 mouse = handle_start;
@@ -469,7 +469,7 @@ AETHER_TEST(TranslateGizmo_ADragIsOneUndoableMoveAlongOneAxis) {
     AETHER_CHECK(!document.CanUndo());
 }
 
-AETHER_TEST(TranslateGizmo_SnapsAndMovesAChildInWorldSpace) {
+AETHER_TEST(TransformGizmo_SnapsAndMovesAChildInWorldSpace) {
     SceneDocument document;
     const Entity parent = document.CreateEntity("Parent");
     document.SetPosition(parent, Vec3(10.0f, 0.0f, 0.0f), true);
@@ -481,15 +481,132 @@ AETHER_TEST(TranslateGizmo_SnapsAndMovesAChildInWorldSpace) {
     camera.distance = 12.0f;
     const ImVec2 origin(0.0f, 0.0f), size(800.0f, 600.0f);
     const Mat4 vp = camera.ViewProjection(size.x / size.y);
-    TranslateGizmo gizmo;
+    TransformGizmo gizmo;
     ImVec2 grab, to;
-    AETHER_CHECK(ProjectToViewport(vp, Vec3(11.0f, 0, 0) + Vec3(TranslateGizmo::HandleLength(camera) * 0.5f, 0, 0), origin, size, grab));
-    AETHER_CHECK(gizmo.Begin(document, camera, origin, size, grab));
-    AETHER_CHECK(ProjectToViewport(vp, Vec3(11.0f + 2.3f + TranslateGizmo::HandleLength(camera) * 0.5f, 0, 0), origin, size, to)); // dragged 2.3 along X
+    AETHER_CHECK(ProjectToViewport(vp, Vec3(11.0f, 0, 0) + Vec3(TransformGizmo::HandleLength(camera) * 0.5f, 0, 0), origin, size, grab));
+    AETHER_CHECK(gizmo.Begin(document, camera, origin, size, grab, GizmoMode::Move));
+    AETHER_CHECK(ProjectToViewport(vp, Vec3(11.0f + 2.3f + TransformGizmo::HandleLength(camera) * 0.5f, 0, 0), origin, size, to)); // dragged 2.3 along X
     AETHER_CHECK(gizmo.Update(document, camera, origin, size, to, 0.5f));
     gizmo.End(document, camera, origin, size, to, 0.5f);
     const Vec3 world = WorldPositionOf(document, child);
     AETHER_CHECK(std::fabs(world.x - 13.5f) < 0.01f);          // 11 + 2.3 = 13.3, snapped to the 0.5 grid in world space
     const Transform* local = document.GetWorld().GetComponent<Transform>(child);
     AETHER_CHECK(local && std::fabs(local->position.x - 3.5f) < 0.01f); // and stored relative to the parent at x = 10
+}
+
+namespace {
+
+// A camera looking at the origin from a fixed place, and a viewport; the gizmo tests aim the mouse with the same projection the gizmo uses.
+struct GizmoRig {
+    SceneViewCamera camera;
+    ImVec2 origin{0.0f, 0.0f}, size{800.0f, 600.0f};
+    GizmoRig() { camera.target = Vec3(0, 0, 0); camera.distance = 12.0f; }
+    ImVec2 Pixel(const Vec3& world) const {
+        ImVec2 at(-1, -1);
+        ProjectToViewport(camera.ViewProjection(size.x / size.y), world, origin, size, at);
+        return at;
+    }
+    f32 Length() const { return TransformGizmo::HandleLength(camera); }
+};
+
+Vec3 WorldAxisOf(const SceneDocument& document, Entity entity, int column) {
+    const Mat4 m = ComputeWorldTransform(document.GetWorld(), document.Guids(), entity);
+    return Vec3(m.cols[column].x, m.cols[column].y, m.cols[column].z);
+}
+
+bool NearVec(const Vec3& a, const Vec3& b, f32 tolerance = 0.05f) { return (a - b).Length() < tolerance; }
+
+} // namespace
+
+AETHER_TEST(TransformGizmo_ScaleFollowsTheEntitysOwnAxes) {
+    GizmoRig rig;
+    SceneDocument document;
+    const Entity thing = document.CreateEntity("Thing");
+    document.SetRotation(thing, Quaternion::FromAxisAngle(Vec3(0, 1, 0), 3.14159265f * 0.5f), true); // local X now points along world -Z
+    document.SetSelection({thing});
+    document.Commands().Clear();
+    const Vec3 local_x = TransformGizmo::HandleDirection(document, thing, GizmoAxis::X, GizmoMode::Scale);
+    AETHER_CHECK(NearVec(local_x, Vec3(0, 0, -1)));
+    AETHER_CHECK(NearVec(TransformGizmo::HandleDirection(document, thing, GizmoAxis::X, GizmoMode::Move), Vec3(1, 0, 0))); // Move stays on the world axes
+
+    TransformGizmo gizmo;
+    const f32 half = rig.Length() * 0.5f;
+    const ImVec2 grab = rig.Pixel(local_x * half);
+    AETHER_CHECK(gizmo.HitTest(document, rig.camera, rig.origin, rig.size, grab, GizmoMode::Scale) == GizmoAxis::X);
+    AETHER_CHECK(gizmo.Begin(document, rig.camera, rig.origin, rig.size, grab, GizmoMode::Scale));
+    ImVec2 mouse = rig.Pixel(local_x * (half * 2.0f));                                              // twice as far out: twice the size
+    AETHER_CHECK(gizmo.Update(document, rig.camera, rig.origin, rig.size, mouse, 0.0f));
+    gizmo.End(document, rig.camera, rig.origin, rig.size, mouse, 0.0f);
+    const Transform* t = document.GetWorld().GetComponent<Transform>(thing);
+    AETHER_CHECK(t && std::fabs(t->scale.x - 2.0f) < 0.02f && std::fabs(t->scale.y - 1.0f) < 1e-3f && std::fabs(t->scale.z - 1.0f) < 1e-3f);
+    AETHER_CHECK(document.Undo() && !document.CanUndo());                                           // one drag, one undo
+    t = document.GetWorld().GetComponent<Transform>(thing);
+    AETHER_CHECK(t && std::fabs(t->scale.x - 1.0f) < 1e-3f);
+
+    // Snapping lands on the step; dragging through the origin never collapses or flips the scale.
+    AETHER_CHECK(gizmo.Begin(document, rig.camera, rig.origin, rig.size, grab, GizmoMode::Scale));
+    mouse = rig.Pixel(local_x * (half * 1.7f));
+    AETHER_CHECK(gizmo.Update(document, rig.camera, rig.origin, rig.size, mouse, 0.5f));
+    t = document.GetWorld().GetComponent<Transform>(thing);
+    AETHER_CHECK(t && std::fabs(t->scale.x - 1.5f) < 1e-3f);                                        // 1.7 snapped to the 0.5 step
+    mouse = rig.Pixel(local_x * (-half * 3.0f));
+    AETHER_CHECK(gizmo.Update(document, rig.camera, rig.origin, rig.size, mouse, 0.0f));
+    gizmo.End(document, rig.camera, rig.origin, rig.size, mouse, 0.0f);
+    t = document.GetWorld().GetComponent<Transform>(thing);
+    AETHER_CHECK(t && t->scale.x > 0.0f && t->scale.x <= 0.02f);                                    // clamped just above zero
+}
+
+AETHER_TEST(TransformGizmo_RotateTurnsAboutAWorldAxisInOneUndoableStep) {
+    GizmoRig rig;
+    SceneDocument document;
+    const Entity thing = document.CreateEntity("Thing");
+    document.SetSelection({thing});
+    document.Commands().Clear();
+    Vec3 ring[8];
+    TransformGizmo::RingPoints(Vec3(0, 0, 0), Vec3(0, 1, 0), rig.Length(), 8, ring); // 45 degree steps round the Y ring: index 1 = 45, 2 = 90, 3 = 135 ...
+    TransformGizmo gizmo;
+    AETHER_CHECK(gizmo.HitTest(document, rig.camera, rig.origin, rig.size, rig.Pixel(ring[1]), GizmoMode::Rotate) == GizmoAxis::Y);
+    AETHER_CHECK(gizmo.HitTest(document, rig.camera, rig.origin, rig.size, ImVec2(5, 5), GizmoMode::Rotate) == GizmoAxis::None);
+    AETHER_CHECK(gizmo.Begin(document, rig.camera, rig.origin, rig.size, rig.Pixel(ring[1]), GizmoMode::Rotate) && gizmo.Axis() == GizmoAxis::Y);
+    AETHER_CHECK(gizmo.Update(document, rig.camera, rig.origin, rig.size, rig.Pixel(ring[2]), 0.0f));
+    gizmo.End(document, rig.camera, rig.origin, rig.size, rig.Pixel(ring[3]), 0.0f);                // 45 -> 135: a quarter turn about +Y
+    AETHER_CHECK(NearVec(WorldAxisOf(document, thing, 0), Vec3(0, 0, -1)));                          // X now points along -Z
+    AETHER_CHECK(NearVec(WorldAxisOf(document, thing, 1), Vec3(0, 1, 0)));                           // Y is the axis, unmoved
+    AETHER_CHECK(document.Undo() && !document.CanUndo());                                           // the whole drag was one undo step
+    AETHER_CHECK(NearVec(WorldAxisOf(document, thing, 0), Vec3(1, 0, 0)));
+
+    // Past the half turn: 45 -> 315 is 270 degrees one way or 90 the other, and either is the same rotation.
+    AETHER_CHECK(gizmo.Begin(document, rig.camera, rig.origin, rig.size, rig.Pixel(ring[1]), GizmoMode::Rotate));
+    for (const int index : {3, 5, 7}) AETHER_CHECK(gizmo.Update(document, rig.camera, rig.origin, rig.size, rig.Pixel(ring[index]), 0.0f));
+    gizmo.End(document, rig.camera, rig.origin, rig.size, rig.Pixel(ring[7]), 0.0f);
+    AETHER_CHECK(NearVec(WorldAxisOf(document, thing, 0), Vec3(0, 0, 1)));                           // 270 degrees: X along +Z
+
+    // Snapping rounds the turn to the step: 100 degrees dragged with a 15 degree step lands on 105.
+    document.Undo();
+    Vec3 fine[36];
+    TransformGizmo::RingPoints(Vec3(0, 0, 0), Vec3(0, 1, 0), rig.Length(), 36, fine);                // 10 degrees apart
+    AETHER_CHECK(gizmo.Begin(document, rig.camera, rig.origin, rig.size, rig.Pixel(fine[5]), GizmoMode::Rotate));
+    gizmo.Update(document, rig.camera, rig.origin, rig.size, rig.Pixel(fine[10]), 15.0f);
+    gizmo.End(document, rig.camera, rig.origin, rig.size, rig.Pixel(fine[15]), 15.0f);               // 50 -> 150
+    const f32 radians = 105.0f * 3.14159265f / 180.0f;
+    AETHER_CHECK(NearVec(WorldAxisOf(document, thing, 0), Vec3(std::cos(radians), 0.0f, -std::sin(radians)), 0.02f));
+}
+
+AETHER_TEST(TransformGizmo_RotateUnderATiltedParentTurnsAboutTheWorldAxis) {
+    GizmoRig rig;
+    SceneDocument document;
+    const Entity parent = document.CreateEntity("Parent");
+    document.SetRotation(parent, Quaternion::FromAxisAngle(Vec3(0, 0, 1), 3.14159265f * 0.5f), true); // x -> y, y -> -x
+    const Entity child = document.CreateEntity("Child", SceneEntityKind::Empty, {}, parent);
+    document.SetSelection({child});
+    document.Commands().Clear();
+    AETHER_CHECK(NearVec(WorldAxisOf(document, child, 0), Vec3(0, 1, 0)));
+    Vec3 ring[8];
+    TransformGizmo::RingPoints(Vec3(0, 0, 0), Vec3(0, 1, 0), rig.Length(), 8, ring);
+    TransformGizmo gizmo;
+    AETHER_CHECK(gizmo.Begin(document, rig.camera, rig.origin, rig.size, rig.Pixel(ring[1]), GizmoMode::Rotate));
+    gizmo.Update(document, rig.camera, rig.origin, rig.size, rig.Pixel(ring[2]), 0.0f);
+    gizmo.End(document, rig.camera, rig.origin, rig.size, rig.Pixel(ring[3]), 0.0f);                // a quarter turn about world +Y
+    AETHER_CHECK(NearVec(WorldAxisOf(document, child, 0), Vec3(0, 1, 0)));                           // its X was along Y, the axis it turned about: unmoved
+    AETHER_CHECK(NearVec(WorldAxisOf(document, child, 1), Vec3(0, 0, 1)));                           // its Y was along -X, which a quarter turn about +Y sends to +Z
 }
