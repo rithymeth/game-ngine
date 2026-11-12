@@ -5041,8 +5041,10 @@
   void WatchSettingsLanguage()
   ~Game()
 [player/include/aether/player/graph_material.h] experimental
+  type struct GraphBuild
   type struct GraphMaterialReport
-  GraphMaterialReport CompileGraphMaterial(const GamePackage&package,const std::string&path,std::string*shader=nullptr,std::vector<std::string>*texture_paths=nullptr)
+  type struct Pushed
+  GraphMaterialReport CompileGraphMaterial(const GamePackage&package,const std::string&path,GraphBuild*build=nullptr)
 [player/include/aether/player/scene_renderer.h] experimental
   type class SceneRenderer
   type struct GpuTimings

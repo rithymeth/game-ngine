@@ -5,6 +5,7 @@
 #include "aether/scene/serialization.h"
 #include "core/scene_preview.h"
 
+#include <nlohmann/json.hpp>
 #include <imgui.h>
 
 #include <algorithm>
@@ -63,9 +64,23 @@ bool ReadFileBytes(const std::filesystem::path& file, std::vector<char>& out) {
 }
 } // namespace
 
+std::vector<std::string> LiveViewportPanel::GraphFiles() const {
+    std::vector<std::string> files = GraphPaths();
+    for (usize i = 0; i < files.size() && files.size() < 64; ++i) { // an instance's parents too, up its chain: editing the graph under it changes what is drawn
+        const std::string& file = files[i];
+        if (file.size() <= 6 || file.compare(file.size() - 6, 6, ".amati") != 0) continue;
+        std::vector<char> bytes;
+        if (!ReadFileBytes(scene_.ContentRoot() / file, bytes)) continue;
+        const nlohmann::json json = nlohmann::json::parse(bytes.begin(), bytes.end(), nullptr, /*allow_exceptions=*/false);
+        const std::string parent = json.is_object() ? json.value("parent", std::string()) : std::string();
+        if (!parent.empty() && std::find(files.begin(), files.end(), parent) == files.end()) files.push_back(parent);
+    }
+    return files;
+}
+
 bool LiveViewportPanel::SyncGraphFiles() {
     bool changed = false;
-    for (const std::string& path : GraphPaths()) {
+    for (const std::string& path : GraphFiles()) {
         std::vector<char> bytes;
         if (!ReadFileBytes(scene_.ContentRoot() / path, bytes)) continue; // not in the project's folder: the package's copy stands
         const u64 hash = HashBytes(bytes);
@@ -86,7 +101,22 @@ std::vector<player::GraphMaterialReport> LiveViewportPanel::GraphMaterials() {
     for (const std::string& path : paths) {
         auto it = graph_reports_.find(path);
         if (it == graph_reports_.end()) it = graph_reports_.emplace(path, viewport_.CompileGraphMaterial(path)).first; // read once per cook: a graph edited since shows after Reload
-        reports.push_back(it->second);
+        player::GraphMaterialReport report = it->second;
+        // An object that gives a value to a parameter the shader holds as a constant (it did not fit in the six values a draw carries) would be ignored without a word.
+        std::vector<std::string> ignored;
+        scene_.Document().GetWorld().ForEach<MaterialParameters>([&](const MaterialParameters& overrides) {
+            if (overrides.material != path) return;
+            for (const MaterialParameterValue& value : overrides.values) {
+                if (!value.is_texture && std::find(report.fixed_parameters.begin(), report.fixed_parameters.end(), value.name) != report.fixed_parameters.end() &&
+                    std::find(ignored.begin(), ignored.end(), value.name) == ignored.end()) ignored.push_back(value.name);
+            }
+        });
+        if (!ignored.empty()) {
+            report.message += " Not per object (over the six values a draw carries):";
+            for (const std::string& name : ignored) report.message += " " + name;
+            report.message += ".";
+        }
+        reports.push_back(std::move(report));
     }
     return reports;
 }
@@ -123,7 +153,7 @@ bool LiveViewportPanel::Start() {
     note_.clear();
     graph_reports_.clear();
     graph_hashes_.clear(); // the graphs on disk are what was just cooked
-    for (const std::string& path : GraphPaths()) {
+    for (const std::string& path : GraphFiles()) {
         std::vector<char> bytes;
         if (ReadFileBytes(scene_.ContentRoot() / path, bytes)) graph_hashes_[path] = HashBytes(bytes);
     }

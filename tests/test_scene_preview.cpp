@@ -1281,7 +1281,7 @@ AETHER_TEST(LiveViewportPanel_SaysWhatItMakesOfAMaterialGraphItCannotDrawYet) {
     use("Materials/Skin.amati");
     AETHER_CHECK(panel.Start());
     reports = panel.GraphMaterials();
-    AETHER_CHECK(reports.size() == 1 && !reports[0].compiles && reports[0].message.find("instance") != std::string::npos);
+    AETHER_CHECK(reports.size() == 1 && !reports[0].compiles && reports[0].message.find("Not in the package") != std::string::npos);
     use("");
     AETHER_CHECK(panel.GraphMaterials().empty());                                 // no graph named: nothing said
 }
@@ -1465,6 +1465,155 @@ AETHER_TEST(LiveViewportPanel_ASavedMaterialGraphShowsWithoutPressingReload) {
     picture = settle();
     AETHER_CHECK(dominant(picture, 2) > frame / 3);
     AETHER_CHECK(panel.Viewport().SceneReloads() == reloads); // naming it is a patched edit of the scene
+}
+
+AETHER_TEST(LiveViewportPanel_ObjectsGiveAGraphTheirOwnValuesAndAnInstanceIsDrawnWithItsParent) {
+    std::unique_ptr<gfx::rhi::IDevice> device = TryDevice();
+    if (!device) {
+        std::printf("    (no Vulkan device: install a driver, or Mesa's lavapipe, to run this)\n");
+        return;
+    }
+    Context imgui;
+    const stdfs::path project = MakeProject("LiveGraphValues");
+    const stdfs::path content = project.parent_path() / "Content";
+    stdfs::create_directories(content / "Materials");
+    auto tinted = [](Vec4 tint, mat::ShadingModel shading = mat::ShadingModel::DefaultLit) {
+        mat::Material m;
+        m.shading = shading;
+        m.parameters.push_back({"Tint", mat::PinType::Float3, tint, "", "Surface"});
+        const mat::NodeId out = m.Add("Material.Output", {}, 600, 0);
+        const mat::NodeId color = m.Add("Param.Vector:Tint");
+        m.Connect(color, "value", out, "BaseColor");
+        return m;
+    };
+    auto save = [&](const char* name, const mat::Material& material) { std::ofstream(content / "Materials" / name, std::ios::trunc) << mat::MaterialToJson(material).dump(); };
+    save("Base.amat", tinted({0.9f, 0.05f, 0.05f, 0}));
+    mat::MaterialInstance teal; // the same graph with another colour
+    teal.parent = "Materials/Base.amat";
+    teal.SetValue("Tint", Vec4(0.05f, 0.8f, 0.75f, 0.0f));
+    std::string error;
+    AETHER_CHECK(mat::SaveInstance(teal, content / "Materials" / "Teal.amati", &error));
+
+    ScenePanel scene(content);
+    AETHER_CHECK(scene.OpenScene("Scenes/Main.ascene", true));
+    SceneDocument& document = scene.Document();
+    std::vector<Entity> models;
+    Entity floor = kNullEntity;
+    for (const Entity entity : document.Entities()) {
+        const ModelRenderer* renderer = document.GetWorld().GetComponent<ModelRenderer>(entity);
+        if (renderer == nullptr) continue;
+        models.push_back(entity);
+        if (std::string(renderer->asset_path).find("Floor") != std::string::npos) floor = entity;
+    }
+    AETHER_CHECK(floor != kNullEntity && models.size() >= 2);
+    if (floor == kNullEntity) return;
+    const ComponentId overrides = GetComponentId<MaterialParameters>();
+    for (const Entity entity : models) AETHER_CHECK(document.AddComponent(entity, overrides));
+    auto use = [&](const char* path) {
+        for (const Entity entity : models) AETHER_CHECK(document.SetComponentField(entity, overrides, "material", reflect::Any(std::string(path)), true));
+    };
+    use("Materials/Base.amat");
+    LiveViewportPanel panel(*device, scene, [&] { return project; });
+    panel.width = 160;
+    panel.height = 90;
+    panel.reload_interval = 0.0f;
+    AETHER_CHECK(panel.Start());
+    auto settle = [&] { for (int i = 0; i < 6; ++i) panel.Advance(0.2f); return panel.Viewport().Pixels(); };
+    const usize frame = 160u * 90u;
+    auto red = [](const std::vector<u8>& p) { usize n = 0; for (usize i = 0; i + 3 < p.size(); i += 4) n += p[i] > p[i + 1] + 50 && p[i] > p[i + 2] + 50; return n; };
+    auto green = [](const std::vector<u8>& p) { usize n = 0; for (usize i = 0; i + 3 < p.size(); i += 4) n += p[i + 1] > p[i] + 50 && p[i + 1] > p[i + 2] + 50; return n; };
+    auto cyan = [](const std::vector<u8>& p) { usize n = 0; for (usize i = 0; i + 3 < p.size(); i += 4) n += p[i + 1] > p[i] + 50 && p[i + 2] > p[i] + 50; return n; };
+    std::vector<u8> picture = settle();
+    AETHER_CHECK(red(picture) > frame / 3 && green(picture) < 8);
+
+    // One object gives the graph its own Tint: the floor goes green (a floor is most of the picture) while the rest keep the graph's red, from one shader.
+    MaterialParameterValue tint;
+    tint.name = "Tint";
+    tint.value = Vec4(0.05f, 0.9f, 0.05f, 0.0f);
+    AETHER_CHECK(document.SetComponentField(floor, overrides, "values", reflect::Any(std::vector<MaterialParameterValue>{tint}), true));
+    picture = settle();
+    AETHER_CHECK(green(picture) > frame / 3);
+    AETHER_CHECK(red(picture) >= 8);                                   // the pillar and the cubes still use the graph's own
+    AETHER_CHECK(panel.Viewport().SceneReloads() == 0);                // a patched edit of the scene, not a reload
+
+    // An instance of the graph (a .amati, with its parent cooked beside it): the instance's colour.
+    AETHER_CHECK(document.SetComponentField(floor, overrides, "values", reflect::Any(std::vector<MaterialParameterValue>{}), true));
+    use("Materials/Teal.amati");
+    AETHER_CHECK(panel.Start());
+    picture = settle();
+    AETHER_CHECK(cyan(picture) > frame / 3 && panel.GraphMaterials().size() == 1 && panel.GraphMaterials()[0].drawable);
+
+    // The parent graph saved as something the renderer cannot draw (unlit): the instance under it falls back with it, with no Reload; saved right again, it is back.
+    save("Base.amat", tinted({0.9f, 0.05f, 0.05f, 0}, mat::ShadingModel::Unlit));
+    picture = settle();
+    AETHER_CHECK(cyan(picture) < frame / 10);
+    save("Base.amat", tinted({0.9f, 0.05f, 0.05f, 0}));
+    picture = settle();
+    AETHER_CHECK(cyan(picture) > frame / 3);
+}
+
+AETHER_TEST(LiveViewportPanel_AGraphsTexturesAreNotTakenForTheModelsOwnSlots) {
+    std::unique_ptr<gfx::rhi::IDevice> device = TryDevice();
+    if (!device) {
+        std::printf("    (no Vulkan device: install a driver, or Mesa's lavapipe, to run this)\n");
+        return;
+    }
+    Context imgui;
+    const stdfs::path project = MakeProject("LiveGraphSlots");
+    const stdfs::path content = project.parent_path() / "Content";
+    stdfs::create_directories(content / "Materials");
+    stdfs::create_directories(content / "textures");
+    auto solid = [&](const char* name, u8 r, u8 g, u8 b) {
+        std::vector<u8> rgb(4 * 4 * 3);
+        for (usize i = 0; i < rgb.size(); i += 3) { rgb[i] = r; rgb[i + 1] = g; rgb[i + 2] = b; }
+        const std::vector<u8> png = assets::EncodePngRgb8(4, 4, rgb);
+        std::ofstream(content / "textures" / name, std::ios::binary).write(reinterpret_cast<const char*>(png.data()), static_cast<std::streamsize>(png.size()));
+    };
+    solid("blue.png", 10, 10, 240);
+    solid("flat.png", 128, 128, 255);   // what a normal map of a flat surface looks like
+    solid("tilted.png", 255, 255, 128); // and one tilted hard: read as the model's normal map it would change every highlight
+    assets::AssetDatabase database(content);
+    database.Scan();
+    auto guid = [&](const char* path) { const assets::AssetRecord* r = database.FindByPath(path); return r != nullptr ? assets::ToString(r->guid) : std::string(); };
+    // Two textures: the blue one is the colour; the second is sampled and multiplied by zero, so it is a live texture in the graph that changes nothing by itself.
+    auto two = [&](const char* second) {
+        mat::Material m;
+        m.parameters.push_back({"Colour", mat::PinType::Texture, {}, guid("textures/blue.png"), "Surface"});
+        m.parameters.push_back({"Other", mat::PinType::Texture, {}, guid(second), "Surface"});
+        for (int i = 0; i < 6; ++i) m.parameters.push_back({"Gain" + std::to_string(i), mat::PinType::Float, {1.1f, 0, 0, 0}, "", ""}); // fill the words a draw carries, so the factor word the model's normal map strength reads is not zero
+        const mat::NodeId out = m.Add("Material.Output", {}, 600, 0);
+        const mat::NodeId t1 = m.Add("Param.Texture:Colour"), s1 = m.Add("Texture.Sample"), t2 = m.Add("Param.Texture:Other"), s2 = m.Add("Texture.Sample");
+        const mat::NodeId zero = m.Add("Const.Float", {{"value", 0.0f}}), scaled = m.Add("Math.Multiply"), sum = m.Add("Math.Add");
+        m.Connect(t1, "value", s1, "texture").Connect(t2, "value", s2, "texture").Connect(s2, "rgb", scaled, "a").Connect(zero, "value", scaled, "b");
+        m.Connect(s1, "rgb", sum, "a").Connect(scaled, "result", sum, "b").Connect(sum, "result", out, "BaseColor");
+        return m;
+    };
+    std::ofstream(content / "Materials" / "Flat.amat") << mat::MaterialToJson(two("textures/flat.png")).dump();
+    std::ofstream(content / "Materials" / "Tilted.amat") << mat::MaterialToJson(two("textures/tilted.png")).dump();
+
+    ScenePanel scene(content);
+    AETHER_CHECK(scene.OpenScene("Scenes/Main.ascene", true));
+    SceneDocument& document = scene.Document();
+    std::vector<Entity> models;
+    for (const Entity entity : document.Entities()) {
+        if (document.GetWorld().HasComponent<ModelRenderer>(entity)) models.push_back(entity);
+    }
+    const ComponentId overrides = GetComponentId<MaterialParameters>();
+    for (const Entity entity : models) AETHER_CHECK(document.AddComponent(entity, overrides));
+    LiveViewportPanel panel(*device, scene, [&] { return project; });
+    panel.width = 160;
+    panel.height = 90;
+    panel.reload_interval = 0.0f;
+    auto picture = [&](const char* path) {
+        for (const Entity entity : models) AETHER_CHECK(document.SetComponentField(entity, overrides, "material", reflect::Any(std::string(path)), true));
+        AETHER_CHECK(panel.Start());
+        for (int i = 0; i < 6; ++i) panel.Advance(0.2f);
+        return panel.Viewport().Pixels();
+    };
+    const std::vector<u8> flat = picture("Materials/Flat.amat");
+    AETHER_CHECK(panel.GraphMaterials().size() == 1 && panel.GraphMaterials()[0].drawable && panel.GraphMaterials()[0].textures == 2);
+    const std::vector<u8> tilted = picture("Materials/Tilted.amat");
+    AETHER_CHECK(DifferingPixels(flat, tilted) < 160u * 90u / 100);       // the second texture does nothing to the lighting: it is not the model's normal map
 }
 
 #endif
