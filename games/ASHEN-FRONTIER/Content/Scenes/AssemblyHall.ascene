@@ -2559,9 +2559,48 @@
         "Parent": {
           "$v": 1,
           "parent": "5c1eb06f-7395-5b91-9ffa-44e00927933f"
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "properties": [],
+          "script": "6d7b68d8-bfbe-499f-a707-f9fc9f946089"
         }
       },
       "guid": "ebf58c1b-062b-55eb-841e-64e8875a17d1"
+    },
+    {
+      "components": {
+        "WidgetComponent": {
+          "$v": 1,
+          "layout": "UI/Hud.aui",
+          "z": 0,
+          "visible": true
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Hud"
+        }
+      },
+      "guid": "f77012ac-b6a7-555c-af5b-2f4dfb9daeea"
     },
     {
       "components": {

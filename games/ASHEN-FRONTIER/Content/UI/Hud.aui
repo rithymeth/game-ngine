@@ -1,0 +1,126 @@
+{
+ "$type": "Layout",
+ "version": 1,
+ "root": {
+  "type": "Canvas",
+  "name": "Hud",
+  "children": [
+   {
+    "type": "Border",
+    "name": "PackPanel",
+    "background": {
+     "kind": "Color",
+     "tint": [
+      0.02,
+      0.04,
+      0.09,
+      0.72
+     ]
+    },
+    "padding": [
+     16,
+     10,
+     16,
+     10
+    ],
+    "slot": {
+     "anchors": [
+      0,
+      0,
+      0,
+      0
+     ],
+     "position": [
+      24,
+      24
+     ],
+     "size": [
+      330,
+      92
+     ]
+    },
+    "children": [
+     {
+      "type": "VerticalBox",
+      "children": [
+       {
+        "type": "Text",
+        "name": "ScrapText",
+        "text": "SCRAP  0",
+        "size": 26,
+        "color": [
+         0.85,
+         0.85,
+         0.9,
+         1.0
+        ]
+       },
+       {
+        "type": "Text",
+        "name": "ComponentText",
+        "text": "COMPONENTS  0",
+        "size": 26,
+        "color": [
+         0.35,
+         0.7,
+         1.0,
+         1.0
+        ]
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "type": "Border",
+    "name": "PromptPanel",
+    "visibility": "Collapsed",
+    "background": {
+     "kind": "Color",
+     "tint": [
+      0.02,
+      0.04,
+      0.09,
+      0.78
+     ]
+    },
+    "padding": [
+     18,
+     8,
+     18,
+     8
+    ],
+    "slot": {
+     "anchors": [
+      0.5,
+      1,
+      0.5,
+      1
+     ],
+     "position": [
+      -210,
+      -150
+     ],
+     "size": [
+      420,
+      48
+     ]
+    },
+    "children": [
+     {
+      "type": "Text",
+      "name": "PromptText",
+      "text": "[E] Take",
+      "size": 28,
+      "color": [
+       1.0,
+       0.82,
+       0.3,
+       1.0
+      ]
+     }
+    ]
+   }
+  ]
+ }
+}

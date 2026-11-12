@@ -11,7 +11,7 @@ import random
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from scenelib import Scene  # noqa: E402
+from scenelib import Scene, give_hands  # noqa: E402
 import world  # noqa: E402
 import world_scene  # noqa: E402
 import interior_scene  # noqa: E402
@@ -143,6 +143,7 @@ def fallen_basin(playable=True):
                        position=(10, 0.05, 20), rotation=(0, 200, 0), tags=("Player",))
         s.model("KaelBody", "Kael", position=(0, 0, 0), tags=("PlayerBody",)).__class__  # placeholder to keep the call chain short
         s.entities[-1]["components"]["Parent"] = {"$v": 1, "parent": player}
+        give_hands(s)
         s.camera((10, 3.2, 26), yaw=0, pitch=-12, fov=62)
         s.save(OUT / "FallenBasin.ascene")
     else:
@@ -162,6 +163,18 @@ def open_world():
     (data / "world.json").write_text(json.dumps(world.world_data(), indent=2) + "\n", encoding="utf-8", newline="\n")
 
 
+def salvage_test():
+    """A small test scene: Kael beside a salvage crate on a floor (the smoke test presses Interact and expects the crate to be taken)."""
+    s = Scene()
+    s.sky(1.2)
+    s.sun(yaw=-25, pitch=-38)
+    s.model("Ground", "Ground", position=(0, 0, 0), scale=(60, 1, 60), color=SAND, snap=False)
+    s.add("GroundCollider", {"BoxCollider": {"$v": 1, "center": [0, 0, 0], "friction": 0.8, "half_extents": [30, 0.5, 30], "is_trigger": False, "report_stay": False, "restitution": 0.0}}, position=(0, -0.5, 0))
+    s.model("Test_Crate", "SalvageCrate", position=(1.5, 0, 0), tags=("Salvage",), snap=False)
+    interior_scene.kael(s, (0, 0.1, 0), 0, script_guid("ThirdPersonController"))
+    s.save(OUT / "SalvageTest.ascene")
+
+
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
     model_gallery()
@@ -170,6 +183,7 @@ def main():
     fallen_basin(True)
     fallen_basin(False)
     open_world()
+    salvage_test()
     print("wrote", OUT)
 
 

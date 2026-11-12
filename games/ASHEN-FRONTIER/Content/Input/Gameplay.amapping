@@ -302,6 +302,38 @@
             "type": "Pressed"
           }
         ]
+      },
+      {
+        "$v": 1,
+        "action": "Interact",
+        "actuation": 0.5,
+        "key": "E",
+        "modifiers": [],
+        "triggers": [
+          {
+            "$v": 1,
+            "chord_action": "",
+            "one_shot": true,
+            "time": 0.5,
+            "type": "Pressed"
+          }
+        ]
+      },
+      {
+        "$v": 1,
+        "action": "Interact",
+        "actuation": 0.5,
+        "key": "GamepadX",
+        "modifiers": [],
+        "triggers": [
+          {
+            "$v": 1,
+            "chord_action": "",
+            "one_shot": true,
+            "time": 0.5,
+            "type": "Pressed"
+          }
+        ]
       }
     ],
     "block_lower_contexts": false,

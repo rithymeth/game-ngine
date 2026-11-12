@@ -2,6 +2,7 @@
 lights and the camera. The scenes are generated (tools/make_scenes.py), so a layout is code and a change is a diff."""
 
 import json
+import pathlib
 import math
 import uuid
 
@@ -88,3 +89,15 @@ class Scene:
         with open(path, "w", encoding="utf-8", newline="\n") as f:
             json.dump({"$type": "Scene", "$version": 1, "entities": self.entities}, f, indent=2)
             f.write("\n")
+
+
+def script_guid(name):
+    """The asset GUID of a script in Content/Scripts, from its .ameta."""
+    meta = json.loads((pathlib.Path(__file__).resolve().parent.parent / "Content" / "Scripts" / (name + ".luau.ameta")).read_text(encoding="utf-8"))
+    return meta["guid"]
+
+
+def give_hands(scene):
+    """Puts the Interactor script on the entity added last (Kael's body): what lets him take salvage. Adds the HUD (pack counts, the prompt) too."""
+    scene.entities[-1]["components"]["ScriptComponent"] = {"$v": 1, "properties": [], "script": script_guid("Interactor")}
+    scene.add("Hud", {"WidgetComponent": {"$v": 1, "layout": "UI/Hud.aui", "z": 0, "visible": True}})

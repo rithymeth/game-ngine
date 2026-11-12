@@ -127,6 +127,19 @@ def interior(work):
         check(math.hypot(x - hx, z - hz) < 45, f"Kael comes out at the hall's door, not at the world's spawn ({math.hypot(x - hx, z - hz):.0f} m from the hall)")
 
 
+def salvage(work):
+    """Kael stands beside a salvage crate and presses Interact: the Interactor script takes it into the pack."""
+    command = [str(BUILD / "player" / "aether_player"), "--pak", str(work / "cooked"), "--scene", "Scenes/SalvageTest.ascene", "--frames", "60", "--size", "320x180",
+               "--press", "E", "--report", "--user-dir", str(work / "user3")]
+    if sys.platform.startswith("linux") and shutil.which("xvfb-run"):
+        command = ["xvfb-run", "-a"] + command
+    result = subprocess.run(command, capture_output=True, text=True, timeout=300)
+    text = result.stdout + result.stderr
+    check(result.returncode == 0, f"the player runs the salvage test and exits cleanly (exit {result.returncode})")
+    check("Salvaged Test_Crate: +2 components" in text, "pressing Interact beside a crate takes it (+2 components)")
+    check(not re.search(r"\[ERROR\]", text), "no errors while salvaging")
+
+
 def main():
     layout()
     if failures:
@@ -136,6 +149,7 @@ def main():
         if cook(work):
             play(work)
             interior(work)
+            salvage(work)
     finally:
         shutil.rmtree(work, ignore_errors=True)
     print(f"{len(failures)} check(s) failed" if failures else "smoke test passed")

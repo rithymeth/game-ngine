@@ -11,7 +11,7 @@ import numpy as np
 
 import terrain
 import world
-from scenelib import Scene
+from scenelib import Scene, give_hands
 
 LIGHT = lambda color, intensity, rng_: {"PointLight": {"$v": 1, "cast_shadows": False, "color": list(color), "intensity": intensity, "range": rng_}}
 BLUE, AMBER, GREEN = (0.2, 0.5, 1.0), (1.0, 0.5, 0.1), (0.3, 1.0, 0.6)
@@ -209,6 +209,7 @@ def build(playable=True, camera=None, door_script=None):
                        position=(world.SPAWN["position"][0], 0.15, world.SPAWN["position"][2]), rotation=(0, world.SPAWN["yaw"], 0), tags=("Player",), snap=True)
         s.model("KaelBody", "Kael", position=(0, 0, 0), tags=("PlayerBody",), snap=False)
         s.entities[-1]["components"]["Parent"] = {"$v": 1, "parent": player}
+        give_hands(s)
         sx, sz = world.SPAWN["position"][0], world.SPAWN["position"][2]
         s.camera((sx, float(terrain.height(sx, sz + 6)) + 3.2, sz + 6), yaw=0, pitch=-12, fov=62, far=2500)
     else:
