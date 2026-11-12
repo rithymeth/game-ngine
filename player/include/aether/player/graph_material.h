@@ -2,6 +2,7 @@
 
 #include "aether/core/base.h"
 
+#include <vector>
 #include <string>
 
 namespace aether::player {
@@ -15,7 +16,7 @@ struct GraphMaterialReport {
     std::string path;
     bool found = false;     // the package has the file
     bool compiles = false;  // valid graph, shader generated
-    bool drawable = false;  // the renderer can draw with it: an opaque, default-lit graph of constants and parameters (no textures yet)
+    bool drawable = false;  // the renderer can draw with it: an opaque, default-lit graph of constants, parameters and textures (no triplanar sampling yet)
     std::string message;    // why not, or a one-line summary
     u32 live_nodes = 0;     // nodes that reach an output the material uses
     u32 instructions = 0;   // locals the shader computes (a rough cost)
@@ -27,6 +28,9 @@ struct GraphMaterialReport {
 // Reads `path` (a .amat under Content/) from the package, checks it and generates its shader. A .amati (an instance of a graph) is reported as not supported yet.
 // When the graph is drawable, `shader` (if given) gets the HLSL the scene shader includes: the graph's defines and EvaluateMaterial, with its parameters as
 // constants (so an edit to the graph is a new shader, not a changed value).
-GraphMaterialReport CompileGraphMaterial(const GamePackage& package, const std::string& path, std::string* shader = nullptr);
+// A graph's texture parameters are sampled through the scene's bindless texture table, by the slots the draw passes in its push constants (the same four 8-bit
+// fields a model's own textures use, so at most four): `texture_paths`, if given, gets the content path of each texture's default in slot order (empty for a
+// texture with none), for the renderer to load and pass.
+GraphMaterialReport CompileGraphMaterial(const GamePackage& package, const std::string& path, std::string* shader = nullptr, std::vector<std::string>* texture_paths = nullptr);
 
 } // namespace aether::player

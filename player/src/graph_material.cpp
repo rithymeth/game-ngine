@@ -42,7 +42,7 @@ const char* HlslType(mat::PinType type) {
 }
 
 // The generated include with its constant buffer replaced by constants holding the graph's own default values, and its defines written out ahead of it.
-std::string BakeParameters(const mat::Material& material, const mat::GeneratedMaterial& generated) {
+std::string BakeParameters(const GamePackage& package, const mat::Material& material, const mat::GeneratedMaterial& generated, std::vector<std::string>* texture_paths) {
     std::string out;
     for (const std::string& define : generated.defines) {
         const usize equals = define.find('=');
@@ -60,12 +60,40 @@ std::string BakeParameters(const mat::Material& material, const mat::GeneratedMa
         const usize end = hlsl.find("};", begin);
         if (end != std::string::npos) hlsl.replace(begin, end + 2 - begin, constants);
     }
+    if (!generated.textures.empty()) {
+        // The sampler is the scene's; each texture is a slot of the bindless table, named as the graph names it.
+        const usize sampler = hlsl.find("SamplerState MaterialSampler");
+        if (sampler != std::string::npos) hlsl.erase(sampler, hlsl.find('\n', sampler) + 1 - sampler);
+        // Plain functions, not methods of a texture wrapper: the compiler turns a method called on a constant struct into invalid SPIR-V.
+        std::string helpers =
+            "float4 GraphSample(uint slot, float2 uv) { return g_Textures[min((g_PC.g_MaterialTextures >> (8u * slot)) & 255u, 127u)].Sample(g_Sampler, uv); }\n"
+            "float4 GraphSampleLevel(uint slot, float2 uv, float level) { return g_Textures[min((g_PC.g_MaterialTextures >> (8u * slot)) & 255u, 127u)].SampleLevel(g_Sampler, uv, level); }\n";
+        const auto replace_all = [&](const std::string& from, const std::string& to) {
+            for (usize at = hlsl.find(from); at != std::string::npos; at = hlsl.find(from, at + to.size())) hlsl.replace(at, from.size(), to);
+        };
+        for (const mat::TextureSlot& slot : generated.textures) {
+            const mat::Parameter* parameter = material.FindParameter(slot.name);
+            std::string content_path;
+            if (parameter != nullptr && !parameter->texture.empty()) {
+                if (const GameManifest::Asset* asset = package.FindAssetByGuid(parameter->texture)) content_path = asset->path;
+            }
+            if (texture_paths != nullptr) texture_paths->push_back(content_path);
+            const std::string number = std::to_string(slot.slot) + "u";
+            replace_all(slot.identifier + ".Sample(MaterialSampler, ", "GraphSample(" + number + ", ");
+            replace_all(slot.identifier + ".SampleLevel(MaterialSampler, ", "GraphSampleLevel(" + number + ", ");
+            const std::string declaration = "Texture2D " + slot.identifier + " :";
+            const usize at = hlsl.find(declaration);
+            if (at != std::string::npos) hlsl.erase(at, hlsl.find('\n', at) + 1 - at);
+        }
+        const usize anchor = hlsl.find("struct MaterialInputs");
+        hlsl.insert(anchor == std::string::npos ? 0 : anchor, helpers + "\n");
+    }
     return out + hlsl;
 }
 
 } // namespace
 
-GraphMaterialReport CompileGraphMaterial(const GamePackage& package, const std::string& path, std::string* shader) {
+GraphMaterialReport CompileGraphMaterial(const GamePackage& package, const std::string& path, std::string* shader, std::vector<std::string>* texture_paths) {
     GraphMaterialReport report;
     report.path = path;
     const auto ends_with = [&](const char* suffix) {
@@ -110,14 +138,16 @@ GraphMaterialReport CompileGraphMaterial(const GamePackage& package, const std::
     // What the renderer can draw so far: an opaque, default-lit graph of constants and parameters (no textures, no vertex offset).
     if (material.shading != mat::ShadingModel::DefaultLit || material.blend != mat::BlendMode::Opaque) {
         report.message = summary + "; not drawn yet (only an opaque, default-lit graph is).";
-    } else if (!generated.textures.empty()) {
-        report.message = summary + "; not drawn yet (a graph that samples textures is not).";
+    } else if (generated.textures.size() > 4) {
+        report.message = summary + "; not drawn yet (more than four textures are not).";
+    } else if (generated.hlsl.find("AetherTriplanar") != std::string::npos) {
+        report.message = summary + "; not drawn yet (triplanar sampling is not).";
     } else if (generated.features.world_position_offset) {
         report.message = summary + "; not drawn yet (a graph that moves vertices is not).";
     } else {
         report.drawable = true;
         report.message = summary + "; drawn.";
-        if (shader != nullptr) *shader = BakeParameters(material, generated);
+        if (shader != nullptr) *shader = BakeParameters(package, material, generated, texture_paths);
     }
     return report;
 }

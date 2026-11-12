@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <cstring>
 #include <deque>
+#include <fstream>
 #include <set>
 
 namespace aether::cook {
@@ -184,6 +185,20 @@ std::vector<AssetGuid> CollectCookSet(const AssetDatabase& database,
             }
         } else if (std::error_code file_ec; std::filesystem::is_regular_file(content / root, file_ec)) {
             extra.insert(root); // a file no importer claims (a material graph, a data file): carried as it is, like the files of a folder
+            // A material graph names its textures by asset GUID inside the file, which nothing else would follow: they come with it.
+            if (root.size() > 5 && root.compare(root.size() - 5, 5, ".amat") == 0) {
+                std::ifstream file(content / root, std::ios::binary);
+                const json graph = json::parse(file, nullptr, /*allow_exceptions=*/false);
+                if (graph.is_object() && graph.contains("parameters") && graph["parameters"].is_array()) {
+                    for (const json& parameter : graph["parameters"]) {
+                        AssetGuid texture;
+                        if (parameter.is_object() && parameter.value("type", "") == "texture" && parameter.contains("texture") && parameter["texture"].is_string() &&
+                            assets::ParseAssetGuid(parameter["texture"].get<std::string>(), texture)) {
+                            include(texture, "texture of " + root);
+                        }
+                    }
+                }
+            }
         } else {
             warnings.push_back(root + " (" + reason + ") isn't an asset in the content folder");
         }
