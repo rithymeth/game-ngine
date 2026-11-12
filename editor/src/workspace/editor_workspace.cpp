@@ -32,6 +32,7 @@
 #include "vfx/vfx_editor.h"
 #include "world/procedural_panel.h"
 #include "world/scene_panel.h"
+#include "world/scene_view.h"
 #include "world/world_panels.h"
 
 #include "aether/blueprint/nodes.h"
@@ -239,6 +240,7 @@ struct EditorWorkspace::Impl {
     std::unique_ptr<ProceduralWorldDocument> procedural_doc;
     std::unique_ptr<ProceduralWorldPanel> procedural_panel;
     std::unique_ptr<ScenePanel> scene_panel;
+    SceneViewPanel scene_view;
     std::unique_ptr<SplineEditDocument> spline_doc;
     std::unique_ptr<SplinePanel> spline_panel;
     streaming::PartitionResult partition;
@@ -306,6 +308,7 @@ struct EditorWorkspace::Impl {
             {"Mixer", "Audio", [this] { mixer_panel->Draw(); }},
             {"UI Designer - WBP_MainMenu", "UI", [this] { ui_designer->Draw(); }},
             {"Scene", "Scene", [this] { scene_panel->Draw(); }},
+            {"Scene View", "Scene", [this] { scene_view.Draw(scene_panel->Document()); }},
             {"Terrain", "World", [this] { terrain_panel->Draw(); }},
             {"Foliage", "World", [this] { foliage_panel->Draw(); }},
             {"Procedural World", "World", [this] { procedural_panel->Draw(); }},

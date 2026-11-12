@@ -3,6 +3,7 @@
 #include "core/commands.h"
 #include "ui/editor_theme.h"
 #include "ui/shell_layout.h"
+#include "world/scene_view.h"
 #include "workspace/editor_workspace.h"
 #include "aether/scene/gameplay.h"
 #include "aether/scene/hierarchy.h"
@@ -313,4 +314,86 @@ AETHER_TEST(ShellLayout_RoundTripsAndForgivesABadFile) {
     ShellLayout long_name;
     AETHER_CHECK(LoadShellLayout(file, long_name) && long_name.tool.empty());
     AETHER_CHECK(!SaveShellLayout({}, layout, &error) && !error.empty()); // no path: refused, with a reason
+}
+
+// The scene view's orbit camera, projection and picking: plain maths, no window.
+AETHER_TEST(SceneView_CameraProjectsAndPicks) {
+    SceneViewCamera camera;
+    camera.target = Vec3(2.0f, 1.0f, -3.0f);
+    camera.distance = 10.0f;
+    const Vec3 eye = camera.Eye();
+    const Vec3 to_target = camera.target - eye;
+    AETHER_CHECK(std::fabs(to_target.Length() - 10.0f) < 1e-3f);          // the eye sits `distance` from the target
+
+    const ImVec2 origin(100.0f, 50.0f), size(800.0f, 600.0f);
+    const Mat4 vp = camera.ViewProjection(size.x / size.y);
+    ImVec2 at;
+    f32 depth = 0.0f;
+    AETHER_CHECK(ProjectToViewport(vp, camera.target, origin, size, at, &depth));
+    AETHER_CHECK(std::fabs(at.x - (origin.x + size.x * 0.5f)) < 0.5f && std::fabs(at.y - (origin.y + size.y * 0.5f)) < 0.5f); // the target is the middle
+    AETHER_CHECK(std::fabs(depth - 10.0f) < 1e-2f);
+    AETHER_CHECK(!ProjectToViewport(vp, eye - to_target, origin, size, at)); // behind the camera: not drawn
+    // Orientation: world up is up on the screen (smaller y), and the camera's right is right (larger x).
+    camera.pitch = 0.3f;
+    const Mat4 vp_level = camera.ViewProjection(size.x / size.y);
+    ImVec2 centre, above, beside;
+    AETHER_CHECK(ProjectToViewport(vp_level, camera.target, origin, size, centre));
+    AETHER_CHECK(ProjectToViewport(vp_level, camera.target + Vec3(0.0f, 2.0f, 0.0f), origin, size, above));
+    AETHER_CHECK(above.y < centre.y - 5.0f);
+    const Mat4 view_matrix = camera.View();
+    const Vec3 camera_right(view_matrix.cols[0].x, view_matrix.cols[1].x, view_matrix.cols[2].x);
+    AETHER_CHECK(ProjectToViewport(vp_level, camera.target + camera_right * 2.0f, origin, size, beside));
+    AETHER_CHECK(beside.x > centre.x + 5.0f);
+    camera.pitch = 0.5f;
+
+    camera.Orbit(0.0f, 100.0f);
+    AETHER_CHECK(camera.pitch < 1.57f && camera.pitch > 1.0f);             // looking straight down is held short of the pole
+    camera.Orbit(0.0f, -100.0f);
+    AETHER_CHECK(camera.pitch > -1.57f && camera.pitch < -1.0f);
+    const f32 before = camera.distance;
+    camera.Zoom(1.0f);
+    AETHER_CHECK(camera.distance < before);                                // a wheel step in moves closer
+    camera.Zoom(-1000.0f);
+    AETHER_CHECK(camera.distance <= 1000.0f);                              // and far out is capped
+    const Vec3 target_before = camera.target;
+    camera.Pan(1.0f, 0.0f);
+    AETHER_CHECK((camera.target - target_before).Length() > 0.99f);       // panning moves the target in the view plane
+
+    // Picking: the entity under the mouse, nothing far from any, and entities without a Transform can't be picked.
+    SceneDocument document;
+    const Entity near_one = document.CreateEntity("Near");
+    const Entity far_one = document.CreateEntity("Far");
+    document.SetPosition(near_one, Vec3(0.0f, 0.0f, 0.0f), true);
+    document.SetPosition(far_one, Vec3(6.0f, 0.0f, 0.0f), true);
+    SceneViewCamera view;
+    view.target = Vec3(3.0f, 0.0f, 0.0f);
+    view.distance = 15.0f;
+    const Mat4 vp2 = view.ViewProjection(size.x / size.y);
+    ImVec2 p_near, p_far;
+    AETHER_CHECK(ProjectToViewport(vp2, Vec3(0, 0, 0), origin, size, p_near) && ProjectToViewport(vp2, Vec3(6, 0, 0), origin, size, p_far));
+    AETHER_CHECK(PickEntity(document, view, origin, size, ImVec2(p_near.x + 3.0f, p_near.y - 2.0f)) == near_one);
+    AETHER_CHECK(PickEntity(document, view, origin, size, p_far) == far_one);
+    AETHER_CHECK(PickEntity(document, view, origin, size, ImVec2(origin.x + 2.0f, origin.y + 2.0f)) == kNullEntity); // empty space
+    AETHER_CHECK(PickEntity(document, view, origin, ImVec2(0.0f, 0.0f), p_near) == kNullEntity);                      // a collapsed viewport picks nothing
+}
+
+AETHER_TEST(SceneView_FocusAndDrawHeadless) {
+    HeadlessImGui imgui;
+    SceneViewPanel panel;
+    SceneDocument document;
+    const Entity a = document.CreateEntity("A");
+    const Entity b = document.CreateEntity("B", SceneEntityKind::Camera);
+    document.SetPosition(a, Vec3(10.0f, 0.0f, 0.0f), true);
+    document.SetPosition(b, Vec3(20.0f, 0.0f, 0.0f), true);
+    document.SetSelection({a});
+    panel.FocusSelection(document);
+    AETHER_CHECK(std::fabs(panel.Camera().target.x - 10.0f) < 1e-3f);     // the selection
+    document.ClearSelection();
+    panel.FocusSelection(document);
+    AETHER_CHECK(std::fabs(panel.Camera().target.x - 15.0f) < 1e-3f);     // nothing selected: the middle of the scene
+    document.SetSelection({a, b});
+    auto frame = [&] { imgui.Frame([&] { ImGui::Begin("view"); panel.Draw(document); ImGui::End(); }); };
+    frame();                                                               // boxes, axes, a camera and a label
+    document.DestroyEntity(a);
+    frame();                                                               // a selection that is gone does not break the view
 }

@@ -43,6 +43,7 @@ add_library(aether_editor_ui STATIC
     ../world/procedural_document.cpp
     ../world/procedural_panel.cpp
     ../world/scene_panel.cpp
+    ../world/scene_view.cpp
     ../world/data_layer_panel.cpp
     ../net/net_play.cpp
     ../net/net_panels.cpp
