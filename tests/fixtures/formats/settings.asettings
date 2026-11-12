@@ -1,0 +1,27 @@
+{
+  "$type": "aether.settings",
+  "checksum": "394a4585",
+  "data": {
+    "$v": 1,
+    "bindings": {
+      "$v": 1,
+      "overrides": []
+    },
+    "fullscreen": true,
+    "height": 1080,
+    "language": "fr",
+    "master": 0.8,
+    "music": 0.5,
+    "quality": "Medium",
+    "sfx": 0.75,
+    "subtitles": false,
+    "voice": 1.0,
+    "vsync": false,
+    "width": 1920
+  },
+  "format": 1,
+  "slot": "settings",
+  "timestamp_utc": 1794447842,
+  "type": "GameSettings",
+  "type_version": 1
+}
