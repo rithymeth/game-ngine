@@ -1,6 +1,6 @@
 -- Kael's hands (put it on his body, a child of the character: the character has the controller): the nearest thing tagged Salvage within reach can be taken with the Interact action (E, or X on a pad).
--- Taking it removes it from the world and adds what it gives to the pack (self.pack, by resource). Later systems (crafting, the HUD, the save)
--- read the pack from here.
+-- Taking it removes it from the world and adds what it gives to the pack. The pack lives in SaveGames ("pack.scrap", "pack.components"), so it
+-- survives a scene change (a door) and is written to the "autosave" slot at every change: the next run picks up where this one left off.
 local Interactor = {}
 
 --@range 0.5 8
@@ -16,9 +16,21 @@ local YIELDS = {
     { "Wreck", "components", 5 },
 }
 
+local function Get(kind) return SaveGames.GetNumber("pack." .. kind, 0) end
+
+local function Set(kind, value)
+    SaveGames.SetNumber("pack." .. kind, value)
+    SaveGames.SaveToSlot("autosave")
+end
+
 function Interactor:OnCreate()
-    self.pack = { scrap = 0, components = self.start_components }
-    Pack = self.pack -- shared with the other scripts (MULE-3 spends components from it)
+    if not SaveGames.HasKey("pack.scrap") and SaveGames.DoesSaveExist("autosave") then SaveGames.LoadFromSlot("autosave") end
+    if not SaveGames.HasKey("pack.scrap") then
+        SaveGames.SetNumber("pack.scrap", 0)
+        SaveGames.SetNumber("pack.components", self.start_components)
+    end
+    print(string.format("Pack at start: %d scrap, %d components", Get("scrap"), Get("components")))
+    self.hud_ready = false
     self.nearest = nil
     self.shown = nil
     self.player = world:EntitiesWith("CharacterMovement")[1]
@@ -32,6 +44,10 @@ local function Yield(name)
 end
 
 function Interactor:OnUpdate(dt)
+    if not self.hud_ready then -- the HUD exists from the first frame: show the pack as it is (it may be carried over)
+        self.hud_ready = UI.SetText("ScrapText", string.format("SCRAP  %d", Get("scrap")))
+        UI.SetText("ComponentText", string.format("COMPONENTS  %d", Get("components")))
+    end
     if self.player == nil then return end
     local here = self.player:Get("Transform").position
     local best, best_d2 = nil, self.reach * self.reach
@@ -62,14 +78,14 @@ function Interactor:OnUpdate(dt)
     if best ~= nil and Input.IsTriggered("Interact") then
         local name = best:Get("EntityName").value
         local kind, amount = Yield(name)
-        self.pack[kind] = self.pack[kind] + amount
+        Set(kind, Get(kind) + amount)
         world:Destroy(best)
         self.nearest = nil
         self.shown = nil
         UI.SetVisible("PromptPanel", false)
-        UI.SetText("ScrapText", string.format("SCRAP  %d", self.pack.scrap))
-        UI.SetText("ComponentText", string.format("COMPONENTS  %d", self.pack.components))
-        print(string.format("Salvaged %s: +%d %s (pack: %d scrap, %d components)", name, amount, kind, self.pack.scrap, self.pack.components))
+        UI.SetText("ScrapText", string.format("SCRAP  %d", Get("scrap")))
+        UI.SetText("ComponentText", string.format("COMPONENTS  %d", Get("components")))
+        print(string.format("Salvaged %s: +%d %s (pack: %d scrap, %d components)", name, amount, kind, Get("scrap"), Get("components")))
     end
 end
 
