@@ -57,8 +57,27 @@ void CommandStack::SetFrozen(bool frozen) {
     merge_open_ = false;
 }
 
+std::vector<CommandStack::ValueEdit> CommandStack::TakeValueEdits(bool* overflowed) {
+    std::vector<ValueEdit> taken;
+    taken.swap(value_edits_);
+    if (overflowed) *overflowed = value_edits_overflowed_;
+    value_edits_overflowed_ = false;
+    return taken;
+}
+
 void CommandStack::Record(std::unique_ptr<ICommand> command, MergePolicy merge) {
     ++revision_;
+    EntityGuid edited;
+    ComponentId edited_component = 0;
+    if (command->ValueEditTarget(edited, edited_component)) {
+        ++value_revision_;
+        constexpr usize kMaxKept = 1024; // a viewer that has not looked for this long rebuilds instead
+        const auto same = [&](const ValueEdit& e) { return e.entity == edited && e.component == edited_component; };
+        if (std::find_if(value_edits_.begin(), value_edits_.end(), same) == value_edits_.end()) {
+            if (value_edits_.size() < kMaxKept) value_edits_.push_back({edited, edited_component});
+            else value_edits_overflowed_ = true;
+        }
+    }
     if (command->Attribution().empty()) command->SetAttribution(attribution_);
     if (frozen_) {
         return; // applied, but not part of the history (see SetFrozen)

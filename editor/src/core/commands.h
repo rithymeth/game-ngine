@@ -46,6 +46,11 @@ public:
     std::string Label() const override;
     bool TryMerge(const ICommand& next) override;
     usize MemoryBytes() const override;
+    bool ValueEditTarget(EntityGuid& entity, ComponentId& component) const override {
+        entity = entity_;
+        component = component_;
+        return true;
+    }
 
 private:
     void Apply(CommandContext& ctx, const reflect::Any& value);

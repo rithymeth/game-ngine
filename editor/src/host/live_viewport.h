@@ -4,6 +4,7 @@
 #include "aether/gfx/rhi/device.h"
 #include "aether/gfx/rhi/swap_chain.h"
 #include "aether/ecs/world.h"
+#include "aether/scene/entity_guid.h"
 #include "aether/math/quaternion.h"
 #include "aether/math/vec.h"
 
@@ -38,10 +39,20 @@ public:
     // Replaces the running scene with `scene_bytes` (the game loads it afresh: the world, physics and scripts start over). Models and
     // textures still come from the cooked archives, so an entity that names one that was not cooked is not drawn. False, with `error`, if the game rejects it.
     bool SetScene(const std::vector<u8>& scene_bytes, std::string* error = nullptr);
-    // Brings the running scene's Transforms to those of `source` (the open document's world), entity by entity, matched by GUID, without reloading the scene.
-    // For the case where nothing but transforms changed: false (having changed nothing) when `source` and the running scene do not hold the same set of
-    // identified entities with a Transform, so the caller falls back to SetScene. How many times it succeeded is PatchCount.
-    bool PatchTransforms(const World& source);
+    // One value the document set inside a component an entity already has.
+    struct ComponentEdit {
+        EntityGuid entity;
+        ComponentId component = 0;
+    };
+    // Brings the running scene to `source` (the open document's world) without reloading it, for a change that was only to values: every Transform, entity
+    // by entity matched by GUID, and each component in `edits` that is one the renderer only reads (lights, the sky, wind, post-process volumes, decals),
+    // copied across as the editor saved it. The game keeps its own state (physics, scripts). False, having changed nothing, when `source` and the
+    // running scene do not hold the same identified entities with a Transform, or an edit names a component the running scene lacks or one that is not
+    // safe to copy over a running game (a rigid body's mass is a physics body already built), so the caller falls back to SetScene. Counted in PatchCount.
+    bool PatchScene(const World& source, const std::vector<ComponentEdit>& edits);
+    bool PatchTransforms(const World& source) { return PatchScene(source, {}); }
+    // Whether a component of that type can be patched into a running scene (PatchScene), for the caller that wants to know before it tries.
+    static bool IsPatchable(ComponentId component);
     u64 PatchCount() const;
     // How many times SetScene has succeeded since Load.
     u64 SceneReloads() const;
