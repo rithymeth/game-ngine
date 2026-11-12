@@ -62,13 +62,29 @@ std::string CheckSoundHeader(const std::string& path, const std::vector<u8>& byt
     if (ext(".wav")) {
         if (!starts("RIFF") || !starts("WAVE", 8)) return "not a RIFF/WAVE file";
         bool fmt = false, data = false;
+        u32 format = 0, channels = 0, bits = 0;
         for (usize at = 12; at + 8 <= bytes.size();) {
             const u32 size = static_cast<u32>(bytes[at + 4]) | static_cast<u32>(bytes[at + 5]) << 8 | static_cast<u32>(bytes[at + 6]) << 16 | static_cast<u32>(bytes[at + 7]) << 24;
+            if (starts("fmt ", at) && !fmt && size >= 16 && bytes.size() >= at + 8 + 16) {
+                const auto u16at = [&](usize o) { return static_cast<u32>(bytes[at + 8 + o]) | static_cast<u32>(bytes[at + 8 + o + 1]) << 8; };
+                format = u16at(0);
+                channels = u16at(2);
+                bits = u16at(14);
+                // WAVE_FORMAT_EXTENSIBLE: the real format code starts the sub-format GUID.
+                if (format == 0xFFFE && size >= 40 && bytes.size() >= at + 8 + 40) format = u16at(24);
+            }
             fmt |= starts("fmt ", at);
             data |= starts("data", at);
             at += 8 + static_cast<usize>(size) + (size & 1u);
         }
         if (!fmt || !data) return "the WAVE file has no fmt or data chunk (truncated or corrupt)";
+        // The same limits the decoder (audio/sound.cpp) enforces, so what cooks is what plays.
+        if (format != 0) {
+            if (format != 1 && format != 3) return "unsupported WAV encoding (only PCM and 32-bit float)";
+            if (channels < 1 || channels > 2) return "only mono and stereo WAVs are supported (this one has " + std::to_string(channels) + " channels)";
+            const bool ok_bits = format == 3 ? bits == 32 : (bits == 8 || bits == 16 || bits == 24 || bits == 32);
+            if (!ok_bits) return "unsupported sample size (" + std::to_string(bits) + " bits)";
+        }
     } else if (ext(".ogg")) {
         if (!starts("OggS")) return "not an Ogg file";
     } else if (ext(".flac")) {
