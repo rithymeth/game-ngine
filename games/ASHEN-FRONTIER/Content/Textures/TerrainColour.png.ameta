@@ -1,0 +1,10 @@
+{
+  "$type": "AssetMeta",
+  "$v": 1,
+  "guid": "30218fce-bcba-46ea-b592-787e785bc1b0",
+  "importer": "Texture",
+  "importer_version": 1,
+  "labels": [],
+  "settings": {},
+  "source_hash": "fnv1a64:30654c62c0f91851"
+}

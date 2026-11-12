@@ -1,0 +1,5908 @@
+{
+  "$type": "Scene",
+  "$version": 1,
+  "entities": [
+    {
+      "components": {
+        "SkyLight": {
+          "$v": 1,
+          "color": [
+            0.75,
+            0.82,
+            0.95
+          ],
+          "intensity": 1.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Sky"
+        }
+      },
+      "guid": "2b236fc4-f2c7-5c19-adef-5aa63b3defaa"
+    },
+    {
+      "components": {
+        "DirectionalLight": {
+          "$v": 1,
+          "cast_shadows": true,
+          "color": [
+            1.0,
+            0.92,
+            0.8
+          ],
+          "intensity": 3.4
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            -0.282409380467853,
+            -0.24750988376535196,
+            -0.07567136543133489,
+            0.9237194615877609
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Sun"
+        }
+      },
+      "guid": "49fe3aa4-c54b-5829-8075-e89e13215d68"
+    },
+    {
+      "components": {
+        "PostProcessVolume": {
+          "$v": 1,
+          "blend_distance": 1.0,
+          "bloom_intensity": 0.1,
+          "exposure_compensation": 0.0,
+          "extents": [
+            5.0,
+            5.0,
+            5.0
+          ],
+          "fog_density": 0.0008,
+          "global": true,
+          "height_fog_base": 0.0,
+          "height_fog_density": 0.0,
+          "height_fog_falloff": 0.02,
+          "priority": 0,
+          "saturation": 1.05,
+          "tonemapper": "ACES",
+          "vignette": 0.12,
+          "weight": 1.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Atmosphere"
+        }
+      },
+      "guid": "0877e15a-d666-5c16-a9f4-3732feac1008"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Ground.glb"
+        },
+        "MaterialParameters": {
+          "$v": 1,
+          "material": "",
+          "revision": 0,
+          "values": [
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "BaseColor",
+              "texture": "",
+              "value": [
+                0.55,
+                0.3,
+                0.18,
+                1.0
+              ]
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            200,
+            1,
+            200
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Ground"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Ground"
+          ]
+        }
+      },
+      "guid": "48f391e7-aae7-5f4f-9f7b-706691185fba"
+    },
+    {
+      "components": {
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "friction": 0.8,
+          "half_extents": [
+            100,
+            0.5,
+            100
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            -0.5,
+            0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "GroundCollider"
+        }
+      },
+      "guid": "97cd1a94-8e1c-57f4-970d-70fe9e8bff9d"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Cliff.glb"
+        },
+        "MaterialParameters": {
+          "$v": 1,
+          "material": "",
+          "revision": 0,
+          "values": [
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "BaseColor",
+              "texture": "",
+              "value": [
+                0.47108315300115644,
+                0.29,
+                0.19,
+                1.0
+              ]
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -87.5,
+            0,
+            -99
+          ],
+          "rotation": [
+            0.0,
+            -0.003873850741809426,
+            0.0,
+            0.9999924966120647
+          ],
+          "scale": [
+            2.1,
+            1.7239871588370252,
+            2.6
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Cliff_0_0"
+        }
+      },
+      "guid": "0942e0e0-ba69-5c4b-84d3-100df23cdefb"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Cliff.glb"
+        },
+        "MaterialParameters": {
+          "$v": 1,
+          "material": "",
+          "revision": 0,
+          "values": [
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "BaseColor",
+              "texture": "",
+              "value": [
+                0.5002225664041766,
+                0.29,
+                0.19,
+                1.0
+              ]
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -62.5,
+            0,
+            -99
+          ],
+          "rotation": [
+            0.0,
+            0.038376840798618965,
+            0.0,
+            0.9992633377094936
+          ],
+          "scale": [
+            2.1,
+            1.503861032448674,
+            2.6
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Cliff_0_1"
+        }
+      },
+      "guid": "8f19a5c4-d94c-5c11-b806-9fb08ee58380"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Cliff.glb"
+        },
+        "MaterialParameters": {
+          "$v": 1,
+          "material": "",
+          "revision": 0,
+          "values": [
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "BaseColor",
+              "texture": "",
+              "value": [
+                0.5043416374542629,
+                0.29,
+                0.19,
+                1.0
+              ]
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -37.5,
+            0,
+            -99
+          ],
+          "rotation": [
+            0.0,
+            0.041697573246921284,
+            0.0,
+            0.9991302779844666
+          ],
+          "scale": [
+            2.1,
+            1.5484887883098006,
+            2.6
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Cliff_0_2"
+        }
+      },
+      "guid": "ac0020cc-9e03-5b40-a3ec-a9ddecc6f38f"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Cliff.glb"
+        },
+        "MaterialParameters": {
+          "$v": 1,
+          "material": "",
+          "revision": 0,
+          "values": [
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "BaseColor",
+              "texture": "",
+              "value": [
+                0.4903215683516349,
+                0.29,
+                0.19,
+                1.0
+              ]
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -12.5,
+            0,
+            -99
+          ],
+          "rotation": [
+            0.0,
+            0.01221526010571567,
+            0.0,
+            0.9999253909270179
+          ],
+          "scale": [
+            2.1,
+            1.524537459290887,
+            2.6
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Cliff_0_3"
+        }
+      },
+      "guid": "7bf479f3-f7aa-5018-909a-52cc6fab1ce5"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Cliff.glb"
+        },
+        "MaterialParameters": {
+          "$v": 1,
+          "material": "",
+          "revision": 0,
+          "values": [
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "BaseColor",
+              "texture": "",
+              "value": [
+                0.5180052294865767,
+                0.29,
+                0.19,
+                1.0
+              ]
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            12.5,
+            0,
+            -99
+          ],
+          "rotation": [
+            0.0,
+            0.02130680437968546,
+            0.0,
+            0.9997729842754933
+          ],
+          "scale": [
+            2.1,
+            1.7712125522700155,
+            2.6
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Cliff_0_4"
+        }
+      },
+      "guid": "efee57b3-bfcb-5bbf-8081-f49e41320027"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Cliff.glb"
+        },
+        "MaterialParameters": {
+          "$v": 1,
+          "material": "",
+          "revision": 0,
+          "values": [
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "BaseColor",
+              "texture": "",
+              "value": [
+                0.46887580223824116,
+                0.29,
+                0.19,
+                1.0
+              ]
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            37.5,
+            0,
+            -99
+          ],
+          "rotation": [
+            0.0,
+            -0.035894705641045216,
+            0.0,
+            0.9993555774132362
+          ],
+          "scale": [
+            2.1,
+            1.6428073214799197,
+            2.6
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Cliff_0_5"
+        }
+      },
+      "guid": "e7622496-dbb4-542b-8420-92862a50440a"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Cliff.glb"
+        },
+        "MaterialParameters": {
+          "$v": 1,
+          "material": "",
+          "revision": 0,
+          "values": [
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "BaseColor",
+              "texture": "",
+              "value": [
+                0.507234276570873,
+                0.29,
+                0.19,
+                1.0
+              ]
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            62.5,
+            0,
+            -99
+          ],
+          "rotation": [
+            0.0,
+            0.0006564935084519736,
+            0.0,
+            0.9999997845081134
+          ],
+          "scale": [
+            2.1,
+            2.0542978718473774,
+            2.6
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Cliff_0_6"
+        }
+      },
+      "guid": "808f7a07-6d19-5ba7-9162-9c22ae890167"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Cliff.glb"
+        },
+        "MaterialParameters": {
+          "$v": 1,
+          "material": "",
+          "revision": 0,
+          "values": [
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "BaseColor",
+              "texture": "",
+              "value": [
+                0.5196876173539543,
+                0.29,
+                0.19,
+                1.0
+              ]
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            87.5,
+            0,
+            -99
+          ],
+          "rotation": [
+            0.0,
+            0.028711202197224738,
+            0.0,
+            0.9995877484585283
+          ],
+          "scale": [
+            2.1,
+            1.730198906911589,
+            2.6
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Cliff_0_7"
+        }
+      },
+      "guid": "f7eda668-261a-558a-b97f-8d20178b8304"
+    },
+    {
+      "components": {
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "friction": 0.5,
+          "half_extents": [
+            100,
+            6,
+            4
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            6,
+            -99
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "CliffCollider_0"
+        }
+      },
+      "guid": "0fcff64e-3a27-5044-bc66-3615a0c1980f"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Cliff.glb"
+        },
+        "MaterialParameters": {
+          "$v": 1,
+          "material": "",
+          "revision": 0,
+          "values": [
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "BaseColor",
+              "texture": "",
+              "value": [
+                0.5139388801004297,
+                0.29,
+                0.19,
+                1.0
+              ]
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -87.5,
+            0,
+            99
+          ],
+          "rotation": [
+            0.0,
+            0.999130135662038,
+            0.0,
+            0.041700983345210156
+          ],
+          "scale": [
+            2.1,
+            1.6747068473918443,
+            2.6
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Cliff_1_0"
+        }
+      },
+      "guid": "29d888a2-417a-563a-9771-3e0beb9995f6"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Cliff.glb"
+        },
+        "MaterialParameters": {
+          "$v": 1,
+          "material": "",
+          "revision": 0,
+          "values": [
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "BaseColor",
+              "texture": "",
+              "value": [
+                0.46701699064527763,
+                0.29,
+                0.19,
+                1.0
+              ]
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -62.5,
+            0,
+            99
+          ],
+          "rotation": [
+            -0.0,
+            0.9997206847900126,
+            -0.0,
+            -0.023633713271259203
+          ],
+          "scale": [
+            2.1,
+            1.7530532370041731,
+            2.6
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Cliff_1_1"
+        }
+      },
+      "guid": "693b1178-0c69-52f1-80d0-e0439c662b54"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Cliff.glb"
+        },
+        "MaterialParameters": {
+          "$v": 1,
+          "material": "",
+          "revision": 0,
+          "values": [
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "BaseColor",
+              "texture": "",
+              "value": [
+                0.4824947532067655,
+                0.29,
+                0.19,
+                1.0
+              ]
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -37.5,
+            0,
+            99
+          ],
+          "rotation": [
+            0.0,
+            0.9997016609340855,
+            0.0,
+            0.02442517401433736
+          ],
+          "scale": [
+            2.1,
+            1.625934078081889,
+            2.6
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Cliff_1_2"
+        }
+      },
+      "guid": "85027854-d9d1-52c3-98bd-8efe7be88594"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Cliff.glb"
+        },
+        "MaterialParameters": {
+          "$v": 1,
+          "material": "",
+          "revision": 0,
+          "values": [
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "BaseColor",
+              "texture": "",
+              "value": [
+                0.5309119784863422,
+                0.29,
+                0.19,
+                1.0
+              ]
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -12.5,
+            0,
+            99
+          ],
+          "rotation": [
+            -0.0,
+            0.9994747808445781,
+            -0.0,
+            -0.03240621014069234
+          ],
+          "scale": [
+            2.1,
+            1.6196899326539071,
+            2.6
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Cliff_1_3"
+        }
+      },
+      "guid": "e3f223e1-3eb0-53f4-a23c-d3298a72b97e"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Cliff.glb"
+        },
+        "MaterialParameters": {
+          "$v": 1,
+          "material": "",
+          "revision": 0,
+          "values": [
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "BaseColor",
+              "texture": "",
+              "value": [
+                0.49030531218398005,
+                0.29,
+                0.19,
+                1.0
+              ]
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            12.5,
+            0,
+            99
+          ],
+          "rotation": [
+            -0.0,
+            0.9992109520643383,
+            -0.0,
+            -0.039717417774556604
+          ],
+          "scale": [
+            2.1,
+            1.5328736136666508,
+            2.6
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Cliff_1_4"
+        }
+      },
+      "guid": "0a950c1e-7c48-5b28-95db-5a418380755b"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Cliff.glb"
+        },
+        "MaterialParameters": {
+          "$v": 1,
+          "material": "",
+          "revision": 0,
+          "values": [
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "BaseColor",
+              "texture": "",
+              "value": [
+                0.4939780281402073,
+                0.29,
+                0.19,
+                1.0
+              ]
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            37.5,
+            0,
+            99
+          ],
+          "rotation": [
+            0.0,
+            0.9999996233358518,
+            0.0,
+            0.0008679447876659214
+          ],
+          "scale": [
+            2.1,
+            1.514089895353019,
+            2.6
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Cliff_1_5"
+        }
+      },
+      "guid": "fccb47e1-ef4b-53d4-afac-b2855a397c61"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Cliff.glb"
+        },
+        "MaterialParameters": {
+          "$v": 1,
+          "material": "",
+          "revision": 0,
+          "values": [
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "BaseColor",
+              "texture": "",
+              "value": [
+                0.5077476513408867,
+                0.29,
+                0.19,
+                1.0
+              ]
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            62.5,
+            0,
+            99
+          ],
+          "rotation": [
+            -0.0,
+            0.9990944930343839,
+            -0.0,
+            -0.042546374561969115
+          ],
+          "scale": [
+            2.1,
+            1.5672277627766693,
+            2.6
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Cliff_1_6"
+        }
+      },
+      "guid": "f3fbe9ff-9aa1-55a5-900c-bbbd0e152f8d"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Cliff.glb"
+        },
+        "MaterialParameters": {
+          "$v": 1,
+          "material": "",
+          "revision": 0,
+          "values": [
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "BaseColor",
+              "texture": "",
+              "value": [
+                0.5316242759538867,
+                0.29,
+                0.19,
+                1.0
+              ]
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            87.5,
+            0,
+            99
+          ],
+          "rotation": [
+            0.0,
+            0.9992134689867168,
+            0.0,
+            0.039654046395436696
+          ],
+          "scale": [
+            2.1,
+            1.8472201788321303,
+            2.6
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Cliff_1_7"
+        }
+      },
+      "guid": "306f3d0c-0efc-5755-98d9-cd8eeaafcd48"
+    },
+    {
+      "components": {
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "friction": 0.5,
+          "half_extents": [
+            100,
+            6,
+            4
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            6,
+            99
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "CliffCollider_1"
+        }
+      },
+      "guid": "e5cae3f5-68e5-53d8-a7a6-bceafd25e53b"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Cliff.glb"
+        },
+        "MaterialParameters": {
+          "$v": 1,
+          "material": "",
+          "revision": 0,
+          "values": [
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "BaseColor",
+              "texture": "",
+              "value": [
+                0.4666802877981564,
+                0.29,
+                0.19,
+                1.0
+              ]
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -99,
+            0,
+            -87.5
+          ],
+          "rotation": [
+            0.0,
+            0.6847801438580897,
+            0.0,
+            0.7287497201218631
+          ],
+          "scale": [
+            2.1,
+            1.5049515361747527,
+            2.6
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Cliff_2_0"
+        }
+      },
+      "guid": "6f45d6d8-ec3b-57c2-81b6-43cc716abc76"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Cliff.glb"
+        },
+        "MaterialParameters": {
+          "$v": 1,
+          "material": "",
+          "revision": 0,
+          "values": [
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "BaseColor",
+              "texture": "",
+              "value": [
+                0.46678692494212276,
+                0.29,
+                0.19,
+                1.0
+              ]
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -99,
+            0,
+            -62.5
+          ],
+          "rotation": [
+            0.0,
+            0.7100454900158993,
+            0.0,
+            0.7041558081192552
+          ],
+          "scale": [
+            2.1,
+            1.5104789055919798,
+            2.6
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Cliff_2_1"
+        }
+      },
+      "guid": "acd7cb2d-7527-5481-9ba0-324a422a7e99"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Cliff.glb"
+        },
+        "MaterialParameters": {
+          "$v": 1,
+          "material": "",
+          "revision": 0,
+          "values": [
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "BaseColor",
+              "texture": "",
+              "value": [
+                0.4936085939817549,
+                0.29,
+                0.19,
+                1.0
+              ]
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -99,
+            0,
+            -37.5
+          ],
+          "rotation": [
+            0.0,
+            0.7068654654969518,
+            0.0,
+            0.7073480145499651
+          ],
+          "scale": [
+            2.1,
+            2.0525557914294694,
+            2.6
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Cliff_2_2"
+        }
+      },
+      "guid": "5c789d5d-179d-50ec-9c4a-a6c16f0c6fc1"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Cliff.glb"
+        },
+        "MaterialParameters": {
+          "$v": 1,
+          "material": "",
+          "revision": 0,
+          "values": [
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "BaseColor",
+              "texture": "",
+              "value": [
+                0.4674734238987253,
+                0.29,
+                0.19,
+                1.0
+              ]
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -99,
+            0,
+            -12.5
+          ],
+          "rotation": [
+            0.0,
+            0.6995237756313569,
+            0.0,
+            0.7146093249646628
+          ],
+          "scale": [
+            2.1,
+            1.883230522714098,
+            2.6
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Cliff_2_3"
+        }
+      },
+      "guid": "19dbea32-f11c-5423-9b9a-b201f433041b"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Cliff.glb"
+        },
+        "MaterialParameters": {
+          "$v": 1,
+          "material": "",
+          "revision": 0,
+          "values": [
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "BaseColor",
+              "texture": "",
+              "value": [
+                0.5087110678670617,
+                0.29,
+                0.19,
+                1.0
+              ]
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -99,
+            0,
+            12.5
+          ],
+          "rotation": [
+            0.0,
+            0.7129910682259543,
+            0.0,
+            0.7011731145944008
+          ],
+          "scale": [
+            2.1,
+            1.6035331157135164,
+            2.6
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Cliff_2_4"
+        }
+      },
+      "guid": "f98dfe41-9c5a-528f-a02f-9633e5a395a6"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Cliff.glb"
+        },
+        "MaterialParameters": {
+          "$v": 1,
+          "material": "",
+          "revision": 0,
+          "values": [
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "BaseColor",
+              "texture": "",
+              "value": [
+                0.5044048575658947,
+                0.29,
+                0.19,
+                1.0
+              ]
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -99,
+            0,
+            37.5
+          ],
+          "rotation": [
+            0.0,
+            0.7402176046608439,
+            0.0,
+            0.6723673830207431
+          ],
+          "scale": [
+            2.1,
+            1.5325039220005028,
+            2.6
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Cliff_2_5"
+        }
+      },
+      "guid": "c5ad0c7d-223d-5b0c-bcb7-544508876307"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Cliff.glb"
+        },
+        "MaterialParameters": {
+          "$v": 1,
+          "material": "",
+          "revision": 0,
+          "values": [
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "BaseColor",
+              "texture": "",
+              "value": [
+                0.48146484418921615,
+                0.29,
+                0.19,
+                1.0
+              ]
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -99,
+            0,
+            62.5
+          ],
+          "rotation": [
+            0.0,
+            0.7149400336158049,
+            0.0,
+            0.6991857752653665
+          ],
+          "scale": [
+            2.1,
+            1.5895826864770788,
+            2.6
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Cliff_2_6"
+        }
+      },
+      "guid": "fcaf0044-0a3b-5a18-b49a-8d93a91b3508"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Cliff.glb"
+        },
+        "MaterialParameters": {
+          "$v": 1,
+          "material": "",
+          "revision": 0,
+          "values": [
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "BaseColor",
+              "texture": "",
+              "value": [
+                0.4697068499735952,
+                0.29,
+                0.19,
+                1.0
+              ]
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -99,
+            0,
+            87.5
+          ],
+          "rotation": [
+            0.0,
+            0.742786228075163,
+            0.0,
+            0.6695286546383746
+          ],
+          "scale": [
+            2.1,
+            2.0987785624008097,
+            2.6
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Cliff_2_7"
+        }
+      },
+      "guid": "ce775389-3028-5f1c-be79-d7d1731b2a38"
+    },
+    {
+      "components": {
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "friction": 0.5,
+          "half_extents": [
+            4,
+            6,
+            100
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -99,
+            6,
+            0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "CliffCollider_2"
+        }
+      },
+      "guid": "fe129f99-8ac3-5ff8-a9f8-ad59d3d3d93e"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Cliff.glb"
+        },
+        "MaterialParameters": {
+          "$v": 1,
+          "material": "",
+          "revision": 0,
+          "values": [
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "BaseColor",
+              "texture": "",
+              "value": [
+                0.47894288787945494,
+                0.29,
+                0.19,
+                1.0
+              ]
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            99,
+            0,
+            -87.5
+          ],
+          "rotation": [
+            -0.0,
+            0.6917297551458869,
+            -0.0,
+            -0.7221564552406988
+          ],
+          "scale": [
+            2.1,
+            2.070553671894112,
+            2.6
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Cliff_3_0"
+        }
+      },
+      "guid": "d35d3fc8-4d56-5fd4-a1e4-270672f6ea53"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Cliff.glb"
+        },
+        "MaterialParameters": {
+          "$v": 1,
+          "material": "",
+          "revision": 0,
+          "values": [
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "BaseColor",
+              "texture": "",
+              "value": [
+                0.48927574863771545,
+                0.29,
+                0.19,
+                1.0
+              ]
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            99,
+            0,
+            -62.5
+          ],
+          "rotation": [
+            -0.0,
+            0.6988303167055917,
+            -0.0,
+            -0.7152874865766649
+          ],
+          "scale": [
+            2.1,
+            1.525818446588497,
+            2.6
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Cliff_3_1"
+        }
+      },
+      "guid": "4ea2a39d-497e-5798-8fd1-87321e975aa5"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Cliff.glb"
+        },
+        "MaterialParameters": {
+          "$v": 1,
+          "material": "",
+          "revision": 0,
+          "values": [
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "BaseColor",
+              "texture": "",
+              "value": [
+                0.5219700000808917,
+                0.29,
+                0.19,
+                1.0
+              ]
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            99,
+            0,
+            -37.5
+          ],
+          "rotation": [
+            -0.0,
+            0.6940963484961831,
+            -0.0,
+            -0.7198821146578551
+          ],
+          "scale": [
+            2.1,
+            1.8541554252739165,
+            2.6
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Cliff_3_2"
+        }
+      },
+      "guid": "06b9a7c2-42fb-5eed-a08f-1acba04aaf5f"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Cliff.glb"
+        },
+        "MaterialParameters": {
+          "$v": 1,
+          "material": "",
+          "revision": 0,
+          "values": [
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "BaseColor",
+              "texture": "",
+              "value": [
+                0.5291228847990683,
+                0.29,
+                0.19,
+                1.0
+              ]
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            99,
+            0,
+            -12.5
+          ],
+          "rotation": [
+            -0.0,
+            0.7370363389453879,
+            -0.0,
+            -0.6758531164935021
+          ],
+          "scale": [
+            2.1,
+            1.708318891122785,
+            2.6
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Cliff_3_3"
+        }
+      },
+      "guid": "1db9eac2-f13b-5f43-9854-e1abe550a972"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Cliff.glb"
+        },
+        "MaterialParameters": {
+          "$v": 1,
+          "material": "",
+          "revision": 0,
+          "values": [
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "BaseColor",
+              "texture": "",
+              "value": [
+                0.49217362415717375,
+                0.29,
+                0.19,
+                1.0
+              ]
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            99,
+            0,
+            12.5
+          ],
+          "rotation": [
+            -0.0,
+            0.7008490236762658,
+            -0.0,
+            -0.7133096424499147
+          ],
+          "scale": [
+            2.1,
+            1.7707800025196252,
+            2.6
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Cliff_3_4"
+        }
+      },
+      "guid": "87e6a14b-8b75-56fd-b453-b7678da35b8f"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Cliff.glb"
+        },
+        "MaterialParameters": {
+          "$v": 1,
+          "material": "",
+          "revision": 0,
+          "values": [
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "BaseColor",
+              "texture": "",
+              "value": [
+                0.4614693292253877,
+                0.29,
+                0.19,
+                1.0
+              ]
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            99,
+            0,
+            37.5
+          ],
+          "rotation": [
+            -0.0,
+            0.670213824650871,
+            -0.0,
+            -0.7421680599748628
+          ],
+          "scale": [
+            2.1,
+            1.8446615550474792,
+            2.6
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Cliff_3_5"
+        }
+      },
+      "guid": "d21f2e2a-8c1a-5539-ba1b-5f3f3d2111c1"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Cliff.glb"
+        },
+        "MaterialParameters": {
+          "$v": 1,
+          "material": "",
+          "revision": 0,
+          "values": [
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "BaseColor",
+              "texture": "",
+              "value": [
+                0.4946857995460675,
+                0.29,
+                0.19,
+                1.0
+              ]
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            99,
+            0,
+            62.5
+          ],
+          "rotation": [
+            -0.0,
+            0.6845952081714832,
+            -0.0,
+            -0.7289234534219924
+          ],
+          "scale": [
+            2.1,
+            1.6972272902754617,
+            2.6
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Cliff_3_6"
+        }
+      },
+      "guid": "2a0e0266-7296-5e7c-9e64-3beda5e98a31"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Cliff.glb"
+        },
+        "MaterialParameters": {
+          "$v": 1,
+          "material": "",
+          "revision": 0,
+          "values": [
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "BaseColor",
+              "texture": "",
+              "value": [
+                0.4859767650453442,
+                0.29,
+                0.19,
+                1.0
+              ]
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            99,
+            0,
+            87.5
+          ],
+          "rotation": [
+            -0.0,
+            0.7280053699739073,
+            -0.0,
+            -0.6855714268325033
+          ],
+          "scale": [
+            2.1,
+            1.7664086815847635,
+            2.6
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Cliff_3_7"
+        }
+      },
+      "guid": "9ce7b184-6cb1-5ab4-8f5e-7c577ebb615c"
+    },
+    {
+      "components": {
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "friction": 0.5,
+          "half_extents": [
+            4,
+            6,
+            100
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            99,
+            6,
+            0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "CliffCollider_3"
+        }
+      },
+      "guid": "3faea75c-a9f5-511c-8b1c-abd55bcf0c5a"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Freighter.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            5,
+            6
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            6.5,
+            5,
+            14
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -42,
+            0,
+            -34
+          ],
+          "rotation": [
+            0.0,
+            0.24192189559966773,
+            0.0,
+            0.9702957262759965
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Freighter"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Landmark"
+          ]
+        }
+      },
+      "guid": "7bcdd649-037f-5c7e-99fe-5e6f0ac02094"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/OutpostPlate.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            6,
+            0,
+            14
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "OutpostPad"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "OutpostPad"
+          ]
+        }
+      },
+      "guid": "b7295a6d-9eb7-54e6-ac47-7a8cd98f2181"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "$v": 1,
+          "cast_shadows": false,
+          "color": [
+            0.2,
+            0.5,
+            1.0
+          ],
+          "intensity": 6.0,
+          "range": 12.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            2.0,
+            14
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "PadLight_0"
+        }
+      },
+      "guid": "692e9785-b3ab-5e1e-977e-3cbfc5d4b115"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "$v": 1,
+          "cast_shadows": false,
+          "color": [
+            0.2,
+            0.5,
+            1.0
+          ],
+          "intensity": 6.0,
+          "range": 12.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            12,
+            2.0,
+            14
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "PadLight_1"
+        }
+      },
+      "guid": "5f49bb12-bbc7-56f4-9a57-2326b85f7125"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Pylon.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            2,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            0.4,
+            2,
+            0.4
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -2,
+            0,
+            8.0
+          ],
+          "rotation": [
+            0.0,
+            -0.07170346290823673,
+            0.0,
+            0.9974259939499106
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Pylon_0"
+        }
+      },
+      "guid": "bd4dc61a-1bb1-58e6-8fbc-16182d7b207a"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Pylon.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            2,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            0.4,
+            2,
+            0.4
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -10,
+            0,
+            1.5
+          ],
+          "rotation": [
+            0.0,
+            0.022601863400884034,
+            0.0,
+            0.999744545256841
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Pylon_1"
+        }
+      },
+      "guid": "fbd9e9f4-7f09-5d8f-86c9-db08a998d85a"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Pylon.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            2,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            0.4,
+            2,
+            0.4
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -18,
+            0,
+            -5.0
+          ],
+          "rotation": [
+            0.0,
+            -0.06922205110855745,
+            0.0,
+            0.9976012768838682
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Pylon_2"
+        }
+      },
+      "guid": "e4678f5a-1560-5e7a-95e0-9efa5b80b2e1"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Pylon.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            2,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            0.4,
+            2,
+            0.4
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -26,
+            0,
+            -11.5
+          ],
+          "rotation": [
+            0.0,
+            0.049564274301893356,
+            0.0,
+            0.9987709360573758
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Pylon_3"
+        }
+      },
+      "guid": "f6a043c2-c583-578c-b662-0afe67f1a84c"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Pylon.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            2,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            0.4,
+            2,
+            0.4
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -34,
+            0,
+            -18.0
+          ],
+          "rotation": [
+            0.0,
+            -0.08274018370854166,
+            0.0,
+            0.9965711525023574
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Pylon_4"
+        }
+      },
+      "guid": "12aefcab-6d10-55ba-a450-7a0f0a66fd46"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/MULE3.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            0.6,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            0.45,
+            0.5,
+            0.7
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -20,
+            0,
+            -12
+          ],
+          "rotation": [
+            -0.0400106696225707,
+            0.5721792329799458,
+            0.057141158069891625,
+            0.8171566310795415
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "MULE3_Wreck"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Salvage",
+            "MULE3"
+          ]
+        }
+      },
+      "guid": "92860692-6953-52ba-ae66-2aee8d243856"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/ScrapPile.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            0.6,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            1.2,
+            0.7,
+            1.0
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -28,
+            0,
+            -10
+          ],
+          "rotation": [
+            -0.0,
+            0.6356762671391,
+            -0.0,
+            -0.7719557522268357
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "SalvageSite_0_Pile"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Salvage"
+          ]
+        }
+      },
+      "guid": "12ae279e-98db-5d66-a43f-9572fba306f2"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/SalvageCrate.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            0.4,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            0.45,
+            0.4,
+            0.3
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -25.6,
+            0,
+            -8.8
+          ],
+          "rotation": [
+            0.0,
+            0.592572051571011,
+            0.0,
+            0.8055174508953379
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "SalvageSite_0_Crate"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Salvage"
+          ]
+        }
+      },
+      "guid": "4952f810-1a20-5008-a64c-dfb5e4bfc20f"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "$v": 1,
+          "cast_shadows": false,
+          "color": [
+            0.2,
+            0.5,
+            1.0
+          ],
+          "intensity": 4.0,
+          "range": 7.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -27.6,
+            1.4,
+            -10.2
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "SalvageSite_0_Glow"
+        }
+      },
+      "guid": "8e644ef8-5e34-56ca-a403-d7baab0a67cd"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/ScrapPile.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            0.6,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            1.2,
+            0.7,
+            1.0
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            30,
+            0,
+            -30
+          ],
+          "rotation": [
+            0.0,
+            0.9999648363332919,
+            0.0,
+            0.00838606564084959
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "SalvageSite_1_Pile"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Salvage"
+          ]
+        }
+      },
+      "guid": "fc6ebdb5-dd68-59b6-bd89-b6614c9e807f"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/SalvageCrate.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            0.4,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            0.45,
+            0.4,
+            0.3
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            32.4,
+            0,
+            -28.8
+          ],
+          "rotation": [
+            0.0,
+            0.5288110291339924,
+            0.0,
+            0.8487395922579835
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "SalvageSite_1_Crate"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Salvage"
+          ]
+        }
+      },
+      "guid": "f137b00c-39fb-523b-8189-d3a960586fed"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "$v": 1,
+          "cast_shadows": false,
+          "color": [
+            0.2,
+            0.5,
+            1.0
+          ],
+          "intensity": 4.0,
+          "range": 7.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            30.4,
+            1.4,
+            -30.2
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "SalvageSite_1_Glow"
+        }
+      },
+      "guid": "21102919-ba6c-567c-89c2-851337e0bf25"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/ScrapPile.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            0.6,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            1.2,
+            0.7,
+            1.0
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -58,
+            0,
+            26
+          ],
+          "rotation": [
+            0.0,
+            0.7032327983887685,
+            0.0,
+            0.7109596551635695
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "SalvageSite_2_Pile"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Salvage"
+          ]
+        }
+      },
+      "guid": "14d061c9-1759-5e61-b5ca-ad7ee3b1df4e"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/SalvageCrate.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            0.4,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            0.45,
+            0.4,
+            0.3
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -55.6,
+            0,
+            27.2
+          ],
+          "rotation": [
+            0.0,
+            0.5474573964161008,
+            0.0,
+            0.836833555200378
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "SalvageSite_2_Crate"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Salvage"
+          ]
+        }
+      },
+      "guid": "3317e4d3-eed5-504f-aebd-ad7404dee5be"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "$v": 1,
+          "cast_shadows": false,
+          "color": [
+            0.2,
+            0.5,
+            1.0
+          ],
+          "intensity": 4.0,
+          "range": 7.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -57.6,
+            1.4,
+            25.8
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "SalvageSite_2_Glow"
+        }
+      },
+      "guid": "f913fed5-f95e-5221-9a5b-8a2a4a6c8485"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/RelayNode.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            2,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            1.0,
+            2.5,
+            1.0
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            62,
+            0,
+            -48
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "DistressRelay"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Relay"
+          ]
+        }
+      },
+      "guid": "4e3d6dfa-4156-568a-8999-95d06c2ec47a"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "$v": 1,
+          "cast_shadows": false,
+          "color": [
+            1.0,
+            0.55,
+            0.15
+          ],
+          "intensity": 8.0,
+          "range": 12.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            62,
+            5.0,
+            -48
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "DistressRelay_Light"
+        }
+      },
+      "guid": "50b3d2e8-6161-55b3-822a-436b9ea9df50"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/HazardNode.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            1.5,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            0.35,
+            1.5,
+            0.35
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            34,
+            0,
+            38
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "HazardNode_0"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Hazard"
+          ]
+        }
+      },
+      "guid": "3181edd1-73a8-5196-af2e-35396f9b17ce"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "$v": 1,
+          "cast_shadows": false,
+          "color": [
+            1.0,
+            0.5,
+            0.1
+          ],
+          "intensity": 9.0,
+          "range": 10.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            34,
+            3.8,
+            38
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "HazardGlow_0"
+        }
+      },
+      "guid": "d23f0116-905c-527b-82ba-6e02eeaef345"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/HazardNode.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            1.5,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            0.35,
+            1.5,
+            0.35
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            42,
+            0,
+            32
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "HazardNode_1"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Hazard"
+          ]
+        }
+      },
+      "guid": "54c36580-fda1-5c99-b6cd-e43bed006084"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "$v": 1,
+          "cast_shadows": false,
+          "color": [
+            1.0,
+            0.5,
+            0.1
+          ],
+          "intensity": 9.0,
+          "range": 10.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            42,
+            3.8,
+            32
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "HazardGlow_1"
+        }
+      },
+      "guid": "0629c1cd-2bc8-5288-9199-c36ac7c932eb"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/HazardNode.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            1.5,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            0.35,
+            1.5,
+            0.35
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            38,
+            0,
+            46
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "HazardNode_2"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Hazard"
+          ]
+        }
+      },
+      "guid": "b8979158-f872-5386-9c32-9a008138b06b"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "$v": 1,
+          "cast_shadows": false,
+          "color": [
+            1.0,
+            0.5,
+            0.1
+          ],
+          "intensity": 9.0,
+          "range": 10.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            38,
+            3.8,
+            46
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "HazardGlow_2"
+        }
+      },
+      "guid": "71f2f7c8-f55e-5c0a-a324-d19a6a37c20a"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/RuinWall.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            1.0,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            2.5,
+            1.0,
+            0.25
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -70,
+            0,
+            -60
+          ],
+          "rotation": [
+            0.0,
+            0.08715574274765817,
+            0.0,
+            0.9961946980917455
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Ruin_0"
+        }
+      },
+      "guid": "2f27e742-116f-5f2b-922f-87a51dd5bfc4"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/RuinWall.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            1.0,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            2.5,
+            1.0,
+            0.25
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -64,
+            0,
+            -60
+          ],
+          "rotation": [
+            0.0,
+            -0.03489949670250097,
+            0.0,
+            0.9993908270190958
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Ruin_1"
+        }
+      },
+      "guid": "27723c2a-f888-5ee4-b1f1-d88130e95bc3"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/RuinWall.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            1.0,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            2.5,
+            1.0,
+            0.25
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -72,
+            0,
+            -53
+          ],
+          "rotation": [
+            0.0,
+            0.7193398003386511,
+            0.0,
+            0.6946583704589973
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Ruin_2"
+        }
+      },
+      "guid": "fe053a07-2737-54bc-87e9-12394a48db35"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/RuinWall.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            1.0,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            2.5,
+            1.0,
+            0.25
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -65,
+            0,
+            -52
+          ],
+          "rotation": [
+            0.0,
+            0.6755902076156602,
+            0.0,
+            0.737277336810124
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Ruin_3"
+        }
+      },
+      "guid": "eedcc37b-8f29-58d4-803f-16f845d0d88f"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/RockA.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            0.8,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            1.2,
+            0.8,
+            1.0
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            85.38975837808854,
+            0,
+            -18.233659224082487
+          ],
+          "rotation": [
+            -0.0,
+            0.42605926863269533,
+            -0.0,
+            -0.9046952523431151
+          ],
+          "scale": [
+            0.8,
+            0.8,
+            0.8
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Rock_0"
+        }
+      },
+      "guid": "c488d872-3cdc-5193-93aa-d82ead310dc7"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/RockB.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            1.2,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            1.6,
+            1.2,
+            1.6
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -24.03776394128073,
+            0,
+            30.820988218596042
+          ],
+          "rotation": [
+            -0.0,
+            0.4727158264719919,
+            -0.0,
+            -0.8812149269065417
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Rock_1"
+        }
+      },
+      "guid": "8737058e-ade7-512b-8c32-37a28ee7d4fd"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/RockA.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            0.8,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            1.2,
+            0.8,
+            1.0
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -44.360181529783674,
+            0,
+            -82.70730950785662
+          ],
+          "rotation": [
+            0.0,
+            0.516475154287654,
+            0.0,
+            0.8563021750547781
+          ],
+          "scale": [
+            0.8,
+            0.8,
+            0.8
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Rock_2"
+        }
+      },
+      "guid": "c6f82df7-287a-5de4-883a-77cb21372560"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/RockA.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            0.8,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            1.2,
+            0.8,
+            1.0
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            82.15953366618953,
+            0,
+            89.45456205403997
+          ],
+          "rotation": [
+            0.0,
+            0.03729693003056114,
+            0.0,
+            0.9993042274554308
+          ],
+          "scale": [
+            0.8,
+            0.8,
+            0.8
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Rock_3"
+        }
+      },
+      "guid": "e9ed7946-b0c9-517d-b03e-fa4c2069dcd1"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/RockA.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            0.8,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            1.2,
+            0.8,
+            1.0
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -80.79242888927043,
+            0,
+            -53.61725902013086
+          ],
+          "rotation": [
+            -0.0,
+            0.9392215735821543,
+            -0.0,
+            -0.3433115723622813
+          ],
+          "scale": [
+            0.8,
+            0.8,
+            0.8
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Rock_4"
+        }
+      },
+      "guid": "09c81e76-4c9f-5c03-bc41-9e6dba162135"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/RockB.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            1.2,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            1.6,
+            1.2,
+            1.6
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            85.82372584162832,
+            0,
+            -26.766276862905116
+          ],
+          "rotation": [
+            -0.0,
+            0.9811317524296627,
+            -0.0,
+            -0.1933403330252101
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Rock_5"
+        }
+      },
+      "guid": "bbbbe7a3-3dc2-5cac-b228-9c41e6ed2331"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/RockA.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            0.8,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            1.2,
+            0.8,
+            1.0
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -66.73687278504684,
+            0,
+            -76.06775986001048
+          ],
+          "rotation": [
+            -0.0,
+            0.8163607126161946,
+            -0.0,
+            -0.5775423680534433
+          ],
+          "scale": [
+            0.8,
+            0.8,
+            0.8
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Rock_6"
+        }
+      },
+      "guid": "f6ff22f5-ed17-5bb9-954d-d8a6df4b5648"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/RockA.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            0.8,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            1.2,
+            0.8,
+            1.0
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -79.93017240415051,
+            0,
+            -8.94231812489194
+          ],
+          "rotation": [
+            -0.0,
+            0.6749382475179649,
+            -0.0,
+            -0.7378742183037555
+          ],
+          "scale": [
+            0.8,
+            0.8,
+            0.8
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Rock_7"
+        }
+      },
+      "guid": "a07ca6ec-7b40-5cb0-9b8a-abaa44b153da"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/RockB.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            1.2,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            1.6,
+            1.2,
+            1.6
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -21.527838556290405,
+            0,
+            71.2405070342507
+          ],
+          "rotation": [
+            -0.0,
+            0.7795132699356098,
+            -0.0,
+            -0.6263857134340575
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Rock_8"
+        }
+      },
+      "guid": "62fc9709-3653-5f19-a40d-26f7f1d005ef"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/RockA.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            0.8,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            1.2,
+            0.8,
+            1.0
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            49.99366901741223,
+            0,
+            69.96705359190992
+          ],
+          "rotation": [
+            0.0,
+            0.3067048743620195,
+            0.0,
+            0.9518046648564914
+          ],
+          "scale": [
+            0.8,
+            0.8,
+            0.8
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Rock_9"
+        }
+      },
+      "guid": "0accafe5-9197-5660-97b2-cc80a404b33d"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/RockB.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            1.2,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            1.6,
+            1.2,
+            1.6
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -83.08342967226622,
+            0,
+            5.30613892983888
+          ],
+          "rotation": [
+            -0.0,
+            0.9181487733244538,
+            -0.0,
+            -0.3962358262989364
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Rock_10"
+        }
+      },
+      "guid": "1e195aba-4aa7-5882-a81c-aa611aaa2fdd"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/RockB.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            1.2,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            1.6,
+            1.2,
+            1.6
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -76.49389745407275,
+            0,
+            51.54742629301052
+          ],
+          "rotation": [
+            0.0,
+            0.04087396855397476,
+            0.0,
+            0.9991643101585688
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Rock_11"
+        }
+      },
+      "guid": "a14aa90f-4487-5afc-bdb4-5d89329d5ebd"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/RockB.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            1.2,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            1.6,
+            1.2,
+            1.6
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            10.901137921014026,
+            0,
+            -20.555742924599613
+          ],
+          "rotation": [
+            0.0,
+            0.9984124793946723,
+            0.0,
+            0.05632513638672503
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Rock_12"
+        }
+      },
+      "guid": "ec5c2554-cc35-5ecd-bb86-34e194121291"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/RockA.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            0.8,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            1.2,
+            0.8,
+            1.0
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            82.14444971299721,
+            0,
+            6.5190843064435455
+          ],
+          "rotation": [
+            0.0,
+            0.09027097348685958,
+            0.0,
+            0.9959172412132118
+          ],
+          "scale": [
+            0.8,
+            0.8,
+            0.8
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Rock_13"
+        }
+      },
+      "guid": "e5a8df61-91ea-5d0f-9ea6-940aca0ae5fa"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/RockA.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            0.8,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            1.2,
+            0.8,
+            1.0
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            90.74031427270833,
+            0,
+            71.5749186886689
+          ],
+          "rotation": [
+            -0.0,
+            0.9972770531855798,
+            -0.0,
+            -0.0737460452464154
+          ],
+          "scale": [
+            0.8,
+            0.8,
+            0.8
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Rock_14"
+        }
+      },
+      "guid": "88646b11-87a2-5a39-a12e-3a6de690e0eb"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/RockB.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            1.2,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            1.6,
+            1.2,
+            1.6
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            6.830811486074751,
+            0,
+            75.35433520738809
+          ],
+          "rotation": [
+            -0.0,
+            0.9010324899649576,
+            -0.0,
+            -0.4337516017579055
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Rock_15"
+        }
+      },
+      "guid": "beb8c2c2-a858-534d-ad06-a73bd97cf19d"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/RockA.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            0.8,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            1.2,
+            0.8,
+            1.0
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            7.755842266978334,
+            0,
+            -36.74145862583244
+          ],
+          "rotation": [
+            -0.0,
+            0.7691573975089434,
+            -0.0,
+            -0.6390593852352606
+          ],
+          "scale": [
+            0.8,
+            0.8,
+            0.8
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Rock_16"
+        }
+      },
+      "guid": "960def12-98d1-5970-aaa4-458ca4ea2bef"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/RockA.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            0.8,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            1.2,
+            0.8,
+            1.0
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -73.0093471234304,
+            0,
+            36.71178885151963
+          ],
+          "rotation": [
+            0.0,
+            0.9995276171240765,
+            0.0,
+            0.030733411887807396
+          ],
+          "scale": [
+            0.8,
+            0.8,
+            0.8
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Rock_17"
+        }
+      },
+      "guid": "bed013b8-101a-576d-b69b-c60e648efabe"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/RockA.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            0.8,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            1.2,
+            0.8,
+            1.0
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            25.164132340700235,
+            0,
+            -82.2575564615585
+          ],
+          "rotation": [
+            0.0,
+            0.9216309591409982,
+            0.0,
+            0.3880674878843158
+          ],
+          "scale": [
+            0.8,
+            0.8,
+            0.8
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Rock_18"
+        }
+      },
+      "guid": "dda9776c-0fa6-5fff-a461-70c2486ff043"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/RockA.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            0.8,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            1.2,
+            0.8,
+            1.0
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            59.454364725239685,
+            0,
+            42.244481038034195
+          ],
+          "rotation": [
+            -0.0,
+            0.3802167571288474,
+            -0.0,
+            -0.9248974092289496
+          ],
+          "scale": [
+            0.8,
+            0.8,
+            0.8
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Rock_19"
+        }
+      },
+      "guid": "6ea3987a-2df8-53d4-9b0d-b9398ee607ab"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/RockA.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            0.8,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            1.2,
+            0.8,
+            1.0
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -85.37619272969104,
+            0,
+            17.840496298464004
+          ],
+          "rotation": [
+            -0.0,
+            0.8475846696496654,
+            -0.0,
+            -0.5306601810715287
+          ],
+          "scale": [
+            0.8,
+            0.8,
+            0.8
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Rock_20"
+        }
+      },
+      "guid": "2cca3ea8-0da7-5806-acd5-bf09da38c575"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/RockB.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            1.2,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            1.6,
+            1.2,
+            1.6
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -17.171528486204124,
+            0,
+            -79.31048870939242
+          ],
+          "rotation": [
+            -0.0,
+            0.9428692177894223,
+            -0.0,
+            -0.33316308040532183
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Rock_21"
+        }
+      },
+      "guid": "1de5958b-1850-5d7a-8288-21ea8c795e24"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/RockA.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            0.8,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            1.2,
+            0.8,
+            1.0
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -58.638410512119705,
+            0,
+            -80.06271495301438
+          ],
+          "rotation": [
+            0.0,
+            0.9956331426640614,
+            0.0,
+            0.09335226418724175
+          ],
+          "scale": [
+            0.8,
+            0.8,
+            0.8
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Rock_22"
+        }
+      },
+      "guid": "6c017c27-e930-56d4-a624-3603e88e5fc3"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/RockA.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            0.8,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            1.2,
+            0.8,
+            1.0
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            6.544723565362091,
+            0,
+            -87.22121523728825
+          ],
+          "rotation": [
+            0.0,
+            0.866803483688143,
+            0.0,
+            0.4986498978903929
+          ],
+          "scale": [
+            0.8,
+            0.8,
+            0.8
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Rock_23"
+        }
+      },
+      "guid": "f2d3b5cc-7088-56c4-85c3-295a07c82b51"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/RockA.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            0.8,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            1.2,
+            0.8,
+            1.0
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            52.0390273567416,
+            0,
+            -90.4230328995863
+          ],
+          "rotation": [
+            -0.0,
+            0.9600784596858736,
+            -0.0,
+            -0.2797308550146023
+          ],
+          "scale": [
+            0.8,
+            0.8,
+            0.8
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Rock_24"
+        }
+      },
+      "guid": "4c291870-9df7-5fd0-88ad-2951fe7b770b"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/RockA.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            0.8,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            1.2,
+            0.8,
+            1.0
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            87.6511673855824,
+            0,
+            89.48192584510977
+          ],
+          "rotation": [
+            0.0,
+            0.3275865532211921,
+            0.0,
+            0.9448211736348097
+          ],
+          "scale": [
+            0.8,
+            0.8,
+            0.8
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Rock_25"
+        }
+      },
+      "guid": "01e31924-7030-5769-9692-8c6d2d1913cf"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Scrub.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            51.517162619596746,
+            0,
+            -56.64205227615062
+          ],
+          "rotation": [
+            0.0,
+            0.6402143569673807,
+            0.0,
+            0.7681963141885303
+          ],
+          "scale": [
+            1.2,
+            1.2,
+            1.2
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Scrub_1"
+        }
+      },
+      "guid": "d7c90a3d-1cd5-5890-b0e2-08b7cacab75a"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Scrub.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -71.64843152685125,
+            0,
+            -69.90324242612296
+          ],
+          "rotation": [
+            -0.0,
+            0.19314609264536353,
+            -0.0,
+            -0.9811700091705966
+          ],
+          "scale": [
+            1.2,
+            1.2,
+            1.2
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Scrub_2"
+        }
+      },
+      "guid": "80622f63-d87d-53a0-8e8a-adc7ba68235a"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Scrub.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            87.61957167975098,
+            0,
+            -23.473267055555425
+          ],
+          "rotation": [
+            -0.0,
+            0.7266931798183281,
+            -0.0,
+            -0.6869621695592321
+          ],
+          "scale": [
+            1.2,
+            1.2,
+            1.2
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Scrub_3"
+        }
+      },
+      "guid": "e549fca0-0e47-5ddc-b76b-1a64494b7093"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Scrub.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -5.97829214270395,
+            0,
+            4.050485707261203
+          ],
+          "rotation": [
+            0.0,
+            0.9171150759333777,
+            0.0,
+            0.39862255015956477
+          ],
+          "scale": [
+            1.2,
+            1.2,
+            1.2
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Scrub_4"
+        }
+      },
+      "guid": "c7c3e796-f1a5-5ddb-8a2b-317a4321a62f"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Scrub.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            24.787318519718497,
+            0,
+            -48.54781799758402
+          ],
+          "rotation": [
+            0.0,
+            0.7211031870302868,
+            0.0,
+            0.6928276796251456
+          ],
+          "scale": [
+            1.2,
+            1.2,
+            1.2
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Scrub_5"
+        }
+      },
+      "guid": "7f92ce72-a219-5247-b2d2-8095532cb050"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Scrub.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            3.2801902713771653,
+            0,
+            -55.686203875776215
+          ],
+          "rotation": [
+            0.0,
+            0.9818464862602022,
+            0.0,
+            0.1896772981104872
+          ],
+          "scale": [
+            1.2,
+            1.2,
+            1.2
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Scrub_6"
+        }
+      },
+      "guid": "c3e2647b-8d99-55e3-8e3b-4b1c964909a5"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Scrub.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            81.67795664354418,
+            0,
+            -87.9089522304454
+          ],
+          "rotation": [
+            0.0,
+            0.31872240160716225,
+            0.0,
+            0.9478481052962878
+          ],
+          "scale": [
+            1.2,
+            1.2,
+            1.2
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Scrub_7"
+        }
+      },
+      "guid": "723a4bde-663f-50b3-8ab6-20e25096c274"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Scrub.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            55.19453147617139,
+            0,
+            -81.36419649870186
+          ],
+          "rotation": [
+            0.0,
+            0.7098475798074867,
+            0.0,
+            0.7043553176071391
+          ],
+          "scale": [
+            1.2,
+            1.2,
+            1.2
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Scrub_8"
+        }
+      },
+      "guid": "7ff10a58-bf60-52da-acc6-6ef11a6d02e5"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Scrub.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            64.7016961721881,
+            0,
+            19.36657852658429
+          ],
+          "rotation": [
+            0.0,
+            0.6391193077333025,
+            0.0,
+            0.7691076065691356
+          ],
+          "scale": [
+            1.2,
+            1.2,
+            1.2
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Scrub_9"
+        }
+      },
+      "guid": "20fa099a-a453-58b7-b628-f51d17b2172c"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Scrub.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -81.21588935450114,
+            0,
+            -41.36621683589876
+          ],
+          "rotation": [
+            0.0,
+            0.8092915404158751,
+            0.0,
+            0.5874071863803677
+          ],
+          "scale": [
+            1.2,
+            1.2,
+            1.2
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Scrub_10"
+        }
+      },
+      "guid": "adb1c79c-f78d-5a2d-93d0-d55cfa63f5c4"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Scrub.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            55.251385408267254,
+            0,
+            87.50197566325411
+          ],
+          "rotation": [
+            -0.0,
+            0.6220778745647235,
+            -0.0,
+            -0.7829553741925757
+          ],
+          "scale": [
+            1.2,
+            1.2,
+            1.2
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Scrub_11"
+        }
+      },
+      "guid": "00d279fc-ad40-51fb-a793-2a277ebd6c6a"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Scrub.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            73.92196323120149,
+            0,
+            79.24527753393812
+          ],
+          "rotation": [
+            -0.0,
+            0.378106058045763,
+            -0.0,
+            -0.925762285292015
+          ],
+          "scale": [
+            1.2,
+            1.2,
+            1.2
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Scrub_12"
+        }
+      },
+      "guid": "68cab515-d505-56be-b7e0-ed8d0fd4a7cb"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Scrub.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            77.27537941711199,
+            0,
+            86.02706568004695
+          ],
+          "rotation": [
+            0.0,
+            0.2922837407791553,
+            0.0,
+            0.9563316448158262
+          ],
+          "scale": [
+            1.2,
+            1.2,
+            1.2
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Scrub_13"
+        }
+      },
+      "guid": "b516e118-5d49-5551-b1ea-be806423e001"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Scrub.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            19.167364442361702,
+            0,
+            -1.526265444876259
+          ],
+          "rotation": [
+            0.0,
+            0.8866035143412218,
+            0.0,
+            0.46253022426409607
+          ],
+          "scale": [
+            1.2,
+            1.2,
+            1.2
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Scrub_15"
+        }
+      },
+      "guid": "26c4ad76-e37f-52c6-b66c-fd60b58dd11d"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Scrub.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            62.02715370218232,
+            0,
+            -18.567113227133035
+          ],
+          "rotation": [
+            0.0,
+            0.6102534233372353,
+            0.0,
+            0.7922062605819176
+          ],
+          "scale": [
+            1.2,
+            1.2,
+            1.2
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Scrub_16"
+        }
+      },
+      "guid": "f2342598-ff9a-552b-b8f4-7b1fc27e98d9"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Scrub.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            20.32628466283913,
+            0,
+            12.592655866499086
+          ],
+          "rotation": [
+            0.0,
+            0.982247935455954,
+            0.0,
+            0.18758729512553896
+          ],
+          "scale": [
+            1.2,
+            1.2,
+            1.2
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Scrub_18"
+        }
+      },
+      "guid": "916d07a8-3687-5d59-bcf6-85e6fc53c49f"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Scrub.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            8.074214912524937,
+            0,
+            -57.30457145838567
+          ],
+          "rotation": [
+            -0.0,
+            0.7870594553601351,
+            -0.0,
+            -0.6168771463818443
+          ],
+          "scale": [
+            1.2,
+            1.2,
+            1.2
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Scrub_21"
+        }
+      },
+      "guid": "2607c764-0e2b-55fc-b823-974aa3fa5028"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Scrub.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            29.21232036487666,
+            0,
+            -66.66440667476735
+          ],
+          "rotation": [
+            -0.0,
+            0.923432648391066,
+            -0.0,
+            -0.3837605293480062
+          ],
+          "scale": [
+            1.2,
+            1.2,
+            1.2
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Scrub_22"
+        }
+      },
+      "guid": "aad29946-c019-5857-97af-52615239493a"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Scrub.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            19.606244193837227,
+            0,
+            48.13509134246709
+          ],
+          "rotation": [
+            -0.0,
+            0.35766024300106686,
+            -0.0,
+            -0.9338517819099655
+          ],
+          "scale": [
+            1.2,
+            1.2,
+            1.2
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Scrub_24"
+        }
+      },
+      "guid": "08219ffc-4bee-5a56-9b09-0523e81506fc"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Scrub.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            42.97327404331162,
+            0,
+            -53.1330658178822
+          ],
+          "rotation": [
+            -0.0,
+            0.9913327594435374,
+            -0.0,
+            -0.13137488365003996
+          ],
+          "scale": [
+            1.2,
+            1.2,
+            1.2
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Scrub_25"
+        }
+      },
+      "guid": "2aed55d5-6d26-54c7-8fae-bb13f8d40409"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Scrub.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -30.29192049831947,
+            0,
+            -88.48161057205307
+          ],
+          "rotation": [
+            -0.0,
+            0.9864495229993793,
+            -0.0,
+            -0.16406504373051922
+          ],
+          "scale": [
+            1.2,
+            1.2,
+            1.2
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Scrub_26"
+        }
+      },
+      "guid": "bc658a47-7b35-5f0b-8863-78df97797eb2"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Scrub.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -5.410136805235453,
+            0,
+            67.51092748203195
+          ],
+          "rotation": [
+            0.0,
+            0.8504792206741029,
+            0.0,
+            0.5260086455578185
+          ],
+          "scale": [
+            1.2,
+            1.2,
+            1.2
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Scrub_27"
+        }
+      },
+      "guid": "89fbffd8-1112-55a7-894f-a8c0c1f0d9ed"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Scrub.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            61.37692835218266,
+            0,
+            2.602491829038499
+          ],
+          "rotation": [
+            0.0,
+            0.30631012786642936,
+            0.0,
+            0.9519317756890205
+          ],
+          "scale": [
+            1.2,
+            1.2,
+            1.2
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Scrub_28"
+        }
+      },
+      "guid": "10f42b83-fdb1-51df-8c1e-40086133650b"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Scrub.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            39.91297215661612,
+            0,
+            -39.622897976258955
+          ],
+          "rotation": [
+            -0.0,
+            0.9944666018988997,
+            -0.0,
+            -0.10505321369503787
+          ],
+          "scale": [
+            1.2,
+            1.2,
+            1.2
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Scrub_29"
+        }
+      },
+      "guid": "e7dd6369-81ce-5250-b4fd-b657a838141a"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Scrub.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -78.8577958854425,
+            0,
+            -90.01222898874516
+          ],
+          "rotation": [
+            -0.0,
+            0.24568196470757672,
+            -0.0,
+            -0.9693504898732063
+          ],
+          "scale": [
+            1.2,
+            1.2,
+            1.2
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Scrub_30"
+        }
+      },
+      "guid": "0d31cba1-ecdc-5267-81e8-9e5839ec0e82"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Scrub.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -84.26831018303017,
+            0,
+            -64.56345989961298
+          ],
+          "rotation": [
+            0.0,
+            0.49080894288231824,
+            0.0,
+            0.8712672274260872
+          ],
+          "scale": [
+            1.2,
+            1.2,
+            1.2
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Scrub_31"
+        }
+      },
+      "guid": "1117cbba-ee5c-5c52-9c0f-175e3079a145"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Scrub.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -74.3269278573317,
+            0,
+            59.62830788880245
+          ],
+          "rotation": [
+            -0.0,
+            0.014975522076135058,
+            -0.0,
+            -0.999887860581649
+          ],
+          "scale": [
+            1.2,
+            1.2,
+            1.2
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Scrub_32"
+        }
+      },
+      "guid": "b09a96e6-7ebb-5629-baaa-987aaa617c9d"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Scrub.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            27.449893433712433,
+            0,
+            -19.23551947137004
+          ],
+          "rotation": [
+            -0.0,
+            0.3433540759773263,
+            -0.0,
+            -0.9392060362400555
+          ],
+          "scale": [
+            1.2,
+            1.2,
+            1.2
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Scrub_33"
+        }
+      },
+      "guid": "5b39f768-d742-515b-afdd-897c921bbe3f"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Scrub.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            1.1421516521472626,
+            0,
+            -67.1888517915811
+          ],
+          "rotation": [
+            -0.0,
+            0.826706232551479,
+            -0.0,
+            -0.5626338108046297
+          ],
+          "scale": [
+            1.2,
+            1.2,
+            1.2
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Scrub_34"
+        }
+      },
+      "guid": "453bcffd-4c62-5de9-8691-bb353a0dc340"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Scrub.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -58.43272689647693,
+            0,
+            20.70061468327927
+          ],
+          "rotation": [
+            -0.0,
+            0.4017264294728107,
+            -0.0,
+            -0.9157597260542892
+          ],
+          "scale": [
+            1.2,
+            1.2,
+            1.2
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Scrub_37"
+        }
+      },
+      "guid": "e6bcb762-0bce-5e97-ba48-e8b84dcbfe71"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Scrub.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            13.022067364782728,
+            0,
+            -90.26118659744317
+          ],
+          "rotation": [
+            -0.0,
+            0.8371703500023515,
+            -0.0,
+            -0.5469422319376519
+          ],
+          "scale": [
+            1.2,
+            1.2,
+            1.2
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Scrub_38"
+        }
+      },
+      "guid": "fc66c255-8c02-56c6-af7c-10537508ee6c"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Scrub.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -88.2979328986458,
+            0,
+            -3.903072475283466
+          ],
+          "rotation": [
+            -0.0,
+            0.409408469842057,
+            -0.0,
+            -0.9123511959884667
+          ],
+          "scale": [
+            1.2,
+            1.2,
+            1.2
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Scrub_39"
+        }
+      },
+      "guid": "dcae3a9f-c2a1-5bda-8025-2f85c1a62e7b"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Kael.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            10,
+            0,
+            20
+          ],
+          "rotation": [
+            -0.0,
+            0.984807753012208,
+            -0.0,
+            -0.1736481776669303
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Kael"
+        }
+      },
+      "guid": "5c1eb06f-7395-5b91-9ffa-44e00927933f"
+    },
+    {
+      "components": {
+        "Camera": {
+          "$v": 1,
+          "far_plane": 2500,
+          "fov_degrees": 62,
+          "near_plane": 0.1,
+          "ortho_height": 10.0,
+          "priority": 0,
+          "projection": "Perspective"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            52,
+            46,
+            70
+          ],
+          "rotation": [
+            -0.2531632279912453,
+            0.20082727174830148,
+            0.053811505283103,
+            0.944818029471471
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "MainCamera"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "MainCamera"
+          ]
+        }
+      },
+      "guid": "12ad2e56-f09a-545d-9864-d7e3b1753071"
+    }
+  ]
+}

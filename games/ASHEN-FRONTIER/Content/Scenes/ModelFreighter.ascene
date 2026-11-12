@@ -1,0 +1,207 @@
+{
+  "$type": "Scene",
+  "$version": 1,
+  "entities": [
+    {
+      "components": {
+        "SkyLight": {
+          "$v": 1,
+          "color": [
+            0.75,
+            0.82,
+            0.95
+          ],
+          "intensity": 1.2
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Sky"
+        }
+      },
+      "guid": "2b236fc4-f2c7-5c19-adef-5aa63b3defaa"
+    },
+    {
+      "components": {
+        "DirectionalLight": {
+          "$v": 1,
+          "cast_shadows": true,
+          "color": [
+            1.0,
+            0.92,
+            0.8
+          ],
+          "intensity": 3.2
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            -0.31785088924192784,
+            -0.20464767547402107,
+            -0.07046584566124764,
+            0.9231060100153399
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Sun"
+        }
+      },
+      "guid": "49fe3aa4-c54b-5829-8075-e89e13215d68"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Ground.glb"
+        },
+        "MaterialParameters": {
+          "$v": 1,
+          "material": "",
+          "revision": 0,
+          "values": [
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "BaseColor",
+              "texture": "",
+              "value": [
+                0.55,
+                0.3,
+                0.18,
+                1.0
+              ]
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            300,
+            1,
+            300
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Ground"
+        }
+      },
+      "guid": "48f391e7-aae7-5f4f-9f7b-706691185fba"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Freighter.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0.0,
+            0.17364817766693033,
+            0.0,
+            0.984807753012208
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "G_Freighter"
+        }
+      },
+      "guid": "f51f8f98-c678-5464-836f-84abf84e139c"
+    },
+    {
+      "components": {
+        "Camera": {
+          "$v": 1,
+          "far_plane": 1500.0,
+          "fov_degrees": 60,
+          "near_plane": 0.1,
+          "ortho_height": 10.0,
+          "priority": 0,
+          "projection": "Perspective"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            60,
+            26,
+            62
+          ],
+          "rotation": [
+            -0.1470003124348961,
+            0.3378093078114409,
+            0.053503738154134076,
+            0.92812344529353
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "MainCamera"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "MainCamera"
+          ]
+        }
+      },
+      "guid": "12ad2e56-f09a-545d-9864-d7e3b1753071"
+    }
+  ]
+}

@@ -1,0 +1,335 @@
+{
+  "$type": "Scene",
+  "$version": 1,
+  "entities": [
+    {
+      "components": {
+        "SkyLight": {
+          "$v": 1,
+          "color": [
+            0.75,
+            0.82,
+            0.95
+          ],
+          "intensity": 1.2
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Sky"
+        }
+      },
+      "guid": "2b236fc4-f2c7-5c19-adef-5aa63b3defaa"
+    },
+    {
+      "components": {
+        "DirectionalLight": {
+          "$v": 1,
+          "cast_shadows": true,
+          "color": [
+            1.0,
+            0.92,
+            0.8
+          ],
+          "intensity": 3.2
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            -0.31785088924192784,
+            -0.20464767547402107,
+            -0.07046584566124764,
+            0.9231060100153399
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Sun"
+        }
+      },
+      "guid": "49fe3aa4-c54b-5829-8075-e89e13215d68"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Ground.glb"
+        },
+        "MaterialParameters": {
+          "$v": 1,
+          "material": "",
+          "revision": 0,
+          "values": [
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "BaseColor",
+              "texture": "",
+              "value": [
+                0.55,
+                0.3,
+                0.18,
+                1.0
+              ]
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            0,
+            -20
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            160,
+            1,
+            120
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "Ground"
+        }
+      },
+      "guid": "48f391e7-aae7-5f4f-9f7b-706691185fba"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/RockA.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -13,
+            0,
+            2
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "G_RockA"
+        }
+      },
+      "guid": "c9f2e67d-ef06-5ea9-9234-c7b46b8370e6"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/RockB.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -7,
+            0,
+            2
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "G_RockB"
+        }
+      },
+      "guid": "72db4025-2fcb-53e0-92f0-cc257ef8c161"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Cliff.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            2,
+            0,
+            1
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "G_Cliff"
+        }
+      },
+      "guid": "f30242d3-9549-5a5d-980b-c83dec217b41"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/RuinWall.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            10,
+            0,
+            3
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "G_RuinWall"
+        }
+      },
+      "guid": "8fc19b16-736f-5a6a-ab5a-a4bb40ddf9cc"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/OutpostPlate.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            18,
+            0,
+            1
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "G_OutpostPlate"
+        }
+      },
+      "guid": "de855159-3ef9-51cf-b0a5-c9ac0cf42e18"
+    },
+    {
+      "components": {
+        "Camera": {
+          "$v": 1,
+          "far_plane": 1500.0,
+          "fov_degrees": 62,
+          "near_plane": 0.1,
+          "ortho_height": 10.0,
+          "priority": 0,
+          "projection": "Perspective"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            3.0,
+            12.0,
+            24.0
+          ],
+          "rotation": [
+            -0.13917310096006544,
+            0.0,
+            0.0,
+            0.9902680687415704
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "name": "MainCamera"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "MainCamera"
+          ]
+        }
+      },
+      "guid": "12ad2e56-f09a-545d-9864-d7e3b1753071"
+    }
+  ]
+}
