@@ -2,6 +2,7 @@
 
 #include "aether/ecs/entity.h"
 #include "aether/math/mat4.h"
+#include "aether/math/quaternion.h"
 #include "core/scene_document.h"
 
 #include <imgui.h>
@@ -40,35 +41,48 @@ bool MouseRay(const Mat4& view_projection, const ImVec2& origin, const ImVec2& s
 bool ClosestOnAxis(const Vec3& axis_origin, const Vec3& axis_direction, const Vec3& ray_origin, const Vec3& ray_direction, f32& distance);
 
 enum class GizmoAxis { None, X, Y, Z };
+enum class GizmoMode { Move, Rotate, Scale };
 
-// The move gizmo: three axis handles at the first selected entity, dragged along world X, Y or Z. A drag is one undoable
-// edit however many frames it takes (the document merges the uncommitted updates), moves the entity in world space even under
-// a parent, and snaps the dragged axis to `snap_step` (0 = off). Only the first selected entity moves; a multi-selection move
-// needs the document to track more than one pending edit. No ImGui: the panel feeds it the mouse.
-class TranslateGizmo {
+// The transform gizmo on the first selected entity, in three modes. Move: arrows along world X, Y and Z. Rotate: a ring around
+// each world axis. Scale: handles along the entity's own (local) axes. A drag is one undoable edit however many frames it takes
+// (the document merges the uncommitted updates), works in world space even under a parent, and snaps to `snap_step`, which means
+// metres for Move, degrees for Rotate and a scale step for Scale (0 = off). Only the first selected entity changes; a multi-selection
+// edit needs the document to track more than one pending edit. No ImGui: the panel feeds it the mouse.
+class TransformGizmo {
 public:
     // The handle length in world units, so it stays about the same size on screen at any zoom.
     static f32 HandleLength(const SceneViewCamera& camera) { return camera.distance * 0.18f; }
     // The entity the gizmo is on (the first selected one with a Transform), or kNullEntity.
     static Entity Subject(const SceneDocument& document);
+    // The world-space direction of a handle: the world axis (Move, Rotate) or the entity's local axis (Scale).
+    static Vec3 HandleDirection(const SceneDocument& document, Entity subject, GizmoAxis axis, GizmoMode mode);
+    // Points of a rotate ring (a circle around `axis_direction`, radius `radius`, centred on `centre`), for drawing and hit-testing.
+    static void RingPoints(const Vec3& centre, const Vec3& axis_direction, f32 radius, int count, Vec3* out);
 
-    GizmoAxis HitTest(const SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse) const;
+    GizmoAxis HitTest(const SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, GizmoMode mode) const;
     // Starts a drag if `mouse` is on a handle; true if it did.
-    bool Begin(const SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse);
-    // Moves the subject to follow the mouse, as an uncommitted edit; false if there is no drag (or the mouse ray is parallel to the axis).
+    bool Begin(const SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, GizmoMode mode);
+    // Edits the subject to follow the mouse, as an uncommitted edit; false if there is no drag (or the mouse ray is parallel to what it needs).
     bool Update(SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, f32 snap_step);
     // Ends the drag, committing it as one edit.
     void End(SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, f32 snap_step);
     bool Dragging() const { return axis_ != GizmoAxis::None; }
     GizmoAxis Axis() const { return axis_; }
+    GizmoMode Mode() const { return mode_; }
 
 private:
     bool Apply(SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, f32 snap_step, bool committed);
+    // Move and Scale: where along the handle's line the mouse ray passes closest. Rotate: the angle of the mouse around the axis.
+    bool Measure(const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, f32& value) const;
 
     GizmoAxis axis_ = GizmoAxis::None;
+    GizmoMode mode_ = GizmoMode::Move;
     Entity entity_ = kNullEntity;
-    Vec3 start_world_{0.0f, 0.0f, 0.0f}; // the subject's world position when the drag began
-    f32 grab_ = 0.0f;                    // where along the axis the mouse took hold, so the entity does not jump to the cursor
+    Vec3 start_world_{0.0f, 0.0f, 0.0f};   // the subject's world position when the drag began
+    Vec3 direction_{1.0f, 0.0f, 0.0f};     // the handle's world direction (the axis a ring turns about)
+    Vec3 start_scale_{1.0f, 1.0f, 1.0f};
+    Quaternion start_rotation_;            // the subject's local rotation when the drag began
+    f32 grab_ = 0.0f;                      // Move/Scale: where along the handle the mouse took hold; Rotate: the angle it took hold at
 };
 
 // A view of the open scene as boxes and axes over a ground grid, from an orbit camera, with click-to-select. It draws
@@ -84,11 +98,14 @@ public:
 
 private:
     SceneViewCamera camera_;
-    TranslateGizmo gizmo_;
+    TransformGizmo gizmo_;
+    GizmoMode mode_ = GizmoMode::Move;
     ImVec2 press_{0.0f, 0.0f};
     bool dragged_ = false;
     bool snap_ = false;
-    f32 snap_step_ = 0.5f;
+    f32 snap_move_ = 0.5f;
+    f32 snap_rotate_ = 15.0f;
+    f32 snap_scale_ = 0.1f;
 };
 
 } // namespace aether::editor

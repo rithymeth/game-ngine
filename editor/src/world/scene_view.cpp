@@ -117,7 +117,7 @@ bool ClosestOnAxis(const Vec3& axis_origin, const Vec3& axis_direction, const Ve
 
 namespace {
 
-Vec3 AxisDirection(GizmoAxis axis) {
+Vec3 AxisUnit(GizmoAxis axis) {
     return axis == GizmoAxis::X ? Vec3(1, 0, 0) : (axis == GizmoAxis::Y ? Vec3(0, 1, 0) : Vec3(0, 0, 1));
 }
 
@@ -130,26 +130,64 @@ f32 DistanceToSegment(const ImVec2& p, const ImVec2& a, const ImVec2& b) {
     return std::hypot(p.x - (a.x + abx * t), p.y - (a.y + aby * t));
 }
 
+// Two unit vectors that, with `axis`, make a right-handed frame: u x v = axis.
+void PlaneBasis(const Vec3& axis, Vec3& u, Vec3& v) {
+    const Vec3 candidate = std::fabs(axis.y) < 0.9f ? Vec3(0, 1, 0) : Vec3(1, 0, 0);
+    u = axis.Cross(candidate).Normalized();
+    v = axis.Cross(u);
+}
+
+// The parent's world matrix inverse, or false for a root entity.
+bool ParentInverse(const SceneDocument& document, Entity entity, Mat4& inverse) {
+    const Entity parent = document.ParentOf(entity);
+    if (parent == kNullEntity) return false;
+    return ComputeWorldTransform(document.GetWorld(), document.Guids(), parent).TryInverse(inverse);
+}
+
 // A world position as the local position an entity under its parent would need to be there.
 Vec3 LocalPositionFor(const SceneDocument& document, Entity entity, const Vec3& world_position) {
-    const Entity parent = document.ParentOf(entity);
-    if (parent == kNullEntity) return world_position;
     Mat4 inverse;
-    if (!ComputeWorldTransform(document.GetWorld(), document.Guids(), parent).TryInverse(inverse)) return world_position;
+    if (!ParentInverse(document, entity, inverse)) return world_position;
     const Vec4 local = inverse * Vec4(world_position.x, world_position.y, world_position.z, 1.0f);
     return Vec3(local.x, local.y, local.z);
 }
 
+// A world direction as the local direction an entity under its parent would turn about.
+Vec3 LocalDirectionFor(const SceneDocument& document, Entity entity, const Vec3& world_direction) {
+    Mat4 inverse;
+    if (!ParentInverse(document, entity, inverse)) return world_direction;
+    const Vec4 local = inverse * Vec4(world_direction.x, world_direction.y, world_direction.z, 0.0f);
+    const Vec3 v(local.x, local.y, local.z);
+    return v.Length() > 1e-6f ? v.Normalized() : world_direction;
+}
+
 } // namespace
 
-Entity TranslateGizmo::Subject(const SceneDocument& document) {
+Entity TransformGizmo::Subject(const SceneDocument& document) {
     for (const Entity entity : document.Selection()) {
         if (document.GetWorld().IsAlive(entity) && document.GetWorld().HasComponent<Transform>(entity)) return entity;
     }
     return kNullEntity;
 }
 
-GizmoAxis TranslateGizmo::HitTest(const SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse) const {
+Vec3 TransformGizmo::HandleDirection(const SceneDocument& document, Entity subject, GizmoAxis axis, GizmoMode mode) {
+    if (mode != GizmoMode::Scale || subject == kNullEntity) return AxisUnit(axis);
+    const Mat4 m = ComputeWorldTransform(document.GetWorld(), document.Guids(), subject);
+    const Vec4& column = axis == GizmoAxis::X ? m.cols[0] : (axis == GizmoAxis::Y ? m.cols[1] : m.cols[2]);
+    const Vec3 v(column.x, column.y, column.z);
+    return v.Length() > 1e-6f ? v.Normalized() : AxisUnit(axis);
+}
+
+void TransformGizmo::RingPoints(const Vec3& centre, const Vec3& axis_direction, f32 radius, int count, Vec3* out) {
+    Vec3 u, v;
+    PlaneBasis(axis_direction, u, v);
+    for (int i = 0; i < count; ++i) {
+        const f32 a = 2.0f * kPi * static_cast<f32>(i) / static_cast<f32>(count);
+        out[i] = centre + u * (std::cos(a) * radius) + v * (std::sin(a) * radius);
+    }
+}
+
+GizmoAxis TransformGizmo::HitTest(const SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, GizmoMode mode) const {
     const Entity subject = Subject(document);
     if (subject == kNullEntity || size.x < 1.0f || size.y < 1.0f) return GizmoAxis::None;
     const Mat4 vp = camera.ViewProjection(size.x / size.y);
@@ -159,47 +197,111 @@ GizmoAxis TranslateGizmo::HitTest(const SceneDocument& document, const SceneView
     GizmoAxis best = GizmoAxis::None;
     f32 best_distance = 9.0f; // pixels
     for (const GizmoAxis axis : {GizmoAxis::X, GizmoAxis::Y, GizmoAxis::Z}) {
-        ImVec2 to;
-        if (!ProjectToViewport(vp, at + AxisDirection(axis) * HandleLength(camera), origin, size, to)) continue;
-        const f32 distance = DistanceToSegment(mouse, from, to);
+        f32 distance = 1e30f;
+        if (mode == GizmoMode::Rotate) {
+            constexpr int kSegments = 48;
+            Vec3 ring[kSegments];
+            RingPoints(at, AxisUnit(axis), HandleLength(camera), kSegments, ring);
+            ImVec2 previous;
+            bool have_previous = ProjectToViewport(vp, ring[kSegments - 1], origin, size, previous);
+            for (int i = 0; i < kSegments; ++i) {
+                ImVec2 current;
+                const bool ok = ProjectToViewport(vp, ring[i], origin, size, current);
+                if (ok && have_previous) distance = std::min(distance, DistanceToSegment(mouse, previous, current));
+                previous = current;
+                have_previous = ok;
+            }
+        } else {
+            ImVec2 to;
+            if (!ProjectToViewport(vp, at + HandleDirection(document, subject, axis, mode) * HandleLength(camera), origin, size, to)) continue;
+            distance = DistanceToSegment(mouse, from, to);
+        }
         if (distance < best_distance) { best_distance = distance; best = axis; }
     }
     return best;
 }
 
-bool TranslateGizmo::Begin(const SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse) {
-    const GizmoAxis axis = HitTest(document, camera, origin, size, mouse);
-    if (axis == GizmoAxis::None) return false;
+bool TransformGizmo::Measure(const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, f32& value) const {
     Vec3 ray_origin, ray_direction;
-    const Entity subject = Subject(document);
-    const Vec3 at = WorldOrigin(document, subject);
-    f32 t = 0.0f;
-    if (!MouseRay(camera.ViewProjection(size.x / size.y), origin, size, mouse, ray_origin, ray_direction) ||
-        !ClosestOnAxis(at, AxisDirection(axis), ray_origin, ray_direction, t)) return false;
-    axis_ = axis;
-    entity_ = subject;
-    start_world_ = at;
-    grab_ = t;
+    if (!MouseRay(camera.ViewProjection(size.x / size.y), origin, size, mouse, ray_origin, ray_direction)) return false;
+    if (mode_ != GizmoMode::Rotate) return ClosestOnAxis(start_world_, direction_, ray_origin, ray_direction, value);
+    // Rotate: where the ray meets the ring's plane, and the angle of that point around the axis.
+    const f32 facing = ray_direction.Dot(direction_);
+    if (std::fabs(facing) < 1e-4f) return false;
+    const f32 t = (start_world_ - ray_origin).Dot(direction_) / facing;
+    const Vec3 p = ray_origin + ray_direction * t - start_world_;
+    Vec3 u, v;
+    PlaneBasis(direction_, u, v);
+    value = std::atan2(p.Dot(v), p.Dot(u));
     return true;
 }
 
-bool TranslateGizmo::Apply(SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, f32 snap_step, bool committed) {
-    if (!Dragging() || !document.GetWorld().IsAlive(entity_)) return false;
-    Vec3 ray_origin, ray_direction;
-    f32 t = 0.0f;
-    const Vec3 direction = AxisDirection(axis_);
-    if (!MouseRay(camera.ViewProjection(size.x / size.y), origin, size, mouse, ray_origin, ray_direction) ||
-        !ClosestOnAxis(start_world_, direction, ray_origin, ray_direction, t)) return false;
-    f32 along = t - grab_;
-    if (snap_step > 0.0f) along = SnapScalar(AxisComponent(start_world_, axis_) + along, snap_step) - AxisComponent(start_world_, axis_);
-    return document.SetPosition(entity_, LocalPositionFor(document, entity_, start_world_ + direction * along), committed);
+bool TransformGizmo::Begin(const SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, GizmoMode mode) {
+    const GizmoAxis axis = HitTest(document, camera, origin, size, mouse, mode);
+    if (axis == GizmoAxis::None) return false;
+    const Entity subject = Subject(document);
+    const Transform* transform = document.GetWorld().GetComponent<Transform>(subject);
+    if (!transform) return false;
+    // Set up the state the measurement needs, and take it back if the first measurement fails.
+    const GizmoAxis old_axis = axis_;
+    const GizmoMode old_mode = mode_;
+    const Vec3 old_start = start_world_, old_direction = direction_;
+    axis_ = axis;
+    mode_ = mode;
+    start_world_ = WorldOrigin(document, subject);
+    direction_ = HandleDirection(document, subject, axis, mode);
+    f32 value = 0.0f;
+    if (!Measure(camera, origin, size, mouse, value) || (mode != GizmoMode::Rotate && std::fabs(value) < 1e-3f)) {
+        axis_ = old_axis;
+        mode_ = old_mode;
+        start_world_ = old_start;
+        direction_ = old_direction;
+        return false;
+    }
+    entity_ = subject;
+    start_scale_ = transform->scale;
+    start_rotation_ = transform->rotation;
+    grab_ = value;
+    return true;
 }
 
-bool TranslateGizmo::Update(SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, f32 snap_step) {
+bool TransformGizmo::Apply(SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, f32 snap_step, bool committed) {
+    if (!Dragging() || !document.GetWorld().IsAlive(entity_)) return false;
+    f32 value = 0.0f;
+    if (!Measure(camera, origin, size, mouse, value)) return false;
+    switch (mode_) {
+        case GizmoMode::Move: {
+            f32 along = value - grab_;
+            if (snap_step > 0.0f) along = SnapScalar(AxisComponent(start_world_, axis_) + along, snap_step) - AxisComponent(start_world_, axis_);
+            return document.SetPosition(entity_, LocalPositionFor(document, entity_, start_world_ + direction_ * along), committed);
+        }
+        case GizmoMode::Scale: {
+            const f32 ratio = std::max(value / grab_, 0.01f); // the handle's own distance from the origin, relative to where it was taken
+            Vec3 scale = start_scale_;
+            f32 component = AxisComponent(start_scale_, axis_) * ratio;
+            if (snap_step > 0.0f) component = SnapScaleAxis(component, snap_step);
+            (axis_ == GizmoAxis::X ? scale.x : (axis_ == GizmoAxis::Y ? scale.y : scale.z)) = component;
+            return document.SetScale(entity_, scale, committed);
+        }
+        case GizmoMode::Rotate: {
+            // The angle from where the mouse took hold, as the short way round. A rotation repeats every full turn, so
+            // following the mouse through several would give the same result.
+            f32 angle = value - grab_;
+            while (angle > kPi) angle -= 2.0f * kPi;
+            while (angle < -kPi) angle += 2.0f * kPi;
+            if (snap_step > 0.0f) angle = SnapRotationDegrees(angle * 180.0f / kPi, snap_step) * kPi / 180.0f;
+            const Quaternion turn = Quaternion::FromAxisAngle(LocalDirectionFor(document, entity_, direction_), angle);
+            return document.SetRotation(entity_, (turn * start_rotation_).Normalized(), committed);
+        }
+    }
+    return false;
+}
+
+bool TransformGizmo::Update(SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, f32 snap_step) {
     return Apply(document, camera, origin, size, mouse, snap_step, false);
 }
 
-void TranslateGizmo::End(SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, f32 snap_step) {
+void TransformGizmo::End(SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, f32 snap_step) {
     Apply(document, camera, origin, size, mouse, snap_step, true);
     axis_ = GizmoAxis::None;
     entity_ = kNullEntity;
@@ -228,15 +330,21 @@ void SceneViewPanel::FocusSelection(const SceneDocument& document) {
 }
 
 void SceneViewPanel::Draw(SceneDocument& document) {
+    for (const GizmoMode mode : {GizmoMode::Move, GizmoMode::Rotate, GizmoMode::Scale}) {
+        const char* label = mode == GizmoMode::Move ? "Move" : (mode == GizmoMode::Rotate ? "Rotate" : "Scale");
+        if (ImGui::RadioButton(label, mode_ == mode)) mode_ = mode;
+        ImGui::SetItemTooltip("%s (%c)", label, mode == GizmoMode::Move ? 'W' : (mode == GizmoMode::Rotate ? 'E' : 'R'));
+        ImGui::SameLine();
+    }
     ImGui::Checkbox("Snap", &snap_);
-    ImGui::SetItemTooltip("Round a gizmo move to the step");
+    ImGui::SetItemTooltip("Round a gizmo drag to the step");
     ImGui::SameLine();
     ImGui::BeginDisabled(!snap_);
     ImGui::SetNextItemWidth(90.0f);
-    ImGui::DragFloat("##snap_step", &snap_step_, 0.05f, 0.05f, 100.0f, "%.2f m");
+    if (mode_ == GizmoMode::Move) ImGui::DragFloat("##snap_move", &snap_move_, 0.05f, 0.05f, 100.0f, "%.2f m");
+    else if (mode_ == GizmoMode::Rotate) ImGui::DragFloat("##snap_rotate", &snap_rotate_, 0.5f, 1.0f, 90.0f, "%.0f deg");
+    else ImGui::DragFloat("##snap_scale", &snap_scale_, 0.01f, 0.01f, 10.0f, "%.2f");
     ImGui::EndDisabled();
-    ImGui::SameLine();
-    ImGui::TextDisabled("drag an arrow on the selected entity to move it");
     const ImVec2 avail = ImGui::GetContentRegionAvail();
     const ImVec2 size(std::max(avail.x, 64.0f), std::max(avail.y, 64.0f));
     const ImVec2 origin = ImGui::GetCursorScreenPos();
@@ -257,11 +365,16 @@ void SceneViewPanel::Draw(SceneDocument& document) {
     }
     if (hovered && io.MouseWheel != 0.0f) camera_.Zoom(io.MouseWheel);
     if (hovered && !io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_F)) FocusSelection(document);
-    const f32 snap_step = snap_ ? snap_step_ : 0.0f;
+    const f32 snap_step = !snap_ ? 0.0f : (mode_ == GizmoMode::Move ? snap_move_ : (mode_ == GizmoMode::Rotate ? snap_rotate_ : snap_scale_));
+    if (hovered && !io.WantTextInput && !gizmo_.Dragging()) { // W, E and R choose the gizmo, as in most editors
+        if (ImGui::IsKeyPressed(ImGuiKey_W)) mode_ = GizmoMode::Move;
+        if (ImGui::IsKeyPressed(ImGuiKey_E)) mode_ = GizmoMode::Rotate;
+        if (ImGui::IsKeyPressed(ImGuiKey_R)) mode_ = GizmoMode::Scale;
+    }
     if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
         press_ = io.MousePos;
         dragged_ = false;
-        if (!io.KeyShift && gizmo_.Begin(document, camera_, origin, size, io.MousePos)) dragged_ = true; // a gizmo press is not a pick
+        if (!io.KeyShift && gizmo_.Begin(document, camera_, origin, size, io.MousePos, mode_)) dragged_ = true; // a gizmo press is not a pick
     }
     if (gizmo_.Dragging()) {
         if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) gizmo_.Update(document, camera_, origin, size, io.MousePos, snap_step);
@@ -332,29 +445,49 @@ void SceneViewPanel::Draw(SceneDocument& document) {
             if (ProjectToViewport(vp, origin_w, origin, size, at)) draw->AddText(ImVec2(at.x + 8.0f, at.y - 18.0f), color, document.Name(entity).c_str());
         }
     }
-    // The move gizmo on the first selected entity: three arrows along world X, Y and Z, the one under the mouse (or being dragged) brighter.
-    if (const Entity subject = TranslateGizmo::Subject(document); subject != kNullEntity) {
-        const GizmoAxis hot = gizmo_.Dragging() ? gizmo_.Axis() : (hovered ? gizmo_.HitTest(document, camera_, origin, size, io.MousePos) : GizmoAxis::None);
+    // The gizmo on the first selected entity, in the chosen mode; the handle under the mouse (or being dragged) is brighter.
+    if (const Entity subject = TransformGizmo::Subject(document); subject != kNullEntity) {
+        const GizmoMode mode = gizmo_.Dragging() ? gizmo_.Mode() : mode_;
+        const GizmoAxis hot = gizmo_.Dragging() ? gizmo_.Axis() : (hovered ? gizmo_.HitTest(document, camera_, origin, size, io.MousePos, mode) : GizmoAxis::None);
         const Vec3 at = WorldOrigin(document, subject);
-        const f32 length = TranslateGizmo::HandleLength(camera_);
-        struct Handle { GizmoAxis axis; Vec3 direction; ImU32 normal, bright; };
-        const Handle handles[3] = {{GizmoAxis::X, Vec3(1, 0, 0), Color(210, 70, 70), Color(255, 130, 120)},
-                                   {GizmoAxis::Y, Vec3(0, 1, 0), Color(80, 190, 80), Color(140, 255, 140)},
-                                   {GizmoAxis::Z, Vec3(0, 0, 1), Color(80, 120, 230), Color(140, 175, 255)}};
+        const f32 length = TransformGizmo::HandleLength(camera_);
+        struct Handle { GizmoAxis axis; ImU32 normal, bright; };
+        const Handle handles[3] = {{GizmoAxis::X, Color(210, 70, 70), Color(255, 130, 120)},
+                                   {GizmoAxis::Y, Color(80, 190, 80), Color(140, 255, 140)},
+                                   {GizmoAxis::Z, Color(80, 120, 230), Color(140, 175, 255)}};
         ImVec2 from;
         if (ProjectToViewport(vp, at, origin, size, from)) {
             for (const Handle& h : handles) {
-                ImVec2 to;
-                if (!ProjectToViewport(vp, at + h.direction * length, origin, size, to)) continue;
                 const ImU32 color = h.axis == hot ? h.bright : h.normal;
-                draw->AddLine(from, to, color, h.axis == hot ? 4.0f : 3.0f);
-                draw->AddCircleFilled(to, h.axis == hot ? 7.0f : 5.5f, color);
+                const f32 thickness = h.axis == hot ? 4.0f : 3.0f;
+                if (mode == GizmoMode::Rotate) {
+                    constexpr int kSegments = 48;
+                    Vec3 ring[kSegments];
+                    const Vec3 axis_direction = TransformGizmo::HandleDirection(document, subject, h.axis, mode);
+                    TransformGizmo::RingPoints(at, axis_direction, length, kSegments, ring);
+                    ImVec2 previous;
+                    bool have_previous = ProjectToViewport(vp, ring[kSegments - 1], origin, size, previous);
+                    for (int i = 0; i < kSegments; ++i) {
+                        ImVec2 current;
+                        const bool ok = ProjectToViewport(vp, ring[i], origin, size, current);
+                        if (ok && have_previous) draw->AddLine(previous, current, color, thickness);
+                        previous = current;
+                        have_previous = ok;
+                    }
+                } else {
+                    ImVec2 to;
+                    if (!ProjectToViewport(vp, at + TransformGizmo::HandleDirection(document, subject, h.axis, mode) * length, origin, size, to)) continue;
+                    draw->AddLine(from, to, color, thickness);
+                    const f32 r = h.axis == hot ? 7.0f : 5.5f;
+                    if (mode == GizmoMode::Scale) draw->AddRectFilled(ImVec2(to.x - r, to.y - r), ImVec2(to.x + r, to.y + r), color);
+                    else draw->AddCircleFilled(to, r, color);
+                }
             }
             draw->AddCircleFilled(from, 3.5f, Color(235, 238, 245));
         }
     }
     draw->AddText(ImVec2(origin.x + 8.0f, end.y - 22.0f), Color(128, 135, 148),
-                  "right-drag: look   middle-drag / shift+drag: pan   wheel: zoom   click: select   F: focus");
+                  "right-drag: look   middle-drag / shift+drag: pan   wheel: zoom   click: select   F: focus   W/E/R: move/rotate/scale");
     draw->PopClipRect();
 }
 
