@@ -25,6 +25,11 @@ namespace stdfs = std::filesystem;
 
 namespace {
 
+Vec3 WorldPositionOf(const SceneDocument& document, Entity entity) {
+    const Mat4 m = ComputeWorldTransform(document.GetWorld(), document.Guids(), entity);
+    return Vec3(m.cols[3].x, m.cols[3].y, m.cols[3].z);
+}
+
 class HeadlessImGui {
 public:
     HeadlessImGui() {
@@ -396,4 +401,95 @@ AETHER_TEST(SceneView_FocusAndDrawHeadless) {
     frame();                                                               // boxes, axes, a camera and a label
     document.DestroyEntity(a);
     frame();                                                               // a selection that is gone does not break the view
+}
+
+// The move gizmo: the mouse ray, a drag along one axis as one undoable edit, snapping, and an entity under a parent.
+AETHER_TEST(TranslateGizmo_RayAndAxisMaths) {
+    SceneViewCamera camera;
+    const ImVec2 origin(0.0f, 0.0f), size(800.0f, 600.0f);
+    const Mat4 vp = camera.ViewProjection(size.x / size.y);
+    const Vec3 point(1.5f, 0.5f, -2.0f);
+    ImVec2 on_screen;
+    AETHER_CHECK(ProjectToViewport(vp, point, origin, size, on_screen));
+    Vec3 ray_origin, ray_direction;
+    AETHER_CHECK(MouseRay(vp, origin, size, on_screen, ray_origin, ray_direction));
+    AETHER_CHECK(std::fabs(ray_direction.Length() - 1.0f) < 1e-3f);
+    const Vec3 to_point = point - ray_origin;                                   // the point lies on the ray through its own pixel
+    const Vec3 off_ray = to_point - ray_direction * to_point.Dot(ray_direction);
+    AETHER_CHECK(off_ray.Length() < 0.02f);
+
+    f32 t = 0.0f;                                                               // the X axis through the origin passes closest to a ray aimed at (3,0,0) at x = 3
+    ImVec2 at_three;
+    AETHER_CHECK(ProjectToViewport(vp, Vec3(3, 0, 0), origin, size, at_three));
+    AETHER_CHECK(MouseRay(vp, origin, size, at_three, ray_origin, ray_direction));
+    AETHER_CHECK(ClosestOnAxis(Vec3(0, 0, 0), Vec3(1, 0, 0), ray_origin, ray_direction, t));
+    AETHER_CHECK(std::fabs(t - 3.0f) < 0.02f);
+    AETHER_CHECK(!ClosestOnAxis(Vec3(0, 0, 0), Vec3(0, 0, 1), Vec3(0, 5, 0), Vec3(0, 0, 1), t)); // parallel: no answer
+    AETHER_CHECK(!MouseRay(vp, origin, ImVec2(0, 0), on_screen, ray_origin, ray_direction));     // a collapsed viewport has no ray
+}
+
+AETHER_TEST(TranslateGizmo_ADragIsOneUndoableMoveAlongOneAxis) {
+    SceneDocument document;
+    const Entity thing = document.CreateEntity("Thing");
+    document.SetPosition(thing, Vec3(1.0f, 2.0f, 3.0f), true);
+    document.ClearSelection();
+    SceneViewCamera camera;
+    camera.target = Vec3(1.0f, 2.0f, 3.0f);
+    camera.distance = 12.0f;
+    const ImVec2 origin(0.0f, 0.0f), size(800.0f, 600.0f);
+    const Mat4 vp = camera.ViewProjection(size.x / size.y);
+    TranslateGizmo gizmo;
+    ImVec2 handle_start;
+    AETHER_CHECK(ProjectToViewport(vp, Vec3(1.0f, 2.0f, 3.0f) + Vec3(TranslateGizmo::HandleLength(camera) * 0.5f, 0, 0), origin, size, handle_start));
+    AETHER_CHECK(gizmo.HitTest(document, camera, origin, size, handle_start) == GizmoAxis::None); // nothing selected: no gizmo to hit
+    document.SetSelection({thing});
+    AETHER_CHECK(gizmo.HitTest(document, camera, origin, size, handle_start) == GizmoAxis::X);   // the middle of the X handle
+    AETHER_CHECK(gizmo.HitTest(document, camera, origin, size, ImVec2(5.0f, 5.0f)) == GizmoAxis::None);
+    AETHER_CHECK(!gizmo.Begin(document, camera, origin, size, ImVec2(5.0f, 5.0f)) && !gizmo.Dragging());
+    document.Commands().Clear();                                                                  // so the undo count below is only the drag
+    AETHER_CHECK(gizmo.Begin(document, camera, origin, size, handle_start) && gizmo.Dragging() && gizmo.Axis() == GizmoAxis::X);
+
+    // Drag the grabbed point 4 units along world X, over several frames; the mouse path is a straight line on the screen.
+    const Vec3 grab_world = Vec3(1.0f, 2.0f, 3.0f) + Vec3(TranslateGizmo::HandleLength(camera) * 0.5f, 0, 0);
+    ImVec2 target_pixel;
+    AETHER_CHECK(ProjectToViewport(vp, grab_world + Vec3(4.0f, 0, 0), origin, size, target_pixel));
+    ImVec2 mouse = handle_start;
+    for (int step = 1; step <= 5; ++step) {
+        mouse = ImVec2(handle_start.x + (target_pixel.x - handle_start.x) * step / 5.0f, handle_start.y + (target_pixel.y - handle_start.y) * step / 5.0f);
+        AETHER_CHECK(gizmo.Update(document, camera, origin, size, mouse, 0.0f));
+    }
+    gizmo.End(document, camera, origin, size, mouse, 0.0f);
+    AETHER_CHECK(!gizmo.Dragging());
+    const Vec3 moved = WorldPositionOf(document, thing);
+    AETHER_CHECK(std::fabs(moved.x - 5.0f) < 0.01f);                                             // 4 along X
+    AETHER_CHECK(std::fabs(moved.y - 2.0f) < 1e-3f && std::fabs(moved.z - 3.0f) < 1e-3f);        // the other axes did not move
+    AETHER_CHECK(document.Undo());                                                                // the whole drag is one undo step
+    const Vec3 back = WorldPositionOf(document, thing);
+    AETHER_CHECK(std::fabs(back.x - 1.0f) < 1e-3f && std::fabs(back.y - 2.0f) < 1e-3f && std::fabs(back.z - 3.0f) < 1e-3f);
+    AETHER_CHECK(!document.CanUndo());
+}
+
+AETHER_TEST(TranslateGizmo_SnapsAndMovesAChildInWorldSpace) {
+    SceneDocument document;
+    const Entity parent = document.CreateEntity("Parent");
+    document.SetPosition(parent, Vec3(10.0f, 0.0f, 0.0f), true);
+    const Entity child = document.CreateEntity("Child", SceneEntityKind::Empty, {}, parent);
+    document.SetPosition(child, Vec3(1.0f, 0.0f, 0.0f), true); // local: the child is at world x = 11
+    document.SetSelection({child});
+    SceneViewCamera camera;
+    camera.target = Vec3(11.0f, 0.0f, 0.0f);
+    camera.distance = 12.0f;
+    const ImVec2 origin(0.0f, 0.0f), size(800.0f, 600.0f);
+    const Mat4 vp = camera.ViewProjection(size.x / size.y);
+    TranslateGizmo gizmo;
+    ImVec2 grab, to;
+    AETHER_CHECK(ProjectToViewport(vp, Vec3(11.0f, 0, 0) + Vec3(TranslateGizmo::HandleLength(camera) * 0.5f, 0, 0), origin, size, grab));
+    AETHER_CHECK(gizmo.Begin(document, camera, origin, size, grab));
+    AETHER_CHECK(ProjectToViewport(vp, Vec3(11.0f + 2.3f + TranslateGizmo::HandleLength(camera) * 0.5f, 0, 0), origin, size, to)); // dragged 2.3 along X
+    AETHER_CHECK(gizmo.Update(document, camera, origin, size, to, 0.5f));
+    gizmo.End(document, camera, origin, size, to, 0.5f);
+    const Vec3 world = WorldPositionOf(document, child);
+    AETHER_CHECK(std::fabs(world.x - 13.5f) < 0.01f);          // 11 + 2.3 = 13.3, snapped to the 0.5 grid in world space
+    const Transform* local = document.GetWorld().GetComponent<Transform>(child);
+    AETHER_CHECK(local && std::fabs(local->position.x - 3.5f) < 0.01f); // and stored relative to the parent at x = 10
 }
