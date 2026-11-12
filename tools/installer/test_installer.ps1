@@ -25,7 +25,7 @@ Compress-Archive -Path "$stage\*" -DestinationPath $zip   # Windows PowerShell w
 
 (Get-Content $source -Raw).Replace('@VERSION@', '0.0.0-test') | Set-Content (Join-Path $work 'AetherInstaller.cs') -Encoding UTF8
 $exe = Join-Path $work 'installer.exe'
-& $csc /nologo /target:exe /optimize+ "/out:$exe" "/resource:$zip,aether-app.zip" /reference:System.IO.Compression.FileSystem.dll (Join-Path $work 'AetherInstaller.cs')
+& $csc /nologo /target:winexe /optimize+ "/out:$exe" "/resource:$zip,aether-app.zip" /reference:System.IO.Compression.FileSystem.dll /reference:System.IO.Compression.dll /reference:System.Windows.Forms.dll /reference:System.Drawing.dll (Join-Path $work 'AetherInstaller.cs')
 Check ($LASTEXITCODE -eq 0 -and (Test-Path $exe)) 'the installer compiles'
 if (-not (Test-Path $exe)) { exit 1 }
 

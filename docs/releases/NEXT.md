@@ -187,7 +187,19 @@ launch), `test_installer.ps1` uses the same name for its stand-in, and `tools/bu
 shell is only built with it. Checked here by compiling the installer with Mono's `mcs` and running its install logic (a fresh install, an upgrade that removes the
 old files and leaves no old folder behind, and the failure when the editor is missing from the payload); not checked here, because they are Windows only: the
 shortcuts, closing a running program, a held file, and a real Windows build of the payload (`python tools/build_installer.py --version <x>` on Windows, then
-`tools\installer\test_installer.ps1`). The two sections below describe the Qt startup crash and are kept as the
+`tools\installer\test_installer.ps1`).
+
+The installer now has a setup window. Run with no arguments, `Aether-<version>-Windows-x64.exe` shows a wizard: a welcome page, the install folder (with Browse, and a note
+when an installation is already there or the drive is short of room) and checkboxes for the Start menu shortcut, the Desktop shortcut and starting the editor, a progress
+page (a bar and a log, the buttons off while files are written), and a finish page with "Start the Aether editor" (or, if it failed, the reason and a way back). Enter
+continues, and a running Aether editor from the folder is closed only after asking. The flags still work: `/silent` installs with no window and writes to the console
+(CI's `test_installer.ps1` uses it), `/target:DIR`, `/noshortcuts` and `/nolaunch` pre-fill the window. One piece of code does the installing for both (`Setup` in
+`AetherInstaller.cs`), and unpacking now refuses a payload entry that would land outside the install folder. The exe is built as a Windows program (`/target:winexe`) and
+links System.Windows.Forms and System.Drawing, which ship with .NET Framework. Checked here with Mono on a Linux display (`mcs -langversion:5`, the window driven with
+key presses and screenshots at each page: the welcome page, a fresh install, an upgrade, the progress page, the finish page and the failure page, plus the `/silent`
+mode and the refused entry); not checked here: how it looks and behaves on Windows itself (native theme, DPI scaling, the shortcuts, closing a running editor), which
+`test_installer.ps1` covers for `/silent` and a person has to look at for the window. A bug found by that run and fixed: Enter pressed Cancel, because Cancel was first in
+the tab order. The two sections below describe the Qt startup crash and are kept as the
 record; the crash no longer applies.
 
 ## The Qt editor crashes at startup, and CI cannot see it
