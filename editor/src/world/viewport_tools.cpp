@@ -131,7 +131,7 @@ void ViewportTools::DrawGizmo(ImDrawList* draw, const SceneDocument& document, c
 }
 
 void ViewportTools::DrawEntityBox(ImDrawList* draw, const SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size,
-                                  Entity entity, ImU32 color, f32 thickness, const ModelBoundsCache* bounds) {
+                                  Entity entity, ImU32 color, f32 thickness, const ModelBoundsCache* bounds, const Vec3& shift) {
     static const int edges[12][2] = {{0, 1}, {1, 2}, {2, 3}, {3, 0}, {4, 5}, {5, 6}, {6, 7}, {7, 4}, {0, 4}, {1, 5}, {2, 6}, {3, 7}};
     if (size.x < 1.0f || size.y < 1.0f || !document.GetWorld().IsAlive(entity)) return;
     const Mat4 vp = camera.ViewProjection(size.x / size.y);
@@ -143,14 +143,15 @@ void ViewportTools::DrawEntityBox(ImDrawList* draw, const SceneDocument& documen
     bool ok[8];
     for (int i = 0; i < 8; ++i) {
         const Vec4 w = m * Vec4(corners[i].x, corners[i].y, corners[i].z, 1.0f);
-        ok[i] = ProjectToViewport(vp, Vec3(w.x, w.y, w.z), origin, size, p[i]);
+        ok[i] = ProjectToViewport(vp, Vec3(w.x + shift.x, w.y + shift.y, w.z + shift.z), origin, size, p[i]);
     }
     for (const auto& e : edges) {
         if (ok[e[0]] && ok[e[1]]) draw->AddLine(p[e[0]], p[e[1]], color, thickness);
     }
 }
 
-void ViewportTools::DrawSelectionOutlines(ImDrawList* draw, const SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, bool hovered) const {
+void ViewportTools::DrawSelectionOutlines(ImDrawList* draw, const SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, bool hovered,
+                                          const LivePosition& live_position) const {
     if (size.x < 1.0f || size.y < 1.0f) return;
     const Mat4 vp = camera.ViewProjection(size.x / size.y);
     const World& world = document.GetWorld();
@@ -166,8 +167,12 @@ void ViewportTools::DrawSelectionOutlines(ImDrawList* draw, const SceneDocument&
     }
     for (const Entity entity : document.Selection()) {
         if (!world.IsAlive(entity) || !world.HasComponent<Transform>(entity)) continue;
-        DrawEntityBox(draw, document, camera, origin, size, entity, Color(255, 170, 40), 2.0f, bounds_);
-        label(entity, Color(255, 170, 40));
+        Vec3 shift(0.0f, 0.0f, 0.0f);
+        Vec3 live;
+        if (live_position && live_position(entity, live)) shift = live - OriginOf(document, entity);
+        DrawEntityBox(draw, document, camera, origin, size, entity, Color(255, 170, 40), 2.0f, bounds_, shift);
+        ImVec2 at;
+        if (ProjectToViewport(vp, OriginOf(document, entity) + shift, origin, size, at)) draw->AddText(ImVec2(at.x + 8.0f, at.y - 18.0f), Color(255, 170, 40), document.Name(entity).c_str());
     }
 }
 

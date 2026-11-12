@@ -25,6 +25,7 @@
 #include <imgui_internal.h> // the drag-drop target the mouse is over
 
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -1718,4 +1719,36 @@ AETHER_TEST(PickEntity_TheNearerOfTwoIsJudgedByWhereTheRayMeetsTheShapeNotTheBox
     const Entity crate = document.CreateEntity("Crate", SceneEntityKind::Model, "Models/crate.glb");
     document.SetPosition(crate, ray_origin + ray_direction * ((camera.target - ray_origin).Length() - 10.0f), true);
     AETHER_CHECK(PickEntity(document, camera, origin, size, middle, 14.0f, &cache) == crate);
+}
+
+// The outline of a selected entity is drawn where a running game really has it (a body the physics moved), not where the document left it.
+AETHER_TEST(ViewportTools_AnOutlineFollowsTheLivePositionOfARunningBody) {
+    HeadlessImGui ui;
+    SceneDocument document;
+    const Entity thing = document.CreateEntity("Thing");
+    document.SetPosition(thing, Vec3(0.0f, 0.0f, 0.0f), true);
+    document.SetSelection({thing});
+    SceneViewCamera camera;
+    camera.distance = 14.0f;
+    const ImVec2 origin(0.0f, 0.0f), size(800.0f, 600.0f);
+    ViewportTools tools;
+    auto mean_x = [&](const ViewportTools::LivePosition& live) {
+        f32 sum = 0.0f;
+        int count = 0;
+        ui.Frame([&] {
+            ImDrawList* draw = ImGui::GetWindowDrawList();
+            const int first = draw->VtxBuffer.Size;
+            tools.DrawSelectionOutlines(draw, document, camera, origin, size, false, live);
+            for (int i = first; i < draw->VtxBuffer.Size; ++i) {
+                sum += draw->VtxBuffer[i].pos.x;
+                ++count;
+            }
+        });
+        return count > 0 ? sum / static_cast<f32>(count) : -1.0f;
+    };
+    const f32 at_document = mean_x(nullptr);
+    AETHER_CHECK(at_document > 0.0f);
+    AETHER_CHECK(std::fabs(mean_x([](Entity, Vec3&) { return false; }) - at_document) < 0.01f); // no such entity in the game: where the document has it
+    const f32 moved = mean_x([](Entity, Vec3& position) { position = Vec3(4.0f, 0.0f, 0.0f); return true; });
+    AETHER_CHECK(moved > at_document + 40.0f);                                                   // drawn 4 m to the right
 }

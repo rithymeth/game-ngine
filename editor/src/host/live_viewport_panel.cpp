@@ -153,7 +153,11 @@ void LiveViewportPanel::Draw(f32 dt) {
     drop_.Accept(scene_.Document(), scene_.ContentRoot(), camera_, origin, size, tools_.MoveSnapStep());
     // The overlay uses the same camera and aspect as the picture, so it lands on what it marks.
     draw->PushClipRect(origin, end, true);
-    tools_.DrawSelectionOutlines(draw, scene_.Document(), camera_, origin, size, hovered);
+    const SceneDocument& document = scene_.Document();
+    tools_.DrawSelectionOutlines(draw, document, camera_, origin, size, hovered, [&](Entity entity, Vec3& position) {
+        const IdComponent* id = document.GetWorld().GetComponent<IdComponent>(entity);
+        return run_game && id != nullptr && viewport_.PositionOf(id->guid, position); // with the game stopped the picture follows the document
+    });
     drop_.DrawPreview(draw, camera_, origin, size);
     tools_.DrawGizmo(draw, scene_.Document(), camera_, origin, size, hovered);
     draw->PopClipRect();
