@@ -10,8 +10,8 @@
 // ImGui window, like the editor's other panels.
 //
 // The cooking and packaging itself is PackageRunner, in the portable editor
-// layer: the Qt editor does not link this library, and it packages with the
-// same runner from its own menu rather than never packaging at all.
+// layer, so this window is only the drawing and a tool or test can drive the
+// same runner without it.
 
 namespace aether::editor {
 

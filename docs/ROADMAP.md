@@ -23,7 +23,7 @@ Judge status from code and CI, not from documents. Measure before building ([`de
 |---|---|---|
 | 1 | Close the AETHER-01 matrix | Every "Partial" and "Unverified" row is proven on a clean Windows machine, skeletal animation/IK, VFX and the Luau/Blueprint loop first |
 | 2 | Performance budgets | Frame-time budgets exist for defined hardware and a stress scene (10k+ entities, streaming world) meets them |
-| 3 | Production editor | The Qt editor's future is decided, missing tools are migrated, and interrupted sessions recover without data loss |
+| 3 | Production editor | The editor is Dear ImGui (the Qt editor was removed, 2026-11-12), its docking and 3D viewport gaps are closed, and interrupted sessions recover without data loss |
 | 4 | Pipeline at scale | Cooks are deterministic and incremental with thousands of assets; reimport keeps identity stable |
 | 5 | Platform depth | Windows x64 / D3D12 is excellent and has a signed-off GPU and OS policy before other platforms are promoted |
 | 6 | Second game | A different kind of game ships on the engine and its gaps become tasks |

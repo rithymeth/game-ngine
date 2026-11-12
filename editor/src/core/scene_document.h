@@ -23,7 +23,7 @@ enum class SceneEntityKind {
 };
 
 // One open scene document: ECS data, stable entity IDs, and undoable editor
-// commands. Presentation hosts (Qt, ImGui, MCP) can share this state.
+// commands. Presentation hosts (ImGui, MCP) can share this state.
 class SceneDocument {
 public:
     SceneDocument();

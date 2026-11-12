@@ -449,7 +449,7 @@ AETHER_TEST(AIEditor_NavigationPanel) {
 #include "aether/scene/components.h"
 
 // M8.8: the editor's AI Debugger rows and viewport overlay, from an
-// AiDebugStore::Collect-shaped snapshot (no Qt, no Luau).
+// AiDebugStore::Collect-shaped snapshot (no UI, no Luau).
 AETHER_TEST(AiDebugger_RowsAndOverlayFromSnapshot) {
     World world;
     const Entity scout = world.CreateEntity(Transform{Vec3(0, 0, 0)}, EntityName{"Scout"});

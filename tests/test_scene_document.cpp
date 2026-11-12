@@ -54,7 +54,7 @@ AETHER_TEST(SceneDocument_SelectionEditsUndoAndRoundTrips) {
         if (document.Name(entity) == "Hero") restored = entity;
     AETHER_CHECK(!restored.IsNull());
 
-    const auto path = std::filesystem::temp_directory_path() / "aether_qt_scene_document_test.ascene";
+    const auto path = std::filesystem::temp_directory_path() / "aether_scene_document_test.ascene";
     std::error_code ec;
     std::filesystem::remove(path, ec);
     AETHER_CHECK(document.Save(path));
@@ -72,7 +72,7 @@ AETHER_TEST(SceneDocument_SelectionEditsUndoAndRoundTrips) {
     AETHER_CHECK(found_hero);
     std::filesystem::remove(path, ec);
 
-    const auto binary_path = std::filesystem::temp_directory_path() / "aether_qt_scene_document_test.aesc";
+    const auto binary_path = std::filesystem::temp_directory_path() / "aether_scene_document_test.aesc";
     std::filesystem::remove(binary_path, ec);
     AETHER_CHECK(document.Save(binary_path));
     SceneDocument binary_loaded;
@@ -157,7 +157,7 @@ AETHER_TEST(SceneDocument_LegacyScenesGetReadableUniqueEditorNames) {
     SetModelPath(renderer, "models/aether_greybox_castle_gate.glb");
     legacy.CreateEntity(Transform{}, renderer);
 
-    const auto path = std::filesystem::temp_directory_path() / "aether_qt_legacy_names.ascene";
+    const auto path = std::filesystem::temp_directory_path() / "aether_legacy_names.ascene";
     std::error_code error;
     std::filesystem::remove(path, error);
     AETHER_CHECK(SaveSceneJson(legacy, path.string()));

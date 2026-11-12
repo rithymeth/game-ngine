@@ -80,7 +80,8 @@ artifacts: local working-tree line endings can differ from tagged source.
 
 The Windows workflow now has a separate `windows-package-validation` job that
 receives only the editor ZIP artifact, extracts it under the runner temp folder,
-and runs `AetherEditor.exe --self-test` from an empty working directory with a
-system-only `PATH`. The release job depends on this check. This provides a
-fresh-runner package check without the source checkout or build directory; the
-first successful CI run is still pending.
+and checks that the build tools, the player, the manual and the assets are in it
+(it used to launch the Qt editor's `--self-test` from an empty working directory with a
+system-only `PATH`; the Qt editor was removed on 2026-11-12, so the check no longer launches
+anything and is weaker for it). The release job depends on this check; the first
+successful CI run is still pending.
