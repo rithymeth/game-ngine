@@ -379,7 +379,12 @@ void ScenePanel::DrawHierarchy() {
     ImGui::InputTextWithHint("##scene_filter", "Filter by name", filter_.data(), filter_.size());
     const std::string filter = filter_.data();
     // Dropping on the heading makes an entity a root again.
-    ImGui::TextDisabled("%zu entities", document_.Entities().size());
+    // An item with an ID of its own and the full width: a drop is delivered only when the same target took it the frame before, and plain text has no ID (its
+    // target flickered between two, so a drop on the heading was never delivered), and a heading as wide as the list is also easier to hit.
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    const std::string heading = std::to_string(document_.Entities().size()) + " entities";
+    ImGui::Selectable((heading + "##hierarchy_heading").c_str(), false, ImGuiSelectableFlags_DontClosePopups);
+    ImGui::PopStyleColor();
     if (ImGui::BeginDragDropTarget()) {
         if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kEntityPayload); payload != nullptr && payload->DataSize == sizeof(Entity)) {
             Entity dragged;
