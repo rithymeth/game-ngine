@@ -1215,3 +1215,68 @@ AETHER_TEST(ContentDrop_PlacingAModelOrAPrefabSaysWhatHappened) {
     AETHER_CHECK(!placed && said == "Could not place Prefabs/Thing.aprefab");
     AETHER_CHECK(document.Entities().size() == before && !document.CanUndo());
 }
+
+AETHER_TEST(ContentDrop_APlacedAssetCanGoUnderAnEntityInOneStep) {
+    const stdfs::path content = Scratch("aether_content_drop_parent");
+    WriteBoxModel(content, "Models/crate.glb", Vec3(-1, 0, -1), Vec3(1, 2, 1));
+    PrefabData prefab;
+    PrefabEntity top;
+    top.id = 1;
+    PrefabEntity part;
+    part.id = 2;
+    part.parent = 1;
+    prefab.entities = {top, part};
+    stdfs::create_directories(content / "Prefabs");
+    AETHER_CHECK(SavePrefab(prefab, content / "Prefabs" / "Thing.aprefab"));
+
+    SceneDocument document;
+    const Entity holder = document.CreateEntity("Holder");
+    document.SetPosition(holder, Vec3(5, 0, 0), true);
+    document.Commands().Clear();
+    const usize before = document.Entities().size();
+    const EntityGuid holder_guid = document.GetWorld().GetComponent<IdComponent>(holder)->guid;
+
+    // A model dropped on the entity is its child, at its origin (the position is relative to it), and it is one create, not a create and a reparent.
+    bool placed = false;
+    PlaceContentAsset(document, content, "Models/crate.glb", Vec3(0, 0, 0), &placed, holder);
+    AETHER_CHECK(placed && document.Entities().size() == before + 1);
+    const Entity model = document.Selection().empty() ? kNullEntity : document.Selection()[0];
+    AETHER_CHECK(model != kNullEntity);
+    if (model == kNullEntity) return;
+    const Parent* link = document.GetWorld().GetComponent<Parent>(model);
+    AETHER_CHECK(link != nullptr && link->parent == holder_guid);
+    AETHER_CHECK(NearVec(WorldPositionOf(document, model), Vec3(5, 0, 0)));
+    // A prefab too: its root is under the entity and its own child stays under the root.
+    PlaceContentAsset(document, content, "Prefabs/Thing.aprefab", Vec3(0, 1, 0), &placed, holder);
+    AETHER_CHECK(placed && document.Entities().size() == before + 3);
+    const Entity root = document.Selection().empty() ? kNullEntity : document.Selection()[0];
+    AETHER_CHECK(root != kNullEntity);
+    if (root == kNullEntity) return;
+    const Parent* root_link = document.GetWorld().GetComponent<Parent>(root);
+    AETHER_CHECK(root_link != nullptr && root_link->parent == holder_guid);
+    AETHER_CHECK(NearVec(WorldPositionOf(document, root), Vec3(5, 1, 0)));
+    Entity child = kNullEntity;
+    for (const Entity entity : document.Entities()) {
+        const Parent* p = document.GetWorld().GetComponent<Parent>(entity);
+        if (entity != model && entity != root && p != nullptr && p->parent == document.GetWorld().GetComponent<IdComponent>(root)->guid) child = entity;
+    }
+    AETHER_CHECK(child != kNullEntity);
+    // Each is one undo step, and redo brings the parent link back with it.
+    AETHER_CHECK(document.Undo() && document.Undo() && !document.CanUndo() && document.Entities().size() == before);
+    AETHER_CHECK(document.Redo() && document.Redo() && document.Entities().size() == before + 3);
+    bool still_under = false;
+    for (const Entity entity : document.Entities()) {
+        const Parent* p = document.GetWorld().GetComponent<Parent>(entity);
+        if (p != nullptr && p->parent == holder_guid) still_under = true;
+    }
+    AETHER_CHECK(still_under);
+
+    // A parent that is not alive is ignored: the object is placed at the root, where it was told to go.
+    Entity gone = document.CreateEntity("Gone");
+    document.DestroyEntity(gone);
+    const usize now = document.Entities().size();
+    PlaceContentAsset(document, content, "Models/crate.glb", Vec3(2, 0, 0), &placed, gone);
+    AETHER_CHECK(placed && document.Entities().size() == now + 1);
+    const Entity orphan = document.Selection().empty() ? kNullEntity : document.Selection()[0];
+    AETHER_CHECK(orphan != kNullEntity && document.GetWorld().GetComponent<Parent>(orphan) == nullptr && NearVec(WorldPositionOf(document, orphan), Vec3(2, 0, 0)));
+}

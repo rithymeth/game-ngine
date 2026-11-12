@@ -4,6 +4,7 @@
 #if defined(AETHER_HAS_EDITOR_VULKAN)
 #include "host/live_viewport_panel.h"
 #endif
+#include "world/content_drop.h"
 #include "world/scene_preview_panel.h"
 
 #include "aether/core/log.h"
@@ -606,6 +607,18 @@ AETHER_TEST(LiveViewportPanel_AddingAndRemovingObjectsDoesNotRebuildTheWorld) {
         const u64 patches = panel.Viewport().PatchCount();
         AETHER_CHECK(PlacePrefabAsset(document, content, "Prefabs/Crate.aprefab", Vec3(1, 0, 1)) != kNullEntity);
         AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().PatchCount() == patches + 1 && panel.Viewport().SceneReloads() == reloads && panel.Viewport().EntityCount() == count + 2);
+    }
+
+    // An object dropped on an entity in the hierarchy goes in under it as one create, so it is patched in too, parent link and all.
+    {
+        const Entity holder = document.CreateEntity("Holder");
+        AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().SceneReloads() == reloads);
+        const u64 patches = panel.Viewport().PatchCount();
+        const usize entities = panel.Viewport().EntityCount();
+        bool placed = false;
+        PlaceContentAsset(document, project.parent_path() / "Content", model, Vec3(0.0f, 0.0f, 0.0f), &placed, holder);
+        AETHER_CHECK(placed && panel.Advance(0.2f) && panel.Viewport().PatchCount() == patches + 1 && panel.Viewport().SceneReloads() == reloads);
+        AETHER_CHECK(panel.Viewport().EntityCount() == entities + 1);
     }
 
     // A component added to, and taken from, an entity that stays: a light on an empty entity lights the scene, and removing it puts it back.

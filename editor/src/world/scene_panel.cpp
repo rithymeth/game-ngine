@@ -1,6 +1,8 @@
 #include "world/scene_panel.h"
 
+#include "content/content_drag.h"
 #include "ui/entity_inspector.h"
+#include "world/content_drop.h"
 
 #include <imgui.h>
 
@@ -354,6 +356,10 @@ void ScenePanel::DrawNode(Entity entity, const HierarchyIndex& index) {
                 std::memcpy(&dragged, payload->Data, sizeof(Entity));
                 Reparent(dragged, entity);
             }
+            // A model or a prefab from the Content Browser goes in under this entity, at its origin, as one undo step.
+            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kContentPathPayload); payload != nullptr && payload->Data != nullptr) {
+                status_ = PlaceContentAsset(document_, content_root_, static_cast<const char*>(payload->Data), Vec3(0.0f, 0.0f, 0.0f), nullptr, entity);
+            }
             ImGui::EndDragDropTarget();
         }
         if (ImGui::BeginPopupContextItem("##entity_menu")) {
@@ -379,6 +385,10 @@ void ScenePanel::DrawHierarchy() {
             Entity dragged;
             std::memcpy(&dragged, payload->Data, sizeof(Entity));
             Reparent(dragged, kNullEntity);
+        }
+        // An asset dropped on the heading is placed at the root, at the scene's origin.
+        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kContentPathPayload); payload != nullptr && payload->Data != nullptr) {
+            status_ = PlaceContentAsset(document_, content_root_, static_cast<const char*>(payload->Data), Vec3(0.0f, 0.0f, 0.0f));
         }
         ImGui::EndDragDropTarget();
     }

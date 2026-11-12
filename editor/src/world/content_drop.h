@@ -15,7 +15,9 @@ Vec3 DropPoint(const SceneViewCamera& camera, const ImVec2& origin, const ImVec2
 
 // Puts a model (.gltf, .glb) or a prefab (.aprefab) from the content folder into the scene at `at` (PlaceModelAsset, PlacePrefabAsset: one undo step, selected),
 // and says what happened in a line a view can show ("Placed ...", or why not). `placed` is set to whether anything was added. A prefab needs `content_root`.
-std::string PlaceContentAsset(SceneDocument& document, const std::filesystem::path& content_root, const std::string& content_path, const Vec3& at, bool* placed = nullptr);
+// With `parent` the new object goes under that entity (`at` relative to it) in the same single step: how a drop on a hierarchy row places it.
+std::string PlaceContentAsset(SceneDocument& document, const std::filesystem::path& content_root, const std::string& content_path, const Vec3& at, bool* placed = nullptr,
+                              Entity parent = kNullEntity);
 
 // The drop target both 3D views share (the Scene View and the Live Viewport): an asset dragged in from the Content Browser. While it is over the view a
 // marker shows where it would land, and letting go places it.

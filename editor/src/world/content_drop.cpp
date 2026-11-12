@@ -12,18 +12,18 @@ Vec3 DropPoint(const SceneViewCamera& camera, const ImVec2& origin, const ImVec2
     return ground;
 }
 
-std::string PlaceContentAsset(SceneDocument& document, const std::filesystem::path& content_root, const std::string& content_path, const Vec3& at, bool* placed) {
+std::string PlaceContentAsset(SceneDocument& document, const std::filesystem::path& content_root, const std::string& content_path, const Vec3& at, bool* placed, Entity parent) {
     if (placed) *placed = false;
     if (IsPlaceablePrefab(content_path)) {
         if (content_root.empty()) return "Could not place " + content_path;
         std::string problem;
-        const Entity entity = PlacePrefabAsset(document, content_root, content_path, at, &problem);
+        const Entity entity = PlacePrefabAsset(document, content_root, content_path, at, &problem, parent);
         if (entity == kNullEntity) return problem.empty() ? "Could not place " + content_path : problem;
         if (placed) *placed = true;
         return "Placed " + content_path;
     }
     if (IsPlaceableModel(content_path)) {
-        const Entity entity = PlaceModelAsset(document, content_path, at);
+        const Entity entity = PlaceModelAsset(document, content_path, at, parent);
         if (entity == kNullEntity) return "Could not place " + content_path;
         if (placed) *placed = true;
         return "Placed " + content_path;
