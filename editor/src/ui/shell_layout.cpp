@@ -4,7 +4,6 @@
 
 #include <nlohmann/json.hpp>
 
-#include <cmath>
 #include <cstdlib>
 #include <fstream>
 #include <system_error>
@@ -30,11 +29,6 @@ bool LoadShellLayout(const stdfs::path& file, ShellLayout& layout) {
     const nlohmann::json json = nlohmann::json::parse(text, nullptr, /*allow_exceptions=*/false);
     if (!json.is_object()) return false;
     ShellLayout loaded;
-    const auto side = json.find("side_fraction");
-    if (side != json.end() && side->is_number()) {
-        const f64 value = side->get<f64>();
-        loaded.side_fraction = (std::isfinite(value) && value >= 0.15 && value <= 0.6) ? static_cast<f32>(value) : 0.0f;
-    }
     const auto tool = json.find("tool");
     if (tool != json.end() && tool->is_string()) {
         loaded.tool = tool->get<std::string>();
@@ -53,7 +47,7 @@ bool SaveShellLayout(const stdfs::path& file, const ShellLayout& layout, std::st
     std::error_code ec;
     if (file.has_parent_path()) stdfs::create_directories(file.parent_path(), ec);
     if (ec) return fail("can't make " + file.parent_path().string() + ": " + ec.message());
-    const nlohmann::json json = {{"side_fraction", layout.side_fraction}, {"tool", layout.tool}};
+    const nlohmann::json json = {{"tool", layout.tool}};
     stdfs::path temp = file;
     temp += ".tmp";
     {

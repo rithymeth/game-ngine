@@ -7,12 +7,11 @@
 
 namespace aether::editor {
 
-// What the portable editor shell remembers between sessions: how wide the side panels were dragged and which
-// tool was open. A small JSON file of the user's own (not the project's), written when the editor closes and read
+// What the portable editor shell remembers between sessions besides where its panels are docked (ImGui keeps that
+// in its own ini file beside this one): which tool was open. A small JSON file of the user's own (not the project's), written when the editor closes and read
 // when it starts. Anything wrong with the file -- missing, damaged, out of range -- gives the defaults, never an error
 // dialog: a layout is a convenience, not data.
 struct ShellLayout {
-    f32 side_fraction = 0.0f; // the side panels' share of the window width; 0 = the shell's own default
     std::string tool;         // the open tool's name; empty = the first
 };
 
@@ -21,7 +20,7 @@ struct ShellLayout {
 std::filesystem::path DefaultShellLayoutPath();
 
 // Reads the file. False (and `layout` unchanged) when it is missing or not a layout; values are clamped
-// (side_fraction to 0.15-0.6, or 0 if it is not a number in that range).
+// (an over-long tool name is dropped).
 bool LoadShellLayout(const std::filesystem::path& file, ShellLayout& layout);
 
 // Writes the file atomically (a temp file, then a rename), making its folder. False with `error` set on failure.

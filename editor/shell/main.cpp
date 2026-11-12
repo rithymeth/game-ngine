@@ -25,6 +25,7 @@
 #include "aether/platform/window.h"
 
 #include <imgui.h>
+#include <imgui_internal.h> // the dock builder: the default arrangement
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stb_image_write.h>
@@ -49,8 +50,25 @@ namespace rhi = aether::gfx::rhi;
 
 namespace {
 
-void DrawEditor(EditorWorkspace& workspace, ShellLayout& layout, const char* backend_label, bool& quit) {
+// The default arrangement, built once when there is no saved one (or after View > Reset layout): the tools
+// take the left and middle, the Terrain tool the top right, the console and profiler under it.
+void BuildDefaultDockLayout(ImGuiID dockspace, const ImVec2& size) {
+    ImGui::DockBuilderRemoveNode(dockspace);
+    ImGui::DockBuilderAddNode(dockspace, ImGuiDockNodeFlags_DockSpace);
+    ImGui::DockBuilderSetNodeSize(dockspace, size);
+    ImGuiID main = dockspace;
+    const ImGuiID side = ImGui::DockBuilderSplitNode(main, ImGuiDir_Right, size.x > 1100.0f ? 420.0f / size.x : 0.3f, nullptr, &main);
+    ImGuiID side_top = side;
+    const ImGuiID side_bottom = ImGui::DockBuilderSplitNode(side_top, ImGuiDir_Down, 0.5f, nullptr, &side_top);
+    ImGui::DockBuilderDockWindow("Editors", main);
+    ImGui::DockBuilderDockWindow("Terrain", side_top);
+    ImGui::DockBuilderDockWindow("Debug", side_bottom);
+    ImGui::DockBuilderFinish(dockspace);
+}
+
+void DrawEditor(EditorWorkspace& workspace, const char* backend_label, bool& quit) {
     const ImGuiIO& io = ImGui::GetIO();
+    bool reset_layout = false;
     if (ImGui::BeginMainMenuBar()) {
         if (ImGui::BeginMenu("File")) {
             workspace.DrawSceneFileItems();
@@ -60,40 +78,37 @@ void DrawEditor(EditorWorkspace& workspace, ShellLayout& layout, const char* bac
         }
         workspace.DrawEditMenu();
         workspace.DrawToolsMenu();
+        if (ImGui::BeginMenu("View")) {
+            if (ImGui::MenuItem("Reset layout")) reset_layout = true;
+            ImGui::EndMenu();
+        }
         ImGui::TextDisabled("   Aether Editor  -  %s  -  %zu tools", backend_label, workspace.ToolCount());
         ImGui::EndMainMenuBar();
     }
 
-    const f32 top = ImGui::GetFrameHeight();
-    // The side panels' width is the user's to change: drag the divider. It is kept as a fraction so a
-    // resized window keeps the proportion, and clamped so neither side can be dragged shut.
-    f32& side_fraction = layout.side_fraction;
-    if (side_fraction <= 0.0f) side_fraction = io.DisplaySize.x > 1100 ? 420.0f / std::max(io.DisplaySize.x, 1.0f) : 0.35f;
-    side_fraction = std::clamp(side_fraction, 0.15f, 0.6f);
-    const f32 status_h = ImGui::GetFrameHeight();
-    const f32 side = io.DisplaySize.x * side_fraction;
-    const f32 main_w = io.DisplaySize.x - side;
-    const f32 main_h = io.DisplaySize.y - top - status_h;
-    constexpr ImGuiWindowFlags kFixed = ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
-                                        ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBringToFrontOnFocus;
+    // The status bar claims the strip along the bottom first, so the dockspace fills what is left.
+    ImGuiViewport* viewport = ImGui::GetMainViewport();
+    if (ImGui::BeginViewportSideBar("##status", viewport, ImGuiDir_Down, ImGui::GetFrameHeight(), ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings)) {
+        ImGui::TextDisabled("%s", backend_label);
+        ImGui::SameLine();
+        ImGui::TextDisabled("|  %.1f ms  (%.0f fps)  |  drag a panel's tab to dock it, or its edge to resize", 1000.0f / std::max(io.Framerate, 1.0f), io.Framerate);
+    }
+    ImGui::End();
 
+    const ImGuiID dockspace = ImGui::DockSpaceOverViewport(0, viewport);
+    const ImGuiDockNode* node = ImGui::DockBuilderGetNode(dockspace);
+    const bool empty = node == nullptr || (node->IsLeafNode() && node->Windows.Size == 0); // nothing saved: the first run
+    if ((reset_layout || empty) && viewport->WorkSize.x > 1.0f && viewport->WorkSize.y > 1.0f) BuildDefaultDockLayout(dockspace, viewport->WorkSize);
+
+    constexpr ImGuiWindowFlags kPanel = ImGuiWindowFlags_NoCollapse;
     // Every tool: the list by category on the left, the selected one beside it.
-    ImGui::SetNextWindowPos(ImVec2(0, top));
-    ImGui::SetNextWindowSize(ImVec2(main_w, main_h));
-    ImGui::Begin("Editors", nullptr, kFixed | ImGuiWindowFlags_NoTitleBar);
-    workspace.DrawHubContents();
+    if (ImGui::Begin("Editors", nullptr, kPanel)) workspace.DrawHubContents();
     ImGui::End();
 
-    ImGui::SetNextWindowPos(ImVec2(main_w, top));
-    ImGui::SetNextWindowSize(ImVec2(side, main_h * 0.5f));
-    ImGui::Begin("Terrain", nullptr, kFixed);
-    workspace.DrawTool(static_cast<usize>(workspace.FindTool("Terrain")));
+    if (ImGui::Begin("Terrain", nullptr, kPanel)) workspace.DrawTool(static_cast<usize>(workspace.FindTool("Terrain")));
     ImGui::End();
 
-    ImGui::SetNextWindowPos(ImVec2(main_w, top + main_h * 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(side, main_h * 0.5f));
-    ImGui::Begin("Debug", nullptr, kFixed);
-    if (ImGui::BeginTabBar("##debug")) {
+    if (ImGui::Begin("Debug", nullptr, kPanel) && ImGui::BeginTabBar("##debug")) {
         for (const char* tool : {"Console", "Profiler"}) {
             if (ImGui::BeginTabItem(tool)) {
                 workspace.DrawTool(static_cast<usize>(workspace.FindTool(tool)));
@@ -103,31 +118,6 @@ void DrawEditor(EditorWorkspace& workspace, ShellLayout& layout, const char* bac
         ImGui::EndTabBar();
     }
     ImGui::End();
-
-    // The divider: a thin strip over the seam, a resize cursor on hover.
-    ImGui::SetNextWindowPos(ImVec2(main_w - 3.0f, top));
-    ImGui::SetNextWindowSize(ImVec2(6.0f, main_h));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0, 0, 0, 0));
-    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0, 0, 0, 0));
-    ImGui::Begin("##divider", nullptr, kFixed | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBackground);
-    ImGui::InvisibleButton("##drag", ImVec2(6.0f, main_h));
-    if (ImGui::IsItemHovered() || ImGui::IsItemActive()) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
-    if (ImGui::IsItemActive() && io.DisplaySize.x > 0.0f) side_fraction -= io.MouseDelta.x / io.DisplaySize.x;
-    ImGui::End();
-    ImGui::PopStyleColor(2);
-    ImGui::PopStyleVar();
-
-    // The status bar: what is selected and how fast the editor is running.
-    ImGui::SetNextWindowPos(ImVec2(0, io.DisplaySize.y - status_h));
-    ImGui::SetNextWindowSize(ImVec2(io.DisplaySize.x, status_h));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10, 2));
-    ImGui::Begin("##status", nullptr, kFixed | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoScrollbar);
-    ImGui::TextDisabled("%s", backend_label);
-    ImGui::SameLine();
-    ImGui::TextDisabled("|  %.1f ms  (%.0f fps)  |  drag the divider to resize the side panels", 1000.0f / std::max(io.Framerate, 1.0f), io.Framerate);
-    ImGui::End();
-    ImGui::PopStyleVar();
 
     workspace.DrawWindows();
 }
@@ -189,7 +179,8 @@ int main() {
         IMGUI_CHECKVERSION();
         ImGui::CreateContext();
         ImGuiIO& io = ImGui::GetIO();
-        io.IniFilename = nullptr;
+        io.IniFilename = nullptr; // set below, once it is known whether this run remembers anything
+        io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
         // Shortcuts use Ctrl everywhere: the engine's key set has no Cmd key
         // yet, so ImGui's macOS Ctrl/Cmd swap would leave none reachable.
         io.ConfigMacOSXBehaviors = false;
@@ -202,6 +193,12 @@ int main() {
         // reads nor writes it unless AETHER_EDITOR_LAYOUT names a file; AETHER_EDITOR_TAB wins over the remembered tool.
         ShellLayout layout;
         const std::filesystem::path layout_file = (headless && !std::getenv("AETHER_EDITOR_LAYOUT")) ? std::filesystem::path() : DefaultShellLayoutPath();
+        // Where the panels are docked is ImGui's own ini, kept beside the layout file.
+        static std::string imgui_ini;
+        if (!layout_file.empty()) {
+            imgui_ini = (layout_file.parent_path() / "editor_panels.ini").string();
+            io.IniFilename = imgui_ini.c_str();
+        }
         if (LoadShellLayout(layout_file, layout) && !layout.tool.empty()) {
             const i64 tool = workspace.FindTool(layout.tool);
             if (tool >= 0) workspace.Select(static_cast<usize>(tool));
@@ -239,7 +236,7 @@ int main() {
             host.NewFrame();
             ImGui::NewFrame();
             workspace.Update(io.DeltaTime);
-            DrawEditor(workspace, layout, backend_label, quit);
+            DrawEditor(workspace, backend_label, quit);
             ImGui::Render();
 
             device->WaitForFence(fence); // one command list: the last frame must be done with it

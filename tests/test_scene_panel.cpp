@@ -290,26 +290,27 @@ AETHER_TEST(ShellLayout_RoundTripsAndForgivesABadFile) {
     const stdfs::path file = dir / "nested" / "editor_layout.json";
     ShellLayout layout;
     AETHER_CHECK(!LoadShellLayout(file, layout));                       // missing: false, layout untouched
-    AETHER_CHECK(layout.side_fraction == 0.0f && layout.tool.empty());
-    layout.side_fraction = 0.42f;
+    AETHER_CHECK(layout.tool.empty());
     layout.tool = "Terrain";
     std::string error;
     AETHER_CHECK(SaveShellLayout(file, layout, &error));                // makes the folder
     AETHER_CHECK(!stdfs::exists(stdfs::path(file).concat(".tmp")));     // the temp file did not stay
     ShellLayout back;
     AETHER_CHECK(LoadShellLayout(file, back));
-    AETHER_CHECK(std::abs(back.side_fraction - 0.42f) < 1e-4f && back.tool == "Terrain");
+    AETHER_CHECK(back.tool == "Terrain");
     auto write = [&](const std::string& text) { std::ofstream(file, std::ios::binary | std::ios::trunc) << text; };
     write("{ this is not json");
     ShellLayout damaged;
     damaged.tool = "kept";
     AETHER_CHECK(!LoadShellLayout(file, damaged) && damaged.tool == "kept");
-    write(R"({"side_fraction": 9.0, "tool": "Scene"})");                // a wild width falls back to the default, the tool survives
-    ShellLayout wild;
-    AETHER_CHECK(LoadShellLayout(file, wild));
-    AETHER_CHECK(wild.side_fraction == 0.0f && wild.tool == "Scene");
-    write(R"({"side_fraction": "wide", "tool": 7})");                   // wrong types are ignored, not fatal
+    write(R"({"side_fraction": 0.4, "tool": "Scene"})");                // a file from before docking: the old key is ignored, the tool survives
+    ShellLayout older;
+    AETHER_CHECK(LoadShellLayout(file, older) && older.tool == "Scene");
+    write(R"({"tool": 7})");                                            // a wrong type is ignored, not fatal
     ShellLayout typed;
-    AETHER_CHECK(LoadShellLayout(file, typed) && typed.side_fraction == 0.0f && typed.tool.empty());
+    AETHER_CHECK(LoadShellLayout(file, typed) && typed.tool.empty());
+    write("{\"tool\": \"" + std::string(500, 'x') + "\"}");             // an absurd name is dropped
+    ShellLayout long_name;
+    AETHER_CHECK(LoadShellLayout(file, long_name) && long_name.tool.empty());
     AETHER_CHECK(!SaveShellLayout({}, layout, &error) && !error.empty()); // no path: refused, with a reason
 }
