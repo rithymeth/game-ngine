@@ -411,6 +411,11 @@ void ScriptSystem::InstallApi(bool install_kit_apis) {
         const std::string spawn = call.IsString(1) ? call.String(1) : std::string();
         call.Return(scene_hooks_.request(call.String(0), spawn));
     });
+    host_.RegisterNative("Camera", "Shake", [this](NativeCall& call) {
+        if (!call.IsNumber(0)) return call.Fail("Camera.Shake(amount) expected a number from 0 to 1");
+        if (!add_camera_trauma_) return call.Fail("Camera isn't bound to a running game");
+        add_camera_trauma_(static_cast<f32>(call.Number(0)));
+    });
     host_.RegisterNative("Scene", "Current", [this](NativeCall& call) {
         call.Return(scene_hooks_.current ? scene_hooks_.current() : std::string());
     });

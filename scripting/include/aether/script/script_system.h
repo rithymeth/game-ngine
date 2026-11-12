@@ -63,6 +63,8 @@ struct ScriptError {
 //                                     ends with the swap (scripts, timers, events); what must outlive it goes in SaveGames.
 //                                     With `spawn` (the name of an entity in the new scene), the player (the entity with a CharacterMovement) starts
 //                                     where that entity is, facing as it faces: a door's far side, instead of the scene's own start.
+//   Camera.Shake(amount)           -> adds trauma 0..1 to the camera shake (0.2 a bump, 0.5 a hit, 1 an explosion); the shake grows with its square and
+//                                     drains away. It moves the active camera after the scripts have run, so a script that sets the camera is not disturbed.
 //   Scene.Current()                -> the path of the scene that is running
 // Connections and timers made while one of an entity's callbacks runs belong
 // to that entity's script, and end when it's destroyed (§11.2).
@@ -98,6 +100,8 @@ public:
         std::function<std::string()> current;
     };
     void BindSceneHooks(SceneHooks hooks) { scene_hooks_ = std::move(hooks); }
+    // What Camera.Shake does: the game adds trauma to its camera shake. Unbound, the call is a script error.
+    void BindCameraShake(std::function<void(f32)> add_trauma) { add_camera_trauma_ = std::move(add_trauma); }
     // Calls `method` on the entity's script if it defines it (e.g.
     // "OnCollisionBegin" from physics); false if it has no script or method.
     bool SendEvent(Entity entity, const std::string& method, const std::vector<ScriptValue>& args = {});
@@ -228,6 +232,7 @@ private:
     input::InputSystem* input_ = nullptr;
     ::aether::PhysicsScene* physics_scene_ = nullptr;
     SceneHooks scene_hooks_;
+    std::function<void(f32)> add_camera_trauma_;
     std::vector<u32> input_subscriptions_;
     u32 next_id_ = 1;
     u64 next_owner_ = 1;
