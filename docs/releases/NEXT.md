@@ -650,3 +650,5 @@ without a camera path. `--camera-path` still works alone or with it.
 A material graph (`.amat`) of constants and parameters, opaque and default-lit, is now drawn by the game and the Live Viewport: its base colour, metallic, roughness, occlusion and emissive replace the model's own, each graph through its own shader. A graph the renderer cannot draw yet (textures, translucency, other shading models, vertex offsets) says so under the Live Viewport's toolbar and shows the model's own surface.
 
 A material graph (`.amat`) that samples textures is now drawn too (up to four, read as the graph says, with no colour-space decode), and the cook carries a graph's textures with it when the graph is on the cook list.
+
+Saving a material graph now shows in the Live Viewport on the next frame, without pressing Reload (the graph's shader is built again; the scene is not loaded again). A graph newly assigned to a material shows without Reload too; its textures still need one.

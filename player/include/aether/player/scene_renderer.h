@@ -30,6 +30,9 @@ public:
     // frame_index selects the fence-protected per-frame buffers for animated meshes.
     // A quality preset's view distance in metres: the camera's far plane is pulled in to it (0, the default, leaves cameras as authored).
     void SetViewDistance(f32 metres);
+    // Forgets every material graph's shader, so the next draw reads each graph again from the package and builds it afresh. The device must be idle (no frame in
+    // flight that still uses the old pipelines): between two frames of a host that waits for each.
+    void ReloadGraphMaterials();
     // Whether the particle pass draws the game's particle effects (Game::Particles()); on by default.
     void SetDrawParticles(bool draw);
     // Whether the post pass draws bloom (a quality preset's `bloom`); on by default. Only where there is an HDR scene colour target: the

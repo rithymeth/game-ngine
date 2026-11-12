@@ -1388,6 +1388,85 @@ AETHER_TEST(LiveViewportPanel_AMaterialGraphIsDrawnInPlaceOfTheModelsSurface) {
     AETHER_CHECK(DifferingPixels(own, skipped) < 160u * 90u / 50);   // not drawn yet: the model's own surface, as before
 }
 
+AETHER_TEST(LiveViewportPanel_ASavedMaterialGraphShowsWithoutPressingReload) {
+    std::unique_ptr<gfx::rhi::IDevice> device = TryDevice();
+    if (!device) {
+        std::printf("    (no Vulkan device: install a driver, or Mesa's lavapipe, to run this)\n");
+        return;
+    }
+    Context imgui;
+    const stdfs::path project = MakeProject("LiveGraphEdit");
+    const stdfs::path content = project.parent_path() / "Content";
+    stdfs::create_directories(content / "Materials");
+    auto tinted = [](Vec4 tint) { // a graph of one colour parameter into BaseColor
+        mat::Material m;
+        m.parameters.push_back({"Tint", mat::PinType::Float3, tint, "", "Surface"});
+        const mat::NodeId out = m.Add("Material.Output", {}, 600, 0);
+        const mat::NodeId color = m.Add("Param.Vector:Tint");
+        m.Connect(color, "value", out, "BaseColor");
+        return m;
+    };
+    auto save = [&](const char* name, const mat::Material& material) { std::ofstream(content / "Materials" / name, std::ios::trunc) << mat::MaterialToJson(material).dump(); };
+    save("Look.amat", tinted({0.9f, 0.05f, 0.05f, 0}));
+    save("Later.amat", tinted({0.05f, 0.1f, 0.95f, 0}));
+
+    ScenePanel scene(content);
+    AETHER_CHECK(scene.OpenScene("Scenes/Main.ascene", true));
+    SceneDocument& document = scene.Document();
+    std::vector<Entity> models;
+    for (const Entity entity : document.Entities()) {
+        if (document.GetWorld().HasComponent<ModelRenderer>(entity)) models.push_back(entity);
+    }
+    const ComponentId overrides = GetComponentId<MaterialParameters>();
+    for (const Entity entity : models) AETHER_CHECK(document.AddComponent(entity, overrides));
+    auto use = [&](const char* path) {
+        for (const Entity entity : models) AETHER_CHECK(document.SetComponentField(entity, overrides, "material", reflect::Any(std::string(path)), true));
+    };
+    use("Materials/Look.amat");
+    LiveViewportPanel panel(*device, scene, [&] { return project; });
+    panel.width = 160;
+    panel.height = 90;
+    panel.reload_interval = 0.0f;
+    AETHER_CHECK(panel.Start());
+    auto settle = [&] { for (int i = 0; i < 6; ++i) panel.Advance(0.2f); return panel.Viewport().Pixels(); };
+    auto dominant = [](const std::vector<u8>& pixels, int channel) {
+        usize count = 0;
+        for (usize i = 0; i + 3 < pixels.size(); i += 4) {
+            const int c = pixels[i + static_cast<usize>(channel)], a = pixels[i + static_cast<usize>((channel + 1) % 3)], b = pixels[i + static_cast<usize>((channel + 2) % 3)];
+            count += c > a + 50 && c > b + 50;
+        }
+        return count;
+    };
+    const u64 reloads = panel.Viewport().SceneReloads();
+    const usize frame = 160u * 90u;
+    std::vector<u8> picture = settle();
+    AETHER_CHECK(dominant(picture, 0) > frame / 3);                                    // the graph's red
+
+    // Saved with another colour: green, with no Reload pressed and the scene not loaded again.
+    save("Look.amat", tinted({0.05f, 0.9f, 0.05f, 0}));
+    picture = settle();
+    AETHER_CHECK(dominant(picture, 1) > frame / 3 && dominant(picture, 0) < frame / 10);
+    AETHER_CHECK(panel.Viewport().SceneReloads() == reloads);
+
+    // Saved broken (no output): it says so, and the models show their own surfaces; saved right again, it is back.
+    mat::Material broken;
+    broken.Add("Const.Float", {{"value", 0.5f}});
+    save("Look.amat", broken);
+    picture = settle();
+    AETHER_CHECK(dominant(picture, 1) < frame / 10);
+    AETHER_CHECK(panel.GraphMaterials().size() == 1 && !panel.GraphMaterials()[0].compiles);
+    save("Look.amat", tinted({0.9f, 0.05f, 0.05f, 0}));
+    picture = settle();
+    AETHER_CHECK(dominant(picture, 0) > frame / 3);
+    AETHER_CHECK(panel.GraphMaterials().size() == 1 && panel.GraphMaterials()[0].drawable);
+
+    // A graph named only after the cook, which the package never had: handed to the game as it is, and shown.
+    use("Materials/Later.amat");
+    picture = settle();
+    AETHER_CHECK(dominant(picture, 2) > frame / 3);
+    AETHER_CHECK(panel.Viewport().SceneReloads() == reloads); // naming it is a patched edit of the scene
+}
+
 #endif
 
 AETHER_TEST(GamePackage_AContentOverrideIsReadInPlaceOfTheArchive) {

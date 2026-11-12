@@ -1032,6 +1032,15 @@ struct SceneRenderer::Impl {
     PipelineDesc scene_desc;      // the scene pipeline's description, to make a graph's from
     bool scene_frame_data = false;
     bool scene_rt = false;
+    void ReleaseGraphPipelines() {
+        for (auto& [path, graph] : graph_pipelines) {
+            for (PipelineHandle* handle : {&graph->pipeline, &graph->culled}) {
+                if (handle->IsValid()) device.DestroyPipeline(*handle);
+                *handle = {};
+            }
+        }
+        graph_pipelines.clear();
+    }
     const GraphPipelines* GraphFor(const std::string& path) {
         auto found = graph_pipelines.find(path);
         if (found != graph_pipelines.end()) return found->second->ok ? found->second.get() : nullptr;
@@ -1281,12 +1290,7 @@ struct SceneRenderer::Impl {
             if (handle->IsValid()) device.DestroyPipeline(*handle);
             *handle = {};
         }
-        for (auto& [path, graph] : graph_pipelines) {
-            for (PipelineHandle* handle : {&graph->pipeline, &graph->culled}) {
-                if (handle->IsValid()) device.DestroyPipeline(*handle);
-                *handle = {};
-            }
-        }
+        ReleaseGraphPipelines();
     }
 
     Impl(IDevice& d, ISwapChain& s, const GamePackage& p) : device(d), swap_chain(s), package(p) {
@@ -2444,6 +2448,7 @@ SceneRenderer::SceneRenderer(IDevice& device, ISwapChain& swap_chain, const Game
 SceneRenderer::~SceneRenderer() = default;
 
 void SceneRenderer::SetViewDistance(f32 metres) { impl_->view_distance = metres; }
+void SceneRenderer::ReloadGraphMaterials() { impl_->ReleaseGraphPipelines(); }
 void SceneRenderer::SetDrawParticles(bool draw) { impl_->draw_particles = draw; }
 void SceneRenderer::SetShadows(u32 resolution, u32 cascades) {
     if (impl_->shadows) impl_->shadows->Configure(resolution, cascades);
