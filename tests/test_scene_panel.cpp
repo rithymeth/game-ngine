@@ -606,6 +606,46 @@ AETHER_TEST(TransformGizmo_LocalSpaceMovesAndRotatesAlongTheEntitysOwnAxes) {
     AETHER_CHECK(NearVec(WorldAxisOf(document, thing, 0), local_x, 0.1f));                       // the axis it turned about did not move
 }
 
+AETHER_TEST(TransformGizmo_PlaneSquaresSlideInTwoAxesAtOnce) {
+    GizmoRig rig;
+    SceneDocument document;
+    const Entity thing = document.CreateEntity("Thing");
+    document.SetSelection({thing});
+    document.Commands().Clear();
+    TransformGizmo gizmo;
+    const f32 centre = rig.Length() * 0.375f; // the middle of the square, which runs from a quarter to a half of the handle
+    const ImVec2 grab = rig.Pixel(Vec3(centre, 0, centre));
+    AETHER_CHECK(gizmo.HitTest(document, rig.camera, rig.origin, rig.size, grab, GizmoMode::Move) == GizmoAxis::PlaneXZ);
+    AETHER_CHECK(gizmo.HitTest(document, rig.camera, rig.origin, rig.size, grab, GizmoMode::Scale) != GizmoAxis::PlaneXZ); // Move only
+    AETHER_CHECK(gizmo.Begin(document, rig.camera, rig.origin, rig.size, grab, GizmoMode::Move));
+    ImVec2 mouse = rig.Pixel(Vec3(centre + 2.0f, 0, centre + 3.0f));
+    AETHER_CHECK(gizmo.Update(document, rig.camera, rig.origin, rig.size, mouse, 0.0f));
+    gizmo.End(document, rig.camera, rig.origin, rig.size, mouse, 0.0f);
+    AETHER_CHECK(NearVec(WorldPositionOf(document, thing), Vec3(2, 0, 3), 0.05f)); // both axes at once, and not off the plane
+    AETHER_CHECK(document.Undo() && !document.CanUndo());                         // one drag, one undo
+
+    // Snapping rounds each of the two axes on its own.
+    AETHER_CHECK(gizmo.Begin(document, rig.camera, rig.origin, rig.size, grab, GizmoMode::Move));
+    mouse = rig.Pixel(Vec3(centre + 1.4f, 0, centre + 2.6f));
+    AETHER_CHECK(gizmo.Update(document, rig.camera, rig.origin, rig.size, mouse, 1.0f));
+    AETHER_CHECK(NearVec(WorldPositionOf(document, thing), Vec3(1, 0, 3), 0.02f));
+    gizmo.End(document, rig.camera, rig.origin, rig.size, mouse, 1.0f);
+    AETHER_CHECK(document.Undo());
+
+    // In Local space the squares sit on the entity's own axes: tipped a quarter turn about X, its XY square lies where the world's XZ one did.
+    document.SetRotation(thing, Quaternion::FromAxisAngle(Vec3(1, 0, 0), 3.14159265f * 0.5f), true);
+    document.Commands().Clear();
+    // (Off the middle, where the entity's own Z arrow, pointing down, happens to be drawn across the square from this camera.)
+    const Vec3 corner_ish(rig.Length() * 0.47f, 0, rig.Length() * 0.28f);
+    const ImVec2 local_grab = rig.Pixel(corner_ish);
+    AETHER_CHECK(gizmo.HitTest(document, rig.camera, rig.origin, rig.size, local_grab, GizmoMode::Move, GizmoSpace::Local) == GizmoAxis::PlaneXY);
+    AETHER_CHECK(gizmo.Begin(document, rig.camera, rig.origin, rig.size, local_grab, GizmoMode::Move, GizmoSpace::Local));
+    mouse = rig.Pixel(corner_ish + Vec3(2.0f, 0, 3.0f));
+    AETHER_CHECK(gizmo.Update(document, rig.camera, rig.origin, rig.size, mouse, 0.0f));
+    gizmo.End(document, rig.camera, rig.origin, rig.size, mouse, 0.0f);
+    AETHER_CHECK(NearVec(WorldPositionOf(document, thing), Vec3(2, 0, 3), 0.05f));
+}
+
 AETHER_TEST(TransformGizmo_RotateTurnsAboutAWorldAxisInOneUndoableStep) {
     GizmoRig rig;
     SceneDocument document;

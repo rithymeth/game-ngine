@@ -30,7 +30,7 @@ In priority order; each is a project of its own.
 2. **Transform gizmos.** Move, rotate and scale are done (W, E and R): arrows along the world axes, a ring around each world axis, and
    handles along the entity's own axes; each drag is one undoable edit, works in world space under a parent, and snaps to a step. With several
    entities selected they all follow (the handles sit on the first; an entity whose ancestor is also selected rides along instead of moving twice).
-   Move and rotate can follow the object's own axes (World/Local, Q). Still to do: plane handles.
+   Move and rotate can follow the object's own axes (World/Local, Q). Move also has plane squares that slide in two axes at once. Still to do: plane handles for Scale.
 3. **A better content browser.** One exists (Project > Content Browser: folders, search, git status badges, rename and move, references,
    asset validation, commit). Dragging a model from it into the Scene View places it on the ground under the mouse. Still to do: thumbnails
    (the preview is the way to render one today, a few seconds each, so thumbnails need a cache), dropping onto the hierarchy and onto inspector fields (a texture onto a material slot, a prefab into the scene),

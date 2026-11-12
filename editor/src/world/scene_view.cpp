@@ -264,6 +264,24 @@ Vec3 LocalDirectionFor(const SceneDocument& document, Entity entity, const Vec3&
 
 } // namespace
 
+void TransformGizmo::PlaneAxes(GizmoAxis plane, GizmoAxis& first, GizmoAxis& second, GizmoAxis& normal) {
+    first = plane == GizmoAxis::PlaneYZ ? GizmoAxis::Y : GizmoAxis::X;
+    second = plane == GizmoAxis::PlaneXY ? GizmoAxis::Y : GizmoAxis::Z;
+    normal = plane == GizmoAxis::PlaneXY ? GizmoAxis::Z : (plane == GizmoAxis::PlaneXZ ? GizmoAxis::Y : GizmoAxis::X);
+}
+
+void TransformGizmo::PlaneCorners(const SceneDocument& document, Entity subject, GizmoAxis plane, GizmoSpace space, f32 handle_length, Vec3* out) {
+    GizmoAxis first, second, normal;
+    PlaneAxes(plane, first, second, normal);
+    const Vec3 u = HandleDirection(document, subject, first, GizmoMode::Move, space), v = HandleDirection(document, subject, second, GizmoMode::Move, space);
+    const Vec3 at = WorldOrigin(document, subject);
+    const f32 lo = handle_length * 0.25f, hi = handle_length * 0.5f;
+    out[0] = at + u * lo + v * lo;
+    out[1] = at + u * hi + v * lo;
+    out[2] = at + u * hi + v * hi;
+    out[3] = at + u * lo + v * hi;
+}
+
 std::vector<Entity> TransformGizmo::Subjects(const SceneDocument& document) {
     const World& world = document.GetWorld();
     auto movable = [&](Entity e) { return world.IsAlive(e) && world.HasComponent<Transform>(e); };
@@ -333,7 +351,32 @@ GizmoAxis TransformGizmo::HitTest(const SceneDocument& document, const SceneView
         }
         if (distance < best_distance) { best_distance = distance; best = axis; }
     }
+    if (mode == GizmoMode::Move && !(best != GizmoAxis::None && best_distance < 5.0f)) { // the plane squares: a press inside one wins over an arrow's pixel margin, but not over the arrow's own line drawn across it
+        for (const GizmoAxis plane : {GizmoAxis::PlaneXY, GizmoAxis::PlaneXZ, GizmoAxis::PlaneYZ}) {
+            Vec3 corners[4];
+            PlaneCorners(document, subject, plane, space, HandleLength(camera), corners);
+            ImVec2 p[4];
+            bool visible = true;
+            for (int i = 0; i < 4 && visible; ++i) visible = ProjectToViewport(vp, corners[i], origin, size, p[i]);
+            if (!visible) continue;
+            bool inside = false; // even-odd test against the projected quad
+            for (int i = 0, j = 3; i < 4; j = i++) {
+                if (((p[i].y > mouse.y) != (p[j].y > mouse.y)) && (mouse.x < (p[j].x - p[i].x) * (mouse.y - p[i].y) / (p[j].y - p[i].y) + p[i].x)) inside = !inside;
+            }
+            if (inside) return plane;
+        }
+    }
     return best;
+}
+
+bool TransformGizmo::MeasurePlane(const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, Vec3& point) const {
+    Vec3 ray_origin, ray_direction;
+    if (!MouseRay(camera.ViewProjection(size.x / size.y), origin, size, mouse, ray_origin, ray_direction)) return false;
+    const f32 facing = ray_direction.Dot(direction_); // direction_ is the plane's normal
+    if (std::fabs(facing) < 1e-3f) return false;      // a plane seen edge-on cannot be dragged along
+    const f32 t = (start_world_ - ray_origin).Dot(direction_) / facing;
+    point = ray_origin + ray_direction * t;
+    return true;
 }
 
 bool TransformGizmo::Measure(const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, f32& value) const {
@@ -356,6 +399,38 @@ bool TransformGizmo::Begin(const SceneDocument& document, const SceneViewCamera&
     if (axis == GizmoAxis::None) return false;
     const std::vector<Entity> entities = Subjects(document);
     if (entities.empty()) return false;
+    if (IsPlane(axis)) { // a Move square: the drag follows where the mouse ray meets the plane through the entity
+        GizmoAxis first, second, normal;
+        PlaneAxes(axis, first, second, normal);
+        const GizmoAxis old_axis = axis_;
+        const GizmoMode old_mode = mode_;
+        const GizmoSpace old_space = space_;
+        const Vec3 old_start = start_world_, old_direction = direction_;
+        axis_ = axis;
+        mode_ = GizmoMode::Move;
+        space_ = space;
+        start_world_ = WorldOrigin(document, entities[0]);
+        direction_ = HandleDirection(document, entities[0], normal, GizmoMode::Move, space);
+        Vec3 grab;
+        if (!MeasurePlane(camera, origin, size, mouse, grab)) {
+            axis_ = old_axis;
+            mode_ = old_mode;
+            space_ = old_space;
+            start_world_ = old_start;
+            direction_ = old_direction;
+            return false;
+        }
+        plane_u_ = HandleDirection(document, entities[0], first, GizmoMode::Move, space);
+        plane_v_ = HandleDirection(document, entities[0], second, GizmoMode::Move, space);
+        grab_point_ = grab;
+        subjects_.clear();
+        for (const Entity entity : entities) {
+            const Transform* transform = document.GetWorld().GetComponent<Transform>(entity);
+            if (!transform) continue;
+            subjects_.push_back({entity, *transform, WorldOrigin(document, entity)});
+        }
+        return !subjects_.empty();
+    }
     // Set up the state the measurement needs, and take it back if the first measurement fails.
     const GizmoAxis old_axis = axis_;
     const GizmoMode old_mode = mode_;
@@ -387,6 +462,7 @@ bool TransformGizmo::Begin(const SceneDocument& document, const SceneViewCamera&
 
 bool TransformGizmo::Apply(SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, f32 snap_step) {
     if (!Dragging() || subjects_.empty()) return false;
+    if (IsPlane(axis_)) return ApplyPlane(document, camera, origin, size, mouse, snap_step);
     f32 value = 0.0f;
     if (!Measure(camera, origin, size, mouse, value)) return false;
     const GizmoAxis axis = axis_;
@@ -433,6 +509,27 @@ bool TransformGizmo::Apply(SceneDocument& document, const SceneViewCamera& camer
                 transform->position = LocalPositionFor(document, held.entity, start_world_ + turned);
             }
         }
+    }
+    return true;
+}
+
+bool TransformGizmo::ApplyPlane(SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, f32 snap_step) {
+    Vec3 point;
+    if (!MeasurePlane(camera, origin, size, mouse, point)) return false;
+    const Vec3 moved = point - grab_point_;
+    f32 du = moved.Dot(plane_u_), dv = moved.Dot(plane_v_);
+    if (snap_step > 0.0f) {
+        // World squares snap the position to the grid on both axes; along an entity's own axes the distance moved snaps instead.
+        const bool world = space_ == GizmoSpace::World;
+        const f32 base_u = world ? start_world_.Dot(plane_u_) : 0.0f, base_v = world ? start_world_.Dot(plane_v_) : 0.0f;
+        du = SnapScalar(base_u + du, snap_step) - base_u;
+        dv = SnapScalar(base_v + dv, snap_step) - base_v;
+    }
+    const Vec3 offset = plane_u_ * du + plane_v_ * dv;
+    document.Touch();
+    for (const Held& held : subjects_) {
+        if (!document.GetWorld().IsAlive(held.entity)) continue;
+        if (Transform* transform = document.GetWorld().GetComponent<Transform>(held.entity)) transform->position = LocalPositionFor(document, held.entity, held.start_world + offset);
     }
     return true;
 }
