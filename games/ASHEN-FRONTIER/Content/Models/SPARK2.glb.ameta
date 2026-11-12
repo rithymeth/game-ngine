@@ -1,0 +1,36 @@
+{
+  "$type": "AssetMeta",
+  "$v": 1,
+  "guid": "6bfdf970-2ff3-45de-aa5f-607da1ce93aa",
+  "importer": "Model",
+  "importer_version": 4,
+  "labels": [],
+  "settings": {},
+  "source_hash": "fnv1a64:99037519e3f1351f",
+  "sub_assets": {
+    "material:0": {
+      "guid": "ba5b3eea-baca-8b4d-9833-9873e8482914",
+      "importer": "Material"
+    },
+    "material:1": {
+      "guid": "237de215-6bc3-852b-beec-750d35516878",
+      "importer": "Material"
+    },
+    "material:2": {
+      "guid": "ba807816-10df-8c57-a198-f87b9c56ae89",
+      "importer": "Material"
+    },
+    "material:3": {
+      "guid": "56257929-f8d8-887c-afd8-c56304d3b7c0",
+      "importer": "Material"
+    },
+    "material:4": {
+      "guid": "b327ca86-e4cc-8ab3-931e-ff4d827a78f7",
+      "importer": "Material"
+    },
+    "mesh:0": {
+      "guid": "04f6825e-27fd-80a3-a557-5b76cdda7173",
+      "importer": "Mesh"
+    }
+  }
+}
