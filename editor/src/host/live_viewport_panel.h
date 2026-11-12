@@ -4,6 +4,7 @@
 #include "ui/image_texture.h"
 #include "world/scene_panel.h"
 #include "world/scene_view.h"
+#include "world/viewport_tools.h"
 
 #include <filesystem>
 #include <functional>
@@ -16,7 +17,9 @@ namespace aether::editor {
 // looks, middle-drag or shift+drag pans, the wheel zooms). **Start** cooks the models the scene uses and runs the scene *as it is open*, unsaved
 // edits included; after that every change to the scene (an edit, a gizmo drag, an undo) reloads it a moment later, so what you do shows without saving.
 // **Reload** cooks again, which picks up a model added since. **Run game** lets physics and scripts run; off (the default) freezes the world so the
-// view is the scene as authored. Draws at up to 30 frames a second while the tool is on screen. Fills the current window.
+// view is the scene as authored. The editing tools of the Scene View work on the rendered picture: click an object to select it, drag a gizmo handle to
+// move, rotate or scale it (W, E, R), and the change shows in the picture as it is made. Draws at up to 30 frames a second while the tool is on
+// screen. Fills the current window.
 class LiveViewportPanel {
 public:
     // `project_file` is asked each time (the open project can change).
@@ -33,6 +36,7 @@ public:
 
     LiveViewport& Viewport() { return viewport_; }
     SceneViewCamera& Camera() { return camera_; }
+    ViewportTools& Tools() { return tools_; }
     const ImageTexture& Texture() const { return texture_; }
     const std::string& Note() const { return note_; }
     f32 FramesPerSecond() const { return fps_; }
@@ -50,6 +54,7 @@ private:
     ScenePanel& scene_;
     std::function<std::filesystem::path()> project_file_;
     SceneViewCamera camera_;
+    ViewportTools tools_;
     ImageTexture texture_;
     std::string note_;
     f32 since_frame_ = 0.0f;

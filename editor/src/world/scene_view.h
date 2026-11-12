@@ -112,30 +112,4 @@ private:
     f32 grab_ = 0.0f;                      // Move/Scale: where along the handle the mouse took hold; Rotate: the angle it took hold at
 };
 
-// A view of the open scene as boxes and axes over a ground grid, from an orbit camera, with click-to-select. It draws
-// with ImGui's own draw list (no renderer), so it works in the portable shell and headless; it shows where things are, not how they look.
-class SceneViewPanel {
-public:
-    // Fills the current ImGui window, editing the selection of `document`.
-    void Draw(SceneDocument& document);
-    // Moves the camera's target to the selection (or the whole scene if nothing is selected) and backs off to fit.
-    void FocusSelection(const SceneDocument& document);
-    SceneViewCamera& Camera() { return camera_; }
-    const SceneViewCamera& Camera() const { return camera_; }
-
-private:
-    SceneViewCamera camera_;
-    TransformGizmo gizmo_;
-    GizmoMode mode_ = GizmoMode::Move;
-    ImVec2 press_{0.0f, 0.0f};
-    bool dragged_ = false;
-    bool snap_ = false;
-    std::string note_; // the last thing the panel has to say (a drop it could not place)
-    bool drop_preview_ = false; // a model is being dragged over the view; where it would land
-    Vec3 drop_point_{0.0f, 0.0f, 0.0f};
-    f32 snap_move_ = 0.5f;
-    f32 snap_rotate_ = 15.0f;
-    f32 snap_scale_ = 0.1f;
-};
-
 } // namespace aether::editor

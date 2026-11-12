@@ -5,7 +5,8 @@
 #include "ui/builtin_components.h"
 #include "ui/editor_theme.h"
 #include "ui/shell_layout.h"
-#include "world/scene_view.h"
+#include "world/scene_view_panel.h"
+#include "world/viewport_tools.h"
 #include "workspace/editor_workspace.h"
 #include "aether/templates/templates.h"
 #include "aether/scene/gameplay.h"
@@ -847,4 +848,90 @@ AETHER_TEST(SceneDocument_RevisionGoesUpWithEveryChange) {
     const u64 before_new = document.Revision();
     document.NewScene();
     AETHER_CHECK(document.Revision() > before_new);                  // a new scene is a change to whoever was looking at the old
+}
+
+namespace {
+
+// A ViewportTools over an invisible item in a headless ImGui window, driven by real mouse events a frame at a time: what the Scene View and the
+// Live Viewport both do with the mouse.
+struct ToolRig {
+    HeadlessImGui imgui;
+    ViewportTools tools;
+    SceneDocument document;
+    SceneViewCamera camera;
+    ImVec2 origin{0, 0}, size{800, 600};
+    ToolRig() { camera.target = Vec3(0, 0, 0); camera.distance = 12.0f; Step(ImVec2(0, 0), false); }
+    void Step(const ImVec2& mouse, bool down, bool ctrl = false) {
+        ImGuiIO& io = ImGui::GetIO();
+        io.AddMousePosEvent(mouse.x, mouse.y);
+        io.AddMouseButtonEvent(0, down);
+        io.AddKeyEvent(ImGuiMod_Ctrl, ctrl);
+        imgui.Frame([&] {
+            origin = ImGui::GetCursorScreenPos();
+            ImGui::InvisibleButton("view", size, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
+            tools.HandleInput(document, camera, origin, size, ImGui::IsItemHovered(), ImGui::IsItemActive());
+        });
+    }
+    ImVec2 Pixel(const Vec3& world) const {
+        ImVec2 at(-1, -1);
+        ProjectToViewport(camera.ViewProjection(size.x / size.y), world, origin, size, at);
+        return at;
+    }
+    void Click(const ImVec2& at, bool ctrl = false) { Step(at, false, ctrl); Step(at, true, ctrl); Step(at, false, ctrl); }
+};
+
+} // namespace
+
+AETHER_TEST(ViewportTools_AClickSelectsWhatIsUnderTheMouse) {
+    ToolRig rig;
+    const Entity a = rig.document.CreateEntity("A");
+    const Entity b = rig.document.CreateEntity("B");
+    rig.document.SetPosition(b, Vec3(4, 0, 0), true);
+    rig.document.ClearSelection();
+    rig.document.Commands().Clear(); // the setup above is not what is being tested
+    rig.Click(rig.Pixel(Vec3(4, 0, 0)));
+    AETHER_CHECK(rig.document.Selection().size() == 1 && rig.document.Selection()[0] == b);
+    rig.Click(rig.Pixel(Vec3(0, 0, 0)), true);                                   // ctrl adds a second
+    AETHER_CHECK(rig.document.Selection().size() == 2 && rig.document.IsSelected(a) && rig.document.IsSelected(b));
+    rig.Click(rig.Pixel(Vec3(0, 0, 0)), true);                                   // and ctrl on a selected one takes it out
+    AETHER_CHECK(rig.document.Selection().size() == 1 && rig.document.IsSelected(b));
+    rig.Click(ImVec2(rig.origin.x + 5, rig.origin.y + 5));                       // empty space clears
+    AETHER_CHECK(rig.document.Selection().empty());
+    rig.Click(rig.Pixel(Vec3(0, 0, 0)));
+    AETHER_CHECK(rig.document.Selection().size() == 1 && rig.document.Selection()[0] == a);
+    AETHER_CHECK(!rig.document.CanUndo());                                       // selecting is not an edit
+}
+
+AETHER_TEST(ViewportTools_DraggingAHandleWithTheMouseMovesTheSelectionInOneUndoStep) {
+    ToolRig rig;
+    const Entity thing = rig.document.CreateEntity("Thing");
+    rig.document.SetSelection({thing});
+    rig.document.Commands().Clear();
+    const f32 half = TransformGizmo::HandleLength(rig.camera) * 0.5f;
+    const ImVec2 grab = rig.Pixel(Vec3(half, 0, 0)), target = rig.Pixel(Vec3(half + 4.0f, 0, 0));
+    rig.Step(grab, false);                                                       // hover the +X handle
+    rig.Step(grab, true);                                                        // press: takes hold of it, and does not select anything else
+    AETHER_CHECK(rig.tools.Dragging());
+    for (int i = 1; i <= 5; ++i) rig.Step(ImVec2(grab.x + (target.x - grab.x) * i / 5.0f, grab.y + (target.y - grab.y) * i / 5.0f), true);
+    AETHER_CHECK(!rig.document.CanUndo());                                       // nothing recorded while the mouse is down
+    AETHER_CHECK(NearVec(WorldPositionOf(rig.document, thing), Vec3(4, 0, 0), 0.05f)); // but the entity is already there
+    rig.Step(target, false);                                                     // release
+    AETHER_CHECK(!rig.tools.Dragging());
+    AETHER_CHECK(rig.document.Selection().size() == 1 && rig.document.Selection()[0] == thing); // the drag did not count as a click
+    AETHER_CHECK(rig.document.UndoLabel() == "Move Thing");
+    AETHER_CHECK(rig.document.Undo() && !rig.document.CanUndo());
+    AETHER_CHECK(NearVec(WorldPositionOf(rig.document, thing), Vec3(0, 0, 0), 0.01f));
+
+    // A press and release on a handle without moving is not a click on empty space: the selection stays, and nothing is recorded.
+    rig.Step(grab, false); rig.Step(grab, true); rig.Step(grab, false);
+    AETHER_CHECK(rig.document.Selection().size() == 1 && rig.document.Selection()[0] == thing && !rig.document.CanUndo());
+
+    rig.tools.SetMode(GizmoMode::Scale);                                         // the same press picks the mode's handle
+    rig.tools.SetSnap(true);
+    rig.Step(grab, false); rig.Step(grab, true);
+    AETHER_CHECK(rig.tools.Dragging() && rig.tools.SnapStep() == 0.1f);
+    rig.Step(rig.Pixel(Vec3(half * 2.0f, 0, 0)), true);
+    rig.Step(rig.Pixel(Vec3(half * 2.0f, 0, 0)), false);
+    const Transform* t = rig.document.GetWorld().GetComponent<Transform>(thing);
+    AETHER_CHECK(t && std::fabs(t->scale.x - 2.0f) < 0.11f);                     // doubled, on the 0.1 step
 }

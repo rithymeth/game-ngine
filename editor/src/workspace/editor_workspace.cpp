@@ -34,7 +34,7 @@
 #include "world/scene_panel.h"
 #include "ui/builtin_components.h"
 #include "world/scene_preview_panel.h"
-#include "world/scene_view.h"
+#include "world/scene_view_panel.h"
 #include "world/world_panels.h"
 
 #include "aether/blueprint/nodes.h"

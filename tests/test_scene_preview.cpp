@@ -8,6 +8,8 @@
 
 #include "aether/core/log.h"
 #include "aether/scene/components.h"
+#include "aether/scene/hierarchy.h"
+#include "aether/scene/script_component.h"
 #include "aether/platform/filesystem.h"
 #include "aether/player/game.h"
 #include "aether/templates/templates.h"
@@ -235,6 +237,58 @@ AETHER_TEST(LiveViewport_RunsTheCookedSceneInProcessAndFollowsTheCamera) {
     AETHER_CHECK(!view.Loaded() && view.Pixels().empty() && view.Width() == 0);
 }
 
+// The overlay (selection outline, gizmo) is drawn with the Scene View's camera maths over the renderer's picture, so the two must agree: the point
+// the overlay camera projects the player's origin to is where the real render has the player's blue pillar.
+AETHER_TEST(LiveViewport_TheOverlayCameraLandsOnTheRenderedObject) {
+    std::unique_ptr<gfx::rhi::IDevice> device = TryDevice();
+    if (!device) {
+        std::printf("    (no Vulkan device: install a driver, or Mesa's lavapipe, to run this)\n");
+        return;
+    }
+    const stdfs::path project = MakeProject("Alignment");
+    ScenePanel scene(project.parent_path() / "Content");
+    AETHER_CHECK(scene.OpenScene("Scenes/Main.ascene", true));
+    SceneDocument& document = scene.Document();
+    Entity player = kNullEntity;
+    for (const Entity entity : document.Entities()) {
+        if (document.GetWorld().HasComponent<ScriptComponent>(entity)) player = entity;
+    }
+    AETHER_CHECK(player != kNullEntity);
+    if (player == kNullEntity) return;
+    stdfs::path cooked;
+    std::string error;
+    AETHER_CHECK(CookForPreview(project, "Scenes/Main.ascene", project.parent_path() / "Saved" / "AlignTest", &cooked, &error));
+    LiveViewport view(*device);
+    constexpr u32 kWidth = 320, kHeight = 180;
+    AETHER_CHECK(view.Load(cooked, "Scenes/Main.ascene", kWidth, kHeight, &error));
+    SceneViewCamera camera; // the default orbit (yaw 0.7, pitch 0.5, 14 m), looking at a point beside the player, so the player is off the middle of the picture
+    camera.target = Vec3(4.0f, 0.0f, 3.0f);
+    for (int i = 0; i < 3; ++i) AETHER_CHECK(view.Frame(0.0f, camera.Eye(), camera.Rotation(), camera.fov_degrees));
+    const Vec3 at = WorldPosition(document.GetWorld(), document.Guids(), player);
+    ImVec2 pixel;
+    AETHER_CHECK(ProjectToViewport(camera.ViewProjection(static_cast<f32>(kWidth) / static_cast<f32>(kHeight)), at, ImVec2(0, 0), ImVec2(kWidth, kHeight), pixel));
+    // A blue pillar stands on that point: some pixel within a few pixels of it, and above it, is clearly blue (the ground and sky are grey and tan).
+    const std::vector<u8>& rgba = view.Pixels();
+    bool blue = false;
+    for (int y = static_cast<int>(pixel.y) - 24; y <= static_cast<int>(pixel.y) + 3 && !blue; ++y) { // about the pillar's own height above its base
+        for (int x = static_cast<int>(pixel.x) - 4; x <= static_cast<int>(pixel.x) + 4 && !blue; ++x) {
+            if (x < 0 || y < 0 || x >= static_cast<int>(kWidth) || y >= static_cast<int>(kHeight)) continue;
+            const u8* p = &rgba[(static_cast<usize>(y) * kWidth + static_cast<usize>(x)) * 4];
+            blue = p[2] > p[0] + 40 && p[2] > p[1] + 15;
+        }
+    }
+    AETHER_CHECK(blue);
+    // And a point well off to the side of it is not: the check can fail.
+    bool blue_elsewhere = false;
+    for (int y = 0; y < static_cast<int>(kHeight); ++y) {
+        for (int x = 0; x < 40; ++x) {
+            const u8* p = &rgba[(static_cast<usize>(y) * kWidth + static_cast<usize>(x)) * 4];
+            blue_elsewhere |= p[2] > p[0] + 40 && p[2] > p[1] + 15;
+        }
+    }
+    AETHER_CHECK(!blue_elsewhere);
+}
+
 AETHER_TEST(LiveViewportPanel_StartsFromTheOpenSceneAndShowsFrames) {
     std::unique_ptr<gfx::rhi::IDevice> device = TryDevice();
     if (!device) {
@@ -258,6 +312,7 @@ AETHER_TEST(LiveViewportPanel_StartsFromTheOpenSceneAndShowsFrames) {
     AETHER_CHECK(panel.Texture().Valid() && panel.Texture().Width() == 160 && panel.Texture().Height() == 90);
     AETHER_CHECK(!panel.Advance(0.001f));                                           // not due again yet: the rate is capped
     AETHER_CHECK(panel.Advance(0.1f) && panel.FramesPerSecond() > 0.0f);
+    scene.Document().SetSelection({scene.Document().Entities()[0]});                // with something selected, the outline and the gizmo are drawn too
     ImGui::Begin("live");
     panel.Draw(0.05f);
     ImGui::End();

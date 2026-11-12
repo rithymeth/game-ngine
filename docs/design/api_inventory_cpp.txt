@@ -7331,8 +7331,10 @@
 [editor/src/world/scene_panel.h] internal-tooling
 [editor/src/world/scene_preview_panel.h] internal-tooling
 [editor/src/world/scene_view.h] internal-tooling
+[editor/src/world/scene_view_panel.h] internal-tooling
 [editor/src/world/spline_document.h] internal-tooling
 [editor/src/world/terrain_document.h] internal-tooling
+[editor/src/world/viewport_tools.h] internal-tooling
 [editor/src/world/world_panels.h] internal-tooling
 [mcp/animation_tools.h] internal-tooling
 [mcp/asset_tools.h] internal-tooling

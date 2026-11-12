@@ -101,9 +101,10 @@ void LiveViewportPanel::Draw(f32 dt) {
     const usize uncooked = loaded ? UncookedModels() : 0;
     if (!note_.empty()) ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.45f, 1.0f), "%s", note_.c_str());
     else if (uncooked > 0) ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.4f, 1.0f), "%zu model(s) in the scene are not cooked yet: press Reload to see them", uncooked);
-    else if (loaded) ImGui::TextDisabled("%.0f fps  |  %zu entities  |  edits show as you make them  |  right-drag: look  middle-drag: pan  wheel: zoom", fps_, viewport_.EntityCount());
+    else if (loaded) ImGui::TextDisabled("%.0f fps  |  %zu entities  |  click: select  drag a handle: edit  W/E/R  |  right-drag: look  middle-drag: pan  wheel: zoom", fps_, viewport_.EntityCount());
     else ImGui::TextDisabled("Runs the open scene with the real renderer, edits and all. Open the scene you want first.");
     if (!loaded) return;
+    tools_.DrawToolbar();
     Advance(dt);
     if (!texture_.Valid()) return;
     const ImVec2 avail = ImGui::GetContentRegionAvail();
@@ -111,9 +112,19 @@ void LiveViewportPanel::Draw(f32 dt) {
     if (!(scale > 0.0f)) return;
     const ImVec2 size(static_cast<f32>(texture_.Width()) * scale, static_cast<f32>(texture_.Height()) * scale);
     const ImVec2 origin = ImGui::GetCursorScreenPos();
-    ImGui::GetWindowDrawList()->AddImage(texture_.Ref(), origin, ImVec2(origin.x + size.x, origin.y + size.y));
+    const ImVec2 end(origin.x + size.x, origin.y + size.y);
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    draw->AddImage(texture_.Ref(), origin, end);
     ImGui::InvisibleButton("##live_viewport", size, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
-    HandleCameraInput(camera_, ImGui::IsItemHovered(), ImGui::IsItemActive(), size);
+    const bool hovered = ImGui::IsItemHovered();
+    const bool active = ImGui::IsItemActive();
+    HandleCameraInput(camera_, hovered, active, size);
+    tools_.HandleInput(scene_.Document(), camera_, origin, size, hovered, active);
+    // The overlay uses the same camera and aspect as the picture, so it lands on what it marks.
+    draw->PushClipRect(origin, end, true);
+    tools_.DrawSelectionOutlines(draw, scene_.Document(), camera_, origin, size, hovered);
+    tools_.DrawGizmo(draw, scene_.Document(), camera_, origin, size, hovered);
+    draw->PopClipRect();
 }
 
 } // namespace aether::editor
