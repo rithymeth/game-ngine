@@ -50,6 +50,13 @@ a path that is not in the content folder, says why and changes nothing. A placed
 The Move gizmo has three small squares between its arrows: grab one to slide the object in two directions at once (along the floor, for example) in one drag. They follow the World/Local
 choice, snap each direction on its own, and are one undo step. A press right on an arrow still takes the arrow.
 
+## Click on a model's shape, not its box
+
+Picking found the nearest model whose bounding box the click went through, so clicking the empty space beside a thin or L-shaped model, or between the parts of one, still selected it. The click is now tested against the model's
+triangles (the Scene View and the Live Viewport both): the gap between two pillars that share a box, or the empty corner of an L, is not the model, and a model behind that gap is what you get. The nearer of two is judged where the
+click meets the shape, not where it enters the box. Limits: it uses the model's unposed (bind) geometry, so an animated pose or an alpha-cut leaf is picked as its solid mesh, and a model of more than 300,000 triangles is still
+picked by its box. An object is also still selected by clicking near its origin (the small dot), as before, and its outline is its box.
+
 ## Move and rotate along an object's own axes
 
 The Move arrows and Rotate rings can follow the object's own axes instead of the world's: the World/Local button in the viewport toolbar, or Q. A rotated object can now be
@@ -60,14 +67,13 @@ pushed along its own length with one arrow. With snapping on, Local snaps the di
 Picking was by an entity's origin (a click had to land within 14 pixels of it, so a big model could not be picked by clicking on it). The Scene View and the Live
 Viewport now read each model's bounding box from its glTF file (`ModelBoundsCache`, kept until the scene is opened or the viewport is (re)started) and pick by a ray
 through the mouse: the nearest box it passes through is selected, and an entity with no model (a camera, a light, an empty) is still picked by its origin, over a model behind it.
-The selection outline is the model's real box instead of a one-metre cube. It is still the box, not the shape: clicking beside a thin or concave model but inside its box selects it;
-pixel-exact picking would need the renderer to write an object-id buffer.
+The selection outline is the model's real box instead of a one-metre cube. It was the box, not the shape; see the section below for the shape.
 
 ## Select and move things in the rendered view
 
 The Live Viewport takes the Scene View's editing tools: click an object in the rendered picture to select it (ctrl adds or removes), drag a gizmo handle to
 move, rotate or scale it (W, E, R, with snapping), and the selected object is outlined, all drawn over the real renderer's picture and following your drag. The tools
-are one shared piece (`ViewportTools`) used by both views, so they behave the same. Objects are picked and outlined by their models' real bounding boxes (see the next section), not by the pixels of their shape.
+are one shared piece (`ViewportTools`) used by both views, so they behave the same. Objects are picked by their models' real shape and outlined by its bounding box (see the next sections).
 
 ## The Live Viewport shows your edits as you make them
 

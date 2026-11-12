@@ -1602,3 +1602,120 @@ AETHER_TEST(InspectorDrop_TheExtensionRuleIsCaseInsensitiveAndExact) {
     AETHER_CHECK(!HasAssetExtension("A/b.pngx", ".png;.jpg") && !HasAssetExtension("A/b.png.meta", ".png") && !HasAssetExtension("A/png", ".png"));
     AETHER_CHECK(!HasAssetExtension("A/b.png", nullptr) && !HasAssetExtension("A/b.png", "") && !HasAssetExtension("", ".png"));
 }
+
+namespace {
+
+// A .glb of several axis-aligned boxes in one mesh, each from `low` to `high`: a model whose bounding box has empty space in it.
+void WriteBoxesModel(const stdfs::path& content, const std::string& name, const std::vector<std::pair<Vec3, Vec3>>& boxes) {
+    assets::procedural::MeshBuilder builder;
+    for (const auto& box : boxes) builder.Box(box.first, box.second);
+    assets::procedural::ProceduralMesh mesh;
+    mesh.materials.push_back(assets::MaterialData{});
+    mesh.mesh.primitives.push_back(builder.Finish(assets::procedural::Shading::Flat, assets::procedural::UvMode::BoxProjected, 0));
+    const std::vector<u8> glb = assets::procedural::EncodeGlb(mesh);
+    stdfs::create_directories((content / name).parent_path());
+    std::ofstream(content / name, std::ios::binary).write(reinterpret_cast<const char*>(glb.data()), static_cast<std::streamsize>(glb.size()));
+}
+
+} // namespace
+
+AETHER_TEST(ModelBounds_TheTrianglesAreKeptWithTheBoxAndOnlyForAModelThatHasThem) {
+    const stdfs::path content = Scratch("aether_model_triangles");
+    WriteBoxesModel(content, "Models/pair.glb", {{Vec3(4, 0, -1), Vec3(5, 2, 1)}, {Vec3(10, 0, -1), Vec3(11, 2, 1)}});
+    ModelBoundsCache cache(content);
+    const ModelTriangles* shape = cache.Triangles("Models/pair.glb");
+    AETHER_CHECK(shape != nullptr);
+    if (shape == nullptr) return;
+    AETHER_CHECK(shape->TriangleCount() == 24 && shape->indices.size() == 72);                    // two boxes: six faces of two triangles each
+    LocalBounds box;
+    AETHER_CHECK(cache.Get("Models/pair.glb", box) && NearVec(box.min, Vec3(4, 0, -1), 1e-3f) && NearVec(box.max, Vec3(11, 2, 1), 1e-3f)); // the box spans the gap
+    for (const u32 index : shape->indices) AETHER_CHECK(index < shape->positions.size());
+    AETHER_CHECK(cache.Triangles("Models/missing.glb") == nullptr && cache.Triangles("") == nullptr);
+    ModelBoundsCache nowhere;
+    AETHER_CHECK(nowhere.Triangles("Models/pair.glb") == nullptr);                                  // no content folder: nothing to read
+    cache.Clear();
+    AETHER_CHECK(cache.CachedCount() == 0 && cache.Triangles("Models/pair.glb") != nullptr);       // read again after a Clear
+}
+
+AETHER_TEST(PickEntity_AClickInTheGapOfAModelsBoxMissesItAndOneOnAPartHits) {
+    const stdfs::path content = Scratch("aether_pick_mesh");
+    WriteBoxesModel(content, "Models/pair.glb", {{Vec3(4, 0, -1), Vec3(5, 2, 1)}, {Vec3(10, 0, -1), Vec3(11, 2, 1)}});
+    WriteBoxModel(content, "Models/crate.glb", Vec3(-1, -1, -1), Vec3(1, 1, 1));
+    ModelBoundsCache cache(content);
+    SceneDocument document;
+    const Entity pair = document.CreateEntity("Pair", SceneEntityKind::Model, "Models/pair.glb");
+    SceneViewCamera camera;
+    camera.target = Vec3(7.5f, 1.0f, 0.0f); // the middle of the gap
+    camera.distance = 16.0f;
+    camera.pitch = 0.4f;
+    camera.yaw = 0.0f;
+    const ImVec2 origin(0, 0), size(800, 600);
+    auto pixel_of = [&](const Vec3& local) {
+        const Mat4 world = ComputeWorldTransform(document.GetWorld(), document.Guids(), pair);
+        const Vec4 w = world * Vec4(local.x, local.y, local.z, 1.0f);
+        ImVec2 at(-1, -1);
+        ProjectToViewport(camera.ViewProjection(size.x / size.y), Vec3(w.x, w.y, w.z), origin, size, at);
+        return at;
+    };
+    // On the first part and on the second: picked. In the gap, which the box spans: not. Nowhere near anything: not.
+    AETHER_CHECK(PickEntity(document, camera, origin, size, pixel_of(Vec3(4.5f, 1.0f, 0.0f)), 14.0f, &cache) == pair);
+    AETHER_CHECK(PickEntity(document, camera, origin, size, pixel_of(Vec3(10.5f, 1.0f, 0.0f)), 14.0f, &cache) == pair);
+    AETHER_CHECK(PickEntity(document, camera, origin, size, pixel_of(Vec3(7.5f, 1.0f, 0.0f)), 14.0f, &cache) == kNullEntity);
+    AETHER_CHECK(PickEntity(document, camera, origin, size, ImVec2(40, 40), 14.0f, &cache) == kNullEntity);
+
+    // The same through the entity's transform: turned, scaled and moved, the parts are where the transform puts them and the gap still misses.
+    document.SetRotation(pair, Quaternion::FromAxisAngle(Vec3(0, 1, 0), 3.14159265f * 0.5f), true);
+    document.SetScale(pair, Vec3(2, 2, 2), true);
+    document.SetPosition(pair, Vec3(3, 0, 0), true);
+    const Mat4 moved = ComputeWorldTransform(document.GetWorld(), document.Guids(), pair);
+    const Vec4 gap = moved * Vec4(7.5f, 1.0f, 0.0f, 1.0f);
+    camera.target = Vec3(gap.x, gap.y, gap.z);
+    AETHER_CHECK(PickEntity(document, camera, origin, size, pixel_of(Vec3(4.5f, 1.0f, 0.0f)), 14.0f, &cache) == pair);
+    AETHER_CHECK(PickEntity(document, camera, origin, size, pixel_of(Vec3(10.5f, 1.0f, 0.0f)), 14.0f, &cache) == pair);
+    AETHER_CHECK(PickEntity(document, camera, origin, size, pixel_of(Vec3(7.5f, 1.0f, 0.0f)), 14.0f, &cache) == kNullEntity);
+
+    // A model behind the gap is what a click there selects: the pair no longer hides it by having a box in the way.
+    Vec3 ray_origin, ray_direction;
+    AETHER_CHECK(MouseRay(camera.ViewProjection(size.x / size.y), origin, size, pixel_of(Vec3(7.5f, 1.0f, 0.0f)), ray_origin, ray_direction));
+    const Entity behind = document.CreateEntity("Behind", SceneEntityKind::Model, "Models/crate.glb");
+    document.SetPosition(behind, ray_origin + ray_direction * ((camera.target - ray_origin).Length() + 6.0f), true);
+    AETHER_CHECK(PickEntity(document, camera, origin, size, pixel_of(Vec3(7.5f, 1.0f, 0.0f)), 14.0f, &cache) == behind);
+    // And a model in front of a part hides it, as before: the nearer of the two along the ray wins.
+    const Vec4 part_world = moved * Vec4(4.5f, 1.0f, 0.0f, 1.0f);
+    const ImVec2 on_part = pixel_of(Vec3(4.5f, 1.0f, 0.0f));
+    AETHER_CHECK(MouseRay(camera.ViewProjection(size.x / size.y), origin, size, on_part, ray_origin, ray_direction));
+    const f32 to_part = (Vec3(part_world.x, part_world.y, part_world.z) - ray_origin).Length();
+    document.SetPosition(behind, ray_origin + ray_direction * (to_part - 5.0f), true);              // in front of the part, on its ray
+    AETHER_CHECK(PickEntity(document, camera, origin, size, on_part, 14.0f, &cache) == behind);
+    document.SetPosition(behind, ray_origin + ray_direction * (to_part + 5.0f), true);              // and behind it: the part is picked
+    AETHER_CHECK(PickEntity(document, camera, origin, size, on_part, 14.0f, &cache) == pair);
+}
+
+AETHER_TEST(PickEntity_TheNearerOfTwoIsJudgedByWhereTheRayMeetsTheShapeNotTheBox) {
+    const stdfs::path content = Scratch("aether_pick_mesh_depth");
+    // A model whose real surface is a wall far behind a small block, so its box starts well in front of anything a ray through the wall can hit.
+    WriteBoxesModel(content, "Models/deep.glb", {{Vec3(3, 0, 0.5f), Vec3(4, 1, 1)}, {Vec3(-5, 0, -20), Vec3(5, 2, -19)}});
+    WriteBoxModel(content, "Models/crate.glb", Vec3(-1, -1, -1), Vec3(1, 1, 1));
+    ModelBoundsCache cache(content);
+    SceneDocument document;
+    const Entity deep = document.CreateEntity("Deep", SceneEntityKind::Model, "Models/deep.glb");
+    SceneViewCamera camera;
+    camera.distance = 12.0f;
+    camera.pitch = 0.0f; // level, so the ray runs along the model's depth
+    camera.yaw = 0.0f;
+    const ImVec2 origin(0, 0), size(800, 600);
+    Vec3 ray_origin, ray_direction;
+    camera.target = Vec3(0, 1, 0);
+    AETHER_CHECK(MouseRay(camera.ViewProjection(size.x / size.y), origin, size, ImVec2(400, 300), ray_origin, ray_direction));
+    if (ray_direction.z > 0.0f) document.SetRotation(deep, Quaternion::FromAxisAngle(Vec3(0, 1, 0), 3.14159265f), true); // the wall is the far side, whichever way the camera looks
+    const Mat4 world = ComputeWorldTransform(document.GetWorld(), document.Guids(), deep);
+    const Vec4 wall = world * Vec4(0.0f, 1.0f, -19.5f, 1.0f);
+    camera.target = Vec3(wall.x, wall.y, wall.z); // the wall's middle: the ray through the middle of the view meets the wall and nothing of the block
+    const ImVec2 middle(400, 300);
+    AETHER_CHECK(MouseRay(camera.ViewProjection(size.x / size.y), origin, size, middle, ray_origin, ray_direction));
+    AETHER_CHECK(PickEntity(document, camera, origin, size, middle, 14.0f, &cache) == deep);
+    // A crate halfway along the ray: well past where the model's box begins, well short of its wall. The wall is what the ray meets, so the crate is nearer and wins.
+    const Entity crate = document.CreateEntity("Crate", SceneEntityKind::Model, "Models/crate.glb");
+    document.SetPosition(crate, ray_origin + ray_direction * ((camera.target - ray_origin).Length() - 10.0f), true);
+    AETHER_CHECK(PickEntity(document, camera, origin, size, middle, 14.0f, &cache) == crate);
+}
