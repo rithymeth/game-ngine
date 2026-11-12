@@ -40,6 +40,9 @@ struct Meta {
     f64 range_max = 0.0;
     bool is_color = false;
     const char* units = nullptr; // "m", "deg", "s"
+    // A path under the content folder: the extensions it takes, ";"-separated and lower case (".png;.jpg"). The editor's inspector then accepts an asset of those kinds
+    // dropped from the Content Browser on the field. Null: not an asset path.
+    const char* asset_extensions = nullptr;
 
     bool HasRange() const { return range_min != range_max; }
 };

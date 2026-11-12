@@ -33,7 +33,7 @@ In priority order; each is a project of its own.
    Move and rotate can follow the object's own axes (World/Local, Q). Move also has plane squares that slide in two axes at once. Still to do: plane handles for Scale.
 3. **A better content browser.** One exists (Project > Content Browser: folders, search, git status badges, rename and move, references,
    asset validation, commit). Dragging a model or a prefab (.aprefab) from it into the Scene View or the Live Viewport places it on the ground under the mouse, and onto a row of the hierarchy places it under that entity (a prefab as a linked instance, root and children, one undo step). Still to do: thumbnails
-   (the preview is the way to render one today, a few seconds each, so thumbnails need a cache), dropping onto inspector fields (a texture onto a material slot), and a prefab's own rotation and scale (a placed instance takes the drop position only).
+   (the preview is the way to render one today, a few seconds each, so thumbnails need a cache), dropping onto an inspector field that is not a path (the inspector takes a picture on a texture path, a sky image, and a material on a material path, but not yet a model on a model reference), and a prefab's own rotation and scale (a placed instance takes the drop position only).
 4. **Previews.** Material, mesh and animation previews that use the real renderer (needs item 1), so tuning a material shows the result.
 5. **Multi-scene and prefab workflow.** Several scenes open at once, prefab instance overrides shown in the inspector, a prefab editing mode.
 6. **Play in editor with the real runtime** shown in the viewport, with pause, step and eject-the-camera (needs items 1 and 2).

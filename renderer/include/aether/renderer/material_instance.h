@@ -137,11 +137,11 @@ struct MaterialParameters {
 AETHER_REFLECT(aether::MaterialParameterValue, 1,
     AETHER_FIELD(name, Field_EditAnywhere),
     AETHER_FIELD(value, Field_EditAnywhere),
-    AETHER_FIELD(texture, Field_EditAnywhere, {.tooltip = "Texture parameters: the texture's asset GUID"}),
+    AETHER_FIELD(texture, Field_EditAnywhere, {.tooltip = "Texture parameters: the image to draw, by its content path (drop one from the Content Browser)", .asset_extensions = ".png;.jpg;.jpeg;.bmp;.tga;.hdr"}),
     AETHER_FIELD(is_texture, Field_EditAnywhere)
 )
 AETHER_REFLECT(aether::MaterialParameters, 1,
-    AETHER_FIELD(material, Field_EditAnywhere, {.tooltip = "The .amat or .amati to draw with (empty: the model's own)"}),
+    AETHER_FIELD(material, Field_EditAnywhere, {.tooltip = "The .amat or .amati to draw with (empty: the model's own). Drop one from the Content Browser", .asset_extensions = ".amat;.amati"}),
     AETHER_FIELD(values, Field_EditAnywhere),
     AETHER_FIELD(revision, Field_None),
     AETHER_METHOD(SetScalarParameter, Fn_BlueprintCallable, {"name", "value"}),

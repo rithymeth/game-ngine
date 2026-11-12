@@ -4,6 +4,7 @@
 #include "content/content_drag.h"
 #include "ui/builtin_components.h"
 #include "ui/editor_theme.h"
+#include "ui/reflected_inspector.h"
 #include "ui/shell_layout.h"
 #include "world/content_drop.h"
 #include "world/scene_view_panel.h"
@@ -12,6 +13,8 @@
 #include "aether/assets/procedural_mesh.h"
 #include "workspace/editor_workspace.h"
 #include "aether/templates/templates.h"
+#include "aether/renderer/components.h"
+#include "aether/renderer/material_instance.h"
 #include "aether/scene/gameplay.h"
 #include "aether/scene/hierarchy.h"
 #include "aether/reflection/serialize.h"
@@ -1480,4 +1483,122 @@ AETHER_TEST(ScenePanel_ADragOfAnEntityOntoTheHeadingMakesItARootAgain) {
     rig.Step(ImVec2(80.0f, targets[0]), false);
     AETHER_CHECK(document.ParentOf(child).IsNull());
     AETHER_CHECK(document.Undo() && document.ParentOf(child) == parent);
+}
+
+namespace {
+
+// A real drag onto the reflected inspector: a row that drags `path`, and an inspector of `type`/`object` below it. Finds each place that takes a drop by carrying the
+// mouse down the value column, as HierarchyDropRig does for the hierarchy.
+struct InspectorDropRig {
+    HeadlessImGui imgui;
+    const reflect::TypeInfo& type;
+    void* object;
+    std::string path;
+    ImVec2 source_at{20, 20};
+    bool committed = false;             // an edit finished on some frame since the last Reset
+    std::string changed;                // the top-level field that changed then
+    InspectorDropRig(const reflect::TypeInfo& t, void* o) : type(t), object(o) { Step(ImVec2(0, 0), false); }
+    void Reset() { committed = false; changed.clear(); }
+    void Step(const ImVec2& mouse, bool down) {
+        ImGuiIO& io = ImGui::GetIO();
+        io.AddMousePosEvent(mouse.x, mouse.y);
+        io.AddMouseButtonEvent(0, down);
+        imgui.Frame([&] {
+            ImGui::SetCursorScreenPos(ImVec2(10, 10));
+            ImGui::Button("row", ImVec2(120, 24));
+            if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None)) {
+                ImGui::SetDragDropPayload(kContentPathPayload, path.c_str(), path.size() + 1);
+                ImGui::TextUnformatted(path.c_str());
+                ImGui::EndDragDropSource();
+            }
+            ImGui::SetCursorScreenPos(ImVec2(10, 50));
+            const InspectResult result = InspectObject(type, object, "drop_target");
+            if (result.committed) committed = true;
+            if (result.changed_field != nullptr) changed = result.changed_field->name;
+        });
+    }
+    std::vector<f32> Targets() {
+        Step(source_at, false);
+        Step(source_at, true);
+        Step(ImVec2(source_at.x + 30.0f, source_at.y), true);
+        std::vector<f32> found;
+        f32 last_top = -1.0f;
+        for (f32 y = 60.0f; y < 400.0f; y += 3.0f) {
+            Step(ImVec2(900.0f, y), true);
+            const ImGuiContext& g = *ImGui::GetCurrentContext();
+            if (g.DragDropTargetId == 0 || g.DragDropTargetRect.Min.y == last_top) continue;
+            last_top = g.DragDropTargetRect.Min.y;
+            found.push_back((g.DragDropTargetRect.Min.y + g.DragDropTargetRect.Max.y) * 0.5f);
+        }
+        return found;
+    }
+    // Drags `dropped` onto the n-th target, and lets go.
+    void DropOn(usize n, const std::string& dropped) {
+        path = dropped;
+        const std::vector<f32> targets = Targets();
+        AETHER_CHECK(n < targets.size());
+        if (n >= targets.size()) return;
+        Reset();
+        Step(ImVec2(900.0f, targets[n]), true);
+        Step(ImVec2(900.0f, targets[n]), false);
+    }
+};
+
+} // namespace
+
+AETHER_TEST(InspectorDrop_AnAssetDroppedOnAPathFieldOfTheRightKindSetsItInOneEdit) {
+    SkyLight sky;
+    InspectorDropRig rig(reflect::Reflect<SkyLight>(), &sky);
+    // The sky's image field takes a picture, and a drop sets it as one finished edit of that field.
+    rig.DropOn(0, "Textures/sky.hdr");
+    AETHER_CHECK(sky.environment == "Textures/sky.hdr" && rig.committed && rig.changed == "environment");
+    // The extension is matched whatever its case; and a model is not a sky image, so the field stays as it was.
+    rig.DropOn(0, "Textures/Sunset.JPG");
+    AETHER_CHECK(sky.environment == "Textures/Sunset.JPG");
+    rig.DropOn(0, "Models/crate.glb");
+    AETHER_CHECK(sky.environment == "Textures/Sunset.JPG" && !rig.committed);
+    rig.DropOn(0, "Scenes/Main.ascene");
+    AETHER_CHECK(sky.environment == "Textures/Sunset.JPG" && !rig.committed);
+}
+
+AETHER_TEST(InspectorDrop_AMaterialFieldTakesAMaterialAndADecalsTextureFieldAPicture) {
+    // A material goes on the material field, and not a picture.
+    MaterialParameters parameters;
+    InspectorDropRig materials(reflect::Reflect<MaterialParameters>(), &parameters);
+    materials.DropOn(0, "Materials/Shiny.amat");
+    AETHER_CHECK(parameters.material == "Materials/Shiny.amat" && materials.changed == "material" && materials.committed);
+    materials.DropOn(0, "Textures/brick.png");
+    AETHER_CHECK(parameters.material == "Materials/Shiny.amat" && !materials.committed);
+    // A decal's texture takes a picture, and not a material.
+    Decal decal;
+    InspectorDropRig decals(reflect::Reflect<Decal>(), &decal);
+    decals.DropOn(0, "Textures/brick.PNG");
+    AETHER_CHECK(decal.texture == "Textures/brick.PNG" && decals.changed == "texture" && decals.committed);
+    decals.DropOn(0, "Materials/Shiny.amat");
+    AETHER_CHECK(decal.texture == "Textures/brick.PNG" && !decals.committed);
+}
+
+AETHER_TEST(InspectorDrop_ThePathFieldsSayWhatTheyTakeAndOtherStringsTakeNothing) {
+    // The nested texture of a material parameter (a list of structs, folded in the inspector) is drawn by the same code as the top-level fields above;
+    // what it needs is its declaration.
+    const reflect::TypeInfo& value = reflect::Reflect<MaterialParameterValue>();
+    const reflect::FieldInfo* texture = nullptr;
+    const reflect::FieldInfo* name = nullptr;
+    for (const reflect::FieldInfo& field : value.fields) {
+        if (std::string(field.name) == "texture") texture = &field;
+        if (std::string(field.name) == "name") name = &field;
+    }
+    AETHER_CHECK(texture != nullptr && name != nullptr);
+    if (texture == nullptr || name == nullptr) return;
+    AETHER_CHECK(HasAssetExtension("Textures/a.png", texture->meta.asset_extensions) && !HasAssetExtension("Materials/a.amat", texture->meta.asset_extensions));
+    AETHER_CHECK(name->meta.asset_extensions == nullptr);                       // a name is text, not a path: nothing can be dropped on it
+    // And an entity's name takes nothing either, however plain it looks.
+    const reflect::TypeInfo& entity_name = reflect::Reflect<EntityName>();
+    for (const reflect::FieldInfo& field : entity_name.fields) AETHER_CHECK(field.meta.asset_extensions == nullptr);
+}
+
+AETHER_TEST(InspectorDrop_TheExtensionRuleIsCaseInsensitiveAndExact) {
+    AETHER_CHECK(HasAssetExtension("A/b.png", ".png;.jpg") && HasAssetExtension("A/b.JPG", ".png;.jpg") && HasAssetExtension("b.Png", ".png"));
+    AETHER_CHECK(!HasAssetExtension("A/b.pngx", ".png;.jpg") && !HasAssetExtension("A/b.png.meta", ".png") && !HasAssetExtension("A/png", ".png"));
+    AETHER_CHECK(!HasAssetExtension("A/b.png", nullptr) && !HasAssetExtension("A/b.png", "") && !HasAssetExtension("", ".png"));
 }
