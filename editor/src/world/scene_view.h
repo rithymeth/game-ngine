@@ -67,6 +67,8 @@ Entity PlaceModelAsset(SceneDocument& document, const std::string& content_path,
 
 enum class GizmoAxis { None, X, Y, Z };
 enum class GizmoMode { Move, Rotate, Scale };
+// Whose axes the Move arrows and Rotate rings follow: the world's, or the entity's own (Scale always uses the entity's own).
+enum class GizmoSpace { World, Local };
 
 // The transform gizmo on the first selected entity, in three modes. Move: arrows along world X, Y and Z. Rotate: a ring around
 // each world axis. Scale: handles along the entity's own (local) axes. A drag is one undoable edit however many frames it takes
@@ -85,13 +87,14 @@ public:
     // The entities a drag moves: the selected, living ones with a Transform, leaving out any whose ancestor is also selected.
     static std::vector<Entity> Subjects(const SceneDocument& document);
     // The world-space direction of a handle: the world axis (Move, Rotate) or the entity's local axis (Scale).
-    static Vec3 HandleDirection(const SceneDocument& document, Entity subject, GizmoAxis axis, GizmoMode mode);
+    // With GizmoSpace::Local, Move and Rotate use the entity's local axis too.
+    static Vec3 HandleDirection(const SceneDocument& document, Entity subject, GizmoAxis axis, GizmoMode mode, GizmoSpace space = GizmoSpace::World);
     // Points of a rotate ring (a circle around `axis_direction`, radius `radius`, centred on `centre`), for drawing and hit-testing.
     static void RingPoints(const Vec3& centre, const Vec3& axis_direction, f32 radius, int count, Vec3* out);
 
-    GizmoAxis HitTest(const SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, GizmoMode mode) const;
+    GizmoAxis HitTest(const SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, GizmoMode mode, GizmoSpace space = GizmoSpace::World) const;
     // Starts a drag if `mouse` is on a handle; true if it did.
-    bool Begin(const SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, GizmoMode mode);
+    bool Begin(const SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, GizmoMode mode, GizmoSpace space = GizmoSpace::World);
     // Edits the subject to follow the mouse, as an uncommitted edit; false if there is no drag (or the mouse ray is parallel to what it needs).
     bool Update(SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, f32 snap_step);
     // Ends the drag, committing it as one edit.
@@ -99,6 +102,7 @@ public:
     bool Dragging() const { return axis_ != GizmoAxis::None; }
     GizmoAxis Axis() const { return axis_; }
     GizmoMode Mode() const { return mode_; }
+    GizmoSpace Space() const { return space_; }
 
 private:
     // Writes the live values for `mouse` into every subject's Transform (no commands).
@@ -116,6 +120,7 @@ private:
 
     GizmoAxis axis_ = GizmoAxis::None;
     GizmoMode mode_ = GizmoMode::Move;
+    GizmoSpace space_ = GizmoSpace::World;
     std::vector<Held> subjects_;            // the first is the one the handles are on
     Vec3 start_world_{0.0f, 0.0f, 0.0f};   // the first subject's world position when the drag began
     Vec3 direction_{1.0f, 0.0f, 0.0f};     // the handle's world direction (the axis a ring turns about)

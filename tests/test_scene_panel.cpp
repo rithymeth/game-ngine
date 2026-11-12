@@ -562,6 +562,50 @@ AETHER_TEST(TransformGizmo_ScaleFollowsTheEntitysOwnAxes) {
     AETHER_CHECK(t && t->scale.x > 0.0f && t->scale.x <= 0.02f);                                    // clamped just above zero
 }
 
+AETHER_TEST(TransformGizmo_LocalSpaceMovesAndRotatesAlongTheEntitysOwnAxes) {
+    GizmoRig rig;
+    SceneDocument document;
+    const Entity thing = document.CreateEntity("Thing");
+    document.SetRotation(thing, Quaternion::FromAxisAngle(Vec3(0, 1, 0), 3.14159265f * 0.5f), true); // local X now points along world -Z
+    document.SetSelection({thing});
+    document.Commands().Clear();
+    const Vec3 local_x = Vec3(0, 0, -1);
+    AETHER_CHECK(NearVec(TransformGizmo::HandleDirection(document, thing, GizmoAxis::X, GizmoMode::Move, GizmoSpace::Local), local_x));
+    AETHER_CHECK(NearVec(TransformGizmo::HandleDirection(document, thing, GizmoAxis::X, GizmoMode::Rotate, GizmoSpace::Local), local_x));
+    AETHER_CHECK(NearVec(TransformGizmo::HandleDirection(document, thing, GizmoAxis::X, GizmoMode::Move, GizmoSpace::World), Vec3(1, 0, 0))); // world is still the default
+
+    TransformGizmo gizmo;
+    const f32 half = rig.Length() * 0.5f;
+    const ImVec2 grab = rig.Pixel(local_x * half);
+    // The arrow sits on the entity's own axis in Local space, and not in World space.
+    AETHER_CHECK(gizmo.HitTest(document, rig.camera, rig.origin, rig.size, grab, GizmoMode::Move, GizmoSpace::Local) == GizmoAxis::X);
+    AETHER_CHECK(gizmo.HitTest(document, rig.camera, rig.origin, rig.size, grab, GizmoMode::Move, GizmoSpace::World) != GizmoAxis::X);
+    AETHER_CHECK(gizmo.Begin(document, rig.camera, rig.origin, rig.size, grab, GizmoMode::Move, GizmoSpace::Local));
+    const ImVec2 mouse = rig.Pixel(local_x * (half * 2.0f));
+    AETHER_CHECK(gizmo.Update(document, rig.camera, rig.origin, rig.size, mouse, 0.0f));
+    gizmo.End(document, rig.camera, rig.origin, rig.size, mouse, 0.0f);
+    AETHER_CHECK(NearVec(WorldPositionOf(document, thing), local_x * half, 0.05f)); // moved by `half` along its own X, which is world -Z
+    AETHER_CHECK(document.Undo() && !document.CanUndo());                           // still one drag, one undo
+
+    // Snapping measures the distance moved along the entity's own axis, since the world grid does not line up with it.
+    AETHER_CHECK(gizmo.Begin(document, rig.camera, rig.origin, rig.size, grab, GizmoMode::Move, GizmoSpace::Local));
+    AETHER_CHECK(gizmo.Update(document, rig.camera, rig.origin, rig.size, rig.Pixel(local_x * (half + 0.9f)), 1.0f));
+    AETHER_CHECK(NearVec(WorldPositionOf(document, thing), local_x * 1.0f, 0.02f));
+    gizmo.End(document, rig.camera, rig.origin, rig.size, rig.Pixel(local_x * (half + 0.9f)), 1.0f);
+    AETHER_CHECK(document.Undo());
+
+    // Rotate about the entity's own X: a quarter turn about it, and the rotation about world X is untouched.
+    const f32 radius = rig.Length();
+    const Vec3 ring_start = Vec3(0, 1, 0) * radius, ring_end = Vec3(1, 0, 0) * radius; // a quarter of the way round the ring about local X (it lies in the world XY plane)
+    AETHER_CHECK(gizmo.HitTest(document, rig.camera, rig.origin, rig.size, rig.Pixel(ring_start), GizmoMode::Rotate, GizmoSpace::Local) == GizmoAxis::X);
+    AETHER_CHECK(gizmo.Begin(document, rig.camera, rig.origin, rig.size, rig.Pixel(ring_start), GizmoMode::Rotate, GizmoSpace::Local));
+    AETHER_CHECK(gizmo.Update(document, rig.camera, rig.origin, rig.size, rig.Pixel(ring_end), 0.0f));
+    gizmo.End(document, rig.camera, rig.origin, rig.size, rig.Pixel(ring_end), 0.0f);
+    const Vec3 up_after = WorldAxisOf(document, thing, 1);
+    AETHER_CHECK(std::fabs(up_after.y) < 0.1f && std::fabs(up_after.x) > 0.9f); // local Y lay along world Y and now lies along world X: it turned about Z
+    AETHER_CHECK(NearVec(WorldAxisOf(document, thing, 0), local_x, 0.1f));                       // the axis it turned about did not move
+}
+
 AETHER_TEST(TransformGizmo_RotateTurnsAboutAWorldAxisInOneUndoableStep) {
     GizmoRig rig;
     SceneDocument document;

@@ -285,8 +285,8 @@ Entity TransformGizmo::Subject(const SceneDocument& document) {
     return subjects.empty() ? kNullEntity : subjects[0];
 }
 
-Vec3 TransformGizmo::HandleDirection(const SceneDocument& document, Entity subject, GizmoAxis axis, GizmoMode mode) {
-    if (mode != GizmoMode::Scale || subject == kNullEntity) return AxisUnit(axis);
+Vec3 TransformGizmo::HandleDirection(const SceneDocument& document, Entity subject, GizmoAxis axis, GizmoMode mode, GizmoSpace space) {
+    if ((mode != GizmoMode::Scale && space != GizmoSpace::Local) || subject == kNullEntity) return AxisUnit(axis);
     const Mat4 m = ComputeWorldTransform(document.GetWorld(), document.Guids(), subject);
     const Vec4& column = axis == GizmoAxis::X ? m.cols[0] : (axis == GizmoAxis::Y ? m.cols[1] : m.cols[2]);
     const Vec3 v(column.x, column.y, column.z);
@@ -302,7 +302,7 @@ void TransformGizmo::RingPoints(const Vec3& centre, const Vec3& axis_direction, 
     }
 }
 
-GizmoAxis TransformGizmo::HitTest(const SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, GizmoMode mode) const {
+GizmoAxis TransformGizmo::HitTest(const SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, GizmoMode mode, GizmoSpace space) const {
     const Entity subject = Subject(document);
     if (subject == kNullEntity || size.x < 1.0f || size.y < 1.0f) return GizmoAxis::None;
     const Mat4 vp = camera.ViewProjection(size.x / size.y);
@@ -316,7 +316,7 @@ GizmoAxis TransformGizmo::HitTest(const SceneDocument& document, const SceneView
         if (mode == GizmoMode::Rotate) {
             constexpr int kSegments = 48;
             Vec3 ring[kSegments];
-            RingPoints(at, AxisUnit(axis), HandleLength(camera), kSegments, ring);
+            RingPoints(at, HandleDirection(document, subject, axis, mode, space), HandleLength(camera), kSegments, ring);
             ImVec2 previous;
             bool have_previous = ProjectToViewport(vp, ring[kSegments - 1], origin, size, previous);
             for (int i = 0; i < kSegments; ++i) {
@@ -328,7 +328,7 @@ GizmoAxis TransformGizmo::HitTest(const SceneDocument& document, const SceneView
             }
         } else {
             ImVec2 to;
-            if (!ProjectToViewport(vp, at + HandleDirection(document, subject, axis, mode) * HandleLength(camera), origin, size, to)) continue;
+            if (!ProjectToViewport(vp, at + HandleDirection(document, subject, axis, mode, space) * HandleLength(camera), origin, size, to)) continue;
             distance = DistanceToSegment(mouse, from, to);
         }
         if (distance < best_distance) { best_distance = distance; best = axis; }
@@ -351,23 +351,26 @@ bool TransformGizmo::Measure(const SceneViewCamera& camera, const ImVec2& origin
     return true;
 }
 
-bool TransformGizmo::Begin(const SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, GizmoMode mode) {
-    const GizmoAxis axis = HitTest(document, camera, origin, size, mouse, mode);
+bool TransformGizmo::Begin(const SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, GizmoMode mode, GizmoSpace space) {
+    const GizmoAxis axis = HitTest(document, camera, origin, size, mouse, mode, space);
     if (axis == GizmoAxis::None) return false;
     const std::vector<Entity> entities = Subjects(document);
     if (entities.empty()) return false;
     // Set up the state the measurement needs, and take it back if the first measurement fails.
     const GizmoAxis old_axis = axis_;
     const GizmoMode old_mode = mode_;
+    const GizmoSpace old_space = space_;
     const Vec3 old_start = start_world_, old_direction = direction_;
     axis_ = axis;
     mode_ = mode;
+    space_ = space;
     start_world_ = WorldOrigin(document, entities[0]);
-    direction_ = HandleDirection(document, entities[0], axis, mode);
+    direction_ = HandleDirection(document, entities[0], axis, mode, space);
     f32 value = 0.0f;
     if (!Measure(camera, origin, size, mouse, value) || (mode != GizmoMode::Rotate && std::fabs(value) < 1e-3f)) {
         axis_ = old_axis;
         mode_ = old_mode;
+        space_ = old_space;
         start_world_ = old_start;
         direction_ = old_direction;
         return false;
@@ -392,7 +395,10 @@ bool TransformGizmo::Apply(SceneDocument& document, const SceneViewCamera& camer
     f32 along = 0.0f, ratio = 1.0f, angle = 0.0f;
     if (mode_ == GizmoMode::Move) {
         along = value - grab_;
-        if (snap_step > 0.0f) along = SnapScalar(AxisComponent(start_world_, axis) + along, snap_step) - AxisComponent(start_world_, axis);
+        if (snap_step > 0.0f) {
+            // World arrows snap to the grid; along an entity's own axis the grid has no meaning, so the distance moved snaps instead.
+            along = space_ == GizmoSpace::Local ? SnapScalar(along, snap_step) : SnapScalar(AxisComponent(start_world_, axis) + along, snap_step) - AxisComponent(start_world_, axis);
+        }
     } else if (mode_ == GizmoMode::Scale) {
         ratio = std::max(value / grab_, 0.01f); // the handle's own distance from the origin, relative to where it was taken
         const f32 start = AxisComponent(first.before.scale, axis);

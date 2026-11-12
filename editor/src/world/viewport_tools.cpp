@@ -25,6 +25,10 @@ void ViewportTools::DrawToolbar() {
         ImGui::SetItemTooltip("%s (%c)", label, mode == GizmoMode::Move ? 'W' : (mode == GizmoMode::Rotate ? 'E' : 'R'));
         ImGui::SameLine();
     }
+    const bool local = space_ == GizmoSpace::Local;
+    if (ImGui::Button(local ? "Local" : "World")) space_ = local ? GizmoSpace::World : GizmoSpace::Local;
+    ImGui::SetItemTooltip("Move and Rotate handles follow the %s axes (Q)", local ? "object's own" : "world's");
+    ImGui::SameLine();
     ImGui::Checkbox("Snap", &snap_);
     ImGui::SetItemTooltip("Round a gizmo drag to the step");
     ImGui::SameLine();
@@ -42,12 +46,13 @@ void ViewportTools::HandleInput(SceneDocument& document, const SceneViewCamera& 
         if (ImGui::IsKeyPressed(ImGuiKey_W)) mode_ = GizmoMode::Move;
         if (ImGui::IsKeyPressed(ImGuiKey_E)) mode_ = GizmoMode::Rotate;
         if (ImGui::IsKeyPressed(ImGuiKey_R)) mode_ = GizmoMode::Scale;
+        if (ImGui::IsKeyPressed(ImGuiKey_Q)) space_ = space_ == GizmoSpace::World ? GizmoSpace::Local : GizmoSpace::World;
     }
     const f32 snap_step = SnapStep();
     if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
         press_ = io.MousePos;
         dragged_ = false;
-        if (!io.KeyShift && gizmo_.Begin(document, camera, origin, size, io.MousePos, mode_)) dragged_ = true; // a gizmo press is not a pick
+        if (!io.KeyShift && gizmo_.Begin(document, camera, origin, size, io.MousePos, mode_, space_)) dragged_ = true; // a gizmo press is not a pick
     }
     if (gizmo_.Dragging()) {
         if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) gizmo_.Update(document, camera, origin, size, io.MousePos, snap_step);
@@ -72,7 +77,8 @@ void ViewportTools::DrawGizmo(ImDrawList* draw, const SceneDocument& document, c
     const Mat4 vp = camera.ViewProjection(size.x / size.y);
     const ImGuiIO& io = ImGui::GetIO();
     const GizmoMode mode = gizmo_.Dragging() ? gizmo_.Mode() : mode_;
-    const GizmoAxis hot = gizmo_.Dragging() ? gizmo_.Axis() : (hovered ? gizmo_.HitTest(document, camera, origin, size, io.MousePos, mode) : GizmoAxis::None);
+    const GizmoSpace space = gizmo_.Dragging() ? gizmo_.Space() : space_;
+    const GizmoAxis hot = gizmo_.Dragging() ? gizmo_.Axis() : (hovered ? gizmo_.HitTest(document, camera, origin, size, io.MousePos, mode, space) : GizmoAxis::None);
     const Vec3 at = OriginOf(document, subject);
     const f32 length = TransformGizmo::HandleLength(camera);
     struct Handle { GizmoAxis axis; ImU32 normal, bright; };
@@ -87,7 +93,7 @@ void ViewportTools::DrawGizmo(ImDrawList* draw, const SceneDocument& document, c
         if (mode == GizmoMode::Rotate) {
             constexpr int kSegments = 48;
             Vec3 ring[kSegments];
-            const Vec3 axis_direction = TransformGizmo::HandleDirection(document, subject, h.axis, mode);
+            const Vec3 axis_direction = TransformGizmo::HandleDirection(document, subject, h.axis, mode, space);
             TransformGizmo::RingPoints(at, axis_direction, length, kSegments, ring);
             ImVec2 previous;
             bool have_previous = ProjectToViewport(vp, ring[kSegments - 1], origin, size, previous);
@@ -100,7 +106,7 @@ void ViewportTools::DrawGizmo(ImDrawList* draw, const SceneDocument& document, c
             }
         } else {
             ImVec2 to;
-            if (!ProjectToViewport(vp, at + TransformGizmo::HandleDirection(document, subject, h.axis, mode) * length, origin, size, to)) continue;
+            if (!ProjectToViewport(vp, at + TransformGizmo::HandleDirection(document, subject, h.axis, mode, space) * length, origin, size, to)) continue;
             draw->AddLine(from, to, color, thickness);
             const f32 r = h.axis == hot ? 7.0f : 5.5f;
             if (mode == GizmoMode::Scale) draw->AddRectFilled(ImVec2(to.x - r, to.y - r), ImVec2(to.x + r, to.y + r), color);
