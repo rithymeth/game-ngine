@@ -10,6 +10,8 @@ Desktop shortcuts, and offers to start the editor. CI compiles and runs it on Wi
 
     python tools/build_installer.py --version 0.29.0
 
+It works from a plain prompt (CMake then uses the installed Visual Studio) and from a Visual Studio developer prompt (Ninja, as CI does).
+
 The result goes to dist/Aether-<version>-Windows-x64.exe.
 """
 
@@ -43,12 +45,15 @@ def main():
     tree = work / "build"
     stage = work / "stage"
     try:
-        run(["cmake", "-S", str(ROOT), "-B", str(tree), "-G", "Ninja",
+        # Ninja needs a compiler on the PATH (a Visual Studio developer prompt, or CI's set-up step). From a plain prompt there is none, so let
+        # CMake choose the installed Visual Studio instead, which finds its own compiler.
+        generator = ["-G", "Ninja"] if shutil.which("cl") and shutil.which("ninja") else (["-A", "x64"] if sys.platform == "win32" else [])
+        run(["cmake", "-S", str(ROOT), "-B", str(tree), *generator,
              "-DCMAKE_BUILD_TYPE=Release", "-DAETHER_BUILD_EDITOR=ON", "-DAETHER_BUILD_VULKAN=ON",
              "-DAETHER_BUILD_DEVTOOLS=ON", "-DAETHER_BUILD_BENCH=OFF",
              "-DAETHER_BUILD_FUZZERS=OFF", "-DAETHER_BUILD_TESTS=OFF"],
             stdout=subprocess.DEVNULL)
-        run(["cmake", "--build", str(tree), "--parallel", "2"], stdout=subprocess.DEVNULL)
+        run(["cmake", "--build", str(tree), "--config", "Release", "--parallel", "2"], stdout=subprocess.DEVNULL)
         run(["cmake", "--install", str(tree), "--prefix", str(stage), "--config", "Release"],
             stdout=subprocess.DEVNULL)
 
