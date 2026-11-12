@@ -820,3 +820,31 @@ AETHER_TEST(EditorComponents_ATemplateScenesComponentsAreAllKnown) {
     AETHER_CHECK(panel.OpenScene("Scenes/Main.ascene", true));
     AETHER_CHECK(panel.Document().Entities().size() >= 10);
 }
+
+// The document's revision: it goes up with every change a viewer should redraw for, and only then.
+AETHER_TEST(SceneDocument_RevisionGoesUpWithEveryChange) {
+    SceneDocument document;
+    const u64 start = document.Revision();
+    document.SetSelection({});
+    AETHER_CHECK(document.Revision() == start);                      // selecting is not a change to the scene
+    const Entity thing = document.CreateEntity("Thing");
+    const u64 created = document.Revision();
+    AETHER_CHECK(created > start);
+    document.SetPosition(thing, Vec3(1, 2, 3), false);               // an edit still going (merged into the last command)
+    const u64 moved = document.Revision();
+    AETHER_CHECK(moved > created);
+    document.SetPosition(thing, Vec3(4, 2, 3), false);
+    AETHER_CHECK(document.Revision() > moved);                       // merged edits count too
+    const u64 before_undo = document.Revision();
+    AETHER_CHECK(document.Undo());
+    const u64 undone = document.Revision();
+    AETHER_CHECK(undone > before_undo);
+    AETHER_CHECK(document.Redo());
+    AETHER_CHECK(document.Revision() > undone);
+    const u64 before_touch = document.Revision();
+    document.Touch();
+    AETHER_CHECK(document.Revision() == before_touch + 1);
+    const u64 before_new = document.Revision();
+    document.NewScene();
+    AETHER_CHECK(document.Revision() > before_new);                  // a new scene is a change to whoever was looking at the old
+}

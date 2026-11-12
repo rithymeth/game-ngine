@@ -71,6 +71,7 @@ void SceneDocument::Reset() {
     guids_.Clear();
     selection_.clear(); // Phase 43.3: the selection belongs to the scene that was open
     commands_.Clear();
+    ++local_revision_; // a new or loaded scene is a change to whoever is looking at the old one
     file_.clear();
     recovered_unsaved_ = false;
     pending_position_before_.reset();

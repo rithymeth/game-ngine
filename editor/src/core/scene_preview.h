@@ -23,8 +23,9 @@ struct PreviewImage {
 
 // Cooks `project_file` so that `scene` (a path relative to its Content folder) can be run, into `<work_dir>/Cooked`, which it makes. The scene is
 // cooked whether or not the project starts with it. False, with `error`, if the cook fails. Shared by the still preview and the live viewport.
+// `extra_assets` are cooked as well (paths relative to Content), for a scene whose models are not all in the file on disk.
 bool CookForPreview(const std::filesystem::path& project_file, const std::string& scene, const std::filesystem::path& work_dir,
-                    std::filesystem::path* cooked_dir, std::string* error);
+                    std::filesystem::path* cooked_dir, std::string* error, const std::vector<std::string>& extra_assets = {});
 
 class ScenePreview {
 public:

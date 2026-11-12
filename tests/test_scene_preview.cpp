@@ -7,8 +7,11 @@
 #include "world/scene_preview_panel.h"
 
 #include "aether/core/log.h"
+#include "aether/scene/components.h"
 #include "aether/platform/filesystem.h"
+#include "aether/player/game.h"
 #include "aether/templates/templates.h"
+#include "ui/builtin_components.h"
 #include "test_framework.h"
 
 #include <algorithm>
@@ -51,6 +54,7 @@ private:
 };
 
 stdfs::path MakeProject(const std::string& name, const std::string& template_id = "third_person") {
+    RegisterEditorComponents(); // as the editor does at startup: a template scene names components of several modules
     const stdfs::path dir = stdfs::temp_directory_path() / "aether_scene_preview_tests" / name;
     stdfs::remove_all(dir);
     ProjectPaths paths;
@@ -246,8 +250,9 @@ AETHER_TEST(LiveViewportPanel_StartsFromTheOpenSceneAndShowsFrames) {
     LiveViewportPanel panel(*device, scene, [&] { return project; });
     panel.width = 160;
     panel.height = 90;
-    AETHER_CHECK(!panel.Start() && panel.Note().find("already exists") != std::string::npos);   // an untitled scene must not replace the project's Main
     AETHER_CHECK(scene.OpenScene("Scenes/Main.ascene", true));
+    std::string main_on_disk;
+    AETHER_CHECK(fs::ReadFileText((project.parent_path() / "Content" / "Scenes/Main.ascene").string(), main_on_disk));
     AETHER_CHECK(panel.Start() && panel.Viewport().Loaded() && panel.Note().empty());
     AETHER_CHECK(panel.Advance(1.0f));                                              // a frame is due, drawn and shown
     AETHER_CHECK(panel.Texture().Valid() && panel.Texture().Width() == 160 && panel.Texture().Height() == 90);
@@ -256,7 +261,69 @@ AETHER_TEST(LiveViewportPanel_StartsFromTheOpenSceneAndShowsFrames) {
     ImGui::Begin("live");
     panel.Draw(0.05f);
     ImGui::End();
+    std::string after;
+    AETHER_CHECK(fs::ReadFileText((project.parent_path() / "Content" / "Scenes/Main.ascene").string(), after) && after == main_on_disk); // nothing was written over the project's scene
     panel.Stop();
     AETHER_CHECK(!panel.Viewport().Loaded() && !panel.Advance(1.0f));
 }
+
+// An edit shows without saving: the scene goes to the game from memory, and each change to the document reloads it.
+AETHER_TEST(LiveViewportPanel_AnEditShowsWithoutSavingAndAModelNotCookedIsSaid) {
+    std::unique_ptr<gfx::rhi::IDevice> device = TryDevice();
+    if (!device) {
+        std::printf("    (no Vulkan device: install a driver, or Mesa's lavapipe, to run this)\n");
+        return;
+    }
+    Context imgui;
+    const stdfs::path project = MakeProject("LiveEdit");
+    ScenePanel scene(project.parent_path() / "Content");
+    AETHER_CHECK(scene.OpenScene("Scenes/Main.ascene", true));
+    LiveViewportPanel panel(*device, scene, [&] { return project; });
+    panel.width = 160;
+    panel.height = 90;
+    panel.reload_interval = 0.0f;
+    AETHER_CHECK(panel.Start() && panel.Advance(1.0f));
+    const std::vector<u8> before = panel.Viewport().Pixels();
+    const u64 reloads = panel.Viewport().SceneReloads();
+    AETHER_CHECK(!panel.Advance(1.0f) || panel.Viewport().SceneReloads() == reloads);      // nothing changed: no reload
+
+    // Remove every model from the scene (the pillar and the cubes): the picture must lose them without a save.
+    SceneDocument& document = scene.Document();
+    std::vector<Entity> with_models;
+    for (const Entity entity : document.Entities()) {
+        if (document.GetWorld().HasComponent<ModelRenderer>(entity)) with_models.push_back(entity);
+    }
+    AETHER_CHECK(!with_models.empty());
+    for (const Entity entity : with_models) document.DestroyEntity(entity);
+    AETHER_CHECK(panel.Advance(0.2f));
+    AETHER_CHECK(panel.Viewport().SceneReloads() == reloads + 1);
+    AETHER_CHECK(DifferingPixels(before, panel.Viewport().Pixels()) > 160u * 90u / 50);   // the models are gone from the picture
+    document.Undo();                                                                       // and undo brings them back
+    for (usize i = 1; i < with_models.size(); ++i) document.Undo();
+    AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().SceneReloads() == reloads + 2);
+    AETHER_CHECK(DifferingPixels(before, panel.Viewport().Pixels()) < 160u * 90u / 50);
+
+    // A model the cook was not asked for is said, and Reload (a new cook) takes it in.
+    AETHER_CHECK(panel.UncookedModels() == 0);
+    document.CreateEntity("Rock", SceneEntityKind::Model, "Models/Rock.glb");
+    AETHER_CHECK(panel.UncookedModels() == 1);
+    AETHER_CHECK(panel.Start() && panel.UncookedModels() == 0);
+    // A gizmo drag is seen while it is still going (it writes into the scene without a command, and says so).
+    const u64 revision = document.Revision();
+    document.Touch();
+    AETHER_CHECK(document.Revision() == revision + 1);
+}
 #endif
+
+AETHER_TEST(GamePackage_AContentOverrideIsReadInPlaceOfTheArchive) {
+    player::GamePackage package;
+    std::vector<u8> out;
+    AETHER_CHECK(!package.ReadContent("Scenes/Live.ascene", out));                 // nothing mounted: nothing there
+    package.SetContentOverride("Scenes/Live.ascene", {1, 2, 3});
+    AETHER_CHECK(package.ReadContent("Scenes/Live.ascene", out) && out == std::vector<u8>({1, 2, 3}));
+    package.SetContentOverride("Scenes/Live.ascene", {9});                          // replaced
+    AETHER_CHECK(package.ReadContent("Scenes/Live.ascene", out) && out == std::vector<u8>({9}));
+    AETHER_CHECK(!package.ReadContent("Scenes/Other.ascene", out));                 // only the named path
+    package.ClearContentOverrides();
+    AETHER_CHECK(!package.ReadContent("Scenes/Live.ascene", out));
+}

@@ -30,8 +30,15 @@ public:
     LiveViewport& operator=(const LiveViewport&) = delete;
 
     // Mounts the cooked folder and starts `scene` (a path relative to the project's Content folder) at `width` x `height`. Replaces any scene
-    // already loaded. False, with `error`, if it can't.
-    bool Load(const std::filesystem::path& cooked_dir, const std::string& scene, u32 width, u32 height, std::string* error = nullptr);
+    // already loaded. With `scene_bytes` (a scene as SaveSceneToMemory writes it) the game runs that instead of the file the archives hold under
+    // that path, so the scene need not be saved or cooked. False, with `error`, if it can't.
+    bool Load(const std::filesystem::path& cooked_dir, const std::string& scene, u32 width, u32 height, std::string* error = nullptr,
+              const std::vector<u8>* scene_bytes = nullptr);
+    // Replaces the running scene with `scene_bytes` (the game loads it afresh: the world, physics and scripts start over). Models and
+    // textures still come from the cooked archives, so an entity that names one that was not cooked is not drawn. False, with `error`, if the game rejects it.
+    bool SetScene(const std::vector<u8>& scene_bytes, std::string* error = nullptr);
+    // How many times SetScene has succeeded since Load.
+    u64 SceneReloads() const;
     void Unload();
     bool Loaded() const { return impl_ != nullptr; }
     u32 Width() const;

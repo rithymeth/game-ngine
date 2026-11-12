@@ -34,6 +34,7 @@
 
 #include <array>
 #include <filesystem>
+#include <map>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -143,6 +144,10 @@ public:
     // Textures/logo.png), trying the language's fallback chain (§29.6), else `path`
     // itself. Only cooked assets count.
     std::string LocalizedPath(const std::string& path, const std::string& language, const std::string& default_language = "en") const;
+    // Serves `bytes` as the content file `path` instead of whatever the archives hold (or nothing): what an editor uses to run the scene it has open
+    // in memory, without saving or cooking it. ReadContent (and so Game::LoadScene) sees it first. Setting the same path again replaces it.
+    void SetContentOverride(const std::string& path, std::vector<u8> bytes);
+    void ClearContentOverrides();
     // ReadContent of LocalizedPath.
     bool ReadContentLocalized(const std::string& path, const std::string& language, std::vector<u8>& out, std::string* error = nullptr) const;
 
@@ -151,6 +156,7 @@ public:
 
 private:
     pak::VirtualFileSystem vfs_;
+    std::map<std::string, std::vector<u8>> content_overrides_;
     GameManifest manifest_;
     bool has_manifest_ = false;
     std::vector<std::string> dlcs_;
