@@ -4,6 +4,8 @@
 #include "aether/player/game.h"
 #include "aether/player/scene_renderer.h"
 #include "aether/scene/components.h"
+#include "aether/reflection/serialize.h"
+#include "aether/renderer/components.h"
 #include "aether/scene/gameplay.h"
 
 #include <algorithm>
@@ -59,7 +61,15 @@ bool LiveViewport::SetScene(const std::vector<u8>& scene_bytes, std::string* err
     return true;
 }
 
-bool LiveViewport::PatchTransforms(const World& source) {
+bool LiveViewport::IsPatchable(ComponentId component) {
+    // Only what the renderer reads each frame and nothing else holds a copy of: a physics body, a script or an audio source is built from its component
+    // when the scene loads, so editing one of those needs the scene loaded again.
+    return component == GetComponentId<Transform>() || component == GetComponentId<DirectionalLight>() || component == GetComponentId<PointLight>() ||
+           component == GetComponentId<SpotLight>() || component == GetComponentId<SkyLight>() || component == GetComponentId<Wind>() ||
+           component == GetComponentId<WindZone>() || component == GetComponentId<PostProcessVolume>() || component == GetComponentId<Decal>();
+}
+
+bool LiveViewport::PatchScene(const World& source, const std::vector<ComponentEdit>& edits) {
     if (!impl_ || !impl_->game) return false;
     struct Hash {
         usize operator()(const EntityGuid& g) const noexcept { return static_cast<usize>(g.hi ^ (g.lo * 0x9e3779b97f4a7c15ull)); }
@@ -72,12 +82,53 @@ bool LiveViewport::PatchTransforms(const World& source) {
     // Every identified entity of the running scene must be in `source` and the other way round, or something was added or removed: that is a reload's job.
     usize found = 0;
     bool same = true;
+    std::unordered_map<EntityGuid, Entity, Hash> running_entities;
     running.ForEach<IdComponent, Transform>([&](IdComponent& id, Transform&) {
         if (id.guid.IsNull()) return;
         if (wanted.find(id.guid) == wanted.end()) same = false;
         else ++found;
     });
     if (!same || found != wanted.size()) return false;
+    // The edited components, checked before anything is changed: both worlds must have the entity and the component, and the component must be patchable.
+    struct Copy {
+        Entity target;
+        const ComponentInfo* info;
+        nlohmann::json value;
+    };
+    std::vector<Copy> copies;
+    if (!edits.empty()) {
+        std::unordered_map<EntityGuid, Entity, Hash> in_source;
+        source.ForEachArchetype([&](const Archetype& archetype) {
+            for (usize chunk = 0; chunk < archetype.ChunkCount(); ++chunk) {
+                const Entity* array = archetype.EntityArray(chunk);
+                for (u32 row = 0; row < archetype.ChunkEntityCount(chunk); ++row) {
+                    if (const IdComponent* id = source.GetComponent<IdComponent>(array[row])) in_source[id->guid] = array[row];
+                }
+            }
+        });
+        running.ForEachArchetype([&](const Archetype& archetype) {
+            for (usize chunk = 0; chunk < archetype.ChunkCount(); ++chunk) {
+                const Entity* array = archetype.EntityArray(chunk);
+                for (u32 row = 0; row < archetype.ChunkEntityCount(chunk); ++row) {
+                    if (const IdComponent* id = running.GetComponent<IdComponent>(array[row])) running_entities[id->guid] = array[row];
+                }
+            }
+        });
+        for (const ComponentEdit& edit : edits) {
+            if (edit.component == GetComponentId<Transform>()) continue; // every Transform is copied below
+            if (!IsPatchable(edit.component)) return false;
+            const auto from = in_source.find(edit.entity);
+            const auto to = running_entities.find(edit.entity);
+            if (from == in_source.end() || to == running_entities.end()) return false;
+            const ComponentInfo& info = GetComponentInfo(edit.component);
+            if (info.reflected == nullptr || !source.HasComponentRaw(from->second, edit.component) || !running.HasComponentRaw(to->second, edit.component)) return false;
+            copies.push_back({to->second, &info, reflect::ToJson(*info.reflected, source.GetComponentRaw(from->second, edit.component))});
+        }
+    }
+    for (const Copy& copy : copies) {
+        const ComponentId id = FindComponentIdByName(copy.info->reflected->name);
+        if (id == kInvalidComponentId || !reflect::FromJson(*copy.info->reflected, running.GetComponentRaw(copy.target, id), copy.value)) return false;
+    }
     running.ForEach<IdComponent, Transform>([&](IdComponent& id, Transform& transform) {
         if (id.guid.IsNull()) return;
         transform = wanted[id.guid];

@@ -78,9 +78,12 @@ bool LiveViewportPanel::Advance(f32 dt) {
         last_revision_ = document.Revision(); // taken before the copy, so an edit during it is seen next time
         since_reload_ = 0.0f;
         const u64 structure = document.StructureRevision();
-        // Only Transforms moved (a gizmo drag, a nudge): put them into the running scene, which keeps the game's own state (physics, scripts) and
-        // costs a fraction of loading it again. Anything else, or a scene that no longer matches, loads it afresh.
-        if (structure == last_structure_ && viewport_.PatchTransforms(document.GetWorld())) {
+        bool overflowed = false;
+        std::vector<LiveViewport::ComponentEdit> edits;
+        for (const CommandStack::ValueEdit& edit : scene_.Document().TakeValueEdits(&overflowed)) edits.push_back({edit.entity, edit.component});
+        // Only values changed (a gizmo drag, a nudge, a light's colour): put them into the running scene, which keeps the game's own state (physics,
+        // scripts) and costs a fraction of loading it again. Anything else, or a scene that no longer matches, loads it afresh.
+        if (structure == last_structure_ && !overflowed && viewport_.PatchScene(document.GetWorld(), edits)) {
             reloaded = true;
         } else {
             std::string error;

@@ -8,6 +8,8 @@
 
 #include "aether/core/log.h"
 #include "aether/scene/components.h"
+#include "aether/renderer/components.h"
+#include "aether/scene/gameplay.h"
 #include "aether/scene/hierarchy.h"
 #include "aether/scene/script_component.h"
 #include "aether/platform/filesystem.h"
@@ -448,6 +450,79 @@ AETHER_TEST(LiveViewportPanel_AMovedObjectIsPatchedInPlaceAndOnlyAChangeToTheSce
     // The running scene and the document disagreeing about which entities exist is refused, not guessed at.
     document.CreateEntity("Extra");
     AETHER_CHECK(!panel.Viewport().PatchTransforms(document.GetWorld()) && panel.Viewport().PatchCount() == 5);
+}
+
+AETHER_TEST(LiveViewportPanel_ALightEditShowsWithoutReloadingTheScene) {
+    std::unique_ptr<gfx::rhi::IDevice> device = TryDevice();
+    if (!device) {
+        std::printf("    (no Vulkan device: install a driver, or Mesa's lavapipe, to run this)\n");
+        return;
+    }
+    Context imgui;
+    const stdfs::path project = MakeProject("LiveLight");
+    ScenePanel scene(project.parent_path() / "Content");
+    AETHER_CHECK(scene.OpenScene("Scenes/Main.ascene", true));
+    LiveViewportPanel panel(*device, scene, [&] { return project; });
+    panel.width = 160;
+    panel.height = 90;
+    panel.reload_interval = 0.0f;
+    AETHER_CHECK(panel.Start() && panel.Advance(1.0f));
+    SceneDocument& document = scene.Document();
+    const u64 reloads = panel.Viewport().SceneReloads();
+    u64 reloads_after_add = 0;
+    Entity camera = kNullEntity, sky = kNullEntity;
+    for (const Entity entity : document.Entities()) {
+        if (document.GetWorld().HasComponent<Camera>(entity)) camera = entity;
+        if (document.GetWorld().HasComponent<SkyLight>(entity)) sky = entity;
+    }
+    AETHER_CHECK(camera != kNullEntity && sky != kNullEntity);
+    if (camera == kNullEntity || sky == kNullEntity) return;
+    // The template has a sky and no sun: add one (a new entity is a structural change, so this loads the scene again) and then edit it.
+    const Entity sun = document.CreateEntity("Sun");
+    AETHER_CHECK(document.AddComponent(sun, GetComponentId<DirectionalLight>()));
+    document.SetRotation(sun, Quaternion::FromAxisAngle(Vec3(1, 0, 0), -0.9f), true);
+    AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().SceneReloads() == reloads + 1);
+    for (int i = 0; i < 6; ++i) panel.Advance(0.2f); // the renderer settles (exposure, history) before the picture is taken as the reference
+    const std::vector<u8> lit = panel.Viewport().Pixels();
+    const ComponentId light = GetComponentId<DirectionalLight>();
+    reloads_after_add = panel.Viewport().SceneReloads();
+    // The sun's intensity to nothing: the picture goes dark, and it is a patch, not a reload.
+    AETHER_CHECK(document.SetComponentField(sun, light, "intensity", reflect::Any(0.0f), true));
+    AETHER_CHECK(panel.Advance(0.2f));
+    AETHER_CHECK(panel.Viewport().PatchCount() == 1 && panel.Viewport().SceneReloads() == reloads_after_add);
+    const std::vector<u8> dark = panel.Viewport().Pixels();
+    AETHER_CHECK(DifferingPixels(lit, dark) > 160u * 90u / 10);
+    // And back: the picture is what it was.
+    AETHER_CHECK(document.SetComponentField(sun, light, "intensity", reflect::Any(3.0f), true));
+    AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().PatchCount() == 2 && panel.Viewport().SceneReloads() == reloads_after_add);
+    for (int i = 0; i < 6; ++i) panel.Advance(0.2f);
+    AETHER_CHECK(DifferingPixels(lit, panel.Viewport().Pixels()) * 5 < DifferingPixels(lit, dark)); // much nearer the lit picture than the dark one
+
+    // The colour, the shadow switch and where the light stands are patched too (each one edit).
+    AETHER_CHECK(document.SetComponentField(sun, light, "color", reflect::Any(Vec3(1.0f, 0.1f, 0.1f)), true));
+    AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().PatchCount() == 3 && panel.Viewport().SceneReloads() == reloads_after_add);
+    AETHER_CHECK(DifferingPixels(lit, panel.Viewport().Pixels()) > 160u * 90u / 10);
+    AETHER_CHECK(document.SetComponentField(sun, light, "color", reflect::Any(Vec3(1.0f, 1.0f, 1.0f)), true));
+    AETHER_CHECK(document.SetComponentField(sun, light, "cast_shadows", reflect::Any(false), true));
+    AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().PatchCount() == 4 && panel.Viewport().SceneReloads() == reloads_after_add);
+    AETHER_CHECK(document.SetComponentField(sun, light, "cast_shadows", reflect::Any(true), true));
+    AETHER_CHECK(document.SetRotation(sun, Quaternion::FromAxisAngle(Vec3(1, 0, 0), -0.4f), true)); // turning the sun moves the shadows
+    AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().PatchCount() == 5 && panel.Viewport().SceneReloads() == reloads_after_add);
+
+    // The sky's own light (what the template scene has) is patched the same way.
+    for (int i = 0; i < 6; ++i) panel.Advance(0.2f);
+    const std::vector<u8> before_sky = panel.Viewport().Pixels();
+    const u64 patches = panel.Viewport().PatchCount();
+    AETHER_CHECK(document.SetComponentField(sky, GetComponentId<SkyLight>(), "intensity", reflect::Any(0.0f), true));
+    AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().PatchCount() == patches + 1 && panel.Viewport().SceneReloads() == reloads_after_add);
+    AETHER_CHECK(DifferingPixels(before_sky, panel.Viewport().Pixels()) > 160u * 90u / 10);
+
+    // A component that is built into the running game when it loads (here the camera) is not patched: the scene loads again.
+    AETHER_CHECK(document.SetComponentField(camera, GetComponentId<Camera>(), "fov_degrees", reflect::Any(70.0f), true));
+    AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().PatchCount() == patches + 1 && panel.Viewport().SceneReloads() == reloads_after_add + 1);
+    // Undoing an edit is structural, so it reloads too, and the light is back where it was.
+    AETHER_CHECK(document.Undo());
+    AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().SceneReloads() == reloads_after_add + 2);
 }
 
 #endif
