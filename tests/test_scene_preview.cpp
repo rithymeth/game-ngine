@@ -1070,6 +1070,57 @@ AETHER_TEST(LiveViewportPanel_PhysicsBodiesAreAddedChangedAndRemovedWithoutReloa
     AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().SceneReloads() == reloads + 1);
 }
 
+AETHER_TEST(LiveViewportPanel_AnEditDoesNotPutAFallingBodyBackWhereTheDocumentHasIt) {
+    std::unique_ptr<gfx::rhi::IDevice> device = TryDevice();
+    if (!device) {
+        std::printf("    (no Vulkan device: install a driver, or Mesa's lavapipe, to run this)\n");
+        return;
+    }
+    Context imgui;
+    const stdfs::path project = MakeProject("LiveFalling");
+    ScenePanel scene(project.parent_path() / "Content");
+    AETHER_CHECK(scene.OpenScene("Scenes/Main.ascene", true));
+    LiveViewportPanel panel(*device, scene, [&] { return project; });
+    panel.width = 160;
+    panel.height = 90;
+    panel.reload_interval = 0.0f;
+    panel.run_game = true; // physics steps, so a dynamic body falls
+    const ComponentId box = FindComponentIdByName("BoxCollider"), body = FindComponentIdByName("RigidBody");
+    if (box == kInvalidComponentId || body == kInvalidComponentId) {
+        std::printf("    (no physics in this build)\n");
+        return;
+    }
+    AETHER_CHECK(panel.Start());
+    SceneDocument& document = scene.Document();
+    for (int i = 0; i < 3; ++i) panel.Advance(0.2f);
+    const u64 reloads = panel.Viewport().SceneReloads();
+    document.Commands().Clear();
+
+    // A dynamic body high above the scene, put in live, and let fall for a second or so of game time.
+    const Entity faller = document.CreateEntity("Faller");
+    document.SetPosition(faller, Vec3(0.0f, 30.0f, 0.0f), true);
+    AETHER_CHECK(document.AddComponent(faller, box));
+    AETHER_CHECK(document.AddComponent(faller, body));
+    const EntityGuid guid = document.GetWorld().GetComponent<IdComponent>(faller)->guid;
+    for (int i = 0; i < 12; ++i) panel.Advance(0.2f);
+    Vec3 fallen;
+    AETHER_CHECK(panel.Viewport().PositionOf(guid, fallen));
+    AETHER_CHECK(fallen.y < 28.0f && fallen.y > 5.0f);                                            // it has fallen (the document still says 30), and not landed
+    // Something unrelated is edited: the body keeps falling from where it is, and is not put back at 30.
+    const Entity marker = document.CreateEntity("Marker");
+    document.SetPosition(marker, Vec3(5.0f, 1.0f, 5.0f), true);
+    AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().SceneReloads() == reloads);
+    Vec3 later;
+    AETHER_CHECK(panel.Viewport().PositionOf(guid, later));
+    AETHER_CHECK(later.y < fallen.y + 0.01f && later.y > fallen.y - 3.0f);
+    const f32 above_ground = later.y;
+    // The body's own Transform edited in the document is a change like any other: that does reach the game.
+    document.SetPosition(faller, Vec3(0.0f, 60.0f, 0.0f), true);
+    AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().SceneReloads() == reloads);
+    AETHER_CHECK(panel.Viewport().PositionOf(guid, later));
+    AETHER_CHECK(later.y > above_ground + 20.0f);
+}
+
 #endif
 
 AETHER_TEST(GamePackage_AContentOverrideIsReadInPlaceOfTheArchive) {

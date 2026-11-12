@@ -88,7 +88,7 @@ fine for small and medium scenes.
 
 An object with a collider or a rigid body (box, sphere, capsule, convex or mesh collider) can now be added, changed or deleted in the Live Viewport without loading the scene again, and so can its colliders' settings: the game's physics scene keeps its bodies in step with
 the world on every physics step, so the body appears, is rebuilt or goes away on the next step of the running game. (While **Run game** is off the world is frozen and physics does not step, so bodies are made when you turn it on.) A script, a character controller and a camera are
-still set up once when the game starts, so those still load the scene again.
+still set up once when the game starts, so those still load the scene again. With **Run game** on, editing one thing no longer puts the other moving bodies back where the scene has them: only the transforms you changed are copied into the running game.
 
 ## Moving an object under another in the hierarchy no longer reloads the Live Viewport
 

@@ -74,6 +74,8 @@ public:
     usize EntityCount() const;
     // How many physics bodies the running game has (as of its last physics step: bodies follow the world's colliders and rigid bodies when the game steps).
     usize PhysicsBodyCount() const;
+    // Where an entity is in the running game (its Transform's position, which a simulated body moves), false if the game has no such entity.
+    bool PositionOf(const EntityGuid& entity, Vec3& position) const;
 
 private:
     void RememberKnown(); // the identified entities of the running scene are what the document has
