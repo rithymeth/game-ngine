@@ -7263,6 +7263,7 @@
 [editor/src/audio/mixer_panel.h] internal-tooling
 [editor/src/audio/waveform.h] internal-tooling
 [editor/src/content/content_browser_panel.h] internal-tooling
+[editor/src/content/content_drag.h] internal-tooling
 [editor/src/core/command_stack.h] internal-tooling
 [editor/src/core/commands.h] internal-tooling
 [editor/src/core/json_edit.h] internal-tooling

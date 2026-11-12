@@ -1,6 +1,7 @@
 #include "world/scene_panel.h"
 
 #include "core/commands.h"
+#include "content/content_drag.h"
 #include "ui/editor_theme.h"
 #include "ui/shell_layout.h"
 #include "world/scene_view.h"
@@ -609,4 +610,44 @@ AETHER_TEST(TransformGizmo_RotateUnderATiltedParentTurnsAboutTheWorldAxis) {
     gizmo.End(document, rig.camera, rig.origin, rig.size, rig.Pixel(ring[3]), 0.0f);                // a quarter turn about world +Y
     AETHER_CHECK(NearVec(WorldAxisOf(document, child, 0), Vec3(0, 1, 0)));                           // its X was along Y, the axis it turned about: unmoved
     AETHER_CHECK(NearVec(WorldAxisOf(document, child, 1), Vec3(0, 0, 1)));                           // its Y was along -X, which a quarter turn about +Y sends to +Z
+}
+
+// Dropping an asset from the Content Browser into the Scene View: where on the ground, which paths place, and the placement itself.
+AETHER_TEST(SceneView_GroundPointAndPlacingAModel) {
+    SceneViewCamera camera;
+    camera.target = Vec3(0, 0, 0);
+    camera.distance = 12.0f;
+    const ImVec2 origin(0, 0), size(800, 600);
+    Mat4 vp = camera.ViewProjection(size.x / size.y);
+    ImVec2 pixel;
+    AETHER_CHECK(ProjectToViewport(vp, Vec3(3.0f, 0.0f, 2.0f), origin, size, pixel));
+    Vec3 ground;
+    AETHER_CHECK(GroundPoint(vp, origin, size, pixel, ground));
+    AETHER_CHECK(NearVec(ground, Vec3(3.0f, 0.0f, 2.0f), 0.05f));                            // the pixel a ground point projects to leads back to it
+    AETHER_CHECK(GroundPoint(vp, origin, size, ImVec2(400, 590), ground) && std::fabs(ground.y) < 1e-3f);
+    camera.pitch = 0.0f;                                                                      // looking along the ground: the middle of the view never meets it
+    vp = camera.ViewProjection(size.x / size.y);
+    AETHER_CHECK(!GroundPoint(vp, origin, size, ImVec2(400, 300), ground));
+    AETHER_CHECK(!GroundPoint(vp, origin, size, ImVec2(400, 20), ground));                   // and above the horizon points away from it
+    AETHER_CHECK(!GroundPoint(vp, origin, ImVec2(0, 0), ImVec2(400, 300), ground));
+
+    AETHER_CHECK(IsPlaceableModel("Models/Rock.glb") && IsPlaceableModel("a/b.GLTF") && IsPlaceableModel("x.gltf"));
+    AETHER_CHECK(!IsPlaceableModel("Textures/rock.png") && !IsPlaceableModel("Scenes/Main.ascene") && !IsPlaceableModel("noextension") && !IsPlaceableModel(""));
+
+    SceneDocument document;
+    document.Commands().Clear();
+    const usize before = document.Entities().size();
+    AETHER_CHECK(PlaceModelAsset(document, "Textures/rock.png", Vec3(1, 0, 1)) == kNullEntity);   // not a model: nothing happens
+    AETHER_CHECK(document.Entities().size() == before && !document.CanUndo());
+    const Entity rock = PlaceModelAsset(document, "Models/Rock.glb", Vec3(4.0f, 0.0f, -2.0f));
+    AETHER_CHECK(rock != kNullEntity && document.Entities().size() == before + 1);
+    AETHER_CHECK(document.Name(rock) == "Rock");
+    const ModelRenderer* renderer = document.GetWorld().GetComponent<ModelRenderer>(rock);
+    AETHER_CHECK(renderer && std::string(renderer->asset_path) == "Models/Rock.glb");
+    AETHER_CHECK(NearVec(WorldPositionOf(document, rock), Vec3(4.0f, 0.0f, -2.0f), 1e-3f));
+    AETHER_CHECK(document.Selection().size() == 1 && document.Selection()[0] == rock);            // the new entity is selected, ready for the gizmo
+    AETHER_CHECK(document.Undo());                                                                // creation and position are one undo step
+    AETHER_CHECK(document.Entities().size() == before && !document.CanUndo());
+    AETHER_CHECK(document.Redo());
+    AETHER_CHECK(document.Entities().size() == before + 1);
 }

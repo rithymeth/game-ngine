@@ -3,10 +3,12 @@
 #include "aether/scene/components.h"
 #include "aether/scene/gameplay.h"
 #include "aether/scene/hierarchy.h"
+#include "content/content_drag.h"
 #include "core/snapping.h"
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <limits>
 
 namespace aether::editor {
@@ -102,6 +104,27 @@ bool MouseRay(const Mat4& view_projection, const ImVec2& origin, const ImVec2& s
     ray_origin = near_point;
     ray_direction = d.Normalized();
     return true;
+}
+
+bool GroundPoint(const Mat4& view_projection, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, Vec3& point) {
+    Vec3 ray_origin, ray_direction;
+    if (!MouseRay(view_projection, origin, size, mouse, ray_origin, ray_direction)) return false;
+    if (std::fabs(ray_direction.y) < 1e-5f) return false;
+    const f32 t = -ray_origin.y / ray_direction.y;
+    if (t < 0.0f) return false;
+    point = ray_origin + ray_direction * t;
+    return true;
+}
+
+Entity PlaceModelAsset(SceneDocument& document, const std::string& content_path, const Vec3& position) {
+    if (!IsPlaceableModel(content_path)) return kNullEntity;
+    const std::string name = std::filesystem::path(content_path).stem().string();
+    document.Commands().BeginTransaction("Place " + name);
+    const Entity entity = document.CreateEntity(name.empty() ? "Model" : name, SceneEntityKind::Model, content_path);
+    document.SetPosition(entity, position, true);
+    document.Commands().EndTransaction();
+    document.SetSelection({entity});
+    return entity;
 }
 
 bool ClosestOnAxis(const Vec3& axis_origin, const Vec3& axis_direction, const Vec3& ray_origin, const Vec3& ray_direction, f32& distance) {
@@ -345,12 +368,35 @@ void SceneViewPanel::Draw(SceneDocument& document) {
     else if (mode_ == GizmoMode::Rotate) ImGui::DragFloat("##snap_rotate", &snap_rotate_, 0.5f, 1.0f, 90.0f, "%.0f deg");
     else ImGui::DragFloat("##snap_scale", &snap_scale_, 0.01f, 0.01f, 10.0f, "%.2f");
     ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::TextDisabled("%s", note_.empty() ? "drop a model from the Content Browser to place it" : note_.c_str());
     const ImVec2 avail = ImGui::GetContentRegionAvail();
     const ImVec2 size(std::max(avail.x, 64.0f), std::max(avail.y, 64.0f));
     const ImVec2 origin = ImGui::GetCursorScreenPos();
     ImGui::InvisibleButton("##scene_view", size, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
     const bool hovered = ImGui::IsItemHovered();
     const bool active = ImGui::IsItemActive();
+    drop_preview_ = false;
+    // An asset dragged in from the Content Browser: a model is placed on the ground under the mouse (rounded to the move step if Snap is on).
+    if (ImGui::BeginDragDropTarget()) {
+        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kContentPathPayload, ImGuiDragDropFlags_AcceptBeforeDelivery)) {
+            const std::string path(static_cast<const char*>(payload->Data));
+            Vec3 ground;
+            const bool on_ground = GroundPoint(camera_.ViewProjection(size.x / size.y), origin, size, ImGui::GetIO().MousePos, ground);
+            if (!on_ground) ground = camera_.target;
+            if (snap_) ground = SnapTranslation(ground, snap_move_);
+            if (!IsPlaceableModel(path)) {
+                if (payload->IsDelivery()) note_ = "Only models (.gltf, .glb) can be placed in the scene.";
+            } else if (payload->IsDelivery()) {
+                const Entity placed = PlaceModelAsset(document, path, ground);
+                note_ = placed == kNullEntity ? "Could not place " + path : "Placed " + path;
+            } else {
+                drop_preview_ = true; // still being dragged: a marker where it would land, drawn with the rest below
+                drop_point_ = ground;
+            }
+        }
+        ImGui::EndDragDropTarget();
+    }
     const ImGuiIO& io = ImGui::GetIO();
 
     // Input: right-drag orbits, middle-drag or shift + left-drag pans, the wheel zooms, F focuses, a click selects.
@@ -443,6 +489,13 @@ void SceneViewPanel::Draw(SceneDocument& document) {
         if (selected || entity == hovered_entity) {
             ImVec2 at;
             if (ProjectToViewport(vp, origin_w, origin, size, at)) draw->AddText(ImVec2(at.x + 8.0f, at.y - 18.0f), color, document.Name(entity).c_str());
+        }
+    }
+    if (drop_preview_) {
+        ImVec2 at;
+        if (ProjectToViewport(vp, drop_point_, origin, size, at)) {
+            draw->AddCircle(at, 10.0f, Color(255, 200, 60), 24, 2.0f);
+            draw->AddCircleFilled(at, 3.0f, Color(255, 200, 60));
         }
     }
     // The gizmo on the first selected entity, in the chosen mode; the handle under the mouse (or being dragged) is brighter.

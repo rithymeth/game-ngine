@@ -40,6 +40,13 @@ bool MouseRay(const Mat4& view_projection, const ImVec2& origin, const ImVec2& s
 // false when the two are (nearly) parallel, where there is no such point.
 bool ClosestOnAxis(const Vec3& axis_origin, const Vec3& axis_direction, const Vec3& ray_origin, const Vec3& ray_direction, f32& distance);
 
+// Where the mouse ray meets the ground plane (y = 0); false when it never does (parallel to the ground, or pointing away from it).
+bool GroundPoint(const Mat4& view_projection, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, Vec3& point);
+
+// Puts a model from the content folder into the scene as an entity named after the file with a ModelRenderer at `position`, selects it,
+// and records the whole placement as one undoable step. Returns kNullEntity (and changes nothing) for a path that is not a glTF/GLB model.
+Entity PlaceModelAsset(SceneDocument& document, const std::string& content_path, const Vec3& position);
+
 enum class GizmoAxis { None, X, Y, Z };
 enum class GizmoMode { Move, Rotate, Scale };
 
@@ -103,6 +110,9 @@ private:
     ImVec2 press_{0.0f, 0.0f};
     bool dragged_ = false;
     bool snap_ = false;
+    std::string note_; // the last thing the panel has to say (a drop it could not place)
+    bool drop_preview_ = false; // a model is being dragged over the view; where it would land
+    Vec3 drop_point_{0.0f, 0.0f, 0.0f};
     f32 snap_move_ = 0.5f;
     f32 snap_rotate_ = 15.0f;
     f32 snap_scale_ = 0.1f;
