@@ -39,16 +39,18 @@ public:
     // Replaces the running scene with `scene_bytes` (the game loads it afresh: the world, physics and scripts start over). Models and
     // textures still come from the cooked archives, so an entity that names one that was not cooked is not drawn. False, with `error`, if the game rejects it.
     bool SetScene(const std::vector<u8>& scene_bytes, std::string* error = nullptr);
-    // One value the document set inside a component an entity already has.
+    // One component of an entity that stays, which the document set, added or removed.
     struct ComponentEdit {
         EntityGuid entity;
         ComponentId component = 0;
     };
-    // Brings the running scene to `source` (the open document's world) without reloading it, for a change that was only to values: every Transform, entity
-    // by entity matched by GUID, and each component in `edits` that is one the renderer only reads (lights, the sky, wind, post-process volumes, decals),
-    // copied across as the editor saved it. The game keeps its own state (physics, scripts). False, having changed nothing, when `source` and the
-    // running scene do not hold the same identified entities with a Transform, or an edit names a component the running scene lacks or one that is not
-    // safe to copy over a running game (a rigid body's mass is a physics body already built), so the caller falls back to SetScene. Counted in PatchCount.
+    // Brings the running scene to `source` (the open document's world) without reloading it, for a change that did not rebuild the world: entities
+    // the document created or destroyed since the viewport last synced (found by comparing the GUIDs it holds with the ones it last saw, so an
+    // entity the game made by itself is left alone) are added or destroyed, each component in `edits` is set, added or removed as the document now has it,
+    // and every Transform is copied, all matched by GUID. Only what the renderer reads each frame is done this way (lights, the sky, wind, post-process
+    // volumes, decals, models, names, and the parent and prefab links that tie entities together); the game keeps its own state (physics, scripts).
+    // False, having changed nothing, when a change involves anything else (a rigid body or a script is built into the running game when it loads, so
+    // an entity that carries one, or an edit to one, needs SetScene). Counted in PatchCount.
     bool PatchScene(const World& source, const std::vector<ComponentEdit>& edits);
     bool PatchTransforms(const World& source) { return PatchScene(source, {}); }
     // Whether a component of that type can be patched into a running scene (PatchScene), for the caller that wants to know before it tries.
@@ -72,6 +74,7 @@ public:
     usize EntityCount() const;
 
 private:
+    void RememberKnown(); // the identified entities of the running scene are what the document has
     struct Impl;
     rhi::IDevice& device_;
     std::unique_ptr<Impl> impl_;

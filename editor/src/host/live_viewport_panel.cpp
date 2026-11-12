@@ -80,7 +80,7 @@ bool LiveViewportPanel::Advance(f32 dt) {
         const u64 structure = document.StructureRevision();
         bool overflowed = false;
         std::vector<LiveViewport::ComponentEdit> edits;
-        for (const CommandStack::ValueEdit& edit : scene_.Document().TakeValueEdits(&overflowed)) edits.push_back({edit.entity, edit.component});
+        for (const CommandStack::ComponentEdit& edit : scene_.Document().TakeComponentEdits(&overflowed)) edits.push_back({edit.entity, edit.component});
         // Only values changed (a gizmo drag, a nudge, a light's colour): put them into the running scene, which keeps the game's own state (physics,
         // scripts) and costs a fraction of loading it again. Anything else, or a scene that no longer matches, loads it afresh.
         if (structure == last_structure_ && !overflowed && viewport_.PatchScene(document.GetWorld(), edits)) {

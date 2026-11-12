@@ -76,14 +76,21 @@ The Live Viewport no longer needs the scene saved: **Start** cooks the models th
 (`GamePackage::SetContentOverride`, with the scene serialized the way Play-in-Editor snapshots it), and after that every change (an edit, a gizmo drag, an
 undo) reloads it a moment later (`SceneDocument::Revision` says when it changed; a drag in progress is announced with `Touch`). Nothing is written over the
 project's scene file. The game's world is frozen by default so the view is the scene as authored (**Run game** lets physics and scripts run); a model added
-since the last cook is said in the toolbar and appears after **Reload**. A move or a light edit is patched in place (see the next two sections); any other change reloads the whole scene (the world, physics and scripts start over), which is
+since the last cook is said in the toolbar and appears after **Reload**. A move, a light edit or adding and removing objects is patched in place (see the next three sections); any other change reloads the whole scene (the world, physics and scripts start over), which is
 fine for small and medium scenes.
+
+## Add and remove objects in the Live Viewport without rebuilding the world
+
+Adding an object (a model, a light, an empty entity, a duplicate, a model dropped from the Content Browser, a prefab instance) or deleting one now shows in the Live Viewport at once, without
+loading the scene again, and so does adding or removing a light, a model or a name on an object that stays. The viewport compares the document's entities with the ones it last saw, so an
+object the game made by itself (a script spawning a coin) is left alone. What the running game builds when it loads is still not added or removed live: an entity with a rigid body, a script or a camera, or
+a change involving one, loads the scene afresh, as does an undo (this editor's undo of a create or delete counts as structural). A patch costs about half a millisecond at 2,000 entities, against about 17 ms for the reload alone.
 
 ## Light edits show in the Live Viewport without restarting the scene
 
 Change a light's colour, intensity or shadows, the sky's, the wind's, a post-process volume's or a decal's settings in the inspector, or move or turn a light, and the Live
 Viewport shows it at once without loading the scene again (physics and scripts keep running). The document now says which component of which entity was set
-(`SceneDocument::TakeValueEdits`) and the viewport copies just those into the running scene (`LiveViewport::PatchScene`). A component that is built into the game
+(`SceneDocument::TakeComponentEdits`) and the viewport copies just those into the running scene (`LiveViewport::PatchScene`). A component that is built into the game
 when it loads (a rigid body, a script, the camera) is not copied over a running game: editing one of those still loads the scene afresh, as does adding or removing an entity, and an undo.
 
 ## Dragging in the Live Viewport no longer restarts the game
