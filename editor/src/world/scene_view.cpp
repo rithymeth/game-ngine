@@ -347,6 +347,7 @@ bool TransformGizmo::Apply(SceneDocument& document, const SceneViewCamera& camer
         if (snap_step > 0.0f) angle = SnapRotationDegrees(angle * 180.0f / kPi, snap_step) * kPi / 180.0f;
     }
     const Vec3 k = direction_; // the axis a rotation turns about (unit length)
+    document.Touch(); // the components are written below without a command, so tell a viewer the scene is moving
     for (const Held& held : subjects_) {
         if (!document.GetWorld().IsAlive(held.entity)) continue;
         Transform* transform = document.GetWorld().GetComponent<Transform>(held.entity);

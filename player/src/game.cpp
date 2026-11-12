@@ -200,7 +200,15 @@ const GameManifest::Asset* GamePackage::FindAssetByGuid(std::string_view guid) c
     return it == by_guid_.end() ? nullptr : &manifest_.assets[it->second];
 }
 
+void GamePackage::SetContentOverride(const std::string& path, std::vector<u8> bytes) { content_overrides_[path] = std::move(bytes); }
+
+void GamePackage::ClearContentOverrides() { content_overrides_.clear(); }
+
 bool GamePackage::ReadContent(const std::string& path, std::vector<u8>& out, std::string* error) const {
+    if (const auto it = content_overrides_.find(path); it != content_overrides_.end()) {
+        out = it->second;
+        return true;
+    }
     return vfs_.Read("Content/" + path, out, error);
 }
 

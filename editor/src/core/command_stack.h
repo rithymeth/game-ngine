@@ -141,12 +141,16 @@ public:
     void SetMemoryBudget(usize bytes);
     usize MemoryUsed() const { return memory_used_; }
 
+    // Counts every change the stack has seen -- a command recorded (merged or not), an undo, a redo -- so a viewer can tell the scene moved
+    // on since it last looked without comparing worlds. It only goes up.
+    u64 Revision() const { return revision_; }
     usize UndoCount() const { return undo_.size(); }
     usize RedoCount() const { return redo_.size(); }
     void Clear();
 
 private:
     void PushUndo(std::unique_ptr<ICommand> command);
+    u64 revision_ = 0;
     void EnforceBudget();
 
     std::vector<std::unique_ptr<ICommand>> undo_; // oldest first

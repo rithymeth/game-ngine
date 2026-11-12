@@ -38,6 +38,11 @@ public:
     GuidIndex& Guids() { return guids_; }
     const GuidIndex& Guids() const { return guids_; }
     bool IsDirty() const { return recovered_unsaved_ || commands_.IsDirty(); }
+    // Goes up whenever the scene may have changed: a command, an undo or redo, a new or loaded scene, or Touch(). A viewer compares it with the
+    // value it last drew to know whether to draw again. Not saved, and not undone by an undo (an undo is a change too).
+    u64 Revision() const { return commands_.Revision() + local_revision_; }
+    // For an edit that writes into the scene directly while it is in progress (a gizmo drag), so a viewer sees it before it is recorded.
+    void Touch() { ++local_revision_; }
     bool CanUndo() const { return commands_.CanUndo(); }
     bool CanRedo() const { return commands_.CanRedo(); }
     std::string UndoLabel() const { return commands_.UndoLabel(); }
@@ -107,6 +112,7 @@ private:
     PlaySession play_session_;
     std::filesystem::path file_;
     bool recovered_unsaved_ = false;
+    u64 local_revision_ = 0;
     EntityGuid pending_position_entity_{};
     std::optional<reflect::Any> pending_position_before_;
     EntityGuid pending_rotation_entity_{};

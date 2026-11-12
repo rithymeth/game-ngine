@@ -39,6 +39,15 @@ certificate error), and `iexpress.exe` produced nothing usable, so the self-extr
 resource compiled with `csc.exe`. A Vulkan-enabled install also fails for a consumer that lacks the Vulkan SDK, because the
 generated `AetherConfig.cmake` requires it -- which is why the installer builds with Vulkan off.
 
+## The Live Viewport shows your edits as you make them
+
+The Live Viewport no longer needs the scene saved: **Start** cooks the models the open scene uses and hands the running game the scene **as it is open**
+(`GamePackage::SetContentOverride`, with the scene serialized the way Play-in-Editor snapshots it), and after that every change (an edit, a gizmo drag, an
+undo) reloads it a moment later (`SceneDocument::Revision` says when it changed; a drag in progress is announced with `Touch`). Nothing is written over the
+project's scene file. The game's world is frozen by default so the view is the scene as authored (**Run game** lets physics and scripts run); a model added
+since the last cook is said in the toolbar and appears after **Reload**. Each change reloads the whole scene (the world, physics and scripts start over), which is
+fine for small and medium scenes and is the limit of this approach; an incremental update would be the renderer rework.
+
 ## A live rendered viewport, and two fixes it needed
 
 The editor has a **Live Viewport** tool: the project's scene running under the real renderer inside the editor itself (the player's `Game` and

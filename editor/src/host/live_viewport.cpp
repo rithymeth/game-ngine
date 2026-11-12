@@ -20,6 +20,8 @@ struct LiveViewport::Impl {
     std::vector<u64> fences;
     std::unique_ptr<player::SceneRenderer> renderer;
     u64 frames = 0;
+    u64 reloads = 0;
+    std::string scene;
 };
 
 LiveViewport::LiveViewport(rhi::IDevice& device) : device_(device) {}
@@ -36,9 +38,26 @@ void LiveViewport::Unload() {
 u32 LiveViewport::Width() const { return impl_ && impl_->swap_chain ? impl_->swap_chain->Width() : 0; }
 u32 LiveViewport::Height() const { return impl_ && impl_->swap_chain ? impl_->swap_chain->Height() : 0; }
 u64 LiveViewport::FrameCount() const { return impl_ ? impl_->frames : 0; }
+u64 LiveViewport::SceneReloads() const { return impl_ ? impl_->reloads : 0; }
 usize LiveViewport::EntityCount() const { return impl_ && impl_->game ? impl_->game->GetWorld().EntityCount() : 0; }
 
-bool LiveViewport::Load(const std::filesystem::path& cooked_dir, const std::string& scene, u32 width, u32 height, std::string* error) {
+bool LiveViewport::SetScene(const std::vector<u8>& scene_bytes, std::string* error) {
+    if (!impl_) {
+        if (error) *error = "Nothing is loaded.";
+        return false;
+    }
+    impl_->package.SetContentOverride(impl_->scene, scene_bytes);
+    std::string problem;
+    if (!impl_->game->LoadScene(impl_->scene, &problem)) {
+        if (error) *error = problem;
+        return false;
+    }
+    ++impl_->reloads;
+    return true;
+}
+
+bool LiveViewport::Load(const std::filesystem::path& cooked_dir, const std::string& scene, u32 width, u32 height, std::string* error,
+                        const std::vector<u8>* scene_bytes) {
     auto fail = [&](const std::string& why) {
         if (error) *error = why;
         Unload();
@@ -55,6 +74,8 @@ bool LiveViewport::Load(const std::filesystem::path& cooked_dir, const std::stri
         if (!impl->package.Mount(paks[i], static_cast<int>(i), &problem)) return fail(problem);
     }
     if (!impl->package.LoadManifest(&problem)) return fail(problem);
+    impl->scene = scene;
+    if (scene_bytes) impl->package.SetContentOverride(scene, *scene_bytes);
     impl->game = std::make_unique<player::Game>(impl->package);
     if (!impl->game->LoadScene(scene, &problem)) return fail("The scene \"" + scene + "\" did not load: " + problem);
     impl->swap_chain = device_.CreateSwapChain(nullptr, width, height, 2); // no window: an offscreen picture

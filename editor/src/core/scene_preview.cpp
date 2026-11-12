@@ -57,7 +57,7 @@ bool ScenePreview::TakeImage(PreviewImage& out) {
 }
 
 bool CookForPreview(const stdfs::path& project_file, const std::string& scene, const stdfs::path& work_dir, stdfs::path* cooked_dir,
-                    std::string* error) {
+                    std::string* error, const std::vector<std::string>& extra_assets) {
     const stdfs::path cooked = work_dir / "Cooked";
     std::error_code ec;
     stdfs::create_directories(cooked, ec);
@@ -70,6 +70,7 @@ bool CookForPreview(const stdfs::path& project_file, const std::string& scene, c
     options.output_dir = cooked;
     options.configuration = cook::BuildConfiguration::Development;
     options.always_cook.push_back(scene); // the scene being previewed, whether or not the project starts with it
+    for (const std::string& asset : extra_assets) options.always_cook.push_back(asset);
     const cook::CookReport report = cook::Cook(options);
     if (!report.ok) {
         if (error) *error = "Cooking failed: " + (report.error.empty() ? std::string("see the log") : report.error);

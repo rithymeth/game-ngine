@@ -58,6 +58,7 @@ void CommandStack::SetFrozen(bool frozen) {
 }
 
 void CommandStack::Record(std::unique_ptr<ICommand> command, MergePolicy merge) {
+    ++revision_;
     if (command->Attribution().empty()) command->SetAttribution(attribution_);
     if (frozen_) {
         return; // applied, but not part of the history (see SetFrozen)
@@ -108,6 +109,7 @@ bool CommandStack::Undo(CommandContext& ctx) {
     }
     redo_.push_back(std::move(command));
     merge_open_ = false;
+    ++revision_;
     return true;
 }
 
@@ -125,6 +127,7 @@ bool CommandStack::Redo(CommandContext& ctx) {
     }
     PushUndo(std::move(command));
     merge_open_ = false;
+    ++revision_;
     return true;
 }
 

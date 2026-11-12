@@ -16,13 +16,15 @@ plan, not a status report: a line is only checked when it works and a test or a 
 
 In priority order; each is a project of its own.
 
-1. **A rendered viewport.** Partly there, in two forms. **Render Preview** is a still of the saved scene from the real renderer (about two seconds, the
-   scene's own camera). **Live Viewport** runs the project's scene under the real renderer inside the editor's own process, drawn on the editor's device, with
-   the Scene View's orbit camera, at up to 30 frames a second (about 12 on a software driver). What it is not: it shows the project as last cooked, so an edit
-   appears after Reload (which saves, cooks and loads again), and the game runs (physics, scripts), it is not a paused edit view of the in-memory scene. That last
-   part needs the scene renderer to draw an in-memory scene: today `SceneRenderer` draws a cooked package through a running `Game`, and the Live Viewport is
-   built on exactly that, so the remaining rework is making the renderer take a `World` directly (and then selection, gizmos and picking can draw on the rendered
-   image instead of the wireframe).
+1. **A rendered viewport.** Largely there, in two forms. **Render Preview** is a still of the saved scene from the real renderer. **Live Viewport** runs the
+   open scene under the real renderer inside the editor's own process, with the Scene View's orbit camera, at up to 30 frames a second (about 12 on a
+   software driver): an edit, a gizmo drag or an undo shows a moment later, **without saving**, because the editor hands the game its in-memory scene
+   (`GamePackage::SetContentOverride`, the scene as `SaveSceneToMemory` writes it). Lighting and material changes in the scene (a light's colour, a
+   transform) therefore show live. What is still true: each change reloads the whole scene into the game (the world, physics and scripts start over), not an
+   incremental update, so it suits small and medium scenes; **Run game** is off by default so the view is the scene as authored; a model added since the
+   last cook is not drawn until **Reload** (which cooks again), and the panel says so; and selection outlines, the gizmos and picking still draw on the
+   wireframe Scene View, not on the rendered image (that needs the rendered image to be the Scene View's background). Material *asset* edits (the Material
+   editor's graph) are not pushed into the view yet; that is a cook of the changed asset.
 2. **Transform gizmos.** Move, rotate and scale are done (W, E and R): arrows along the world axes, a ring around each world axis, and
    handles along the entity's own axes; each drag is one undoable edit, works in world space under a parent, and snaps to a step. With several
    entities selected they all follow (the handles sit on the first; an entity whose ancestor is also selected rides along instead of moving twice).
