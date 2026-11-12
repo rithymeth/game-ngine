@@ -2,10 +2,12 @@
 
 #include "core/commands.h"
 #include "content/content_drag.h"
+#include "ui/builtin_components.h"
 #include "ui/editor_theme.h"
 #include "ui/shell_layout.h"
 #include "world/scene_view.h"
 #include "workspace/editor_workspace.h"
+#include "aether/templates/templates.h"
 #include "aether/scene/gameplay.h"
 #include "aether/scene/hierarchy.h"
 #include "test_framework.h"
@@ -740,4 +742,81 @@ AETHER_TEST(TransformGizmo_AClickWithoutADragRecordsNothingAndAParentCarriesItsS
     AETHER_CHECK(NearVec(WorldPositionOf(document, child), Vec3(3, 0, 2), 0.02f));          // moved 3 once, not 6
     const Transform* local = document.GetWorld().GetComponent<Transform>(child);
     AETHER_CHECK(local && NearVec(local->position, Vec3(0, 0, 2), 1e-3f));                   // its own offset from the parent unchanged
+}
+
+// An untitled scene saved to the default name used to replace the project's real Main scene without a word (the Render and Live Viewport
+// buttons both save first). A plain save never replaces a file that is not the open scene.
+AETHER_TEST(ScenePanel_APlainSaveNeverReplacesAnotherScenesFile) {
+    const stdfs::path root = Scratch("aether_scene_panel_overwrite");
+    auto read = [&](const char* name) {
+        std::ifstream in(root / name, std::ios::binary);
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    };
+    {   // the project's real scene, made by someone else
+        ScenePanel author(root);
+        author.Document().CreateEntity("Real");
+        AETHER_CHECK(author.SaveScene("Scenes/Main.ascene"));
+    }
+    const std::string real = read("Scenes/Main.ascene");
+    AETHER_CHECK(real.find("Real") != std::string::npos);
+
+    ScenePanel panel(root);                                              // untitled, with the default path Scenes/Main.ascene
+    panel.Document().CreateEntity("Draft");
+    AETHER_CHECK(!panel.SaveScene());                                    // refused
+    AETHER_CHECK(panel.Status().find("already exists") != std::string::npos);
+    AETHER_CHECK(read("Scenes/Main.ascene") == real);                    // and untouched
+    AETHER_CHECK(panel.SaveScene("Scenes/Draft.ascene"));                // another name is fine
+    AETHER_CHECK(read("Scenes/Main.ascene") == real && read("Scenes/Draft.ascene").find("Draft") != std::string::npos);
+    AETHER_CHECK(panel.SaveScene());                                     // now the open scene is Draft: a plain save writes to it
+    AETHER_CHECK(!panel.SaveScene("Scenes/Main.ascene"));                // saving as the real one is refused the first time...
+    AETHER_CHECK(read("Scenes/Main.ascene") == real);
+    AETHER_CHECK(panel.SaveScene("Scenes/Main.ascene"));                 // ...and replaces it when asked again by name
+    AETHER_CHECK(read("Scenes/Main.ascene").find("Draft") != std::string::npos);
+
+    ScenePanel other(root);                                              // an explicit overwrite, and opening a scene first, both work
+    other.Document().CreateEntity("Third");
+    AETHER_CHECK(!other.SaveScene("Scenes/Draft.ascene") && read("Scenes/Draft.ascene").find("Third") == std::string::npos);
+    AETHER_CHECK(other.SaveScene("Scenes/Draft.ascene", true));
+    ScenePanel opener(root);
+    AETHER_CHECK(opener.OpenScene("Scenes/Main.ascene", true));
+    opener.Document().CreateEntity("Added");
+    AETHER_CHECK(opener.SaveScene());                                    // the scene that is open saves to its own file without ceremony
+    AETHER_CHECK(read("Scenes/Main.ascene").find("Added") != std::string::npos);
+}
+
+// The orientation a camera entity needs to look the way the orbit view looks: forward along eye -> target, right side up, same right as the view matrix.
+AETHER_TEST(SceneView_RotationPutsACameraEntityWhereTheViewLooks) {
+    for (const auto& [yaw, pitch] : {std::pair<f32, f32>{0.0f, 0.0f}, {0.9f, 0.4f}, {-2.3f, 0.8f}, {3.0f, -0.5f}, {1.2f, 1.4f}}) {
+        SceneViewCamera camera;
+        camera.yaw = yaw;
+        camera.pitch = pitch;
+        camera.distance = 10.0f;
+        camera.target = Vec3(1, 2, 3);
+        Transform t;
+        t.position = camera.Eye();
+        t.rotation = camera.Rotation();
+        const Mat4 m = LocalTransformMatrix(t);
+        const Vec3 forward = Vec3(m.cols[2].x, m.cols[2].y, m.cols[2].z) * -1.0f;   // a camera looks down its own -Z
+        const Vec3 wanted = (camera.target - camera.Eye()).Normalized();
+        AETHER_CHECK(NearVec(forward, wanted, 1e-3f));
+        AETHER_CHECK(m.cols[1].y > 0.0f);                                           // right side up
+        const Mat4 view = camera.View();
+        AETHER_CHECK(NearVec(Vec3(m.cols[0].x, m.cols[0].y, m.cols[0].z), Vec3(view.cols[0].x, view.cols[1].x, view.cols[2].x), 1e-3f)); // right is the view's right
+    }
+}
+
+// A template project's scene uses components from several modules (SkyLight, Blueprint instances, colliders, scripts); an editor that has not
+// registered them refuses to open it. (In this process other tests may have registered them already, so this proves the call works, not
+// that the editor makes it; the editor's workspace does, which is checked by running the shell on such a project.)
+AETHER_TEST(EditorComponents_ATemplateScenesComponentsAreAllKnown) {
+    RegisterEditorComponents();
+    RegisterEditorComponents(); // again: harmless
+    const stdfs::path dir = stdfs::temp_directory_path() / "aether_editor_components_test";
+    stdfs::remove_all(dir);
+    ProjectPaths paths;
+    std::string error;
+    AETHER_CHECK(templates::CreateProjectFromTemplate(dir, "Demo", "third_person", &paths, &error));
+    ScenePanel panel(paths.content);
+    AETHER_CHECK(panel.OpenScene("Scenes/Main.ascene", true));
+    AETHER_CHECK(panel.Document().Entities().size() >= 10);
 }

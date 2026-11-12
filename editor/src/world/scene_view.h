@@ -21,12 +21,18 @@ struct SceneViewCamera {
     f32 fov_degrees = 60.0f;
 
     Vec3 Eye() const;
+    // The orientation a camera entity needs to look from Eye() at the target (a camera looks down its own -Z).
+    Quaternion Rotation() const;
     Mat4 View() const;
     Mat4 ViewProjection(f32 aspect) const;
     void Orbit(f32 delta_yaw, f32 delta_pitch);
     void Zoom(f32 wheel_steps);          // each step scales the distance by 0.9 (in) or 1/0.9 (out)
     void Pan(f32 right_units, f32 up_units); // in the view plane, in world units
 };
+
+// The mouse and keys of an orbit view, for the ImGui item just submitted (right-drag turns, middle-drag or shift + left-drag pans, the
+// wheel zooms). `size` is the item's size in pixels. Shared by the Scene View and the live viewport.
+void HandleCameraInput(SceneViewCamera& camera, bool hovered, bool active, const ImVec2& size);
 
 // Where a world point lands in a viewport rectangle (top-left `origin`, `size` pixels); false when it is behind the camera.
 bool ProjectToViewport(const Mat4& view_projection, const Vec3& world, const ImVec2& origin, const ImVec2& size, ImVec2& out, f32* depth = nullptr);

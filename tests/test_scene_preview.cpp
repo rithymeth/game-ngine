@@ -1,6 +1,9 @@
 #include "core/scene_preview.h"
 #include "ui/image_texture.h"
 #include "workspace/editor_workspace.h"
+#if defined(AETHER_HAS_EDITOR_VULKAN)
+#include "host/live_viewport_panel.h"
+#endif
 #include "world/scene_preview_panel.h"
 
 #include "aether/core/log.h"
@@ -9,8 +12,11 @@
 #include "test_framework.h"
 
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <imgui.h>
+#include <memory>
 #include <set>
 
 // The rendered preview: the real player renders a project's scene and the picture comes back as pixels. Like the other player tests
@@ -134,6 +140,9 @@ AETHER_TEST(ScenePreviewPanel_RendersTheSavedSceneIntoATexture) {
     panel.SetProject(project);
     panel.width = 160;
     panel.height = 90;
+    AETHER_CHECK(!panel.Render());                                             // an untitled scene would replace the project's Main: refused,
+    AETHER_CHECK(panel.Note().find("already exists") != std::string::npos);    // and it says why
+    AETHER_CHECK(scene.OpenScene("Scenes/Main.ascene", true));                  // so the project's own scene is opened first
     scene.Document().CreateEntity("Marker");
     AETHER_CHECK(panel.Render());                                              // saved first, then started
     {   // the player renders what is on disk, so the scene was saved first: the new entity is in the file
@@ -164,3 +173,90 @@ AETHER_TEST(EditorWorkspace_TheSceneToolWorksInTheOpenProject) {
     AETHER_CHECK(workspace.Scene().ContentRoot() == other.parent_path() / "Content");
     AETHER_CHECK(workspace.Scene().Document().Entities().size() == before + 1);          // switching projects does not throw away the open scene
 }
+
+#if defined(AETHER_HAS_EDITOR_VULKAN)
+namespace {
+
+std::unique_ptr<gfx::rhi::IDevice> TryDevice() {
+    try {
+        return gfx::rhi::CreateDevice(gfx::rhi::Backend::Vulkan, false);
+    } catch (const std::exception&) {
+        return nullptr;
+    }
+}
+
+usize DifferingPixels(const std::vector<u8>& a, const std::vector<u8>& b) {
+    usize differing = 0;
+    for (usize i = 0; i + 3 < std::min(a.size(), b.size()); i += 4) {
+        if (std::abs(int(a[i]) - int(b[i])) + std::abs(int(a[i + 1]) - int(b[i + 1])) + std::abs(int(a[i + 2]) - int(b[i + 2])) > 12) ++differing;
+    }
+    return differing;
+}
+
+} // namespace
+
+AETHER_TEST(LiveViewport_RunsTheCookedSceneInProcessAndFollowsTheCamera) {
+    std::unique_ptr<gfx::rhi::IDevice> device = TryDevice();
+    if (!device) {
+        std::printf("    (no Vulkan device: install a driver, or Mesa's lavapipe, to run this)\n");
+        return;
+    }
+    const stdfs::path project = MakeProject("Live");
+    stdfs::path cooked;
+    std::string error;
+    AETHER_CHECK(CookForPreview(project, "Scenes/Main.ascene", project.parent_path() / "Saved" / "LiveTest", &cooked, &error));
+
+    LiveViewport view(*device);
+    AETHER_CHECK(!view.Loaded() && view.EntityCount() == 0 && view.FrameCount() == 0);
+    AETHER_CHECK(!view.Frame(0.016f, Vec3(0, 5, 10), Quaternion::Identity()));      // nothing loaded: nothing to draw
+    AETHER_CHECK(!view.Load(stdfs::temp_directory_path() / "aether_scene_preview_tests" / "no_such_cook", "Scenes/Main.ascene", 160, 90, &error) && !error.empty() && !view.Loaded());
+    AETHER_CHECK(!view.Load(cooked, "Scenes/DoesNotExist.ascene", 160, 90, &error) && error.find("did not load") != std::string::npos && !view.Loaded());
+    AETHER_CHECK(view.Load(cooked, "Scenes/Main.ascene", 160, 90, &error));
+    AETHER_CHECK(view.Loaded() && view.Width() == 160 && view.Height() == 90 && view.EntityCount() >= 10);
+
+    SceneViewCamera camera;
+    for (int i = 0; i < 4; ++i) AETHER_CHECK(view.Frame(0.016f, camera.Eye(), camera.Rotation(), camera.fov_degrees));
+    const std::vector<u8> first = view.Pixels();
+    AETHER_CHECK(first.size() == 160u * 90u * 4u);
+    std::set<u32> colours;                                                         // a lit scene, not an empty frame
+    for (usize i = 0; i + 3 < first.size(); i += 4 * 7) colours.insert(u32(first[i]) << 16 | u32(first[i + 1]) << 8 | first[i + 2]);
+    AETHER_CHECK(colours.size() > 20);
+    camera.Orbit(1.5f, 0.2f);                                                      // the picture follows the camera
+    for (int i = 0; i < 3; ++i) AETHER_CHECK(view.Frame(0.016f, camera.Eye(), camera.Rotation(), camera.fov_degrees));
+    AETHER_CHECK(DifferingPixels(first, view.Pixels()) > 160u * 90u / 10);
+    AETHER_CHECK(view.FrameCount() == 7);
+
+    AETHER_CHECK(view.Load(cooked, "Scenes/Main.ascene", 96, 54, &error) && view.Width() == 96 && view.FrameCount() == 0); // a second load replaces the first
+    view.Unload();
+    AETHER_CHECK(!view.Loaded() && view.Pixels().empty() && view.Width() == 0);
+}
+
+AETHER_TEST(LiveViewportPanel_StartsFromTheOpenSceneAndShowsFrames) {
+    std::unique_ptr<gfx::rhi::IDevice> device = TryDevice();
+    if (!device) {
+        std::printf("    (no Vulkan device: install a driver, or Mesa's lavapipe, to run this)\n");
+        return;
+    }
+    Context imgui;
+    const stdfs::path project = MakeProject("LivePanel");
+    ScenePanel scene(project.parent_path() / "Content");
+    LiveViewportPanel none(*device, scene, [] { return stdfs::path(); });
+    AETHER_CHECK(!none.Start() && none.Note() == "No project is open.");
+
+    LiveViewportPanel panel(*device, scene, [&] { return project; });
+    panel.width = 160;
+    panel.height = 90;
+    AETHER_CHECK(!panel.Start() && panel.Note().find("already exists") != std::string::npos);   // an untitled scene must not replace the project's Main
+    AETHER_CHECK(scene.OpenScene("Scenes/Main.ascene", true));
+    AETHER_CHECK(panel.Start() && panel.Viewport().Loaded() && panel.Note().empty());
+    AETHER_CHECK(panel.Advance(1.0f));                                              // a frame is due, drawn and shown
+    AETHER_CHECK(panel.Texture().Valid() && panel.Texture().Width() == 160 && panel.Texture().Height() == 90);
+    AETHER_CHECK(!panel.Advance(0.001f));                                           // not due again yet: the rate is capped
+    AETHER_CHECK(panel.Advance(0.1f) && panel.FramesPerSecond() > 0.0f);
+    ImGui::Begin("live");
+    panel.Draw(0.05f);
+    ImGui::End();
+    panel.Stop();
+    AETHER_CHECK(!panel.Viewport().Loaded() && !panel.Advance(1.0f));
+}
+#endif

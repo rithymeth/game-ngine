@@ -56,6 +56,29 @@ bool ScenePreview::TakeImage(PreviewImage& out) {
     return true;
 }
 
+bool CookForPreview(const stdfs::path& project_file, const std::string& scene, const stdfs::path& work_dir, stdfs::path* cooked_dir,
+                    std::string* error) {
+    const stdfs::path cooked = work_dir / "Cooked";
+    std::error_code ec;
+    stdfs::create_directories(cooked, ec);
+    if (ec) {
+        if (error) *error = "Can't make " + work_dir.string() + ": " + ec.message();
+        return false;
+    }
+    cook::CookOptions options;
+    options.project_file = project_file;
+    options.output_dir = cooked;
+    options.configuration = cook::BuildConfiguration::Development;
+    options.always_cook.push_back(scene); // the scene being previewed, whether or not the project starts with it
+    const cook::CookReport report = cook::Cook(options);
+    if (!report.ok) {
+        if (error) *error = "Cooking failed: " + (report.error.empty() ? std::string("see the log") : report.error);
+        return false;
+    }
+    if (cooked_dir) *cooked_dir = cooked;
+    return true;
+}
+
 void ScenePreview::Run(std::string scene, u32 width, u32 height) {
     auto fail = [this](const std::string& why) {
         SetMessage(why);
@@ -65,18 +88,10 @@ void ScenePreview::Run(std::string scene, u32 width, u32 height) {
     if (player.empty() || !stdfs::exists(player)) return fail("The player (aether_player) was not found beside the editor, so there is nothing to render with.");
 
     const stdfs::path work = WorkDir();
-    const stdfs::path cooked = work / "Cooked";
+    stdfs::path cooked;
+    std::string cook_error;
+    if (!CookForPreview(project_file_, scene, work, &cooked, &cook_error)) return fail(cook_error);
     std::error_code ec;
-    stdfs::create_directories(cooked, ec);
-    if (ec) return fail("Can't make " + work.string() + ": " + ec.message());
-
-    cook::CookOptions options;
-    options.project_file = project_file_;
-    options.output_dir = cooked;
-    options.configuration = cook::BuildConfiguration::Development;
-    options.always_cook.push_back(scene); // the scene being previewed, whether or not the project starts with it
-    const cook::CookReport report = cook::Cook(options);
-    if (!report.ok) return fail("Cooking failed: " + (report.error.empty() ? std::string("see the log") : report.error));
 
     const stdfs::path picture = work / "preview.bmp";
     stdfs::remove(picture, ec);

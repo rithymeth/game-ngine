@@ -16,6 +16,7 @@
 //                                blueprint, material, particle, sound, ...)
 
 #include "host/imgui_vulkan_host.h"
+#include "host/live_viewport_panel.h"
 #include "host/imgui_window_input.h"
 #include "workspace/editor_workspace.h"
 
@@ -34,6 +35,7 @@
 #include <chrono>
 #include <cctype>
 #include "ui/editor_theme.h"
+#include "ui/extensions.h"
 #include "ui/shell_layout.h"
 
 #include <cstdio>
@@ -188,6 +190,11 @@ int main() {
         ImGuiVulkanHost host(*device, *swap_chain);
 
         EditorWorkspace workspace;
+        // The Live Viewport tool: the project's scene running under the real renderer, drawn on this same device. It is made here, not in the
+        // workspace, because the workspace has no graphics device (it also runs headless in tests).
+        LiveViewportPanel live(*device, workspace.Scene(), [&workspace] { return workspace.ProjectFile(); });
+        f32 frame_dt = 0.0f;
+        workspace.Extensions().AddPanel({"Live Viewport", "Scene", [&live, &frame_dt] { live.Draw(frame_dt); }, "shell"});
         // AETHER_EDITOR_TAB picks the tool shown first (the start of its name, any case).
         // What the last session left: the divider and the open tool. A headless run (tests, screenshots) neither
         // reads nor writes it unless AETHER_EDITOR_LAYOUT names a file; AETHER_EDITOR_TAB wins over the remembered tool.
@@ -199,14 +206,24 @@ int main() {
             imgui_ini = (layout_file.parent_path() / "editor_panels.ini").string();
             io.IniFilename = imgui_ini.c_str();
         }
-        if (LoadShellLayout(layout_file, layout) && !layout.tool.empty()) {
-            const i64 tool = workspace.FindTool(layout.tool);
-            if (tool >= 0) workspace.Select(static_cast<usize>(tool));
-        }
-        if (const char* tab = std::getenv("AETHER_EDITOR_TAB")) {
-            const i64 tool = workspace.FindTool(tab);
-            if (tool >= 0) workspace.Select(static_cast<usize>(tool));
-        }
+        // The tool to open on: the one asked for, else the one left open last time. A tool an extension adds (the Live Viewport is one) only
+        // exists after the workspace's first frame, so a name not found yet is tried again for a few frames; until then the layout is not saved,
+        // or the remembered tool would be overwritten by the default one.
+        std::string pending_tool;
+        i32 pending_frames = 0;
+        if (LoadShellLayout(layout_file, layout) && !layout.tool.empty()) pending_tool = layout.tool;
+        if (const char* tab = std::getenv("AETHER_EDITOR_TAB")) pending_tool = tab;
+        auto select_pending = [&] {
+            if (pending_tool.empty()) return;
+            const i64 tool = workspace.FindTool(pending_tool);
+            if (tool >= 0) {
+                workspace.Select(static_cast<usize>(tool));
+                pending_tool.clear();
+            } else if (++pending_frames > 5) {
+                pending_tool.clear(); // no such tool: give up and keep the default
+            }
+        };
+        select_pending();
         AETHER_LOG_INFO("Editor", "Aether editor shell: Vulkan, %s, %ux%u", headless ? "offscreen" : "window",
                         swap_chain->Width(), swap_chain->Height());
         const char* backend_label = headless ? "Vulkan (offscreen)" : "Vulkan";
@@ -228,7 +245,8 @@ int main() {
                 }
             }
             const auto now = std::chrono::steady_clock::now();
-            io.DeltaTime = std::max(std::chrono::duration<f32>(now - last).count(), 1.0f / 1000.0f);
+            frame_dt = std::max(std::chrono::duration<f32>(now - last).count(), 1.0f / 1000.0f);
+            io.DeltaTime = frame_dt;
             last = now;
             io.DisplaySize = ImVec2(static_cast<f32>(swap_chain->Width()), static_cast<f32>(swap_chain->Height()));
 
@@ -236,6 +254,7 @@ int main() {
             host.NewFrame();
             ImGui::NewFrame();
             workspace.Update(io.DeltaTime);
+            select_pending();
             DrawEditor(workspace, backend_label, quit);
             ImGui::Render();
 
@@ -264,14 +283,14 @@ int main() {
                 }
             }
             swap_chain->Present(true);
-            if (frame % 120 == 0 && !layout_file.empty()) { // not only at exit: a crash should not lose the divider
+            if (frame % 120 == 0 && !layout_file.empty() && pending_tool.empty()) { // not only at exit: a crash should not lose the divider
                 layout.tool = workspace.ToolName(workspace.Selected());
                 SaveShellLayout(layout_file, layout);
             }
             Profiler::Get().EndFrame();
         }
         device->WaitForFence(fence);
-        if (!layout_file.empty()) {
+        if (!layout_file.empty() && pending_tool.empty()) {
             layout.tool = workspace.ToolName(workspace.Selected());
             std::string layout_error;
             if (!SaveShellLayout(layout_file, layout, &layout_error)) AETHER_LOG_WARN("Editor", "Couldn't remember the layout: %s", layout_error.c_str());

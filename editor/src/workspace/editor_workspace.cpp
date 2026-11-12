@@ -32,6 +32,7 @@
 #include "vfx/vfx_editor.h"
 #include "world/procedural_panel.h"
 #include "world/scene_panel.h"
+#include "ui/builtin_components.h"
 #include "world/scene_preview_panel.h"
 #include "world/scene_view.h"
 #include "world/world_panels.h"
@@ -279,6 +280,7 @@ struct EditorWorkspace::Impl {
         else if (!project_file.empty())
             CrashHandler::SetContext("project", project_file.stem().string());
         extensions.MakeActive();
+        RegisterEditorComponents(); // so a scene that uses any module's components opens (an unknown component is refused, not dropped)
         BuildBlueprint();
         BuildScript();
         BuildMaterial();

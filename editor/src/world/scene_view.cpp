@@ -32,6 +32,11 @@ Vec3 SceneViewCamera::Eye() const {
     return target + Vec3(cp * std::sin(yaw), std::sin(pitch), cp * std::cos(yaw)) * distance;
 }
 
+Quaternion SceneViewCamera::Rotation() const {
+    // Turn about Y by the yaw, then tip about the camera's own X: looking down (the eye above the target) is a negative turn about X.
+    return (Quaternion::FromAxisAngle(Vec3(0, 1, 0), yaw) * Quaternion::FromAxisAngle(Vec3(1, 0, 0), -pitch)).Normalized();
+}
+
 Mat4 SceneViewCamera::View() const { return Mat4::LookAtRH(Eye(), target, Vec3(0.0f, 1.0f, 0.0f)); }
 
 Mat4 SceneViewCamera::ViewProjection(f32 aspect) const {
@@ -53,6 +58,20 @@ void SceneViewCamera::Pan(f32 right_units, f32 up_units) {
     const Vec3 right(view.cols[0].x, view.cols[1].x, view.cols[2].x);
     const Vec3 up(view.cols[0].y, view.cols[1].y, view.cols[2].y);
     target = target + right * right_units + up * up_units;
+}
+
+void HandleCameraInput(SceneViewCamera& camera, bool hovered, bool active, const ImVec2& size) {
+    const ImGuiIO& io = ImGui::GetIO();
+    if (active) {
+        const ImVec2 d = io.MouseDelta;
+        if (ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
+            camera.Orbit(-d.x * 0.008f, d.y * 0.008f);
+        } else if (ImGui::IsMouseDown(ImGuiMouseButton_Middle) || (io.KeyShift && ImGui::IsMouseDown(ImGuiMouseButton_Left))) {
+            const f32 per_pixel = 2.0f * camera.distance * std::tan(camera.fov_degrees * kPi / 360.0f) / std::max(size.y, 1.0f);
+            camera.Pan(-d.x * per_pixel, d.y * per_pixel);
+        }
+    }
+    if (hovered && io.MouseWheel != 0.0f) camera.Zoom(io.MouseWheel);
 }
 
 bool ProjectToViewport(const Mat4& view_projection, const Vec3& world, const ImVec2& origin, const ImVec2& size, ImVec2& out, f32* depth) {
@@ -455,16 +474,7 @@ void SceneViewPanel::Draw(SceneDocument& document) {
     const ImGuiIO& io = ImGui::GetIO();
 
     // Input: right-drag orbits, middle-drag or shift + left-drag pans, the wheel zooms, F focuses, a click selects.
-    if (active) {
-        const ImVec2 d = io.MouseDelta;
-        if (ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
-            camera_.Orbit(-d.x * 0.008f, d.y * 0.008f);
-        } else if (ImGui::IsMouseDown(ImGuiMouseButton_Middle) || (io.KeyShift && ImGui::IsMouseDown(ImGuiMouseButton_Left))) {
-            const f32 per_pixel = 2.0f * camera_.distance * std::tan(camera_.fov_degrees * kPi / 360.0f) / size.y;
-            camera_.Pan(-d.x * per_pixel, d.y * per_pixel);
-        }
-    }
-    if (hovered && io.MouseWheel != 0.0f) camera_.Zoom(io.MouseWheel);
+    HandleCameraInput(camera_, hovered, active, size);
     if (hovered && !io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_F)) FocusSelection(document);
     const f32 snap_step = !snap_ ? 0.0f : (mode_ == GizmoMode::Move ? snap_move_ : (mode_ == GizmoMode::Rotate ? snap_rotate_ : snap_scale_));
     if (hovered && !io.WantTextInput && !gizmo_.Dragging()) { // W, E and R choose the gizmo, as in most editors

@@ -7,6 +7,7 @@ add_library(aether_editor_ui STATIC
     entity_inspector.cpp
     script_inspector.cpp
     error_overlay.cpp
+    builtin_components.cpp
     editor_theme.cpp
     image_texture.cpp
     shell_layout.cpp
@@ -88,6 +89,16 @@ if(TARGET Aether::Physics)
 else()
     target_compile_definitions(aether_editor_ui PUBLIC AETHER_EDITOR_NET_PHYSICS=0)
 endif()
+# The kits whose components a scene may carry (see builtin_components.h), where this build has them.
+foreach(kit Inventory Interaction Quests)
+    string(TOUPPER ${kit} kit_upper)
+    if(TARGET Aether::${kit})
+        target_link_libraries(aether_editor_ui PRIVATE Aether::${kit})
+        target_compile_definitions(aether_editor_ui PRIVATE AETHER_EDITOR_KIT_${kit_upper}=1)
+    else()
+        target_compile_definitions(aether_editor_ui PRIVATE AETHER_EDITOR_KIT_${kit_upper}=0)
+    endif()
+endforeach()
 add_library(Aether::EditorUI ALIAS aether_editor_ui)
 
 # Phase 24 step 5: Dear ImGui on the RHI's Vulkan backend (imgui_impl_vulkan
@@ -95,10 +106,12 @@ add_library(Aether::EditorUI ALIAS aether_editor_ui)
 if(AETHER_BUILD_VULKAN)
     add_library(aether_editor_vulkan STATIC
         ../host/imgui_vulkan_host.cpp
+        ../host/live_viewport.cpp
+        ../host/live_viewport_panel.cpp
         ${imgui_SOURCE_DIR}/backends/imgui_impl_vulkan.cpp
     )
     target_include_directories(aether_editor_vulkan PUBLIC ${imgui_SOURCE_DIR}/backends)
-    target_link_libraries(aether_editor_vulkan PUBLIC aether_editor_ui PRIVATE ${AETHER_VULKAN_LIBRARY})
+    target_link_libraries(aether_editor_vulkan PUBLIC aether_editor_ui Aether::Game PRIVATE ${AETHER_VULKAN_LIBRARY})
     # Third-party code: don't hold it to our warning flags.
     if(MSVC)
         set_source_files_properties(${imgui_SOURCE_DIR}/backends/imgui_impl_vulkan.cpp PROPERTIES COMPILE_OPTIONS /w)

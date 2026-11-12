@@ -55,7 +55,10 @@ public:
     // refused with a status line unless `discard` is true (the toolbar asks first and then passes true).
     bool NewScene(bool discard = false);
     bool OpenScene(const std::string& path, bool discard = false);
-    bool SaveScene(const std::string& path = {});
+    // Saves the open scene, or (with `path`) to another name. A file that already exists and is not the open scene is never replaced by a
+    // plain save: it is refused with a message (Status()), because an untitled scene saved to the default name would otherwise overwrite
+    // the project's real one. Saving to a name again right after that refusal (Save As twice), or with `overwrite`, replaces it.
+    bool SaveScene(const std::string& path = {}, bool overwrite = false);
     // Drops `entity` under `parent` (kNullEntity: the scene root). False, and a status line, when that would put an entity under its own descendant, or it is already there.
     bool Reparent(Entity entity, Entity parent);
     // Deletes everything selected, one undo step each.
@@ -80,6 +83,7 @@ private:
 
     SceneDocument document_;
     std::filesystem::path content_root_;
+    std::filesystem::path pending_overwrite_; // the file a save was just refused for, so that asking again by name can confirm it
     std::string path_ = "Scenes/Main.ascene";
     std::string status_;
     std::array<char, 128> filter_{};
