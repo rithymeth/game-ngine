@@ -1,6 +1,7 @@
 #include "content_browser_panel.h"
 
 #include "aether/project/project.h"
+#include "content/content_drag.h"
 #include "ui/extensions.h"
 
 #include <imgui.h>
@@ -15,7 +16,6 @@ using assets::VcsState;
 
 namespace {
 
-constexpr char kContentPathPayload[] = "AETHER_CONTENT_PATH";
 
 ImVec4 StateColor(VcsState s) {
     switch (s) {

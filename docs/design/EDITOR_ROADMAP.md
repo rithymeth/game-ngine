@@ -24,8 +24,10 @@ In priority order; each is a project of its own.
    handles along the entity's own axes; each drag is one undoable edit, works in world space under a parent, and snaps to a step. Still to
    do: plane handles, a local-space option for move and rotate, and editing a multi-selection (the document tracks one pending edit at a
    time, so only the first selected entity changes).
-3. **A content browser.** Browse and search the project's assets with thumbnails, drag an asset into the scene or a field. The asset
-   database and importers exist; there is no panel for them.
+3. **A better content browser.** One exists (Project > Content Browser: folders, search, git status badges, rename and move, references,
+   asset validation, commit). Dragging a model from it into the Scene View places it on the ground under the mouse. Still to do: thumbnails
+   (need the renderer, item 1), dropping onto the hierarchy and onto inspector fields (a texture onto a material slot, a prefab into the scene),
+   and prefab placement.
 4. **Previews.** Material, mesh and animation previews that use the real renderer (needs item 1), so tuning a material shows the result.
 5. **Multi-scene and prefab workflow.** Several scenes open at once, prefab instance overrides shown in the inspector, a prefab editing mode.
 6. **Play in editor with the real runtime** shown in the viewport, with pause, step and eject-the-camera (needs items 1 and 2).
