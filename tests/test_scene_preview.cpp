@@ -1263,7 +1263,7 @@ AETHER_TEST(LiveViewportPanel_SaysWhatItMakesOfAMaterialGraphItCannotDrawYet) {
     AETHER_CHECK(panel.Start());
     std::vector<player::GraphMaterialReport> reports = panel.GraphMaterials();
     AETHER_CHECK(reports.size() == 1 && reports[0].found && reports[0].compiles && reports[0].parameters > 0 && reports[0].live_nodes == 2 && reports[0].permutation_key != 0);
-    AETHER_CHECK(reports.size() == 1 && reports[0].message.find("not drawn yet") != std::string::npos); // it says so, rather than showing the model's own surface unremarked
+    AETHER_CHECK(reports.size() == 1 && reports[0].drawable && reports[0].message.find("drawn") != std::string::npos);
 
     use("Materials/Broken.amat");
     AETHER_CHECK(panel.Start());
@@ -1283,6 +1283,76 @@ AETHER_TEST(LiveViewportPanel_SaysWhatItMakesOfAMaterialGraphItCannotDrawYet) {
     AETHER_CHECK(reports.size() == 1 && !reports[0].compiles && reports[0].message.find("instance") != std::string::npos);
     use("");
     AETHER_CHECK(panel.GraphMaterials().empty());                                 // no graph named: nothing said
+}
+
+AETHER_TEST(LiveViewportPanel_AMaterialGraphIsDrawnInPlaceOfTheModelsSurface) {
+    std::unique_ptr<gfx::rhi::IDevice> device = TryDevice();
+    if (!device) {
+        std::printf("    (no Vulkan device: install a driver, or Mesa's lavapipe, to run this)\n");
+        return;
+    }
+    Context imgui;
+    const stdfs::path project = MakeProject("LiveGraphDraw");
+    const stdfs::path content = project.parent_path() / "Content";
+    stdfs::create_directories(content / "Materials");
+    auto write = [&](const char* name, const mat::Material& material) { std::ofstream(content / "Materials" / name) << mat::MaterialToJson(material).dump(); };
+    mat::Material red; // a red surface: a Tint parameter into BaseColor, a Roughness parameter, nothing else
+    red.parameters.push_back({"Tint", mat::PinType::Float3, {0.9f, 0.05f, 0.05f, 0}, "", "Surface"});
+    red.parameters.push_back({"Roughness", mat::PinType::Float, {0.6f, 0, 0, 0}, "", ""});
+    {
+        const mat::NodeId out = red.Add("Material.Output", {}, 600, 0);
+        const mat::NodeId color = red.Add("Param.Vector:Tint");
+        const mat::NodeId rough = red.Add("Param.Scalar:Roughness");
+        red.Connect(color, "value", out, "BaseColor").Connect(rough, "value", out, "Roughness");
+    }
+    write("Red.amat", red);
+    mat::Material textured; // a graph that samples a texture: compiles, but the renderer does not draw those yet
+    textured.parameters.push_back({"Albedo", mat::PinType::Texture, {}, "0123456789abcdef", "Surface"});
+    {
+        const mat::NodeId out = textured.Add("Material.Output", {}, 600, 0);
+        const mat::NodeId tex = textured.Add("Param.Texture:Albedo");
+        const mat::NodeId sample = textured.Add("Texture.Sample");
+        textured.Connect(tex, "value", sample, "texture").Connect(sample, "rgb", out, "BaseColor");
+    }
+    write("Textured.amat", textured);
+
+    ScenePanel scene(content);
+    AETHER_CHECK(scene.OpenScene("Scenes/Main.ascene", true));
+    SceneDocument& document = scene.Document();
+    std::vector<Entity> models;
+    for (const Entity entity : document.Entities()) {
+        if (document.GetWorld().HasComponent<ModelRenderer>(entity)) models.push_back(entity);
+    }
+    AETHER_CHECK(models.size() >= 2);
+    const ComponentId overrides = GetComponentId<MaterialParameters>();
+    for (const Entity entity : models) AETHER_CHECK(document.AddComponent(entity, overrides));
+    auto use = [&](const char* path) {
+        for (const Entity entity : models) AETHER_CHECK(document.SetComponentField(entity, overrides, "material", reflect::Any(std::string(path)), true));
+    };
+    LiveViewportPanel panel(*device, scene, [&] { return project; });
+    panel.width = 160;
+    panel.height = 90;
+    panel.reload_interval = 0.0f;
+    auto picture = [&](const char* path) {
+        use(path);
+        AETHER_CHECK(panel.Start());
+        for (int i = 0; i < 6; ++i) panel.Advance(0.2f);
+        return panel.Viewport().Pixels();
+    };
+    auto reds = [](const std::vector<u8>& pixels) {
+        usize count = 0;
+        for (usize i = 0; i + 3 < pixels.size(); i += 4) count += pixels[i] > pixels[i + 1] + 50 && pixels[i] > pixels[i + 2] + 50;
+        return count;
+    };
+    const std::vector<u8> own = picture("");
+    const std::vector<u8> drawn = picture("Materials/Red.amat");
+    AETHER_CHECK(panel.GraphMaterials().size() == 1 && panel.GraphMaterials()[0].drawable);
+    AETHER_CHECK(reds(own) < 160u * 90u / 100);                     // the scene's own surfaces are grey and blue and tan, not red
+    AETHER_CHECK(reds(drawn) > 160u * 90u / 3);                      // every model is the graph's red now: most of the picture (the floor is a model)
+    AETHER_CHECK(DifferingPixels(own, drawn) > 160u * 90u / 3);
+    const std::vector<u8> skipped = picture("Materials/Textured.amat");
+    AETHER_CHECK(panel.GraphMaterials().size() == 1 && panel.GraphMaterials()[0].compiles && !panel.GraphMaterials()[0].drawable);
+    AETHER_CHECK(DifferingPixels(own, skipped) < 160u * 90u / 50);   // not drawn yet: the model's own surface, as before
 }
 
 #endif

@@ -1,5 +1,6 @@
 #include "aether/player/scene_renderer.h"
 
+#include "aether/player/graph_material.h"
 #include "aether/renderer/material_codegen.h"
 #include "aether/renderer/components.h"
 #include "material_overrides.h"
@@ -30,6 +31,8 @@
 #include "vsm_pass.h"
 #include "package_textures.h"
 #include "aether/ui/draw.h"
+
+#include <map>
 #include "aether/ui/font.h"
 #include "aether/ui/viewport.h"
 #include "aether/vfx/particle_system.h"
@@ -696,6 +699,29 @@ float4 PSMain(PSInput input, bool is_front : SV_IsFrontFace) : SV_TARGET {
         float occlusion_sample = g_Textures[occlusion_index].Sample(g_Sampler, input.uv).r;
         ambient_occlusion = lerp(1.0, occlusion_sample, occlusion_strength);
     }
+    float3 graph_emissive = float3(0.0, 0.0, 0.0);
+#ifdef AETHER_GRAPH_MATERIAL
+    {   // A material graph: what it says replaces the model's own base colour, metallic, roughness, occlusion and emissive.
+        MaterialInputs graph_in;
+        for (int uv_set = 0; uv_set < 4; ++uv_set) graph_in.uv[uv_set] = input.uv;
+        graph_in.world_position = input.local_position;
+        graph_in.vertex_normal = normalize(input.normal);
+        graph_in.camera_vector = normalize(g_PC.g_CameraLocal - input.local_position);
+        graph_in.time = 0.0;
+#ifdef AETHER_FRAME_DATA
+        float3 graph_view = ApplyModelTransform(g_PC.g_CameraLocal - input.local_position);
+        graph_in.world_position = g_Frame.camera_world.xyz - graph_view;
+        graph_in.camera_vector = normalize(graph_view);
+        graph_in.time = g_Frame.time.x;
+#endif
+        MaterialOutputs graph_out = EvaluateMaterial(graph_in);
+        base_color = graph_out.base_color;
+        metallic = saturate(graph_out.metallic);
+        roughness = clamp(graph_out.roughness, 0.04, 1.0);
+        ambient_occlusion = saturate(graph_out.ao);
+        graph_emissive = graph_out.emissive;
+    }
+#endif
     SurfaceExtension surface_ext = NoSurfaceExtension();
     uint extension_index = (g_PC.g_AlphaOptions >> 2) & 255;
     // Not a ?: for the same reason as above.
@@ -774,6 +800,9 @@ float4 PSMain(PSInput input, bool is_front : SV_IsFrontFace) : SV_TARGET {
     float3 emissive = float3(f16tof32(g_PC.g_Emissive.x), f16tof32(g_PC.g_Emissive.x >> 16), f16tof32(g_PC.g_Emissive.y));
     uint emissive_index = (g_PC.g_Emissive.y >> 16) & 255;
     if (emissive_index < 128) emissive *= SRGBToLinear(g_Textures[emissive_index].Sample(g_Sampler, input.uv).rgb);
+#ifdef AETHER_GRAPH_MATERIAL
+    emissive = graph_emissive;
+#endif
     color += emissive;
 #ifdef AETHER_FRAME_DATA
     // Water (AETHER_materials_water) mirrors the scene: the frame's reflection texture is the world drawn mirrored about the water's plane from this same
@@ -987,6 +1016,39 @@ struct SceneRenderer::Impl {
         std::vector<Mat4> skin_matrices;
         bool valid = false;
     };
+
+    // A material graph (.amat) the renderer draws with: the scene's pipelines compiled with the graph's shader, made the first time a draw needs them. `ok` is
+    // false for a graph that is not drawable or whose shader did not build (those draw with the model's own surface), tried once.
+    struct GraphPipelines {
+        bool ok = false;
+        PipelineHandle pipeline, culled;
+    };
+    std::map<std::string, std::unique_ptr<GraphPipelines>> graph_pipelines;
+    PipelineDesc scene_desc;      // the scene pipeline's description, to make a graph's from
+    bool scene_frame_data = false;
+    bool scene_rt = false;
+    const GraphPipelines* GraphFor(const std::string& path) {
+        auto found = graph_pipelines.find(path);
+        if (found != graph_pipelines.end()) return found->second->ok ? found->second.get() : nullptr;
+        auto made = std::make_unique<GraphPipelines>();
+        std::string shader;
+        const GraphMaterialReport report = CompileGraphMaterial(package, path, &shader);
+        if (report.drawable && scene_frame_data) {
+            try {
+                PipelineDesc desc = scene_desc;
+                desc.hlsl_source = SceneShaderSource(scene_frame_data, hdr, scene_rt, shader);
+                made->pipeline = device.CreatePipeline(desc, swap_chain);
+                desc.cull_back_face = true;
+                made->culled = device.CreatePipeline(desc, swap_chain);
+                made->ok = made->pipeline.IsValid() && made->culled.IsValid();
+            } catch (const std::exception& error) {
+                AETHER_LOG_WARN("PlayerRenderer", "The material graph '%s' did not build a shader (%s); it draws with the model's own surface", path.c_str(), error.what());
+            }
+        }
+        const GraphPipelines* result = made->ok ? made.get() : nullptr;
+        graph_pipelines.emplace(path, std::move(made));
+        return result;
+    }
 
     IDevice& device;
     ISwapChain& swap_chain;
@@ -1207,6 +1269,12 @@ struct SceneRenderer::Impl {
             if (handle->IsValid()) device.DestroyPipeline(*handle);
             *handle = {};
         }
+        for (auto& [path, graph] : graph_pipelines) {
+            for (PipelineHandle* handle : {&graph->pipeline, &graph->culled}) {
+                if (handle->IsValid()) device.DestroyPipeline(*handle);
+                *handle = {};
+            }
+        }
     }
 
     Impl(IDevice& d, ISwapChain& s, const GamePackage& p) : device(d), swap_chain(s), package(p) {
@@ -1312,6 +1380,9 @@ struct SceneRenderer::Impl {
             }
         }
         if (!pipeline.IsValid()) pipeline = device.CreatePipeline(desc, swap_chain);
+        scene_desc = desc; // a material graph's pipelines are this one with another pixel shader
+        scene_frame_data = device.SupportsFrameConstants();
+        scene_rt = rt_shadows;
 
         PipelineDesc transparent_desc = desc;
         transparent_desc.enable_blending = true;
@@ -2403,6 +2474,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
         Mat4 model;           // for the water reflection's pass, which draws it again with another matrix
         bool reflect = false; // drawn into the water's reflection: still, single-sided, opaque surfaces (not plants, skinned meshes or water); double-sided ones too, with the mirror pass's own frame constants flagging it
         bool in_view = true;  // the main camera can see it; a draw it cannot is kept only for the mirror pass, which sees what the camera does not
+        const Impl::GraphPipelines* graph = nullptr; // drawn with a material graph's shader (null: the scene's own)
     };
 
     Impl& renderer = *impl_;
@@ -2854,7 +2926,9 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                             bool has_base_color_texture = primitive.has_base_color_texture, has_normal_texture = primitive.has_normal_texture,
                                  has_metallic_roughness_texture = primitive.has_metallic_roughness_texture, has_occlusion_texture = primitive.has_occlusion_texture,
                                  has_emissive_texture = primitive.has_emissive_texture;
+                            const Impl::GraphPipelines* graph = nullptr;
                             if (const MaterialParameters* overrides = world.GetComponent<MaterialParameters>(entities[row])) {
+                                if (overrides->material.size() > 5 && overrides->material.compare(overrides->material.size() - 5, 5, ".amat") == 0) graph = renderer.GraphFor(overrides->material);
                                 const player::TextureOverrides images = player::ApplyMaterialOverrides(*overrides, surface);
                                 SampledTextureHandle* handles[player::kTextureSlotCount] = {&base_color_texture, &normal_texture, &metallic_roughness_texture, &occlusion_texture, &emissive_texture};
                                 bool* present[player::kTextureSlotCount] = {&has_base_color_texture, &has_normal_texture, &has_metallic_roughness_texture, &has_occlusion_texture, &has_emissive_texture};
@@ -2938,7 +3012,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                                 const bool reflect = primitive.wind_level == 0 && !primitive.water && !uploaded_animation;
                                 if (in_view || reflect) {
                                     opaque_draws.push_back({frame_vertex_buffer, far_level ? primitive.lod_indices : primitive.indices, far_level ? primitive.lod_index_count : primitive.index_count,
-                                                            constants, cull, model_transform, reflect, in_view});
+                                                            constants, cull, model_transform, reflect, in_view, graph});
                                 }
                                 if (transform_moved || previous_positions != kTaaNoPreviousPositions) {
                                     taa_movers.push_back({frame_vertex_buffer, primitive.indices, primitive.index_count,
@@ -3292,13 +3366,19 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
     if (draw_sky) renderer.sky->Draw(commands, shadow_view, frame_buffer);
     if (!opaque_draws.empty()) {
         // Culled draws first, then the two-sided ones: one pipeline switch.
-        std::stable_partition(opaque_draws.begin(), opaque_draws.end(), [](const PendingOpaqueDraw& draw) { return draw.cull; });
+        // (and a material graph's draws together, each graph with its own pipelines)
+        std::stable_sort(opaque_draws.begin(), opaque_draws.end(), [](const PendingOpaqueDraw& a, const PendingOpaqueDraw& b) {
+            if (a.graph != b.graph) return std::less<const void*>()(a.graph, b.graph);
+            return a.cull && !b.cull;
+        });
         bool bound = false, bound_cull = false;
+        const Impl::GraphPipelines* bound_graph = nullptr;
         for (const PendingOpaqueDraw& draw : opaque_draws) {
             if (!draw.in_view) continue;
             const bool cull = draw.cull && renderer.culled_pipeline.IsValid();
-            if (!bound || cull != bound_cull) {
-                commands.BindPipeline(cull ? renderer.culled_pipeline : renderer.pipeline);
+            if (!bound || cull != bound_cull || draw.graph != bound_graph) {
+                bound_graph = draw.graph;
+                commands.BindPipeline(draw.graph != nullptr ? (cull ? draw.graph->culled : draw.graph->pipeline) : (cull ? renderer.culled_pipeline : renderer.pipeline));
                 if (frame_buffer.IsValid()) commands.BindFrameConstants(frame_buffer);
                 if (light_buffer.IsValid()) commands.BindFrameReadBuffer(light_buffer);
                 if (renderer.rt_shadows && renderer.rt_tlas.IsValid()) commands.BindAccelerationStructure(renderer.rt_tlas);
@@ -3395,10 +3475,10 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
 }
 
 // The advanced PBR library (anisotropic GGX, sheen, clear coat) goes ahead of the scene shader.
-std::string SceneShaderSource(bool with_frame_data, bool hdr_target, bool ray_traced_shadows) {
+std::string SceneShaderSource(bool with_frame_data, bool hdr_target, bool ray_traced_shadows, const std::string& graph_hlsl) {
     return std::string(with_frame_data ? "#define AETHER_FRAME_DATA 1\n" : "") + (hdr_target ? "#define AETHER_HDR_TARGET 1\n" : "") +
-           (with_frame_data && ray_traced_shadows ? "#define AETHER_RT_SHADOWS 1\n" : "") +
-           mat::AdvancedPbrHlsl() + mat::ShadingModelsHlsl() + kSceneShader + (with_frame_data ? FrameDataHlsl() : "") + kSceneShaderVertex +
+           (with_frame_data && ray_traced_shadows ? "#define AETHER_RT_SHADOWS 1\n" : "") + (graph_hlsl.empty() ? "" : "#define AETHER_GRAPH_MATERIAL 1\n") +
+           mat::AdvancedPbrHlsl() + mat::ShadingModelsHlsl() + graph_hlsl + kSceneShader + (with_frame_data ? FrameDataHlsl() : "") + kSceneShaderVertex +
            (with_frame_data ? VsmShaderLibrary() : "") + (with_frame_data ? kSceneShaderVsm : "") + kSceneShaderFrame;
 }
 
