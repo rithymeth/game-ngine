@@ -34,7 +34,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Sky"
+          "value": "Sky"
         }
       },
       "guid": "2b236fc4-f2c7-5c19-adef-5aa63b3defaa"
@@ -72,7 +72,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Sun"
+          "value": "Sun"
         }
       },
       "guid": "49fe3aa4-c54b-5829-8075-e89e13215d68"
@@ -123,7 +123,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Ground"
+          "value": "Ground"
         }
       },
       "guid": "48f391e7-aae7-5f4f-9f7b-706691185fba"
@@ -155,7 +155,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "G_RockA"
+          "value": "G_RockA"
         }
       },
       "guid": "c9f2e67d-ef06-5ea9-9234-c7b46b8370e6"
@@ -187,7 +187,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "G_RockB"
+          "value": "G_RockB"
         }
       },
       "guid": "72db4025-2fcb-53e0-92f0-cc257ef8c161"
@@ -219,7 +219,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "G_Cliff"
+          "value": "G_Cliff"
         }
       },
       "guid": "f30242d3-9549-5a5d-980b-c83dec217b41"
@@ -251,7 +251,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "G_RuinWall"
+          "value": "G_RuinWall"
         }
       },
       "guid": "8fc19b16-736f-5a6a-ab5a-a4bb40ddf9cc"
@@ -283,7 +283,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "G_OutpostPlate"
+          "value": "G_OutpostPlate"
         }
       },
       "guid": "de855159-3ef9-51cf-b0a5-c9ac0cf42e18"
@@ -320,7 +320,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "MainCamera"
+          "value": "MainCamera"
         },
         "Tags": {
           "$v": 1,

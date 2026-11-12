@@ -4971,7 +4971,7 @@
   bool ParseGameManifest(std::string_view text,GameManifest&out,std::string*error=nullptr)
   bool ReadContent(const std::string&path,std::vector<u8>&out,std::string*error=nullptr)const
   bool ReadContentLocalized(const std::string&path,const std::string&language,std::vector<u8>&out,std::string*error=nullptr)const
-  bool RequestScene(const std::string&path)
+  bool RequestScene(const std::string&path,const std::string&spawn=
   bool StartAudioOutput(std::string*error=nullptr)
   bool Suspended()const
   const GameManifest&Manifest()const
@@ -5035,6 +5035,7 @@
   void LoadKitAssets()
   void LoadLocalization()
   void OnPlatformEvent(const platform::LifecycleMessage&message)
+  void PlaceCharacterAt(const std::string&spawn)
   void RefreshSaveContext()
   void SetAuthoritativePhysicsClient(bool enabled)
   void SetContentOverride(const std::string&path,std::vector<u8>bytes)
@@ -5798,7 +5799,7 @@
   static ScriptClassInfo DescribeSource(LuauHost&host,const std::string&source,const std::string&name,int*ref=nullptr)
   static ScriptError Parse(const std::string&text)
   static SourceLoader DatabaseLoader(const assets::AssetDatabase&database)
-  std::function<bool(const std::string&)>request
+  std::function<bool(const std::string&,const std::string&)>request
   std::function<std::string()>current
   std::string DescribeEntity(Entity entity)const
   u32 Connect(u32 event,int function_ref)

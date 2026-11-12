@@ -887,7 +887,7 @@ void Game::StartRuntime() {
         }, false);
     runtime_->scripts->Register(*lifecycle_);
     runtime_->scripts->BindInput(&input_);
-    runtime_->scripts->BindSceneHooks({[this](const std::string& path) { return RequestScene(path); }, [this]() { return scene_; }});
+    runtime_->scripts->BindSceneHooks({[this](const std::string& path, const std::string& spawn) { return RequestScene(path, spawn); }, [this]() { return scene_; }});
 #if AETHER_GAME_PHYSICS
     runtime_->scripts->BindPhysicsScene(physics_ ? physics_->scene.get() : nullptr);
     if (physics_ && physics_->scene) {
@@ -1472,18 +1472,48 @@ void Game::OnPlatformEvent(const platform::LifecycleMessage& message) {
     }
 }
 
-bool Game::RequestScene(const std::string& path) {
+bool Game::RequestScene(const std::string& path, const std::string& spawn) {
     std::vector<u8> bytes;
     if (!package_.ReadContent(path, bytes)) return false;
     pending_scene_ = path;
+    pending_spawn_ = spawn;
     return true;
+}
+
+// Moves the character to the entity named `spawn` (position and rotation), before play begins so physics builds from where it now stands.
+void Game::PlaceCharacterAt(const std::string& spawn) {
+    Entity target = kNullEntity, character = kNullEntity;
+    const ComponentId transform = GetComponentId<Transform>(), name = GetComponentId<EntityName>(), movement = GetComponentId<CharacterMovement>();
+    world_->ForEachArchetype([&](Archetype& archetype) {
+        if (!archetype.Mask().test(transform)) return;
+        const bool named = archetype.Mask().test(name), moves = archetype.Mask().test(movement);
+        if (!named && !moves) return;
+        for (usize c = 0; c < archetype.ChunkCount(); ++c) {
+            const Entity* entities = archetype.EntityArray(c);
+            for (u32 i = 0; i < archetype.ChunkEntityCount(c); ++i) {
+                if (moves && character == kNullEntity) character = entities[i];
+                if (named && target == kNullEntity && world_->GetComponent<EntityName>(entities[i])->value == spawn) target = entities[i];
+            }
+        }
+    });
+    if (target == kNullEntity || character == kNullEntity) {
+        warnings_.push_back("Scene.Load spawn \"" + spawn + "\": " + (target == kNullEntity ? "no entity of that name in the scene" : "the scene has no character to place"));
+        AETHER_LOG_WARN("Player", "%s", warnings_.back().c_str());
+        return;
+    }
+    const Transform at = *world_->GetComponent<Transform>(target);
+    Transform* t = world_->GetComponent<Transform>(character);
+    t->position = at.position;
+    t->rotation = at.rotation;
 }
 
 // The scene a script asked for, at a point where nothing of the old one is running. It is read and parsed first (into a scratch world), because
 // LoadScene ends the current runtime before it parses: a scene that cannot load must not leave the game with no scripts and nothing to run.
 void Game::ApplyPendingScene() {
     const std::string path = std::move(pending_scene_);
+    const std::string spawn = std::move(pending_spawn_);
     pending_scene_.clear();
+    pending_spawn_.clear();
     std::vector<u8> bytes;
     std::string error;
     const auto refuse = [&](const std::string& why) {
@@ -1497,6 +1527,7 @@ void Game::ApplyPendingScene() {
     if (!(is_json ? LoadSceneJsonFromMemory(scratch, bytes, path) : LoadSceneFromMemory(scratch, bytes, path))) return refuse("it does not parse as a scene");
     const bool was_playing = lifecycle_ && lifecycle_->IsPlaying();
     if (!LoadScene(path, &error)) return refuse(error);
+    if (!spawn.empty()) PlaceCharacterAt(spawn);
     if (was_playing) BeginPlay();
 }
 

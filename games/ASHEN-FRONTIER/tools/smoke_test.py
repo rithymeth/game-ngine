@@ -120,6 +120,11 @@ def interior(work):
     loads = re.findall(r"Loaded (Scenes/\S+\.ascene)", text)
     check(loads[:2] == ["Scenes/AssemblyHall.ascene", "Scenes/OpenWorld.ascene"], f"the exit door leads from the hall to the open world (loaded: {loads})")
     check(not re.search(r"\[ERROR\]", text), "no errors on the way through the door")
+    match = re.search(r"Player at \(([-\d.]+), ([-\d.]+), ([-\d.]+)\)", text)
+    if check(match is not None, "the player reports where Kael ended up after the door"):
+        x, _, z = (float(v) for v in match.groups())
+        hx, hz = world.poi_position("assembly_hall")
+        check(math.hypot(x - hx, z - hz) < 45, f"Kael comes out at the hall's door, not at the world's spawn ({math.hypot(x - hx, z - hz):.0f} m from the hall)")
 
 
 def main():

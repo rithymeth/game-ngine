@@ -34,7 +34,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Sky"
+          "value": "Sky"
         }
       },
       "guid": "2b236fc4-f2c7-5c19-adef-5aa63b3defaa"
@@ -72,7 +72,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Sun"
+          "value": "Sun"
         }
       },
       "guid": "49fe3aa4-c54b-5829-8075-e89e13215d68"
@@ -123,7 +123,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Ground"
+          "value": "Ground"
         }
       },
       "guid": "48f391e7-aae7-5f4f-9f7b-706691185fba"
@@ -155,7 +155,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "G_Freighter"
+          "value": "G_Freighter"
         }
       },
       "guid": "f51f8f98-c678-5464-836f-84abf84e139c"
@@ -192,7 +192,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "MainCamera"
+          "value": "MainCamera"
         },
         "Tags": {
           "$v": 1,

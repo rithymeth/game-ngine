@@ -45,11 +45,11 @@ def kael(s, position, yaw, script):
     s.camera((position[0], 3.0, position[2] + 6), yaw=0, pitch=-12, fov=62, far=300)
 
 
-def door(s, name, position, target, script, radius=2.2):
+def door(s, name, position, target, script, radius=2.2, spawn=""):
     """The doorway: a cobalt glow, a light, and the Door script that loads `target` when the player walks in."""
     s.model(name + "Frame", "Pylon", position=(position[0] - 1.9, 0, position[2]), snap=False)
     s.model(name + "FrameB", "Pylon", position=(position[0] + 1.9, 0, position[2]), snap=False)
-    s.add(name, {"ScriptComponent": {"$v": 1, "script": script, "properties": [{"name": "target", "value": json.dumps(target)}, {"name": "radius", "value": str(radius)}]}},
+    s.add(name, {"ScriptComponent": {"$v": 1, "script": script, "properties": [{"name": "target", "value": json.dumps(target)}, {"name": "radius", "value": str(radius)}, {"name": "spawn", "value": json.dumps(spawn)}]}},
           position=position)
     s.add(name + "Light", LIGHT(BLUE, 10.0, 10.0), position=(position[0], 3.0, position[2] - 1.5))
 
@@ -85,6 +85,7 @@ def assembly_hall(player_script, door_script):
     s.add("GuardianLight", LIGHT(BLUE, 14.0, 14.0), position=(0, 3.5, -16))
     s.add("EntryLight", LIGHT(BLUE, 8.0, 12.0), position=(0, 4.0, 15))
     # the way out, behind the player
-    door(s, "ExitDoor", (0, 0, 18.5), "Scenes/OpenWorld.ascene", door_script)
+    door(s, "ExitDoor", (0, 0, 18.5), "Scenes/OpenWorld.ascene", door_script, spawn="AssemblyHallOutside")
+    s.add("HallEntry", {}, position=(0, 0.1, 13.0))
     kael(s, (0, 0.1, 13.0), 180, player_script)
     return s

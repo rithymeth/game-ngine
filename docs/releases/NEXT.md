@@ -18,7 +18,7 @@ than a fix made at a tag.
 
 ## Scripts can load another scene
 
-`Scene.Load(path)` moves the game to another scene (a door into an interior, fast travel, a region gate); `Scene.Current()` names the running one. The swap happens at the start of the next frame, so the script that asks isn't torn down under itself. A path the package doesn't have returns false and changes nothing; a scene that is there but doesn't parse leaves the current one running with a warning. `Game::RequestScene` is the C++ side.
+`Scene.Load(path)` moves the game to another scene (a door into an interior, fast travel, a region gate); `Scene.Current()` names the running one. The swap happens at the start of the next frame, so the script that asks isn't torn down under itself. A path the package doesn't have returns false and changes nothing; a scene that is there but doesn't parse leaves the current one running with a warning. `Scene.Load(path, spawn)` takes the name of an entity in the new scene: the player (the entity with a `CharacterMovement`) starts there, so a door can put you on its far side. `Game::RequestScene` is the C++ side.
 
 ## Installer
 

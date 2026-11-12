@@ -408,7 +408,8 @@ void ScriptSystem::InstallApi(bool install_kit_apis) {
     host_.RegisterNative("Scene", "Load", [this](NativeCall& call) {
         if (!call.IsString(0)) return call.Fail("Scene.Load(path) expected the content path of a scene, such as \"Scenes/Inside.ascene\"");
         if (!scene_hooks_.request) return call.Fail("Scene isn't bound to a running game");
-        call.Return(scene_hooks_.request(call.String(0)));
+        const std::string spawn = call.IsString(1) ? call.String(1) : std::string();
+        call.Return(scene_hooks_.request(call.String(0), spawn));
     });
     host_.RegisterNative("Scene", "Current", [this](NativeCall& call) {
         call.Return(scene_hooks_.current ? scene_hooks_.current() : std::string());

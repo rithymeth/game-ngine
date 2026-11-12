@@ -57,10 +57,12 @@ struct ScriptError {
 //   Physics.SetGrabTarget(grab, point), Physics.Release(grab), Physics.IsGrabActive(grab)
 //   Physics.SetJointEnabled / SetJointLocked(entity, bool), Physics.SetJointMotorTarget(entity, number)
 //   Physics.GetJointState(entity) -> enabled, locked, broken, angle (nil if none), Physics.RepairJoint(entity)
-//   Scene.Load(path)               -> true if the scene will load (false: the package has no such file, nothing changes). It does not load at once: the
+//   Scene.Load(path [, spawn])     -> true if the scene will load (false: the package has no such file, nothing changes). It does not load at once: the
 //                                     game swaps the scenes at the start of its next frame, so the script that asks is not torn down under itself, and a
 //                                     scene that then fails to parse leaves the current one running (with a warning). Everything of this scene's runtime
 //                                     ends with the swap (scripts, timers, events); what must outlive it goes in SaveGames.
+//                                     With `spawn` (the name of an entity in the new scene), the player (the entity with a CharacterMovement) starts
+//                                     where that entity is, facing as it faces: a door's far side, instead of the scene's own start.
 //   Scene.Current()                -> the path of the scene that is running
 // Connections and timers made while one of an entity's callbacks runs belong
 // to that entity's script, and end when it's destroyed (§11.2).
@@ -92,7 +94,7 @@ public:
     // What the `Scene` table asks of the game that runs the scripts: `request` asks for another scene at the next frame (false: there is no such scene),
     // `current` is the running scene's path. Without them Scene.Load is a script error ("not bound to a running game").
     struct SceneHooks {
-        std::function<bool(const std::string&)> request;
+        std::function<bool(const std::string&, const std::string&)> request; // path, spawn (an entity's name; empty: none)
         std::function<std::string()> current;
     };
     void BindSceneHooks(SceneHooks hooks) { scene_hooks_ = std::move(hooks); }

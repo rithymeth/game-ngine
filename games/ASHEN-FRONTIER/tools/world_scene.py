@@ -105,8 +105,9 @@ def iron(s, rng, door_script=None):
     x, z = world.poi_position("assembly_hall")
     s.model("AssemblyHall", "AssemblyHall", position=(x, 0, z), rotation=(0, 90, 0), tags=("Dungeon",), collider=((0, 3.5, 0), (8, 3.5, 14)))
     s.add("AssemblyDoorGlow", LIGHT(BLUE, 14.0, 14.0), position=(x + 15, 2.5, z), snap=True)
+    s.add("AssemblyHallOutside", {}, position=(x + 19.5, 0.1, z), snap=True)
     if door_script:
-      s.add("AssemblyDoor", {"ScriptComponent": {"$v": 1, "script": door_script, "properties": [{"name": "target", "value": json.dumps("Scenes/AssemblyHall.ascene")}, {"name": "radius", "value": "2.5"}]}},
+      s.add("AssemblyDoor", {"ScriptComponent": {"$v": 1, "script": door_script, "properties": [{"name": "target", "value": json.dumps("Scenes/AssemblyHall.ascene")}, {"name": "radius", "value": "2.5"}, {"name": "spawn", "value": json.dumps("HallEntry")}]}},
             position=(x + 15.2, 0, z), snap=True)
     x, z = world.poi_position("warden_checkpoint")
     for i, (dx, dz) in enumerate(((-6, 0), (6, 0))):

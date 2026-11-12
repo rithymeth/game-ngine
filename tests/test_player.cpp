@@ -4,6 +4,7 @@
 #include "aether/cook/cooker.h"
 #include "aether/pak/pak.h"
 #include "aether/player/game.h"
+#include "aether/physics/character.h"
 #include "aether/project/project.h"
 #include "aether/scene/components.h"
 #include "aether/scene/gameplay.h"
@@ -379,7 +380,9 @@ AETHER_TEST(Player_ScriptsCanLoadAnotherScene) {
     const json start = {{"$type", "Scene"}, {"$version", 1},
         {"entities", json::array({{{"components", {{"ScriptComponent", reflect::ToJson(script_component(door_guid))}}}}})}};
     const json inside = {{"$type", "Scene"}, {"$version", 1},
-        {"entities", json::array({{{"components", {{"ScriptComponent", reflect::ToJson(script_component(mover_guid))}}}}})}};
+        {"entities", json::array({{{"components", {{"ScriptComponent", reflect::ToJson(script_component(mover_guid))}}}},
+                                  json::parse(R"({"components": {"Transform": {"$v": 2, "position": [5, 1, -3], "rotation": [0, 0, 0, 1], "scale": [1, 1, 1]}, "EntityName": {"$v": 1, "value": "Landing"}}})"),
+                                  json::parse(R"({"components": {"Transform": {"$v": 2, "position": [0, 0, 0], "rotation": [0, 0, 0, 1], "scale": [1, 1, 1]}, "CharacterMovement": {"$v": 1}}})")})}};
     const char* door =
         "local Door = {}\n"
         "function Door:OnUpdate(dt)\n"
@@ -387,7 +390,7 @@ AETHER_TEST(Player_ScriptsCanLoadAnotherScene) {
         "  if self.t > 0.1 and not self.asked then\n"
         "    self.asked = true\n"
         "    Door.missing = Scene.Load('Scenes/nope.ascene')\n"
-        "    Door.ok = Scene.Load('Scenes/inside.ascene')\n"
+        "    Door.ok = Scene.Load('Scenes/inside.ascene', 'Landing')\n"
         "    Door.current = Scene.Current()\n"
         "  end\n"
         "end\n"
@@ -420,6 +423,10 @@ AETHER_TEST(Player_ScriptsCanLoadAnotherScene) {
     for (int i = 0; i < 12; ++i) game.Tick(1.0f / 60.0f);
     CHECK(game.SceneName() == "Scenes/inside.ascene");
     CHECK(game.IsPlaying());
+    // The character stands where the spawn entity is.
+    bool placed = false;
+    game.GetWorld().ForEach<CharacterMovement, Transform>([&](CharacterMovement&, Transform& t) { placed = std::fabs(t.position.x - 5.0f) < 1e-3f && std::fabs(t.position.z + 3.0f) < 1e-3f; });
+    CHECK(placed);
     for (int i = 0; i < 5; ++i) game.Tick(1.0f / 60.0f);
     CHECK(game.ScriptErrors().empty());
     CHECK(game.Warnings().empty());

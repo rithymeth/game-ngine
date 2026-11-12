@@ -34,7 +34,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Sky"
+          "value": "Sky"
         }
       },
       "guid": "2b236fc4-f2c7-5c19-adef-5aa63b3defaa"
@@ -83,7 +83,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Atmosphere"
+          "value": "Atmosphere"
         }
       },
       "guid": "0877e15a-d666-5c16-a9f4-3732feac1008"
@@ -134,7 +134,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Floor"
+          "value": "Floor"
         },
         "Tags": {
           "$v": 1,
@@ -185,7 +185,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "FloorCollider"
+          "value": "FloorCollider"
         }
       },
       "guid": "be7af161-c6d7-5323-bf56-4488f46c4998"
@@ -236,7 +236,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Ceiling"
+          "value": "Ceiling"
         }
       },
       "guid": "efbfc53d-5103-5760-a421-3d53b31fa46d"
@@ -287,7 +287,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "WallNorth"
+          "value": "WallNorth"
         }
       },
       "guid": "b5381e3b-d920-57cb-864b-22729ecfbd48"
@@ -332,7 +332,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "NorthCollider"
+          "value": "NorthCollider"
         }
       },
       "guid": "e2ef3026-dec6-59fa-bdeb-6f465e4f5e91"
@@ -383,7 +383,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "WallSouth"
+          "value": "WallSouth"
         }
       },
       "guid": "6e729f9e-56d2-5e82-9a98-95abc30aa582"
@@ -428,7 +428,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "SouthCollider"
+          "value": "SouthCollider"
         }
       },
       "guid": "1acfc2ec-6d98-520d-b6a9-b1390696362d"
@@ -479,7 +479,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "WallWest"
+          "value": "WallWest"
         }
       },
       "guid": "b3be1807-f665-5823-ba0b-2dab6176bbcc"
@@ -524,7 +524,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "WestCollider"
+          "value": "WestCollider"
         }
       },
       "guid": "10675503-d161-588f-bc8c-a56d56d88fc0"
@@ -575,7 +575,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "WallEast"
+          "value": "WallEast"
         }
       },
       "guid": "f6668085-6ee2-5a2e-9df1-9c8b2000f149"
@@ -620,7 +620,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "EastCollider"
+          "value": "EastCollider"
         }
       },
       "guid": "ef8c1f3f-0a60-53ca-95a5-56009d10f37a"
@@ -669,7 +669,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Machine_0_0"
+          "value": "Machine_0_0"
         }
       },
       "guid": "beddf651-597c-57a7-a662-ea5bdb91b276"
@@ -708,7 +708,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "WorkLight_0_0"
+          "value": "WorkLight_0_0"
         }
       },
       "guid": "ed31f3a5-0d23-5573-8a22-fc560cabebaf"
@@ -757,7 +757,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Machine_0_1"
+          "value": "Machine_0_1"
         }
       },
       "guid": "2cb6fdc7-f4d1-5164-bc8f-5f910acbc5e7"
@@ -796,7 +796,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "WorkLight_0_1"
+          "value": "WorkLight_0_1"
         }
       },
       "guid": "1fd62753-ad15-5f7e-9a9b-68b5634f917d"
@@ -845,7 +845,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Machine_0_2"
+          "value": "Machine_0_2"
         }
       },
       "guid": "3fda1b84-787e-5a8c-8899-342eb5c1c0f3"
@@ -884,7 +884,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "WorkLight_0_2"
+          "value": "WorkLight_0_2"
         }
       },
       "guid": "4c6b01b2-c8b7-5e17-8287-be4c01ec28a9"
@@ -933,7 +933,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Machine_0_3"
+          "value": "Machine_0_3"
         }
       },
       "guid": "b3f1971c-f90d-551a-8ce8-9cf62f176d68"
@@ -972,7 +972,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "WorkLight_0_3"
+          "value": "WorkLight_0_3"
         }
       },
       "guid": "fa35897f-9310-5b77-98bc-89a2fcd8a35f"
@@ -1021,7 +1021,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Machine_0_4"
+          "value": "Machine_0_4"
         }
       },
       "guid": "9cd47399-3d72-50c1-bb9c-ecc93df6cf7d"
@@ -1060,7 +1060,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "WorkLight_0_4"
+          "value": "WorkLight_0_4"
         }
       },
       "guid": "19b26f95-be66-548d-a1be-e29b1f0eba22"
@@ -1109,7 +1109,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Machine_1_0"
+          "value": "Machine_1_0"
         }
       },
       "guid": "62c4e073-afff-5b5e-b52e-19c6a86dcde9"
@@ -1148,7 +1148,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "WorkLight_1_0"
+          "value": "WorkLight_1_0"
         }
       },
       "guid": "778babb7-34ae-590a-a831-75b393b95221"
@@ -1197,7 +1197,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Machine_1_1"
+          "value": "Machine_1_1"
         }
       },
       "guid": "5d77d45f-5cfb-5d30-aa6f-3a3cc7173e0e"
@@ -1236,7 +1236,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "WorkLight_1_1"
+          "value": "WorkLight_1_1"
         }
       },
       "guid": "560e0147-a98d-5570-a152-726fe84732c5"
@@ -1285,7 +1285,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Machine_1_2"
+          "value": "Machine_1_2"
         }
       },
       "guid": "f6c8c849-df46-5572-9066-ef5e47d0a0a8"
@@ -1324,7 +1324,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "WorkLight_1_2"
+          "value": "WorkLight_1_2"
         }
       },
       "guid": "ebacf7cd-2a60-593f-be27-34b3b25ca20c"
@@ -1373,7 +1373,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Machine_1_3"
+          "value": "Machine_1_3"
         }
       },
       "guid": "889b77fd-009e-52d7-847b-379b000c2d3e"
@@ -1412,7 +1412,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "WorkLight_1_3"
+          "value": "WorkLight_1_3"
         }
       },
       "guid": "c7f8fa99-4c13-5b5a-85e3-216d4d9c8fed"
@@ -1461,7 +1461,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Machine_1_4"
+          "value": "Machine_1_4"
         }
       },
       "guid": "d7f637b5-2c61-5e6b-99b4-d527601d7fa4"
@@ -1500,7 +1500,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "WorkLight_1_4"
+          "value": "WorkLight_1_4"
         }
       },
       "guid": "0df21c9d-85e1-5151-9126-f69b438e7928"
@@ -1549,7 +1549,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Column_-4.0_0"
+          "value": "Column_-4.0_0"
         }
       },
       "guid": "f6247035-c5b6-5ed7-8c8a-a4ed24dd15a5"
@@ -1598,7 +1598,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Column_4.0_0"
+          "value": "Column_4.0_0"
         }
       },
       "guid": "27c6d3e7-6052-5427-ac06-1551c1f3705c"
@@ -1647,7 +1647,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Column_-4.0_1"
+          "value": "Column_-4.0_1"
         }
       },
       "guid": "1ea292f4-5348-5156-9d2e-700f04423484"
@@ -1696,7 +1696,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Column_4.0_1"
+          "value": "Column_4.0_1"
         }
       },
       "guid": "2ba33d5b-1a4a-5cd4-b394-2e1cb875140f"
@@ -1745,7 +1745,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Column_-4.0_2"
+          "value": "Column_-4.0_2"
         }
       },
       "guid": "53ae4f61-ab95-56f9-a359-9bdb89d43680"
@@ -1794,7 +1794,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Column_4.0_2"
+          "value": "Column_4.0_2"
         }
       },
       "guid": "b1d4e30a-1741-5131-bc33-f033bba73765"
@@ -1843,7 +1843,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Column_-4.0_3"
+          "value": "Column_-4.0_3"
         }
       },
       "guid": "3fb86390-ca7d-5b63-84cb-3f62d2af2c83"
@@ -1892,7 +1892,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Column_4.0_3"
+          "value": "Column_4.0_3"
         }
       },
       "guid": "47c0f4a1-0d4c-5b0e-9fcf-f926ddd08389"
@@ -1924,7 +1924,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Gantry"
+          "value": "Gantry"
         }
       },
       "guid": "d812f68d-ee9a-5964-bc9d-c00547a4b74a"
@@ -1956,7 +1956,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Scrap_0"
+          "value": "Scrap_0"
         }
       },
       "guid": "da538f11-6c35-5aae-8f3f-38aa1ce452da"
@@ -1988,7 +1988,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Scrap_1"
+          "value": "Scrap_1"
         }
       },
       "guid": "bceaa380-323d-5f41-a33d-8423a56079a6"
@@ -2020,7 +2020,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Scrap_2"
+          "value": "Scrap_2"
         }
       },
       "guid": "57a69e69-352a-5e8a-8948-342bd02209d9"
@@ -2052,7 +2052,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Scrap_3"
+          "value": "Scrap_3"
         }
       },
       "guid": "26bacb7f-70d6-52f8-95ad-ae83b3e3d62b"
@@ -2084,7 +2084,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Scrap_4"
+          "value": "Scrap_4"
         }
       },
       "guid": "dedbf80d-0930-5ada-ab18-7f4ef73b9ff0"
@@ -2116,7 +2116,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Scrap_5"
+          "value": "Scrap_5"
         }
       },
       "guid": "81ffcdbc-4463-50d2-a79b-e4239eb1663a"
@@ -2148,7 +2148,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Scrap_6"
+          "value": "Scrap_6"
         }
       },
       "guid": "78da07e1-a362-51c2-9381-b92d1f702c08"
@@ -2197,7 +2197,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Guardian"
+          "value": "Guardian"
         },
         "Tags": {
           "$v": 1,
@@ -2242,7 +2242,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "GuardianLight"
+          "value": "GuardianLight"
         }
       },
       "guid": "026fa716-cd53-5784-a230-b35ceb452350"
@@ -2281,7 +2281,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "EntryLight"
+          "value": "EntryLight"
         }
       },
       "guid": "62fc671f-9fc2-5296-b7a6-11b2f6ef8eda"
@@ -2313,7 +2313,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "ExitDoorFrame"
+          "value": "ExitDoorFrame"
         }
       },
       "guid": "18470c60-97aa-525f-b3c0-ae4ca4d98c05"
@@ -2345,7 +2345,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "ExitDoorFrameB"
+          "value": "ExitDoorFrameB"
         }
       },
       "guid": "6057a46a-aaf2-5dca-a8b9-88e64b269e1f"
@@ -2363,6 +2363,10 @@
             {
               "name": "radius",
               "value": "2.2"
+            },
+            {
+              "name": "spawn",
+              "value": "\"AssemblyHallOutside\""
             }
           ]
         },
@@ -2387,7 +2391,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "ExitDoor"
+          "value": "ExitDoor"
         }
       },
       "guid": "fee3943c-3772-5c16-9a62-358f409a942c"
@@ -2426,10 +2430,38 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "ExitDoorLight"
+          "value": "ExitDoorLight"
         }
       },
       "guid": "58f97e31-458e-5365-9c39-4f17f9fd846a"
+    },
+    {
+      "components": {
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            0.1,
+            13.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "HallEntry"
+        }
+      },
+      "guid": "a72610eb-60ff-5bf8-8f6f-b27eb4ce443d"
     },
     {
       "components": {
@@ -2478,7 +2510,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Kael"
+          "value": "Kael"
         },
         "Tags": {
           "$v": 1,
@@ -2516,7 +2548,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "KaelBody"
+          "value": "KaelBody"
         },
         "Tags": {
           "$v": 1,
@@ -2563,7 +2595,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "MainCamera"
+          "value": "MainCamera"
         },
         "Tags": {
           "$v": 1,

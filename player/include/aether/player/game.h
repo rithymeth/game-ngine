@@ -202,7 +202,8 @@ public:
     // Asks for another scene to take this one's place at the start of the next Tick (never mid-frame: a script that asks is one of the things the swap
     // ends). False, changing nothing, if the package has no such file. A scene that is there but will not load (it does not parse) leaves the current one
     // running and adds a warning. This is what the scripts' Scene.Load calls.
-    bool RequestScene(const std::string& path);
+    // `spawn` names an entity of the new scene: the character (the entity with a CharacterMovement) is moved to it before play begins.
+    bool RequestScene(const std::string& path, const std::string& spawn = {});
 
     // OnCreate/OnEnable/OnStart for the scene's entities; physics bodies are made then.
     void BeginPlay();
@@ -392,8 +393,10 @@ private:
     std::unordered_map<assets::AssetGuid, std::unique_ptr<PrefabData>> prefabs_;
     std::unordered_map<std::string, std::unique_ptr<seq::LevelSequence>> sequences_;
     std::string scene_;
+    std::string pending_spawn_;
     std::string pending_scene_; // asked for by RequestScene, swapped in at the start of the next Tick
     void ApplyPendingScene();
+    void PlaceCharacterAt(const std::string& spawn);
     std::vector<std::string> warnings_;
     usize prefab_instances_ = 0;
     GameStats stats_;

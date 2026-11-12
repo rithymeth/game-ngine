@@ -34,7 +34,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Sky"
+          "value": "Sky"
         }
       },
       "guid": "2b236fc4-f2c7-5c19-adef-5aa63b3defaa"
@@ -72,7 +72,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Sun"
+          "value": "Sun"
         }
       },
       "guid": "49fe3aa4-c54b-5829-8075-e89e13215d68"
@@ -121,7 +121,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Atmosphere"
+          "value": "Atmosphere"
         }
       },
       "guid": "0877e15a-d666-5c16-a9f4-3732feac1008"
@@ -172,7 +172,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Terrain"
+          "value": "Terrain"
         },
         "Tags": {
           "$v": 1,
@@ -14146,7 +14146,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "TerrainCollider"
+          "value": "TerrainCollider"
         }
       },
       "guid": "fcaff97d-f3cb-524f-8b9b-52e990e4c4e3"
@@ -14178,7 +14178,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "OutpostPad"
+          "value": "OutpostPad"
         },
         "Tags": {
           "$v": 1,
@@ -14233,7 +14233,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "OutpostPylon_0"
+          "value": "OutpostPylon_0"
         }
       },
       "guid": "72c8a6f4-bf95-584d-83d5-c525be8855ca"
@@ -14272,7 +14272,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "OutpostLight_0"
+          "value": "OutpostLight_0"
         }
       },
       "guid": "35d8b6b6-ef83-5903-b606-8a0fb1230a2f"
@@ -14321,7 +14321,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "OutpostPylon_1"
+          "value": "OutpostPylon_1"
         }
       },
       "guid": "760d8229-b341-59a4-9880-8fcd1256cda4"
@@ -14360,7 +14360,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "OutpostLight_1"
+          "value": "OutpostLight_1"
         }
       },
       "guid": "51c67c55-f8bc-5798-9358-9ec2d228d1e2"
@@ -14409,7 +14409,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "OutpostPylon_2"
+          "value": "OutpostPylon_2"
         }
       },
       "guid": "a0f8b801-38b9-57e7-b236-6842b8ad8024"
@@ -14448,7 +14448,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "OutpostLight_2"
+          "value": "OutpostLight_2"
         }
       },
       "guid": "49c80fbd-6427-52cf-ae93-72014a668a6d"
@@ -14497,7 +14497,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "OutpostPylon_3"
+          "value": "OutpostPylon_3"
         }
       },
       "guid": "e4cf80d4-1381-5cc1-95f2-936fb5cf8c03"
@@ -14536,7 +14536,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "OutpostLight_3"
+          "value": "OutpostLight_3"
         }
       },
       "guid": "77067368-7ec2-58c4-949f-577b56ccba6d"
@@ -14585,7 +14585,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "GridPylon_0"
+          "value": "GridPylon_0"
         }
       },
       "guid": "6eba7699-9eaa-526a-b194-f4a05eaa5bac"
@@ -14634,7 +14634,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "GridPylon_1"
+          "value": "GridPylon_1"
         }
       },
       "guid": "0a1e576c-1e55-5b9b-9c8d-60fde1de1b0d"
@@ -14683,7 +14683,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "GridPylon_2"
+          "value": "GridPylon_2"
         }
       },
       "guid": "acc1630d-69b8-5560-8e40-ff5195a700eb"
@@ -14732,7 +14732,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "GridPylon_3"
+          "value": "GridPylon_3"
         }
       },
       "guid": "627066d2-8c5a-563e-9d33-a8fe2d1110d9"
@@ -14781,7 +14781,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "GridPylon_4"
+          "value": "GridPylon_4"
         }
       },
       "guid": "a6ab7d9c-addb-5faa-b607-c5dfdc3fb793"
@@ -14830,7 +14830,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "GridPylon_5"
+          "value": "GridPylon_5"
         }
       },
       "guid": "68129504-8c5e-551d-a666-082b4276b2e9"
@@ -14879,7 +14879,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "GridPylon_6"
+          "value": "GridPylon_6"
         }
       },
       "guid": "6f00584a-1797-5fae-a541-36c8786ae7d7"
@@ -14928,7 +14928,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "GridPylon_7"
+          "value": "GridPylon_7"
         }
       },
       "guid": "d35ff838-de46-5a11-b300-dafe55f7e24b"
@@ -14977,7 +14977,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Freighter"
+          "value": "Freighter"
         },
         "Tags": {
           "$v": 1,
@@ -15032,7 +15032,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "MULE3_Wreck"
+          "value": "MULE3_Wreck"
         },
         "Tags": {
           "$v": 1,
@@ -15088,7 +15088,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Ruin_0"
+          "value": "Ruin_0"
         }
       },
       "guid": "2f27e742-116f-5f2b-922f-87a51dd5bfc4"
@@ -15137,7 +15137,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Ruin_1"
+          "value": "Ruin_1"
         }
       },
       "guid": "27723c2a-f888-5ee4-b1f1-d88130e95bc3"
@@ -15186,7 +15186,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Ruin_2"
+          "value": "Ruin_2"
         }
       },
       "guid": "fe053a07-2737-54bc-87e9-12394a48db35"
@@ -15235,7 +15235,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Ruin_3"
+          "value": "Ruin_3"
         }
       },
       "guid": "eedcc37b-8f29-58d4-803f-16f845d0d88f"
@@ -15284,7 +15284,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Salvage_0_Pile"
+          "value": "Salvage_0_Pile"
         },
         "Tags": {
           "$v": 1,
@@ -15339,7 +15339,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Salvage_0_Crate"
+          "value": "Salvage_0_Crate"
         },
         "Tags": {
           "$v": 1,
@@ -15384,7 +15384,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Salvage_0_Glow"
+          "value": "Salvage_0_Glow"
         }
       },
       "guid": "8af5aa0d-a863-5161-9e95-7ceefa847499"
@@ -15433,7 +15433,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Salvage_1_Pile"
+          "value": "Salvage_1_Pile"
         },
         "Tags": {
           "$v": 1,
@@ -15488,7 +15488,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Salvage_1_Crate"
+          "value": "Salvage_1_Crate"
         },
         "Tags": {
           "$v": 1,
@@ -15533,7 +15533,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Salvage_1_Glow"
+          "value": "Salvage_1_Glow"
         }
       },
       "guid": "851e4d3d-a302-54f7-8604-9e3c2ee2a80f"
@@ -15582,7 +15582,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Salvage_2_Pile"
+          "value": "Salvage_2_Pile"
         },
         "Tags": {
           "$v": 1,
@@ -15637,7 +15637,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Salvage_2_Crate"
+          "value": "Salvage_2_Crate"
         },
         "Tags": {
           "$v": 1,
@@ -15682,7 +15682,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Salvage_2_Glow"
+          "value": "Salvage_2_Glow"
         }
       },
       "guid": "99f3983a-c91a-501d-9bec-c7239e6021fc"
@@ -15731,7 +15731,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "DistressRelay"
+          "value": "DistressRelay"
         },
         "Tags": {
           "$v": 1,
@@ -15776,7 +15776,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "DistressRelay_Light"
+          "value": "DistressRelay_Light"
         }
       },
       "guid": "50b3d2e8-6161-55b3-822a-436b9ea9df50"
@@ -15825,7 +15825,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "StormNode_0"
+          "value": "StormNode_0"
         },
         "Tags": {
           "$v": 1,
@@ -15870,7 +15870,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "StormGlow_0"
+          "value": "StormGlow_0"
         }
       },
       "guid": "c66f68f9-df44-57a5-b232-598ca3fb27c6"
@@ -15919,7 +15919,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "StormNode_1"
+          "value": "StormNode_1"
         },
         "Tags": {
           "$v": 1,
@@ -15964,7 +15964,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "StormGlow_1"
+          "value": "StormGlow_1"
         }
       },
       "guid": "d1ccac83-0e72-52ae-ba63-3ac753439930"
@@ -16013,7 +16013,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "StormNode_2"
+          "value": "StormNode_2"
         },
         "Tags": {
           "$v": 1,
@@ -16058,7 +16058,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "StormGlow_2"
+          "value": "StormGlow_2"
         }
       },
       "guid": "af70e3b3-12cc-5a17-b05d-1a9c2a69f67e"
@@ -16107,7 +16107,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "BasinRock_0"
+          "value": "BasinRock_0"
         }
       },
       "guid": "d47989fe-882a-51f9-a4cb-431e99641cc2"
@@ -16156,7 +16156,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "BasinRock_1"
+          "value": "BasinRock_1"
         }
       },
       "guid": "11f1f71f-aa48-5c93-bb2e-f0ec54daba9d"
@@ -16205,7 +16205,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "BasinRock_2"
+          "value": "BasinRock_2"
         }
       },
       "guid": "aff2ef13-2401-518d-92e8-d4b118bc0154"
@@ -16254,7 +16254,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "BasinRock_3"
+          "value": "BasinRock_3"
         }
       },
       "guid": "4945ac0f-c579-534c-a02b-17ec22ecf8c5"
@@ -16303,7 +16303,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "BasinRock_4"
+          "value": "BasinRock_4"
         }
       },
       "guid": "19e4807f-b591-57fa-a4fc-62fa69c01a73"
@@ -16352,7 +16352,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "BasinRock_5"
+          "value": "BasinRock_5"
         }
       },
       "guid": "36764962-ea91-5f83-ab72-f99ed888daf5"
@@ -16401,7 +16401,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "BasinRock_6"
+          "value": "BasinRock_6"
         }
       },
       "guid": "eaf50efa-cb6a-5bd2-a4ef-57969876fc4f"
@@ -16450,7 +16450,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "BasinRock_7"
+          "value": "BasinRock_7"
         }
       },
       "guid": "90250cc3-1cc2-50fe-b382-3c769a249885"
@@ -16499,7 +16499,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "BasinRock_8"
+          "value": "BasinRock_8"
         }
       },
       "guid": "6a2a41b0-0c58-552a-b3d2-080ffdc97946"
@@ -16548,7 +16548,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "BasinRock_9"
+          "value": "BasinRock_9"
         }
       },
       "guid": "0515af4b-79c3-503d-884b-ae6f2720acce"
@@ -16597,7 +16597,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "BasinRock_10"
+          "value": "BasinRock_10"
         }
       },
       "guid": "0e6ffb78-e9e9-5b71-b234-ebd82665ba95"
@@ -16646,7 +16646,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "BasinRock_11"
+          "value": "BasinRock_11"
         }
       },
       "guid": "34b7c683-ab92-5c59-b641-c5d74157f20a"
@@ -16695,7 +16695,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "BasinRock_12"
+          "value": "BasinRock_12"
         }
       },
       "guid": "c1f9db64-0a36-5f79-8013-2c1e797af474"
@@ -16744,7 +16744,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "BasinRock_13"
+          "value": "BasinRock_13"
         }
       },
       "guid": "4abc7173-9a7f-5282-899d-e3e4700a8f7e"
@@ -16793,7 +16793,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "BasinRock_14"
+          "value": "BasinRock_14"
         }
       },
       "guid": "6784eab5-4a55-5cb0-9342-1335813a7515"
@@ -16842,7 +16842,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "BasinRock_15"
+          "value": "BasinRock_15"
         }
       },
       "guid": "b01e75a3-c917-514c-bea3-264a3d3e4324"
@@ -16891,7 +16891,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "BasinRock_16"
+          "value": "BasinRock_16"
         }
       },
       "guid": "7fcaf940-82b9-5499-b6d4-2a0a6a2da786"
@@ -16940,7 +16940,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "BasinRock_17"
+          "value": "BasinRock_17"
         }
       },
       "guid": "eafa0c95-274e-5cf0-b280-a033b5f71453"
@@ -16989,7 +16989,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "BasinRock_18"
+          "value": "BasinRock_18"
         }
       },
       "guid": "d70103d0-dd6e-591f-9610-117ee747e177"
@@ -17038,7 +17038,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "BasinRock_19"
+          "value": "BasinRock_19"
         }
       },
       "guid": "e9e00133-a24a-594c-accc-69d9ae137dc9"
@@ -17087,7 +17087,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "BasinRock_20"
+          "value": "BasinRock_20"
         }
       },
       "guid": "b06ff223-1fd4-55ce-9934-d0c3fae12176"
@@ -17136,7 +17136,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "BasinRock_21"
+          "value": "BasinRock_21"
         }
       },
       "guid": "c0774b6d-83fd-58d8-a743-c8e0328a96cc"
@@ -17168,7 +17168,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "BasinScrub_0"
+          "value": "BasinScrub_0"
         }
       },
       "guid": "9f5cc31c-4e06-5509-a498-772370dc975b"
@@ -17200,7 +17200,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "BasinScrub_1"
+          "value": "BasinScrub_1"
         }
       },
       "guid": "7d22c002-74e7-5a45-a84c-e907085835b0"
@@ -17232,7 +17232,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "BasinScrub_2"
+          "value": "BasinScrub_2"
         }
       },
       "guid": "83ec74f9-4e83-5f2e-9928-ece3d277671f"
@@ -17264,7 +17264,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "BasinScrub_3"
+          "value": "BasinScrub_3"
         }
       },
       "guid": "e263d035-294c-543d-baea-152290546d77"
@@ -17296,7 +17296,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "BasinScrub_4"
+          "value": "BasinScrub_4"
         }
       },
       "guid": "3a2316c6-4fd1-5d75-ab9a-070ea1583929"
@@ -17328,7 +17328,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "BasinScrub_5"
+          "value": "BasinScrub_5"
         }
       },
       "guid": "a7c27e7f-294f-54de-9e3d-dbefa24983ab"
@@ -17360,7 +17360,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "BasinScrub_6"
+          "value": "BasinScrub_6"
         }
       },
       "guid": "9038b182-a199-5078-8e3c-afff5bcab932"
@@ -17392,7 +17392,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "BasinScrub_7"
+          "value": "BasinScrub_7"
         }
       },
       "guid": "0ebcf908-ebab-5b1a-9a8f-1382abe6a99e"
@@ -17424,7 +17424,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "BasinScrub_8"
+          "value": "BasinScrub_8"
         }
       },
       "guid": "a4250545-1ac4-5645-875b-2de67a448b7b"
@@ -17456,7 +17456,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "BasinScrub_9"
+          "value": "BasinScrub_9"
         }
       },
       "guid": "99845263-fd82-56e6-a884-5ca080625155"
@@ -17488,7 +17488,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "BasinScrub_10"
+          "value": "BasinScrub_10"
         }
       },
       "guid": "a0379201-5bdf-5236-b3a2-0df75e4db46d"
@@ -17520,7 +17520,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "BasinScrub_11"
+          "value": "BasinScrub_11"
         }
       },
       "guid": "621c0661-3551-55b0-a1f6-2bf854fb48a0"
@@ -17552,7 +17552,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "BasinScrub_12"
+          "value": "BasinScrub_12"
         }
       },
       "guid": "7f349d24-72be-55a3-aef3-c07b949c1324"
@@ -17584,7 +17584,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "BasinScrub_13"
+          "value": "BasinScrub_13"
         }
       },
       "guid": "e360b849-f181-5bf1-b716-660e1ac85bf9"
@@ -17616,7 +17616,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "BasinScrub_14"
+          "value": "BasinScrub_14"
         }
       },
       "guid": "29a1c9c0-bd6e-593b-8e03-d4e898362f45"
@@ -17648,7 +17648,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "BasinScrub_15"
+          "value": "BasinScrub_15"
         }
       },
       "guid": "f42a56be-5ee5-55a0-83de-56bb92beb4eb"
@@ -17680,7 +17680,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "BasinScrub_16"
+          "value": "BasinScrub_16"
         }
       },
       "guid": "d85e8cfc-5d4a-5cdb-bd76-2452de7ffdca"
@@ -17712,7 +17712,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "BasinScrub_17"
+          "value": "BasinScrub_17"
         }
       },
       "guid": "078195dd-6349-50c4-ad88-2c77db93ae6b"
@@ -17744,7 +17744,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "BasinScrub_18"
+          "value": "BasinScrub_18"
         }
       },
       "guid": "06d1ed77-9d5c-5934-98c4-f76b86c18059"
@@ -17776,7 +17776,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "BasinScrub_19"
+          "value": "BasinScrub_19"
         }
       },
       "guid": "12a73e19-c333-595d-9666-cb4c19f729cd"
@@ -17808,7 +17808,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "BasinScrub_20"
+          "value": "BasinScrub_20"
         }
       },
       "guid": "b12cf7bc-935f-528d-8aed-3dca2d3cee08"
@@ -17840,7 +17840,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "BasinScrub_21"
+          "value": "BasinScrub_21"
         }
       },
       "guid": "180b0d22-90d2-5e59-813f-a53140b33e15"
@@ -17872,7 +17872,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "BasinScrub_22"
+          "value": "BasinScrub_22"
         }
       },
       "guid": "9b2287ac-7e90-5d9f-9e4d-b079a090b97f"
@@ -17904,7 +17904,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "BasinScrub_23"
+          "value": "BasinScrub_23"
         }
       },
       "guid": "855a394d-f479-513d-9dff-9da358f69c28"
@@ -17936,7 +17936,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "BasinScrub_24"
+          "value": "BasinScrub_24"
         }
       },
       "guid": "46eb5046-06c2-5618-a53d-e276ed88114c"
@@ -17968,7 +17968,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "BasinScrub_25"
+          "value": "BasinScrub_25"
         }
       },
       "guid": "939a46c7-cbf9-576f-8b97-2e4c24cbd8a6"
@@ -18000,7 +18000,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "BasinScrub_26"
+          "value": "BasinScrub_26"
         }
       },
       "guid": "e8aee959-5a9c-5ddd-99d3-d0ad55553a82"
@@ -18032,7 +18032,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "BasinScrub_27"
+          "value": "BasinScrub_27"
         }
       },
       "guid": "abce9f32-007f-53d4-bcf5-4cc044458156"
@@ -18064,7 +18064,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "BasinScrub_28"
+          "value": "BasinScrub_28"
         }
       },
       "guid": "9baf9bbd-60a1-5a9f-b603-e1084ece6c14"
@@ -18096,7 +18096,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "BasinScrub_29"
+          "value": "BasinScrub_29"
         }
       },
       "guid": "b27a9fc1-8e2c-503b-b72a-70feb8cc5f42"
@@ -18128,7 +18128,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "BasinScrub_30"
+          "value": "BasinScrub_30"
         }
       },
       "guid": "fa42bae8-6f6d-520c-ac50-714b0ffc282a"
@@ -18160,7 +18160,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "BasinScrub_31"
+          "value": "BasinScrub_31"
         }
       },
       "guid": "9bdba69e-0570-5419-b546-9cf9c43e0a11"
@@ -18192,7 +18192,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "BasinScrub_32"
+          "value": "BasinScrub_32"
         }
       },
       "guid": "32c12c80-027b-56af-956c-2c509f02bff5"
@@ -18224,7 +18224,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "BasinScrub_33"
+          "value": "BasinScrub_33"
         }
       },
       "guid": "92883643-2a63-5400-af72-482b7a57d645"
@@ -18273,7 +18273,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Smelter_0"
+          "value": "Smelter_0"
         },
         "Tags": {
           "$v": 1,
@@ -18318,7 +18318,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "SmelterGlow_0"
+          "value": "SmelterGlow_0"
         }
       },
       "guid": "c0d1fbe9-caa7-51a5-aa52-bb5078c2be8b"
@@ -18367,7 +18367,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Smelter_1"
+          "value": "Smelter_1"
         },
         "Tags": {
           "$v": 1,
@@ -18412,7 +18412,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "SmelterGlow_1"
+          "value": "SmelterGlow_1"
         }
       },
       "guid": "8c75b111-ce98-5785-b3d6-911156c5fb58"
@@ -18461,7 +18461,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Smelter_2"
+          "value": "Smelter_2"
         },
         "Tags": {
           "$v": 1,
@@ -18506,7 +18506,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "SmelterGlow_2"
+          "value": "SmelterGlow_2"
         }
       },
       "guid": "5c4f2455-f430-5db8-bfaf-5395937ea762"
@@ -18555,7 +18555,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Rail_0_0"
+          "value": "Rail_0_0"
         },
         "Tags": {
           "$v": 1,
@@ -18610,7 +18610,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Rail_0_1"
+          "value": "Rail_0_1"
         },
         "Tags": {
           "$v": 1,
@@ -18665,7 +18665,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Rail_0_2"
+          "value": "Rail_0_2"
         },
         "Tags": {
           "$v": 1,
@@ -18720,7 +18720,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Rail_0_3"
+          "value": "Rail_0_3"
         },
         "Tags": {
           "$v": 1,
@@ -18775,7 +18775,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Rail_1_0"
+          "value": "Rail_1_0"
         },
         "Tags": {
           "$v": 1,
@@ -18830,7 +18830,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Rail_1_1"
+          "value": "Rail_1_1"
         },
         "Tags": {
           "$v": 1,
@@ -18885,7 +18885,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Rail_1_2"
+          "value": "Rail_1_2"
         },
         "Tags": {
           "$v": 1,
@@ -18940,7 +18940,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Rail_1_3"
+          "value": "Rail_1_3"
         },
         "Tags": {
           "$v": 1,
@@ -18995,7 +18995,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Rail_2_0"
+          "value": "Rail_2_0"
         },
         "Tags": {
           "$v": 1,
@@ -19050,7 +19050,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Rail_2_1"
+          "value": "Rail_2_1"
         },
         "Tags": {
           "$v": 1,
@@ -19105,7 +19105,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Rail_2_2"
+          "value": "Rail_2_2"
         },
         "Tags": {
           "$v": 1,
@@ -19160,7 +19160,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Rail_2_3"
+          "value": "Rail_2_3"
         },
         "Tags": {
           "$v": 1,
@@ -19215,7 +19215,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Gantry_0"
+          "value": "Gantry_0"
         }
       },
       "guid": "0348f37e-4c58-5fb9-920d-35622c7cc220"
@@ -19264,7 +19264,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Gantry_1"
+          "value": "Gantry_1"
         }
       },
       "guid": "e9e02935-d6c7-5b5a-98bf-ec196cc4b809"
@@ -19313,7 +19313,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Gantry_2"
+          "value": "Gantry_2"
         }
       },
       "guid": "7d006e79-96f3-5519-8525-7c4fa31f0df7"
@@ -19362,7 +19362,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "AssemblyHall"
+          "value": "AssemblyHall"
         },
         "Tags": {
           "$v": 1,
@@ -19407,10 +19407,38 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "AssemblyDoorGlow"
+          "value": "AssemblyDoorGlow"
         }
       },
       "guid": "7ae1f579-83f9-570f-beee-937aa5227244"
+    },
+    {
+      "components": {
+        "Transform": {
+          "$v": 2,
+          "position": [
+            84.5,
+            3.913026438006297,
+            155.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "AssemblyHallOutside"
+        }
+      },
+      "guid": "3ee5f151-142a-576c-81d5-9a01ea99052b"
     },
     {
       "components": {
@@ -19425,6 +19453,10 @@
             {
               "name": "radius",
               "value": "2.5"
+            },
+            {
+              "name": "spawn",
+              "value": "\"HallEntry\""
             }
           ]
         },
@@ -19449,7 +19481,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "AssemblyDoor"
+          "value": "AssemblyDoor"
         }
       },
       "guid": "b9631fe3-5b6c-590d-b044-f993129ae229"
@@ -19498,7 +19530,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "WardenSentinel_0"
+          "value": "WardenSentinel_0"
         },
         "Tags": {
           "$v": 1,
@@ -19554,7 +19586,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "WardenSentinel_1"
+          "value": "WardenSentinel_1"
         },
         "Tags": {
           "$v": 1,
@@ -19610,7 +19642,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "WardenPylon_0"
+          "value": "WardenPylon_0"
         }
       },
       "guid": "aaa807bf-6ab4-5506-93e3-ca02aac16ab9"
@@ -19659,7 +19691,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "WardenPylon_1"
+          "value": "WardenPylon_1"
         }
       },
       "guid": "1a3323da-7ddb-594b-aa89-af25d89fbc5f"
@@ -19708,7 +19740,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "WardenPylon_2"
+          "value": "WardenPylon_2"
         }
       },
       "guid": "5e9d7d64-0780-5acb-aa0f-8a96a800f3bb"
@@ -19757,7 +19789,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "WardenPylon_3"
+          "value": "WardenPylon_3"
         }
       },
       "guid": "1f6e7b53-fb98-5458-af7e-dc14caea9172"
@@ -19820,7 +19852,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "SlagPit_0"
+          "value": "SlagPit_0"
         },
         "Tags": {
           "$v": 1,
@@ -19875,7 +19907,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "SlagNode_0"
+          "value": "SlagNode_0"
         },
         "Tags": {
           "$v": 1,
@@ -19920,7 +19952,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "SlagGlow_0"
+          "value": "SlagGlow_0"
         }
       },
       "guid": "91ba9cd4-02fa-52cb-8fea-61d0d90f4799"
@@ -19983,7 +20015,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "SlagPit_1"
+          "value": "SlagPit_1"
         },
         "Tags": {
           "$v": 1,
@@ -20038,7 +20070,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "SlagNode_1"
+          "value": "SlagNode_1"
         },
         "Tags": {
           "$v": 1,
@@ -20083,7 +20115,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "SlagGlow_1"
+          "value": "SlagGlow_1"
         }
       },
       "guid": "7f1aae36-b8ab-5cb5-a03a-1cb5247261d6"
@@ -20146,7 +20178,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "SlagPit_2"
+          "value": "SlagPit_2"
         },
         "Tags": {
           "$v": 1,
@@ -20201,7 +20233,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "SlagNode_2"
+          "value": "SlagNode_2"
         },
         "Tags": {
           "$v": 1,
@@ -20246,7 +20278,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "SlagGlow_2"
+          "value": "SlagGlow_2"
         }
       },
       "guid": "a16cff1d-c0f7-53d5-b58c-b1563653de34"
@@ -20309,7 +20341,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "SlagPit_3"
+          "value": "SlagPit_3"
         },
         "Tags": {
           "$v": 1,
@@ -20364,7 +20396,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "SlagNode_3"
+          "value": "SlagNode_3"
         },
         "Tags": {
           "$v": 1,
@@ -20409,7 +20441,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "SlagGlow_3"
+          "value": "SlagGlow_3"
         }
       },
       "guid": "354bee0d-fafb-515f-b8ad-404e07d85014"
@@ -20458,7 +20490,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "IronRock_0"
+          "value": "IronRock_0"
         }
       },
       "guid": "fd8bc5ac-d40b-5b81-9c5a-2761644778a9"
@@ -20507,7 +20539,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "IronRock_1"
+          "value": "IronRock_1"
         }
       },
       "guid": "a0141404-ddfa-5e09-a09a-248e54a58cbc"
@@ -20556,7 +20588,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "IronRock_2"
+          "value": "IronRock_2"
         }
       },
       "guid": "df4374d3-462a-54d7-b3b0-e14c294637bc"
@@ -20605,7 +20637,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "IronRock_3"
+          "value": "IronRock_3"
         }
       },
       "guid": "bb0e8e6a-c3b2-56c9-8579-60fe4d06aa5a"
@@ -20654,7 +20686,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "IronRock_4"
+          "value": "IronRock_4"
         }
       },
       "guid": "24171086-9f62-52fd-a96d-b3e7f62ae4da"
@@ -20703,7 +20735,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "IronRock_5"
+          "value": "IronRock_5"
         }
       },
       "guid": "1ea088a1-42c6-5f1f-8396-e41e2d97f5a4"
@@ -20752,7 +20784,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "IronRock_6"
+          "value": "IronRock_6"
         }
       },
       "guid": "d8517d5a-5a43-5450-a834-25a161ed9754"
@@ -20801,7 +20833,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "IronRock_7"
+          "value": "IronRock_7"
         }
       },
       "guid": "98dc0bfd-f354-5b79-8dd0-2211e58fa2fd"
@@ -20850,7 +20882,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "IronRock_8"
+          "value": "IronRock_8"
         }
       },
       "guid": "68a8aee9-461b-59cb-af7f-8c86fb107d41"
@@ -20899,7 +20931,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "IronRock_9"
+          "value": "IronRock_9"
         }
       },
       "guid": "85e6b9a9-ebbb-5ef9-99ec-468b509fb455"
@@ -20948,7 +20980,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "IronRock_10"
+          "value": "IronRock_10"
         }
       },
       "guid": "32bd380d-6e7b-5712-b3cb-ef40ba7c1e9e"
@@ -20997,7 +21029,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "IronRock_11"
+          "value": "IronRock_11"
         }
       },
       "guid": "608b066a-db92-51ca-ae8d-0acb67e179d1"
@@ -21046,7 +21078,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "IronRock_12"
+          "value": "IronRock_12"
         }
       },
       "guid": "1c07569d-0689-5c75-91ce-f669d95e040b"
@@ -21095,7 +21127,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "IronRock_13"
+          "value": "IronRock_13"
         }
       },
       "guid": "b42f9aa2-630a-534e-a331-2aa18444de7b"
@@ -21127,7 +21159,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "IronScrap_0"
+          "value": "IronScrap_0"
         }
       },
       "guid": "9db27c28-48f9-59f9-ba35-cb0fd55cd02d"
@@ -21159,7 +21191,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "IronScrap_1"
+          "value": "IronScrap_1"
         }
       },
       "guid": "a3e2be79-7bac-5a83-96c6-49259a6854e3"
@@ -21191,7 +21223,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "IronScrap_2"
+          "value": "IronScrap_2"
         }
       },
       "guid": "5fe208a0-9b3f-5a86-bd1b-6df3a06aef13"
@@ -21223,7 +21255,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "IronScrap_3"
+          "value": "IronScrap_3"
         }
       },
       "guid": "1f23a9c6-6f23-546d-bab8-d3bbcb51d6d5"
@@ -21255,7 +21287,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "IronScrap_4"
+          "value": "IronScrap_4"
         }
       },
       "guid": "84fc0391-df17-53ab-8fc6-365b79b9b522"
@@ -21287,7 +21319,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "IronScrap_5"
+          "value": "IronScrap_5"
         }
       },
       "guid": "fc8ef9cf-51ff-5f9f-bf69-9585acc63f0d"
@@ -21319,7 +21351,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "IronScrap_6"
+          "value": "IronScrap_6"
         }
       },
       "guid": "164c0011-7e6c-56db-9f46-48a856eb1222"
@@ -21351,7 +21383,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "IronScrap_7"
+          "value": "IronScrap_7"
         }
       },
       "guid": "1cfc6539-71ac-53da-bc11-5f9df7c1c7ef"
@@ -21400,7 +21432,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Greenhouse_0"
+          "value": "Greenhouse_0"
         },
         "Tags": {
           "$v": 1,
@@ -21445,7 +21477,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "GreenhouseGlow_0"
+          "value": "GreenhouseGlow_0"
         }
       },
       "guid": "50f601cf-7d3b-5c45-adfe-dfc988f6aa5d"
@@ -21494,7 +21526,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Greenhouse_1"
+          "value": "Greenhouse_1"
         },
         "Tags": {
           "$v": 1,
@@ -21539,7 +21571,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "GreenhouseGlow_1"
+          "value": "GreenhouseGlow_1"
         }
       },
       "guid": "430bdc5c-959e-5df1-bd2d-fdeb71402b27"
@@ -21588,7 +21620,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Greenhouse_2"
+          "value": "Greenhouse_2"
         },
         "Tags": {
           "$v": 1,
@@ -21633,7 +21665,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "GreenhouseGlow_2"
+          "value": "GreenhouseGlow_2"
         }
       },
       "guid": "98d06994-beb0-57aa-90c3-fd7525c0dbc1"
@@ -21682,7 +21714,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Greenhouse_3"
+          "value": "Greenhouse_3"
         },
         "Tags": {
           "$v": 1,
@@ -21727,7 +21759,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "GreenhouseGlow_3"
+          "value": "GreenhouseGlow_3"
         }
       },
       "guid": "469982af-d96a-55a2-a3de-40988ac1b8fd"
@@ -21776,7 +21808,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "LivingDome"
+          "value": "LivingDome"
         },
         "Tags": {
           "$v": 1,
@@ -21821,7 +21853,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "LivingDomeGlow"
+          "value": "LivingDomeGlow"
         }
       },
       "guid": "2e308e1f-1143-5e41-9c2d-e73fefdedd8f"
@@ -21870,7 +21902,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "DepotGenerator_0"
+          "value": "DepotGenerator_0"
         }
       },
       "guid": "23754b30-e156-5cc3-ba41-be0617e7c257"
@@ -21919,7 +21951,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "DepotGenerator_1"
+          "value": "DepotGenerator_1"
         }
       },
       "guid": "e62ccc22-4a84-5ffe-b47a-c82e2407c57e"
@@ -21968,7 +22000,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "DepotBench"
+          "value": "DepotBench"
         }
       },
       "guid": "2ac617ee-9a3b-572b-bfc6-ceddb6fc9390"
@@ -22000,7 +22032,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "DepotDrone_0"
+          "value": "DepotDrone_0"
         },
         "Tags": {
           "$v": 1,
@@ -22038,7 +22070,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "DepotDrone_1"
+          "value": "DepotDrone_1"
         },
         "Tags": {
           "$v": 1,
@@ -22076,7 +22108,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "DepotDrone_2"
+          "value": "DepotDrone_2"
         },
         "Tags": {
           "$v": 1,
@@ -22131,7 +22163,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "GardenTree_0"
+          "value": "GardenTree_0"
         }
       },
       "guid": "573dfb66-1b5d-5581-ade8-81a91e717fa6"
@@ -22180,7 +22212,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "GardenTree_1"
+          "value": "GardenTree_1"
         }
       },
       "guid": "bd7ba8a8-bd81-573e-b2a1-23e21f562510"
@@ -22229,7 +22261,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "GardenTree_2"
+          "value": "GardenTree_2"
         }
       },
       "guid": "6f8d2dfa-2458-5d6f-8694-82d95da73bea"
@@ -22278,7 +22310,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "GardenTree_3"
+          "value": "GardenTree_3"
         }
       },
       "guid": "9a82651f-7373-5108-ad8c-87f2f15db432"
@@ -22327,7 +22359,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "GardenTree_4"
+          "value": "GardenTree_4"
         }
       },
       "guid": "def03dbe-c248-567e-ba77-30335b4d3f4c"
@@ -22376,7 +22408,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "GardenTree_5"
+          "value": "GardenTree_5"
         }
       },
       "guid": "e72b3873-81f4-5c85-8122-1dfa9fba9d93"
@@ -22425,7 +22457,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "GardenTree_6"
+          "value": "GardenTree_6"
         }
       },
       "guid": "7e31a197-3311-5a38-8f74-ce945392c33f"
@@ -22474,7 +22506,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "GardenTree_7"
+          "value": "GardenTree_7"
         }
       },
       "guid": "fec0c04e-ba7d-5f56-b4c4-5e94f28de56e"
@@ -22523,7 +22555,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "GardenTree_8"
+          "value": "GardenTree_8"
         }
       },
       "guid": "984e77b5-c248-56c9-9bbe-7447d2aa4a03"
@@ -22572,7 +22604,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "GardenTree_9"
+          "value": "GardenTree_9"
         }
       },
       "guid": "864cfbc9-66e2-5498-91b5-6f7c448dd7b8"
@@ -22621,7 +22653,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "GardenTree_10"
+          "value": "GardenTree_10"
         }
       },
       "guid": "9e4f5570-8b61-5537-9560-402d33c718e1"
@@ -22670,7 +22702,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "GardenTree_11"
+          "value": "GardenTree_11"
         }
       },
       "guid": "a5bfc238-ac23-51a0-96f8-7da71d0d68c8"
@@ -22719,7 +22751,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "GardenTree_12"
+          "value": "GardenTree_12"
         }
       },
       "guid": "37c4d5af-1992-5705-80e2-1b2ea8f3eb38"
@@ -22768,7 +22800,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "GardenTree_13"
+          "value": "GardenTree_13"
         }
       },
       "guid": "2adffc2e-5b8c-59bf-92e3-ea46158ba5a7"
@@ -22817,7 +22849,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "GardenTree_14"
+          "value": "GardenTree_14"
         }
       },
       "guid": "3a811d2e-91e9-563b-805f-769f6919db9f"
@@ -22866,7 +22898,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "GardenTree_15"
+          "value": "GardenTree_15"
         }
       },
       "guid": "ba371ab2-b2e8-59d6-b82f-1a4416d7bd2b"
@@ -22915,7 +22947,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "GardenTree_16"
+          "value": "GardenTree_16"
         }
       },
       "guid": "62167f8d-e4c1-561e-9a0b-0ee1a35e93bb"
@@ -22964,7 +22996,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "GardenTree_17"
+          "value": "GardenTree_17"
         }
       },
       "guid": "6f42cc4c-1749-5d46-9e99-07a3137c8f95"
@@ -23013,7 +23045,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "AnnexRelay"
+          "value": "AnnexRelay"
         },
         "Tags": {
           "$v": 1,
@@ -23068,7 +23100,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "AnnexBench"
+          "value": "AnnexBench"
         }
       },
       "guid": "608bdff8-0c84-521c-b34f-8fa322773037"
@@ -23117,7 +23149,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "AnnexCrate_0"
+          "value": "AnnexCrate_0"
         },
         "Tags": {
           "$v": 1,
@@ -23172,7 +23204,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "AnnexCrate_1"
+          "value": "AnnexCrate_1"
         },
         "Tags": {
           "$v": 1,
@@ -23227,7 +23259,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "AnnexCrate_2"
+          "value": "AnnexCrate_2"
         },
         "Tags": {
           "$v": 1,
@@ -23265,7 +23297,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "ArrayTree_0"
+          "value": "ArrayTree_0"
         }
       },
       "guid": "3749540f-17e1-5002-8ccd-d09e99344fa2"
@@ -23297,7 +23329,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "ArrayTree_1"
+          "value": "ArrayTree_1"
         }
       },
       "guid": "709364fb-894e-5d1c-b9f6-cea071972689"
@@ -23329,7 +23361,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "ArrayTree_2"
+          "value": "ArrayTree_2"
         }
       },
       "guid": "2b52a01c-8ec6-5925-99d8-ec33e21db0c2"
@@ -23361,7 +23393,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "ArrayTree_3"
+          "value": "ArrayTree_3"
         }
       },
       "guid": "db065adc-e296-5dc5-94bd-1498b2fafe77"
@@ -23393,7 +23425,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "ArrayTree_4"
+          "value": "ArrayTree_4"
         }
       },
       "guid": "479349d3-f547-5cca-b1e2-c47217fd7906"
@@ -23425,7 +23457,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "ArrayTree_5"
+          "value": "ArrayTree_5"
         }
       },
       "guid": "649fc718-9fe1-56a8-b613-3cdc667c3d96"
@@ -23457,7 +23489,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "ArrayTree_6"
+          "value": "ArrayTree_6"
         }
       },
       "guid": "b25f5a37-c526-5f61-84c6-2759d7867590"
@@ -23489,7 +23521,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "ArrayTree_7"
+          "value": "ArrayTree_7"
         }
       },
       "guid": "6598a8eb-c4f7-5cdd-9e47-8ad0f50d7526"
@@ -23521,7 +23553,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "ArrayTree_8"
+          "value": "ArrayTree_8"
         }
       },
       "guid": "4ad49aec-53c2-5256-89cc-5c30a467f69c"
@@ -23553,7 +23585,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "ArrayTree_9"
+          "value": "ArrayTree_9"
         }
       },
       "guid": "ea9c2693-1570-5f98-a1c2-78eb4e4fa3bd"
@@ -23585,7 +23617,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "ArrayTree_10"
+          "value": "ArrayTree_10"
         }
       },
       "guid": "864ba4f6-0bb4-5a44-9e48-fabe89226165"
@@ -23617,7 +23649,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "ArrayTree_11"
+          "value": "ArrayTree_11"
         }
       },
       "guid": "8a5c4559-d7f6-5ff1-9639-633d79461b67"
@@ -23649,7 +23681,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "ArrayTree_12"
+          "value": "ArrayTree_12"
         }
       },
       "guid": "20f4f16f-1ee7-54e2-bb67-b62be32e5c3a"
@@ -23681,7 +23713,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "ArrayTree_13"
+          "value": "ArrayTree_13"
         }
       },
       "guid": "ad5b8ef3-b017-5017-bd52-9915728e3834"
@@ -23713,7 +23745,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "ArrayTree_14"
+          "value": "ArrayTree_14"
         }
       },
       "guid": "a036b20e-8983-56ef-86bd-712b51a6ef82"
@@ -23745,7 +23777,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "ArrayTree_15"
+          "value": "ArrayTree_15"
         }
       },
       "guid": "f54e621b-b579-521d-985e-07c151b8bb04"
@@ -23777,7 +23809,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "ArrayTree_16"
+          "value": "ArrayTree_16"
         }
       },
       "guid": "cc82dc7f-8f35-55df-8393-afbaceb17b73"
@@ -23809,7 +23841,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "ArrayTree_17"
+          "value": "ArrayTree_17"
         }
       },
       "guid": "8619b83e-8009-5f53-b2a1-f527ea06ed0e"
@@ -23841,7 +23873,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "ArrayTree_18"
+          "value": "ArrayTree_18"
         }
       },
       "guid": "83f2d8d5-2620-5ca5-a80c-dea6a912b5e9"
@@ -23873,7 +23905,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "ArrayTree_19"
+          "value": "ArrayTree_19"
         }
       },
       "guid": "7d6dab75-7a52-5c8a-825a-70b19564f447"
@@ -23905,7 +23937,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "ArrayTree_20"
+          "value": "ArrayTree_20"
         }
       },
       "guid": "43ac5dae-8bfb-5a63-9baa-53a20571ad5a"
@@ -23937,7 +23969,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "ArrayTree_21"
+          "value": "ArrayTree_21"
         }
       },
       "guid": "6bbb19a8-181a-505a-aa03-3e16f5785c8c"
@@ -23969,7 +24001,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "ArrayTree_22"
+          "value": "ArrayTree_22"
         }
       },
       "guid": "550182d7-da25-5cb5-a66a-000d66127fbd"
@@ -24001,7 +24033,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "ArrayTree_23"
+          "value": "ArrayTree_23"
         }
       },
       "guid": "7d2fc905-e5dd-5102-a920-67c7adf29731"
@@ -24033,7 +24065,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "ArrayTree_24"
+          "value": "ArrayTree_24"
         }
       },
       "guid": "eb466d20-4254-570c-8674-6e9d051918b2"
@@ -24065,7 +24097,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "ArrayTree_25"
+          "value": "ArrayTree_25"
         }
       },
       "guid": "a9c1f7cb-c3e3-5982-8267-bb34fd02dc79"
@@ -24097,7 +24129,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "ArrayTree_26"
+          "value": "ArrayTree_26"
         }
       },
       "guid": "89bde3a8-5b3f-5049-9881-5c59f8c9cd75"
@@ -24129,7 +24161,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "ArrayTree_27"
+          "value": "ArrayTree_27"
         }
       },
       "guid": "228983e0-c225-534d-ad94-885f36f5536c"
@@ -24161,7 +24193,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "ArrayTree_28"
+          "value": "ArrayTree_28"
         }
       },
       "guid": "3ef1dd03-1c89-5cc0-84ad-4d276a9aaf31"
@@ -24193,7 +24225,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "ArrayTree_29"
+          "value": "ArrayTree_29"
         }
       },
       "guid": "42f6924f-002a-55fb-9b5d-bc3556863a55"
@@ -24225,7 +24257,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "ArrayTree_30"
+          "value": "ArrayTree_30"
         }
       },
       "guid": "788b1505-403d-55e4-b55d-bf97c224cccd"
@@ -24257,7 +24289,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "ArrayTree_31"
+          "value": "ArrayTree_31"
         }
       },
       "guid": "17a4be4d-1afa-5a2f-89cd-a2635b9d01d9"
@@ -24289,7 +24321,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "ArrayTree_32"
+          "value": "ArrayTree_32"
         }
       },
       "guid": "2a03160d-7653-5909-b6f9-4b753e1b33be"
@@ -24321,7 +24353,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "ArrayTree_33"
+          "value": "ArrayTree_33"
         }
       },
       "guid": "d55890bc-f5c6-59f0-b653-7572f03e2f3f"
@@ -24370,7 +24402,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "ArrayRock_0"
+          "value": "ArrayRock_0"
         }
       },
       "guid": "1e52f81e-a570-556a-b494-e53ab0d24fa1"
@@ -24419,7 +24451,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "ArrayRock_1"
+          "value": "ArrayRock_1"
         }
       },
       "guid": "3ccd9ab8-b2f1-50ac-81d4-81275b102423"
@@ -24468,7 +24500,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "ArrayRock_2"
+          "value": "ArrayRock_2"
         }
       },
       "guid": "fbae4a5b-18d8-564f-91ed-58431ce59057"
@@ -24517,7 +24549,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "ArrayRock_3"
+          "value": "ArrayRock_3"
         }
       },
       "guid": "328eafba-3e80-5b48-bdcb-65abb0c5c8a6"
@@ -24566,7 +24598,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "ArrayRock_4"
+          "value": "ArrayRock_4"
         }
       },
       "guid": "a74527f4-8576-5649-9b87-668575cb8a75"
@@ -24615,7 +24647,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "ArrayRock_5"
+          "value": "ArrayRock_5"
         }
       },
       "guid": "9304cd89-f5cf-5394-89f1-ae620a5a2b27"
@@ -24664,7 +24696,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "ArrayRock_6"
+          "value": "ArrayRock_6"
         }
       },
       "guid": "2a2f392f-09e9-582e-b17d-e1ecf4fbd1d1"
@@ -24713,7 +24745,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "ArrayRock_7"
+          "value": "ArrayRock_7"
         }
       },
       "guid": "8a0a2241-ee9a-5312-a9ca-002163335caa"
@@ -24762,7 +24794,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "ReactorTower"
+          "value": "ReactorTower"
         },
         "Tags": {
           "$v": 1,
@@ -24807,7 +24839,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "ReactorGlow"
+          "value": "ReactorGlow"
         }
       },
       "guid": "1d3e0c9e-b257-50d9-b77f-d550ce84ef05"
@@ -24856,7 +24888,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "DataPylon_0"
+          "value": "DataPylon_0"
         }
       },
       "guid": "5ee1efaa-aedc-5b07-a4f6-35a789f8702d"
@@ -24905,7 +24937,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "DataPylon_1"
+          "value": "DataPylon_1"
         }
       },
       "guid": "31292ab5-7fa7-54c7-a663-094ba3e8d852"
@@ -24954,7 +24986,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "DataPylon_2"
+          "value": "DataPylon_2"
         }
       },
       "guid": "5c9b3007-889f-5048-86f2-771e5af16f8e"
@@ -25003,7 +25035,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "DataPylon_3"
+          "value": "DataPylon_3"
         }
       },
       "guid": "f4706aaa-38ea-531a-9f96-c3ebd9a9ac2f"
@@ -25052,7 +25084,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "DataPylon_4"
+          "value": "DataPylon_4"
         }
       },
       "guid": "1a4af684-98d2-58d0-8752-94f23792e10b"
@@ -25101,7 +25133,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "DataPylon_5"
+          "value": "DataPylon_5"
         }
       },
       "guid": "05584435-a98f-575e-a43f-e4bdde35024a"
@@ -25150,7 +25182,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "DataPylon_6"
+          "value": "DataPylon_6"
         }
       },
       "guid": "5ef5e13c-cbe9-59bc-be5f-fc72c4cedf18"
@@ -25199,7 +25231,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "DataPylon_7"
+          "value": "DataPylon_7"
         }
       },
       "guid": "e332eced-9e72-5205-a991-5e17e5118a2c"
@@ -25248,7 +25280,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "CoreGate"
+          "value": "CoreGate"
         },
         "Tags": {
           "$v": 1,
@@ -25293,7 +25325,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "CoreGateGlow"
+          "value": "CoreGateGlow"
         }
       },
       "guid": "3f534c86-9c88-5e38-9f22-c8d38fd04ad8"
@@ -25342,7 +25374,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "GridNode_0"
+          "value": "GridNode_0"
         },
         "Tags": {
           "$v": 1,
@@ -25387,7 +25419,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "GridGlow_0"
+          "value": "GridGlow_0"
         }
       },
       "guid": "a1b7a4a9-cbe0-5a14-b0f1-71b2f8edd77a"
@@ -25436,7 +25468,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "GridNode_1"
+          "value": "GridNode_1"
         },
         "Tags": {
           "$v": 1,
@@ -25481,7 +25513,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "GridGlow_1"
+          "value": "GridGlow_1"
         }
       },
       "guid": "37d55269-9087-50bb-967c-49416a2de1e3"
@@ -25530,7 +25562,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "GridNode_2"
+          "value": "GridNode_2"
         },
         "Tags": {
           "$v": 1,
@@ -25575,7 +25607,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "GridGlow_2"
+          "value": "GridGlow_2"
         }
       },
       "guid": "7e533ace-bc84-5151-9b0f-ef3dae0a0c15"
@@ -25624,7 +25656,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "GridNode_3"
+          "value": "GridNode_3"
         },
         "Tags": {
           "$v": 1,
@@ -25669,7 +25701,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "GridGlow_3"
+          "value": "GridGlow_3"
         }
       },
       "guid": "5ad7a286-8a41-59ee-8ef0-17600083f5bc"
@@ -25718,7 +25750,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "RampPost_0"
+          "value": "RampPost_0"
         }
       },
       "guid": "bc61aea8-27a9-542d-9b7a-04a21b14f6f1"
@@ -25767,7 +25799,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "RampPost_1"
+          "value": "RampPost_1"
         }
       },
       "guid": "a6511c03-b8e8-523d-944f-8ccf994389b9"
@@ -25816,7 +25848,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "RampPost_2"
+          "value": "RampPost_2"
         }
       },
       "guid": "35995d1d-545c-5487-856e-767d7609a0b2"
@@ -25865,7 +25897,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "RampPost_3"
+          "value": "RampPost_3"
         }
       },
       "guid": "dfcffa34-195a-51fc-9109-8af09fdaf961"
@@ -25914,7 +25946,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "RampPost_4"
+          "value": "RampPost_4"
         }
       },
       "guid": "b75c5eb6-62f7-5ba1-8df6-ed490fbce78d"
@@ -25963,7 +25995,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "RampPost_5"
+          "value": "RampPost_5"
         }
       },
       "guid": "6f2252bf-6119-54c6-8930-6da79e9d956b"
@@ -26012,7 +26044,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "CoreRock_0"
+          "value": "CoreRock_0"
         }
       },
       "guid": "e5832831-7fd5-5272-ad02-a399d99c83b7"
@@ -26061,7 +26093,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "CoreRock_1"
+          "value": "CoreRock_1"
         }
       },
       "guid": "750fe1ec-fd07-57de-bb39-e7e02959f699"
@@ -26110,7 +26142,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "CoreRock_2"
+          "value": "CoreRock_2"
         }
       },
       "guid": "b9fc4684-a96a-5c10-85d4-536fb1686142"
@@ -26159,7 +26191,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "CoreRock_3"
+          "value": "CoreRock_3"
         }
       },
       "guid": "ab06bc99-1698-5c62-a46d-cc6a3392818e"
@@ -26208,7 +26240,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "CoreRock_4"
+          "value": "CoreRock_4"
         }
       },
       "guid": "2f45810d-5f99-512a-9204-bfc424b41df4"
@@ -26257,7 +26289,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "CoreRock_5"
+          "value": "CoreRock_5"
         }
       },
       "guid": "1a7dbaed-0d18-5730-9f23-3602773b978f"
@@ -26306,7 +26338,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "CoreRock_6"
+          "value": "CoreRock_6"
         }
       },
       "guid": "c92f6fe2-9213-59ff-a7fe-74af0355b90a"
@@ -26355,7 +26387,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "CoreRock_7"
+          "value": "CoreRock_7"
         }
       },
       "guid": "77e1b3cf-67a8-5cb0-ac72-9fbecf469d1f"
@@ -26404,7 +26436,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "CoreRock_8"
+          "value": "CoreRock_8"
         }
       },
       "guid": "9c2eb75e-f625-5387-9825-179dd963a18f"
@@ -26453,7 +26485,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "CoreRock_9"
+          "value": "CoreRock_9"
         }
       },
       "guid": "9447553b-ab14-5cd9-8d3f-c79718cb0c03"
@@ -26502,7 +26534,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "CoreRock_10"
+          "value": "CoreRock_10"
         }
       },
       "guid": "87ef25d3-d555-5cba-8cb3-53ccbeb8ba0c"
@@ -26551,7 +26583,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "CoreRock_11"
+          "value": "CoreRock_11"
         }
       },
       "guid": "fb17c84b-42e2-5d5f-92b6-0a7edd7e6be2"
@@ -26600,7 +26632,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "CoreRock_12"
+          "value": "CoreRock_12"
         }
       },
       "guid": "fe10f323-dc18-53f8-b66e-76b81cc8e317"
@@ -26649,7 +26681,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "CoreRock_13"
+          "value": "CoreRock_13"
         }
       },
       "guid": "a7530538-cd61-501c-9e0f-c0d4cdcb087c"
@@ -26698,7 +26730,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_0"
+          "value": "Outcrop_0"
         }
       },
       "guid": "ad45a64f-1418-51bb-a67a-51991552a507"
@@ -26747,7 +26779,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_1"
+          "value": "Outcrop_1"
         }
       },
       "guid": "167dded3-a8ae-55ec-bdd1-d79fe7c85764"
@@ -26779,7 +26811,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_2"
+          "value": "Outcrop_2"
         }
       },
       "guid": "1945df7b-5a82-55c1-81fd-50339be2e0f6"
@@ -26828,7 +26860,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_3"
+          "value": "Outcrop_3"
         }
       },
       "guid": "7f25c3f2-54d2-5690-8e48-5fc8240260ec"
@@ -26877,7 +26909,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_4"
+          "value": "Outcrop_4"
         }
       },
       "guid": "f5ec1caf-07b0-57ed-abaa-df66104fe574"
@@ -26926,7 +26958,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_5"
+          "value": "Outcrop_5"
         }
       },
       "guid": "6d21eb5e-ec3e-5d5d-8280-6263eb4f9b0b"
@@ -26958,7 +26990,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_6"
+          "value": "Outcrop_6"
         }
       },
       "guid": "3f1f95c0-8788-5bfb-867d-97184ff37069"
@@ -26990,7 +27022,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_7"
+          "value": "Outcrop_7"
         }
       },
       "guid": "eea1aa44-0a56-587d-9e64-cb2c64ef5718"
@@ -27022,7 +27054,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_8"
+          "value": "Outcrop_8"
         }
       },
       "guid": "5fe012fb-5b9e-53b0-8405-ed1c4fe339c2"
@@ -27054,7 +27086,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_9"
+          "value": "Outcrop_9"
         }
       },
       "guid": "f9b98aea-90d9-522f-ae87-a0585120a99e"
@@ -27086,7 +27118,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_10"
+          "value": "Outcrop_10"
         }
       },
       "guid": "800917eb-0857-56c8-812b-ff9d136297f0"
@@ -27135,7 +27167,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_11"
+          "value": "Outcrop_11"
         }
       },
       "guid": "c86108ea-ca58-5b0a-b113-bdf64c635155"
@@ -27184,7 +27216,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_12"
+          "value": "Outcrop_12"
         }
       },
       "guid": "4d687cad-f45e-5131-8c15-9c0885030664"
@@ -27216,7 +27248,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_13"
+          "value": "Outcrop_13"
         }
       },
       "guid": "a3574e6f-9456-513d-bbc0-a3702079c30f"
@@ -27265,7 +27297,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_14"
+          "value": "Outcrop_14"
         }
       },
       "guid": "8259c6ff-0fb3-5b81-a31b-974663798e34"
@@ -27314,7 +27346,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_15"
+          "value": "Outcrop_15"
         }
       },
       "guid": "493daddc-39a7-50f1-9435-c49ab43716ae"
@@ -27363,7 +27395,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_16"
+          "value": "Outcrop_16"
         }
       },
       "guid": "89f844bc-6398-561f-86c6-599f5b11aa55"
@@ -27395,7 +27427,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_17"
+          "value": "Outcrop_17"
         }
       },
       "guid": "81fc5d20-d33a-533e-a46a-4d3958e5579c"
@@ -27444,7 +27476,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_18"
+          "value": "Outcrop_18"
         }
       },
       "guid": "3861cf1c-6af1-5272-a672-a671aac0f171"
@@ -27476,7 +27508,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_19"
+          "value": "Outcrop_19"
         }
       },
       "guid": "2b7b7dc2-cca7-5da0-aab2-14620caa1671"
@@ -27508,7 +27540,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_20"
+          "value": "Outcrop_20"
         }
       },
       "guid": "19a30c0a-cb32-5e40-8c05-101988d1c351"
@@ -27557,7 +27589,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_21"
+          "value": "Outcrop_21"
         }
       },
       "guid": "5461e645-6eb4-5bfb-9f33-a8567b22aba9"
@@ -27589,7 +27621,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_22"
+          "value": "Outcrop_22"
         }
       },
       "guid": "55bce0c9-94b0-54aa-92a9-998c58cdeb1e"
@@ -27638,7 +27670,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_23"
+          "value": "Outcrop_23"
         }
       },
       "guid": "12cdaf35-fb1d-5b86-b908-20f768423792"
@@ -27687,7 +27719,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_24"
+          "value": "Outcrop_24"
         }
       },
       "guid": "14f3a4da-64a4-5efd-98a1-4738c198a880"
@@ -27736,7 +27768,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_25"
+          "value": "Outcrop_25"
         }
       },
       "guid": "26e013dd-ba10-5266-89d2-82630e0b1c45"
@@ -27768,7 +27800,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_26"
+          "value": "Outcrop_26"
         }
       },
       "guid": "c522c930-4c80-5e3f-be0e-50bb7782ee6f"
@@ -27800,7 +27832,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_27"
+          "value": "Outcrop_27"
         }
       },
       "guid": "759c0386-f428-5c3d-8a0a-f374ad615b47"
@@ -27832,7 +27864,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_28"
+          "value": "Outcrop_28"
         }
       },
       "guid": "750df52b-32f7-5c21-80d4-0a2707e59ffe"
@@ -27881,7 +27913,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_29"
+          "value": "Outcrop_29"
         }
       },
       "guid": "32b9a45f-e790-541c-a311-437e538ec374"
@@ -27930,7 +27962,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_30"
+          "value": "Outcrop_30"
         }
       },
       "guid": "9ee3c060-ea1a-5c12-9525-33dd71927c37"
@@ -27962,7 +27994,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_31"
+          "value": "Outcrop_31"
         }
       },
       "guid": "aedc40e5-d546-5a3e-b84c-3c98e03bdae2"
@@ -27994,7 +28026,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_32"
+          "value": "Outcrop_32"
         }
       },
       "guid": "e556d7d8-ab8d-578a-9fdd-6606c82c0767"
@@ -28026,7 +28058,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_33"
+          "value": "Outcrop_33"
         }
       },
       "guid": "32abe6eb-f5d2-53cf-9498-f61c1f8900cd"
@@ -28058,7 +28090,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_34"
+          "value": "Outcrop_34"
         }
       },
       "guid": "8a027d26-37e9-57bc-a01b-19b45d7e5c8d"
@@ -28107,7 +28139,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_35"
+          "value": "Outcrop_35"
         }
       },
       "guid": "86e81b03-8c56-5d00-bc19-da3ace282af7"
@@ -28156,7 +28188,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_36"
+          "value": "Outcrop_36"
         }
       },
       "guid": "8cb0b906-c16d-5525-853d-a5d9c309ce9d"
@@ -28188,7 +28220,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_37"
+          "value": "Outcrop_37"
         }
       },
       "guid": "4fbc5b53-930e-518c-993e-4861eb207a5b"
@@ -28220,7 +28252,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_38"
+          "value": "Outcrop_38"
         }
       },
       "guid": "abe4f294-a702-5824-8361-929c10c1b8b2"
@@ -28252,7 +28284,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_39"
+          "value": "Outcrop_39"
         }
       },
       "guid": "bd1afa09-056f-5f8c-b842-54c57b4518ef"
@@ -28301,7 +28333,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_40"
+          "value": "Outcrop_40"
         }
       },
       "guid": "728f6135-cbd9-5313-bf36-535f02758785"
@@ -28333,7 +28365,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_41"
+          "value": "Outcrop_41"
         }
       },
       "guid": "6d87a543-b312-5330-bad7-59c30e4f48c7"
@@ -28365,7 +28397,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_42"
+          "value": "Outcrop_42"
         }
       },
       "guid": "2411b3b1-cc40-5243-a9d3-92d5b44d68f9"
@@ -28414,7 +28446,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_43"
+          "value": "Outcrop_43"
         }
       },
       "guid": "54c05769-1aaf-509e-b420-b2e3ab34d8be"
@@ -28463,7 +28495,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_44"
+          "value": "Outcrop_44"
         }
       },
       "guid": "19d050d0-2944-502e-826c-feee60f2b634"
@@ -28495,7 +28527,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_45"
+          "value": "Outcrop_45"
         }
       },
       "guid": "f2804f16-a5df-58b0-96dc-7be5f230aee1"
@@ -28544,7 +28576,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_46"
+          "value": "Outcrop_46"
         }
       },
       "guid": "18962da8-2cd5-5d99-9bcb-136896bf241e"
@@ -28576,7 +28608,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_47"
+          "value": "Outcrop_47"
         }
       },
       "guid": "1e8072ef-c74c-51f6-b829-56da89eff912"
@@ -28608,7 +28640,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_48"
+          "value": "Outcrop_48"
         }
       },
       "guid": "dbf9a76e-ed58-5417-a306-0df0af2b9fc8"
@@ -28657,7 +28689,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_49"
+          "value": "Outcrop_49"
         }
       },
       "guid": "44bf3a11-751e-556f-bf04-6cb57a3074dd"
@@ -28706,7 +28738,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_50"
+          "value": "Outcrop_50"
         }
       },
       "guid": "6e91ce2e-99ad-5837-8209-c849a58b551c"
@@ -28738,7 +28770,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_51"
+          "value": "Outcrop_51"
         }
       },
       "guid": "6d2d4b8b-55e5-533e-a4d9-6c6b7b4d9fcd"
@@ -28787,7 +28819,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_52"
+          "value": "Outcrop_52"
         }
       },
       "guid": "d3e1dff2-300e-5add-ab46-8ddb21690e64"
@@ -28836,7 +28868,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_53"
+          "value": "Outcrop_53"
         }
       },
       "guid": "d2b84287-cb9a-51e5-8629-e7f3d3273f5a"
@@ -28868,7 +28900,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_54"
+          "value": "Outcrop_54"
         }
       },
       "guid": "f5245abc-23fe-54af-ab24-9ede18a499c8"
@@ -28917,7 +28949,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_55"
+          "value": "Outcrop_55"
         }
       },
       "guid": "0eb3457b-37f7-5500-b759-1b6ff19673ed"
@@ -28966,7 +28998,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_56"
+          "value": "Outcrop_56"
         }
       },
       "guid": "6ed665cb-c7ce-53ca-b230-261fad1505e8"
@@ -29015,7 +29047,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_57"
+          "value": "Outcrop_57"
         }
       },
       "guid": "d56176d9-340a-5ccc-8cdd-87b3c5892b98"
@@ -29047,7 +29079,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_58"
+          "value": "Outcrop_58"
         }
       },
       "guid": "dd33321f-8125-50e8-ba7d-a43858647bc9"
@@ -29096,7 +29128,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_59"
+          "value": "Outcrop_59"
         }
       },
       "guid": "4861f7b8-707f-5b9d-ba89-870f8e7a8eba"
@@ -29145,7 +29177,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_60"
+          "value": "Outcrop_60"
         }
       },
       "guid": "bdee065a-8820-51c7-bdcf-c951c4b3ba62"
@@ -29194,7 +29226,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_61"
+          "value": "Outcrop_61"
         }
       },
       "guid": "4b420bd8-5c98-57ba-83eb-83cdaac6cbf6"
@@ -29243,7 +29275,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_62"
+          "value": "Outcrop_62"
         }
       },
       "guid": "8a20fbd2-99a6-55ee-ac53-9dda8864a9b7"
@@ -29292,7 +29324,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Outcrop_63"
+          "value": "Outcrop_63"
         }
       },
       "guid": "23afb269-b77b-5e98-9dd6-9a03b930904e"
@@ -29344,7 +29376,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Kael"
+          "value": "Kael"
         },
         "Tags": {
           "$v": 1,
@@ -29382,7 +29414,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "KaelBody"
+          "value": "KaelBody"
         },
         "Tags": {
           "$v": 1,
@@ -29429,7 +29461,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "MainCamera"
+          "value": "MainCamera"
         },
         "Tags": {
           "$v": 1,

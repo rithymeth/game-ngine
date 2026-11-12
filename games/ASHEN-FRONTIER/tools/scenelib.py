@@ -40,7 +40,7 @@ class Scene:
         if snap and self.ground is not None:
             position = (position[0], position[1] + float(self.ground(position[0], position[2])), position[2])
         comps["Transform"] = {"$v": 2, "position": list(position), "rotation": quat_from_euler(*rotation), "scale": list(scale)}
-        comps["EntityName"] = {"$v": 1, "name": name}
+        comps["EntityName"] = {"$v": 1, "value": name}
         if tags:
             comps["Tags"] = {"$v": 1, "names": list(tags)}
         if parent:
@@ -79,7 +79,7 @@ class Scene:
                             "projection": "Orthographic" if ortho_height else "Perspective"}}
         g = guid(name)
         comps["Transform"] = {"$v": 2, "position": list(position), "rotation": look_quat(yaw, pitch), "scale": [1, 1, 1]}
-        comps["EntityName"] = {"$v": 1, "name": name}
+        comps["EntityName"] = {"$v": 1, "value": name}
         comps["Tags"] = {"$v": 1, "names": ["MainCamera"]}
         self.entities.append({"components": comps, "guid": g})
         return g

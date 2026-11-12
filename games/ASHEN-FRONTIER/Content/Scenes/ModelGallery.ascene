@@ -34,7 +34,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Sky"
+          "value": "Sky"
         }
       },
       "guid": "2b236fc4-f2c7-5c19-adef-5aa63b3defaa"
@@ -72,7 +72,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Sun"
+          "value": "Sun"
         }
       },
       "guid": "49fe3aa4-c54b-5829-8075-e89e13215d68"
@@ -123,7 +123,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "Ground"
+          "value": "Ground"
         }
       },
       "guid": "48f391e7-aae7-5f4f-9f7b-706691185fba"
@@ -155,7 +155,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "G_Kael"
+          "value": "G_Kael"
         }
       },
       "guid": "ffd43699-944c-51b7-b393-61044b34a081"
@@ -187,7 +187,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "G_MULE3"
+          "value": "G_MULE3"
         }
       },
       "guid": "cf168eb0-11cb-503e-b6bc-64f55b886f87"
@@ -219,7 +219,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "G_SPARK2"
+          "value": "G_SPARK2"
         }
       },
       "guid": "757dbd1d-f4cb-54dd-b815-ae06f98cc5ae"
@@ -251,7 +251,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "G_SENTINEL4"
+          "value": "G_SENTINEL4"
         }
       },
       "guid": "94bde245-4b24-51e9-a7ef-3431d6030b87"
@@ -283,7 +283,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "G_Drone"
+          "value": "G_Drone"
         }
       },
       "guid": "6a35aaf6-9565-5606-ae04-7d91f605b582"
@@ -315,7 +315,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "G_ScrapPile"
+          "value": "G_ScrapPile"
         }
       },
       "guid": "acb20bad-8017-51a7-8d82-a2b2222a7838"
@@ -347,7 +347,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "G_SalvageCrate"
+          "value": "G_SalvageCrate"
         }
       },
       "guid": "0185445c-9aed-548c-9121-5b4e6d16595b"
@@ -379,7 +379,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "G_Pylon"
+          "value": "G_Pylon"
         }
       },
       "guid": "b6d8a9e6-87cc-5069-8000-d9f33fb30cba"
@@ -411,7 +411,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "G_Generator"
+          "value": "G_Generator"
         }
       },
       "guid": "e4959dfe-3660-5eba-8747-6b5d360951b4"
@@ -443,7 +443,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "G_FabBench"
+          "value": "G_FabBench"
         }
       },
       "guid": "adf9d398-4c72-511a-8521-6f87a05f58c0"
@@ -475,7 +475,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "G_RelayNode"
+          "value": "G_RelayNode"
         }
       },
       "guid": "3d560922-d1aa-532d-ac4d-dba063da053d"
@@ -507,7 +507,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "G_HazardNode"
+          "value": "G_HazardNode"
         }
       },
       "guid": "bd2b4859-09c2-5c1b-8db2-d9579d50634c"
@@ -539,7 +539,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "G_Scrub"
+          "value": "G_Scrub"
         }
       },
       "guid": "1719f4c6-35e2-5bfd-b776-daf7765d83ba"
@@ -576,7 +576,7 @@
         },
         "EntityName": {
           "$v": 1,
-          "name": "MainCamera"
+          "value": "MainCamera"
         },
         "Tags": {
           "$v": 1,
