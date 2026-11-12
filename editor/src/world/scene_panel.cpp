@@ -8,6 +8,7 @@
 #include <cctype>
 #include <cstdio>
 #include <cstring>
+#include <system_error>
 
 namespace aether::editor {
 
@@ -87,6 +88,21 @@ bool ScenePanel::OpenScene(const std::string& path, bool discard) {
     path_ = path;
     status_ = "Opened " + file.string() + " (" + std::to_string(document_.Entities().size()) + " entities).";
     return true;
+}
+
+std::vector<std::string> ScenePanel::ListScenes() const {
+    std::vector<std::string> scenes;
+    std::error_code ec;
+    if (!std::filesystem::is_directory(content_root_, ec)) return scenes;
+    for (std::filesystem::recursive_directory_iterator it(content_root_, std::filesystem::directory_options::skip_permission_denied, ec), end; !ec && it != end; it.increment(ec)) {
+        if (!it->is_regular_file(ec)) continue;
+        const std::string extension = it->path().extension().string();
+        if (extension != ".ascene" && extension != ".aesc") continue;
+        scenes.push_back(std::filesystem::relative(it->path(), content_root_, ec).generic_string());
+        if (scenes.size() >= 500) break; // a project with more has the path box
+    }
+    std::sort(scenes.begin(), scenes.end());
+    return scenes;
 }
 
 bool ScenePanel::SaveScene(const std::string& path) {
@@ -170,6 +186,23 @@ void ScenePanel::DrawToolbar() {
     ImGui::SetNextItemWidth(200.0f);
     if (ImGui::InputText("##scene_path", buffer, sizeof(buffer))) path_ = buffer;
     ImGui::SetItemTooltip("Scene file, relative to the content folder");
+    ImGui::SameLine();
+    if (ImGui::Button("Scenes")) ImGui::OpenPopup("##scene_list");
+    ImGui::SetItemTooltip("Pick one of the scenes in the content folder");
+    std::string chosen;
+    if (ImGui::BeginPopup("##scene_list")) {
+        const std::vector<std::string> scenes = ListScenes();
+        if (scenes.empty()) ImGui::TextDisabled("No scenes in %s", content_root_.string().c_str());
+        for (const std::string& scene : scenes) {
+            if (ImGui::Selectable(scene.c_str(), scene == path_)) chosen = scene;
+        }
+        ImGui::EndPopup();
+    }
+    if (!chosen.empty()) { // after the list closes, so the unsaved-changes prompt is not a child of it
+        path_ = chosen;
+        if (document_.IsDirty()) { pending_ = Pending::Open; ImGui::OpenPopup("Unsaved changes"); }
+        else OpenScene(chosen, true);
+    }
     ImGui::SameLine();
     if (ImGui::Button("Open")) {
         if (document_.IsDirty()) { pending_ = Pending::Open; ImGui::OpenPopup("Unsaved changes"); }
