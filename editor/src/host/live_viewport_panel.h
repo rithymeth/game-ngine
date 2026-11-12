@@ -49,6 +49,8 @@ public:
     std::vector<player::GraphMaterialReport> GraphMaterials();
     // The paths of the material graphs the scene's materials name.
     std::vector<std::string> GraphPaths() const;
+    // Those, and the parents of the instances among them, up each chain: every file whose edit changes what is drawn.
+    std::vector<std::string> GraphFiles() const;
     // Looks at each of those files in the project's folder; one that differs from the copy the game has (saved since the cook) is handed to the game, which builds its
     // shader again. True if any was.
     bool SyncGraphFiles();

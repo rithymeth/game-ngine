@@ -652,3 +652,5 @@ A material graph (`.amat`) of constants and parameters, opaque and default-lit, 
 A material graph (`.amat`) that samples textures is now drawn too (up to four, read as the graph says, with no colour-space decode), and the cook carries a graph's textures with it when the graph is on the cook list.
 
 Saving a material graph now shows in the Live Viewport on the next frame, without pressing Reload (the graph's shader is built again; the scene is not loaded again). A graph newly assigned to a material shows without Reload too; its textures still need one.
+
+A material instance (`.amati`) is now drawn like its graph, and an object can give a graph its own value for a parameter by name in its Material Parameters (up to six values of float data per graph; a parameter past that limit is fixed in the shader and the Live Viewport says so). Saving the parent of an instance shows at once. Fixed: a material graph with two textures lit its surface with the second as a normal map.
