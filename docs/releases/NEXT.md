@@ -44,8 +44,7 @@ generated `AetherConfig.cmake` requires it -- which is why the installer builds 
 At the project owner's request the Qt editor (`editor/qt`, target `aether_editor_qt`, option `AETHER_BUILD_QT_EDITOR`) is gone, and
 `aether_editor_shell` (Dear ImGui over Vulkan) is the editor. Removed with it: its `--self-test` ctest, its Windows packaging and
 the Qt install steps in CI, the Qt coverage ledger and UX roadmap, and the Qt concept page. `aether_editor_core` and the document
-classes stay (the ImGui panels and the MCP tools use them). Costs, stated plainly: no docking or saved layouts yet (stock ImGui has
-none), no 3D viewport in the shell (a project: the scene renderer draws a cooked package through a running game into a swap
+classes stay (the ImGui panels and the MCP tools use them). Costs, stated plainly: no 3D viewport in the shell (a project: the scene renderer draws a cooked package through a running game into a swap
 chain), and the Windows package no longer contains an editor, only the build tools, the player and the assets (the hosted Windows
 runner has no Vulkan loader), so the package validation job now checks that those are present instead of launching an editor.
 `tools/installer` still looks for `bin\aether_editor.exe`; that name needs to change to `aether_editor_shell.exe` with a Windows

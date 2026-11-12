@@ -364,8 +364,9 @@ requirements across all workspaces:
 The toolkit is Dear ImGui (decided 2026-11-12; see EDITOR_UI_TOOLKIT_ADR.md, which
 also records why the earlier Qt 6 Widgets proposal was dropped). The toolkit is a
 presentation dependency of editor targets only. It does not replace the Aether
-RHI, renderer, runtime, or game UI module. Docking and saved layouts, and a viewport
-that shows a live scene, are the gaps this section's workspace goals still need.
+RHI, renderer, runtime, or game UI module. Docking and saved layouts exist (the
+dependency is Dear ImGui's docking tag); a viewport that shows a live scene is the gap
+this section's workspace goals still need.
 
 Aether's native viewport remains rendered by the existing RHI. The editor
 host owns menus, docks, documents, input routing, and platform window
@@ -406,7 +407,7 @@ The toolkit question was settled on 2026-11-12 (see EDITOR_UI_TOOLKIT_ADR.md): D
 ImGui stays and the Qt spike was removed. What the Qt prototype was meant to prove
 (dockable Hierarchy, Inspector, Content and Console, saved layouts, Ctrl+K, and a
 viewport on the RHI) is still the goal, now on ImGui: the command palette (Ctrl+K)
-and the Scene tool exist; docking, saved layouts and the live viewport do not.
+the Scene tool, docking and saved layouts exist; the live viewport does not.
 
 ### Stage 1 — Shared services
 

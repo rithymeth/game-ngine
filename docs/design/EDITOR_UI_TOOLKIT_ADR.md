@@ -22,11 +22,12 @@ mattered:
 its Windows packaging and the Qt install steps in CI, and the Qt coverage and UX roadmap documents. The shared logic it
 used (`aether_editor_core`, the document classes) stays: the ImGui panels and the MCP tools use it.
 
-**What this costs, honestly:** docking and saved layouts (stock Dear ImGui has no docking; it needs the separate docking
-branch), the 3D viewport (the Windows D3D12 ImGui host that had one no longer exists, and the scene renderer draws a
-cooked package through a running game into a swap chain, so showing a live scene in the shell is a project of its own),
-and a Windows packaged editor (the hosted Windows runner has no Vulkan loader). Each of those is open work, not a
-reason to bring Qt back.
+**What this costs, honestly:** the 3D viewport (the Windows D3D12 ImGui host that had one no longer exists, and the scene
+renderer draws a cooked package through a running game into a swap chain, so showing a live scene in the shell is a project of
+its own) and a Windows packaged editor (the hosted Windows runner has no Vulkan loader). Each of those is open work, not a
+reason to bring Qt back. Docking and saved layouts were on this list until the same day: the dependency is now Dear ImGui's
+`v1.92.9-docking` tag (the same release plus the docking branch's changes), the shell docks, tabs and rearranges its panels,
+and remembers where they are.
 
 **History kept:** the Qt editor and its documents are in the git history before this change.
 
