@@ -39,6 +39,12 @@ certificate error), and `iexpress.exe` produced nothing usable, so the self-extr
 resource compiled with `csc.exe`. A Vulkan-enabled install also fails for a consumer that lacks the Vulkan SDK, because the
 generated `AetherConfig.cmake` requires it -- which is why the installer builds with Vulkan off.
 
+## Select and move things in the rendered view
+
+The Live Viewport takes the Scene View's editing tools: click an object in the rendered picture to select it (ctrl adds or removes), drag a gizmo handle to
+move, rotate or scale it (W, E, R, with snapping), and the selected object is outlined, all drawn over the real renderer's picture and following your drag. The tools
+are one shared piece (`ViewportTools`) used by both views, so they behave the same. Picking is by an entity's origin (click near it), not by the pixels of its shape.
+
 ## The Live Viewport shows your edits as you make them
 
 The Live Viewport no longer needs the scene saved: **Start** cooks the models the open scene uses and hands the running game the scene **as it is open**

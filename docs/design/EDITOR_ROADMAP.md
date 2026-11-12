@@ -22,9 +22,10 @@ In priority order; each is a project of its own.
    (`GamePackage::SetContentOverride`, the scene as `SaveSceneToMemory` writes it). Lighting and material changes in the scene (a light's colour, a
    transform) therefore show live. What is still true: each change reloads the whole scene into the game (the world, physics and scripts start over), not an
    incremental update, so it suits small and medium scenes; **Run game** is off by default so the view is the scene as authored; a model added since the
-   last cook is not drawn until **Reload** (which cooks again), and the panel says so; and selection outlines, the gizmos and picking still draw on the
-   wireframe Scene View, not on the rendered image (that needs the rendered image to be the Scene View's background). Material *asset* edits (the Material
-   editor's graph) are not pushed into the view yet; that is a cook of the changed asset.
+   last cook is not drawn until **Reload** (which cooks again), and the panel says so. The editing tools are shared with the Scene View and work on the rendered
+   picture: click an object to select it, drag a gizmo handle to move, rotate or scale it (W, E, R), with the selection outlined, and the picture follows the drag.
+   Material *asset* edits (the Material editor's graph) are not pushed into the view yet; that is a cook of the changed asset. Picking is by entity origin (as in
+   the Scene View), not by the pixels of the rendered shape, so an object is selected by clicking near its origin.
 2. **Transform gizmos.** Move, rotate and scale are done (W, E and R): arrows along the world axes, a ring around each world axis, and
    handles along the entity's own axes; each drag is one undoable edit, works in world space under a parent, and snaps to a step. With several
    entities selected they all follow (the handles sit on the first; an entity whose ancestor is also selected rides along instead of moving twice).
