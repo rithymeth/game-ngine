@@ -161,7 +161,10 @@ void PackNormalMatrix(const Mat4& matrix, u32 packed[5]) {
     }
 }
 
-constexpr char kSceneShader[] = R"(
+// The scene's bindless texture table, sampler and per-draw push constants, ahead of a material graph's shader, which samples through them.
+constexpr char kSceneBindings[] = R"(
+Texture2D g_Textures[128] : register(t0, space0);
+SamplerState g_Sampler : register(s0, space1);
 struct PushConstants {
     float4x4 g_Mvp;
     uint2 g_ColorPacked;
@@ -178,6 +181,9 @@ struct PushConstants {
 [[vk::push_constant]]
 #endif
 ConstantBuffer<PushConstants> g_PC : register(b0);
+)";
+
+constexpr char kSceneShader[] = R"(
 
 struct VSInput {
     float3 position : POSITION;
@@ -194,8 +200,6 @@ struct PSInput {
     float3 local_position : TEXCOORD4;
     float crest : TEXCOORD5; // water: how near a swell's crest this point is, 0 to 1 (whitecap foam); 0 elsewhere
 };
-Texture2D g_Textures[128] : register(t0, space0);
-SamplerState g_Sampler : register(s0, space1);
 
 float3 SRGBToLinear(float3 encoded) {
     encoded = saturate(encoded);
@@ -1022,6 +1026,7 @@ struct SceneRenderer::Impl {
     struct GraphPipelines {
         bool ok = false;
         PipelineHandle pipeline, culled;
+        u32 textures = 0xffffffffu; // the graph's textures as the push constants' four 8-bit slots (255: none)
     };
     std::map<std::string, std::unique_ptr<GraphPipelines>> graph_pipelines;
     PipelineDesc scene_desc;      // the scene pipeline's description, to make a graph's from
@@ -1032,7 +1037,14 @@ struct SceneRenderer::Impl {
         if (found != graph_pipelines.end()) return found->second->ok ? found->second.get() : nullptr;
         auto made = std::make_unique<GraphPipelines>();
         std::string shader;
-        const GraphMaterialReport report = CompileGraphMaterial(package, path, &shader);
+        std::vector<std::string> texture_paths;
+        const GraphMaterialReport report = CompileGraphMaterial(package, path, &shader, &texture_paths);
+        for (usize slot = 0; slot < texture_paths.size() && slot < 4; ++slot) {
+            SampledTextureHandle handle;
+            LoadTexture(texture_paths[slot], handle); // an empty or missing one is the white texture
+            made->textures &= ~(255u << (8 * slot));
+            made->textures |= (handle.index & 255u) << (8 * slot);
+        }
         if (report.drawable && scene_frame_data) {
             try {
                 PipelineDesc desc = scene_desc;
@@ -2960,6 +2972,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                                 normal_texture, has_normal_texture,
                                 metallic_roughness_texture, has_metallic_roughness_texture,
                                 occlusion_texture, has_occlusion_texture);
+                            if (graph != nullptr) constants.material_textures = graph->textures; // the graph's textures, in place of the model's own
                             constants.material_factors_0 = PackHalfPair(surface.metallic, surface.roughness);
                             constants.material_factors_1 = PackHalfPair(primitive.normal_scale, primitive.occlusion_strength);
                             if (primitive.water && primitive.bounds_radius >= 0.0f && primitive.bounds_height < 0.1f && (!have_water || primitive.bounds_radius > water_radius)) {
@@ -3478,7 +3491,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
 std::string SceneShaderSource(bool with_frame_data, bool hdr_target, bool ray_traced_shadows, const std::string& graph_hlsl) {
     return std::string(with_frame_data ? "#define AETHER_FRAME_DATA 1\n" : "") + (hdr_target ? "#define AETHER_HDR_TARGET 1\n" : "") +
            (with_frame_data && ray_traced_shadows ? "#define AETHER_RT_SHADOWS 1\n" : "") + (graph_hlsl.empty() ? "" : "#define AETHER_GRAPH_MATERIAL 1\n") +
-           mat::AdvancedPbrHlsl() + mat::ShadingModelsHlsl() + graph_hlsl + kSceneShader + (with_frame_data ? FrameDataHlsl() : "") + kSceneShaderVertex +
+           mat::AdvancedPbrHlsl() + mat::ShadingModelsHlsl() + kSceneBindings + graph_hlsl + kSceneShader + (with_frame_data ? FrameDataHlsl() : "") + kSceneShaderVertex +
            (with_frame_data ? VsmShaderLibrary() : "") + (with_frame_data ? kSceneShaderVsm : "") + kSceneShaderFrame;
 }
 

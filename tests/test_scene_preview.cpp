@@ -11,6 +11,7 @@
 #include "aether/core/log.h"
 #include "aether/scene/components.h"
 #include "aether/assets/png_writer.h"
+#include "aether/assets/asset_database.h"
 #include "aether/renderer/components.h"
 #include "aether/renderer/material_instance.h"
 #include "aether/renderer/material.h"
@@ -1306,8 +1307,23 @@ AETHER_TEST(LiveViewportPanel_AMaterialGraphIsDrawnInPlaceOfTheModelsSurface) {
         red.Connect(color, "value", out, "BaseColor").Connect(rough, "value", out, "Roughness");
     }
     write("Red.amat", red);
-    mat::Material textured; // a graph that samples a texture: compiles, but the renderer does not draw those yet
-    textured.parameters.push_back({"Albedo", mat::PinType::Texture, {}, "0123456789abcdef", "Surface"});
+    // A graph that samples a texture asset of the project: a solid blue picture, found by the GUID the project's asset database gave it.
+    stdfs::create_directories(content / "textures");
+    std::vector<u8> rgb(4 * 4 * 3);
+    for (usize i = 0; i < rgb.size(); i += 3) {
+        rgb[i] = 10;
+        rgb[i + 1] = 10;
+        rgb[i + 2] = 240;
+    }
+    const std::vector<u8> png = assets::EncodePngRgb8(4, 4, rgb);
+    std::ofstream(content / "textures" / "blue.png", std::ios::binary).write(reinterpret_cast<const char*>(png.data()), static_cast<std::streamsize>(png.size()));
+    assets::AssetDatabase database(content);
+    database.Scan();
+    const assets::AssetRecord* blue = database.FindByPath("textures/blue.png");
+    AETHER_CHECK(blue != nullptr);
+    if (blue == nullptr) return;
+    mat::Material textured;
+    textured.parameters.push_back({"Albedo", mat::PinType::Texture, {}, assets::ToString(blue->guid), "Surface"});
     {
         const mat::NodeId out = textured.Add("Material.Output", {}, 600, 0);
         const mat::NodeId tex = textured.Add("Param.Texture:Albedo");
@@ -1315,6 +1331,14 @@ AETHER_TEST(LiveViewportPanel_AMaterialGraphIsDrawnInPlaceOfTheModelsSurface) {
         textured.Connect(tex, "value", sample, "texture").Connect(sample, "rgb", out, "BaseColor");
     }
     write("Textured.amat", textured);
+    mat::Material unlit; // a shading model the renderer does not draw with a graph yet
+    unlit.shading = mat::ShadingModel::Unlit;
+    {
+        const mat::NodeId out = unlit.Add("Material.Output", {}, 600, 0);
+        const mat::NodeId color = unlit.Add("Const.Float3", {{"value", {0.0f, 1.0f, 0.0f}}});
+        unlit.Connect(color, "value", out, "BaseColor");
+    }
+    write("Unlit.amat", unlit);
 
     ScenePanel scene(content);
     AETHER_CHECK(scene.OpenScene("Scenes/Main.ascene", true));
@@ -1350,7 +1374,16 @@ AETHER_TEST(LiveViewportPanel_AMaterialGraphIsDrawnInPlaceOfTheModelsSurface) {
     AETHER_CHECK(reds(own) < 160u * 90u / 100);                     // the scene's own surfaces are grey and blue and tan, not red
     AETHER_CHECK(reds(drawn) > 160u * 90u / 3);                      // every model is the graph's red now: most of the picture (the floor is a model)
     AETHER_CHECK(DifferingPixels(own, drawn) > 160u * 90u / 3);
-    const std::vector<u8> skipped = picture("Materials/Textured.amat");
+    const std::vector<u8> sampled = picture("Materials/Textured.amat");
+    AETHER_CHECK(panel.GraphMaterials().size() == 1 && panel.GraphMaterials()[0].drawable && panel.GraphMaterials()[0].textures == 1);
+    auto blues = [](const std::vector<u8>& pixels) {
+        usize count = 0;
+        for (usize i = 0; i + 3 < pixels.size(); i += 4) count += pixels[i + 2] > pixels[i] + 50 && pixels[i + 2] > pixels[i + 1] + 50;
+        return count;
+    };
+    AETHER_CHECK(blues(sampled) > 160u * 90u / 3);                    // the texture's blue, read through the scene's own texture table
+    AETHER_CHECK(blues(own) < 160u * 90u / 4);                        // (the player's blue pillar is a small part of the scene's own picture)
+    const std::vector<u8> skipped = picture("Materials/Unlit.amat");
     AETHER_CHECK(panel.GraphMaterials().size() == 1 && panel.GraphMaterials()[0].compiles && !panel.GraphMaterials()[0].drawable);
     AETHER_CHECK(DifferingPixels(own, skipped) < 160u * 90u / 50);   // not drawn yet: the model's own surface, as before
 }
