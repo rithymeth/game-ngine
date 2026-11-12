@@ -181,8 +181,13 @@ the Qt install steps in CI, the Qt coverage ledger and UX roadmap, and the Qt co
 classes stay (the ImGui panels and the MCP tools use them). Costs, stated plainly: no 3D viewport in the shell (a project: the scene renderer draws a cooked package through a running game into a swap
 chain), and the Windows package no longer contains an editor, only the build tools, the player and the assets (the hosted Windows
 runner has no Vulkan loader), so the package validation job now checks that those are present instead of launching an editor.
-`tools/installer` still looks for `bin\aether_editor.exe`; that name needs to change to `aether_editor_shell.exe` with a Windows
-run of `test_installer.ps1`, which could not be done here. The two sections below describe the Qt startup crash and are kept as the
+`tools/installer` looked for `bin\aether_editor.exe`, which no longer exists, so every installer built since the Qt editor went failed after unpacking
+("the installation is incomplete"). It now looks for `bin\aether_editor_shell.exe` (one constant, `EditorExe`, used for the check, the shortcuts and the
+launch), `test_installer.ps1` uses the same name for its stand-in, and `tools/build_installer.py` turns the Vulkan backend on explicitly, since the editor
+shell is only built with it. Checked here by compiling the installer with Mono's `mcs` and running its install logic (a fresh install, an upgrade that removes the
+old files and leaves no old folder behind, and the failure when the editor is missing from the payload); not checked here, because they are Windows only: the
+shortcuts, closing a running program, a held file, and a real Windows build of the payload (`python tools/build_installer.py --version <x>` on Windows, then
+`tools\installer\test_installer.ps1`). The two sections below describe the Qt startup crash and are kept as the
 record; the crash no longer applies.
 
 ## The Qt editor crashes at startup, and CI cannot see it

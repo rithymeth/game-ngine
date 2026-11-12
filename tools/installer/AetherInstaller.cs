@@ -19,6 +19,9 @@ using System.Threading;
 class AetherInstaller
 {
     const string Version = "@VERSION@";
+    // The editor program inside bin\ (the Dear ImGui shell; the old Qt editor was aether_editor.exe). The installer checks it after unpacking, points the shortcuts
+    // at it and offers to start it.
+    const string EditorExe = "aether_editor_shell.exe";
     static readonly string LogPath = Path.Combine(Path.GetTempPath(), "aether-install-log.txt");
     static readonly StringBuilder Log = new StringBuilder();
     static bool Silent;
@@ -189,7 +192,7 @@ class AetherInstaller
             try { Directory.Delete(temp, true); } catch { }
 
             string bin = Path.Combine(target, "bin");
-            string editor = Path.Combine(bin, "aether_editor.exe");
+            string editor = Path.Combine(bin, EditorExe);
             if (!File.Exists(editor)) return Fail("the installation is incomplete: " + editor + " is missing after unpacking");
             File.WriteAllText(Path.Combine(target, "INSTALLED_VERSION.txt"), Version + Environment.NewLine);
 
