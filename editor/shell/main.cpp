@@ -61,9 +61,15 @@ void DrawEditor(EditorWorkspace& workspace, const char* backend_label, bool& qui
     }
 
     const f32 top = ImGui::GetFrameHeight();
-    const f32 side = io.DisplaySize.x > 1100 ? 420.0f : io.DisplaySize.x * 0.35f;
+    // The side panels' width is the user's to change: drag the divider. It is kept as a fraction so a
+    // resized window keeps the proportion, and clamped so neither side can be dragged shut.
+    static f32 side_fraction = 0.0f;
+    if (side_fraction <= 0.0f) side_fraction = io.DisplaySize.x > 1100 ? 420.0f / io.DisplaySize.x : 0.35f;
+    side_fraction = std::clamp(side_fraction, 0.15f, 0.6f);
+    const f32 status_h = ImGui::GetFrameHeight();
+    const f32 side = io.DisplaySize.x * side_fraction;
     const f32 main_w = io.DisplaySize.x - side;
-    const f32 main_h = io.DisplaySize.y - top;
+    const f32 main_h = io.DisplaySize.y - top - status_h;
     constexpr ImGuiWindowFlags kFixed = ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
                                         ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBringToFrontOnFocus;
 
@@ -93,6 +99,31 @@ void DrawEditor(EditorWorkspace& workspace, const char* backend_label, bool& qui
         ImGui::EndTabBar();
     }
     ImGui::End();
+
+    // The divider: a thin strip over the seam, a resize cursor on hover.
+    ImGui::SetNextWindowPos(ImVec2(main_w - 3.0f, top));
+    ImGui::SetNextWindowSize(ImVec2(6.0f, main_h));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0, 0, 0, 0));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0, 0, 0, 0));
+    ImGui::Begin("##divider", nullptr, kFixed | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBackground);
+    ImGui::InvisibleButton("##drag", ImVec2(6.0f, main_h));
+    if (ImGui::IsItemHovered() || ImGui::IsItemActive()) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+    if (ImGui::IsItemActive() && io.DisplaySize.x > 0.0f) side_fraction -= io.MouseDelta.x / io.DisplaySize.x;
+    ImGui::End();
+    ImGui::PopStyleColor(2);
+    ImGui::PopStyleVar();
+
+    // The status bar: what is selected and how fast the editor is running.
+    ImGui::SetNextWindowPos(ImVec2(0, io.DisplaySize.y - status_h));
+    ImGui::SetNextWindowSize(ImVec2(io.DisplaySize.x, status_h));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10, 2));
+    ImGui::Begin("##status", nullptr, kFixed | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoScrollbar);
+    ImGui::TextDisabled("%s", backend_label);
+    ImGui::SameLine();
+    ImGui::TextDisabled("|  %.1f ms  (%.0f fps)  |  drag the divider to resize the side panels", 1000.0f / std::max(io.Framerate, 1.0f), io.Framerate);
+    ImGui::End();
+    ImGui::PopStyleVar();
 
     workspace.DrawWindows();
 }
