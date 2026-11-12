@@ -11,6 +11,7 @@
 #include "audio/cue_editor.h"
 #include "audio/mixer_panel.h"
 #include "content/content_browser_panel.h"
+#include "ui/reflected_inspector.h"
 #include "devtools/console_panel.h"
 #include "ui/editor_scripts.h"
 #include "ui/extensions.h"
@@ -860,6 +861,15 @@ struct EditorWorkspace::Impl {
         build_window = std::make_unique<BuildPackageWindow>(project_file);
         plugins_panel = std::make_unique<PluginsPanel>(project_file);
         content_browser = std::make_unique<ContentBrowserPanel>(project_file);
+        // An asset reference in the inspector (a model's, a sky's) offers the project's assets of that kind, read from the browser's database at the time it is drawn.
+        SetAssetListProvider([this](const char* asset_type) {
+            std::vector<AssetChoice> choices;
+            const assets::AssetDatabase* database = content_browser ? content_browser->Database() : nullptr;
+            if (database == nullptr) return choices;
+            for (const assets::AssetRecord* record : database->FindByImporter(asset_type)) choices.push_back({record->guid, record->path});
+            std::sort(choices.begin(), choices.end(), [](const AssetChoice& a, const AssetChoice& b) { return a.name < b.name; });
+            return choices;
+        });
         // The Scene tool works in the project's Content folder (its open scene is left as it is), and the preview renders that project.
         if (scene_panel) scene_panel->SetContentRoot(ProjectPaths::ForFile(project_file).content);
         if (scene_preview) scene_preview->SetProject(project_file);
@@ -984,7 +994,9 @@ std::filesystem::path EditorWorkspace::SampleProject(std::string* error) {
     WriteSampleEditorScript(paths.content);
     return paths.file;
 }
-EditorWorkspace::~EditorWorkspace() = default;
+EditorWorkspace::~EditorWorkspace() {
+    SetAssetListProvider(nullptr); // the provider reads this workspace's content browser
+}
 
 void EditorWorkspace::Update(f32 dt) {
     impl_->SyncExtensions();
