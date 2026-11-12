@@ -78,6 +78,13 @@ u64 LiveViewport::SceneReloads() const { return impl_ ? impl_->reloads : 0; }
 u64 LiveViewport::PatchCount() const { return impl_ ? impl_->patches : 0; }
 u64 LiveViewport::ScriptRestarts() const { return impl_ ? impl_->script_restarts : 0; }
 usize LiveViewport::EntityCount() const { return impl_ && impl_->game ? impl_->game->GetWorld().EntityCount() : 0; }
+bool LiveViewport::SetGraphFile(const std::string& path, std::vector<u8> bytes) {
+    if (!impl_ || !impl_->renderer) return false;
+    impl_->package.SetContentOverride(path, std::move(bytes)); // Frame waits for its fence before it returns, so the old pipelines are idle now
+    impl_->renderer->ReloadGraphMaterials();
+    return true;
+}
+
 player::GraphMaterialReport LiveViewport::CompileGraphMaterial(const std::string& path) const {
     if (!impl_) {
         player::GraphMaterialReport report;

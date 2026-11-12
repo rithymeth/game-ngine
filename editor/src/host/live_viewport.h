@@ -80,6 +80,9 @@ public:
     usize PhysicsBodyCount() const;
     // Reads a material graph (.amat) from the running game's package and checks it (player/graph_material.h): whether the game could draw with it.
     player::GraphMaterialReport CompileGraphMaterial(const std::string& path) const;
+    // Serves `bytes` as the content file `path` from now on (a material graph the person has just saved) and has the game's renderer build every graph's
+    // shader again, so the next frame shows it. False if nothing is loaded.
+    bool SetGraphFile(const std::string& path, std::vector<u8> bytes);
     // How many script instances the running game has (one per entity with a working script).
     usize ScriptInstanceCount() const;
     // Where an entity is in the running game (its Transform's position, which a simulated body moves), false if the game has no such entity.

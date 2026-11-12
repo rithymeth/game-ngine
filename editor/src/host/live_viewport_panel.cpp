@@ -8,6 +8,8 @@
 #include <imgui.h>
 
 #include <algorithm>
+#include <fstream>
+#include <iterator>
 
 namespace aether::editor {
 
@@ -35,15 +37,51 @@ std::vector<std::string> ModelPaths(const SceneDocument& document, const std::fi
 
 } // namespace
 
-std::vector<player::GraphMaterialReport> LiveViewportPanel::GraphMaterials() {
+std::vector<std::string> LiveViewportPanel::GraphPaths() const {
     std::vector<std::string> paths;
     scene_.Document().GetWorld().ForEach<MaterialParameters>([&](const MaterialParameters& overrides) {
         const std::string& material = overrides.material;
-        const bool graph = material.size() > 5 && (material.compare(material.size() - 5, 5, ".amat") == 0 || material.compare(material.size() - 6, 6, ".amati") == 0);
+        const bool graph = material.size() > 5 && (material.compare(material.size() - 5, 5, ".amat") == 0 || (material.size() > 6 && material.compare(material.size() - 6, 6, ".amati") == 0));
         if (graph) paths.push_back(material);
     });
     std::sort(paths.begin(), paths.end());
     paths.erase(std::unique(paths.begin(), paths.end()), paths.end());
+    return paths;
+}
+
+namespace {
+u64 HashBytes(const std::vector<char>& bytes) {
+    u64 hash = 1469598103934665603ull; // FNV-1a
+    for (const char c : bytes) hash = (hash ^ static_cast<u8>(c)) * 1099511628211ull;
+    return hash;
+}
+bool ReadFileBytes(const std::filesystem::path& file, std::vector<char>& out) {
+    std::ifstream stream(file, std::ios::binary);
+    if (!stream) return false;
+    out.assign(std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>());
+    return true;
+}
+} // namespace
+
+bool LiveViewportPanel::SyncGraphFiles() {
+    bool changed = false;
+    for (const std::string& path : GraphPaths()) {
+        std::vector<char> bytes;
+        if (!ReadFileBytes(scene_.ContentRoot() / path, bytes)) continue; // not in the project's folder: the package's copy stands
+        const u64 hash = HashBytes(bytes);
+        const auto seen = graph_hashes_.find(path);
+        if (seen != graph_hashes_.end() && seen->second == hash) continue;
+        graph_hashes_[path] = hash; // new to the scene since the cook (the game has no copy), or saved since: the game gets this one
+        if (viewport_.SetGraphFile(path, std::vector<u8>(bytes.begin(), bytes.end()))) {
+            graph_reports_.clear(); // read again, as the game reads them
+            changed = true;
+        }
+    }
+    return changed;
+}
+
+std::vector<player::GraphMaterialReport> LiveViewportPanel::GraphMaterials() {
+    const std::vector<std::string> paths = GraphPaths();
     std::vector<player::GraphMaterialReport> reports;
     for (const std::string& path : paths) {
         auto it = graph_reports_.find(path);
@@ -84,6 +122,11 @@ bool LiveViewportPanel::Start() {
     }
     note_.clear();
     graph_reports_.clear();
+    graph_hashes_.clear(); // the graphs on disk are what was just cooked
+    for (const std::string& path : GraphPaths()) {
+        std::vector<char> bytes;
+        if (ReadFileBytes(scene_.ContentRoot() / path, bytes)) graph_hashes_[path] = HashBytes(bytes);
+    }
     cooked_models_ = models;
     last_revision_ = revision;
     last_structure_ = structure;
@@ -101,7 +144,7 @@ bool LiveViewportPanel::Advance(f32 dt) {
     if (!viewport_.Loaded()) return false;
     since_frame_ += dt;
     since_reload_ += dt;
-    bool reloaded = false;
+    bool reloaded = SyncGraphFiles(); // a material graph saved (or newly named) since the cook: the game has its shader built again, and shows it
     const SceneDocument& document = scene_.Document();
     if (document.Revision() != last_revision_ && since_reload_ >= reload_interval) {
         last_revision_ = document.Revision(); // taken before the copy, so an edit during it is seen next time
