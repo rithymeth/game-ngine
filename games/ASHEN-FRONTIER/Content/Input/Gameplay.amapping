@@ -1,0 +1,311 @@
+{
+  "$type": "InputMappingContext",
+  "data": {
+    "$v": 1,
+    "bindings": [
+      {
+        "$v": 1,
+        "action": "Move",
+        "actuation": 0.5,
+        "key": "W",
+        "modifiers": [
+          {
+            "$v": 1,
+            "lower": 0.2,
+            "negate_x": true,
+            "negate_y": true,
+            "negate_z": true,
+            "order": "YXZ",
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ],
+            "type": "Swizzle",
+            "upper": 1.0
+          }
+        ],
+        "triggers": []
+      },
+      {
+        "$v": 1,
+        "action": "Move",
+        "actuation": 0.5,
+        "key": "S",
+        "modifiers": [
+          {
+            "$v": 1,
+            "lower": 0.2,
+            "negate_x": true,
+            "negate_y": true,
+            "negate_z": true,
+            "order": "YXZ",
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ],
+            "type": "Swizzle",
+            "upper": 1.0
+          },
+          {
+            "$v": 1,
+            "lower": 0.2,
+            "negate_x": true,
+            "negate_y": true,
+            "negate_z": true,
+            "order": "YXZ",
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ],
+            "type": "Negate",
+            "upper": 1.0
+          }
+        ],
+        "triggers": []
+      },
+      {
+        "$v": 1,
+        "action": "Move",
+        "actuation": 0.5,
+        "key": "D",
+        "modifiers": [],
+        "triggers": []
+      },
+      {
+        "$v": 1,
+        "action": "Move",
+        "actuation": 0.5,
+        "key": "A",
+        "modifiers": [
+          {
+            "$v": 1,
+            "lower": 0.2,
+            "negate_x": true,
+            "negate_y": true,
+            "negate_z": true,
+            "order": "YXZ",
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ],
+            "type": "Negate",
+            "upper": 1.0
+          }
+        ],
+        "triggers": []
+      },
+      {
+        "$v": 1,
+        "action": "Move",
+        "actuation": 0.5,
+        "key": "GamepadLeftStickX",
+        "modifiers": [
+          {
+            "$v": 1,
+            "lower": 0.2,
+            "negate_x": true,
+            "negate_y": true,
+            "negate_z": true,
+            "order": "YXZ",
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ],
+            "type": "DeadZone",
+            "upper": 1.0
+          }
+        ],
+        "triggers": []
+      },
+      {
+        "$v": 1,
+        "action": "Move",
+        "actuation": 0.5,
+        "key": "GamepadLeftStickY",
+        "modifiers": [
+          {
+            "$v": 1,
+            "lower": 0.2,
+            "negate_x": true,
+            "negate_y": true,
+            "negate_z": true,
+            "order": "YXZ",
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ],
+            "type": "DeadZone",
+            "upper": 1.0
+          },
+          {
+            "$v": 1,
+            "lower": 0.2,
+            "negate_x": true,
+            "negate_y": true,
+            "negate_z": true,
+            "order": "YXZ",
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ],
+            "type": "Swizzle",
+            "upper": 1.0
+          },
+          {
+            "$v": 1,
+            "lower": 0.2,
+            "negate_x": true,
+            "negate_y": true,
+            "negate_z": true,
+            "order": "YXZ",
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ],
+            "type": "Negate",
+            "upper": 1.0
+          }
+        ],
+        "triggers": []
+      },
+      {
+        "$v": 1,
+        "action": "Look",
+        "actuation": 0.5,
+        "key": "MouseX",
+        "modifiers": [],
+        "triggers": []
+      },
+      {
+        "$v": 1,
+        "action": "Look",
+        "actuation": 0.5,
+        "key": "MouseY",
+        "modifiers": [
+          {
+            "$v": 1,
+            "lower": 0.2,
+            "negate_x": true,
+            "negate_y": true,
+            "negate_z": true,
+            "order": "YXZ",
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ],
+            "type": "Swizzle",
+            "upper": 1.0
+          }
+        ],
+        "triggers": []
+      },
+      {
+        "$v": 1,
+        "action": "Look",
+        "actuation": 0.5,
+        "key": "GamepadRightStickX",
+        "modifiers": [
+          {
+            "$v": 1,
+            "lower": 0.2,
+            "negate_x": true,
+            "negate_y": true,
+            "negate_z": true,
+            "order": "YXZ",
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ],
+            "type": "DeadZone",
+            "upper": 1.0
+          }
+        ],
+        "triggers": []
+      },
+      {
+        "$v": 1,
+        "action": "Look",
+        "actuation": 0.5,
+        "key": "GamepadRightStickY",
+        "modifiers": [
+          {
+            "$v": 1,
+            "lower": 0.2,
+            "negate_x": true,
+            "negate_y": true,
+            "negate_z": true,
+            "order": "YXZ",
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ],
+            "type": "DeadZone",
+            "upper": 1.0
+          },
+          {
+            "$v": 1,
+            "lower": 0.2,
+            "negate_x": true,
+            "negate_y": true,
+            "negate_z": true,
+            "order": "YXZ",
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ],
+            "type": "Swizzle",
+            "upper": 1.0
+          }
+        ],
+        "triggers": []
+      },
+      {
+        "$v": 1,
+        "action": "Jump",
+        "actuation": 0.5,
+        "key": "Space",
+        "modifiers": [],
+        "triggers": [
+          {
+            "$v": 1,
+            "chord_action": "",
+            "one_shot": true,
+            "time": 0.5,
+            "type": "Pressed"
+          }
+        ]
+      },
+      {
+        "$v": 1,
+        "action": "Jump",
+        "actuation": 0.5,
+        "key": "GamepadA",
+        "modifiers": [],
+        "triggers": [
+          {
+            "$v": 1,
+            "chord_action": "",
+            "one_shot": true,
+            "time": 0.5,
+            "type": "Pressed"
+          }
+        ]
+      }
+    ],
+    "block_lower_contexts": false,
+    "consume_input": true,
+    "name": "Gameplay"
+  }
+}

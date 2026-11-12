@@ -1,0 +1,5 @@
+Build/
+Intermediate/
+Saved/
+*.bmp
+__pycache__/

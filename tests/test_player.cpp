@@ -4,6 +4,7 @@
 #include "aether/cook/cooker.h"
 #include "aether/pak/pak.h"
 #include "aether/player/game.h"
+#include "aether/physics/character.h"
 #include "aether/project/project.h"
 #include "aether/scene/components.h"
 #include "aether/scene/gameplay.h"
@@ -360,6 +361,98 @@ AETHER_TEST(Player_RunsTheStartupSceneFromAPak) {
     CHECK(updates == 60 && fixed == 60);
     game.EndPlay();
     CHECK(!game.IsPlaying());
+}
+
+// A script can move the game to another scene (a door, a fast-travel point): Scene.Load asks, the game swaps at the start of the next frame, the new
+// scene's scripts run, and a scene that is missing or does not parse leaves the current one running.
+AETHER_TEST(Player_ScriptsCanLoadAnotherScene) {
+    if (!Game::HasScripting()) return;
+    const stdfs::path dir = TestDir("SceneLoad");
+    const auto script_component = [](const std::string& guid) {
+        ScriptComponent component;
+        assets::AssetGuid parsed;
+        assets::ParseAssetGuid(guid, parsed);
+        component.script.guid = parsed;
+        return component;
+    };
+    const std::string door_guid = assets::ToString(assets::NewAssetGuid());
+    const std::string mover_guid = assets::ToString(assets::NewAssetGuid());
+    const json start = {{"$type", "Scene"}, {"$version", 1},
+        {"entities", json::array({{{"components", {{"ScriptComponent", reflect::ToJson(script_component(door_guid))}}}}})}};
+    const json inside = {{"$type", "Scene"}, {"$version", 1},
+        {"entities", json::array({{{"components", {{"ScriptComponent", reflect::ToJson(script_component(mover_guid))}}}},
+                                  json::parse(R"({"components": {"Transform": {"$v": 2, "position": [5, 1, -3], "rotation": [0, 0, 0, 1], "scale": [1, 1, 1]}, "EntityName": {"$v": 1, "value": "Landing"}}})"),
+                                  json::parse(R"({"components": {"Transform": {"$v": 2, "position": [0, 0, 0], "rotation": [0, 0, 0, 1], "scale": [1, 1, 1]}, "CharacterMovement": {"$v": 1}}})")})}};
+    const char* door =
+        "local Door = {}\n"
+        "function Door:OnUpdate(dt)\n"
+        "  self.t = (self.t or 0) + dt\n"
+        "  if self.t > 0.1 and not self.asked then\n"
+        "    self.asked = true\n"
+        "    Door.missing = Scene.Load('Scenes/nope.ascene')\n"
+        "    Door.ok = Scene.Load('Scenes/inside.ascene', 'Landing')\n"
+        "    Door.current = Scene.Current()\n"
+        "  end\n"
+        "end\n"
+        "return Door\n";
+    const char* mover = "local M = {}\nfunction M:OnUpdate(dt) Scene.Ticks = (Scene.Ticks or 0) + 1 end\nreturn M\n";
+    json manifest = Manifest("Scenes/start.ascene", "unused");
+    manifest["assets"] = json::array({{{"guid", assets::ToString(assets::NewAssetGuid())}, {"path", "Scenes/start.ascene"}, {"importer", "Scene"}},
+                                      {{"guid", assets::ToString(assets::NewAssetGuid())}, {"path", "Scenes/inside.ascene"}, {"importer", "Scene"}},
+                                      {{"guid", door_guid}, {"path", "Scripts/Door.luau"}, {"importer", "Script"}},
+                                      {{"guid", mover_guid}, {"path", "Scripts/Mover.luau"}, {"importer", "Script"}}});
+    pak::PakWriter writer;
+    CHECK(writer.Add("Manifest.json", manifest.dump()));
+    CHECK(writer.Add("Content/Scenes/start.ascene", start.dump()));
+    CHECK(writer.Add("Content/Scenes/inside.ascene", inside.dump()));
+    CHECK(writer.Add("Content/Scripts/Door.luau", std::string(door)));
+    CHECK(writer.Add("Content/Scripts/Mover.luau", std::string(mover)));
+    const stdfs::path pak = dir / "Game.apak";
+    CHECK(writer.Write(pak.string()));
+
+    GamePackage package;
+    std::string error;
+    CHECK(package.Mount(pak.string(), 0, &error));
+    CHECK(package.LoadManifest(&error));
+    Game game(package);
+    CHECK(game.LoadStartupScene(&error));
+    CHECK(!game.RequestScene("Scenes/nope.ascene")); // not in the package: refused at once, nothing changes
+    game.BeginPlay();
+    for (int i = 0; i < 3; ++i) game.Tick(1.0f / 60.0f);
+    CHECK(game.SceneName() == "Scenes/start.ascene"); // not yet asked (0.1 s has not passed)
+    for (int i = 0; i < 12; ++i) game.Tick(1.0f / 60.0f);
+    CHECK(game.SceneName() == "Scenes/inside.ascene");
+    CHECK(game.IsPlaying());
+    // The character stands where the spawn entity is.
+    bool placed = false;
+    game.GetWorld().ForEach<CharacterMovement, Transform>([&](CharacterMovement&, Transform& t) { placed = std::fabs(t.position.x - 5.0f) < 1e-3f && std::fabs(t.position.z + 3.0f) < 1e-3f; });
+    CHECK(placed);
+    for (int i = 0; i < 5; ++i) game.Tick(1.0f / 60.0f);
+    CHECK(game.ScriptErrors().empty());
+    CHECK(game.Warnings().empty());
+
+    // A scene that is in the package but does not parse leaves the current one running, with a warning.
+    pak::PakWriter bad;
+    manifest["assets"].push_back({{"guid", assets::ToString(assets::NewAssetGuid())}, {"path", "Scenes/broken.ascene"}, {"importer", "Scene"}});
+    CHECK(bad.Add("Manifest.json", manifest.dump()));
+    CHECK(bad.Add("Content/Scenes/start.ascene", start.dump()));
+    CHECK(bad.Add("Content/Scenes/inside.ascene", inside.dump()));
+    CHECK(bad.Add("Content/Scenes/broken.ascene", std::string("this is not a scene")));
+    CHECK(bad.Add("Content/Scripts/Door.luau", std::string(door)));
+    CHECK(bad.Add("Content/Scripts/Mover.luau", std::string(mover)));
+    const stdfs::path bad_pak = dir / "Bad.apak";
+    CHECK(bad.Write(bad_pak.string()));
+    GamePackage bad_package;
+    CHECK(bad_package.Mount(bad_pak.string(), 0, &error));
+    CHECK(bad_package.LoadManifest(&error));
+    Game bad_game(bad_package);
+    CHECK(bad_game.LoadStartupScene(&error));
+    bad_game.BeginPlay();
+    CHECK(bad_game.RequestScene("Scenes/broken.ascene"));
+    bad_game.Tick(1.0f / 60.0f);
+    CHECK(bad_game.SceneName() == "Scenes/start.ascene");
+    CHECK(!bad_game.Warnings().empty());
+    CHECK(bad_game.IsPlaying());
 }
 
 // A game with its own UI: a WidgetComponent shows a layout from the pak, a script changes it by widget name (the Luau UI table), and the
