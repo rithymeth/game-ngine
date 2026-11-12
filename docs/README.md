@@ -29,7 +29,7 @@ without a server or network connection.
 | [design/m8_gates.json](design/m8_gates.json) | Evidence status for that product-gate proposal |
 | [design/EDITOR_UI.md](design/EDITOR_UI.md) | Editor UI design system: color/type/spacing tokens, icons, layouts, widgets, panel specs, interaction rules, feedback, accessibility, and the plan for splitting editor/main.cpp |
 | [design/AETHER_ENGINE_UX.md](design/AETHER_ENGINE_UX.md) | Complete product UX architecture: Project Hub, editor workspaces, shared panels/services, core workflows, accessibility, toolkit boundary, migration, and acceptance criteria |
-| [design/EDITOR_UI_TOOLKIT_ADR.md](design/EDITOR_UI_TOOLKIT_ADR.md) | Proposed UI framework change: Qt Widgets recommendation, RHI/viewport boundary, alternatives, licensing gate, and a go/no-go validation spike |
+| [design/EDITOR_UI_TOOLKIT_ADR.md](design/EDITOR_UI_TOOLKIT_ADR.md) | The editor UI framework decision: Dear ImGui is the editor, the Qt editor was removed, and why (the original Qt recommendation is kept as history) |
 | [design/BLUEPRINT_NODES.md](design/BLUEPRINT_NODES.md) | Every node in the first Blueprint library with pins and behavior, compiler messages, and the node test plan |
 | [manual/README.md](manual/README.md) | The manual: getting started, projects and assets, scripting, input, 2D, packaging, plugins and editor extensions, and the generated API reference |
 | [manual/01-getting-started.md](manual/01-getting-started.md) | Windows path from a clean checkout to a playable sample game |
@@ -56,8 +56,6 @@ without a server or network connection.
 
 | Document | What it's for |
 |---|---|
-| [design/EDITOR_QT_UX_ROADMAP.md](design/EDITOR_QT_UX_ROADMAP.md) | The Qt editor UI/UX migration plan and its current step |
-| [design/QT_EDITOR_FEATURE_COVERAGE.md](design/QT_EDITOR_FEATURE_COVERAGE.md) | Acceptance ledger for replacing the ImGui editor with Qt 6 |
 
 ## Manual chapters
 

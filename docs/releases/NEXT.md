@@ -39,6 +39,19 @@ certificate error), and `iexpress.exe` produced nothing usable, so the self-extr
 resource compiled with `csc.exe`. A Vulkan-enabled install also fails for a consumer that lacks the Vulkan SDK, because the
 generated `AetherConfig.cmake` requires it -- which is why the installer builds with Vulkan off.
 
+## The Qt editor is removed; the editor is Dear ImGui
+
+At the project owner's request the Qt editor (`editor/qt`, target `aether_editor_qt`, option `AETHER_BUILD_QT_EDITOR`) is gone, and
+`aether_editor_shell` (Dear ImGui over Vulkan) is the editor. Removed with it: its `--self-test` ctest, its Windows packaging and
+the Qt install steps in CI, the Qt coverage ledger and UX roadmap, and the Qt concept page. `aether_editor_core` and the document
+classes stay (the ImGui panels and the MCP tools use them). Costs, stated plainly: no docking or saved layouts yet (stock ImGui has
+none), no 3D viewport in the shell (a project: the scene renderer draws a cooked package through a running game into a swap
+chain), and the Windows package no longer contains an editor, only the build tools, the player and the assets (the hosted Windows
+runner has no Vulkan loader), so the package validation job now checks that those are present instead of launching an editor.
+`tools/installer` still looks for `bin\aether_editor.exe`; that name needs to change to `aether_editor_shell.exe` with a Windows
+run of `test_installer.ps1`, which could not be done here. The two sections below describe the Qt startup crash and are kept as the
+record; the crash no longer applies.
+
 ## The Qt editor crashes at startup, and CI cannot see it
 
 Running the production Qt editor (`aether_editor.exe`, built by `aether_editor_qt`) opens no window and dies with an access

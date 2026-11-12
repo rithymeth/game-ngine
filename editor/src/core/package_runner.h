@@ -12,10 +12,8 @@
 #include <vector>
 
 // Cooks or packages a project on a worker thread: the part of Build and Package
-// that has nothing to do with drawing. It lives in the portable editor layer
-// because the Qt editor -- the default one -- does not link the ImGui UI
-// library, and it needs to package a project too. The legacy ImGui window
-// inherits this and draws it; the Qt editor drives the same runner from a menu.
+// that has nothing to do with drawing. It lives in the portable editor layer, so
+// the ImGui build window draws it and a headless tool or test can run it too.
 namespace aether::editor {
 
 class PackageRunner {

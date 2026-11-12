@@ -120,7 +120,6 @@ endif()
 option(AETHER_BUILD_SANDBOX "Build the Aether sandbox app" ON)
 option(AETHER_BUILD_PHYSICS "Build the Jolt-backed physics module" ON)
 option(AETHER_BUILD_EDITOR "Build the Dear ImGui editor app" ON)
-option(AETHER_BUILD_QT_EDITOR "Build the Qt 6 editor shell (migration target)" OFF)
 option(AETHER_BUILD_EDITOR_UI "Build the portable editor UI library (ImGui + reflection, no graphics backend; tested headless on every platform)" ON)
 option(AETHER_BUILD_VULKAN "Build the Vulkan RHI backend" ON)
 option(AETHER_BUILD_SCRIPTING "Build the Luau scripting module" ON)
@@ -596,17 +595,6 @@ if(AETHER_BUILD_EDITOR_UI)
     add_subdirectory(editor/src/ui)
 endif()
 
-if(AETHER_BUILD_QT_EDITOR)
-    if(NOT WIN32)
-        message(FATAL_ERROR "The Qt editor viewport currently uses the Windows D3D12 RHI window surface")
-    endif()
-    if(NOT TARGET aether_editor_core)
-        add_subdirectory(editor/src/core)
-    endif()
-    find_package(Qt6 6.8 REQUIRED COMPONENTS Widgets)
-    add_subdirectory(editor/qt)
-endif()
-
 if(AETHER_BUILD_MCP)
     add_subdirectory(mcp)
 endif()
@@ -651,14 +639,6 @@ endfunction()
 if(AETHER_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
-    if(TARGET aether_editor_qt)
-        add_test(NAME qt_editor_self_test COMMAND aether_editor_qt --self-test)
-        set_tests_properties(qt_editor_self_test PROPERTIES
-            ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
-            ENVIRONMENT_MODIFICATION
-                "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>;PATH=path_list_prepend:${CMAKE_BINARY_DIR}/dxc_spirv/extracted/bin/x64")
-        aether_test_scratch_dir(qt_editor_self_test)
-    endif()
 endif()
 
 # Phase 23: the functional test runner (headless, any platform).
@@ -700,7 +680,7 @@ endif()
 
 # Phase 26 step 1: the executables that host plugins get every module this
 # build has (each registers itself; the project's plugins decide which start).
-foreach(host aether_player aether_editor_shell aether_editor_qt aether_tests)
+foreach(host aether_player aether_editor_shell aether_tests)
     if(TARGET ${host})
         aether_link_modules(${host})
     endif()
@@ -797,7 +777,7 @@ aether_generate_package_config()
 # Applications and tools, installed alongside the SDK so an installed tree can author and run a game rather than only link
 # against the engine. Each is guarded by its target so a lean configuration that leaves one out still installs.
 set(_aether_install_apps
-    aether_editor_qt aether_player aether_package aether_cook aether_pak aether_new
+    aether_editor_shell aether_player aether_package aether_cook aether_pak aether_new
     aether_plugin aether_loc aether_symbolicate aether_server)
 foreach(_aether_app IN LISTS _aether_install_apps)
     if(TARGET ${_aether_app})

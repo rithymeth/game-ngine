@@ -24,7 +24,6 @@ editor, physics, scripting, Vulkan, and test targets:
 ```powershell
 cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
   -DAETHER_BUILD_EDITOR=OFF `
-  -DAETHER_BUILD_QT_EDITOR=OFF `
   -DAETHER_BUILD_EDITOR_UI=OFF `
   -DAETHER_BUILD_MCP=OFF `
   -DAETHER_BUILD_SANDBOX=OFF `
@@ -99,9 +98,9 @@ To change something, edit the controller script or move an entity in `Main.ascen
 - For later command-line steps, `aether_cook` builds a packaged game, `aether_player` launches a cooked package, and `aether_docgen` generates the API reference. See [packaging](06-packaging.md) and [API reference](08-api-reference.md).
 - Read [Projects and assets](02-projects-and-assets.md) for project structure.
 - Use the [Aether manual](README.md) for scripting, input, 2D, and packaging.
-- The Qt editor is an opt-in Windows/D3D12 migration host with partial tool
-  coverage. See its [current status and build steps](../../editor/qt/README.md)
-  before choosing it as your first project workflow.
+- The editor is `aether_editor_shell`: Dear ImGui over Vulkan, one window with every tool
+  (Scene, Terrain, Blueprint, Material and more). Build it with the rest of the engine; there is
+  no separate editor configuration.
 - [`tutorials/FIRST_GAME.md`](../tutorials/FIRST_GAME.md) describes a broader
   Blueprint-based target workflow; it is a roadmap acceptance document, not a
   tutorial that works in the current editor.

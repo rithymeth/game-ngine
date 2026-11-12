@@ -30,7 +30,7 @@ std::vector<Entity> MatchingEntities(const SceneDocument& document, const std::s
 
 // The scene editor of the portable (ImGui) editor: a toolbar (new, open, save, undo and redo, play), the hierarchy (filter, select, rename, create, duplicate, delete, copy and paste, and
 // drag one entity onto another to make it a child) and the inspector for the selected entity (every reflected component, add and remove, all undoable). It edits a SceneDocument, the same
-// document the Qt editor uses, so what it saves is what either editor opens. Fills the current ImGui window and runs headless in tests.
+// document the MCP tools use, so what it saves is what they open. Fills the current ImGui window and runs headless in tests.
 class ScenePanel {
 public:
     // `content_root`: relative scene paths in the path box are under it.

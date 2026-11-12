@@ -361,10 +361,11 @@ requirements across all workspaces:
 
 ## 10. UI framework and rendering boundary
 
-The proposed toolkit direction is Qt 6 Widgets for the desktop shell and
-panels, pending the validation gate in EDITOR_UI_TOOLKIT_ADR.md. Qt is a
+The toolkit is Dear ImGui (decided 2026-11-12; see EDITOR_UI_TOOLKIT_ADR.md, which
+also records why the earlier Qt 6 Widgets proposal was dropped). The toolkit is a
 presentation dependency of editor targets only. It does not replace the Aether
-RHI, renderer, runtime, or game UI module.
+RHI, renderer, runtime, or game UI module. Docking and saved layouts, and a viewport
+that shows a live scene, are the gaps this section's workspace goals still need.
 
 Aether's native viewport remains rendered by the existing RHI. The editor
 host owns menus, docks, documents, input routing, and platform window
@@ -372,8 +373,7 @@ integration. Prove native surface creation, resize, focus, input, render-loop
 ownership, and shutdown with the Vulkan and D3D12 backends before replacing
 production panels.
 
-Dear ImGui may remain available for debug overlays and during migration.
-New shared services must not expose Qt or ImGui types.
+New shared services must not expose ImGui types.
 
 ### Target service boundaries
 
@@ -386,11 +386,11 @@ New shared services must not expose Qt or ImGui types.
 - **Diagnostics service:** console events, errors, notifications, navigation.
 - **Build service:** validation, cook/package steps, manifests, history.
 - **Engine adapters:** authoring world, play session, RHI viewport, systems.
-- **Presentation adapters:** Qt Widgets and temporary ImGui host implementations.
+- **Presentation adapters:** the Dear ImGui host (the portable Vulkan shell).
 
 The data flow is:
 
-    Qt/ImGui presentation
+    ImGui presentation
         -> editor services and authoring commands
         -> authoring data / editor world
         -> validate, compile, cook
@@ -400,12 +400,13 @@ Runtime/player targets depend on none of the presentation adapters.
 
 ## 11. Migration and delivery plan
 
-### Stage 0 — Baseline and toolkit spike
+### Stage 0 — Baseline and toolkit (done: Dear ImGui)
 
-Capture current workflows and screenshots for both editor hosts. Prototype
-Qt Widgets with dockable Hierarchy, Inspector, Content, Console, saved
-layouts, Ctrl+K, and the existing RHI viewport. Gate adoption on platform
-builds, input/focus, DPI, viewport lifecycle, packaging, and license review.
+The toolkit question was settled on 2026-11-12 (see EDITOR_UI_TOOLKIT_ADR.md): Dear
+ImGui stays and the Qt spike was removed. What the Qt prototype was meant to prove
+(dockable Hierarchy, Inspector, Content and Console, saved layouts, Ctrl+K, and a
+viewport on the RHI) is still the goal, now on ImGui: the command palette (Ctrl+K)
+and the Scene tool exist; docking, saved layouts and the live viewport do not.
 
 ### Stage 1 — Shared services
 
@@ -467,7 +468,7 @@ targets after that baseline rather than inventing them in advance.
 
 Resolve these as implementation gates, not hidden assumptions:
 
-1. Confirm Aether's project license and Qt module/deployment compatibility.
+1. Confirm the licenses of what the editor ships with (Dear ImGui and its bundled font are MIT and Apache 2.0).
 2. Confirm supported desktop platforms and renderer combinations for the
    editor, distinct from game runtime targets.
 3. Decide whether source-control UI is first-party or plugin-provided.

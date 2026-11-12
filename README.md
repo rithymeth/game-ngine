@@ -37,7 +37,7 @@ records what the game implements, what is verified, and what is still missing, a
   and packaging.
 - [Current platform priorities](docs/design/PLATFORM_SUPPORT_POLICY.md) — what
   is a release target and what is only validated in CI.
-- [Qt editor status](editor/qt/README.md) — current workflow and limitations.
+- [The editor](docs/design/EDITOR_UI_TOOLKIT_ADR.md) — Dear ImGui, why, and what the Qt editor's removal means.
 - [Working on Aether](AGENTS.md) — build and check commands, and the traps that cost the most time: the test
   suite is not idempotent, `AETHER_CHECK` does not abort, `IdComponent{}` is a null GUID, and the repository is
   forty sibling source trees rather than one.
@@ -5952,11 +5952,11 @@ Spec: [a retired planning doc, Phase 24].
 - **GitHub Actions on every push and pull request**:
   - Linux: GCC, Clang, ASan+UBSan and physics builds, each running the
     unit and functional tests.
-  - Windows: an MSVC build of everything, the D3D12 editor included.
-- **The packaged editor**: the Windows job packages
-  `AetherEditor-windows-x64.zip` (`AetherEditor.exe`, the Qt runtime, the
-  optional `AetherEditorLegacy.exe`, engine DLLs and assets) as a download on
-  each run. The Qt editor is the default application in the package.
+  - Windows: an MSVC build of the engine and the D3D12 target set.
+- **The packaged tools**: the Windows job packages
+  `AetherEditor-windows-x64.zip` (the build tools, the player, the manual and
+  assets) as a download on each run. The editor is `aether_editor_shell`
+  (Dear ImGui over Vulkan); build it from source where Vulkan is available.
 - **Releases**: a `v*` tag publishes the zip as a GitHub release.
 - **Assets**: the editor finds `assets/` next to its executable, so the
   zip runs anywhere.
@@ -6196,11 +6196,10 @@ Physics, Dear ImGui, Vulkan-Headers, stb_image, nlohmann/json, and — on a
 Vulkan-enabled Windows build — a SPIR-V-capable `dxcompiler.dll` release).
 
 ```bash
-cmake -S . -B build -DAETHER_BUILD_QT_EDITOR=ON
+cmake -S . -B build
 cmake --build build --config RelWithDebInfo
 ./build/sandbox/aether_sandbox.exe          # Windows only; Phase 3/4 bindless + GPU-culling demo
-./build/editor/aether_editor.exe            # Windows only; current Qt/D3D12 editor
-./build/editor/aether_editor_legacy.exe     # Optional ImGui editor for tools still migrating
+./build/editor/shell/aether_editor_shell    # the editor: Dear ImGui over Vulkan (AETHER_EDITOR_HEADLESS=1 runs it offscreen)
 AETHER_RHI_BACKEND=vulkan ./build/rhi_demo/aether_rhi_demo.exe   # or =d3d12 (default); swappable RHI proof
 ctest --test-dir build --output-on-failure
 ```

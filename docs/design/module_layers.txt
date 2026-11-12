@@ -76,7 +76,6 @@ aether_module_AI 5
 aether_replay_ai 5
 aether_scripting 5
 aether_bench 6
-aether_editor_qt 6
 aether_editor_ui 6
 aether_game 6
 aether_editor 7

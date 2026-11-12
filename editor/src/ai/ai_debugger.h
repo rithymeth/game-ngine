@@ -13,7 +13,7 @@
 namespace aether::editor {
 
 // The AI Debugger (M8.8: decisions and navigation state in the editor). Pure
-// data shaping over an AiDebugStore::Collect snapshot, so the Qt dock stays a
+// data shaping over an AiDebugStore::Collect snapshot, so the ImGui panel stays a
 // thin view and tests run it headless.
 struct AiDebugRow {
     Entity entity;
@@ -54,7 +54,7 @@ void BuildAiDebugOverlay(const World& world, const std::vector<script::AiDebugEn
                          const AiDebugOverlayOptions& options, nav::NavDebugDraw& out);
 
 // --- Phase 40.6: the Utility / State-tree / GOAP brains (Phase 40.4) as
-// debugger rows, shaped here so the Qt dock stays a thin view and tests run
+// debugger rows, shaped here so the ImGui panel stays a thin view and tests run
 // them headless, the same way the rows and overlay above work.
 
 // One utility action scored under a blackboard; `chosen` marks the action

@@ -1,9 +1,34 @@
-# ADR: replace Dear ImGui as the Aether Editor UI framework
+# ADR: the Aether Editor UI framework (Qt was proposed; Dear ImGui was kept)
 
-- **Status:** Spike in progress; no production go/no-go decision yet.
-- **Update 2026-11-12:** the project owner reports that the Qt editor does not build for them, and asked for an editor that does. The Dear ImGui editor builds and runs everywhere Vulkan does (the portable shell, `aether_editor_shell`, runs headless in CI and in the sandbox this was written in; the Windows D3D12 host has the 3D viewport), so work now goes there first: the shell gained a **Scene** tool (hierarchy, inspector, new/open/save/undo/play) on the same `SceneDocument` the Qt editor uses, so a scene saved by either editor opens in the other. The Qt editor is untouched and stays behind `AETHER_BUILD_QT_EDITOR` (off by default); this is not a decision that Qt is wrong, only that the editor that works is the one being built on. Unreal (Slate), Unity (UI Toolkit, IMGUI before it) and Godot (its own Control nodes) all draw their editors with a UI framework of their own on their own renderer, which is closer to the ImGui approach than to Qt.
-- **Date:** 2026-10-07
+- **Status:** Decided. Dear ImGui is the Aether editor's UI framework and the Qt editor has been removed. The text below the Decision section is the original Qt recommendation and spike plan, kept as history; it is not the current plan.
+- **Date decided:** 2026-11-12.
+- **Date proposed:** 2026-10-07
 - **Scope:** Editor presentation and host only. Aether's engine RHI and runtime remain independent.
+
+## Decision (2026-11-12)
+
+The project owner asked to stop using Qt and make the Dear ImGui editor the main editor. The reasons, in the order they
+mattered:
+
+- **Qt did not build for the owner.** An editor that cannot be built is not an editor, whatever its docking model.
+- **ImGui builds and runs wherever Vulkan does.** The portable shell (`aether_editor_shell`) runs headless, so it is
+  tested and screenshotted in the same sandbox the code is written in, which the Windows-only Qt editor never could be.
+- **One editor, not two.** Both drew on the same `SceneDocument` and command stack, but every tool existed twice or
+  only in one of them. The ledger that tracked the gap is gone with the editor.
+- **It matches what the engines people compare with do.** Unreal (Slate), Unity (UI Toolkit, IMGUI before it) and Godot
+  (its own Control nodes) draw their editors with a UI framework of their own on their own renderer.
+
+**What was removed:** `editor/qt` (the Qt Widgets editor, 46 files), the `AETHER_BUILD_QT_EDITOR` option, its self-test,
+its Windows packaging and the Qt install steps in CI, and the Qt coverage and UX roadmap documents. The shared logic it
+used (`aether_editor_core`, the document classes) stays: the ImGui panels and the MCP tools use it.
+
+**What this costs, honestly:** docking and saved layouts (stock Dear ImGui has no docking; it needs the separate docking
+branch), the 3D viewport (the Windows D3D12 ImGui host that had one no longer exists, and the scene renderer draws a
+cooked package through a running game into a swap chain, so showing a live scene in the shell is a project of its own),
+and a Windows packaged editor (the hosted Windows runner has no Vulkan loader). Each of those is open work, not a
+reason to bring Qt back.
+
+**History kept:** the Qt editor and its documents are in the git history before this change.
 
 ## Context
 
