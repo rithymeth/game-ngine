@@ -20,6 +20,9 @@ public:
     bool Dragging() const { return gizmo_.Dragging(); }
     void SetMode(GizmoMode mode) { mode_ = mode; }
     void SetSnap(bool enabled) { snap_ = enabled; }
+    // The models' real extents, for picking and outlines (null: every object is a unit box and is picked by its origin). Not owned.
+    void SetBounds(const ModelBoundsCache* bounds) { bounds_ = bounds; }
+    const ModelBoundsCache* Bounds() const { return bounds_; }
 
     // The mode buttons and the snap controls on the current line (the caller may SameLine and add to it).
     void DrawToolbar();
@@ -28,14 +31,15 @@ public:
     void HandleInput(SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, bool hovered, bool active);
     // The gizmo on the first selected entity, in the chosen mode, the handle under the mouse (or being dragged) brighter.
     void DrawGizmo(ImDrawList* draw, const SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, bool hovered) const;
-    // An entity's outline: its unit box scaled and placed by its world transform. `thickness` > 1 for emphasis.
+    // An entity's outline: its box (the model's real extent with `bounds`, else a unit box) placed by its world transform. `thickness` > 1 for emphasis.
     static void DrawEntityBox(ImDrawList* draw, const SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size,
-                              Entity entity, ImU32 color, f32 thickness);
+                              Entity entity, ImU32 color, f32 thickness, const ModelBoundsCache* bounds = nullptr);
     // The outline and the name of every selected entity (orange), and of the one under the mouse (white), for a view with no wireframe of its own.
     void DrawSelectionOutlines(ImDrawList* draw, const SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, bool hovered) const;
 
 private:
     TransformGizmo gizmo_;
+    const ModelBoundsCache* bounds_ = nullptr;
     GizmoMode mode_ = GizmoMode::Move;
     bool snap_ = false;
     f32 snap_move_ = 0.5f;

@@ -46,6 +46,7 @@ add_library(aether_editor_ui STATIC
     ../world/procedural_panel.cpp
     ../world/scene_panel.cpp
     ../world/scene_view.cpp
+    ../world/model_bounds.cpp
     ../world/viewport_tools.cpp
     ../world/scene_view_panel.cpp
     ../world/scene_preview_panel.cpp

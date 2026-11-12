@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/scene_document.h"
+#include "world/model_bounds.h"
 
 #include <array>
 #include <filesystem>
@@ -46,8 +47,11 @@ public:
     // slashes, sorted; what the toolbar's list offers instead of a path to type.
     std::vector<std::string> ListScenes() const;
     // The folder scene paths are relative to (the open project's Content folder). Changing it leaves the open scene alone.
-    void SetContentRoot(std::filesystem::path content_root) { content_root_ = std::move(content_root); }
+    void SetContentRoot(std::filesystem::path content_root) { content_root_ = std::move(content_root); bounds_.SetContentRoot(content_root_); }
     const std::filesystem::path& ContentRoot() const { return content_root_; }
+    // The extents of the models the scene names, read from the content folder (for picking and outlines). Refreshed when a scene is opened.
+    ModelBoundsCache& ModelBounds() { return bounds_; }
+    const ModelBoundsCache& ModelBounds() const { return bounds_; }
     const std::string& Path() const { return path_; }
     void SetPath(const std::string& path) { path_ = path; }
 
@@ -83,6 +87,7 @@ private:
 
     SceneDocument document_;
     std::filesystem::path content_root_;
+    ModelBoundsCache bounds_;
     std::filesystem::path pending_overwrite_; // the file a save was just refused for, so that asking again by name can confirm it
     std::string path_ = "Scenes/Main.ascene";
     std::string status_;

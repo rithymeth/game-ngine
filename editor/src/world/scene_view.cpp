@@ -84,8 +84,63 @@ bool ProjectToViewport(const Mat4& view_projection, const Vec3& world, const ImV
     return true;
 }
 
-Entity PickEntity(const SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, f32 radius) {
+LocalBounds EntityBounds(const SceneDocument& document, Entity entity, const ModelBoundsCache* bounds) {
+    LocalBounds box; // the unit box
+    if (bounds && document.GetWorld().IsAlive(entity)) {
+        if (const ModelRenderer* renderer = document.GetWorld().GetComponent<ModelRenderer>(entity)) {
+            if (renderer->asset_path[0] != '\0') {
+                LocalBounds known;
+                if (bounds->Get(renderer->asset_path, known)) box = known;
+            }
+        }
+    }
+    return box;
+}
+
+bool RayHitsEntityBox(const SceneDocument& document, Entity entity, const LocalBounds& box, const Vec3& ray_origin, const Vec3& ray_direction, f32& distance) {
+    Mat4 inverse;
+    if (!ComputeWorldTransform(document.GetWorld(), document.Guids(), entity).TryInverse(inverse)) return false;
+    const Vec4 o = inverse * Vec4(ray_origin.x, ray_origin.y, ray_origin.z, 1.0f);
+    const Vec4 d = inverse * Vec4(ray_direction.x, ray_direction.y, ray_direction.z, 0.0f); // not renormalised, so a distance along it is a distance along the world ray
+    const f32 origin_a[3] = {o.x, o.y, o.z}, direction_a[3] = {d.x, d.y, d.z};
+    const f32 low[3] = {box.min.x, box.min.y, box.min.z}, high[3] = {box.max.x, box.max.y, box.max.z};
+    f32 t_near = 0.0f, t_far = std::numeric_limits<f32>::max();
+    for (int axis = 0; axis < 3; ++axis) {
+        if (std::fabs(direction_a[axis]) < 1e-9f) {
+            if (origin_a[axis] < low[axis] || origin_a[axis] > high[axis]) return false; // parallel to this slab and outside it
+            continue;
+        }
+        f32 t0 = (low[axis] - origin_a[axis]) / direction_a[axis];
+        f32 t1 = (high[axis] - origin_a[axis]) / direction_a[axis];
+        if (t0 > t1) std::swap(t0, t1);
+        t_near = std::max(t_near, t0);
+        t_far = std::min(t_far, t1);
+        if (t_near > t_far) return false;
+    }
+    distance = t_near;
+    return true;
+}
+
+Entity PickEntity(const SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, f32 radius,
+                  const ModelBoundsCache* bounds) {
     if (size.x < 1.0f || size.y < 1.0f) return kNullEntity;
+    Vec3 ray_origin, ray_direction;
+    Entity box_hit = kNullEntity;
+    f32 box_distance = std::numeric_limits<f32>::max();
+    const bool have_ray = MouseRay(camera.ViewProjection(size.x / size.y), origin, size, mouse, ray_origin, ray_direction);
+    if (bounds && have_ray) { // the models' own boxes: the nearest one the mouse ray goes through
+        for (const Entity entity : document.Entities()) {
+            const ModelRenderer* renderer = document.GetWorld().GetComponent<ModelRenderer>(entity);
+            if (!renderer || renderer->asset_path[0] == '\0' || !document.GetWorld().HasComponent<Transform>(entity)) continue;
+            LocalBounds known;
+            if (!bounds->Get(renderer->asset_path, known)) continue; // no box for it: found by its origin below
+            f32 distance = 0.0f;
+            if (RayHitsEntityBox(document, entity, known, ray_origin, ray_direction, distance) && distance < box_distance) {
+                box_distance = distance;
+                box_hit = entity;
+            }
+        }
+    }
     const Mat4 vp = camera.ViewProjection(size.x / size.y);
     Entity best = kNullEntity;
     f32 best_distance = radius, best_depth = std::numeric_limits<f32>::max();
@@ -104,7 +159,11 @@ Entity PickEntity(const SceneDocument& document, const SceneViewCamera& camera, 
             best_depth = depth;
         }
     }
-    return best;
+    // A box and an origin both under the mouse: whichever is nearer along the ray, so a camera or a light in front of a big model is the one clicked,
+    // and a model in front of a small thing hides it.
+    if (box_hit == kNullEntity) return best;
+    if (best == kNullEntity) return box_hit;
+    return (WorldOrigin(document, best) - ray_origin).Length() < box_distance ? best : box_hit;
 }
 
 bool MouseRay(const Mat4& view_projection, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, Vec3& ray_origin, Vec3& ray_direction) {

@@ -55,7 +55,7 @@ void ViewportTools::HandleInput(SceneDocument& document, const SceneViewCamera& 
     }
     if (active && ImGui::IsMouseDown(ImGuiMouseButton_Left) && (std::fabs(io.MousePos.x - press_.x) + std::fabs(io.MousePos.y - press_.y)) > 4.0f) dragged_ = true;
     if (hovered && ImGui::IsMouseReleased(ImGuiMouseButton_Left) && !dragged_ && !io.KeyShift) {
-        const Entity picked = PickEntity(document, camera, origin, size, io.MousePos);
+        const Entity picked = PickEntity(document, camera, origin, size, io.MousePos, 14.0f, bounds_);
         if (picked == kNullEntity) {
             if (!io.KeyCtrl) document.ClearSelection();
         } else if (io.KeyCtrl) {
@@ -111,13 +111,14 @@ void ViewportTools::DrawGizmo(ImDrawList* draw, const SceneDocument& document, c
 }
 
 void ViewportTools::DrawEntityBox(ImDrawList* draw, const SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size,
-                                  Entity entity, ImU32 color, f32 thickness) {
-    static const Vec3 corners[8] = {{-.5f, -.5f, -.5f}, {.5f, -.5f, -.5f}, {.5f, .5f, -.5f}, {-.5f, .5f, -.5f},
-                                    {-.5f, -.5f, .5f},  {.5f, -.5f, .5f},  {.5f, .5f, .5f},  {-.5f, .5f, .5f}};
+                                  Entity entity, ImU32 color, f32 thickness, const ModelBoundsCache* bounds) {
     static const int edges[12][2] = {{0, 1}, {1, 2}, {2, 3}, {3, 0}, {4, 5}, {5, 6}, {6, 7}, {7, 4}, {0, 4}, {1, 5}, {2, 6}, {3, 7}};
     if (size.x < 1.0f || size.y < 1.0f || !document.GetWorld().IsAlive(entity)) return;
     const Mat4 vp = camera.ViewProjection(size.x / size.y);
     const Mat4 m = ComputeWorldTransform(document.GetWorld(), document.Guids(), entity);
+    const LocalBounds box = EntityBounds(document, entity, bounds);
+    const Vec3 corners[8] = {{box.min.x, box.min.y, box.min.z}, {box.max.x, box.min.y, box.min.z}, {box.max.x, box.max.y, box.min.z}, {box.min.x, box.max.y, box.min.z},
+                             {box.min.x, box.min.y, box.max.z}, {box.max.x, box.min.y, box.max.z}, {box.max.x, box.max.y, box.max.z}, {box.min.x, box.max.y, box.max.z}};
     ImVec2 p[8];
     bool ok[8];
     for (int i = 0; i < 8; ++i) {
@@ -138,14 +139,14 @@ void ViewportTools::DrawSelectionOutlines(ImDrawList* draw, const SceneDocument&
         if (ProjectToViewport(vp, OriginOf(document, entity), origin, size, at)) draw->AddText(ImVec2(at.x + 8.0f, at.y - 18.0f), color, document.Name(entity).c_str());
     };
     Entity under_mouse = kNullEntity;
-    if (hovered && !gizmo_.Dragging()) under_mouse = PickEntity(document, camera, origin, size, ImGui::GetIO().MousePos);
+    if (hovered && !gizmo_.Dragging()) under_mouse = PickEntity(document, camera, origin, size, ImGui::GetIO().MousePos, 14.0f, bounds_);
     if (under_mouse != kNullEntity && !document.IsSelected(under_mouse)) {
-        DrawEntityBox(draw, document, camera, origin, size, under_mouse, Color(255, 255, 255), 1.0f);
+        DrawEntityBox(draw, document, camera, origin, size, under_mouse, Color(255, 255, 255), 1.0f, bounds_);
         label(under_mouse, Color(255, 255, 255));
     }
     for (const Entity entity : document.Selection()) {
         if (!world.IsAlive(entity) || !world.HasComponent<Transform>(entity)) continue;
-        DrawEntityBox(draw, document, camera, origin, size, entity, Color(255, 170, 40), 2.0f);
+        DrawEntityBox(draw, document, camera, origin, size, entity, Color(255, 170, 40), 2.0f, bounds_);
         label(entity, Color(255, 170, 40));
     }
 }

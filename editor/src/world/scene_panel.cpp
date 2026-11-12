@@ -56,7 +56,7 @@ std::vector<Entity> MatchingEntities(const SceneDocument& document, const std::s
     return out;
 }
 
-ScenePanel::ScenePanel(std::filesystem::path content_root) : content_root_(std::move(content_root)) {
+ScenePanel::ScenePanel(std::filesystem::path content_root) : content_root_(std::move(content_root)), bounds_(content_root_) {
     document_.NewScene();
 }
 
@@ -87,6 +87,7 @@ bool ScenePanel::OpenScene(const std::string& path, bool discard) {
         return false;
     }
     path_ = path;
+    bounds_.Clear(); // the models may have changed since they were last looked at
     status_ = "Opened " + file.string() + " (" + std::to_string(document_.Entities().size()) + " entities).";
     return true;
 }

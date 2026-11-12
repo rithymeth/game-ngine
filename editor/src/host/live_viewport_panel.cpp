@@ -42,6 +42,7 @@ bool LiveViewportPanel::Start() {
     // The scene is run as it is open, unsaved edits and all, so nothing is written over the project's own file: the cook only has to find the
     // models the scene uses (whose assets are in the project), and the scene itself goes to the game from memory.
     const SceneDocument& document = scene_.Document();
+    scene_.ModelBounds().Clear(); // a model may have changed on disk since it was measured
     const std::vector<std::string> models = ModelPaths(document);
     const std::vector<u8> bytes = SaveSceneToMemory(document.GetWorld());
     const u64 revision = document.Revision();
@@ -104,6 +105,7 @@ void LiveViewportPanel::Draw(f32 dt) {
     else if (loaded) ImGui::TextDisabled("%.0f fps  |  %zu entities  |  click: select  drag a handle: edit  W/E/R  |  right-drag: look  middle-drag: pan  wheel: zoom", fps_, viewport_.EntityCount());
     else ImGui::TextDisabled("Runs the open scene with the real renderer, edits and all. Open the scene you want first.");
     if (!loaded) return;
+    tools_.SetBounds(&scene_.ModelBounds());
     tools_.DrawToolbar();
     Advance(dt);
     if (!texture_.Valid()) return;
