@@ -61,6 +61,7 @@ private:
     f32 since_reload_ = 0.0f;
     f32 fps_ = 0.0f;
     u64 last_revision_ = 0;               // the scene's revision when it was last handed to the viewport
+    u64 last_structure_ = 0;              // and its structure revision: while that holds, a change was only to Transforms
     std::vector<std::string> cooked_models_; // the models the last cook was asked for
 };
 

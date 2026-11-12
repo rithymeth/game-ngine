@@ -43,6 +43,12 @@ public:
     u64 Revision() const { return commands_.Revision() + local_revision_; }
     // For an edit that writes into the scene directly while it is in progress (a gizmo drag), so a viewer sees it before it is recorded.
     void Touch() { ++local_revision_; }
+    // Like Touch(), for a gizmo drag that writes only Transforms. It is a change (Revision goes up) but not a structural one.
+    void TouchTransforms() { ++local_revision_; ++transform_revision_; }
+    // Revision() less the changes that were only to existing entities' Transforms (SetPosition, SetRotation, SetScale, TouchTransforms). While it is
+    // unchanged between two looks, the scene has the same entities, components and values apart from Transforms, so a viewer that already runs the
+    // scene can take just the new Transforms (LiveViewport::PatchTransforms) instead of loading it again. An undo or redo always counts as structural.
+    u64 StructureRevision() const { return Revision() - transform_revision_; }
     bool CanUndo() const { return commands_.CanUndo(); }
     bool CanRedo() const { return commands_.CanRedo(); }
     std::string UndoLabel() const { return commands_.UndoLabel(); }
@@ -113,6 +119,14 @@ private:
     std::filesystem::path file_;
     bool recovered_unsaved_ = false;
     u64 local_revision_ = 0;
+    u64 transform_revision_ = 0; // how much of Revision() was Transform-only edits
+    // Counts what the stack's revision gains while it lives as a Transform-only edit.
+    struct TransformEdit {
+        explicit TransformEdit(SceneDocument& document) : document_(document), before_(document.commands_.Revision()) {}
+        ~TransformEdit() { document_.transform_revision_ += document_.commands_.Revision() - before_; }
+        SceneDocument& document_;
+        u64 before_;
+    };
     EntityGuid pending_position_entity_{};
     std::optional<reflect::Any> pending_position_before_;
     EntityGuid pending_rotation_entity_{};

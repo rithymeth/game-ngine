@@ -22,6 +22,7 @@
 #include <filesystem>
 #include <imgui.h>
 #include <memory>
+#include "aether/scene/serialization.h"
 #include <set>
 
 // The rendered preview: the real player renders a project's scene and the picture comes back as pixels. Like the other player tests
@@ -368,6 +369,87 @@ AETHER_TEST(LiveViewportPanel_AnEditShowsWithoutSavingAndAModelNotCookedIsSaid) 
     document.Touch();
     AETHER_CHECK(document.Revision() == revision + 1);
 }
+AETHER_TEST(LiveViewportPanel_AMovedObjectIsPatchedInPlaceAndOnlyAChangeToTheSceneReloads) {
+    std::unique_ptr<gfx::rhi::IDevice> device = TryDevice();
+    if (!device) {
+        std::printf("    (no Vulkan device: install a driver, or Mesa's lavapipe, to run this)\n");
+        return;
+    }
+    Context imgui;
+    const stdfs::path project = MakeProject("LivePatch");
+    ScenePanel scene(project.parent_path() / "Content");
+    AETHER_CHECK(scene.OpenScene("Scenes/Main.ascene", true));
+    LiveViewportPanel panel(*device, scene, [&] { return project; });
+    panel.width = 160;
+    panel.height = 90;
+    panel.reload_interval = 0.0f;
+    AETHER_CHECK(panel.Start() && panel.Advance(1.0f));
+    SceneDocument& document = scene.Document();
+    const std::vector<u8> before = panel.Viewport().Pixels();
+    const u64 reloads = panel.Viewport().SceneReloads();
+    AETHER_CHECK(panel.Viewport().PatchCount() == 0);
+
+    // Every model in the scene, so a move shows clearly: they are the pillar and the cubes.
+    std::vector<Entity> models;
+    std::vector<Vec3> homes;
+    for (const Entity entity : document.Entities()) {
+        const Transform* transform = document.GetWorld().GetComponent<Transform>(entity);
+        if (transform && document.GetWorld().HasComponent<ModelRenderer>(entity)) {
+            models.push_back(entity);
+            homes.push_back(transform->position);
+        }
+    }
+    AETHER_CHECK(models.size() >= 2);
+    if (models.size() < 2) return;
+    const Vec3 lift(0.0f, 30.0f, 0.0f);
+    auto move_all = [&](const Vec3& by, bool as_command) {
+        for (usize i = 0; i < models.size(); ++i) {
+            if (as_command) {
+                document.SetPosition(models[i], homes[i] + by, true);
+            } else if (Transform* transform = document.GetWorld().GetComponent<Transform>(models[i])) {
+                transform->position = homes[i] + by; // what a gizmo drag does, before it records anything
+            }
+        }
+        if (!as_command) document.TouchTransforms();
+    };
+
+    // The document says what kind of change it was: a move is not structural; a Touch or a new entity is.
+    const u64 structure = document.StructureRevision(), revision = document.Revision();
+    move_all(lift, true);
+    AETHER_CHECK(document.Revision() > revision && document.StructureRevision() == structure);
+    document.TouchTransforms();
+    AETHER_CHECK(document.StructureRevision() == structure);
+
+    // The move is in the picture, and the scene was not loaded again.
+    AETHER_CHECK(panel.Advance(0.2f));
+    AETHER_CHECK(panel.Viewport().PatchCount() == 1 && panel.Viewport().SceneReloads() == reloads);
+    AETHER_CHECK(DifferingPixels(before, panel.Viewport().Pixels()) > 160u * 90u / 50);
+    move_all(Vec3(0, 0, 0), true);                                                       // and back
+    AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().PatchCount() == 2 && panel.Viewport().SceneReloads() == reloads);
+    AETHER_CHECK(DifferingPixels(before, panel.Viewport().Pixels()) < 160u * 90u / 50);
+
+    // A gizmo drag writes into the components and says so; that is patched too.
+    move_all(lift, false);
+    AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().PatchCount() == 3 && panel.Viewport().SceneReloads() == reloads);
+    AETHER_CHECK(DifferingPixels(before, panel.Viewport().Pixels()) > 160u * 90u / 50);
+    move_all(Vec3(0, 0, 0), false);
+    AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().PatchCount() == 4);
+
+    // A change that is not only a move loads the scene again, and a move after it is patched against the new baseline.
+    document.Touch();
+    AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().SceneReloads() == reloads + 1 && panel.Viewport().PatchCount() == 4);
+    document.DestroyEntity(models[1]);
+    AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().SceneReloads() == reloads + 2 && panel.Viewport().PatchCount() == 4);
+    document.SetPosition(models[0], homes[0] + Vec3(1.0f, 0.0f, 0.0f), true);
+    AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().PatchCount() == 5 && panel.Viewport().SceneReloads() == reloads + 2);
+    document.Undo();                                                                     // an undo is structural, even of a move
+    AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().SceneReloads() == reloads + 3 && panel.Viewport().PatchCount() == 5);
+
+    // The running scene and the document disagreeing about which entities exist is refused, not guessed at.
+    document.CreateEntity("Extra");
+    AETHER_CHECK(!panel.Viewport().PatchTransforms(document.GetWorld()) && panel.Viewport().PatchCount() == 5);
+}
+
 #endif
 
 AETHER_TEST(GamePackage_AContentOverrideIsReadInPlaceOfTheArchive) {

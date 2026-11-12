@@ -410,6 +410,7 @@ bool SceneDocument::SetComponentField(Entity entity, ComponentId component, cons
 }
 
 bool SceneDocument::SetPosition(Entity entity, const Vec3& position, bool committed) {
+    const TransformEdit counted(*this);
     if (!world_.IsAlive(entity) || !world_.HasComponent<Transform>(entity)) return false;
     const auto* id = world_.GetComponent<IdComponent>(entity);
     auto* transform = world_.GetComponent<Transform>(entity);
@@ -437,6 +438,7 @@ bool SceneDocument::SetPosition(Entity entity, const Vec3& position, bool commit
 }
 
 bool SceneDocument::SetRotation(Entity entity, const Quaternion& rotation, bool committed) {
+    const TransformEdit counted(*this);
     if (!world_.IsAlive(entity) || !world_.HasComponent<Transform>(entity)) return false;
     const auto* id = world_.GetComponent<IdComponent>(entity);
     auto* transform = world_.GetComponent<Transform>(entity);
@@ -465,6 +467,7 @@ bool SceneDocument::SetRotation(Entity entity, const Quaternion& rotation, bool 
 }
 
 bool SceneDocument::SetScale(Entity entity, const Vec3& scale, bool committed) {
+    const TransformEdit counted(*this);
     if (!world_.IsAlive(entity) || !world_.HasComponent<Transform>(entity)) return false;
     const auto* id = world_.GetComponent<IdComponent>(entity);
     auto* transform = world_.GetComponent<Transform>(entity);

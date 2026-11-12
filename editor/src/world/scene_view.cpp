@@ -488,7 +488,7 @@ bool TransformGizmo::Apply(SceneDocument& document, const SceneViewCamera& camer
         if (snap_step > 0.0f) angle = SnapRotationDegrees(angle * 180.0f / kPi, snap_step) * kPi / 180.0f;
     }
     const Vec3 k = direction_; // the axis a rotation turns about (unit length)
-    document.Touch(); // the components are written below without a command, so tell a viewer the scene is moving
+    document.TouchTransforms(); // the components are written below without a command, so tell a viewer the scene is moving (only Transforms)
     for (const Held& held : subjects_) {
         if (!document.GetWorld().IsAlive(held.entity)) continue;
         Transform* transform = document.GetWorld().GetComponent<Transform>(held.entity);
@@ -526,7 +526,7 @@ bool TransformGizmo::ApplyPlane(SceneDocument& document, const SceneViewCamera& 
         dv = SnapScalar(base_v + dv, snap_step) - base_v;
     }
     const Vec3 offset = plane_u_ * du + plane_v_ * dv;
-    document.Touch();
+    document.TouchTransforms();
     for (const Held& held : subjects_) {
         if (!document.GetWorld().IsAlive(held.entity)) continue;
         if (Transform* transform = document.GetWorld().GetComponent<Transform>(held.entity)) transform->position = LocalPositionFor(document, held.entity, held.start_world + offset);

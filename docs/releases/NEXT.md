@@ -69,8 +69,15 @@ The Live Viewport no longer needs the scene saved: **Start** cooks the models th
 (`GamePackage::SetContentOverride`, with the scene serialized the way Play-in-Editor snapshots it), and after that every change (an edit, a gizmo drag, an
 undo) reloads it a moment later (`SceneDocument::Revision` says when it changed; a drag in progress is announced with `Touch`). Nothing is written over the
 project's scene file. The game's world is frozen by default so the view is the scene as authored (**Run game** lets physics and scripts run); a model added
-since the last cook is said in the toolbar and appears after **Reload**. Each change reloads the whole scene (the world, physics and scripts start over), which is
-fine for small and medium scenes and is the limit of this approach; an incremental update would be the renderer rework.
+since the last cook is said in the toolbar and appears after **Reload**. A move is patched in place (see the next section); any other change reloads the whole scene (the world, physics and scripts start over), which is
+fine for small and medium scenes.
+
+## Dragging in the Live Viewport no longer restarts the game
+
+Every change used to load the whole scene again, so dragging an object with **Run game** on also restarted physics and scripts on every frame of the drag. Now, when only
+Transforms changed (a gizmo drag, a nudge, a typed position), the editor puts the new Transforms into the running scene (`LiveViewport::PatchTransforms`, matched by entity ID) and
+leaves everything else alone; the game keeps its own state. The document says which kind of change it was (`SceneDocument::StructureRevision`); adding or removing an
+entity, editing any other component, or an undo still loads the scene afresh. Measured, it also costs less: at 960x540 with 2,000 entities an edit takes about 77 ms instead of about 116 ms (see PERFORMANCE.md).
 
 ## A live rendered viewport, and two fixes it needed
 

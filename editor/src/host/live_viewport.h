@@ -3,6 +3,7 @@
 #include "aether/gfx/rhi/command_list.h"
 #include "aether/gfx/rhi/device.h"
 #include "aether/gfx/rhi/swap_chain.h"
+#include "aether/ecs/world.h"
 #include "aether/math/quaternion.h"
 #include "aether/math/vec.h"
 
@@ -37,6 +38,11 @@ public:
     // Replaces the running scene with `scene_bytes` (the game loads it afresh: the world, physics and scripts start over). Models and
     // textures still come from the cooked archives, so an entity that names one that was not cooked is not drawn. False, with `error`, if the game rejects it.
     bool SetScene(const std::vector<u8>& scene_bytes, std::string* error = nullptr);
+    // Brings the running scene's Transforms to those of `source` (the open document's world), entity by entity, matched by GUID, without reloading the scene.
+    // For the case where nothing but transforms changed: false (having changed nothing) when `source` and the running scene do not hold the same set of
+    // identified entities with a Transform, so the caller falls back to SetScene. How many times it succeeded is PatchCount.
+    bool PatchTransforms(const World& source);
+    u64 PatchCount() const;
     // How many times SetScene has succeeded since Load.
     u64 SceneReloads() const;
     void Unload();

@@ -20,8 +20,8 @@ In priority order; each is a project of its own.
    open scene under the real renderer inside the editor's own process, with the Scene View's orbit camera, at up to 30 frames a second (about 12 on a
    software driver): an edit, a gizmo drag or an undo shows a moment later, **without saving**, because the editor hands the game its in-memory scene
    (`GamePackage::SetContentOverride`, the scene as `SaveSceneToMemory` writes it). Lighting and material changes in the scene (a light's colour, a
-   transform) therefore show live. What is still true: each change reloads the whole scene into the game (the world, physics and scripts start over), not an
-   incremental update, so it suits small and medium scenes; **Run game** is off by default so the view is the scene as authored; a model added since the
+   transform) therefore show live. A move (a gizmo drag, a nudge) is patched into the running scene in place; any other change (and an undo) reloads the whole scene into the game (the world, physics
+   and scripts start over), so it suits small and medium scenes; **Run game** is off by default so the view is the scene as authored; a model added since the
    last cook is not drawn until **Reload** (which cooks again), and the panel says so. The editing tools are shared with the Scene View and work on the rendered
    picture: click an object to select it, drag a gizmo handle to move, rotate or scale it (W, E, R), with the selection outlined, and the picture follows the drag.
    Material *asset* edits (the Material editor's graph) are not pushed into the view yet; that is a cook of the changed asset. Objects are picked and outlined by their models' real bounding boxes (read from the glTF files; a ray through

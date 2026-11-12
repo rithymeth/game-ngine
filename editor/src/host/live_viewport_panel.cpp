@@ -46,6 +46,7 @@ bool LiveViewportPanel::Start() {
     const std::vector<std::string> models = ModelPaths(document);
     const std::vector<u8> bytes = SaveSceneToMemory(document.GetWorld());
     const u64 revision = document.Revision();
+    const u64 structure = document.StructureRevision();
     std::filesystem::path cooked;
     std::string error;
     if (!CookForPreview(project, scene_.Path(), project.parent_path() / "Saved" / "LiveViewport", &cooked, &error, models) ||
@@ -56,6 +57,7 @@ bool LiveViewportPanel::Start() {
     note_.clear();
     cooked_models_ = models;
     last_revision_ = revision;
+    last_structure_ = structure;
     since_frame_ = 1.0f; // draw straight away
     since_reload_ = 0.0f;
     return true;
@@ -75,9 +77,20 @@ bool LiveViewportPanel::Advance(f32 dt) {
     if (document.Revision() != last_revision_ && since_reload_ >= reload_interval) {
         last_revision_ = document.Revision(); // taken before the copy, so an edit during it is seen next time
         since_reload_ = 0.0f;
-        std::string error;
-        if (viewport_.SetScene(SaveSceneToMemory(document.GetWorld()), &error)) reloaded = true;
-        else note_ = error;
+        const u64 structure = document.StructureRevision();
+        // Only Transforms moved (a gizmo drag, a nudge): put them into the running scene, which keeps the game's own state (physics, scripts) and
+        // costs a fraction of loading it again. Anything else, or a scene that no longer matches, loads it afresh.
+        if (structure == last_structure_ && viewport_.PatchTransforms(document.GetWorld())) {
+            reloaded = true;
+        } else {
+            std::string error;
+            if (viewport_.SetScene(SaveSceneToMemory(document.GetWorld()), &error)) {
+                reloaded = true;
+                last_structure_ = structure;
+            } else {
+                note_ = error;
+            }
+        }
     }
     if (!reloaded && since_frame_ < 1.0f / std::max(max_fps, 1.0f)) return false;
     const f32 elapsed = since_frame_;
