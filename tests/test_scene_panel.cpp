@@ -13,6 +13,8 @@
 #include "aether/templates/templates.h"
 #include "aether/scene/gameplay.h"
 #include "aether/scene/hierarchy.h"
+#include "aether/reflection/serialize.h"
+#include "aether/scene/prefab.h"
 #include "test_framework.h"
 
 #include <imgui.h>
@@ -1100,4 +1102,65 @@ AETHER_TEST(ModelBounds_AnEntitysBoxFollowsItsScaleAndRotation) {
     document.SetRotation(thing, Quaternion::FromAxisAngle(up, 3.14159265f * 0.5f), true);
     AETHER_CHECK(!hits_at(1.9f) && hits_at(0.4f));                                      // turned a quarter: 4 deep instead, 1 wide in x
     AETHER_CHECK(!RayHitsEntityBox(document, thing, EntityBounds(document, thing, nullptr), Vec3(0, 0, 10), Vec3(0, 0, 1), distance)); // pointing away from it
+}
+
+AETHER_TEST(PrefabPlacement_ADroppedPrefabIsOneUndoableInstanceLinkedToTheAsset) {
+    const stdfs::path content = Scratch("aether_prefab_place");
+    PrefabData crate; // a crate with a lid under it
+    PrefabEntity root_entity;
+    root_entity.id = 1;
+    EntityName crate_name;
+    crate_name.value = "Crate";
+    const std::string name_key = GetComponentInfo(GetComponentId<EntityName>()).reflected->name; // how a prefab file names the component
+    root_entity.components[name_key] = reflect::ToJson(crate_name);
+    PrefabEntity lid;
+    lid.id = 2;
+    lid.parent = 1;
+    EntityName lid_name;
+    lid_name.value = "Lid";
+    lid.components[name_key] = reflect::ToJson(lid_name);
+    crate.entities = {root_entity, lid};
+    stdfs::create_directories(content / "Prefabs");
+    AETHER_CHECK(SavePrefab(crate, content / "Prefabs" / "Crate.aprefab"));
+
+    AETHER_CHECK(IsPlaceablePrefab("Prefabs/Crate.aprefab") && IsPlaceablePrefab("A/B.APREFAB") && !IsPlaceablePrefab("Models/crate.glb") && !IsPlaceablePrefab("aprefab"));
+
+    SceneDocument document;
+    document.Commands().Clear();
+    const usize before = document.Entities().size();
+    std::string error;
+    const Entity placed = PlacePrefabAsset(document, content, "Prefabs/Crate.aprefab", Vec3(4, 0, 2), &error);
+    AETHER_CHECK(placed != kNullEntity && error.empty());
+    if (placed == kNullEntity) return;
+    AETHER_CHECK(document.Entities().size() == before + 2);                       // the root and the lid
+    AETHER_CHECK(NearVec(WorldPositionOf(document, placed), Vec3(4, 0, 2)));
+    AETHER_CHECK(document.Selection().size() == 1 && document.Selection()[0] == placed);
+    const PrefabInstance* instance = document.GetWorld().GetComponent<PrefabInstance>(placed);
+    AETHER_CHECK(instance != nullptr && !instance->source.guid.IsNull());          // still tied to the asset, so a change to it reaches this
+    Entity lid_entity = kNullEntity;
+    for (const Entity entity : document.Entities()) {
+        if (document.Name(entity) == "Lid") lid_entity = entity;
+    }
+    AETHER_CHECK(lid_entity != kNullEntity);
+    if (lid_entity == kNullEntity) return;
+    const Parent* parent = document.GetWorld().GetComponent<Parent>(lid_entity);
+    AETHER_CHECK(parent != nullptr && parent->parent == document.GetWorld().GetComponent<IdComponent>(placed)->guid);
+    AETHER_CHECK(document.GetWorld().HasComponent<PrefabLink>(lid_entity));
+
+    // One drop, one undo: both entities go, and redo brings both back, the lid still under its crate.
+    AETHER_CHECK(document.Undo() && !document.CanUndo());
+    AETHER_CHECK(document.Entities().size() == before);
+    AETHER_CHECK(document.Redo() && document.Entities().size() == before + 2);
+    Entity lid_again = kNullEntity;
+    for (const Entity entity : document.Entities()) {
+        if (document.Name(entity) == "Lid") lid_again = entity;
+    }
+    AETHER_CHECK(lid_again != kNullEntity && document.GetWorld().GetComponent<Parent>(lid_again) != nullptr);
+
+    // Something that is not a prefab, or not there, changes nothing and says why.
+    const usize now = document.Entities().size();
+    AETHER_CHECK(PlacePrefabAsset(document, content, "Models/crate.glb", Vec3(0, 0, 0), &error) == kNullEntity && !error.empty());
+    error.clear();
+    AETHER_CHECK(PlacePrefabAsset(document, content, "Prefabs/Missing.aprefab", Vec3(0, 0, 0), &error) == kNullEntity && !error.empty());
+    AETHER_CHECK(document.Entities().size() == now);
 }

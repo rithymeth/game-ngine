@@ -2,7 +2,9 @@
 
 #include "aether/scene/components.h"
 #include "aether/scene/gameplay.h"
+#include "aether/assets/asset_database.h"
 #include "aether/scene/hierarchy.h"
+#include "aether/scene/prefab_library.h"
 #include "content/content_drag.h"
 #include "core/snapping.h"
 
@@ -203,6 +205,36 @@ Entity PlaceModelAsset(SceneDocument& document, const std::string& content_path,
     document.Commands().EndTransaction();
     document.SetSelection({entity});
     return entity;
+}
+
+Entity PlacePrefabAsset(SceneDocument& document, const std::filesystem::path& content_root, const std::string& content_path, const Vec3& position, std::string* error) {
+    auto fail = [&](const std::string& why) {
+        if (error) *error = why;
+        return kNullEntity;
+    };
+    if (!IsPlaceablePrefab(content_path)) return fail(content_path + " is not a prefab.");
+    assets::AssetDatabase database(content_root);
+    database.Scan();
+    const assets::AssetRecord* record = database.FindByPath(content_path);
+    if (!record) return fail(content_path + " is not in the content folder.");
+    const assets::AssetGuid guid = record->guid;
+    PrefabLibrary library(database);
+    const PrefabData* flat = library.Flattened(guid);
+    if (!flat) return fail(library.LastError(guid).empty() ? "Could not read " + content_path : library.LastError(guid));
+    Transform placement;
+    placement.position = position;
+    ResolveReport report;
+    const Entity root = InstantiatePrefab(document.GetWorld(), document.Guids(), guid, *flat, &placement, &report);
+    if (root == kNullEntity) return fail("Could not place " + content_path);
+    const std::string name = std::filesystem::path(content_path).stem().string();
+    CommandStack& commands = document.Commands();
+    commands.BeginTransaction("Place " + name);
+    for (const Entity created : report.created_entities) {
+        if (document.GetWorld().IsAlive(created)) commands.Record(CreateEntityCommand::FromExisting(document.Context(), created, "Place " + name));
+    }
+    commands.EndTransaction();
+    document.SetSelection({root});
+    return root;
 }
 
 bool ClosestOnAxis(const Vec3& axis_origin, const Vec3& axis_direction, const Vec3& ray_origin, const Vec3& ray_direction, f32& distance) {
