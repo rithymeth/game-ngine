@@ -109,9 +109,9 @@ state, and so does an undo of several edits grouped into one step. An undo that 
 ## Material and texture changes on an object show in the game and in the Live Viewport
 
 A `MaterialParameters` component on an object (add it in the inspector, or from a Blueprint with Set Scalar, Vector or Texture Parameter) now changes how the player draws it: `BaseColor`, `Metallic`,
-`Roughness`, `Emissive` and `BaseColorTexture` (the content path of an image) replace the model's own value for that object alone, in the game as well as in the editor's Live Viewport, where an edit
+`Roughness`, `Emissive` and the textures `BaseColorTexture`, `NormalTexture`, `MetallicRoughnessTexture`, `OcclusionTexture` and `EmissiveTexture` (the content path of an image) replace the model's own value for that object alone, in the game as well as in the editor's Live Viewport, where an edit
 shows at once with no reload. A texture goes into the Live Viewport's cook when it is a file in the content folder (one that is not is left out, and **Reload** picks up a new one). Not done:
-the Material editor's own graphs (`.amat`) are not drawn by the player, so editing one there still shows only in the editor's preview; normal, metallic-roughness and occlusion textures are not overridable.
+the Material editor's own graphs (`.amat`) are not drawn by the player, so editing one there still shows only in the editor's preview. The metallic-roughness image multiplies Metallic and Roughness as in glTF (set both to 1 to let the image decide), and the emissive image multiplies the Emissive colour (give it one).
 
 ## Add and remove objects in the Live Viewport without rebuilding the world
 
