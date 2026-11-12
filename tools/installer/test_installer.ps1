@@ -15,10 +15,10 @@ function RunInstaller($exe, $arguments) {
     return $p.ExitCode
 }
 
-# The payload: bin\aether_editor.exe is a long-running console program (ping), so an upgrade has something to close.
+# The payload: bin\aether_editor_shell.exe is a long-running console program (ping), so an upgrade has something to close.
 $stage = Join-Path $work 'stage'
 New-Item -ItemType Directory -Path (Join-Path $stage 'bin'), (Join-Path $stage 'share') | Out-Null
-Copy-Item "$env:SystemRoot\System32\PING.EXE" (Join-Path $stage 'bin\aether_editor.exe')
+Copy-Item "$env:SystemRoot\System32\PING.EXE" (Join-Path $stage 'bin\aether_editor_shell.exe')
 Set-Content (Join-Path $stage 'share\readme.txt') 'payload'
 $zip = Join-Path $work 'aether-app.zip'
 Compress-Archive -Path "$stage\*" -DestinationPath $zip   # Windows PowerShell writes backslash entry names, as the real payload has
@@ -34,18 +34,18 @@ $flags = "/silent /noshortcuts /nolaunch `"/target:$target`""
 
 # 1. A fresh install.
 Check ((RunInstaller $exe $flags) -eq 0) 'a fresh install succeeds'
-Check (Test-Path (Join-Path $target 'bin\aether_editor.exe')) 'the editor is at bin\aether_editor.exe, not a file with a backslash in its name'
+Check (Test-Path (Join-Path $target 'bin\aether_editor_shell.exe')) 'the editor is at bin\aether_editor_shell.exe, not a file with a backslash in its name'
 Check (Test-Path (Join-Path $target 'share\readme.txt')) 'the folders from the payload are unpacked as folders'
 Check ((Get-Content (Join-Path $target 'INSTALLED_VERSION.txt')).Trim() -eq '0.0.0-test') 'the installed version is recorded'
 
 # 2. An upgrade while the old editor is running from the install folder: the installer closes it and replaces the files.
-$running = Start-Process -FilePath (Join-Path $target 'bin\aether_editor.exe') -ArgumentList '-t 127.0.0.1' -WindowStyle Hidden -PassThru
+$running = Start-Process -FilePath (Join-Path $target 'bin\aether_editor_shell.exe') -ArgumentList '-t 127.0.0.1' -WindowStyle Hidden -PassThru
 Start-Sleep -Seconds 1
 Check (-not $running.HasExited) 'the stand-in editor is running'
 Set-Content (Join-Path $target 'old-file.txt') 'from the previous installation'
 Check ((RunInstaller $exe $flags) -eq 0) 'an upgrade over a running editor succeeds'
 Check ($running.HasExited) 'the running editor was closed'
-Check ((Test-Path (Join-Path $target 'bin\aether_editor.exe')) -and -not (Test-Path (Join-Path $target 'old-file.txt'))) 'the old files are gone and the new ones are in'
+Check ((Test-Path (Join-Path $target 'bin\aether_editor_shell.exe')) -and -not (Test-Path (Join-Path $target 'old-file.txt'))) 'the old files are gone and the new ones are in'
 Check (@(Get-ChildItem -Path $work -Directory -Filter 'Aether.old-*').Count -eq 0) 'no old installation is left beside the new one'
 
 # 3. A file held open by something the installer cannot close. Either the installer cannot move the folder, fails and leaves the old
@@ -55,7 +55,7 @@ try {
     Set-Content (Join-Path $target 'marker.txt') 'old'
     $code = RunInstaller $exe $flags
 } finally { $held.Dispose() }
-$editorThere = Test-Path (Join-Path $target 'bin\aether_editor.exe')
+$editorThere = Test-Path (Join-Path $target 'bin\aether_editor_shell.exe')
 $markerThere = Test-Path (Join-Path $target 'marker.txt')
 Check ((($code -eq 1) -and $markerThere -and $editorThere) -or (($code -eq 0) -and -not $markerThere -and $editorThere)) "with a file held open the install either fails with the old installation intact or completes (exit $code)"
 Check ((RunInstaller $exe $flags) -eq 0) 'once the file is released the install succeeds'
@@ -68,7 +68,7 @@ $link = Join-Path ([Environment]::GetFolderPath('Programs')) 'Aether\Aether Edit
 Check (Test-Path $link) 'the Start menu shortcut exists'
 if (Test-Path $link) {
     $shell = New-Object -ComObject WScript.Shell
-    Check ($shell.CreateShortcut($link).TargetPath -eq (Join-Path $target 'bin\aether_editor.exe')) 'the Start menu shortcut starts the installed editor'
+    Check ($shell.CreateShortcut($link).TargetPath -eq (Join-Path $target 'bin\aether_editor_shell.exe')) 'the Start menu shortcut starts the installed editor'
 }
 Remove-Item $link -ErrorAction SilentlyContinue
 Remove-Item (Join-Path ([Environment]::GetFolderPath('DesktopDirectory')) 'Aether Editor.lnk') -ErrorAction SilentlyContinue
