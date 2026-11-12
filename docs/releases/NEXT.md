@@ -86,8 +86,8 @@ fine for small and medium scenes.
 
 ## Cameras are patched live too
 
-A camera is found in the world every frame, like a light, so editing a camera's settings and adding or removing an object with a camera no longer loads the scene again in the Live Viewport (the viewport uses its own camera for the picture, so the edit does not change what you see). Only a script and a
-character controller are still set up once when the game starts and still load the scene again.
+A camera is found in the world every frame, like a light, so editing a camera's settings and adding or removing an object with a camera no longer loads the scene again in the Live Viewport (the viewport uses its own camera for the picture, so the edit does not change what you see). A script is made and ended as its component comes and goes, so adding or removing one needs no reload either, and editing one restarts that script alone. Only a
+character controller and an audio source are still set up once when the game starts and still load the scene again.
 
 ## Physics bodies are added, changed and removed live in the Live Viewport
 

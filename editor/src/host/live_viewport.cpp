@@ -6,6 +6,7 @@
 #include "aether/scene/components.h"
 #include "aether/reflection/serialize.h"
 #include "aether/scene/hierarchy.h"
+#include "aether/scene/script_component.h"
 #include "aether/scene/prefab.h"
 #include "core/commands.h"
 #include "aether/renderer/components.h"
@@ -53,6 +54,7 @@ struct LiveViewport::Impl {
     u64 frames = 0;
     u64 reloads = 0;
     u64 patches = 0;
+    u64 script_restarts = 0;
     std::unordered_set<EntityGuid, GuidHash> known; // the identified entities the document had when the scene was last loaded or patched
     std::unordered_map<EntityGuid, Transform, GuidHash> synced; // their Transforms as the document had them then: a patch copies only the ones that changed since
     std::string scene;
@@ -74,7 +76,9 @@ u32 LiveViewport::Height() const { return impl_ && impl_->swap_chain ? impl_->sw
 u64 LiveViewport::FrameCount() const { return impl_ ? impl_->frames : 0; }
 u64 LiveViewport::SceneReloads() const { return impl_ ? impl_->reloads : 0; }
 u64 LiveViewport::PatchCount() const { return impl_ ? impl_->patches : 0; }
+u64 LiveViewport::ScriptRestarts() const { return impl_ ? impl_->script_restarts : 0; }
 usize LiveViewport::EntityCount() const { return impl_ && impl_->game ? impl_->game->GetWorld().EntityCount() : 0; }
+usize LiveViewport::ScriptInstanceCount() const { return impl_ && impl_->game ? impl_->game->Stats().script_instances : 0; }
 usize LiveViewport::PhysicsBodyCount() const { return impl_ && impl_->game ? impl_->game->Stats().physics_bodies : 0; }
 
 bool LiveViewport::SetScene(const std::vector<u8>& scene_bytes, std::string* error) {
@@ -131,13 +135,13 @@ bool IsPhysicsBodyComponent(ComponentId component) {
 
 bool LiveViewport::IsPatchable(ComponentId component) {
     // What the renderer reads each frame (a MaterialParameters per draw: player/src/material_overrides.h) and what the physics scene keeps in step with the world.
-    // A script, a character controller or an audio source is set up once when the game starts, so those need the scene loaded again. (A camera is found in the world
-    // every frame, like a light.)
+    // A script is made and unmade by the game's lifecycle as its component comes and goes (and an edit restarts it: see PatchScene); a character controller or an audio
+    // source is set up once when the game starts, so those need the scene loaded again. (A camera is found in the world every frame, like a light.)
     return IsPhysicsBodyComponent(component) || component == GetComponentId<Transform>() || component == GetComponentId<EntityName>() || component == GetComponentId<ModelRenderer>() ||
            component == GetComponentId<DirectionalLight>() || component == GetComponentId<PointLight>() || component == GetComponentId<SpotLight>() ||
            component == GetComponentId<SkyLight>() || component == GetComponentId<Wind>() || component == GetComponentId<WindZone>() ||
            component == GetComponentId<PostProcessVolume>() || component == GetComponentId<Decal>() || component == GetComponentId<MaterialParameters>() || component == GetComponentId<Parent>() ||
-           component == GetComponentId<Camera>();
+           component == GetComponentId<Camera>() || component == GetComponentId<ScriptComponent>();
 }
 
 namespace {
@@ -218,6 +222,11 @@ bool LiveViewport::PatchScene(const World& source, const std::vector<ComponentEd
     for (const EntityGuid& guid : removed) {
         const auto it = in_running.find(guid);
         if (it == in_running.end() || !running.IsAlive(it->second)) continue;
+        if (running.HasComponent<ScriptComponent>(it->second)) { // so its script ends properly (OnDestroy), which the lifecycle does only for a component taken off a living entity
+            running.RemoveComponent<ScriptComponent>(it->second);
+            impl_->game->GetLifecycle().Sync();
+            if (!running.IsAlive(it->second)) continue;
+        }
         impl_->game->Guids().Remove(guid);
         running.DestroyEntity(it->second);
     }
@@ -227,6 +236,15 @@ bool LiveViewport::PatchScene(const World& source, const std::vector<ComponentEd
         if (change.op == Op::Remove) {
             running.RemoveComponentRaw(change.target, change.component);
             continue;
+        }
+        // A script reads its settings once, when it is made: an edit takes the component off, lets the lifecycle end that instance (OnDisable, OnDestroy), and
+        // puts it back with the new settings, which the next tick starts again. Only that entity's script restarts.
+        if (change.op == Op::Copy && change.component == GetComponentId<ScriptComponent>()) {
+            running.RemoveComponentRaw(change.target, change.component);
+            impl_->game->GetLifecycle().Sync();
+            if (!running.IsAlive(change.target)) continue;
+            running.AddComponentRaw(change.target, change.component);
+            ++impl_->script_restarts;
         }
         if (change.op == Op::Add) running.AddComponentRaw(change.target, change.component);
         reflect::FromJson(*info.reflected, running.GetComponentRaw(change.target, change.component), change.value);

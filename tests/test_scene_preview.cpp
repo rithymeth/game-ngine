@@ -1155,6 +1155,69 @@ AETHER_TEST(LiveViewportPanel_AnEditDoesNotPutAFallingBodyBackWhereTheDocumentHa
     AETHER_CHECK(later.y > above_ground + 20.0f);
 }
 
+AETHER_TEST(LiveViewportPanel_AScriptIsMadeRestartedAndEndedWithoutReloadingTheScene) {
+    std::unique_ptr<gfx::rhi::IDevice> device = TryDevice();
+    if (!device) {
+        std::printf("    (no Vulkan device: install a driver, or Mesa's lavapipe, to run this)\n");
+        return;
+    }
+    if (!player::Game::HasScripting()) {
+        std::printf("    (no scripting in this build)\n");
+        return;
+    }
+    Context imgui;
+    const stdfs::path project = MakeProject("LiveScript");
+    ScenePanel scene(project.parent_path() / "Content");
+    AETHER_CHECK(scene.OpenScene("Scenes/Main.ascene", true));
+    LiveViewportPanel panel(*device, scene, [&] { return project; });
+    panel.width = 160;
+    panel.height = 90;
+    panel.reload_interval = 0.0f;
+    AETHER_CHECK(panel.Start());
+    SceneDocument& document = scene.Document();
+    auto settle = [&] { for (int i = 0; i < 4; ++i) panel.Advance(0.2f); };
+    settle();
+    const ComponentId script = GetComponentId<ScriptComponent>();
+    assets::AssetRef<assets::ScriptAsset> class_ref;
+    for (const Entity entity : document.Entities()) {
+        if (const ScriptComponent* component = document.GetWorld().GetComponent<ScriptComponent>(entity)) class_ref = component->script;
+    }
+    AETHER_CHECK(class_ref.IsSet());
+    if (!class_ref.IsSet()) return;
+    const u64 reloads = panel.Viewport().SceneReloads();
+    const usize instances = panel.Viewport().ScriptInstanceCount();
+    AETHER_CHECK(instances >= 1);
+    document.Commands().Clear();
+
+    // A new object with a script: made by the game's lifecycle, with no reload.
+    const Entity scripted = document.CreateEntity("Scripted");
+    AETHER_CHECK(document.AddComponent(scripted, script));
+    AETHER_CHECK(document.SetComponentField(scripted, script, "script", reflect::Any(class_ref), true));
+    AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().SceneReloads() == reloads);
+    settle();
+    AETHER_CHECK(panel.Viewport().SceneReloads() == reloads && panel.Viewport().ScriptInstanceCount() == instances + 1);
+
+    // Editing its settings restarts that script alone: still one instance of it, still no reload.
+    const u64 restarts = panel.Viewport().ScriptRestarts();
+    ScriptProperty speed;
+    speed.name = "speed";
+    speed.value = "9";
+    AETHER_CHECK(document.SetComponentField(scripted, script, "properties", reflect::Any(std::vector<ScriptProperty>{speed}), true));
+    AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().SceneReloads() == reloads && panel.Viewport().ScriptRestarts() == restarts + 1);
+    settle();
+    AETHER_CHECK(panel.Viewport().SceneReloads() == reloads && panel.Viewport().ScriptInstanceCount() == instances + 1);
+
+    // Taking the object away ends its script, and undo brings both back.
+    AETHER_CHECK(document.DestroyEntity(scripted));
+    AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().SceneReloads() == reloads);
+    settle();
+    AETHER_CHECK(panel.Viewport().SceneReloads() == reloads && panel.Viewport().ScriptInstanceCount() == instances);
+    AETHER_CHECK(document.Undo());
+    AETHER_CHECK(panel.Advance(0.2f) && panel.Viewport().SceneReloads() == reloads);
+    settle();
+    AETHER_CHECK(panel.Viewport().SceneReloads() == reloads && panel.Viewport().ScriptInstanceCount() == instances + 1);
+}
+
 #endif
 
 AETHER_TEST(GamePackage_AContentOverrideIsReadInPlaceOfTheArchive) {
