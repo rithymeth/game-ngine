@@ -36,6 +36,7 @@ class AssetDatabase;
 namespace aether::editor {
 
 class ExtensionRegistry;
+class ScenePanel;
 class EditorScripts;
 
 class EditorWorkspace {
@@ -85,6 +86,13 @@ public:
 
     // The tool's contents, into the current window.
     void DrawTool(usize tool);
+    // The open scene (the Scene tool's document and actions), for a host's own menus and shortcuts.
+    ScenePanel& Scene();
+    // The scene's File items (New, Open, Save, Save As) and an "Edit" menu (Undo, Redo, Duplicate, Delete): the
+    // host puts the first inside its "File" menu and calls the second inside its menu bar. Each switches the hub to
+    // the Scene tool so the result (or a refusal: "unsaved changes") is in view.
+    void DrawSceneFileItems();
+    void DrawEditMenu();
     // A "Tools" menu: each category's tools; picking one pops it out.
     void DrawToolsMenu();
     // A window with every tool. `open` (optional) gets the title-bar X.
