@@ -4971,6 +4971,7 @@
   bool ParseGameManifest(std::string_view text,GameManifest&out,std::string*error=nullptr)
   bool ReadContent(const std::string&path,std::vector<u8>&out,std::string*error=nullptr)const
   bool ReadContentLocalized(const std::string&path,const std::string&language,std::vector<u8>&out,std::string*error=nullptr)const
+  bool RequestScene(const std::string&path)
   bool StartAudioOutput(std::string*error=nullptr)
   bool Suspended()const
   const GameManifest&Manifest()const
@@ -5021,6 +5022,7 @@
   void AddQuestsStage()
   void ApplyAudioSettings()
   void ApplyKitStage(SystemDesc&system,const std::string&name)const
+  void ApplyPendingScene()
   void ApplyVirtualControls()
   void BeginPlay()
   void BuildFrame()
@@ -5767,6 +5769,7 @@
   type struct EventData
   type struct Instance
   type struct ReloadResult
+  type struct SceneHooks
   type struct ScriptError
   type struct SeenError
   type struct Timer
@@ -5795,6 +5798,8 @@
   static ScriptClassInfo DescribeSource(LuauHost&host,const std::string&source,const std::string&name,int*ref=nullptr)
   static ScriptError Parse(const std::string&text)
   static SourceLoader DatabaseLoader(const assets::AssetDatabase&database)
+  std::function<bool(const std::string&)>request
+  std::function<std::string()>current
   std::string DescribeEntity(Entity entity)const
   u32 Connect(u32 event,int function_ref)
   u32 InputEvent(const std::string&action,input::ActionEvent event)
@@ -5806,6 +5811,7 @@
   usize TimerCount()const
   void BindInput(input::InputSystem*input)
   void BindPhysicsScene(::aether::PhysicsScene*scene)
+  void BindSceneHooks(SceneHooks hooks)
   void ClearErrors()
   void Create(Entity entity)
   void Destroy(Entity entity)

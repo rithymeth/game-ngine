@@ -887,6 +887,7 @@ void Game::StartRuntime() {
         }, false);
     runtime_->scripts->Register(*lifecycle_);
     runtime_->scripts->BindInput(&input_);
+    runtime_->scripts->BindSceneHooks({[this](const std::string& path) { return RequestScene(path); }, [this]() { return scene_; }});
 #if AETHER_GAME_PHYSICS
     runtime_->scripts->BindPhysicsScene(physics_ ? physics_->scene.get() : nullptr);
     if (physics_ && physics_->scene) {
@@ -1471,7 +1472,36 @@ void Game::OnPlatformEvent(const platform::LifecycleMessage& message) {
     }
 }
 
+bool Game::RequestScene(const std::string& path) {
+    std::vector<u8> bytes;
+    if (!package_.ReadContent(path, bytes)) return false;
+    pending_scene_ = path;
+    return true;
+}
+
+// The scene a script asked for, at a point where nothing of the old one is running. It is read and parsed first (into a scratch world), because
+// LoadScene ends the current runtime before it parses: a scene that cannot load must not leave the game with no scripts and nothing to run.
+void Game::ApplyPendingScene() {
+    const std::string path = std::move(pending_scene_);
+    pending_scene_.clear();
+    std::vector<u8> bytes;
+    std::string error;
+    const auto refuse = [&](const std::string& why) {
+        warnings_.push_back("Scene.Load(\"" + path + "\"): " + why + "; " + scene_ + " keeps running");
+        AETHER_LOG_WARN("Player", "%s", warnings_.back().c_str());
+    };
+    if (!package_.ReadContent(path, bytes, &error)) return refuse("can't read it" + (error.empty() ? std::string() : " (" + error + ")"));
+    World scratch;
+    const auto first = std::find_if(bytes.begin(), bytes.end(), [](u8 c) { return c != ' ' && c != '\n' && c != '\r' && c != '\t'; });
+    const bool is_json = first != bytes.end() && *first == '{';
+    if (!(is_json ? LoadSceneJsonFromMemory(scratch, bytes, path) : LoadSceneFromMemory(scratch, bytes, path))) return refuse("it does not parse as a scene");
+    const bool was_playing = lifecycle_ && lifecycle_->IsPlaying();
+    if (!LoadScene(path, &error)) return refuse(error);
+    if (was_playing) BeginPlay();
+}
+
 FrameContext Game::Tick(f32 dt) {
+    if (!pending_scene_.empty()) ApplyPendingScene();
     if (!loop_) BuildFrame();
     if (platform_lifecycle_->Suspended()) {
         // In the background the game stands still: no time passes and input is left alone.
