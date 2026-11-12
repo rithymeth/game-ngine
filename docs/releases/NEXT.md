@@ -16,6 +16,10 @@ Recorded rather than patched: raising the tolerance to 4x would hide it, and rai
 everything under 200 us. The honest options are a per-row tolerance, or a baseline taken on the same runner, and both are bigger
 than a fix made at a tag.
 
+## Scripts can play sounds
+
+`Audio.PlaySound2D(cue [, volume_db, pitch])`, `Audio.PlaySoundAtLocation(cue, x, y, z [, volume_db, pitch])`, `Audio.SetBusVolume(bus, volume_db [, fade])` and `Audio.StopAll()` act on the game's active audio system, the one the Blueprint audio nodes use. Playing returns whether the cue exists and started; with no audio system running the calls return false and do nothing.
+
 ## Camera shake
 
 `Camera.Shake(amount)` from a script adds trauma (0 to 1; 0.2 a bump, 0.5 a hit, 1 an explosion) to the player's camera shake. The shake grows with the square of the trauma and drains away; it is a smooth deterministic wobble in position and pitch/yaw/roll. The game applies it to the active camera after each frame's scripts and takes it off before the next, so scripts that set the camera are undisturbed and the renderer, shadows and listener all see the shaken camera. C++: `player::CameraShake` (`Game::Shake()`), with `Settings` for amplitude, angle, frequency and decay.

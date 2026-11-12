@@ -63,6 +63,9 @@ struct ScriptError {
 //                                     ends with the swap (scripts, timers, events); what must outlive it goes in SaveGames.
 //                                     With `spawn` (the name of an entity in the new scene), the player (the entity with a CharacterMovement) starts
 //                                     where that entity is, facing as it faces: a door's far side, instead of the scene's own start.
+//   Audio.PlaySound2D(cue [, volume_db, pitch])                 -> true if the cue exists and started (a sound cue's asset path, such as "Audio/Pickup.acue")
+//   Audio.PlaySoundAtLocation(cue, x, y, z [, volume_db, pitch]) -> the same, heard from that place (3D cues are attenuated and panned)
+//   Audio.SetBusVolume(bus, volume_db [, fade_seconds])         -> true if the bus exists;  Audio.StopAll()
 //   Camera.Shake(amount)           -> adds trauma 0..1 to the camera shake (0.2 a bump, 0.5 a hit, 1 an explosion); the shake grows with its square and
 //                                     drains away. It moves the active camera after the scripts have run, so a script that sets the camera is not disturbed.
 //   Scene.Current()                -> the path of the scene that is running
