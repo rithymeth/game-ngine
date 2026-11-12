@@ -196,18 +196,18 @@ bool GroundPoint(const Mat4& view_projection, const ImVec2& origin, const ImVec2
     return true;
 }
 
-Entity PlaceModelAsset(SceneDocument& document, const std::string& content_path, const Vec3& position) {
+Entity PlaceModelAsset(SceneDocument& document, const std::string& content_path, const Vec3& position, Entity parent) {
     if (!IsPlaceableModel(content_path)) return kNullEntity;
     const std::string name = std::filesystem::path(content_path).stem().string();
     document.Commands().BeginTransaction("Place " + name);
-    const Entity entity = document.CreateEntity(name.empty() ? "Model" : name, SceneEntityKind::Model, content_path);
+    const Entity entity = document.CreateEntity(name.empty() ? "Model" : name, SceneEntityKind::Model, content_path, parent);
     document.SetPosition(entity, position, true);
     document.Commands().EndTransaction();
     document.SetSelection({entity});
     return entity;
 }
 
-Entity PlacePrefabAsset(SceneDocument& document, const std::filesystem::path& content_root, const std::string& content_path, const Vec3& position, std::string* error) {
+Entity PlacePrefabAsset(SceneDocument& document, const std::filesystem::path& content_root, const std::string& content_path, const Vec3& position, std::string* error, Entity parent) {
     auto fail = [&](const std::string& why) {
         if (error) *error = why;
         return kNullEntity;
@@ -226,6 +226,9 @@ Entity PlacePrefabAsset(SceneDocument& document, const std::filesystem::path& co
     ResolveReport report;
     const Entity root = InstantiatePrefab(document.GetWorld(), document.Guids(), guid, *flat, &placement, &report);
     if (root == kNullEntity) return fail("Could not place " + content_path);
+    if (parent != kNullEntity && document.GetWorld().IsAlive(parent)) { // under that entity: the Parent is on the root before it is recorded, so it is one create, not a create and a reparent
+        if (const IdComponent* parent_id = document.GetWorld().GetComponent<IdComponent>(parent)) document.GetWorld().AddComponent(root, Parent{parent_id->guid});
+    }
     const std::string name = std::filesystem::path(content_path).stem().string();
     CommandStack& commands = document.Commands();
     commands.BeginTransaction("Place " + name);

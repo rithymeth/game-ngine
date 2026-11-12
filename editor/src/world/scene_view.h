@@ -65,13 +65,15 @@ bool GroundPoint(const Mat4& view_projection, const ImVec2& origin, const ImVec2
 
 // Puts a model from the content folder into the scene as an entity named after the file with a ModelRenderer at `position`, selects it,
 // and records the whole placement as one undoable step. Returns kNullEntity (and changes nothing) for a path that is not a glTF/GLB model.
-Entity PlaceModelAsset(SceneDocument& document, const std::string& content_path, const Vec3& position);
+// With `parent`, the entity is created under it (`position` is then relative to the parent: Vec3(0) puts it at the parent's origin).
+Entity PlaceModelAsset(SceneDocument& document, const std::string& content_path, const Vec3& position, Entity parent = kNullEntity);
 
 // Puts an instance of a prefab asset (`content_path`, a .aprefab under `content_root`) into the scene with its root at `position`, selects the root,
 // and records the whole instance (the root and every entity under it) as one undoable step. The instance stays linked to the prefab, so later
 // changes to the prefab reach it. Returns the root, or kNullEntity (and changes nothing, with the reason in `error`) for a path that is not a prefab
 // asset of that content folder, or one that cannot be read or flattened. Reads the content folder's asset database (a scan, which writes .ameta files for assets that have none).
-Entity PlacePrefabAsset(SceneDocument& document, const std::filesystem::path& content_root, const std::string& content_path, const Vec3& position, std::string* error = nullptr);
+Entity PlacePrefabAsset(SceneDocument& document, const std::filesystem::path& content_root, const std::string& content_path, const Vec3& position, std::string* error = nullptr,
+                        Entity parent = kNullEntity);
 
 // X, Y and Z are the arrows; PlaneXY, PlaneXZ and PlaneYZ are the small squares (Move only) that slide the entity in that plane.
 enum class GizmoAxis { None, X, Y, Z, PlaneXY, PlaneXZ, PlaneYZ };

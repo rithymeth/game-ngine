@@ -43,8 +43,7 @@ generated `AetherConfig.cmake` requires it -- which is why the installer builds 
 
 Dragging a prefab (`.aprefab`) from the Content Browser into the Scene View places an instance of it on the ground under the mouse, like a model: the crate and everything under it, as
 one undo step, selected, and still linked to the prefab asset (so later changes to the prefab reach it). The toolbar hint now says models and prefabs. A prefab that cannot be read, or
-a path that is not in the content folder, says why and changes nothing. A placed instance takes the drop position only (not the prefab's own rotation or scale), and dropping onto the
-hierarchy is not there yet (the Live Viewport takes drops too: see the next section).
+a path that is not in the content folder, says why and changes nothing. A placed instance takes the drop position only (not the prefab's own rotation or scale), and the Live Viewport and the hierarchy take drops too (see the next two sections).
 
 ## Drag across a plane
 
@@ -78,6 +77,11 @@ undo) reloads it a moment later (`SceneDocument::Revision` says when it changed;
 project's scene file. The game's world is frozen by default so the view is the scene as authored (**Run game** lets physics and scripts run); a model added
 since the last cook is said in the toolbar and appears after **Reload**. A move, a light edit or adding and removing objects is patched in place (see the next three sections); any other change reloads the whole scene (the world, physics and scripts start over), which is
 fine for small and medium scenes.
+
+## Drop a model or a prefab onto the hierarchy
+
+Drag a model or a prefab from the Content Browser onto an entity in the hierarchy and it is placed under that entity, at its origin (so it follows the entity when it moves), as one undo step; onto the "entities" heading and it is placed at
+the root, at the scene's origin. It is a single create, so in the Live Viewport it appears without the scene being loaded again.
 
 ## Drop a model or a prefab into the Live Viewport
 
