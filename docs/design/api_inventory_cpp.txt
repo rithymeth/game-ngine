@@ -5042,7 +5042,7 @@
   ~Game()
 [player/include/aether/player/graph_material.h] experimental
   type struct GraphMaterialReport
-  GraphMaterialReport CompileGraphMaterial(const GamePackage&package,const std::string&path)
+  GraphMaterialReport CompileGraphMaterial(const GamePackage&package,const std::string&path,std::string*shader=nullptr)
 [player/include/aether/player/scene_renderer.h] experimental
   type class SceneRenderer
   type struct GpuTimings
@@ -5054,7 +5054,7 @@
   SceneRenderer(const SceneRenderer&)=delete
   VirtualShadowStats VirtualShadows()const
   public:SceneRenderer(gfx::rhi::IDevice&device,gfx::rhi::ISwapChain&swap_chain,const GamePackage&package)
-  std::string SceneShaderSource(bool with_frame_data,bool hdr_target=false,bool ray_traced_shadows=false)
+  std::string SceneShaderSource(bool with_frame_data,bool hdr_target=false,bool ray_traced_shadows=false,const std::string&graph_hlsl=
   void Draw(Game&game,gfx::rhi::ICommandList&commands,u32 frame_index)
   void SetBloom(bool enabled)
   void SetDrawParticles(bool draw)

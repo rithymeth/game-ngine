@@ -13,7 +13,9 @@ namespace aether::player {
 // shader, and with the frame-constants block when `with_frame_data` (what devices that support frame constants get). Here so a test can
 // compile the real source with glslang. With `hdr_target` the pixel shader writes linear light for the HDR scene colour target (the
 // post pass tone maps it) instead of tone mapping and encoding for the back buffer itself.
-std::string SceneShaderSource(bool with_frame_data, bool hdr_target = false, bool ray_traced_shadows = false);
+// With `graph_hlsl` (a drawable material graph's include, graph_material.h) the surface's base colour, metallic, roughness, occlusion and emissive come from
+// the graph's EvaluateMaterial instead of the model's own factors and textures.
+std::string SceneShaderSource(bool with_frame_data, bool hdr_target = false, bool ray_traced_shadows = false, const std::string& graph_hlsl = {});
 
 // Draws the current game's cooked ModelRenderer entities through the same
 // cross-API RHI used by the renderer demos. The player owns this alongside
