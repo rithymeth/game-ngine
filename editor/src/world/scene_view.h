@@ -46,6 +46,10 @@ LocalBounds EntityBounds(const SceneDocument& document, Entity entity, const Mod
 // Where the mouse ray first meets an entity's box (the model's real bounds, placed by its world transform): the distance along the ray, false for a miss.
 bool RayHitsEntityBox(const SceneDocument& document, Entity entity, const LocalBounds& box, const Vec3& ray_origin, const Vec3& ray_direction, f32& distance);
 
+// Where the mouse ray first meets an entity's actual triangles (`triangles`, the model's, placed by the entity's world transform, either face of each): the distance along
+// the ray, in the same units as RayHitsEntityBox's, false for a miss. So an L-shaped model is not hit in the empty corner of its box.
+bool RayHitsEntityMesh(const SceneDocument& document, Entity entity, const ModelTriangles& triangles, const Vec3& ray_origin, const Vec3& ray_direction, f32& distance);
+
 // The entity under `mouse`. With `bounds`, an entity whose model's box the mouse ray passes through is picked, the nearest along the ray first (so a big
 // model is selected by clicking anywhere on it, and one in front hides one behind). Otherwise, and for entities with no model (a camera, a light, an empty),
 // the one whose origin is nearest `mouse` within `radius` pixels (the nearer to the camera on a tie within 2 pixels). kNullEntity if none.

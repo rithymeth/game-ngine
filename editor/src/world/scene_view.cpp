@@ -123,6 +123,40 @@ bool RayHitsEntityBox(const SceneDocument& document, Entity entity, const LocalB
     return true;
 }
 
+bool RayHitsEntityMesh(const SceneDocument& document, Entity entity, const ModelTriangles& triangles, const Vec3& ray_origin, const Vec3& ray_direction, f32& distance) {
+    Mat4 inverse;
+    if (!ComputeWorldTransform(document.GetWorld(), document.Guids(), entity).TryInverse(inverse)) return false;
+    const Vec4 o4 = inverse * Vec4(ray_origin.x, ray_origin.y, ray_origin.z, 1.0f);
+    const Vec4 d4 = inverse * Vec4(ray_direction.x, ray_direction.y, ray_direction.z, 0.0f); // not renormalised, so the distance is along the world ray, as for the box
+    const Vec3 o(o4.x, o4.y, o4.z), d(d4.x, d4.y, d4.z);
+    f32 nearest = std::numeric_limits<f32>::max();
+    bool hit = false;
+    const usize count = triangles.TriangleCount();
+    for (usize t = 0; t < count; ++t) { // Moller-Trumbore, both faces
+        const Vec3& a = triangles.positions[triangles.indices[t * 3]];
+        const Vec3& b = triangles.positions[triangles.indices[t * 3 + 1]];
+        const Vec3& c = triangles.positions[triangles.indices[t * 3 + 2]];
+        const Vec3 edge1 = b - a, edge2 = c - a;
+        const Vec3 p = d.Cross(edge2);
+        const f32 determinant = edge1.Dot(p);
+        if (std::fabs(determinant) < 1e-12f) continue; // a sliver, or the ray runs along the triangle
+        const f32 inverse_determinant = 1.0f / determinant;
+        const Vec3 from_a = o - a;
+        const f32 u = from_a.Dot(p) * inverse_determinant;
+        if (u < 0.0f || u > 1.0f) continue;
+        const Vec3 q = from_a.Cross(edge1);
+        const f32 v = d.Dot(q) * inverse_determinant;
+        if (v < 0.0f || u + v > 1.0f) continue;
+        const f32 along = edge2.Dot(q) * inverse_determinant;
+        if (along >= 0.0f && along < nearest) {
+            nearest = along;
+            hit = true;
+        }
+    }
+    if (hit) distance = nearest;
+    return hit;
+}
+
 Entity PickEntity(const SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, f32 radius,
                   const ModelBoundsCache* bounds) {
     if (size.x < 1.0f || size.y < 1.0f) return kNullEntity;
@@ -137,10 +171,14 @@ Entity PickEntity(const SceneDocument& document, const SceneViewCamera& camera, 
             LocalBounds known;
             if (!bounds->Get(renderer->asset_path, known)) continue; // no box for it: found by its origin below
             f32 distance = 0.0f;
-            if (RayHitsEntityBox(document, entity, known, ray_origin, ray_direction, distance) && distance < box_distance) {
-                box_distance = distance;
-                box_hit = entity;
+            if (!RayHitsEntityBox(document, entity, known, ray_origin, ray_direction, distance) || distance >= box_distance) continue; // the mesh is never nearer than its box
+            // Through the box is not yet on the model: with its triangles, the ray has to meet one (and then that is the distance), so the gap in a model's
+            // shape, or the empty corner of its box, is not clicked.
+            if (const ModelTriangles* shape = bounds->Triangles(renderer->asset_path)) {
+                if (!RayHitsEntityMesh(document, entity, *shape, ray_origin, ray_direction, distance) || distance >= box_distance) continue;
             }
+            box_distance = distance;
+            box_hit = entity;
         }
     }
     const Mat4 vp = camera.ViewProjection(size.x / size.y);
