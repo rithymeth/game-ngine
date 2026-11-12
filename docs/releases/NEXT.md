@@ -78,6 +78,12 @@ project's scene file. The game's world is frozen by default so the view is the s
 since the last cook is said in the toolbar and appears after **Reload**. A move, a light edit or adding and removing objects is patched in place (see the next three sections); any other change reloads the whole scene (the world, physics and scripts start over), which is
 fine for small and medium scenes.
 
+## Drop an asset onto a path field in the inspector
+
+A field that holds the path of an asset can take it from the Content Browser: drop a picture on a decal's texture, a sky light's environment image or a material parameter's texture, or a material (`.amat`, `.amati`) on a
+material parameter's material, and the path is set as one finished edit (one undo step). A field takes only the kinds it names (a model dropped on a texture does nothing, and a field that is plain text, such as an entity's name,
+takes nothing). A model on a model reference is not there yet. Developers: `Meta::asset_extensions` on a reflected string field says what it takes.
+
 ## Drop a model or a prefab onto the hierarchy
 
 Drag a model or a prefab from the Content Browser onto an entity in the hierarchy and it is placed under that entity, at its origin (so it follows the entity when it moves), as one undo step; onto the "entities" heading and it is placed at

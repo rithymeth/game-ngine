@@ -1,5 +1,6 @@
 #include "reflected_inspector.h"
 
+#include "content/content_drag.h"
 #include "extensions.h"
 
 #include <imgui.h>
@@ -29,6 +30,7 @@ bool DrawAssetRef(const TypeInfo& type, void* ptr, struct DrawContext& ctx);
 
 struct DrawContext {
     InspectResult result;
+    bool read_only = false; // the field being drawn is shown but not editable
     const FieldInfo* top_level_field = nullptr; // attributed as the changed field
     const InspectOptions* options = nullptr;
 };
@@ -163,12 +165,35 @@ void DrawStructFields(const TypeInfo& type, void* object, DrawContext& ctx, bool
             ImGui::BeginDisabled();
         }
         ImGui::SetNextItemWidth(-FLT_MIN);
+        ctx.read_only = read_only;
         DrawValue(*field.type, field.Ptr(object), field.meta, ctx);
+        ctx.read_only = false;
         if (read_only) {
             ImGui::EndDisabled();
         }
         ImGui::PopID();
     }
+}
+
+// An asset dragged from the Content Browser onto a path field that says what it takes (Meta::asset_extensions): the path goes in, as one complete edit. A field
+// that is read only, one that takes other kinds, and anything dragged that is not an asset path leave it alone (and the field is not highlighted as a target).
+void AcceptAssetDrop(DrawContext& ctx, const TypeInfo& type, void* ptr, const reflect::Meta& meta) {
+    if (meta.asset_extensions == nullptr || ctx.read_only || !ImGui::BeginDragDropTarget()) return;
+    const ImGuiPayload* dragged = ImGui::GetDragDropPayload();
+    if (dragged != nullptr && dragged->IsDataType(kContentPathPayload) && dragged->Data != nullptr && HasAssetExtension(static_cast<const char*>(dragged->Data), meta.asset_extensions)) {
+        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kContentPathPayload)) {
+            const std::string path(static_cast<const char*>(payload->Data));
+            if (type.kind == TypeKind::String) {
+                *static_cast<std::string*>(ptr) = path;
+            } else {
+                std::memset(ptr, 0, type.size);
+                std::memcpy(ptr, path.data(), std::min<usize>(path.size(), type.size > 0 ? type.size - 1 : 0));
+            }
+            if (ctx.result.changed_field == nullptr) ctx.result.changed_field = ctx.top_level_field;
+            ctx.result.committed = true; // a drop is a complete edit
+        }
+    }
+    ImGui::EndDragDropTarget();
 }
 
 void DrawValue(const TypeInfo& type, void* ptr, const reflect::Meta& meta, DrawContext& ctx) {
@@ -205,9 +230,11 @@ void DrawValue(const TypeInfo& type, void* ptr, const reflect::Meta& meta, DrawC
     }
     case TypeKind::String:
         NoteEdit(ctx, ImGui::InputText("##v", static_cast<std::string*>(ptr)));
+        AcceptAssetDrop(ctx, type, ptr, meta);
         return;
     case TypeKind::FixedString:
         NoteEdit(ctx, ImGui::InputText("##v", static_cast<char*>(ptr), type.size));
+        AcceptAssetDrop(ctx, type, ptr, meta);
         return;
     case TypeKind::Enum: {
         const TypeInfo& underlying = *type.underlying;
