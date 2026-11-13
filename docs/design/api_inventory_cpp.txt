@@ -7324,6 +7324,7 @@
 [editor/src/core/commands.h] internal-tooling
 [editor/src/core/editor_document.h] internal-tooling
 [editor/src/core/editor_settings.h] internal-tooling
+[editor/src/core/file_dialog.h] internal-tooling
 [editor/src/core/json_edit.h] internal-tooling
 [editor/src/core/notifications.h] internal-tooling
 [editor/src/core/package_runner.h] internal-tooling

@@ -5,6 +5,7 @@
 add_library(aether_editor_core STATIC
     command_stack.cpp
     editor_document.cpp
+    file_dialog.cpp
     notifications.cpp
     editor_settings.cpp
     scene_autosave.cpp
@@ -18,3 +19,7 @@ add_library(aether_editor_core STATIC
 )
 target_include_directories(aether_editor_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_link_libraries(aether_editor_core PUBLIC Aether::Engine Aether::Sequencer)
+if (WIN32)
+    # The native open/save dialog is the shell's common item dialog (IFileDialog).
+    target_link_libraries(aether_editor_core PRIVATE ole32 shell32)
+endif ()

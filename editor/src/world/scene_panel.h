@@ -6,6 +6,7 @@
 #include <array>
 #include <filesystem>
 #include <functional>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -13,6 +14,8 @@
 namespace aether::editor {
 
 class CommandRegistry;
+class FileDialog;
+struct FileDialogOptions;
 
 // The entities of a scene as a tree, for the hierarchy: who is directly under whom (by the Parent component), each level by name and then by creation order. Built once from a document
 // and read many times, so drawing a thousand entities does not scan the scene for every row.
@@ -67,6 +70,15 @@ public:
     // must outlive the panel; with none set the panel has no key handling.
     void SetCommands(const CommandRegistry* commands) { commands_ = commands; }
 
+    // The native file picker the toolbar's "..." button and the File menu's Open and Save As use. Not owned; without
+    // one, or where the platform has none, those actions keep their typed-path behaviour.
+    void SetFileDialog(FileDialog* dialog) { dialog_ = dialog; }
+
+    // The scene chosen in the native picker, as the path box would hold it (relative to the content folder when it is
+    // under it). An empty string is a cancel; no value at all means there is no picker here, so the caller falls back
+    // to the typed path rather than reporting a cancel. `save` asks for a name to write instead of a file to read.
+    std::optional<std::string> PickSceneFile(bool save);
+
     // The actions the toolbar and the hierarchy run, public so that a test (and a command palette) can run them without clicking. Each one that would discard unsaved changes is
     // refused with a status line unless `discard` is true (the toolbar asks first and then passes true).
     bool NewScene(bool discard = false);
@@ -92,6 +104,8 @@ private:
     enum class Pending : u8 { None, New, Open };
 
     std::filesystem::path Resolve(const std::string& path) const;
+    FileDialogOptions SceneFileDialogOptions(bool save) const;
+    std::string DisplayPath(const std::filesystem::path& absolute) const;
     void DrawToolbar();
     void DrawHierarchy();
     void DrawNode(Entity entity, const HierarchyIndex& index);
@@ -103,6 +117,7 @@ private:
 
     SceneDocument document_;
     const CommandRegistry* commands_ = nullptr;
+    FileDialog* dialog_ = nullptr;
     std::filesystem::path content_root_;
     ModelBoundsCache bounds_;
     std::filesystem::path pending_overwrite_; // the file a save was just refused for, so that asking again by name can confirm it

@@ -455,6 +455,13 @@ will happen) before release. Invalid targets show a "no" cursor.
 - The quit prompt asks the active document through the `EditorDocument` contract (kind, name,
   `IsDirty()`), not the Scene panel directly. A panel may front `Save()` with its own naming
   defaults and overwrite check -- the Scene toolbar does -- but the document is what changes.
+- Opening and saving a scene can go through the system's own file picker: *File > Open Scene* and
+  *File > Save Scene As* use it, and the Scene toolbar has a "..." button for Open. A picked file
+  under the content folder is shown there by its scene name; one from elsewhere keeps its absolute
+  path. The picker is `core/file_dialog.{h,cpp}` (`IFileDialog` on Windows, zenity or kdialog on
+  Linux); where the platform has none, the toolbar's typed path is still the way, so the commands
+  fall back to it instead of doing nothing. The toolbar's own *Save As* stays typed, for renaming
+  without a dialog.
 
 ---
 

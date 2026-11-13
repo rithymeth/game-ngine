@@ -77,7 +77,7 @@ as well. The verdicts are a judgement from the source audit; the evidence column
 | Theme and UI scale | Theme, UI scale, DPI awareness | Skin, UI scaling | Editor themes, editor scale | One dark theme; `ApplyEditorTheme(font_size)` has no caller-supplied setting | `editor/src/ui/editor_theme.cpp:33`, `main.cpp:189` | Missing |
 | Shortcut mapping | Remappable, conflict reporting | Shortcuts manager | Remappable input map/editor shortcuts | Hardcoded keys; extensions parse chord strings; no conflict view | `editor/src/ui/extensions.cpp:225-261` | Missing |
 | Command palette | Command palette in recent versions | Search (Ctrl+K) | Quick Open | Implemented, opened by no key or menu item | `editor/src/workspace/editor_workspace.h:107`, `editor_workspace.cpp:1194` | Missing |
-| Native file dialogs | Native open/save/import | Native | Native | Typed paths only; no `GetOpenFileName`/`IFileDialog` anywhere in `editor/` | `editor/src/world/scene_panel.cpp:202`, `:209-224` | Missing |
+| Native file dialogs | Native open/save/import | Native | Native | Open Scene, Save Scene As and the toolbar's "..." use the system picker (`IFileDialog`; zenity/kdialog on Linux); the typed path remains the fallback | `editor/src/core/file_dialog.cpp`, `editor/src/world/scene_panel.cpp:74-100` | Partial |
 | Unsaved work on exit | Prompt per document | Prompt; play-mode changes discarded with warning | Prompt | Quit immediate; only New/Open prompt | `editor/shell/main.cpp:78`, `scene_panel.cpp:70-96` | Missing |
 | Autosave/recovery | Autosave and recovery | Autosave and recovery | Autosave backups | `SaveAutosave`/`LoadAutosave` exist and are unused | `editor/src/core/scene_document.cpp:202-226` | Missing |
 | Status bar | Project, source control, progress, PIE state | Scene, play state, console counts | Debug state, network, version | Backend name, frame time, docking hint | `editor/shell/main.cpp:92-97` | Partial |
@@ -237,7 +237,19 @@ row, so a repeating autosave warning is one line. The Messages tool lists newest
 selects it in the scene, an asset or file opens its folder in the Content Browser; drawing the list marks it read.
 `EditorWorkspace::Update` advances the clock, save/autosave/recovery results and failures post, and clicking a toast opens
 Messages. Tests: history and read state, lifetime per severity, repeat grouping, age and label text, both halves drawn
-headless, and a workspace whose Messages tool reads the same service. Remaining in this stage: native dialogs.
+headless, and a workspace whose Messages tool reads the same service.
+
+Done so far (2026-11-14): native open/save dialogs behind one interface. `FileDialog` (`editor/src/core/file_dialog.{h,cpp}`)
+takes a title, a start path, a suggested save name, file-type filters and save-or-open, and returns the absolute path or
+nothing; `Available()` says whether the platform has a picker at all, which is what lets a caller fall back to typing a
+path instead of mistaking "no picker" for "cancelled". Windows uses the shell's common item dialog (`IFileDialog`,
+`FOS_FILEMUSTEXIST`/`FOS_OVERWRITEPROMPT`, filters from the options); Linux runs zenity or kdialog without a shell, so a
+cancelled dialog is not retried on the other picker. `File > Open Scene` and `File > Save Scene As` and the Scene
+toolbar's "..." button go through it, and a picked file under the content folder is shown there by its scene name. The
+save picker already asked about replacing a file, so the panel is told to overwrite rather than asking twice. Tests: the
+options each action builds (verb, filter, start file), a picked scene opening, Save As writing the picked name, cancel
+versus no picker, a scene outside the content folder staying absolute, and both File-menu commands through to the panel,
+with the typed-path fallback where no picker exists. Stage 0 is complete.
 
 ### Stage 1 — Shell, project hub and workflow (M)
 
@@ -255,7 +267,8 @@ Outcome: the editor opens like an application, not a tool launcher.
 - Bind the command palette (`Ctrl+Shift+P`) and the shortcut cheat sheet; generate both from the registry.
 - Layout presets: Default, Level design, Scripting, Animation, plus save-current-as. Presets are layout files, not
   hardcoded splits.
-- Replace typed scene paths in the Scene toolbar with the native Open/Save dialogs and a recents list.
+- Scene toolbar: a recents list beside the native Open/Save dialogs from Stage 0, so the typed path is the third way,
+  not the only one.
 
 Gate: launch with no project shows the hub; recent-project round-trip; tab dirty-state and close prompts; preset restore
 test; shortcut-conflict test; toolbar screenshot with PIE idle/playing/paused; Step advances exactly one frame in a

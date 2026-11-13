@@ -1,6 +1,7 @@
 #include "world/scene_panel.h"
 
 #include "content/content_drag.h"
+#include "core/file_dialog.h"
 #include "workspace/command_registry.h"
 #include "ui/entity_inspector.h"
 #include "world/content_drop.h"
@@ -66,6 +67,36 @@ ScenePanel::ScenePanel(std::filesystem::path content_root) : content_root_(std::
 std::filesystem::path ScenePanel::Resolve(const std::string& path) const {
     const std::filesystem::path given(path);
     return given.is_absolute() ? given : content_root_ / given;
+}
+
+// A picked file is shown the way the path box shows one: relative to the content folder when it is inside it (that is
+// what a scene file in the project should look like), and absolute otherwise (a scene opened from elsewhere).
+std::string ScenePanel::DisplayPath(const std::filesystem::path& absolute) const {
+    std::error_code ec;
+    const std::filesystem::path root = std::filesystem::absolute(content_root_, ec);
+    if (!ec) {
+        const std::string relative = absolute.lexically_relative(root).generic_string();
+        if (!relative.empty() && relative.rfind("..", 0) != 0) return relative;
+    }
+    return absolute.generic_string();
+}
+
+FileDialogOptions ScenePanel::SceneFileDialogOptions(bool save) const {
+    FileDialogOptions options;
+    options.save = save;
+    options.title = save ? "Save scene" : "Open scene";
+    options.filters = {{"Aether scene", "ascene;aesc"}, {"All files", "*"}};
+    options.default_extension = "ascene";
+    options.start_path = document_.FilePath().empty() ? Resolve(path_) : document_.FilePath();
+    options.default_name = options.start_path.filename().generic_string();
+    return options;
+}
+
+std::optional<std::string> ScenePanel::PickSceneFile(bool save) {
+    if (dialog_ == nullptr || !dialog_->Available()) return std::nullopt;
+    const std::filesystem::path chosen = dialog_->Show(SceneFileDialogOptions(save));
+    if (chosen.empty()) return std::string();
+    return DisplayPath(chosen);
 }
 
 bool ScenePanel::NewScene(bool discard) {
@@ -243,6 +274,16 @@ void ScenePanel::DrawToolbar() {
         else OpenScene(chosen, true);
     }
     ImGui::SameLine();
+    if (ImGui::Button("...")) {
+        const std::optional<std::string> picked = PickSceneFile(false);
+        if (picked && !picked->empty()) {
+            path_ = *picked;
+            if (document_.IsDirty()) { pending_ = Pending::Open; ImGui::OpenPopup("Unsaved changes"); }
+            else OpenScene(*picked, true);
+        }
+    }
+    ImGui::SetItemTooltip("Choose a scene file with the system's file picker");
+    ImGui::SameLine();
     if (ImGui::Button("Open")) {
         if (document_.IsDirty()) { pending_ = Pending::Open; ImGui::OpenPopup("Unsaved changes"); }
         else OpenScene(path_, true);
@@ -253,7 +294,7 @@ void ScenePanel::DrawToolbar() {
     ImGui::SetItemTooltip("Save (Ctrl+S)");
     ImGui::SameLine();
     if (ImGui::Button("Save As")) SaveScene(path_);
-    ImGui::SetItemTooltip("Save to the name in the box");
+    ImGui::SetItemTooltip("Save to the name in the box (File > Save Scene As opens a file picker)");
     ImGui::SameLine();
     ImGui::TextDisabled("|");
     ImGui::SameLine();

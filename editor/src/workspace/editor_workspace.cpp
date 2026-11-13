@@ -4,6 +4,7 @@
 #include "workspace/command_registry.h"
 #include "core/editor_document.h"
 #include "core/editor_settings.h"
+#include "core/file_dialog.h"
 #include "core/notifications.h"
 #include "core/recent_projects.h"
 #include "core/scene_autosave.h"
@@ -70,6 +71,7 @@
 #include <cstring>
 #include <fstream>
 #include <functional>
+#include <optional>
 #include <vector>
 
 namespace aether::editor {
@@ -248,6 +250,7 @@ struct EditorWorkspace::Impl {
     std::unique_ptr<FoliagePanel> foliage_panel;
     std::unique_ptr<ProceduralWorldDocument> procedural_doc;
     std::unique_ptr<ProceduralWorldPanel> procedural_panel;
+    std::unique_ptr<FileDialog> file_dialog = CreateNativeFileDialog();
     std::unique_ptr<ScenePanel> scene_panel;
     SceneViewPanel scene_view;
     std::unique_ptr<ScenePreviewPanel> scene_preview;
@@ -806,6 +809,7 @@ struct EditorWorkspace::Impl {
         foliage_panel = std::make_unique<FoliagePanel>(*foliage_doc);
 
         scene_panel = std::make_unique<ScenePanel>();
+        scene_panel->SetFileDialog(file_dialog.get());
         scene_preview = std::make_unique<ScenePreviewPanel>(*scene_panel);
         procedural_doc = std::make_unique<ProceduralWorldDocument>();
         procedural_panel = std::make_unique<ProceduralWorldPanel>(*procedural_doc, terrain_doc.get(), foliage_doc.get());
@@ -919,6 +923,17 @@ struct EditorWorkspace::Impl {
                            scene_panel->Status().empty() ? "The scene could not be saved." : scene_panel->Status(),
                            file.empty() ? NotificationTarget{}
                                         : NotificationTarget{NotificationTarget::Kind::File, file.string()});
+    }
+
+    // An open that did not happen: refused because the open scene is dirty (a warning the user can act on) or because
+    // the file could not be read (an error). The path is the file that was asked for.
+    void NotifyOpenFailure(const std::string& path) {
+        const bool refused_for_unsaved_changes = scene_panel->Document().IsDirty();
+        notifications.Post(refused_for_unsaved_changes ? NotificationSeverity::Warning : NotificationSeverity::Error,
+                           refused_for_unsaved_changes ? "Unsaved changes" : "Open failed",
+                           scene_panel->Status().empty() ? std::string("The scene could not be opened.") : scene_panel->Status(),
+                           path.empty() ? NotificationTarget{}
+                                        : NotificationTarget{NotificationTarget::Kind::File, path});
     }
 
     void FocusTool(const char* name) {
@@ -1180,7 +1195,17 @@ void EditorWorkspace::RegisterCommands() {
     add({"scene.new", "New scene", "File", false, {}, CommandScope::Global, {}, {},
          [this, show_scene] { impl_->scene_panel->NewScene(false); show_scene(); }});
     add({"scene.open", "Open scene", "File", false, {}, CommandScope::Global, {}, {},
-         [this, show_scene] { impl_->scene_panel->OpenScene(impl_->scene_panel->Path(), false); show_scene(); }});
+         [this, show_scene] {
+             const std::optional<std::string> picked = impl_->scene_panel->PickSceneFile(false);
+             if (!picked) { // this platform has no picker: open the name in the box, as the toolbar does
+                 if (!impl_->scene_panel->OpenScene(impl_->scene_panel->Path(), false))
+                     impl_->NotifyOpenFailure(impl_->scene_panel->Path());
+             } else if (!picked->empty()) { // the picked file is left in the box, so a refused open can be retried after saving
+                 impl_->scene_panel->SetPath(*picked);
+                 if (!impl_->scene_panel->OpenScene(*picked, false)) impl_->NotifyOpenFailure(*picked);
+             }
+             show_scene();
+         }});
     add({"scene.save", "Save scene", "File", false, {ImGuiKey_S, true, false, false}, CommandScope::Scene, {}, {},
          [this, show_scene] {
              if (!impl_->scene_panel->SaveScene()) impl_->NotifySaveFailure();
@@ -1188,7 +1213,13 @@ void EditorWorkspace::RegisterCommands() {
          }});
     add({"scene.save_as", "Save scene as", "File", false, {}, CommandScope::Global, {}, {},
          [this, show_scene] {
-             if (!impl_->scene_panel->SaveScene(impl_->scene_panel->Path())) impl_->NotifySaveFailure();
+             const std::optional<std::string> picked = impl_->scene_panel->PickSceneFile(true);
+             if (!picked) {
+                 if (!impl_->scene_panel->SaveScene(impl_->scene_panel->Path())) impl_->NotifySaveFailure();
+             } else if (!picked->empty()) {
+                 // The picker already asked whether to replace an existing file; asking again in the panel would ask twice.
+                 if (!impl_->scene_panel->SaveScene(*picked, /*overwrite=*/true)) impl_->NotifySaveFailure();
+             }
              show_scene();
          }});
     add({"file.quit", "Quit", "File", true, {}, CommandScope::Global, {}, {}, [this] { RequestQuit(); }});
