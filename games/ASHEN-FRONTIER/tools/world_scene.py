@@ -123,7 +123,7 @@ def iron(s, rng, door_script=None):
     _scatter(s, rng, "iron_wastes", "IronScrap", ["ScrapPile"], 8, scale=(1.2, 1.6), collide=False)
 
 
-def verdant(s, rng):
+def verdant(s, rng, door_script=None):
     x, z = world.poi_position("greenhouse_rows")
     for i in range(4):
         s.model(f"Greenhouse_{i}", "Greenhouse", position=(x + i * 16, 0, z), tags=("Landmark",), collider=((0, 2.5, 0), (6, 2.5, 10)))
@@ -131,6 +131,10 @@ def verdant(s, rng):
     x, z = world.poi_position("living_dome")
     s.model("LivingDome", "Dome", position=(x, 0, z), tags=("Dungeon",), collider=((0, 3.5, 0), (8.5, 3.5, 8.5)))
     s.add("LivingDomeGlow", LIGHT(GREEN, 16.0, 20.0), position=(x, 5.0, z), snap=True)
+    s.add("LivingDomeOutside", {}, position=(x, 0.1, z + 14.5), snap=True)
+    if door_script:
+        s.add("LivingDomeDoor", {"ScriptComponent": {"$v": 1, "script": door_script, "properties": [{"name": "target", "value": json.dumps("Scenes/LivingDome.ascene")}, {"name": "radius", "value": "2.5"}, {"name": "spawn", "value": json.dumps("DomeEntry")}]}},
+              position=(x, 0, z + 10.5), snap=True)
     x, z = world.poi_position("maintenance_depot")
     s.model("DepotGenerator_0", "Generator", position=(x, 0, z), collider=((0, 0.7, 0), (0.85, 0.7, 0.65)))
     s.model("DepotGenerator_1", "Generator", position=(x + 3.5, 0, z + 1), rotation=(0, 20, 0), collider=((0, 0.7, 0), (0.85, 0.7, 0.65)))
@@ -201,7 +205,7 @@ def build(playable=True, camera=None, door_script=None):
         s.model(f"GridPylon_{i}", "Pylon", position=(bx + (-9 - bx) * t, 0, bz + (9 - bz) * t), collider=((0, 2, 0), (0.4, 2, 0.4)))
     basin(s, rng)
     iron(s, rng, door_script)
-    verdant(s, rng)
+    verdant(s, rng, door_script)
     hollow(s, rng)
     _outcrops(s, rng)
     if playable:

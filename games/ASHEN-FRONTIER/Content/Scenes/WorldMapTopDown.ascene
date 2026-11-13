@@ -21903,6 +21903,34 @@
     },
     {
       "components": {
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -115.0,
+            -0.8415812489273524,
+            -60.5
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "LivingDomeOutside"
+        }
+      },
+      "guid": "e9dd20ce-6d8e-5c8d-928f-3d71101080f3"
+    },
+    {
+      "components": {
         "ModelRenderer": {
           "$v": 1,
           "asset_path": "Models/Generator.glb"
