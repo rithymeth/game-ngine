@@ -8,6 +8,8 @@ local Interactor = {}
 Interactor.reach = 3
 --@tooltip Components already in the pack at the start (for test scenes)
 Interactor.start_components = 0
+--@tooltip Scrap already in the pack at the start (for test scenes)
+Interactor.start_scrap = 0
 
 -- What a salvage entity gives, by the words in its name. Anything else gives scrap.
 local YIELDS = {
@@ -26,7 +28,7 @@ end
 function Interactor:OnCreate()
     if not SaveGames.HasKey("pack.scrap") and SaveGames.DoesSaveExist("autosave") then SaveGames.LoadFromSlot("autosave") end
     if not SaveGames.HasKey("pack.scrap") then
-        SaveGames.SetNumber("pack.scrap", 0)
+        SaveGames.SetNumber("pack.scrap", self.start_scrap)
         SaveGames.SetNumber("pack.components", self.start_components)
     end
     print(string.format("Pack at start: %d scrap, %d components", Get("scrap"), Get("components")))
@@ -43,11 +45,20 @@ local function Yield(name)
     return "scrap", 1
 end
 
+-- The mission line: what to do next, from what has been done (all of it in SaveGames, so it survives a door and a restart).
+local function Objective()
+    if SaveGames.GetNumber("power.outpost", 0) > 0 then return "The outpost has power. Explore the four regions." end
+    if SaveGames.GetNumber("crafted.generator_core", 0) > 0 then return "Install the Generator Core at the generator." end
+    return "Salvage scrap and components, craft a Generator Core."
+end
+
 function Interactor:OnUpdate(dt)
     if not self.hud_ready then -- the HUD exists from the first frame: show the pack as it is (it may be carried over)
         self.hud_ready = UI.SetText("ScrapText", string.format("SCRAP  %d", Get("scrap")))
         UI.SetText("ComponentText", string.format("COMPONENTS  %d", Get("components")))
     end
+    local objective = Objective()
+    if objective ~= self.objective and UI.SetText("ObjectiveText", objective) then self.objective = objective end
     if self.player == nil then return end
     local here = self.player:Get("Transform").position
     local best, best_d2 = nil, self.reach * self.reach

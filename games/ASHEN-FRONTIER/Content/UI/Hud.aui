@@ -73,6 +73,55 @@
    },
    {
     "type": "Border",
+    "name": "ObjectivePanel",
+    "background": {
+     "kind": "Color",
+     "tint": [
+      0.02,
+      0.04,
+      0.09,
+      0.72
+     ]
+    },
+    "padding": [
+     16,
+     10,
+     16,
+     10
+    ],
+    "slot": {
+     "anchors": [
+      1,
+      0,
+      1,
+      0
+     ],
+     "position": [
+      -784,
+      24
+     ],
+     "size": [
+      760,
+      56
+     ]
+    },
+    "children": [
+     {
+      "type": "Text",
+      "name": "ObjectiveText",
+      "text": "Salvage scrap and components, craft a Generator Core.",
+      "size": 22,
+      "color": [
+       1.0,
+       0.82,
+       0.3,
+       1.0
+      ]
+     }
+    ]
+   },
+   {
+    "type": "Border",
     "name": "PromptPanel",
     "visibility": "Collapsed",
     "background": {
@@ -98,11 +147,11 @@
       1
      ],
      "position": [
-      -210,
+      -320,
       -150
      ],
      "size": [
-      420,
+      640,
       48
      ]
     },

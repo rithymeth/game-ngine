@@ -14545,6 +14545,103 @@
       "components": {
         "ModelRenderer": {
           "$v": 1,
+          "asset_path": "Models/FabBench.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -6.5,
+            -0.23081579928183416,
+            3.5
+          ],
+          "rotation": [
+            0.0,
+            0.7071067811865475,
+            0.0,
+            0.7071067811865476
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "OutpostFabBench"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Workbench"
+          ]
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "properties": [],
+          "script": "e1fc2105-2422-4e8a-83ea-d46261895140"
+        }
+      },
+      "guid": "ac3f62e4-f896-55d8-b3ca-f13c3a735cfa"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Generator.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            6.5,
+            -0.23081579928183416,
+            3.5
+          ],
+          "rotation": [
+            0.0,
+            -0.7071067811865475,
+            0.0,
+            0.7071067811865476
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "OutpostGenerator"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Generator"
+          ]
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "properties": [],
+          "script": "6da70c0f-552d-4316-8b0c-bdeca2d077c6"
+        },
+        "PointLight": {
+          "$v": 1,
+          "cast_shadows": false,
+          "color": [
+            0.3,
+            0.7,
+            1.0
+          ],
+          "intensity": 0.0,
+          "range": 16.0
+        }
+      },
+      "guid": "f128ee37-9b9e-5b9b-952d-0566e68ffa92"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
           "asset_path": "Models/Pylon.glb"
         },
         "BoxCollider": {
