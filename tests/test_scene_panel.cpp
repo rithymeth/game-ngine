@@ -272,7 +272,7 @@ AETHER_TEST(EditorWorkspace_MenusReachTheSceneDocument) {
     document.SetSelection({thing});
     imgui.Frame([&] {
         if (ImGui::BeginMainMenuBar()) {
-            if (ImGui::BeginMenu("File")) { workspace.DrawSceneFileItems(); ImGui::EndMenu(); }
+            if (ImGui::BeginMenu("File")) { workspace.DrawMenuItems("File"); ImGui::EndMenu(); }
             workspace.DrawEditMenu();
             ImGui::EndMainMenuBar();
         }

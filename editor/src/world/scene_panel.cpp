@@ -1,6 +1,7 @@
 #include "world/scene_panel.h"
 
 #include "content/content_drag.h"
+#include "workspace/command_registry.h"
 #include "ui/entity_inspector.h"
 #include "world/content_drop.h"
 
@@ -283,13 +284,11 @@ void ScenePanel::DrawToolbar() {
     ImGui::TextDisabled("%s%s%s", title.c_str(), document_.IsDirty() ? " *" : "", state == PlaySession::State::Editing ? "" : "   [playing: edits are discarded on Stop]");
     if (document_.IsDirty()) ImGui::SetItemTooltip("Unsaved changes");
     if (!status_.empty()) ImGui::TextWrapped("%s", status_.c_str());
-    // Undo and redo from the keyboard, when no text box has it.
+    // Undo, redo and save from the keyboard, when no text box has it. The chords come from the command table, so
+    // the menu, the palette and this check cannot drift apart.
     const ImGuiIO& io = ImGui::GetIO();
-    if (io.KeyCtrl && !io.WantTextInput && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {
-        if (ImGui::IsKeyPressed(ImGuiKey_Z)) document_.Undo();
-        if (ImGui::IsKeyPressed(ImGuiKey_Y)) document_.Redo();
-        if (ImGui::IsKeyPressed(ImGuiKey_S)) SaveScene();
-    }
+    if (commands_ != nullptr && !io.WantTextInput && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows))
+        commands_->RunPressedChord(CommandScope::Scene);
 }
 
 void ScenePanel::DrawDiscardPrompt() {
@@ -441,15 +440,10 @@ void ScenePanel::DrawHierarchy() {
         if (ImGui::MenuItem("Paste", "Ctrl+V", false, document_.HasClipboard())) document_.PasteClipboard();
         ImGui::EndPopup();
     }
-    // Keyboard, when this list has the focus and no text box has the keys.
+    // Keyboard, when this list has the focus and no text box has the keys. Same command table as the Edit menu.
     const ImGuiIO& io = ImGui::GetIO();
-    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows) && !io.WantTextInput && !Renaming()) {
-        if (ImGui::IsKeyPressed(ImGuiKey_Delete)) DeleteSelection();
-        if (ImGui::IsKeyPressed(ImGuiKey_F2) && !document_.Selection().empty()) BeginRename(document_.Selection().front());
-        if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_D)) DuplicateSelection();
-        if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_C)) document_.CopySelection();
-        if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_V) && document_.HasClipboard()) document_.PasteClipboard();
-    }
+    if (commands_ != nullptr && ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows) && !io.WantTextInput && !Renaming())
+        commands_->RunPressedChord(CommandScope::SceneTree);
 }
 
 void ScenePanel::DrawInspector() {

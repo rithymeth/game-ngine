@@ -2,6 +2,7 @@
 #include "aether/assets/asset_database.h"
 #include "core/editor_settings.h"
 #include "workspace/command_palette.h"
+#include "workspace/command_registry.h"
 #include "workspace/editor_workspace.h"
 #include "world/scene_panel.h"
 
@@ -216,11 +217,15 @@ AETHER_TEST(Editor_CommandPaletteFiltersAndSelectsTools) {
     EditorWorkspace ws;
     CommandPalette palette(ws);
 
-    // An empty query lists every tool, in workspace order, so the palette doubles as an index.
-    CHECK(palette.Results().size() == ws.ToolCount());
-    for (std::size_t i = 0; i < palette.Results().size(); ++i) {
+    // An empty query lists every tool in workspace order, then every command in registry order, so the
+    // palette doubles as an index.
+    CHECK(palette.Results().size() == ws.ToolCount() + ws.Commands().Size());
+    for (std::size_t i = 0; i < ws.ToolCount(); ++i) {
         CHECK(palette.Results()[i].kind == PaletteKind::Tool);
         CHECK(palette.Results()[i].tool == i);
+    }
+    for (std::size_t i = ws.ToolCount(); i < palette.Results().size(); ++i) {
+        CHECK(palette.Results()[i].kind == PaletteKind::Command && !palette.Results()[i].command.empty());
     }
 
     // Matching is case-insensitive and covers the category as well as the name.

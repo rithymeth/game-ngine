@@ -207,9 +207,19 @@ host); autosave recovery test; a headless screenshot at 100% and 150% scale.
 Done so far (2026-11-13): the scene's quit prompt on both File > Quit and the title-bar X (a cancelable
 `Window::on_close`), `EditorSettings` v1 (autosave on and off, interval), a per-project recovery slot written while the
 document is dirty and offered on the next launch, and a Preferences window. Tests: settings defaults/round-trip/clamping,
-slot write/find/clear/corruption, the autosave timer and quit flow on a headless workspace. Still open in this stage: the
-command registry, the document contract, notifications and native dialogs; autosave and the quit prompt cover the scene
-document only.
+slot write/find/clear/corruption, the autosave timer and quit flow on a headless workspace.
+
+Done so far (2026-11-14): the command registry (`editor/src/workspace/command_registry.{h,cpp}`). A `Command` carries a
+stable dotted id, a label, an optional menu and separator, a default chord, a `CommandScope` (`Global`, `Scene`,
+`SceneTree`) and optional `enabled`/`label_now` functions; `Add` refuses an empty or duplicate id, and `Conflicts()`
+reports two chords that could fire at once, where `Global` overlaps every scope and the others overlap only themselves.
+File, Edit and View menus are drawn from the table, the palette lists tools, then commands, then assets, and both the
+workspace (`Global`) and the Scene panel (toolbar `Scene`, hierarchy `SceneTree`) poll the same table, so a chord is
+written down once. Ctrl+Shift+P opens the palette through the table, not a separate check. Tests: add/find/run/refusals,
+chord formatting and exact-modifier matching, the conflict rule, the built-in table's ids and menus and empty conflict
+list, menus and commands acting on the scene, and both chord scopes through injected ImGui key events. Still open in this
+stage: the document contract, notifications and native dialogs; autosave and the quit prompt cover the scene document
+only.
 
 ### Stage 1 — Shell, project hub and workflow (M)
 

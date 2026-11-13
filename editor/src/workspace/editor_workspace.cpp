@@ -1,6 +1,7 @@
 #include "workspace/editor_workspace.h"
 
 #include "workspace/command_palette.h"
+#include "workspace/command_registry.h"
 #include "core/editor_settings.h"
 #include "core/recent_projects.h"
 #include "core/scene_autosave.h"
@@ -265,6 +266,7 @@ struct EditorWorkspace::Impl {
     std::unique_ptr<CrashReporterDialog> crash_dialog;
     // Project.
     std::filesystem::path project_file;
+    CommandRegistry commands;
     EditorSettings editor_settings = EditorSettings::Load(EditorSettings::DefaultFile());
     SceneAutosaves autosaves;
     f32 autosave_elapsed = 0.0f;
@@ -360,6 +362,8 @@ struct EditorWorkspace::Impl {
                  }
              }},
         };
+        // The scene panel matches its own keys through the same table the menus read.
+        scene_panel->SetCommands(&commands);
     }
 
     void BuildBlueprint() {
@@ -994,7 +998,9 @@ struct EditorWorkspace::Impl {
 };
 
 EditorWorkspace::EditorWorkspace(std::filesystem::path project_file)
-    : impl_(std::make_unique<Impl>(std::move(project_file))) {}
+    : impl_(std::make_unique<Impl>(std::move(project_file))) {
+    RegisterCommands();
+}
 
 const std::filesystem::path& EditorWorkspace::ProjectFile() const { return impl_->project_file; }
 
@@ -1099,31 +1105,97 @@ void EditorWorkspace::DrawTool(usize tool) {
 
 ScenePanel& EditorWorkspace::Scene() { return *impl_->scene_panel; }
 
-void EditorWorkspace::DrawSceneFileItems() {
-    ScenePanel& scene = *impl_->scene_panel;
-    auto show_scene = [&] {
+CommandRegistry& EditorWorkspace::Commands() { return impl_->commands; }
+const CommandRegistry& EditorWorkspace::Commands() const { return impl_->commands; }
+
+bool EditorWorkspace::RunCommand(std::string_view id) { return impl_->commands.Run(id); }
+
+// The editor's own commands: what the File, Edit and View menus offer, and the chords the keyboard matches. A host
+// adds what only it can do (the shell's layout reset) to the same table.
+void EditorWorkspace::RegisterCommands() {
+    const auto show_scene = [this] {
         const i64 tool = FindTool("Scene");
         if (tool >= 0) Select(static_cast<usize>(tool));
     };
-    if (ImGui::MenuItem("New scene")) { scene.NewScene(false); show_scene(); }
-    if (ImGui::MenuItem("Open scene")) { scene.OpenScene(scene.Path(), false); show_scene(); }
-    if (ImGui::MenuItem("Save scene", "Ctrl+S")) { scene.SaveScene(); show_scene(); }
-    if (ImGui::MenuItem("Save scene as")) { scene.SaveScene(scene.Path()); show_scene(); }
+    const auto document = [this]() -> SceneDocument& { return impl_->scene_panel->Document(); };
+    const auto add = [this](Command command) { impl_->commands.Add(std::move(command)); };
+
+    add({"scene.new", "New scene", "File", false, {}, CommandScope::Global, {}, {},
+         [this, show_scene] { impl_->scene_panel->NewScene(false); show_scene(); }});
+    add({"scene.open", "Open scene", "File", false, {}, CommandScope::Global, {}, {},
+         [this, show_scene] { impl_->scene_panel->OpenScene(impl_->scene_panel->Path(), false); show_scene(); }});
+    add({"scene.save", "Save scene", "File", false, {ImGuiKey_S, true, false, false}, CommandScope::Scene, {}, {},
+         [this, show_scene] { impl_->scene_panel->SaveScene(); show_scene(); }});
+    add({"scene.save_as", "Save scene as", "File", false, {}, CommandScope::Global, {}, {},
+         [this, show_scene] {
+             impl_->scene_panel->SaveScene(impl_->scene_panel->Path());
+             show_scene();
+         }});
+    add({"file.quit", "Quit", "File", true, {}, CommandScope::Global, {}, {}, [this] { RequestQuit(); }});
+
+    add({"edit.undo", "Undo", "Edit", false, {ImGuiKey_Z, true, false, false}, CommandScope::Scene,
+         [document] { return document().CanUndo(); },
+         [document] {
+             SceneDocument& doc = document();
+             return doc.CanUndo() ? "Undo " + doc.UndoLabel() : std::string("Undo");
+         },
+         [document] { (void)document().Undo(); }});
+    add({"edit.redo", "Redo", "Edit", false, {ImGuiKey_Y, true, false, false}, CommandScope::Scene,
+         [document] { return document().CanRedo(); },
+         [document] {
+             SceneDocument& doc = document();
+             return doc.CanRedo() ? "Redo " + doc.RedoLabel() : std::string("Redo");
+         },
+         [document] { (void)document().Redo(); }});
+    add({"edit.duplicate", "Duplicate", "Edit", true, {ImGuiKey_D, true, false, false}, CommandScope::SceneTree,
+         [document] { return !document().Selection().empty(); }, {},
+         [this] { impl_->scene_panel->DuplicateSelection(); }});
+    add({"edit.delete", "Delete", "Edit", false, {ImGuiKey_Delete, false, false, false}, CommandScope::SceneTree,
+         [document] { return !document().Selection().empty(); }, {},
+         [this] { impl_->scene_panel->DeleteSelection(); }});
+    add({"edit.copy", "Copy", "Edit", true, {ImGuiKey_C, true, false, false}, CommandScope::SceneTree,
+         [document] { return !document().Selection().empty(); }, {},
+         [document] { document().CopySelection(); }});
+    add({"edit.paste", "Paste", "Edit", false, {ImGuiKey_V, true, false, false}, CommandScope::SceneTree,
+         [document] { return document().HasClipboard(); }, {},
+         [document] { document().PasteClipboard(); }});
+    auto rename = Command{"scene.rename", "Rename", "", false, {ImGuiKey_F2, false, false, false},
+                          CommandScope::SceneTree, [document] { return !document().Selection().empty(); }, {}, {}};
+    rename.run = [this] {
+        const auto selection = impl_->scene_panel->Document().Selection();
+        if (!selection.empty()) impl_->scene_panel->BeginRename(selection.front());
+    };
+    add(std::move(rename));
+
+    add({"view.command_palette", "Command Palette", "View", false, {ImGuiKey_P, true, true, false},
+         CommandScope::Global, {}, {}, [this] { command_palette_open = true; }});
+    add({"view.preferences", "Preferences", "View", false, {}, CommandScope::Global, {}, {},
+         [this] { preferences_open = true; }});
+}
+
+void EditorWorkspace::DrawMenuItems(const char* menu) {
+    for (usize i = 0; i < impl_->commands.Size(); ++i) {
+        const Command& command = impl_->commands.At(i);
+        if (command.menu != menu) continue;
+        if (command.separator_before) ImGui::Separator();
+        const std::string chord = command.chord.ToString();
+        const std::string label = impl_->commands.Label(command);
+        if (ImGui::MenuItem(label.c_str(), chord.empty() ? nullptr : chord.c_str(), false, impl_->commands.Enabled(command)))
+            impl_->commands.Run(command.id);
+    }
 }
 
 void EditorWorkspace::DrawEditMenu() {
-    ScenePanel& scene = *impl_->scene_panel;
-    SceneDocument& doc = scene.Document();
     if (!ImGui::BeginMenu("Edit")) return;
-    const std::string undo = doc.CanUndo() ? "Undo " + doc.UndoLabel() : std::string("Undo");
-    const std::string redo = doc.CanRedo() ? "Redo " + doc.RedoLabel() : std::string("Redo");
-    if (ImGui::MenuItem(undo.c_str(), "Ctrl+Z", false, doc.CanUndo())) doc.Undo();
-    if (ImGui::MenuItem(redo.c_str(), "Ctrl+Y", false, doc.CanRedo())) doc.Redo();
-    ImGui::Separator();
-    const bool any = !doc.Selection().empty();
-    if (ImGui::MenuItem("Duplicate", "Ctrl+D", false, any)) scene.DuplicateSelection();
-    if (ImGui::MenuItem("Delete", "Del", false, any)) scene.DeleteSelection();
+    DrawMenuItems("Edit");
     ImGui::EndMenu();
+}
+
+void EditorWorkspace::PollShortcuts() {
+    const ImGuiIO& io = ImGui::GetIO();
+    if (io.WantTextInput) return;
+    if (ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId)) return; // a menu or a modal owns the keys
+    impl_->commands.RunPressedChord(CommandScope::Global);
 }
 
 void EditorWorkspace::DrawToolsMenu() {
@@ -1235,6 +1307,7 @@ void EditorWorkspace::DrawHub(const char* title, bool* open) {
 }
 
 void EditorWorkspace::DrawWindows() {
+    PollShortcuts(); // inside a frame, where ImGui's input is valid
     int cascade = 0;
     for (usize i = 0; i < impl_->tools.size(); ++i) {
         Impl::Tool& t = impl_->tools[i];
@@ -1279,15 +1352,33 @@ void EditorWorkspace::DrawCommandPalette() {
         }
         for (std::size_t i = 0; i < palette.Results().size(); ++i) {
             const PaletteEntry& entry = palette.Results()[i];
-            const std::string label = entry.kind == PaletteKind::Tool ? ToolName(entry.tool) : entry.path;
+            std::string label;
+            std::string chord;
+            bool enabled = true;
+            if (entry.kind == PaletteKind::Tool) {
+                label = ToolName(entry.tool);
+            } else if (entry.kind == PaletteKind::Command) {
+                const Command* command = impl_->commands.Find(entry.command);
+                label = command != nullptr ? impl_->commands.Label(*command) : entry.command;
+                enabled = command != nullptr && impl_->commands.Enabled(*command);
+                if (command != nullptr) chord = command->chord.ToString();
+            } else {
+                label = entry.path;
+            }
             ImGui::PushID(static_cast<int>(i));
+            ImGui::BeginDisabled(!enabled);
             if (ImGui::Selectable(label.c_str())) {
                 palette.Activate(*this, i);
                 command_palette_open = false;
             }
+            ImGui::EndDisabled();
+            if (!chord.empty()) {
+                ImGui::SameLine();
+                ImGui::TextDisabled("%s", chord.c_str());
+            }
             ImGui::PopID();
         }
-        if (palette.Results().empty()) ImGui::TextDisabled("No matching tools.");
+        if (palette.Results().empty()) ImGui::TextDisabled("No matching tools or commands.");
     }
     ImGui::End();
     command_palette_open = open;

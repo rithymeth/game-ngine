@@ -1,6 +1,7 @@
 #include "workspace/command_palette.h"
 
 #include "aether/assets/asset_database.h"
+#include "workspace/command_registry.h"
 #include "workspace/editor_workspace.h"
 
 #include <algorithm>
@@ -29,8 +30,8 @@ void CommandPalette::SetQuery(std::string_view query) {
     query_.assign(query);
     results_.clear();
     if (workspace_ == nullptr) return;
-    // Tools first, in workspace order, then assets in the database's path order: the palette's
-    // order has to be stable or the same query would list different things between frames.
+    // Tools first, in workspace order; then commands in registry order; then assets in the database's path
+    // order: the palette's order has to be stable or the same query would list different things between frames.
     for (std::size_t tool = 0; tool < workspace_->ToolCount(); ++tool) {
         if (!ContainsNoCase(workspace_->ToolName(tool), query_) && !ContainsNoCase(workspace_->ToolCategory(tool), query_)) {
             continue;
@@ -38,6 +39,15 @@ void CommandPalette::SetQuery(std::string_view query) {
         PaletteEntry entry;
         entry.kind = PaletteKind::Tool;
         entry.tool = tool;
+        results_.push_back(std::move(entry));
+    }
+    const CommandRegistry& commands = workspace_->Commands();
+    for (std::size_t i = 0; i < commands.Size(); ++i) {
+        const Command& command = commands.At(i);
+        if (!ContainsNoCase(commands.Label(command), query_) && !ContainsNoCase(command.id, query_)) continue;
+        PaletteEntry entry;
+        entry.kind = PaletteKind::Command;
+        entry.command = command.id;
         results_.push_back(std::move(entry));
     }
     if (assets_ == nullptr) return;
@@ -57,6 +67,7 @@ bool CommandPalette::Activate(EditorWorkspace& workspace, std::size_t index) con
         workspace.Select(entry.tool);
         return true;
     }
+    if (entry.kind == PaletteKind::Command) return workspace.RunCommand(entry.command);
     if (!opener_) return false; // nothing to do with an asset in a host that has no opener
     opener_(entry.path);
     return true;

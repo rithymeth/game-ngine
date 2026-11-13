@@ -73,17 +73,15 @@ void DrawEditor(EditorWorkspace& workspace, const char* backend_label) {
     bool reset_layout = false;
     if (ImGui::BeginMainMenuBar()) {
         if (ImGui::BeginMenu("File")) {
-            workspace.DrawSceneFileItems();
-            ImGui::Separator();
-            if (ImGui::MenuItem("Quit")) workspace.RequestQuit();
+            workspace.DrawMenuItems("File"); // New, Open, Save, Save as, Quit: the registry's File commands
             ImGui::EndMenu();
         }
         workspace.DrawEditMenu();
         workspace.DrawToolsMenu();
         if (ImGui::BeginMenu("View")) {
-            if (ImGui::MenuItem("Reset layout")) reset_layout = true;
+            workspace.DrawMenuItems("View"); // Command Palette (Ctrl+Shift+P), Preferences
             ImGui::Separator();
-            if (ImGui::MenuItem("Preferences")) workspace.preferences_open = true;
+            if (ImGui::MenuItem("Reset layout")) reset_layout = true;
             ImGui::EndMenu();
         }
         ImGui::TextDisabled("   Aether Editor  -  %s  -  %zu tools", backend_label, workspace.ToolCount());

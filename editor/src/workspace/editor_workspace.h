@@ -38,6 +38,7 @@ namespace aether::editor {
 class ExtensionRegistry;
 class ScenePanel;
 class EditorScripts;
+class CommandRegistry;
 struct EditorSettings;
 
 class EditorWorkspace {
@@ -89,10 +90,16 @@ public:
     void DrawTool(usize tool);
     // The open scene (the Scene tool's document and actions), for a host's own menus and shortcuts.
     ScenePanel& Scene();
-    // The scene's File items (New, Open, Save, Save As) and an "Edit" menu (Undo, Redo, Duplicate, Delete): the
-    // host puts the first inside its "File" menu and calls the second inside its menu bar. Each switches the hub to
-    // the Scene tool so the result (or a refusal: "unsaved changes") is in view.
-    void DrawSceneFileItems();
+    // The commands the editor has (Stage 0 of docs/design/EDITOR_PARITY_AUDIT.md): each with a stable id, a label,
+    // a default chord, the context its chord applies in, an enabled predicate and an action. The menus, the palette
+    // and the keyboard read this one table; a host may add its own (View's "Reset layout" is the shell's).
+    CommandRegistry& Commands();
+    const CommandRegistry& Commands() const;
+    bool RunCommand(std::string_view id);
+    // Draws the registry's items for one menu ("File", "Edit", "View") into the current ImGui menu, with their
+    // chords and enabled state. Each switches the hub to the tool it belongs to where that makes the result visible.
+    void DrawMenuItems(const char* menu);
+    // An "Edit" menu (Undo, Redo, Duplicate, ...): the host puts it inside its menu bar.
     void DrawEditMenu();
     // A "Tools" menu: each category's tools; picking one pops it out.
     void DrawToolsMenu();
@@ -151,6 +158,9 @@ public:
     void SetAssetOpener(std::function<void(const std::string&)> opener);
 
 private:
+    void RegisterCommands();
+    // Runs the Global commands whose chord was pressed this frame; called from DrawWindows, inside a frame.
+    void PollShortcuts();
     void DrawDataSafetyWindows();
     void DrawPreferences();
 

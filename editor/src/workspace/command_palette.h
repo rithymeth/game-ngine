@@ -26,6 +26,7 @@ class EditorWorkspace;
 
 enum class PaletteKind {
     Tool,
+    Command,
     Asset,
 };
 
@@ -33,6 +34,7 @@ struct PaletteEntry {
     PaletteKind kind = PaletteKind::Tool;
     std::size_t tool = 0; // Tool: index into the workspace's tool list
     std::string path;     // Asset: content-relative path, '/'-separated
+    std::string command;  // Command: the registry's stable id
 };
 
 class CommandPalette {
@@ -45,15 +47,16 @@ public:
 
     void SetAssetOpener(AssetOpener opener) { opener_ = std::move(opener); }
 
-    // An empty query lists every tool in workspace order then every asset in path order, so the
-    // palette doubles as an index. Otherwise the match is a case-insensitive substring of a tool
-    // name, a tool category or an asset path -- so "anim" finds both.
+    // An empty query lists every tool in workspace order, then every command in registry order, then every asset
+    // in path order, so the palette doubles as an index. Otherwise the match is a case-insensitive substring of a
+    // tool name, a tool category, a command label or id, or an asset path -- so "anim" finds both.
     void SetQuery(std::string_view query);
     const std::string& Query() const { return query_; }
     const std::vector<PaletteEntry>& Results() const { return results_; }
 
-    // Chooses an entry: a tool is selected in the workspace, an asset goes to the opener.
-    // False when the index is out of range, or when it is an asset and no opener is set.
+    // Chooses an entry: a tool is selected in the workspace, a command runs through it (false when the command is
+    // disabled), an asset goes to the opener. False when the index is out of range, or when it is an asset and no
+    // opener is set.
     bool Activate(EditorWorkspace& workspace, std::size_t index) const;
     // Chooses the first result, for Enter with nothing highlighted.
     bool ActivateFirst(EditorWorkspace& workspace) const;

@@ -420,6 +420,13 @@ will happen) before release. Invalid targets show a "no" cursor.
   (last clicked, shown with a 1 px `accent` top edge) gets keyboard input.
 - Shortcuts are context-sensitive: W/E/R go to the viewport only when the
   viewport or Hierarchy is focused, never while typing in a text field.
+- Every menu item, the command palette and the keyboard read one table,
+  `editor/src/workspace/command_registry.{h,cpp}`, so a label, a chord and
+  the action behind it exist once. A chord declares a scope (`Global`,
+  `Scene`, `SceneTree`); the workspace polls `Global` and the Scene panel
+  polls its two, which is what keeps Ctrl+S in a focused graph editor from
+  meaning "save the scene" as well. Modifiers match exactly, and a startup
+  test fails on a duplicate id or on two chords that overlap.
 - Tab/Shift+Tab move between fields in the Inspector; Enter commits;
   Esc reverts a field being edited.
 

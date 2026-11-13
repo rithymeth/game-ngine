@@ -12,6 +12,8 @@
 
 namespace aether::editor {
 
+class CommandRegistry;
+
 // The entities of a scene as a tree, for the hierarchy: who is directly under whom (by the Parent component), each level by name and then by creation order. Built once from a document
 // and read many times, so drawing a thousand entities does not scan the scene for every row.
 class HierarchyIndex {
@@ -60,6 +62,11 @@ public:
     // drop state that belonged to the scene that was open: the recovery autosave above all.
     std::function<void()> on_document_replaced;
 
+    // The command table the panel's own keys come from (undo, redo and save while the panel has focus; duplicate,
+    // delete, copy, paste and rename while the hierarchy does), so a chord is defined in one place. The registry
+    // must outlive the panel; with none set the panel has no key handling.
+    void SetCommands(const CommandRegistry* commands) { commands_ = commands; }
+
     // The actions the toolbar and the hierarchy run, public so that a test (and a command palette) can run them without clicking. Each one that would discard unsaved changes is
     // refused with a status line unless `discard` is true (the toolbar asks first and then passes true).
     bool NewScene(bool discard = false);
@@ -95,6 +102,7 @@ private:
     void Select(Entity entity, bool additive);
 
     SceneDocument document_;
+    const CommandRegistry* commands_ = nullptr;
     std::filesystem::path content_root_;
     ModelBoundsCache bounds_;
     std::filesystem::path pending_overwrite_; // the file a save was just refused for, so that asking again by name can confirm it
