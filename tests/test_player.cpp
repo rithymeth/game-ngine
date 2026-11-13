@@ -6,6 +6,7 @@
 #include "aether/player/game.h"
 #include "aether/physics/character.h"
 #include "aether/player/camera_shake.h"
+#include "aether/player/frame_report.h"
 #include "aether/project/project.h"
 #include "aether/scene/components.h"
 #include "aether/scene/gameplay.h"
@@ -362,6 +363,33 @@ AETHER_TEST(Player_RunsTheStartupSceneFromAPak) {
     CHECK(updates == 60 && fixed == 60);
     game.EndPlay();
     CHECK(!game.IsPlaying());
+}
+
+// The frame-time report: warm-up frames are left out, percentiles are nearest-rank, and without GPU samples it says so.
+AETHER_TEST(Player_FrameReportSummarisesTheFramesAfterTheWarmup) {
+    player::FrameReport report(5);
+    for (int i = 0; i < 5; ++i) report.AddFrame(500.0f); // warm-up: slow, and left out
+    for (int i = 1; i <= 100; ++i) report.AddFrame(static_cast<f32>(i)); // 1..100 ms
+    report.AddFrame(std::nanf("")); // not a measurement
+    const player::FrameReport::Stats cpu = report.Cpu();
+    CHECK(cpu.samples == 100);
+    CHECK(std::fabs(cpu.average - 50.5f) < 1e-3f);
+    CHECK(cpu.p50 == 50.0f && cpu.p95 == 95.0f && cpu.p99 == 99.0f && cpu.max == 100.0f);
+    CHECK(report.Gpu().samples == 0);
+    CHECK(report.Text().find("GPU time: not available") != std::string::npos);
+    CHECK(report.Text().find("Frame time: 100 frames") != std::string::npos);
+
+    for (int i = 0; i < 5; ++i) report.AddGpu(9.0f, 1.0f, 5.0f, 3.0f); // warm-up samples, left out
+    report.AddGpu(4.0f, 1.0f, 2.0f, 1.0f);
+    report.AddGpu(6.0f, 1.0f, 4.0f, 1.0f);
+    CHECK(report.Gpu().samples == 2 && std::fabs(report.Gpu().average - 5.0f) < 1e-4f);
+    CHECK(std::fabs(report.GpuScene() - 3.0f) < 1e-4f && std::fabs(report.GpuShadows() - 1.0f) < 1e-4f);
+    CHECK(report.Text().find("GPU time: 2 samples") != std::string::npos);
+
+    player::FrameReport none(10);
+    none.AddFrame(1.0f);
+    CHECK(none.Cpu().samples == 0);
+    CHECK(none.Text().find("no frames measured") != std::string::npos);
 }
 
 // Camera shake: trauma adds up and is capped, the shake grows with its square and the camera is put back exactly as it was.

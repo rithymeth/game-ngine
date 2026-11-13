@@ -28,6 +28,7 @@
 // every second, Shipping only warnings and errors.
 
 #include "aether/player/bindings_migrate.h"
+#include "aether/player/frame_report.h"
 #include "aether/player/game.h"
 #include "aether/platform/platform_plugin.h"
 #include "aether/player/scene_renderer.h"
@@ -559,6 +560,8 @@ int main(int argc, char** argv) {
         bool network_failed = false;
         auto last = std::chrono::steady_clock::now();
         auto last_stats = last;
+        FrameReport frame_report;
+        SceneRenderer::GpuTimings last_gpu;
         for (i64 frame = 0; options.frames < 0 || frame < options.frames; ++frame) {
             if (window) {
                 if (!window->PumpMessages()) break;
@@ -655,6 +658,14 @@ int main(int argc, char** argv) {
                         const SceneRenderer::GpuTimings t = scene_renderer->GpuFrameTimings();
                         if (t.valid) AETHER_LOG_INFO("Player", "GpuTiming frame %.2f ms: shadows %.2f, scene %.2f, post %.2f", t.frame_ms, t.shadows_ms, t.scene_ms, t.post_ms);
                     }
+                    if (options.report) {
+                        // One sample per finished frame: the newest timing is repeated until the next frame finishes, so only a changed one counts.
+                        const SceneRenderer::GpuTimings t = scene_renderer->GpuFrameTimings();
+                        if (t.valid && (t.frame_ms != last_gpu.frame_ms || t.scene_ms != last_gpu.scene_ms || t.shadows_ms != last_gpu.shadows_ms || t.post_ms != last_gpu.post_ms)) {
+                            frame_report.AddGpu(t.frame_ms, t.shadows_ms, t.scene_ms, t.post_ms);
+                            last_gpu = t;
+                        }
+                    }
                 } else {
                     cmd.BeginRenderPass(*swap_chain, {0.015f, 0.025f, 0.045f, 1.0f});
                     cmd.EndRenderPass();
@@ -685,6 +696,7 @@ int main(int argc, char** argv) {
                 swap_chain->Present(vsync);
                 frame_slot = (frame_slot + 1) % static_cast<u32>(frame_fences.size());
             }
+            if (options.report) frame_report.AddFrame(std::chrono::duration<f32, std::milli>(std::chrono::steady_clock::now() - now).count());
             if (config != cook::BuildConfiguration::Shipping && now - last_stats >= std::chrono::seconds(1)) {
                 last_stats = now;
                 const GameStats s = game.Stats();
@@ -698,6 +710,7 @@ int main(int argc, char** argv) {
             for (u64 pending_fence : frame_fences) device->WaitForFence(pending_fence);
         }
         if (options.report) {
+            std::fputs(frame_report.Text().c_str(), stdout);
             for (const Entity e : FindEntitiesWithTag(game.GetWorld(), "Player")) {
                 if (const Transform* t = game.GetWorld().GetComponent<Transform>(e)) {
                     std::printf("Player at (%.3f, %.3f, %.3f)\n", t->position.x, t->position.y, t->position.z);
