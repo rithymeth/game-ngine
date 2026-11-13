@@ -230,6 +230,21 @@ def dome(work):
         check(math.hypot(x - dx, z - dz) < 45, f"Kael comes out beside the dome ({math.hypot(x - dx, z - dz):.0f} m from it)")
 
 
+def combat(work):
+    """A sentinel walks up to Kael and strikes him (his health falls; at none he is disabled and the world reloads); one of Kael's hits disables a weak
+    sentinel, which drops components; and that stays so in the next run (the sentinel is gone for good)."""
+    result, text = run_player(work, "Scenes/CombatTest.ascene", "user12", press="W", frames=1200)
+    check(result.returncode == 0, f"the player runs the combat test and exits cleanly (exit {result.returncode})")
+    check("Sentinel hit Kael (health 90)" in text, "a sentinel walks up to Kael and strikes him")
+    check("Kael disabled" in text, "Kael at no health is disabled")
+    check(re.findall(r"Loaded (Scenes/\S+\.ascene)", text)[-1:] == ["Scenes/OpenWorld.ascene"], "being disabled reloads the open world")
+    check(not re.search(r"\[ERROR\]", text), "no errors in the fight")
+    result, text = run_player(work, "Scenes/CombatKill.ascene", "user13", press="F", frames=120)
+    check("Kael hit Test_Sentinel" in text and "Sentinel disabled: +2 components" in text, "one hit disables a weak sentinel, which drops components")
+    result, text = run_player(work, "Scenes/CombatKill.ascene", "user13", press="W", frames=120)
+    check("Sentinel hit Kael" not in text and "Pack at start: 0 scrap, 2 components" in text, "a disabled sentinel stays gone in the next run, and its drop was saved")
+
+
 def main():
     layout()
     if failures:

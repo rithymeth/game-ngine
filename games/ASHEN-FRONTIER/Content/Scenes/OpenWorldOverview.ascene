@@ -19535,23 +19535,6 @@
           "$v": 1,
           "asset_path": "Models/SENTINEL4.glb"
         },
-        "BoxCollider": {
-          "$v": 1,
-          "center": [
-            0,
-            1.2,
-            0
-          ],
-          "friction": 0.6,
-          "half_extents": [
-            0.8,
-            1.2,
-            0.8
-          ],
-          "is_trigger": false,
-          "report_stay": false,
-          "restitution": 0.0
-        },
         "Transform": {
           "$v": 2,
           "position": [
@@ -19578,9 +19561,13 @@
         "Tags": {
           "$v": 1,
           "names": [
-            "Enemy",
-            "Warden"
+            "Enemy"
           ]
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "properties": [],
+          "script": "cf03216d-65cf-4851-b232-4c1c7fa4c6dc"
         }
       },
       "guid": "5053d91b-5d17-520e-bf25-05a791479a2c"
@@ -19590,23 +19577,6 @@
         "ModelRenderer": {
           "$v": 1,
           "asset_path": "Models/SENTINEL4.glb"
-        },
-        "BoxCollider": {
-          "$v": 1,
-          "center": [
-            0,
-            1.2,
-            0
-          ],
-          "friction": 0.6,
-          "half_extents": [
-            0.8,
-            1.2,
-            0.8
-          ],
-          "is_trigger": false,
-          "report_stay": false,
-          "restitution": 0.0
         },
         "Transform": {
           "$v": 2,
@@ -19634,9 +19604,13 @@
         "Tags": {
           "$v": 1,
           "names": [
-            "Enemy",
-            "Warden"
+            "Enemy"
           ]
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "properties": [],
+          "script": "cf03216d-65cf-4851-b232-4c1c7fa4c6dc"
         }
       },
       "guid": "f3560388-c9ac-5f20-bc6a-08406f0d2f70"

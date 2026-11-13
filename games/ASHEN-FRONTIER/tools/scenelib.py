@@ -131,3 +131,10 @@ def beacon(scene, name, asset, position, **kwargs):
     guid_ = scene.model(name, asset, position=position, tags=("Relay",), **kwargs)
     scene.entities[-1]["components"]["ScriptComponent"] = {"$v": 1, "properties": [], "script": script_guid("Beacon")}
     return guid_
+
+
+def sentinel(scene, name, position, rotation=(0, 0, 0), snap=True, **props):
+    """A sentinel with its script (it chases and strikes; Kael can disable it). No collider: it moves. `props` override the script's values (max_hp, damage...)."""
+    guid_ = scene.model(name, "SENTINEL4", position=position, rotation=rotation, tags=("Enemy",), snap=snap)
+    scene.entities[-1]["components"]["ScriptComponent"] = {"$v": 1, "properties": [{"name": k, "value": str(v)} for k, v in props.items()], "script": script_guid("Sentinel")}
+    return guid_

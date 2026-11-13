@@ -1,0 +1,407 @@
+{
+  "$type": "Scene",
+  "$version": 1,
+  "entities": [
+    {
+      "components": {
+        "SkyLight": {
+          "$v": 1,
+          "color": [
+            0.75,
+            0.82,
+            0.95
+          ],
+          "intensity": 1.2
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Sky"
+        }
+      },
+      "guid": "2b236fc4-f2c7-5c19-adef-5aa63b3defaa"
+    },
+    {
+      "components": {
+        "DirectionalLight": {
+          "$v": 1,
+          "cast_shadows": true,
+          "color": [
+            1.0,
+            0.92,
+            0.8
+          ],
+          "intensity": 3.2
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            -0.31785088924192784,
+            -0.20464767547402107,
+            -0.07046584566124764,
+            0.9231060100153399
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Sun"
+        }
+      },
+      "guid": "49fe3aa4-c54b-5829-8075-e89e13215d68"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Ground.glb"
+        },
+        "MaterialParameters": {
+          "$v": 1,
+          "material": "",
+          "revision": 0,
+          "values": [
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "BaseColor",
+              "texture": "",
+              "value": [
+                0.55,
+                0.3,
+                0.18,
+                1.0
+              ]
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            60,
+            1,
+            60
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Ground"
+        }
+      },
+      "guid": "48f391e7-aae7-5f4f-9f7b-706691185fba"
+    },
+    {
+      "components": {
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "friction": 0.8,
+          "half_extents": [
+            30,
+            0.5,
+            30
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            -0.5,
+            0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "GroundCollider"
+        }
+      },
+      "guid": "97cd1a94-8e1c-57f4-970d-70fe9e8bff9d"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/SENTINEL4.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            0,
+            -2
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Test_Sentinel"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Enemy"
+          ]
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "properties": [
+            {
+              "name": "max_hp",
+              "value": "20"
+            }
+          ],
+          "script": "cf03216d-65cf-4851-b232-4c1c7fa4c6dc"
+        }
+      },
+      "guid": "985327ee-e444-5d68-b8e0-876c4a209579"
+    },
+    {
+      "components": {
+        "CharacterMovement": {
+          "$v": 1,
+          "acceleration": 20.0,
+          "air_acceleration": 5.0,
+          "air_control": 0.3,
+          "braking": 25.0,
+          "coyote_time": 0.1,
+          "flying": false,
+          "gravity_scale": 1.0,
+          "height": 1.8,
+          "jump_buffer": 0.1,
+          "jump_velocity": 5.0,
+          "mass": 70.0,
+          "max_slope_degrees": 45.0,
+          "radius": 0.35,
+          "run_speed": 7.0,
+          "step_height": 0.35,
+          "walk_speed": 4.0
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "properties": [],
+          "script": "0fe46960-544b-4e2d-8f69-f32f1bcca466"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            0.1,
+            0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Kael"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Player"
+          ]
+        }
+      },
+      "guid": "5c1eb06f-7395-5b91-9ffa-44e00927933f"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Kael.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "KaelBody"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "PlayerBody"
+          ]
+        },
+        "Parent": {
+          "$v": 1,
+          "parent": "5c1eb06f-7395-5b91-9ffa-44e00927933f"
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "properties": [],
+          "script": "6d7b68d8-bfbe-499f-a707-f9fc9f946089"
+        }
+      },
+      "guid": "ebf58c1b-062b-55eb-841e-64e8875a17d1"
+    },
+    {
+      "components": {
+        "WidgetComponent": {
+          "$v": 1,
+          "layout": "UI/Hud.aui",
+          "z": 0,
+          "visible": true
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Hud"
+        }
+      },
+      "guid": "f77012ac-b6a7-555c-af5b-2f4dfb9daeea"
+    },
+    {
+      "components": {
+        "Camera": {
+          "$v": 1,
+          "far_plane": 300,
+          "fov_degrees": 62,
+          "near_plane": 0.1,
+          "ortho_height": 10.0,
+          "priority": 0,
+          "projection": "Perspective"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            3.0,
+            6
+          ],
+          "rotation": [
+            -0.10452846326765347,
+            0.0,
+            0.0,
+            0.9945218953682733
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "MainCamera"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "MainCamera"
+          ]
+        }
+      },
+      "guid": "12ad2e56-f09a-545d-9864-d7e3b1753071"
+    }
+  ]
+}

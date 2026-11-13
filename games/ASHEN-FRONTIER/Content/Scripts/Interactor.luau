@@ -26,6 +26,8 @@ local function Set(kind, value)
 end
 
 function Interactor:OnCreate()
+    self.attack_cool = 0
+    if not SaveGames.HasKey("player.hp") then SaveGames.SetNumber("player.hp", 100) end
     if not SaveGames.HasKey("pack.scrap") and SaveGames.DoesSaveExist("autosave") then SaveGames.LoadFromSlot("autosave") end
     if not SaveGames.HasKey("pack.scrap") then
         SaveGames.SetNumber("pack.scrap", self.start_scrap)
@@ -56,17 +58,46 @@ local function Objective()
 end
 
 -- Everything the first chapter saves, cleared for a new game (F9).
-local PROGRESS = { "pack.scrap", "pack.components", "crafted.generator_core", "power.outpost", "mule.repaired", "mission.relay" }
-
 local function NewGame()
-    for _, key in ipairs(PROGRESS) do SaveGames.RemoveKey(key) end
+    SaveGames.CreateSaveObject() -- the whole bag: the pack, the chapter, Kael's health and every sentinel's
     SaveGames.DeleteSave("autosave")
     print("New game: progress cleared")
     Scene.Load("Scenes/OpenWorld.ascene")
 end
 
+-- Kael's strike: every sentinel within reach loses health (kept in SaveGames, where the sentinel reads it).
+local ATTACK_REACH = 2.6
+local ATTACK_DAMAGE = 25
+
 function Interactor:OnUpdate(dt)
     if Input.IsTriggered("NewGame") then return NewGame() end
+    local hp = SaveGames.GetNumber("player.hp", 100)
+    if hp <= 0 then
+        print("Kael disabled: back to the start, his health restored")
+        SaveGames.SetNumber("player.hp", 100)
+        SaveGames.SaveToSlot("autosave")
+        return Scene.Load("Scenes/OpenWorld.ascene")
+    end
+    UI.SetText("HealthText", string.format("HEALTH  %d", hp))
+    self.attack_cool = self.attack_cool - dt
+    if self.player ~= nil and self.attack_cool <= 0 and Input.IsTriggered("Attack") then
+        self.attack_cool = 0.5
+        local here = self.player:Get("Transform").position
+        for _, e in ipairs(world:EntitiesWith("Tags")) do
+            local isEnemy = false
+            for _, t in ipairs(e:Get("Tags").names) do if t == "Enemy" then isEnemy = true end end
+            if isEnemy then
+                local p = e:Get("Transform").position
+                local dx, dz = p.x - here.x, p.z - here.z
+                if dx * dx + dz * dz <= ATTACK_REACH * ATTACK_REACH then
+                    local key = "enemy." .. e:Get("EntityName").value .. ".hp"
+                    SaveGames.SetNumber(key, SaveGames.GetNumber(key, 100) - ATTACK_DAMAGE)
+                    Camera.Shake(0.15)
+                    print("Kael hit " .. e:Get("EntityName").value)
+                end
+            end
+        end
+    end
     if not self.hud_ready then -- the HUD exists from the first frame: show the pack as it is (it may be carried over)
         self.hud_ready = UI.SetText("ScrapText", string.format("SCRAP  %d", Get("scrap")))
         UI.SetText("ComponentText", string.format("COMPONENTS  %d", Get("components")))
