@@ -28,6 +28,18 @@ local function Set(kind, value)
     SaveGames.SaveToSlot("autosave")
 end
 
+-- Taken pickups stay taken: "taken.<scene>.<name>" in SaveGames (so they do not come back after a door or a restart, and F9 clears them).
+local function TakenKey(entity)
+    return "taken." .. Scene.Current() .. "." .. entity:Get("EntityName").value
+end
+
+local function IsPickup(entity)
+    for _, t in ipairs(entity:Get("Tags").names) do
+        if t == "Salvage" or t == "Sample" then return true end
+    end
+    return false
+end
+
 local function Sfx(name)
     if not Audio.PlaySound2D("Audio/" .. name .. ".acue") then print("Missing sound: " .. name) end
 end
@@ -122,9 +134,9 @@ function Interactor:OnUpdate(dt)
     local best, best_d2 = nil, self.reach * self.reach
     for _, e in ipairs(world:EntitiesWith("Tags")) do
         local tags = e:Get("Tags").names
-        local salvage = false
-        for _, t in ipairs(tags) do if t == "Salvage" or t == "Sample" then salvage = true end end
-        if salvage then
+        if IsPickup(e) and SaveGames.HasKey(TakenKey(e)) then
+            world:Destroy(e) -- taken before (an earlier visit or run): it does not come back
+        elseif IsPickup(e) then
             local p = e:Get("Transform").position
             local dx, dz = p.x - here.x, p.z - here.z
             local d2 = dx * dx + dz * dz
@@ -147,6 +159,7 @@ function Interactor:OnUpdate(dt)
     if best ~= nil and Input.IsTriggered("Interact") then
         local name = best:Get("EntityName").value
         local kind, amount = Yield(name)
+        SaveGames.SetNumber(TakenKey(best), 1)
         Set(kind, Get(kind) + amount)
         world:Destroy(best)
         Sfx("pickup")
