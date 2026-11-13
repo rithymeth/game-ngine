@@ -17,6 +17,7 @@
 #endif
 
 #include "aether/core/log.h"
+#include "aether/scene/components.h"
 
 #include "script_values.h"
 
