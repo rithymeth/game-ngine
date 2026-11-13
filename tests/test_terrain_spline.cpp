@@ -135,3 +135,110 @@ AETHER_TEST(Spline_MeshAndRoadMask) {
     for (usize i = 0; i < mask.size(); i += 4) gap = gap || mask[i] == 0.0f;
     AETHER_CHECK(gap);
 }
+
+AETHER_TEST(Spline_TangentFollowsCurve) {
+    Spline sp;
+    sp.AddPoint({0, 0, 0});
+    sp.AddPoint({10, 0, 0});
+    sp.AddPoint({10, 0, 10});
+    sp.AddPoint({0, 0, 10});
+
+    // The tangent must point where the curve actually goes. The old code
+    // returned the segment's chord, constant over each segment and tens of
+    // degrees away from the real direction on a bend like this one.
+    const f32 h = 1e-3f;
+    for (const f32 t : {0.13f, 0.29f, 0.42f, 0.61f, 0.78f, 0.91f}) {
+        const Vec3 numeric = (sp.Evaluate(t + h) - sp.Evaluate(t - h)).Normalized();
+        const Vec3 tangent = sp.Tangent(t);
+        AETHER_CHECK(NearEqual(tangent.Length(), 1.0f, 1e-4f));
+        AETHER_CHECK(tangent.Dot(numeric) > 0.999f);
+    }
+}
+
+AETHER_TEST(Spline_FrameVertical) {
+    Spline sp;
+    sp.AddPoint({0, 0, 0});
+    sp.AddPoint({0, 10, 0});
+    sp.AddPoint({0, 20, 0});
+
+    Vec3 tangent{1, 0, 0}, up{0, 1, 0}, right{1, 0, 0};
+    sp.Frame(0.5f, &tangent, &up, &right);
+
+    AETHER_CHECK(NearEqual(tangent.Length(), 1.0f, 1e-4f));
+    AETHER_CHECK(NearEqual(up.Length(), 1.0f, 1e-4f));
+    AETHER_CHECK(NearEqual(right.Length(), 1.0f, 1e-4f));
+    // Orthonormal even though the tangent is parallel to world up (the old
+    // cross product with +Y was zero and collapsed the frame).
+    AETHER_CHECK(NearEqual(tangent.Dot(up), 0.0f, 1e-4f));
+    AETHER_CHECK(NearEqual(tangent.Dot(right), 0.0f, 1e-4f));
+    AETHER_CHECK(NearEqual(up.Dot(right), 0.0f, 1e-4f));
+    AETHER_CHECK(tangent.Dot(Vec3(0, 1, 0)) > 0.999f);
+}
+
+AETHER_TEST(Spline_RollIsDegrees) {
+    Spline sp;
+    sp.AddPoint({0, 0, 0});
+    sp.AddPoint({10, 0, 0});
+    sp.SetRoll(0, 90.0f);
+    sp.SetRoll(1, 90.0f);
+
+    Vec3 tangent{1, 0, 0}, up{0, 1, 0}, right{1, 0, 0};
+    sp.Frame(0.5f, &tangent, &up, &right);
+    // A quarter turn around +X sends up to +Z and right to -Y. Roll is
+    // documented in degrees, and the editor sets it in degrees; treating it
+    // as radians turned 90 into 90 rad.
+    AETHER_CHECK(NearEqual(up, Vec3(0, 0, 1), 1e-4f));
+    AETHER_CHECK(NearEqual(right, Vec3(0, -1, 0), 1e-4f));
+}
+
+AETHER_TEST(Spline_SampleDegenerate) {
+    // One point: evaluating anywhere gives it back.
+    Spline one;
+    one.AddPoint({3, 4, 5});
+    const auto single = one.SampleUniform(1.0f);
+    AETHER_CHECK(single.size() == 1);
+    AETHER_CHECK(NearEqual(single[0], Vec3(3, 4, 5), 1e-5f));
+
+    // Two coincident points span no distance: one finite sample, not 0/0.
+    Spline still;
+    still.AddPoint({1, 2, 3});
+    still.AddPoint({1, 2, 3});
+    const auto flat = still.SampleUniform(1.0f);
+    AETHER_CHECK(flat.size() == 1);
+    AETHER_CHECK(std::isfinite(flat[0].x) && std::isfinite(flat[0].y) && std::isfinite(flat[0].z));
+
+    // A zero or negative step has no interval, and a tiny one must not ask
+    // for an unbounded allocation.
+    Spline line;
+    line.AddPoint({0, 0, 0});
+    line.AddPoint({10, 0, 0});
+    AETHER_CHECK(line.SampleUniform(0.0f).size() == 1);
+    AETHER_CHECK(line.SampleUniform(-3.0f).size() == 1);
+    AETHER_CHECK(line.SampleUniform(1e-9f).size() <= 1'000'000);
+
+    // A step longer than the spline still gives both ends.
+    const auto ends = line.SampleUniform(100.0f);
+    AETHER_CHECK(ends.size() == 2);
+    AETHER_CHECK(NearEqual(ends[0], Vec3(0, 0, 0), 1e-5f));
+    AETHER_CHECK(NearEqual(ends[1], Vec3(10, 0, 0), 1e-5f));
+}
+
+AETHER_TEST(Spline_LengthOfWindingCurve) {
+    // A zigzag of many short segments. The old length used 16 chords over the
+    // whole spline and cut across the turns, reporting far less than the
+    // curve is long.
+    Spline sp;
+    for (u32 i = 0; i <= 32; ++i) {
+        sp.AddPoint({static_cast<f32>(i) * 5.0f, 0.0f, (i % 2 == 0) ? 10.0f : -10.0f});
+    }
+    constexpr u32 kFine = 4096;
+    f32 fine = 0.0f;
+    Vec3 prev = sp.Evaluate(0.0f);
+    for (u32 i = 1; i <= kFine; ++i) {
+        const Vec3 cur = sp.Evaluate(static_cast<f32>(i) / static_cast<f32>(kFine));
+        fine += (cur - prev).Length();
+        prev = cur;
+    }
+    const f32 length = sp.Length();
+    AETHER_CHECK(std::fabs(length - fine) / fine < 0.03f);
+}
