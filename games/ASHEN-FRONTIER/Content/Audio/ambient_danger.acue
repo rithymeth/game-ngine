@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "name": "ambient_danger",
+  "root": 1,
+  "output": {
+    "bus": "Music",
+    "volume_db": -12,
+    "spatial": false
+  },
+  "nodes": [
+    {
+      "id": 1,
+      "type": "Wave",
+      "sound": "Audio/ambient_danger.wav",
+      "looping": true
+    }
+  ]
+}

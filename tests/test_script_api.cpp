@@ -227,6 +227,18 @@ AETHER_TEST(ScriptApi_AudioPlaysThroughTheActiveAudioSystem) {
         AETHER_CHECK(f.host.Run("Audio.StopAll()").ok);
         AETHER_CHECK(mixer.VoiceCount() == 0);
         AETHER_CHECK(!f.host.Run("Audio.PlaySound2D(42)").ok); // wants a cue name
+        // Handles: a sound a script started can be asked about, changed and stopped; a missing cue gives false.
+        const usize before_handles = mixer.VoiceCount();
+        ScriptResult h = f.host.Run("H = Audio.Play2D('Beep', -6); return H, Audio.IsPlaying(H), Audio.SetVolume(H, -12), Audio.Play2D('Nope')");
+        AETHER_CHECK(h.ok && h.values.size() == 4);
+        if (h.ok && h.values.size() == 4) {
+            AETHER_CHECK(std::holds_alternative<f64>(h.values[0]) && std::get<f64>(h.values[0]) > 0.0);
+            AETHER_CHECK(std::get<bool>(h.values[1]) && std::get<bool>(h.values[2]) && !std::get<bool>(h.values[3]));
+        }
+        AETHER_CHECK(mixer.VoiceCount() == before_handles + 1);
+        ScriptResult stopped = f.host.Run("local was = Audio.Stop(H); return was, Audio.IsPlaying(H), Audio.Stop(H)");
+        AETHER_CHECK(stopped.ok && stopped.values.size() == 3 && std::get<bool>(stopped.values[0]) && !std::get<bool>(stopped.values[1]) && !std::get<bool>(stopped.values[2]));
+        AETHER_CHECK(!f.host.Run("Audio.Stop('x')").ok && !f.host.Run("Audio.Play2D(1)").ok); // wrong argument types are script errors
     }
     // With no audio system running, playing is false and harmless.
     ScriptResult none = f.host.Run("return Audio.PlaySound2D('Beep')");

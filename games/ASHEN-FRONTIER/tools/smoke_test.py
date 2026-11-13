@@ -244,6 +244,7 @@ def combat(work):
     check("Kael disabled" in text, "Kael at no health is disabled")
     check(re.findall(r"Loaded (Scenes/\S+\.ascene)", text)[-1:] == ["Scenes/OpenWorld.ascene"], "being disabled reloads the open world")
     check(not re.search(r"\[ERROR\]", text), "no errors in the fight")
+    check("Music: danger" in text, "with a sentinel close the music turns tense (Audio.Play2D and Audio.Stop fade the calm loop)")
     result, text = run_player(work, "Scenes/CombatKill.ascene", "user13", press="F", frames=120)
     check("Kael hit Test_Sentinel" in text and "Sentinel disabled: +2 components" in text, "one hit disables a weak sentinel, which drops components")
     result, text = run_player(work, "Scenes/CombatKill.ascene", "user13", press="W", frames=120)
@@ -260,6 +261,10 @@ def scan(work):
         check(lines[0].startswith("[SALVAGE] Test Crate  5 m NE"), f"nearest first: the crate, 5 m north-east ({lines[0]})")
         check(lines[1].startswith("[FABRICATION] Test FabBench  9 m S"), f"then the fab bench, 9 m south ({lines[1]})")
         check(lines[2].startswith("[MACHINE] Test Sentinel  30 m W") and "health 100" in lines[2], f"then the sentinel, 30 m west, with its health ({lines[2]})")
+    check("Music: calm" in text and "Music: danger" not in text, "with the nearest sentinel far off the music stays calm")
+    result, text = run_player(work, "Scenes/MusicTest.ascene", "user22", press="Z", frames=300)
+    modes = re.findall(r"Music: (calm|danger)", text)
+    check(modes[:2] == ["calm", "danger"], f"a sentinel closing in from afar switches the music from calm to tense ({modes[:3]})")
     check(not re.search(r"\[ERROR\]", text), "no errors while scanning")
 
 
@@ -331,7 +336,7 @@ def main():
             visible(work)
     finally:
         shutil.rmtree(work, ignore_errors=True)
-    check(not any("Missing sound" in text for text in TRANSCRIPTS), f"every sound a script plays exists ({len(TRANSCRIPTS)} runs looked through)")
+    check(not any("Missing sound" in text or "Missing music" in text for text in TRANSCRIPTS), f"every sound a script plays exists ({len(TRANSCRIPTS)} runs looked through)")
     print(f"{len(failures)} check(s) failed" if failures else "smoke test passed")
     return 1 if failures else 0
 

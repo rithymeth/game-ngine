@@ -48,6 +48,14 @@ SOUNDS = {
 }
 
 
+# Looping music: name -> (duration, rate, volume_db, function(t, sine) -> sample). Every tone completes whole cycles in the duration, so the loop is seamless.
+MUSIC = {
+    "ambient_calm": (6.0, 24000, -14, lambda t, s: (0.30 * s(55) + 0.20 * s(83) + 0.10 * s(110)) * (0.65 + 0.35 * s(0.5))),
+    "ambient_inside": (6.0, 24000, -14, lambda t, s: (0.30 * s(73) + 0.18 * s(110) + 0.08 * s(220)) * (0.6 + 0.4 * s(1 / 3))),
+    "ambient_danger": (3.0, 24000, -12, lambda t, s: (0.28 * s(55) + 0.22 * s(110) + 0.16 * s(165) + 0.08 * s(330)) * (0.5 + 0.5 * s(2)) ** 2 * 1.4),
+}
+
+
 def main():
     out = CONTENT / "Audio"
     out.mkdir(parents=True, exist_ok=True)
@@ -71,7 +79,25 @@ def main():
         write_json(cue, {"version": 1, "name": name, "root": 1, "output": {"bus": "SFX", "volume_db": volume_db, "spatial": False},
                          "nodes": [{"id": 1, "type": "Wave", "sound": f"Audio/{name}.wav", "looping": False}]})
         meta(cue, "SoundCue")
-    print("wrote", len(SOUNDS), "sounds to", out)
+    for name, (duration, rate, volume_db, fn) in MUSIC.items():
+        samples = array.array("h")
+        for frame in range(round(rate * duration)):
+            t = frame / rate
+            samples.append(round(max(-1.0, min(1.0, fn(t, lambda hz: math.sin(2 * math.pi * hz * t)))) * 32767))
+        if sys.byteorder != "little":
+            samples.byteswap()
+        wav_path = out / f"{name}.wav"
+        with wave.open(str(wav_path), "wb") as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(rate)
+            wav.writeframes(samples.tobytes())
+        meta(wav_path, "Sound")
+        cue = out / f"{name}.acue"
+        write_json(cue, {"version": 1, "name": name, "root": 1, "output": {"bus": "Music", "volume_db": volume_db, "spatial": False},
+                         "nodes": [{"id": 1, "type": "Wave", "sound": f"Audio/{name}.wav", "looping": True}]})
+        meta(cue, "SoundCue")
+    print("wrote", len(SOUNDS), "sounds and", len(MUSIC), "music loops to", out)
 
 
 if __name__ == "__main__":

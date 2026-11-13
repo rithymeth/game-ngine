@@ -388,6 +388,44 @@
     },
     {
       "components": {
+        "ScriptComponent": {
+          "$v": 1,
+          "properties": [
+            {
+              "name": "calm",
+              "value": "\"Audio/ambient_inside.acue\""
+            }
+          ],
+          "script": "1bb3e0c1-0bc2-48ee-bbb6-579e153350a7"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Music"
+        }
+      },
+      "guid": "e8eb82ca-c9cb-50a6-856e-44df9d588f46"
+    },
+    {
+      "components": {
         "Camera": {
           "$v": 1,
           "far_plane": 300,

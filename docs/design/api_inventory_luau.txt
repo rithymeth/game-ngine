@@ -92,9 +92,13 @@ Attributes.GetMin function
 Attributes.Has function
 Attributes.SetBase function
 Audio table
+Audio.IsPlaying function
+Audio.Play2D function
 Audio.PlaySound2D function
 Audio.PlaySoundAtLocation function
 Audio.SetBusVolume function
+Audio.SetVolume function
+Audio.Stop function
 Audio.StopAll function
 Camera table
 Camera.Shake function

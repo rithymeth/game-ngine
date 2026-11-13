@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "name": "ambient_inside",
+  "root": 1,
+  "output": {
+    "bus": "Music",
+    "volume_db": -14,
+    "spatial": false
+  },
+  "nodes": [
+    {
+      "id": 1,
+      "type": "Wave",
+      "sound": "Audio/ambient_inside.wav",
+      "looping": true
+    }
+  ]
+}

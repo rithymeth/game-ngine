@@ -431,6 +431,28 @@ void ScriptSystem::InstallApi(bool install_kit_apis) {
         audio::AudioSystem* system = audio::AudioSystem::Active();
         call.Return(system != nullptr && system->SetBusVolume(call.String(0), static_cast<f32>(call.Number(1)), static_cast<f32>(call.Number(2, 0.0))));
     });
+    host_.RegisterNative("Audio", "Play2D", [](NativeCall& call) {
+        if (!call.IsString(0)) return call.Fail("Audio.Play2D(cue [, volume_db, pitch]) expected a cue name");
+        audio::AudioSystem* system = audio::AudioSystem::Active();
+        const audio::CueHandle handle = system != nullptr ? system->PlaySound2D(call.String(0), static_cast<f32>(call.Number(1, 0.0)), static_cast<f32>(call.Number(2, 1.0))) : 0;
+        if (handle != 0) call.Return(static_cast<f64>(handle));
+        else call.Return(false);
+    });
+    host_.RegisterNative("Audio", "Stop", [](NativeCall& call) {
+        if (!call.IsNumber(0)) return call.Fail("Audio.Stop(handle [, fade_seconds]) expected a handle from Audio.Play2D");
+        audio::AudioSystem* system = audio::AudioSystem::Active();
+        call.Return(system != nullptr && system->Player().Stop(static_cast<audio::CueHandle>(call.Number(0)), static_cast<f32>(call.Number(1, 0.0))));
+    });
+    host_.RegisterNative("Audio", "IsPlaying", [](NativeCall& call) {
+        if (!call.IsNumber(0)) return call.Fail("Audio.IsPlaying(handle) expected a handle from Audio.Play2D");
+        audio::AudioSystem* system = audio::AudioSystem::Active();
+        call.Return(system != nullptr && system->Player().IsPlaying(static_cast<audio::CueHandle>(call.Number(0))));
+    });
+    host_.RegisterNative("Audio", "SetVolume", [](NativeCall& call) {
+        if (!call.IsNumber(0) || !call.IsNumber(1)) return call.Fail("Audio.SetVolume(handle, volume_db) expected a handle from Audio.Play2D and a number");
+        audio::AudioSystem* system = audio::AudioSystem::Active();
+        call.Return(system != nullptr && system->Player().SetVolume(static_cast<audio::CueHandle>(call.Number(0)), static_cast<f32>(call.Number(1))));
+    });
     host_.RegisterNative("Audio", "StopAll", [](NativeCall&) {
         if (audio::AudioSystem* system = audio::AudioSystem::Active()) system->StopAll();
     });
