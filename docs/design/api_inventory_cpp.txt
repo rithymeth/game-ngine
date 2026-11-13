@@ -2688,11 +2688,13 @@
   Job*AllocateJob(u32 thread_index,JobFunc fn,void*data,JobCounter&counter)
   JobSystem&operator=(const JobSystem&)=delete
   JobSystem(const JobSystem&)=delete
+  bool TryPopOverflow(Job*&job)
   bool TryRunOneJob(u32 thread_index)
   public:explicit JobSystem(u32 worker_count=0)
   static void Execute(Job*job)
   u32 ThreadCount()const
   using JobFunc=void(*)(void*data)
+  void PushOverflow(Job*job)
   void Schedule(JobFunc fn,void*data,JobCounter&counter)
   void ScheduleBatch(const JobDecl*jobs,u32 count,JobCounter&counter)
   void Wait(JobCounter&counter)
@@ -2706,11 +2708,11 @@
   alignas(kCacheLineSize)std::atomic<i64>top_
   bool Empty()const
   bool Pop(T&out)
+  bool Push(T item)
   bool Steal(T&out)
   public:WorkStealingQueue()=default
   static_assert((Capacity&(Capacity - 1))==0,"")
   static_assert(std::atomic<T>::is_always_lock_free,"")
-  void Push(T item)
 [engine/include/aether/kit/event_bus.h] experimental
   type class KitEventBus
   public:template<typename Event>void Publish(Event event)
