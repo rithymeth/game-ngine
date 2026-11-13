@@ -26,7 +26,9 @@ Kael can take salvage (E or X: the nearest thing tagged Salvage within 3 m goes 
 
 Sentinels (`Sentinel.luau`) guard the Iron Wastes checkpoint, the assembly hall and the reactor hall: they notice Kael within 14 m, walk up and strike; Kael hits back (F, left mouse or B on a pad: 25 damage within 2.6 m), a disabled sentinel drops 2 components and stays gone (health is kept in SaveGames: `player.hp`, `enemy.<name>.hp`); at no health Kael is returned to the start. F9 clears all of it.
 
-Not yet: the scanner, ranged combat, audio, the other regions' missions, and the reactor hall (the rest of DESIGN.md section 22). Two interiors exist: the Assembly Hall (the door on the Iron Wastes hall) and the Living Dome (the door on the Verdant Array dome); each exit puts Kael back outside its door. The reactor hall is next.
+Sound effects (`Content/Audio`, written by `tools/make_audio.py`: short synthesized tones, placeholders) play for pickups, crafting, power, repairs, the relay, doors, strikes and hits, through the scripts' `Audio` table; the smoke test fails if a script asks for a sound that is not there.
+
+Not yet: the scanner, ranged combat, music and ambience, the other regions' missions, and the reactor hall (the rest of DESIGN.md section 22). Two interiors exist: the Assembly Hall (the door on the Iron Wastes hall) and the Living Dome (the door on the Verdant Array dome); each exit puts Kael back outside its door. The reactor hall is next.
 
 ## Run it
 

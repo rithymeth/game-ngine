@@ -25,6 +25,10 @@ local function Set(kind, value)
     SaveGames.SaveToSlot("autosave")
 end
 
+local function Sfx(name)
+    if not Audio.PlaySound2D("Audio/" .. name .. ".acue") then print("Missing sound: " .. name) end
+end
+
 function Interactor:OnCreate()
     self.attack_cool = 0
     if not SaveGames.HasKey("player.hp") then SaveGames.SetNumber("player.hp", 100) end
@@ -82,6 +86,7 @@ function Interactor:OnUpdate(dt)
     self.attack_cool = self.attack_cool - dt
     if self.player ~= nil and self.attack_cool <= 0 and Input.IsTriggered("Attack") then
         self.attack_cool = 0.5
+        Sfx("swing")
         local here = self.player:Get("Transform").position
         for _, e in ipairs(world:EntitiesWith("Tags")) do
             local isEnemy = false
@@ -93,6 +98,7 @@ function Interactor:OnUpdate(dt)
                     local key = "enemy." .. e:Get("EntityName").value .. ".hp"
                     SaveGames.SetNumber(key, SaveGames.GetNumber(key, 100) - ATTACK_DAMAGE)
                     Camera.Shake(0.15)
+                    Sfx("hit_enemy")
                     print("Kael hit " .. e:Get("EntityName").value)
                 end
             end
@@ -136,6 +142,7 @@ function Interactor:OnUpdate(dt)
         local kind, amount = Yield(name)
         Set(kind, Get(kind) + amount)
         world:Destroy(best)
+        Sfx("pickup")
         self.nearest = nil
         self.shown = nil
         UI.SetVisible("PromptPanel", false)

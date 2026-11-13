@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "name": "repair",
+  "root": 1,
+  "output": {
+    "bus": "SFX",
+    "volume_db": -7,
+    "spatial": false
+  },
+  "nodes": [
+    {
+      "id": 1,
+      "type": "Wave",
+      "sound": "Audio/repair.wav",
+      "looping": false
+    }
+  ]
+}

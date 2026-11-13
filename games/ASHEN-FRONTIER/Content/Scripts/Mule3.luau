@@ -14,6 +14,10 @@ Mule.follow_distance = 2
 --@tooltip How close Kael has to be to talk to it, metres
 Mule.reach = 3
 
+local function Sfx(name)
+    if not Audio.PlaySound2D("Audio/" .. name .. ".acue") then print("Missing sound: " .. name) end
+end
+
 function Mule:OnCreate()
     self.state = "broken" -- broken, follow, hold
     self.player = world:EntitiesWith("CharacterMovement")[1]
@@ -70,6 +74,7 @@ function Mule:OnUpdate(dt)
                     self.state = "follow"
                     SaveGames.SetNumber("mule.repaired", 1)
                     SaveGames.SaveToSlot("autosave")
+                    Sfx("repair")
                     print("MULE-3 repaired: it follows Kael")
                 else
                     print("MULE-3 needs components")

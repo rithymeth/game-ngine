@@ -28,6 +28,7 @@ import world  # noqa: E402
 
 BUILD = pathlib.Path(os.environ.get("AETHER_BUILD", HERE.parent.parent / "build"))
 failures = []
+TRANSCRIPTS = []  # the console output of every player run, to look through at the end
 
 
 def check(ok, what):
@@ -86,7 +87,7 @@ def play(work):
     if sys.platform.startswith("linux") and shutil.which("xvfb-run"):
         command = ["xvfb-run", "-a"] + command
     result = subprocess.run(command, capture_output=True, text=True, timeout=300)
-    text = result.stdout + result.stderr
+    text = result.stdout + result.stderr; TRANSCRIPTS.append(text)
     check(result.returncode == 0, f"the player runs and exits cleanly (exit {result.returncode})")
     problems = [l for l in text.splitlines() if re.search(r"\[(ERROR|WARN)\].*(script|Script|luau|Luau|scene|Scene|load|Load)", l) and "Vulkan" not in l and "settings" not in l]
     check(not problems, "no script, scene or load errors in the log" + ("" if not problems else ": " + problems[0][:140]))
@@ -122,7 +123,7 @@ def interior(work):
     if sys.platform.startswith("linux") and shutil.which("xvfb-run"):
         command = ["xvfb-run", "-a"] + command
     result = subprocess.run(command, capture_output=True, text=True, timeout=300)
-    text = result.stdout + result.stderr
+    text = result.stdout + result.stderr; TRANSCRIPTS.append(text)
     check(result.returncode == 0, f"the player runs the hall and exits cleanly (exit {result.returncode})")
     loads = re.findall(r"Loaded (Scenes/\S+\.ascene)", text)
     check(loads[:2] == ["Scenes/AssemblyHall.ascene", "Scenes/OpenWorld.ascene"], f"the exit door leads from the hall to the open world (loaded: {loads})")
@@ -143,6 +144,7 @@ def salvage(work):
         if sys.platform.startswith("linux") and shutil.which("xvfb-run"):
             command = ["xvfb-run", "-a"] + command
         result = subprocess.run(command, capture_output=True, text=True, timeout=300)
+        TRANSCRIPTS.append(result.stdout + result.stderr)
         return result, result.stdout + result.stderr
     result, text = run(60)
     check(result.returncode == 0, f"the player runs the salvage test and exits cleanly (exit {result.returncode})")
@@ -159,7 +161,7 @@ def mule(work):
     if sys.platform.startswith("linux") and shutil.which("xvfb-run"):
         command = ["xvfb-run", "-a"] + command
     result = subprocess.run(command, capture_output=True, text=True, timeout=300)
-    text = result.stdout + result.stderr
+    text = result.stdout + result.stderr; TRANSCRIPTS.append(text)
     check(result.returncode == 0, f"the player runs the MULE-3 test and exits cleanly (exit {result.returncode})")
     check("MULE-3 repaired" in text, "Interact beside the broken MULE-3 with enough components repairs it")
     check("MULE-3 reached Kael" in text, "the repaired MULE-3 follows Kael and comes up to him")
@@ -175,6 +177,7 @@ def craft(work):
         if sys.platform.startswith("linux") and shutil.which("xvfb-run"):
             command = ["xvfb-run", "-a"] + command
         result = subprocess.run(command, capture_output=True, text=True, timeout=300)
+        TRANSCRIPTS.append(result.stdout + result.stderr)
         return result, result.stdout + result.stderr
     result, text = run("Scenes/CraftTest.ascene", "user5")
     check(result.returncode == 0, f"the player runs the crafting test and exits cleanly (exit {result.returncode})")
@@ -193,6 +196,7 @@ def run_player(work, scene, user, press="E", frames=80):
     if sys.platform.startswith("linux") and shutil.which("xvfb-run"):
         command = ["xvfb-run", "-a"] + command
     result = subprocess.run(command, capture_output=True, text=True, timeout=300)
+    TRANSCRIPTS.append(result.stdout + result.stderr)
     return result, result.stdout + result.stderr
 
 
@@ -261,6 +265,7 @@ def main():
             dome(work)
     finally:
         shutil.rmtree(work, ignore_errors=True)
+    check(not any("Missing sound" in text for text in TRANSCRIPTS), f"every sound a script plays exists ({len(TRANSCRIPTS)} runs looked through)")
     print(f"{len(failures)} check(s) failed" if failures else "smoke test passed")
     return 1 if failures else 0
 

@@ -25,6 +25,10 @@ local function Quat(yaw)
     return { 0, math.sin(h), 0, math.cos(h) }
 end
 
+local function Sfx(name)
+    if not Audio.PlaySound2D("Audio/" .. name .. ".acue") then print("Missing sound: " .. name) end
+end
+
 function Sentinel:OnCreate()
     self.player = world:EntitiesWith("CharacterMovement")[1]
     self.key = "enemy." .. self.entity:Get("EntityName").value .. ".hp"
@@ -45,6 +49,7 @@ function Sentinel:OnUpdate(dt)
         SaveGames.SaveToSlot("autosave")
         UI.SetText("ComponentText", string.format("COMPONENTS  %d", components))
         Camera.Shake(0.2)
+        Sfx("sentinel_down")
         print(string.format("Sentinel disabled: +%d components", self.reward))
         world:Destroy(self.entity)
         return
@@ -67,6 +72,7 @@ function Sentinel:OnUpdate(dt)
         local left = SaveGames.GetNumber("player.hp", 100) - self.damage
         SaveGames.SetNumber("player.hp", left)
         Camera.Shake(0.3)
+        Sfx("hurt")
         print(string.format("Sentinel hit Kael (health %d)", left))
     end
 end
