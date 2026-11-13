@@ -14,7 +14,9 @@
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <new>
 #include <random>
+#include <stdexcept>
 #include <thread>
 
 namespace aether::pak {
@@ -31,6 +33,13 @@ constexpr usize kAutoZstdThreshold = 16 * 1024;
 // Building an archive: entries are packed on threads only when there is at least this much to pack, and on no more than this many.
 constexpr u64 kParallelPackBytes = 1024 * 1024;
 constexpr usize kMaxPackThreads = 16;
+// An entry's uncompressed size is read from the index, which a damaged or
+// hostile archive controls, and the CRC that vouches for it can only be
+// checked after decompression. Rejecting anything larger than this while
+// parsing keeps a lying size field from becoming an arbitrarily large
+// allocation. Whole entries are read into memory, so this is also the
+// practical ceiling for one asset; large content belongs in several entries.
+constexpr u64 kMaxEntrySize = 1ull << 30; // 1 GiB
 
 const std::array<u32, 256>& CrcTable() {
     static const std::array<u32, 256> table = [] {
@@ -138,7 +147,9 @@ std::vector<u8> CompressWith(Compression method, std::span<const u8> in, int zst
 }
 
 bool Decompress(Compression method, std::span<const u8> in, u64 size, std::vector<u8>& out) {
-    if (size > std::numeric_limits<usize>::max()) return false;
+    // Repeated here rather than trusted from Parse: the declared size decides
+    // how much is allocated, so every path into decompression bounds it.
+    if (size > kMaxEntrySize || size > std::numeric_limits<usize>::max()) return false;
     switch (method) {
         case Compression::None:
             if (in.size() != size) return false;
@@ -153,6 +164,15 @@ bool Decompress(Compression method, std::span<const u8> in, u64 size, std::vecto
             return n >= 0 && static_cast<u64>(n) == size;
         }
         case Compression::Zstd: {
+            // A zstd frame with a normal header records its decompressed size.
+            // When it does, it has to agree with the index before anything is
+            // allocated, so a plausible-but-wrong size fails without the
+            // allocation. (A frame that omits the size is still bounded by
+            // kMaxEntrySize above.) An empty buffer can't hold a frame.
+            if (in.empty()) return false;
+            const unsigned long long frame_size = ZSTD_getFrameContentSize(in.data(), in.size());
+            if (frame_size == ZSTD_CONTENTSIZE_ERROR) return false;
+            if (frame_size != ZSTD_CONTENTSIZE_UNKNOWN && frame_size != size) return false;
             out.resize(static_cast<usize>(size));
             const usize n = ZSTD_decompress(out.data(), out.size(), in.data(), in.size());
             return !ZSTD_isError(n) && n == size;
@@ -578,6 +598,11 @@ bool PakReader::Parse(std::string* error, std::span<const PakKey> keys) {
             SetError(error, "entry '" + e.path + "' has inconsistent uncompressed sizes");
             return false;
         }
+        if (e.size > kMaxEntrySize || e.stored_size > kMaxEntrySize) {
+            SetError(error, "entry '" + e.path + "' is over the 1 GiB limit (" + std::to_string(e.size) +
+                                " bytes, stored as " + std::to_string(e.stored_size) + ")");
+            return false;
+        }
         if (e.offset < kHeaderSize || e.offset > index_offset || e.stored_size > index_offset - e.offset ||
             e.path.empty() || NormalizePath(e.path) != e.path) {
             SetError(error, "entry '" + e.path + "' is malformed");
@@ -631,8 +656,19 @@ bool PakReader::Read(const std::string& path, std::vector<u8>& out, std::string*
         SetError(error, "can't read '" + entry->path + "' from " + file_);
         return false;
     }
-    if (!Decompress(entry->compression, stored, entry->size, out)) {
-        SetError(error, "'" + entry->path + "' doesn't decompress (" + CompressionName(entry->compression) + ")");
+    // A malformed archive can still ask for more memory than the machine has
+    // even under the size limit; report that as a read failure, not a crash.
+    try {
+        if (!Decompress(entry->compression, stored, entry->size, out)) {
+            SetError(error, "'" + entry->path + "' doesn't decompress (" + CompressionName(entry->compression) + ")");
+            return false;
+        }
+    } catch (const std::bad_alloc&) {
+        SetError(error, "'" + entry->path + "' needs " + std::to_string(entry->size) +
+                            " bytes, more than is available");
+        return false;
+    } catch (const std::length_error&) {
+        SetError(error, "'" + entry->path + "' has an impossible uncompressed size");
         return false;
     }
     if (Crc32(out) != entry->crc32) {

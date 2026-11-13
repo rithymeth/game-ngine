@@ -45,10 +45,49 @@ std::vector<u8> Noise(usize size) {
     return v;
 }
 
+u16 Get16(const std::vector<u8>& bytes, usize at) {
+    return static_cast<u16>(bytes[at] | (bytes[at + 1] << 8));
+}
+
+u64 Get64(const std::vector<u8>& bytes, usize at) {
+    u64 v = 0;
+    for (int i = 0; i < 8; ++i) v |= static_cast<u64>(bytes[at + static_cast<usize>(i)]) << (8 * i);
+    return v;
+}
+
+void Put32(std::vector<u8>& bytes, usize at, u32 v) {
+    for (int i = 0; i < 4; ++i) bytes[at + static_cast<usize>(i)] = static_cast<u8>(v >> (8 * i));
+}
+
+void Put64(std::vector<u8>& bytes, usize at, u64 v) {
+    for (int i = 0; i < 8; ++i) bytes[at + static_cast<usize>(i)] = static_cast<u8>(v >> (8 * i));
+}
+
+// Rewrites the first index entry's uncompressed size and re-seals the index,
+// so the archive stays structurally valid and only the size can be at fault.
+void SetFirstEntryUncompressedSize(std::vector<u8>& bytes, u64 size) {
+    const usize index_offset = static_cast<usize>(Get64(bytes, 16));
+    const usize index_size = static_cast<usize>(Get64(bytes, 24));
+    const usize path_len = Get16(bytes, index_offset);
+    // path length, path, compression + 3 reserved bytes, offset, stored size.
+    const usize size_at = index_offset + 2 + path_len + 4 + 8 + 8;
+    Put64(bytes, size_at, size);
+    Put32(bytes, 32, Crc32(std::span<const u8>(bytes.data() + index_offset, index_size)));
+}
+
+void SetFirstEntryStoredSize(std::vector<u8>& bytes, u64 size) {
+    const usize index_offset = static_cast<usize>(Get64(bytes, 16));
+    const usize index_size = static_cast<usize>(Get64(bytes, 24));
+    const usize path_len = Get16(bytes, index_offset);
+    const usize stored_at = index_offset + 2 + path_len + 4 + 8;
+    Put64(bytes, stored_at, size);
+    Put32(bytes, 32, Crc32(std::span<const u8>(bytes.data() + index_offset, index_size)));
+}
+
 } // namespace
 
 AETHER_TEST(Pak_PathsAndCrc) {
-    CHECK(NormalizePath("textures\\rock.png") == "textures/rock.png");
+    CHECK(NormalizePath("textures\\\\rock.png") == "textures/rock.png");
     CHECK(NormalizePath("./a//b/./c.txt") == "a/b/c.txt" && NormalizePath("/root.json") == "root.json");
     CHECK(NormalizePath("a/../b").empty() && NormalizePath("").empty());
     const std::string check = "123456789";
@@ -62,7 +101,7 @@ AETHER_TEST(Pak_RoundTripWithEveryCompression) {
     const std::vector<u8> noise = Noise(50000);       // doesn't compress: stored raw
     PakWriter writer;
     CHECK(writer.Add("levels/big.bin", big) && writer.Add("ui/small.bin", small) && writer.Add("audio/noise.bin", noise));
-    CHECK(writer.Add("empty.txt", std::string()) && writer.Add("scenes\\start.json", std::string("{\"name\":\"Start\"}")));
+    CHECK(writer.Add("empty.txt", std::string()) && writer.Add("scenes\\\\start.json", std::string("{\"name\":\"Start\"}")));
     CHECK(!writer.Add("../escape.txt", std::string("x")) && !writer.Add("", std::string("x")));
     CHECK(writer.Add("ui/small.bin", small)); // replaces, doesn't duplicate
     CHECK(writer.EntryCount() == 5 && writer.OriginalBytes() == big.size() + small.size() + noise.size() + 16);
@@ -70,7 +109,7 @@ AETHER_TEST(Pak_RoundTripWithEveryCompression) {
     PakReader reader;
     std::string error;
     CHECK(reader.OpenMemory(writer.Build(), &error));
-    CHECK(reader.Entries().size() == 5 && reader.Contains("scenes/start.json") && reader.Contains("./ui\\small.bin"));
+    CHECK(reader.Entries().size() == 5 && reader.Contains("scenes/start.json") && reader.Contains("./ui\\\\small.bin"));
     CHECK(reader.Find("levels/big.bin")->compression == Compression::Zstd);
     CHECK(reader.Find("ui/small.bin")->compression == Compression::LZ4);
     CHECK(reader.Find("audio/noise.bin")->compression == Compression::None);
@@ -283,4 +322,46 @@ AETHER_TEST(Pak_ThreadCountDoesNotChangeTheBytes) {
     empty.SetThreads(8);
     PakReader reader;
     CHECK(reader.OpenMemory(empty.Build()) && reader.Entries().empty());
+}
+
+AETHER_TEST(Pak_RejectsAnEntryOverTheSizeLimit) {
+    for (CompressionPolicy policy : {CompressionPolicy::LZ4, CompressionPolicy::Zstd}) {
+        PakWriter writer(policy);
+        CHECK(writer.Add("big.bin", Repetitive(100000)));
+        PakReader good;
+        CHECK(good.OpenMemory(writer.Build())); // valid before the index is tampered with
+
+        // A terabyte declared for a 100 KB entry: rejected while parsing, so
+        // no allocation is ever attempted for the lie.
+        std::vector<u8> bytes = writer.Build();
+        SetFirstEntryUncompressedSize(bytes, 1ull << 40);
+        PakReader reader;
+        std::string error;
+        CHECK(!reader.OpenMemory(bytes, &error));
+        CHECK(error.find("over the 1 GiB limit") != std::string::npos);
+
+        // The same for the stored size: ReadStored resizes by it before any
+        // decompression happens.
+        bytes = writer.Build();
+        SetFirstEntryStoredSize(bytes, 1ull << 40);
+        CHECK(!reader.OpenMemory(bytes, &error));
+        CHECK(error.find("over the 1 GiB limit") != std::string::npos);
+    }
+}
+
+AETHER_TEST(Pak_ZstdSizeMustMatchTheFrameBeforeAllocating) {
+    PakWriter writer(CompressionPolicy::Zstd);
+    CHECK(writer.Add("z.bin", Repetitive(100000)));
+    std::vector<u8> bytes = writer.Build();
+
+    // Under the limit and structurally valid, but the frame records 100000.
+    SetFirstEntryUncompressedSize(bytes, 100001);
+    PakReader reader;
+    std::string error;
+    CHECK(reader.OpenMemory(bytes, &error));
+
+    std::vector<u8> out;
+    CHECK(!reader.Read("z.bin", out, &error));
+    CHECK(out.empty()); // rejected before the output was resized
+    CHECK(error.find("doesn't decompress") != std::string::npos);
 }
