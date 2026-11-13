@@ -159,6 +159,7 @@ def open_world():
     world_scene.build(False, {"ortho": True}).save(OUT / "WorldMapTopDown.ascene")
     interior_scene.assembly_hall(script_guid("ThirdPersonController"), script_guid("Door")).save(OUT / "AssemblyHall.ascene")
     interior_scene.living_dome(script_guid("ThirdPersonController"), script_guid("Door")).save(OUT / "LivingDome.ascene")
+    interior_scene.reactor_hall(script_guid("ThirdPersonController"), script_guid("Door")).save(OUT / "ReactorHall.ascene")
     data = OUT.parent / "Data"
     data.mkdir(exist_ok=True)
     (data / "world.json").write_text(json.dumps(world.world_data(), indent=2) + "\n", encoding="utf-8", newline="\n")
@@ -216,9 +217,9 @@ def beacon_test():
 
 
 def combat_tests():
-    """CombatTest: a sentinel 5 m from Kael with its usual values (it walks up and strikes; Kael is left alone to be hit). CombatKill: a weak sentinel 2 m
+    """CombatTest: a sentinel 5 m from Kael that hits hard (40: three strikes disable him, so the test is short at any frame rate; Kael stands still to be hit). CombatKill: a weak sentinel 2 m
     away (20 health: one of Kael's hits disables it)."""
-    for name, build in (("CombatTest", lambda s: sentinel(s, "Test_Sentinel", (0, 0, -5), snap=False)),
+    for name, build in (("CombatTest", lambda s: sentinel(s, "Test_Sentinel", (0, 0, -5), snap=False, damage=40)),
                         ("CombatKill", lambda s: sentinel(s, "Test_Sentinel", (0, 0, -2), snap=False, max_hp=20))):
         s = Scene()
         s.sky(1.2)
@@ -228,6 +229,21 @@ def combat_tests():
         build(s)
         interior_scene.kael(s, (0, 0.1, 0), 0, script_guid("ThirdPersonController"))
         s.save(OUT / (name + ".ascene"))
+
+
+def scan_test():
+    """ScanTest: Kael on a floor with a salvage crate 5 m north-east, the fab bench 9 m south and a weak sentinel 30 m west (out of its notice): a scan lists
+    them by category with distance and direction."""
+    s = Scene()
+    s.sky(1.2)
+    s.sun(yaw=-25, pitch=-38)
+    s.model("Ground", "Ground", position=(0, 0, 0), scale=(100, 1, 100), color=SAND, snap=False)
+    s.add("GroundCollider", {"BoxCollider": {"$v": 1, "center": [0, 0, 0], "friction": 0.8, "half_extents": [50, 0.5, 50], "is_trigger": False, "report_stay": False, "restitution": 0.0}}, position=(0, -0.5, 0))
+    s.model("Test_Crate", "SalvageCrate", position=(3.5, 0, -3.5), tags=("Salvage",), snap=False)
+    workbench(s, "Test_FabBench", (0, 0, 9), snap=False)
+    sentinel(s, "Test_Sentinel", (-30, 0, 0), snap=False)
+    interior_scene.kael(s, (0, 0.1, 0), 0, script_guid("ThirdPersonController"))
+    s.save(OUT / "ScanTest.ascene")
 
 
 def main():
@@ -243,6 +259,7 @@ def main():
     craft_test()
     beacon_test()
     combat_tests()
+    scan_test()
     print("wrote", OUT)
 
 

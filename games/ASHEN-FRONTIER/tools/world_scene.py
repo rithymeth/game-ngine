@@ -153,7 +153,7 @@ def verdant(s, rng, door_script=None):
     _scatter(s, rng, "verdant_array", "ArrayRock", ["RockA"], 8)
 
 
-def hollow(s, rng):
+def hollow(s, rng, door_script=None):
     x, z = world.poi_position("reactor_tower")
     s.model("ReactorTower", "ReactorTower", position=(x, 0, z), tags=("Landmark",), collider=((0, 15, 0), (7, 15, 7)))
     s.add("ReactorGlow", LIGHT((0.15, 0.5, 1.0), 40.0, 45.0), position=(x, 14, z), snap=True)
@@ -164,6 +164,10 @@ def hollow(s, rng):
     x, z = world.poi_position("core_gate")
     s.model("CoreGate", "AssemblyHall", position=(x, 0, z), rotation=(0, 0, 0), scale=(1.4, 1.4, 1.0), tags=("Dungeon",), collider=((0, 3.5, 0), (11, 3.5, 14)))
     s.add("CoreGateGlow", LIGHT(BLUE, 20.0, 18.0), position=(x, 2.5, z + 16), snap=True)
+    s.add("ReactorHallOutside", {}, position=(x, 0.1, z + 20.0), snap=True)
+    if door_script:
+        s.add("ReactorHallDoor", {"ScriptComponent": {"$v": 1, "script": door_script, "properties": [{"name": "target", "value": json.dumps("Scenes/ReactorHall.ascene")}, {"name": "radius", "value": "2.5"}, {"name": "spawn", "value": json.dumps("ReactorEntry")}]}},
+              position=(x, 0, z + 15.6), snap=True)
     x, z = world.poi_position("failing_grid")
     for i, (dx, dz) in enumerate(((0, 0), (12, -6), (-8, 10), (6, 14))):
         s.model(f"GridNode_{i}", "HazardNode", position=(x + dx, 0, z + dz), tags=("Hazard",), collider=((0, 1.5, 0), (0.35, 1.5, 0.35)))
@@ -206,7 +210,7 @@ def build(playable=True, camera=None, door_script=None):
     basin(s, rng)
     iron(s, rng, door_script)
     verdant(s, rng, door_script)
-    hollow(s, rng)
+    hollow(s, rng, door_script)
     _outcrops(s, rng)
     if playable:
         player = s.add("Kael", {"CharacterMovement": {"$v": 1, "acceleration": 20.0, "air_acceleration": 5.0, "air_control": 0.3, "braking": 25.0, "coyote_time": 0.1, "flying": False,

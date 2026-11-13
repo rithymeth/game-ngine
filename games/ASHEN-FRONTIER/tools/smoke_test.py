@@ -237,9 +237,9 @@ def dome(work):
 def combat(work):
     """A sentinel walks up to Kael and strikes him (his health falls; at none he is disabled and the world reloads); one of Kael's hits disables a weak
     sentinel, which drops components; and that stays so in the next run (the sentinel is gone for good)."""
-    result, text = run_player(work, "Scenes/CombatTest.ascene", "user12", press="W", frames=1200)
+    result, text = run_player(work, "Scenes/CombatTest.ascene", "user12", press="Z", frames=400)  # Z is bound to nothing: Kael stands still
     check(result.returncode == 0, f"the player runs the combat test and exits cleanly (exit {result.returncode})")
-    check("Sentinel hit Kael (health 90)" in text, "a sentinel walks up to Kael and strikes him")
+    check("Sentinel hit Kael (health 60)" in text, "a sentinel walks up to Kael and strikes him")
     check("Kael disabled" in text, "Kael at no health is disabled")
     check(re.findall(r"Loaded (Scenes/\S+\.ascene)", text)[-1:] == ["Scenes/OpenWorld.ascene"], "being disabled reloads the open world")
     check(not re.search(r"\[ERROR\]", text), "no errors in the fight")
@@ -247,6 +247,33 @@ def combat(work):
     check("Kael hit Test_Sentinel" in text and "Sentinel disabled: +2 components" in text, "one hit disables a weak sentinel, which drops components")
     result, text = run_player(work, "Scenes/CombatKill.ascene", "user13", press="W", frames=120)
     check("Sentinel hit Kael" not in text and "Pack at start: 0 scrap, 2 components" in text, "a disabled sentinel stays gone in the next run, and its drop was saved")
+
+
+def scan(work):
+    """The scanner lists what is near by category, with distance and compass direction, nearest first (crate 5 m NE, fab bench 9 m S, a sentinel 30 m W)."""
+    result, text = run_player(work, "Scenes/ScanTest.ascene", "user14", press="Q", frames=40)
+    check(result.returncode == 0, f"the player runs the scan test and exits cleanly (exit {result.returncode})")
+    lines = [l.split("Scan ", 1)[1] for l in text.splitlines() if "Script: Scan [" in l]
+    check(len(lines) == 3, f"the scan lists the three things in range ({len(lines)} listed)")
+    if len(lines) == 3:
+        check(lines[0].startswith("[SALVAGE] Test Crate  5 m NE"), f"nearest first: the crate, 5 m north-east ({lines[0]})")
+        check(lines[1].startswith("[FABRICATION] Test FabBench  9 m S"), f"then the fab bench, 9 m south ({lines[1]})")
+        check(lines[2].startswith("[MACHINE] Test Sentinel  30 m W") and "health 100" in lines[2], f"then the sentinel, 30 m west, with its health ({lines[2]})")
+    check(not re.search(r"\[ERROR\]", text), "no errors while scanning")
+
+
+def reactor(work):
+    """Kael starts inside the reactor hall and walks out of its exit door: back in the open world, outside the Core Gate."""
+    result, text = run_player(work, "Scenes/ReactorHall.ascene", "user11", press="S", frames=500)
+    check(result.returncode == 0, f"the player runs the reactor hall and exits cleanly (exit {result.returncode})")
+    loads = re.findall(r"Loaded (Scenes/\S+\.ascene)", text)
+    check(loads[:2] == ["Scenes/ReactorHall.ascene", "Scenes/OpenWorld.ascene"], f"the reactor hall's exit door leads to the open world (loaded: {loads})")
+    check(not re.search(r"\[ERROR\]", text), "no errors on the way out of the reactor hall")
+    match = re.search(r"Player at \(([-\d.]+), ([-\d.]+), ([-\d.]+)\)", text)
+    if check(match is not None, "the player reports where Kael ended up after the reactor hall's door"):
+        x, _, z = (float(v) for v in match.groups())
+        gx, gz = world.poi_position("core_gate")
+        check(math.hypot(x - gx, z - gz) < 45, f"Kael comes out at the Core Gate ({math.hypot(x - gx, z - gz):.0f} m from it)")
 
 
 def main():
@@ -263,6 +290,9 @@ def main():
             craft(work)
             chapter(work)
             dome(work)
+            reactor(work)
+            combat(work)
+            scan(work)
     finally:
         shutil.rmtree(work, ignore_errors=True)
     check(not any("Missing sound" in text for text in TRANSCRIPTS), f"every sound a script plays exists ({len(TRANSCRIPTS)} runs looked through)")

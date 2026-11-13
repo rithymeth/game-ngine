@@ -12,13 +12,15 @@
     "Audio/",
     "Scenes/AssemblyHall.ascene",
     "Scenes/LivingDome.ascene",
+    "Scenes/ReactorHall.ascene",
     "Scenes/SalvageTest.ascene",
     "Scenes/MuleTest.ascene",
     "Scenes/CraftTest.ascene",
     "Scenes/PowerTest.ascene",
     "Scenes/BeaconTest.ascene",
     "Scenes/CombatTest.ascene",
-    "Scenes/CombatKill.ascene"
+    "Scenes/CombatKill.ascene",
+    "Scenes/ScanTest.ascene"
   ],
   "collision_matrix": [],
   "default_quality": "High",

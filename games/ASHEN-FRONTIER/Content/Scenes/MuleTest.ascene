@@ -334,6 +334,11 @@
           "z": 0,
           "visible": true
         },
+        "ScriptComponent": {
+          "$v": 1,
+          "properties": [],
+          "script": "81441e9b-9733-4c9c-8aa7-44059c8daf4b"
+        },
         "Transform": {
           "$v": 2,
           "position": [
