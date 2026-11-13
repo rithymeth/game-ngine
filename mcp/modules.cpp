@@ -87,6 +87,7 @@ void RegisterBuiltinComponents() {
     GetComponentId<CapsuleCollider>();
     GetComponentId<ConvexCollider>();
     GetComponentId<MeshCollider>();
+    GetComponentId<HeightfieldCollider>();
     GetComponentId<CharacterMovement>();
 #endif
 #if AETHER_MCP_INVENTORY

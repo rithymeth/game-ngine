@@ -8,8 +8,10 @@
 #include "aether/scene/serialization.h"
 #include "test_framework.h"
 
+#include <cmath>
 #include <cstring>
 #include <filesystem>
+#include <limits>
 
 using namespace aether;
 
@@ -522,4 +524,72 @@ AETHER_TEST(PhysicsScene_AuthoritativePoseTracksRotationAndPreservesSleep) {
     pose->rotation = Quaternion(-actual.x, -actual.y, -actual.z, -actual.w);
     AETHER_CHECK(ReconcileAuthoritativePhysicsPose<net::NetPhysicsState>(s.world, s.scene) == 0);
     AETHER_CHECK_NEAR(s.physics.GetPosition(s.scene.BodyOf(stationary)).x, 10.0f, 1e-4f);
+}
+
+// Terrain: a grid of heights is ground without a triangle mesh in the scene. A flat plateau at y = 2 with a hole (kHole) cut in it: a body over
+// the plateau rests on it, a body over the hole falls through, and the grid round-trips through both scene formats.
+AETHER_TEST(PhysicsScene_AHeightfieldIsGroundAndKHoleIsAHole) {
+    Sim s;
+    HeightfieldCollider ground;
+    ground.samples = 16;
+    ground.cell_size = 2.0f;
+    ground.origin = Vec3(-16, 0, -16); // the grid spans x and z from -16 to 14
+    ground.heights.assign(16 * 16, 2.0f);
+    for (int z = 7; z <= 9; ++z)
+        for (int x = 11; x <= 13; ++x) ground.heights[z * 16 + x] = HeightfieldCollider::kHole; // samples x 11-13, z 7-9: around x = 6..10, z = -2..2
+    s.world.CreateEntity(Transform{Vec3(0, 0, 0), Quaternion::Identity()}, ground);
+    const Entity on_ground = s.Body(Vec3(-8, 6, 0), Sphere(0.5f));
+    const Entity over_hole = s.Body(Vec3(8, 6, 0), Sphere(0.5f));
+    s.scene.Sync();
+    AETHER_CHECK(s.scene.BodyCount() == 3 && s.scene.Problems().empty());
+    s.Run(150);
+    AETHER_CHECK_NEAR(s.Y(on_ground), 2.5f, 0.05); // the plateau at 2 plus the radius
+    AETHER_CHECK(s.Y(over_hole) < -5.0f);          // nothing under it
+
+    // Both scene formats keep it (the heights, the hole and the grid's size).
+    const std::string binary = (std::filesystem::temp_directory_path() / "aether_test_heightfield.aesc").string();
+    const std::string json = (std::filesystem::temp_directory_path() / "aether_test_heightfield.ascene").string();
+    AETHER_CHECK(SaveScene(s.world, binary) && SaveSceneJson(s.world, json));
+    World a, b;
+    AETHER_CHECK(LoadScene(a, binary) && LoadSceneJson(b, json));
+    for (World* loaded : {&a, &b}) {
+        int n = 0;
+        loaded->ForEach<HeightfieldCollider>([&](HeightfieldCollider& h) {
+            ++n;
+            AETHER_CHECK(h.samples == 16 && h.cell_size == 2.0f && h.origin.x == -16.0f && h.heights.size() == 256 && h.heights[0] == 2.0f);
+            AETHER_CHECK(h.heights[8 * 16 + 12] == HeightfieldCollider::kHole);
+        });
+        AETHER_CHECK(n == 1);
+    }
+    std::filesystem::remove(binary);
+    std::filesystem::remove(json);
+}
+
+// A grid that is not usable is reported, with the reason, and gets no body (nothing crashes).
+AETHER_TEST(PhysicsScene_ABadHeightfieldIsReportedNotBuilt) {
+    Sim s;
+    HeightfieldCollider odd;
+    odd.samples = 5; // not even
+    odd.heights.assign(25, 0.0f);
+    HeightfieldCollider short_grid;
+    short_grid.samples = 8;
+    short_grid.heights.assign(10, 0.0f); // needs 64
+    HeightfieldCollider fine;
+    fine.samples = 4;
+    fine.heights.assign(16, 0.0f);
+    s.world.CreateEntity(Transform{Vec3(0, 0, 0), Quaternion::Identity()}, odd);
+    s.world.CreateEntity(Transform{Vec3(0, 0, 0), Quaternion::Identity()}, short_grid);
+    s.Body(Vec3(0, 1, 0), fine);                 // a moving body cannot be terrain
+    s.world.CreateEntity(Transform{Vec3(0, 0, 0), Quaternion::Identity()}, fine); // a static one is fine
+    s.scene.Sync();
+    AETHER_CHECK(s.scene.BodyCount() == 1);
+    AETHER_CHECK(s.scene.Problems().size() == 3);
+    bool even = false, count = false, moving = false;
+    for (const auto& entry : s.scene.Problems()) {
+        const std::string& problem = entry.second;
+        even |= problem.find("even") != std::string::npos;
+        count |= problem.find("samples x samples") != std::string::npos;
+        moving |= problem.find("static") != std::string::npos;
+    }
+    AETHER_CHECK(even && count && moving);
 }

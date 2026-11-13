@@ -91,6 +91,17 @@ Attributes.GetMax function
 Attributes.GetMin function
 Attributes.Has function
 Attributes.SetBase function
+Audio table
+Audio.IsPlaying function
+Audio.Play2D function
+Audio.PlaySound2D function
+Audio.PlaySoundAtLocation function
+Audio.SetBusVolume function
+Audio.SetVolume function
+Audio.Stop function
+Audio.StopAll function
+Camera table
+Camera.Shake function
 Draw table
 Draw.arrow function
 Draw.box function
@@ -208,6 +219,9 @@ SaveGames.SetBool function
 SaveGames.SetNumber function
 SaveGames.SetString function
 SaveGames.SetVector function
+Scene table
+Scene.Current function
+Scene.Load function
 Timer table
 Timer.After function
 Timer.Every function

@@ -1,0 +1,340 @@
+{
+  "$type": "WorldLayout",
+  "$version": 1,
+  "bounds": {
+    "min": [
+      -230.0,
+      -230.0
+    ],
+    "max": [
+      230.0,
+      230.0
+    ]
+  },
+  "outpost": {
+    "id": "outpost",
+    "name": "Outpost",
+    "position": [
+      0.0,
+      0.0
+    ]
+  },
+  "spawn": {
+    "position": [
+      -107.0,
+      0.05,
+      133.0
+    ],
+    "yaw": 200
+  },
+  "regions": [
+    {
+      "id": "fallen_basin",
+      "name": "Fallen Basin",
+      "centre": [
+        -115.0,
+        115.0
+      ],
+      "half": 100.0,
+      "summary": "Crashed freighter, desert gullies, abandoned homesteads. Tutorial, salvage, the first robot."
+    },
+    {
+      "id": "iron_wastes",
+      "name": "Iron Wastes",
+      "centre": [
+        115.0,
+        115.0
+      ],
+      "half": 100.0,
+      "summary": "Smelters, gantries, rail yards, buried assembly lines. Combat, traversal, production schematics."
+    },
+    {
+      "id": "verdant_array",
+      "name": "Verdant Array",
+      "centre": [
+        -115.0,
+        -115.0
+      ],
+      "half": 100.0,
+      "summary": "Greenhouses, living domes, maintenance drones. Research, puzzles, ecological diplomacy."
+    },
+    {
+      "id": "hollow_core",
+      "name": "Hollow Core",
+      "centre": [
+        115.0,
+        -115.0
+      ],
+      "half": 100.0,
+      "summary": "The reactor plateau and the way down to the data network. Late-game exploration and the finale."
+    }
+  ],
+  "pois": [
+    {
+      "id": "crash_site",
+      "region": "fallen_basin",
+      "name": "Crash Site",
+      "type": "landmark",
+      "position": [
+        -135.0,
+        85.0
+      ]
+    },
+    {
+      "id": "mule3_wreck",
+      "region": "fallen_basin",
+      "name": "MULE-3 Wreck",
+      "type": "machine",
+      "position": [
+        -105.0,
+        103.0
+      ]
+    },
+    {
+      "id": "homestead_ruins",
+      "region": "fallen_basin",
+      "name": "Homestead Ruins",
+      "type": "ruin",
+      "position": [
+        -160.0,
+        60.0
+      ]
+    },
+    {
+      "id": "salvage_field",
+      "region": "fallen_basin",
+      "name": "Salvage Field",
+      "type": "salvage",
+      "position": [
+        -80.0,
+        125.0
+      ]
+    },
+    {
+      "id": "distress_relay",
+      "region": "fallen_basin",
+      "name": "Distress Relay",
+      "type": "relay",
+      "position": [
+        -65.0,
+        55.0
+      ]
+    },
+    {
+      "id": "storm_field",
+      "region": "fallen_basin",
+      "name": "Storm Field",
+      "type": "hazard",
+      "position": [
+        -85.0,
+        170.0
+      ]
+    },
+    {
+      "id": "smelter_row",
+      "region": "iron_wastes",
+      "name": "Smelter Row",
+      "type": "landmark",
+      "position": [
+        75.0,
+        85.0
+      ]
+    },
+    {
+      "id": "rail_yard",
+      "region": "iron_wastes",
+      "name": "Rail Yard",
+      "type": "salvage",
+      "position": [
+        135.0,
+        165.0
+      ]
+    },
+    {
+      "id": "gantry_works",
+      "region": "iron_wastes",
+      "name": "Gantry Works",
+      "type": "landmark",
+      "position": [
+        165.0,
+        75.0
+      ]
+    },
+    {
+      "id": "assembly_hall",
+      "region": "iron_wastes",
+      "name": "Buried Assembly Hall",
+      "type": "dungeon",
+      "position": [
+        65.0,
+        155.0
+      ]
+    },
+    {
+      "id": "warden_checkpoint",
+      "region": "iron_wastes",
+      "name": "Warden Checkpoint",
+      "type": "faction",
+      "position": [
+        115.0,
+        115.0
+      ]
+    },
+    {
+      "id": "slag_pits",
+      "region": "iron_wastes",
+      "name": "Slag Pits",
+      "type": "hazard",
+      "position": [
+        160.0,
+        150.0
+      ]
+    },
+    {
+      "id": "greenhouse_rows",
+      "region": "verdant_array",
+      "name": "Greenhouse Rows",
+      "type": "landmark",
+      "position": [
+        -150.0,
+        -145.0
+      ]
+    },
+    {
+      "id": "living_dome",
+      "region": "verdant_array",
+      "name": "Living Dome",
+      "type": "dungeon",
+      "position": [
+        -115.0,
+        -75.0
+      ]
+    },
+    {
+      "id": "maintenance_depot",
+      "region": "verdant_array",
+      "name": "Maintenance Depot",
+      "type": "machine",
+      "position": [
+        -70.0,
+        -150.0
+      ]
+    },
+    {
+      "id": "repaired_garden",
+      "region": "verdant_array",
+      "name": "Repaired Garden",
+      "type": "faction",
+      "position": [
+        -165.0,
+        -75.0
+      ]
+    },
+    {
+      "id": "research_annex",
+      "region": "verdant_array",
+      "name": "Research Annex",
+      "type": "relay",
+      "position": [
+        -85.0,
+        -110.0
+      ]
+    },
+    {
+      "id": "core_approach",
+      "region": "hollow_core",
+      "name": "Core Approach",
+      "type": "landmark",
+      "position": [
+        115.0,
+        -17.0
+      ]
+    },
+    {
+      "id": "reactor_tower",
+      "region": "hollow_core",
+      "name": "Reactor Tower",
+      "type": "landmark",
+      "position": [
+        115.0,
+        -120.0
+      ]
+    },
+    {
+      "id": "data_spine",
+      "region": "hollow_core",
+      "name": "Data Spine",
+      "type": "relay",
+      "position": [
+        70.0,
+        -125.0
+      ]
+    },
+    {
+      "id": "core_gate",
+      "region": "hollow_core",
+      "name": "Core Gate",
+      "type": "dungeon",
+      "position": [
+        115.0,
+        -175.0
+      ]
+    },
+    {
+      "id": "failing_grid",
+      "region": "hollow_core",
+      "name": "Failing Grid",
+      "type": "hazard",
+      "position": [
+        160.0,
+        -85.0
+      ]
+    }
+  ],
+  "passes": [
+    {
+      "between": [
+        "fallen_basin",
+        "iron_wastes"
+      ],
+      "position": [
+        0,
+        115
+      ],
+      "width": 30.0
+    },
+    {
+      "between": [
+        "verdant_array",
+        "hollow_core"
+      ],
+      "position": [
+        0,
+        -115
+      ],
+      "width": 30.0
+    },
+    {
+      "between": [
+        "fallen_basin",
+        "verdant_array"
+      ],
+      "position": [
+        -115,
+        0
+      ],
+      "width": 30.0
+    },
+    {
+      "between": [
+        "iron_wastes",
+        "hollow_core"
+      ],
+      "position": [
+        115,
+        0
+      ],
+      "width": 30.0
+    }
+  ]
+}

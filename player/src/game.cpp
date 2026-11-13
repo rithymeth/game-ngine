@@ -273,6 +273,7 @@ Game::Game(GamePackage& package)
     (void)GetComponentId<CapsuleCollider>();
     (void)GetComponentId<ConvexCollider>();
     (void)GetComponentId<MeshCollider>();
+    (void)GetComponentId<HeightfieldCollider>();
     (void)GetComponentId<PhysicsJoint>();
 #endif
 }
@@ -434,6 +435,7 @@ bool Game::LoadScene(const std::string& path, std::string* error) {
     // The UDP client keeps a pointer to this World. Replacing it mid-session
     // would leave replication writing to freed ECS memory.
     if (authoritative_physics_client_) return Fail(error, "Can't replace a scene while authoritative multiplayer is active");
+    shake_.Reset(); // the world it shook is about to go
     StartModules(); // their components, before the scene names them
     bp::RegisterBlueprintComponents(); // BlueprintInstance, before scene deserialization
     ui::RegisterWidgetComponents(); // WidgetComponent (§18.4)
@@ -887,11 +889,8 @@ void Game::StartRuntime() {
     runtime_->scripts->Register(*lifecycle_);
     runtime_->scripts->BindInput(&input_);
     runtime_->scripts->BindInputState(&input_state_);
-    runtime_->scripts->BindSceneLoadRequest([this](const std::string& path) {
-        if (path.empty() || path.find("..") != std::string::npos) return false;
-        pending_scene_load_ = path;
-        return true;
-    });
+    runtime_->scripts->BindCameraShake([this](f32 amount) { shake_.AddTrauma(amount); });
+    runtime_->scripts->BindSceneHooks({[this](const std::string& path, const std::string& spawn) { return RequestScene(path, spawn); }, [this]() { return scene_; }});
 #if AETHER_GAME_PHYSICS
     runtime_->scripts->BindPhysicsScene(physics_ ? physics_->scene.get() : nullptr);
     if (physics_ && physics_->scene) {
@@ -1476,7 +1475,68 @@ void Game::OnPlatformEvent(const platform::LifecycleMessage& message) {
     }
 }
 
+bool Game::RequestScene(const std::string& path, const std::string& spawn) {
+    if (path.empty() || path.find("..") != std::string::npos) return false;
+    std::vector<u8> bytes;
+    if (!package_.ReadContent(path, bytes)) return false;
+    pending_scene_ = path;
+    pending_spawn_ = spawn;
+    return true;
+}
+
+// Moves the character to the entity named `spawn` (position and rotation), before play begins so physics builds from where it now stands.
+void Game::PlaceCharacterAt(const std::string& spawn) {
+    Entity target = kNullEntity, character = kNullEntity;
+    const ComponentId transform = GetComponentId<Transform>(), name = GetComponentId<EntityName>(), movement = GetComponentId<CharacterMovement>();
+    world_->ForEachArchetype([&](Archetype& archetype) {
+        if (!archetype.Mask().test(transform)) return;
+        const bool named = archetype.Mask().test(name), moves = archetype.Mask().test(movement);
+        if (!named && !moves) return;
+        for (usize c = 0; c < archetype.ChunkCount(); ++c) {
+            const Entity* entities = archetype.EntityArray(c);
+            for (u32 i = 0; i < archetype.ChunkEntityCount(c); ++i) {
+                if (moves && character == kNullEntity) character = entities[i];
+                if (named && target == kNullEntity && world_->GetComponent<EntityName>(entities[i])->value == spawn) target = entities[i];
+            }
+        }
+    });
+    if (target == kNullEntity || character == kNullEntity) {
+        warnings_.push_back("Scene.Load spawn \"" + spawn + "\": " + (target == kNullEntity ? "no entity of that name in the scene" : "the scene has no character to place"));
+        AETHER_LOG_WARN("Player", "%s", warnings_.back().c_str());
+        return;
+    }
+    const Transform at = *world_->GetComponent<Transform>(target);
+    Transform* t = world_->GetComponent<Transform>(character);
+    t->position = at.position;
+    t->rotation = at.rotation;
+}
+
+// The scene a script asked for, at a point where nothing of the old one is running. It is read and parsed first (into a scratch world), because
+// LoadScene ends the current runtime before it parses: a scene that cannot load must not leave the game with no scripts and nothing to run.
+void Game::ApplyPendingScene() {
+    const std::string path = std::move(pending_scene_);
+    const std::string spawn = std::move(pending_spawn_);
+    pending_scene_.clear();
+    pending_spawn_.clear();
+    std::vector<u8> bytes;
+    std::string error;
+    const auto refuse = [&](const std::string& why) {
+        warnings_.push_back("Scene.Load(\"" + path + "\"): " + why + "; " + scene_ + " keeps running");
+        AETHER_LOG_WARN("Player", "%s", warnings_.back().c_str());
+    };
+    if (!package_.ReadContent(path, bytes, &error)) return refuse("can't read it" + (error.empty() ? std::string() : " (" + error + ")"));
+    World scratch;
+    const auto first = std::find_if(bytes.begin(), bytes.end(), [](u8 c) { return c != ' ' && c != '\n' && c != '\r' && c != '\t'; });
+    const bool is_json = first != bytes.end() && *first == '{';
+    if (!(is_json ? LoadSceneJsonFromMemory(scratch, bytes, path) : LoadSceneFromMemory(scratch, bytes, path))) return refuse("it does not parse as a scene");
+    const bool was_playing = lifecycle_ && lifecycle_->IsPlaying();
+    if (!LoadScene(path, &error)) return refuse(error);
+    if (!spawn.empty()) PlaceCharacterAt(spawn);
+    if (was_playing) BeginPlay();
+}
+
 FrameContext Game::Tick(f32 dt) {
+    if (!pending_scene_.empty()) ApplyPendingScene();
     if (!loop_) BuildFrame();
     if (platform_lifecycle_->Suspended()) {
         // In the background the game stands still: no time passes and input is left alone.
@@ -1498,16 +1558,9 @@ FrameContext Game::Tick(f32 dt) {
         frame.dt = 0;
         return frame;
     }
+    shake_.Restore(*world_); // the scripts start from the camera they last set, not the shaken one
     const FrameContext frame = loop_->Tick(*world_, dt);
-    if (!pending_scene_load_.empty()) {
-        const std::string requested = std::move(pending_scene_load_);
-        pending_scene_load_.clear();
-        std::string error;
-        if (!LoadScene(requested, &error)) {
-            warnings_.push_back("Scene request failed for " + requested + (error.empty() ? "" : ": " + error));
-            AETHER_LOG_ERROR("Player", "Scene request failed for %s: %s", requested.c_str(), error.c_str());
-        }
-    }
+    shake_.Apply(*world_, FindActiveCamera(*world_, guids_), frame.dt);
     input_state_.EndFrame();         // movement deltas are per frame; held keys stay
     if (proof_load_input_) { input_state_.SetButton(input::Key::F5, false); proof_load_input_ = false; }
     if (proof_new_input_) { input_state_.SetButton(input::Key::N, false); proof_new_input_ = false; }

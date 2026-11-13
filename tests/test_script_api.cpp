@@ -1,3 +1,4 @@
+#include "aether/audio/audio_system.h"
 #include "aether/input/actions.h"
 #include "aether/scene/components.h"
 #include "aether/script/script_system.h"
@@ -204,22 +205,54 @@ AETHER_TEST(ScriptApi_InputFromScripts) {
     AETHER_CHECK(f.Number("jumps") == 1.0); // unbound: no more events reach scripts
 }
 
-AETHER_TEST(ScriptApi_SceneLoadIsDeferredToTheHost) {
+// Scripts play sounds through the active audio system: 2D and placed one-shots, bus volume, stop all; a missing cue or no system is false, not an error.
+AETHER_TEST(ScriptApi_AudioPlaysThroughTheActiveAudioSystem) {
+    using namespace aether::audio;
+    constexpr u32 kRate = 48000;
+    Mixer mixer(kRate);
+    mixer.AddDefaultBuses();
+    SoundBank bank;
+    SoundWave wave;
+    wave.sample_rate = kRate;
+    wave.samples.assign(kRate, 0.5f);
+    bank.Add("beep", wave);
+    std::map<std::string, SoundCue> cues;
+    SoundCue cue;
+    CueNode node;
+    node.id = 1;
+    node.sound = "beep";
+    cue.nodes.push_back(node);
+    cue.root = 1;
+    cues["Beep"] = cue;
     Fixture f;
     ScriptSystem scripts(f.host, f.world, f.guids, f.Loader());
-    std::string requested;
-    scripts.BindSceneLoadRequest([&](const std::string& path) {
-        requested = path;
-        return path == "Scenes/Farmhouse.ascene";
-    });
-
-    ScriptResult result = f.host.Run("return Scene.Load('Scenes/Farmhouse.ascene')");
-    AETHER_CHECK(result.ok && result.values.size() == 1 && std::holds_alternative<bool>(result.values[0]) &&
-                 std::get<bool>(result.values[0]) && requested == "Scenes/Farmhouse.ascene");
-    AETHER_CHECK(!f.host.Run("Scene.Load(42)").ok);
-
-    scripts.BindSceneLoadRequest({});
-    result = f.host.Run("return Scene.Load('Scenes/Farmhouse.ascene')");
-    AETHER_CHECK(result.ok && result.values.size() == 1 && std::holds_alternative<bool>(result.values[0]) &&
-                 !std::get<bool>(result.values[0]));
+    {
+        AudioSystem system(f.world, mixer, bank, [&](const std::string& n) { const auto it = cues.find(n); return it == cues.end() ? nullptr : &it->second; });
+        const usize before = mixer.VoiceCount();
+        ScriptResult r = f.host.Run("return Audio.PlaySound2D('Beep', -6, 1.0), Audio.PlaySound2D('Nope'), Audio.PlaySoundAtLocation('Beep', 1, 2, 3), Audio.SetBusVolume('Master', -3), Audio.SetBusVolume('NoBus', 0)");
+        AETHER_CHECK(r.ok && r.values.size() == 5);
+        if (r.ok && r.values.size() == 5) {
+            AETHER_CHECK(std::get<bool>(r.values[0]) && !std::get<bool>(r.values[1]) && std::get<bool>(r.values[2]));
+            AETHER_CHECK(std::get<bool>(r.values[3]) && !std::get<bool>(r.values[4]));
+        }
+        AETHER_CHECK(mixer.VoiceCount() == before + 2);
+        AETHER_CHECK(f.host.Run("Audio.StopAll()").ok);
+        AETHER_CHECK(mixer.VoiceCount() == 0);
+        AETHER_CHECK(!f.host.Run("Audio.PlaySound2D(42)").ok); // wants a cue name
+        // Handles: a sound a script started can be asked about, changed and stopped; a missing cue gives false.
+        const usize before_handles = mixer.VoiceCount();
+        ScriptResult h = f.host.Run("H = Audio.Play2D('Beep', -6); return H, Audio.IsPlaying(H), Audio.SetVolume(H, -12), Audio.Play2D('Nope')");
+        AETHER_CHECK(h.ok && h.values.size() == 4);
+        if (h.ok && h.values.size() == 4) {
+            AETHER_CHECK(std::holds_alternative<f64>(h.values[0]) && std::get<f64>(h.values[0]) > 0.0);
+            AETHER_CHECK(std::get<bool>(h.values[1]) && std::get<bool>(h.values[2]) && !std::get<bool>(h.values[3]));
+        }
+        AETHER_CHECK(mixer.VoiceCount() == before_handles + 1);
+        ScriptResult stopped = f.host.Run("local was = Audio.Stop(H); return was, Audio.IsPlaying(H), Audio.Stop(H)");
+        AETHER_CHECK(stopped.ok && stopped.values.size() == 3 && std::get<bool>(stopped.values[0]) && !std::get<bool>(stopped.values[1]) && !std::get<bool>(stopped.values[2]));
+        AETHER_CHECK(!f.host.Run("Audio.Stop('x')").ok && !f.host.Run("Audio.Play2D(1)").ok); // wrong argument types are script errors
+    }
+    // With no audio system running, playing is false and harmless.
+    ScriptResult none = f.host.Run("return Audio.PlaySound2D('Beep')");
+    AETHER_CHECK(none.ok && !std::get<bool>(none.values[0]));
 }

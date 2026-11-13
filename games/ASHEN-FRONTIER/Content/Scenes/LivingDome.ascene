@@ -1,0 +1,3026 @@
+{
+  "$type": "Scene",
+  "$version": 1,
+  "entities": [
+    {
+      "components": {
+        "SkyLight": {
+          "$v": 1,
+          "color": [
+            0.5,
+            0.8,
+            0.6
+          ],
+          "intensity": 0.15
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Sky"
+        }
+      },
+      "guid": "2b236fc4-f2c7-5c19-adef-5aa63b3defaa"
+    },
+    {
+      "components": {
+        "PostProcessVolume": {
+          "$v": 1,
+          "blend_distance": 1.0,
+          "bloom_intensity": 0.35,
+          "exposure_compensation": 0.5,
+          "extents": [
+            5.0,
+            5.0,
+            5.0
+          ],
+          "fog_density": 0.01,
+          "global": true,
+          "height_fog_base": 0.0,
+          "height_fog_density": 0.0,
+          "height_fog_falloff": 0.02,
+          "priority": 0,
+          "saturation": 1.15,
+          "tonemapper": "ACES",
+          "vignette": 0.25,
+          "weight": 1.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Atmosphere"
+        }
+      },
+      "guid": "0877e15a-d666-5c16-a9f4-3732feac1008"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Ground.glb"
+        },
+        "MaterialParameters": {
+          "$v": 1,
+          "material": "",
+          "revision": 0,
+          "values": [
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "BaseColor",
+              "texture": "",
+              "value": [
+                0.2,
+                0.26,
+                0.15,
+                1.0
+              ]
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            30.0,
+            1,
+            40.0
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Floor"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Ground"
+          ]
+        }
+      },
+      "guid": "786d6bac-f4cf-5983-9578-e0bc0f41b50a"
+    },
+    {
+      "components": {
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            16.0,
+            0.5,
+            21.0
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            -0.5,
+            0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "FloorCollider"
+        }
+      },
+      "guid": "be7af161-c6d7-5323-bf56-4488f46c4998"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Ground.glb"
+        },
+        "MaterialParameters": {
+          "$v": 1,
+          "material": "",
+          "revision": 0,
+          "values": [
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "BaseColor",
+              "texture": "",
+              "value": [
+                0.16,
+                0.15,
+                0.15,
+                1.0
+              ]
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            14.0,
+            0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            6.123233995736766e-17
+          ],
+          "scale": [
+            30.0,
+            1,
+            40.0
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Ceiling"
+        }
+      },
+      "guid": "efbfc53d-5103-5760-a421-3d53b31fa46d"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Ground.glb"
+        },
+        "MaterialParameters": {
+          "$v": 1,
+          "material": "",
+          "revision": 0,
+          "values": [
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "BaseColor",
+              "texture": "",
+              "value": [
+                0.16,
+                0.22,
+                0.2,
+                1.0
+              ]
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            7.0,
+            -20.0
+          ],
+          "rotation": [
+            0.7071067811865475,
+            0.0,
+            0.0,
+            0.7071067811865476
+          ],
+          "scale": [
+            30.0,
+            1,
+            14.0
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "WallNorth"
+        }
+      },
+      "guid": "b5381e3b-d920-57cb-864b-22729ecfbd48"
+    },
+    {
+      "components": {
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            15.0,
+            7.0,
+            0.5
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            7.0,
+            -20.5
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "NorthCollider"
+        }
+      },
+      "guid": "e2ef3026-dec6-59fa-bdeb-6f465e4f5e91"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Ground.glb"
+        },
+        "MaterialParameters": {
+          "$v": 1,
+          "material": "",
+          "revision": 0,
+          "values": [
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "BaseColor",
+              "texture": "",
+              "value": [
+                0.16,
+                0.22,
+                0.2,
+                1.0
+              ]
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            7.0,
+            20.0
+          ],
+          "rotation": [
+            4.329780281177466e-17,
+            0.7071067811865476,
+            -0.7071067811865475,
+            4.329780281177467e-17
+          ],
+          "scale": [
+            30.0,
+            1,
+            14.0
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "WallSouth"
+        }
+      },
+      "guid": "6e729f9e-56d2-5e82-9a98-95abc30aa582"
+    },
+    {
+      "components": {
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            15.0,
+            7.0,
+            0.5
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            7.0,
+            20.5
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "SouthCollider"
+        }
+      },
+      "guid": "1acfc2ec-6d98-520d-b6a9-b1390696362d"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Ground.glb"
+        },
+        "MaterialParameters": {
+          "$v": 1,
+          "material": "",
+          "revision": 0,
+          "values": [
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "BaseColor",
+              "texture": "",
+              "value": [
+                0.16,
+                0.22,
+                0.2,
+                1.0
+              ]
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -15.0,
+            7.0,
+            0
+          ],
+          "rotation": [
+            0.5,
+            0.5,
+            -0.4999999999999999,
+            0.5000000000000001
+          ],
+          "scale": [
+            40.0,
+            1,
+            14.0
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "WallWest"
+        }
+      },
+      "guid": "b3be1807-f665-5823-ba0b-2dab6176bbcc"
+    },
+    {
+      "components": {
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            0.5,
+            7.0,
+            20.0
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -15.5,
+            7.0,
+            0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "WestCollider"
+        }
+      },
+      "guid": "10675503-d161-588f-bc8c-a56d56d88fc0"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Ground.glb"
+        },
+        "MaterialParameters": {
+          "$v": 1,
+          "material": "",
+          "revision": 0,
+          "values": [
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "BaseColor",
+              "texture": "",
+              "value": [
+                0.16,
+                0.22,
+                0.2,
+                1.0
+              ]
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            15.0,
+            7.0,
+            0
+          ],
+          "rotation": [
+            -0.4999999999999999,
+            0.5000000000000001,
+            -0.5,
+            -0.5
+          ],
+          "scale": [
+            40.0,
+            1,
+            14.0
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "WallEast"
+        }
+      },
+      "guid": "f6668085-6ee2-5a2e-9df1-9c8b2000f149"
+    },
+    {
+      "components": {
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            0.5,
+            7.0,
+            20.0
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            15.5,
+            7.0,
+            0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "EastCollider"
+        }
+      },
+      "guid": "ef8c1f3f-0a60-53ca-95a5-56009d10f37a"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Pylon.glb"
+        },
+        "MaterialParameters": {
+          "$v": 1,
+          "material": "",
+          "revision": 0,
+          "values": [
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "BaseColor",
+              "texture": "",
+              "value": [
+                0.1,
+                0.3,
+                0.2,
+                1.0
+              ]
+            },
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "Emissive",
+              "texture": "",
+              "value": [
+                0.2,
+                1.0,
+                0.5,
+                1.0
+              ]
+            }
+          ]
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            6,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            1.5,
+            6,
+            1.5
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            0,
+            -3
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            3.2,
+            3.2,
+            3.2
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Core"
+        }
+      },
+      "guid": "fd386754-1d2c-5ebb-849e-55c9998fd91d"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "$v": 1,
+          "cast_shadows": false,
+          "color": [
+            0.3,
+            1.0,
+            0.6
+          ],
+          "intensity": 12.0,
+          "range": 28.0
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "script": "9f1fc7af-8ae7-4854-92f1-a28199b2c865",
+          "properties": [
+            {
+              "name": "flag",
+              "value": "\"mission.dome\""
+            },
+            {
+              "name": "off",
+              "value": "12.0"
+            },
+            {
+              "name": "on",
+              "value": "40.0"
+            },
+            {
+              "name": "ramp",
+              "value": "8.0"
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            7.0,
+            -3
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "CoreLight"
+        }
+      },
+      "guid": "657d6f52-d63f-504d-b886-f1fd60b6d932"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "$v": 1,
+          "cast_shadows": false,
+          "color": [
+            0.3,
+            1.0,
+            0.6
+          ],
+          "intensity": 18.0,
+          "range": 18.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            1.8,
+            -3
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "CoreLightLow"
+        }
+      },
+      "guid": "d67c5f40-f99e-58be-973c-bcbd3f88f669"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/TreeLow.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            1.5,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            0.4,
+            1.5,
+            0.4
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            7.0,
+            0,
+            -3.0
+          ],
+          "rotation": [
+            0.0,
+            0.988830171222025,
+            0.0,
+            0.14904661177303125
+          ],
+          "scale": [
+            1.3,
+            1.391840670256347,
+            1.3
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Tree_0"
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "script": "275020e3-7136-4134-a109-c4b3a06ffa0a",
+          "properties": [
+            {
+              "name": "flag",
+              "value": "\"mission.dome\""
+            },
+            {
+              "name": "start",
+              "value": "0.35"
+            }
+          ]
+        }
+      },
+      "guid": "ff84ca43-9dc4-57b0-9b6b-c0789c80b8d3"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/TreeLow.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            1.5,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            0.4,
+            1.5,
+            0.4
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            7.748332263960805,
+            0,
+            0.7314001564109995
+          ],
+          "rotation": [
+            -0.0,
+            0.23585614366637617,
+            -0.0,
+            -0.9717879807318187
+          ],
+          "scale": [
+            1.3,
+            1.3259550490698413,
+            1.3
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Tree_1"
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "script": "275020e3-7136-4134-a109-c4b3a06ffa0a",
+          "properties": [
+            {
+              "name": "flag",
+              "value": "\"mission.dome\""
+            },
+            {
+              "name": "start",
+              "value": "0.35"
+            }
+          ]
+        }
+      },
+      "guid": "1be272b9-8c4a-5491-b02f-4a2264aa5271"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/TreeLow.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            1.5,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            0.4,
+            1.5,
+            0.4
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            4.364428613011135,
+            0,
+            2.472820377276209
+          ],
+          "rotation": [
+            -0.0,
+            0.9996965962507831,
+            -0.0,
+            -0.02463159443882499
+          ],
+          "scale": [
+            1.3,
+            1.4111693801949279,
+            1.3
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Tree_2"
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "script": "275020e3-7136-4134-a109-c4b3a06ffa0a",
+          "properties": [
+            {
+              "name": "flag",
+              "value": "\"mission.dome\""
+            },
+            {
+              "name": "start",
+              "value": "0.35"
+            }
+          ]
+        }
+      },
+      "guid": "170cc54a-d6ba-524c-b525-146229d4a454"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/TreeLow.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            1.5,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            0.4,
+            1.5,
+            0.4
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            1.9136800320243041,
+            0,
+            5.384380044763683
+          ],
+          "rotation": [
+            0.0,
+            0.5481306479553043,
+            0.0,
+            0.8363927263983698
+          ],
+          "scale": [
+            1.3,
+            1.3583360473292638,
+            1.3
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Tree_3"
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "script": "275020e3-7136-4134-a109-c4b3a06ffa0a",
+          "properties": [
+            {
+              "name": "flag",
+              "value": "\"mission.dome\""
+            },
+            {
+              "name": "start",
+              "value": "0.35"
+            }
+          ]
+        }
+      },
+      "guid": "ecc02ca9-9112-5539-a299-2901f8c59298"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/TreeLow.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            1.5,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            0.4,
+            1.5,
+            0.4
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -1.5576465376942004,
+            0,
+            3.8244953852727654
+          ],
+          "rotation": [
+            -0.0,
+            0.9179008906630023,
+            -0.0,
+            -0.39680972130237313
+          ],
+          "scale": [
+            1.3,
+            1.5550838107639668,
+            1.3
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Tree_4"
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "script": "275020e3-7136-4134-a109-c4b3a06ffa0a",
+          "properties": [
+            {
+              "name": "flag",
+              "value": "\"mission.dome\""
+            },
+            {
+              "name": "start",
+              "value": "0.35"
+            }
+          ]
+        }
+      },
+      "guid": "0e659af8-b1a8-5da9-b570-af3cd40a43a3"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/TreeLow.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            1.5,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            0.4,
+            1.5,
+            0.4
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -5.3620122959851075,
+            0,
+            3.723750749225057
+          ],
+          "rotation": [
+            0.0,
+            0.29140720491644884,
+            0.0,
+            0.9565991014645492
+          ],
+          "scale": [
+            1.3,
+            1.212380883837168,
+            1.3
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Tree_5"
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "script": "275020e3-7136-4134-a109-c4b3a06ffa0a",
+          "properties": [
+            {
+              "name": "flag",
+              "value": "\"mission.dome\""
+            },
+            {
+              "name": "start",
+              "value": "0.35"
+            }
+          ]
+        }
+      },
+      "guid": "ca107e3d-e5f0-5904-b9c3-2dc9502cc8ed"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/TreeLow.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            1.5,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            0.4,
+            1.5,
+            0.4
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -6.306782075316933,
+            0,
+            0.037186173822907787
+          ],
+          "rotation": [
+            0.0,
+            0.28101339761830985,
+            0.0,
+            0.9597038451308891
+          ],
+          "scale": [
+            1.3,
+            1.5667511740570244,
+            1.3
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Tree_6"
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "script": "275020e3-7136-4134-a109-c4b3a06ffa0a",
+          "properties": [
+            {
+              "name": "flag",
+              "value": "\"mission.dome\""
+            },
+            {
+              "name": "start",
+              "value": "0.35"
+            }
+          ]
+        }
+      },
+      "guid": "d97465f1-a78d-5af3-add0-fe37aea34414"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/TreeLow.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            1.5,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            0.4,
+            1.5,
+            0.4
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -8.6,
+            0,
+            -2.999999999999999
+          ],
+          "rotation": [
+            -0.0,
+            0.8209606371093094,
+            -0.0,
+            -0.570984791668812
+          ],
+          "scale": [
+            1.3,
+            1.0293162354588923,
+            1.3
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Tree_7"
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "script": "275020e3-7136-4134-a109-c4b3a06ffa0a",
+          "properties": [
+            {
+              "name": "flag",
+              "value": "\"mission.dome\""
+            },
+            {
+              "name": "start",
+              "value": "0.35"
+            }
+          ]
+        }
+      },
+      "guid": "6e94940f-d04f-5edc-bb1a-5fb9bb567af0"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/TreeLow.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            1.5,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            0.4,
+            1.5,
+            0.4
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -6.306782075316934,
+            0,
+            -6.0371861738229065
+          ],
+          "rotation": [
+            -0.0,
+            0.055911846021532284,
+            -0.0,
+            -0.9984357092344326
+          ],
+          "scale": [
+            1.3,
+            1.6753304467878967,
+            1.3
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Tree_8"
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "script": "275020e3-7136-4134-a109-c4b3a06ffa0a",
+          "properties": [
+            {
+              "name": "flag",
+              "value": "\"mission.dome\""
+            },
+            {
+              "name": "start",
+              "value": "0.35"
+            }
+          ]
+        }
+      },
+      "guid": "220f9a2d-3456-5010-a94f-6a90f7882298"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/TreeLow.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            1.5,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            0.4,
+            1.5,
+            0.4
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -5.362012295985109,
+            0,
+            -9.723750749225054
+          ],
+          "rotation": [
+            -0.0,
+            0.8853444880413281,
+            -0.0,
+            -0.46493562725912774
+          ],
+          "scale": [
+            1.3,
+            1.4308938932049995,
+            1.3
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Tree_9"
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "script": "275020e3-7136-4134-a109-c4b3a06ffa0a",
+          "properties": [
+            {
+              "name": "flag",
+              "value": "\"mission.dome\""
+            },
+            {
+              "name": "start",
+              "value": "0.35"
+            }
+          ]
+        }
+      },
+      "guid": "ca5b632b-d142-5ccb-8302-5f30e6063efe"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/TreeLow.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            1.5,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            0.4,
+            1.5,
+            0.4
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -1.5576465376942021,
+            0,
+            -9.824495385272765
+          ],
+          "rotation": [
+            0.0,
+            0.4748400640300929,
+            0.0,
+            0.8800721070411772
+          ],
+          "scale": [
+            1.3,
+            1.0105005158647233,
+            1.3
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Tree_10"
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "script": "275020e3-7136-4134-a109-c4b3a06ffa0a",
+          "properties": [
+            {
+              "name": "flag",
+              "value": "\"mission.dome\""
+            },
+            {
+              "name": "start",
+              "value": "0.35"
+            }
+          ]
+        }
+      },
+      "guid": "1630d8c4-b81f-5a74-a3d9-17f9ce8f20bc"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/TreeLow.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            1.5,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            0.4,
+            1.5,
+            0.4
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            1.9136800320243024,
+            0,
+            -11.384380044763683
+          ],
+          "rotation": [
+            -0.0,
+            0.9960276679301069,
+            -0.0,
+            -0.08904428514909102
+          ],
+          "scale": [
+            1.3,
+            1.0416857736181986,
+            1.3
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Tree_11"
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "script": "275020e3-7136-4134-a109-c4b3a06ffa0a",
+          "properties": [
+            {
+              "name": "flag",
+              "value": "\"mission.dome\""
+            },
+            {
+              "name": "start",
+              "value": "0.35"
+            }
+          ]
+        }
+      },
+      "guid": "e22858b5-3e33-54d3-9a3b-c40106ed9e05"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/TreeLow.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            1.5,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            0.4,
+            1.5,
+            0.4
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            4.364428613011134,
+            0,
+            -8.472820377276209
+          ],
+          "rotation": [
+            0.0,
+            0.5626243972000261,
+            0.0,
+            0.8267126391167049
+          ],
+          "scale": [
+            1.3,
+            1.1693601095656503,
+            1.3
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Tree_12"
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "script": "275020e3-7136-4134-a109-c4b3a06ffa0a",
+          "properties": [
+            {
+              "name": "flag",
+              "value": "\"mission.dome\""
+            },
+            {
+              "name": "start",
+              "value": "0.35"
+            }
+          ]
+        }
+      },
+      "guid": "2d8ea68f-1d12-502e-9a60-bf5916f06edd"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/TreeLow.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            1.5,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            0.4,
+            1.5,
+            0.4
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            7.748332263960803,
+            0,
+            -6.731400156411002
+          ],
+          "rotation": [
+            0.0,
+            0.09436662034955706,
+            0.0,
+            0.995537513589419
+          ],
+          "scale": [
+            1.3,
+            1.3247541228562991,
+            1.3
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Tree_13"
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "script": "275020e3-7136-4134-a109-c4b3a06ffa0a",
+          "properties": [
+            {
+              "name": "flag",
+              "value": "\"mission.dome\""
+            },
+            {
+              "name": "start",
+              "value": "0.35"
+            }
+          ]
+        }
+      },
+      "guid": "d81cbe12-37a8-5c52-8ff0-f4ee8f2d2e4b"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Scrub.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -1.5461909669269236,
+            0,
+            4.69096969888917
+          ],
+          "rotation": [
+            -0.0,
+            0.9981957289056522,
+            -0.0,
+            -0.06004404045793105
+          ],
+          "scale": [
+            1.4,
+            1.4,
+            1.4
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Scrub_0"
+        }
+      },
+      "guid": "e466fbad-d856-573d-9133-44edd90d9047"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Scrub.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -5.767764608738968,
+            0,
+            7.950780209724773
+          ],
+          "rotation": [
+            -0.0,
+            0.01353469365575755,
+            -0.0,
+            -0.9999084018387108
+          ],
+          "scale": [
+            1.4,
+            1.4,
+            1.4
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Scrub_3"
+        }
+      },
+      "guid": "e549fca0-0e47-5ddc-b76b-1a64494b7093"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Scrub.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            8.845604286814407,
+            0,
+            1.8640020514569393
+          ],
+          "rotation": [
+            0.0,
+            0.8362851899256838,
+            0.0,
+            0.5482947027930901
+          ],
+          "scale": [
+            1.4,
+            1.4,
+            1.4
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Scrub_4"
+        }
+      },
+      "guid": "c7c3e796-f1a5-5ddb-8a2b-317a4321a62f"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Scrub.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -7.0286865581944555,
+            0,
+            -6.930161106401755
+          ],
+          "rotation": [
+            0.0,
+            0.21882842222774498,
+            0.0,
+            0.9757633532908047
+          ],
+          "scale": [
+            1.4,
+            1.4,
+            1.4
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Scrub_5"
+        }
+      },
+      "guid": "7f92ce72-a219-5247-b2d2-8095532cb050"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Scrub.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            6.9234850466705815,
+            0,
+            -4.591604096711688
+          ],
+          "rotation": [
+            -0.0,
+            0.4635272235612426,
+            -0.0,
+            -0.8860826784322137
+          ],
+          "scale": [
+            1.4,
+            1.4,
+            1.4
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Scrub_6"
+        }
+      },
+      "guid": "c3e2647b-8d99-55e3-8e3b-4b1c964909a5"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Scrub.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -2.9506481756457035,
+            0,
+            7.118890049716082
+          ],
+          "rotation": [
+            -0.0,
+            0.4615046235916455,
+            -0.0,
+            -0.8871378035026652
+          ],
+          "scale": [
+            1.4,
+            1.4,
+            1.4
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Scrub_7"
+        }
+      },
+      "guid": "723a4bde-663f-50b3-8ab6-20e25096c274"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Scrub.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -12.985831636555169,
+            0,
+            -8.595934290678166
+          ],
+          "rotation": [
+            -0.0,
+            0.27817063760123134,
+            -0.0,
+            -0.9605316738018193
+          ],
+          "scale": [
+            1.4,
+            1.4,
+            1.4
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Scrub_8"
+        }
+      },
+      "guid": "7ff10a58-bf60-52da-acc6-6ef11a6d02e5"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Scrub.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -0.7803308236446735,
+            0,
+            7.587537764660134
+          ],
+          "rotation": [
+            0.0,
+            0.9485249913375519,
+            0.0,
+            0.31670229050023796
+          ],
+          "scale": [
+            1.4,
+            1.4,
+            1.4
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Scrub_9"
+        }
+      },
+      "guid": "20fa099a-a453-58b7-b628-f51d17b2172c"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Scrub.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -11.101003060323855,
+            0,
+            0.21855315691450805
+          ],
+          "rotation": [
+            -0.0,
+            0.6410216743797837,
+            -0.0,
+            -0.7675227768446605
+          ],
+          "scale": [
+            1.4,
+            1.4,
+            1.4
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Scrub_10"
+        }
+      },
+      "guid": "adb1c79c-f78d-5a2d-93d0-d55cfa63f5c4"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Scrub.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -5.98583474189629,
+            0,
+            -11.169971834604427
+          ],
+          "rotation": [
+            0.0,
+            0.8648485188251477,
+            0.0,
+            0.5020329067759882
+          ],
+          "scale": [
+            1.4,
+            1.4,
+            1.4
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Scrub_11"
+        }
+      },
+      "guid": "00d279fc-ad40-51fb-a793-2a277ebd6c6a"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Scrub.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            12.065981631437865,
+            0,
+            2.9188508568689358
+          ],
+          "rotation": [
+            0.0,
+            0.36225100235895485,
+            0.0,
+            0.9320805819723595
+          ],
+          "scale": [
+            1.4,
+            1.4,
+            1.4
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Scrub_12"
+        }
+      },
+      "guid": "68cab515-d505-56be-b7e0-ed8d0fd4a7cb"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Scrub.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -6.593913328778621,
+            0,
+            -10.878027511909194
+          ],
+          "rotation": [
+            0.0,
+            0.1870523512733206,
+            0.0,
+            0.9823499467517277
+          ],
+          "scale": [
+            1.4,
+            1.4,
+            1.4
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Scrub_13"
+        }
+      },
+      "guid": "b516e118-5d49-5551-b1ea-be806423e001"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Scrub.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            7.722559307943325,
+            0,
+            -9.268759307834312
+          ],
+          "rotation": [
+            -0.0,
+            0.9826997751318332,
+            -0.0,
+            -0.18520570173686515
+          ],
+          "scale": [
+            1.4,
+            1.4,
+            1.4
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Scrub_14"
+        }
+      },
+      "guid": "9e562d2e-1e95-564e-8cb3-8c60fbffa88a"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Scrub.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -1.3669531849734398,
+            0,
+            -8.995627278902312
+          ],
+          "rotation": [
+            -0.0,
+            0.7461624407073559,
+            -0.0,
+            -0.665763931193063
+          ],
+          "scale": [
+            1.4,
+            1.4,
+            1.4
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Scrub_15"
+        }
+      },
+      "guid": "26c4ad76-e37f-52c6-b66c-fd60b58dd11d"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Scrub.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -9.594855823367888,
+            0,
+            0.5180175979345094
+          ],
+          "rotation": [
+            0.0,
+            0.35790251065125467,
+            0.0,
+            0.9337589586555668
+          ],
+          "scale": [
+            1.4,
+            1.4,
+            1.4
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Scrub_16"
+        }
+      },
+      "guid": "f2342598-ff9a-552b-b8f4-7b1fc27e98d9"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Scrub.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -2.0603539515930542,
+            0,
+            -8.529820866809121
+          ],
+          "rotation": [
+            0.0,
+            0.7496849643132251,
+            0.0,
+            0.6617948732671465
+          ],
+          "scale": [
+            1.4,
+            1.4,
+            1.4
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Scrub_17"
+        }
+      },
+      "guid": "cdefd825-d86b-52b7-9582-63d06e53bff7"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Scrub.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            12.244155461685981,
+            0,
+            3.8716415647235003
+          ],
+          "rotation": [
+            0.0,
+            0.8166025400083633,
+            0.0,
+            0.5772003912437079
+          ],
+          "scale": [
+            1.4,
+            1.4,
+            1.4
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Scrub_18"
+        }
+      },
+      "guid": "916d07a8-3687-5d59-bcf6-85e6fc53c49f"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Scrub.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            10.006492931473243,
+            0,
+            -8.575085349876773
+          ],
+          "rotation": [
+            0.0,
+            0.9453447616583175,
+            0.0,
+            0.32607250973545565
+          ],
+          "scale": [
+            1.4,
+            1.4,
+            1.4
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Scrub_19"
+        }
+      },
+      "guid": "8a96ddac-756e-5020-9d88-9f8af2273bf3"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Scrub.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            9.213799444231991,
+            0,
+            0.47854878839967085
+          ],
+          "rotation": [
+            0.0,
+            0.3100110330245465,
+            0.0,
+            0.9507329590390003
+          ],
+          "scale": [
+            1.4,
+            1.4,
+            1.4
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Scrub_20"
+        }
+      },
+      "guid": "b74dc4a9-7f54-55eb-98b9-eb00704a3f7d"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Scrub.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            12.721844135264483,
+            0,
+            -8.521889259872026
+          ],
+          "rotation": [
+            0.0,
+            0.7252537437642936,
+            0.0,
+            0.6884816679882452
+          ],
+          "scale": [
+            1.4,
+            1.4,
+            1.4
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Scrub_21"
+        }
+      },
+      "guid": "2607c764-0e2b-55fc-b823-974aa3fa5028"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Scrub.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            7.0899319340934035,
+            0,
+            -6.091936063497672
+          ],
+          "rotation": [
+            0.0,
+            0.8021765931579935,
+            0.0,
+            0.5970868558170034
+          ],
+          "scale": [
+            1.4,
+            1.4,
+            1.4
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Scrub_22"
+        }
+      },
+      "guid": "aad29946-c019-5857-97af-52615239493a"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Scrub.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -11.091637611900971,
+            0,
+            -11.107539367799465
+          ],
+          "rotation": [
+            -0.0,
+            0.9664107897201835,
+            -0.0,
+            -0.25700230643403066
+          ],
+          "scale": [
+            1.4,
+            1.4,
+            1.4
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Scrub_23"
+        }
+      },
+      "guid": "522571b4-8024-5212-8119-004afe5146c5"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Drone.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            5.5,
+            4.2,
+            -3.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Drone_0"
+        }
+      },
+      "guid": "b87d0b1f-50db-5710-91c4-f8f3d0b404c3"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Drone.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -0.16059737265708848,
+            5.2,
+            2.4976548167282777
+          ],
+          "rotation": [
+            0.0,
+            0.573576436351046,
+            0.0,
+            0.8191520442889918
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Drone_1"
+        }
+      },
+      "guid": "d9081b65-a627-5cd1-b42f-b8c3530fbc7c"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Drone.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -5.490621266871142,
+            4.2,
+            -3.3210577888516903
+          ],
+          "rotation": [
+            0.0,
+            0.9396926207859083,
+            0.0,
+            0.3420201433256688
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Drone_2"
+        }
+      },
+      "guid": "f43561a7-8573-501f-bebf-ff4af5ea8646"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Drone.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0.48124440891696,
+            5.2,
+            -8.478905348597124
+          ],
+          "rotation": [
+            -0.0,
+            0.9659258262890683,
+            -0.0,
+            -0.25881904510252085
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Drone_3"
+        }
+      },
+      "guid": "38dbc057-e90d-5be5-a2ff-d65d6a1cd87e"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/FabBench.glb"
+        },
+        "MaterialParameters": {
+          "$v": 1,
+          "material": "",
+          "revision": 0,
+          "values": [
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "BaseColor",
+              "texture": "",
+              "value": [
+                0.2,
+                0.5,
+                0.35,
+                1.0
+              ]
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            7.0,
+            0,
+            8.0
+          ],
+          "rotation": [
+            0.0,
+            -0.7071067811865475,
+            0.0,
+            0.7071067811865476
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "IrrigationConsole"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Console"
+          ]
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "properties": [],
+          "script": "c1e9d8d2-b165-4ef8-b46d-68b40d4b49a7"
+        }
+      },
+      "guid": "2ca40e13-dd8c-5f4c-bbc1-86ddca6c3574"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "$v": 1,
+          "cast_shadows": false,
+          "color": [
+            0.4,
+            0.8,
+            1.0
+          ],
+          "intensity": 8.0,
+          "range": 12.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            4.0,
+            13
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "EntryLight"
+        }
+      },
+      "guid": "62fc671f-9fc2-5296-b7a6-11b2f6ef8eda"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Pylon.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -1.9,
+            0,
+            18.5
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "ExitDoorFrame"
+        }
+      },
+      "guid": "18470c60-97aa-525f-b3c0-ae4ca4d98c05"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Pylon.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            1.9,
+            0,
+            18.5
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "ExitDoorFrameB"
+        }
+      },
+      "guid": "6057a46a-aaf2-5dca-a8b9-88e64b269e1f"
+    },
+    {
+      "components": {
+        "ScriptComponent": {
+          "$v": 1,
+          "script": "9968fb53-eb77-4757-85a3-eb7280fa5646",
+          "properties": [
+            {
+              "name": "target",
+              "value": "\"Scenes/OpenWorld.ascene\""
+            },
+            {
+              "name": "radius",
+              "value": "2.2"
+            },
+            {
+              "name": "spawn",
+              "value": "\"LivingDomeOutside\""
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            0,
+            18.5
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "ExitDoor"
+        }
+      },
+      "guid": "fee3943c-3772-5c16-9a62-358f409a942c"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "$v": 1,
+          "cast_shadows": false,
+          "color": [
+            0.2,
+            0.5,
+            1.0
+          ],
+          "intensity": 10.0,
+          "range": 10.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            3.0,
+            17.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "ExitDoorLight"
+        }
+      },
+      "guid": "58f97e31-458e-5365-9c39-4f17f9fd846a"
+    },
+    {
+      "components": {
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            0.1,
+            12.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "DomeEntry"
+        }
+      },
+      "guid": "945c2b41-5f47-566c-b84d-1c2b9446cf0e"
+    },
+    {
+      "components": {
+        "CharacterMovement": {
+          "$v": 1,
+          "acceleration": 20.0,
+          "air_acceleration": 5.0,
+          "air_control": 0.3,
+          "braking": 25.0,
+          "coyote_time": 0.1,
+          "flying": false,
+          "gravity_scale": 1.0,
+          "height": 1.8,
+          "jump_buffer": 0.1,
+          "jump_velocity": 5.0,
+          "mass": 70.0,
+          "max_slope_degrees": 45.0,
+          "radius": 0.35,
+          "run_speed": 7.0,
+          "step_height": 0.35,
+          "walk_speed": 4.0
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "properties": [],
+          "script": "0fe46960-544b-4e2d-8f69-f32f1bcca466"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            0.1,
+            12.0
+          ],
+          "rotation": [
+            0.0,
+            1.0,
+            0.0,
+            6.123233995736766e-17
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Kael"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Player"
+          ]
+        }
+      },
+      "guid": "5c1eb06f-7395-5b91-9ffa-44e00927933f"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Kael.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "KaelBody"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "PlayerBody"
+          ]
+        },
+        "Parent": {
+          "$v": 1,
+          "parent": "5c1eb06f-7395-5b91-9ffa-44e00927933f"
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "properties": [],
+          "script": "6d7b68d8-bfbe-499f-a707-f9fc9f946089"
+        }
+      },
+      "guid": "ebf58c1b-062b-55eb-841e-64e8875a17d1"
+    },
+    {
+      "components": {
+        "WidgetComponent": {
+          "$v": 1,
+          "layout": "UI/Hud.aui",
+          "z": 0,
+          "visible": true
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "properties": [],
+          "script": "81441e9b-9733-4c9c-8aa7-44059c8daf4b"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Hud"
+        }
+      },
+      "guid": "f77012ac-b6a7-555c-af5b-2f4dfb9daeea"
+    },
+    {
+      "components": {
+        "ScriptComponent": {
+          "$v": 1,
+          "properties": [
+            {
+              "name": "calm",
+              "value": "\"Audio/ambient_inside.acue\""
+            }
+          ],
+          "script": "1bb3e0c1-0bc2-48ee-bbb6-579e153350a7"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Music"
+        }
+      },
+      "guid": "e8eb82ca-c9cb-50a6-856e-44df9d588f46"
+    },
+    {
+      "components": {
+        "Camera": {
+          "$v": 1,
+          "far_plane": 300,
+          "fov_degrees": 62,
+          "near_plane": 0.1,
+          "ortho_height": 10.0,
+          "priority": 0,
+          "projection": "Perspective"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            3.0,
+            18.0
+          ],
+          "rotation": [
+            -0.10452846326765347,
+            0.0,
+            0.0,
+            0.9945218953682733
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "MainCamera"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "MainCamera"
+          ]
+        }
+      },
+      "guid": "12ad2e56-f09a-545d-9864-d7e3b1753071"
+    }
+  ]
+}

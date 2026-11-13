@@ -59,6 +59,21 @@ struct ScriptError {
 //   Physics.SetGrabTarget(grab, point), Physics.Release(grab), Physics.IsGrabActive(grab)
 //   Physics.SetJointEnabled / SetJointLocked(entity, bool), Physics.SetJointMotorTarget(entity, number)
 //   Physics.GetJointState(entity) -> enabled, locked, broken, angle (nil if none), Physics.RepairJoint(entity)
+//   Scene.Load(path [, spawn])     -> true if the scene will load (false: the package has no such file, nothing changes). It does not load at once: the
+//                                     game swaps the scenes at the start of its next frame, so the script that asks is not torn down under itself, and a
+//                                     scene that then fails to parse leaves the current one running (with a warning). Everything of this scene's runtime
+//                                     ends with the swap (scripts, timers, events); what must outlive it goes in SaveGames.
+//                                     With `spawn` (the name of an entity in the new scene), the player (the entity with a CharacterMovement) starts
+//                                     where that entity is, facing as it faces: a door's far side, instead of the scene's own start.
+//   Audio.PlaySound2D(cue [, volume_db, pitch])                 -> true if the cue exists and started (a sound cue's asset path, such as "Audio/Pickup.acue")
+//   Audio.PlaySoundAtLocation(cue, x, y, z [, volume_db, pitch]) -> the same, heard from that place (3D cues are attenuated and panned)
+//   Audio.SetBusVolume(bus, volume_db [, fade_seconds])         -> true if the bus exists;  Audio.StopAll()
+//   Audio.Play2D(cue [, volume_db, pitch])                      -> a handle (a number) to the sound it started, or false (no such cue / no audio system); for sounds a
+//                                                                  script wants to stop or change later (music, a loop). A handle ends with its sound.
+//   Audio.Stop(handle [, fade_seconds]) -> true if it was playing;  Audio.IsPlaying(handle) -> bool;  Audio.SetVolume(handle, volume_db) -> true if it was playing
+//   Camera.Shake(amount)           -> adds trauma 0..1 to the camera shake (0.2 a bump, 0.5 a hit, 1 an explosion); the shake grows with its square and
+//                                     drains away. It moves the active camera after the scripts have run, so a script that sets the camera is not disturbed.
+//   Scene.Current()                -> the path of the scene that is running
 // Connections and timers made while one of an entity's callbacks runs belong
 // to that entity's script, and end when it's destroyed (§11.2).
 class AiDebugStore;
@@ -87,12 +102,18 @@ public:
     // outlive the binding. UI-consumed clicks are removed from the matching
     // action mapping before scripts observe them.
     void BindInputState(const input::InputState* state) { input_state_ = state; }
-    // A host supplies deferred scene replacement. Requests made in a script
-    // callback are queued by the player and applied only after that frame.
-    void BindSceneLoadRequest(std::function<bool(const std::string&)> request) { scene_load_request_ = std::move(request); }
     // Makes the current scene's ray queries and rigid-body controls available to Luau.
     void BindPhysicsScene(::aether::PhysicsScene* scene) { physics_scene_ = scene; }
     ::aether::PhysicsScene* BoundPhysicsScene() const { return physics_scene_; }
+    // What the `Scene` table asks of the game that runs the scripts: `request` asks for another scene at the next frame (false: there is no such scene),
+    // `current` is the running scene's path. Without them Scene.Load is a script error ("not bound to a running game").
+    struct SceneHooks {
+        std::function<bool(const std::string&, const std::string&)> request; // path, spawn (an entity's name; empty: none)
+        std::function<std::string()> current;
+    };
+    void BindSceneHooks(SceneHooks hooks) { scene_hooks_ = std::move(hooks); }
+    // What Camera.Shake does: the game adds trauma to its camera shake. Unbound, the call is a script error.
+    void BindCameraShake(std::function<void(f32)> add_trauma) { add_camera_trauma_ = std::move(add_trauma); }
     // Calls `method` on the entity's script if it defines it (e.g.
     // "OnCollisionBegin" from physics); false if it has no script or method.
     bool SendEvent(Entity entity, const std::string& method, const std::vector<ScriptValue>& args = {});
@@ -188,7 +209,6 @@ public:
     bool CancelTimer(u32 timer);
     input::InputSystem* BoundInput() { return input_; }
     const input::InputState* BoundInputState() const { return input_state_; }
-    bool RequestSceneLoad(const std::string& path) { return scene_load_request_ && scene_load_request_(path); }
     u32 InputEvent(const std::string& action, input::ActionEvent event);
     void InstallKitApi(const std::string& kit_name);
 
@@ -224,8 +244,9 @@ private:
     std::unordered_map<std::string, u32> input_events_; // "action\nevent" -> event id
     input::InputSystem* input_ = nullptr;
     const input::InputState* input_state_ = nullptr;
-    std::function<bool(const std::string&)> scene_load_request_;
     ::aether::PhysicsScene* physics_scene_ = nullptr;
+    SceneHooks scene_hooks_;
+    std::function<void(f32)> add_camera_trauma_;
     std::vector<u32> input_subscriptions_;
     u32 next_id_ = 1;
     u64 next_owner_ = 1;

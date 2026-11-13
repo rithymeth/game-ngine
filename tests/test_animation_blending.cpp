@@ -1,4 +1,5 @@
 #include "aether/animation/blend_space.h"
+#include "aether/animation/anim_graph.h"
 #include "test_framework.h"
 
 #include <algorithm>
@@ -229,6 +230,416 @@ AETHER_TEST(AnimationBlending_WeightedPosesAndSyncedPlayback) {
     player.Update(0.75f, out);
     AETHER_CHECK(std::fabs(player.Phase() - 0.25f) < 1e-4f); // wrapped
     AETHER_CHECK(player.Weights().size() == 1);
+}
+
+AETHER_TEST(AnimationBlending_InactivePosesDoNotChooseRotationHemisphere) {
+    const Skeleton skeleton = OneBone();
+    Pose inactive = RestPose(skeleton), a = RestPose(skeleton), b = RestPose(skeleton);
+    const f32 angle = 170.0f * kPi / 180.0f;
+    a.local[0].rotation = Quaternion::FromAxisAngle(Vec3(0, 1, 0), angle);
+    b.local[0].rotation = Quaternion::FromAxisAngle(Vec3(0, 1, 0), -angle);
+    a.local[1].rotation = Quaternion::FromAxisAngle(Vec3(1, 0, 0), angle);
+    b.local[1].rotation = Quaternion::FromAxisAngle(Vec3(1, 0, 0), -angle);
+    a.local[0].translation = Vec3(1, 2, 3);
+    b.local[0].translation = Vec3(5, 6, 7);
+    a.local[0].scale = Vec3(1, 2, 3);
+    b.local[0].scale = Vec3(3, 4, 5);
+    inactive.local[0].translation = Vec3(100, 200, 300);
+    inactive.local[0].scale = Vec3(100, 100, 100);
+    Pose expected;
+    BlendWeighted({&a, &b}, {1.0f, 3.0f}, expected);
+    AETHER_CHECK(expected.local.size() == 2);
+    if (expected.local.size() != 2) return;
+    AETHER_CHECK(Rotate(expected.local[0].rotation, Vec3(0, 0, 1)).z < -0.98f);
+
+    for (f32 inactive_weight : {0.0f, -2.0f}) {
+        for (f32 sign : {1.0f, -1.0f}) {
+            Pose signed_b = b;
+            for (auto& bone : signed_b.local) {
+                const Quaternion q = bone.rotation;
+                bone.rotation = Quaternion(q.x * sign, q.y * sign, q.z * sign, q.w * sign);
+            }
+            Pose actual;
+            BlendWeighted({&inactive, &a, &signed_b}, {inactive_weight, 1.0f, 3.0f}, actual);
+            AETHER_CHECK(actual.local.size() == expected.local.size());
+            if (actual.local.size() != expected.local.size()) continue;
+            for (usize i = 0; i < actual.local.size(); ++i) {
+                AETHER_CHECK(Near(actual.local[i].translation, expected.local[i].translation));
+                AETHER_CHECK(Near(actual.local[i].scale, expected.local[i].scale));
+                AETHER_CHECK(Near(Rotate(actual.local[i].rotation, Vec3(0, 0, 1)), Rotate(expected.local[i].rotation, Vec3(0, 0, 1))));
+                AETHER_CHECK(Near(Rotate(actual.local[i].rotation, Vec3(0, 1, 0)), Rotate(expected.local[i].rotation, Vec3(0, 1, 0))));
+            }
+        }
+    }
+    // Writing into an input is supported: no input/reference is overwritten until the blend is complete.
+    BlendWeighted({&inactive, &a, &b}, {0.0f, 1.0f, 3.0f}, a);
+    AETHER_CHECK(Near(Rotate(a.local[0].rotation, Vec3(0, 0, 1)), Rotate(expected.local[0].rotation, Vec3(0, 0, 1))));
+}
+
+AETHER_TEST(AnimationBlending_RotationReferenceUsesAContributingBone) {
+    const Skeleton skeleton = OneBone();
+    Pose inactive = RestPose(skeleton), short_pose = RestPose(skeleton), a = RestPose(skeleton), b = RestPose(skeleton);
+    short_pose.local.resize(1); // a contributing pose can lack a later bone
+    a.local[1].rotation = Quaternion::FromAxisAngle(Vec3(1, 0, 0), 170.0f * kPi / 180.0f);
+    b.local[1].rotation = Quaternion::FromAxisAngle(Vec3(1, 0, 0), -170.0f * kPi / 180.0f);
+    Pose expected, actual;
+    BlendWeighted({&a, &short_pose, &b}, {0.3f, 0.2f, 0.5f}, expected);
+    BlendWeighted({&inactive, &short_pose, &a, &b}, {0.0f, 0.2f, 0.3f, 0.5f}, actual);
+    AETHER_CHECK(actual.local.size() == 2 && expected.local.size() == 2);
+    if (actual.local.size() != 2 || expected.local.size() != 2) return;
+    for (usize i = 0; i < actual.local.size(); ++i) {
+        AETHER_CHECK(Near(actual.local[i].translation, expected.local[i].translation));
+        AETHER_CHECK(Near(actual.local[i].scale, expected.local[i].scale));
+        AETHER_CHECK(Near(Rotate(actual.local[i].rotation, Vec3(0, 0, 1)), Rotate(expected.local[i].rotation, Vec3(0, 0, 1))));
+    }
+}
+
+AETHER_TEST(AnimationBlending_RotationReferencePreservesFallbacks) {
+    const Skeleton skeleton = OneBone();
+    Pose a = RestPose(skeleton), b = RestPose(skeleton), out;
+    a.local[0].rotation = Quaternion::FromAxisAngle(Vec3(0, 1, 0), 0.7f);
+    b.local[0].rotation = Quaternion::FromAxisAngle(Vec3(0, 1, 0), -1.1f);
+    a.local[0].translation = Vec3(1, 2, 3);
+    b.local[0].translation = Vec3(4, 5, 6);
+    BlendWeighted({&a, &b}, {0.0f, -1.0f}, out);
+    AETHER_CHECK(out.local.size() == 2);
+    if (out.local.size() != 2) return;
+    AETHER_CHECK(Near(out.local[0].translation, a.local[0].translation));
+    AETHER_CHECK(Near(Rotate(out.local[0].rotation, Vec3(0, 0, 1)), Rotate(a.local[0].rotation, Vec3(0, 0, 1))));
+    BlendWeighted({&a, &b}, {0.0f, 2.0f}, out);
+    AETHER_CHECK(Near(out.local[0].translation, b.local[0].translation));
+    AETHER_CHECK(Near(Rotate(out.local[0].rotation, Vec3(0, 0, 1)), Rotate(b.local[0].rotation, Vec3(0, 0, 1))));
+    // Mismatched counts keep the existing normalization policy without reading past either vector.
+    BlendWeighted({&a, &b, &a}, {0.0f, 1.0f}, out);
+    AETHER_CHECK(Near(out.local[0].translation, b.local[0].translation));
+    BlendWeighted({&a, &b}, {0.0f, 0.0f, 1.0f}, out); // surplus weight, but no contributing pose
+    AETHER_CHECK(Near(out.local[0].translation, Vec3(0, 0, 0)));
+    AETHER_CHECK(Near(Rotate(out.local[0].rotation, Vec3(0, 0, 1)), Vec3(0, 0, 1)));
+    const Pose before = out;
+    BlendWeighted({}, {}, out); // existing empty-input no-op
+    AETHER_CHECK(Near(out.local[0].translation, before.local[0].translation));
+    AETHER_CHECK(Near(Rotate(out.local[0].rotation, Vec3(0, 0, 1)), Rotate(before.local[0].rotation, Vec3(0, 0, 1))));
+}
+
+AETHER_TEST(AnimationBlending_RootMotionRotationsTakeTheShortArc) {
+    const Skeleton skeleton = OneBone();
+    const f32 turn = 340.0f * kPi / 180.0f;
+    const AnimationClip left = Walk(1.0f, 2.0f, turn), right = Walk(1.0f, 4.0f, -turn);
+    const RootMotionDelta left_delta = ExtractRootMotion(left, skeleton, 0.0f, 0.5f, false);
+    const RootMotionDelta right_delta = ExtractRootMotion(right, skeleton, 0.0f, 0.5f, false);
+    Pose left_pose = RestPose(skeleton), right_pose = RestPose(skeleton);
+    left_pose.local[0].rotation = left_delta.rotation;
+    right_pose.local[0].rotation = right_delta.rotation;
+    for (bool reverse_samples : {false, true}) {
+        BlendSpace space;
+        space.samples = reverse_samples ? std::vector<BlendSample>{{"Right", 1}, {"Left", 0}}
+                                        : std::vector<BlendSample>{{"Left", 0}, {"Right", 1}};
+        const std::vector<const AnimationClip*> clips = reverse_samples ? std::vector<const AnimationClip*>{&right, &left}
+                                                                        : std::vector<const AnimationClip*>{&left, &right};
+        for (f32 weight : {0.0f, 0.25f, 0.5f, 0.75f, 1.0f}) {
+            BlendSpacePlayer player(space, clips, skeleton);
+            player.SetParameters(weight);
+            RootMotionDelta motion;
+            Pose pose, expected;
+            BlendWeighted({&left_pose, &right_pose}, {1.0f - weight, weight}, expected);
+            player.Update(0.5f, pose, &motion);
+            AETHER_CHECK(pose.local.size() == 2 && expected.local.size() == 2);
+            if (pose.local.size() != 2 || expected.local.size() != 2) continue;
+            AETHER_CHECK(Near(motion.translation, left_delta.translation * (1.0f - weight) + right_delta.translation * weight));
+            AETHER_CHECK(Near(Rotate(motion.rotation, Vec3(0, 0, 1)), Rotate(expected.local[0].rotation, Vec3(0, 0, 1))));
+            AETHER_CHECK(Rotate(motion.rotation, Vec3(0, 0, 1)).z < -0.98f); // every blend stays between the two near-180-degree turns
+            AETHER_CHECK(motion.rotation.w >= 0.0f); // preserve the canonical output sign used by graph yaw weighting
+            AETHER_CHECK(Near(pose.local[0].translation, Vec3(0, 0, 0)));
+            AETHER_CHECK(Near(Rotate(YawOf(pose.local[0].rotation), Vec3(0, 0, 1)), Vec3(0, 0, 1)));
+            player.Update(0.0f, pose, &motion);
+            AETHER_CHECK(Near(motion.translation, Vec3(0, 0, 0)));
+            AETHER_CHECK(Near(Rotate(motion.rotation, Vec3(0, 0, 1)), Vec3(0, 0, 1)));
+        }
+    }
+    // Missing assets do not become rotation references, even when they have the largest weight.
+    BlendSpace missing;
+    missing.samples = {{"Unavailable", 0}, {"Left", 1}};
+    for (bool yaw : {false, true}) {
+        BlendSpacePlayer player(missing, {nullptr, &left}, skeleton);
+        player.SetParameters(0.25f);
+        RootMotionSettings settings;
+        settings.yaw = yaw;
+        RootMotionDelta motion;
+        Pose pose;
+        player.Update(0.125f, pose, &motion, &settings); // available duration is weighted to 0.25 s
+        AETHER_CHECK(Near(motion.translation, left_delta.translation * 0.25f));
+        AETHER_CHECK(Near(Rotate(motion.rotation, Vec3(0, 0, 1)), yaw ? Rotate(left_delta.rotation, Vec3(0, 0, 1)) : Vec3(0, 0, 1)));
+    }
+    BlendSpacePlayer unavailable(missing, {nullptr, nullptr}, skeleton);
+    RootMotionDelta none;
+    Pose rest;
+    unavailable.Update(0.5f, rest, &none);
+    AETHER_CHECK(rest.local.size() == skeleton.bones.size());
+    AETHER_CHECK(Near(none.translation, Vec3(0, 0, 0)) && Near(Rotate(none.rotation, Vec3(0, 0, 1)), Vec3(0, 0, 1)));
+}
+
+AETHER_TEST(AnimationBlending_RootMotionHemisphereSurvivesGraphWeighting) {
+    const Skeleton skeleton = OneBone();
+    const f32 turn = 340.0f * kPi / 180.0f;
+    const AnimationClip left = Walk(1.0f, 2.0f, turn), right = Walk(1.0f, 4.0f, -turn), idle = Walk(1.0f, 0.0f, 0.0f);
+    BlendSpace space;
+    space.samples = {{"Left", 0}, {"Right", 1}};
+    AnimAssets assets;
+    assets.clip = [&](const std::string& name) -> const AnimationClip* {
+        if (name == "Left") return &left;
+        if (name == "Right") return &right;
+        return name == "Idle" ? &idle : nullptr;
+    };
+    assets.blend_space = [&](const std::string& name) -> const BlendSpace* { return name == "Move" ? &space : nullptr; };
+    AnimNode still, moving, blend;
+    still.id = 1;
+    still.asset = "Idle";
+    moving.id = 2;
+    moving.kind = AnimNodeKind::BlendSpace;
+    moving.asset = "Move";
+    moving.variable = "Side";
+    blend.id = 3;
+    blend.kind = AnimNodeKind::Blend;
+    blend.inputs = {1, 2};
+    blend.variable = "Influence";
+    AnimGraph graph;
+    graph.nodes = {still, moving, blend};
+    graph.output = 3;
+    graph.variables = {{"Side", VarType::Float, 0}, {"Influence", VarType::Float, 0.5f}};
+    const auto diagnostics = ValidateAnimGraph(graph, &assets);
+    AETHER_CHECK(diagnostics.empty());
+    if (!diagnostics.empty()) return;
+    Pose a = RestPose(skeleton), b = RestPose(skeleton);
+    a.local[0].rotation = ExtractRootMotion(left, skeleton, 0.0f, 0.5f, false).rotation;
+    b.local[0].rotation = ExtractRootMotion(right, skeleton, 0.0f, 0.5f, false).rotation;
+    for (f32 side : {0.25f, 0.75f}) {
+        Pose expected, out;
+        BlendWeighted({&a, &b}, {1.0f - side, side}, expected);
+        AETHER_CHECK(!expected.local.empty());
+        if (expected.local.empty()) continue;
+        const Quaternion q = expected.local[0].rotation;
+        const f32 sign = q.w < 0.0f ? -1.0f : 1.0f;
+        const f32 yaw = 2.0f * std::atan2(q.y * sign, q.w * sign);
+        AnimGraphInstance instance(graph, skeleton, assets);
+        instance.SetRootMotion(true);
+        AETHER_CHECK(instance.SetFloat("Side", side));
+        instance.Update(0.5f, out);
+        const Quaternion weighted = Quaternion::FromAxisAngle(Vec3(0, 1, 0), yaw * 0.5f);
+        AETHER_CHECK(Near(Rotate(instance.RootMotion().rotation, Vec3(0, 0, 1)), Rotate(weighted, Vec3(0, 0, 1))));
+        AETHER_CHECK(Near(instance.RootMotion().translation, Vec3(0, 0, (1.0f + side) * 0.5f)));
+    }
+}
+
+AETHER_TEST(AnimationBlending_CompleteLoopsKeepStraightRootMotion) {
+    const Skeleton s = OneBone();
+    const AnimationClip walk = Walk(1.0f, 2.0f, 0.0f);
+    BlendSpace space;
+    space.samples = {{"Walk", 0}};
+    for (const f32 dt : {0.5f, 1.0f, 2.25f, 3.0f}) {
+        BlendSpacePlayer player(space, {&walk}, s);
+        Pose out;
+        RootMotionDelta motion;
+        player.Update(dt, out, &motion);
+        AETHER_CHECK(Near(motion.translation, Vec3(0, 0, 2.0f * dt)));
+        AETHER_CHECK(std::fabs(player.Phase() - (dt - std::floor(dt))) < 1e-5f);
+        AETHER_CHECK(player.PreviousPhase() == 0.0f && !out.local.empty());
+        if (!out.local.empty()) AETHER_CHECK(std::fabs(out.local[0].translation.z) < 1e-5f);
+        player.Update(0.0f, out, &motion);
+        AETHER_CHECK(Near(motion.translation, Vec3()) && AngleBetween(motion.rotation, Quaternion::Identity()) < 1e-4f);
+        AETHER_CHECK(player.PreviousPhase() == player.Phase());
+    }
+    // Preserve the tail, full cycles, and head when a hitch starts late.
+    BlendSpacePlayer player(space, {&walk}, s);
+    Pose out;
+    RootMotionDelta motion;
+    player.Update(0.875f, out);
+    player.Update(2.375f, out, &motion);
+    AETHER_CHECK(Near(motion.translation, Vec3(0, 0, 4.75f)));
+    AETHER_CHECK(player.PreviousPhase() == 0.875f && player.Phase() == 0.25f);
+    player.Update(0.125f, out, &motion);
+    AETHER_CHECK(Near(motion.translation, Vec3(0, 0, 0.25f)));
+    // A large finite count must not require visiting every cycle.
+    BlendSpacePlayer many(space, {&walk}, s);
+    many.Update(1048576.0f, out, &motion);
+    AETHER_CHECK(Near(motion.translation, Vec3(0, 0, 2097152.0f)) && many.Phase() == 0.0f);
+}
+
+AETHER_TEST(AnimationBlending_CompleteLoopsComposeTurningRootMotion) {
+    const Skeleton s = OneBone();
+    const AnimationClip walk = Walk(1.0f, 2.0f, kPi / 2);
+    BlendSpace space;
+    space.samples = {{"Walk", 0}};
+    for (const f32 start : {0.0f, 0.375f}) {
+        for (const f32 dt : {1.0f, 3.25f, 4.0f, 4.25f}) {
+            BlendSpacePlayer coarse(space, {&walk}, s), fine(space, {&walk}, s);
+            Pose out, fine_out;
+            coarse.Update(start, out);
+            fine.Update(start, fine_out);
+            RootMotionDelta actual, expected;
+            coarse.Update(dt, out, &actual);
+            const int steps = static_cast<int>(dt * 16.0f);
+            for (int i = 0; i < steps; ++i) {
+                RootMotionDelta part;
+                fine.Update(1.0f / 16.0f, fine_out, &part);
+                expected += part;
+            }
+            AETHER_CHECK(Near(actual.translation, expected.translation, 1e-3f));
+            AETHER_CHECK(Near(Rotate(actual.rotation, Vec3(0, 0, 1)), Rotate(expected.rotation, Vec3(0, 0, 1)), 1e-3f));
+            AETHER_CHECK(actual.rotation.w >= 0.0f && coarse.Phase() == fine.Phase());
+            AETHER_CHECK(out.local.size() == fine_out.local.size() && !out.local.empty());
+            if (!out.local.empty() && !fine_out.local.empty()) {
+                AETHER_CHECK(Near(out.local[0].translation, fine_out.local[0].translation));
+                AETHER_CHECK(Near(Rotate(out.local[0].rotation, Vec3(0, 0, 1)), Rotate(fine_out.local[0].rotation, Vec3(0, 0, 1))));
+            }
+        }
+    }
+}
+
+AETHER_TEST(AnimationBlending_CompleteLoopsDoNotAddAnExtraCycleForLargeCounts) {
+    const Skeleton s = OneBone();
+    const AnimationClip pivot = Walk(1.0f, 0.0f, kPi / 2);
+    BlendSpace space;
+    space.samples = {{"Pivot", 0}};
+    // These powers of two are exact in float, but count - 1 is not exact in
+    // double. A tail plus the rounded count would introduce an extra turn.
+    for (const int power : {54, 60}) {
+        RootMotionDelta expected = ExtractRootMotion(pivot, s, 0.0f, 1.0f, false);
+        for (int i = 0; i < power; ++i) expected += expected;
+        BlendSpacePlayer player(space, {&pivot}, s);
+        Pose out;
+        RootMotionDelta actual;
+        player.Update(std::ldexp(1.0f, power), out, &actual);
+        AETHER_CHECK(Near(actual.translation, Vec3()));
+        AETHER_CHECK(Near(Rotate(actual.rotation, Vec3(0, 0, 1)), Rotate(expected.rotation, Vec3(0, 0, 1)), 1e-3f));
+        AETHER_CHECK(player.Phase() == 0.0f && actual.rotation.w >= 0.0f);
+    }
+}
+
+AETHER_TEST(AnimationBlending_CompleteLoopsBlendComposedTurningSamples) {
+    const Skeleton s = OneBone();
+    const AnimationClip left = Walk(1.0f, 2.0f, 0.5f), right = Walk(1.0f, 1.0f, -0.3f);
+    // Independent per-sample oracle: compose small clip-local intervals, then
+    // blend the complete transforms. This does not assert that blending each
+    // short frame first would produce the same turning trajectory.
+    RootMotionDelta left_motion, right_motion;
+    for (int i = 0; i < 68; ++i) {
+        const f32 from = static_cast<f32>(i % 16) / 16.0f;
+        const f32 to = static_cast<f32>((i + 1) % 16) / 16.0f;
+        left_motion += ExtractRootMotion(left, s, from, to, true);
+        right_motion += ExtractRootMotion(right, s, from, to, true);
+    }
+    Pose a = RestPose(s), b = RestPose(s);
+    a.local[0].rotation = left_motion.rotation;
+    b.local[0].rotation = right_motion.rotation;
+    BlendSpace space;
+    space.samples = {{"Left", 0}, {"Right", 1}};
+    for (const f32 weight : {0.25f, 0.5f, 0.75f}) {
+        BlendSpacePlayer player(space, {&left, &right}, s);
+        player.SetParameters(weight);
+        Pose out, expected;
+        RootMotionDelta actual;
+        player.Update(4.25f, out, &actual);
+        BlendWeighted({&a, &b}, {1.0f - weight, weight}, expected);
+        AETHER_CHECK(Near(actual.translation, left_motion.translation * (1.0f - weight) + right_motion.translation * weight, 1e-3f));
+        AETHER_CHECK(!expected.local.empty());
+        if (!expected.local.empty()) {
+            AETHER_CHECK(Near(Rotate(actual.rotation, Vec3(0, 0, 1)), Rotate(expected.local[0].rotation, Vec3(0, 0, 1)), 1e-3f));
+        }
+        AETHER_CHECK(actual.rotation.w >= 0.0f && player.Phase() == 0.25f);
+    }
+}
+
+AETHER_TEST(AnimationBlending_CompleteLoopsRespectSyncedRatesAndWeights) {
+    const Skeleton s = OneBone();
+    const AnimationClip walk = Walk(1.0f, 1.5f, 0.0f), run = Walk(0.5f, 2.0f, 0.0f);
+    BlendSpace space;
+    space.samples = {{"Walk", 0, 0, 0.5f}, {"Run", 1}};
+    for (const f32 weight : {0.0f, 0.25f, 0.5f, 0.75f, 1.0f}) {
+        BlendSpacePlayer player(space, {&walk, &run}, s);
+        player.SetParameters(weight);
+        const f32 cycle = 2.0f * (1.0f - weight) + 0.5f * weight;
+        AETHER_CHECK(std::fabs(player.CycleDuration() - cycle) < 1e-5f);
+        Pose out;
+        RootMotionDelta motion;
+        player.Update(3.25f * cycle, out, &motion);
+        AETHER_CHECK(Near(motion.translation, Vec3(0, 0, 3.25f * (1.5f + 0.5f * weight))));
+        AETHER_CHECK(player.Phase() == 0.25f && !out.local.empty());
+        if (!out.local.empty()) AETHER_CHECK(std::fabs(out.local[0].translation.z) < 1e-5f);
+    }
+    // Changing parameters preserves phase; the new cycle duration governs the hitch.
+    BlendSpacePlayer player(space, {&walk, &run}, s);
+    Pose out;
+    RootMotionDelta motion;
+    player.Update(1.5f, out); // three quarters of the 2-second walk cycle
+    player.SetParameters(0.5f);
+    AETHER_CHECK(player.Phase() == 0.75f && player.CycleDuration() == 1.25f);
+    player.Update(2.5f, out, &motion);
+    AETHER_CHECK(Near(motion.translation, Vec3(0, 0, 3.5f)) && player.Phase() == 0.75f);
+}
+
+AETHER_TEST(AnimationBlending_CompleteLoopsHonorSettingsAndMissingClips) {
+    const Skeleton s = OneBone();
+    const AnimationClip walk = Walk(1.0f, 2.0f, kPi / 2);
+    BlendSpace space;
+    space.samples = {{"Walk", 0}};
+    Pose out;
+    RootMotionDelta motion;
+    RootMotionSettings flat;
+    flat.yaw = false;
+    BlendSpacePlayer no_yaw(space, {&walk}, s);
+    no_yaw.Update(2.25f, out, &motion, &flat);
+    AETHER_CHECK(Near(motion.translation, Vec3(0, 0, 4.5f)));
+    AETHER_CHECK(AngleBetween(motion.rotation, Quaternion::Identity()) < 1e-4f);
+    RootMotionSettings vertical;
+    vertical.translation_xz = false;
+    vertical.translation_y = true;
+    vertical.yaw = false;
+    BlendSpacePlayer bob(space, {&walk}, s);
+    bob.Update(3.25f, out, &motion, &vertical);
+    AETHER_CHECK(Near(motion.translation, Vec3(0, 0.1f, 0), 1e-3f));
+    RootMotionSettings invalid;
+    invalid.bone = -1;
+    BlendSpacePlayer bad_bone(space, {&walk}, s);
+    bad_bone.Update(2.25f, out, &motion, &invalid);
+    AETHER_CHECK(Near(motion.translation, Vec3()) && AngleBetween(motion.rotation, Quaternion::Identity()) < 1e-4f);
+    // Preserve the existing missing-asset duration and weight policy.
+    const AnimationClip straight = Walk(1.0f, 2.0f, 0.0f);
+    space.samples = {{"Missing", 0}, {"Walk", 1}};
+    BlendSpacePlayer missing(space, {nullptr, &straight}, s);
+    missing.SetParameters(0.5f);
+    missing.Update(1.0f, out, &motion); // two cycles at half weight
+    AETHER_CHECK(Near(motion.translation, Vec3(0, 0, 2.0f)) && missing.Phase() == 0.0f);
+    BlendSpacePlayer absent(space, {}, s);
+    absent.Update(3.0f, out, &motion);
+    AETHER_CHECK(Near(motion.translation, Vec3()) && AngleBetween(motion.rotation, Quaternion::Identity()) < 1e-4f);
+    AETHER_CHECK(out.local.size() == s.bones.size());
+}
+
+AETHER_TEST(AnimationBlending_CompleteLoopsSurviveGraphWeighting) {
+    const Skeleton s = OneBone();
+    const AnimationClip walk = Walk(1.0f, 2.0f, 0.0f), idle = Walk(1.0f, 0.0f, 0.0f);
+    BlendSpace space;
+    space.samples = {{"Walk", 0}};
+    AnimAssets assets;
+    assets.clip = [&](const std::string& name) -> const AnimationClip* { return name == "Walk" ? &walk : &idle; };
+    assets.blend_space = [&](const std::string&) -> const BlendSpace* { return &space; };
+    AnimNode still, moving, blend;
+    still.id = 1, still.asset = "Idle";
+    moving.id = 2, moving.kind = AnimNodeKind::BlendSpace, moving.asset = "Move", moving.variable = "Speed";
+    blend.id = 3, blend.kind = AnimNodeKind::Blend, blend.inputs = {1, 2}, blend.variable = "Influence";
+    AnimGraph graph;
+    graph.nodes = {still, moving, blend};
+    graph.variables = {{"Speed", VarType::Float, 0}, {"Influence", VarType::Float, 0.25f}};
+    graph.output = 3;
+    AnimGraphInstance anim(graph, s, assets);
+    anim.SetRootMotion(true);
+    Pose out;
+    anim.Update(2.5f, out);
+    AETHER_CHECK(Near(anim.RootMotion().translation, Vec3(0, 0, 1.25f)));
+    AETHER_CHECK(!out.local.empty());
+    if (!out.local.empty()) AETHER_CHECK(std::fabs(out.local[0].translation.z) < 1e-5f);
+    anim.Update(0.0f, out);
+    AETHER_CHECK(Near(anim.RootMotion().translation, Vec3()));
 }
 
 AETHER_TEST(AnimationBlending_RootMotion) {

@@ -1,0 +1,302 @@
+{
+ "$type": "Layout",
+ "version": 1,
+ "root": {
+  "type": "Canvas",
+  "name": "Hud",
+  "children": [
+   {
+    "type": "Border",
+    "name": "PackPanel",
+    "background": {
+     "kind": "Color",
+     "tint": [
+      0.02,
+      0.04,
+      0.09,
+      0.72
+     ]
+    },
+    "padding": [
+     16,
+     10,
+     16,
+     10
+    ],
+    "slot": {
+     "anchors": [
+      0,
+      0,
+      0,
+      0
+     ],
+     "position": [
+      24,
+      24
+     ],
+     "size": [
+      330,
+      156
+     ]
+    },
+    "children": [
+     {
+      "type": "VerticalBox",
+      "children": [
+       {
+        "type": "Text",
+        "name": "ScrapText",
+        "text": "SCRAP  0",
+        "size": 26,
+        "color": [
+         0.85,
+         0.85,
+         0.9,
+         1.0
+        ]
+       },
+       {
+        "type": "Text",
+        "name": "ComponentText",
+        "text": "COMPONENTS  0",
+        "size": 26,
+        "color": [
+         0.35,
+         0.7,
+         1.0,
+         1.0
+        ]
+       },
+       {
+        "type": "Text",
+        "name": "HealthText",
+        "text": "HEALTH  100",
+        "size": 26,
+        "color": [
+         1.0,
+         0.45,
+         0.4,
+         1.0
+        ]
+       },
+       {
+        "type": "Text",
+        "name": "SamplesText",
+        "text": "SEED SAMPLES  0 / 3",
+        "size": 26,
+        "color": [
+         0.5,
+         1.0,
+         0.6,
+         1.0
+        ]
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "type": "Border",
+    "name": "ObjectivePanel",
+    "background": {
+     "kind": "Color",
+     "tint": [
+      0.02,
+      0.04,
+      0.09,
+      0.72
+     ]
+    },
+    "padding": [
+     16,
+     10,
+     16,
+     10
+    ],
+    "slot": {
+     "anchors": [
+      1,
+      0,
+      1,
+      0
+     ],
+     "position": [
+      -784,
+      24
+     ],
+     "size": [
+      760,
+      56
+     ]
+    },
+    "children": [
+     {
+      "type": "Text",
+      "name": "ObjectiveText",
+      "text": "Salvage scrap and components, craft a Generator Core.",
+      "size": 22,
+      "color": [
+       1.0,
+       0.82,
+       0.3,
+       1.0
+      ]
+     }
+    ]
+   },
+   {
+    "type": "Border",
+    "name": "PromptPanel",
+    "visibility": "Collapsed",
+    "background": {
+     "kind": "Color",
+     "tint": [
+      0.02,
+      0.04,
+      0.09,
+      0.78
+     ]
+    },
+    "padding": [
+     18,
+     8,
+     18,
+     8
+    ],
+    "slot": {
+     "anchors": [
+      0.5,
+      1,
+      0.5,
+      1
+     ],
+     "position": [
+      -320,
+      -150
+     ],
+     "size": [
+      640,
+      48
+     ]
+    },
+    "children": [
+     {
+      "type": "Text",
+      "name": "PromptText",
+      "text": "[E] Take",
+      "size": 28,
+      "color": [
+       1.0,
+       0.82,
+       0.3,
+       1.0
+      ]
+     }
+    ]
+   },
+   {
+    "type": "Border",
+    "name": "ScanPanel",
+    "visibility": "Collapsed",
+    "background": {
+     "kind": "Color",
+     "tint": [
+      0.02,
+      0.04,
+      0.09,
+      0.78
+     ]
+    },
+    "padding": [
+     16,
+     10,
+     16,
+     10
+    ],
+    "slot": {
+     "anchors": [
+      0,
+      0,
+      0,
+      0
+     ],
+     "position": [
+      24,
+      196
+     ],
+     "size": [
+      620,
+      170
+     ]
+    },
+    "children": [
+     {
+      "type": "VerticalBox",
+      "children": [
+       {
+        "type": "Text",
+        "name": "ScanLine1",
+        "text": "",
+        "size": 22,
+        "color": [
+         0.75,
+         0.95,
+         1.0,
+         1.0
+        ]
+       },
+       {
+        "type": "Text",
+        "name": "ScanLine2",
+        "text": "",
+        "size": 22,
+        "color": [
+         0.75,
+         0.95,
+         1.0,
+         1.0
+        ]
+       },
+       {
+        "type": "Text",
+        "name": "ScanLine3",
+        "text": "",
+        "size": 22,
+        "color": [
+         0.75,
+         0.95,
+         1.0,
+         1.0
+        ]
+       },
+       {
+        "type": "Text",
+        "name": "ScanLine4",
+        "text": "",
+        "size": 22,
+        "color": [
+         0.75,
+         0.95,
+         1.0,
+         1.0
+        ]
+       },
+       {
+        "type": "Text",
+        "name": "ScanLine5",
+        "text": "",
+        "size": 22,
+        "color": [
+         0.75,
+         0.95,
+         1.0,
+         1.0
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ }
+}

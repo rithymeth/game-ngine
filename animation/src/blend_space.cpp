@@ -85,6 +85,22 @@ std::vector<BlendWeight> Weights1D(const std::vector<std::pair<f64, u32>>& line,
     return Finish(w);
 }
 
+// The first wrap is handled by the tail. Compose the other count - 1 cycles
+// in logarithmic time, subtracting in binary so large counts cannot round up.
+RootMotionDelta RepeatMotionAfterFirst(RootMotionDelta cycle, f64 count) {
+    RootMotionDelta result;
+    bool borrow = true;
+    while (count >= 1.0) {
+        const f64 half = std::floor(count * 0.5);
+        const bool bit = count - half * 2.0 >= 1.0;
+        if (borrow ? !bit : bit) result += cycle;
+        if (bit) borrow = false;
+        count = half;
+        if (count >= 1.0) cycle += cycle;
+    }
+    return result;
+}
+
 } // namespace
 
 std::vector<BlendDiagnostic> ValidateBlendSpace(const BlendSpace& s) {
@@ -223,10 +239,14 @@ void BlendWeighted(const std::vector<const Pose*>& poses, const std::vector<f32>
     if (poses.empty()) return;
     f32 total = 0.0f;
     for (f32 w : weights) total += std::max(w, 0.0f);
-    const usize n = poses[0]->local.size();
+    const usize n = poses[0]->local.size(), count = std::min(poses.size(), weights.size());
+    usize first = 0;
+    if (total > 0.0f) {
+        while (first < count && !(weights[first] > 0.0f)) ++first;
+    }
     Pose result;
     result.local.assign(n, BoneTransform{Vec3(0, 0, 0), Quaternion(0, 0, 0, 0), Vec3(0, 0, 0)});
-    for (usize p = 0; p < poses.size() && p < weights.size(); ++p) {
+    for (usize p = 0; p < count; ++p) {
         const f32 w = total > 0 ? std::max(weights[p], 0.0f) / total : (p == 0 ? 1.0f : 0.0f);
         if (w == 0.0f) continue;
         for (usize i = 0; i < n && i < poses[p]->local.size(); ++i) {
@@ -234,7 +254,11 @@ void BlendWeighted(const std::vector<const Pose*>& poses, const std::vector<f32>
             BoneTransform& r = result.local[i];
             r.translation = r.translation + t.translation * w;
             r.scale = r.scale + t.scale * w;
-            const f32 sign = Dot(poses[0]->local[i].rotation, t.rotation) < 0.0f ? -w : w;
+            // Inactive poses cannot choose the hemisphere: +170 and -170 degrees
+            // must blend near 180, not cancel around an unused identity pose.
+            usize reference = first;
+            while (reference < p && (!(weights[reference] > 0.0f) || i >= poses[reference]->local.size())) ++reference;
+            const f32 sign = Dot(poses[reference]->local[i].rotation, t.rotation) < 0.0f ? -w : w;
             r.rotation = Quaternion(r.rotation.x + t.rotation.x * sign, r.rotation.y + t.rotation.y * sign, r.rotation.z + t.rotation.z * sign,
                                     r.rotation.w + t.rotation.w * sign);
         }
@@ -270,15 +294,18 @@ void BlendSpacePlayer::Update(f32 dt, Pose& out, RootMotionDelta* motion, const 
     const f32 cycle = CycleDuration();
     const f32 before = phase_;
     previous_phase_ = phase_;
+    f64 wraps = 0.0;
     if (cycle > 0.0f) {
         phase_ += dt / cycle;
-        phase_ -= std::floor(phase_);
+        wraps = std::floor(phase_);
+        phase_ -= static_cast<f32>(wraps);
     }
     std::vector<const Pose*> poses;
     std::vector<f32> weights;
     scratch_.resize(weights_.size());
     Vec3 moved(0, 0, 0);
-    Quaternion turned(0, 0, 0, 0);
+    Quaternion turned(0, 0, 0, 0), rotation_reference;
+    bool has_rotation_reference = false;
     for (usize k = 0; k < weights_.size(); ++k) {
         const BlendWeight& w = weights_[k];
         const AnimationClip* c = w.sample < clips_.size() ? clips_[w.sample] : nullptr;
@@ -286,9 +313,24 @@ void BlendSpacePlayer::Update(f32 dt, Pose& out, RootMotionDelta* motion, const 
         SampleClip(*c, skeleton_, phase_ * c->duration, true, scratch_[k]);
         if (motion != nullptr) {
             const RootMotionSettings s = settings != nullptr ? *settings : RootMotionSettings{};
-            const RootMotionDelta d = ExtractRootMotion(*c, skeleton_, before * c->duration, phase_ * c->duration, true, s);
+            RootMotionDelta d;
+            if (dt > 0.0f && std::isfinite(wraps) && wraps >= 1.0) {
+                // Wrapped phases alone cannot distinguish a partial step from
+                // one or more complete cycles. Keep the tail, cycles, and head.
+                d = ExtractRootMotion(*c, skeleton_, before * c->duration, c->duration, false, s);
+                if (wraps > 1.0) d += RepeatMotionAfterFirst(ExtractRootMotion(*c, skeleton_, 0.0f, c->duration, false, s), wraps);
+                d += ExtractRootMotion(*c, skeleton_, 0.0f, phase_ * c->duration, false, s);
+            } else {
+                d = ExtractRootMotion(*c, skeleton_, before * c->duration, phase_ * c->duration, true, s);
+            }
             moved = moved + d.translation * w.weight;
-            const f32 sign = d.rotation.w < 0.0f ? -w.weight : w.weight;
+            // Weights are heaviest first. Align to the first available sample,
+            // not identity, so rotations on opposite sides of 180 stay together.
+            if (!has_rotation_reference) {
+                rotation_reference = d.rotation;
+                has_rotation_reference = true;
+            }
+            const f32 sign = Dot(rotation_reference, d.rotation) < 0.0f ? -w.weight : w.weight;
             turned = Quaternion(turned.x + d.rotation.x * sign, turned.y + d.rotation.y * sign, turned.z + d.rotation.z * sign,
                                 turned.w + d.rotation.w * sign);
             StripRootMotion(scratch_[k], *c, skeleton_, s);
@@ -303,6 +345,8 @@ void BlendSpacePlayer::Update(f32 dt, Pose& out, RootMotionDelta* motion, const 
     }
     if (motion != nullptr) {
         motion->translation = moved;
+        // Preserve the canonical output sign used by the graph's yaw weighting.
+        if (turned.w < 0.0f) turned = Quaternion(-turned.x, -turned.y, -turned.z, -turned.w);
         motion->rotation = turned.LengthSq() > 0 ? turned.Normalized() : Quaternion::Identity();
     }
 }

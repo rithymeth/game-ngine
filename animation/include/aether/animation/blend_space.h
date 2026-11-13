@@ -61,7 +61,7 @@ void Triangulate(BlendSpace& space);
 std::vector<BlendWeight> ComputeWeights(const BlendSpace& space, f32 x, f32 y = 0.0f);
 
 // Several poses blended by weight (normalized); rotations are aligned to
-// the first before they're averaged.
+// the first contributing pose for each bone before they're averaged.
 void BlendWeighted(const std::vector<const Pose*>& poses, const std::vector<f32>& weights, Pose& out);
 
 // Plays a blend space with its clips in step: every clip is at the same

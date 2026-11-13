@@ -3,7 +3,8 @@
 
 Configures a Release tree (the Dear ImGui editor, aether_editor_shell, with the Vulkan backend it draws through, and the dev tools, no tests), installs it to a staging prefix, zips the result and
 compiles a self-extracting installer with the .NET Framework compiler that ships with Windows. The payload is embedded as a
-managed resource, so the output is a single exe a user runs with no administrator rights. The installer's source is
+managed resource, so the output is a single exe a user runs with no administrator rights. Run with no arguments it shows a setup
+window (welcome, folder and options, progress, finish); with /silent it installs with no window and writes to the console. The installer's source is
 tools/installer/AetherInstaller.cs: it closes (with the user's consent) any Aether program running from the install folder, moves
 a previous installation aside (leaving it untouched if it is in use), checks that bin\aether_editor_shell.exe is there after unpacking, makes the Start menu and
 Desktop shortcuts, and offers to start the editor. CI compiles and runs it on Windows (tools/installer/test_installer.ps1).
@@ -68,9 +69,10 @@ def main():
         dist = ROOT / "dist"
         dist.mkdir(exist_ok=True)
         output = dist / f"Aether-{args.version}-Windows-x64.exe"
-        run([str(CSC), "/nologo", "/target:exe", "/optimize+", f"/out:{output}",
+        run([str(CSC), "/nologo", "/target:winexe", "/optimize+", f"/out:{output}",
              f"/resource:{payload},aether-app.zip",
-             "/reference:System.IO.Compression.FileSystem.dll", str(source)])
+             "/reference:System.IO.Compression.FileSystem.dll", "/reference:System.IO.Compression.dll",
+             "/reference:System.Windows.Forms.dll", "/reference:System.Drawing.dll", str(source)])
         print(f"wrote {output} ({output.stat().st_size / 1024 / 1024:.1f} MB)")
     finally:
         if args.keep:

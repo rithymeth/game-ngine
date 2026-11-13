@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "name": "power_up",
+  "root": 1,
+  "output": {
+    "bus": "SFX",
+    "volume_db": -5,
+    "spatial": false
+  },
+  "nodes": [
+    {
+      "id": 1,
+      "type": "Wave",
+      "sound": "Audio/power_up.wav",
+      "looping": false
+    }
+  ]
+}

@@ -182,11 +182,18 @@ AETHER_TEST(SceneDocument_RejectsUnknownComponentsWithoutReplacingCurrentScene) 
 
     SceneDocument document;
     document.NewScene();
+    const std::vector<Entity> selection = document.Entities();
+    document.SetSelection(selection);
+    AETHER_CHECK(document.CopySelection());
+    const u64 revision = document.Revision();
     std::string error;
     AETHER_CHECK(!document.Load(path, &error));
     AETHER_CHECK(!error.empty());
     AETHER_CHECK(document.Entities().size() == 5);
     AETHER_CHECK(document.Name(document.Entities().front()) == "Camera");
+    AETHER_CHECK(document.Selection() == selection);
+    AETHER_CHECK(document.HasClipboard());
+    AETHER_CHECK(document.Revision() == revision && !document.IsDirty());
 
     std::error_code filesystem_error;
     std::filesystem::remove(path, filesystem_error);
@@ -512,6 +519,338 @@ std::filesystem::path FreshSceneDir(const char* name) {
 }
 
 } // namespace
+
+AETHER_TEST(SceneDocument_PlayRestorationKeepsAuthoredSelectionAndHistory) {
+    const auto dir = FreshSceneDir("aether_test_play_selection");
+    for (bool dirty : {false, true}) {
+        SceneDocument document;
+        const Entity gap = document.CreateEntity("Gap");
+        const Entity other = document.CreateEntity("Other");
+        const Entity focus = document.CreateEntity("Focus");
+        const EntityGuid other_guid = GuidOf(document, other), focus_guid = GuidOf(document, focus);
+        AETHER_CHECK(document.DestroyEntity(gap));
+        // The first selected handle is beyond the restored world's compact entity range.
+        AETHER_CHECK(focus.index >= document.Entities().size());
+        document.SetSelection({focus, other, gap, kNullEntity});
+        AETHER_CHECK(document.CopySelection());
+        const auto path = dir / (dirty ? "dirty.ascene" : "clean.ascene");
+        const bool saved = document.Save(path);
+        AETHER_CHECK(saved);
+        if (!saved) continue;
+        if (dirty) AETHER_CHECK(document.Rename(focus, "Authored focus"));
+        AETHER_CHECK(document.Rename(other, "Redo target"));
+        AETHER_CHECK(document.Undo());
+        const auto before = SaveSceneToMemory(document.GetWorld());
+        const auto undo_count = document.Commands().UndoCount(), redo_count = document.Commands().RedoCount();
+        const auto undo_label = document.UndoLabel(), redo_label = document.RedoLabel();
+        AETHER_CHECK(document.IsDirty() == dirty && document.CanRedo());
+
+        document.Play();
+        AETHER_CHECK(document.Commands().IsFrozen() && !document.CanUndo() && !document.CanRedo());
+        AETHER_CHECK(document.DestroyEntity(focus)); // authored selection must survive runtime deletion
+        const Entity runtime = document.CreateEntity("Runtime only");
+        document.SetSelection({runtime});
+        document.Play(); // already playing: must not replace the authored selection
+        document.Pause();
+        document.Play(); // resume: must not take a second snapshot
+        document.ClearSelection();
+        document.Pause();
+        document.Stop();
+
+        const Entity restored_focus = document.Guids().Find(document.GetWorld(), focus_guid);
+        const Entity restored_other = document.Guids().Find(document.GetWorld(), other_guid);
+        AETHER_CHECK(!restored_focus.IsNull() && !restored_other.IsNull());
+        if (restored_focus.IsNull() || restored_other.IsNull()) continue;
+        AETHER_CHECK(restored_focus != focus);
+        AETHER_CHECK(document.Selection() == (std::vector<Entity>{restored_focus, restored_other}));
+        AETHER_CHECK(SaveSceneToMemory(document.GetWorld()) == before);
+        AETHER_CHECK(document.PlayState() == PlaySession::State::Editing && !document.Commands().IsFrozen());
+        AETHER_CHECK(document.IsDirty() == dirty && document.FilePath() == path && document.HasClipboard());
+        AETHER_CHECK(document.Commands().UndoCount() == undo_count && document.Commands().RedoCount() == redo_count);
+        AETHER_CHECK(document.UndoLabel() == undo_label && document.RedoLabel() == redo_label);
+        AETHER_CHECK(document.Redo() && document.Name(restored_other) == "Redo target");
+        AETHER_CHECK(document.Undo() && document.Name(restored_other) == "Other");
+
+        // A later play session captures its own pivot/order, not the previous session's selection.
+        document.SetSelection({restored_other});
+        document.Play();
+        document.SetSelection({restored_focus});
+        document.Stop();
+        AETHER_CHECK(document.Selection() == std::vector<Entity>{document.Guids().Find(document.GetWorld(), other_guid)});
+        document.ClearSelection();
+        document.Play();
+        document.SetSelection(document.Entities());
+        document.Stop();
+        AETHER_CHECK(document.Selection().empty());
+    }
+}
+
+AETHER_TEST(SceneDocument_PlayRestorationInvalidatesViewersWithoutAnEditCommand) {
+    for (bool paused : {false, true}) {
+        SceneDocument document;
+        document.NewScene();
+        const auto entities = document.Entities();
+        AETHER_CHECK(!entities.empty());
+        if (entities.empty()) continue;
+        const EntityGuid guid = GuidOf(document, entities.front());
+        const auto before = SaveSceneToMemory(document.GetWorld());
+        document.Play();
+        auto* transform = document.GetWorld().GetComponent<Transform>(entities.front());
+        AETHER_CHECK(transform != nullptr);
+        if (!transform) continue;
+        transform->position = Vec3{90.0f, 80.0f, 70.0f}; // physics bypasses the command stack
+        document.GetWorld().CreateEntity(Transform{}, IdComponent{NewEntityGuid()});
+        if (paused) document.Pause();
+        const u64 revision = document.Revision(), structure = document.StructureRevision();
+        const u64 command_revision = document.Commands().Revision();
+        document.Stop();
+        AETHER_CHECK(document.Revision() == revision + 1 && document.StructureRevision() == structure + 1);
+        AETHER_CHECK(document.Commands().Revision() == command_revision);
+        AETHER_CHECK(SaveSceneToMemory(document.GetWorld()) == before);
+        AETHER_CHECK(!document.Guids().Find(document.GetWorld(), guid).IsNull());
+        AETHER_CHECK(!document.IsDirty() && !document.CanUndo() && !document.CanRedo());
+        const auto stopped_revision = document.Revision(), stopped_structure = document.StructureRevision();
+        document.Stop();
+        AETHER_CHECK(document.Revision() == stopped_revision && document.StructureRevision() == stopped_structure);
+    }
+}
+
+AETHER_TEST(SceneDocument_PlayRestorationClearsAllPendingTransformBaselines) {
+    for (bool edit_during_play : {false, true}) {
+        SceneDocument document;
+        const Entity entity = document.CreateEntity("Transform target");
+        const EntityGuid guid = GuidOf(document, entity);
+        AETHER_CHECK(document.SetPosition(entity, Vec3{1.0f, 2.0f, 3.0f}, edit_during_play));
+        AETHER_CHECK(document.SetRotation(entity, Quaternion::FromAxisAngle(Vec3{0, 1, 0}, 0.7f), edit_during_play));
+        AETHER_CHECK(document.SetScale(entity, Vec3{4.0f, 5.0f, 6.0f}, edit_during_play));
+        const auto* transform = document.GetWorld().GetComponent<Transform>(entity);
+        AETHER_CHECK(transform != nullptr);
+        if (!transform) continue;
+        const Transform authored = *transform;
+        const auto undo_count = document.Commands().UndoCount();
+        document.Play();
+        if (edit_during_play) {
+            auto* runtime = document.GetWorld().GetComponent<Transform>(entity);
+            AETHER_CHECK(runtime != nullptr);
+            if (!runtime) continue;
+            runtime->position = Vec3{11.0f, 12.0f, 13.0f};
+            runtime->rotation = Quaternion::FromAxisAngle(Vec3{0, 1, 0}, 1.2f);
+            runtime->scale = Vec3{14.0f, 15.0f, 16.0f};
+            AETHER_CHECK(document.SetPosition(entity, Vec3{20.0f, 21.0f, 22.0f}, false));
+            AETHER_CHECK(document.SetRotation(entity, Quaternion::Identity(), false));
+            AETHER_CHECK(document.SetScale(entity, Vec3{23.0f, 24.0f, 25.0f}, false));
+        }
+        document.Stop();
+        const Entity restored = document.Guids().Find(document.GetWorld(), guid);
+        AETHER_CHECK(!restored.IsNull());
+        if (restored.IsNull()) continue;
+        AETHER_CHECK(document.SetPosition(restored, Vec3{30.0f, 31.0f, 32.0f}, true));
+        AETHER_CHECK(document.SetRotation(restored, Quaternion::Identity(), true));
+        AETHER_CHECK(document.SetScale(restored, Vec3{33.0f, 34.0f, 35.0f}, true));
+        AETHER_CHECK(document.Undo() && document.Undo() && document.Undo());
+        const Transform* undone = document.GetWorld().GetComponent<Transform>(restored);
+        AETHER_CHECK(undone != nullptr);
+        if (!undone) continue;
+        AETHER_CHECK(Close(undone->position.x, authored.position.x) && Close(undone->position.y, authored.position.y) && Close(undone->position.z, authored.position.z));
+        AETHER_CHECK(Close(undone->rotation.x, authored.rotation.x) && Close(undone->rotation.y, authored.rotation.y) && Close(undone->rotation.z, authored.rotation.z) && Close(undone->rotation.w, authored.rotation.w));
+        AETHER_CHECK(Close(undone->scale.x, authored.scale.x) && Close(undone->scale.y, authored.scale.y) && Close(undone->scale.z, authored.scale.z));
+        AETHER_CHECK(document.Commands().UndoCount() == undo_count);
+    }
+}
+
+AETHER_TEST(SceneDocument_PlayRestorationStopWhileEditingIsANoOp) {
+    SceneDocument document;
+    const Entity entity = document.CreateEntity("Still editing");
+    document.SetSelection({entity});
+    AETHER_CHECK(document.SetPosition(entity, Vec3{1.0f, 2.0f, 3.0f}, false));
+    AETHER_CHECK(document.SetRotation(entity, Quaternion::FromAxisAngle(Vec3{0, 1, 0}, 0.7f), false));
+    AETHER_CHECK(document.SetScale(entity, Vec3{4.0f, 5.0f, 6.0f}, false));
+    const u64 revision = document.Revision(), structure = document.StructureRevision();
+    document.Stop();
+    AETHER_CHECK(document.Revision() == revision && document.StructureRevision() == structure);
+    AETHER_CHECK(document.Selection() == std::vector<Entity>{entity});
+    AETHER_CHECK(document.SetPosition(entity, Vec3{10.0f, 20.0f, 30.0f}, true));
+    AETHER_CHECK(document.SetRotation(entity, Quaternion::FromAxisAngle(Vec3{0, 1, 0}, 1.4f), true));
+    AETHER_CHECK(document.SetScale(entity, Vec3{40.0f, 50.0f, 60.0f}, true));
+    AETHER_CHECK(document.Undo() && document.Undo() && document.Undo());
+    const Transform* undone = document.GetWorld().GetComponent<Transform>(entity);
+    AETHER_CHECK(undone != nullptr);
+    if (!undone) return;
+    AETHER_CHECK(Close(undone->position.x, 0.0f) && Close(undone->position.y, 0.0f) && Close(undone->position.z, 0.0f));
+    AETHER_CHECK(Close(undone->rotation.x, 0.0f) && Close(undone->rotation.y, 0.0f) && Close(undone->rotation.z, 0.0f) && Close(undone->rotation.w, 1.0f));
+    AETHER_CHECK(Close(undone->scale.x, 1.0f) && Close(undone->scale.y, 1.0f) && Close(undone->scale.z, 1.0f));
+}
+
+AETHER_TEST(SceneDocument_PlayRestorationNewSceneDiscardsTheOldSelectionSnapshot) {
+    SceneDocument document;
+    const Entity old = document.CreateEntity("Old scene");
+    document.SetSelection({old});
+    document.Play();
+    document.NewScene(); // Reset stops play internally without restoring the old selection into the new scene.
+    AETHER_CHECK(document.PlayState() == PlaySession::State::Editing && document.Selection().empty());
+    const auto entities = document.Entities();
+    AETHER_CHECK(!entities.empty());
+    if (entities.empty()) return;
+    const EntityGuid guid = GuidOf(document, entities.back());
+    document.SetSelection({entities.back()});
+    document.Play();
+    document.ClearSelection();
+    document.Stop();
+    AETHER_CHECK(document.Selection() == std::vector<Entity>{document.Guids().Find(document.GetWorld(), guid)});
+}
+
+// Entity handles are local to a world: loading another scene can reuse a selected handle for an unrelated object.
+AETHER_TEST(SceneDocument_LoadDropsOldSelectionButKeepsTheClipboard) {
+    const auto dir = FreshSceneDir("aether_test_load_selection");
+    for (const char* extension : {".ascene", ".aesc"}) {
+        SceneDocument source;
+        const Entity replacement = source.CreateEntity("Different object");
+        const EntityGuid replacement_guid = GuidOf(source, replacement);
+        const auto path = dir / (std::string("replacement") + extension);
+        const bool saved = source.Save(path);
+        AETHER_CHECK(saved);
+        if (!saved) continue;
+
+        SceneDocument document;
+        document.NewScene();
+        const auto old_entities = document.Entities();
+        AETHER_CHECK(old_entities.size() == 5);
+        if (old_entities.size() != 5) continue;
+        const Entity camera = old_entities.front();
+        const EntityGuid camera_guid = GuidOf(document, camera);
+        document.SetSelection({camera});
+        AETHER_CHECK(document.CopySelection());
+        document.ToggleSelection(old_entities.back()); // include a handle absent from the next scene, too
+        AETHER_CHECK(document.Rename(camera, "Old camera"));
+        const u64 revision = document.Revision();
+        const u64 structure_revision = document.StructureRevision();
+        const bool loaded = document.Load(path);
+        AETHER_CHECK(loaded);
+        if (!loaded) continue;
+
+        const Entity object = document.Guids().Find(document.GetWorld(), replacement_guid);
+        AETHER_CHECK(object == camera && replacement_guid != camera_guid); // prove the dangerous handle reuse
+        AETHER_CHECK(document.Name(object) == "Different object");
+        AETHER_CHECK(document.Selection().empty() && !document.IsSelected(object));
+        AETHER_CHECK(document.Revision() > revision);
+        AETHER_CHECK(document.StructureRevision() > structure_revision);
+        AETHER_CHECK(!document.IsDirty() && !document.CanUndo() && !document.CanRedo());
+        AETHER_CHECK(document.FilePath() == path && document.HasClipboard());
+
+        // Clipboard snapshots are intentionally portable between scenes; loading must not clear them.
+        AETHER_CHECK(document.PasteClipboard() == 1);
+        AETHER_CHECK(document.Entities().size() == 2);
+        AETHER_CHECK(document.Name(object) == "Different object");
+        bool found_camera = false;
+        for (Entity entity : document.Entities()) found_camera |= document.Name(entity) == "Camera Copy";
+        AETHER_CHECK(found_camera);
+        AETHER_CHECK(document.Undo() && document.Entities().size() == 1);
+    }
+}
+
+AETHER_TEST(SceneDocument_FailedLoadsKeepSelectionAndPendingEdits) {
+    const auto dir = FreshSceneDir("aether_test_failed_load_selection");
+    for (const char* extension : {".ascene", ".aesc"}) {
+        SceneDocument document;
+        const Entity entity = document.CreateEntity("Keeper");
+        const EntityGuid guid = GuidOf(document, entity);
+        const auto original = dir / (std::string("original") + extension);
+        const bool saved = document.Save(original);
+        AETHER_CHECK(saved);
+        if (!saved) continue;
+        document.SetSelection({entity});
+        AETHER_CHECK(document.CopySelection());
+        AETHER_CHECK(document.SetScale(entity, Vec3{2.0f, 3.0f, 4.0f}, false));
+        const auto revision = document.Revision();
+        const auto structure_revision = document.StructureRevision();
+        const auto label = document.UndoLabel();
+        const auto damaged = dir / (std::string("damaged") + extension);
+        {
+            std::ofstream file(damaged, std::ios::binary);
+            file << "not a scene";
+            AETHER_CHECK(file.good());
+        }
+        for (const auto& path : {damaged, dir / (std::string("missing") + extension)}) {
+            std::string error;
+            AETHER_CHECK(!document.Load(path, &error) && !error.empty());
+            AETHER_CHECK(document.Selection() == std::vector<Entity>{entity});
+            AETHER_CHECK(document.Guids().Find(document.GetWorld(), guid) == entity);
+            AETHER_CHECK(document.Name(entity) == "Keeper" && document.Entities().size() == 1);
+            AETHER_CHECK(document.FilePath() == original && document.HasClipboard());
+            AETHER_CHECK(document.IsDirty() && document.CanUndo());
+            AETHER_CHECK(document.Revision() == revision && document.UndoLabel() == label);
+            AETHER_CHECK(document.StructureRevision() == structure_revision);
+        }
+        // A failed open does not terminate the ongoing edit: committing it still undoes to where it began.
+        AETHER_CHECK(document.SetScale(entity, Vec3{5.0f, 6.0f, 7.0f}, true));
+        AETHER_CHECK(document.Undo());
+        const Transform* restored = document.GetWorld().GetComponent<Transform>(entity);
+        AETHER_CHECK(restored != nullptr);
+        if (restored) AETHER_CHECK(restored->scale.x == 1.0f && restored->scale.y == 1.0f && restored->scale.z == 1.0f);
+    }
+}
+
+AETHER_TEST(SceneDocument_LoadClearsPendingTransformEditsEvenWhenGuidsMatch) {
+    const auto dir = FreshSceneDir("aether_test_load_pending_transforms");
+    for (const char* extension : {".ascene", ".aesc"}) {
+        SceneDocument document;
+        const Entity entity = document.CreateEntity("Same object");
+        const EntityGuid guid = GuidOf(document, entity);
+        AETHER_CHECK(document.SetPosition(entity, Vec3{1.0f, 2.0f, 3.0f}, false));
+        AETHER_CHECK(document.SetRotation(entity, Quaternion::FromAxisAngle(Vec3{0, 1, 0}, 0.7f), false));
+        AETHER_CHECK(document.SetScale(entity, Vec3{4.0f, 5.0f, 6.0f}, false));
+        const Transform* transform = document.GetWorld().GetComponent<Transform>(entity);
+        AETHER_CHECK(transform != nullptr);
+        if (!transform) continue;
+        const Transform saved_transform = *transform;
+        const auto path = dir / (std::string("transforms") + extension);
+        const bool saved = document.Save(path);
+        AETHER_CHECK(saved);
+        if (!saved) continue;
+        const bool loaded = document.Load(path);
+        AETHER_CHECK(loaded);
+        if (!loaded) continue;
+        const Entity reloaded = document.Guids().Find(document.GetWorld(), guid);
+        AETHER_CHECK(!reloaded.IsNull());
+        if (reloaded.IsNull()) continue;
+
+        AETHER_CHECK(document.SetPosition(reloaded, Vec3{10.0f, 20.0f, 30.0f}, true));
+        AETHER_CHECK(document.SetRotation(reloaded, Quaternion::Identity(), true));
+        AETHER_CHECK(document.SetScale(reloaded, Vec3{8.0f, 9.0f, 10.0f}, true));
+        AETHER_CHECK(document.Undo() && document.Undo() && document.Undo());
+        const Transform* restored = document.GetWorld().GetComponent<Transform>(reloaded);
+        AETHER_CHECK(restored != nullptr);
+        if (!restored) continue;
+        AETHER_CHECK(Close(restored->position.x, saved_transform.position.x) && Close(restored->position.y, saved_transform.position.y) && Close(restored->position.z, saved_transform.position.z));
+        AETHER_CHECK(Close(restored->rotation.x, saved_transform.rotation.x) && Close(restored->rotation.y, saved_transform.rotation.y) && Close(restored->rotation.z, saved_transform.rotation.z) && Close(restored->rotation.w, saved_transform.rotation.w));
+        AETHER_CHECK(Close(restored->scale.x, saved_transform.scale.x) && Close(restored->scale.y, saved_transform.scale.y) && Close(restored->scale.z, saved_transform.scale.z));
+        AETHER_CHECK(!document.IsDirty() && !document.CanUndo());
+    }
+}
+
+AETHER_TEST(SceneDocument_AutosaveLoadDropsOldSelectionAndKeepsRecoveryState) {
+    const auto dir = FreshSceneDir("aether_test_autosave_load_selection");
+    const auto autosave = dir / "recovered.ascene", source_path = dir / "original.ascene";
+    SceneDocument source;
+    const Entity replacement = source.CreateEntity("Recovered object");
+    const EntityGuid guid = GuidOf(source, replacement);
+    const bool saved = source.SaveAutosave(autosave);
+    AETHER_CHECK(saved);
+    if (!saved) return;
+    SceneDocument document;
+    document.NewScene();
+    const auto entities = document.Entities();
+    AETHER_CHECK(!entities.empty());
+    if (entities.empty()) return;
+    document.SetSelection({entities.front()});
+    AETHER_CHECK(document.CopySelection());
+    const bool loaded = document.LoadAutosave(autosave, source_path);
+    AETHER_CHECK(loaded);
+    if (!loaded) return;
+    AETHER_CHECK(document.Selection().empty() && document.HasClipboard());
+    AETHER_CHECK(document.Name(document.Guids().Find(document.GetWorld(), guid)) == "Recovered object");
+    AETHER_CHECK(document.FilePath() == source_path && document.IsDirty() && !document.CanUndo());
+}
 
 // M9.1: a scene of 100 entities in a three-level hierarchy, edited through the document's own commands, keeps every GUID, name, transform
 // and parent link across save and reload (JSON and binary), and its edits undo and redo.

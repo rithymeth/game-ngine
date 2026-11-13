@@ -2,6 +2,7 @@
 // :Connect, timers, and input.
 
 #include "aether/script/script_system.h"
+#include "aether/audio/audio_system.h"
 #include "aether/script/ai_api.h"
 #include "aether/script/gameplay_api.h"
 #include "aether/script/interaction_api.h"
@@ -16,6 +17,7 @@
 #endif
 
 #include "aether/core/log.h"
+#include "aether/scene/components.h"
 
 #include "script_values.h"
 
@@ -426,13 +428,67 @@ void ScriptSystem::InstallApi(bool install_kit_apis) {
     });
 #endif
 
+    host_.RegisterNative("Scene", "Load", [this](NativeCall& call) {
+        if (!call.IsString(0)) return call.Fail("Scene.Load(path) expected the content path of a scene, such as \"Scenes/Inside.ascene\"");
+        if (!scene_hooks_.request) return call.Fail("Scene isn't bound to a running game");
+        const std::string spawn = call.IsString(1) ? call.String(1) : std::string();
+        call.Return(scene_hooks_.request(call.String(0), spawn));
+    });
+    // Audio acts on the game's active audio system (the same one the Blueprint nodes use); with none running, the calls report false and do nothing.
+    host_.RegisterNative("Audio", "PlaySound2D", [](NativeCall& call) {
+        if (!call.IsString(0)) return call.Fail("Audio.PlaySound2D(cue [, volume_db, pitch]) expected a cue name");
+        audio::AudioSystem* system = audio::AudioSystem::Active();
+        call.Return(system != nullptr && system->PlaySound2D(call.String(0), static_cast<f32>(call.Number(1, 0.0)), static_cast<f32>(call.Number(2, 1.0))) != 0);
+    });
+    host_.RegisterNative("Audio", "PlaySoundAtLocation", [](NativeCall& call) {
+        if (!call.IsString(0) || !call.IsNumber(1) || !call.IsNumber(2) || !call.IsNumber(3))
+            return call.Fail("Audio.PlaySoundAtLocation(cue, x, y, z [, volume_db, pitch]) expected a cue name and a position");
+        audio::AudioSystem* system = audio::AudioSystem::Active();
+        const Vec3 at(static_cast<f32>(call.Number(1)), static_cast<f32>(call.Number(2)), static_cast<f32>(call.Number(3)));
+        call.Return(system != nullptr && system->PlaySoundAtLocation(call.String(0), at, static_cast<f32>(call.Number(4, 0.0)), static_cast<f32>(call.Number(5, 1.0))) != 0);
+    });
+    host_.RegisterNative("Audio", "SetBusVolume", [](NativeCall& call) {
+        if (!call.IsString(0) || !call.IsNumber(1)) return call.Fail("Audio.SetBusVolume(bus, volume_db [, fade_seconds]) expected a bus name and a number");
+        audio::AudioSystem* system = audio::AudioSystem::Active();
+        call.Return(system != nullptr && system->SetBusVolume(call.String(0), static_cast<f32>(call.Number(1)), static_cast<f32>(call.Number(2, 0.0))));
+    });
+    host_.RegisterNative("Audio", "Play2D", [](NativeCall& call) {
+        if (!call.IsString(0)) return call.Fail("Audio.Play2D(cue [, volume_db, pitch]) expected a cue name");
+        audio::AudioSystem* system = audio::AudioSystem::Active();
+        const audio::CueHandle handle = system != nullptr ? system->PlaySound2D(call.String(0), static_cast<f32>(call.Number(1, 0.0)), static_cast<f32>(call.Number(2, 1.0))) : 0;
+        if (handle != 0) call.Return(static_cast<f64>(handle));
+        else call.Return(false);
+    });
+    host_.RegisterNative("Audio", "Stop", [](NativeCall& call) {
+        if (!call.IsNumber(0)) return call.Fail("Audio.Stop(handle [, fade_seconds]) expected a handle from Audio.Play2D");
+        audio::AudioSystem* system = audio::AudioSystem::Active();
+        call.Return(system != nullptr && system->Player().Stop(static_cast<audio::CueHandle>(call.Number(0)), static_cast<f32>(call.Number(1, 0.0))));
+    });
+    host_.RegisterNative("Audio", "IsPlaying", [](NativeCall& call) {
+        if (!call.IsNumber(0)) return call.Fail("Audio.IsPlaying(handle) expected a handle from Audio.Play2D");
+        audio::AudioSystem* system = audio::AudioSystem::Active();
+        call.Return(system != nullptr && system->Player().IsPlaying(static_cast<audio::CueHandle>(call.Number(0))));
+    });
+    host_.RegisterNative("Audio", "SetVolume", [](NativeCall& call) {
+        if (!call.IsNumber(0) || !call.IsNumber(1)) return call.Fail("Audio.SetVolume(handle, volume_db) expected a handle from Audio.Play2D and a number");
+        audio::AudioSystem* system = audio::AudioSystem::Active();
+        call.Return(system != nullptr && system->Player().SetVolume(static_cast<audio::CueHandle>(call.Number(0)), static_cast<f32>(call.Number(1))));
+    });
+    host_.RegisterNative("Audio", "StopAll", [](NativeCall&) {
+        if (audio::AudioSystem* system = audio::AudioSystem::Active()) system->StopAll();
+    });
+    host_.RegisterNative("Camera", "Shake", [this](NativeCall& call) {
+        if (!call.IsNumber(0)) return call.Fail("Camera.Shake(amount) expected a number from 0 to 1");
+        if (!add_camera_trauma_) return call.Fail("Camera isn't bound to a running game");
+        add_camera_trauma_(static_cast<f32>(call.Number(0)));
+    });
+    host_.RegisterNative("Scene", "Current", [this](NativeCall& call) {
+        call.Return(scene_hooks_.current ? scene_hooks_.current() : std::string());
+    });
+
     InstallSaveApi(host_); // SaveGames (Phase 28 step 4)
     InstallLocApi(host_);  // Localization (Phase 29 step 2)
     InstallUiApi(host_);   // UI: text, bars and visibility by widget name
-    host_.RegisterNative("Scene", "Load", [this](NativeCall& call) {
-        if (!call.IsString(0)) return call.Fail("Scene.Load(path) expects a scene path string");
-        call.Return(RequestSceneLoad(call.String(0)));
-    });
     ai_debug_ = InstallAiApi(host_); // AI perception and Nav path queries (M8.8)
     if (install_kit_apis) {
         InstallKitApi("Quests");

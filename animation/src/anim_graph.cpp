@@ -291,6 +291,7 @@ struct AnimGraphInstance::NodeState {
     BoneMask mask;
     bool has_mask = false;
     RootMotionDelta motion; // this frame's, at full weight
+    f64 motion_yaw = 0.0; // retain complete turns until the graph applies its weight
 };
 
 struct AnimGraphInstance::MachineState {
@@ -332,6 +333,61 @@ bool SetValue(std::map<std::string, f32>& values, const AnimGraph& g, const std:
 
 // The signed angle about +Y of a yaw rotation.
 f32 YawAngle(const Quaternion& q) { return 2.0f * std::atan2(q.y, q.w); }
+
+constexpr f64 kYawPeriod = 6.28318530717958647692;
+
+// A quotient very close to an integer may round up before floor. FMA keeps
+// the residual's sign, so the cycle count agrees with ClipTime's remainder.
+f64 ClipCycle(f32 time, f64 duration) {
+    f64 cycle = std::floor(static_cast<f64>(time) / duration);
+    const f64 residual = std::fma(-cycle, duration, static_cast<f64>(time));
+    if (residual < 0.0) cycle -= 1.0;
+    else if (residual >= duration) cycle += 1.0;
+    return cycle;
+}
+
+// ClipTime alone discards complete cycles. Keep their count from the unwrapped
+// forward interval; the public notify/root-motion APIs still take clip times.
+f64 ForwardClipWraps(const AnimationClip& clip, f32 from, f32 to, bool loop) {
+    if (!loop || !(to > from) || !(clip.duration > 0.0f) || !std::isfinite(clip.duration) ||
+        !std::isfinite(from) || !std::isfinite(to)) return 0.0;
+    return ClipCycle(to, clip.duration) - ClipCycle(from, clip.duration);
+}
+
+// Follow the root's rotation keys rather than subtracting canonical endpoint
+// headings: 170 -> 260 degrees is +90, and a keyed full turn has equal endpoints.
+f64 ClipSpanYaw(const AnimationClip& clip, const Skeleton& skeleton, f32 from, f32 to, const RootMotionSettings& settings) {
+    const usize bone = static_cast<usize>(settings.bone);
+    if (!settings.yaw || !(to > from) || settings.bone < 0 || bone >= skeleton.bones.size() || bone >= clip.tracks.size()) return 0.0;
+    const RotationTrack& track = clip.tracks[bone].rotation;
+    const Quaternion& rest = skeleton.bones[bone].rest.rotation;
+    auto heading = [&](f32 time) {
+        const Quaternion yaw = YawOf(SampleTrack(track, time, rest));
+        return 2.0 * std::atan2(static_cast<f64>(yaw.y), static_cast<f64>(yaw.w));
+    };
+    f64 previous = heading(from), result = 0.0;
+    auto advance = [&](f32 time) {
+        const f64 next = heading(time);
+        result += std::remainder(next - previous, kYawPeriod);
+        previous = next;
+    };
+    for (auto it = std::upper_bound(track.times.begin(), track.times.end(), from); it != track.times.end() && *it < to; ++it) advance(*it);
+    advance(to);
+    return result;
+}
+
+// Compose repeated cycle transforms in logarithmic time, even when a fast clip
+// crosses many cycles without any notifies. Translation must turn with the root.
+RootMotionDelta RepeatMotion(RootMotionDelta cycle, f64 count) {
+    RootMotionDelta result;
+    while (count >= 1.0) {
+        const f64 half = std::floor(count * 0.5);
+        if (count - half * 2.0 >= 1.0) result += cycle;
+        count = half;
+        if (count >= 1.0) cycle += cycle;
+    }
+    return result;
+}
 } // namespace
 
 bool AnimGraphInstance::SetBool(const std::string& n, bool v) { return SetValue(values_, graph_, n, v ? 1.0f : 0.0f, {VarType::Bool}); }
@@ -370,13 +426,32 @@ void AnimGraphInstance::Update(f32 dt, Pose& out) {
 }
 
 void AnimGraphInstance::Collect() {
-    auto add_motion = [&](const RootMotionDelta& d, f32 w) {
+    auto add_motion = [&](const RootMotionDelta& d, f32 w, f64 yaw, bool winding = false) {
         root_motion_.translation = root_motion_.translation + d.translation * w;
-        root_yaw_ += YawAngle(d.rotation) * w;
+        // Weight before reducing, and reduce in double precision before the
+        // float cast. A quaternion has a 4*pi period (including its sign).
+        f64 weighted = std::remainder(yaw * w, kYawPeriod * 2.0);
+        if (winding) {
+            // Keep the composed transform's orientation authoritative, including
+            // float rounding during repeated composition, without losing turns.
+            const f64 composed = 2.0 * std::atan2(static_cast<f64>(d.rotation.y), static_cast<f64>(d.rotation.w));
+            weighted += std::remainder(composed - std::remainder(yaw, kYawPeriod), kYawPeriod) * w;
+        }
+        root_yaw_ += static_cast<f32>(weighted);
     };
-    auto notify = [&](const AnimationClip& clip, f32 from, f32 to, bool loop, f32 weight) {
+    auto notify = [&](const AnimationClip& clip, f32 from, f32 to, bool loop, f32 weight, bool include_start = false) {
         std::vector<NotifyPoint> points;
-        CollectNotifies(clip, from, to, loop, points);
+        if (!include_start) {
+            CollectNotifies(clip, from, to, loop, points);
+        } else {
+            // A span following a wrap includes time zero. Keep the clip's stored
+            // notify order, including window begins/ends, just like CollectNotifies.
+            for (const AnimNotify& n : clip.notifies) {
+                if (n.time >= from && n.time <= to) points.push_back({&n, n.duration > 0.0f, false});
+                const f32 end = std::min(n.time + n.duration, clip.duration);
+                if (n.duration > 0.0f && end >= from && end <= to) points.push_back({&n, true, true});
+            }
+        }
         for (const NotifyPoint& p : points) {
             const AnimEventType type = !p.window ? AnimEventType::Notify : p.end ? AnimEventType::NotifyEnd : AnimEventType::NotifyBegin;
             Emit({type, p.notify->name, clip.name, {}, std::min(weight, 1.0f), false});
@@ -389,8 +464,18 @@ void AnimGraphInstance::Collect() {
         if (n->kind == AnimNodeKind::Clip) {
             const AnimationClip* c = assets_.clip ? assets_.clip(n->asset) : nullptr;
             if (c == nullptr) continue;
-            notify(*c, ClipTime(*c, ns->previous_time, n->loop), ClipTime(*c, ns->time, n->loop), n->loop, ns->weight);
-            if (root_motion_enabled_) add_motion(ns->motion, std::min(ns->weight, 1.0f));
+            const f32 from = ClipTime(*c, ns->previous_time, n->loop), to = ClipTime(*c, ns->time, n->loop);
+            const f64 wraps = ForwardClipWraps(*c, ns->previous_time, ns->time, n->loop);
+            if (wraps > 0.0 && !c->notifies.empty()) {
+                notify(*c, from, c->duration, false, ns->weight);
+                for (f64 cycle = 1.0; cycle < wraps; cycle += 1.0) notify(*c, 0.0f, c->duration, false, ns->weight, true);
+                // Even an exact-cycle update crosses time zero, but its following
+                // frame must not report that boundary a second time.
+                notify(*c, 0.0f, to, false, ns->weight, true);
+            } else {
+                notify(*c, from, to, n->loop, ns->weight);
+            }
+            if (root_motion_enabled_) add_motion(ns->motion, std::min(ns->weight, 1.0f), ns->motion_yaw, wraps > 0.0);
         } else if (n->kind == AnimNodeKind::BlendSpace && ns->player) {
             // Notifies from the heaviest clip only, so a blend of walk cycles steps once.
             const auto& w = ns->player->Weights();
@@ -399,7 +484,7 @@ void AnimGraphInstance::Collect() {
                     notify(*c, ns->player->PreviousPhase() * c->duration, ns->player->Phase() * c->duration, true, ns->weight * w.front().weight);
                 }
             }
-            if (root_motion_enabled_) add_motion(ns->motion, std::min(ns->weight, 1.0f));
+            if (root_motion_enabled_) add_motion(ns->motion, std::min(ns->weight, 1.0f), YawAngle(ns->motion.rotation));
         }
     }
 }
@@ -676,11 +761,12 @@ void AnimGraphInstance::EvaluateMachine(const AnimNode& node, f32 dt, f32 weight
     f32 alpha = 1.0f, mean = 1.0f;
     if (blending) {
         const f32 before = std::clamp(ms.blend_elapsed / ms.blend_duration, 0.0f, 1.0f);
+        const f32 remaining = ms.blend_duration - ms.blend_elapsed;
         ms.blend_elapsed += dt;
         alpha = std::clamp(ms.blend_elapsed / ms.blend_duration, 0.0f, 1.0f);
-        // Root motion and notifies count by the crossfade's average weight over the frame, so a blend
-        // moves the character the same distance at any frame rate; the pose uses the weight at its end.
-        mean = 0.5f * (before + alpha);
+        // Root motion and notifies use the frame-average weight; the pose uses its end weight.
+        // If the ramp ends within this frame, the rest of the frame has full target weight.
+        mean = dt > remaining ? 1.0f - 0.5f * (1.0f - before) * (remaining / dt) : 0.5f * (before + alpha);
     }
     const Pose target_pose = Evaluate(m->states[static_cast<usize>(ms.current)].pose, dt, weight * mean);
     if (blending) {
@@ -708,6 +794,7 @@ const Pose& AnimGraphInstance::Evaluate(u32 id, f32 dt, f32 weight) {
     ns.frame = frame_;
     ns.weight = weight;
     ns.motion = {};
+    ns.motion_yaw = 0.0;
     const AnimNode* n = graph_.Find(id);
     if (n == nullptr) {
         ns.pose = RestPose(skeleton_);
@@ -726,8 +813,23 @@ const Pose& AnimGraphInstance::Evaluate(u32 id, f32 dt, f32 weight) {
         if (!n->loop) ns.time = std::clamp(ns.time, 0.0f, c->duration);
         SampleClip(*c, skeleton_, ns.time, n->loop, ns.pose);
         if (root_motion_enabled_) {
-            ns.motion = ExtractRootMotion(*c, skeleton_, ClipTime(*c, ns.previous_time, n->loop), ClipTime(*c, ns.time, n->loop), n->loop,
-                                          root_settings_);
+            const f32 from = ClipTime(*c, ns.previous_time, n->loop), to = ClipTime(*c, ns.time, n->loop);
+            const f64 wraps = ForwardClipWraps(*c, ns.previous_time, ns.time, n->loop);
+            if (wraps > 0.0) {
+                ns.motion = ExtractRootMotion(*c, skeleton_, from, c->duration, false, root_settings_);
+                ns.motion_yaw = ClipSpanYaw(*c, skeleton_, from, c->duration, root_settings_);
+                if (wraps > 1.0) {
+                    const RootMotionDelta cycle = ExtractRootMotion(*c, skeleton_, 0.0f, c->duration, false, root_settings_);
+                    ns.motion += RepeatMotion(cycle, wraps - 1.0);
+                    ns.motion_yaw += ClipSpanYaw(*c, skeleton_, 0.0f, c->duration, root_settings_) * (wraps - 1.0);
+                }
+                const RootMotionDelta head = ExtractRootMotion(*c, skeleton_, 0.0f, to, false, root_settings_);
+                ns.motion += head;
+                ns.motion_yaw += ClipSpanYaw(*c, skeleton_, 0.0f, to, root_settings_);
+            } else {
+                ns.motion = ExtractRootMotion(*c, skeleton_, from, to, n->loop, root_settings_);
+                ns.motion_yaw = YawAngle(ns.motion.rotation);
+            }
             StripRootMotion(ns.pose, *c, skeleton_, root_settings_);
         }
         break;

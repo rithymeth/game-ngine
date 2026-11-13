@@ -4,6 +4,9 @@
 #include "aether/cook/cooker.h"
 #include "aether/pak/pak.h"
 #include "aether/player/game.h"
+#include "aether/physics/character.h"
+#include "aether/player/camera_shake.h"
+#include "aether/player/frame_report.h"
 #include "aether/project/project.h"
 #include "aether/scene/components.h"
 #include "aether/scene/gameplay.h"
@@ -360,6 +363,217 @@ AETHER_TEST(Player_RunsTheStartupSceneFromAPak) {
     CHECK(updates == 60 && fixed == 60);
     game.EndPlay();
     CHECK(!game.IsPlaying());
+}
+
+// The frame-time report: warm-up frames are left out, percentiles are nearest-rank, and without GPU samples it says so.
+AETHER_TEST(Player_FrameReportSummarisesTheFramesAfterTheWarmup) {
+    player::FrameReport report(5);
+    for (int i = 0; i < 5; ++i) report.AddFrame(500.0f); // warm-up: slow, and left out
+    for (int i = 1; i <= 100; ++i) report.AddFrame(static_cast<f32>(i)); // 1..100 ms
+    report.AddFrame(std::nanf("")); // not a measurement
+    const player::FrameReport::Stats cpu = report.Cpu();
+    CHECK(cpu.samples == 100);
+    CHECK(std::fabs(cpu.average - 50.5f) < 1e-3f);
+    CHECK(cpu.p50 == 50.0f && cpu.p95 == 95.0f && cpu.p99 == 99.0f && cpu.max == 100.0f);
+    CHECK(report.Gpu().samples == 0);
+    CHECK(report.Text().find("GPU time: not available") != std::string::npos);
+    CHECK(report.Text().find("Frame time: 100 frames") != std::string::npos);
+
+    for (int i = 0; i < 5; ++i) report.AddGpu(9.0f, 1.0f, 5.0f, 3.0f); // warm-up samples, left out
+    report.AddGpu(4.0f, 1.0f, 2.0f, 1.0f);
+    report.AddGpu(6.0f, 1.0f, 4.0f, 1.0f);
+    CHECK(report.Gpu().samples == 2 && std::fabs(report.Gpu().average - 5.0f) < 1e-4f);
+    CHECK(std::fabs(report.GpuScene() - 3.0f) < 1e-4f && std::fabs(report.GpuShadows() - 1.0f) < 1e-4f);
+    CHECK(report.Text().find("GPU time: 2 samples") != std::string::npos);
+
+    player::FrameReport none(10);
+    none.AddFrame(1.0f);
+    CHECK(none.Cpu().samples == 0);
+    CHECK(none.Text().find("no frames measured") != std::string::npos);
+}
+
+// Camera shake: trauma adds up and is capped, the shake grows with its square and the camera is put back exactly as it was.
+AETHER_TEST(Player_CameraShakeFollowsTheTraumaModelAndRestoresTheCamera) {
+    player::CameraShake shake;
+    CHECK(shake.Trauma() == 0.0f);
+    shake.AddTrauma(-1.0f);
+    shake.AddTrauma(std::nanf(""));
+    CHECK(shake.Trauma() == 0.0f); // a negative or non-finite amount is ignored
+    shake.AddTrauma(0.6f);
+    shake.AddTrauma(0.9f);
+    CHECK(shake.Trauma() == 1.0f); // capped
+    const player::CameraShake::Pose full = shake.Evaluate();
+    player::CameraShake half;
+    half.AddTrauma(0.5f);
+    const player::CameraShake::Pose small = half.Evaluate();
+    // trauma squared: half the trauma is a quarter of the shake
+    CHECK(std::fabs(full.offset.y) > 1e-4f);
+    CHECK(std::fabs(small.offset.y - full.offset.y * 0.25f) < 1e-5f);
+    CHECK(std::fabs(small.angles_degrees.z - full.angles_degrees.z * 0.25f) < 1e-5f);
+
+    // On a camera: moved while there is trauma, put back exactly, and the trauma drains.
+    World world;
+    Transform at;
+    at.position = Vec3(1.0f, 2.0f, 3.0f);
+    const Entity camera = world.CreateEntity(at);
+    player::CameraShake live;
+    live.Apply(world, camera, 0.016f); // no trauma: nothing happens
+    CHECK(world.GetComponent<Transform>(camera)->position.x == 1.0f);
+    live.AddTrauma(1.0f);
+    live.Apply(world, camera, 0.016f);
+    const Transform shaken = *world.GetComponent<Transform>(camera);
+    CHECK(shaken.position.x != 1.0f || shaken.position.y != 2.0f || shaken.position.z != 3.0f);
+    CHECK(live.Trauma() < 1.0f);
+    live.Restore(world);
+    const Transform* back = world.GetComponent<Transform>(camera);
+    CHECK(back->position.x == 1.0f && back->position.y == 2.0f && back->position.z == 3.0f);
+    CHECK(back->rotation.w == 1.0f && back->rotation.x == 0.0f);
+    live.Restore(world); // twice is harmless
+    for (int i = 0; i < 200; ++i) live.Apply(world, camera, 0.016f), live.Restore(world);
+    CHECK(live.Trauma() == 0.0f); // it drained away
+}
+
+// A script's Camera.Shake shakes the active camera, after the scripts have run.
+AETHER_TEST(Player_ScriptsCanShakeTheCamera) {
+    if (!Game::HasScripting()) return;
+    const stdfs::path dir = TestDir("Shake");
+    const std::string guid = assets::ToString(assets::NewAssetGuid());
+    ScriptComponent component;
+    assets::AssetGuid parsed;
+    CHECK(assets::ParseAssetGuid(guid, parsed));
+    component.script.guid = parsed;
+    const json scene = {{"$type", "Scene"}, {"$version", 1},
+        {"entities", json::array({json::parse(R"({"components": {"Transform": {"$v": 2, "position": [0, 5, 10], "rotation": [0, 0, 0, 1], "scale": [1, 1, 1]}, "Camera": {"$v": 1, "far_plane": 100, "fov_degrees": 60, "near_plane": 0.1, "ortho_height": 10, "priority": 0, "projection": "Perspective"}}})"),
+                                  {{"components", {{"ScriptComponent", reflect::ToJson(component)}}}}})}};
+    const char* script =
+        "local S = {}\n"
+        "function S:OnUpdate(dt)\n"
+        "  self.n = (self.n or 0) + 1\n"
+        "  if self.n == 2 then Camera.Shake(1) end\n"
+        "end\n"
+        "return S\n";
+    json manifest = Manifest("Scenes/start.ascene", "unused");
+    manifest["assets"] = json::array({{{"guid", assets::ToString(assets::NewAssetGuid())}, {"path", "Scenes/start.ascene"}, {"importer", "Scene"}},
+                                      {{"guid", guid}, {"path", "Scripts/Shake.luau"}, {"importer", "Script"}}});
+    pak::PakWriter writer;
+    CHECK(writer.Add("Manifest.json", manifest.dump()));
+    CHECK(writer.Add("Content/Scenes/start.ascene", scene.dump()));
+    CHECK(writer.Add("Content/Scripts/Shake.luau", std::string(script)));
+    const stdfs::path pak = dir / "Game.apak";
+    CHECK(writer.Write(pak.string()));
+    GamePackage package;
+    std::string error;
+    CHECK(package.Mount(pak.string(), 0, &error));
+    CHECK(package.LoadManifest(&error));
+    Game game(package);
+    CHECK(game.LoadStartupScene(&error));
+    game.BeginPlay();
+    const auto camera_y = [&]() {
+        f32 y = 0;
+        game.GetWorld().ForEach<Camera, Transform>([&](Camera&, Transform& t) { y = t.position.y; });
+        return y;
+    };
+    game.Tick(1.0f / 60.0f);
+    CHECK(camera_y() == 5.0f); // not asked yet
+    game.Tick(1.0f / 60.0f);   // the script asks: this frame is shaken
+    CHECK(camera_y() != 5.0f);
+    CHECK(game.Shake().Trauma() > 0.0f);
+    CHECK(game.ScriptErrors().empty());
+    for (int i = 0; i < 400; ++i) game.Tick(1.0f / 60.0f);
+    CHECK(game.Shake().Trauma() == 0.0f);
+    CHECK(camera_y() == 5.0f); // drained away, and the camera is back where the scene put it
+}
+
+// A script can move the game to another scene (a door, a fast-travel point): Scene.Load asks, the game swaps at the start of the next frame, the new
+// scene's scripts run, and a scene that is missing or does not parse leaves the current one running.
+AETHER_TEST(Player_ScriptsCanLoadAnotherScene) {
+    if (!Game::HasScripting()) return;
+    const stdfs::path dir = TestDir("SceneLoad");
+    const auto script_component = [](const std::string& guid) {
+        ScriptComponent component;
+        assets::AssetGuid parsed;
+        assets::ParseAssetGuid(guid, parsed);
+        component.script.guid = parsed;
+        return component;
+    };
+    const std::string door_guid = assets::ToString(assets::NewAssetGuid());
+    const std::string mover_guid = assets::ToString(assets::NewAssetGuid());
+    const json start = {{"$type", "Scene"}, {"$version", 1},
+        {"entities", json::array({{{"components", {{"ScriptComponent", reflect::ToJson(script_component(door_guid))}}}}})}};
+    const json inside = {{"$type", "Scene"}, {"$version", 1},
+        {"entities", json::array({{{"components", {{"ScriptComponent", reflect::ToJson(script_component(mover_guid))}}}},
+                                  json::parse(R"({"components": {"Transform": {"$v": 2, "position": [5, 1, -3], "rotation": [0, 0, 0, 1], "scale": [1, 1, 1]}, "EntityName": {"$v": 1, "value": "Landing"}}})"),
+                                  json::parse(R"({"components": {"Transform": {"$v": 2, "position": [0, 0, 0], "rotation": [0, 0, 0, 1], "scale": [1, 1, 1]}, "CharacterMovement": {"$v": 1}}})")})}};
+    const char* door =
+        "local Door = {}\n"
+        "function Door:OnUpdate(dt)\n"
+        "  self.t = (self.t or 0) + dt\n"
+        "  if self.t > 0.1 and not self.asked then\n"
+        "    self.asked = true\n"
+        "    Door.missing = Scene.Load('Scenes/nope.ascene')\n"
+        "    Door.ok = Scene.Load('Scenes/inside.ascene', 'Landing')\n"
+        "    Door.current = Scene.Current()\n"
+        "  end\n"
+        "end\n"
+        "return Door\n";
+    const char* mover = "local M = {}\nfunction M:OnUpdate(dt) Scene.Ticks = (Scene.Ticks or 0) + 1 end\nreturn M\n";
+    json manifest = Manifest("Scenes/start.ascene", "unused");
+    manifest["assets"] = json::array({{{"guid", assets::ToString(assets::NewAssetGuid())}, {"path", "Scenes/start.ascene"}, {"importer", "Scene"}},
+                                      {{"guid", assets::ToString(assets::NewAssetGuid())}, {"path", "Scenes/inside.ascene"}, {"importer", "Scene"}},
+                                      {{"guid", door_guid}, {"path", "Scripts/Door.luau"}, {"importer", "Script"}},
+                                      {{"guid", mover_guid}, {"path", "Scripts/Mover.luau"}, {"importer", "Script"}}});
+    pak::PakWriter writer;
+    CHECK(writer.Add("Manifest.json", manifest.dump()));
+    CHECK(writer.Add("Content/Scenes/start.ascene", start.dump()));
+    CHECK(writer.Add("Content/Scenes/inside.ascene", inside.dump()));
+    CHECK(writer.Add("Content/Scripts/Door.luau", std::string(door)));
+    CHECK(writer.Add("Content/Scripts/Mover.luau", std::string(mover)));
+    const stdfs::path pak = dir / "Game.apak";
+    CHECK(writer.Write(pak.string()));
+
+    GamePackage package;
+    std::string error;
+    CHECK(package.Mount(pak.string(), 0, &error));
+    CHECK(package.LoadManifest(&error));
+    Game game(package);
+    CHECK(game.LoadStartupScene(&error));
+    CHECK(!game.RequestScene("Scenes/nope.ascene")); // not in the package: refused at once, nothing changes
+    game.BeginPlay();
+    for (int i = 0; i < 3; ++i) game.Tick(1.0f / 60.0f);
+    CHECK(game.SceneName() == "Scenes/start.ascene"); // not yet asked (0.1 s has not passed)
+    for (int i = 0; i < 12; ++i) game.Tick(1.0f / 60.0f);
+    CHECK(game.SceneName() == "Scenes/inside.ascene");
+    CHECK(game.IsPlaying());
+    // The character stands where the spawn entity is.
+    bool placed = false;
+    game.GetWorld().ForEach<CharacterMovement, Transform>([&](CharacterMovement&, Transform& t) { placed = std::fabs(t.position.x - 5.0f) < 1e-3f && std::fabs(t.position.z + 3.0f) < 1e-3f; });
+    CHECK(placed);
+    for (int i = 0; i < 5; ++i) game.Tick(1.0f / 60.0f);
+    CHECK(game.ScriptErrors().empty());
+    CHECK(game.Warnings().empty());
+
+    // A scene that is in the package but does not parse leaves the current one running, with a warning.
+    pak::PakWriter bad;
+    manifest["assets"].push_back({{"guid", assets::ToString(assets::NewAssetGuid())}, {"path", "Scenes/broken.ascene"}, {"importer", "Scene"}});
+    CHECK(bad.Add("Manifest.json", manifest.dump()));
+    CHECK(bad.Add("Content/Scenes/start.ascene", start.dump()));
+    CHECK(bad.Add("Content/Scenes/inside.ascene", inside.dump()));
+    CHECK(bad.Add("Content/Scenes/broken.ascene", std::string("this is not a scene")));
+    CHECK(bad.Add("Content/Scripts/Door.luau", std::string(door)));
+    CHECK(bad.Add("Content/Scripts/Mover.luau", std::string(mover)));
+    const stdfs::path bad_pak = dir / "Bad.apak";
+    CHECK(bad.Write(bad_pak.string()));
+    GamePackage bad_package;
+    CHECK(bad_package.Mount(bad_pak.string(), 0, &error));
+    CHECK(bad_package.LoadManifest(&error));
+    Game bad_game(bad_package);
+    CHECK(bad_game.LoadStartupScene(&error));
+    bad_game.BeginPlay();
+    CHECK(bad_game.RequestScene("Scenes/broken.ascene"));
+    bad_game.Tick(1.0f / 60.0f);
+    CHECK(bad_game.SceneName() == "Scenes/start.ascene");
+    CHECK(!bad_game.Warnings().empty());
+    CHECK(bad_game.IsPlaying());
 }
 
 // A game with its own UI: a WidgetComponent shows a layout from the pak, a script changes it by widget name (the Luau UI table), and the

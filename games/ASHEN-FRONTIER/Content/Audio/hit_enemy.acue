@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "name": "hit_enemy",
+  "root": 1,
+  "output": {
+    "bus": "SFX",
+    "volume_db": -5,
+    "spatial": false
+  },
+  "nodes": [
+    {
+      "id": 1,
+      "type": "Wave",
+      "sound": "Audio/hit_enemy.wav",
+      "looping": false
+    }
+  ]
+}

@@ -70,6 +70,7 @@ void SceneDocument::Reset() {
     world_ = World{};
     guids_.Clear();
     selection_.clear(); // Phase 43.3: the selection belongs to the scene that was open
+    play_selection_.clear();
     commands_.Clear();
     ++local_revision_; // a new or loaded scene is a change to whoever is looking at the old one
     file_.clear();
@@ -160,11 +161,15 @@ bool SceneDocument::Load(const std::filesystem::path& file, std::string* error) 
     }
     world_ = std::move(candidate);
     guids_ = std::move(candidate_guids);
+    selection_.clear(); // Handles belong to the old world, even if the new world reuses their indices.
     commands_.Clear();
+    ++local_revision_; // Replacing a world must refresh viewers even when no edit commands were issued.
     pending_position_before_.reset();
     pending_position_entity_ = {};
     pending_rotation_before_.reset();
     pending_rotation_entity_ = {};
+    pending_scale_before_.reset();
+    pending_scale_entity_ = {};
     file_ = file;
     recovered_unsaved_ = false;
     commands_.MarkSaved();
@@ -531,14 +536,36 @@ bool SceneDocument::SetCineCameraField(Entity entity, const std::string& field_n
 
 bool SceneDocument::Undo() { return commands_.Undo(context_); }
 bool SceneDocument::Redo() { return commands_.Redo(context_); }
-void SceneDocument::Play() { play_session_.Play(context_, commands_); }
+void SceneDocument::Play() {
+    if (play_session_.IsEditing()) {
+        play_selection_.clear();
+        play_selection_.reserve(selection_.size());
+        for (const Entity entity : selection_) {
+            if (!world_.IsAlive(entity)) continue;
+            const auto* id = world_.GetComponent<IdComponent>(entity);
+            if (id && !id->guid.IsNull()) play_selection_.push_back(id->guid);
+        }
+    }
+    play_session_.Play(context_, commands_);
+}
 void SceneDocument::Pause() { play_session_.Pause(); }
 void SceneDocument::Stop() {
+    if (play_session_.IsEditing()) return;
     play_session_.Stop(context_, commands_);
+    // Restore the authored selection, even if gameplay deleted it or selected runtime-only entities.
+    selection_.clear();
+    for (const EntityGuid& guid : play_selection_) {
+        const Entity entity = guids_.Find(world_, guid);
+        if (!entity.IsNull()) selection_.push_back(entity);
+    }
+    play_selection_.clear();
+    ++local_revision_; // Restoring a world is a structural change even when simulation issued no commands.
     pending_position_before_.reset();
     pending_position_entity_ = {};
     pending_rotation_before_.reset();
     pending_rotation_entity_ = {};
+    pending_scale_before_.reset();
+    pending_scale_entity_ = {};
 }
 
 } // namespace aether::editor

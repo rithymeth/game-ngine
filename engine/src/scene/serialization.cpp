@@ -357,8 +357,13 @@ bool LoadSceneFromMemory(World& world, std::span<const u8> buffer, const std::st
     // The file is fully parsed and all strict-unknown checks have passed.
     // Only now mutate the destination world, so malformed input cannot leave
     // a partially loaded scene behind.
+    if (options.loaded_entities != nullptr) {
+        options.loaded_entities->clear();
+        options.loaded_entities->reserve(entity_count);
+    }
     for (const PendingEntity& pending_entity : pending_entities) {
         Entity entity = world.CreateEntityRaw(pending_entity.mask);
+        if (options.loaded_entities != nullptr) options.loaded_entities->push_back(entity);
         for (const PendingComponent& component : pending_entity.components) {
             void* ptr = world.GetComponentRaw(entity, component.id);
             if (ptr) {
@@ -553,8 +558,13 @@ bool LoadSceneJsonFromMemoryImpl(World& world, std::span<const u8> bytes, const 
     if (rejected_for_unknown) return false;
     // Defer all world mutations until every entity and strict component check
     // has been processed. The Json document stays alive through this commit.
+    if (options.loaded_entities != nullptr) {
+        options.loaded_entities->clear();
+        options.loaded_entities->reserve(pending_entities.size());
+    }
     for (const PendingJsonEntity& pending_entity : pending_entities) {
         Entity entity = world.CreateEntityRaw(pending_entity.mask);
+        if (options.loaded_entities != nullptr) options.loaded_entities->push_back(entity);
         if (!pending_entity.guid.IsNull()) {
             world.GetComponent<IdComponent>(entity)->guid = pending_entity.guid;
         }

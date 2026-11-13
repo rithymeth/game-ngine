@@ -1,6 +1,7 @@
 #pragma once
 
 #include "aether/cook/cooker.h"
+#include "aether/player/camera_shake.h"
 #include "aether/ecs/world.h"
 #include "aether/input/actions.h"
 #include "aether/kit/kit.h"
@@ -199,6 +200,11 @@ public:
     // instances resolved from the package. Ends play first if it's running.
     bool LoadScene(const std::string& path, std::string* error = nullptr);
     const std::string& SceneName() const { return scene_; }
+    // Asks for another scene to take this one's place at the start of the next Tick (never mid-frame: a script that asks is one of the things the swap
+    // ends). False, changing nothing, if the package has no such file. A scene that is there but will not load (it does not parse) leaves the current one
+    // running and adds a warning. This is what the scripts' Scene.Load calls.
+    // `spawn` names an entity of the new scene: the character (the entity with a CharacterMovement) is moved to it before play begins.
+    bool RequestScene(const std::string& path, const std::string& spawn = {});
 
     // OnCreate/OnEnable/OnStart for the scene's entities; physics bodies are made then.
     void BeginPlay();
@@ -215,6 +221,8 @@ public:
 
     World& GetWorld() { return *world_; }
     GuidIndex& Guids() { return guids_; }
+    // The camera shake the scripts' Camera.Shake feeds; applied to the active camera after each frame's scripts (see camera_shake.h).
+    player::CameraShake& Shake() { return shake_; }
     Lifecycle& GetLifecycle() { return *lifecycle_; }
     // Add game systems here, before the first Tick.
     SystemScheduler& Systems() { return scheduler_; }
@@ -381,6 +389,7 @@ private:
     GamePackage& package_;
     std::unique_ptr<World> world_;
     GuidIndex guids_;
+    player::CameraShake shake_;
     std::unique_ptr<Lifecycle> lifecycle_;
     SystemScheduler scheduler_;
     kit::KitRegistry kits_; // the gameplay kits this build has (Phase 37 step 4)
@@ -388,7 +397,10 @@ private:
     std::unordered_map<assets::AssetGuid, std::unique_ptr<PrefabData>> prefabs_;
     std::unordered_map<std::string, std::unique_ptr<seq::LevelSequence>> sequences_;
     std::string scene_;
-    std::string pending_scene_load_;
+    std::string pending_spawn_;
+    std::string pending_scene_; // asked for by RequestScene, swapped in at the start of the next Tick
+    void ApplyPendingScene();
+    void PlaceCharacterAt(const std::string& spawn);
     std::vector<std::string> warnings_;
     usize prefab_instances_ = 0;
     GameStats stats_;

@@ -115,6 +115,7 @@ private:
     GuidIndex guids_;
     Vec3d origin_;
     std::vector<Entity> selection_; // Phase 43.3: multi-selection, not an undoable edit
+    std::vector<EntityGuid> play_selection_; // authored selection, captured once on entry to Play; handles do not survive Stop
     std::vector<EntitySnapshot> clipboard_; // Phase 43.3: snapshots, so paste outlives the originals
     CommandStack commands_;
     CommandContext context_;

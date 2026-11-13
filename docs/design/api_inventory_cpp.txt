@@ -2688,11 +2688,13 @@
   Job*AllocateJob(u32 thread_index,JobFunc fn,void*data,JobCounter&counter)
   JobSystem&operator=(const JobSystem&)=delete
   JobSystem(const JobSystem&)=delete
+  bool TryPopOverflow(Job*&job)
   bool TryRunOneJob(u32 thread_index)
   public:explicit JobSystem(u32 worker_count=0)
   static void Execute(Job*job)
   u32 ThreadCount()const
   using JobFunc=void(*)(void*data)
+  void PushOverflow(Job*job)
   void Schedule(JobFunc fn,void*data,JobCounter&counter)
   void ScheduleBatch(const JobDecl*jobs,u32 count,JobCounter&counter)
   void Wait(JobCounter&counter)
@@ -2706,11 +2708,11 @@
   alignas(kCacheLineSize)std::atomic<i64>top_
   bool Empty()const
   bool Pop(T&out)
+  bool Push(T item)
   bool Steal(T&out)
   public:WorkStealingQueue()=default
   static_assert((Capacity&(Capacity - 1))==0,"")
   static_assert(std::atomic<T>::is_always_lock_free,"")
-  void Push(T item)
 [engine/include/aether/kit/event_bus.h] experimental
   type class KitEventBus
   public:template<typename Event>void Publish(Event event)
@@ -4680,28 +4682,34 @@
   type struct BoxCollider
   type struct CapsuleCollider
   type struct ConvexCollider
+  type struct HeightfieldCollider
   type struct MeshCollider
   type struct RigidBody
   type struct SphereCollider
   ))AETHER_REFLECT(aether::CapsuleCollider,1,AETHER_FIELD(radius,Field_EditAnywhere,
   ))AETHER_REFLECT(aether::ConvexCollider,1,AETHER_FIELD(points,Field_EditAnywhere,
+  ))AETHER_REFLECT(aether::HeightfieldCollider,1,AETHER_FIELD(samples,Field_EditAnywhere,
   ))AETHER_REFLECT(aether::MeshCollider,1,AETHER_FIELD(vertices,Field_ReadOnly,
   ))AETHER_REFLECT(aether::SphereCollider,1,AETHER_FIELD(radius,Field_EditAnywhere,
   ),AETHER_FIELD(angular_damping,Field_EditAnywhere,
+  ),AETHER_FIELD(cell_size,Field_EditAnywhere,
   ),AETHER_FIELD(center,Field_EditAnywhere,
   ),AETHER_FIELD(continuous_collision,Field_EditAnywhere,
   ),AETHER_FIELD(friction,Field_EditAnywhere,
   ),AETHER_FIELD(gravity_scale,Field_EditAnywhere,
   ),AETHER_FIELD(height,Field_EditAnywhere,
+  ),AETHER_FIELD(heights,Field_ReadOnly,
   ),AETHER_FIELD(indices,Field_ReadOnly,
   ),AETHER_FIELD(is_trigger,Field_EditAnywhere,
   ),AETHER_FIELD(linear_damping,Field_EditAnywhere,
   ),AETHER_FIELD(lock_rotation_x,Field_EditAnywhere),AETHER_FIELD(lock_rotation_y,Field_EditAnywhere),AETHER_FIELD(lock_rotation_z,Field_EditAnywhere),AETHER_FIELD(legacy_radius,Field_None))AETHER_REFLECT(aether::BoxCollider,1,AETHER_FIELD(half_extents,Field_EditAnywhere,
   ),AETHER_FIELD(mass,Field_EditAnywhere,
+  ),AETHER_FIELD(origin,Field_EditAnywhere,
   ),AETHER_FIELD(report_stay,Field_EditAnywhere,
   ),AETHER_FIELD(restitution,Field_EditAnywhere,
   AETHER_ENUM(aether::BodyMotion,1,AETHER_ENUM_VALUE(Static),AETHER_ENUM_VALUE(Kinematic),AETHER_ENUM_VALUE(Dynamic))AETHER_REFLECT(aether::RigidBody,2,AETHER_FIELD(motion,Field_EditAnywhere,
   bool HasCollider(const World&world,Entity entity)
+  static constexpr f32 kHole=std::numeric_limits<f32>::max()
   usize MigrateLegacyRigidBodies(World&world)
   void RegisterPhysicsComponentSerializers()
 [physics/include/aether/physics/constraints.h] experimental
@@ -4931,6 +4939,33 @@
   std::vector<u8>Encode(const SnapshotChunk&message)
 [player/include/aether/player/bindings_migrate.h] experimental
   std::vector<std::string>MigrateLegacyBindings(const std::filesystem::path&saved_dir,save::SettingsStore<save::GameSettings>&store)
+[player/include/aether/player/camera_shake.h] experimental
+  type class CameraShake
+  type struct Pose
+  type struct Settings
+  Pose Evaluate()const
+  const Settings&GetSettings()const
+  f32 Trauma()const
+  void AddTrauma(f32 amount)
+  void Apply(World&world,Entity camera,f32 dt)
+  void Reset()
+  void Restore(World&world)
+  void SetSettings(const Settings&settings)
+[player/include/aether/player/frame_report.h] experimental
+  type class FrameReport
+  type struct Stats
+  Stats Cpu()const
+  Stats Gpu()const
+  f32 GpuPost()const
+  f32 GpuScene()const
+  f32 GpuShadows()const
+  private:static f32 Mean(const std::vector<f32>&values)
+  public:explicit FrameReport(u32 warmup=30):warmup_(warmup)
+  static Stats Summarise(std::vector<f32>values)
+  std::string Text()const
+  u32 FramesSeen()const
+  void AddFrame(f32 cpu_ms)
+  void AddGpu(f32 frame_ms,f32 shadows_ms,f32 scene_ms,f32 post_ms)
 [player/include/aether/player/game.h] experimental
   type class Game
   type class GamePackage
@@ -4965,6 +5000,7 @@
   bool ParseGameManifest(std::string_view text,GameManifest&out,std::string*error=nullptr)
   bool ReadContent(const std::string&path,std::vector<u8>&out,std::string*error=nullptr)const
   bool ReadContentLocalized(const std::string&path,const std::string&language,std::vector<u8>&out,std::string*error=nullptr)const
+  bool RequestScene(const std::string&path,const std::string&spawn=
   bool StartAudioOutput(std::string*error=nullptr)
   bool Suspended()const
   const GameManifest&Manifest()const
@@ -4986,6 +5022,7 @@
   loc::Localization&Localization()
   pak::VirtualFileSystem&Files()
   platform::PlatformLifecycle&Platform()
+  player::CameraShake&Shake()
   private:const PrefabData*FindPrefab(const assets::AssetGuid&guid)
   public:void AddKey(const pak::PakKey&key)
   save::SaveSystem*Saves()
@@ -5015,6 +5052,7 @@
   void AddQuestsStage()
   void ApplyAudioSettings()
   void ApplyKitStage(SystemDesc&system,const std::string&name)const
+  void ApplyPendingScene()
   void ApplyVirtualControls()
   void BeginPlay()
   void BuildFrame()
@@ -5027,6 +5065,7 @@
   void LoadKitAssets()
   void LoadLocalization()
   void OnPlatformEvent(const platform::LifecycleMessage&message)
+  void PlaceCharacterAt(const std::string&spawn)
   void RefreshSaveContext()
   void SetAuthoritativePhysicsClient(bool enabled)
   void SetContentOverride(const std::string&path,std::vector<u8>bytes)
@@ -5761,6 +5800,7 @@
   type struct EventData
   type struct Instance
   type struct ReloadResult
+  type struct SceneHooks
   type struct ScriptError
   type struct SeenError
   type struct Timer
@@ -5778,7 +5818,6 @@
   bool CancelTimer(u32 timer)
   bool Disconnect(u32 event,u32 connection)
   bool IsConnected(u32 event,u32 connection)const
-  bool RequestSceneLoad(const std::string&path)
   bool SendEvent(Entity entity,const std::string&method,const std::vector<ScriptValue>&args=
   const AiDebugStore&AiDebug()const
   const input::InputState*BoundInputState()const
@@ -5791,7 +5830,9 @@
   static ScriptClassInfo DescribeSource(LuauHost&host,const std::string&source,const std::string&name,int*ref=nullptr)
   static ScriptError Parse(const std::string&text)
   static SourceLoader DatabaseLoader(const assets::AssetDatabase&database)
-  std::function<bool(const std::string&)>scene_load_request_
+  std::function<bool(const std::string&,const std::string&)>request
+  std::function<std::string()>current
+  std::function<void(f32)>add_camera_trauma_
   std::string DescribeEntity(Entity entity)const
   u32 Connect(u32 event,int function_ref)
   u32 InputEvent(const std::string&action,input::ActionEvent event)
@@ -5801,10 +5842,11 @@
   usize InstanceCount()const
   usize ReloadChanged(const std::vector<assets::AssetChange>&changes)
   usize TimerCount()const
+  void BindCameraShake(std::function<void(f32)>add_trauma)
   void BindInput(input::InputSystem*input)
   void BindInputState(const input::InputState*state)
   void BindPhysicsScene(::aether::PhysicsScene*scene)
-  void BindSceneLoadRequest(std::function<bool(const std::string&)>request)
+  void BindSceneHooks(SceneHooks hooks)
   void ClearErrors()
   void Create(Entity entity)
   void Destroy(Entity entity)

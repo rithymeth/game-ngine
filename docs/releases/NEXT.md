@@ -16,6 +16,26 @@ Recorded rather than patched: raising the tolerance to 4x would hide it, and rai
 everything under 200 us. The honest options are a per-row tolerance, or a baseline taken on the same runner, and both are bigger
 than a fix made at a tag.
 
+## Frame times from the player
+
+`aether_player --report` now also prints the speed of the run: CPU frame time (average, p50, p95, p99, max) and, on devices that can time the GPU, the GPU's time by stage (shadows, scene, post). The first 30 frames are left out so shader creation does not skew it. Run it on the target hardware to get the baseline numbers (numbers from a software Vulkan device say nothing about a real GPU). C++: `player::FrameReport`.
+
+## Scripts can stop and change a sound
+
+`Audio.Play2D(cue [, volume_db, pitch])` starts a sound and returns a handle (a number; `false` if the cue is missing or no audio system runs), for sounds a script wants to control later: `Audio.Stop(handle [, fade_seconds])`, `Audio.IsPlaying(handle)` and `Audio.SetVolume(handle, volume_db)`. Music and loops are the use: start a loop, fade it out when the mood changes. The one-shot calls (`PlaySound2D`) are unchanged.
+
+## Scripts can play sounds
+
+`Audio.PlaySound2D(cue [, volume_db, pitch])`, `Audio.PlaySoundAtLocation(cue, x, y, z [, volume_db, pitch])`, `Audio.SetBusVolume(bus, volume_db [, fade])` and `Audio.StopAll()` act on the game's active audio system, the one the Blueprint audio nodes use. Playing returns whether the cue exists and started; with no audio system running the calls return false and do nothing.
+
+## Camera shake
+
+`Camera.Shake(amount)` from a script adds trauma (0 to 1; 0.2 a bump, 0.5 a hit, 1 an explosion) to the player's camera shake. The shake grows with the square of the trauma and drains away; it is a smooth deterministic wobble in position and pitch/yaw/roll. The game applies it to the active camera after each frame's scripts and takes it off before the next, so scripts that set the camera are undisturbed and the renderer, shadows and listener all see the shaken camera. C++: `player::CameraShake` (`Game::Shake()`), with `Settings` for amplitude, angle, frequency and decay.
+
+## Scripts can load another scene
+
+`Scene.Load(path)` moves the game to another scene (a door into an interior, fast travel, a region gate); `Scene.Current()` names the running one. The swap happens at the start of the next frame, so the script that asks isn't torn down under itself. A path the package doesn't have returns false and changes nothing; a scene that is there but doesn't parse leaves the current one running with a warning. `Scene.Load(path, spawn)` takes the name of an entity in the new scene: the player (the entity with a `CharacterMovement`) starts there, so a door can put you on its far side. `Game::RequestScene` is the C++ side.
+
 ## Installer
 
 The application installer (`Aether-<version>-Windows-x64.exe`, built by `tools/build_installer.py`; its source is
@@ -187,7 +207,19 @@ launch), `test_installer.ps1` uses the same name for its stand-in, and `tools/bu
 shell is only built with it. Checked here by compiling the installer with Mono's `mcs` and running its install logic (a fresh install, an upgrade that removes the
 old files and leaves no old folder behind, and the failure when the editor is missing from the payload); not checked here, because they are Windows only: the
 shortcuts, closing a running program, a held file, and a real Windows build of the payload (`python tools/build_installer.py --version <x>` on Windows, then
-`tools\installer\test_installer.ps1`). The two sections below describe the Qt startup crash and are kept as the
+`tools\installer\test_installer.ps1`).
+
+The installer now has a setup window. Run with no arguments, `Aether-<version>-Windows-x64.exe` shows a wizard: a welcome page, the install folder (with Browse, and a note
+when an installation is already there or the drive is short of room) and checkboxes for the Start menu shortcut, the Desktop shortcut and starting the editor, a progress
+page (a bar and a log, the buttons off while files are written), and a finish page with "Start the Aether editor" (or, if it failed, the reason and a way back). Enter
+continues, and a running Aether editor from the folder is closed only after asking. The flags still work: `/silent` installs with no window and writes to the console
+(CI's `test_installer.ps1` uses it), `/target:DIR`, `/noshortcuts` and `/nolaunch` pre-fill the window. One piece of code does the installing for both (`Setup` in
+`AetherInstaller.cs`), and unpacking now refuses a payload entry that would land outside the install folder. The exe is built as a Windows program (`/target:winexe`) and
+links System.Windows.Forms and System.Drawing, which ship with .NET Framework. Checked here with Mono on a Linux display (`mcs -langversion:5`, the window driven with
+key presses and screenshots at each page: the welcome page, a fresh install, an upgrade, the progress page, the finish page and the failure page, plus the `/silent`
+mode and the refused entry); not checked here: how it looks and behaves on Windows itself (native theme, DPI scaling, the shortcuts, closing a running editor), which
+`test_installer.ps1` covers for `/silent` and a person has to look at for the window. A bug found by that run and fixed: Enter pressed Cancel, because Cancel was first in
+the tab order. The two sections below describe the Qt startup crash and are kept as the
 record; the crash no longer applies.
 
 ## The Qt editor crashes at startup, and CI cannot see it
@@ -659,3 +691,6 @@ A material graph (`.amat`) that samples textures is now drawn too (up to four, r
 Saving a material graph now shows in the Live Viewport on the next frame, without pressing Reload (the graph's shader is built again; the scene is not loaded again). A graph newly assigned to a material shows without Reload too; its textures still need one.
 
 A material instance (`.amati`) is now drawn like its graph, and an object can give a graph its own value for a parameter by name in its Material Parameters (up to six values of float data per graph; a parameter past that limit is fixed in the shader and the Live Viewport says so). Saving the parent of an instance shows at once. Fixed: a material graph with two textures lit its surface with the second as a normal map.
+
+
+A new `HeightfieldCollider` component gives static terrain collision from a grid of heights (`samples` x `samples`, `cell_size`, `origin`), without a triangle mesh in the scene. The largest float (`HeightfieldCollider::kHole`) marks a hole. A grid that cannot be used is reported with the reason and gets no body.

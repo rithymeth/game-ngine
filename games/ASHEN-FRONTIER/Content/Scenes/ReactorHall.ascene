@@ -1,0 +1,2047 @@
+{
+  "$type": "Scene",
+  "$version": 1,
+  "entities": [
+    {
+      "components": {
+        "SkyLight": {
+          "$v": 1,
+          "color": [
+            0.4,
+            0.55,
+            0.9
+          ],
+          "intensity": 0.08
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Sky"
+        }
+      },
+      "guid": "2b236fc4-f2c7-5c19-adef-5aa63b3defaa"
+    },
+    {
+      "components": {
+        "PostProcessVolume": {
+          "$v": 1,
+          "blend_distance": 1.0,
+          "bloom_intensity": 0.45,
+          "exposure_compensation": 0.7,
+          "extents": [
+            5.0,
+            5.0,
+            5.0
+          ],
+          "fog_density": 0.014,
+          "global": true,
+          "height_fog_base": 0.0,
+          "height_fog_density": 0.0,
+          "height_fog_falloff": 0.02,
+          "priority": 0,
+          "saturation": 1.1,
+          "tonemapper": "ACES",
+          "vignette": 0.3,
+          "weight": 1.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Atmosphere"
+        }
+      },
+      "guid": "0877e15a-d666-5c16-a9f4-3732feac1008"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Ground.glb"
+        },
+        "MaterialParameters": {
+          "$v": 1,
+          "material": "",
+          "revision": 0,
+          "values": [
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "BaseColor",
+              "texture": "",
+              "value": [
+                0.12,
+                0.13,
+                0.17,
+                1.0
+              ]
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            50.0,
+            1,
+            60.0
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Floor"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Ground"
+          ]
+        }
+      },
+      "guid": "786d6bac-f4cf-5983-9578-e0bc0f41b50a"
+    },
+    {
+      "components": {
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            26.0,
+            0.5,
+            31.0
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            -0.5,
+            0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "FloorCollider"
+        }
+      },
+      "guid": "be7af161-c6d7-5323-bf56-4488f46c4998"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Ground.glb"
+        },
+        "MaterialParameters": {
+          "$v": 1,
+          "material": "",
+          "revision": 0,
+          "values": [
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "BaseColor",
+              "texture": "",
+              "value": [
+                0.16,
+                0.15,
+                0.15,
+                1.0
+              ]
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            30.0,
+            0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            6.123233995736766e-17
+          ],
+          "scale": [
+            50.0,
+            1,
+            60.0
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Ceiling"
+        }
+      },
+      "guid": "efbfc53d-5103-5760-a421-3d53b31fa46d"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Ground.glb"
+        },
+        "MaterialParameters": {
+          "$v": 1,
+          "material": "",
+          "revision": 0,
+          "values": [
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "BaseColor",
+              "texture": "",
+              "value": [
+                0.13,
+                0.14,
+                0.2,
+                1.0
+              ]
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            15.0,
+            -30.0
+          ],
+          "rotation": [
+            0.7071067811865475,
+            0.0,
+            0.0,
+            0.7071067811865476
+          ],
+          "scale": [
+            50.0,
+            1,
+            30.0
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "WallNorth"
+        }
+      },
+      "guid": "b5381e3b-d920-57cb-864b-22729ecfbd48"
+    },
+    {
+      "components": {
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            25.0,
+            15.0,
+            0.5
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            15.0,
+            -30.5
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "NorthCollider"
+        }
+      },
+      "guid": "e2ef3026-dec6-59fa-bdeb-6f465e4f5e91"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Ground.glb"
+        },
+        "MaterialParameters": {
+          "$v": 1,
+          "material": "",
+          "revision": 0,
+          "values": [
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "BaseColor",
+              "texture": "",
+              "value": [
+                0.13,
+                0.14,
+                0.2,
+                1.0
+              ]
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            15.0,
+            30.0
+          ],
+          "rotation": [
+            4.329780281177466e-17,
+            0.7071067811865476,
+            -0.7071067811865475,
+            4.329780281177467e-17
+          ],
+          "scale": [
+            50.0,
+            1,
+            30.0
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "WallSouth"
+        }
+      },
+      "guid": "6e729f9e-56d2-5e82-9a98-95abc30aa582"
+    },
+    {
+      "components": {
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            25.0,
+            15.0,
+            0.5
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            15.0,
+            30.5
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "SouthCollider"
+        }
+      },
+      "guid": "1acfc2ec-6d98-520d-b6a9-b1390696362d"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Ground.glb"
+        },
+        "MaterialParameters": {
+          "$v": 1,
+          "material": "",
+          "revision": 0,
+          "values": [
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "BaseColor",
+              "texture": "",
+              "value": [
+                0.13,
+                0.14,
+                0.2,
+                1.0
+              ]
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -25.0,
+            15.0,
+            0
+          ],
+          "rotation": [
+            0.5,
+            0.5,
+            -0.4999999999999999,
+            0.5000000000000001
+          ],
+          "scale": [
+            60.0,
+            1,
+            30.0
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "WallWest"
+        }
+      },
+      "guid": "b3be1807-f665-5823-ba0b-2dab6176bbcc"
+    },
+    {
+      "components": {
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            0.5,
+            15.0,
+            30.0
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -25.5,
+            15.0,
+            0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "WestCollider"
+        }
+      },
+      "guid": "10675503-d161-588f-bc8c-a56d56d88fc0"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Ground.glb"
+        },
+        "MaterialParameters": {
+          "$v": 1,
+          "material": "",
+          "revision": 0,
+          "values": [
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "BaseColor",
+              "texture": "",
+              "value": [
+                0.13,
+                0.14,
+                0.2,
+                1.0
+              ]
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            25.0,
+            15.0,
+            0
+          ],
+          "rotation": [
+            -0.4999999999999999,
+            0.5000000000000001,
+            -0.5,
+            -0.5
+          ],
+          "scale": [
+            60.0,
+            1,
+            30.0
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "WallEast"
+        }
+      },
+      "guid": "f6668085-6ee2-5a2e-9df1-9c8b2000f149"
+    },
+    {
+      "components": {
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            0,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            0.5,
+            15.0,
+            30.0
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            25.5,
+            15.0,
+            0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "EastCollider"
+        }
+      },
+      "guid": "ef8c1f3f-0a60-53ca-95a5-56009d10f37a"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/ReactorTower.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            15,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            6,
+            15,
+            6
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            0,
+            -8
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.3,
+            1.1,
+            1.3
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Reactor"
+        }
+      },
+      "guid": "363956ac-c4ce-5d91-a58f-4de629264c1b"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "$v": 1,
+          "cast_shadows": false,
+          "color": [
+            0.15,
+            0.5,
+            1.0
+          ],
+          "intensity": 80.0,
+          "range": 60.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            18,
+            -8
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "ReactorLightHigh"
+        }
+      },
+      "guid": "1c07e959-efae-527f-a43e-f8ac5ea38e86"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "$v": 1,
+          "cast_shadows": false,
+          "color": [
+            0.15,
+            0.5,
+            1.0
+          ],
+          "intensity": 40.0,
+          "range": 40.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            3,
+            -8
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "ReactorLightLow"
+        }
+      },
+      "guid": "c348eaee-2e07-5a62-acdd-6dc43ab5a43d"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Pylon.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            6,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            1.3,
+            6,
+            1.3
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            21.0,
+            0,
+            -8.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            3.0,
+            6.0,
+            3.0
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Pillar_0"
+        }
+      },
+      "guid": "6d029d2d-e3e5-5b5a-b3b0-d7c62b29ad56"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Pylon.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            6,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            1.3,
+            6,
+            1.3
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            16.989356881873896,
+            0,
+            6.106846055019355
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            3.0,
+            6.0,
+            3.0
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Pillar_1"
+        }
+      },
+      "guid": "03fd478b-7cce-5ab7-b652-4b8265d4e14d"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Pylon.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            6,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            1.3,
+            6,
+            1.3
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            6.4893568818738965,
+            0,
+            14.825356391083684
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            3.0,
+            6.0,
+            3.0
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Pillar_2"
+        }
+      },
+      "guid": "084b0e02-32f8-5323-9deb-d3d17bef6ffe"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Pylon.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            6,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            1.3,
+            6,
+            1.3
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -6.489356881873894,
+            0,
+            14.825356391083687
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            3.0,
+            6.0,
+            3.0
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Pillar_3"
+        }
+      },
+      "guid": "1ef3dc55-6f5d-53a2-a5ba-1f75f19a97c3"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Pylon.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            6,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            1.3,
+            6,
+            1.3
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -16.989356881873896,
+            0,
+            6.106846055019357
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            3.0,
+            6.0,
+            3.0
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Pillar_4"
+        }
+      },
+      "guid": "b7d6487b-d1ad-5e9b-b2e1-308138025088"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Pylon.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            6,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            1.3,
+            6,
+            1.3
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -21.0,
+            0,
+            -7.999999999999997
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            3.0,
+            6.0,
+            3.0
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Pillar_5"
+        }
+      },
+      "guid": "ceb07ea6-0f5b-5205-a9aa-7c34078a5093"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Pylon.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            6,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            1.3,
+            6,
+            1.3
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -16.9893568818739,
+            0,
+            -22.106846055019354
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            3.0,
+            6.0,
+            3.0
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Pillar_6"
+        }
+      },
+      "guid": "92470613-eca6-57a1-890e-d97d85e23c2f"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Pylon.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            6,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            1.3,
+            6,
+            1.3
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -6.489356881873899,
+            0,
+            -30.825356391083684
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            3.0,
+            6.0,
+            3.0
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Pillar_7"
+        }
+      },
+      "guid": "4a70b684-ced0-5bfd-afd0-1e2fe7e32b56"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Pylon.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            6,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            1.3,
+            6,
+            1.3
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            6.489356881873892,
+            0,
+            -30.825356391083687
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            3.0,
+            6.0,
+            3.0
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Pillar_8"
+        }
+      },
+      "guid": "aea57595-0912-5ada-8717-75f3e9f28d11"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Pylon.glb"
+        },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            6,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            1.3,
+            6,
+            1.3
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            16.989356881873896,
+            0,
+            -22.10684605501936
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            3.0,
+            6.0,
+            3.0
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Pillar_9"
+        }
+      },
+      "guid": "c1461734-afaf-5643-a7c8-d18633d2d3ec"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Gantry.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            9,
+            -22
+          ],
+          "rotation": [
+            0.0,
+            0.7071067811865475,
+            0.0,
+            0.7071067811865476
+          ],
+          "scale": [
+            1.6,
+            1.0,
+            1.6
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Gantry_0"
+        }
+      },
+      "guid": "0348f37e-4c58-5fb9-920d-35622c7cc220"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Gantry.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            13,
+            6
+          ],
+          "rotation": [
+            0.0,
+            0.7071067811865475,
+            0.0,
+            0.7071067811865476
+          ],
+          "scale": [
+            1.6,
+            1.0,
+            1.6
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Gantry_1"
+        }
+      },
+      "guid": "e9e02935-d6c7-5b5a-98bf-ec196cc4b809"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/SENTINEL4.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -9,
+            0,
+            6
+          ],
+          "rotation": [
+            0.0,
+            1.0,
+            0.0,
+            6.123233995736766e-17
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Guard_0"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Enemy"
+          ]
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "properties": [
+            {
+              "name": "max_hp",
+              "value": "150"
+            },
+            {
+              "name": "damage",
+              "value": "12"
+            }
+          ],
+          "script": "cf03216d-65cf-4851-b232-4c1c7fa4c6dc"
+        }
+      },
+      "guid": "078e2250-c265-559b-a7be-20c8367145bd"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/SENTINEL4.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            9,
+            0,
+            6
+          ],
+          "rotation": [
+            0.0,
+            1.0,
+            0.0,
+            6.123233995736766e-17
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Guard_1"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Enemy"
+          ]
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "properties": [
+            {
+              "name": "max_hp",
+              "value": "150"
+            },
+            {
+              "name": "damage",
+              "value": "12"
+            }
+          ],
+          "script": "cf03216d-65cf-4851-b232-4c1c7fa4c6dc"
+        }
+      },
+      "guid": "44f4bec4-d40c-5226-84ef-7a99d33866b4"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/ScrapPile.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0.7914207496497561,
+            0,
+            19.293670879661505
+          ],
+          "rotation": [
+            -0.0,
+            0.12379096014141905,
+            -0.0,
+            -0.9923083181084725
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Debris_0"
+        }
+      },
+      "guid": "3df619fc-ecc7-5999-aa3a-b496ca99cb89"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/ScrapPile.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -7.573486400479242,
+            0,
+            18.725504129171338
+          ],
+          "rotation": [
+            -0.0,
+            0.8011538015449491,
+            -0.0,
+            -0.5984585083947561
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Debris_1"
+        }
+      },
+      "guid": "2129066a-955b-5a14-a865-0af0c8370983"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/ScrapPile.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            5.8097900600578924,
+            0,
+            9.542268684840966
+          ],
+          "rotation": [
+            0.0,
+            0.0845234192694912,
+            0.0,
+            0.9964214929411116
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Debris_2"
+        }
+      },
+      "guid": "e234d011-eaa8-5beb-b44b-1853c32fc025"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/ScrapPile.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -4.169840236405291,
+            0,
+            18.449532746329382
+          ],
+          "rotation": [
+            0.0,
+            0.712382303623336,
+            0.0,
+            0.7017916026031582
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Debris_3"
+        }
+      },
+      "guid": "99bf262e-3fbd-58d5-b454-4bd25a50bf5f"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/ScrapPile.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0.05769614044921667,
+            0,
+            12.444091267640495
+          ],
+          "rotation": [
+            -0.0,
+            0.46423918252684276,
+            -0.0,
+            -0.8857098742854845
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Debris_4"
+        }
+      },
+      "guid": "3855e9a0-745d-5b29-b624-9919b8bd93a9"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/ScrapPile.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            16.026980922176016,
+            0,
+            13.622273116749373
+          ],
+          "rotation": [
+            -0.0,
+            0.004878858054018732,
+            -0.0,
+            -0.9999880983012192
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Debris_5"
+        }
+      },
+      "guid": "655d0714-8b8d-566b-94cc-5f5ded62d235"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "$v": 1,
+          "cast_shadows": false,
+          "color": [
+            0.2,
+            0.5,
+            1.0
+          ],
+          "intensity": 10.0,
+          "range": 14.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            5.0,
+            25
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "EntryLight"
+        }
+      },
+      "guid": "62fc671f-9fc2-5296-b7a6-11b2f6ef8eda"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Pylon.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -1.9,
+            0,
+            27.5
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "ExitDoorFrame"
+        }
+      },
+      "guid": "18470c60-97aa-525f-b3c0-ae4ca4d98c05"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Pylon.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            1.9,
+            0,
+            27.5
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "ExitDoorFrameB"
+        }
+      },
+      "guid": "6057a46a-aaf2-5dca-a8b9-88e64b269e1f"
+    },
+    {
+      "components": {
+        "ScriptComponent": {
+          "$v": 1,
+          "script": "9968fb53-eb77-4757-85a3-eb7280fa5646",
+          "properties": [
+            {
+              "name": "target",
+              "value": "\"Scenes/OpenWorld.ascene\""
+            },
+            {
+              "name": "radius",
+              "value": "2.2"
+            },
+            {
+              "name": "spawn",
+              "value": "\"ReactorHallOutside\""
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            0,
+            27.5
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "ExitDoor"
+        }
+      },
+      "guid": "fee3943c-3772-5c16-9a62-358f409a942c"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "$v": 1,
+          "cast_shadows": false,
+          "color": [
+            0.2,
+            0.5,
+            1.0
+          ],
+          "intensity": 10.0,
+          "range": 10.0
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            3.0,
+            26.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "ExitDoorLight"
+        }
+      },
+      "guid": "58f97e31-458e-5365-9c39-4f17f9fd846a"
+    },
+    {
+      "components": {
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            0.1,
+            22.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "ReactorEntry"
+        }
+      },
+      "guid": "705926d5-c7bc-5073-ad97-e1584040e81d"
+    },
+    {
+      "components": {
+        "CharacterMovement": {
+          "$v": 1,
+          "acceleration": 20.0,
+          "air_acceleration": 5.0,
+          "air_control": 0.3,
+          "braking": 25.0,
+          "coyote_time": 0.1,
+          "flying": false,
+          "gravity_scale": 1.0,
+          "height": 1.8,
+          "jump_buffer": 0.1,
+          "jump_velocity": 5.0,
+          "mass": 70.0,
+          "max_slope_degrees": 45.0,
+          "radius": 0.35,
+          "run_speed": 7.0,
+          "step_height": 0.35,
+          "walk_speed": 4.0
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "properties": [],
+          "script": "0fe46960-544b-4e2d-8f69-f32f1bcca466"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            0.1,
+            22.0
+          ],
+          "rotation": [
+            0.0,
+            1.0,
+            0.0,
+            6.123233995736766e-17
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Kael"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Player"
+          ]
+        }
+      },
+      "guid": "5c1eb06f-7395-5b91-9ffa-44e00927933f"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/Kael.glb"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "KaelBody"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "PlayerBody"
+          ]
+        },
+        "Parent": {
+          "$v": 1,
+          "parent": "5c1eb06f-7395-5b91-9ffa-44e00927933f"
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "properties": [],
+          "script": "6d7b68d8-bfbe-499f-a707-f9fc9f946089"
+        }
+      },
+      "guid": "ebf58c1b-062b-55eb-841e-64e8875a17d1"
+    },
+    {
+      "components": {
+        "WidgetComponent": {
+          "$v": 1,
+          "layout": "UI/Hud.aui",
+          "z": 0,
+          "visible": true
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "properties": [],
+          "script": "81441e9b-9733-4c9c-8aa7-44059c8daf4b"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Hud"
+        }
+      },
+      "guid": "f77012ac-b6a7-555c-af5b-2f4dfb9daeea"
+    },
+    {
+      "components": {
+        "ScriptComponent": {
+          "$v": 1,
+          "properties": [
+            {
+              "name": "calm",
+              "value": "\"Audio/ambient_inside.acue\""
+            }
+          ],
+          "script": "1bb3e0c1-0bc2-48ee-bbb6-579e153350a7"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Music"
+        }
+      },
+      "guid": "e8eb82ca-c9cb-50a6-856e-44df9d588f46"
+    },
+    {
+      "components": {
+        "Camera": {
+          "$v": 1,
+          "far_plane": 300,
+          "fov_degrees": 62,
+          "near_plane": 0.1,
+          "ortho_height": 10.0,
+          "priority": 0,
+          "projection": "Perspective"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            3.0,
+            28.0
+          ],
+          "rotation": [
+            -0.10452846326765347,
+            0.0,
+            0.0,
+            0.9945218953682733
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "MainCamera"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "MainCamera"
+          ]
+        }
+      },
+      "guid": "12ad2e56-f09a-545d-9864-d7e3b1753071"
+    }
+  ]
+}
