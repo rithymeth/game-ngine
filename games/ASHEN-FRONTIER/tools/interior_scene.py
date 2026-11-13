@@ -90,3 +90,40 @@ def assembly_hall(player_script, door_script):
     s.add("HallEntry", {}, position=(0, 0.1, 13.0))
     kael(s, (0, 0.1, 13.0), 180, player_script)
     return s
+
+
+GREEN = (0.3, 1.0, 0.6)
+
+
+def living_dome(player_script, door_script):
+    """The living dome's inside: a 30 x 40 m garden hall under a dark roof, a tall glowing green core in the middle, a ring of trees and scrub round it,
+    maintenance drones hanging in the air, green light from the core. Kael comes in at the south; the door out is behind him."""
+    rng = random.Random(11)
+    s = Scene()
+    s.sky(0.15, color=(0.5, 0.8, 0.6))
+    s.add("Atmosphere", {"PostProcessVolume": {"$v": 1, "blend_distance": 1.0, "bloom_intensity": 0.35, "exposure_compensation": 0.5, "extents": [5.0, 5.0, 5.0], "fog_density": 0.010,
+                                                "global": True, "height_fog_base": 0.0, "height_fog_density": 0.0, "height_fog_falloff": 0.02, "priority": 0,
+                                                "saturation": 1.15, "tonemapper": "ACES", "vignette": 0.25, "weight": 1.0}})
+    W, L, H = 30.0, 40.0, 14.0
+    room(s, W, L, H, floor=(0.20, 0.26, 0.15), wall=(0.16, 0.22, 0.20))
+    # the core: a tall cylinder of green light, with a ring of low planters round its foot
+    s.model("Core", "Pylon", position=(0, 0, -3), snap=False, scale=(3.2, 3.2, 3.2), color=(0.1, 0.3, 0.2), emissive=(0.2, 1.0, 0.5), collider=((0, 6, 0), (1.5, 6, 1.5)))
+    s.add("CoreLight", LIGHT(GREEN, 40.0, 28.0), position=(0, 7.0, -3))
+    s.add("CoreLightLow", LIGHT(GREEN, 18.0, 18.0), position=(0, 1.8, -3))
+    import math
+    for i in range(14):
+        angle = i / 14 * math.tau
+        r = 7.0 + (i % 2) * 1.6
+        x, z = math.cos(angle) * r, -3 + math.sin(angle) * r
+        s.model(f"Tree_{i}", "TreeLow", position=(x, 0, z), rotation=(0, rng.uniform(0, 360), 0), scale=(1.3, rng.uniform(1.0, 1.7), 1.3), snap=False, collider=((0, 1.5, 0), (0.4, 1.5, 0.4)))
+    for i in range(24):
+        x, z = rng.uniform(-13, 13), rng.uniform(-13, 8)
+        if math.hypot(x, z + 3) > 4.5:
+            s.model(f"Scrub_{i}", "Scrub", position=(x, 0, z), rotation=(0, rng.uniform(0, 360), 0), scale=(1.4, 1.4, 1.4), snap=False)
+    for i in range(4):
+        s.model(f"Drone_{i}", "Drone", position=(math.cos(i * 1.6) * 5.5, 4.2 + (i % 2) * 1.0, -3 + math.sin(i * 1.6) * 5.5), rotation=(0, i * 70, 0), snap=False)
+    s.add("EntryLight", LIGHT((0.4, 0.8, 1.0), 8.0, 12.0), position=(0, 4.0, 13))
+    door(s, "ExitDoor", (0, 0, 18.5), "Scenes/OpenWorld.ascene", door_script, spawn="LivingDomeOutside")
+    s.add("DomeEntry", {}, position=(0, 0.1, 12.0))
+    kael(s, (0, 0.1, 12.0), 180, player_script)
+    return s

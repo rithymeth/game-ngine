@@ -158,6 +158,7 @@ def open_world():
     world_scene.build(False, {"position": (150, 230, 330), "yaw": 24, "pitch": -30, "clear": True}).save(OUT / "OpenWorldOverview.ascene")
     world_scene.build(False, {"ortho": True}).save(OUT / "WorldMapTopDown.ascene")
     interior_scene.assembly_hall(script_guid("ThirdPersonController"), script_guid("Door")).save(OUT / "AssemblyHall.ascene")
+    interior_scene.living_dome(script_guid("ThirdPersonController"), script_guid("Door")).save(OUT / "LivingDome.ascene")
     data = OUT.parent / "Data"
     data.mkdir(exist_ok=True)
     (data / "world.json").write_text(json.dumps(world.world_data(), indent=2) + "\n", encoding="utf-8", newline="\n")

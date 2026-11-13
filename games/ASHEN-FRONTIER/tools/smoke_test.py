@@ -216,6 +216,20 @@ def chapter(work):
     check("pack: 0 scrap, 2 components" in text, "after the new game the pack started empty again (2, not 4)")
 
 
+def dome(work):
+    """Kael starts inside the living dome and walks out of its exit door: back in the open world, beside the dome."""
+    result, text = run_player(work, "Scenes/LivingDome.ascene", "user10", press="S", frames=400)
+    check(result.returncode == 0, f"the player runs the dome and exits cleanly (exit {result.returncode})")
+    loads = re.findall(r"Loaded (Scenes/\S+\.ascene)", text)
+    check(loads[:2] == ["Scenes/LivingDome.ascene", "Scenes/OpenWorld.ascene"], f"the dome's exit door leads to the open world (loaded: {loads})")
+    check(not re.search(r"\[ERROR\]", text), "no errors on the way out of the dome")
+    match = re.search(r"Player at \(([-\d.]+), ([-\d.]+), ([-\d.]+)\)", text)
+    if check(match is not None, "the player reports where Kael ended up after the dome's door"):
+        x, _, z = (float(v) for v in match.groups())
+        dx, dz = world.poi_position("living_dome")
+        check(math.hypot(x - dx, z - dz) < 45, f"Kael comes out beside the dome ({math.hypot(x - dx, z - dz):.0f} m from it)")
+
+
 def main():
     layout()
     if failures:
@@ -229,6 +243,7 @@ def main():
             mule(work)
             craft(work)
             chapter(work)
+            dome(work)
     finally:
         shutil.rmtree(work, ignore_errors=True)
     print(f"{len(failures)} check(s) failed" if failures else "smoke test passed")

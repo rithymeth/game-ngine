@@ -10,6 +10,7 @@
     "UI/",
     "fonts/",
     "Scenes/AssemblyHall.ascene",
+    "Scenes/LivingDome.ascene",
     "Scenes/SalvageTest.ascene",
     "Scenes/MuleTest.ascene",
     "Scenes/CraftTest.ascene",
