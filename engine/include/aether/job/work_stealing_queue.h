@@ -11,10 +11,9 @@ namespace aether {
 // from the bottom (LIFO — cheap, and keeps depth-first fork-join work cache-
 // hot on the thread that spawned it); other threads steal from the top
 // (FIFO) via a CAS loop when they run out of their own work. Capacity is
-// fixed for the deque's lifetime; callers size it generously and treat
-// overflow (silently dropped Push, in a debug build an assert) as a bug in
-// how much work is being fanned out per frame, not something to recover from
-// at runtime.
+// fixed for the deque's lifetime; Push reports a full deque instead of
+// dropping work, and the scheduler spills the overflow to a secondary queue
+// that idle threads can also steal from.
 template <typename T, usize Capacity>
 class WorkStealingQueue {
     static_assert((Capacity & (Capacity - 1)) == 0, "Capacity must be a power of two");
@@ -26,13 +25,23 @@ public:
     WorkStealingQueue(const WorkStealingQueue&) = delete;
     WorkStealingQueue& operator=(const WorkStealingQueue&) = delete;
 
-    // Owner-thread only.
-    void Push(T item) {
-        i64 b = bottom_.load(std::memory_order_relaxed);
-        AETHER_ASSERT(b - top_.load(std::memory_order_relaxed) < static_cast<i64>(Capacity));
-        buffer_[static_cast<usize>(b) & kMask].store(item, std::memory_order_relaxed);
+    // Owner-thread only. Returns false when the deque is full; the caller
+    // decides where the item goes next (the scheduler spills it to overflow).
+    bool Push(T item) {
+        const i64 b = bottom_.load(std::memory_order_relaxed);
+        // top_ only moves away from bottom_, so a stale read can report "full"
+        // but never "space" when there is none. Reporting full early is safe.
+        if (b - top_.load(std::memory_order_acquire) >= static_cast<i64>(Capacity)) {
+            return false;
+        }
+        // Publish the item itself before making it reachable through bottom_:
+        // the release store is what a thief's acquire load in Steal reads, so
+        // every write to the job (function, data, counter, owner) is visible
+        // before it runs the job.
+        buffer_[static_cast<usize>(b) & kMask].store(item, std::memory_order_release);
         std::atomic_thread_fence(std::memory_order_release);
         bottom_.store(b + 1, std::memory_order_relaxed);
+        return true;
     }
 
     // Owner-thread only. Returns false if the deque is empty.
@@ -69,7 +78,9 @@ public:
             return false;
         }
 
-        out = buffer_[static_cast<usize>(t) & kMask].load(std::memory_order_relaxed);
+        // Acquire pairs with the release store in Push, so the job's fields are
+        // visible before Execute reads them.
+        out = buffer_[static_cast<usize>(t) & kMask].load(std::memory_order_acquire);
         return top_.compare_exchange_strong(t, t + 1, std::memory_order_seq_cst, std::memory_order_relaxed);
     }
 
