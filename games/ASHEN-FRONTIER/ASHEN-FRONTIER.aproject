@@ -25,6 +25,7 @@
     "Scenes/ConsoleTest.ascene",
     "Scenes/LightTest.ascene",
     "Scenes/MusicTest.ascene",
+    "Scenes/TerminalTest.ascene",
     "Scenes/GrowTest.ascene"
   ],
   "collision_matrix": [],

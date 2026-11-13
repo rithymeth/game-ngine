@@ -684,8 +684,30 @@
             0.5,
             0.1
           ],
-          "intensity": 9.0,
+          "intensity": 1.5,
           "range": 10.0
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "script": "9f1fc7af-8ae7-4854-92f1-a28199b2c865",
+          "properties": [
+            {
+              "name": "flag",
+              "value": "\"mission.assembly\""
+            },
+            {
+              "name": "off",
+              "value": "1.5"
+            },
+            {
+              "name": "on",
+              "value": "9.0"
+            },
+            {
+              "name": "ramp",
+              "value": "8.0"
+            }
+          ]
         },
         "Transform": {
           "$v": 2,
@@ -772,8 +794,30 @@
             0.5,
             0.1
           ],
-          "intensity": 9.0,
+          "intensity": 1.5,
           "range": 10.0
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "script": "9f1fc7af-8ae7-4854-92f1-a28199b2c865",
+          "properties": [
+            {
+              "name": "flag",
+              "value": "\"mission.assembly\""
+            },
+            {
+              "name": "off",
+              "value": "1.5"
+            },
+            {
+              "name": "on",
+              "value": "9.0"
+            },
+            {
+              "name": "ramp",
+              "value": "8.0"
+            }
+          ]
         },
         "Transform": {
           "$v": 2,
@@ -860,8 +904,30 @@
             0.5,
             0.1
           ],
-          "intensity": 9.0,
+          "intensity": 1.5,
           "range": 10.0
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "script": "9f1fc7af-8ae7-4854-92f1-a28199b2c865",
+          "properties": [
+            {
+              "name": "flag",
+              "value": "\"mission.assembly\""
+            },
+            {
+              "name": "off",
+              "value": "1.5"
+            },
+            {
+              "name": "on",
+              "value": "9.0"
+            },
+            {
+              "name": "ramp",
+              "value": "8.0"
+            }
+          ]
         },
         "Transform": {
           "$v": 2,
@@ -948,8 +1014,30 @@
             0.5,
             0.1
           ],
-          "intensity": 9.0,
+          "intensity": 1.5,
           "range": 10.0
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "script": "9f1fc7af-8ae7-4854-92f1-a28199b2c865",
+          "properties": [
+            {
+              "name": "flag",
+              "value": "\"mission.assembly\""
+            },
+            {
+              "name": "off",
+              "value": "1.5"
+            },
+            {
+              "name": "on",
+              "value": "9.0"
+            },
+            {
+              "name": "ramp",
+              "value": "8.0"
+            }
+          ]
         },
         "Transform": {
           "$v": 2,
@@ -1036,8 +1124,30 @@
             0.5,
             0.1
           ],
-          "intensity": 9.0,
+          "intensity": 1.5,
           "range": 10.0
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "script": "9f1fc7af-8ae7-4854-92f1-a28199b2c865",
+          "properties": [
+            {
+              "name": "flag",
+              "value": "\"mission.assembly\""
+            },
+            {
+              "name": "off",
+              "value": "1.5"
+            },
+            {
+              "name": "on",
+              "value": "9.0"
+            },
+            {
+              "name": "ramp",
+              "value": "8.0"
+            }
+          ]
         },
         "Transform": {
           "$v": 2,
@@ -1124,8 +1234,30 @@
             0.5,
             0.1
           ],
-          "intensity": 9.0,
+          "intensity": 1.5,
           "range": 10.0
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "script": "9f1fc7af-8ae7-4854-92f1-a28199b2c865",
+          "properties": [
+            {
+              "name": "flag",
+              "value": "\"mission.assembly\""
+            },
+            {
+              "name": "off",
+              "value": "1.5"
+            },
+            {
+              "name": "on",
+              "value": "9.0"
+            },
+            {
+              "name": "ramp",
+              "value": "8.0"
+            }
+          ]
         },
         "Transform": {
           "$v": 2,
@@ -1212,8 +1344,30 @@
             0.5,
             0.1
           ],
-          "intensity": 9.0,
+          "intensity": 1.5,
           "range": 10.0
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "script": "9f1fc7af-8ae7-4854-92f1-a28199b2c865",
+          "properties": [
+            {
+              "name": "flag",
+              "value": "\"mission.assembly\""
+            },
+            {
+              "name": "off",
+              "value": "1.5"
+            },
+            {
+              "name": "on",
+              "value": "9.0"
+            },
+            {
+              "name": "ramp",
+              "value": "8.0"
+            }
+          ]
         },
         "Transform": {
           "$v": 2,
@@ -1300,8 +1454,30 @@
             0.5,
             0.1
           ],
-          "intensity": 9.0,
+          "intensity": 1.5,
           "range": 10.0
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "script": "9f1fc7af-8ae7-4854-92f1-a28199b2c865",
+          "properties": [
+            {
+              "name": "flag",
+              "value": "\"mission.assembly\""
+            },
+            {
+              "name": "off",
+              "value": "1.5"
+            },
+            {
+              "name": "on",
+              "value": "9.0"
+            },
+            {
+              "name": "ramp",
+              "value": "8.0"
+            }
+          ]
         },
         "Transform": {
           "$v": 2,
@@ -1388,8 +1564,30 @@
             0.5,
             0.1
           ],
-          "intensity": 9.0,
+          "intensity": 1.5,
           "range": 10.0
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "script": "9f1fc7af-8ae7-4854-92f1-a28199b2c865",
+          "properties": [
+            {
+              "name": "flag",
+              "value": "\"mission.assembly\""
+            },
+            {
+              "name": "off",
+              "value": "1.5"
+            },
+            {
+              "name": "on",
+              "value": "9.0"
+            },
+            {
+              "name": "ramp",
+              "value": "8.0"
+            }
+          ]
         },
         "Transform": {
           "$v": 2,
@@ -1476,8 +1674,30 @@
             0.5,
             0.1
           ],
-          "intensity": 9.0,
+          "intensity": 1.5,
           "range": 10.0
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "script": "9f1fc7af-8ae7-4854-92f1-a28199b2c865",
+          "properties": [
+            {
+              "name": "flag",
+              "value": "\"mission.assembly\""
+            },
+            {
+              "name": "off",
+              "value": "1.5"
+            },
+            {
+              "name": "on",
+              "value": "9.0"
+            },
+            {
+              "name": "ramp",
+              "value": "8.0"
+            }
+          ]
         },
         "Transform": {
           "$v": 2,
@@ -2273,6 +2493,68 @@
         }
       },
       "guid": "62fc671f-9fc2-5296-b7a6-11b2f6ef8eda"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/FabBench.glb"
+        },
+        "MaterialParameters": {
+          "$v": 1,
+          "material": "",
+          "revision": 0,
+          "values": [
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "BaseColor",
+              "texture": "",
+              "value": [
+                0.55,
+                0.35,
+                0.12,
+                1.0
+              ]
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -5.0,
+            0,
+            11.0
+          ],
+          "rotation": [
+            0.0,
+            0.7071067811865475,
+            0.0,
+            0.7071067811865476
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "AssemblyTerminal"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Terminal"
+          ]
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "properties": [],
+          "script": "e6845bba-5e99-4103-b091-4549939b58b1"
+        }
+      },
+      "guid": "a637eea8-dd8a-5ae8-ad5a-dd25cb855415"
     },
     {
       "components": {

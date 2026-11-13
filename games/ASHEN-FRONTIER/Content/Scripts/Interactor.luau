@@ -74,9 +74,20 @@ local function Objective()
     if not done("power.outpost") then return "Install the Generator Core at the generator." end
     if not done("mule.repaired") then return "Repair MULE-3 in the Fallen Basin wreck." end
     if not done("mission.relay") then return "Take MULE-3 to the Distress Relay." end
-    if done("mission.dome") then return "Chapter 2 complete. The living dome grows again." end
-    if Get("samples") >= 3 then return "Take the seed samples to the console in the living dome." end
-    return string.format("Chapter 2: collect three seed samples in the Verdant Array (%d of 3).", Get("samples"))
+    if not done("mission.dome") then
+        if Get("samples") >= 3 then return "Take the seed samples to the console in the living dome." end
+        return string.format("Chapter 2: collect three seed samples in the Verdant Array (%d of 3).", Get("samples"))
+    end
+    -- chapter 3: the two warden sentinels at the Iron Wastes checkpoint, then the assembly hall's terminal
+    local down = 0
+    for _, name in ipairs({ "WardenSentinel_0", "WardenSentinel_1" }) do
+        if SaveGames.GetNumber("enemy." .. name .. ".hp", 1) <= 0 then down = down + 1 end
+    end
+    if down < 2 and not done("mission.assembly") then
+        return string.format("Chapter 3: disable the two warden sentinels at the Iron Wastes checkpoint (%d of 2).", down)
+    end
+    if not done("mission.assembly") then return "Start the assembly line at the terminal in the assembly hall." end
+    return "Chapter 3 complete. The assembly line runs."
 end
 
 -- Everything the first chapter saves, cleared for a new game (F9).
