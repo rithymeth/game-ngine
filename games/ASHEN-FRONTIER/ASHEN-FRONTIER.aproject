@@ -11,7 +11,9 @@
     "fonts/",
     "Scenes/AssemblyHall.ascene",
     "Scenes/SalvageTest.ascene",
-    "Scenes/MuleTest.ascene"
+    "Scenes/MuleTest.ascene",
+    "Scenes/CraftTest.ascene",
+    "Scenes/PowerTest.ascene"
   ],
   "collision_matrix": [],
   "default_quality": "High",

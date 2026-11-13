@@ -35,14 +35,14 @@ def room(s, width, length, height, floor=DARK, wall=RUST):
         _box(s, name + "Collider", (cx + (-0.5 if name == "West" else 0.5 if name == "East" else 0), height / 2, cz + (-0.5 if name == "North" else 0.5 if name == "South" else 0)), half)
 
 
-def kael(s, position, yaw, script, components=0):
+def kael(s, position, yaw, script, components=0, scrap=0):
     player = s.add("Kael", {"CharacterMovement": {"$v": 1, "acceleration": 20.0, "air_acceleration": 5.0, "air_control": 0.3, "braking": 25.0, "coyote_time": 0.1, "flying": False,
                                                    "gravity_scale": 1.0, "height": 1.8, "jump_buffer": 0.1, "jump_velocity": 5.0, "mass": 70.0, "max_slope_degrees": 45.0,
                                                    "radius": 0.35, "run_speed": 7.0, "step_height": 0.35, "walk_speed": 4.0},
                               "ScriptComponent": {"$v": 1, "properties": [], "script": script}}, position=position, rotation=(0, yaw, 0), tags=("Player",))
     s.model("KaelBody", "Kael", position=(0, 0, 0), tags=("PlayerBody",), snap=False)
     s.entities[-1]["components"]["Parent"] = {"$v": 1, "parent": player}
-    give_hands(s, components)
+    give_hands(s, components, scrap)
     s.camera((position[0], 3.0, position[2] + 6), yaw=0, pitch=-12, fov=62, far=300)
 
 

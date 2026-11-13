@@ -11,7 +11,7 @@ import random
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from scenelib import Scene, give_hands, mule  # noqa: E402
+from scenelib import Scene, give_hands, mule, workbench, generator  # noqa: E402
 import world  # noqa: E402
 import world_scene  # noqa: E402
 import interior_scene  # noqa: E402
@@ -187,6 +187,21 @@ def mule_test():
     s.save(OUT / "MuleTest.ascene")
 
 
+def craft_test():
+    """Two tiny scenes for the smoke test: Kael with the cost of a Generator Core beside the fab bench; and beside the generator (run after the first,
+    in the same user directory, the saved Generator Core is what powers it)."""
+    for name, build in (("CraftTest", lambda s: workbench(s, "Test_FabBench", (2.5, 0, 0), snap=False)),
+                        ("PowerTest", lambda s: generator(s, "Test_Generator", (2.5, 0, 0), snap=False))):
+        s = Scene()
+        s.sky(1.2)
+        s.sun(yaw=-25, pitch=-38)
+        s.model("Ground", "Ground", position=(0, 0, 0), scale=(60, 1, 60), color=SAND, snap=False)
+        s.add("GroundCollider", {"BoxCollider": {"$v": 1, "center": [0, 0, 0], "friction": 0.8, "half_extents": [30, 0.5, 30], "is_trigger": False, "report_stay": False, "restitution": 0.0}}, position=(0, -0.5, 0))
+        build(s)
+        interior_scene.kael(s, (0, 0.1, 0), 0, script_guid("ThirdPersonController"), components=2, scrap=4)
+        s.save(OUT / (name + ".ascene"))
+
+
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
     model_gallery()
@@ -197,6 +212,7 @@ def main():
     open_world()
     salvage_test()
     mule_test()
+    craft_test()
     print("wrote", OUT)
 
 

@@ -11,7 +11,7 @@ import numpy as np
 
 import terrain
 import world
-from scenelib import Scene, give_hands, mule
+from scenelib import Scene, give_hands, mule, workbench, generator
 
 LIGHT = lambda color, intensity, rng_: {"PointLight": {"$v": 1, "cast_shadows": False, "color": list(color), "intensity": intensity, "range": rng_}}
 BLUE, AMBER, GREEN = (0.2, 0.5, 1.0), (1.0, 0.5, 0.1), (0.3, 1.0, 0.6)
@@ -191,6 +191,9 @@ def build(playable=True, camera=None, door_script=None):
     for i, (dx, dz) in enumerate(((-7, -7), (7, -7), (-7, 7), (7, 7))):
         s.model(f"OutpostPylon_{i}", "Pylon", position=(dx, 0, dz), collider=((0, 2, 0), (0.4, 2, 0.4)))
         s.add(f"OutpostLight_{i}", LIGHT(BLUE, 8.0, 14.0), position=(dx, 4.0, dz), snap=True)
+    # the fab bench and the generator beside the pad: where salvage becomes a part, and the part becomes power
+    workbench(s, "OutpostFabBench", (-6.5, 0, 3.5), rotation=(0, 90, 0))
+    generator(s, "OutpostGenerator", (6.5, 0, 3.5), rotation=(0, -90, 0))
     # a line of pylons from the Basin to the outpost: the grid the first generator joins
     bx, bz = world.poi_position("mule3_wreck")
     for i in range(8):

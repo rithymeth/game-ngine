@@ -97,9 +97,9 @@ def script_guid(name):
     return meta["guid"]
 
 
-def give_hands(scene, components=0):
+def give_hands(scene, components=0, scrap=0):
     """Puts the Interactor script on the entity added last (Kael's body): what lets him take salvage. Adds the HUD (pack counts, the prompt) too."""
-    scene.entities[-1]["components"]["ScriptComponent"] = {"$v": 1, "properties": ([{"name": "start_components", "value": str(components)}] if components else []), "script": script_guid("Interactor")}
+    scene.entities[-1]["components"]["ScriptComponent"] = {"$v": 1, "properties": ([{"name": "start_components", "value": str(components)}] if components else []) + ([{"name": "start_scrap", "value": str(scrap)}] if scrap else []), "script": script_guid("Interactor")}
     scene.add("Hud", {"WidgetComponent": {"$v": 1, "layout": "UI/Hud.aui", "z": 0, "visible": True}})
 
 
@@ -107,4 +107,20 @@ def mule(scene, name, position, rotation=(0, 0, 0), **kwargs):
     """MULE-3, broken, with its script: repaired in play, then it follows Kael. (No collider: it moves.)"""
     guid_ = scene.model(name, "MULE3", position=position, rotation=rotation, tags=("MULE3",), **kwargs)
     scene.entities[-1]["components"]["ScriptComponent"] = {"$v": 1, "properties": [], "script": script_guid("Mule3")}
+    return guid_
+
+
+def workbench(scene, name, position, rotation=(0, 0, 0), **kwargs):
+    """The fab bench with its script: Interact beside it crafts the Generator Core."""
+    guid_ = scene.model(name, "FabBench", position=position, rotation=rotation, tags=("Workbench",), **kwargs)
+    scene.entities[-1]["components"]["ScriptComponent"] = {"$v": 1, "properties": [], "script": script_guid("Workbench")}
+    return guid_
+
+
+def generator(scene, name, position, rotation=(0, 0, 0), **kwargs):
+    """The outpost generator with its script and a light that is dark until it is powered."""
+    guid_ = scene.model(name, "Generator", position=position, rotation=rotation, tags=("Generator",), **kwargs)
+    comps = scene.entities[-1]["components"]
+    comps["ScriptComponent"] = {"$v": 1, "properties": [], "script": script_guid("PowerGenerator")}
+    comps["PointLight"] = {"$v": 1, "cast_shadows": False, "color": [0.3, 0.7, 1.0], "intensity": 0.0, "range": 16.0}
     return guid_

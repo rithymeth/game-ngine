@@ -166,6 +166,27 @@ def mule(work):
     check(not re.search(r"\[ERROR\]", text), "no errors with MULE-3")
 
 
+def craft(work):
+    """Kael has the cost of a Generator Core and stands beside the fab bench: Interact crafts it (the cost is spent). A second run, in the same user
+    directory, beside the generator: the saved Generator Core lets him power it."""
+    def run(scene, user):
+        command = [str(BUILD / "player" / "aether_player"), "--pak", str(work / "cooked"), "--scene", scene, "--frames", "80", "--size", "320x180",
+                   "--press", "E", "--report", "--user-dir", str(work / user)]
+        if sys.platform.startswith("linux") and shutil.which("xvfb-run"):
+            command = ["xvfb-run", "-a"] + command
+        result = subprocess.run(command, capture_output=True, text=True, timeout=300)
+        return result, result.stdout + result.stderr
+    result, text = run("Scenes/CraftTest.ascene", "user5")
+    check(result.returncode == 0, f"the player runs the crafting test and exits cleanly (exit {result.returncode})")
+    check("Crafted Generator Core" in text, "Interact beside the fab bench with the cost in the pack crafts the Generator Core")
+    check(not re.search(r"\[ERROR\]", text), "no errors while crafting")
+    result, text = run("Scenes/PowerTest.ascene", "user5")
+    check("Generator powered" in text, "the saved Generator Core lets Kael power the generator in the next run")
+    check(not re.search(r"\[ERROR\]", text), "no errors while powering the generator")
+    result, text = run("Scenes/PowerTest.ascene", "user6")
+    check("Generator powered" not in text, "without the Generator Core the generator stays off")
+
+
 def main():
     layout()
     if failures:
@@ -177,6 +198,7 @@ def main():
             interior(work)
             salvage(work)
             mule(work)
+            craft(work)
     finally:
         shutil.rmtree(work, ignore_errors=True)
     print(f"{len(failures)} check(s) failed" if failures else "smoke test passed")
