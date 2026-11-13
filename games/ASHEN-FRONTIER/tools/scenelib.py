@@ -97,11 +97,12 @@ def script_guid(name):
     return meta["guid"]
 
 
-def give_hands(scene, components=0, scrap=0, samples=0):
+def give_hands(scene, components=0, scrap=0, samples=0, calm="ambient_calm"):
     """Puts the Interactor script on the entity added last (Kael's body): what lets him take salvage. Adds the HUD (pack counts, the prompt) too."""
     scene.entities[-1]["components"]["ScriptComponent"] = {"$v": 1, "properties": ([{"name": "start_components", "value": str(components)}] if components else []) + ([{"name": "start_scrap", "value": str(scrap)}] if scrap else []) + ([{"name": "start_samples", "value": str(samples)}] if samples else []), "script": script_guid("Interactor")}
     scene.add("Hud", {"WidgetComponent": {"$v": 1, "layout": "UI/Hud.aui", "z": 0, "visible": True},
                       "ScriptComponent": {"$v": 1, "properties": [], "script": script_guid("Scanner")}})  # the HUD entity also carries the scanner
+    scene.add("Music", {"ScriptComponent": {"$v": 1, "properties": [{"name": "calm", "value": json.dumps("Audio/" + calm + ".acue")}], "script": script_guid("Music")}})
 
 
 def mule(scene, name, position, rotation=(0, 0, 0), **kwargs):

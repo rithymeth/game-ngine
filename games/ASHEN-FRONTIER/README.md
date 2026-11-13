@@ -26,6 +26,8 @@ Kael can take salvage (E or X: the nearest thing tagged Salvage within 3 m goes 
 
 Sentinels (`Sentinel.luau`) guard the Iron Wastes checkpoint, the assembly hall and the reactor hall: they notice Kael within 14 m, walk up and strike; Kael hits back (F, left mouse or B on a pad: 25 damage within 2.6 m), a disabled sentinel drops 2 components and stays gone (health is kept in SaveGames: `player.hp`, `enemy.<name>.hp`); at no health Kael is returned to the start. F9 clears all of it.
 
+Music (`Music.luau`): a calm loop, and a tense one while an active sentinel is within 16 m of Kael; the old loop is faded out with `Audio.Stop` when the mood changes (the three loops are synthesized placeholders from `tools/make_audio.py`).
+
 Sound effects (`Content/Audio`, written by `tools/make_audio.py`: short synthesized tones, placeholders) play for pickups, crafting, power, repairs, the relay, doors, strikes and hits, through the scripts' `Audio` table; the smoke test fails if a script asks for a sound that is not there.
 
 The scanner (Q, or Y on a pad) lists what is near by category as words ([SALVAGE], [MACHINE], [ROBOT], [FABRICATION], [POWER], [RELAY], [HAZARD]) with distance, compass direction and known status, on the HUD.

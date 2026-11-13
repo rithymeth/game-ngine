@@ -66,6 +66,9 @@ struct ScriptError {
 //   Audio.PlaySound2D(cue [, volume_db, pitch])                 -> true if the cue exists and started (a sound cue's asset path, such as "Audio/Pickup.acue")
 //   Audio.PlaySoundAtLocation(cue, x, y, z [, volume_db, pitch]) -> the same, heard from that place (3D cues are attenuated and panned)
 //   Audio.SetBusVolume(bus, volume_db [, fade_seconds])         -> true if the bus exists;  Audio.StopAll()
+//   Audio.Play2D(cue [, volume_db, pitch])                      -> a handle (a number) to the sound it started, or false (no such cue / no audio system); for sounds a
+//                                                                  script wants to stop or change later (music, a loop). A handle ends with its sound.
+//   Audio.Stop(handle [, fade_seconds]) -> true if it was playing;  Audio.IsPlaying(handle) -> bool;  Audio.SetVolume(handle, volume_db) -> true if it was playing
 //   Camera.Shake(amount)           -> adds trauma 0..1 to the camera shake (0.2 a bump, 0.5 a hit, 1 an explosion); the shake grows with its square and
 //                                     drains away. It moves the active camera after the scripts have run, so a script that sets the camera is not disturbed.
 //   Scene.Current()                -> the path of the scene that is running
