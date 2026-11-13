@@ -761,11 +761,12 @@ void AnimGraphInstance::EvaluateMachine(const AnimNode& node, f32 dt, f32 weight
     f32 alpha = 1.0f, mean = 1.0f;
     if (blending) {
         const f32 before = std::clamp(ms.blend_elapsed / ms.blend_duration, 0.0f, 1.0f);
+        const f32 remaining = ms.blend_duration - ms.blend_elapsed;
         ms.blend_elapsed += dt;
         alpha = std::clamp(ms.blend_elapsed / ms.blend_duration, 0.0f, 1.0f);
-        // Root motion and notifies count by the crossfade's average weight over the frame, so a blend
-        // moves the character the same distance at any frame rate; the pose uses the weight at its end.
-        mean = 0.5f * (before + alpha);
+        // Root motion and notifies use the frame-average weight; the pose uses its end weight.
+        // If the ramp ends within this frame, the rest of the frame has full target weight.
+        mean = dt > remaining ? 1.0f - 0.5f * (1.0f - before) * (remaining / dt) : 0.5f * (before + alpha);
     }
     const Pose target_pose = Evaluate(m->states[static_cast<usize>(ms.current)].pose, dt, weight * mean);
     if (blending) {

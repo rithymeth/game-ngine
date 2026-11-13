@@ -139,6 +139,25 @@ AnimGraph OneNode(const AnimNode& n) {
     return g;
 }
 
+// Two constant-speed clips let the crossfade's motion be checked analytically,
+// without conflating frame weights with nonlinear motion inside a clip.
+AnimGraph Crossfade(f32 duration) {
+    AnimGraph g;
+    g.variables = {{"Go", VarType::Trigger, 0.0f}};
+    AnimNode machine, walk, run;
+    machine.id = 1, machine.kind = AnimNodeKind::StateMachine, machine.machine = "Move";
+    walk.id = 2, walk.asset = "Walk";
+    run.id = 3, run.asset = "Run";
+    g.nodes = {machine, walk, run};
+    g.output = 1;
+    StateMachine m;
+    m.name = "Move";
+    m.states = {{"Walk", 2}, {"Run", 3}};
+    m.transitions = {{0, 1, {{"Go", CompareOp::Triggered, 0}}, false, duration, 0}};
+    g.machines = {m};
+    return g;
+}
+
 } // namespace
 
 AETHER_TEST(Animator_NotifyPointsAndCompression) {
@@ -336,6 +355,168 @@ AETHER_TEST(Animator_RootMotionFromGraphsAndMontages) {
     AnimGraphInstance off(single, a.rig, a.Anim());
     off.Update(0.1f, pose);
     AETHER_CHECK(Close(pose.local[0].translation.z, 0.2f) && off.RootMotion().translation.z == 0.0f);
+}
+
+AETHER_TEST(Animator_CrossfadeHitchesIntegrateTheWholeFrame) {
+    Assets a;
+    a.clips["Walk"] = Clip("Walk", 1, 4.0f, 2.0f);
+    a.clips["Run"] = Clip("Run", 2, 4.0f, 6.0f);
+    const f32 duration = 0.25f;
+    const AnimGraph graph = Crossfade(duration);
+    AETHER_CHECK(ValidateAnimGraph(graph).empty());
+    for (const f32 dt : {0.125f, 0.25f, 0.5f, 1.0f}) {
+        AnimGraphInstance coarse(graph, a.rig, a.Anim()), fine(graph, a.rig, a.Anim());
+        coarse.SetRootMotion(true);
+        fine.SetRootMotion(true);
+        Pose pose, fine_pose;
+        coarse.Update(0.0f, pose);
+        fine.Update(0.0f, fine_pose);
+        AETHER_CHECK(coarse.SetTrigger("Go") && fine.SetTrigger("Go"));
+        coarse.Update(dt, pose);
+        f32 fine_distance = 0.0f;
+        for (int i = 0; i < 16; ++i) {
+            fine.Update(dt / 16.0f, fine_pose);
+            fine_distance += fine.RootMotion().translation.z;
+        }
+        const f32 ramp = std::min(dt, duration);
+        const f32 target_area = ramp * ramp / (2.0f * duration) + std::max(dt - duration, 0.0f);
+        const f32 expected = 2.0f * (dt - target_area) + 6.0f * target_area;
+        AETHER_CHECK(Close(coarse.RootMotion().translation.z, expected));
+        AETHER_CHECK(Close(fine_distance, expected));
+        AETHER_CHECK(Close(coarse.RootMotion().translation.z, fine_distance));
+        AETHER_CHECK(coarse.CurrentState(1) == "Run" && coarse.InTransition(1) == (dt < duration));
+        AETHER_CHECK(Count(coarse.Events(), AnimEventType::StateChanged) == 1);
+        AETHER_CHECK(!pose.local.empty());
+        if (!pose.local.empty()) {
+            // The pose uses the end weight, not the motion's frame average.
+            AETHER_CHECK(Close(pose.local[0].translation.x, 1.0f + std::min(dt / duration, 1.0f)));
+            AETHER_CHECK(Close(pose.local[0].translation.z, 0.0f));
+        }
+        if (dt >= duration) {
+            coarse.Update(0.125f, pose);
+            AETHER_CHECK(Close(coarse.RootMotion().translation.z, 0.75f));
+            AETHER_CHECK(!coarse.InTransition(1) && coarse.Events().empty());
+        }
+    }
+}
+
+AETHER_TEST(Animator_CrossfadeHitchesFinishPartialRampsUnderGraphWeights) {
+    Assets a;
+    a.clips["Walk"] = Clip("Walk", 1, 4.0f, 2.0f);
+    a.clips["Run"] = Clip("Run", 2, 4.0f, 6.0f);
+    for (const f32 weight : {1.0f, 0.25f}) {
+        AnimGraph graph = Crossfade(0.5f);
+        graph.variables.push_back({"Weight", VarType::Float, weight});
+        AnimNode idle, blend;
+        idle.id = 4, idle.asset = "Idle";
+        blend.id = 5, blend.kind = AnimNodeKind::Blend, blend.variable = "Weight", blend.inputs = {4, 1};
+        graph.nodes.push_back(idle);
+        graph.nodes.push_back(blend);
+        graph.output = 5;
+        AnimGraphInstance coarse(graph, a.rig, a.Anim()), fine(graph, a.rig, a.Anim());
+        coarse.SetRootMotion(true);
+        fine.SetRootMotion(true);
+        Pose pose;
+        coarse.Update(0.0f, pose);
+        fine.Update(0.0f, pose);
+        AETHER_CHECK(coarse.SetTrigger("Go") && fine.SetTrigger("Go"));
+        coarse.Update(0.125f, pose);
+        const f32 first = coarse.RootMotion().translation.z;
+        AETHER_CHECK(Close(first, 0.3125f * weight) && coarse.InTransition(1));
+        const Pose paused_pose = pose;
+        coarse.Update(0.0f, pose); // pause an already-progressed ramp
+        AETHER_CHECK(coarse.Events().empty() && Close(coarse.RootMotion().translation.z, 0.0f));
+        AETHER_CHECK(Close(coarse.Blend(1).to_weight, 0.25f) && coarse.InTransition(1));
+        AETHER_CHECK(!pose.local.empty() && pose.local.size() == paused_pose.local.size());
+        if (!pose.local.empty() && !paused_pose.local.empty()) {
+            AETHER_CHECK((pose.local[0].translation - paused_pose.local[0].translation).Length() < 1e-4f);
+        }
+        coarse.Update(0.875f, pose); // only 0.375 seconds of ramp remain
+        // Target-weight area over the full second is 0.75: 2 * 0.25 + 6 * 0.75 = 5 m.
+        AETHER_CHECK(Close(first + coarse.RootMotion().translation.z, 5.0f * weight));
+        AETHER_CHECK(!coarse.InTransition(1));
+        f32 fine_distance = 0.0f;
+        for (int i = 0; i < 32; ++i) {
+            fine.Update(1.0f / 32.0f, pose);
+            fine_distance += fine.RootMotion().translation.z;
+        }
+        AETHER_CHECK(Close(fine_distance, 5.0f * weight));
+        AETHER_CHECK(Close(first + coarse.RootMotion().translation.z, fine_distance));
+    }
+}
+
+AETHER_TEST(Animator_CrossfadeHitchesUseFrameAverageNotifyWeights) {
+    Assets a;
+    a.clips["Walk"] = Clip("Walk", 1, 4.0f, 2.0f);
+    a.clips["Run"] = Clip("Run", 2, 4.0f, 6.0f);
+    a.clips["Walk"].notifies = {{"Source", 0.1875f}, {"LateSource", 0.75f}};
+    a.clips["Run"].notifies = {{"Target", 0.1875f}, {"LateTarget", 0.75f}};
+    for (const bool partial : {false, true}) {
+        AnimGraph graph = Crossfade(partial ? 0.5f : 0.25f);
+        graph.variables.push_back({"Weight", VarType::Float, 0.25f});
+        AnimNode idle, blend;
+        idle.id = 4, idle.asset = "Idle";
+        blend.id = 5, blend.kind = AnimNodeKind::Blend, blend.variable = "Weight", blend.inputs = {4, 1};
+        graph.nodes.push_back(idle);
+        graph.nodes.push_back(blend);
+        graph.output = 5;
+        for (const bool root_motion : {false, true}) {
+            AnimGraphInstance anim(graph, a.rig, a.Anim());
+            anim.SetRootMotion(root_motion);
+            Pose pose;
+            anim.Update(0.0f, pose);
+            AETHER_CHECK(anim.SetTrigger("Go"));
+            if (partial) anim.Update(0.125f, pose);
+            anim.Update(partial ? 0.875f : 1.0f, pose);
+            // Notifications keep the established frame-average policy, not the
+            // instantaneous blend weight at the marker's timestamp.
+            const f32 target_weight = partial ? 47.0f / 56.0f : 0.875f;
+            AETHER_CHECK(Count(anim.Events(), AnimEventType::Notify, "Source") == 1);
+            AETHER_CHECK(Count(anim.Events(), AnimEventType::Notify, "Target") == 1);
+            // Even markers beyond the ramp retain the whole-frame policy,
+            // including the source marker, and compose with the outer weight.
+            AETHER_CHECK(Count(anim.Events(), AnimEventType::Notify, "LateSource") == 1);
+            AETHER_CHECK(Count(anim.Events(), AnimEventType::Notify, "LateTarget") == 1);
+            for (const AnimEvent& e : anim.Events()) {
+                if (e.type != AnimEventType::Notify) continue;
+                AETHER_CHECK(Close(e.weight, 0.25f * (e.detail == "Walk" ? 1.0f - target_weight : target_weight)));
+            }
+            anim.Update(0.0f, pose);
+            AETHER_CHECK(anim.Events().empty() && Close(anim.RootMotion().translation.z, 0.0f));
+        }
+    }
+}
+
+AETHER_TEST(Animator_CrossfadeHitchesPreserveZeroTimeAndInstantTransitions) {
+    Assets a;
+    a.clips["Walk"] = Clip("Walk", 1, 4.0f, 2.0f);
+    a.clips["Run"] = Clip("Run", 2, 4.0f, 6.0f);
+    for (const f32 duration : {0.0f, 0.5f}) {
+        const AnimGraph graph = Crossfade(duration);
+        AnimGraphInstance anim(graph, a.rig, a.Anim());
+        anim.SetRootMotion(true);
+        Pose pose;
+        anim.Update(0.0f, pose);
+        AETHER_CHECK(anim.SetTrigger("Go"));
+        anim.Update(0.0f, pose);
+        AETHER_CHECK(anim.CurrentState(1) == "Run" && anim.InTransition(1) == (duration > 0.0f));
+        AETHER_CHECK(Close(anim.RootMotion().translation.z, 0.0f));
+        anim.Update(0.0f, pose);
+        AETHER_CHECK(anim.Events().empty() && Close(anim.RootMotion().translation.z, 0.0f));
+        anim.Update(0.125f, pose);
+        AETHER_CHECK(Close(anim.RootMotion().translation.z, duration > 0.0f ? 0.3125f : 0.75f));
+    }
+    // Disabling extraction still samples the target at the frame endpoint.
+    const AnimGraph graph = Crossfade(0.25f);
+    AnimGraphInstance off(graph, a.rig, a.Anim());
+    Pose pose;
+    off.Update(0.0f, pose);
+    AETHER_CHECK(off.SetTrigger("Go"));
+    off.Update(1.0f, pose);
+    AETHER_CHECK(Close(off.RootMotion().translation.z, 0.0f) && !pose.local.empty());
+    if (!pose.local.empty()) {
+        AETHER_CHECK(Close(pose.local[0].translation.x, 2.0f) && Close(pose.local[0].translation.z, 6.0f));
+    }
 }
 
 AETHER_TEST(Animator_ClipHitchesKeepEveryCycle) {
