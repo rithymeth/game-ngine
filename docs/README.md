@@ -87,6 +87,7 @@ without a server or network connection.
 | [releases/NEXT.md](releases/NEXT.md) | The working draft of the next release; rewritten into `vX.Y.Z.md` when a version is tagged |
 | [releases/v0.28.0.md](releases/v0.28.0.md) | v0.28.0: netcode and MCP hardening, level instances, and AGENTS.md |
 | [releases/v0.29.0.md](releases/v0.29.0.md) | Verification debt, five gates added or repaired, and the defects each one found |
+| [releases/v0.30.0.md](releases/v0.30.0.md) | The Live Viewport, procedural worlds, and the player calls a game needs |
 | [releases/v0.27.6.md](releases/v0.27.6.md) | v0.27.6: Qt editor startup fix |
 | [releases/v0.27.5.md](releases/v0.27.5.md) | v0.27.5: the current editor in the Windows package |
 | [releases/v0.27.4.md](releases/v0.27.4.md) | v0.27.4: release and cook reliability |
