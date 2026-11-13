@@ -16,6 +16,10 @@ Recorded rather than patched: raising the tolerance to 4x would hide it, and rai
 everything under 200 us. The honest options are a per-row tolerance, or a baseline taken on the same runner, and both are bigger
 than a fix made at a tag.
 
+## Frame times from the player
+
+`aether_player --report` now also prints the speed of the run: CPU frame time (average, p50, p95, p99, max) and, on devices that can time the GPU, the GPU's time by stage (shadows, scene, post). The first 30 frames are left out so shader creation does not skew it. Run it on the target hardware to get the baseline numbers (numbers from a software Vulkan device say nothing about a real GPU). C++: `player::FrameReport`.
+
 ## Scripts can play sounds
 
 `Audio.PlaySound2D(cue [, volume_db, pitch])`, `Audio.PlaySoundAtLocation(cue, x, y, z [, volume_db, pitch])`, `Audio.SetBusVolume(bus, volume_db [, fade])` and `Audio.StopAll()` act on the game's active audio system, the one the Blueprint audio nodes use. Playing returns whether the cue exists and started; with no audio system running the calls return false and do nothing.

@@ -90,6 +90,13 @@ def play(work):
     check(result.returncode == 0, f"the player runs and exits cleanly (exit {result.returncode})")
     problems = [l for l in text.splitlines() if re.search(r"\[(ERROR|WARN)\].*(script|Script|luau|Luau|scene|Scene|load|Load)", l) and "Vulkan" not in l and "settings" not in l]
     check(not problems, "no script, scene or load errors in the log" + ("" if not problems else ": " + problems[0][:140]))
+    frame_time = re.search(r"^Frame time: .*$", text, re.M)
+    gpu_time = re.search(r"^GPU time: .*$", text, re.M)
+    check(frame_time is not None, "the player reports frame times")
+    # Informational: on a software Vulkan device these say nothing about a real GPU; on real hardware they are the baseline to keep.
+    for line in (frame_time, gpu_time):
+        if line:
+            print("      " + line.group(0))
     match = re.search(r"Player at \(([-\d.]+), ([-\d.]+), ([-\d.]+)\)", text)
     if not check(match is not None, "the player reports where Kael ended up"):
         return
