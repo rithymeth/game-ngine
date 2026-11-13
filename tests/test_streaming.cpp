@@ -7,6 +7,9 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <limits>
+#include <random>
+#include <set>
 
 // Phase 21 step 6: large worlds - partitioning a scene into grid cells (and
 // a persistent scene), the index and files, streaming cells in and out
@@ -400,4 +403,291 @@ AETHER_TEST(Streaming_CellHookFollowsLoadsAndUnloads) {
     streamer.Update();
     CHECK(streamer.State({0, 0}) == CellState::Unloaded);
     CHECK(calls.size() == 2 && !calls[1].second);
+}
+
+namespace {
+// Deliberately brute-force reference: the pre-spatial-query selection rule.
+// Compare requests, priorities, hysteresis and budgets across many frames,
+// not just the final set of loaded cells.
+struct ReferenceStreamer {
+    const WorldIndex& index;
+    std::set<CellCoord> loaded, failed, pinned, missing;
+    std::vector<CellCoord> requests;
+    std::vector<StreamingEvent> events;
+    usize pending = 0;
+
+    explicit ReferenceStreamer(const WorldIndex& world_index, std::set<CellCoord> missing_cells = {})
+        : index(world_index), missing(std::move(missing_cells)) {}
+
+    void Update(World& world, const std::vector<Entity>& players, const streaming::WorldPosition& offset,
+                usize load_budget, usize unload_budget, f32 margin) {
+        requests.clear();
+        events.clear();
+        const auto nearness = [&](const CellCoord& cell) {
+            if (pinned.count(cell) != 0) return 0.0f;
+            f32 best = 1e30f;
+            for (Entity e : players) {
+                const StreamingSource* source = world.GetComponent<StreamingSource>(e);
+                const Transform* transform = world.GetComponent<Transform>(e);
+                if (source == nullptr || transform == nullptr || !source->enabled) continue;
+                const f64 x = offset.x + transform->position.x, z = offset.z + transform->position.z;
+                const f64 size = index.settings.cell_size;
+                const f64 x0 = index.settings.origin.x + cell.x * size, z0 = index.settings.origin.z + cell.z * size;
+                const f64 dx = std::max({x0 - x, 0.0, x - (x0 + size)});
+                const f64 dz = std::max({z0 - z, 0.0, z - (z0 + size)});
+                const f32 d = static_cast<f32>(std::sqrt(dx * dx + dz * dz));
+                best = std::min(best, source->radius > 0.0f ? d / source->radius : (d <= 0.0f ? 0.0f : 1e30f));
+            }
+            return best;
+        };
+        usize unloads = 0;
+        for (auto it = loaded.begin(); it != loaded.end() && unloads < unload_budget;) {
+            if (nearness(*it) > margin) {
+                events.push_back({*it, false, 0});
+                it = loaded.erase(it);
+                ++unloads;
+            } else ++it;
+        }
+        std::vector<std::pair<f32, CellCoord>> wanted;
+        for (const CellInfo& info : index.cells) {
+            if (loaded.count(info.coord) != 0 || failed.count(info.coord) != 0) continue;
+            const f32 n = nearness(info.coord);
+            if (n <= 1.0f) wanted.push_back({n, info.coord});
+        }
+        for (const CellCoord& cell : pinned)
+            if (index.Find(cell) == nullptr && loaded.count(cell) == 0 && failed.count(cell) == 0)
+                wanted.push_back({0.0f, cell});
+        std::sort(wanted.begin(), wanted.end());
+        pending = wanted.size() > load_budget ? wanted.size() - load_budget : 0;
+        for (usize i = 0; i < std::min(load_budget, wanted.size()); ++i) {
+            const CellCoord cell = wanted[i].second;
+            requests.push_back(cell);
+            if (missing.count(cell) != 0) failed.insert(cell);
+            else {
+                loaded.insert(cell);
+                events.push_back({cell, true, 0});
+            }
+        }
+    }
+};
+
+CellInfo QueryCell(const CellCoord& coord) {
+    CellInfo info;
+    info.coord = coord;
+    return info;
+}
+
+WorldIndex QueryTestIndex() {
+    WorldIndex index;
+    index.settings.origin = Vec3(-32, 0, 16);
+    for (i32 x = -40; x <= 40; ++x)
+        for (i32 z = -40; z <= 40; ++z)
+            if ((x * x + z * z) % 7 != 3) index.cells.push_back(QueryCell({x, z}));
+    return index;
+}
+} // namespace
+
+AETHER_TEST(Streaming_SpatialQueryMatchesBruteForceAcrossFrames) {
+    RegisterStreamingComponents();
+    const WorldIndex index = QueryTestIndex();
+    World game;
+    std::vector<Entity> players;
+    for (int i = 0; i < 4; ++i) players.push_back(game.CreateEntity(At(0, 0), StreamingSource{80, true}));
+    // A source without a Transform cannot select cells.
+    players.push_back(game.CreateEntity(StreamingSource{100000, true}));
+    World empty;
+    const std::vector<u8> bytes = SaveSceneToMemory(empty);
+    ReferenceStreamer reference(index, {{0, 0}, {-2, 1}});
+    std::vector<CellCoord> requests;
+    WorldStreamer streamer(game, index, [&](const CellCoord& cell, std::vector<u8>& out) {
+        requests.push_back(cell);
+        if (reference.missing.count(cell) != 0) return false;
+        out = bytes;
+        return true;
+    });
+    std::mt19937 random(1729);
+    const f32 radii[] = {0, -1, 16, 64, 80, 200, 400, 65536,
+        std::numeric_limits<f32>::infinity(), std::numeric_limits<f32>::quiet_NaN()};
+    for (int frame = 0; frame < 100; ++frame) {
+        const streaming::WorldPosition offset{frame % 3 == 0 ? 1024.0 : 0.0, 0, frame % 5 == 0 ? -2048.0 : 0.0};
+        for (usize s = 0; s < 4; ++s) {
+            const i32 x = static_cast<i32>(random() % 81) - 40;
+            const i32 z = static_cast<i32>(random() % 81) - 40;
+            // Exact grid lines, then cell centers, including negative coords;
+            // two sources overlap to exercise minimum normalized priorities.
+            Vec3 position(index.settings.origin.x + x * 64.0f, 0, index.settings.origin.z + z * 64.0f);
+            if (frame % 2 != 0) position = position + Vec3(32, 0, 32);
+            if (s == 1) position = game.GetComponent<Transform>(players[0])->position;
+            game.GetComponent<Transform>(players[s])->position = position;
+            StreamingSource* source = game.GetComponent<StreamingSource>(players[s]);
+            source->radius = radii[(frame + s) % 10];
+            source->enabled = frame % 13 != 0 && (s != 3 || frame % 3 == 0);
+        }
+        const CellCoord pin = frame % 2 == 0 ? CellCoord{30, -30} : CellCoord{100, -100};
+        reference.pinned.clear();
+        reference.pinned.insert(pin);
+        streamer.Unpin({30, -30});
+        streamer.Unpin({100, -100});
+        streamer.Pin(pin);
+        streamer.SetOriginOffset(offset);
+        streamer.max_loads_per_update = static_cast<usize>(frame % 7);
+        streamer.max_unloads_per_update = static_cast<usize>(frame % 5);
+        streamer.unload_margin = frame % 2 == 0 ? 1.25f : 1.5f;
+        reference.Update(game, players, offset, streamer.max_loads_per_update,
+                         streamer.max_unloads_per_update, streamer.unload_margin);
+        requests.clear();
+        streamer.Update();
+        CHECK(requests == reference.requests);
+        CHECK(streamer.LoadedCells() == std::vector<CellCoord>(reference.loaded.begin(), reference.loaded.end()));
+        CHECK(streamer.PendingLoads() == reference.pending);
+        CHECK(streamer.Events().size() == reference.events.size());
+        for (usize i = 0; i < std::min(streamer.Events().size(), reference.events.size()); ++i) {
+            CHECK(streamer.Events()[i].cell == reference.events[i].cell);
+            CHECK(streamer.Events()[i].loaded == reference.events[i].loaded);
+        }
+    }
+}
+
+AETHER_TEST(Streaming_SpatialQueryKeepsTouchingBoundariesAndExtremeCoordinates) {
+    RegisterStreamingComponents();
+    const auto run = [](WorldIndex index, streaming::WorldPosition offset, Vec3 position, f32 radius, bool expect_cells = true) {
+        World game, empty;
+        const Entity player = game.CreateEntity(Transform{position, Quaternion::Identity()}, StreamingSource{radius, true});
+        const std::vector<u8> bytes = SaveSceneToMemory(empty);
+        std::vector<CellCoord> requests;
+        WorldStreamer streamer(game, index, [&](const CellCoord& cell, std::vector<u8>& out) {
+            requests.push_back(cell);
+            out = bytes;
+            return true;
+        });
+        streamer.SetOriginOffset(offset);
+        streamer.max_loads_per_update = index.cells.size();
+        ReferenceStreamer reference(index);
+        reference.Update(game, {player}, offset, streamer.max_loads_per_update, 4, 1.25f);
+        streamer.Update();
+        if (expect_cells) CHECK(!reference.requests.empty());
+        CHECK(requests == reference.requests);
+    };
+    WorldIndex index = QueryTestIndex();
+    run(index, {}, Vec3(-32, 0, 16), 0); // four cells touch the corner
+    run(index, {}, Vec3(-32, 0, 16), -1); // legacy non-positive radius rule
+    run(index, {}, Vec3(-32, 0, 16), 64); // cells touching the exact radius
+    run(index, {}, Vec3(-32, 0, 16), std::nextafter(64.0f, 0.0f));
+    run(index, {1024, 0, -2048}, Vec3(-1056, 0, 2064), 64);
+    for (f32 size : {0.3f, 3.7f, 127.25f}) {
+        index.settings.cell_size = size;
+        index.settings.origin = Vec3(0.1f, 0, -0.2f);
+        const f32 boundary = index.settings.origin.x + 3 * size;
+        for (f32 x : {std::nextafter(boundary, -std::numeric_limits<f32>::infinity()),
+                       boundary, std::nextafter(boundary, std::numeric_limits<f32>::infinity())}) {
+            run(index, {}, Vec3(x, 0, index.settings.origin.z), size);
+            run(index, {0.15, 0, -0.35}, Vec3(x, 0, index.settings.origin.z), size);
+        }
+    }
+    // Non-finite coordinates and settings must keep the original predicate,
+    // never enter coordinate conversion or silently pick different cells.
+    const f32 inf = std::numeric_limits<f32>::infinity();
+    const f32 nan = std::numeric_limits<f32>::quiet_NaN();
+    run(index, {}, Vec3(inf, 0, 0), 16, false);
+    run(index, {}, Vec3(nan, 0, 0), 16, false);
+    run(index, {inf, 0, 0}, Vec3(), 16, false);
+    run(index, {nan, 0, 0}, Vec3(), 16, false);
+    WorldIndex unusual;
+    unusual.cells = {QueryCell({-1, -1}), QueryCell({0, 0}), QueryCell({1, 1})};
+    for (f32 size : {0.0f, -1.0f, inf, nan}) {
+        unusual.settings.cell_size = size;
+        run(unusual, {}, Vec3(), 16, false);
+    }
+
+    index.settings.cell_size = 64.0f;
+    index.settings.origin = Vec3();
+    constexpr i32 lo = std::numeric_limits<i32>::min(), hi = std::numeric_limits<i32>::max();
+    index.cells.insert(index.cells.begin(), {QueryCell({lo, lo}), QueryCell({lo, hi})});
+    index.cells.push_back(QueryCell({hi, lo}));
+    index.cells.push_back(QueryCell({hi, hi}));
+    run(index, {static_cast<f64>(lo) * 64, 0, static_cast<f64>(lo) * 64}, Vec3(32, 0, 32), 0);
+    run(index, {static_cast<f64>(hi) * 64, 0, static_cast<f64>(hi) * 64}, Vec3(32, 0, 32), 0);
+    // Double precision cannot distinguish these cell bounds: take the legacy
+    // predicate path rather than incorrectly culling coincident cells.
+    index.settings.origin = Vec3(1e20f, 0, 1e20f);
+    run(index, {index.settings.origin.x, 0, index.settings.origin.z}, Vec3(), 16);
+}
+
+AETHER_TEST(Streaming_SpatialQueryAsyncDropsOldWindowAfterTeleport) {
+    RegisterStreamingComponents();
+    const WorldIndex index = QueryTestIndex();
+    World game, empty;
+    const Entity player = game.CreateEntity(At(0, 0), StreamingSource{80, true});
+    const std::vector<u8> bytes = SaveSceneToMemory(empty);
+    WorldStreamer streamer(game, index, [&](const CellCoord&, std::vector<u8>& out) {
+        out = bytes;
+        return true;
+    });
+    ManualExecutor executor;
+    streamer.SetExecutor(executor.Get());
+    streamer.Update();
+    CHECK(streamer.InFlight() > 0 && streamer.LoadedCells().empty());
+    executor.RunAll(); // results for the old window are ready
+    game.GetComponent<Transform>(player)->position = Vec3(1600, 0, -1600);
+    streamer.Update(); // discard those results and request the new window
+    CHECK(streamer.LoadedCells().empty());
+    for (int i = 0; i < 10; ++i) {
+        executor.RunAll();
+        streamer.Update();
+    }
+    ReferenceStreamer reference(index);
+    reference.Update(game, {player}, {}, index.cells.size(), 4, 1.25f);
+    CHECK(streamer.LoadedCells() == std::vector<CellCoord>(reference.loaded.begin(), reference.loaded.end()));
+    CHECK(streamer.InFlight() == 0 && streamer.PendingLoads() == 0);
+}
+
+AETHER_TEST(Streaming_SpatialQueryAsyncPreservesOverlapAndDiscardsDepartedFailure) {
+    RegisterStreamingComponents();
+    const WorldIndex index = QueryTestIndex();
+    World game, empty;
+    const Vec3 start(-32, 0, 16);
+    const Entity player = game.CreateEntity(Transform{start, Quaternion::Identity()}, StreamingSource{80, true});
+    const std::vector<u8> bytes = SaveSceneToMemory(empty);
+    const CellCoord pin{-100, 100}, departed{-1, -1}, overlap{0, -1};
+    bool fail_departed = true;
+    std::map<CellCoord, usize> reads;
+    WorldStreamer streamer(game, index, [&](const CellCoord& cell, std::vector<u8>& out) {
+        ++reads[cell];
+        if (cell == departed && fail_departed) return false;
+        out = bytes;
+        return true;
+    });
+    streamer.Pin(pin); // absent from the index, and earlier in priority order
+    ManualExecutor executor;
+    streamer.SetExecutor(executor.Get());
+    streamer.Update();
+    CHECK(streamer.InFlight() == 4);
+    game.GetComponent<Transform>(player)->position = start + Vec3(128, 0, 0);
+    streamer.Update(); // old tasks still in flight; no results yet
+    CHECK(streamer.LoadedCells().empty() && streamer.InFlight() == 4);
+    executor.RunAll(); // overlapping + pinned results survive; departed reads do not
+    streamer.Update();
+    CHECK(streamer.State(pin) == CellState::Loaded);
+    CHECK(streamer.State(overlap) == CellState::Loaded);
+    CHECK(streamer.State(departed) == CellState::Unloaded);
+    CHECK(streamer.Problems().empty()); // discarded failure does not poison the cell
+    for (int i = 0; i < 12; ++i) {
+        executor.RunAll();
+        streamer.Update();
+    }
+    CHECK(reads[pin] == 1 && reads[overlap] == 1 && reads[departed] == 1);
+    ReferenceStreamer reference(index);
+    reference.pinned.insert(pin);
+    reference.Update(game, {player}, {}, index.cells.size() + 1, 4, 1.25f);
+    CHECK(streamer.LoadedCells() == std::vector<CellCoord>(reference.loaded.begin(), reference.loaded.end()));
+
+    fail_departed = false;
+    game.GetComponent<Transform>(player)->position = start;
+    for (int i = 0; i < 12; ++i) {
+        executor.RunAll();
+        streamer.Update();
+    }
+    CHECK(streamer.State(departed) == CellState::Loaded && reads[departed] == 2);
+    CHECK(reads[pin] == 1 && reads[overlap] == 1);
+    CHECK(streamer.InFlight() == 0 && streamer.PendingLoads() == 0);
 }
