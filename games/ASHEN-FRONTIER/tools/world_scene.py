@@ -11,7 +11,7 @@ import numpy as np
 
 import terrain
 import world
-from scenelib import Scene, give_hands, mule, workbench, generator, beacon, sentinel, sample
+from scenelib import Scene, give_hands, mule, workbench, generator, beacon, sentinel, sample, flag_light
 
 LIGHT = lambda color, intensity, rng_: {"PointLight": {"$v": 1, "cast_shadows": False, "color": list(color), "intensity": intensity, "range": rng_}}
 BLUE, AMBER, GREEN = (0.2, 0.5, 1.0), (1.0, 0.5, 0.1), (0.3, 1.0, 0.6)
@@ -130,7 +130,7 @@ def verdant(s, rng, door_script=None):
         s.add(f"GreenhouseGlow_{i}", LIGHT((0.4, 1.0, 0.5), 8.0, 12.0), position=(x + i * 16, 3.0, z), snap=True)
     x, z = world.poi_position("living_dome")
     s.model("LivingDome", "Dome", position=(x, 0, z), tags=("Dungeon",), collider=((0, 3.5, 0), (8.5, 3.5, 8.5)))
-    s.add("LivingDomeGlow", LIGHT(GREEN, 16.0, 20.0), position=(x, 5.0, z), snap=True)
+    flag_light(s, "LivingDomeGlow", GREEN, 16.0, 20.0, "mission.dome", off=4.0, position=(x, 5.0, z), snap=True)
     s.add("LivingDomeOutside", {}, position=(x, 0.1, z + 14.5), snap=True)
     if door_script:
         s.add("LivingDomeDoor", {"ScriptComponent": {"$v": 1, "script": door_script, "properties": [{"name": "target", "value": json.dumps("Scenes/LivingDome.ascene")}, {"name": "radius", "value": "2.5"}, {"name": "spawn", "value": json.dumps("DomeEntry")}]}},
@@ -202,7 +202,7 @@ def build(playable=True, camera=None, door_script=None):
     s.model("OutpostPad", "OutpostPlate", position=(0, 0.02, 0), scale=(1.6, 1, 1.6), tags=("OutpostPad",))
     for i, (dx, dz) in enumerate(((-7, -7), (7, -7), (-7, 7), (7, 7))):
         s.model(f"OutpostPylon_{i}", "Pylon", position=(dx, 0, dz), collider=((0, 2, 0), (0.4, 2, 0.4)))
-        s.add(f"OutpostLight_{i}", LIGHT(BLUE, 8.0, 14.0), position=(dx, 4.0, dz), snap=True)
+        flag_light(s, f"OutpostLight_{i}", BLUE, 8.0, 14.0, "power.outpost", off=0.0, position=(dx, 4.0, dz), snap=True)
     # the fab bench and the generator beside the pad: where salvage becomes a part, and the part becomes power
     workbench(s, "OutpostFabBench", (-6.5, 0, 3.5), rotation=(0, 90, 0))
     generator(s, "OutpostGenerator", (6.5, 0, 3.5), rotation=(0, -90, 0))

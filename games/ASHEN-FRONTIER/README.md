@@ -32,6 +32,8 @@ The scanner (Q, or Y on a pad) lists what is near by category as words ([SALVAGE
 
 Chapter 2 (after the relay): collect three glowing seed samples out in the Verdant Array (E, counted on the HUD) and load them into the irrigation console inside the living dome (`Console.luau`), which restores the garden. The scanner lists samples and the console too.
 
+The chapters show in the world: the outpost lights come on when the generator is powered and the dome's glow rises when its console is restored (`FlagLight.luau`), and the garden inside the dome grows from saplings to full trees (`Growth.luau`); both follow a saved flag, so they hold through doors and restarts.
+
 Three interiors exist, one for each of the reference images: the Assembly Hall (the door on the Iron Wastes hall), the Living Dome (the door on the Verdant Array dome) and the Reactor Hall (the door on the Hollow Core's gate); each exit puts Kael back outside its door.
 
 Not yet: ranged combat, music and ambience, the other regions' missions (the rest of DESIGN.md section 22).

@@ -22,7 +22,9 @@
     "Scenes/CombatKill.ascene",
     "Scenes/ScanTest.ascene",
     "Scenes/SampleTest.ascene",
-    "Scenes/ConsoleTest.ascene"
+    "Scenes/ConsoleTest.ascene",
+    "Scenes/LightTest.ascene",
+    "Scenes/GrowTest.ascene"
   ],
   "collision_matrix": [],
   "default_quality": "High",
