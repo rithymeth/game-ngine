@@ -15822,6 +15822,11 @@
           "names": [
             "Relay"
           ]
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "properties": [],
+          "script": "784d5b3c-a094-41d3-b754-6750a6f8140c"
         }
       },
       "guid": "4e3d6dfa-4156-568a-8999-95d06c2ec47a"

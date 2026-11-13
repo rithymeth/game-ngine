@@ -334,6 +334,22 @@
             "type": "Pressed"
           }
         ]
+      },
+      {
+        "$v": 1,
+        "action": "NewGame",
+        "actuation": 0.5,
+        "key": "F9",
+        "modifiers": [],
+        "triggers": [
+          {
+            "$v": 1,
+            "chord_action": "",
+            "one_shot": true,
+            "time": 0.5,
+            "type": "Pressed"
+          }
+        ]
       }
     ],
     "block_lower_contexts": false,

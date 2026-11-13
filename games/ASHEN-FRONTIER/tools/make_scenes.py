@@ -11,7 +11,7 @@ import random
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from scenelib import Scene, give_hands, mule, workbench, generator  # noqa: E402
+from scenelib import Scene, give_hands, mule, workbench, generator, beacon  # noqa: E402
 import world  # noqa: E402
 import world_scene  # noqa: E402
 import interior_scene  # noqa: E402
@@ -202,6 +202,18 @@ def craft_test():
         s.save(OUT / (name + ".ascene"))
 
 
+def beacon_test():
+    """Kael 3 m from a relay: reaching it needs no key, just standing near."""
+    s = Scene()
+    s.sky(1.2)
+    s.sun(yaw=-25, pitch=-38)
+    s.model("Ground", "Ground", position=(0, 0, 0), scale=(60, 1, 60), color=SAND, snap=False)
+    s.add("GroundCollider", {"BoxCollider": {"$v": 1, "center": [0, 0, 0], "friction": 0.8, "half_extents": [30, 0.5, 30], "is_trigger": False, "report_stay": False, "restitution": 0.0}}, position=(0, -0.5, 0))
+    beacon(s, "Test_Relay", "RelayNode", (3, 0, 0), snap=False)
+    interior_scene.kael(s, (0, 0.1, 0), 0, script_guid("ThirdPersonController"))
+    s.save(OUT / "BeaconTest.ascene")
+
+
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
     model_gallery()
@@ -213,6 +225,7 @@ def main():
     salvage_test()
     mule_test()
     craft_test()
+    beacon_test()
     print("wrote", OUT)
 
 

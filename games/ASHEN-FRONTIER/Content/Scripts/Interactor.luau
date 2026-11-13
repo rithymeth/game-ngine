@@ -47,12 +47,26 @@ end
 
 -- The mission line: what to do next, from what has been done (all of it in SaveGames, so it survives a door and a restart).
 local function Objective()
-    if SaveGames.GetNumber("power.outpost", 0) > 0 then return "The outpost has power. Explore the four regions." end
-    if SaveGames.GetNumber("crafted.generator_core", 0) > 0 then return "Install the Generator Core at the generator." end
-    return "Salvage scrap and components, craft a Generator Core."
+    local function done(key) return SaveGames.GetNumber(key, 0) > 0 end
+    if not done("crafted.generator_core") then return "Salvage scrap and components, craft a Generator Core." end
+    if not done("power.outpost") then return "Install the Generator Core at the generator." end
+    if not done("mule.repaired") then return "Repair MULE-3 in the Fallen Basin wreck." end
+    if not done("mission.relay") then return "Take MULE-3 to the Distress Relay." end
+    return "Chapter 1 complete. Explore the four regions."
+end
+
+-- Everything the first chapter saves, cleared for a new game (F9).
+local PROGRESS = { "pack.scrap", "pack.components", "crafted.generator_core", "power.outpost", "mule.repaired", "mission.relay" }
+
+local function NewGame()
+    for _, key in ipairs(PROGRESS) do SaveGames.RemoveKey(key) end
+    SaveGames.DeleteSave("autosave")
+    print("New game: progress cleared")
+    Scene.Load("Scenes/OpenWorld.ascene")
 end
 
 function Interactor:OnUpdate(dt)
+    if Input.IsTriggered("NewGame") then return NewGame() end
     if not self.hud_ready then -- the HUD exists from the first frame: show the pack as it is (it may be carried over)
         self.hud_ready = UI.SetText("ScrapText", string.format("SCRAP  %d", Get("scrap")))
         UI.SetText("ComponentText", string.format("COMPONENTS  %d", Get("components")))

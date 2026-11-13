@@ -124,3 +124,10 @@ def generator(scene, name, position, rotation=(0, 0, 0), **kwargs):
     comps["ScriptComponent"] = {"$v": 1, "properties": [], "script": script_guid("PowerGenerator")}
     comps["PointLight"] = {"$v": 1, "cast_shadows": False, "color": [0.3, 0.7, 1.0], "intensity": 0.0, "range": 16.0}
     return guid_
+
+
+def beacon(scene, name, asset, position, **kwargs):
+    """A model with the Beacon script: reached when the player walks up to it (the distress relay)."""
+    guid_ = scene.model(name, asset, position=position, tags=("Relay",), **kwargs)
+    scene.entities[-1]["components"]["ScriptComponent"] = {"$v": 1, "properties": [], "script": script_guid("Beacon")}
+    return guid_
