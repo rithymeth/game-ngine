@@ -127,3 +127,35 @@ def living_dome(player_script, door_script):
     s.add("DomeEntry", {}, position=(0, 0.1, 12.0))
     kael(s, (0, 0.1, 12.0), 180, player_script)
     return s
+
+
+def reactor_hall(player_script, door_script):
+    """The reactor hall under the Hollow Core's gate: a vast 50 x 60 m, 30 m high chamber with the reactor column standing in the middle in a pool of cobalt
+    light, pillars round the walls, gantries crossing overhead, two sentinels on guard. Kael comes in at the south; the door out is behind him."""
+    import math
+    rng = random.Random(17)
+    s = Scene()
+    s.sky(0.08, color=(0.4, 0.55, 0.9))
+    s.add("Atmosphere", {"PostProcessVolume": {"$v": 1, "blend_distance": 1.0, "bloom_intensity": 0.45, "exposure_compensation": 0.7, "extents": [5.0, 5.0, 5.0], "fog_density": 0.014,
+                                                "global": True, "height_fog_base": 0.0, "height_fog_density": 0.0, "height_fog_falloff": 0.02, "priority": 0,
+                                                "saturation": 1.1, "tonemapper": "ACES", "vignette": 0.3, "weight": 1.0}})
+    W, L, H = 50.0, 60.0, 30.0
+    room(s, W, L, H, floor=(0.12, 0.13, 0.17), wall=(0.13, 0.14, 0.2))
+    s.model("Reactor", "ReactorTower", position=(0, 0, -8), snap=False, scale=(1.3, 1.1, 1.3), collider=((0, 15, 0), (6, 15, 6)))
+    s.add("ReactorLightHigh", LIGHT((0.15, 0.5, 1.0), 80.0, 60.0), position=(0, 18, -8))
+    s.add("ReactorLightLow", LIGHT((0.15, 0.5, 1.0), 40.0, 40.0), position=(0, 3, -8))
+    for i in range(10):
+        angle = i / 10 * math.tau
+        x, z = math.cos(angle) * 21, -8 + math.sin(angle) * 24
+        s.model(f"Pillar_{i}", "Pylon", position=(x, 0, z), snap=False, scale=(3.0, 6.0, 3.0), collider=((0, 6, 0), (1.3, 6, 1.3)))
+    for i, z in enumerate((-22, 6)):
+        s.model(f"Gantry_{i}", "Gantry", position=(0, 9 + i * 4, z), rotation=(0, 90, 0), snap=False, scale=(1.6, 1.0, 1.6))
+    for i, (x, z) in enumerate(((-9, 6), (9, 6))):
+        s.model(f"Guard_{i}", "SENTINEL4", position=(x, 0, z), rotation=(0, 180, 0), snap=False, tags=("Enemy",), collider=((0, 1.2, 0), (0.8, 1.2, 0.8)))
+    for i in range(6):
+        s.model(f"Debris_{i}", "ScrapPile", position=(rng.uniform(-18, 18), 0, rng.uniform(8, 22)), rotation=(0, rng.uniform(0, 360), 0), snap=False)
+    s.add("EntryLight", LIGHT(BLUE, 10.0, 14.0), position=(0, 5.0, 25))
+    door(s, "ExitDoor", (0, 0, 27.5), "Scenes/OpenWorld.ascene", door_script, spawn="ReactorHallOutside")
+    s.add("ReactorEntry", {}, position=(0, 0.1, 22.0))
+    kael(s, (0, 0.1, 22.0), 180, player_script)
+    return s

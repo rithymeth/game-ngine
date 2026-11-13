@@ -230,6 +230,20 @@ def dome(work):
         check(math.hypot(x - dx, z - dz) < 45, f"Kael comes out beside the dome ({math.hypot(x - dx, z - dz):.0f} m from it)")
 
 
+def reactor(work):
+    """Kael starts inside the reactor hall and walks out of its exit door: back in the open world, outside the Core Gate."""
+    result, text = run_player(work, "Scenes/ReactorHall.ascene", "user11", press="S", frames=500)
+    check(result.returncode == 0, f"the player runs the reactor hall and exits cleanly (exit {result.returncode})")
+    loads = re.findall(r"Loaded (Scenes/\S+\.ascene)", text)
+    check(loads[:2] == ["Scenes/ReactorHall.ascene", "Scenes/OpenWorld.ascene"], f"the reactor hall's exit door leads to the open world (loaded: {loads})")
+    check(not re.search(r"\[ERROR\]", text), "no errors on the way out of the reactor hall")
+    match = re.search(r"Player at \(([-\d.]+), ([-\d.]+), ([-\d.]+)\)", text)
+    if check(match is not None, "the player reports where Kael ended up after the reactor hall's door"):
+        x, _, z = (float(v) for v in match.groups())
+        gx, gz = world.poi_position("core_gate")
+        check(math.hypot(x - gx, z - gz) < 45, f"Kael comes out at the Core Gate ({math.hypot(x - gx, z - gz):.0f} m from it)")
+
+
 def main():
     layout()
     if failures:
@@ -244,6 +258,7 @@ def main():
             craft(work)
             chapter(work)
             dome(work)
+            reactor(work)
     finally:
         shutil.rmtree(work, ignore_errors=True)
     print(f"{len(failures)} check(s) failed" if failures else "smoke test passed")
