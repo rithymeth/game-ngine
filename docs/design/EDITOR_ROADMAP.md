@@ -4,6 +4,9 @@ The editor is the Dear ImGui shell (`aether_editor_shell`; see [the toolkit deci
 the honest gap between what it is and what an advanced, AAA-grade editor does, in the order the work should be done. It is a
 plan, not a status report: a line is only checked when it works and a test or a screenshot shows it.
 
+The measured comparison with Unreal, Unity and Godot, with the evidence and the staged plan, is
+[EDITOR_PARITY_AUDIT.md](EDITOR_PARITY_AUDIT.md); that plan sets the order of work. This page keeps the short form.
+
 ## What exists
 
 - 33 tools in one window with a command palette, searchable and grouped: Scene, Terrain, Blueprint, Material, Animation, Sequencer,

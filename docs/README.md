@@ -57,6 +57,7 @@ without a server or network connection.
 
 | Document | What it's for |
 |---|---|
+| [design/EDITOR_PARITY_AUDIT.md](design/EDITOR_PARITY_AUDIT.md) | Feature-by-feature audit of the ImGui editor against Unreal, Unity and Godot: evidence, measured gaps, and the staged plan to close them |
 
 ## Manual chapters
 

@@ -1,0 +1,377 @@
+# Editor parity audit: Aether against Unreal, Unity and Godot
+
+Audited on 2026-11-13 against `master` at `01a013e7`. Line numbers below are from that commit; they move.
+
+This is the audit the [editor roadmap](EDITOR_ROADMAP.md) did not have: a feature-by-feature comparison with the three
+editors the request names, evidence for every Aether claim, and the measured cost of the gaps that have been measured.
+It is deliberately written before any code changes, so the order of work can be argued with.
+
+## The short version
+
+The hard parts are present. There is a real renderer running inside the editor (Live Viewport), triangle-accurate picking,
+a transform gizmo with world/local spaces and snapping, one command stack, 33 tools, a CVar console with history and
+completion, a cook/package pipeline, and an installer. What is missing is the scaffolding that makes those parts feel like
+one application: a project hub, a global toolbar, document tabs with dirty state, preferences, remappable commands, a
+viewport that can show the scene lit from any angle, and a content pipeline that can import, reimport and preview.
+
+The most serious gap is not visual. **Quit discards unsaved work with no prompt** (`File > Quit` sets the shell's quit
+flag at `editor/shell/main.cpp:78`), even though `SceneDocument` already implements autosave
+(`editor/src/core/scene_document.cpp:202`) and nothing in the editor calls it. A parity audit that fixes menus before
+this would be upside down.
+
+## What is already strong
+
+- **Live editing without a reload.** Edits are patched into the running game: transforms, names, models, lights, sky,
+  wind, post-process volumes, decals, material parameters, parent changes and physics bodies. The patch is 0.3 ms at
+  2,014 entities; the reload it replaces is 5 ms to save plus 11.5 ms to load before the slower frame after it
+  (`docs/design/PERFORMANCE.md:1475`).
+- **Picking by shape, not bounding box.** A click is tested against the model's triangles up to 300,000 triangles
+  (`editor/src/world/viewport_tools.h:36`, `editor/src/world/model_bounds.h:43`), with the box as the broad phase.
+- **One undo stack for the scene.** Every reflected component edit, gizmo drag, hierarchy change and prefab placement
+  is a command (`editor/src/core/command_stack.cpp`).
+- **A real console.** It is a CVar command console with history, Tab completion and filtering
+  (`editor/src/devtools/console_panel.cpp:61-83`), not a read-only log.
+- **A complete desktop ship path.** Cook, package, manifest verification, smoke run and a tested installer
+  (`tools/package/main.cpp`, `tools/build_installer.py`, `tools/installer/`).
+
+These are worth protecting while the workflow pieces are built; several later stages reuse them rather than replacing
+them.
+
+## Scorecard
+
+No dimension is marked `Ahead`: in the areas where Aether is strongest, the reference editors do the same job at least
+as well. The verdicts are a judgement from the source audit; the evidence column is the part that is verifiable.
+
+| Dimension | Aether today | Reference editors | Verdict |
+|---|---|---|---|
+| Project lifecycle | A `New Project` tool; no launch hub; `RecentProjects` exists but only its crash-report directory is used | Project Browser/templates (Unreal), Unity Hub, Project Manager (Godot) | Missing |
+| Menus and commands | File, Edit, Tools, View; no Asset, Actor, Window or Help menus; command palette exists but has no binding | Complete menu bars plus searchable asset/command surfaces in all three | Missing |
+| Preferences and theme | One hardcoded dark theme; no settings file, theme choice or UI scale | Editor Preferences (Unreal, Unity), Editor Settings/themes (Godot) | Missing |
+| Shortcut handling | Hardcoded `ImGuiKey` checks plus `"Ctrl+Shift+B"` strings in extensions; no remap or conflict detection | Remappable shortcuts and conflict reporting in all three | Missing |
+| Documents and layout | One scene document; one tool shown at a time (popped-out tools are separate windows); only the open tool and ImGui docking are remembered | Multi-document tabs, per-asset tabs, layout presets | Partial |
+| Data safety on exit | Quit is immediate; autosave exists but is unwired; unsaved-scene prompts exist for New/Open only | Close/quit prompts and recoverable autosave in all three | Missing |
+| Hierarchy | Tree with name filter, drag reparent, Ctrl multi-select, create/duplicate/delete/copy/paste | Outliner/Scene dock with visibility, lock, icons, multi-edit | Partial |
+| Viewport | Wireframe overlay, orbit camera, ±20 m grid; Live Viewport is a separate rendered tool | Lit/wireframe modes, fly camera, orthographic views, bookmarks, show flags | Partial |
+| Selection | Click, Ctrl toggle, triangle picking; no marquee, click-through or select-all | Marquee, click-through, select-all/invert in all three | Partial |
+| Transform | Move/rotate/scale, world/local, per-mode snap, plane handles for Move, quaternion fields | Pivot/center modes, plane and uniform scale handles, Euler entry, numeric transform | Partial |
+| Content browser | Flat folder list, name search, rename/move, references, VCS badges, drag sources; no thumbnails, filters, multi-select or import UI | Thumbnails, type filters, multi-select, import/reimport, create/duplicate/delete | Partial |
+| Inspector | Every reflected component, add/remove with search, prefab revert, asset drop targets; single-object only | Multi-object editing, property search, reset/copy/paste, mixed values | Partial |
+| Play in editor | Play/Pause/Resume/Stop in the Scene panel; a separate Live Viewport with **Run game**; `Step()` exists and is unreachable | Play/Simulate, Pause, Step, Eject/Possess in the viewport | Partial |
+| Asset editors | 33 tools with uneven document models: some save and undo, terrain/foliage have neither, localization has no undo | One tab/document model, save and undo everywhere | Partial |
+| Build and package | Build and Package tool, `aether_package` CLI, verified installers | Build/package from the main toolbar with progress | At parity for Windows desktop |
+| Diagnostics | Console filter/history/completion, profiler, crash reports; error overlay widget exists but is wired nowhere | Message log linked to objects, console severity filters, frame debugger, profiler | Partial |
+| Settings, accessibility, localization | No UI scale, keyboard-navigation pass, colorblind check or editor localization | UI scale and accessibility options in all three | Missing |
+| Collaboration | VCS status badges and stage-all commit | Per-file source control, scene/asset diffs, review workflows | Partial |
+
+## Shell and project workflow
+
+| Capability | Unreal Editor | Unity Editor | Godot Editor | Aether today | Evidence | Gap |
+|---|---|---|---|---|---|---|
+| Launch and project selection | Project Browser with templates and recent projects | Unity Hub, templates, recent projects | Project Manager, templates, import/scan | `New Project` is one of 33 tools; no launch surface | `editor/src/workspace/editor_workspace.cpp:340` | Missing |
+| Recent projects | In the project browser | In the Hub | In the Project Manager | Class exists; only `DefaultCrashReportDir()` is used | `editor/src/core/recent_projects.cpp:13`, `editor_workspace.cpp:275` | Missing |
+| Main toolbar | Save/undo/redo, transform tools, play controls, build/package, settings | Transform tools, play controls, layers, layout | Transform tools, play controls, scene tabs | None; controls live in each tool's own toolbar | `editor/shell/main.cpp:74-97` | Missing |
+| Menus | File, Edit, Window, Tools, Build, Help | File, Edit, Assets, GameObject, Component, Window, Help | Scene, Project, Debug, Editor, Help | File, Edit, Tools, View only | `editor/shell/main.cpp:74-88`, `editor_workspace.cpp:1044-1094` | Missing |
+| Document tabs | Level and asset editors as tabs | Scene, Game, asset editors as tabs | Scenes and scripts as main-screen tabs | One scene; one hub tool visible; popped-out tools | `editor/src/world/scene_panel.h:88` | Partial |
+| Layout presets | Saved layouts, per-user | Layouts per project/user | Editor layouts | Only "Reset layout"; panel positions in ImGui ini | `editor/shell/main.cpp:83-85`, `:201-214` | Missing |
+| Preferences | Editor Preferences, project settings, plugins | Preferences, Project Settings, Package Manager | Editor Settings, Project Settings, Input Map, plugins | None | — | Missing |
+| Theme and UI scale | Theme, UI scale, DPI awareness | Skin, UI scaling | Editor themes, editor scale | One dark theme; `ApplyEditorTheme(font_size)` has no caller-supplied setting | `editor/src/ui/editor_theme.cpp:33`, `main.cpp:189` | Missing |
+| Shortcut mapping | Remappable, conflict reporting | Shortcuts manager | Remappable input map/editor shortcuts | Hardcoded keys; extensions parse chord strings; no conflict view | `editor/src/ui/extensions.cpp:225-261` | Missing |
+| Command palette | Command palette in recent versions | Search (Ctrl+K) | Quick Open | Implemented, opened by no key or menu item | `editor/src/workspace/editor_workspace.h:107`, `editor_workspace.cpp:1194` | Missing |
+| Native file dialogs | Native open/save/import | Native | Native | Typed paths only; no `GetOpenFileName`/`IFileDialog` anywhere in `editor/` | `editor/src/world/scene_panel.cpp:202`, `:209-224` | Missing |
+| Unsaved work on exit | Prompt per document | Prompt; play-mode changes discarded with warning | Prompt | Quit immediate; only New/Open prompt | `editor/shell/main.cpp:78`, `scene_panel.cpp:70-96` | Missing |
+| Autosave/recovery | Autosave and recovery | Autosave and recovery | Autosave backups | `SaveAutosave`/`LoadAutosave` exist and are unused | `editor/src/core/scene_document.cpp:202-226` | Missing |
+| Status bar | Project, source control, progress, PIE state | Scene, play state, console counts | Debug state, network, version | Backend name, frame time, docking hint | `editor/shell/main.cpp:92-97` | Partial |
+
+## World editing, viewport and transforms
+
+| Capability | Unreal Editor | Unity Editor | Godot Editor | Aether today | Evidence | Gap |
+|---|---|---|---|---|---|---|
+| View modes | Lit, Unlit, Wireframe, Buffer Visualization, show flags | Shaded, Wireframe, Shaded Wireframe, draw modes | Perspective/orthogonal, debug draw modes | Wireframe boxes and lines only; rendered picture only in Live Viewport | `editor/src/world/scene_view_panel.cpp:70-140` | Partial |
+| Projection | Perspective and orthographic (top/front/side) | Perspective and orthographic, 2D/3D toggle | Perspective and orthogonal, 3D/2D screens | Perspective only | `editor/src/world/scene_view.cpp:41` | Missing |
+| Camera navigation | Fly (WASD), orbit, pan, focus, speed control, bookmarks | Fly/orbit/pan, focus, speed, bookmarks | Fly/orbit/pan, focus, view menu | Right-drag orbit, middle/shift pan, wheel zoom, F focus | `scene_view.cpp:64-79`, `scene_view_panel.cpp:26-45` | Partial |
+| World extent | Large-world grid, snap to grid, world partition | Grid with configurable size | Grid with configurable size | Grid ±20 m; zoom 0.5–1000 m | `scene_view_panel.cpp:78-86`, `scene_view.cpp:54` | Missing |
+| Viewport stats | FPS, draw calls, triangles, memory | Stats overlay | Monitor/debug overlays | FPS and entity count only in Live Viewport | `editor/src/host/live_viewport_panel.cpp:224` | Partial |
+| Selection | Click, Ctrl, marquee, select-all, click-through | Click, Ctrl, marquee, select-all, scene picking | Click, Ctrl, box select, select-all | Click, Ctrl toggle; no marquee, click-through or select-all | `editor/src/world/viewport_tools.cpp:62-69` | Partial |
+| Picking accuracy | Rendered object ID / physics | Rendered object ID | Rendered object ID | Bind-pose triangles (≤300k), else box; no animated/alpha-accurate pick | `editor/src/world/model_bounds.h:43`, `scene_view.cpp:126-206` | Partial |
+| Transform gizmo | Translate/rotate/scale, screen/plane handles, pivot modes | Translate/rotate/scale/rect, pivot/center, plane and uniform handles | Translate/rotate/scale, local/global, snap | Move/rotate/scale, world/local, plane Move handles, snap per mode | `editor/src/world/viewport_tools.h:16-56`, `scene_view.cpp:427` | Partial |
+| Pivot | Center of selection or each actor's pivot | Center/Pivot toggle | Local/global transform pivot | First selected entity's origin only | `viewport_tools.cpp:126-140` | Partial |
+| Numeric transform | Location/rotation/scale fields, relative/absolute | Vector fields, Euler rotation | Transform fields, Euler | Reflected Transform; quaternion fields, no Euler presentation | `editor/src/ui/reflected_inspector.cpp` | Partial |
+| Multi-edit undo | One transaction per user action | One undo entry per action | One action per undo | Delete/duplicate/paste record one entry per entity | `editor/src/world/scene_panel.cpp:146-163` | Partial |
+| Play state in the viewport | PIE border, pause tint, banner, eject | Play-mode tint, Game view, pause | Embedded game, pause overlay | No viewport PIE; `Run game` checkbox in Live Viewport | `live_viewport_panel.cpp:216` | Partial |
+
+## Content browser, inspector and hierarchy
+
+| Capability | Unreal Editor | Unity Editor | Godot Editor | Aether today | Evidence | Gap |
+|---|---|---|---|---|---|---|
+| Browser presentation | Grid/list, thumbnails, collections | Grid/list, thumbnails, labels | Grid/list, thumbnails | List of names only | `editor/src/content/content_browser_panel.cpp:122-235` | Partial |
+| Search and filters | Name, type, path, collections | Name, type, labels, `t:` queries | Name, type, path | Name substring in the current listing | `content_browser_panel.cpp:138` | Partial |
+| Multi-select and file operations | Multi-select, duplicate, delete, rename, move, fix up redirectors | Multi-select, duplicate, delete, rename, move | Multi-select, duplicate, delete, rename, move | Single selection; rename, move, new folder | `content_browser_panel.cpp:207-215` | Partial |
+| Thumbnails | Rendered asset thumbnails | Rendered asset thumbnails | Rendered resource thumbnails | None; the engine's thumbnail API is unused by the editor | `engine/include/aether/assets/content_browser.h:121-127` | Missing |
+| Import and reimport | Import dialog, per-asset import settings, reimport | Import settings in the Inspector, reimport | Import dock, per-asset import settings | No importer UI; cook imports assets | No `ImportSettings`/reimport UI in `editor/` | Missing |
+| Open an asset | Double-click opens its editor | Double-click opens its editor | Double-click opens its editor | Openers registered for `.dialogue`, `.astrings`, `.asav`, `.asettings` only | `editor_workspace.cpp:155`, `:651-657`, `:753-762` | Partial |
+| Create assets | Right-click create menu for every asset type | Create menu for every asset type | Create New menu | New folder; entities are created in the hierarchy; no create-asset menu in the browser | `content_browser_panel.cpp:212-215` | Partial |
+| References | Reference viewer and dependency graph | Find references/dependencies | Resource dependencies | References window (referencers/references) | `content_browser_panel.cpp:351` | Partial |
+| Inspector coverage | Every reflected property, categories | Every serialized field, custom editors | Every exported property | Every reflected component, categories, tooltips, prefab revert | `editor/src/ui/reflected_inspector.cpp:445` | At parity |
+| Property search | Details search | Inspector search | Property search | Component filter only | `reflected_inspector.cpp:445` | Partial |
+| Multi-object editing | Shared values, mixed state | Shared values, mixed state | Multi-node editing | First selected entity only | `editor/src/world/scene_panel.cpp:436-448` | Missing |
+| Copy/reset values | Copy/paste values, reset to default | Copy/paste values, reset | Copy/paste, revert | Prefab revert only | `reflected_inspector.cpp:153` | Partial |
+| Hierarchy entity controls | Visibility, lock, folders, icons | Active toggle, icons, prefab state | Visibility, lock, icons | Name, selection, reparent, context menu; no visibility/lock | `scene_panel.cpp:330-430` | Partial |
+| Hierarchy search | By name, type, path | By name and type | By name and type | Name substring; filtered rows lose the tree | `scene_panel.cpp:379-416` | Partial |
+
+## Play in editor and diagnostics
+
+| Capability | Unreal Editor | Unity Editor | Godot Editor | Aether today | Evidence | Gap |
+|---|---|---|---|---|---|---|
+| Enter play | Play, Simulate, selected viewport or new window | Play, pause, step in the main toolbar | Play scene/main, pause, step | Play/Pause/Resume/Stop in the Scene tool only | `editor/src/world/scene_panel.cpp:248-260` | Partial |
+| Pause and step | Pause and single-frame step | Pause and step | Pause and step | Pause works; `Step()` exists with no caller | `editor/src/core/play_session.cpp:44`, no UI caller | Partial |
+| Simulate vs play | Simulate runs without possessing a pawn | Play is the only mode | Play scene/main | `Run game` in Live Viewport is closest | `live_viewport_panel.cpp:216` | Partial |
+| Eject/possess camera | Eject and possess | Scene/Game view switching | Remote scene tree while running | None | — | Missing |
+| Play in the rendered viewport | Yes, inside the level viewport | Yes, Game view | Yes, embedded game | Separate Live Viewport tool; Scene View stays wireframe | `editor/shell/main.cpp:197`, `scene_view_panel.cpp:70` | Partial |
+| Stop behavior | Restores editor state | Restores editor state | Restores editor state | Live Viewport keeps running until stopped/reloaded; scene PIE discards edits | `scene_panel.cpp:260` | Partial |
+| Console filters | Categories, verbosity, search, source links | Log/error/warning filters, collapse, clear on play | Output, errors/warnings, search | One substring filter; no severity/category/collapse | `editor/src/devtools/console_panel.cpp:83` | Partial |
+| Messages linked to objects | Message Log links to actor/asset | Console double-click opens source/asset | Errors link to script line/node | Console text only; error overlay widget unused | `editor/src/ui/error_overlay.cpp:10` (no caller) | Missing |
+| Profiler/debugger | Insights, GPU Visualizer, stat commands | Profiler, Frame Debugger, Memory Profiler | Profiler, Monitors, debugger with breakpoints | Profiler tool, net profiler, crash reports | `editor/src/devtools/`, `editor/src/net/` | Partial |
+
+## Asset editors, build and platform
+
+| Capability | Unreal Editor | Unity Editor | Godot Editor | Aether today | Evidence | Gap |
+|---|---|---|---|---|---|---|
+| One document model | Asset editors share tabs, save, undo | Asset editors share Inspector/undo | Resource editors share tabs/undo | Each tool owns its document and behavior | `editor/src/workspace/editor_workspace.cpp:305-347` | Partial |
+| Save/dirty per asset | Yes | Yes | Yes | Blueprint, material, animation, audio, graph editors save; terrain and foliage do not | `editor/src/world/world_panels.cpp` (no save/load) | Partial |
+| Undo per asset | Yes | Yes | Yes | Most graph editors have undo; localization does not | `editor/src/loc/localization_panel.cpp:66` | Partial |
+| Live material preview | Material editor in viewport | Shader Graph preview | Shader editor preview | Material graph not drawn by the player; per-entity overrides show live | `docs/releases/v0.30.0.md` (Materials) | Partial |
+| Build/package | Toolbar build, cook, package, launch | Build Settings, Build And Run | Export templates, one-click export | Build and Package tool plus `aether_package` CLI; no toolbar action | `tools/package/main.cpp`, `editor/src/packaging/` | At parity (desktop) |
+| Plugin management | Plugin browser, enable/disable | Package Manager | Project Settings > Plugins, Asset Library | Plugins tool; no enable/disable workflow documented in-editor | `editor_workspace.cpp:343` | Partial |
+| Help and documentation | Help menu, docs, console `help` | Help menu, manual, API docs | Help menu, class reference | No Help menu; console has `help` | `editor/shell/main.cpp:74-88` | Missing |
+| Editor localization | Yes | Partial/localizable | Yes | No; UI strings are literals | source audit | Missing |
+
+## The gaps that cost the most, with numbers
+
+These are the gaps where "it is missing" can be given a cost, or where the measured number changes the priority.
+
+1. **Iteration latency is dominated by the frame, not by the edit.** At 960x540 with 2,014 entities, patching an edit
+   costs 0.3 ms and the next frame 76 ms; the reload route costs 116 ms end to end. The Live Viewport caps itself at
+   30 frames a second (`editor/src/host/live_viewport_panel.h:60`). All of these numbers are from lavapipe, the CPU
+   Vulkan driver; the same scene on a real GPU was not measured (`docs/design/PERFORMANCE.md:1475-1512`). Until it is,
+   "the editor is slow" cannot be separated from "this machine has no GPU driver".
+2. **Picking is linear in triangles.** 0.514 ms for an 81,920-triangle model, about 6 ns per triangle, so the 300,000
+   triangle cap is about 2 ms per pick — and the Scene View picks every frame for the hover outline
+   (`docs/design/PERFORMANCE.md:1514`). A bounding-volume tree is not needed yet; it becomes needed if the cap rises or
+   several large models overlap.
+3. **The viewport cannot show a large world.** The grid is ±20 m and the orbit distance is clamped to 1,000 m
+   (`scene_view_panel.cpp:78`, `scene_view.cpp:54`). The engine has large-world and world-partition systems; the
+   wireframe view cannot frame them.
+4. **Only four asset extensions have an opener.** `.dialogue`, `.astrings`, `.asav` and `.asettings`
+   (`editor_workspace.cpp:155`, `:651`, `:753`). A `.amat`, `.abp`, `.avfx`, `.acue`, `.aui`, `.abt` or `.aseq`
+   double-clicked in the Content Browser does nothing, although an editor for it exists as a tool.
+5. **Multi-entity actions are not one undo step.** `DeleteSelection` and `DuplicateSelection` call the per-entity
+   destroy/duplicate, so ten selected entities are ten undo entries (`scene_panel.cpp:146-163`). The fix is in the
+   command layer, not the UI.
+6. **Step is implemented and unreachable.** `PlaySession::Step()` exists (`play_session.cpp:44`) and no editor code calls
+   it or `ShouldSimulate()`. This is the cheapest parity win in the audit: one button and one caller in the toolbar.
+7. **The command palette and the error overlay are built but unused.** The palette is a public flag with no binding
+   (`editor_workspace.h:107`); the error overlay has no caller (`error_overlay.cpp:10`). Both are finished enough to
+   wire rather than redesign.
+8. **Unsaved work is lost on quit.** `Quit` exits immediately (`main.cpp:78`); autosave and recovery exist in the
+   document layer and are unused (`scene_document.cpp:202-226`). This is a correctness gap, and it is why it comes
+   before visual parity in the plan.
+
+## The staged plan
+
+Sizes are relative for one engineer familiar with the code: **S** up to 3 days, **M** 1–2 weeks, **L** 3+ weeks. They
+sequence the work; they are not release commitments.
+
+The order is by dependency and workflow leverage, not by how visible a feature is. Stage 0 exists because every later
+stage needs command identity, settings and a document contract; building the toolbar first would hardcode a second set
+of shortcuts and a second notion of "the open document".
+
+### Stage 0 — Safety and shared services (M)
+
+Outcome: no work is lost on exit, and later stages have one place to register a command, a setting and a document.
+
+- Prompt on quit for every dirty document; wire the existing autosave (interval in settings) and offer recovery on the
+  next launch.
+- `EditorSettings` file under `%APPDATA%/Aether` (versioned JSON): theme, UI scale, camera speed, autosave interval,
+  recent projects, last project. Reuse `RecentProjects` instead of its crash-directory-only use.
+- Command registry: stable id, label, default chord, context, enabled predicate. Menus, the palette and the shortcut
+  poller are generated from it. Startup test rejects duplicate ids and conflicting chords.
+- `EditorDocument` contract: path, dirty, save, save-as, undo stack and label, close prompt. The scene document adopts
+  it in this stage; the other asset documents migrate in Stage 6. The shell uses the contract for tabs and quit.
+- Notification service: toasts (info/success/warning/error), a Messages panel, and the existing error overlay wired to
+  it. Errors carry an optional entity/asset/file target.
+- Native open/save dialogs behind one small interface, so every path field and save action can use them.
+
+Gate: settings round-trip test; duplicate-command and chord-conflict tests; quit-with-dirty-document test (headless
+host); autosave recovery test; a headless screenshot at 100% and 150% scale.
+
+### Stage 1 — Shell, project hub and workflow (M)
+
+Outcome: the editor opens like an application, not a tool launcher.
+
+- Project hub on launch (open, create from template, recent, remove missing), reachable from File > Open Project.
+- Main toolbar: Save, Undo/Redo, transform mode, space and snap, Play/Pause/Step/Stop, Build/Package, Settings. Step
+  wires the existing `PlaySession::Step()`.
+- Menu bar completion: File, Edit, Asset, Actor, Window, Help. Window owns layout presets; Help holds About (version,
+  commit), documentation, API reference and the shortcut cheat sheet.
+- Document tabs for scenes and asset editors, with dirty dots, middle-click close, close-others and "reopen focuses the
+  existing tab".
+- Status bar: project name, scene name, dirty state, PIE state, active background job, source-control branch.
+- Preferences dialog driven by `EditorSettings`: theme, UI scale, autosave, camera speed, font size.
+- Bind the command palette (`Ctrl+Shift+P`) and the shortcut cheat sheet; generate both from the registry.
+- Layout presets: Default, Level design, Scripting, Animation, plus save-current-as. Presets are layout files, not
+  hardcoded splits.
+- Replace typed scene paths in the Scene toolbar with the native Open/Save dialogs and a recents list.
+
+Gate: launch with no project shows the hub; recent-project round-trip; tab dirty-state and close prompts; preset restore
+test; shortcut-conflict test; toolbar screenshot with PIE idle/playing/paused; Step advances exactly one frame in a
+headless play session.
+
+### Stage 2 — Viewport and selection parity (L)
+
+Outcome: the Scene View can be the main 3D view for everyday work; the Live Viewport becomes the lighting check.
+
+- Shaded mode in the Scene View by reusing the Live Viewport's offscreen renderer at editor resolution; Wireframe,
+  Unlit and Normals as cheap alternatives. Show flags for grid, gizmos, bounds, helpers and collision.
+- Orthographic top/front/side views with independent zoom, plus a perspective/ortho toggle; keep the orbit camera as
+  the default.
+- Fly camera (WASD + Q/E, right-drag look, speed modifier, speed shown briefly), focus by selection bounds (not origin),
+  and camera bookmarks.
+- Infinite fading grid with metre/decametre lines and axis labels; remove the ±20 m and 1,000 m framing limits.
+- Selection: marquee (replace/add/subtract), Alt click-through, Ctrl+A, invert; keep Ctrl toggle.
+- Transform: pivot mode (first selected origin vs selection centre), uniform-scale handle, plane handles for Scale,
+  Euler rotation entry in the inspector, gizmo screen-constant size.
+- Grouped undo: one command per user action for multi-delete, multi-duplicate, multi-paste and multi-transform.
+
+Gate: camera/projection unit tests; marquee hit tests; multi-edit undo-count test; headless screenshots for each view
+mode and ortho view; picking regression test at the 300k cap.
+
+Dependency: shaded mode depends on the Live Viewport's offscreen path, which already exists. Material-graph preview
+waits for the renderer work in Stage 6.
+
+### Stage 3 — Content browser and importer parity (L)
+
+Outcome: assets can be found, judged, imported, fixed and opened without leaving the editor.
+
+- Grid view with thumbnails using the existing `AssetThumbnail` API, cached on disk under `Saved/Thumbnails` and
+  invalidated by source timestamp. Render thumbnails asynchronously so the browser does not stall.
+- Multi-select and box-select; create asset, duplicate, delete, rename inline, move; operations are one undo step where
+  the asset database supports undo, and otherwise one grouped transaction.
+- Type filter chips, folder scope (current folder vs subtree), breadcrumbs, sortable columns, and a search syntax for
+  type/path.
+- Import settings drawer persisted in `.ameta`: per-importer options, reimport, and drag files from Explorer to import.
+- An opener for every asset type that has an editor: material, blueprint, animation graph/clip, audio cue/mixer, UI,
+  behavior tree, sequencer, VFX. A missing opener must say so instead of doing nothing.
+- Reference viewer upgrades: referencers vs dependencies, find usages, and a broken/missing asset list.
+- Reveal in Explorer and copy path in the context menu.
+
+Gate: thumbnail cache test (second open does not re-render unchanged assets); reimport identity test; multi-select
+operations and their undo count; headless open of every registered asset type; importer settings round-trip.
+
+Dependency: Stage 0's document contract and Stage 1's tabs, so opening an asset has somewhere to put it.
+
+### Stage 4 — Inspector and hierarchy parity (M)
+
+Outcome: editing many objects and finding a property are as fast as in the reference editors.
+
+- Multi-object editing: show values shared by all selected objects, show a mixed state where they differ, apply an edit
+  to all as one undo step. At minimum, transforms, names and the components all selected objects share.
+- Property search across all components; reset property/component to default; copy/paste component values.
+- Metadata for ranges, sliders, colour pickers and units, so reflected fields present well without per-type UI code.
+- Hierarchy: visibility and lock toggles, type icons, prefab-instance state, multi-drag reparent, and a search that
+  keeps ancestors visible and supports `type:` and `name:` tokens.
+- Prefab overrides shown at the instance level, with revert per property (revert-to-prefab exists; it needs the
+  granular view).
+
+Gate: mixed-value semantics tests; edit-across-selection undo test; reset/copy/paste tests; hierarchy filter tests;
+screenshot of a multi-selection inspector.
+
+### Stage 5 — Play in editor and diagnostics parity (L)
+
+Outcome: testing the game and finding the cause of a failure both happen in the editor.
+
+- PIE in a rendered viewport: Play, Simulate, Pause, Step and Stop from the main toolbar; the Scene View or Live
+  Viewport can host the picture (the offscreen path exists). Step is already implemented.
+- PIE affordances in the playing viewport: border, pause tint and banner, so the state is visible without reading the
+  Scene panel.
+- Eject/possess camera, and a clear return to the editor camera and selection on Stop.
+- PIE console tab with severity/category filters, collapse, clear-on-play and source links; runtime errors surface in
+  the error overlay and Messages with an entity/asset target.
+- Stop restores the pre-play document and camera; the "edits are discarded" state is shown before play, not after.
+- Runtime stats overlay: frame time, draw calls, triangles, entities, physics bodies, script time.
+
+Gate: N-step determinism test (the same state after N steps); stop-restores-document test; error-to-entity link test;
+console filter tests; headless screenshot of PIE idle/paused/playing.
+
+Dependency: Stage 2's view modes and Stage 0's notification/error service. A frame debugger and GPU capture are engine
+work and are explicitly not part of this stage.
+
+### Stage 6 — Asset documents, build and extensibility parity (L)
+
+Outcome: every asset editor behaves the same, and shipping is a toolbar action.
+
+- Put every asset editor on the Stage 0 document contract: save, save-as, dirty, undo, close prompt. Terrain and foliage
+  gain save/load; localization gains undo; the Save Inspector states clearly that it is read-only where it is.
+- Material graph preview in the viewport. This is renderer work (the player does not draw `.amat` graphs), not a UI
+  task; keep it behind a capability check so the editor degrades honestly when the renderer cannot do it.
+- Build/Package in the main toolbar with progress, cancel and an output log; run the packaged game from the same menu.
+- Plugin manager: enable/disable, load errors, restart prompt; document the extension API beside it.
+- Importer and project settings panels that persist to project files rather than only to sample documents.
+
+Gate: open/save/undo tests for every asset document; package-from-toolbar test that verifies the manifest; plugin
+enable/disable startup test.
+
+### Stage 7 — Accessibility, localization and collaboration (M)
+
+Outcome: the editor is usable beyond the default theme and keyboard layout, and changes are reviewable.
+
+- UI scale from 75% to 200%, keyboard navigation for the main panels, focus visibility, and contrast checks.
+- Colorblind-safe axis and pin colours, with the shape encoding already specified for Blueprint pins
+  (`docs/design/EDITOR_UI.md:482-495`).
+- Editor localization through the same string table system the games use; no literal UI strings.
+- Source control: per-file stage/commit, diff for scene and asset documents, and a review-friendly change list. Real-time
+  multi-user editing is out of scope.
+
+Gate: screenshot matrix at 100/150/200%; keyboard-only workflow script; localization extraction check (no new literals);
+scene diff test.
+
+## How to tell a stage is done
+
+A stage is done when its gate runs in `ctest` where it can be automated, the screenshot checks pass, and the matching
+workflow can be completed in the editor by hand (editor tests are already part of `aether_tests`,
+`tests/CMakeLists.txt:71-81`):
+
+1. Launch, open a project, open a scene, place a model and a light, play, pause, step, stop, save, quit without losing
+   work.
+2. Find a broken asset from an error message, open it, fix it, reimport, and see the fix in the viewport.
+3. Change a material parameter and see it in the rendered view without a reload.
+4. Select ten objects, transform them together with snapping, undo once, and get all ten back.
+5. Build, package and run the game from the editor.
+
+These are the acceptance scripts; they should be written down as manual test steps and, where the host allows, driven
+headlessly with `AETHER_EDITOR_MAX_FRAMES` and `AETHER_EDITOR_SCREENSHOT` (`editor/shell/main.cpp:139-141`). Until
+they are timed, "parity" is a feature count, not a workflow claim.
+
+## Sequencing rationale and risks
+
+- **Why the shell before the viewport.** Every feature is discovered through the shell. A shaded viewport that cannot be
+  reached from a project hub, cannot be saved, and loses work on quit does not shorten a task.
+- **Why content before inspector multi-edit.** The content pipeline is where assets enter; multi-edit improves work that
+  already has assets. Both are needed, but the pipeline blocks more tasks.
+- **Why PIE after the viewport.** The renderer path and camera work are shared; building PIE first would duplicate them.
+- **The main risk is scope drift into engine work.** Shaded view modes, material-graph preview, frame debugging and
+  large-world streaming are renderer/engine features with an editor surface. Each stage above states which side owns
+  the work; do not let an editor-stage estimate absorb an engine project.
+- **The second risk is a second command system.** Extensions already register chords as strings
+  (`editor/src/ui/extensions.cpp:225-261`). Stage 0 must move them onto the registry rather than adding a parallel
+  shortcut path beside them.
+- **The third risk is measuring the wrong machine.** The Live Viewport numbers above are from a CPU Vulkan driver. Do
+  not tune the editor against them; record a real-GPU baseline before setting frame budgets.
+
+## Not in this plan
+
+- Replacing Dear ImGui. The toolkit decision is made; see [EDITOR_UI_TOOLKIT_ADR.md](EDITOR_UI_TOOLKIT_ADR.md).
+- Multi-viewport floating panels across monitors. It is useful, but it is platform work that pays off only after the
+  single-window workflow is complete.
+- Real-time multi-user editing, an asset marketplace, and AAA content pipelines. These are separate products.
+- Reimplementing engine systems inside the editor. Previews and PIE use the real renderer and the real runtime.
+- Copying a reference editor's visual style. The target is the workflow: the same job in the same number of steps.
