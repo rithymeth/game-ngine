@@ -151,7 +151,8 @@ def salvage(work):
     check("Salvaged Test_Crate: +2 components (pack: 0 scrap, 2 components)" in text, "pressing Interact beside a crate takes it (+2 components)")
     check(not re.search(r"\[ERROR\]", text), "no errors while salvaging")
     result, text = run(60)
-    check("Salvaged Test_Crate: +2 components (pack: 0 scrap, 4 components)" in text, "the pack was saved: the next run starts with the 2 components of the first")
+    check("Pack at start: 0 scrap, 2 components" in text, "the pack was saved: the next run starts with the 2 components of the first")
+    check("Salvaged Test_Crate" not in text, "a crate that was taken stays taken in the next run (no farming by reloading)")
 
 
 def mule(work):
