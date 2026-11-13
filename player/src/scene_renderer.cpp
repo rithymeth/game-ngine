@@ -1470,13 +1470,24 @@ struct SceneRenderer::Impl {
         hud_pipeline = device.CreatePipeline(hud_desc, swap_chain);
 
         std::vector<u8> font_bytes;
-        if (package.ReadContent("fonts/Roboto-Medium.ttf", font_bytes)) {
+        // Projects are not required to carry the legacy AETHER-01 Roboto
+        // payload. Prefer it when present, then use a Khmer-capable project
+        // font so a localized game doesn't start with an invisible UI.
+        std::string hud_font_path = "fonts/Roboto-Medium.ttf";
+        if (!package.ReadContent(hud_font_path, font_bytes)) {
+            hud_font_path = "Fonts/NotoSansKhmer-Regular.ttf";
+            (void)package.ReadContent(hud_font_path, font_bytes);
+        }
+        if (!font_bytes.empty()) {
             std::string error;
             hud_font = ui::SdfFont::FromMemory(std::move(font_bytes), {}, &error);
             if (hud_font) {
-                // Printable ASCII: the built-in HUD uses capitals and digits, and a game's own UI layouts any text. (The atlas is
-                // uploaded once, here; glyphs outside this set would draw as blanks.)
+                // The font atlas is uploaded once here, so preload the compact
+                // shared Latin UI alphabet and Evervale's Khmer title strings.
+                // Projects may still supply Roboto for the legacy HUD; the
+                // fallback Noto font makes the localization path usable.
                 hud_font->Prewarm(" !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~");
+                hud_font->Prewarm("អេវើវេលការចាប់ផ្តើមថ្មីនៅជ្រលងភ្នំដ៏រស់រវើកចាប់ផ្តើមដំណើរបន្តភាសាអង់គ្លេសខ្មែរកសិដ្ឋានរបស់អ្នកល្បឿនរឿងរ៉ាវ");
                 const auto& atlas = hud_font->AtlasPixels();
                 std::vector<u8> rgba(atlas.size() * 4);
                 for (usize i = 0; i < atlas.size(); ++i) {
@@ -1496,11 +1507,11 @@ struct SceneRenderer::Impl {
                     hud_font.reset();
                 }
             } else {
-                AETHER_LOG_WARN("PlayerRenderer", "Couldn't load the AETHER-01 HUD font: %s", error.c_str());
+                AETHER_LOG_WARN("PlayerRenderer", "Couldn't load UI font '%s': %s", hud_font_path.c_str(), error.c_str());
             }
         } else {
-            if (legacy_hud) AETHER_LOG_WARN("PlayerRenderer", "Cooked package has no fonts/Roboto-Medium.ttf; HUD text is unavailable");
-            else AETHER_LOG_INFO("PlayerRenderer", "Cooked package has no fonts/Roboto-Medium.ttf; UI text is unavailable");
+            if (legacy_hud) AETHER_LOG_WARN("PlayerRenderer", "Cooked package has no Roboto or Khmer fallback font; HUD text is unavailable");
+            else AETHER_LOG_INFO("PlayerRenderer", "Cooked package has no Roboto or Khmer fallback font; UI text is unavailable");
         }
     }
 
