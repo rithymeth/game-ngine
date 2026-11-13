@@ -128,7 +128,9 @@ Input table
 Input.GetAxis1D function
 Input.GetAxis2D function
 Input.GetAxis3D function
+Input.GetPointerPosition function
 Input.HasHapticOutput function
+Input.IsPointerDown function
 Input.IsTriggered function
 Input.OnCanceled function
 Input.OnCompleted function
