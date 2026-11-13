@@ -230,6 +230,21 @@ def combat_tests():
         s.save(OUT / (name + ".ascene"))
 
 
+def scan_test():
+    """ScanTest: Kael on a floor with a salvage crate 5 m north-east, the fab bench 9 m south and a weak sentinel 30 m west (out of its notice): a scan lists
+    them by category with distance and direction."""
+    s = Scene()
+    s.sky(1.2)
+    s.sun(yaw=-25, pitch=-38)
+    s.model("Ground", "Ground", position=(0, 0, 0), scale=(100, 1, 100), color=SAND, snap=False)
+    s.add("GroundCollider", {"BoxCollider": {"$v": 1, "center": [0, 0, 0], "friction": 0.8, "half_extents": [50, 0.5, 50], "is_trigger": False, "report_stay": False, "restitution": 0.0}}, position=(0, -0.5, 0))
+    s.model("Test_Crate", "SalvageCrate", position=(3.5, 0, -3.5), tags=("Salvage",), snap=False)
+    workbench(s, "Test_FabBench", (0, 0, 9), snap=False)
+    sentinel(s, "Test_Sentinel", (-30, 0, 0), snap=False)
+    interior_scene.kael(s, (0, 0.1, 0), 0, script_guid("ThirdPersonController"))
+    s.save(OUT / "ScanTest.ascene")
+
+
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
     model_gallery()
@@ -243,6 +258,7 @@ def main():
     craft_test()
     beacon_test()
     combat_tests()
+    scan_test()
     print("wrote", OUT)
 
 

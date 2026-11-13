@@ -249,6 +249,19 @@ def combat(work):
     check("Sentinel hit Kael" not in text and "Pack at start: 0 scrap, 2 components" in text, "a disabled sentinel stays gone in the next run, and its drop was saved")
 
 
+def scan(work):
+    """The scanner lists what is near by category, with distance and compass direction, nearest first (crate 5 m NE, fab bench 9 m S, a sentinel 30 m W)."""
+    result, text = run_player(work, "Scenes/ScanTest.ascene", "user14", press="Q", frames=40)
+    check(result.returncode == 0, f"the player runs the scan test and exits cleanly (exit {result.returncode})")
+    lines = [l.split("Scan ", 1)[1] for l in text.splitlines() if "Script: Scan [" in l]
+    check(len(lines) == 3, f"the scan lists the three things in range ({len(lines)} listed)")
+    if len(lines) == 3:
+        check(lines[0].startswith("[SALVAGE] Test Crate  5 m NE"), f"nearest first: the crate, 5 m north-east ({lines[0]})")
+        check(lines[1].startswith("[FABRICATION] Test FabBench  9 m S"), f"then the fab bench, 9 m south ({lines[1]})")
+        check(lines[2].startswith("[MACHINE] Test Sentinel  30 m W") and "health 100" in lines[2], f"then the sentinel, 30 m west, with its health ({lines[2]})")
+    check(not re.search(r"\[ERROR\]", text), "no errors while scanning")
+
+
 def main():
     layout()
     if failures:

@@ -42,6 +42,7 @@ SOUNDS = {
     "door": (0.55, -10, lambda t, n, s: 0.4 * n * math.sin(math.pi * t / 0.55) ** 2 + 0.2 * s(60)),
     "swing": (0.16, -12, lambda t, n, s: 0.5 * n * math.sin(math.pi * t / 0.16)),
     "hit_enemy": (0.22, -5, lambda t, n, s: (0.5 * n + 0.5 * s(95)) * math.exp(-22 * t)),
+    "scan": (0.55, -9, lambda t, n, s: 0.4 * s(300 + 1100 * (t / 0.55)) * math.sin(math.pi * t / 0.55) + 0.1 * s(2400) * math.exp(-8 * t)),
     "hurt": (0.28, -4, lambda t, n, s: (0.55 * s(130 - 150 * t) + 0.25 * n) * math.exp(-12 * t)),
     "sentinel_down": (0.8, -5, lambda t, n, s: (0.4 * s(300 * math.exp(-2.5 * t)) + 0.15 * n) * math.exp(-3.5 * t)),
 }

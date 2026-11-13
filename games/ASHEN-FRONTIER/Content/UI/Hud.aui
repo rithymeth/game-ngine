@@ -181,6 +181,109 @@
       ]
      }
     ]
+   },
+   {
+    "type": "Border",
+    "name": "ScanPanel",
+    "visibility": "Collapsed",
+    "background": {
+     "kind": "Color",
+     "tint": [
+      0.02,
+      0.04,
+      0.09,
+      0.78
+     ]
+    },
+    "padding": [
+     16,
+     10,
+     16,
+     10
+    ],
+    "slot": {
+     "anchors": [
+      0,
+      0,
+      0,
+      0
+     ],
+     "position": [
+      24,
+      160
+     ],
+     "size": [
+      620,
+      170
+     ]
+    },
+    "children": [
+     {
+      "type": "VerticalBox",
+      "children": [
+       {
+        "type": "Text",
+        "name": "ScanLine1",
+        "text": "",
+        "size": 22,
+        "color": [
+         0.75,
+         0.95,
+         1.0,
+         1.0
+        ]
+       },
+       {
+        "type": "Text",
+        "name": "ScanLine2",
+        "text": "",
+        "size": 22,
+        "color": [
+         0.75,
+         0.95,
+         1.0,
+         1.0
+        ]
+       },
+       {
+        "type": "Text",
+        "name": "ScanLine3",
+        "text": "",
+        "size": 22,
+        "color": [
+         0.75,
+         0.95,
+         1.0,
+         1.0
+        ]
+       },
+       {
+        "type": "Text",
+        "name": "ScanLine4",
+        "text": "",
+        "size": 22,
+        "color": [
+         0.75,
+         0.95,
+         1.0,
+         1.0
+        ]
+       },
+       {
+        "type": "Text",
+        "name": "ScanLine5",
+        "text": "",
+        "size": 22,
+        "color": [
+         0.75,
+         0.95,
+         1.0,
+         1.0
+        ]
+       }
+      ]
+     }
+    ]
    }
   ]
  }

@@ -18,7 +18,8 @@
     "Scenes/PowerTest.ascene",
     "Scenes/BeaconTest.ascene",
     "Scenes/CombatTest.ascene",
-    "Scenes/CombatKill.ascene"
+    "Scenes/CombatKill.ascene",
+    "Scenes/ScanTest.ascene"
   ],
   "collision_matrix": [],
   "default_quality": "High",
