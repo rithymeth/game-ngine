@@ -13,7 +13,8 @@
     "Scenes/SalvageTest.ascene",
     "Scenes/MuleTest.ascene",
     "Scenes/CraftTest.ascene",
-    "Scenes/PowerTest.ascene"
+    "Scenes/PowerTest.ascene",
+    "Scenes/BeaconTest.ascene"
   ],
   "collision_matrix": [],
   "default_quality": "High",

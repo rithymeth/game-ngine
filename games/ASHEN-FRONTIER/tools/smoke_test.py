@@ -187,6 +187,35 @@ def craft(work):
     check("Generator powered" not in text, "without the Generator Core the generator stays off")
 
 
+def run_player(work, scene, user, press="E", frames=80):
+    command = [str(BUILD / "player" / "aether_player"), "--pak", str(work / "cooked"), "--scene", scene, "--frames", str(frames), "--size", "320x180",
+               "--press", press, "--report", "--user-dir", str(work / user)]
+    if sys.platform.startswith("linux") and shutil.which("xvfb-run"):
+        command = ["xvfb-run", "-a"] + command
+    result = subprocess.run(command, capture_output=True, text=True, timeout=300)
+    return result, result.stdout + result.stderr
+
+
+def chapter(work):
+    """The first chapter's state: the relay is reached by walking up to it; MULE-3 stays repaired from one run to the next; F9 starts a new game
+    (clears the pack and the autosave and loads the world again)."""
+    result, text = run_player(work, "Scenes/BeaconTest.ascene", "user7", press="W")
+    check("Distress relay reached" in text, "walking up to the distress relay reaches it")
+    check(not re.search(r"\[ERROR\]", text), "no errors at the relay")
+    result, text = run_player(work, "Scenes/MuleTest.ascene", "user8")
+    check("MULE-3 repaired" in text, "MULE-3 is repaired (first run)")
+    result, text = run_player(work, "Scenes/MuleTest.ascene", "user8", press="W")
+    check("MULE-3 is with Kael" in text and "MULE-3 needs components" not in text, "a repaired MULE-3 is with Kael in the next run")
+    result, text = run_player(work, "Scenes/SalvageTest.ascene", "user9")
+    check("pack: 0 scrap, 2 components" in text, "the pack holds the crate's components (before the new game)")
+    result, text = run_player(work, "Scenes/SalvageTest.ascene", "user9", press="F9")
+    check("New game: progress cleared" in text, "F9 starts a new game")
+    check(re.findall(r"Loaded (Scenes/\S+\.ascene)", text)[-1:] == ["Scenes/OpenWorld.ascene"], "the new game loads the open world")
+    check(not re.search(r"\[ERROR\]", text), "no errors in the new game")
+    result, text = run_player(work, "Scenes/SalvageTest.ascene", "user9")
+    check("pack: 0 scrap, 2 components" in text, "after the new game the pack started empty again (2, not 4)")
+
+
 def main():
     layout()
     if failures:
@@ -199,6 +228,7 @@ def main():
             salvage(work)
             mule(work)
             craft(work)
+            chapter(work)
     finally:
         shutil.rmtree(work, ignore_errors=True)
     print(f"{len(failures)} check(s) failed" if failures else "smoke test passed")

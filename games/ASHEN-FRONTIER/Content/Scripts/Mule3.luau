@@ -18,6 +18,21 @@ function Mule:OnCreate()
     self.state = "broken" -- broken, follow, hold
     self.player = world:EntitiesWith("CharacterMovement")[1]
     self.prompt = nil
+    self.checked = false
+end
+
+-- Repaired in an earlier visit (or run)? Asked on the first update, not in OnCreate: the script that loads the autosave (Kael's Interactor) may be
+-- created after this one, and until it has, the saved flag is not there to read.
+local function Restore(self)
+    self.checked = true
+    if self.player ~= nil and SaveGames.GetNumber("mule.repaired", 0) > 0 then
+        self.state = "follow"
+        self.arrived = true
+        local t = self.entity:Get("Transform")
+        local p = self.player:Get("Transform").position
+        t.position = vector.create(p.x + 1.5, p.y, p.z + 1.0)
+        print("MULE-3 is with Kael")
+    end
 end
 
 local function Prompt(self, text)
@@ -30,6 +45,7 @@ end
 
 function Mule:OnUpdate(dt)
     if self.player == nil then return end
+    if not self.checked then Restore(self) end
     local me = self.entity:Get("Transform")
     local p = self.player:Get("Transform").position
     local dx, dz = p.x - me.position.x, p.z - me.position.z
@@ -52,6 +68,8 @@ function Mule:OnUpdate(dt)
                     SaveGames.SaveToSlot("autosave")
                     UI.SetText("ComponentText", string.format("COMPONENTS  %d", have - self.repair_cost))
                     self.state = "follow"
+                    SaveGames.SetNumber("mule.repaired", 1)
+                    SaveGames.SaveToSlot("autosave")
                     print("MULE-3 repaired: it follows Kael")
                 else
                     print("MULE-3 needs components")
