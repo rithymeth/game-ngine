@@ -11,7 +11,7 @@ import random
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from scenelib import Scene, give_hands, mule, workbench, generator, beacon, sentinel, sample, console  # noqa: E402
+from scenelib import Scene, give_hands, mule, workbench, generator, beacon, sentinel, sample, console, flag_light, grows  # noqa: E402
 import world  # noqa: E402
 import world_scene  # noqa: E402
 import interior_scene  # noqa: E402
@@ -260,6 +260,21 @@ def sample_tests():
         s.save(OUT / (name + ".ascene"))
 
 
+def visible_tests():
+    """LightTest: a lamp that is dim until the outpost has power. GrowTest: a plant that is small until the dome is restored. (Run after PowerTest / ConsoleTest
+    in the same user directory, the saved flag is what lights and grows them.)"""
+    for name, build in (("LightTest", lambda s: flag_light(s, "Test_Lamp", (0.3, 0.7, 1.0), 8.0, 14.0, "power.outpost", off=0.0, position=(3, 3, 0))),
+                        ("GrowTest", lambda s: (s.model("Test_Plant", "TreeLow", position=(3, 0, 0), snap=False), grows(s)))):
+        s = Scene()
+        s.sky(1.2)
+        s.sun(yaw=-25, pitch=-38)
+        s.model("Ground", "Ground", position=(0, 0, 0), scale=(60, 1, 60), color=SAND, snap=False)
+        s.add("GroundCollider", {"BoxCollider": {"$v": 1, "center": [0, 0, 0], "friction": 0.8, "half_extents": [30, 0.5, 30], "is_trigger": False, "report_stay": False, "restitution": 0.0}}, position=(0, -0.5, 0))
+        build(s)
+        interior_scene.kael(s, (0, 0.1, 0), 0, script_guid("ThirdPersonController"))
+        s.save(OUT / (name + ".ascene"))
+
+
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
     model_gallery()
@@ -275,6 +290,7 @@ def main():
     combat_tests()
     scan_test()
     sample_tests()
+    visible_tests()
     print("wrote", OUT)
 
 

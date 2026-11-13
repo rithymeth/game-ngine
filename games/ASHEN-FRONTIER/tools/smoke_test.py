@@ -293,6 +293,23 @@ def chapter2(work):
     check(layout_text.count('"SeedSample_') >= 3, "the open world holds the three seed samples")
 
 
+def visible(work):
+    """The chapters show: a lamp lights up once the generator has been powered (a run of PowerTest first, in the same user directory), and a plant grows once
+    the dome has been restored (ConsoleTest first). In a fresh user directory neither happens."""
+    run_player(work, "Scenes/CraftTest.ascene", "user18")
+    run_player(work, "Scenes/PowerTest.ascene", "user18")
+    result, text = run_player(work, "Scenes/LightTest.ascene", "user18", press="Z", frames=120)
+    check("Light on: Test_Lamp" in text, "after the generator is powered, the lamp fades up")
+    result, text = run_player(work, "Scenes/LightTest.ascene", "user19", press="Z", frames=120)
+    check("Light on: Test_Lamp" not in text, "in a new game the lamp stays dark")
+    run_player(work, "Scenes/ConsoleTest.ascene", "user20")
+    result, text = run_player(work, "Scenes/GrowTest.ascene", "user20", press="Z", frames=200)
+    check("Plant grown: Test_Plant" in text, "after the dome is restored, the plant grows to full size")
+    result, text = run_player(work, "Scenes/GrowTest.ascene", "user21", press="Z", frames=200)
+    check("Plant grown: Test_Plant" not in text, "in a new game the plant stays small")
+    check(not re.search(r"\[ERROR\]", text), "no errors with the growing plant")
+
+
 def main():
     layout()
     if failures:
@@ -311,6 +328,7 @@ def main():
             combat(work)
             scan(work)
             chapter2(work)
+            visible(work)
     finally:
         shutil.rmtree(work, ignore_errors=True)
     check(not any("Missing sound" in text for text in TRANSCRIPTS), f"every sound a script plays exists ({len(TRANSCRIPTS)} runs looked through)")

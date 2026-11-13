@@ -151,3 +151,15 @@ def console(scene, name, position, rotation=(0, 0, 0), **kwargs):
     guid_ = scene.model(name, "FabBench", position=position, rotation=rotation, tags=("Console",), color=(0.2, 0.5, 0.35), **kwargs)
     scene.entities[-1]["components"]["ScriptComponent"] = {"$v": 1, "properties": [], "script": script_guid("Console")}
     return guid_
+
+
+def flag_light(scene, name, color, on, rng_, flag, off=0.0, position=(0, 0, 0), snap=False, ramp=8.0):
+    """A point light that fades up when the SaveGames flag is set (power.outpost, mission.dome): dim at `off`, `on` once it is."""
+    comps = {"PointLight": {"$v": 1, "cast_shadows": False, "color": list(color), "intensity": off, "range": rng_},
+             "ScriptComponent": {"$v": 1, "script": script_guid("FlagLight"), "properties": [{"name": "flag", "value": json.dumps(flag)}, {"name": "off", "value": str(off)}, {"name": "on", "value": str(on)}, {"name": "ramp", "value": str(ramp)}]}}
+    return scene.add(name, comps, position=position, snap=snap)
+
+
+def grows(scene, flag="mission.dome", start=0.35):
+    """Makes the entity added last grow when the flag is set (a plant that starts small)."""
+    scene.entities[-1]["components"]["ScriptComponent"] = {"$v": 1, "script": script_guid("Growth"), "properties": [{"name": "flag", "value": json.dumps(flag)}, {"name": "start", "value": str(start)}]}

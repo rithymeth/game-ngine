@@ -14248,8 +14248,30 @@
             0.5,
             1.0
           ],
-          "intensity": 8.0,
+          "intensity": 0.0,
           "range": 14.0
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "script": "9f1fc7af-8ae7-4854-92f1-a28199b2c865",
+          "properties": [
+            {
+              "name": "flag",
+              "value": "\"power.outpost\""
+            },
+            {
+              "name": "off",
+              "value": "0.0"
+            },
+            {
+              "name": "on",
+              "value": "8.0"
+            },
+            {
+              "name": "ramp",
+              "value": "8.0"
+            }
+          ]
         },
         "Transform": {
           "$v": 2,
@@ -14336,8 +14358,30 @@
             0.5,
             1.0
           ],
-          "intensity": 8.0,
+          "intensity": 0.0,
           "range": 14.0
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "script": "9f1fc7af-8ae7-4854-92f1-a28199b2c865",
+          "properties": [
+            {
+              "name": "flag",
+              "value": "\"power.outpost\""
+            },
+            {
+              "name": "off",
+              "value": "0.0"
+            },
+            {
+              "name": "on",
+              "value": "8.0"
+            },
+            {
+              "name": "ramp",
+              "value": "8.0"
+            }
+          ]
         },
         "Transform": {
           "$v": 2,
@@ -14424,8 +14468,30 @@
             0.5,
             1.0
           ],
-          "intensity": 8.0,
+          "intensity": 0.0,
           "range": 14.0
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "script": "9f1fc7af-8ae7-4854-92f1-a28199b2c865",
+          "properties": [
+            {
+              "name": "flag",
+              "value": "\"power.outpost\""
+            },
+            {
+              "name": "off",
+              "value": "0.0"
+            },
+            {
+              "name": "on",
+              "value": "8.0"
+            },
+            {
+              "name": "ramp",
+              "value": "8.0"
+            }
+          ]
         },
         "Transform": {
           "$v": 2,
@@ -14512,8 +14578,30 @@
             0.5,
             1.0
           ],
-          "intensity": 8.0,
+          "intensity": 0.0,
           "range": 14.0
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "script": "9f1fc7af-8ae7-4854-92f1-a28199b2c865",
+          "properties": [
+            {
+              "name": "flag",
+              "value": "\"power.outpost\""
+            },
+            {
+              "name": "off",
+              "value": "0.0"
+            },
+            {
+              "name": "on",
+              "value": "8.0"
+            },
+            {
+              "name": "ramp",
+              "value": "8.0"
+            }
+          ]
         },
         "Transform": {
           "$v": 2,
@@ -21892,8 +21980,30 @@
             1.0,
             0.6
           ],
-          "intensity": 16.0,
+          "intensity": 4.0,
           "range": 20.0
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "script": "9f1fc7af-8ae7-4854-92f1-a28199b2c865",
+          "properties": [
+            {
+              "name": "flag",
+              "value": "\"mission.dome\""
+            },
+            {
+              "name": "off",
+              "value": "4.0"
+            },
+            {
+              "name": "on",
+              "value": "16.0"
+            },
+            {
+              "name": "ramp",
+              "value": "8.0"
+            }
+          ]
         },
         "Transform": {
           "$v": 2,

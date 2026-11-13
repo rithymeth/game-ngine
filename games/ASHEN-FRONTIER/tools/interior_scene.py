@@ -8,7 +8,7 @@ import json
 import math
 import random
 
-from scenelib import Scene, give_hands, sentinel, console
+from scenelib import Scene, give_hands, sentinel, console, flag_light, grows
 import world_scene
 
 LIGHT, BLUE, AMBER = world_scene.LIGHT, world_scene.BLUE, world_scene.AMBER
@@ -108,7 +108,7 @@ def living_dome(player_script, door_script):
     room(s, W, L, H, floor=(0.20, 0.26, 0.15), wall=(0.16, 0.22, 0.20))
     # the core: a tall cylinder of green light, with a ring of low planters round its foot
     s.model("Core", "Pylon", position=(0, 0, -3), snap=False, scale=(3.2, 3.2, 3.2), color=(0.1, 0.3, 0.2), emissive=(0.2, 1.0, 0.5), collider=((0, 6, 0), (1.5, 6, 1.5)))
-    s.add("CoreLight", LIGHT(GREEN, 40.0, 28.0), position=(0, 7.0, -3))
+    flag_light(s, "CoreLight", GREEN, 40.0, 28.0, "mission.dome", off=12.0, position=(0, 7.0, -3))
     s.add("CoreLightLow", LIGHT(GREEN, 18.0, 18.0), position=(0, 1.8, -3))
     import math
     for i in range(14):
@@ -116,6 +116,7 @@ def living_dome(player_script, door_script):
         r = 7.0 + (i % 2) * 1.6
         x, z = math.cos(angle) * r, -3 + math.sin(angle) * r
         s.model(f"Tree_{i}", "TreeLow", position=(x, 0, z), rotation=(0, rng.uniform(0, 360), 0), scale=(1.3, rng.uniform(1.0, 1.7), 1.3), snap=False, collider=((0, 1.5, 0), (0.4, 1.5, 0.4)))
+        grows(s)  # the garden is small until the console is restored, then it grows
     for i in range(24):
         x, z = rng.uniform(-13, 13), rng.uniform(-13, 8)
         if math.hypot(x, z + 3) > 4.5:
