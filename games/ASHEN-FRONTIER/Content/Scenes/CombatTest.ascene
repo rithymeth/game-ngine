@@ -210,7 +210,12 @@
         },
         "ScriptComponent": {
           "$v": 1,
-          "properties": [],
+          "properties": [
+            {
+              "name": "damage",
+              "value": "40"
+            }
+          ],
           "script": "cf03216d-65cf-4851-b232-4c1c7fa4c6dc"
         }
       },

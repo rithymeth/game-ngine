@@ -25469,6 +25469,80 @@
     },
     {
       "components": {
+        "Transform": {
+          "$v": 2,
+          "position": [
+            115.0,
+            11.445903815750968,
+            -155.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "ReactorHallOutside"
+        }
+      },
+      "guid": "8bad3d8c-3aab-585a-9b7e-c2bd7ca4f490"
+    },
+    {
+      "components": {
+        "ScriptComponent": {
+          "$v": 1,
+          "script": "9968fb53-eb77-4757-85a3-eb7280fa5646",
+          "properties": [
+            {
+              "name": "target",
+              "value": "\"Scenes/ReactorHall.ascene\""
+            },
+            {
+              "name": "radius",
+              "value": "2.5"
+            },
+            {
+              "name": "spawn",
+              "value": "\"ReactorEntry\""
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            115.0,
+            11.349805314892073,
+            -159.4
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "ReactorHallDoor"
+        }
+      },
+      "guid": "f71e3652-20c4-5d8c-aeb6-69c4061a385c"
+    },
+    {
+      "components": {
         "ModelRenderer": {
           "$v": 1,
           "asset_path": "Models/HazardNode.glb"

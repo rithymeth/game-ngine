@@ -25377,6 +25377,34 @@
     },
     {
       "components": {
+        "Transform": {
+          "$v": 2,
+          "position": [
+            115.0,
+            11.445903815750968,
+            -155.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "ReactorHallOutside"
+        }
+      },
+      "guid": "8bad3d8c-3aab-585a-9b7e-c2bd7ca4f490"
+    },
+    {
+      "components": {
         "ModelRenderer": {
           "$v": 1,
           "asset_path": "Models/HazardNode.glb"

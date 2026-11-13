@@ -237,9 +237,9 @@ def dome(work):
 def combat(work):
     """A sentinel walks up to Kael and strikes him (his health falls; at none he is disabled and the world reloads); one of Kael's hits disables a weak
     sentinel, which drops components; and that stays so in the next run (the sentinel is gone for good)."""
-    result, text = run_player(work, "Scenes/CombatTest.ascene", "user12", press="W", frames=1200)
+    result, text = run_player(work, "Scenes/CombatTest.ascene", "user12", press="Z", frames=400)  # Z is bound to nothing: Kael stands still
     check(result.returncode == 0, f"the player runs the combat test and exits cleanly (exit {result.returncode})")
-    check("Sentinel hit Kael (health 90)" in text, "a sentinel walks up to Kael and strikes him")
+    check("Sentinel hit Kael (health 60)" in text, "a sentinel walks up to Kael and strikes him")
     check("Kael disabled" in text, "Kael at no health is disabled")
     check(re.findall(r"Loaded (Scenes/\S+\.ascene)", text)[-1:] == ["Scenes/OpenWorld.ascene"], "being disabled reloads the open world")
     check(not re.search(r"\[ERROR\]", text), "no errors in the fight")
@@ -262,6 +262,20 @@ def scan(work):
     check(not re.search(r"\[ERROR\]", text), "no errors while scanning")
 
 
+def reactor(work):
+    """Kael starts inside the reactor hall and walks out of its exit door: back in the open world, outside the Core Gate."""
+    result, text = run_player(work, "Scenes/ReactorHall.ascene", "user11", press="S", frames=500)
+    check(result.returncode == 0, f"the player runs the reactor hall and exits cleanly (exit {result.returncode})")
+    loads = re.findall(r"Loaded (Scenes/\S+\.ascene)", text)
+    check(loads[:2] == ["Scenes/ReactorHall.ascene", "Scenes/OpenWorld.ascene"], f"the reactor hall's exit door leads to the open world (loaded: {loads})")
+    check(not re.search(r"\[ERROR\]", text), "no errors on the way out of the reactor hall")
+    match = re.search(r"Player at \(([-\d.]+), ([-\d.]+), ([-\d.]+)\)", text)
+    if check(match is not None, "the player reports where Kael ended up after the reactor hall's door"):
+        x, _, z = (float(v) for v in match.groups())
+        gx, gz = world.poi_position("core_gate")
+        check(math.hypot(x - gx, z - gz) < 45, f"Kael comes out at the Core Gate ({math.hypot(x - gx, z - gz):.0f} m from it)")
+
+
 def main():
     layout()
     if failures:
@@ -276,6 +290,9 @@ def main():
             craft(work)
             chapter(work)
             dome(work)
+            reactor(work)
+            combat(work)
+            scan(work)
     finally:
         shutil.rmtree(work, ignore_errors=True)
     check(not any("Missing sound" in text for text in TRANSCRIPTS), f"every sound a script plays exists ({len(TRANSCRIPTS)} runs looked through)")

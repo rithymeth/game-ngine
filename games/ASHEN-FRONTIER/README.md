@@ -28,7 +28,11 @@ Sentinels (`Sentinel.luau`) guard the Iron Wastes checkpoint, the assembly hall 
 
 Sound effects (`Content/Audio`, written by `tools/make_audio.py`: short synthesized tones, placeholders) play for pickups, crafting, power, repairs, the relay, doors, strikes and hits, through the scripts' `Audio` table; the smoke test fails if a script asks for a sound that is not there.
 
-Not yet: the scanner, ranged combat, music and ambience, the other regions' missions, and the reactor hall (the rest of DESIGN.md section 22). Two interiors exist: the Assembly Hall (the door on the Iron Wastes hall) and the Living Dome (the door on the Verdant Array dome); each exit puts Kael back outside its door. The reactor hall is next.
+The scanner (Q, or Y on a pad) lists what is near by category as words ([SALVAGE], [MACHINE], [ROBOT], [FABRICATION], [POWER], [RELAY], [HAZARD]) with distance, compass direction and known status, on the HUD.
+
+Three interiors exist, one for each of the reference images: the Assembly Hall (the door on the Iron Wastes hall), the Living Dome (the door on the Verdant Array dome) and the Reactor Hall (the door on the Hollow Core's gate); each exit puts Kael back outside its door.
+
+Not yet: ranged combat, music and ambience, the other regions' missions (the rest of DESIGN.md section 22).
 
 ## Run it
 

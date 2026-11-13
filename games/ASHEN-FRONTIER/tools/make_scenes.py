@@ -159,6 +159,7 @@ def open_world():
     world_scene.build(False, {"ortho": True}).save(OUT / "WorldMapTopDown.ascene")
     interior_scene.assembly_hall(script_guid("ThirdPersonController"), script_guid("Door")).save(OUT / "AssemblyHall.ascene")
     interior_scene.living_dome(script_guid("ThirdPersonController"), script_guid("Door")).save(OUT / "LivingDome.ascene")
+    interior_scene.reactor_hall(script_guid("ThirdPersonController"), script_guid("Door")).save(OUT / "ReactorHall.ascene")
     data = OUT.parent / "Data"
     data.mkdir(exist_ok=True)
     (data / "world.json").write_text(json.dumps(world.world_data(), indent=2) + "\n", encoding="utf-8", newline="\n")
@@ -216,9 +217,9 @@ def beacon_test():
 
 
 def combat_tests():
-    """CombatTest: a sentinel 5 m from Kael with its usual values (it walks up and strikes; Kael is left alone to be hit). CombatKill: a weak sentinel 2 m
+    """CombatTest: a sentinel 5 m from Kael that hits hard (40: three strikes disable him, so the test is short at any frame rate; Kael stands still to be hit). CombatKill: a weak sentinel 2 m
     away (20 health: one of Kael's hits disables it)."""
-    for name, build in (("CombatTest", lambda s: sentinel(s, "Test_Sentinel", (0, 0, -5), snap=False)),
+    for name, build in (("CombatTest", lambda s: sentinel(s, "Test_Sentinel", (0, 0, -5), snap=False, damage=40)),
                         ("CombatKill", lambda s: sentinel(s, "Test_Sentinel", (0, 0, -2), snap=False, max_hp=20))):
         s = Scene()
         s.sky(1.2)
