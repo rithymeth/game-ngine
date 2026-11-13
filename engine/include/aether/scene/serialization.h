@@ -21,6 +21,12 @@ struct SceneLoadOptions {
     // origin-relative coordinates. Zero (the default) uses the origin recorded in
     // a JSON scene, if it has one.
     Vec3d origin;
+    // When given, replaced with every entity the load creates (in file order),
+    // so a caller can follow what a scene added without scanning the whole
+    // world before and after (the world streamer tracks a cell's entities for
+    // unloading this way). Left alone when the load fails, which creates
+    // nothing.
+    std::vector<Entity>* loaded_entities = nullptr;
 };
 
 struct SceneSaveOptions {

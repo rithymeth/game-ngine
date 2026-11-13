@@ -10,22 +10,10 @@
 #include <mutex>
 #include <cmath>
 #include <fstream>
-#include <unordered_set>
 
 namespace aether::streaming {
 
 namespace {
-std::vector<Entity> AllEntities(const World& world) {
-    std::vector<Entity> out;
-    world.ForEachArchetype([&](Archetype& archetype) {
-        for (usize c = 0; c < archetype.ChunkCount(); ++c) {
-            Entity* e = archetype.EntityArray(c);
-            out.insert(out.end(), e, e + archetype.ChunkEntityCount(c));
-        }
-    });
-    return out;
-}
-u64 Key(Entity e) { return (static_cast<u64>(e.generation) << 32) | e.index; }
 const std::vector<Entity> kNone;
 } // namespace
 
@@ -99,16 +87,17 @@ bool WorldStreamer::LoadCell(const CellCoord& cell) {
 }
 
 bool WorldStreamer::ApplyCell(const CellCoord& cell, std::vector<u8>& bytes) {
-    std::unordered_set<u64> before;
-    for (Entity e : AllEntities(world_)) before.insert(Key(e));
-    if (!LoadSceneFromMemory(world_, bytes, "cell " + CellName(cell))) {
+    // The loader reports exactly the entities it creates, so a cell costs its
+    // own entities rather than two scans of the whole world (which made
+    // applying cells quadratic in a large world).
+    std::vector<Entity> added;
+    SceneLoadOptions options;
+    options.loaded_entities = &added;
+    if (!LoadSceneFromMemory(world_, bytes, "cell " + CellName(cell), options)) {
         failed_[cell] = CellState::Failed;
         problems_.push_back("cell " + CellName(cell) + " isn't a scene");
         return false;
     }
-    std::vector<Entity>& added = loaded_[cell];
-    for (Entity e : AllEntities(world_))
-        if (before.count(Key(e)) == 0) added.push_back(e);
     // Cells are saved in whole-world positions; Transforms are local to the floating origin.
     const Vec3 shift(static_cast<f32>(offset_.x), static_cast<f32>(offset_.y), static_cast<f32>(offset_.z));
     for (Entity e : added) {
@@ -116,7 +105,8 @@ bool WorldStreamer::ApplyCell(const CellCoord& cell, std::vector<u8>& bytes) {
         if (guids_ != nullptr)
             if (const IdComponent* id = world_.GetComponent<IdComponent>(e)) guids_->Add(id->guid, e);
     }
-    events_.push_back({cell, true, added.size()});
+    loaded_[cell] = std::move(added);
+    events_.push_back({cell, true, loaded_[cell].size()});
     if (on_cell_) on_cell_(cell, true);
     return true;
 }
