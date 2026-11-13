@@ -87,7 +87,7 @@ void SetFirstEntryStoredSize(std::vector<u8>& bytes, u64 size) {
 } // namespace
 
 AETHER_TEST(Pak_PathsAndCrc) {
-    CHECK(NormalizePath("textures\\\\rock.png") == "textures/rock.png");
+    CHECK(NormalizePath("textures\\rock.png") == "textures/rock.png");
     CHECK(NormalizePath("./a//b/./c.txt") == "a/b/c.txt" && NormalizePath("/root.json") == "root.json");
     CHECK(NormalizePath("a/../b").empty() && NormalizePath("").empty());
     const std::string check = "123456789";
@@ -101,7 +101,7 @@ AETHER_TEST(Pak_RoundTripWithEveryCompression) {
     const std::vector<u8> noise = Noise(50000);       // doesn't compress: stored raw
     PakWriter writer;
     CHECK(writer.Add("levels/big.bin", big) && writer.Add("ui/small.bin", small) && writer.Add("audio/noise.bin", noise));
-    CHECK(writer.Add("empty.txt", std::string()) && writer.Add("scenes\\\\start.json", std::string("{\"name\":\"Start\"}")));
+    CHECK(writer.Add("empty.txt", std::string()) && writer.Add("scenes\\start.json", std::string("{\"name\":\"Start\"}")));
     CHECK(!writer.Add("../escape.txt", std::string("x")) && !writer.Add("", std::string("x")));
     CHECK(writer.Add("ui/small.bin", small)); // replaces, doesn't duplicate
     CHECK(writer.EntryCount() == 5 && writer.OriginalBytes() == big.size() + small.size() + noise.size() + 16);
@@ -109,7 +109,7 @@ AETHER_TEST(Pak_RoundTripWithEveryCompression) {
     PakReader reader;
     std::string error;
     CHECK(reader.OpenMemory(writer.Build(), &error));
-    CHECK(reader.Entries().size() == 5 && reader.Contains("scenes/start.json") && reader.Contains("./ui\\\\small.bin"));
+    CHECK(reader.Entries().size() == 5 && reader.Contains("scenes/start.json") && reader.Contains("./ui\\small.bin"));
     CHECK(reader.Find("levels/big.bin")->compression == Compression::Zstd);
     CHECK(reader.Find("ui/small.bin")->compression == Compression::LZ4);
     CHECK(reader.Find("audio/noise.bin")->compression == Compression::None);
