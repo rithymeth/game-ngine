@@ -3029,6 +3029,7 @@
   input::Key KeyFromGlfwMouseButton(int button)
   input::Key KeyFromVirtualKey(u32 vk)
   public:explicit Window(const WindowDesc&desc)
+  std::function<bool()>on_close
   std::function<void(u32 width,u32 height)>on_resize
   std::function<void(void*hwnd,u32 msg,u64 wparam,i64 lparam)>native_message_hook
   std::vector<WindowEvent>TakeEvents()
@@ -7321,10 +7322,12 @@
 [editor/src/content/content_drag.h] internal-tooling
 [editor/src/core/command_stack.h] internal-tooling
 [editor/src/core/commands.h] internal-tooling
+[editor/src/core/editor_settings.h] internal-tooling
 [editor/src/core/json_edit.h] internal-tooling
 [editor/src/core/package_runner.h] internal-tooling
 [editor/src/core/play_session.h] internal-tooling
 [editor/src/core/recent_projects.h] internal-tooling
+[editor/src/core/scene_autosave.h] internal-tooling
 [editor/src/core/scene_document.h] internal-tooling
 [editor/src/core/scene_preview.h] internal-tooling
 [editor/src/core/snapping.h] internal-tooling

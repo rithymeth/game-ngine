@@ -204,6 +204,13 @@ Outcome: no work is lost on exit, and later stages have one place to register a 
 Gate: settings round-trip test; duplicate-command and chord-conflict tests; quit-with-dirty-document test (headless
 host); autosave recovery test; a headless screenshot at 100% and 150% scale.
 
+Done so far (2026-11-13): the scene's quit prompt on both File > Quit and the title-bar X (a cancelable
+`Window::on_close`), `EditorSettings` v1 (autosave on and off, interval), a per-project recovery slot written while the
+document is dirty and offered on the next launch, and a Preferences window. Tests: settings defaults/round-trip/clamping,
+slot write/find/clear/corruption, the autosave timer and quit flow on a headless workspace. Still open in this stage: the
+command registry, the document contract, notifications and native dialogs; autosave and the quit prompt cover the scene
+document only.
+
 ### Stage 1 — Shell, project hub and workflow (M)
 
 Outcome: the editor opens like an application, not a tool launcher.

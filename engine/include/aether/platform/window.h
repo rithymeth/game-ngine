@@ -95,6 +95,12 @@ public:
     // so the caller can resize its swap chain).
     std::function<void(u32 width, u32 height)> on_resize;
 
+    // Asked before the window closes (the title-bar X, RequestClose), and the
+    // window stays open when it returns false -- the hook an editor needs to
+    // offer to save first, since the OS destroys the window as soon as it is
+    // allowed to. With no callback the window closes.
+    std::function<bool()> on_close;
+
     // Win32 only: called with every raw message this window's WndProc
     // receives, before Window's own handling - the hook a UI library's
     // Win32 backend (e.g. Dear ImGui's ImGui_ImplWin32_WndProcHandler)

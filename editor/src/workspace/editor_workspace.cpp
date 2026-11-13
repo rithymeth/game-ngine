@@ -1,7 +1,9 @@
 #include "workspace/editor_workspace.h"
 
 #include "workspace/command_palette.h"
+#include "core/editor_settings.h"
 #include "core/recent_projects.h"
+#include "core/scene_autosave.h"
 
 #include "ai/bt_editor.h"
 #include "ai/nav_panel.h"
@@ -263,6 +265,16 @@ struct EditorWorkspace::Impl {
     std::unique_ptr<CrashReporterDialog> crash_dialog;
     // Project.
     std::filesystem::path project_file;
+    EditorSettings editor_settings = EditorSettings::Load(EditorSettings::DefaultFile());
+    SceneAutosaves autosaves;
+    f32 autosave_elapsed = 0.0f;
+    bool autosave_dirty_seen = false; // the document was unsaved at the last tick, so a clean tick has a slot to remove
+    bool quit_prompt = false;
+    bool quit_prompt_opened = false; // OpenPopup once, not every frame while the modal is up
+    bool recovery_prompt = false;
+    bool recovery_prompt_opened = false;
+    bool recovery_offered = false;
+    SceneAutosaveSlot recovery_slot;
     std::unique_ptr<ProjectSettingsPanel> project_settings;
     std::unique_ptr<BuildPackageWindow> build_window;
     std::unique_ptr<PluginsPanel> plugins_panel;
@@ -871,12 +883,57 @@ struct EditorWorkspace::Impl {
             return choices;
         });
         // The Scene tool works in the project's Content folder (its open scene is left as it is), and the preview renders that project.
-        if (scene_panel) scene_panel->SetContentRoot(ProjectPaths::ForFile(project_file).content);
+        if (scene_panel) {
+            scene_panel->SetContentRoot(ProjectPaths::ForFile(project_file).content);
+            scene_panel->on_document_replaced = [this] { OnDocumentReplaced(); };
+        }
         if (scene_preview) scene_preview->SetProject(project_file);
         // The project's plugins: their runtime and editor modules run in the editor.
         if (plugin::ResolveProjectPlugins(project_file, plugins, &error)) plugins.StartModules(true, true);
         // The project's editor scripts (Content/Editor/*.luau, §26.5).
         editor_scripts.Load(ProjectPaths::ForFile(project_file).content / "Editor");
+    }
+
+    // A new, opened or recovered scene replaces the one the recovery slot described.
+    void OnDocumentReplaced() {
+        autosave_elapsed = 0.0f;
+        autosave_dirty_seen = scene_panel != nullptr && scene_panel->Document().IsDirty();
+        // Recovery leaves the document dirty and its slot in place; a new or opened scene starts clean, and the slot
+        // belonged to the scene that just went away.
+        if (!autosave_dirty_seen) autosaves.Clear(project_file);
+    }
+
+    bool WriteAutosave() {
+        if (scene_panel == nullptr || project_file.empty()) return false;
+        SceneDocument& document = scene_panel->Document();
+        if (!document.IsDirty()) return false;
+        std::string error;
+        if (!autosaves.Write(document, project_file, document.FilePath(), &error)) {
+            AETHER_LOG_WARN("Autosave", "%s", error.c_str());
+            return false;
+        }
+        autosave_elapsed = 0.0f;
+        autosave_dirty_seen = true;
+        return true;
+    }
+
+    // The autosave timer: writes the open scene while it has unsaved changes, and drops the slot once they are saved.
+    void TickAutosave(f32 dt) {
+        if (scene_panel == nullptr) return;
+        if (!scene_panel->Document().IsDirty()) {
+            if (autosave_dirty_seen) {
+                autosave_dirty_seen = false;
+                autosaves.Clear(project_file);
+            }
+            autosave_elapsed = 0.0f;
+            return;
+        }
+        autosave_dirty_seen = true;
+        if (!editor_settings.autosave_enabled || project_file.empty()) return;
+        autosave_elapsed += dt;
+        if (autosave_elapsed < editor_settings.autosave_interval_seconds) return;
+        autosave_elapsed = 0.0f; // a failed write waits another interval rather than being retried every frame
+        WriteAutosave();
     }
 
     // The registry's panels become tools at the end of the list (so the
@@ -1000,6 +1057,7 @@ EditorWorkspace::~EditorWorkspace() {
 
 void EditorWorkspace::Update(f32 dt) {
     impl_->SyncExtensions();
+    impl_->TickAutosave(dt);
     if (impl_->net_session->Running()) impl_->net_session->Tick(static_cast<f64>(dt));
     impl_->console.Pump();
 }
@@ -1189,6 +1247,7 @@ void EditorWorkspace::DrawWindows() {
     }
     impl_->crash_dialog->Draw();
     DrawCommandPalette();
+    DrawDataSafetyWindows();
 }
 
 void EditorWorkspace::DrawCommandPalette() {
@@ -1238,6 +1297,163 @@ void EditorWorkspace::SetAssetDatabase(const assets::AssetDatabase* database) { 
 
 void EditorWorkspace::SetAssetOpener(std::function<void(const std::string&)> opener) {
     impl_->asset_opener = std::move(opener);
+}
+
+EditorSettings& EditorWorkspace::Settings() { return impl_->editor_settings; }
+
+bool EditorWorkspace::SaveSettings() { return impl_->editor_settings.Save(EditorSettings::DefaultFile()); }
+
+bool EditorWorkspace::HasUnsavedChanges() const {
+    return impl_->scene_panel != nullptr && impl_->scene_panel->Document().IsDirty();
+}
+
+bool EditorWorkspace::HasRecoverableAutosave() const {
+    return impl_->autosaves.Find(impl_->project_file).IsValid();
+}
+
+bool EditorWorkspace::AutosaveNow() { return impl_->WriteAutosave(); }
+
+bool EditorWorkspace::RecoverAutosave() {
+    const SceneAutosaveSlot slot = impl_->autosaves.Find(impl_->project_file);
+    if (!slot.IsValid()) return false;
+    if (!impl_->scene_panel->LoadRecovered(slot.scene, slot.source)) return false;
+    impl_->autosave_elapsed = 0.0f;
+    impl_->autosave_dirty_seen = true;
+    return true;
+}
+
+void EditorWorkspace::DiscardAutosave() { impl_->autosaves.Clear(impl_->project_file); }
+
+void EditorWorkspace::OfferRecovery() {
+    if (impl_->recovery_offered) return;
+    impl_->recovery_offered = true;
+    const SceneAutosaveSlot slot = impl_->autosaves.Find(impl_->project_file);
+    if (!slot.IsValid()) return;
+    if (HasUnsavedChanges()) return; // the open scene's own prompt comes first; nothing is thrown away without an answer
+    impl_->recovery_slot = slot;
+    impl_->recovery_prompt = true;
+}
+
+void EditorWorkspace::RequestQuit() {
+    if (!HasUnsavedChanges()) {
+        if (on_quit_confirmed) on_quit_confirmed();
+        return;
+    }
+    impl_->quit_prompt = true;
+}
+
+bool EditorWorkspace::QuitPromptOpen() const { return impl_->quit_prompt; }
+
+bool EditorWorkspace::SaveAndQuit() {
+    if (!impl_->scene_panel->SaveScene()) return false;
+    impl_->autosaves.Clear(impl_->project_file); // a normal quit leaves nothing to recover
+    impl_->autosave_dirty_seen = false;
+    impl_->autosave_elapsed = 0.0f;
+    impl_->quit_prompt = false;
+    if (on_quit_confirmed) on_quit_confirmed();
+    return true;
+}
+
+void EditorWorkspace::QuitWithoutSaving() {
+    impl_->autosaves.Clear(impl_->project_file);
+    impl_->autosave_dirty_seen = false;
+    impl_->autosave_elapsed = 0.0f;
+    impl_->quit_prompt = false;
+    if (on_quit_confirmed) on_quit_confirmed();
+}
+
+void EditorWorkspace::CancelQuit() { impl_->quit_prompt = false; }
+
+void EditorWorkspace::DrawDataSafetyWindows() {
+    Impl& impl = *impl_;
+    if (impl.recovery_prompt) {
+        if (!impl.recovery_prompt_opened) {
+            ImGui::OpenPopup("Recover unsaved work?");
+            impl.recovery_prompt_opened = true;
+        }
+        if (ImGui::BeginPopupModal("Recover unsaved work?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            const SceneAutosaveSlot& slot = impl.recovery_slot;
+            ImGui::TextUnformatted("The last session ended with unsaved changes.");
+            const std::string from = slot.source.empty() ? std::string("a scene that was never saved") : slot.source.string();
+            ImGui::TextWrapped("An autosave of %s is newer than the scene on disk: %zu entities%s%s.", from.c_str(), slot.entities,
+                               slot.saved.empty() ? "" : ", saved ", slot.saved.c_str());
+            if (!impl.scene_panel->Status().empty()) ImGui::TextWrapped("%s", impl.scene_panel->Status().c_str());
+            ImGui::Separator();
+            if (ImGui::Button("Recover the autosave")) {
+                if (RecoverAutosave()) {
+                    impl.recovery_prompt = false;
+                    ImGui::CloseCurrentPopup();
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Discard it")) {
+                DiscardAutosave();
+                impl.recovery_prompt = false;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Not now")) {
+                impl.recovery_prompt = false;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+        if (!impl.recovery_prompt) impl.recovery_prompt_opened = false;
+    }
+    if (impl.quit_prompt) {
+        if (!impl.quit_prompt_opened) {
+            ImGui::OpenPopup("Quit Aether Editor?");
+            impl.quit_prompt_opened = true;
+        }
+        if (ImGui::BeginPopupModal("Quit Aether Editor?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            const std::filesystem::path file = impl.scene_panel->Document().FilePath();
+            ImGui::TextUnformatted("The open scene has changes that are not saved.");
+            ImGui::TextDisabled("%s", file.empty() ? "(a scene that has never been saved)" : file.string().c_str());
+            if (!impl.scene_panel->Status().empty()) ImGui::TextWrapped("%s", impl.scene_panel->Status().c_str());
+            ImGui::Separator();
+            if (ImGui::Button("Save and quit")) {
+                if (SaveAndQuit()) ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Quit without saving")) {
+                QuitWithoutSaving();
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel")) {
+                CancelQuit();
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+        if (!impl.quit_prompt) impl.quit_prompt_opened = false;
+    }
+    DrawPreferences();
+}
+
+void EditorWorkspace::DrawPreferences() {
+    if (!preferences_open) return;
+    ImGui::SetNextWindowSize(ImVec2(460.0f, 0.0f), ImGuiCond_FirstUseEver);
+    if (ImGui::Begin("Preferences", &preferences_open, ImGuiWindowFlags_AlwaysAutoResize)) {
+        EditorSettings& settings = impl_->editor_settings;
+        ImGui::TextUnformatted("Autosave");
+        bool changed = ImGui::Checkbox("Autosave while the scene has unsaved changes", &settings.autosave_enabled);
+        ImGui::BeginDisabled(!settings.autosave_enabled);
+        ImGui::SliderFloat("Every (seconds)", &settings.autosave_interval_seconds, EditorSettings::kMinAutosaveSeconds,
+                           EditorSettings::kMaxAutosaveSeconds, "%.0f s");
+        changed |= ImGui::IsItemDeactivatedAfterEdit(); // once, when the drag ends, not every frame of it
+        ImGui::EndDisabled();
+        ImGui::BeginDisabled(!HasUnsavedChanges());
+        if (ImGui::Button("Autosave now") && impl_->WriteAutosave()) ImGui::SetItemTooltip("Written to the recovery slot");
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", HasRecoverableAutosave() ? "A recovery autosave is on disk." : "No recovery autosave is on disk.");
+        if (changed) {
+            settings.Normalize();
+            SaveSettings();
+        }
+    }
+    ImGui::End();
 }
 
 } // namespace aether::editor

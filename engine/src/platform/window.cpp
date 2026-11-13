@@ -175,6 +175,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
         }
         case WM_CLOSE:
             if (window) {
+                if (window->on_close && !window->on_close()) return 0;
                 window->NotifyClosed();
             }
             return 0;

@@ -1,11 +1,14 @@
 #include "test_framework.h"
 #include "aether/assets/asset_database.h"
+#include "core/editor_settings.h"
 #include "workspace/command_palette.h"
 #include "workspace/editor_workspace.h"
+#include "world/scene_panel.h"
 
 #include <imgui.h>
 
 #include <cctype>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -48,6 +51,108 @@ private:
 };
 
 } // namespace
+
+namespace {
+
+// Points the autosave folder at a scratch directory for one test, and puts the real one back after.
+struct ScopedAutosaveFolder {
+    std::string previous;
+    bool had_previous = false;
+    explicit ScopedAutosaveFolder(const std::filesystem::path& folder) {
+        if (const char* old = std::getenv("AETHER_EDITOR_AUTOSAVE_DIR")) {
+            previous = old;
+            had_previous = true;
+        }
+#if defined(_WIN32)
+        _putenv_s("AETHER_EDITOR_AUTOSAVE_DIR", folder.string().c_str());
+#else
+        setenv("AETHER_EDITOR_AUTOSAVE_DIR", folder.string().c_str(), 1);
+#endif
+        std::error_code ignored;
+        std::filesystem::remove_all(folder, ignored);
+    }
+    ~ScopedAutosaveFolder() {
+#if defined(_WIN32)
+        _putenv_s("AETHER_EDITOR_AUTOSAVE_DIR", had_previous ? previous.c_str() : "");
+#else
+        if (had_previous) setenv("AETHER_EDITOR_AUTOSAVE_DIR", previous.c_str(), 1);
+        else unsetenv("AETHER_EDITOR_AUTOSAVE_DIR");
+#endif
+    }
+};
+
+} // namespace
+
+// Stage 0 of the editor parity audit: quitting asks when -- and only when -- there is something to lose.
+AETHER_TEST(EditorWorkspace_QuitAsksOnlyWhenThereIsSomethingToLose) {
+    const ScopedAutosaveFolder folder(std::filesystem::temp_directory_path() / "aether_workspace_quit");
+    EditorWorkspace ws;
+    int confirmed = 0;
+    ws.on_quit_confirmed = [&] { ++confirmed; };
+    CHECK(!ws.HasUnsavedChanges());
+    ws.RequestQuit();
+    CHECK(confirmed == 1); // nothing unsaved: the host may close at once
+    CHECK(!ws.QuitPromptOpen());
+
+    ws.Scene().Document().CreateEntity("unsaved");
+    ws.RequestQuit();
+    CHECK(confirmed == 1); // asked, not confirmed
+    CHECK(ws.QuitPromptOpen());
+    ws.CancelQuit();
+    CHECK(!ws.QuitPromptOpen());
+    CHECK(confirmed == 1);
+    CHECK(ws.HasUnsavedChanges()); // canceling keeps the work
+
+    ws.RequestQuit();
+    ws.QuitWithoutSaving();
+    CHECK(confirmed == 2);
+    CHECK(!ws.QuitPromptOpen());
+}
+
+// The autosave timer writes while the scene has unsaved changes, and the recovery copy goes away with them.
+AETHER_TEST(EditorWorkspace_AutosaveFollowsTheUnsavedChanges) {
+    const std::filesystem::path base = std::filesystem::temp_directory_path() / "aether_workspace_autosave";
+    const ScopedAutosaveFolder folder(base);
+    EditorWorkspace ws;
+    ws.Settings().autosave_enabled = true;
+    ws.Settings().autosave_interval_seconds = EditorSettings::kMinAutosaveSeconds;
+    CHECK(!ws.HasRecoverableAutosave());
+
+    ws.Scene().Document().CreateEntity("unsaved");
+    ws.Update(EditorSettings::kMinAutosaveSeconds * 0.5f);
+    CHECK(!ws.HasRecoverableAutosave()); // not due yet
+    ws.Update(EditorSettings::kMinAutosaveSeconds * 0.5f + 1.0f);
+    CHECK(ws.HasRecoverableAutosave());
+
+    CHECK(ws.Scene().Document().Undo()); // back to the last saved state
+    CHECK(!ws.HasUnsavedChanges());
+    ws.Update(0.0f);
+    CHECK(!ws.HasRecoverableAutosave());
+}
+
+// A session that ends without saving leaves a slot; the next launch recovers it, and the scene file is untouched.
+AETHER_TEST(EditorWorkspace_RecoveryBringsBackAnInterruptedSessionsWork) {
+    const std::filesystem::path base = std::filesystem::temp_directory_path() / "aether_workspace_recovery";
+    const ScopedAutosaveFolder folder(base);
+    std::filesystem::path project;
+    {
+        EditorWorkspace first;
+        project = first.ProjectFile();
+        first.Scene().Document().CreateEntity("recovered marker");
+        CHECK(first.AutosaveNow());
+        CHECK(first.HasRecoverableAutosave());
+    } // destroyed without saving: what a crash leaves behind
+    EditorWorkspace second;
+    CHECK(second.ProjectFile() == project);
+    CHECK(second.HasRecoverableAutosave());
+    const usize before = second.Scene().Document().Entities().size();
+    CHECK(second.RecoverAutosave());
+    CHECK(second.Scene().Document().Entities().size() == before + 1);
+    CHECK(second.Scene().Document().IsDirty());
+    CHECK(second.HasUnsavedChanges());
+    second.DiscardAutosave();
+    CHECK(!second.HasRecoverableAutosave());
+}
 
 AETHER_TEST(EditorWorkspace_HasEveryTool) {
     HeadlessImGui imgui;

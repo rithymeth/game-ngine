@@ -68,20 +68,22 @@ void BuildDefaultDockLayout(ImGuiID dockspace, const ImVec2& size) {
     ImGui::DockBuilderFinish(dockspace);
 }
 
-void DrawEditor(EditorWorkspace& workspace, const char* backend_label, bool& quit) {
+void DrawEditor(EditorWorkspace& workspace, const char* backend_label) {
     const ImGuiIO& io = ImGui::GetIO();
     bool reset_layout = false;
     if (ImGui::BeginMainMenuBar()) {
         if (ImGui::BeginMenu("File")) {
             workspace.DrawSceneFileItems();
             ImGui::Separator();
-            if (ImGui::MenuItem("Quit")) quit = true;
+            if (ImGui::MenuItem("Quit")) workspace.RequestQuit();
             ImGui::EndMenu();
         }
         workspace.DrawEditMenu();
         workspace.DrawToolsMenu();
         if (ImGui::BeginMenu("View")) {
             if (ImGui::MenuItem("Reset layout")) reset_layout = true;
+            ImGui::Separator();
+            if (ImGui::MenuItem("Preferences")) workspace.preferences_open = true;
             ImGui::EndMenu();
         }
         ImGui::TextDisabled("   Aether Editor  -  %s  -  %zu tools", backend_label, workspace.ToolCount());
@@ -190,6 +192,21 @@ int main() {
         ImGuiVulkanHost host(*device, *swap_chain);
 
         EditorWorkspace workspace;
+        bool quit = false;
+        bool close_approved = false;
+        if (window) {
+            // The title-bar X asks first when the scene has unsaved changes, like File > Quit: the OS destroys the
+            // window as soon as it is allowed to, so the prompt has to keep it open.
+            window->on_close = [&] {
+                if (close_approved || !workspace.HasUnsavedChanges()) return true;
+                workspace.RequestQuit();
+                return false;
+            };
+        }
+        workspace.on_quit_confirmed = [&] {
+            close_approved = true;
+            quit = true;
+        };
         // The Live Viewport tool: the project's scene running under the real renderer, drawn on this same device. It is made here, not in the
         // workspace, because the workspace has no graphics device (it also runs headless in tests).
         LiveViewportPanel live(*device, workspace.Scene(), [&workspace] { return workspace.ProjectFile(); });
@@ -231,7 +248,9 @@ int main() {
         std::unique_ptr<rhi::ICommandList> cmd = device->CreateCommandList();
         u64 fence = 0;
         auto last = std::chrono::steady_clock::now();
-        bool quit = false;
+        // A last session that did not end cleanly left an autosave; offer it once the editor is up. Headless runs
+        // (tests, screenshots) skip it: nothing there can answer the prompt, and the answer must not be "discard".
+        if (!headless) workspace.OfferRecovery();
         for (i32 frame = 0; !quit && (max_frames < 0 || frame < max_frames); ++frame) {
             if (window) {
                 if (!window->PumpMessages()) break;
@@ -255,7 +274,7 @@ int main() {
             ImGui::NewFrame();
             workspace.Update(io.DeltaTime);
             select_pending();
-            DrawEditor(workspace, backend_label, quit);
+            DrawEditor(workspace, backend_label);
             ImGui::Render();
 
             device->WaitForFence(fence); // one command list: the last frame must be done with it

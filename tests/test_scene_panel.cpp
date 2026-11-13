@@ -283,6 +283,39 @@ AETHER_TEST(EditorWorkspace_MenusReachTheSceneDocument) {
     imgui.Frame([&] { if (ImGui::BeginMainMenuBar()) { workspace.DrawEditMenu(); ImGui::EndMainMenuBar(); } });
 }
 
+// A recovery autosave comes back as the open scene under its own name, dirty until saved, with the file on disk untouched.
+AETHER_TEST(ScenePanel_RecoveredChangesAreDirtyUntilSaved) {
+    const stdfs::path root = Scratch("aether_scene_panel_recover");
+    const stdfs::path source = root / "Scenes" / "Main.ascene";
+    const stdfs::path autosave = root / "recovery.ascene";
+    usize saved_count = 0;
+    {
+        SceneDocument document;
+        document.CreateEntity("Saved entity");
+        AETHER_CHECK(document.Save(source));
+        saved_count = document.Entities().size();
+        document.CreateEntity("Recovered entity");
+        std::string error;
+        AETHER_CHECK(document.SaveAutosave(autosave, &error));
+    }
+    ScenePanel panel(root);
+    usize replaced = 0;
+    panel.on_document_replaced = [&] { ++replaced; };
+    AETHER_CHECK(panel.LoadRecovered(autosave, source));
+    AETHER_CHECK(replaced == 1);
+    AETHER_CHECK(panel.Document().Entities().size() == saved_count + 1);
+    AETHER_CHECK(panel.Document().IsDirty());
+    AETHER_CHECK(panel.Path() == "Scenes/Main.ascene"); // the path box names the scene it came from
+    { SceneDocument on_disk; AETHER_CHECK(on_disk.Load(source) && on_disk.Entities().size() == saved_count); }
+    // Recovering again over the recovered scene would throw that away: it is refused, as any open would be.
+    AETHER_CHECK(!panel.LoadRecovered(autosave, source));
+    AETHER_CHECK(panel.Document().Entities().size() == saved_count + 1);
+    // Saving is what writes it over the scene the autosave came from.
+    AETHER_CHECK(panel.SaveScene());
+    { SceneDocument on_disk; AETHER_CHECK(on_disk.Load(source) && on_disk.Entities().size() == saved_count + 1); }
+    AETHER_CHECK(!panel.Document().IsDirty());
+}
+
 // The toolbar's scene list: what is in the content folder, sorted, with nothing else in it.
 AETHER_TEST(ScenePanel_ListsTheScenesInTheContentFolder) {
     const stdfs::path root = Scratch("aether_scene_panel_list");

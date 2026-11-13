@@ -138,7 +138,9 @@ Window::Window(const WindowDesc& desc) : width_(desc.width), height_(desc.height
     });
     glfwSetWindowCloseCallback(w, [](GLFWwindow* gw) {
         glfwSetWindowShouldClose(gw, GLFW_FALSE); // Window decides, as on Win32
-        Owner(gw)->NotifyClosed();
+        Window* self = Owner(gw);
+        if (self->on_close && !self->on_close()) return;
+        self->NotifyClosed();
     });
     int fw = 0, fh = 0;
     glfwGetFramebufferSize(w, &fw, &fh);
@@ -174,7 +176,9 @@ void Window::SetCursorMode(CursorMode mode) {
 }
 
 void Window::RequestClose() {
-    if (platform_window_) NotifyClosed();
+    if (!platform_window_) return;
+    if (on_close && !on_close()) return;
+    NotifyClosed();
 }
 
 void Window::NotifyResized(u32 width, u32 height) {

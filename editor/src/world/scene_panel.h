@@ -5,6 +5,7 @@
 
 #include <array>
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -55,10 +56,18 @@ public:
     const std::string& Path() const { return path_; }
     void SetPath(const std::string& path) { path_ = path; }
 
+    // Called after NewScene() or OpenScene() (or LoadRecovered()) actually replaced the document, so a host can
+    // drop state that belonged to the scene that was open: the recovery autosave above all.
+    std::function<void()> on_document_replaced;
+
     // The actions the toolbar and the hierarchy run, public so that a test (and a command palette) can run them without clicking. Each one that would discard unsaved changes is
     // refused with a status line unless `discard` is true (the toolbar asks first and then passes true).
     bool NewScene(bool discard = false);
     bool OpenScene(const std::string& path, bool discard = false);
+    // Puts a recovery autosave on screen as the open scene, under the name of the scene it was saved from (`source`,
+    // empty when that scene had never been saved). The document stays dirty: the recovered work is not on disk
+    // until it is saved. Refused, with a status line, when the open scene has unsaved changes.
+    bool LoadRecovered(const std::filesystem::path& autosave, const std::filesystem::path& source, bool discard = false);
     // Saves the open scene, or (with `path`) to another name. A file that already exists and is not the open scene is never replaced by a
     // plain save: it is refused with a message (Status()), because an untitled scene saved to the default name would otherwise overwrite
     // the project's real one. Saving to a name again right after that refusal (Save As twice), or with `overwrite`, replaces it.

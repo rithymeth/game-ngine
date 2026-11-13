@@ -38,6 +38,7 @@ namespace aether::editor {
 class ExtensionRegistry;
 class ScenePanel;
 class EditorScripts;
+struct EditorSettings;
 
 class EditorWorkspace {
 public:
@@ -102,6 +103,42 @@ public:
     // The popped-out tool windows.
     void DrawWindows();
 
+    // Data safety (Stage 0 of docs/design/EDITOR_PARITY_AUDIT.md): the editor writes the open scene into a
+    // per-project recovery slot while it has unsaved changes, and offers it back when the last session did not end
+    // cleanly. A clean save or a normal quit removes the slot; only an interrupted session leaves one to recover.
+    EditorSettings& Settings();
+    bool SaveSettings();
+    // The open scene has edits that were never written to its file.
+    bool HasUnsavedChanges() const;
+    // A recovery autosave is waiting for this project.
+    bool HasRecoverableAutosave() const;
+    // Writes the open scene into its recovery slot now. False when it can't be written (Play mode, no project, no
+    // unsaved changes); the reason goes to the log.
+    bool AutosaveNow();
+    // Makes the recovery autosave the open scene, keeping the scene file on disk untouched and the document dirty
+    // until it is saved. False when there is nothing to recover, it can't be read, or the open scene has unsaved
+    // changes of its own (the Scene panel says so).
+    bool RecoverAutosave();
+    // Throws the recovery autosave away.
+    void DiscardAutosave();
+    // Shows the recovery prompt when a slot exists; a host calls it once, after construction. DrawWindows draws the
+    // prompt, so it works in both shells.
+    void OfferRecovery();
+
+    // Quitting. File > Quit and the title-bar X go through RequestQuit(); with unsaved changes it shows the prompt
+    // DrawWindows draws, and on_quit_confirmed runs once the user has saved (or chosen to quit anyway). With nothing
+    // unsaved it runs at once, before RequestQuit returns. The prompt's answers are public so a headless host can
+    // make them too; SaveAndQuit is false (and the prompt stays) when the save itself fails.
+    void RequestQuit();
+    bool QuitPromptOpen() const;
+    bool SaveAndQuit();
+    void QuitWithoutSaving();
+    void CancelQuit();
+    std::function<void()> on_quit_confirmed;
+
+    // View > Preferences: autosave, on or off and how often. Plain UI state, like the palette's.
+    bool preferences_open = false;
+
     // Phase 43.5: the command palette. Plain UI state, like a tool's window flag, so a host --
     // or a headless test -- can open it without a keybinding. DrawWindows() draws it.
     bool command_palette_open = false;
@@ -114,6 +151,9 @@ public:
     void SetAssetOpener(std::function<void(const std::string&)> opener);
 
 private:
+    void DrawDataSafetyWindows();
+    void DrawPreferences();
+
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

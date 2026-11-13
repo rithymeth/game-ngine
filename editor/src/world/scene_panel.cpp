@@ -73,7 +73,9 @@ bool ScenePanel::NewScene(bool discard) {
         return false;
     }
     document_.NewScene();
+    bounds_.Clear();
     status_ = "A new scene.";
+    if (on_document_replaced) on_document_replaced();
     return true;
 }
 
@@ -91,6 +93,27 @@ bool ScenePanel::OpenScene(const std::string& path, bool discard) {
     path_ = path;
     bounds_.Clear(); // the models may have changed since they were last looked at
     status_ = "Opened " + file.string() + " (" + std::to_string(document_.Entities().size()) + " entities).";
+    if (on_document_replaced) on_document_replaced();
+    return true;
+}
+
+bool ScenePanel::LoadRecovered(const std::filesystem::path& autosave, const std::filesystem::path& source, bool discard) {
+    if (document_.IsDirty() && !discard) {
+        status_ = "There are unsaved changes: save them, or discard them to recover the last session's autosave.";
+        return false;
+    }
+    std::string error;
+    if (!document_.LoadAutosave(autosave, source, &error)) {
+        status_ = error.empty() ? "The recovery autosave could not be opened." : error;
+        return false;
+    }
+    bounds_.Clear();
+    std::error_code ec;
+    const std::string relative = source.empty() ? std::string() : std::filesystem::relative(source, content_root_, ec).generic_string();
+    if (!relative.empty() && relative.rfind("..", 0) != 0) path_ = relative;
+    else if (!source.empty()) path_ = source.string();
+    status_ = "Recovered unsaved changes from the last session. Save to keep them.";
+    if (on_document_replaced) on_document_replaced();
     return true;
 }
 

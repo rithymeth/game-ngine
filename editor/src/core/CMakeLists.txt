@@ -4,6 +4,8 @@
 # headless.
 add_library(aether_editor_core STATIC
     command_stack.cpp
+    editor_settings.cpp
+    scene_autosave.cpp
     scene_preview.cpp
     commands.cpp
     package_runner.cpp

@@ -425,13 +425,19 @@ will happen) before release. Invalid targets show a "no" cursor.
 
 ### 7.4 Editing and saving
 
-- Scenes and assets save explicitly (Ctrl+S) with **autosave** every 5
-  minutes to `Saved/Autosaves/` (never overwriting the real file).
-- Closing the editor or a tab with unsaved changes shows one dialog
-  listing every unsaved asset with checkboxes: *Save Selected*, *Don't
-  Save*, *Cancel*.
-- If the editor crashes, the next start offers to restore from the latest
-  autosave.
+- Scenes and assets save explicitly (Ctrl+S). The open scene is also **autosaved** while it has
+  unsaved changes, every 5 minutes by default (*View > Preferences*: on or off, 30 s to 1 h), into a
+  per-project recovery slot under the user's config folder (`%APPDATA%/Aether/Autosave`). An
+  autosave never writes the scene file, and saving the scene or undoing back to the saved state
+  removes it.
+- Closing the editor (File > Quit, or the title-bar X) with an unsaved scene asks: *Save and quit*,
+  *Quit without saving*, *Cancel*. A normal quit removes the recovery slot; only a session that ends
+  without one leaves it behind.
+- If the editor ends without a normal quit (a crash, a kill), the next launch on the same project
+  offers to recover the autosave: *Recover the autosave* (the scene comes back dirty, under its own
+  name, and the file on disk is untouched until it is saved), *Discard it*, or *Not now*.
+- Target, not yet built: one dialog listing every unsaved asset with checkboxes. Today the prompt
+  covers the scene document; the other asset editors keep their own documents and do not ask.
 
 ---
 
