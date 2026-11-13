@@ -2159,23 +2159,6 @@
           "$v": 1,
           "asset_path": "Models/SENTINEL4.glb"
         },
-        "BoxCollider": {
-          "$v": 1,
-          "center": [
-            0,
-            1.2,
-            0
-          ],
-          "friction": 0.6,
-          "half_extents": [
-            0.8,
-            1.2,
-            0.8
-          ],
-          "is_trigger": false,
-          "report_stay": false,
-          "restitution": 0.0
-        },
         "Transform": {
           "$v": 2,
           "position": [
@@ -2204,6 +2187,11 @@
           "names": [
             "Enemy"
           ]
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "properties": [],
+          "script": "cf03216d-65cf-4851-b232-4c1c7fa4c6dc"
         }
       },
       "guid": "36bcd0a9-6681-571a-b896-305f55971a51"

@@ -11,7 +11,7 @@ import numpy as np
 
 import terrain
 import world
-from scenelib import Scene, give_hands, mule, workbench, generator, beacon
+from scenelib import Scene, give_hands, mule, workbench, generator, beacon, sentinel
 
 LIGHT = lambda color, intensity, rng_: {"PointLight": {"$v": 1, "cast_shadows": False, "color": list(color), "intensity": intensity, "range": rng_}}
 BLUE, AMBER, GREEN = (0.2, 0.5, 1.0), (1.0, 0.5, 0.1), (0.3, 1.0, 0.6)
@@ -111,7 +111,7 @@ def iron(s, rng, door_script=None):
             position=(x + 15.2, 0, z), snap=True)
     x, z = world.poi_position("warden_checkpoint")
     for i, (dx, dz) in enumerate(((-6, 0), (6, 0))):
-        s.model(f"WardenSentinel_{i}", "SENTINEL4", position=(x + dx, 0, z + dz), rotation=(0, 180, 0), tags=("Enemy", "Warden"), collider=((0, 1.2, 0), (0.8, 1.2, 0.8)))
+        sentinel(s, f"WardenSentinel_{i}", (x + dx, 0, z + dz), rotation=(0, 180, 0))
     for i in range(4):
         s.model(f"WardenPylon_{i}", "Pylon", position=(x - 9 + i * 6, 0, z - 8), collider=((0, 2, 0), (0.4, 2, 0.4)))
     x, z = world.poi_position("slag_pits")

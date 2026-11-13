@@ -11,7 +11,7 @@ import random
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from scenelib import Scene, give_hands, mule, workbench, generator, beacon  # noqa: E402
+from scenelib import Scene, give_hands, mule, workbench, generator, beacon, sentinel  # noqa: E402
 import world  # noqa: E402
 import world_scene  # noqa: E402
 import interior_scene  # noqa: E402
@@ -215,6 +215,21 @@ def beacon_test():
     s.save(OUT / "BeaconTest.ascene")
 
 
+def combat_tests():
+    """CombatTest: a sentinel 5 m from Kael with its usual values (it walks up and strikes; Kael is left alone to be hit). CombatKill: a weak sentinel 2 m
+    away (20 health: one of Kael's hits disables it)."""
+    for name, build in (("CombatTest", lambda s: sentinel(s, "Test_Sentinel", (0, 0, -5), snap=False)),
+                        ("CombatKill", lambda s: sentinel(s, "Test_Sentinel", (0, 0, -2), snap=False, max_hp=20))):
+        s = Scene()
+        s.sky(1.2)
+        s.sun(yaw=-25, pitch=-38)
+        s.model("Ground", "Ground", position=(0, 0, 0), scale=(60, 1, 60), color=SAND, snap=False)
+        s.add("GroundCollider", {"BoxCollider": {"$v": 1, "center": [0, 0, 0], "friction": 0.8, "half_extents": [30, 0.5, 30], "is_trigger": False, "report_stay": False, "restitution": 0.0}}, position=(0, -0.5, 0))
+        build(s)
+        interior_scene.kael(s, (0, 0.1, 0), 0, script_guid("ThirdPersonController"))
+        s.save(OUT / (name + ".ascene"))
+
+
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
     model_gallery()
@@ -227,6 +242,7 @@ def main():
     mule_test()
     craft_test()
     beacon_test()
+    combat_tests()
     print("wrote", OUT)
 
 

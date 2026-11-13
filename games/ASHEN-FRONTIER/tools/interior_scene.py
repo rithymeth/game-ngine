@@ -8,7 +8,7 @@ import json
 import math
 import random
 
-from scenelib import Scene, give_hands
+from scenelib import Scene, give_hands, sentinel
 import world_scene
 
 LIGHT, BLUE, AMBER = world_scene.LIGHT, world_scene.BLUE, world_scene.AMBER
@@ -82,7 +82,7 @@ def assembly_hall(player_script, door_script):
     for i in range(7):
         s.model(f"Scrap_{i}", "ScrapPile", position=(rng.uniform(-10, 10), 0, rng.uniform(-18, 14)), rotation=(0, rng.uniform(0, 360), 0), snap=False)
     # the robot in the aisle, and the glow of the far end
-    s.model("Guardian", "SENTINEL4", position=(0, 0, -12), rotation=(0, 0, 0), snap=False, tags=("Enemy",), collider=((0, 1.2, 0), (0.8, 1.2, 0.8)))
+    sentinel(s, "Guardian", (0, 0, -12), snap=False)
     s.add("GuardianLight", LIGHT(BLUE, 14.0, 14.0), position=(0, 3.5, -16))
     s.add("EntryLight", LIGHT(BLUE, 8.0, 12.0), position=(0, 4.0, 15))
     # the way out, behind the player

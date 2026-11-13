@@ -15,7 +15,9 @@
     "Scenes/MuleTest.ascene",
     "Scenes/CraftTest.ascene",
     "Scenes/PowerTest.ascene",
-    "Scenes/BeaconTest.ascene"
+    "Scenes/BeaconTest.ascene",
+    "Scenes/CombatTest.ascene",
+    "Scenes/CombatKill.ascene"
   ],
   "collision_matrix": [],
   "default_quality": "High",
