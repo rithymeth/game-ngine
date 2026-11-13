@@ -24,7 +24,7 @@ new `HeightfieldCollider`.
 
 Kael can take salvage (E or X: the nearest thing tagged Salvage within 3 m goes into his pack; `Interactor.luau`). The pack is kept in SaveGames and written to the `autosave` slot at every change, so it survives a door and the next run. A HUD (`Content/UI/Hud.aui`) shows the pack and a `[E] Take` prompt for what is in reach. MULE-3 (`Mule3.luau`) starts broken: Interact beside it spends 3 components from the pack, then it follows Kael, and Interact beside it toggles follow / hold. The fab bench (`Workbench.luau`) crafts a Generator Core from 4 scrap and 2 components; the outpost generator (`PowerGenerator.luau`) takes it and lights up (`power.outpost`, saved). The first chapter is a chain on the HUD's objective line: craft the core, power the generator, repair MULE-3 (it then stays repaired and with Kael through doors and restarts), reach the Distress Relay (`Beacon.luau`). F9 starts a new game (clears the saved progress and reloads the world). The UI font (`Content/fonts/`) has to be in the package for any UI text to draw.
 
-Not yet: most gameplay (scanner, prompts, MULE-3, crafting, power, missions, saves: the first sprint of DESIGN.md section 22), most interiors, audio, HUD. Two interiors exist: the Assembly Hall (the door on the Iron Wastes hall) and the Living Dome (the door on the Verdant Array dome); each exit puts Kael back outside its door. The reactor hall is next.
+Not yet: the scanner, combat, audio, the other regions' missions, and the reactor hall (the rest of DESIGN.md section 22). Two interiors exist: the Assembly Hall (the door on the Iron Wastes hall) and the Living Dome (the door on the Verdant Array dome); each exit puts Kael back outside its door. The reactor hall is next.
 
 ## Run it
 
