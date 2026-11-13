@@ -23,16 +23,38 @@ Vec3 CatmullRom(f32 t, const SplinePoint& p0, const SplinePoint& p1,
          + b2 * p2.position + b3 * p3.position;
 }
 
-Vec3 CatmullRomTangent(const SplinePoint& p0, const SplinePoint& p1,
-                       const SplinePoint& p2, const SplinePoint& p3) {
-    // Derivative of Catmull-Rom.
-    // d/dt[CatmullRom] = ...
-    // Use finite differences on the position curve.
-    const f32 eps = 1e-4f;
-    Vec3 a = CatmullRom(0.0f - eps, p0, p1, p2, p3);
-    Vec3 b = CatmullRom(0.0f + eps, p1, p2, p3, p0);
-    return Normalize(b - a);
+namespace {
+
+constexpr f32 kDegToRad = 3.14159265358979323846f / 180.0f;
+
+// Derivative of the Catmull-Rom basis at t, applied to the same four points
+// CatmullRom uses: b0' = -1.5t^2 + 2t - 0.5, b1' = 4.5t^2 - 5t,
+// b2' = -4.5t^2 + 4t + 0.5, b3' = 1.5t^2 - t.
+Vec3 CatmullRomDerivative(f32 t, const SplinePoint& p0, const SplinePoint& p1,
+                          const SplinePoint& p2, const SplinePoint& p3) {
+    const f32 t2 = t * t;
+    const f32 d0 = -1.5f * t2 + 2.0f * t - 0.5f;
+    const f32 d1 = 4.5f * t2 - 5.0f * t;
+    const f32 d2 = -4.5f * t2 + 4.0f * t + 0.5f;
+    const f32 d3 = 1.5f * t2 - t;
+    return d0 * p0.position + d1 * p1.position + d2 * p2.position + d3 * p3.position;
 }
+
+// Unit tangent at local t. The analytic derivative is zero where control
+// points coincide and at the very end of a two-point spline (both phantom
+// points are the other end there), so fall back to the chord.
+Vec3 CatmullRomTangent(f32 t, const SplinePoint& p0, const SplinePoint& p1,
+                       const SplinePoint& p2, const SplinePoint& p3) {
+    Vec3 d = CatmullRomDerivative(t, p0, p1, p2, p3);
+    if (d.LengthSq() > 1e-12f) return d.Normalized();
+    d = p2.position - p1.position;
+    if (d.LengthSq() > 1e-12f) return d.Normalized();
+    d = p3.position - p0.position;
+    if (d.LengthSq() > 1e-12f) return d.Normalized();
+    return Vec3(1, 0, 0);
+}
+
+} // namespace
 
 // --- Spline construction ---
 
@@ -105,12 +127,17 @@ void Spline::RecomputeTangents() {
 // --- Evaluation ---
 
 f32 Spline::Length() const {
+    const usize segs = SegmentCount();
+    if (segs == 0) return 0.0f;
+    // Per segment, not a fixed count over the whole spline: 16 chords over a
+    // long, winding spline cut every corner and report a length far too short.
+    constexpr u32 kSamplesPerSegment = 8;
+    constexpr u32 kMaxSamples = 1u << 16;
+    const u32 samples = std::min(std::max(static_cast<u32>(segs) * kSamplesPerSegment, 16u), kMaxSamples);
     f32 len = 0.0f;
-    constexpr u32 kSamples = 16;
     Vec3 prev = Evaluate(0.0f);
-    for (u32 i = 1; i <= kSamples; ++i) {
-        const f32 t = static_cast<f32>(i) / kSamples;
-        Vec3 cur = Evaluate(t);
+    for (u32 i = 1; i <= samples; ++i) {
+        const Vec3 cur = Evaluate(static_cast<f32>(i) / static_cast<f32>(samples));
         len += (cur - prev).Length();
         prev = cur;
     }
@@ -126,13 +153,17 @@ f32 Spline::SegmentT(f32 t) const {
 
 void Spline::Evaluate(f32 t, Vec3* out_pos, Vec3* out_tangent) const {
     const usize segs = SegmentCount();
-    if (segs == 0) { *out_pos = Vec3(0,0,0); *out_tangent = Vec3(1,0,0); return; }
+    if (segs == 0) {
+        *out_pos = points_.empty() ? Vec3(0, 0, 0) : points_[0].position;
+        *out_tangent = Vec3(1, 0, 0);
+        return;
+    }
 
     t = std::clamp(t, 0.0f, 1.0f);
     const f32 st = t * static_cast<f32>(segs);
     usize seg = static_cast<usize>(st);
     if (seg >= segs) seg = segs - 1;
-    const f32 local_t = st - static_cast<f32>(seg);
+    const f32 local_t = std::clamp(st - static_cast<f32>(seg), 0.0f, 1.0f);
 
     const usize i0 = seg == 0 ? 0 : seg - 1;
     const usize i1 = seg;
@@ -141,7 +172,7 @@ void Spline::Evaluate(f32 t, Vec3* out_pos, Vec3* out_tangent) const {
 
     *out_pos = CatmullRom(local_t, points_[i0], points_[i1],
                           points_[i2], points_[i3]);
-    *out_tangent = CatmullRomTangent(points_[i0], points_[i1],
+    *out_tangent = CatmullRomTangent(local_t, points_[i0], points_[i1],
                                      points_[i2], points_[i3]);
 }
 
@@ -183,27 +214,39 @@ f32 Spline::Width(f32 t) const {
 
 void Spline::Frame(f32 t, Vec3* out_tangent, Vec3* out_up, Vec3* out_right) const {
     Vec3 tangent = Tangent(t);
-    const f32 roll = Roll(t);
-    // Apply roll around the tangent axis.
-    Vec3 up{0, 1, 0};
-    Vec3 right = Normalize(Cross(tangent, up));
-    up = Normalize(Cross(right, tangent));
-    // Simple roll: rotate up/right around tangent.
+    if (tangent.LengthSq() < 0.5f) tangent = Vec3(1, 0, 0);
+    // A reference up that is not parallel to the tangent: world +Y unless the
+    // spline runs straight up or down, where cross(tangent, up) is zero and
+    // the whole frame used to collapse to (0, 0, 0).
+    const Vec3 reference = std::fabs(tangent.y) > 0.999f ? Vec3(1, 0, 0) : Vec3(0, 1, 0);
+    Vec3 right = Cross(tangent, reference).Normalized();
+    Vec3 up = Cross(right, tangent).Normalized();
+    // Roll is in degrees (SplinePoint::roll, the editor's Roll field).
+    const f32 roll = Roll(t) * kDegToRad;
     const f32 cr = std::cos(roll);
     const f32 sr = std::sin(roll);
-    const Vec3 new_up = up * cr + right * sr;
-    const Vec3 new_right = right * cr - up * sr;
     *out_tangent = tangent;
-    *out_up = new_up;
-    *out_right = new_right;
+    *out_up = up * cr + right * sr;
+    *out_right = right * cr - up * sr;
 }
 
 // --- Sampling ---
 
 std::vector<Vec3> Spline::SampleUniform(f32 step) const {
     std::vector<Vec3> samples;
+    if (points_.empty()) return samples;
     const f32 len = Length();
-    const u32 count = static_cast<u32>(std::ceil(len / step)) + 1;
+    // A step that isn't a positive interval, or a spline that spans no
+    // distance, gives a single point. (Before, a zero-length spline divided
+    // by count - 1 == 0 and returned NaNs, and a tiny step could ask for an
+    // arbitrarily large allocation.)
+    if (!std::isfinite(step) || step <= 0.0f || len <= 0.0f) {
+        samples.push_back(Evaluate(0.0f));
+        return samples;
+    }
+    constexpr f32 kMaxSamples = 1'000'000.0f;
+    const f32 wanted = std::ceil(len / step) + 1.0f;
+    const u32 count = static_cast<u32>(std::clamp(wanted, 2.0f, kMaxSamples));
     samples.reserve(count);
     for (u32 i = 0; i < count; ++i) {
         const f32 t = static_cast<f32>(i) / static_cast<f32>(count - 1);
