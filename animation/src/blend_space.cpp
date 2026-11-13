@@ -85,6 +85,22 @@ std::vector<BlendWeight> Weights1D(const std::vector<std::pair<f64, u32>>& line,
     return Finish(w);
 }
 
+// The first wrap is handled by the tail. Compose the other count - 1 cycles
+// in logarithmic time, subtracting in binary so large counts cannot round up.
+RootMotionDelta RepeatMotionAfterFirst(RootMotionDelta cycle, f64 count) {
+    RootMotionDelta result;
+    bool borrow = true;
+    while (count >= 1.0) {
+        const f64 half = std::floor(count * 0.5);
+        const bool bit = count - half * 2.0 >= 1.0;
+        if (borrow ? !bit : bit) result += cycle;
+        if (bit) borrow = false;
+        count = half;
+        if (count >= 1.0) cycle += cycle;
+    }
+    return result;
+}
+
 } // namespace
 
 std::vector<BlendDiagnostic> ValidateBlendSpace(const BlendSpace& s) {
@@ -278,9 +294,11 @@ void BlendSpacePlayer::Update(f32 dt, Pose& out, RootMotionDelta* motion, const 
     const f32 cycle = CycleDuration();
     const f32 before = phase_;
     previous_phase_ = phase_;
+    f64 wraps = 0.0;
     if (cycle > 0.0f) {
         phase_ += dt / cycle;
-        phase_ -= std::floor(phase_);
+        wraps = std::floor(phase_);
+        phase_ -= static_cast<f32>(wraps);
     }
     std::vector<const Pose*> poses;
     std::vector<f32> weights;
@@ -295,7 +313,16 @@ void BlendSpacePlayer::Update(f32 dt, Pose& out, RootMotionDelta* motion, const 
         SampleClip(*c, skeleton_, phase_ * c->duration, true, scratch_[k]);
         if (motion != nullptr) {
             const RootMotionSettings s = settings != nullptr ? *settings : RootMotionSettings{};
-            const RootMotionDelta d = ExtractRootMotion(*c, skeleton_, before * c->duration, phase_ * c->duration, true, s);
+            RootMotionDelta d;
+            if (dt > 0.0f && std::isfinite(wraps) && wraps >= 1.0) {
+                // Wrapped phases alone cannot distinguish a partial step from
+                // one or more complete cycles. Keep the tail, cycles, and head.
+                d = ExtractRootMotion(*c, skeleton_, before * c->duration, c->duration, false, s);
+                if (wraps > 1.0) d += RepeatMotionAfterFirst(ExtractRootMotion(*c, skeleton_, 0.0f, c->duration, false, s), wraps);
+                d += ExtractRootMotion(*c, skeleton_, 0.0f, phase_ * c->duration, false, s);
+            } else {
+                d = ExtractRootMotion(*c, skeleton_, before * c->duration, phase_ * c->duration, true, s);
+            }
             moved = moved + d.translation * w.weight;
             // Weights are heaviest first. Align to the first available sample,
             // not identity, so rotations on opposite sides of 180 stay together.
