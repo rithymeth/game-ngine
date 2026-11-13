@@ -8,7 +8,7 @@ import json
 import math
 import random
 
-from scenelib import Scene, give_hands, sentinel
+from scenelib import Scene, give_hands, sentinel, console
 import world_scene
 
 LIGHT, BLUE, AMBER = world_scene.LIGHT, world_scene.BLUE, world_scene.AMBER
@@ -35,14 +35,14 @@ def room(s, width, length, height, floor=DARK, wall=RUST):
         _box(s, name + "Collider", (cx + (-0.5 if name == "West" else 0.5 if name == "East" else 0), height / 2, cz + (-0.5 if name == "North" else 0.5 if name == "South" else 0)), half)
 
 
-def kael(s, position, yaw, script, components=0, scrap=0):
+def kael(s, position, yaw, script, components=0, scrap=0, samples=0):
     player = s.add("Kael", {"CharacterMovement": {"$v": 1, "acceleration": 20.0, "air_acceleration": 5.0, "air_control": 0.3, "braking": 25.0, "coyote_time": 0.1, "flying": False,
                                                    "gravity_scale": 1.0, "height": 1.8, "jump_buffer": 0.1, "jump_velocity": 5.0, "mass": 70.0, "max_slope_degrees": 45.0,
                                                    "radius": 0.35, "run_speed": 7.0, "step_height": 0.35, "walk_speed": 4.0},
                               "ScriptComponent": {"$v": 1, "properties": [], "script": script}}, position=position, rotation=(0, yaw, 0), tags=("Player",))
     s.model("KaelBody", "Kael", position=(0, 0, 0), tags=("PlayerBody",), snap=False)
     s.entities[-1]["components"]["Parent"] = {"$v": 1, "parent": player}
-    give_hands(s, components, scrap)
+    give_hands(s, components, scrap, samples)
     s.camera((position[0], 3.0, position[2] + 6), yaw=0, pitch=-12, fov=62, far=300)
 
 
@@ -122,6 +122,7 @@ def living_dome(player_script, door_script):
             s.model(f"Scrub_{i}", "Scrub", position=(x, 0, z), rotation=(0, rng.uniform(0, 360), 0), scale=(1.4, 1.4, 1.4), snap=False)
     for i in range(4):
         s.model(f"Drone_{i}", "Drone", position=(math.cos(i * 1.6) * 5.5, 4.2 + (i % 2) * 1.0, -3 + math.sin(i * 1.6) * 5.5), rotation=(0, i * 70, 0), snap=False)
+    console(s, "IrrigationConsole", (7.0, 0, 8.0), rotation=(0, -90, 0), snap=False)
     s.add("EntryLight", LIGHT((0.4, 0.8, 1.0), 8.0, 12.0), position=(0, 4.0, 13))
     door(s, "ExitDoor", (0, 0, 18.5), "Scenes/OpenWorld.ascene", door_script, spawn="LivingDomeOutside")
     s.add("DomeEntry", {}, position=(0, 0.1, 12.0))

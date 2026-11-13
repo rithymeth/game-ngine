@@ -10,9 +10,12 @@ Interactor.reach = 3
 Interactor.start_components = 0
 --@tooltip Scrap already in the pack at the start (for test scenes)
 Interactor.start_scrap = 0
+--@tooltip Seed samples already in the pack at the start (for test scenes)
+Interactor.start_samples = 0
 
 -- What a salvage entity gives, by the words in its name. Anything else gives scrap.
 local YIELDS = {
+    { "Sample", "samples", 1 },
     { "Crate", "components", 2 },
     { "Pile", "scrap", 3 },
     { "Wreck", "components", 5 },
@@ -35,6 +38,7 @@ function Interactor:OnCreate()
     if not SaveGames.HasKey("pack.scrap") and SaveGames.DoesSaveExist("autosave") then SaveGames.LoadFromSlot("autosave") end
     if not SaveGames.HasKey("pack.scrap") then
         SaveGames.SetNumber("pack.scrap", self.start_scrap)
+        SaveGames.SetNumber("pack.samples", self.start_samples)
         SaveGames.SetNumber("pack.components", self.start_components)
     end
     print(string.format("Pack at start: %d scrap, %d components", Get("scrap"), Get("components")))
@@ -58,7 +62,9 @@ local function Objective()
     if not done("power.outpost") then return "Install the Generator Core at the generator." end
     if not done("mule.repaired") then return "Repair MULE-3 in the Fallen Basin wreck." end
     if not done("mission.relay") then return "Take MULE-3 to the Distress Relay." end
-    return "Chapter 1 complete. Explore the four regions."
+    if done("mission.dome") then return "Chapter 2 complete. The living dome grows again." end
+    if Get("samples") >= 3 then return "Take the seed samples to the console in the living dome." end
+    return string.format("Chapter 2: collect three seed samples in the Verdant Array (%d of 3).", Get("samples"))
 end
 
 -- Everything the first chapter saves, cleared for a new game (F9).
@@ -107,6 +113,7 @@ function Interactor:OnUpdate(dt)
     if not self.hud_ready then -- the HUD exists from the first frame: show the pack as it is (it may be carried over)
         self.hud_ready = UI.SetText("ScrapText", string.format("SCRAP  %d", Get("scrap")))
         UI.SetText("ComponentText", string.format("COMPONENTS  %d", Get("components")))
+        UI.SetText("SamplesText", string.format("SEED SAMPLES  %d / 3", Get("samples")))
     end
     local objective = Objective()
     if objective ~= self.objective and UI.SetText("ObjectiveText", objective) then self.objective = objective end
@@ -116,7 +123,7 @@ function Interactor:OnUpdate(dt)
     for _, e in ipairs(world:EntitiesWith("Tags")) do
         local tags = e:Get("Tags").names
         local salvage = false
-        for _, t in ipairs(tags) do if t == "Salvage" then salvage = true end end
+        for _, t in ipairs(tags) do if t == "Salvage" or t == "Sample" then salvage = true end end
         if salvage then
             local p = e:Get("Transform").position
             local dx, dz = p.x - here.x, p.z - here.z
@@ -148,7 +155,12 @@ function Interactor:OnUpdate(dt)
         UI.SetVisible("PromptPanel", false)
         UI.SetText("ScrapText", string.format("SCRAP  %d", Get("scrap")))
         UI.SetText("ComponentText", string.format("COMPONENTS  %d", Get("components")))
-        print(string.format("Salvaged %s: +%d %s (pack: %d scrap, %d components)", name, amount, kind, Get("scrap"), Get("components")))
+        if kind == "samples" then
+            UI.SetText("SamplesText", string.format("SEED SAMPLES  %d / 3", Get("samples")))
+            print(string.format("Collected seed sample %s (%d of 3)", name, Get("samples")))
+        else
+            print(string.format("Salvaged %s: +%d %s (pack: %d scrap, %d components)", name, amount, kind, Get("scrap"), Get("components")))
+        end
     end
 end
 

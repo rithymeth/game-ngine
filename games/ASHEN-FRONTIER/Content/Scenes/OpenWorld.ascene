@@ -23411,6 +23411,213 @@
       "components": {
         "ModelRenderer": {
           "$v": 1,
+          "asset_path": "Models/SalvageCrate.glb"
+        },
+        "MaterialParameters": {
+          "$v": 1,
+          "material": "",
+          "revision": 0,
+          "values": [
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "BaseColor",
+              "texture": "",
+              "value": [
+                0.15,
+                0.45,
+                0.2,
+                1.0
+              ]
+            },
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "Emissive",
+              "texture": "",
+              "value": [
+                0.2,
+                1.0,
+                0.45,
+                1.0
+              ]
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -158.0,
+            -1.876240723379169,
+            -131.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            0.7,
+            0.7,
+            0.7
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "SeedSample_0"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Sample"
+          ]
+        }
+      },
+      "guid": "81e0b24f-df55-576f-ac71-9975778543b0"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/SalvageCrate.glb"
+        },
+        "MaterialParameters": {
+          "$v": 1,
+          "material": "",
+          "revision": 0,
+          "values": [
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "BaseColor",
+              "texture": "",
+              "value": [
+                0.15,
+                0.45,
+                0.2,
+                1.0
+              ]
+            },
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "Emissive",
+              "texture": "",
+              "value": [
+                0.2,
+                1.0,
+                0.45,
+                1.0
+              ]
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -159.0,
+            -1.0423318778147725,
+            -77.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            0.7,
+            0.7,
+            0.7
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "SeedSample_1"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Sample"
+          ]
+        }
+      },
+      "guid": "637314c5-0c2e-5448-adaa-fd1a5212f798"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/SalvageCrate.glb"
+        },
+        "MaterialParameters": {
+          "$v": 1,
+          "material": "",
+          "revision": 0,
+          "values": [
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "BaseColor",
+              "texture": "",
+              "value": [
+                0.15,
+                0.45,
+                0.2,
+                1.0
+              ]
+            },
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "Emissive",
+              "texture": "",
+              "value": [
+                0.2,
+                1.0,
+                0.45,
+                1.0
+              ]
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -94.0,
+            -0.694589962589685,
+            -114.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            0.7,
+            0.7,
+            0.7
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "SeedSample_2"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Sample"
+          ]
+        }
+      },
+      "guid": "64d24f18-8137-5f40-a51a-a24b4a91fe7c"
+    },
+    {
+      "components": {
+        "ModelRenderer": {
+          "$v": 1,
           "asset_path": "Models/TreeLow.glb"
         },
         "Transform": {

@@ -276,6 +276,22 @@ def reactor(work):
         check(math.hypot(x - gx, z - gz) < 45, f"Kael comes out at the Core Gate ({math.hypot(x - gx, z - gz):.0f} m from it)")
 
 
+def chapter2(work):
+    """Chapter 2: a seed sample is collected with Interact (counted of three, saved); with three samples beside the dome's console, Interact restores the
+    dome (saved, and the samples are spent)."""
+    result, text = run_player(work, "Scenes/SampleTest.ascene", "user15")
+    check(result.returncode == 0, f"the player runs the sample test and exits cleanly (exit {result.returncode})")
+    check("Collected seed sample Test_Sample (1 of 3)" in text, "Interact beside a seed sample collects it (1 of 3)")
+    check(not re.search(r"\[ERROR\]", text), "no errors collecting a sample")
+    result, text = run_player(work, "Scenes/ConsoleTest.ascene", "user16")
+    check("Living dome restored" in text, "three samples beside the console restore the living dome")
+    check(not re.search(r"\[ERROR\]", text), "no errors at the console")
+    result, text = run_player(work, "Scenes/ConsoleTest.ascene", "user17", press="Z")
+    check("Living dome restored" not in text, "the console does nothing without a key press")
+    layout_text = (HERE / "Content" / "Scenes" / "OpenWorld.ascene").read_text(encoding="utf-8")
+    check(layout_text.count('"SeedSample_') >= 3, "the open world holds the three seed samples")
+
+
 def main():
     layout()
     if failures:
@@ -293,6 +309,7 @@ def main():
             reactor(work)
             combat(work)
             scan(work)
+            chapter2(work)
     finally:
         shutil.rmtree(work, ignore_errors=True)
     check(not any("Missing sound" in text for text in TRANSCRIPTS), f"every sound a script plays exists ({len(TRANSCRIPTS)} runs looked through)")
