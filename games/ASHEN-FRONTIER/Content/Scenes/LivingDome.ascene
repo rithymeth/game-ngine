@@ -2303,6 +2303,68 @@
     },
     {
       "components": {
+        "ModelRenderer": {
+          "$v": 1,
+          "asset_path": "Models/FabBench.glb"
+        },
+        "MaterialParameters": {
+          "$v": 1,
+          "material": "",
+          "revision": 0,
+          "values": [
+            {
+              "$v": 1,
+              "is_texture": false,
+              "name": "BaseColor",
+              "texture": "",
+              "value": [
+                0.2,
+                0.5,
+                0.35,
+                1.0
+              ]
+            }
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            7.0,
+            0,
+            8.0
+          ],
+          "rotation": [
+            0.0,
+            -0.7071067811865475,
+            0.0,
+            0.7071067811865476
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "IrrigationConsole"
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "Console"
+          ]
+        },
+        "ScriptComponent": {
+          "$v": 1,
+          "properties": [],
+          "script": "c1e9d8d2-b165-4ef8-b46d-68b40d4b49a7"
+        }
+      },
+      "guid": "2ca40e13-dd8c-5f4c-bbc1-86ddca6c3574"
+    },
+    {
+      "components": {
         "PointLight": {
           "$v": 1,
           "cast_shadows": false,

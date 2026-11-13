@@ -97,9 +97,9 @@ def script_guid(name):
     return meta["guid"]
 
 
-def give_hands(scene, components=0, scrap=0):
+def give_hands(scene, components=0, scrap=0, samples=0):
     """Puts the Interactor script on the entity added last (Kael's body): what lets him take salvage. Adds the HUD (pack counts, the prompt) too."""
-    scene.entities[-1]["components"]["ScriptComponent"] = {"$v": 1, "properties": ([{"name": "start_components", "value": str(components)}] if components else []) + ([{"name": "start_scrap", "value": str(scrap)}] if scrap else []), "script": script_guid("Interactor")}
+    scene.entities[-1]["components"]["ScriptComponent"] = {"$v": 1, "properties": ([{"name": "start_components", "value": str(components)}] if components else []) + ([{"name": "start_scrap", "value": str(scrap)}] if scrap else []) + ([{"name": "start_samples", "value": str(samples)}] if samples else []), "script": script_guid("Interactor")}
     scene.add("Hud", {"WidgetComponent": {"$v": 1, "layout": "UI/Hud.aui", "z": 0, "visible": True},
                       "ScriptComponent": {"$v": 1, "properties": [], "script": script_guid("Scanner")}})  # the HUD entity also carries the scanner
 
@@ -138,4 +138,16 @@ def sentinel(scene, name, position, rotation=(0, 0, 0), snap=True, **props):
     """A sentinel with its script (it chases and strikes; Kael can disable it). No collider: it moves. `props` override the script's values (max_hp, damage...)."""
     guid_ = scene.model(name, "SENTINEL4", position=position, rotation=rotation, tags=("Enemy",), snap=snap)
     scene.entities[-1]["components"]["ScriptComponent"] = {"$v": 1, "properties": [{"name": k, "value": str(v)} for k, v in props.items()], "script": script_guid("Sentinel")}
+    return guid_
+
+
+def sample(scene, name, position, **kwargs):
+    """A seed sample: a small glowing green case, taken with Interact (chapter 2)."""
+    return scene.model(name, "SalvageCrate", position=position, tags=("Sample",), color=(0.15, 0.45, 0.2), emissive=(0.2, 1.0, 0.45), scale=(0.7, 0.7, 0.7), **kwargs)
+
+
+def console(scene, name, position, rotation=(0, 0, 0), **kwargs):
+    """The living dome's irrigation console with its script: three seed samples wake it."""
+    guid_ = scene.model(name, "FabBench", position=position, rotation=rotation, tags=("Console",), color=(0.2, 0.5, 0.35), **kwargs)
+    scene.entities[-1]["components"]["ScriptComponent"] = {"$v": 1, "properties": [], "script": script_guid("Console")}
     return guid_

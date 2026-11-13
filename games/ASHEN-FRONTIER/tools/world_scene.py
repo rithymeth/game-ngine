@@ -11,7 +11,7 @@ import numpy as np
 
 import terrain
 import world
-from scenelib import Scene, give_hands, mule, workbench, generator, beacon, sentinel
+from scenelib import Scene, give_hands, mule, workbench, generator, beacon, sentinel, sample
 
 LIGHT = lambda color, intensity, rng_: {"PointLight": {"$v": 1, "cast_shadows": False, "color": list(color), "intensity": intensity, "range": rng_}}
 BLUE, AMBER, GREEN = (0.2, 0.5, 1.0), (1.0, 0.5, 0.1), (0.3, 1.0, 0.6)
@@ -149,6 +149,10 @@ def verdant(s, rng, door_script=None):
     s.model("AnnexBench", "FabBench", position=(x + 5, 0, z + 3), collider=((0, 0.5, 0), (0.9, 0.5, 0.45)))
     for i in range(3):
         s.model(f"AnnexCrate_{i}", "SalvageCrate", position=(x - 4 + i * 1.3, 0, z + 4), rotation=(0, rng.uniform(0, 90), 0), tags=("Salvage",), collider=((0, 0.4, 0), (0.45, 0.4, 0.3)))
+    # chapter 2: three seed samples lie out in the array (by the greenhouses, in the garden, at the annex)
+    for i, (poi, dx, dz) in enumerate((("greenhouse_rows", -8, 14), ("repaired_garden", 6, -2), ("research_annex", -9, -4))):
+        px, pz = world.poi_position(poi)
+        sample(s, f"SeedSample_{i}", (px + dx, 0, pz + dz))
     _scatter(s, rng, "verdant_array", "ArrayTree", ["TreeLow"], 34, scale=(0.9, 1.4))
     _scatter(s, rng, "verdant_array", "ArrayRock", ["RockA"], 8)
 

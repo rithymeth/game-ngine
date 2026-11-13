@@ -19,7 +19,7 @@ end
 -- tag -> the category word the scan shows (the first tag of an entity found in this list decides)
 local CATEGORIES = {
     { "Enemy", "MACHINE" }, { "MULE3", "ROBOT" }, { "Workbench", "FABRICATION" }, { "Generator", "POWER" },
-    { "Relay", "RELAY" }, { "Hazard", "HAZARD" }, { "Salvage", "SALVAGE" },
+    { "Relay", "RELAY" }, { "Hazard", "HAZARD" }, { "Console", "CONSOLE" }, { "Sample", "SAMPLE" }, { "Salvage", "SALVAGE" },
 }
 
 local function Compass(dx, dz)
@@ -36,6 +36,8 @@ local function Status(category, name)
         return SaveGames.GetNumber("mule.repaired", 0) > 0 and "repaired" or "broken: needs repair"
     elseif category == "POWER" then
         return SaveGames.GetNumber("power.outpost", 0) > 0 and "running" or "off"
+    elseif category == "CONSOLE" then
+        return SaveGames.GetNumber("mission.dome", 0) > 0 and "running" or "needs 3 seed samples"
     elseif category == "RELAY" then
         return SaveGames.GetNumber("mission.relay", 0) > 0 and "reached" or "not reached"
     end

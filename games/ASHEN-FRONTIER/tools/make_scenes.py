@@ -11,7 +11,7 @@ import random
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from scenelib import Scene, give_hands, mule, workbench, generator, beacon, sentinel  # noqa: E402
+from scenelib import Scene, give_hands, mule, workbench, generator, beacon, sentinel, sample, console  # noqa: E402
 import world  # noqa: E402
 import world_scene  # noqa: E402
 import interior_scene  # noqa: E402
@@ -246,6 +246,20 @@ def scan_test():
     s.save(OUT / "ScanTest.ascene")
 
 
+def sample_tests():
+    """SampleTest: one seed sample 2 m from Kael (Interact collects it). ConsoleTest: Kael with three samples beside the dome's console (Interact restores it)."""
+    for name, build, samples in (("SampleTest", lambda s: sample(s, "Test_Sample", (2, 0, 0), snap=False), 0),
+                                 ("ConsoleTest", lambda s: console(s, "Test_Console", (2.5, 0, 0), snap=False), 3)):
+        s = Scene()
+        s.sky(1.2)
+        s.sun(yaw=-25, pitch=-38)
+        s.model("Ground", "Ground", position=(0, 0, 0), scale=(60, 1, 60), color=SAND, snap=False)
+        s.add("GroundCollider", {"BoxCollider": {"$v": 1, "center": [0, 0, 0], "friction": 0.8, "half_extents": [30, 0.5, 30], "is_trigger": False, "report_stay": False, "restitution": 0.0}}, position=(0, -0.5, 0))
+        build(s)
+        interior_scene.kael(s, (0, 0.1, 0), 0, script_guid("ThirdPersonController"), samples=samples)
+        s.save(OUT / (name + ".ascene"))
+
+
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
     model_gallery()
@@ -260,6 +274,7 @@ def main():
     beacon_test()
     combat_tests()
     scan_test()
+    sample_tests()
     print("wrote", OUT)
 
 

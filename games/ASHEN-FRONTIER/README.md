@@ -30,6 +30,8 @@ Sound effects (`Content/Audio`, written by `tools/make_audio.py`: short synthesi
 
 The scanner (Q, or Y on a pad) lists what is near by category as words ([SALVAGE], [MACHINE], [ROBOT], [FABRICATION], [POWER], [RELAY], [HAZARD]) with distance, compass direction and known status, on the HUD.
 
+Chapter 2 (after the relay): collect three glowing seed samples out in the Verdant Array (E, counted on the HUD) and load them into the irrigation console inside the living dome (`Console.luau`), which restores the garden. The scanner lists samples and the console too.
+
 Three interiors exist, one for each of the reference images: the Assembly Hall (the door on the Iron Wastes hall), the Living Dome (the door on the Verdant Array dome) and the Reactor Hall (the door on the Hollow Core's gate); each exit puts Kael back outside its door.
 
 Not yet: ranged combat, music and ambience, the other regions' missions (the rest of DESIGN.md section 22).
