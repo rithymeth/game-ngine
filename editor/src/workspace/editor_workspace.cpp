@@ -2,6 +2,7 @@
 
 #include "workspace/command_palette.h"
 #include "workspace/command_registry.h"
+#include "core/editor_document.h"
 #include "core/editor_settings.h"
 #include "core/recent_projects.h"
 #include "core/scene_autosave.h"
@@ -1105,6 +1106,9 @@ void EditorWorkspace::DrawTool(usize tool) {
 
 ScenePanel& EditorWorkspace::Scene() { return *impl_->scene_panel; }
 
+EditorDocument& EditorWorkspace::ActiveDocument() { return impl_->scene_panel->Document(); }
+const EditorDocument& EditorWorkspace::ActiveDocument() const { return impl_->scene_panel->Document(); }
+
 CommandRegistry& EditorWorkspace::Commands() { return impl_->commands; }
 const CommandRegistry& EditorWorkspace::Commands() const { return impl_->commands; }
 
@@ -1395,7 +1399,7 @@ EditorSettings& EditorWorkspace::Settings() { return impl_->editor_settings; }
 bool EditorWorkspace::SaveSettings() { return impl_->editor_settings.Save(EditorSettings::DefaultFile()); }
 
 bool EditorWorkspace::HasUnsavedChanges() const {
-    return impl_->scene_panel != nullptr && impl_->scene_panel->Document().IsDirty();
+    return impl_->scene_panel != nullptr && ActiveDocument().IsDirty();
 }
 
 bool EditorWorkspace::HasRecoverableAutosave() const {
@@ -1497,9 +1501,11 @@ void EditorWorkspace::DrawDataSafetyWindows() {
             impl.quit_prompt_opened = true;
         }
         if (ImGui::BeginPopupModal("Quit Aether Editor?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-            const std::filesystem::path file = impl.scene_panel->Document().FilePath();
-            ImGui::TextUnformatted("The open scene has changes that are not saved.");
-            ImGui::TextDisabled("%s", file.empty() ? "(a scene that has never been saved)" : file.string().c_str());
+            const EditorDocument& document = ActiveDocument();
+            ImGui::Text("The open %s has changes that are not saved.", document.Kind());
+            ImGui::TextDisabled("%s", document.FilePath().empty()
+                ? "an untitled document"
+                : document.DisplayName().c_str());
             if (!impl.scene_panel->Status().empty()) ImGui::TextWrapped("%s", impl.scene_panel->Status().c_str());
             ImGui::Separator();
             if (ImGui::Button("Save and quit")) {

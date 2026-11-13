@@ -7322,6 +7322,7 @@
 [editor/src/content/content_drag.h] internal-tooling
 [editor/src/core/command_stack.h] internal-tooling
 [editor/src/core/commands.h] internal-tooling
+[editor/src/core/editor_document.h] internal-tooling
 [editor/src/core/editor_settings.h] internal-tooling
 [editor/src/core/json_edit.h] internal-tooling
 [editor/src/core/package_runner.h] internal-tooling

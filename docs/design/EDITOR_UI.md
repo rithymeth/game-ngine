@@ -207,6 +207,11 @@ Users can save their own layouts. Layouts are stored per project in
   changes. Middle-click closes the tab (and asks to save if needed).
 - Reopening an asset focuses its existing tab instead of opening a
   second copy.
+- A tab reads its document through `core/editor_document.h`
+  (`EditorDocument`: path, display name, kind, dirty state, undo history
+  and save), not through the panel that draws it. `SceneDocument` is the
+  first adopter; the other asset documents follow in Stage 6 of the parity
+  audit.
 
 ---
 
@@ -445,6 +450,9 @@ will happen) before release. Invalid targets show a "no" cursor.
   name, and the file on disk is untouched until it is saved), *Discard it*, or *Not now*.
 - Target, not yet built: one dialog listing every unsaved asset with checkboxes. Today the prompt
   covers the scene document; the other asset editors keep their own documents and do not ask.
+- The quit prompt asks the active document through the `EditorDocument` contract (kind, name,
+  `IsDirty()`), not the Scene panel directly. A panel may front `Save()` with its own naming
+  defaults and overwrite check -- the Scene toolbar does -- but the document is what changes.
 
 ---
 

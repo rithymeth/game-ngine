@@ -1,5 +1,6 @@
 #include "test_framework.h"
 #include "aether/assets/asset_database.h"
+#include "core/editor_document.h"
 #include "core/editor_settings.h"
 #include "workspace/command_palette.h"
 #include "workspace/command_registry.h"
@@ -91,11 +92,14 @@ AETHER_TEST(EditorWorkspace_QuitAsksOnlyWhenThereIsSomethingToLose) {
     int confirmed = 0;
     ws.on_quit_confirmed = [&] { ++confirmed; };
     CHECK(!ws.HasUnsavedChanges());
+    CHECK(std::string(ws.ActiveDocument().Kind()) == "scene");
+    CHECK(ws.ActiveDocument().DisplayName() == "Untitled");
     ws.RequestQuit();
     CHECK(confirmed == 1); // nothing unsaved: the host may close at once
     CHECK(!ws.QuitPromptOpen());
 
     ws.Scene().Document().CreateEntity("unsaved");
+    CHECK(ws.ActiveDocument().IsDirty()); // the prompt asks the contract, not the scene panel
     ws.RequestQuit();
     CHECK(confirmed == 1); // asked, not confirmed
     CHECK(ws.QuitPromptOpen());

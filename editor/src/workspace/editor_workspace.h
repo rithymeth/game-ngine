@@ -39,6 +39,7 @@ class ExtensionRegistry;
 class ScenePanel;
 class EditorScripts;
 class CommandRegistry;
+class EditorDocument;
 struct EditorSettings;
 
 class EditorWorkspace {
@@ -90,6 +91,11 @@ public:
     void DrawTool(usize tool);
     // The open scene (the Scene tool's document and actions), for a host's own menus and shortcuts.
     ScenePanel& Scene();
+    // The document the shell's quit prompt asks about (Stage 0 of docs/design/EDITOR_PARITY_AUDIT.md): name, dirty
+    // state, undo history and save, without the caller knowing it is a scene. There is one document today; Stage 1's
+    // tabs turn this into "the focused one".
+    EditorDocument& ActiveDocument();
+    const EditorDocument& ActiveDocument() const;
     // The commands the editor has (Stage 0 of docs/design/EDITOR_PARITY_AUDIT.md): each with a stable id, a label,
     // a default chord, the context its chord applies in, an enabled predicate and an action. The menus, the palette
     // and the keyboard read this one table; a host may add its own (View's "Reset layout" is the shell's).

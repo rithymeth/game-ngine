@@ -217,9 +217,17 @@ File, Edit and View menus are drawn from the table, the palette lists tools, the
 workspace (`Global`) and the Scene panel (toolbar `Scene`, hierarchy `SceneTree`) poll the same table, so a chord is
 written down once. Ctrl+Shift+P opens the palette through the table, not a separate check. Tests: add/find/run/refusals,
 chord formatting and exact-modifier matching, the conflict rule, the built-in table's ids and menus and empty conflict
-list, menus and commands acting on the scene, and both chord scopes through injected ImGui key events. Still open in this
-stage: the document contract, notifications and native dialogs; autosave and the quit prompt cover the scene document
+list, menus and commands acting on the scene, and both chord scopes through injected ImGui key events. Still open at that
+point: the document contract, notifications and native dialogs; autosave and the quit prompt cover the scene document
 only.
+
+Done so far (2026-11-14): the `EditorDocument` contract (`editor/src/core/editor_document.{h,cpp}`): file path, display
+name (the file name, or "Untitled"), kind ("scene"), dirty state, undo/redo with labels, and a save that takes the target
+path. `SceneDocument` implements it, and `EditorWorkspace::ActiveDocument()` returns it, so the quit prompt asks kind,
+name and dirty state of a document rather than of the Scene panel. Tests: a scene answering every contract question
+(including clean-after-undo and save-as naming), the default display name, a non-scene stand-in implementing the
+contract, and the workspace's quit flow agreeing with `ActiveDocument()`. Still open in this stage: notifications and
+native dialogs.
 
 ### Stage 1 — Shell, project hub and workflow (M)
 

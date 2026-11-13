@@ -6,6 +6,7 @@
 #include "aether/reflection/any.h"
 #include "core/command_stack.h"
 #include "core/commands.h" // EntitySnapshot, for the copy/paste clipboard
+#include "core/editor_document.h"
 #include "core/play_session.h"
 
 #include <filesystem>
@@ -23,21 +24,24 @@ enum class SceneEntityKind {
 };
 
 // One open scene document: ECS data, stable entity IDs, and undoable editor
-// commands. Presentation hosts (ImGui, MCP) can share this state.
-class SceneDocument {
+// commands. Presentation hosts (ImGui, MCP) can share this state. It is an
+// EditorDocument (Stage 0 of the parity audit), so the shell can ask it for its
+// name, unsaved state and undo history without knowing it is a scene.
+class SceneDocument : public EditorDocument {
 public:
     SceneDocument();
 
     World& GetWorld() { return world_; }
     const World& GetWorld() const { return world_; }
-    const std::filesystem::path& FilePath() const { return file_; }
+    const std::filesystem::path& FilePath() const override { return file_; }
+    const char* Kind() const override { return "scene"; }
     // Phase 42.1: the scene's absolute origin. A JSON scene records it and its
     // Transforms are local to it, so a large world round-trips to the right place.
     void SetOrigin(const Vec3d& origin) { origin_ = origin; }
     const Vec3d& Origin() const { return origin_; }
     GuidIndex& Guids() { return guids_; }
     const GuidIndex& Guids() const { return guids_; }
-    bool IsDirty() const { return recovered_unsaved_ || commands_.IsDirty(); }
+    bool IsDirty() const override { return recovered_unsaved_ || commands_.IsDirty(); }
     // Goes up whenever the scene may have changed: a command, an undo or redo, a new or loaded scene, or Touch(). A viewer compares it with the
     // value it last drew to know whether to draw again. Not saved, and not undone by an undo (an undo is a change too).
     u64 Revision() const { return commands_.Revision() + local_revision_; }
@@ -52,16 +56,16 @@ public:
     u64 StructureRevision() const { return Revision() - commands_.PatchableRevision() - touched_revision_; }
     // The (entity, component) pairs set since the last call (see CommandStack::TakeComponentEdits); `overflowed` says the list is incomplete.
     std::vector<CommandStack::ComponentEdit> TakeComponentEdits(bool* overflowed = nullptr) { return commands_.TakeComponentEdits(overflowed); }
-    bool CanUndo() const { return commands_.CanUndo(); }
-    bool CanRedo() const { return commands_.CanRedo(); }
-    std::string UndoLabel() const { return commands_.UndoLabel(); }
-    std::string RedoLabel() const { return commands_.RedoLabel(); }
+    bool CanUndo() const override { return commands_.CanUndo(); }
+    bool CanRedo() const override { return commands_.CanRedo(); }
+    std::string UndoLabel() const override { return commands_.UndoLabel(); }
+    std::string RedoLabel() const override { return commands_.RedoLabel(); }
     std::string UndoAttribution() const { return commands_.UndoAttribution(); }
     std::string RedoAttribution() const { return commands_.RedoAttribution(); }
 
     void NewScene();
     bool Load(const std::filesystem::path& file, std::string* error = nullptr);
-    bool Save(const std::filesystem::path& file = {}, std::string* error = nullptr);
+    bool Save(const std::filesystem::path& file = {}, std::string* error = nullptr) override;
     bool SaveAutosave(const std::filesystem::path& file, std::string* error = nullptr) const;
     bool LoadAutosave(const std::filesystem::path& autosave, const std::filesystem::path& source,
                       std::string* error = nullptr);
@@ -97,8 +101,8 @@ public:
     bool SetScale(Entity entity, const Vec3& scale, bool committed);
     bool SetCameraField(Entity entity, const std::string& field_name, const reflect::Any& value);
     bool SetCineCameraField(Entity entity, const std::string& field_name, const reflect::Any& value);
-    bool Undo();
-    bool Redo();
+    bool Undo() override;
+    bool Redo() override;
     // For a tool panel that issues commands of its own (the entity inspector's field edits and component adds): they go through the document's own stack and
     // context, so they are undoable with everything else and mark the scene as changed.
     CommandContext& Context() { return context_; }
