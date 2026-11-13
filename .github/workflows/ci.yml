@@ -1,18 +1,8 @@
-# Continuous integration (Phase 24 step 1).
-#
-# Linux: the portable engine, editor UI, scripting and tests with GCC,
-# Clang, ASan/UBSan and the physics module; runs unit, functional, checked-in
-# fuzz-corpus and registered API/release-gate regressions, and keeps JUnit.
-#
-# macOS (Apple Silicon): the engine, scripting, physics, the Vulkan backend
-# on MoltenVK and the editor shell; runs unit, functional and registered regressions.
-#
-# Windows: MSVC builds the engine and the D3D12 target set, runs their tests and registered
-# regressions, and packages the build tools, the player and the assets as a downloadable artifact. The
-# editor is the Dear ImGui one (aether_editor_shell, over Vulkan); the hosted Windows runner has no
-# Vulkan loader, so it is not built or packaged here. Pushing a tag v* - or running
-# the workflow by hand with a release_tag - also publishes the package as a
-# GitHub release.
+# Windows-only continuous integration. Non-Windows lanes remain defined below
+# but are disabled; restoring other platforms is a separate, explicit change.
+# Hosted Windows runners build MSVC/D3D12, run the complete CTest gate, and
+# validate Windows packages. Signing is still gated on an explicit release tag;
+# this Windows-only workflow does not publish the cross-platform release.
 name: CI
 
 on:
@@ -21,13 +11,13 @@ on:
     tags: ["v*"]
     paths-ignore: ["docs/**", "**/*.md"]
   pull_request:
-  # Nightly: the slow lanes (macOS, iOS, Android, TSan, fuzz) run here and on release tags, not on every master push.
+  # Nightly runs the Windows checks and extended heap soak only.
   schedule:
     - cron: "0 3 * * *"
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Publish a GitHub release with this tag (e.g. v0.24.0), created on the commit being built; empty for a plain run"
+        description: "Prepare signed Windows artifacts with this version (e.g. v0.24.0); empty for ordinary Windows CI"
         required: false
         default: ""
 
@@ -54,7 +44,7 @@ jobs:
     # 20 minutes was not enough: the job was cancelled while still compiling on almost every pull-request run of 9 and 10 November 2026
     # (step 516 of 919 at the limit on a cold cache), so the gate rarely reported anything. A run that completes takes about 17.
     timeout-minutes: 45
-    if: github.event_name == 'pull_request'
+    if: ${{ false }} # Windows-only CI; this platform lane is intentionally disabled.
     # The pull-request gate keeps the portable GCC path: compile, unit and
     # functional behavior, API/format regressions, and Vulkan validation.
     # Release packaging, alternate compilers and device jobs run after merge.
@@ -151,7 +141,7 @@ jobs:
     name: Post-merge Linux (${{ matrix.name }})
     runs-on: ubuntu-24.04
     timeout-minutes: 60
-    if: github.event_name != 'pull_request'
+    if: ${{ false }} # Windows-only CI; this platform lane is intentionally disabled.
     strategy:
       fail-fast: false
       matrix:
@@ -540,7 +530,7 @@ jobs:
     name: Clean-machine SDK consumer (Linux container)
     needs: [linux-full]
     runs-on: ubuntu-24.04
-    if: github.event_name != 'pull_request'
+    if: ${{ false }} # Windows-only CI; this platform lane is intentionally disabled.
     steps:
       - uses: actions/checkout@v4
       - name: Download the installed SDK
@@ -567,7 +557,7 @@ jobs:
     # --join-first) runs first; the server writes a network profile capture. Log + capture are uploaded.
     needs: [linux-full]
     runs-on: ubuntu-24.04
-    if: github.event_name != 'pull_request'
+    if: ${{ false }} # Windows-only CI; this platform lane is intentionally disabled.
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -608,7 +598,7 @@ jobs:
     # (tools/ship/ship_smoke.sh). Then a dry run of the release assembly (nothing is published).
     needs: [linux-full]
     runs-on: ubuntu-24.04
-    if: github.event_name != 'pull_request'
+    if: ${{ false }} # Windows-only CI; this platform lane is intentionally disabled.
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -641,7 +631,7 @@ jobs:
     name: macOS (Apple Silicon, MoltenVK)
     runs-on: macos-15
     timeout-minutes: 60
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    if: ${{ false }} # Windows-only CI; this platform lane is intentionally disabled.
     steps:
       - uses: actions/checkout@v4
       - name: Install tools
@@ -755,10 +745,10 @@ jobs:
 
   windows:
     name: Windows (MSVC, D3D12 editor)
-    # Repository variable WINDOWS_RUNNER (e.g. ["self-hosted","windows"]) moves this job to your own machine; unset = GitHub-hosted.
-    runs-on: ${{ fromJSON(vars.WINDOWS_RUNNER || '"windows-2022"') }}
+    # Use a hosted runner explicitly: the repository self-hosted Windows runner is offline.
+    runs-on: windows-2022
     timeout-minutes: 75
-    if: github.event_name != 'pull_request'
+    if: ${{ true }} # Windows validates pull requests, pushes, nightlies and manual runs.
     steps:
       - uses: actions/checkout@v4
       - name: Make bash mean Git Bash
@@ -792,20 +782,18 @@ jobs:
           python tools/check_module_graph.py --dot build/graph.dot
       - name: Build
         run: cmake --build build --config Release --parallel
-      - name: Unit tests
+      - name: CTest (unit tests and all registered checks)
         # The D3D12 backend falls back to WARP on hosts without a hardware GPU,
         # so the Windows suite is a required release check on hosted runners too.
         env:
           AETHER01_INPUT_TRACE: ${{ github.workspace }}/build/aether01-input-trace.json
-        run: .\build\tests\Release\aether_tests.exe
+        run: ctest --test-dir build -C Release --output-on-failure --parallel 4
       - name: Windows installer
         # Compiles tools/installer/AetherInstaller.cs with a stand-in payload and runs it: a fresh install, an upgrade over a running
         # program, a held file, and the shortcuts. The installer is built by hand for releases, so nothing else would catch it breaking.
         run: .\tools\installer\test_installer.ps1
       - name: Functional tests
         run: .\build\tools\functional\Release\aether_functional.exe --quiet --junit functional-results.xml
-      - name: Registered regression tests
-        run: ctest --test-dir build -C Release --output-on-failure --parallel 4 -R "^(fuzz_replay_.*|module_graph_catches_a_cycle|api_stability_annotations|api_freeze_checks|api_inventory|frozen_api_game|production_gate_table|m8_gate_table)$"
       - name: Long-running heap soak
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
         env:
@@ -1100,9 +1088,9 @@ jobs:
   windows-package-validation:
     name: Windows packaged editor (clean runner)
     needs: windows
-    # Repository variable WINDOWS_RUNNER (e.g. ["self-hosted","windows"]) moves this job to your own machine; unset = GitHub-hosted.
-    runs-on: ${{ fromJSON(vars.WINDOWS_RUNNER || '"windows-2022"') }}
-    if: github.event_name != 'pull_request'
+    # Use a hosted runner explicitly: the repository self-hosted Windows runner is offline.
+    runs-on: windows-2022
+    if: ${{ true }} # Windows validates pull requests, pushes, nightlies and manual runs.
     timeout-minutes: 10
     steps:
       - name: Download the packaged editor
@@ -1167,7 +1155,7 @@ jobs:
   tsan:
     name: Linux (TSan, advisory)
     runs-on: ubuntu-latest
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    if: ${{ false }} # Windows-only CI; this platform lane is intentionally disabled.
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
@@ -1202,7 +1190,7 @@ jobs:
     # Required since it built clean on every master run; Android windowing and Vulkan are still missing.
     name: Android (arm64, Gradle APK)
     runs-on: ubuntu-24.04
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    if: ${{ false }} # Windows-only CI; this platform lane is intentionally disabled.
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v5
@@ -1233,7 +1221,7 @@ jobs:
     # checks "AETHER_RENDER PRESENTED" and that a screenshot shows the clear colour. Required.
     name: Android (x86_64 emulator, Lantern Run)
     runs-on: ubuntu-24.04
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    if: ${{ false }} # Windows-only CI; this platform lane is intentionally disabled.
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -1387,7 +1375,7 @@ jobs:
     # against the engine core. Signing and device execution remain out of scope.
     name: iOS (arm64, unsigned app)
     runs-on: macos-15
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    if: ${{ false }} # Windows-only CI; this platform lane is intentionally disabled.
     steps:
       - uses: actions/checkout@v4
       - name: Cache fetched dependencies
@@ -1426,7 +1414,7 @@ jobs:
     # Required since it passed on every master run that got a runner.
     name: iOS (Simulator, Lantern Run)
     runs-on: macos-15
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    if: ${{ false }} # Windows-only CI; this platform lane is intentionally disabled.
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -1477,7 +1465,7 @@ jobs:
     name: clang-tidy (changed files, advisory)
     runs-on: ubuntu-latest
     continue-on-error: true
-    if: github.event_name == 'pull_request'
+    if: ${{ false }} # Windows-only CI; this platform lane is intentionally disabled.
     steps:
       - uses: actions/checkout@v4
         with:
@@ -1511,7 +1499,7 @@ jobs:
   fuzz:
     name: Fuzz (Clang, advisory)
     runs-on: ubuntu-latest
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    if: ${{ false }} # Windows-only CI; this platform lane is intentionally disabled.
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
@@ -1556,7 +1544,7 @@ jobs:
     name: Release
     # A pushed v* tag, or a manual run given a release_tag (which creates
     # the tag on the commit it built).
-    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
+    if: ${{ false }} # Windows-only CI; this platform lane is intentionally disabled.
     # linux-full, not linux: the linux lane only runs on pull_request, so needing it made this job skip on every
     # tag push -- which is why v0.29.0 published with no CI-built assets. linux-full runs on every non-PR event.
     needs: [linux-full, clean-machine-sdk, dedicated-server, game-ship, macos, windows, windows-package-validation, windows-sign-release, android, android-emulator, ios, ios-simulator]
