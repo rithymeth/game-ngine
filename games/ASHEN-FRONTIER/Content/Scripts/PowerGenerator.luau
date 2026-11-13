@@ -10,6 +10,10 @@ Generator.glow = 14
 --@tooltip How quickly the light comes up, in units per second
 Generator.ramp = 10
 
+local function Sfx(name)
+    if not Audio.PlaySound2D("Audio/" .. name .. ".acue") then print("Missing sound: " .. name) end
+end
+
 function Generator:OnCreate()
     self.player = world:EntitiesWith("CharacterMovement")[1]
     self.prompt = nil
@@ -49,6 +53,7 @@ function Generator:OnUpdate(dt)
             SaveGames.SetNumber("power.outpost", 1)
             SaveGames.SaveToSlot("autosave")
             Camera.Shake(0.4)
+            Sfx("power_up")
             self.prompt = nil
             print("Generator powered")
         end

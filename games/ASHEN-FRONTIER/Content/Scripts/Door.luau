@@ -9,6 +9,10 @@ Door.spawn = ""
 --@tooltip How close the player has to come, metres (along the ground)
 Door.radius = 2.2
 
+local function Sfx(name)
+    if not Audio.PlaySound2D("Audio/" .. name .. ".acue") then print("Missing sound: " .. name) end
+end
+
 function Door:OnCreate()
     self.player = world:EntitiesWith("CharacterMovement")[1]
 end
@@ -19,6 +23,7 @@ function Door:OnUpdate(dt)
     local b = self.player:Get("Transform").position
     local dx, dz = a.x - b.x, a.z - b.z
     if dx * dx + dz * dz < self.radius * self.radius and math.abs(a.y - b.y) < 3 then
+        Sfx("door")
         self.used = true -- one request; the game swaps scenes at the start of the next frame
         Scene.Load(self.target, self.spawn ~= "" and self.spawn or nil)
     end

@@ -9,6 +9,7 @@
     "Textures/",
     "UI/",
     "fonts/",
+    "Audio/",
     "Scenes/AssemblyHall.ascene",
     "Scenes/LivingDome.ascene",
     "Scenes/SalvageTest.ascene",

@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "name": "door",
+  "root": 1,
+  "output": {
+    "bus": "SFX",
+    "volume_db": -10,
+    "spatial": false
+  },
+  "nodes": [
+    {
+      "id": 1,
+      "type": "Wave",
+      "sound": "Audio/door.wav",
+      "looping": false
+    }
+  ]
+}

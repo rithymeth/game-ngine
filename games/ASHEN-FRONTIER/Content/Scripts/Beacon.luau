@@ -5,6 +5,10 @@ local Beacon = {}
 --@tooltip How close Kael has to come, metres (along the ground)
 Beacon.radius = 8
 
+local function Sfx(name)
+    if not Audio.PlaySound2D("Audio/" .. name .. ".acue") then print("Missing sound: " .. name) end
+end
+
 function Beacon:OnCreate()
     self.player = world:EntitiesWith("CharacterMovement")[1]
 end
@@ -18,6 +22,7 @@ function Beacon:OnUpdate(dt)
         SaveGames.SetNumber("mission.relay", 1)
         SaveGames.SaveToSlot("autosave")
         Camera.Shake(0.35)
+        Sfx("relay")
         print("Distress relay reached")
     end
 end

@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "name": "sentinel_down",
+  "root": 1,
+  "output": {
+    "bus": "SFX",
+    "volume_db": -5,
+    "spatial": false
+  },
+  "nodes": [
+    {
+      "id": 1,
+      "type": "Wave",
+      "sound": "Audio/sentinel_down.wav",
+      "looping": false
+    }
+  ]
+}
