@@ -458,3 +458,52 @@ AETHER_TEST(Serialization_ModelRendererIsReflectedAndKeepsLegacyRawData) {
     std::filesystem::remove(path);
     std::filesystem::remove(json_path);
 }
+
+// SceneLoadOptions::loaded_entities reports what a load created, so streaming
+// can track a cell's entities without scanning the whole world before and
+// after every load (which was quadratic in the world's size).
+AETHER_TEST(Serialization_SceneLoadReportsCreatedEntities) {
+    const std::string binary_path = TempScenePath("aether_test_scene_created.aesc");
+    World saved;
+    saved.CreateEntity(Position{1, 2, 3});
+    saved.CreateEntity(Health{9});
+    AETHER_CHECK(SaveScene(saved, binary_path));
+
+    World loaded;
+    const Entity existing = loaded.CreateEntity(Position{-1, 0, 0});
+    std::vector<Entity> created{existing}; // the load replaces the list
+    SceneLoadOptions options;
+    options.loaded_entities = &created;
+    AETHER_CHECK(LoadScene(loaded, binary_path, options));
+    AETHER_CHECK(loaded.IsAlive(existing));
+    AETHER_CHECK(loaded.EntityCount() == 3);
+    AETHER_CHECK(created.size() == 2);
+    AETHER_CHECK(created[0] != existing && created[1] != existing && created[0] != created[1]);
+    AETHER_CHECK(loaded.IsAlive(created[0]) && loaded.IsAlive(created[1]));
+    // In file order: the components land on the entity reported for them.
+    AETHER_CHECK(loaded.GetComponent<Position>(created[0])->x == 1.0f);
+    AETHER_CHECK(loaded.GetComponent<Health>(created[1])->value == 9);
+    std::filesystem::remove(binary_path);
+
+    // The JSON loader reports its entities the same way.
+    const std::string json_path = TempScenePath("aether_test_scene_created.ascene");
+    World json_saved;
+    json_saved.CreateEntity(scene_test::Stamina{}, scene_test::LegacyPos{7, 8, 9});
+    AETHER_CHECK(SaveSceneJson(json_saved, json_path));
+    World json_loaded;
+    std::vector<Entity> json_created;
+    SceneLoadOptions json_options;
+    json_options.loaded_entities = &json_created;
+    AETHER_CHECK(LoadSceneJson(json_loaded, json_path, json_options));
+    AETHER_CHECK(json_created.size() == 1 && json_loaded.IsAlive(json_created[0]));
+    AETHER_CHECK(json_loaded.GetComponent<scene_test::LegacyPos>(json_created[0])->x == 7.0f);
+    std::filesystem::remove(json_path);
+
+    // A load that fails creates nothing and leaves the caller's list alone.
+    std::vector<u8> not_a_scene = {0, 0, 0, 0};
+    std::vector<Entity> untouched{existing};
+    SceneLoadOptions bad_options;
+    bad_options.loaded_entities = &untouched;
+    AETHER_CHECK(!LoadSceneFromMemory(loaded, not_a_scene, "not a scene", bad_options));
+    AETHER_CHECK(untouched.size() == 1 && untouched[0] == existing);
+}
