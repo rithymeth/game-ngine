@@ -2,6 +2,7 @@
 #include "aether/assets/asset_database.h"
 #include "core/editor_document.h"
 #include "core/editor_settings.h"
+#include "core/notifications.h"
 #include "workspace/command_palette.h"
 #include "workspace/command_registry.h"
 #include "workspace/editor_workspace.h"
@@ -159,6 +160,25 @@ AETHER_TEST(EditorWorkspace_RecoveryBringsBackAnInterruptedSessionsWork) {
     CHECK(!second.HasRecoverableAutosave());
 }
 
+// The Messages tool lists what the notification service holds and marks it read; the toast stack reads
+// the same service and expires with the workspace clock.
+AETHER_TEST(EditorWorkspace_NotificationsReachTheMessagesTool) {
+    HeadlessImGui imgui;
+    EditorWorkspace ws;
+    const i64 messages = ws.FindTool("Messages");
+    CHECK(messages >= 0);
+    ws.Notifications().Post(NotificationSeverity::Warning, "Heads up", "something happened");
+    CHECK(ws.Notifications().UnreadCount() == 1);
+    imgui.Frame([&] { ws.DrawTool(static_cast<usize>(messages)); });
+    CHECK(ws.Notifications().UnreadCount() == 0);
+
+    const u64 info = ws.Notifications().Post(NotificationSeverity::Info, "Saved", "ok");
+    imgui.Frame([&] { ws.DrawWindows(); }); // the toasts are drawn here
+    CHECK(ws.Notifications().IsToastShowing(info));
+    ws.Update(5.0f); // past the 4 s an info toast stays
+    CHECK(!ws.Notifications().IsToastShowing(info));
+}
+
 AETHER_TEST(EditorWorkspace_HasEveryTool) {
     HeadlessImGui imgui;
     EditorWorkspace ws;
@@ -174,7 +194,7 @@ AETHER_TEST(EditorWorkspace_HasEveryTool) {
     }
     for (const char* t : {"Blueprint", "Luau", "Material", "Particle", "Animation", "Behavior", "Navigation", "Sound Cue",
                           "Mixer", "UI Designer", "Terrain", "Foliage", "Spline", "World Partition", "Net Play",
-                          "Net Profiler", "Console", "Profiler", "Crash", "Sequencer"}) {
+                          "Net Profiler", "Console", "Profiler", "Crash", "Sequencer", "Messages"}) {
         CHECK(ws.FindTool(t) >= 0);
     }
     CHECK(ws.FindTool("material") == ws.FindTool("Material - M_Lit")); // any case, a prefix

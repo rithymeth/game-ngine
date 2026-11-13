@@ -4,6 +4,7 @@
 #include "workspace/command_registry.h"
 #include "core/editor_document.h"
 #include "core/editor_settings.h"
+#include "core/notifications.h"
 #include "core/recent_projects.h"
 #include "core/scene_autosave.h"
 
@@ -18,6 +19,7 @@
 #include "ui/reflected_inspector.h"
 #include "devtools/console_panel.h"
 #include "ui/editor_scripts.h"
+#include "ui/notification_overlay.h"
 #include "ui/extensions.h"
 #include "packaging/build_window.h"
 #include "packaging/new_project_panel.h"
@@ -268,6 +270,8 @@ struct EditorWorkspace::Impl {
     // Project.
     std::filesystem::path project_file;
     CommandRegistry commands;
+    NotificationService notifications;
+    double clock = 0.0; // seconds since the workspace was made; Update() advances it and expires toasts
     EditorSettings editor_settings = EditorSettings::Load(EditorSettings::DefaultFile());
     SceneAutosaves autosaves;
     f32 autosave_elapsed = 0.0f;
@@ -344,6 +348,7 @@ struct EditorWorkspace::Impl {
             {"Net Profiler", "Networking", [this] { net_profiler->Draw(); }},
             {"Console", "Debug", [this] { console_panel->Draw(); }},
             {"Profiler", "Debug", [this] { profiler_panel->Draw(); }},
+            {"Messages", "Debug", [this] { DrawMessages(); }},
             {"Crash Reports", "Debug", [this] { DrawCrashReports(); }},
             {"Content Browser", "Project", [this] {
                  if (content_browser) {
@@ -908,6 +913,44 @@ struct EditorWorkspace::Impl {
         if (!autosave_dirty_seen) autosaves.Clear(project_file);
     }
 
+    void NotifySaveFailure() {
+        const std::filesystem::path& file = scene_panel->Document().FilePath();
+        notifications.Post(NotificationSeverity::Error, "Save failed",
+                           scene_panel->Status().empty() ? "The scene could not be saved." : scene_panel->Status(),
+                           file.empty() ? NotificationTarget{}
+                                        : NotificationTarget{NotificationTarget::Kind::File, file.string()});
+    }
+
+    void FocusTool(const char* name) {
+        for (usize i = 0; i < tools.size(); ++i) {
+            if (StartsWithNoCase(tools[i].name.c_str(), name)) {
+                selected = i;
+                return;
+            }
+        }
+    }
+
+    // The Messages tool. A click on a target opens it the way the command palette opens an asset --
+    // the Content Browser at its folder -- or selects the entity in the scene.
+    void DrawMessages() {
+        const NotificationTarget target = aether::editor::DrawMessagesPanel(notifications, clock);
+        if (!target.IsSet()) return;
+        if (target.kind == NotificationTarget::Kind::Entity) {
+            EntityGuid guid;
+            if (!ParseEntityGuid(target.value, guid)) return;
+            SceneDocument& document = scene_panel->Document();
+            const Entity entity = document.Guids().Find(document.GetWorld(), guid);
+            if (entity.IsNull()) return;
+            document.SetSelection({entity});
+            FocusTool("Scene");
+            return;
+        }
+        if (content_browser) {
+            content_browser->OpenFolder(std::filesystem::path(target.value).parent_path().generic_string());
+            FocusTool("Content Browser");
+        }
+    }
+
     bool WriteAutosave() {
         if (scene_panel == nullptr || project_file.empty()) return false;
         SceneDocument& document = scene_panel->Document();
@@ -915,6 +958,11 @@ struct EditorWorkspace::Impl {
         std::string error;
         if (!autosaves.Write(document, project_file, document.FilePath(), &error)) {
             AETHER_LOG_WARN("Autosave", "%s", error.c_str());
+            notifications.Post(NotificationSeverity::Warning, "Autosave failed",
+                               error.empty() ? "The recovery copy could not be written." : error,
+                               document.FilePath().empty()
+                                   ? NotificationTarget{}
+                                   : NotificationTarget{NotificationTarget::Kind::File, document.FilePath().string()});
             return false;
         }
         autosave_elapsed = 0.0f;
@@ -1063,6 +1111,8 @@ EditorWorkspace::~EditorWorkspace() {
 }
 
 void EditorWorkspace::Update(f32 dt) {
+    impl_->clock += static_cast<double>(dt);
+    impl_->notifications.Update(impl_->clock);
     impl_->SyncExtensions();
     impl_->TickAutosave(dt);
     if (impl_->net_session->Running()) impl_->net_session->Tick(static_cast<f64>(dt));
@@ -1109,6 +1159,9 @@ ScenePanel& EditorWorkspace::Scene() { return *impl_->scene_panel; }
 EditorDocument& EditorWorkspace::ActiveDocument() { return impl_->scene_panel->Document(); }
 const EditorDocument& EditorWorkspace::ActiveDocument() const { return impl_->scene_panel->Document(); }
 
+NotificationService& EditorWorkspace::Notifications() { return impl_->notifications; }
+const NotificationService& EditorWorkspace::Notifications() const { return impl_->notifications; }
+
 CommandRegistry& EditorWorkspace::Commands() { return impl_->commands; }
 const CommandRegistry& EditorWorkspace::Commands() const { return impl_->commands; }
 
@@ -1129,10 +1182,13 @@ void EditorWorkspace::RegisterCommands() {
     add({"scene.open", "Open scene", "File", false, {}, CommandScope::Global, {}, {},
          [this, show_scene] { impl_->scene_panel->OpenScene(impl_->scene_panel->Path(), false); show_scene(); }});
     add({"scene.save", "Save scene", "File", false, {ImGuiKey_S, true, false, false}, CommandScope::Scene, {}, {},
-         [this, show_scene] { impl_->scene_panel->SaveScene(); show_scene(); }});
+         [this, show_scene] {
+             if (!impl_->scene_panel->SaveScene()) impl_->NotifySaveFailure();
+             show_scene();
+         }});
     add({"scene.save_as", "Save scene as", "File", false, {}, CommandScope::Global, {}, {},
          [this, show_scene] {
-             impl_->scene_panel->SaveScene(impl_->scene_panel->Path());
+             if (!impl_->scene_panel->SaveScene(impl_->scene_panel->Path())) impl_->NotifySaveFailure();
              show_scene();
          }});
     add({"file.quit", "Quit", "File", true, {}, CommandScope::Global, {}, {}, [this] { RequestQuit(); }});
@@ -1325,6 +1381,16 @@ void EditorWorkspace::DrawWindows() {
     impl_->crash_dialog->Draw();
     DrawCommandPalette();
     DrawDataSafetyWindows();
+    // Toasts last, so they sit above a modal. Clicking one is the way to the Messages list, where
+    // the target links are; the toast itself only says what happened.
+    if (DrawNotificationToasts(impl_->notifications) != 0) {
+        impl_->notifications.MarkAllRead();
+        const i64 messages = FindTool("Messages");
+        if (messages >= 0) {
+            Select(static_cast<usize>(messages));
+            impl_->tools[static_cast<usize>(messages)].window_open = true;
+        }
+    }
 }
 
 void EditorWorkspace::DrawCommandPalette() {
@@ -1411,13 +1477,32 @@ bool EditorWorkspace::AutosaveNow() { return impl_->WriteAutosave(); }
 bool EditorWorkspace::RecoverAutosave() {
     const SceneAutosaveSlot slot = impl_->autosaves.Find(impl_->project_file);
     if (!slot.IsValid()) return false;
-    if (!impl_->scene_panel->LoadRecovered(slot.scene, slot.source)) return false;
+    if (!impl_->scene_panel->LoadRecovered(slot.scene, slot.source)) {
+        impl_->notifications.Post(NotificationSeverity::Error, "Recovery failed",
+                                  impl_->scene_panel->Status().empty() ? "The autosave could not be read."
+                                                                       : impl_->scene_panel->Status());
+        return false;
+    }
     impl_->autosave_elapsed = 0.0f;
     impl_->autosave_dirty_seen = true;
+    impl_->notifications.Post(
+        NotificationSeverity::Success, "Recovered unsaved work",
+        (slot.source.empty() ? std::string("The autosave of a never-saved scene is open")
+                             : "The autosave of " + slot.source.string() + " is open") +
+            " and has not been saved.",
+        slot.source.empty() ? NotificationTarget{}
+                            : NotificationTarget{NotificationTarget::Kind::File, slot.source.string()});
     return true;
 }
 
-void EditorWorkspace::DiscardAutosave() { impl_->autosaves.Clear(impl_->project_file); }
+void EditorWorkspace::DiscardAutosave() {
+    const bool had_slot = impl_->autosaves.Find(impl_->project_file).IsValid();
+    impl_->autosaves.Clear(impl_->project_file);
+    if (had_slot) {
+        impl_->notifications.Post(NotificationSeverity::Info, "Autosave discarded",
+                                  "The recovery copy was removed; the scene file is unchanged.");
+    }
+}
 
 void EditorWorkspace::OfferRecovery() {
     if (impl_->recovery_offered) return;
@@ -1440,7 +1525,10 @@ void EditorWorkspace::RequestQuit() {
 bool EditorWorkspace::QuitPromptOpen() const { return impl_->quit_prompt; }
 
 bool EditorWorkspace::SaveAndQuit() {
-    if (!impl_->scene_panel->SaveScene()) return false;
+    if (!impl_->scene_panel->SaveScene()) {
+        impl_->NotifySaveFailure();
+        return false;
+    }
     impl_->autosaves.Clear(impl_->project_file); // a normal quit leaves nothing to recover
     impl_->autosave_dirty_seen = false;
     impl_->autosave_elapsed = 0.0f;

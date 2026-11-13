@@ -5,6 +5,7 @@
 add_library(aether_editor_core STATIC
     command_stack.cpp
     editor_document.cpp
+    notifications.cpp
     editor_settings.cpp
     scene_autosave.cpp
     scene_preview.cpp

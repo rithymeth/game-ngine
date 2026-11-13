@@ -379,9 +379,11 @@ Covered in [ROADMAP.md Phase 8](../ROADMAP.md). Additional rules:
   (CVars and commands, with auto-complete).
 - **Output:** build and compile output (C++ builds, shader compiles, cooks)
   with clickable file:line links.
-- **Messages:** grouped, deduplicated warnings and errors from Blueprints,
-  assets and map checks. Each links to the node, asset or entity. This is
-  the "fix these problems" list.
+- **Messages:** the editor's own warnings and errors that are not a log line, newest
+  first, with severity, repetition count and age. Each can carry an entity, asset or
+  file; clicking it selects the entity in the scene or opens the asset's folder in the
+  Content Browser. *Clear* and *Mark all read* are in the header. This is the "fix
+  these problems" list; Blueprint and asset checks post here as they gain them.
 
 ### 6.7 Status bar
 
@@ -461,7 +463,12 @@ will happen) before release. Invalid targets show a "no" cursor.
 ### 8.1 Toasts
 
 - Bottom-right, stacked, up to 4 visible. Info and success disappear after
-  4 s; warnings after 8 s; errors stay until dismissed.
+  4 s; warnings after 8 s; errors stay until dismissed. Each has an X.
+  Clicking a toast opens Messages, where the links are.
+- Built: `core/notifications.{h,cpp}` keeps the history and expiry, and
+  `ui/notification_overlay.{h,cpp}` draws the toasts and the Messages list. The
+  editor posts save, autosave and recovery results and failures. A warning that
+  repeats back to back is one row with a count.
 - A toast can carry one action ("Show in Messages", "Undo").
 - Examples: "Saved Level_01" (success), "BP_Door compiled with
   1 warning" (warning, action: Show), "Import failed: T_Rock.png is not a

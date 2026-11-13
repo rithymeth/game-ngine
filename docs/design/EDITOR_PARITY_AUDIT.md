@@ -129,7 +129,7 @@ as well. The verdicts are a judgement from the source audit; the evidence column
 | Play in the rendered viewport | Yes, inside the level viewport | Yes, Game view | Yes, embedded game | Separate Live Viewport tool; Scene View stays wireframe | `editor/shell/main.cpp:197`, `scene_view_panel.cpp:70` | Partial |
 | Stop behavior | Restores editor state | Restores editor state | Restores editor state | Live Viewport keeps running until stopped/reloaded; scene PIE discards edits | `scene_panel.cpp:260` | Partial |
 | Console filters | Categories, verbosity, search, source links | Log/error/warning filters, collapse, clear on play | Output, errors/warnings, search | One substring filter; no severity/category/collapse | `editor/src/devtools/console_panel.cpp:83` | Partial |
-| Messages linked to objects | Message Log links to actor/asset | Console double-click opens source/asset | Errors link to script line/node | Console text only; error overlay widget unused | `editor/src/ui/error_overlay.cpp:10` (no caller) | Missing |
+| Messages linked to objects | Message Log links to actor/asset | Console double-click opens source/asset | Errors link to script line/node | Notification service keeps the history with an entity, asset or file target; the Messages tool links back (entity selects it, asset opens its folder) | `editor/src/core/notifications.cpp`, `editor/src/ui/notification_overlay.cpp` | Partial |
 | Profiler/debugger | Insights, GPU Visualizer, stat commands | Profiler, Frame Debugger, Memory Profiler | Profiler, Monitors, debugger with breakpoints | Profiler tool, net profiler, crash reports | `editor/src/devtools/`, `editor/src/net/` | Partial |
 
 ## Asset editors, build and platform
@@ -169,9 +169,9 @@ These are the gaps where "it is missing" can be given a cost, or where the measu
    command layer, not the UI.
 6. **Step is implemented and unreachable.** `PlaySession::Step()` exists (`play_session.cpp:44`) and no editor code calls
    it or `ShouldSimulate()`. This is the cheapest parity win in the audit: one button and one caller in the toolbar.
-7. **The command palette and the error overlay are built but unused.** The palette is a public flag with no binding
-   (`editor_workspace.h:107`); the error overlay has no caller (`error_overlay.cpp:10`). Both are finished enough to
-   wire rather than redesign.
+7. **The command palette and the error overlay were built but unused.** The palette is now bound to Ctrl+Shift+P through
+   the command registry, and the error overlay became the severity-aware notification overlay, driven by the
+   notification service. Both are wired; kept here because they show how long a finished widget can sit unconnected.
 8. **Unsaved work is lost on quit.** `Quit` exits immediately (`main.cpp:78`); autosave and recovery exist in the
    document layer and are unused (`scene_document.cpp:202-226`). This is a correctness gap, and it is why it comes
    before visual parity in the plan.
@@ -226,8 +226,18 @@ name (the file name, or "Untitled"), kind ("scene"), dirty state, undo/redo with
 path. `SceneDocument` implements it, and `EditorWorkspace::ActiveDocument()` returns it, so the quit prompt asks kind,
 name and dirty state of a document rather than of the Scene panel. Tests: a scene answering every contract question
 (including clean-after-undo and save-as naming), the default display name, a non-scene stand-in implementing the
-contract, and the workspace's quit flow agreeing with `ActiveDocument()`. Still open in this stage: notifications and
-native dialogs.
+contract, and the workspace's quit flow agreeing with `ActiveDocument()`. At that point the notification service and native
+dialogs were still open.
+
+Done so far (2026-11-14): the notification service (`editor/src/core/notifications.{h,cpp}`) and its drawing
+(`editor/src/ui/notification_overlay.{h,cpp}`, which replaces the unused error-only overlay). A message is a severity, a
+title, optional detail, an optional entity/asset/file target and a repetition count; info and success toasts last 4 s,
+warnings 8 s, errors until dismissed, and the history outlives all of them. Identical back-to-back posts join the newest
+row, so a repeating autosave warning is one line. The Messages tool lists newest first and links back: an entity target
+selects it in the scene, an asset or file opens its folder in the Content Browser; drawing the list marks it read.
+`EditorWorkspace::Update` advances the clock, save/autosave/recovery results and failures post, and clicking a toast opens
+Messages. Tests: history and read state, lifetime per severity, repeat grouping, age and label text, both halves drawn
+headless, and a workspace whose Messages tool reads the same service. Remaining in this stage: native dialogs.
 
 ### Stage 1 — Shell, project hub and workflow (M)
 

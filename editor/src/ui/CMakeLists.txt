@@ -6,7 +6,7 @@ add_library(aether_editor_ui STATIC
     reflected_inspector.cpp
     entity_inspector.cpp
     script_inspector.cpp
-    error_overlay.cpp
+    notification_overlay.cpp
     builtin_components.cpp
     editor_theme.cpp
     image_texture.cpp

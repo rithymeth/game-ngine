@@ -7325,6 +7325,7 @@
 [editor/src/core/editor_document.h] internal-tooling
 [editor/src/core/editor_settings.h] internal-tooling
 [editor/src/core/json_edit.h] internal-tooling
+[editor/src/core/notifications.h] internal-tooling
 [editor/src/core/package_runner.h] internal-tooling
 [editor/src/core/play_session.h] internal-tooling
 [editor/src/core/recent_projects.h] internal-tooling
@@ -7368,9 +7369,9 @@
 [editor/src/ui/editor_scripts.h] internal-tooling
 [editor/src/ui/editor_theme.h] internal-tooling
 [editor/src/ui/entity_inspector.h] internal-tooling
-[editor/src/ui/error_overlay.h] internal-tooling
 [editor/src/ui/extensions.h] internal-tooling
 [editor/src/ui/image_texture.h] internal-tooling
+[editor/src/ui/notification_overlay.h] internal-tooling
 [editor/src/ui/reflected_inspector.h] internal-tooling
 [editor/src/ui/script_inspector.h] internal-tooling
 [editor/src/ui/shell_layout.h] internal-tooling

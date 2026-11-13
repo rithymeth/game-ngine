@@ -40,6 +40,7 @@ class ScenePanel;
 class EditorScripts;
 class CommandRegistry;
 class EditorDocument;
+class NotificationService;
 struct EditorSettings;
 
 class EditorWorkspace {
@@ -96,6 +97,11 @@ public:
     // tabs turn this into "the focused one".
     EditorDocument& ActiveDocument();
     const EditorDocument& ActiveDocument() const;
+    // What the editor wants to tell the user (Stage 0 of docs/design/EDITOR_PARITY_AUDIT.md): the toasts DrawWindows
+    // shows and the rows the Messages tool lists. Save, autosave and recovery failures are posted here; a host with a
+    // status bar may also read UnreadCount().
+    NotificationService& Notifications();
+    const NotificationService& Notifications() const;
     // The commands the editor has (Stage 0 of docs/design/EDITOR_PARITY_AUDIT.md): each with a stable id, a label,
     // a default chord, the context its chord applies in, an enabled predicate and an action. The menus, the palette
     // and the keyboard read this one table; a host may add its own (View's "Reset layout" is the shell's).
