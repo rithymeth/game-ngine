@@ -164,3 +164,11 @@ def flag_light(scene, name, color, on, rng_, flag, off=0.0, position=(0, 0, 0), 
 def grows(scene, flag="mission.dome", start=0.35):
     """Makes the entity added last grow when the flag is set (a plant that starts small)."""
     scene.entities[-1]["components"]["ScriptComponent"] = {"$v": 1, "script": script_guid("Growth"), "properties": [{"name": "flag", "value": json.dumps(flag)}, {"name": "start", "value": str(start)}]}
+
+
+def terminal(scene, name, position, rotation=(0, 0, 0), required=None, **kwargs):
+    """The assembly hall's terminal with its script: locked until the named sentinels are disabled (default: the two wardens)."""
+    guid_ = scene.model(name, "FabBench", position=position, rotation=rotation, tags=("Terminal",), color=(0.55, 0.35, 0.12), **kwargs)
+    props = [{"name": "required", "value": json.dumps(required)}] if required else []
+    scene.entities[-1]["components"]["ScriptComponent"] = {"$v": 1, "properties": props, "script": script_guid("Terminal")}
+    return guid_

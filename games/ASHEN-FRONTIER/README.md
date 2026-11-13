@@ -36,6 +36,8 @@ Chapter 2 (after the relay): collect three glowing seed samples out in the Verda
 
 The chapters show in the world: the outpost lights come on when the generator is powered and the dome's glow rises when its console is restored (`FlagLight.luau`), and the garden inside the dome grows from saplings to full trees (`Growth.luau`); both follow a saved flag, so they hold through doors and restarts.
 
+Chapter 3 (Iron Wastes, after the dome): disable the two warden sentinels at the checkpoint (the objective line counts them, and the scanner shows their health), then start the assembly line at the terminal in the assembly hall (`Terminal.luau`: locked while any named sentinel is active); the hall's work lights come up when it runs.
+
 Three interiors exist, one for each of the reference images: the Assembly Hall (the door on the Iron Wastes hall), the Living Dome (the door on the Verdant Array dome) and the Reactor Hall (the door on the Hollow Core's gate); each exit puts Kael back outside its door.
 
 Not yet: ranged combat, music and ambience, the other regions' missions (the rest of DESIGN.md section 22).

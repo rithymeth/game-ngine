@@ -315,6 +315,19 @@ def visible(work):
     check(not re.search(r"\[ERROR\]", text), "no errors with the growing plant")
 
 
+def chapter3(work):
+    """Chapter 3: the assembly hall's terminal is locked while its sentinels are active (E does nothing but say so); once they are disabled (here: the test
+    sentinel killed by Kael's hit in an earlier run, same user directory), E starts the assembly line, and the hall's machine lights are on in the next run."""
+    result, text = run_player(work, "Scenes/TerminalTest.ascene", "user23")
+    check("Terminal locked" in text and "Assembly line started" not in text, "the terminal is locked while the sentinel is active")
+    run_player(work, "Scenes/CombatKill.ascene", "user24", press="F", frames=120)
+    result, text = run_player(work, "Scenes/TerminalTest.ascene", "user24")
+    check("Assembly line started" in text and "Terminal locked" not in text, "with the sentinel disabled, the terminal starts the assembly line")
+    check(not re.search(r"\[ERROR\]", text), "no errors at the terminal")
+    layout_text = (HERE / "Content" / "Scenes" / "AssemblyHall.ascene").read_text(encoding="utf-8")
+    check("AssemblyTerminal" in layout_text, "the assembly hall holds its terminal")
+
+
 def main():
     layout()
     if failures:
@@ -334,6 +347,7 @@ def main():
             scan(work)
             chapter2(work)
             visible(work)
+            chapter3(work)
     finally:
         shutil.rmtree(work, ignore_errors=True)
     check(not any("Missing sound" in text or "Missing music" in text for text in TRANSCRIPTS), f"every sound a script plays exists ({len(TRANSCRIPTS)} runs looked through)")

@@ -11,7 +11,7 @@ import random
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from scenelib import Scene, give_hands, mule, workbench, generator, beacon, sentinel, sample, console, flag_light, grows  # noqa: E402
+from scenelib import Scene, give_hands, mule, workbench, generator, beacon, sentinel, sample, console, flag_light, grows, terminal  # noqa: E402
 import world  # noqa: E402
 import world_scene  # noqa: E402
 import interior_scene  # noqa: E402
@@ -263,7 +263,8 @@ def sample_tests():
 def visible_tests():
     """LightTest: a lamp that is dim until the outpost has power. GrowTest: a plant that is small until the dome is restored. (Run after PowerTest / ConsoleTest
     in the same user directory, the saved flag is what lights and grows them.)"""
-    for name, build in (("MusicTest", lambda s: sentinel(s, "Test_Sentinel", (0, 0, -25), snap=False, detect_range=40)),
+    for name, build in (("TerminalTest", lambda s: terminal(s, "Test_Terminal", (2.5, 0, 0), required="Test_Sentinel", snap=False)),
+                        ("MusicTest", lambda s: sentinel(s, "Test_Sentinel", (0, 0, -25), snap=False, detect_range=40)),
                         ("LightTest", lambda s: flag_light(s, "Test_Lamp", (0.3, 0.7, 1.0), 8.0, 14.0, "power.outpost", off=0.0, position=(3, 3, 0))),
                         ("GrowTest", lambda s: (s.model("Test_Plant", "TreeLow", position=(3, 0, 0), snap=False), grows(s)))):
         s = Scene()

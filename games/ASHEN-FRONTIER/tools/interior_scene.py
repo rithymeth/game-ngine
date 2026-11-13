@@ -8,7 +8,7 @@ import json
 import math
 import random
 
-from scenelib import Scene, give_hands, sentinel, console, flag_light, grows
+from scenelib import Scene, give_hands, sentinel, console, flag_light, grows, terminal
 import world_scene
 
 LIGHT, BLUE, AMBER = world_scene.LIGHT, world_scene.BLUE, world_scene.AMBER
@@ -73,7 +73,7 @@ def assembly_hall(player_script, door_script):
             kind = ("FabBench", "Generator")[(i + side) % 2]
             s.model(f"Machine_{side}_{i}", kind, position=(x, 0, z), rotation=(0, 90 if side == 0 else 270, 0), snap=False,
                     collider=((0, 1.0, 0), (1.4, 1.0, 1.4)))
-            s.add(f"WorkLight_{side}_{i}", LIGHT(AMBER, 9.0, 10.0), position=(x * 0.55, 6.5, z + 3.5))
+            flag_light(s, f"WorkLight_{side}_{i}", (1.0, 0.5, 0.1), 9.0, 10.0, "mission.assembly", off=1.5, position=(x * 0.55, 6.5, z + 3.5))
     # columns down the aisle edges, a gantry across the middle, scrap on the floor
     for i in range(4):
         for x in (-4.0, 4.0):
@@ -85,6 +85,8 @@ def assembly_hall(player_script, door_script):
     sentinel(s, "Guardian", (0, 0, -12), snap=False)
     s.add("GuardianLight", LIGHT(BLUE, 14.0, 14.0), position=(0, 3.5, -16))
     s.add("EntryLight", LIGHT(BLUE, 8.0, 12.0), position=(0, 4.0, 15))
+    # the terminal that starts the line (chapter 3), by the entrance
+    terminal(s, "AssemblyTerminal", (-5.0, 0, 11.0), rotation=(0, 90, 0), snap=False)
     # the way out, behind the player
     door(s, "ExitDoor", (0, 0, 18.5), "Scenes/OpenWorld.ascene", door_script, spawn="AssemblyHallOutside")
     s.add("HallEntry", {}, position=(0, 0.1, 13.0))
