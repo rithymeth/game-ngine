@@ -160,11 +160,15 @@ bool SceneDocument::Load(const std::filesystem::path& file, std::string* error) 
     }
     world_ = std::move(candidate);
     guids_ = std::move(candidate_guids);
+    selection_.clear(); // Handles belong to the old world, even if the new world reuses their indices.
     commands_.Clear();
+    ++local_revision_; // Replacing a world must refresh viewers even when no edit commands were issued.
     pending_position_before_.reset();
     pending_position_entity_ = {};
     pending_rotation_before_.reset();
     pending_rotation_entity_ = {};
+    pending_scale_before_.reset();
+    pending_scale_entity_ = {};
     file_ = file;
     recovered_unsaved_ = false;
     commands_.MarkSaved();
