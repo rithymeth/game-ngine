@@ -7324,6 +7324,7 @@
 [editor/src/audio/waveform.h] internal-tooling
 [editor/src/content/content_browser_panel.h] internal-tooling
 [editor/src/content/content_drag.h] internal-tooling
+[editor/src/content/thumbnail_store.h] internal-tooling
 [editor/src/core/command_stack.h] internal-tooling
 [editor/src/core/commands.h] internal-tooling
 [editor/src/core/document_tabs.h] internal-tooling

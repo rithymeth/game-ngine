@@ -3,11 +3,14 @@
 #include "aether/project/project.h"
 #include "content/content_drag.h"
 #include "ui/extensions.h"
+#include "ui/image_texture.h"
 
 #include <imgui.h>
 #include <misc/cpp/imgui_stdlib.h>
 
 #include <algorithm>
+#include <cctype>
+#include <cmath>
 
 namespace aether::editor {
 
@@ -16,6 +19,8 @@ using assets::VcsState;
 
 namespace {
 
+constexpr f32 kTile = 96.0f;
+constexpr f32 kTileGap = 12.0f;
 
 ImVec4 StateColor(VcsState s) {
     switch (s) {
@@ -36,9 +41,36 @@ void Badge(VcsState s) {
     if (s != VcsState::Clean && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", assets::VcsStateName(s));
 }
 
+// The fill of a tile with no picture: a folder or an asset kind, so the grid reads by colour as well as by name.
+ImU32 KindColor(const assets::ContentEntry& entry) {
+    if (entry.is_folder) return IM_COL32(96, 86, 58, 255);
+    const std::string importer = entry.asset ? entry.asset->importer : std::string();
+    if (importer == "Texture") return IM_COL32(58, 78, 112, 255);
+    if (importer == "Material") return IM_COL32(96, 66, 108, 255);
+    if (importer == "Model" || importer == "Mesh") return IM_COL32(58, 96, 78, 255);
+    if (importer == "Scene" || importer == "Prefab") return IM_COL32(78, 70, 108, 255);
+    if (importer == "Script") return IM_COL32(96, 76, 52, 255);
+    if (importer == "Animation" || importer == "AnimationGraph") return IM_COL32(88, 84, 108, 255);
+    if (importer == "Audio" || importer == "AudioCue" || importer == "AudioMixer") return IM_COL32(58, 92, 96, 255);
+    return IM_COL32(66, 66, 66, 255);
+}
+
+// `text` cut with "..." to fit `width` pixels at the current font size.
+std::string Elide(const std::string& text, f32 width) {
+    if (ImGui::CalcTextSize(text.c_str()).x <= width) return text;
+    std::string cut = text;
+    while (!cut.empty() && ImGui::CalcTextSize((cut + "...").c_str()).x > width) cut.pop_back();
+    return cut + "...";
+}
+
 } // namespace
 
-ContentBrowserPanel::ContentBrowserPanel(stdfs::path project_file) : project_file_(std::move(project_file)) { Refresh(); }
+ContentBrowserPanel::ContentBrowserPanel(stdfs::path project_file)
+    : project_file_(std::move(project_file)), thumbnails_(project_file_) {
+    Refresh();
+}
+
+ContentBrowserPanel::~ContentBrowserPanel() = default;
 
 bool ContentBrowserPanel::Refresh() {
     error_.clear();
@@ -52,11 +84,13 @@ bool ContentBrowserPanel::Refresh() {
         return false;
     }
     const ProjectPaths paths = ProjectPaths::ForFile(project_file_);
-    database_ = std::make_unique<assets::AssetDatabase>(paths.content);
-    database_->Scan();
+    auto database = std::make_shared<assets::AssetDatabase>(paths.content);
+    database->Scan();
     // Phase 43.6: validation runs with the scan, so the panel can show what is wrong with
     // the assets without a second pass over them.
-    issues_ = assets::ValidateAssets(*database_);
+    issues_ = assets::ValidateAssets(*database);
+    database_ = std::move(database);
+    thumbnails_.SetDatabase(database_);
     if (!vcs_injected_) vcs_ = assets::QueryGitStatus(paths.content);
     Rebuild();
     return true;
@@ -117,6 +151,7 @@ void ContentBrowserPanel::Draw() {
         ImGui::TextDisabled("%s", error_.empty() ? "No project is open." : error_.c_str());
         return;
     }
+    thumbnails_.Pump(); // pictures the worker finished since the last frame
     DrawToolbar();
     ImGui::Separator();
     if (ImGui::BeginChild("##folders", ImVec2(200, 0), ImGuiChildFlags_Borders)) DrawTree();
@@ -133,6 +168,11 @@ void ContentBrowserPanel::DrawToolbar() {
     if (ImGui::Button("Refresh")) Refresh();
     ImGui::SameLine();
     if (ImGui::Button("New Folder")) StartAction(Action::NewFolder, folder_);
+    ImGui::SameLine();
+    // The grid shows a thumbnail (or a type tile) per asset; the list is the denser view.
+    if (ImGui::Button(grid_view ? "[Grid]" : "Grid")) grid_view = true;
+    ImGui::SameLine();
+    if (ImGui::Button(grid_view ? "List" : "[List]")) grid_view = false;
     ImGui::SameLine();
     ImGui::SetNextItemWidth(200);
     if (ImGui::InputTextWithHint("##search", "Search", &search)) Rebuild();
@@ -196,8 +236,119 @@ void ContentBrowserPanel::DrawTree() {
 
 void ContentBrowserPanel::DrawListing() {
     ImGui::TextDisabled("Content/%s", folder_.c_str());
-    if (!folder_.empty() && ImGui::Selectable("..")) OpenParent();
-    std::string asset_to_open;
+    if (!folder_.empty() && ImGui::Selectable("..")) {
+        OpenParent();
+        return;
+    }
+    std::string folder_to_open, asset_to_open;
+    if (grid_view) {
+        DrawGrid(folder_to_open, asset_to_open);
+    } else {
+        DrawRows(folder_to_open, asset_to_open);
+    }
+    if (rows_.empty()) ImGui::TextDisabled(changed_only ? "Nothing here has changed." : "Empty.");
+    if (!folder_to_open.empty()) {
+        OpenFolder(folder_to_open);
+        return;
+    }
+    if (!asset_to_open.empty()) {
+        if (ExtensionRegistry* ext = ExtensionRegistry::Active()) {
+            ext->OpenAsset(project_file_.parent_path() / "Content" / asset_to_open);
+        }
+    }
+}
+
+void ContentBrowserPanel::DrawEntryMenu(const assets::ContentEntry& e) {
+    if (!ImGui::BeginPopupContextItem("content_entry_context")) return;
+    if (ImGui::MenuItem("Rename")) StartAction(Action::Rename, e.path);
+    if (ImGui::MenuItem("Move")) StartAction(Action::Move, e.path);
+    if (e.is_folder && ImGui::MenuItem("New Subfolder")) StartAction(Action::NewFolder, e.path);
+    if (!e.is_folder && e.asset && ImGui::BeginMenu("References")) {
+        if (ImGui::MenuItem("Show Dependencies")) {
+            reference_guid_ = e.asset->guid;
+            reference_direction_ = assets::ReferenceDirection::Dependencies;
+            references_open_ = true;
+        }
+        if (ImGui::MenuItem("Show Referencers")) {
+            reference_guid_ = e.asset->guid;
+            reference_direction_ = assets::ReferenceDirection::Referencers;
+            references_open_ = true;
+        }
+        ImGui::EndMenu();
+    }
+    ImGui::EndPopup();
+}
+
+void ContentBrowserPanel::DrawGrid(std::string& folder_to_open, std::string& asset_to_open) {
+    const f32 columns_width = std::max(ImGui::GetContentRegionAvail().x, kTile);
+    const int columns = std::max(1, static_cast<int>((columns_width + kTileGap) / (kTile + kTileGap)));
+    int column = 0;
+    for (usize i = 0; i < rows_.size(); ++i) {
+        const assets::ContentEntry e = rows_[i];
+        ImGui::PushID(static_cast<int>(i));
+        ImGui::BeginGroup();
+        ImGui::InvisibleButton("##tile", ImVec2(kTile, kTile));
+        const bool hovered = ImGui::IsItemHovered();
+        const bool activated = hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
+        if (hovered) {
+            ImGui::SetTooltip("%s\n%s", e.path.c_str(), e.is_folder ? "Folder" : (e.asset ? e.asset->importer.c_str() : "Asset"));
+        }
+        DrawEntryMenu(e);
+        if (ImGui::BeginDragDropSource()) {
+            const std::string label = e.is_folder ? e.name + "/" : e.name;
+            ImGui::SetDragDropPayload(kContentPathPayload, e.path.c_str(), e.path.size() + 1);
+            ImGui::TextUnformatted(label.c_str());
+            ImGui::EndDragDropSource();
+        }
+        const ImVec2 low = ImGui::GetItemRectMin(), high = ImGui::GetItemRectMax();
+        ImDrawList* draw = ImGui::GetWindowDrawList();
+        draw->AddRectFilled(low, high, KindColor(e), 6.0f);
+        bool pictured = false;
+        if (!e.is_folder && e.asset) {
+            const ThumbnailStore::Picture picture = thumbnails_.Get(e);
+            if (picture.image != nullptr) {
+                TileTexture& shown = textures_[assets::ToString(e.asset->guid)];
+                if (!shown.texture || shown.key != picture.key) { // a new version needs new pixels; a resized one needs a new texture
+                    shown.texture = std::make_unique<ImageTexture>();
+                    shown.key = picture.key;
+                }
+                if (!shown.texture->Valid()) {
+                    shown.texture->Set(picture.image->width, picture.image->height, picture.image->rgba);
+                }
+                if (shown.texture->Valid()) {
+                    const f32 width = static_cast<f32>(picture.image->width), height = static_cast<f32>(picture.image->height);
+                    const f32 scale = std::min(kTile / width, kTile / height);
+                    const ImVec2 fit(width * scale, height * scale);
+                    const ImVec2 image_low((low.x + high.x - fit.x) * 0.5f, (low.y + high.y - fit.y) * 0.5f);
+                    draw->AddImage(shown.texture->Ref(), image_low, ImVec2(image_low.x + fit.x, image_low.y + fit.y));
+                    pictured = true;
+                }
+            }
+        }
+        if (!pictured) { // no picture (yet, or for this kind): the kind's initial, on the kind's colour
+            const std::string initial = e.name.empty() ? "?" : std::string(1, static_cast<char>(std::toupper(static_cast<unsigned char>(e.name[0]))));
+            const ImVec2 text = ImGui::CalcTextSize(initial.c_str());
+            draw->AddText(ImVec2((low.x + high.x - text.x) * 0.5f, (low.y + high.y - text.y) * 0.5f), IM_COL32(225, 225, 225, 220), initial.c_str());
+        }
+        const ImU32 border = e.vcs != VcsState::Clean ? ImGui::GetColorU32(StateColor(e.vcs)) : IM_COL32(255, 255, 255, hovered ? 120 : 40);
+        draw->AddRect(low, high, border, 6.0f, 0, hovered ? 2.5f : 1.0f);
+        if (e.vcs != VcsState::Clean) {
+            char letter[2] = {assets::VcsStateLetter(e.vcs), 0};
+            draw->AddText(ImVec2(high.x - 12.0f, low.y + 3.0f), border, letter);
+        }
+        ImGui::TextUnformatted(Elide(e.is_folder ? e.name + "/" : e.name, kTile).c_str());
+        ImGui::EndGroup();
+        if (e.is_folder) AcceptMoveDrop(e.path);
+        if (activated) {
+            if (e.is_folder) folder_to_open = e.path;
+            else asset_to_open = e.path;
+        }
+        ImGui::PopID();
+        if (++column % columns != 0 && i + 1 < rows_.size()) ImGui::SameLine(0, kTileGap);
+    }
+}
+
+void ContentBrowserPanel::DrawRows(std::string& folder_to_open, std::string& asset_to_open) {
     for (usize i = 0; i < rows_.size(); ++i) {
         const assets::ContentEntry e = rows_[i];
         ImGui::PushID(static_cast<int>(i));
@@ -206,27 +357,11 @@ void ContentBrowserPanel::DrawListing() {
         const std::string label = e.is_folder ? e.name + "/" : e.name;
         const bool activated = ImGui::Selectable(label.c_str(), false, ImGuiSelectableFlags_AllowDoubleClick) &&
                                ImGui::IsMouseDoubleClicked(0);
-        const bool open_folder = activated && e.is_folder;
-        if (activated && !e.is_folder) asset_to_open = e.path;
-        if (ImGui::BeginPopupContextItem("content_entry_context")) {
-            if (ImGui::MenuItem("Rename")) StartAction(Action::Rename, e.path);
-            if (ImGui::MenuItem("Move")) StartAction(Action::Move, e.path);
-            if (e.is_folder && ImGui::MenuItem("New Subfolder")) StartAction(Action::NewFolder, e.path);
-            if (!e.is_folder && e.asset && ImGui::BeginMenu("References")) {
-                if (ImGui::MenuItem("Show Dependencies")) {
-                    reference_guid_ = e.asset->guid;
-                    reference_direction_ = assets::ReferenceDirection::Dependencies;
-                    references_open_ = true;
-                }
-                if (ImGui::MenuItem("Show Referencers")) {
-                    reference_guid_ = e.asset->guid;
-                    reference_direction_ = assets::ReferenceDirection::Referencers;
-                    references_open_ = true;
-                }
-                ImGui::EndMenu();
-            }
-            ImGui::EndPopup();
+        if (activated) {
+            if (e.is_folder) folder_to_open = e.path;
+            else asset_to_open = e.path;
         }
+        DrawEntryMenu(e);
         if (ImGui::BeginDragDropSource()) {
             ImGui::SetDragDropPayload(kContentPathPayload, e.path.c_str(), e.path.size() + 1);
             ImGui::TextUnformatted(label.c_str());
@@ -238,16 +373,6 @@ void ContentBrowserPanel::DrawListing() {
             ImGui::TextDisabled("%s", e.asset->importer.c_str());
         }
         ImGui::PopID();
-        if (open_folder) {
-            OpenFolder(e.path);
-            return;
-        }
-    }
-    if (rows_.empty()) ImGui::TextDisabled(changed_only ? "Nothing here has changed." : "Empty.");
-    if (!asset_to_open.empty()) {
-        if (ExtensionRegistry* ext = ExtensionRegistry::Active()) {
-            ext->OpenAsset(project_file_.parent_path() / "Content" / asset_to_open);
-        }
     }
 }
 

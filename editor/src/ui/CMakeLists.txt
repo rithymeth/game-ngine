@@ -76,6 +76,7 @@ add_library(aether_editor_ui STATIC
     ../gameplay/gameplay_debugger_document.cpp
     ../gameplay/gameplay_debugger_panel.cpp
     ../content/content_browser_panel.cpp
+    ../content/thumbnail_store.cpp
     ../packaging/build_window.cpp
     ../packaging/plugins_panel.cpp
     ../packaging/new_project_panel.cpp

@@ -3,10 +3,12 @@
 #include "aether/assets/asset_database.h"
 #include "aether/assets/content_browser.h"
 #include "aether/assets/vcs.h"
+#include "content/thumbnail_store.h"
 
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 // The Content Browser (Phase 8 step 6's data, with version control status
@@ -14,13 +16,20 @@
 // folders and assets, each with a badge for its git status (M modified, A
 // added, ? untracked, D deleted, R renamed, ! conflict; a folder shows its
 // worst child), a search, a "changed only" filter, and double-click to open
-// a folder or an asset type an extension registered. Draws into the current window.
+// a folder or an asset type an extension registered. The listing is a grid of
+// thumbnails (textures and materials; other kinds get a type tile) or a list.
+// Draws into the current window.
 
 namespace aether::editor {
+
+class ImageTexture;
 
 class ContentBrowserPanel {
 public:
     explicit ContentBrowserPanel(std::filesystem::path project_file);
+    ~ContentBrowserPanel();
+    ContentBrowserPanel(const ContentBrowserPanel&) = delete;
+    ContentBrowserPanel& operator=(const ContentBrowserPanel&) = delete;
     void Draw();
 
     // Rescans the assets and asks git again.
@@ -39,9 +48,14 @@ public:
 
     std::string search;
     bool changed_only = false;
+    // The listing as tiles (the default) or as rows; a host or a test can pick without clicking the toolbar.
+    bool grid_view = true;
     // Phase 43.6: the asset issue list. Like `search` and `changed_only` this is plain UI
     // state, public so a host (or a headless test) can open it without clicking.
     bool validation_open = false;
+    // The pictures the grid shows; public so a host can read its counters and a test can wait for the worker.
+    ThumbnailStore& Thumbnails() { return thumbnails_; }
+    const ThumbnailStore& Thumbnails() const { return thumbnails_; }
 
     const assets::VcsStatus& Vcs() const { return vcs_; }
     // Phase 43.7: stage everything under Content/ and commit it, then refresh so the badges
@@ -61,6 +75,9 @@ private:
     void DrawToolbar();
     void DrawTree();
     void DrawListing();
+    void DrawGrid(std::string& folder_to_open, std::string& asset_to_open);
+    void DrawRows(std::string& folder_to_open, std::string& asset_to_open);
+    void DrawEntryMenu(const assets::ContentEntry& entry); // what a tile and a row both offer
     void DrawActionDialog();
     void DrawReferenceViewer();
     void DrawValidation();
@@ -70,7 +87,13 @@ private:
     void RebaseOpenFolder(const std::string& old_path, const std::string& new_path);
 
     std::filesystem::path project_file_;
-    std::unique_ptr<assets::AssetDatabase> database_;
+    std::shared_ptr<assets::AssetDatabase> database_;
+    ThumbnailStore thumbnails_;
+    struct TileTexture {
+        std::unique_ptr<ImageTexture> texture;
+        std::string key; // the thumbnail version the pixels were uploaded from
+    };
+    std::unordered_map<std::string, TileTexture> textures_; // by asset GUID, for the grid
     assets::VcsStatus vcs_;
     bool vcs_injected_ = false;
     std::string folder_;

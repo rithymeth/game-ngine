@@ -438,6 +438,17 @@ asset editor is focused once those documents adopt the contract in Stage 6.
 
 Covered in [ROADMAP.md Phase 8](../ROADMAP.md). Additional rules:
 
+Implemented: the listing opens as a grid of 96 px tiles (Grid/List in the toolbar, or `grid_view` on the panel), and
+`editor/src/content/thumbnail_store.{h,cpp}` supplies the pictures. Textures and materials get one from `AssetThumbnail`;
+every other kind, and a picture not made yet, draws the importer's colour with the name's first letter. A tile carries the
+same git badge, drag payload, context menu and folder drop target as a row. Pictures are made on one worker thread -- its
+own importer registry and derived data cache, and its own copy of the asset database, because importing registers
+sub-assets -- and are kept in `Saved/Thumbnails/<guid>-<key>.png`. The key is the source file's size and modified time
+plus the `.ameta`'s import settings and the dependencies' source hashes, not the `.ameta`'s timestamp: an import rewrites
+the sidecar even when the result is a cache hit. A second open decodes those files instead of importing; the store counts
+`Rendered()`, `LoadedFromDisk()` and `WithoutPicture()` so a test can tell. A changed source gets a new key, one render,
+and its old file is removed.
+
 - Thumbnail size slider (64–256 px); list view for large folders.
 - Filter current-folder entries by supported asset type and name; search and
   type filters combine. Label the folder scope, show the visible/matching

@@ -551,6 +551,22 @@ Outcome: assets can be found, judged, imported, fixed and opened without leaving
 Gate: thumbnail cache test (second open does not re-render unchanged assets); reimport identity test; multi-select
 operations and their undo count; headless open of every registered asset type; importer settings round-trip.
 
+Done so far (2026-11-14): the grid of thumbnails. `ThumbnailStore` (`editor/src/content/thumbnail_store.{h,cpp}`) is the
+whole of it: `Get(entry)` answers a picture or nothing, `Pump()` once a frame, and counters -- `Rendered`, `LoadedFromDisk`,
+`WithoutPicture`, `Queued` -- so a test can say which path answered. Pictures are made on one worker thread that owns its
+importer registry and derived data cache and a copy of the asset database, because `ImportAsset` registers sub-assets and
+the panel is still reading the database it scanned. Each one is written to `Saved/Thumbnails/<guid>-<key>.png` (a temporary
+file renamed into place; the older key for that asset removed). The key mixes the source file's size and modified time, the
+`.ameta`'s import settings, the importer name and the dependencies' source hashes; the `.ameta`'s timestamp is not in it,
+since every import -- including a cache hit -- rewrites the sidecar's source hash. The panel draws a 96 px tile per entry
+with its picture fitted inside (or the importer's colour and the first letter for kinds without one -- models, scripts,
+scenes, folders), the same git badge, drag payload, context menu and folder drop target the rows have, and Grid/List in the
+toolbar switches between the two listings. Textures and materials are the pictured kinds; a material's picture follows its
+base-colour texture's change. Tests: `ContentBrowserGrid_ThumbnailsRenderOnceAndComeFromDiskTheSecondTime` (the list asks
+for no picture; the grid renders one per texture; a fresh panel on the same project decodes all of them from disk and
+renders none; a changed source renders exactly one and does not accumulate files) and
+`ContentBrowserGrid_KindsWithoutAPictureGetATypeTile` (models are counted as picture-less and write nothing).
+
 Dependency: Stage 0's document contract and Stage 1's tabs, so opening an asset has somewhere to put it.
 
 ### Stage 4 — Inspector and hierarchy parity (M)
