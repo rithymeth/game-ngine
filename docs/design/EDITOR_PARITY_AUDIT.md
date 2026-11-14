@@ -45,7 +45,7 @@ as well. The verdicts are a judgement from the source audit; the evidence column
 | Dimension | Aether today | Reference editors | Verdict |
 |---|---|---|---|
 | Project lifecycle | A Project Hub shown on a launch with no project (and File > Project Hub): recent projects with missing ones pruned, a picked or typed path, and template creation; File > Open Project goes through it | Project Browser/templates (Unreal), Unity Hub, Project Manager (Godot) | Partial |
-| Menus and commands | File, Edit, Tools, View and Help; no Asset, Actor or Window menus; one command table drives the menus, the palette and a generated shortcut cheat sheet | Complete menu bars plus searchable asset/command surfaces in all three | Partial |
+| Menus and commands | File, Edit, Asset, Actor, Tools, View and Help; no Window menu (layout presets) yet; one command table drives the menus, the palette and a generated shortcut cheat sheet | Complete menu bars plus searchable asset/command surfaces in all three | Partial |
 | Preferences and theme | One hardcoded dark theme; no settings file, theme choice or UI scale | Editor Preferences (Unreal, Unity), Editor Settings/themes (Godot) | Missing |
 | Shortcut handling | One command table with default chords and scopes, conflict detection (a startup test requires none) and a cheat sheet generated from it; no remapping yet | Remappable shortcuts and conflict reporting in all three | Partial |
 | Documents and layout | One scene document; one tool shown at a time (popped-out tools are separate windows); only the open tool and ImGui docking are remembered | Multi-document tabs, per-asset tabs, layout presets | Partial |
@@ -70,7 +70,7 @@ as well. The verdicts are a judgement from the source audit; the evidence column
 | Launch and project selection | Project Browser with templates and recent projects | Unity Hub, templates, recent projects | Project Manager, templates, import/scan | Project Hub on launch when no project is given; the template list, a picked path and the recent list in one window | `editor/src/workspace/editor_workspace.cpp` (`DrawProjectHub`), `editor/shell/main.cpp` | Partial |
 | Recent projects | In the project browser | In the Hub | In the Project Manager | Listed newest first and saved per user; missing entries are marked, removable individually or in one action; opening a project records it | `editor/src/core/recent_projects.cpp`, `editor_workspace.cpp` (`Impl::OpenProject`) | Partial |
 | Main toolbar | Save/undo/redo, transform tools, play controls, build/package, settings | Transform tools, play controls, layers, layout | Transform tools, play controls, scene tabs | One row under the menu bar: Save, Undo, Redo, the Scene View's move/rotate/scale, world/local and snap, Play/Pause/Step/Stop with a state underline, Build and Package, Settings | `editor/src/workspace/editor_workspace.cpp` (`DrawMainToolbar`), `editor/shell/main.cpp` | Partial |
-| Menus | File, Edit, Window, Tools, Build, Help | File, Edit, Assets, GameObject, Component, Window, Help | Scene, Project, Debug, Editor, Help | File, Edit, Tools, View and Help; no Asset, Actor or Window | `editor/shell/main.cpp` (`DrawEditor`), `editor_workspace.cpp` (`DrawMenuItems`, `DrawHelpMenu`) | Partial |
+| Menus | File, Edit, Window, Tools, Build, Help | File, Edit, Assets, GameObject, Component, Window, Help | Scene, Project, Debug, Editor, Help | File, Edit, Asset, Actor, Tools, View and Help; no Window menu (layout presets) yet | `editor/shell/main.cpp` (`DrawEditor`), `editor_workspace.cpp` (`DrawMenuItems`, `DrawHelpMenu`) | Partial |
 | Document tabs | Level and asset editors as tabs | Scene, Game, asset editors as tabs | Scenes and scripts as main-screen tabs | One scene; one hub tool visible; popped-out tools | `editor/src/world/scene_panel.h:88` | Partial |
 | Layout presets | Saved layouts, per-user | Layouts per project/user | Editor layouts | Only "Reset layout"; panel positions in ImGui ini | `editor/shell/main.cpp:83-85`, `:201-214` | Missing |
 | Preferences | Editor Preferences, project settings, plugins | Preferences, Project Settings, Package Manager | Editor Settings, Project Settings, Input Map, plugins | None | — | Missing |
@@ -319,9 +319,17 @@ looked" in the bar too. Tests: the project/document/dirty snapshot following the
 Playing, Paused and back, the unread count through a post and a draw (drawing alone must not clear it), and the bar
 drawn headlessly in every play state.
 
-Still open in this stage: the rest of menu completion (Asset, Actor, Window with layout presets), document tabs,
-layout presets, the scene toolbar's recents list, and the status bar's source-control branch segment and selection
-count (`EDITOR_UI.md` §6.7).
+Done so far (2026-11-14): the Asset and Actor menus. `actor.empty`, `actor.camera` and `actor.cine_camera` create the
+same kinds the hierarchy's Create menu does on the open scene, select the new entity and record one undo step each;
+`asset.browser`, `asset.refresh` and `asset.validate` act where assets are managed by putting the Content Browser on
+screen (Refresh also posts a warning with the panel's own error when the scan fails, and Validate opens the issue
+list). All six are ordinary command-table entries with no chords, so the startup conflict test covers them; the shell
+draws both menus from the table. Tests: each Actor command making its kind (Camera/CineCamera components present) and
+undo removing one, the registration (menu, no chord, enabled) and an empty conflict list, the Asset commands opening
+the Content Browser, and both menus drawn headlessly.
+
+Still open in this stage: the Window menu with layout presets, document tabs, layout presets, the scene toolbar's
+recents list, and the status bar's source-control branch segment and selection count (`EDITOR_UI.md` §6.7).
 
 ### Stage 2 — Viewport and selection parity (L)
 

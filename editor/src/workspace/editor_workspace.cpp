@@ -1346,6 +1346,37 @@ void EditorWorkspace::RegisterCommands() {
     };
     add(std::move(rename));
 
+    // The Actor menu creates the same kinds the hierarchy's Create menu does, on the open scene (one undo step each).
+    const auto create_actor = [this](const char* name, SceneEntityKind kind) {
+        SceneDocument& document = impl_->scene_panel->Document();
+        const Entity made = document.CreateEntity(name, kind);
+        if (!made.IsNull()) document.SetSelection({made});
+    };
+    add({"actor.empty", "Create Empty Actor", "Actor", false, {}, CommandScope::Scene, {}, {},
+         [create_actor] { create_actor("Actor", SceneEntityKind::Empty); }});
+    add({"actor.camera", "Create Camera", "Actor", false, {}, CommandScope::Scene, {}, {},
+         [create_actor] { create_actor("Camera", SceneEntityKind::Camera); }});
+    add({"actor.cine_camera", "Create Cine Camera", "Actor", false, {}, CommandScope::Scene, {}, {},
+         [create_actor] { create_actor("Cine Camera", SceneEntityKind::CineCamera); }});
+
+    // The Asset menu: the Content Browser is where assets are made, moved and committed, so its actions focus it there.
+    add({"asset.browser", "Content Browser", "Asset", false, {}, CommandScope::Global, {}, {},
+         [this] { impl_->ShowTool("Content Browser"); }});
+    add({"asset.refresh", "Refresh Assets", "Asset", true, {}, CommandScope::Global,
+         [this] { return impl_->content_browser != nullptr; }, {},
+         [this] {
+             if (impl_->content_browser == nullptr) return;
+             if (!impl_->content_browser->Refresh())
+                 Notifications().Post(NotificationSeverity::Warning, "Couldn't refresh assets", impl_->content_browser->Error());
+         }});
+    add({"asset.validate", "Validate Assets", "Asset", false, {}, CommandScope::Global,
+         [this] { return impl_->content_browser != nullptr; }, {},
+         [this] {
+             if (impl_->content_browser == nullptr) return;
+             impl_->content_browser->validation_open = true;
+             impl_->ShowTool("Content Browser");
+         }});
+
     add({"view.command_palette", "Command Palette", "View", false, {ImGuiKey_P, true, true, false},
          CommandScope::Global, {}, {}, [this] { command_palette_open = true; }});
     add({"view.preferences", "Preferences", "View", false, {}, CommandScope::Global, {}, {},

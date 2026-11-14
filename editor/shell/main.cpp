@@ -79,6 +79,14 @@ void DrawEditor(EditorWorkspace& workspace, const char* backend_label) {
             ImGui::EndMenu();
         }
         workspace.DrawEditMenu();
+        if (ImGui::BeginMenu("Asset")) {
+            workspace.DrawMenuItems("Asset"); // Content Browser, Refresh Assets, Validate Assets
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("Actor")) {
+            workspace.DrawMenuItems("Actor"); // Create Empty Actor, Camera, Cine Camera
+            ImGui::EndMenu();
+        }
         workspace.DrawToolsMenu();
         if (ImGui::BeginMenu("View")) {
             workspace.DrawMenuItems("View"); // Command Palette (Ctrl+Shift+P), Preferences

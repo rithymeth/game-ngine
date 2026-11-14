@@ -432,6 +432,25 @@ command palette for actions that have no chord.
 or an assertions-on build, the tool count and the open project, with a button to
 the shortcut sheet.
 
+### 6.10 Menus
+
+The bar is File, Edit, Asset, Actor, Tools, View and Help. Every item comes from
+the command table (except the shell's own Reset layout and the Tools menu's tool
+list), so a label, a chord and the action are written once.
+
+- **File**: New, Open, Save, Save As, Open Project, Project Hub, Quit.
+- **Edit**: Undo, Redo, Duplicate, Delete, Copy, Paste, Rename.
+- **Asset**: Content Browser (focuses it), Refresh Assets, Validate Assets. The
+  browser is where assets are created, moved and committed, so the menu opens it
+  rather than repeating those actions.
+- **Actor**: Create Empty Actor, Create Camera, Create Cine Camera — the same
+  kinds as the hierarchy's Create menu, selected and undoable.
+- **Tools**: every tool by category, checked while its window is open.
+- **View**: Command Palette, Preferences, Reset layout.
+- **Help**: Keyboard Shortcuts (F1), About.
+
+A Window menu (layout presets) is still to come.
+
 ---
 
 ## 7. Interaction rules
