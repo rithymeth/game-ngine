@@ -14,23 +14,41 @@
 
 namespace aether::editor {
 
+// How the Scene View projects: the perspective orbit camera, or an orthographic view (top, front, side, or any orientation).
+enum class SceneViewProjection { Perspective, Orthographic };
+// The axis-aligned orthographic views the Scene View offers; Free is any other orientation.
+enum class SceneViewOrientation { Free, Top, Front, Side };
+
 // An orbit camera around a target point, Y up: right-drag turns it, middle-drag (or shift + left-drag) pans, the wheel
-// zooms. Plain data and plain functions, so the maths is tested without a window.
+// zooms. In an orthographic projection the same angles give a parallel view and the wheel changes `ortho_height` instead.
+// Plain data and plain functions, so the maths is tested without a window.
 struct SceneViewCamera {
     f32 yaw = 0.7f;      // radians around Y
     f32 pitch = 0.5f;    // radians above the horizon, kept clear of straight up and down
     f32 distance = 14.0f;
     Vec3 target{0.0f, 0.0f, 0.0f};
     f32 fov_degrees = 60.0f;
+    SceneViewProjection projection = SceneViewProjection::Perspective;
+    f32 ortho_height = 14.0f; // world units across the view's vertical when orthographic: its own zoom, kept apart from `distance`
 
     Vec3 Eye() const;
+    // The world up the view uses: +Y, or -Z/+Z when looking straight down/up, where +Y would be along the view direction.
+    Vec3 Up() const;
+    // Target to eye in world units: `distance`, or in an orthographic view far enough back that the whole scene is in front.
+    f32 EyeDistance() const;
     // The orientation a camera entity needs to look from Eye() at the target (a camera looks down its own -Z).
     Quaternion Rotation() const;
     Mat4 View() const;
     Mat4 ViewProjection(f32 aspect) const;
+    // The world-space height the view covers at the target, for panning and for keeping the gizmo the same size on screen.
+    f32 ViewHeight() const;
     void Orbit(f32 delta_yaw, f32 delta_pitch);
-    void Zoom(f32 wheel_steps);          // each step scales the distance by 0.9 (in) or 1/0.9 (out)
+    void Zoom(f32 wheel_steps);          // each step scales the perspective distance, or the orthographic height, by 0.9 (in) or 1/0.9 (out)
     void Pan(f32 right_units, f32 up_units); // in the view plane, in world units
+    // An orthographic top, front or side view, with exactly the angles that imply; Free does nothing.
+    void Look(SceneViewOrientation orientation);
+    // The preset the camera is on -- orthographic with matching angles -- else Free.
+    SceneViewOrientation Orientation() const;
 };
 
 // The mouse and keys of an orbit view, for the ImGui item just submitted (right-drag turns, middle-drag or shift + left-drag pans, the
@@ -96,7 +114,9 @@ enum class GizmoSpace { World, Local };
 class TransformGizmo {
 public:
     // The handle length in world units, so it stays about the same size on screen at any zoom.
-    static f32 HandleLength(const SceneViewCamera& camera) { return camera.distance * 0.18f; }
+    static f32 HandleLength(const SceneViewCamera& camera) {
+        return (camera.projection == SceneViewProjection::Orthographic ? camera.ortho_height : camera.distance) * 0.18f;
+    }
     // The entity the gizmo is on (the first of Subjects), or kNullEntity.
     static Entity Subject(const SceneDocument& document);
     // The entities a drag moves: the selected, living ones with a Transform, leaving out any whose ancestor is also selected.

@@ -490,6 +490,62 @@ AETHER_TEST(SceneView_CameraProjectsAndPicks) {
     AETHER_CHECK(PickEntity(document, view, origin, ImVec2(0.0f, 0.0f), p_near) == kNullEntity);                      // a collapsed viewport picks nothing
 }
 
+// The orthographic views: parallel projection (a world unit is the same size at any depth), exact top/front/side angles, and a zoom of
+// their own that survives switching projections.
+AETHER_TEST(SceneView_OrthographicViewsProjectInParallelAndLookAlongAxes) {
+    SceneViewCamera camera;
+    camera.target = Vec3(1.0f, 2.0f, -3.0f);
+    camera.distance = 12.0f;
+    camera.ortho_height = 10.0f;
+    camera.projection = SceneViewProjection::Orthographic;
+    const ImVec2 origin(40.0f, 30.0f), size(800.0f, 600.0f);
+    const Mat4 vp = camera.ViewProjection(size.x / size.y);
+    const Mat4 view = camera.View();
+    const Vec3 right(view.cols[0].x, view.cols[1].x, view.cols[2].x);
+    const Vec3 ahead = (camera.target - camera.Eye()).Normalized();
+    ImVec2 centre, one_unit, one_unit_far;
+    AETHER_CHECK(ProjectToViewport(vp, camera.target, origin, size, centre));
+    AETHER_CHECK(ProjectToViewport(vp, camera.target + right, origin, size, one_unit));
+    AETHER_CHECK(ProjectToViewport(vp, camera.target + right + ahead * 100.0f, origin, size, one_unit_far));
+    const f32 pixels_per_unit = size.y / camera.ortho_height;
+    AETHER_CHECK(std::fabs((one_unit.x - centre.x) - pixels_per_unit) < 0.5f);     // one world unit is ortho_height / size.y pixels ...
+    AETHER_CHECK(std::fabs((one_unit_far.x - centre.x) - pixels_per_unit) < 0.5f); // ... at the target and 100 units beyond it
+    AETHER_CHECK(camera.EyeDistance() > 100.0f);                                   // the eye is well back, so nothing is behind the near plane
+
+    // Each projection has its own zoom: the wheel in ortho leaves the perspective distance alone, and the other way round.
+    camera.Zoom(1.0f);
+    AETHER_CHECK(camera.ortho_height < 10.0f && std::fabs(camera.distance - 12.0f) < 1e-4f);
+    const f32 ortho_height = camera.ortho_height;
+    camera.projection = SceneViewProjection::Perspective;
+    camera.Zoom(1.0f);
+    AETHER_CHECK(camera.distance < 12.0f && std::fabs(camera.ortho_height - ortho_height) < 1e-4f);
+
+    // Top: looking down -Y, with +X right and -Z up the screen.
+    camera.Look(SceneViewOrientation::Top);
+    AETHER_CHECK(camera.Orientation() == SceneViewOrientation::Top);
+    AETHER_CHECK(camera.Eye().y > camera.target.y + 100.0f);
+    const Mat4 top = camera.ViewProjection(size.x / size.y);
+    ImVec2 along_x, along_back;
+    AETHER_CHECK(ProjectToViewport(top, camera.target, origin, size, centre));
+    AETHER_CHECK(ProjectToViewport(top, camera.target + Vec3(1.0f, 0.0f, 0.0f), origin, size, along_x));
+    AETHER_CHECK(ProjectToViewport(top, camera.target + Vec3(0.0f, 0.0f, -1.0f), origin, size, along_back));
+    AETHER_CHECK(along_x.x > centre.x + 5.0f);
+    AETHER_CHECK(along_back.y < centre.y - 5.0f);
+
+    // Front looks along -Z and Side along -X, both keeping +Y up the screen; orbiting one makes it a free view again.
+    camera.Look(SceneViewOrientation::Front);
+    AETHER_CHECK(camera.Orientation() == SceneViewOrientation::Front);
+    ImVec2 above;
+    AETHER_CHECK(ProjectToViewport(camera.ViewProjection(size.x / size.y), camera.target + Vec3(0.0f, 1.0f, 0.0f), origin, size, above));
+    AETHER_CHECK(above.y < centre.y - 5.0f);
+    camera.Look(SceneViewOrientation::Side);
+    AETHER_CHECK(camera.Orientation() == SceneViewOrientation::Side);
+    AETHER_CHECK(ProjectToViewport(camera.ViewProjection(size.x / size.y), camera.target + Vec3(0.0f, 1.0f, 0.0f), origin, size, above));
+    AETHER_CHECK(above.y < centre.y - 5.0f);
+    camera.Orbit(0.0f, 0.1f);
+    AETHER_CHECK(camera.Orientation() == SceneViewOrientation::Free);
+}
+
 AETHER_TEST(SceneView_FocusAndDrawHeadless) {
     HeadlessImGui imgui;
     SceneViewPanel panel;

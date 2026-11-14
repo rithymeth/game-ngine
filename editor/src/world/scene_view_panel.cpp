@@ -42,12 +42,40 @@ void SceneViewPanel::FocusSelection(const SceneDocument& document) {
     }
     camera_.target = (low + high) * 0.5f;
     const Vec3 extent = high - low;
-    camera_.distance = std::clamp(std::max({extent.x, extent.y, extent.z}) * 1.6f + 5.0f, 3.0f, 1000.0f);
+    const f32 span = std::max({extent.x, extent.y, extent.z});
+    camera_.distance = std::clamp(span * 1.6f + 5.0f, 3.0f, 1000.0f);
+    camera_.ortho_height = std::clamp(span * 1.6f + 5.0f, 3.0f, 10000.0f); // the orthographic zoom is its own, so focus sets both
 }
 
 void SceneViewPanel::Draw(SceneDocument& document, const ModelBoundsCache* bounds, const std::filesystem::path& content_root) {
     tools_.SetBounds(bounds);
     tools_.DrawToolbar();
+    ImGui::SameLine();
+    ImGui::TextDisabled("|");
+    ImGui::SameLine();
+    // Perspective or an orthographic top/front/side view; choosing a preset switches to orthographic, and each projection keeps its own zoom.
+    const bool ortho = camera_.projection == SceneViewProjection::Orthographic;
+    const SceneViewOrientation orientation = camera_.Orientation();
+    auto view_button = [](const char* label, bool active) {
+        if (active) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+        const bool pressed = ImGui::Button(label);
+        if (active) ImGui::PopStyleColor();
+        return pressed;
+    };
+    if (view_button("Persp", !ortho)) camera_.projection = SceneViewProjection::Perspective;
+    ImGui::SetItemTooltip("Perspective orbit camera");
+    ImGui::SameLine();
+    if (view_button("Ortho", ortho)) camera_.projection = SceneViewProjection::Orthographic;
+    ImGui::SetItemTooltip("Orthographic projection, keeping the current angle");
+    ImGui::SameLine();
+    if (view_button("Top", orientation == SceneViewOrientation::Top)) camera_.Look(SceneViewOrientation::Top);
+    ImGui::SetItemTooltip("Top view: orthographic, looking down -Y");
+    ImGui::SameLine();
+    if (view_button("Front", orientation == SceneViewOrientation::Front)) camera_.Look(SceneViewOrientation::Front);
+    ImGui::SetItemTooltip("Front view: orthographic, looking along -Z");
+    ImGui::SameLine();
+    if (view_button("Side", orientation == SceneViewOrientation::Side)) camera_.Look(SceneViewOrientation::Side);
+    ImGui::SetItemTooltip("Side view: orthographic, looking along -X");
     ImGui::SameLine();
     ImGui::TextDisabled("%s", drop_.note.empty() ? "drop a model or a prefab from the Content Browser to place it" : drop_.note.c_str());
     const ImVec2 avail = ImGui::GetContentRegionAvail();

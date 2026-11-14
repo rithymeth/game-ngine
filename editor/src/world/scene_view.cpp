@@ -31,7 +31,18 @@ ImU32 Color(int r, int g, int b, int a = 255) { return IM_COL32(r, g, b, a); }
 
 Vec3 SceneViewCamera::Eye() const {
     const f32 cp = std::cos(pitch);
-    return target + Vec3(cp * std::sin(yaw), std::sin(pitch), cp * std::cos(yaw)) * distance;
+    return target + Vec3(cp * std::sin(yaw), std::sin(pitch), cp * std::cos(yaw)) * EyeDistance();
+}
+
+Vec3 SceneViewCamera::Up() const {
+    // At the poles +Y is the view direction itself, so the view is levelled with the world's -Z (looking down) or +Z (looking up).
+    if (std::fabs(pitch) > kMaxPitch + 0.01f) return Vec3(0.0f, 0.0f, pitch > 0.0f ? -1.0f : 1.0f);
+    return Vec3(0.0f, 1.0f, 0.0f);
+}
+
+f32 SceneViewCamera::EyeDistance() const {
+    // Parallel projection does not shrink with distance, so the eye is pulled back far enough that the whole scene is in front of the near plane.
+    return projection == SceneViewProjection::Orthographic ? std::max(1000.0f, ortho_height * 4.0f) : distance;
 }
 
 Quaternion SceneViewCamera::Rotation() const {
@@ -39,10 +50,19 @@ Quaternion SceneViewCamera::Rotation() const {
     return (Quaternion::FromAxisAngle(Vec3(0, 1, 0), yaw) * Quaternion::FromAxisAngle(Vec3(1, 0, 0), -pitch)).Normalized();
 }
 
-Mat4 SceneViewCamera::View() const { return Mat4::LookAtRH(Eye(), target, Vec3(0.0f, 1.0f, 0.0f)); }
+Mat4 SceneViewCamera::View() const { return Mat4::LookAtRH(Eye(), target, Up()); }
+
+f32 SceneViewCamera::ViewHeight() const {
+    return projection == SceneViewProjection::Orthographic ? ortho_height : 2.0f * distance * std::tan(fov_degrees * kPi / 360.0f);
+}
 
 Mat4 SceneViewCamera::ViewProjection(f32 aspect) const {
-    return Mat4::PerspectiveRH(fov_degrees * kPi / 180.0f, std::max(aspect, 0.01f), 0.1f, 2000.0f) * View();
+    aspect = std::max(aspect, 0.01f);
+    if (projection == SceneViewProjection::Orthographic) {
+        const f32 height = std::max(ortho_height, 0.01f);
+        return OrthographicRH(height * aspect, height, 0.1f, EyeDistance() * 2.0f) * View();
+    }
+    return Mat4::PerspectiveRH(fov_degrees * kPi / 180.0f, aspect, 0.1f, 2000.0f) * View();
 }
 
 void SceneViewCamera::Orbit(f32 delta_yaw, f32 delta_pitch) {
@@ -51,7 +71,28 @@ void SceneViewCamera::Orbit(f32 delta_yaw, f32 delta_pitch) {
 }
 
 void SceneViewCamera::Zoom(f32 wheel_steps) {
+    if (projection == SceneViewProjection::Orthographic) {
+        ortho_height = std::clamp(ortho_height * std::pow(0.9f, wheel_steps), 0.25f, 10000.0f);
+        return;
+    }
     distance = std::clamp(distance * std::pow(0.9f, wheel_steps), 0.5f, 1000.0f);
+}
+
+void SceneViewCamera::Look(SceneViewOrientation orientation) {
+    if (orientation == SceneViewOrientation::Free) return;
+    projection = SceneViewProjection::Orthographic;
+    yaw = orientation == SceneViewOrientation::Side ? kPi * 0.5f : 0.0f;
+    pitch = orientation == SceneViewOrientation::Top ? kPi * 0.5f : 0.0f;
+}
+
+SceneViewOrientation SceneViewCamera::Orientation() const {
+    if (projection != SceneViewProjection::Orthographic) return SceneViewOrientation::Free;
+    const auto matches = [](f32 a, f32 b) { return std::fabs(a - b) < 1e-3f; };
+    const f32 turned = std::remainder(yaw, 2.0f * kPi);
+    if (matches(pitch, kPi * 0.5f) && matches(turned, 0.0f)) return SceneViewOrientation::Top;
+    if (matches(pitch, 0.0f) && matches(turned, 0.0f)) return SceneViewOrientation::Front;
+    if (matches(pitch, 0.0f) && matches(turned, kPi * 0.5f)) return SceneViewOrientation::Side;
+    return SceneViewOrientation::Free;
 }
 
 void SceneViewCamera::Pan(f32 right_units, f32 up_units) {
@@ -69,7 +110,7 @@ void HandleCameraInput(SceneViewCamera& camera, bool hovered, bool active, const
         if (ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
             camera.Orbit(-d.x * 0.008f, d.y * 0.008f);
         } else if (ImGui::IsMouseDown(ImGuiMouseButton_Middle) || (io.KeyShift && ImGui::IsMouseDown(ImGuiMouseButton_Left))) {
-            const f32 per_pixel = 2.0f * camera.distance * std::tan(camera.fov_degrees * kPi / 360.0f) / std::max(size.y, 1.0f);
+            const f32 per_pixel = camera.ViewHeight() / std::max(size.y, 1.0f);
             camera.Pan(-d.x * per_pixel, d.y * per_pixel);
         }
     }
@@ -78,11 +119,13 @@ void HandleCameraInput(SceneViewCamera& camera, bool hovered, bool active, const
 
 bool ProjectToViewport(const Mat4& view_projection, const Vec3& world, const ImVec2& origin, const ImVec2& size, ImVec2& out, f32* depth) {
     const Vec4 clip = view_projection * Vec4(world.x, world.y, world.z, 1.0f);
-    if (!(clip.w > 1e-4f)) return false; // at or behind the eye
+    // The depth range starts at 0: a point nearer than the near plane (or behind the eye) has a negative z however its w reads.
+    if (!(clip.w > 1e-4f) || clip.z < 0.0f) return false;
     const f32 ndc_x = clip.x / clip.w;
     const f32 ndc_y = clip.y / clip.w;
     out = ImVec2(origin.x + (ndc_x * 0.5f + 0.5f) * size.x, origin.y + (0.5f - ndc_y * 0.5f) * size.y);
-    if (depth) *depth = clip.w;
+    // Orthographic matrices put w at 1 at every depth, where the NDC z is the one that ranks points.
+    if (depth) *depth = clip.w == 1.0f ? clip.z : clip.w;
     return true;
 }
 

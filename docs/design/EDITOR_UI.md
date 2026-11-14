@@ -360,6 +360,11 @@ asset editor is focused once those documents adopt the contract in Stage 6.
   Esc to stop".
 - **Camera speed:** shows briefly in the middle ("Speed 4") when changed
   with the mouse wheel during fly mode.
+- **Projection:** the Scene View opens on the perspective orbit camera.
+  Persp/Ortho toggles a parallel projection without changing the angle, and
+  Top, Front and Side jump to those axis views (orthographic); the orthographic
+  zoom is kept apart from the perspective distance, so switching back restores
+  the other.
 
 ### 6.3 Hierarchy
 

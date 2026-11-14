@@ -411,6 +411,22 @@ mode and ortho view; picking regression test at the 300k cap.
 Dependency: shaded mode depends on the Live Viewport's offscreen path, which already exists. Material-graph preview
 waits for the renderer work in Stage 6.
 
+Done so far (2026-11-14): the perspective/orthographic toggle and the orthographic top, front and side views.
+`SceneViewCamera` gained `projection`, `ortho_height` and `Look`/`Orientation` (`editor/src/world/scene_view.{h,cpp}`):
+the orbit camera stays the default, Ortho keeps the current angle under a parallel projection, and Top, Front and Side set
+the exact angles (looking down -Y, along -Z and along -X) and switch to orthographic. The orthographic zoom is its own
+field, so the wheel changes `ortho_height` and leaves the perspective `distance` alone, and the other way round; Focus
+sets both. The camera pulls its eye back (`EyeDistance`, at least 1000 units) so a parallel view's near plane never cuts
+an object the perspective orbit distance would have, and it levels the view with -Z/+Z at the poles, where +Y would be
+along the view direction. Panning and the gizmo's handle length use `ViewHeight()`, so both stay the same on screen in
+either projection, and `ProjectToViewport` now ranks depths by the NDC z when the matrix's w is 1 (orthographic), which
+keeps click-to-select's nearer-wins tie-break working there; it also rejects points before the near plane, which the
+depth range's zero start makes visible as a negative z. The Scene View's toolbar has Persp/Ortho and Top/Front/Side
+buttons, lit for the current view. Tests: a world unit projects to the same pixel length at the target and 100 units
+beyond it, each projection keeps its zoom across switching, the top view puts +X right and -Z up, front and side keep +Y
+up, and orbiting a preset makes it free again; the existing perspective, focus, ground-point and gizmo tests still pass.
+Not yet: shading, fly mode, the infinite grid, marquee selection and grouped undo.
+
 ### Stage 3 — Content browser and importer parity (L)
 
 Outcome: assets can be found, judged, imported, fixed and opened without leaving the editor.
