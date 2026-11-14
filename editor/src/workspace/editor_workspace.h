@@ -142,6 +142,11 @@ public:
     void DrawHubContents();
     // The popped-out tool windows.
     void DrawWindows();
+    // The main toolbar (Stage 1 of docs/design/EDITOR_PARITY_AUDIT.md), into the current window: Save, Undo and Redo
+    // from the command table, the Scene View's transform mode, space and snap, Play/Pause/Step/Stop for the open
+    // document, and Build and Package and Settings. A host draws it along the top; the toolbar adds no state of its
+    // own, so a headless test can draw it too.
+    void DrawMainToolbar();
 
     // Data safety (Stage 0 of docs/design/EDITOR_PARITY_AUDIT.md): the editor writes the open scene into a
     // per-project recovery slot while it has unsaved changes, and offers it back when the last session did not end

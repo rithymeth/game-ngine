@@ -110,7 +110,11 @@ public:
     PlaySession::State PlayState() const { return play_session_.GetState(); }
     void Play();
     void Pause();
+    // While paused, lets exactly one simulation frame run (ShouldSimulate() is true for the next call only).
+    void Step();
     void Stop();
+    // Whether the host should advance the game this frame: every frame while playing, once after Step() while paused.
+    bool ShouldSimulate() { return play_session_.ShouldSimulate(); }
 
 private:
     void Reset();

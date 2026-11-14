@@ -90,8 +90,13 @@ void DrawEditor(EditorWorkspace& workspace, const char* backend_label) {
         ImGui::EndMainMenuBar();
     }
 
-    // The status bar claims the strip along the bottom first, so the dockspace fills what is left.
+    // The main toolbar claims the strip under the menu bar, and the status bar the one along the bottom, so the
+    // dockspace fills what is left.
     ImGuiViewport* viewport = ImGui::GetMainViewport();
+    if (ImGui::BeginViewportSideBar("##toolbar", viewport, ImGuiDir_Up, ImGui::GetFrameHeight(), ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings)) {
+        workspace.DrawMainToolbar();
+    }
+    ImGui::End();
     if (ImGui::BeginViewportSideBar("##status", viewport, ImGuiDir_Down, ImGui::GetFrameHeight(), ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings)) {
         ImGui::TextDisabled("%s", backend_label);
         ImGui::SameLine();

@@ -964,6 +964,17 @@ struct EditorWorkspace::Impl {
         }
     }
 
+    // A toolbar action's tool: selected in the hub and popped out, so it is visible wherever the host draws.
+    void ShowTool(const char* name) {
+        for (usize i = 0; i < tools.size(); ++i) {
+            if (StartsWithNoCase(tools[i].name.c_str(), name)) {
+                selected = i;
+                tools[i].window_open = true;
+                return;
+            }
+        }
+    }
+
     // The Messages tool. A click on a target opens it the way the command palette opens an asset --
     // the Content Browser at its folder -- or selects the entity in the scene.
     void DrawMessages() {
@@ -1264,6 +1275,11 @@ void EditorWorkspace::RegisterCommands() {
              }
          }});
     add({"project.hub", "Project Hub", "File", false, {}, CommandScope::Global, {}, {}, [this] { OpenProjectHub(); }});
+    // Toolbar actions with no menu of their own; the palette lists them beside the tools they open.
+    add({"project.build", "Build and Package...", "", false, {}, CommandScope::Global, {}, {},
+         [this] { impl_->ShowTool("Build and Package"); }});
+    add({"project.settings", "Project Settings...", "", false, {}, CommandScope::Global, {}, {},
+         [this] { impl_->ShowTool("Project Settings"); }});
     add({"scene.new", "New scene", "File", true, {}, CommandScope::Global, {}, {},
          [this, show_scene] { impl_->scene_panel->NewScene(false); show_scene(); }});
     add({"scene.open", "Open scene", "File", false, {}, CommandScope::Global, {}, {},
@@ -1495,6 +1511,76 @@ void EditorWorkspace::DrawWindows() {
             impl_->tools[static_cast<usize>(messages)].window_open = true;
         }
     }
+}
+
+// The main toolbar: every action is a command or a document call, so it cannot disagree with the menus, the palette or
+// the keyboard about what is enabled or what a chord is. The transform controls are the Scene View's own tools, so a
+// keyboard W/E/R/Q and these buttons are the same state.
+void EditorWorkspace::DrawMainToolbar() {
+    Impl& impl = *impl_;
+    SceneDocument& document = impl.scene_panel->Document();
+    int id = 0; // stable ids for the tooltips: the toolbar draws the same labels every frame
+    const auto command_button = [this, &id](const char* command_id, const char* label) {
+        const Command* command = impl_->commands.Find(command_id);
+        const bool enabled = command != nullptr && impl_->commands.Enabled(*command);
+        ImGui::PushID(id++);
+        ImGui::BeginDisabled(!enabled);
+        const bool clicked = ImGui::Button(label);
+        ImGui::EndDisabled();
+        if (command != nullptr) {
+            const std::string chord = command->chord.ToString();
+            const std::string what = impl_->commands.Label(*command);
+            ImGui::SetItemTooltip("%s%s%s", what.c_str(), chord.empty() ? "" : "  (", chord.c_str(),
+                                  chord.empty() ? "" : ")");
+        }
+        ImGui::PopID();
+        return clicked;
+    };
+
+    if (command_button("scene.save", "Save")) impl_->commands.Run("scene.save");
+    ImGui::SameLine();
+    if (command_button("edit.undo", "Undo")) impl_->commands.Run("edit.undo");
+    ImGui::SameLine();
+    if (command_button("edit.redo", "Redo")) impl_->commands.Run("edit.redo");
+    ImGui::SameLine();
+    ImGui::TextDisabled("|");
+    ImGui::SameLine();
+    impl.scene_view.Tools().DrawToolbar();
+    ImGui::SameLine();
+    ImGui::TextDisabled("|");
+    ImGui::SameLine();
+
+    const PlaySession::State state = document.PlayState();
+    if (state == PlaySession::State::Editing) {
+        if (ImGui::Button("Play")) document.Play();
+    } else {
+        if (ImGui::Button(state == PlaySession::State::Playing ? "Pause" : "Resume")) {
+            if (state == PlaySession::State::Playing) document.Pause();
+            else document.Play();
+        }
+        ImGui::SameLine();
+        ImGui::BeginDisabled(state != PlaySession::State::Paused);
+        if (ImGui::Button("Step")) document.Step();
+        ImGui::EndDisabled();
+        ImGui::SetItemTooltip("Advance the game exactly one frame while paused");
+        ImGui::SameLine();
+        if (ImGui::Button("Stop")) document.Stop();
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(1.0f, 0.72f, 0.2f, 1.0f), "%s",
+                           state == PlaySession::State::Playing ? "Playing" : "Paused");
+        // The state is also an underline, so it is visible without reading the labels.
+        ImDrawList* draw = ImGui::GetWindowDrawList();
+        const ImVec2 origin = ImGui::GetWindowPos();
+        draw->AddLine(ImVec2(origin.x, origin.y + ImGui::GetWindowHeight() - 1.0f),
+                      ImVec2(origin.x + ImGui::GetWindowWidth(), origin.y + ImGui::GetWindowHeight() - 1.0f),
+                      IM_COL32(255, 184, 51, 255), 2.0f);
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("|");
+    ImGui::SameLine();
+    if (command_button("project.build", "Build and Package")) impl_->commands.Run("project.build");
+    ImGui::SameLine();
+    if (command_button("view.preferences", "Settings")) impl_->commands.Run("view.preferences");
 }
 
 void EditorWorkspace::DrawCommandPalette() {

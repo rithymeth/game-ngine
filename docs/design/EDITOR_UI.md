@@ -304,14 +304,23 @@ Icon-only buttons always have a tooltip with name and shortcut
 
 ### 6.1 Main toolbar
 
-Left to right: Save, Undo, Redo | Select/Translate/Rotate/Scale, space
-(Local/World), snap toggles with values | **Play controls** centered
-(Play ▾ with options: Selected Viewport / New Window / Simulate, and
-number of clients once networking exists; Pause; Step; Stop) | Build ▾,
-Package ▾, Settings on the right.
+One row under the menu bar, drawn by the workspace (not the shell), left to
+right:
 
-- While playing, Play is replaced by Stop, and the whole toolbar gets a
-  thin `pie.border` underline.
+- Save, Undo, Redo. Each is the command table's entry: the enabled state and
+  the chord in the tooltip come from the registry, and Undo's tooltip names
+  what it would undo.
+- The Scene View's transform tools: Move, Rotate, Scale, World/Local, Snap
+  with the step for the current mode. These are the same `ViewportTools` the
+  Scene View drives, so W/E/R/Q and the buttons cannot disagree.
+- Play controls. While editing there is one Play button. While playing it
+  becomes Pause, Resume when paused, plus Step (enabled only while paused,
+  and it advances exactly one frame) and Stop. The play state is also a thin
+  amber underline across the toolbar, so it is visible without reading labels.
+- Build and Package, and Settings (Preferences), at the right.
+
+The current scene is not chosen here: the toolbar acts on the focused
+document, which today is the open scene (Stage 1's tabs make that several).
 
 ### 6.2 Viewport
 

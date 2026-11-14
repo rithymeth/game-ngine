@@ -69,7 +69,7 @@ as well. The verdicts are a judgement from the source audit; the evidence column
 |---|---|---|---|---|---|---|
 | Launch and project selection | Project Browser with templates and recent projects | Unity Hub, templates, recent projects | Project Manager, templates, import/scan | Project Hub on launch when no project is given; the template list, a picked path and the recent list in one window | `editor/src/workspace/editor_workspace.cpp` (`DrawProjectHub`), `editor/shell/main.cpp` | Partial |
 | Recent projects | In the project browser | In the Hub | In the Project Manager | Listed newest first and saved per user; missing entries are marked, removable individually or in one action; opening a project records it | `editor/src/core/recent_projects.cpp`, `editor_workspace.cpp` (`Impl::OpenProject`) | Partial |
-| Main toolbar | Save/undo/redo, transform tools, play controls, build/package, settings | Transform tools, play controls, layers, layout | Transform tools, play controls, scene tabs | None; controls live in each tool's own toolbar | `editor/shell/main.cpp:74-97` | Missing |
+| Main toolbar | Save/undo/redo, transform tools, play controls, build/package, settings | Transform tools, play controls, layers, layout | Transform tools, play controls, scene tabs | One row under the menu bar: Save, Undo, Redo, the Scene View's move/rotate/scale, world/local and snap, Play/Pause/Step/Stop with a state underline, Build and Package, Settings | `editor/src/workspace/editor_workspace.cpp` (`DrawMainToolbar`), `editor/shell/main.cpp` | Partial |
 | Menus | File, Edit, Window, Tools, Build, Help | File, Edit, Assets, GameObject, Component, Window, Help | Scene, Project, Debug, Editor, Help | File, Edit, Tools, View only | `editor/shell/main.cpp:74-88`, `editor_workspace.cpp:1044-1094` | Missing |
 | Document tabs | Level and asset editors as tabs | Scene, Game, asset editors as tabs | Scenes and scripts as main-screen tabs | One scene; one hub tool visible; popped-out tools | `editor/src/world/scene_panel.h:88` | Partial |
 | Layout presets | Saved layouts, per-user | Layouts per project/user | Editor layouts | Only "Reset layout"; panel positions in ImGui ini | `editor/shell/main.cpp:83-85`, `:201-214` | Missing |
@@ -286,8 +286,20 @@ it when neither an argument nor `AETHER_PROJECT` names a project. A project that
 file as its target) instead of failing quietly, and neither the open project nor the list changes. Tests:
 recent-list round-trip across two workspaces, remove-missing pruning and saving, File > Open Project through the picker
 (including cancel and the no-picker fallback), a bad project posting an error and changing nothing, and the hub drawn
-headlessly over an open project. Still open in this stage: the main toolbar, menu completion, document tabs, the status
-bar, generated shortcut bindings and the cheat sheet, layout presets, and the scene toolbar's recents list.
+headlessly over an open project.
+
+Done so far (2026-11-14): the main toolbar, the Stage 1 gate's other piece. `EditorWorkspace::DrawMainToolbar` is drawn
+into the shell's top side bar and is plain ImGui, so tests draw it headlessly. Save, Undo and Redo run the command
+table's ids, so their enabled state and chord tooltips are the registry's (an undo says what it would undo); the
+transform row is the Scene View's own `ViewportTools::DrawToolbar`, so the W/E/R/Q keys and the buttons are one state;
+Play/Pause/Step/Stop drive the open document, with `SceneDocument::Step()` wired to the existing `PlaySession::Step()`
+and a new `SceneDocument::ShouldSimulate()` for a host to ask, and an amber underline reports the play state without
+reading labels; Build and Package and Settings open their tools (the latter Preferences) through new palette commands
+`project.build` and `project.settings`. Tests: Step lets exactly one frame simulate and is ignored while playing (the
+stage gate), the toolbar's enabled state following the document through undo and redo, both tool actions opening their
+windows, and the toolbar drawn in editing, playing and paused states. Still open in this stage: menu completion,
+document tabs, the status bar, generated shortcut bindings and the cheat sheet, layout presets, and the scene toolbar's
+recents list.
 
 ### Stage 2 — Viewport and selection parity (L)
 

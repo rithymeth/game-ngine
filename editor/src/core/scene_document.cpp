@@ -549,6 +549,7 @@ void SceneDocument::Play() {
     play_session_.Play(context_, commands_);
 }
 void SceneDocument::Pause() { play_session_.Pause(); }
+void SceneDocument::Step() { play_session_.Step(); }
 void SceneDocument::Stop() {
     if (play_session_.IsEditing()) return;
     play_session_.Stop(context_, commands_);
