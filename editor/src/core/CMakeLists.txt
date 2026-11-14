@@ -4,6 +4,7 @@
 # headless.
 add_library(aether_editor_core STATIC
     command_stack.cpp
+    document_tabs.cpp
     editor_document.cpp
     file_dialog.cpp
     notifications.cpp

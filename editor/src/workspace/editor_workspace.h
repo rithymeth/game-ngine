@@ -114,10 +114,32 @@ public:
     // The open scene (the Scene tool's document and actions), for a host's own menus and shortcuts.
     ScenePanel& Scene();
     // The document the shell's quit prompt asks about (Stage 0 of docs/design/EDITOR_PARITY_AUDIT.md): name, dirty
-    // state, undo history and save, without the caller knowing it is a scene. There is one document today; Stage 1's
-    // tabs turn this into "the focused one".
+    // state, undo history and save, without the caller knowing it is a scene. Stage 1's tabs make it the focused
+    // tab's document; the scene is the first document and stays open as long as it is the last one.
     EditorDocument& ActiveDocument();
     const EditorDocument& ActiveDocument() const;
+
+    // The open documents as tabs (Stage 1 of docs/design/EDITOR_PARITY_AUDIT.md). The scene opens its own document;
+    // an asset editor opens its document with OpenDocument when it is shown, and opening it again focuses the tab it
+    // already has. Closing a dirty document is refused unless `discard` is true, and the last tab always stays open.
+    // DrawDocumentTabs draws the strip into the current window, with a close prompt for unsaved changes.
+    std::size_t DocumentCount() const;
+    std::size_t ActiveDocumentIndex() const;
+    EditorDocument& DocumentAt(std::size_t index);
+    const EditorDocument& DocumentAt(std::size_t index) const;
+    std::size_t OpenDocument(EditorDocument& document);
+    void ActivateDocument(std::size_t index);
+    bool CloseDocument(std::size_t index, bool discard = false);
+    bool CloseOtherDocuments(std::size_t index, bool discard = false);
+    void DrawDocumentTabs();
+    // Closing through the tab strip: a clean document closes at once; a dirty one sets up the prompt. Its answers are
+    // public so a headless host can make them too. SaveAndCloseDocument is false (and the prompt stays) when the save
+    // itself fails.
+    void RequestCloseDocument(std::size_t index);
+    bool ClosePromptOpen() const;
+    bool SaveAndCloseDocument();
+    void CloseDocumentWithoutSaving();
+    void CancelCloseDocument();
     // What the editor wants to tell the user (Stage 0 of docs/design/EDITOR_PARITY_AUDIT.md): the toasts DrawWindows
     // shows and the rows the Messages tool lists. Save, autosave and recovery failures are posted here; a host with a
     // status bar may also read UnreadCount().
@@ -229,6 +251,7 @@ private:
     // Runs the Global commands whose chord was pressed this frame; called from DrawWindows, inside a frame.
     void PollShortcuts();
     void DrawDataSafetyWindows();
+    void DrawCloseDocumentPrompt();
     void DrawPreferences();
     void DrawProjectHub();
     void DrawShortcutCheatSheet();

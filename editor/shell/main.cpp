@@ -243,6 +243,11 @@ void DrawEditor(EditorWorkspace& workspace, LayoutState& layouts, const char* ba
         workspace.DrawMainToolbar();
     }
     ImGui::End();
+    // The open documents, as tabs, on their own strip under the toolbar.
+    if (ImGui::BeginViewportSideBar("##document_tabs", viewport, ImGuiDir_Up, ImGui::GetFrameHeight(), ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings)) {
+        workspace.DrawDocumentTabs();
+    }
+    ImGui::End();
     if (ImGui::BeginViewportSideBar("##status", viewport, ImGuiDir_Down, ImGui::GetFrameHeight(), ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings)) {
         workspace.DrawStatusBar();
         ImGui::SameLine(0.0f, 10.0f);

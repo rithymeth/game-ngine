@@ -212,20 +212,28 @@ it and rebuilds the built-in. The chosen name is remembered with the open
 tool in `editor_layout.json`, and panel positions stay in `editor_panels.ini`
 beside it.
 
-### 4.3 Asset editor tabs
+### 4.3 Document tabs
 
-- Opening an asset editor (Blueprint, Material, and so on) adds a tab next
-  to the viewport. Each asset editor has its **own dock space** inside the
-  tab, with its own panel layout.
-- A tab title shows the asset name, with a `●` when it has unsaved
-  changes. Middle-click closes the tab (and asks to save if needed).
-- Reopening an asset focuses its existing tab instead of opening a
-  second copy.
+- The open documents are tabs on their own strip under the main toolbar. The
+  scene is the first; an asset editor's document joins when it is opened, and
+  opening it again focuses its existing tab instead of opening a second copy.
+  Today the scene is the only built document, so the strip has one tab; the
+  other asset documents join the contract in Stage 6 of the parity audit.
+- The active tab is drawn in the active-button color. A tab shows the
+  document's display name, with a filled dot drawn beside it while it has
+  unsaved changes.
+- Middle-click closes a tab (and asks to save first when it is dirty); the
+  right-click menu has Close and Close Others, which keeps the chosen tab and,
+  while another document has unsaved changes, refuses rather than guessing. The
+  last tab always stays open: its document still exists, and an empty strip
+  would leave the toolbar and quit prompt with nothing to mean.
+- The close prompt offers *Save and close*, *Close without saving* and *Cancel*;
+  a save that fails leaves the prompt up with the reason.
 - A tab reads its document through `core/editor_document.h`
   (`EditorDocument`: path, display name, kind, dirty state, undo history
-  and save), not through the panel that draws it. `SceneDocument` is the
-  first adopter; the other asset documents follow in Stage 6 of the parity
-  audit.
+  and save), not through the panel that draws it. Activating the scene's tab
+  brings the Scene tool back. `SceneDocument` is the first adopter; the other
+  asset documents follow in Stage 6 of the parity audit.
 
 ---
 
@@ -334,7 +342,8 @@ right:
 - Build and Package, and Settings (Preferences), at the right.
 
 The current scene is not chosen here: the toolbar acts on the focused
-document, which today is the open scene (Stage 1's tabs make that several).
+document -- the active tab's -- which is the scene today and becomes whichever
+asset editor is focused once those documents adopt the contract in Stage 6.
 
 ### 6.2 Viewport
 

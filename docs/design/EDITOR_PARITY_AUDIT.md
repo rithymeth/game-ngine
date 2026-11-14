@@ -370,7 +370,24 @@ the segment out). Tests: the selection count following `SetSelection` and `Clear
 cleared, a host-set branch surviving a refresh, and a real repository read through init, an unborn branch and a
 renamed branch, with a quote in the path refused.
 
-Still open in this stage: document tabs.
+Done so far (2026-11-14): document tabs, the last Stage 1 item. `DocumentTabs`
+(`editor/src/core/document_tabs.{h,cpp}`) keeps the open documents in tab order with one focused. A document is its own
+identity, so opening it again focuses the tab it already has rather than adding a second copy; a dirty document closes
+only when the caller discards it, and the last tab always stays open, since its document still exists and an empty strip
+would leave the toolbar and quit prompt with nothing to mean. The workspace opens the scene as the first tab, and
+opening another document (an asset editor's, from Stage 6) activates it and brings its view back -- the scene's is the
+Scene tool. `DrawDocumentTabs` draws the strip (the active tab in the active-button color, a drawn dot rather than a
+glyph when a document is dirty), middle-click and a right-click menu close a tab, and Close Others keeps the chosen one
+or refuses as a whole while another document has unsaved changes. The close prompt is the same shape as the quit
+prompt: Save and close (through the document's `Save`, or the Scene panel's naming defaults for the scene), Close
+without saving, Cancel, with a failed save keeping the prompt up and saying why; its answers are public so a headless
+host can make them. The strip is a viewport side bar under the main toolbar. Today the scene is the only real document,
+so the production strip has one tab (which cannot be closed); the model and the prompt are exercised with a second document in tests. Tests: opening once and re-focusing, close-with-neighbor, dirty refusal and discard, the
+last tab staying, Close Others both ways, the workspace's scene tab and its activation selecting the Scene tool, the
+prompt's save/discard/cancel answers (including a failed save leaving the document open), and the strip and prompt
+drawn headlessly.
+
+Stage 1 is complete.
 
 ### Stage 2 — Viewport and selection parity (L)
 

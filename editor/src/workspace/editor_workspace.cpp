@@ -3,6 +3,7 @@
 #include "workspace/command_palette.h"
 #include "workspace/command_registry.h"
 #include "core/editor_document.h"
+#include "core/document_tabs.h"
 #include "core/editor_settings.h"
 #include "core/file_dialog.h"
 #include "core/notifications.h"
@@ -284,6 +285,12 @@ struct EditorWorkspace::Impl {
     std::filesystem::path project_file;
     std::string branch;               // the status bar's source-control branch; asked of git, not recomputed per frame
     bool branch_injected = false;     // a host set it, so RefreshSourceControl leaves it alone
+    // Stage 1: the open documents as tabs, and the close prompt for one with unsaved changes.
+    DocumentTabs document_tabs;
+    EditorDocument* closing_document = nullptr;
+    bool close_prompt = false;
+    bool close_prompt_opened = false; // OpenPopup once, not every frame while the modal is up
+    std::string close_error;
     CommandRegistry commands;
     NotificationService notifications;
     double clock = 0.0; // seconds since the workspace was made; Update() advances it and expires toasts
@@ -386,6 +393,7 @@ struct EditorWorkspace::Impl {
         };
         // The scene panel matches its own keys through the same table the menus read.
         scene_panel->SetCommands(&commands);
+        document_tabs.Open(scene_panel->Document()); // the first tab; the scene stays open as long as it is the last
     }
 
     void BuildBlueprint() {
@@ -1250,8 +1258,158 @@ void EditorWorkspace::DrawTool(usize tool) {
 
 ScenePanel& EditorWorkspace::Scene() { return *impl_->scene_panel; }
 
-EditorDocument& EditorWorkspace::ActiveDocument() { return impl_->scene_panel->Document(); }
-const EditorDocument& EditorWorkspace::ActiveDocument() const { return impl_->scene_panel->Document(); }
+EditorDocument& EditorWorkspace::ActiveDocument() { return *impl_->document_tabs.Active(); }
+const EditorDocument& EditorWorkspace::ActiveDocument() const { return *impl_->document_tabs.Active(); }
+
+std::size_t EditorWorkspace::DocumentCount() const { return impl_->document_tabs.Count(); }
+
+std::size_t EditorWorkspace::ActiveDocumentIndex() const { return impl_->document_tabs.ActiveIndex(); }
+
+EditorDocument& EditorWorkspace::DocumentAt(std::size_t index) { return impl_->document_tabs.At(index); }
+
+const EditorDocument& EditorWorkspace::DocumentAt(std::size_t index) const { return impl_->document_tabs.At(index); }
+
+std::size_t EditorWorkspace::OpenDocument(EditorDocument& document) {
+    const std::size_t index = impl_->document_tabs.Open(document);
+    ActivateDocument(index);
+    return index;
+}
+
+void EditorWorkspace::ActivateDocument(std::size_t index) {
+    impl_->document_tabs.Activate(index);
+    if (index >= impl_->document_tabs.Count()) return;
+    // A document's view is the tool that draws it; the scene's is the Scene tool, so its tab brings it back.
+    if (&impl_->document_tabs.At(index) == &impl_->scene_panel->Document()) {
+        const i64 scene = FindTool("Scene");
+        if (scene >= 0) impl_->selected = static_cast<std::size_t>(scene);
+    }
+}
+
+bool EditorWorkspace::CloseDocument(std::size_t index, bool discard) { return impl_->document_tabs.Close(index, discard); }
+
+bool EditorWorkspace::CloseOtherDocuments(std::size_t index, bool discard) {
+    return impl_->document_tabs.CloseOthers(index, discard);
+}
+
+void EditorWorkspace::RequestCloseDocument(std::size_t index) {
+    if (index >= impl_->document_tabs.Count() || impl_->document_tabs.Count() == 1) return;
+    EditorDocument& document = impl_->document_tabs.At(index);
+    if (!document.IsDirty()) {
+        impl_->document_tabs.Close(index, true);
+        return;
+    }
+    impl_->closing_document = &document;
+    impl_->close_prompt = true;
+    impl_->close_error.clear();
+}
+
+bool EditorWorkspace::ClosePromptOpen() const { return impl_->close_prompt; }
+
+bool EditorWorkspace::SaveAndCloseDocument() {
+    if (!impl_->close_prompt || impl_->closing_document == nullptr) return true;
+    bool saved = false;
+    if (impl_->closing_document == &impl_->scene_panel->Document()) {
+        saved = impl_->scene_panel->SaveScene();
+        if (!saved) impl_->close_error = impl_->scene_panel->Status();
+    } else {
+        std::string error;
+        saved = impl_->closing_document->Save({}, &error);
+        if (!saved) impl_->close_error = error.empty() ? "The document could not be saved." : error;
+    }
+    if (!saved) return false;
+    const std::optional<std::size_t> index = impl_->document_tabs.IndexOf(*impl_->closing_document);
+    if (index) impl_->document_tabs.Close(*index, true);
+    impl_->closing_document = nullptr;
+    impl_->close_prompt = false;
+    impl_->close_error.clear();
+    return true;
+}
+
+void EditorWorkspace::CloseDocumentWithoutSaving() {
+    if (impl_->close_prompt && impl_->closing_document != nullptr) {
+        const std::optional<std::size_t> index = impl_->document_tabs.IndexOf(*impl_->closing_document);
+        if (index) impl_->document_tabs.Close(*index, true);
+    }
+    impl_->closing_document = nullptr;
+    impl_->close_prompt = false;
+    impl_->close_error.clear();
+}
+
+void EditorWorkspace::CancelCloseDocument() {
+    impl_->closing_document = nullptr;
+    impl_->close_prompt = false;
+    impl_->close_error.clear();
+}
+
+void EditorWorkspace::DrawDocumentTabs() {
+    DocumentTabs& tabs = impl_->document_tabs;
+    if (tabs.Empty()) {
+        ImGui::TextDisabled("No document");
+        return;
+    }
+    std::optional<std::size_t> close;
+    std::optional<std::size_t> close_others;
+    for (std::size_t i = 0; i < tabs.Count(); ++i) {
+        EditorDocument& document = tabs.At(i);
+        if (i != 0) ImGui::SameLine(0.0f, 4.0f);
+        const bool active = i == tabs.ActiveIndex();
+        if (active) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+        const std::string label = document.DisplayName() + "##document_tab" + std::to_string(i);
+        if (ImGui::Button(label.c_str())) ActivateDocument(i);
+        if (active) ImGui::PopStyleColor();
+        const ImVec2 min = ImGui::GetItemRectMin();
+        const ImVec2 max = ImGui::GetItemRectMax();
+        if (document.IsDirty()) { // the tab's dot, drawn rather than typed so it does not depend on the font atlas
+            ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(max.x + 5.0f, (min.y + max.y) * 0.5f), 3.0f,
+                                                        ImGui::GetColorU32(ImVec4(1.0f, 0.72f, 0.2f, 1.0f)));
+        }
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Middle)) close = i;
+        if (ImGui::BeginPopupContextItem(("##document_tab_menu" + std::to_string(i)).c_str())) {
+            const bool closable = tabs.Count() > 1;
+            if (ImGui::MenuItem("Close", nullptr, false, closable)) close = i;
+            if (ImGui::MenuItem("Close Others", nullptr, false, closable)) close_others = i;
+            ImGui::EndPopup();
+        }
+    }
+    if (close) RequestCloseDocument(*close);
+    if (close_others && !CloseOtherDocuments(*close_others)) {
+        Notifications().Post(NotificationSeverity::Warning, "Documents left open",
+                             "Another document has unsaved changes; save or close it first.");
+    }
+    DrawCloseDocumentPrompt();
+}
+
+void EditorWorkspace::DrawCloseDocumentPrompt() {
+    Impl& impl = *impl_;
+    if (!impl.close_prompt || impl.closing_document == nullptr) {
+        impl.close_prompt_opened = false;
+        return;
+    }
+    if (!impl.close_prompt_opened) {
+        ImGui::OpenPopup("Close document?");
+        impl.close_prompt_opened = true;
+    }
+    if (ImGui::BeginPopupModal("Close document?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Save the changes to %s before closing it?", impl.closing_document->DisplayName().c_str());
+        if (ImGui::Button("Save and close")) {
+            if (SaveAndCloseDocument()) ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Close without saving")) {
+            CloseDocumentWithoutSaving();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel")) {
+            CancelCloseDocument();
+            ImGui::CloseCurrentPopup();
+        }
+        if (!impl.close_error.empty()) ImGui::TextWrapped("%s", impl.close_error.c_str());
+        ImGui::EndPopup();
+    } else if (impl.close_prompt_opened) { // a host or the window manager dismissed it
+        CancelCloseDocument();
+    }
+}
 
 NotificationService& EditorWorkspace::Notifications() { return impl_->notifications; }
 const NotificationService& EditorWorkspace::Notifications() const { return impl_->notifications; }

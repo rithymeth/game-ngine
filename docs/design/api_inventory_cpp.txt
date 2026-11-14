@@ -7323,6 +7323,7 @@
 [editor/src/content/content_drag.h] internal-tooling
 [editor/src/core/command_stack.h] internal-tooling
 [editor/src/core/commands.h] internal-tooling
+[editor/src/core/document_tabs.h] internal-tooling
 [editor/src/core/editor_document.h] internal-tooling
 [editor/src/core/editor_settings.h] internal-tooling
 [editor/src/core/file_dialog.h] internal-tooling
