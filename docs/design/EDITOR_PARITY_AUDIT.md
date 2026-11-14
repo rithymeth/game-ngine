@@ -44,7 +44,7 @@ as well. The verdicts are a judgement from the source audit; the evidence column
 
 | Dimension | Aether today | Reference editors | Verdict |
 |---|---|---|---|
-| Project lifecycle | A `New Project` tool; no launch hub; `RecentProjects` exists but only its crash-report directory is used | Project Browser/templates (Unreal), Unity Hub, Project Manager (Godot) | Missing |
+| Project lifecycle | A Project Hub shown on a launch with no project (and File > Project Hub): recent projects with missing ones pruned, a picked or typed path, and template creation; File > Open Project goes through it | Project Browser/templates (Unreal), Unity Hub, Project Manager (Godot) | Partial |
 | Menus and commands | File, Edit, Tools, View; no Asset, Actor, Window or Help menus; command palette exists but has no binding | Complete menu bars plus searchable asset/command surfaces in all three | Missing |
 | Preferences and theme | One hardcoded dark theme; no settings file, theme choice or UI scale | Editor Preferences (Unreal, Unity), Editor Settings/themes (Godot) | Missing |
 | Shortcut handling | Hardcoded `ImGuiKey` checks plus `"Ctrl+Shift+B"` strings in extensions; no remap or conflict detection | Remappable shortcuts and conflict reporting in all three | Missing |
@@ -67,8 +67,8 @@ as well. The verdicts are a judgement from the source audit; the evidence column
 
 | Capability | Unreal Editor | Unity Editor | Godot Editor | Aether today | Evidence | Gap |
 |---|---|---|---|---|---|---|
-| Launch and project selection | Project Browser with templates and recent projects | Unity Hub, templates, recent projects | Project Manager, templates, import/scan | `New Project` is one of 33 tools; no launch surface | `editor/src/workspace/editor_workspace.cpp:340` | Missing |
-| Recent projects | In the project browser | In the Hub | In the Project Manager | Class exists; only `DefaultCrashReportDir()` is used | `editor/src/core/recent_projects.cpp:13`, `editor_workspace.cpp:275` | Missing |
+| Launch and project selection | Project Browser with templates and recent projects | Unity Hub, templates, recent projects | Project Manager, templates, import/scan | Project Hub on launch when no project is given; the template list, a picked path and the recent list in one window | `editor/src/workspace/editor_workspace.cpp` (`DrawProjectHub`), `editor/shell/main.cpp` | Partial |
+| Recent projects | In the project browser | In the Hub | In the Project Manager | Listed newest first and saved per user; missing entries are marked, removable individually or in one action; opening a project records it | `editor/src/core/recent_projects.cpp`, `editor_workspace.cpp` (`Impl::OpenProject`) | Partial |
 | Main toolbar | Save/undo/redo, transform tools, play controls, build/package, settings | Transform tools, play controls, layers, layout | Transform tools, play controls, scene tabs | None; controls live in each tool's own toolbar | `editor/shell/main.cpp:74-97` | Missing |
 | Menus | File, Edit, Window, Tools, Build, Help | File, Edit, Assets, GameObject, Component, Window, Help | Scene, Project, Debug, Editor, Help | File, Edit, Tools, View only | `editor/shell/main.cpp:74-88`, `editor_workspace.cpp:1044-1094` | Missing |
 | Document tabs | Level and asset editors as tabs | Scene, Game, asset editors as tabs | Scenes and scripts as main-screen tabs | One scene; one hub tool visible; popped-out tools | `editor/src/world/scene_panel.h:88` | Partial |
@@ -273,6 +273,21 @@ Outcome: the editor opens like an application, not a tool launcher.
 Gate: launch with no project shows the hub; recent-project round-trip; tab dirty-state and close prompts; preset restore
 test; shortcut-conflict test; toolbar screenshot with PIE idle/playing/paused; Step advances exactly one frame in a
 headless play session.
+
+Done so far (2026-11-14): the project hub, the first gate item. `EditorWorkspace` owns the per-user recent list
+(`RecentProjects`, `%APPDATA%/Aether/recent_projects.json`, beside the settings file) and records a project when one
+opens; the hub
+is a window the workspace draws itself, so both shells and a headless test show the same thing. It offers a typed path
+and, where the platform has a picker, Browse (the Stage 0 `FileDialog`, filtered to `.aproject`); the recent list with
+each row's folder, a missing file marked and removable, and one "Remove missing projects" action; and the existing
+`NewProjectPanel` template list, whose Create now opens the new project and closes the hub. File > Open Project asks
+the picker and falls back to the hub when there is none, File > Project Hub opens it directly, and the shell starts on
+it when neither an argument nor `AETHER_PROJECT` names a project. A project that will not load posts an Error (with the
+file as its target) instead of failing quietly, and neither the open project nor the list changes. Tests:
+recent-list round-trip across two workspaces, remove-missing pruning and saving, File > Open Project through the picker
+(including cancel and the no-picker fallback), a bad project posting an error and changing nothing, and the hub drawn
+headlessly over an open project. Still open in this stage: the main toolbar, menu completion, document tabs, the status
+bar, generated shortcut bindings and the cheat sheet, layout presets, and the scene toolbar's recents list.
 
 ### Stage 2 — Viewport and selection parity (L)
 

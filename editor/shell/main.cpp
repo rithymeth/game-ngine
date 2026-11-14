@@ -14,6 +14,8 @@
 //   AETHER_EDITOR_SIZE=WxH       the window or offscreen size (default 1600x960)
 //   AETHER_EDITOR_TAB=name       the tool to open on (the start of its name:
 //                                blueprint, material, particle, sound, ...)
+//   AETHER_PROJECT=file          the .aproject to open (a command-line argument
+//                                wins); without either the Project Hub is shown
 
 #include "host/imgui_vulkan_host.h"
 #include "host/live_viewport_panel.h"
@@ -134,7 +136,7 @@ bool HasDisplay() {
 
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
     i32 max_frames = -1;
     if (const char* env = std::getenv("AETHER_EDITOR_MAX_FRAMES")) max_frames = std::atoi(env);
     const char* screenshot_path = std::getenv("AETHER_EDITOR_SCREENSHOT");
@@ -190,6 +192,14 @@ int main() {
         ImGuiVulkanHost host(*device, *swap_chain);
 
         EditorWorkspace workspace;
+        // The project to open: the command line first, then AETHER_PROJECT. With neither (or a project that will not
+        // open) the Project Hub is the start screen, so a launch with no arguments is not a sample project nobody chose.
+        const char* project = argc > 1 ? argv[1] : std::getenv("AETHER_PROJECT");
+        if (project != nullptr && *project != '\0') {
+            if (!workspace.OpenProject(project)) workspace.OpenProjectHub();
+        } else {
+            workspace.OpenProjectHub();
+        }
         bool quit = false;
         bool close_approved = false;
         if (window) {

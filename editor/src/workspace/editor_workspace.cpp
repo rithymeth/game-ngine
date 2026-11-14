@@ -251,7 +251,16 @@ struct EditorWorkspace::Impl {
     std::unique_ptr<ProceduralWorldDocument> procedural_doc;
     std::unique_ptr<ProceduralWorldPanel> procedural_panel;
     std::unique_ptr<FileDialog> file_dialog = CreateNativeFileDialog();
+    // A test's stand-in for the platform, which the workspace must not own.
+    FileDialog* picker_override = nullptr;
+    FileDialog* Picker() const { return picker_override != nullptr ? picker_override : file_dialog.get(); }
     std::unique_ptr<ScenePanel> scene_panel;
+    // Stage 1: the hub's list of projects, its path field for platforms without a picker, and what it last said.
+    RecentProjects recents;
+    std::filesystem::path recents_file = RecentProjects::DefaultConfigDir() / "recent_projects.json";
+    std::string hub_status;
+    std::string hub_path;
+    EditorWorkspace* owner = nullptr; // set once the workspace exists; the hub's flag lives on it
     SceneViewPanel scene_view;
     std::unique_ptr<ScenePreviewPanel> scene_preview;
     std::unique_ptr<SplineEditDocument> spline_doc;
@@ -304,6 +313,7 @@ struct EditorWorkspace::Impl {
             CrashHandler::SetContext("project", project_file.stem().string());
         extensions.MakeActive();
         RegisterEditorComponents(); // so a scene that uses any module's components opens (an unknown component is refused, not dropped)
+        recents.Load(recents_file);
         BuildBlueprint();
         BuildScript();
         BuildMaterial();
@@ -863,21 +873,30 @@ struct EditorWorkspace::Impl {
         crash_dialog->Refresh();
     }
 
-    // A project made from a template becomes the one the Project tools work on.
+    // A project made from a template becomes the one the Project tools work on, and the hub closes over it.
     void BuildProject() {
-        new_project.on_created = [this](const std::filesystem::path& file) { OpenProject(file); };
+        new_project.on_created = [this](const std::filesystem::path& file) {
+            OpenProject(file);
+            if (owner != nullptr) owner->project_hub_open = false;
+        };
         std::string error;
         if (project_file.empty()) project_file = EditorWorkspace::SampleProject(&error);
         if (project_file.empty()) return;
         LoadProjectTools();
     }
 
-    // Points the Project tools (and the plugins' modules) at `file`.
+    // Points the Project tools (and the plugins' modules) at `file`, and puts it at the front of the hub's list.
     void OpenProject(const std::filesystem::path& file) {
         // The running build, if any, is cancelled and joined by its window's destructor.
         build_window.reset();
         project_file = file;
         LoadProjectTools();
+        recents.Add(file);
+        SaveRecents();
+    }
+
+    void SaveRecents() {
+        if (!recents.Save(recents_file)) AETHER_LOG_WARN("Editor", "Couldn't save the recent-projects list to %s", recents_file.string().c_str());
     }
 
     void LoadProjectTools() {
@@ -1063,6 +1082,7 @@ struct EditorWorkspace::Impl {
 
 EditorWorkspace::EditorWorkspace(std::filesystem::path project_file)
     : impl_(std::make_unique<Impl>(std::move(project_file))) {
+    impl_->owner = this;
     RegisterCommands();
 }
 
@@ -1070,9 +1090,51 @@ const std::filesystem::path& EditorWorkspace::ProjectFile() const { return impl_
 
 bool EditorWorkspace::OpenProject(const std::filesystem::path& project_file) {
     ProjectSettings settings;
-    if (!LoadProject(project_file, settings, nullptr)) return false;
+    std::string error;
+    if (!LoadProject(project_file, settings, &error)) {
+        impl_->notifications.Post(NotificationSeverity::Error, "Open project failed",
+                                  error.empty() ? std::string("That file is not an Aether project.") : error,
+                                  NotificationTarget{NotificationTarget::Kind::File, project_file.string()});
+        return false;
+    }
     impl_->OpenProject(project_file);
     return true;
+}
+
+void EditorWorkspace::OpenProjectHub() {
+    project_hub_open = true;
+    impl_->hub_status.clear();
+    if (impl_->hub_path.empty()) impl_->hub_path = impl_->project_file.string();
+}
+
+const std::vector<std::filesystem::path>& EditorWorkspace::RecentProjectFiles() const { return impl_->recents.Entries(); }
+
+void EditorWorkspace::SetRecentProjectsFile(const std::filesystem::path& file) {
+    impl_->recents_file = file;
+    impl_->recents = RecentProjects{};
+    impl_->recents.Load(file);
+}
+
+std::size_t EditorWorkspace::RemoveMissingProjects() {
+    const std::size_t removed = impl_->recents.RemoveMissing();
+    if (removed != 0) impl_->SaveRecents();
+    return removed;
+}
+
+std::optional<std::filesystem::path> EditorWorkspace::PickProjectFile() {
+    FileDialog* picker = impl_->Picker();
+    if (picker == nullptr || !picker->Available()) return std::nullopt;
+    FileDialogOptions options;
+    options.title = "Open project";
+    options.default_extension = "aproject";
+    options.filters = {{"Aether project", "aproject"}, {"All files", "*"}};
+    if (!impl_->recents.Entries().empty()) options.start_path = impl_->recents.Entries().front().parent_path();
+    return picker->Show(options); // an empty path means the user cancelled
+}
+
+void EditorWorkspace::SetFileDialog(FileDialog* dialog) {
+    impl_->picker_override = dialog;
+    if (impl_->scene_panel) impl_->scene_panel->SetFileDialog(impl_->Picker());
 }
 
 std::filesystem::path EditorWorkspace::SampleProject(std::string* error) {
@@ -1192,7 +1254,17 @@ void EditorWorkspace::RegisterCommands() {
     const auto document = [this]() -> SceneDocument& { return impl_->scene_panel->Document(); };
     const auto add = [this](Command command) { impl_->commands.Add(std::move(command)); };
 
-    add({"scene.new", "New scene", "File", false, {}, CommandScope::Global, {}, {},
+    add({"project.open", "Open Project...", "File", false, {}, CommandScope::Global, {}, {},
+         [this] {
+             const std::optional<std::filesystem::path> picked = PickProjectFile();
+             if (!picked) { // no platform picker: the hub names the file instead of a dialog
+                 OpenProjectHub();
+             } else if (!picked->empty() && OpenProject(*picked)) {
+                 project_hub_open = false;
+             }
+         }});
+    add({"project.hub", "Project Hub", "File", false, {}, CommandScope::Global, {}, {}, [this] { OpenProjectHub(); }});
+    add({"scene.new", "New scene", "File", true, {}, CommandScope::Global, {}, {},
          [this, show_scene] { impl_->scene_panel->NewScene(false); show_scene(); }});
     add({"scene.open", "Open scene", "File", false, {}, CommandScope::Global, {}, {},
          [this, show_scene] {
@@ -1412,6 +1484,7 @@ void EditorWorkspace::DrawWindows() {
     impl_->crash_dialog->Draw();
     DrawCommandPalette();
     DrawDataSafetyWindows();
+    if (project_hub_open) DrawProjectHub();
     // Toasts last, so they sit above a modal. Clicking one is the way to the Messages list, where
     // the target links are; the toast itself only says what happened.
     if (DrawNotificationToasts(impl_->notifications) != 0) {
@@ -1645,6 +1718,105 @@ void EditorWorkspace::DrawDataSafetyWindows() {
         if (!impl.quit_prompt) impl.quit_prompt_opened = false;
     }
     DrawPreferences();
+}
+
+// The project hub: the projects opened recently, a path field for the platforms with no picker (and a Browse button
+// where there is one), and the template list for a new project. Opening or creating one closes the window.
+void EditorWorkspace::DrawProjectHub() {
+    Impl& impl = *impl_;
+    ImGui::SetNextWindowSize(ImVec2(780, 620), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Project Hub", &project_hub_open)) {
+        ImGui::End();
+        return;
+    }
+
+    ImGui::TextDisabled("%s", impl.project_file.empty() ? "No project is open."
+                                                       : ("Open project: " + impl.project_file.string()).c_str());
+
+    ImGui::SeparatorText("Open a project");
+    FileDialog* picker = impl.Picker();
+    const bool has_picker = picker != nullptr && picker->Available();
+    if (has_picker && ImGui::Button("Browse...")) {
+        const std::optional<std::filesystem::path> picked = PickProjectFile();
+        if (picked && !picked->empty()) impl.hub_path = picked->string();
+    }
+    if (has_picker) ImGui::SameLine();
+    ImGui::SetNextItemWidth(-90.0f);
+    const bool submitted = ImGui::InputTextWithHint("##hub_path", "Path to an .aproject file", &impl.hub_path,
+                                                    ImGuiInputTextFlags_EnterReturnsTrue);
+    ImGui::SameLine();
+    bool opened = false;
+    if (ImGui::Button("Open") || submitted) {
+        const std::filesystem::path file(impl.hub_path);
+        if (file.empty()) {
+            impl.hub_status = "Type a project path (or use Browse) first.";
+        } else if (OpenProject(file)) {
+            opened = true;
+        } else {
+            impl.hub_status = "Could not open " + file.filename().string() + "; see Messages for the reason.";
+        }
+    }
+
+    ImGui::SeparatorText("Recent projects");
+    const std::vector<std::filesystem::path>& entries = impl.recents.Entries();
+    if (entries.empty()) {
+        ImGui::TextDisabled("Nothing here yet. A project opened or created here is listed next time.");
+    } else {
+        std::filesystem::path chosen;
+        std::optional<std::filesystem::path> to_remove;
+        bool any_missing = false;
+        if (ImGui::BeginTable("##recent_projects", 3,
+                              ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+            ImGui::TableSetupColumn("Project");
+            ImGui::TableSetupColumn("Folder");
+            ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 64.0f);
+            ImGui::TableHeadersRow();
+            for (std::size_t i = 0; i < entries.size(); ++i) {
+                const std::filesystem::path& entry = entries[i];
+                const bool exists = std::filesystem::is_regular_file(entry);
+                any_missing |= !exists;
+                ImGui::PushID(static_cast<int>(i));
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::BeginDisabled(!exists);
+                if (ImGui::Selectable(entry.stem().string().c_str())) chosen = entry;
+                ImGui::EndDisabled();
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", entry.string().c_str());
+                ImGui::TableSetColumnIndex(1);
+                ImGui::TextDisabled("%s", entry.parent_path().string().c_str());
+                ImGui::TableSetColumnIndex(2);
+                if (!exists) ImGui::TextDisabled("Missing");
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Remove")) to_remove = entry;
+                ImGui::PopID();
+            }
+            ImGui::EndTable();
+        }
+        // Remove before opening: OpenProject moves the chosen entry to the front, which reorders the list.
+        if (to_remove) {
+            impl.recents.Remove(*to_remove);
+            impl.SaveRecents();
+        }
+        if (!chosen.empty()) {
+            if (OpenProject(chosen)) {
+                opened = true;
+            } else {
+                impl.hub_status = "Could not open " + chosen.filename().string() + "; see Messages for the reason.";
+            }
+        }
+        if (any_missing && ImGui::Button("Remove missing projects")) {
+            const std::size_t removed = RemoveMissingProjects();
+            impl.hub_status = std::to_string(removed) + " missing project(s) removed.";
+        }
+    }
+
+    ImGui::SeparatorText("Create a project from a template");
+    impl.new_project.Draw();
+
+    if (!impl.hub_status.empty()) ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "%s", impl.hub_status.c_str());
+
+    if (opened) project_hub_open = false;
+    ImGui::End();
 }
 
 void EditorWorkspace::DrawPreferences() {

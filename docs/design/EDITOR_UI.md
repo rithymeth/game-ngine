@@ -392,6 +392,19 @@ Left: current task or "Ready", plus a progress bar for background work
 branch/state, autosave time, frame time. Clicking the frame time opens the
 Profiler.
 
+### 6.8 Project Hub
+
+The start screen when the editor is launched with no project, and File >
+Project Hub at any time. The open project's path sits at the top, then a path
+field with Browse beside it where the platform has a picker ("pick or type" is
+one row, not two ways to do the same thing). The recent list is newest first:
+clicking a row opens it, a row whose file is gone is marked Missing and
+cannot be opened, its Remove button drops just that row, and "Remove missing
+projects" drops all of them and saves. The New Project template list is
+embedded below it rather than in a second window. Opening or creating a project
+closes the hub; a failed open leaves it open, says why in its status line, and
+posts the same error to Messages.
+
 ---
 
 ## 7. Interaction rules

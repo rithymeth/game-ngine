@@ -5,8 +5,10 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 // Every tool editor the engine has, in one place: the Blueprint, Material,
 // animation, AI, audio, VFX, UI, world, networking, debug and project
@@ -41,6 +43,7 @@ class EditorScripts;
 class CommandRegistry;
 class EditorDocument;
 class NotificationService;
+class FileDialog;
 struct EditorSettings;
 
 class EditorWorkspace {
@@ -63,6 +66,24 @@ public:
     // Points the Project tools (settings, Build and Package, Plugins) and
     // the plugins' modules at another project. False if it isn't one.
     bool OpenProject(const std::filesystem::path& project_file);
+
+    // Stage 1 of docs/design/EDITOR_PARITY_AUDIT.md: the project hub. A host shows it at launch when it was given no
+    // project; it lists the projects opened recently, creates one from a template, and opens one from disk. Drawn by
+    // DrawWindows, so both shells and a headless test see the same thing.
+    bool project_hub_open = false;
+    void OpenProjectHub();
+    // The recent list the hub shows, most recent first, as last saved (entries may name files that are gone).
+    const std::vector<std::filesystem::path>& RecentProjectFiles() const;
+    // Where that list is read from and written to. Defaults to the per-user config folder; a test points it at a
+    // scratch file. Loading happens here, so a file written by an earlier session is visible at once.
+    void SetRecentProjectsFile(const std::filesystem::path& file);
+    // Drops the entries whose project file no longer exists, and saves. Returns how many went.
+    std::size_t RemoveMissingProjects();
+    // The native picker the Open Project actions use, filtered to .aproject. No value when the platform has no
+    // picker (the hub then has a path field); an empty path when the user cancelled.
+    std::optional<std::filesystem::path> PickProjectFile();
+    // The picker itself, so a test can answer for the platform. Not owned; it also becomes the Scene panel's.
+    void SetFileDialog(FileDialog* dialog);
 
     // What plugins, game modules and the project's editor scripts add (§26.5):
     // panels (tools under "Extensions"), menus, property drawers, asset types.
@@ -175,6 +196,7 @@ private:
     void PollShortcuts();
     void DrawDataSafetyWindows();
     void DrawPreferences();
+    void DrawProjectHub();
 
     struct Impl;
     std::unique_ptr<Impl> impl_;
