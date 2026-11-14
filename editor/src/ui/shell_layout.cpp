@@ -34,6 +34,11 @@ bool LoadShellLayout(const stdfs::path& file, ShellLayout& layout) {
         loaded.tool = tool->get<std::string>();
         if (loaded.tool.size() > 128) loaded.tool.clear();
     }
+    const auto preset = json.find("layout");
+    if (preset != json.end() && preset->is_string()) {
+        loaded.layout = preset->get<std::string>();
+        if (loaded.layout.size() > 128) loaded.layout.clear();
+    }
     layout = std::move(loaded);
     return true;
 }
@@ -47,7 +52,7 @@ bool SaveShellLayout(const stdfs::path& file, const ShellLayout& layout, std::st
     std::error_code ec;
     if (file.has_parent_path()) stdfs::create_directories(file.parent_path(), ec);
     if (ec) return fail("can't make " + file.parent_path().string() + ": " + ec.message());
-    const nlohmann::json json = {{"tool", layout.tool}};
+    const nlohmann::json json = {{"tool", layout.tool}, {"layout", layout.layout}};
     stdfs::path temp = file;
     temp += ".tmp";
     {

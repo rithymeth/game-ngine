@@ -345,12 +345,13 @@ AETHER_TEST(ShellLayout_RoundTripsAndForgivesABadFile) {
     AETHER_CHECK(!LoadShellLayout(file, layout));                       // missing: false, layout untouched
     AETHER_CHECK(layout.tool.empty());
     layout.tool = "Terrain";
+    layout.layout = "Level design";
     std::string error;
     AETHER_CHECK(SaveShellLayout(file, layout, &error));                // makes the folder
     AETHER_CHECK(!stdfs::exists(stdfs::path(file).concat(".tmp")));     // the temp file did not stay
     ShellLayout back;
     AETHER_CHECK(LoadShellLayout(file, back));
-    AETHER_CHECK(back.tool == "Terrain");
+    AETHER_CHECK(back.tool == "Terrain" && back.layout == "Level design");
     auto write = [&](const std::string& text) { std::ofstream(file, std::ios::binary | std::ios::trunc) << text; };
     write("{ this is not json");
     ShellLayout damaged;
@@ -358,13 +359,16 @@ AETHER_TEST(ShellLayout_RoundTripsAndForgivesABadFile) {
     AETHER_CHECK(!LoadShellLayout(file, damaged) && damaged.tool == "kept");
     write(R"({"side_fraction": 0.4, "tool": "Scene"})");                // a file from before docking: the old key is ignored, the tool survives
     ShellLayout older;
-    AETHER_CHECK(LoadShellLayout(file, older) && older.tool == "Scene");
-    write(R"({"tool": 7})");                                            // a wrong type is ignored, not fatal
+    AETHER_CHECK(LoadShellLayout(file, older) && older.tool == "Scene" && older.layout.empty());
+    write(R"({"tool": 7, "layout": 4})");                               // a wrong type is ignored, not fatal
     ShellLayout typed;
-    AETHER_CHECK(LoadShellLayout(file, typed) && typed.tool.empty());
+    AETHER_CHECK(LoadShellLayout(file, typed) && typed.tool.empty() && typed.layout.empty());
     write("{\"tool\": \"" + std::string(500, 'x') + "\"}");             // an absurd name is dropped
     ShellLayout long_name;
     AETHER_CHECK(LoadShellLayout(file, long_name) && long_name.tool.empty());
+    write("{\"layout\": \"" + std::string(500, 'x') + "\"}");           // so is an absurd layout name
+    ShellLayout long_layout;
+    AETHER_CHECK(LoadShellLayout(file, long_layout) && long_layout.layout.empty());
     AETHER_CHECK(!SaveShellLayout({}, layout, &error) && !error.empty()); // no path: refused, with a reason
 }
 

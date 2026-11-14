@@ -45,7 +45,7 @@ as well. The verdicts are a judgement from the source audit; the evidence column
 | Dimension | Aether today | Reference editors | Verdict |
 |---|---|---|---|
 | Project lifecycle | A Project Hub shown on a launch with no project (and File > Project Hub): recent projects with missing ones pruned, a picked or typed path, and template creation; File > Open Project goes through it | Project Browser/templates (Unreal), Unity Hub, Project Manager (Godot) | Partial |
-| Menus and commands | File, Edit, Asset, Actor, Tools, View and Help; no Window menu (layout presets) yet; one command table drives the menus, the palette and a generated shortcut cheat sheet | Complete menu bars plus searchable asset/command surfaces in all three | Partial |
+| Menus and commands | File, Edit, Asset, Actor, Tools, View, Window and Help; Window > Layout has the four built-in arrangements, saved presets and Save Layout As; one command table drives the menus, the palette and a generated shortcut cheat sheet | Complete menu bars plus searchable asset/command surfaces in all three | Partial |
 | Preferences and theme | One hardcoded dark theme; no settings file, theme choice or UI scale | Editor Preferences (Unreal, Unity), Editor Settings/themes (Godot) | Missing |
 | Shortcut handling | One command table with default chords and scopes, conflict detection (a startup test requires none) and a cheat sheet generated from it; no remapping yet | Remappable shortcuts and conflict reporting in all three | Partial |
 | Documents and layout | One scene document; one tool shown at a time (popped-out tools are separate windows); only the open tool and ImGui docking are remembered | Multi-document tabs, per-asset tabs, layout presets | Partial |
@@ -70,9 +70,9 @@ as well. The verdicts are a judgement from the source audit; the evidence column
 | Launch and project selection | Project Browser with templates and recent projects | Unity Hub, templates, recent projects | Project Manager, templates, import/scan | Project Hub on launch when no project is given; the template list, a picked path and the recent list in one window | `editor/src/workspace/editor_workspace.cpp` (`DrawProjectHub`), `editor/shell/main.cpp` | Partial |
 | Recent projects | In the project browser | In the Hub | In the Project Manager | Listed newest first and saved per user; missing entries are marked, removable individually or in one action; opening a project records it | `editor/src/core/recent_projects.cpp`, `editor_workspace.cpp` (`Impl::OpenProject`) | Partial |
 | Main toolbar | Save/undo/redo, transform tools, play controls, build/package, settings | Transform tools, play controls, layers, layout | Transform tools, play controls, scene tabs | One row under the menu bar: Save, Undo, Redo, the Scene View's move/rotate/scale, world/local and snap, Play/Pause/Step/Stop with a state underline, Build and Package, Settings | `editor/src/workspace/editor_workspace.cpp` (`DrawMainToolbar`), `editor/shell/main.cpp` | Partial |
-| Menus | File, Edit, Window, Tools, Build, Help | File, Edit, Assets, GameObject, Component, Window, Help | Scene, Project, Debug, Editor, Help | File, Edit, Asset, Actor, Tools, View and Help; no Window menu (layout presets) yet | `editor/shell/main.cpp` (`DrawEditor`), `editor_workspace.cpp` (`DrawMenuItems`, `DrawHelpMenu`) | Partial |
+| Menus | File, Edit, Window, Tools, Build, Help | File, Edit, Assets, GameObject, Component, Window, Help | Scene, Project, Debug, Editor, Help | File, Edit, Asset, Actor, Tools, View, Window and Help | `editor/shell/main.cpp` (`DrawEditor`), `editor_workspace.cpp` (`DrawMenuItems`, `DrawHelpMenu`) | Partial |
 | Document tabs | Level and asset editors as tabs | Scene, Game, asset editors as tabs | Scenes and scripts as main-screen tabs | One scene; one hub tool visible; popped-out tools | `editor/src/world/scene_panel.h:88` | Partial |
-| Layout presets | Saved layouts, per-user | Layouts per project/user | Editor layouts | Only "Reset layout"; panel positions in ImGui ini | `editor/shell/main.cpp:83-85`, `:201-214` | Missing |
+| Layout presets | Saved layouts, per-user | Layouts per project/user | Editor layouts | Window > Layout: Default, Level design, Scripting and Animation, saved per project in `Saved/Layouts/*.ini`, plus Save Layout As and Reset to Default | `editor/src/workspace/layout_presets.{h,cpp}`, `editor/shell/main.cpp` (`BuildDockLayout`, `DrawWindowMenu`) | Complete for this shell |
 | Preferences | Editor Preferences, project settings, plugins | Preferences, Project Settings, Package Manager | Editor Settings, Project Settings, Input Map, plugins | None | — | Missing |
 | Theme and UI scale | Theme, UI scale, DPI awareness | Skin, UI scaling | Editor themes, editor scale | One dark theme; `ApplyEditorTheme(font_size)` has no caller-supplied setting | `editor/src/ui/editor_theme.cpp:33`, `main.cpp:189` | Missing |
 | Shortcut mapping | Remappable, conflict reporting | Shortcuts manager | Remappable input map/editor shortcuts | One table of default chords with scopes, conflict detection at startup and a cheat sheet generated from it; no remapping UI | `editor/src/workspace/command_registry.cpp`, `editor_workspace.cpp` (`DrawShortcutCheatSheet`) | Partial |
@@ -265,8 +265,8 @@ Outcome: the editor opens like an application, not a tool launcher.
 - Status bar: project name, scene name, dirty state, PIE state, active background job, source-control branch.
 - Preferences dialog driven by `EditorSettings`: theme, UI scale, autosave, camera speed, font size.
 - Bind the command palette (`Ctrl+Shift+P`) and the shortcut cheat sheet; generate both from the registry.
-- Layout presets: Default, Level design, Scripting, Animation, plus save-current-as. Presets are layout files, not
-  hardcoded splits.
+- Layout presets: Default, Level design, Scripting, Animation, plus save-current-as. The four built-ins are DockBuilder
+  arrangements; a saved preset is the ImGui ini text, so restore does not need a second layout format.
 - Scene toolbar: a recents list beside the native Open/Save dialogs from Stage 0, so the typed path is the third way,
   not the only one.
 
@@ -328,8 +328,27 @@ draws both menus from the table. Tests: each Actor command making its kind (Came
 undo removing one, the registration (menu, no chord, enabled) and an empty conflict list, the Asset commands opening
 the Content Browser, and both menus drawn headlessly.
 
-Still open in this stage: the Window menu with layout presets, document tabs, layout presets, the scene toolbar's
-recents list, and the status bar's source-control branch segment and selection count (`EDITOR_UI.md` §6.7).
+Done so far (2026-11-14): the Window menu and layout presets. `LayoutPresets`
+(`editor/src/workspace/layout_presets.{h,cpp}`) stores a preset as exactly the ini text ImGui already writes for its
+own settings -- docking tree included -- captured with `ImGui::SaveIniSettingsToMemory` and applied with
+`LoadIniSettingsFromMemory`, so there is no second layout format to keep in step with the docking system. It sanitizes
+names into files inside the preset folder (a separator, colon or other punctuation becomes `_`, leading and trailing
+dots and spaces go, 64 characters at most, `..` refused), writes atomically through a temp file, and lists the four
+built-ins first and saved layouts after them without repeats. The shell's Window > Layout menu offers the built-in
+arrangements (Default, Level design, Scripting, Animation), builds each from `DockBuilder` in `BuildDockLayout`, lists
+the saved layouts found in the project's `Saved/Layouts`, opens a Save Layout As dialog that captures the current
+arrangement, and has Reset to Default, which always rebuilds the built-in and ignores any file of that name. A file
+saved under a built-in name wins when that name is chosen ("Default (custom)" in the menu). The chosen name is
+remembered with the open tool in `ShellLayout.layout`; the panel positions remain ImGui's own `editor_panels.ini`, so a
+preset is a snapshot of it rather than a parallel layout system. View > Reset layout moved here as Window > Layout >
+Reset to Default. Tests: the built-in names and menu order, saved layouts after them with a built-in-named file not
+repeated and still loadable, a round-trip that leaves no temp file and makes the folder, empty and unusable names and
+empty text refused with a reason, a missing or empty file reading as no preset, and the name sanitizing cases (path
+separators, `../`, only dots or spaces, a 200-character name, a trailing dot). The shell layout file's round-trip test
+now covers the remembered preset name, including files from before the field existed.
+
+Still open in this stage: document tabs, the scene toolbar's recents list, and the status bar's source-control branch
+segment and selection count (`EDITOR_UI.md` §6.7).
 
 ### Stage 2 — Viewport and selection parity (L)
 

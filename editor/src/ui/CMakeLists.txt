@@ -65,6 +65,7 @@ add_library(aether_editor_ui STATIC
     ../workspace/editor_workspace.cpp
     ../workspace/command_palette.cpp
     ../workspace/command_registry.cpp
+    ../workspace/layout_presets.cpp
     ../sprite2d/tilemap_document.cpp
     ../sprite2d/tilemap_panel.cpp
     ../sequencer/sequencer_panel.cpp

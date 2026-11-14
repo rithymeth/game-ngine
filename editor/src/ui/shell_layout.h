@@ -13,6 +13,7 @@ namespace aether::editor {
 // dialog: a layout is a convenience, not data.
 struct ShellLayout {
     std::string tool;         // the open tool's name; empty = the first
+    std::string layout;       // the Window > Layout preset last chosen; empty = "Default"
 };
 
 // Where the file lives: AETHER_EDITOR_LAYOUT if set, else `aether/editor_layout.json` under XDG_CONFIG_HOME,

@@ -193,10 +193,24 @@ The default layout proportions (at 1920×1080):
   top-right, Output large.
 - **Animation:** asset viewer center, timeline bottom, Details right.
 - **Two monitors:** viewport maximized on one monitor, all panels on the
-  other (uses ImGui multi-viewport).
+  other (uses ImGui multi-viewport). Not offered yet: the shell does not
+  enable multi-viewport.
 
 Users can save their own layouts. Layouts are stored per project in
-`Saved/Layouts/*.ini`. **Reset Layout** always restores Default.
+`Saved/Layouts/*.ini` (the per-user config folder when no project is open).
+**Reset Layout** always restores Default.
+
+As implemented: the four built-ins are `DockBuilder` arrangements the shell
+builds (`BuildDockLayout`); a saved layout is exactly the ini text ImGui
+already writes for its own settings, captured with
+`SaveIniSettingsToMemory` and applied with `LoadIniSettingsFromMemory`, so
+the docking tree needs no second format. Window > Layout lists the built-ins
+first (marked "(custom)" when a saved file of that name exists) and the saved
+layouts after them, then Save Layout As... and Reset to Default. A file saved
+under a built-in name wins when that name is chosen; Reset to Default ignores
+it and rebuilds the built-in. The chosen name is remembered with the open
+tool in `editor_layout.json`, and panel positions stay in `editor_panels.ini`
+beside it.
 
 ### 4.3 Asset editor tabs
 
@@ -434,8 +448,8 @@ the shortcut sheet.
 
 ### 6.10 Menus
 
-The bar is File, Edit, Asset, Actor, Tools, View and Help. Every item comes from
-the command table (except the shell's own Reset layout and the Tools menu's tool
+The bar is File, Edit, Asset, Actor, Tools, View, Window and Help. Every item comes from
+the command table (except the shell's own Window > Layout entries and the Tools menu's tool
 list), so a label, a chord and the action are written once.
 
 - **File**: New, Open, Save, Save As, Open Project, Project Hub, Quit.
@@ -446,10 +460,10 @@ list), so a label, a chord and the action are written once.
 - **Actor**: Create Empty Actor, Create Camera, Create Cine Camera — the same
   kinds as the hierarchy's Create menu, selected and undoable.
 - **Tools**: every tool by category, checked while its window is open.
-- **View**: Command Palette, Preferences, Reset layout.
+- **View**: Command Palette, Preferences.
+- **Window**: Layout (Default, Level design, Scripting, Animation, then the
+  saved layouts, Save Layout As..., Reset to Default; §4.2).
 - **Help**: Keyboard Shortcuts (F1), About.
-
-A Window menu (layout presets) is still to come.
 
 ---
 

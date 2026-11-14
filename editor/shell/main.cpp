@@ -28,7 +28,7 @@
 #include "aether/platform/window.h"
 
 #include <imgui.h>
-#include <imgui_internal.h> // the dock builder: the default arrangement
+#include <imgui_internal.h> // the dock builder: the built-in arrangements
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stb_image_write.h>
@@ -36,9 +36,11 @@
 #include <algorithm>
 #include <chrono>
 #include <cctype>
+#include "aether/project/project.h"
 #include "ui/editor_theme.h"
 #include "ui/extensions.h"
 #include "ui/shell_layout.h"
+#include "workspace/layout_presets.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -54,25 +56,160 @@ namespace rhi = aether::gfx::rhi;
 
 namespace {
 
-// The default arrangement, built once when there is no saved one (or after View > Reset layout): the tools
-// take the left and middle, the Terrain tool the top right, the console and profiler under it.
-void BuildDefaultDockLayout(ImGuiID dockspace, const ImVec2& size) {
+// The arrangements Window > Layout offers under LayoutPresets::BuiltinNames(), each a docking of the three windows
+// this shell owns: the tool list and editor ("Editors"), the Terrain tool, and the console/profiler ("Debug").
+void BuildDockLayout(ImGuiID dockspace, const ImVec2& size, const std::string& preset) {
     ImGui::DockBuilderRemoveNode(dockspace);
     ImGui::DockBuilderAddNode(dockspace, ImGuiDockNodeFlags_DockSpace);
     ImGui::DockBuilderSetNodeSize(dockspace, size);
     ImGuiID main = dockspace;
-    const ImGuiID side = ImGui::DockBuilderSplitNode(main, ImGuiDir_Right, size.x > 1100.0f ? 420.0f / size.x : 0.3f, nullptr, &main);
-    ImGuiID side_top = side;
-    const ImGuiID side_bottom = ImGui::DockBuilderSplitNode(side_top, ImGuiDir_Down, 0.5f, nullptr, &side_top);
+    ImGuiID top_right = 0;
+    ImGuiID bottom = 0;
+    if (preset == "Level design") {
+        // The editor takes the room a level needs; the side panels narrow to a quarter.
+        const ImGuiID side = ImGui::DockBuilderSplitNode(main, ImGuiDir_Right, 0.24f, nullptr, &main);
+        top_right = side;
+        bottom = ImGui::DockBuilderSplitNode(side, ImGuiDir_Down, 0.5f, nullptr, &top_right);
+    } else if (preset == "Scripting") {
+        // The editor in the centre, a small scene at the top right, Output large below it.
+        const ImGuiID side = ImGui::DockBuilderSplitNode(main, ImGuiDir_Right, size.x > 1100.0f ? 420.0f / size.x : 0.3f, nullptr, &main);
+        top_right = side;
+        bottom = ImGui::DockBuilderSplitNode(side, ImGuiDir_Down, 0.65f, nullptr, &top_right);
+    } else if (preset == "Animation") {
+        // The editor in the centre, the timeline along the bottom, Details on the right.
+        bottom = ImGui::DockBuilderSplitNode(main, ImGuiDir_Down, 0.28f, nullptr, &main);
+        top_right = ImGui::DockBuilderSplitNode(main, ImGuiDir_Right, 0.3f, nullptr, &main);
+    } else { // Default: the tools left and middle, Terrain top right, the console and profiler under it
+        const ImGuiID side = ImGui::DockBuilderSplitNode(main, ImGuiDir_Right, size.x > 1100.0f ? 420.0f / size.x : 0.3f, nullptr, &main);
+        top_right = side;
+        bottom = ImGui::DockBuilderSplitNode(side, ImGuiDir_Down, 0.5f, nullptr, &top_right);
+    }
     ImGui::DockBuilderDockWindow("Editors", main);
-    ImGui::DockBuilderDockWindow("Terrain", side_top);
-    ImGui::DockBuilderDockWindow("Debug", side_bottom);
+    ImGui::DockBuilderDockWindow("Terrain", top_right);
+    ImGui::DockBuilderDockWindow("Debug", bottom);
     ImGui::DockBuilderFinish(dockspace);
 }
 
-void DrawEditor(EditorWorkspace& workspace, const char* backend_label) {
+// What Window > Layout is showing and what it still has to apply: a saved preset's ini is loaded before the next
+// NewFrame, a built-in arrangement is rebuilt once the dockspace exists, and Save Layout As captures the current one.
+struct LayoutState {
+    LayoutPresets presets;
+    std::filesystem::path preset_project; // the project the presets folder belongs to; empty = the user config folder
+    std::string active = "Default";       // the name the menu draws with a mark
+    std::string apply_builtin;            // a built-in arrangement to rebuild after DockSpaceOverViewport
+    std::string apply_text;               // a saved preset's ini, loaded before the next frame
+    bool open_save_popup = false;
+    char save_name[64] = {};
+    std::string save_error;
+};
+
+// Layouts are per project (docs/design/EDITOR_UI.md §4.2: Saved/Layouts), so opening another project switches the
+// folder too. Without a project they live in the per-user config folder, as the remembered layout itself does.
+void SyncPresetFolder(LayoutState& state, EditorWorkspace& workspace) {
+    if (state.preset_project == workspace.ProjectFile()) return;
+    state.preset_project = workspace.ProjectFile();
+    state.presets = state.preset_project.empty() ? LayoutPresets()
+                                                 : LayoutPresets(ProjectPaths::ForFile(state.preset_project).saved / "Layouts");
+}
+
+// A file saved under a built-in name wins when that name is chosen; Reset to Default bypasses it and always rebuilds.
+void ChooseBuiltinLayout(LayoutState& state, const std::string& name) {
+    state.active = name;
+    state.apply_builtin.clear();
+    if (std::optional<std::string> text = state.presets.Load(name)) {
+        state.apply_text = std::move(*text);
+    } else {
+        state.apply_text.clear();
+        state.apply_builtin = name;
+    }
+}
+
+void ChooseSavedLayout(LayoutState& state, const std::string& name) {
+    if (std::optional<std::string> text = state.presets.Load(name)) {
+        state.active = name;
+        state.apply_builtin.clear();
+        state.apply_text = std::move(*text);
+    }
+}
+
+void ResetLayout(LayoutState& state) {
+    state.active = "Default";
+    state.apply_text.clear();
+    state.apply_builtin = "Default";
+}
+
+void DrawSaveLayoutPopup(LayoutState& state) {
+    if (state.open_save_popup) {
+        ImGui::OpenPopup("Save Layout As");
+        state.open_save_popup = false;
+    }
+    if (!ImGui::BeginPopupModal("Save Layout As", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+    ImGui::TextUnformatted("Save the current arrangement as:");
+    ImGui::SetNextItemWidth(320.0f);
+    const bool entered = ImGui::InputTextWithHint("##layout_name", "My layout", state.save_name, sizeof(state.save_name),
+                                                  ImGuiInputTextFlags_EnterReturnsTrue);
+    if (!state.save_error.empty()) ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.4f, 1.0f), "%s", state.save_error.c_str());
+    ImGui::TextDisabled("Saved in %s", state.presets.Directory().empty() ? "the user config folder" : state.presets.Directory().string().c_str());
+    ImGui::Separator();
+    const bool save = ImGui::Button("Save", ImVec2(90.0f, 0.0f)) || entered;
+    ImGui::SameLine();
+    const bool cancel = ImGui::Button("Cancel", ImVec2(90.0f, 0.0f));
+    if (save) {
+        std::size_t length = 0;
+        const char* ini = ImGui::SaveIniSettingsToMemory(&length);
+        ImGui::GetIO().WantSaveIniSettings = false; // captured here, not by the ini writer
+        std::string error;
+        if (ini == nullptr || length == 0) {
+            state.save_error = "The editor has no layout to save yet";
+        } else if (state.presets.Save(state.save_name, std::string(ini, length), &error)) {
+            state.active = state.presets.Path(state.save_name).stem().string(); // the name the menu will list
+            state.apply_text.clear();
+            state.apply_builtin.clear();
+            state.save_name[0] = '\0';
+            state.save_error.clear();
+            ImGui::CloseCurrentPopup();
+        } else {
+            state.save_error = error;
+        }
+    }
+    if (cancel) {
+        state.save_name[0] = '\0';
+        state.save_error.clear();
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+}
+
+void DrawWindowMenu(LayoutState& state) {
+    if (!ImGui::BeginMenu("Window")) return;
+    if (ImGui::BeginMenu("Layout")) {
+        for (const std::string& name : LayoutPresets::BuiltinNames()) {
+            std::string label = name;
+            if (state.presets.Load(name)) label += " (custom)";
+            if (ImGui::MenuItem(label.c_str(), nullptr, state.active == name)) ChooseBuiltinLayout(state, name);
+        }
+        const std::vector<std::string> saved = state.presets.SavedNames();
+        if (!saved.empty()) {
+            ImGui::Separator();
+            for (const std::string& name : saved) {
+                if (ImGui::MenuItem(name.c_str(), nullptr, state.active == name)) ChooseSavedLayout(state, name);
+            }
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Save Layout As...")) {
+            std::snprintf(state.save_name, sizeof(state.save_name), "%s", state.active.c_str());
+            state.save_error.clear();
+            state.open_save_popup = true;
+        }
+        if (ImGui::MenuItem("Reset to Default")) ResetLayout(state);
+        ImGui::EndMenu();
+    }
+    ImGui::EndMenu();
+}
+
+void DrawEditor(EditorWorkspace& workspace, LayoutState& layouts, const char* backend_label) {
     const ImGuiIO& io = ImGui::GetIO();
-    bool reset_layout = false;
+    SyncPresetFolder(layouts, workspace); // a project opened this frame switches Saved/Layouts before the menu lists it
     if (ImGui::BeginMainMenuBar()) {
         if (ImGui::BeginMenu("File")) {
             workspace.DrawMenuItems("File"); // New, Open, Save, Save as, Quit: the registry's File commands
@@ -90,14 +227,14 @@ void DrawEditor(EditorWorkspace& workspace, const char* backend_label) {
         workspace.DrawToolsMenu();
         if (ImGui::BeginMenu("View")) {
             workspace.DrawMenuItems("View"); // Command Palette (Ctrl+Shift+P), Preferences
-            ImGui::Separator();
-            if (ImGui::MenuItem("Reset layout")) reset_layout = true;
             ImGui::EndMenu();
         }
+        DrawWindowMenu(layouts); // Layout: the built-in presets, saved ones, Save Layout As, Reset to Default
         workspace.DrawHelpMenu(); // Keyboard Shortcuts (F1), About
         ImGui::TextDisabled("   Aether Editor  -  %s  -  %zu tools", backend_label, workspace.ToolCount());
         ImGui::EndMainMenuBar();
     }
+    DrawSaveLayoutPopup(layouts);
 
     // The main toolbar claims the strip under the menu bar, and the status bar the one along the bottom, so the
     // dockspace fills what is left.
@@ -116,9 +253,16 @@ void DrawEditor(EditorWorkspace& workspace, const char* backend_label) {
     ImGui::End();
 
     const ImGuiID dockspace = ImGui::DockSpaceOverViewport(0, viewport);
-    const ImGuiDockNode* node = ImGui::DockBuilderGetNode(dockspace);
-    const bool empty = node == nullptr || (node->IsLeafNode() && node->Windows.Size == 0); // nothing saved: the first run
-    if ((reset_layout || empty) && viewport->WorkSize.x > 1.0f && viewport->WorkSize.y > 1.0f) BuildDefaultDockLayout(dockspace, viewport->WorkSize);
+    if (viewport->WorkSize.x > 1.0f && viewport->WorkSize.y > 1.0f) {
+        if (!layouts.apply_builtin.empty()) { // a built-in arrived from the menu (or the remembered preset): rebuild it
+            BuildDockLayout(dockspace, viewport->WorkSize, layouts.apply_builtin);
+            layouts.apply_builtin.clear();
+        } else {
+            const ImGuiDockNode* node = ImGui::DockBuilderGetNode(dockspace);
+            const bool empty = node == nullptr || (node->IsLeafNode() && node->Windows.Size == 0); // nothing saved: the first run
+            if (empty) BuildDockLayout(dockspace, viewport->WorkSize, "Default");
+        }
+    }
 
     constexpr ImGuiWindowFlags kPanel = ImGuiWindowFlags_NoCollapse;
     // Every tool: the list by category on the left, the selected one beside it.
@@ -254,6 +398,24 @@ int main(int argc, char** argv) {
         i32 pending_frames = 0;
         if (LoadShellLayout(layout_file, layout) && !layout.tool.empty()) pending_tool = layout.tool;
         if (const char* tab = std::getenv("AETHER_EDITOR_TAB")) pending_tool = tab;
+        // Window > Layout: the preset last chosen is remembered beside the tool. A saved one is applied as its ini; a
+        // built-in is the arrangement rebuilt once the dockspace exists on the first frame.
+        LayoutState layouts;
+        SyncPresetFolder(layouts, workspace);
+        if (!layout.layout.empty()) {
+            layouts.active = layout.layout;
+            if (LayoutPresets::IsBuiltin(layout.layout)) {
+                if (std::optional<std::string> text = layouts.presets.Load(layout.layout)) {
+                    layouts.apply_text = std::move(*text);
+                } else {
+                    layouts.apply_builtin = layout.layout;
+                }
+            } else if (std::optional<std::string> text = layouts.presets.Load(layout.layout)) {
+                layouts.apply_text = std::move(*text);
+            } else {
+                layouts.active = "Default"; // the file is gone: the arrangement it left in editor_panels.ini stays
+            }
+        }
         auto select_pending = [&] {
             if (pending_tool.empty()) return;
             const i64 tool = workspace.FindTool(pending_tool);
@@ -294,11 +456,15 @@ int main(int argc, char** argv) {
             io.DisplaySize = ImVec2(static_cast<f32>(swap_chain->Width()), static_cast<f32>(swap_chain->Height()));
 
             Profiler::Get().BeginFrame();
+            if (!layouts.apply_text.empty()) { // Window > Layout chose a saved arrangement: its ini replaces the current one
+                ImGui::LoadIniSettingsFromMemory(layouts.apply_text.data(), layouts.apply_text.size());
+                layouts.apply_text.clear();
+            }
             host.NewFrame();
             ImGui::NewFrame();
             workspace.Update(io.DeltaTime);
             select_pending();
-            DrawEditor(workspace, backend_label);
+            DrawEditor(workspace, layouts, backend_label);
             ImGui::Render();
 
             device->WaitForFence(fence); // one command list: the last frame must be done with it
@@ -328,6 +494,7 @@ int main(int argc, char** argv) {
             swap_chain->Present(true);
             if (frame % 120 == 0 && !layout_file.empty() && pending_tool.empty()) { // not only at exit: a crash should not lose the divider
                 layout.tool = workspace.ToolName(workspace.Selected());
+                layout.layout = layouts.active;
                 SaveShellLayout(layout_file, layout);
             }
             Profiler::Get().EndFrame();
@@ -335,6 +502,7 @@ int main(int argc, char** argv) {
         device->WaitForFence(fence);
         if (!layout_file.empty() && pending_tool.empty()) {
             layout.tool = workspace.ToolName(workspace.Selected());
+            layout.layout = layouts.active;
             std::string layout_error;
             if (!SaveShellLayout(layout_file, layout, &layout_error)) AETHER_LOG_WARN("Editor", "Couldn't remember the layout: %s", layout_error.c_str());
         }
