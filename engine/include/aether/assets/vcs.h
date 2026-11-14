@@ -73,6 +73,12 @@ VcsStatus ParseGitStatus(std::string_view output);
 // says so; never throws.
 VcsStatus QueryGitStatus(const std::filesystem::path& directory);
 
+// The branch the repository containing `directory` is on, for the editor's
+// status bar. A detached HEAD yields the abbreviated commit id instead of a
+// name. Empty outside a repository (or without git), with `error` saying why;
+// never throws.
+std::string QueryGitBranch(const std::filesystem::path& directory, std::string* error = nullptr);
+
 // Phase 43.7: the write half of the wrapper, so the editor can record its own edits instead of
 // sending the user to a terminal. Both run the git CLI the way QueryGitStatus does; on failure
 // `error` gets the CLI's own message, which is usually the useful one ("nothing to commit", a

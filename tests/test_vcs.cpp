@@ -210,6 +210,21 @@ AETHER_TEST(Vcs_AskingGitInARealRepository) {
     CHECK(at_root.available && at_root.prefix.empty() && at_root.Of("other.txt") == VcsState::Modified && at_root.ChangedCount() == 4);
 }
 
+AETHER_TEST(Vcs_ReadsTheBranchTheRepositoryIsOn) {
+    const stdfs::path repo = Dir("branch");
+    const std::string q = "\"" + repo.string() + "\"";
+    if (std::system(("git init -q " + q).c_str()) != 0) {
+        std::printf("    (git isn't available here; skipping the branch check)\n");
+        return;
+    }
+    std::string error;
+    CHECK(!QueryGitBranch(repo, &error).empty()); // an unborn branch still has a name
+    CHECK(error.empty());
+    CHECK(std::system(("git -C " + q + " checkout -q -b parity/test-branch").c_str()) == 0);
+    CHECK(QueryGitBranch(repo) == "parity/test-branch");
+    CHECK(QueryGitBranch(repo / "quote\"name").empty()); // a quote in the path is refused, not escaped
+}
+
 AETHER_TEST(Vcs_ContentBrowserPanelListsFiltersAndDraws) {
     const stdfs::path dir = Dir("panel");
     ProjectPaths paths;

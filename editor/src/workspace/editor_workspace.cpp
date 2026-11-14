@@ -46,6 +46,7 @@
 #include "world/world_panels.h"
 
 #include "aether/blueprint/nodes.h"
+#include "aether/assets/vcs.h"
 #include "aether/core/console.h"
 #include "aether/core/version.h"
 #include "aether/gameplay/gameplay_kit.h"
@@ -281,6 +282,8 @@ struct EditorWorkspace::Impl {
     std::unique_ptr<CrashReporterDialog> crash_dialog;
     // Project.
     std::filesystem::path project_file;
+    std::string branch;               // the status bar's source-control branch; asked of git, not recomputed per frame
+    bool branch_injected = false;     // a host set it, so RefreshSourceControl leaves it alone
     CommandRegistry commands;
     NotificationService notifications;
     double clock = 0.0; // seconds since the workspace was made; Update() advances it and expires toasts
@@ -901,6 +904,7 @@ struct EditorWorkspace::Impl {
 
     void LoadProjectTools() {
         CrashHandler::SetContext("project", project_file.stem().string());
+        if (!branch_injected) branch = assets::QueryGitBranch(ProjectPaths::ForFile(project_file).root);
         std::string error;
         project_settings = std::make_unique<ProjectSettingsPanel>(project_file);
         build_window = std::make_unique<BuildPackageWindow>(project_file);
@@ -1647,6 +1651,8 @@ EditorWorkspace::StatusBarInfo EditorWorkspace::StatusBar() {
     info.document = document.DisplayName();
     info.dirty = document.IsDirty();
     info.play = PlayStateName(Scene().Document().PlayState());
+    info.selected = Scene().Document().Selection().size();
+    info.branch = impl_->branch;
     if (impl_->build_window != nullptr) {
         PackageRunner& runner = *impl_->build_window;
         if (runner.Busy()) {
@@ -1676,6 +1682,12 @@ void EditorWorkspace::DrawStatusBar() {
     ImGui::Text("%s%s", info.document.c_str(), info.dirty ? " *" : "");
     if (info.dirty) ImGui::SetItemTooltip("Unsaved changes");
 
+    if (info.selected > 0) {
+        separator();
+        ImGui::Text("%zu selected", info.selected);
+        ImGui::SetItemTooltip("Entities selected in the scene");
+    }
+
     separator();
     if (std::string(info.play) == "Editing") {
         ImGui::TextDisabled("%s", info.play);
@@ -1686,6 +1698,12 @@ void EditorWorkspace::DrawStatusBar() {
     if (!info.job.empty()) {
         separator();
         ImGui::TextUnformatted(info.job.c_str());
+    }
+
+    if (!info.branch.empty()) {
+        separator();
+        ImGui::TextUnformatted(info.branch.c_str());
+        ImGui::SetItemTooltip("Source control branch (a commit id when HEAD is detached)");
     }
 
     separator();
@@ -1699,6 +1717,16 @@ void EditorWorkspace::DrawStatusBar() {
         }
     }
     ImGui::SetItemTooltip("%s", info.unread > 0 ? "Unread messages: click to open the list" : "Open the message list");
+}
+
+void EditorWorkspace::RefreshSourceControl() {
+    if (impl_->branch_injected || impl_->project_file.empty()) return;
+    impl_->branch = assets::QueryGitBranch(ProjectPaths::ForFile(impl_->project_file).root);
+}
+
+void EditorWorkspace::SetSourceControlBranch(std::string branch) {
+    impl_->branch_injected = true;
+    impl_->branch = std::move(branch);
 }
 
 void EditorWorkspace::DrawCommandPalette() {

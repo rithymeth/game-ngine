@@ -1441,6 +1441,7 @@
   const char*VcsStateName(VcsState state)
   inline VcsState WorseVcsState(VcsState a,VcsState b)
   inline int VcsSeverity(VcsState s)
+  std::string QueryGitBranch(const std::filesystem::path&directory,std::string*error=nullptr)
   usize ChangedCount()const
 [engine/include/aether/cook/cooker.h] experimental
   type enum class BuildConfiguration

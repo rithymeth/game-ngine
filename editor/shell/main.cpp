@@ -463,6 +463,7 @@ int main(int argc, char** argv) {
             host.NewFrame();
             ImGui::NewFrame();
             workspace.Update(io.DeltaTime);
+            if (frame > 0 && frame % 300 == 0) workspace.RefreshSourceControl(); // a checkout outside the editor shows up within a few seconds
             select_pending();
             DrawEditor(workspace, layouts, backend_label);
             ImGui::Render();

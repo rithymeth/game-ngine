@@ -158,10 +158,17 @@ public:
         bool dirty = false;
         const char* play = "Editing"; // "Editing", "Playing" or "Paused"
         std::string job;              // an active cook/package or a launched game; empty when idle
+        std::size_t selected = 0;     // entities selected in the scene
+        std::string branch;           // the source-control branch; empty outside a repository
         std::size_t unread = 0;
     };
     StatusBarInfo StatusBar();
     void DrawStatusBar();
+    // Reads the branch from the open project's repository and caches it for the status bar (a detached HEAD shows
+    // the commit id). Run when a project opens and periodically by the host -- not per frame, since it asks git.
+    void RefreshSourceControl();
+    // Sets the branch the status bar shows instead of asking git (a host using another VCS, and tests).
+    void SetSourceControlBranch(std::string branch);
 
     // Data safety (Stage 0 of docs/design/EDITOR_PARITY_AUDIT.md): the editor writes the open scene into a
     // per-project recovery slot while it has unsaved changes, and offers it back when the last session did not end

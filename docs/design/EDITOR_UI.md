@@ -411,12 +411,15 @@ Covered in [ROADMAP.md Phase 8](../ROADMAP.md). Additional rules:
 ### 6.7 Status bar
 
 Left to right: the open project (tooltip: its full path), the active
-document's name with `*` while it has unsaved changes, the play state
-("Editing", or "Playing"/"Paused" in amber), an active cook/package
-("Cooking 42%") or "Game running", and the unread message count as a button —
-clicking "Messages (2)" opens the Messages tool and marks them read. The host
-appends the backend and frame time on the same line. The source-control branch
-and selection count are still to come.
+document's name with `*` while it has unsaved changes, how many entities are
+selected (left out at zero), the play state ("Editing", or "Playing"/"Paused" in
+amber), an active cook/package ("Cooking 42%") or "Game running", the
+source-control branch (left out outside a repository; a detached HEAD shows the
+commit id), and the unread message count as a button — clicking "Messages (2)"
+opens the Messages tool and marks them read. The host appends the backend and
+frame time on the same line. The branch is read from the project's repository
+when it opens and by the shell every few seconds, not every frame, because it
+asks git.
 
 ### 6.8 Project Hub
 

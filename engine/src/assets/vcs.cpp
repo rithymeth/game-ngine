@@ -145,6 +145,36 @@ VcsStatus QueryGitStatus(const stdfs::path& directory) {
     return status;
 }
 
+std::string QueryGitBranch(const stdfs::path& directory, std::string* error) {
+    const std::string dir = directory.string();
+    if (dir.find('"') != std::string::npos) {
+        if (error != nullptr) *error = "The path has a quote in it";
+        return {};
+    }
+#if defined(_WIN32)
+    const char* quiet = " 2>nul";
+#else
+    const char* quiet = " 2>/dev/null";
+#endif
+    const auto trim = [](std::string& text) {
+        while (!text.empty() && (text.back() == '\n' || text.back() == '\r' || text.back() == ' ')) text.pop_back();
+    };
+    std::string output;
+    int rc = 0;
+    // symbolic-ref answers on an unborn branch too (a repository with no commit yet), where rev-parse HEAD fails.
+    if (Capture("git -C \"" + dir + "\" symbolic-ref --short HEAD" + quiet, output, &rc) && rc == 0) {
+        trim(output);
+        if (!output.empty()) return output;
+    }
+    output.clear();
+    if (Capture("git -C \"" + dir + "\" rev-parse --short HEAD" + quiet, output, &rc) && rc == 0) {
+        trim(output);
+        if (!output.empty()) return output; // detached: the commit id stands in for the branch name
+    }
+    if (error != nullptr) *error = "Not in a git repository (or git isn't installed)";
+    return {};
+}
+
 namespace {
 
 // Runs one git command in `directory`, turning a failure into the CLI's own output. The command

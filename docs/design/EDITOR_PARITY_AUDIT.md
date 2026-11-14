@@ -359,8 +359,18 @@ first, re-adding moving a path rather than duplicating it, removal, a save/load 
 reading as an empty list; and the panel recording saves and opens, deduping a path written absolutely, persisting across
 two panels, and pruning a deleted scene (the persisted file is pruned too).
 
-Still open in this stage: document tabs, and the status bar's source-control branch segment and selection count
-(`EDITOR_UI.md` §6.7).
+Done so far (2026-11-14): the status bar's source-control branch and selection count. `QueryGitBranch`
+(`engine/src/assets/vcs.cpp`) asks git for the repository's branch with `symbolic-ref --short HEAD`, so a repository
+with no commit yet still has a name, and falls back to the abbreviated commit id on a detached HEAD; outside a
+repository it returns empty and says why instead of failing. The workspace caches the branch -- read when a project
+opens and by `RefreshSourceControl()`, which the shell calls every 300 frames so a checkout outside the editor shows up
+within seconds, rather than spawning git per frame -- and a host may set it directly (`SetSourceControlBranch`) for
+another VCS or a test. `StatusBarInfo` gained `branch` and `selected` (the scene document's selection count; zero leaves
+the segment out). Tests: the selection count following `SetSelection` and `ClearSelection`, the branch drawn and
+cleared, a host-set branch surviving a refresh, and a real repository read through init, an unborn branch and a
+renamed branch, with a quote in the path refused.
+
+Still open in this stage: document tabs.
 
 ### Stage 2 — Viewport and selection parity (L)
 

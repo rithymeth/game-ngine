@@ -53,10 +53,36 @@ AETHER_TEST(StatusBar_NamesTheProjectAndDocument) {
     CHECK(std::string(info.play) == "Editing");
     CHECK(info.job.empty());
 
-    workspace.Scene().Document().CreateEntity("crate");
+    const Entity crate = workspace.Scene().Document().CreateEntity("crate");
+    workspace.Scene().Document().CreateEntity("barrel");
     const EditorWorkspace::StatusBarInfo edited = workspace.StatusBar();
     CHECK(edited.dirty);
     CHECK(edited.document == workspace.ActiveDocument().DisplayName());
+    CHECK(edited.selected == 0); // nothing picked yet
+
+    workspace.Scene().Document().SetSelection({crate});
+    CHECK(workspace.StatusBar().selected == 1);
+    workspace.Scene().Document().ClearSelection();
+    CHECK(workspace.StatusBar().selected == 0);
+}
+
+// The branch is the workspace's own value, so a host (or a test) can show a repository the workspace didn't ask git
+// about, and refreshing does not overwrite a value the host set.
+AETHER_TEST(StatusBar_ShowsTheSourceControlBranch) {
+    HeadlessImGui imgui;
+    EditorWorkspace workspace;
+    workspace.SetSourceControlBranch("feature/parity");
+    CHECK(workspace.StatusBar().branch == "feature/parity");
+    workspace.RefreshSourceControl();
+    CHECK(workspace.StatusBar().branch == "feature/parity");
+
+    ImGui::NewFrame();
+    if (ImGui::Begin("##status_test")) workspace.DrawStatusBar(); // the branch segment draws
+    ImGui::End();
+    ImGui::Render();
+
+    workspace.SetSourceControlBranch(""); // no repository: the segment is left out
+    CHECK(workspace.StatusBar().branch.empty());
 }
 
 // The play segment follows the document's PlaySession through its three states.
