@@ -30,7 +30,9 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <limits>
 #include <string>
+#include <vector>
 
 // The scene editor of the portable (ImGui) editor: the hierarchy as a tree, the toolbar's actions, and the panel drawn headless in every state it has.
 
@@ -1195,11 +1197,13 @@ struct ToolRig {
     SceneViewCamera camera;
     ImVec2 origin{0, 0}, size{800, 600};
     ToolRig() { camera.target = Vec3(0, 0, 0); camera.distance = 12.0f; Step(ImVec2(0, 0), false); }
-    void Step(const ImVec2& mouse, bool down, bool ctrl = false) {
+    void Step(const ImVec2& mouse, bool down, bool ctrl = false, bool alt = false, bool shift = false) {
         ImGuiIO& io = ImGui::GetIO();
         io.AddMousePosEvent(mouse.x, mouse.y);
         io.AddMouseButtonEvent(0, down);
         io.AddKeyEvent(ImGuiMod_Ctrl, ctrl);
+        io.AddKeyEvent(ImGuiMod_Alt, alt);
+        io.AddKeyEvent(ImGuiMod_Shift, shift);
         imgui.Frame([&] {
             origin = ImGui::GetCursorScreenPos();
             ImGui::InvisibleButton("view", size, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
@@ -1211,7 +1215,15 @@ struct ToolRig {
         ProjectToViewport(camera.ViewProjection(size.x / size.y), world, origin, size, at);
         return at;
     }
-    void Click(const ImVec2& at, bool ctrl = false) { Step(at, false, ctrl); Step(at, true, ctrl); Step(at, false, ctrl); }
+    void Click(const ImVec2& at, bool ctrl = false, bool alt = false) { Step(at, false, ctrl, alt); Step(at, true, ctrl, alt); Step(at, false, ctrl, alt); }
+    // Presses at `from`, moves through the middle to `to`, and releases there: a marquee drag.
+    void Drag(const ImVec2& from, const ImVec2& to, bool ctrl = false, bool alt = false) {
+        Step(from, false, ctrl, alt);
+        Step(from, true, ctrl, alt);
+        Step(ImVec2((from.x + to.x) * 0.5f, (from.y + to.y) * 0.5f), true, ctrl, alt);
+        Step(to, true, ctrl, alt);
+        Step(to, false, ctrl, alt);
+    }
 };
 
 } // namespace
@@ -1268,6 +1280,87 @@ AETHER_TEST(ViewportTools_DraggingAHandleWithTheMouseMovesTheSelectionInOneUndoS
     rig.Step(rig.Pixel(Vec3(half * 2.0f, 0, 0)), false);
     const Transform* t = rig.document.GetWorld().GetComponent<Transform>(thing);
     AETHER_CHECK(t && std::fabs(t->scale.x - 2.0f) < 0.11f);                     // doubled, on the 0.1 step
+}
+
+namespace {
+
+// A pixel rectangle round the given points, `margin` pixels bigger on every side.
+void RectAround(const std::vector<ImVec2>& points, f32 margin, ImVec2& low, ImVec2& high) {
+    low = ImVec2(std::numeric_limits<f32>::max(), std::numeric_limits<f32>::max());
+    high = ImVec2(-std::numeric_limits<f32>::max(), -std::numeric_limits<f32>::max());
+    for (const ImVec2& p : points) {
+        low = ImVec2(std::min(low.x, p.x - margin), std::min(low.y, p.y - margin));
+        high = ImVec2(std::max(high.x, p.x + margin), std::max(high.y, p.y + margin));
+    }
+}
+
+} // namespace
+
+AETHER_TEST(ViewportTools_AMarqueeSelectsWhatItTouchesWithReplaceAddAndSubtract) {
+    ToolRig rig;
+    const Entity a = rig.document.CreateEntity("A");
+    const Entity b = rig.document.CreateEntity("B");
+    const Entity c = rig.document.CreateEntity("C");
+    rig.document.SetPosition(a, Vec3(-3, 0, 0), true);
+    rig.document.SetPosition(b, Vec3(0, 0, 0), true);
+    rig.document.SetPosition(c, Vec3(6, 0, 0), true);
+    rig.document.SetSelection({c});
+    rig.document.Commands().Clear();
+    const ImVec2 pa = rig.Pixel(Vec3(-3, 0, 0)), pb = rig.Pixel(Vec3(0, 0, 0)), pc = rig.Pixel(Vec3(6, 0, 0));
+    ImVec2 low, high;
+    RectAround({pa, pb}, 25.0f, low, high);
+    AETHER_CHECK(pc.x < low.x || pc.x > high.x || pc.y < low.y || pc.y > high.y); // C is well clear of the rectangle
+
+    rig.Drag(low, high); // replace: the rectangle becomes the selection
+    AETHER_CHECK(rig.document.Selection().size() == 2 && rig.document.IsSelected(a) && rig.document.IsSelected(b) && !rig.document.IsSelected(c));
+    AETHER_CHECK(!rig.document.CanUndo()); // selecting is not an edit
+
+    ImVec2 c_low, c_high;
+    RectAround({pc}, 25.0f, c_low, c_high);
+    rig.Drag(c_low, c_high, true); // ctrl adds what it touches
+    AETHER_CHECK(rig.document.Selection().size() == 3 && rig.document.IsSelected(c));
+
+    // Alt subtracts. The gizmo sits on the first selected entity, so C is selected first here to keep the handles away from the rectangle.
+    rig.Click(ImVec2(rig.origin.x + 5, rig.origin.y + 5));
+    AETHER_CHECK(rig.document.Selection().empty());
+    rig.Click(pc);
+    rig.Click(pa, true);
+    rig.Click(pb, true);
+    AETHER_CHECK(rig.document.Selection().size() == 3 && rig.document.Selection()[0] == c);
+    rig.Drag(low, high, false, true);
+    AETHER_CHECK(rig.document.Selection().size() == 1 && rig.document.Selection()[0] == c);
+}
+
+AETHER_TEST(ViewportTools_AltClickStepsThroughAStackOfEntities) {
+    ToolRig rig;
+    const Entity a = rig.document.CreateEntity("A");
+    const Entity b = rig.document.CreateEntity("B"); // the same spot, so both are under the mouse
+    rig.document.ClearSelection();
+    rig.document.Commands().Clear();
+    const ImVec2 at = rig.Pixel(Vec3(0, 0, 0));
+    rig.Click(at);
+    AETHER_CHECK(rig.document.Selection().size() == 1 && rig.document.Selection()[0] == a);
+    rig.Click(at, false, true); // behind the front one
+    AETHER_CHECK(rig.document.Selection().size() == 1 && rig.document.Selection()[0] == b);
+    rig.Click(at, false, true); // round to the front again
+    AETHER_CHECK(rig.document.Selection().size() == 1 && rig.document.Selection()[0] == a);
+    rig.document.ClearSelection();
+    rig.Click(at, false, true); // from nothing selected, the first Alt-click already steps behind the front
+    AETHER_CHECK(rig.document.Selection().size() == 1 && rig.document.Selection()[0] == b);
+}
+
+AETHER_TEST(ViewportTools_SelectAllAndInvertKeepEveryEntityWithATransform) {
+    ToolRig rig;
+    const Entity a = rig.document.CreateEntity("A");
+    const Entity b = rig.document.CreateEntity("B");
+    const Entity c = rig.document.CreateEntity("C");
+    ViewportTools::SelectAll(rig.document);
+    AETHER_CHECK(rig.document.Selection().size() == 3 && rig.document.IsSelected(a) && rig.document.IsSelected(b) && rig.document.IsSelected(c));
+    rig.document.SetSelection({b});
+    ViewportTools::InvertSelection(rig.document);
+    AETHER_CHECK(rig.document.Selection().size() == 2 && rig.document.IsSelected(a) && rig.document.IsSelected(c) && !rig.document.IsSelected(b));
+    ViewportTools::InvertSelection(rig.document);
+    AETHER_CHECK(rig.document.Selection().size() == 1 && rig.document.Selection()[0] == b);
 }
 
 namespace {
@@ -1348,6 +1441,30 @@ AETHER_TEST(ModelBounds_APickedEntityIsFoundWhereverItsModelIsAndTheNearerOneWin
     AETHER_CHECK(PickEntity(document, camera, origin, size, pixel(Vec3(0, 0.5f, 0)), 14.0f, &cache) != kNullEntity);
     AETHER_CHECK(PickEntity(document, camera, origin, size, pixel(Vec3(8, 6, 8)), 14.0f, &cache) == camera_entity);   // no model: still found by its origin
     AETHER_CHECK(PickEntity(document, camera, origin, size, ImVec2(5, 5), 14.0f, &cache) == kNullEntity);             // empty space
+}
+
+AETHER_TEST(SceneView_AMarqueeTouchesAModelsRealBoxNotJustItsOrigin) {
+    const stdfs::path content = Scratch("aether_marquee_bounds");
+    WriteBoxModel(content, "Models/slab.glb", Vec3(-2, 0, -2), Vec3(2, 1, 2));
+    ModelBoundsCache cache(content);
+    SceneDocument document;
+    const Entity slab = document.CreateEntity("Slab", SceneEntityKind::Model, "Models/slab.glb");
+    SceneViewCamera camera;
+    camera.target = Vec3(0, 0, 0);
+    camera.distance = 12.0f;
+    const ImVec2 origin(0, 0), size(800, 600);
+    auto pixel = [&](const Vec3& world) { ImVec2 at(-1, -1); ProjectToViewport(camera.ViewProjection(size.x / size.y), world, origin, size, at); return at; };
+
+    const ImVec2 edge = pixel(Vec3(-2, 0.5f, 0)); // the model's own left side, a long way from its origin in pixels
+    const ImVec2 low(edge.x - 6.0f, edge.y - 6.0f), high(edge.x + 6.0f, edge.y + 6.0f);
+    AETHER_CHECK(EntitiesInRectangle(document, camera, origin, size, low, high).empty());                       // without bounds: the unit box at the origin is elsewhere
+    const std::vector<Entity> touches = EntitiesInRectangle(document, camera, origin, size, low, high, &cache); // with them: the real box reaches here
+    AETHER_CHECK(touches.size() == 1 && touches[0] == slab);
+    AETHER_CHECK(EntitiesInRectangle(document, camera, origin, size, ImVec2(5, 5), ImVec2(40, 40), &cache).empty());
+    const ImVec2 over_origin = pixel(Vec3(0, 0.5f, 0));
+    const std::vector<Entity> centre = EntitiesInRectangle(document, camera, origin, size, ImVec2(over_origin.x - 6.0f, over_origin.y - 6.0f),
+                                                           ImVec2(over_origin.x + 6.0f, over_origin.y + 6.0f), &cache);
+    AETHER_CHECK(centre.size() == 1 && centre[0] == slab);
 }
 
 AETHER_TEST(ModelBounds_AnEntitysBoxFollowsItsScaleAndRotation) {

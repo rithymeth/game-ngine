@@ -52,7 +52,7 @@ as well. The verdicts are a judgement from the source audit; the evidence column
 | Data safety on exit | Quit is immediate; autosave exists but is unwired; unsaved-scene prompts exist for New/Open only | Close/quit prompts and recoverable autosave in all three | Missing |
 | Hierarchy | Tree with name filter, drag reparent, Ctrl multi-select, create/duplicate/delete/copy/paste | Outliner/Scene dock with visibility, lock, icons, multi-edit | Partial |
 | Viewport | Wireframe overlay, orbit camera, ±20 m grid; Live Viewport is a separate rendered tool | Lit/wireframe modes, fly camera, orthographic views, bookmarks, show flags | Partial |
-| Selection | Click, Ctrl toggle, triangle picking; no marquee, click-through or select-all | Marquee, click-through, select-all/invert in all three | Partial |
+| Selection | Click, Ctrl toggle, marquee (replace/add/subtract), Alt click-through, Ctrl+A and invert in the Scene View and Live Viewport | Marquee, click-through, select-all/invert in all three | Partial |
 | Transform | Move/rotate/scale, world/local, per-mode snap, plane handles for Move, quaternion fields | Pivot/center modes, plane and uniform scale handles, Euler entry, numeric transform | Partial |
 | Content browser | Flat folder list, name search, rename/move, references, VCS badges, drag sources; no thumbnails, filters, multi-select or import UI | Thumbnails, type filters, multi-select, import/reimport, create/duplicate/delete | Partial |
 | Inspector | Every reflected component, add/remove with search, prefab revert, asset drop targets; single-object only | Multi-object editing, property search, reset/copy/paste, mixed values | Partial |
@@ -91,7 +91,7 @@ as well. The verdicts are a judgement from the source audit; the evidence column
 | Camera navigation | Fly (WASD), orbit, pan, focus, speed control, bookmarks | Fly/orbit/pan, focus, speed, bookmarks | Fly/orbit/pan, focus, view menu | Right-drag orbit, middle/shift pan, wheel zoom, F focus | `scene_view.cpp:64-79`, `scene_view_panel.cpp:26-45` | Partial |
 | World extent | Large-world grid, snap to grid, world partition | Grid with configurable size | Grid with configurable size | Grid ±20 m; zoom 0.5–1000 m | `scene_view_panel.cpp:78-86`, `scene_view.cpp:54` | Missing |
 | Viewport stats | FPS, draw calls, triangles, memory | Stats overlay | Monitor/debug overlays | FPS and entity count only in Live Viewport | `editor/src/host/live_viewport_panel.cpp:224` | Partial |
-| Selection | Click, Ctrl, marquee, select-all, click-through | Click, Ctrl, marquee, select-all, scene picking | Click, Ctrl, box select, select-all | Click, Ctrl toggle; no marquee, click-through or select-all | `editor/src/world/viewport_tools.cpp:62-69` | Partial |
+| Selection | Click, Ctrl, marquee, select-all, click-through | Click, Ctrl, marquee, select-all, scene picking | Click, Ctrl, box select, select-all | Click, Ctrl toggle, marquee, select-all/invert, Alt click-through | `editor/src/world/viewport_tools.cpp:51-110` | Partial |
 | Picking accuracy | Rendered object ID / physics | Rendered object ID | Rendered object ID | Bind-pose triangles (≤300k), else box; no animated/alpha-accurate pick | `editor/src/world/model_bounds.h:43`, `scene_view.cpp:126-206` | Partial |
 | Transform gizmo | Translate/rotate/scale, screen/plane handles, pivot modes | Translate/rotate/scale/rect, pivot/center, plane and uniform handles | Translate/rotate/scale, local/global, snap | Move/rotate/scale, world/local, plane Move handles, snap per mode | `editor/src/world/viewport_tools.h:16-56`, `scene_view.cpp:427` | Partial |
 | Pivot | Center of selection or each actor's pivot | Center/Pivot toggle | Local/global transform pivot | First selected entity's origin only | `viewport_tools.cpp:126-140` | Partial |
@@ -425,7 +425,7 @@ depth range's zero start makes visible as a negative z. The Scene View's toolbar
 buttons, lit for the current view. Tests: a world unit projects to the same pixel length at the target and 100 units
 beyond it, each projection keeps its zoom across switching, the top view puts +X right and -Z up, front and side keep +Y
 up, and orbiting a preset makes it free again; the existing perspective, focus, ground-point and gizmo tests still pass.
-Not yet: shading, the infinite grid, marquee selection and grouped undo.
+Not yet: shading, the infinite grid and grouped undo.
 
 Done so far (2026-11-14): the fly camera, focus by selection bounds and camera bookmarks. `SceneViewCamera` gained
 `Move`, which translates eye and target together along the view's own forward, right and up, and `HandleCameraInput` runs
@@ -442,6 +442,21 @@ with the target), the wheel changes the speed while flying and the zoom otherwis
 axes, focus framing a scaled model's box centre rather than its origin (and the unit box without a cache), a whole-pose
 save/recall round-trip with empty and out-of-range slots refused, and the panel's Ctrl+3/3 keys storing and recalling
 through headless frames.
+
+Done so far (2026-11-14): marquee selection, Alt click-through, Ctrl+A and invert, shared by the Scene View and the Live
+Viewport. `PickEntities` (`editor/src/world/scene_view.cpp`) returns everything under the mouse, nearest first -- model
+boxes the ray passes through (with the triangles refining them) and origins within the pick radius -- which is the stack
+Alt-click steps through: the first Alt-click on an unselected stack takes the one behind the front, and each further one
+moves back a place, wrapping round. `EntitiesInRectangle` is the marquee's hit test: every entity whose screen box (the
+model's real box with the cache, the unit box otherwise, the origin for one partly behind the near plane) meets the
+rectangle. `ViewportTools::HandleInput` turns a plain drag into a replace marquee, Ctrl+drag into an add and Alt+drag
+into a subtract (Shift+drag is still the camera pan), draws the live rectangle in blue/green/red, and adds Ctrl+A
+(select every entity with a Transform) and Ctrl+I (invert among them) while the View's mouse is over it; Alt presses no
+longer grab a gizmo handle, so Alt selects through even on the pivot. The rectangle is drawn over both pictures.
+Tests: a marquee replaces, a Ctrl marquee adds and an Alt marquee subtracts (each checked to leave an entity outside it
+alone), Alt-click cycling a two-deep stack both ways and starting behind the front from an empty selection, select-all
+and invert, and a marquee meeting a model's real box where only its origin would miss. Not yet: the infinite grid,
+shading and grouped undo.
 
 ### Stage 3 — Content browser and importer parity (L)
 

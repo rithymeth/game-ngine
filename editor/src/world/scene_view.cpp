@@ -13,6 +13,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <limits>
+#include <utility>
 
 namespace aether::editor {
 
@@ -302,6 +303,94 @@ Entity PickEntity(const SceneDocument& document, const SceneViewCamera& camera, 
     if (box_hit == kNullEntity) return best;
     if (best == kNullEntity) return box_hit;
     return (WorldOrigin(document, best) - ray_origin).Length() < box_distance ? best : box_hit;
+}
+
+std::vector<Entity> PickEntities(const SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, f32 radius,
+                                 const ModelBoundsCache* bounds) {
+    std::vector<Entity> picks;
+    if (size.x < 1.0f || size.y < 1.0f) return picks;
+    Vec3 ray_origin, ray_direction;
+    const bool have_ray = MouseRay(camera.ViewProjection(size.x / size.y), origin, size, mouse, ray_origin, ray_direction);
+    const Mat4 vp = camera.ViewProjection(size.x / size.y);
+    std::vector<std::pair<f32, Entity>> found; // distance along the ray, entity
+    for (const Entity entity : document.Entities()) {
+        if (!document.GetWorld().HasComponent<Transform>(entity)) continue;
+        bool hit = false;
+        f32 distance = 0.0f;
+        if (bounds && have_ray) {
+            const ModelRenderer* renderer = document.GetWorld().GetComponent<ModelRenderer>(entity);
+            if (renderer && renderer->asset_path[0] != '\0') {
+                LocalBounds known;
+                if (bounds->Get(renderer->asset_path, known) && RayHitsEntityBox(document, entity, known, ray_origin, ray_direction, distance)) {
+                    if (const ModelTriangles* shape = bounds->Triangles(renderer->asset_path)) {
+                        hit = RayHitsEntityMesh(document, entity, *shape, ray_origin, ray_direction, distance); // the box's empty corner is a miss
+                    } else {
+                        hit = true;
+                    }
+                }
+            }
+        }
+        if (!hit) { // the origin under the cursor, as PickEntity finds a camera, a light or a model with no box
+            ImVec2 at;
+            f32 depth = 0.0f;
+            if (!ProjectToViewport(vp, WorldOrigin(document, entity), origin, size, at, &depth)) continue;
+            if (std::hypot(at.x - mouse.x, at.y - mouse.y) > radius) continue;
+            distance = have_ray ? (WorldOrigin(document, entity) - ray_origin).Length() : depth;
+        }
+        found.emplace_back(distance, entity);
+    }
+    std::stable_sort(found.begin(), found.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    picks.reserve(found.size());
+    for (const auto& [distance, entity] : found) picks.push_back(entity);
+    return picks;
+}
+
+namespace {
+
+// The screen-space box of an entity's own bounds; false when none of it is in front of the near plane. `partial` says some corners are behind it,
+// and then the origin stands in for the whole (an entity partly behind the eye is judged by where it is).
+bool ScreenBox(const SceneDocument& document, Entity entity, const LocalBounds& box, const Mat4& view_projection, const ImVec2& origin, const ImVec2& size, ImVec2& low,
+               ImVec2& high) {
+    const Mat4 world = ComputeWorldTransform(document.GetWorld(), document.Guids(), entity);
+    bool any = false, behind = false;
+    low = ImVec2(std::numeric_limits<f32>::max(), std::numeric_limits<f32>::max());
+    high = ImVec2(-std::numeric_limits<f32>::max(), -std::numeric_limits<f32>::max());
+    for (int corner = 0; corner < 8; ++corner) {
+        const Vec3 local((corner & 1) ? box.max.x : box.min.x, (corner & 2) ? box.max.y : box.min.y, (corner & 4) ? box.max.z : box.min.z);
+        const Vec4 placed = world * Vec4(local.x, local.y, local.z, 1.0f);
+        ImVec2 at;
+        if (!ProjectToViewport(view_projection, Vec3(placed.x, placed.y, placed.z), origin, size, at)) {
+            behind = true;
+            continue;
+        }
+        any = true;
+        low = ImVec2(std::min(low.x, at.x), std::min(low.y, at.y));
+        high = ImVec2(std::max(high.x, at.x), std::max(high.y, at.y));
+    }
+    if (any && !behind) return true;
+    ImVec2 at;
+    if (!ProjectToViewport(view_projection, WorldOrigin(document, entity), origin, size, at)) return false;
+    low = high = at;
+    return true;
+}
+
+} // namespace
+
+std::vector<Entity> EntitiesInRectangle(const SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& first,
+                                        const ImVec2& second, const ModelBoundsCache* bounds) {
+    std::vector<Entity> inside;
+    if (size.x < 1.0f || size.y < 1.0f) return inside;
+    const ImVec2 rect_low(std::min(first.x, second.x), std::min(first.y, second.y));
+    const ImVec2 rect_high(std::max(first.x, second.x), std::max(first.y, second.y));
+    const Mat4 vp = camera.ViewProjection(size.x / size.y);
+    for (const Entity entity : document.Entities()) {
+        if (!document.GetWorld().HasComponent<Transform>(entity)) continue;
+        ImVec2 low, high;
+        if (!ScreenBox(document, entity, EntityBounds(document, entity, bounds), vp, origin, size, low, high)) continue;
+        if (low.x > rect_high.x || high.x < rect_low.x || low.y > rect_high.y || high.y < rect_low.y) continue;
+        inside.push_back(entity);
+    }
+    return inside;
 }
 
 bool MouseRay(const Mat4& view_projection, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, Vec3& ray_origin, Vec3& ray_direction) {

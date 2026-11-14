@@ -370,6 +370,12 @@ asset editor is focused once those documents adopt the contract in Stage 6.
   Top, Front and Side jump to those axis views (orthographic); the orthographic
   zoom is kept apart from the perspective distance, so switching back restores
   the other.
+- **Selection:** click picks (Ctrl toggles); a plain drag draws a marquee that
+  replaces the selection, Ctrl+drag adds what it touches and Alt+drag removes
+  it (Shift+drag still pans). Alt+click steps through whatever is stacked under
+  the mouse, front to back. Ctrl+A selects every entity with a Transform and
+  Ctrl+I inverts that selection. The marquee is blue for replace, green for
+  add and red for subtract.
 
 ### 6.3 Hierarchy
 

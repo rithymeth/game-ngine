@@ -255,6 +255,7 @@ void LiveViewportPanel::Draw(f32 dt) {
     });
     drop_.DrawPreview(draw, camera_, origin, size);
     tools_.DrawGizmo(draw, scene_.Document(), camera_, origin, size, hovered);
+    tools_.DrawMarquee(draw, origin, size);
     draw->PopClipRect();
 }
 

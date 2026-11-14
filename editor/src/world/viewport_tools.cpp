@@ -16,6 +16,20 @@ Vec3 OriginOf(const SceneDocument& document, Entity entity) {
     return Vec3(world.cols[3].x, world.cols[3].y, world.cols[3].z);
 }
 
+void ApplyMarquee(SceneDocument& document, const std::vector<Entity>& hits, bool add, bool subtract) {
+    if (!add && !subtract) {
+        document.SetSelection(hits);
+        return;
+    }
+    std::vector<Entity> selection = document.Selection();
+    for (const Entity entity : hits) {
+        const auto it = std::find(selection.begin(), selection.end(), entity);
+        if (add && it == selection.end()) selection.push_back(entity);
+        if (subtract && it != selection.end()) selection.erase(it);
+    }
+    document.SetSelection(std::move(selection));
+}
+
 } // namespace
 
 void ViewportTools::DrawToolbar() {
@@ -47,28 +61,94 @@ void ViewportTools::HandleInput(SceneDocument& document, const SceneViewCamera& 
         if (ImGui::IsKeyPressed(ImGuiKey_E)) mode_ = GizmoMode::Rotate;
         if (ImGui::IsKeyPressed(ImGuiKey_R)) mode_ = GizmoMode::Scale;
         if (ImGui::IsKeyPressed(ImGuiKey_Q)) space_ = space_ == GizmoSpace::World ? GizmoSpace::Local : GizmoSpace::World;
+        if (io.KeyCtrl) { // not while looking, where A is the fly key
+            if (ImGui::IsKeyPressed(ImGuiKey_A)) SelectAll(document);
+            if (ImGui::IsKeyPressed(ImGuiKey_I)) InvertSelection(document);
+        }
     }
     const f32 snap_step = SnapStep();
     if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
         press_ = io.MousePos;
         dragged_ = false;
-        if (!io.KeyShift && gizmo_.Begin(document, camera, origin, size, io.MousePos, mode_, space_)) dragged_ = true; // a gizmo press is not a pick
+        gizmo_press_ = false;
+        marquee_ = false;
+        marquee_op_ = io.KeyAlt ? MarqueeOperation::Subtract : (io.KeyCtrl ? MarqueeOperation::Add : MarqueeOperation::Replace);
+        if (!io.KeyShift && !io.KeyAlt && gizmo_.Begin(document, camera, origin, size, io.MousePos, mode_, space_)) { // Alt selects through, so it never grabs a handle
+            dragged_ = true;
+            gizmo_press_ = true;
+        }
     }
     if (gizmo_.Dragging()) {
         if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) gizmo_.Update(document, camera, origin, size, io.MousePos, snap_step);
         else gizmo_.End(document, camera, origin, size, io.MousePos, snap_step);
     }
-    if (active && ImGui::IsMouseDown(ImGuiMouseButton_Left) && (std::fabs(io.MousePos.x - press_.x) + std::fabs(io.MousePos.y - press_.y)) > 4.0f) dragged_ = true;
-    if (hovered && ImGui::IsMouseReleased(ImGuiMouseButton_Left) && !dragged_ && !io.KeyShift) {
-        const Entity picked = PickEntity(document, camera, origin, size, io.MousePos, 14.0f, bounds_);
-        if (picked == kNullEntity) {
-            if (!io.KeyCtrl) document.ClearSelection();
-        } else if (io.KeyCtrl) {
-            document.ToggleSelection(picked);
-        } else {
-            document.SetSelection({picked});
-        }
+    if (active && ImGui::IsMouseDown(ImGuiMouseButton_Left) && (std::fabs(io.MousePos.x - press_.x) + std::fabs(io.MousePos.y - press_.y)) > 4.0f) {
+        dragged_ = true;
+        if (!gizmo_press_ && !io.KeyShift) marquee_ = true; // shift + drag pans the view instead
     }
+    if ((hovered || active) && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+        const bool was_marquee = marquee_, was_gizmo = gizmo_press_;
+        marquee_ = false;
+        gizmo_press_ = false;
+        if (was_gizmo) {
+            // the gizmo's End above recorded the drag as one edit
+        } else if (was_marquee) {
+            ApplyMarquee(document, EntitiesInRectangle(document, camera, origin, size, press_, io.MousePos, bounds_), marquee_op_ == MarqueeOperation::Add,
+                         marquee_op_ == MarqueeOperation::Subtract);
+        } else if (hovered && !dragged_ && !io.KeyShift) {
+            Entity picked = PickEntity(document, camera, origin, size, io.MousePos, 14.0f, bounds_);
+            if (io.KeyAlt) { // step through what is stacked under the mouse, so a model in front does not hide the one behind
+                const std::vector<Entity> stack = PickEntities(document, camera, origin, size, io.MousePos, 14.0f, bounds_);
+                if (!stack.empty()) {
+                    std::size_t index = 0;
+                    bool found = false;
+                    for (std::size_t i = 0; i < stack.size(); ++i) {
+                        if (!document.IsSelected(stack[i])) continue;
+                        index = i;
+                        found = true;
+                    }
+                    index = !found ? (stack.size() > 1 ? 1 : 0) : (index + 1) % stack.size(); // the first Alt-click takes the one behind the front
+                    picked = stack[index];
+                }
+            }
+            if (picked == kNullEntity) {
+                if (!io.KeyCtrl) document.ClearSelection();
+            } else if (io.KeyCtrl) {
+                document.ToggleSelection(picked);
+            } else {
+                document.SetSelection({picked});
+            }
+        }
+        dragged_ = false;
+    }
+}
+
+void ViewportTools::SelectAll(SceneDocument& document) {
+    std::vector<Entity> all;
+    for (const Entity entity : document.Entities()) {
+        if (document.GetWorld().HasComponent<Transform>(entity)) all.push_back(entity);
+    }
+    document.SetSelection(std::move(all));
+}
+
+void ViewportTools::InvertSelection(SceneDocument& document) {
+    std::vector<Entity> inverted;
+    for (const Entity entity : document.Entities()) {
+        if (document.GetWorld().HasComponent<Transform>(entity) && !document.IsSelected(entity)) inverted.push_back(entity);
+    }
+    document.SetSelection(std::move(inverted));
+}
+
+void ViewportTools::DrawMarquee(ImDrawList* draw, const ImVec2& origin, const ImVec2& size) const {
+    if (!marquee_ || size.x < 1.0f || size.y < 1.0f) return;
+    const ImVec2 mouse = ImGui::GetIO().MousePos;
+    const ImVec2 low(std::clamp(std::min(press_.x, mouse.x), origin.x, origin.x + size.x), std::clamp(std::min(press_.y, mouse.y), origin.y, origin.y + size.y));
+    const ImVec2 high(std::clamp(std::max(press_.x, mouse.x), origin.x, origin.x + size.x), std::clamp(std::max(press_.y, mouse.y), origin.y, origin.y + size.y));
+    const ImU32 color = marquee_op_ == MarqueeOperation::Add     ? Color(90, 200, 120, 220)
+                        : marquee_op_ == MarqueeOperation::Subtract ? Color(220, 100, 90, 220)
+                                                                    : Color(120, 170, 255, 220);
+    draw->AddRectFilled(low, high, (color & 0x00FFFFFFu) | (45u << 24));
+    draw->AddRect(low, high, color);
 }
 
 void ViewportTools::DrawGizmo(ImDrawList* draw, const SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, bool hovered) const {

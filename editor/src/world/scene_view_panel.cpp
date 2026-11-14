@@ -164,6 +164,7 @@ void SceneViewPanel::Draw(SceneDocument& document, const ModelBoundsCache* bound
     }
     drop_.DrawPreview(draw, camera_, origin, size);
     tools_.DrawGizmo(draw, document, camera_, origin, size, hovered);
+    tools_.DrawMarquee(draw, origin, size);
     // A short message in the middle: the fly speed while the wheel is changing it, otherwise a bookmark that was saved or recalled.
     const std::string message = speed_notice_ > 0.0f ? "Speed " + std::to_string(static_cast<int>(std::lround(camera_.fly_speed))) + " m/s"
                                                      : (notice_left_ > 0.0f ? notice_ : std::string());

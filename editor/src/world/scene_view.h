@@ -100,6 +100,16 @@ bool RayHitsEntityMesh(const SceneDocument& document, Entity entity, const Model
 Entity PickEntity(const SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, f32 radius = 14.0f,
                   const ModelBoundsCache* bounds = nullptr);
 
+// Every entity under `mouse`, nearest first: those whose model box the ray passes through (with `bounds`), then those whose origin is within `radius`
+// pixels, ordered by the distance along the ray. This is the stack Alt-click steps through, front to back.
+std::vector<Entity> PickEntities(const SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse,
+                                 f32 radius = 14.0f, const ModelBoundsCache* bounds = nullptr);
+
+// The entities whose screen-space box meets the rectangle between `first` and `second` (either corner order): for marquee selection. A model's real box
+// is used when `bounds` knows it, the unit box otherwise; an entity partly behind the near plane is judged by its origin.
+std::vector<Entity> EntitiesInRectangle(const SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& first,
+                                        const ImVec2& second, const ModelBoundsCache* bounds = nullptr);
+
 // The mouse as a ray into the world (origin and unit direction); false if the view-projection can't be inverted.
 bool MouseRay(const Mat4& view_projection, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, Vec3& ray_origin, Vec3& ray_direction);
 

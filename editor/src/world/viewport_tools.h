@@ -31,8 +31,15 @@ public:
     // The mode buttons and the snap controls on the current line (the caller may SameLine and add to it).
     void DrawToolbar();
     // For the ImGui item just submitted over the view (an invisible button covering `origin`, `size`): W, E and R choose the mode, a press on a
-    // gizmo handle starts a drag that follows the mouse and records one undo step on release, and a click elsewhere selects (ctrl toggles, empty space clears).
+    // gizmo handle starts a drag that follows the mouse and records one undo step on release, and a click elsewhere selects (ctrl toggles, alt steps
+    // through what is stacked under the mouse, empty space clears). A plain drag is a marquee, Ctrl+drag adds to the selection and Alt+drag subtracts.
     void HandleInput(SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, bool hovered, bool active);
+    // Ctrl+A selects every entity with a Transform; Ctrl+I keeps the ones that are not selected (both among those entities).
+    static void SelectAll(SceneDocument& document);
+    static void InvertSelection(SceneDocument& document);
+    // While a marquee drag is running, its rectangle: drawn over the picture (blue replace, green add, red subtract).
+    bool MarqueeActive() const { return marquee_; }
+    void DrawMarquee(ImDrawList* draw, const ImVec2& origin, const ImVec2& size) const;
     // The gizmo on the first selected entity, in the chosen mode, the handle under the mouse (or being dragged) brighter.
     void DrawGizmo(ImDrawList* draw, const SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, bool hovered) const;
     // An entity's outline: its box (the model's real extent with `bounds`, else a unit box) placed by its world transform. `thickness` > 1 for emphasis.
@@ -46,6 +53,7 @@ public:
                                const LivePosition& live_position = nullptr) const;
 
 private:
+    enum class MarqueeOperation { Replace, Add, Subtract };
     TransformGizmo gizmo_;
     const ModelBoundsCache* bounds_ = nullptr;
     GizmoMode mode_ = GizmoMode::Move;
@@ -55,7 +63,10 @@ private:
     f32 snap_rotate_ = 15.0f;
     f32 snap_scale_ = 0.1f;
     ImVec2 press_{0.0f, 0.0f};
-    bool dragged_ = false;
+    bool dragged_ = false;      // the mouse moved far enough that the press is not a click
+    bool gizmo_press_ = false;  // the press took a gizmo handle, so the release is not a marquee or a pick
+    bool marquee_ = false;      // a selection rectangle is being dragged
+    MarqueeOperation marquee_op_ = MarqueeOperation::Replace;
 };
 
 } // namespace aether::editor
