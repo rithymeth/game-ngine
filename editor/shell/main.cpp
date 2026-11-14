@@ -19,8 +19,10 @@
 
 #include "host/imgui_vulkan_host.h"
 #include "host/live_viewport_panel.h"
+#include "host/scene_shading.h"
 #include "host/imgui_window_input.h"
 #include "workspace/editor_workspace.h"
+#include "world/scene_view_panel.h"
 
 #include "aether/core/log.h"
 #include "aether/core/profiler.h"
@@ -385,6 +387,10 @@ int main(int argc, char** argv) {
         LiveViewportPanel live(*device, workspace.Scene(), [&workspace] { return workspace.ProjectFile(); });
         f32 frame_dt = 0.0f;
         workspace.Extensions().AddPanel({"Live Viewport", "Scene", [&live, &frame_dt] { live.Draw(frame_dt); }, "shell"});
+        // The Scene View's rendered looks (Lit, Unlit, Normals) are the same renderer, driven by the Scene View's own camera; the panel asks this for
+        // a picture when one of those modes is chosen and keeps its own overlays on top.
+        LiveSceneShading scene_shading(*device, workspace.Scene(), [&workspace] { return workspace.ProjectFile(); });
+        workspace.SceneView().shading = &scene_shading;
         // AETHER_EDITOR_TAB picks the tool shown first (the start of its name, any case).
         // What the last session left: the divider and the open tool. A headless run (tests, screenshots) neither
         // reads nor writes it unless AETHER_EDITOR_LAYOUT names a file; AETHER_EDITOR_TAB wins over the remembered tool.

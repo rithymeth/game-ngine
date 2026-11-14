@@ -3,6 +3,7 @@
 #include "workspace/editor_workspace.h"
 #if defined(AETHER_HAS_EDITOR_VULKAN)
 #include "host/live_viewport_panel.h"
+#include "host/scene_shading.h"
 #endif
 #include "content/content_drag.h"
 #include "world/content_drop.h"
@@ -309,6 +310,112 @@ AETHER_TEST(LiveViewport_TheOverlayCameraLandsOnTheRenderedObject) {
     }
     AETHER_CHECK(!blue_elsewhere);
 }
+
+AETHER_TEST(LiveViewport_UnlitNormalsAndOrthographicViewsDrawDifferently) {
+    std::unique_ptr<gfx::rhi::IDevice> device = TryDevice();
+    if (!device) {
+        std::printf("    (no Vulkan device: install a driver, or Mesa's lavapipe, to run this)\n");
+        return;
+    }
+    const stdfs::path project = MakeProject("ViewModes");
+    stdfs::path cooked;
+    std::string error;
+    AETHER_CHECK(CookForPreview(project, "Scenes/Main.ascene", project.parent_path() / "Saved" / "ViewModeTest", &cooked, &error));
+    LiveViewport view(*device);
+    constexpr u32 kWidth = 160, kHeight = 90;
+    AETHER_CHECK(view.Load(cooked, "Scenes/Main.ascene", kWidth, kHeight, &error));
+    SceneViewCamera camera;
+    auto draw = [&](player::SceneRenderer::ViewMode mode, SceneViewProjection projection) {
+        camera.projection = projection;
+        view.SetViewMode(mode);
+        for (int frame = 0; frame < 3; ++frame) {
+            AETHER_CHECK(view.Frame(0.0f, camera.Eye(), camera.Rotation(), camera.fov_degrees,
+                                    projection == SceneViewProjection::Orthographic ? Projection::Orthographic : Projection::Perspective, camera.ortho_height));
+        }
+        return std::vector<u8>(view.Pixels());
+    };
+    const std::vector<u8> lit = draw(player::SceneRenderer::ViewMode::Lit, SceneViewProjection::Perspective);
+    const std::vector<u8> unlit = draw(player::SceneRenderer::ViewMode::Unlit, SceneViewProjection::Perspective);
+    const std::vector<u8> normals = draw(player::SceneRenderer::ViewMode::Normals, SceneViewProjection::Perspective);
+    const std::vector<u8> ortho = draw(player::SceneRenderer::ViewMode::Lit, SceneViewProjection::Orthographic);
+    // Each look is a different picture: no light on the surfaces, the normals as colours, and the same lit scene in parallel projection.
+    AETHER_CHECK(DifferingPixels(lit, unlit) > kWidth * kHeight / 10);
+    AETHER_CHECK(DifferingPixels(lit, normals) > kWidth * kHeight / 10);
+    AETHER_CHECK(DifferingPixels(unlit, normals) > kWidth * kHeight / 10);
+    AETHER_CHECK(DifferingPixels(lit, ortho) > kWidth * kHeight / 10);
+}
+
+// A scene with no camera is drawn anyway: the viewport puts the editor's own camera in it, as the Scene View has one of its own.
+AETHER_TEST(LiveViewport_ASceneWithNoCameraGetsTheEditorCamera) {
+    std::unique_ptr<gfx::rhi::IDevice> device = TryDevice();
+    if (!device) {
+        std::printf("    (no Vulkan device: install a driver, or Mesa's lavapipe, to run this)\n");
+        return;
+    }
+    const stdfs::path project = MakeProject("NoCamera");
+    ScenePanel scene(project.parent_path() / "Content");
+    AETHER_CHECK(scene.OpenScene("Scenes/Main.ascene", true));
+    SceneDocument& document = scene.Document();
+    std::vector<Entity> cameras;
+    for (const Entity entity : document.Entities()) {
+        if (document.GetWorld().HasComponent<Camera>(entity)) cameras.push_back(entity);
+    }
+    for (const Entity entity : cameras) AETHER_CHECK(document.RemoveComponent(entity, GetComponentId<Camera>()));
+    stdfs::path cooked;
+    std::string error;
+    AETHER_CHECK(CookForPreview(project, "Scenes/Main.ascene", project.parent_path() / "Saved" / "NoCameraTest", &cooked, &error));
+    LiveViewport view(*device);
+    const std::vector<u8> bytes = SaveSceneToMemory(document.GetWorld());
+    AETHER_CHECK(view.Load(cooked, "Scenes/Main.ascene", 96, 54, &error, &bytes));
+    const usize entities = view.EntityCount();
+    SceneViewCamera camera;
+    AETHER_CHECK(view.Frame(0.0f, camera.Eye(), camera.Rotation(), camera.fov_degrees));
+    AETHER_CHECK(view.EntityCount() == entities + 1); // the camera the viewport made, once
+    AETHER_CHECK(view.Frame(0.0f, camera.Eye(), camera.Rotation(), camera.fov_degrees));
+    AETHER_CHECK(view.EntityCount() == entities + 1);
+    std::set<u32> colours;
+    for (usize i = 0; i + 3 < view.Pixels().size(); i += 4 * 7) colours.insert(u32(view.Pixels()[i]) << 16 | u32(view.Pixels()[i + 1]) << 8 | view.Pixels()[i + 2]);
+    AETHER_CHECK(colours.size() > 5);
+}
+
+#if defined(AETHER_HAS_EDITOR_VULKAN)
+// The Scene View's shaded look: the bridge cooks and runs the open scene the first time it is asked, draws at the Scene View's camera, and keeps what
+// the document has with patches, as the Live Viewport does.
+AETHER_TEST(LiveSceneShading_CooksOnFirstUseAndFollowsTheDocument) {
+    std::unique_ptr<gfx::rhi::IDevice> device = TryDevice();
+    if (!device) {
+        std::printf("    (no Vulkan device: install a driver, or Mesa's lavapipe, to run this)\n");
+        return;
+    }
+    Context imgui;
+    const stdfs::path project = MakeProject("ShadedSceneView");
+    ScenePanel scene(project.parent_path() / "Content");
+    AETHER_CHECK(scene.OpenScene("Scenes/Main.ascene", true));
+    LiveSceneShading shading(*device, scene, [&] { return project; });
+    AETHER_CHECK(!shading.Ready() && !shading.Picture().Valid());
+    SceneViewCamera camera;
+    AETHER_CHECK(shading.Advance(scene.Document(), camera, 160, 90, SceneViewMode::Lit, 1.0f));
+    AETHER_CHECK(shading.Ready() && shading.Picture().Width() == 160 && shading.Picture().Height() == 90);
+    AETHER_CHECK(shading.Viewport().FrameCount() >= 1);
+    const std::vector<u8> lit = shading.Viewport().Pixels();
+    AETHER_CHECK(shading.Advance(scene.Document(), camera, 160, 90, SceneViewMode::Unlit, 1.0f));
+    AETHER_CHECK(DifferingPixels(lit, shading.Viewport().Pixels()) > 160u * 90u / 10);
+    // A moved object is patched into the running scene: the next frame shows it where the document has it, without the scene starting over.
+    const u64 reloads = shading.Viewport().SceneReloads();
+    usize moved = 0;
+    for (const Entity entity : scene.Document().Entities()) {
+        if (!scene.Document().GetWorld().HasComponent<ModelRenderer>(entity)) continue;
+        scene.Document().SetPosition(entity, Vec3(200.0f, 0.0f, 0.0f), true);
+        ++moved;
+    }
+    AETHER_CHECK(moved > 0);
+    AETHER_CHECK(shading.Advance(scene.Document(), camera, 160, 90, SceneViewMode::Lit, 1.0f));
+    AETHER_CHECK(shading.Viewport().SceneReloads() == reloads && shading.Viewport().PatchCount() > 0);
+    AETHER_CHECK(DifferingPixels(lit, shading.Viewport().Pixels()) > 160u * 90u / 10);
+    shading.Stop();
+    AETHER_CHECK(!shading.Ready());
+}
+#endif
 
 AETHER_TEST(LiveViewportPanel_StartsFromTheOpenSceneAndShowsFrames) {
     std::unique_ptr<gfx::rhi::IDevice> device = TryDevice();

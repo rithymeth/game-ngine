@@ -363,6 +363,19 @@ asset editor is focused once those documents adopt the contract in Stage 6.
   so it stays readable, and each line fades to nothing at the grid's radius,
   so there is no edge. The X and Z axes are coloured and labelled near the
   origin.
+- **View modes:** the toolbar's combo picks Wireframe (boxes over the grid;
+  the default, and the only look in a build without a graphics device) or a
+  picture from the real renderer: Lit, Unlit (each surface's base colour, no
+  light on it) and Normals (the world-space normal as a colour). A shaded
+  picture runs the open scene in-process with the Scene View's own camera, at
+  up to 30 fps with the world frozen; edits show as they are made, the
+  project's models being cooked the first time a shaded look is chosen. Over
+  a picture only the selected and hovered entities are boxed, so the lit
+  scene shows through.
+- **Show flags:** the Show popup toggles the Grid, Gizmos, Bounds (entity
+  boxes), Helpers (entity labels, the selected entity's axes, the key hints)
+  and Collision (every box, sphere and capsule collider as a wireframe; a
+  trigger is yellow).
 - **Gizmo:** axis colors from tokens; the hovered handle turns yellow
   (`#FFD33D`). Move has the three arrows and the two-axis plane squares;
   Scale has arrows on the entity's own axes, the same squares growing two

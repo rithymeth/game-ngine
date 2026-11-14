@@ -424,7 +424,6 @@ depth range's zero start makes visible as a negative z. The Scene View's toolbar
 buttons, lit for the current view. Tests: a world unit projects to the same pixel length at the target and 100 units
 beyond it, each projection keeps its zoom across switching, the top view puts +X right and -Z up, front and side keep +Y
 up, and orbiting a preset makes it free again; the existing perspective, focus, ground-point and gizmo tests still pass.
-Not yet: shading.
 
 Done so far (2026-11-14): the fly camera, focus by selection bounds and camera bookmarks. `SceneViewCamera` gained
 `Move`, which translates eye and target together along the view's own forward, right and up, and `HandleCameraInput` runs
@@ -454,7 +453,7 @@ into a subtract (Shift+drag is still the camera pan), draws the live rectangle i
 longer grab a gizmo handle, so Alt selects through even on the pivot. The rectangle is drawn over both pictures.
 Tests: a marquee replaces, a Ctrl marquee adds and an Alt marquee subtracts (each checked to leave an entity outside it
 alone), Alt-click cycling a two-deep stack both ways and starting behind the front from an empty selection, select-all
-and invert, and a marquee meeting a model's real box where only its origin would miss. Not yet: shading.
+and invert, and a marquee meeting a model's real box where only its origin would miss.
 
 Done so far (2026-11-14): the endless fading ground grid, and the framing limits gone with it. The panel draws the grid around the
 camera target instead of a fixed ±20 m square: its minor spacing is `GridSpacing(world_per_pixel)`, a power of ten that keeps a minor
@@ -497,7 +496,30 @@ travel and one undo restores them; a Scale square doubles X and Z and leaves Y; 
 points; a Centre move shifts a pair and a Centre quarter-turn puts them at (2, 0, ±2) round the middle; the handle projects to 90 px
 at the target, grows tenfold in world units after a tenfold zoom, halves at half the depth, and is `height`/90 px in an orthographic
 view; Euler round-trips (30, -20, 10), matches a camera's yaw-then-pitch rotation, and typing 45 into the rotation row's X entry
-yields a 45-degree pitch quaternion. Not yet: shading.
+yields a 45-degree pitch quaternion.
+
+Done so far (2026-11-14): the shaded Scene View and the show flags. The shell gives the Scene View a picture from the Live
+Viewport's own renderer. `SceneViewShading` (`editor/src/world/scene_view_shading.h`) is the whole of what the portable panel knows --
+`Advance(document, camera, width, height, mode, dt)`, a picture and a note -- and `LiveSceneShading`
+(`editor/src/host/scene_shading.{h,cpp}`, Vulkan only) implements it on a `LiveViewport`; the shell makes one and hands it to the
+workspace's new `SceneView()` accessor. The first shaded frame cooks the project's models and starts the open scene from its bytes, so
+nothing has to be saved; after that an edit is patched into the running scene exactly as the Live Viewport patches, which is what makes
+a gizmo drag show in the picture as it is made, and only a change that cannot be patched -- or another scene -- loads it again. The
+picture has the view's aspect (the overlays share it), is drawn at most 1920 px on its long side, is rebuilt at a new size only once the
+view has kept it for 0.3 s (a splitter drag does not rebuild it every frame), and runs at up to 30 fps with the world frozen, since the
+Scene View shows the scene as authored. `SceneRenderer::ViewMode` (installed header) adds Unlit -- each surface's own base colour, no
+light on it -- and Normals -- the world-space normal as a colour -- to Lit; the scene shader reads the mode from `g_Frame.counts.w` and
+returns before the tone-map, leaving the lit path untouched. `LiveViewport::Frame` takes the projection and the orthographic height and
+makes an "Editor Camera" for a scene with none (so Lit works on a cameraless scene, as the Scene View always has a camera of its own), the
+orthographic eye is put far enough back that the whole scene is in front of it, and `SetViewMode` chooses the look. The toolbar gained a
+Wireframe/Lit/Unlit/Normals combo and a Show popup (Grid, Gizmos, Bounds, Helpers, Collision); over a picture only the selected and hovered
+entities are boxed so the lit scene shows through, and Wireframe -- or a build without Vulkan, which says so in the middle of the view --
+keeps the old drawing. Collision draws every BoxCollider, SphereCollider and CapsuleCollider as a wireframe read through reflection (no
+physics link, so the portable editor has it too; a trigger is yellow). Tests: Lit, Unlit, Normals and an orthographic view each draw a
+different picture; a scene with every camera removed gains exactly one editor camera and draws; the panel asks the shading for the chosen
+mode at the view's size and stops it in Wireframe; each show flag removes draw-list vertices and Collision adds them; and the bridge cooks
+on first use, follows a moved object by patch without reloading the scene, changes with the mode, and stops. Not yet: a GPU wireframe (it
+needs a line pipeline, which the Vulkan path has none of), and the gate's headless screenshots per mode and 300k picking regression.
 
 ### Stage 3 — Content browser and importer parity (L)
 

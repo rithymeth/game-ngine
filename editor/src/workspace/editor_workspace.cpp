@@ -1257,6 +1257,7 @@ void EditorWorkspace::DrawTool(usize tool) {
 }
 
 ScenePanel& EditorWorkspace::Scene() { return *impl_->scene_panel; }
+SceneViewPanel& EditorWorkspace::SceneView() { return impl_->scene_view; }
 
 EditorDocument& EditorWorkspace::ActiveDocument() { return *impl_->document_tabs.Active(); }
 const EditorDocument& EditorWorkspace::ActiveDocument() const { return *impl_->document_tabs.Active(); }

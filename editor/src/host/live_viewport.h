@@ -1,11 +1,13 @@
 #pragma once
 
 #include "aether/player/graph_material.h"
+#include "aether/player/scene_renderer.h"
 #include "aether/gfx/rhi/command_list.h"
 #include "aether/gfx/rhi/device.h"
 #include "aether/gfx/rhi/swap_chain.h"
 #include "aether/ecs/world.h"
 #include "aether/scene/entity_guid.h"
+#include "aether/scene/gameplay.h"
 #include "aether/math/quaternion.h"
 #include "aether/math/vec.h"
 
@@ -68,8 +70,12 @@ public:
     u32 Height() const;
 
     // Advances the game by `dt` seconds, puts the scene's camera at `position` looking as `rotation` (with `fov_degrees` if above zero),
-    // draws, and reads the picture back. False if nothing is loaded or the picture could not be read.
-    bool Frame(f32 dt, const Vec3& position, const Quaternion& rotation, f32 fov_degrees = 0.0f);
+    // draws, and reads the picture back. The scene keeps its own camera (the active one, or one made here when it has none); `projection`
+    // and `ortho_height` select the parallel view. False if nothing is loaded or the picture could not be read.
+    bool Frame(f32 dt, const Vec3& position, const Quaternion& rotation, f32 fov_degrees = 0.0f, Projection projection = Projection::Perspective,
+               f32 ortho_height = 0.0f);
+    // The look of the next frames: the scene pass's lit shading, or the editor's unlit and normals debug views.
+    void SetViewMode(player::SceneRenderer::ViewMode mode);
     // The last picture: Width() * Height() * 4 bytes, top row first.
     const std::vector<u8>& Pixels() const { return pixels_; }
     // How many frames have been drawn since Load.

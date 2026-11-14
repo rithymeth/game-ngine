@@ -2,15 +2,16 @@
 
 #include "world/content_drop.h"
 #include "world/scene_view.h"
+#include "world/scene_view_shading.h"
 #include "world/viewport_tools.h"
 
 #include <string>
 
 namespace aether::editor {
 
-// A view of the open scene as boxes and axes over a ground grid, from an orbit camera, with the editing tools (click-to-select, the move, rotate and
-// scale gizmos, dropping a model from the Content Browser). It draws with ImGui's own draw list (no renderer), so it works in the portable shell and
-// headless; it shows where things are, not how they look (the Live Viewport shows that, with the same tools).
+// A view of the open scene: boxes and axes over a ground grid, or (with `shading`) the scene drawn by the real renderer in the shell. From an orbit
+// camera, with the editing tools (click-to-select, the move, rotate and scale gizmos, dropping a model from the Content Browser). Without `shading` it
+// draws with ImGui's own draw list only (no renderer), so it works in the portable shell and headless; the shading is a Vulkan build's business.
 class SceneViewPanel {
 public:
     // Fills the current ImGui window, editing the selection of `document`. With `bounds`, objects are picked and outlined by their models' real extents.
@@ -22,6 +23,12 @@ public:
     SceneViewCamera& Camera() { return camera_; }
     const SceneViewCamera& Camera() const { return camera_; }
     ViewportTools& Tools() { return tools_; }
+
+    // Wireframe (boxes, above) or a rendered picture; Lit, Unlit and Normals need `shading`. Not owned: null leaves the view wireframe-only.
+    SceneViewMode mode = SceneViewMode::Wireframe;
+    SceneViewShading* shading = nullptr;
+    // The overlays drawn on top, in either mode.
+    SceneViewShowFlags show;
 
 private:
     SceneViewCamera camera_;

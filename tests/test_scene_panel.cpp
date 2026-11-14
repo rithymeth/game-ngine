@@ -659,6 +659,91 @@ AETHER_TEST(SceneView_BookmarksStoreAWholePoseAndNumberKeysRecallIt) {
     AETHER_CHECK(NearVec(panel.Camera().target, Vec3(7.0f, 0.0f, 0.0f), 1e-4f));
 }
 
+// The view mode asks the shell's shading for a picture (and lets it go in Wireframe); the show flags take each overlay away, and Collision adds the
+// collider wireframe. The draw-list vertex count says whether an overlay drew.
+AETHER_TEST(SceneView_TheShadedLookAsksForAPictureAndShowFlagsHideOverlays) {
+    HeadlessImGui imgui;
+    SceneViewPanel panel;
+    SceneDocument document;
+    const Entity a = document.CreateEntity("A");
+    document.SetPosition(a, Vec3(2.0f, 0.0f, 0.0f), true);
+    const Entity b = document.CreateEntity("B");
+    document.SetPosition(b, Vec3(-2.0f, 0.5f, 0.0f), true);
+    const ComponentId box = FindComponentIdByName("BoxCollider"); // by name, so the test needs no physics header; the default box is fine
+    const bool has_collider = box != kInvalidComponentId && document.AddComponent(b, box);
+    document.SetSelection({a});
+
+    struct StubShading final : SceneViewShading {
+        bool Ready() const override { return texture.Valid(); }
+        const std::string& Note() const override { return note; }
+        bool Advance(SceneDocument&, const SceneViewCamera&, u32 width, u32 height, SceneViewMode requested, f32) override {
+            ++advances;
+            last_mode = requested;
+            last_width = width;
+            last_height = height;
+            return Ready();
+        }
+        const ImageTexture& Picture() const override { return texture; }
+        void Stop() override { ++stops; }
+
+        ImageTexture texture;
+        std::string note;
+        int advances = 0;
+        int stops = 0;
+        SceneViewMode last_mode = SceneViewMode::Wireframe;
+        u32 last_width = 0;
+        u32 last_height = 0;
+    };
+    StubShading stub;
+    AETHER_CHECK(stub.texture.Set(8, 8, std::vector<u8>(8 * 8 * 4, 120)));
+    panel.shading = &stub;
+
+    int vertices = 0;
+    auto frame = [&] {
+        imgui.Frame([&] {
+            ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f));
+            ImGui::SetNextWindowSize(ImVec2(1200.0f, 800.0f)); // fixed, so the overlays' vertex counts are comparable frame to frame
+            ImGui::Begin("view", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize);
+            panel.Draw(document);
+            vertices = static_cast<int>(ImGui::GetWindowDrawList()->VtxBuffer.Size);
+            ImGui::End();
+        });
+    };
+    frame();
+    AETHER_CHECK(stub.advances == 0 && stub.stops == 1); // wireframe: the shading is not asked, and any scene it ran is stopped
+    const int wireframe = vertices;
+
+    panel.mode = SceneViewMode::Unlit;
+    frame();
+    AETHER_CHECK(stub.advances == 1 && stub.last_mode == SceneViewMode::Unlit && stub.last_width > 0 && stub.last_height > 0);
+    panel.mode = SceneViewMode::Normals;
+    frame();
+    AETHER_CHECK(stub.last_mode == SceneViewMode::Normals);
+    panel.mode = SceneViewMode::Wireframe;
+    frame();
+    AETHER_CHECK(stub.advances == 2 && stub.stops == 2);
+
+    panel.show.grid = false;
+    frame();
+    AETHER_CHECK(vertices < wireframe);
+    const int no_grid = vertices;
+    panel.show.bounds = false;
+    frame();
+    AETHER_CHECK(vertices < no_grid);
+    const int no_bounds = vertices;
+    panel.show.helpers = false;
+    frame();
+    AETHER_CHECK(vertices < no_bounds);
+    panel.show.gizmos = false;
+    frame();
+    const int no_gizmos = vertices;
+    if (has_collider) {
+        panel.show.collision = true;
+        frame();
+        AETHER_CHECK(vertices > no_gizmos); // the collider's wireframe
+    }
+}
+
 AETHER_TEST(SceneView_FocusAndDrawHeadless) {
     HeadlessImGui imgui;
     SceneViewPanel panel;

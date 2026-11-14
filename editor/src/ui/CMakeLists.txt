@@ -114,6 +114,7 @@ if(AETHER_BUILD_VULKAN)
         ../host/imgui_vulkan_host.cpp
         ../host/live_viewport.cpp
         ../host/live_viewport_panel.cpp
+        ../host/scene_shading.cpp
         ${imgui_SOURCE_DIR}/backends/imgui_impl_vulkan.cpp
     )
     target_include_directories(aether_editor_vulkan PUBLIC ${imgui_SOURCE_DIR}/backends)

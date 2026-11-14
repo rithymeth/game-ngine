@@ -26,7 +26,7 @@ public:
     u32 Width() const { return width_; }
     u32 Height() const { return height_; }
     // For ImGui::Image. Only meaningful while Valid().
-    ImTextureRef Ref();
+    ImTextureRef Ref() const;
 
 private:
     void Collect(); // frees what the backend has finished destroying

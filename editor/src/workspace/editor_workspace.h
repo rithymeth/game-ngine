@@ -44,6 +44,7 @@ class CommandRegistry;
 class EditorDocument;
 class NotificationService;
 class FileDialog;
+class SceneViewPanel;
 struct EditorSettings;
 
 class EditorWorkspace {
@@ -113,6 +114,8 @@ public:
     void DrawTool(usize tool);
     // The open scene (the Scene tool's document and actions), for a host's own menus and shortcuts.
     ScenePanel& Scene();
+    // The Scene View's camera, tools and view mode, for a host that gives it a rendered picture (the shell's Vulkan shading).
+    SceneViewPanel& SceneView();
     // The document the shell's quit prompt asks about (Stage 0 of docs/design/EDITOR_PARITY_AUDIT.md): name, dirty
     // state, undo history and save, without the caller knowing it is a scene. Stage 1's tabs make it the focused
     // tab's document; the scene is the first document and stays open as long as it is the last one.

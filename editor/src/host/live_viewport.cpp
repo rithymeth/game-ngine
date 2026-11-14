@@ -85,6 +85,10 @@ bool LiveViewport::SetGraphFile(const std::string& path, std::vector<u8> bytes) 
     return true;
 }
 
+void LiveViewport::SetViewMode(player::SceneRenderer::ViewMode mode) {
+    if (impl_ && impl_->renderer) impl_->renderer->SetViewMode(mode);
+}
+
 player::GraphMaterialReport LiveViewport::CompileGraphMaterial(const std::string& path) const {
     if (!impl_) {
         player::GraphMaterialReport report;
@@ -318,18 +322,40 @@ bool LiveViewport::Load(const std::filesystem::path& cooked_dir, const std::stri
     return true;
 }
 
-bool LiveViewport::Frame(f32 dt, const Vec3& position, const Quaternion& rotation, f32 fov_degrees) {
+bool LiveViewport::Frame(f32 dt, const Vec3& position, const Quaternion& rotation, f32 fov_degrees, Projection projection, f32 ortho_height) {
     if (!impl_) return false;
     Impl& live = *impl_;
     live.game->Tick(std::clamp(dt, 0.0f, 0.1f));
-    bool placed = false;
-    live.game->GetWorld().ForEach<Transform, Camera>([&](Transform& transform, Camera& camera) { // the scene's camera is the editor's
-        if (placed) return;
-        placed = true;
-        transform.position = position;
-        transform.rotation = rotation;
-        if (fov_degrees > 0.0f) camera.fov_degrees = fov_degrees;
-    });
+    World& world = live.game->GetWorld();
+    const GuidIndex& guids = live.game->Guids();
+    Entity camera_entity = FindActiveCamera(world, guids);
+    if (camera_entity.IsNull()) { // a scene may have no camera; the viewport brings its own, above any the scene adds later
+        camera_entity = world.CreateEntity("Editor Camera");
+        world.AddComponent<Transform>(camera_entity);
+        world.AddComponent<Camera>(camera_entity);
+    }
+    Transform* transform = world.GetComponent<Transform>(camera_entity);
+    Camera* camera = world.GetComponent<Camera>(camera_entity);
+    if (transform != nullptr && camera != nullptr) {
+        transform->position = position;
+        transform->rotation = rotation;
+        camera->projection = projection;
+        if (projection == Projection::Orthographic) {
+            if (ortho_height > 0.0f) camera->ortho_height = ortho_height;
+            // The editor's parallel eye stands far back so the scene is in front of it; the far plane has to reach past the scene from there.
+            Vec3 centre(0.0f, 0.0f, 0.0f);
+            u32 count = 0;
+            world.ForEach<Transform>([&](const Transform& t) {
+                centre = centre + t.position;
+                ++count;
+            });
+            if (count > 0) centre = centre * (1.0f / static_cast<f32>(count));
+            camera->near_plane = 0.1f;
+            camera->far_plane = std::max(camera->far_plane, (position - centre).Length() * 2.0f + 100.0f);
+        } else if (fov_degrees > 0.0f) {
+            camera->fov_degrees = fov_degrees;
+        }
+    }
     const usize slot = static_cast<usize>(live.frames % live.commands.size());
     device_.WaitForFence(live.fences[slot]);
     live.swap_chain->AcquireNextImage();

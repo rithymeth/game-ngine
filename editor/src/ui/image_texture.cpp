@@ -61,6 +61,6 @@ bool ImageTexture::Set(u32 width, u32 height, const std::vector<u8>& rgba) {
     return true;
 }
 
-ImTextureRef ImageTexture::Ref() { return current_ ? current_->GetTexRef() : ImTextureRef(); }
+ImTextureRef ImageTexture::Ref() const { return current_ ? current_->GetTexRef() : ImTextureRef(); }
 
 } // namespace aether::editor

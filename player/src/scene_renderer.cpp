@@ -844,6 +844,21 @@ float4 PSMain(PSInput input, bool is_front : SV_IsFrontFace) : SV_TARGET {
         color = lerp(color, foam_color, foam * 0.85);
         surface_alpha = lerp(surface_alpha, 1.0, foam);
     }
+)" // split: MSVC caps one string literal at 16 KB
+R"(
+#ifdef AETHER_FRAME_DATA
+    // The editor's view modes (SceneRenderer::SetViewMode, in g_Frame.counts.w): a debug look that replaces the lit colour. Lit (0) is everything above.
+    if (g_Frame.counts.w == 1) { // Unlit: the surface's own colour, no light or sky on it
+#ifdef AETHER_HDR_TARGET
+        return float4(max(base_color, 0.0), surface_alpha);
+#else
+        return float4(LinearToSRGB(max(base_color, 0.0)), surface_alpha);
+#endif
+    }
+    if (g_Frame.counts.w == 2) { // Normals: the world-space normal as a colour (+X red, +Y green, +Z blue)
+        return float4(normal * 0.5 + 0.5, surface_alpha);
+    }
+#endif
 #ifdef AETHER_HDR_TARGET
     // Linear light into the HDR scene colour target; the post pass applies exposure, the tone mapper and the sRGB encoding.
     return float4(max(color, 0.0), surface_alpha);
@@ -2766,6 +2781,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
             frame_data = BuildFrameData(world, guids, camera_position);
             wind_zones = CollectWindZones(world, guids);
             frame_data.time[0] = static_cast<f32>(std::fmod(std::max(game_time, 0.0), 3600.0)); // wraps hourly: a float keeps its precision for the ripples' scroll
+            frame_data.counts[3] = static_cast<u32>(view_mode_); // the editor's view mode (counts.w in the shader)
             if (draw_particles) AddParticleLights(frame_data, renderer.particle_data.lights, camera_position);
             if (!renderer.light_buffers.empty()) {
                 light_buffer = renderer.light_buffers[frame_index % renderer.light_buffers.size()];

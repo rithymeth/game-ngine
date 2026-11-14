@@ -25,7 +25,7 @@ struct FrameData {
     f32 sun_direction[4]{}; // xyz: the unit vector from a surface toward the sun; w: 1 when a DirectionalLight set it
     f32 sun_color[4]{};     // rgb: the sun's colour times its intensity
     f32 sky_color[4]{};     // rgb: the ambient light's colour times its intensity; w: 1 when a SkyLight set it
-    u32 counts[4]{};        // x: point lights used, y: spot lights used, z: 1 when the sun is a DirectionalLight that casts shadows
+    u32 counts[4]{};        // x: point lights used, y: spot lights used, z: 1 when the sun is a DirectionalLight that casts shadows, w: the scene shader's view mode (0 lit, 1 unlit, 2 normals)
     f32 point_position_range[kMaxPointLights][4]{}; // xyz position, w range (the light fades to nothing there)
     f32 point_color[kMaxPointLights][4]{};          // rgb colour times intensity
     f32 spot_position_range[kMaxSpotLights][4]{};   // xyz position, w range

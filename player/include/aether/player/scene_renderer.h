@@ -22,10 +22,21 @@ std::string SceneShaderSource(bool with_frame_data, bool hdr_target = false, boo
 // its window/swap chain; headless runs do not construct it.
 class SceneRenderer {
 public:
+    // How the scene pass colours surfaces: the ordinary lit look, or one of the debug views a viewport tool offers.
+    enum class ViewMode : u32 {
+        Lit = 0,     // lights, sky and shadows
+        Unlit = 1,   // each surface's own base colour, with no light on it
+        Normals = 2, // the world-space normal as a colour (+X red, +Y green, +Z blue)
+    };
+
     SceneRenderer(gfx::rhi::IDevice& device, gfx::rhi::ISwapChain& swap_chain, const GamePackage& package);
     ~SceneRenderer();
     SceneRenderer(const SceneRenderer&) = delete;
     SceneRenderer& operator=(const SceneRenderer&) = delete;
+
+    // Which view mode the next Draw uses (Lit by default). The scene shader reads it from the frame constants.
+    void SetViewMode(ViewMode mode) { view_mode_ = mode; }
+    ViewMode GetViewMode() const { return view_mode_; }
 
     // frame_index selects the fence-protected per-frame buffers for animated meshes.
     // A quality preset's view distance in metres: the camera's far plane is pulled in to it (0, the default, leaves cameras as authored).
@@ -80,6 +91,7 @@ public:
     RayTracedShadowStats RayTracedShadows() const;
 
 private:
+    ViewMode view_mode_ = ViewMode::Lit;
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };
