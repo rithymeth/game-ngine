@@ -45,9 +45,9 @@ as well. The verdicts are a judgement from the source audit; the evidence column
 | Dimension | Aether today | Reference editors | Verdict |
 |---|---|---|---|
 | Project lifecycle | A Project Hub shown on a launch with no project (and File > Project Hub): recent projects with missing ones pruned, a picked or typed path, and template creation; File > Open Project goes through it | Project Browser/templates (Unreal), Unity Hub, Project Manager (Godot) | Partial |
-| Menus and commands | File, Edit, Tools, View; no Asset, Actor, Window or Help menus; command palette exists but has no binding | Complete menu bars plus searchable asset/command surfaces in all three | Missing |
+| Menus and commands | File, Edit, Tools, View and Help; no Asset, Actor or Window menus; one command table drives the menus, the palette and a generated shortcut cheat sheet | Complete menu bars plus searchable asset/command surfaces in all three | Partial |
 | Preferences and theme | One hardcoded dark theme; no settings file, theme choice or UI scale | Editor Preferences (Unreal, Unity), Editor Settings/themes (Godot) | Missing |
-| Shortcut handling | Hardcoded `ImGuiKey` checks plus `"Ctrl+Shift+B"` strings in extensions; no remap or conflict detection | Remappable shortcuts and conflict reporting in all three | Missing |
+| Shortcut handling | One command table with default chords and scopes, conflict detection (a startup test requires none) and a cheat sheet generated from it; no remapping yet | Remappable shortcuts and conflict reporting in all three | Partial |
 | Documents and layout | One scene document; one tool shown at a time (popped-out tools are separate windows); only the open tool and ImGui docking are remembered | Multi-document tabs, per-asset tabs, layout presets | Partial |
 | Data safety on exit | Quit is immediate; autosave exists but is unwired; unsaved-scene prompts exist for New/Open only | Close/quit prompts and recoverable autosave in all three | Missing |
 | Hierarchy | Tree with name filter, drag reparent, Ctrl multi-select, create/duplicate/delete/copy/paste | Outliner/Scene dock with visibility, lock, icons, multi-edit | Partial |
@@ -70,13 +70,13 @@ as well. The verdicts are a judgement from the source audit; the evidence column
 | Launch and project selection | Project Browser with templates and recent projects | Unity Hub, templates, recent projects | Project Manager, templates, import/scan | Project Hub on launch when no project is given; the template list, a picked path and the recent list in one window | `editor/src/workspace/editor_workspace.cpp` (`DrawProjectHub`), `editor/shell/main.cpp` | Partial |
 | Recent projects | In the project browser | In the Hub | In the Project Manager | Listed newest first and saved per user; missing entries are marked, removable individually or in one action; opening a project records it | `editor/src/core/recent_projects.cpp`, `editor_workspace.cpp` (`Impl::OpenProject`) | Partial |
 | Main toolbar | Save/undo/redo, transform tools, play controls, build/package, settings | Transform tools, play controls, layers, layout | Transform tools, play controls, scene tabs | One row under the menu bar: Save, Undo, Redo, the Scene View's move/rotate/scale, world/local and snap, Play/Pause/Step/Stop with a state underline, Build and Package, Settings | `editor/src/workspace/editor_workspace.cpp` (`DrawMainToolbar`), `editor/shell/main.cpp` | Partial |
-| Menus | File, Edit, Window, Tools, Build, Help | File, Edit, Assets, GameObject, Component, Window, Help | Scene, Project, Debug, Editor, Help | File, Edit, Tools, View only | `editor/shell/main.cpp:74-88`, `editor_workspace.cpp:1044-1094` | Missing |
+| Menus | File, Edit, Window, Tools, Build, Help | File, Edit, Assets, GameObject, Component, Window, Help | Scene, Project, Debug, Editor, Help | File, Edit, Tools, View and Help; no Asset, Actor or Window | `editor/shell/main.cpp` (`DrawEditor`), `editor_workspace.cpp` (`DrawMenuItems`, `DrawHelpMenu`) | Partial |
 | Document tabs | Level and asset editors as tabs | Scene, Game, asset editors as tabs | Scenes and scripts as main-screen tabs | One scene; one hub tool visible; popped-out tools | `editor/src/world/scene_panel.h:88` | Partial |
 | Layout presets | Saved layouts, per-user | Layouts per project/user | Editor layouts | Only "Reset layout"; panel positions in ImGui ini | `editor/shell/main.cpp:83-85`, `:201-214` | Missing |
 | Preferences | Editor Preferences, project settings, plugins | Preferences, Project Settings, Package Manager | Editor Settings, Project Settings, Input Map, plugins | None | — | Missing |
 | Theme and UI scale | Theme, UI scale, DPI awareness | Skin, UI scaling | Editor themes, editor scale | One dark theme; `ApplyEditorTheme(font_size)` has no caller-supplied setting | `editor/src/ui/editor_theme.cpp:33`, `main.cpp:189` | Missing |
-| Shortcut mapping | Remappable, conflict reporting | Shortcuts manager | Remappable input map/editor shortcuts | Hardcoded keys; extensions parse chord strings; no conflict view | `editor/src/ui/extensions.cpp:225-261` | Missing |
-| Command palette | Command palette in recent versions | Search (Ctrl+K) | Quick Open | Implemented, opened by no key or menu item | `editor/src/workspace/editor_workspace.h:107`, `editor_workspace.cpp:1194` | Missing |
+| Shortcut mapping | Remappable, conflict reporting | Shortcuts manager | Remappable input map/editor shortcuts | One table of default chords with scopes, conflict detection at startup and a cheat sheet generated from it; no remapping UI | `editor/src/workspace/command_registry.cpp`, `editor_workspace.cpp` (`DrawShortcutCheatSheet`) | Partial |
+| Command palette | Command palette in recent versions | Search (Ctrl+K) | Quick Open | Implemented and bound to Ctrl+Shift+P and View > Command Palette | `editor/src/workspace/command_registry.cpp` (`view.command_palette`), `editor_workspace.cpp` (`DrawCommandPalette`) | Partial |
 | Native file dialogs | Native open/save/import | Native | Native | Open Scene, Save Scene As and the toolbar's "..." use the system picker (`IFileDialog`; zenity/kdialog on Linux); the typed path remains the fallback | `editor/src/core/file_dialog.cpp`, `editor/src/world/scene_panel.cpp:74-100` | Partial |
 | Unsaved work on exit | Prompt per document | Prompt; play-mode changes discarded with warning | Prompt | Quit immediate; only New/Open prompt | `editor/shell/main.cpp:78`, `scene_panel.cpp:70-96` | Missing |
 | Autosave/recovery | Autosave and recovery | Autosave and recovery | Autosave backups | `SaveAutosave`/`LoadAutosave` exist and are unused | `editor/src/core/scene_document.cpp:202-226` | Missing |
@@ -142,7 +142,7 @@ as well. The verdicts are a judgement from the source audit; the evidence column
 | Live material preview | Material editor in viewport | Shader Graph preview | Shader editor preview | Material graph not drawn by the player; per-entity overrides show live | `docs/releases/v0.30.0.md` (Materials) | Partial |
 | Build/package | Toolbar build, cook, package, launch | Build Settings, Build And Run | Export templates, one-click export | Build and Package tool plus `aether_package` CLI; no toolbar action | `tools/package/main.cpp`, `editor/src/packaging/` | At parity (desktop) |
 | Plugin management | Plugin browser, enable/disable | Package Manager | Project Settings > Plugins, Asset Library | Plugins tool; no enable/disable workflow documented in-editor | `editor_workspace.cpp:343` | Partial |
-| Help and documentation | Help menu, docs, console `help` | Help menu, manual, API docs | Help menu, class reference | No Help menu; console has `help` | `editor/shell/main.cpp:74-88` | Missing |
+| Help and documentation | Help menu, docs, console `help` | Help menu, manual, API docs | Help menu, class reference | Help menu with a generated keyboard-shortcut sheet (F1) and About (engine version, build kind, tool count, open project); console has `help`; no docs or API links in-editor yet | `editor/shell/main.cpp` (`DrawHelpMenu`), `editor_workspace.cpp` (`DrawShortcutCheatSheet`, `DrawAbout`) | Partial |
 | Editor localization | Yes | Partial/localizable | Yes | No; UI strings are literals | source audit | Missing |
 
 ## The gaps that cost the most, with numbers
@@ -297,9 +297,19 @@ and a new `SceneDocument::ShouldSimulate()` for a host to ask, and an amber unde
 reading labels; Build and Package and Settings open their tools (the latter Preferences) through new palette commands
 `project.build` and `project.settings`. Tests: Step lets exactly one frame simulate and is ignored while playing (the
 stage gate), the toolbar's enabled state following the document through undo and redo, both tool actions opening their
-windows, and the toolbar drawn in editing, playing and paused states. Still open in this stage: menu completion,
-document tabs, the status bar, generated shortcut bindings and the cheat sheet, layout presets, and the scene toolbar's
-recents list.
+windows, and the toolbar drawn in editing, playing and paused states.
+
+Done so far (2026-11-14): the Help menu and the generated shortcut cheat sheet. `CommandRegistry::Shortcuts()` returns
+every chorded command as a `ShortcutRow` (id, label, chord, menu, context), in menu order and by label within a menu,
+with a command that has no menu listed under "Other" instead of being dropped; `DrawShortcutCheatSheet` draws exactly
+that table, so a chord the editor no longer has cannot stay listed and a new one appears with no second edit. Each row
+names its context (`CommandScopeName`: anywhere, Scene tool, Scene hierarchy): a Scene chord does nothing until the
+Scene tool has focus, and that is the part a reader needs. Help holds Keyboard Shortcuts (F1) and About Aether Editor
+(engine version, build kind, tool count, open project), and About links to the sheet. Tests: the rows are exactly the
+chorded commands, once each and carrying the table's label/chord/menu; menu ordering; F1 registered under Help; both
+commands opening their windows and drawing headlessly; and a chord-only command appearing under "Other". Still open in
+this stage: the rest of menu completion (Asset, Actor, Window with layout presets), document tabs, the status bar,
+layout presets, and the scene toolbar's recents list.
 
 ### Stage 2 — Viewport and selection parity (L)
 

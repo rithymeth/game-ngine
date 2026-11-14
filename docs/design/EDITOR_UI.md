@@ -414,6 +414,21 @@ embedded below it rather than in a second window. Opening or creating a project
 closes the hub; a failed open leaves it open, says why in its status line, and
 posts the same error to Messages.
 
+### 6.9 Help
+
+*Help > Keyboard Shortcuts* (F1) opens a sheet of every chord the editor has,
+grouped by menu (File, Edit, then the rest, then "Other" for toolbar and
+palette actions that have no menu) and with a Where column — Anywhere, Scene
+tool or Scene hierarchy — because a Scene chord does nothing until that tool has
+focus. The rows are generated from the command table (`CommandRegistry::Shortcuts`),
+not written by hand, so a chord that is removed disappears from the
+sheet and a new one appears without a second edit; a footer points at the
+command palette for actions that have no chord.
+
+*Help > About Aether Editor* shows the engine version, whether this is a release
+or an assertions-on build, the tool count and the open project, with a button to
+the shortcut sheet.
+
 ---
 
 ## 7. Interaction rules
@@ -455,7 +470,8 @@ will happen) before release. Invalid targets show a "no" cursor.
   `Scene`, `SceneTree`); the workspace polls `Global` and the Scene panel
   polls its two, which is what keeps Ctrl+S in a focused graph editor from
   meaning "save the scene" as well. Modifiers match exactly, and a startup
-  test fails on a duplicate id or on two chords that overlap.
+  test fails on a duplicate id or on two chords that overlap. The same table
+  generates the F1 shortcut sheet (§6.9).
 - Tab/Shift+Tab move between fields in the Inspector; Enter commits;
   Esc reverts a field being edited.
 

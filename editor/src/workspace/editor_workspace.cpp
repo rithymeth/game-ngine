@@ -1350,6 +1350,16 @@ void EditorWorkspace::RegisterCommands() {
          CommandScope::Global, {}, {}, [this] { command_palette_open = true; }});
     add({"view.preferences", "Preferences", "View", false, {}, CommandScope::Global, {}, {},
          [this] { preferences_open = true; }});
+    add({"help.shortcuts", "Keyboard Shortcuts", "Help", false, {ImGuiKey_F1, false, false, false},
+         CommandScope::Global, {}, {}, [this] { shortcuts_open = true; }});
+    add({"help.about", "About Aether Editor", "Help", false, {}, CommandScope::Global, {}, {},
+         [this] { about_open = true; }});
+}
+
+void EditorWorkspace::DrawHelpMenu() {
+    if (!ImGui::BeginMenu("Help")) return;
+    DrawMenuItems("Help");
+    ImGui::EndMenu();
 }
 
 void EditorWorkspace::DrawMenuItems(const char* menu) {
@@ -1501,6 +1511,8 @@ void EditorWorkspace::DrawWindows() {
     DrawCommandPalette();
     DrawDataSafetyWindows();
     if (project_hub_open) DrawProjectHub();
+    if (shortcuts_open) DrawShortcutCheatSheet();
+    if (about_open) DrawAbout();
     // Toasts last, so they sit above a modal. Clicking one is the way to the Messages list, where
     // the target links are; the toast itself only says what happened.
     if (DrawNotificationToasts(impl_->notifications) != 0) {
@@ -1902,6 +1914,70 @@ void EditorWorkspace::DrawProjectHub() {
     if (!impl.hub_status.empty()) ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "%s", impl.hub_status.c_str());
 
     if (opened) project_hub_open = false;
+    ImGui::End();
+}
+
+// The cheat sheet is the command table's chorded rows, grouped by menu, so a chord the editor no longer has cannot stay
+// listed and a new one appears without a second edit. The Where column is what a reader needs to know: a Scene chord
+// does nothing until the Scene tool has focus.
+void EditorWorkspace::DrawShortcutCheatSheet() {
+    ImGui::SetNextWindowSize(ImVec2(480, 580), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Keyboard Shortcuts", &shortcuts_open)) {
+        ImGui::End();
+        return;
+    }
+    ImGui::TextWrapped("Every chord the editor answers to. A chord fires where its context has focus.");
+    if (ImGui::BeginTable("##shortcuts", 3,
+                          ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn("Shortcut", ImGuiTableColumnFlags_WidthFixed, 120.0f);
+        ImGui::TableSetupColumn("Command");
+        ImGui::TableSetupColumn("Where", ImGuiTableColumnFlags_WidthFixed, 120.0f);
+        ImGui::TableHeadersRow();
+        std::string menu;
+        for (const ShortcutRow& row : impl_->commands.Shortcuts()) {
+            if (row.menu != menu) {
+                menu = row.menu;
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::TextDisabled("%s", menu.c_str());
+            }
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextUnformatted(row.chord.c_str());
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextUnformatted(row.label.c_str());
+            ImGui::TableSetColumnIndex(2);
+            ImGui::TextDisabled("%s", CommandScopeName(row.scope));
+        }
+        ImGui::EndTable();
+    }
+    if (const Command* palette = impl_->commands.Find("view.command_palette"); palette != nullptr) {
+        ImGui::TextDisabled("The command palette (%s) also lists commands without a chord.", palette->chord.ToString().c_str());
+    }
+    ImGui::End();
+}
+
+void EditorWorkspace::DrawAbout() {
+    ImGui::SetNextWindowSize(ImVec2(460, 0), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("About Aether Editor", &about_open, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::End();
+        return;
+    }
+    ImGui::TextUnformatted("Aether Editor");
+    ImGui::Separator();
+    ImGui::Text("Engine %s", kEngineVersion);
+#if defined(NDEBUG)
+    ImGui::TextDisabled("Release build");
+#else
+    ImGui::TextDisabled("Debug build (assertions on)");
+#endif
+    ImGui::Text("%zu tools", ToolCount());
+    ImGui::TextDisabled("Project: %s", impl_->project_file.empty() ? "none" : impl_->project_file.string().c_str());
+    ImGui::Separator();
+    if (ImGui::Button("Keyboard Shortcuts")) shortcuts_open = true;
+    ImGui::SameLine();
+    if (ImGui::Button("Close")) about_open = false;
+    ImGui::TextDisabled("Design docs: docs/design/EDITOR_UI.md and docs/design/EDITOR_PARITY_AUDIT.md");
     ImGui::End();
 }
 

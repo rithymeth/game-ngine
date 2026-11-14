@@ -184,6 +184,13 @@ public:
     // View > Preferences: autosave, on or off and how often. Plain UI state, like the palette's.
     bool preferences_open = false;
 
+    // Help (Stage 1 of docs/design/EDITOR_PARITY_AUDIT.md): the shortcut cheat sheet, generated from the command table
+    // so it cannot list a chord the editor no longer has, and About. Plain UI state, like the palette's.
+    bool shortcuts_open = false;
+    bool about_open = false;
+    // A "Help" menu: Keyboard Shortcuts (F1) and About Aether Editor, both from the table. The host puts it in its bar.
+    void DrawHelpMenu();
+
     // Phase 43.5: the command palette. Plain UI state, like a tool's window flag, so a host --
     // or a headless test -- can open it without a keybinding. DrawWindows() draws it.
     bool command_palette_open = false;
@@ -202,6 +209,8 @@ private:
     void DrawDataSafetyWindows();
     void DrawPreferences();
     void DrawProjectHub();
+    void DrawShortcutCheatSheet();
+    void DrawAbout();
 
     struct Impl;
     std::unique_ptr<Impl> impl_;

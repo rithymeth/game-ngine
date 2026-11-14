@@ -86,6 +86,7 @@ void DrawEditor(EditorWorkspace& workspace, const char* backend_label) {
             if (ImGui::MenuItem("Reset layout")) reset_layout = true;
             ImGui::EndMenu();
         }
+        workspace.DrawHelpMenu(); // Keyboard Shortcuts (F1), About
         ImGui::TextDisabled("   Aether Editor  -  %s  -  %zu tools", backend_label, workspace.ToolCount());
         ImGui::EndMainMenuBar();
     }

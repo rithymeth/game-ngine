@@ -1,5 +1,6 @@
 #include "workspace/command_registry.h"
 
+#include <algorithm>
 #include <utility>
 
 namespace aether::editor {
@@ -66,6 +67,41 @@ std::vector<std::string> CommandRegistry::Conflicts() const {
         }
     }
     return conflicts;
+}
+
+const char* CommandScopeName(CommandScope scope) {
+    switch (scope) {
+    case CommandScope::Global: return "Anywhere";
+    case CommandScope::Scene: return "Scene tool";
+    case CommandScope::SceneTree: return "Scene hierarchy";
+    }
+    return "Anywhere";
+}
+
+std::vector<ShortcutRow> CommandRegistry::Shortcuts() const {
+    static constexpr const char* kMenuOrder[] = {"File", "Edit", "Asset", "Actor", "View", "Tools", "Window", "Help", "Other"};
+    const auto rank = [](const std::string& menu) {
+        int index = 0;
+        for (const char* known : kMenuOrder) {
+            if (menu == known) return index;
+            ++index;
+        }
+        return 100; // a menu an extension adds comes after the editor's, alphabetically
+    };
+    std::vector<ShortcutRow> rows;
+    for (const Command& command : commands_) {
+        if (!command.chord.IsSet()) continue;
+        rows.push_back({command.id, Label(command), command.chord.ToString(),
+                        command.menu.empty() ? std::string("Other") : command.menu, command.scope});
+    }
+    std::stable_sort(rows.begin(), rows.end(), [&rank](const ShortcutRow& a, const ShortcutRow& b) {
+        const int rank_a = rank(a.menu);
+        const int rank_b = rank(b.menu);
+        if (rank_a != rank_b) return rank_a < rank_b;
+        if (a.menu != b.menu) return a.menu < b.menu;
+        return a.label < b.label;
+    });
+    return rows;
 }
 
 bool CommandRegistry::RunPressedChord(CommandScope scope) const {

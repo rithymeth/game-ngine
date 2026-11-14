@@ -57,6 +57,19 @@ struct Command {
     std::function<void()> run;
 };
 
+// "Anywhere", "Scene tool" or "Scene hierarchy": where a chord has to be focused to fire, for the cheat sheet.
+const char* CommandScopeName(CommandScope scope);
+
+// One row of the shortcut cheat sheet, built from the table so a new command with a chord appears without a second
+// edit. `menu` is "Other" for a command with no menu (a toolbar or palette-only action).
+struct ShortcutRow {
+    std::string id;
+    std::string label;
+    std::string chord;
+    std::string menu;
+    CommandScope scope;
+};
+
 class CommandRegistry {
 public:
     // False, and nothing added, when the id is empty or already registered.
@@ -80,6 +93,10 @@ public:
     // The command a key press means in `context`, or nullptr. Runs the first
     // matching, enabled command and reports whether it did.
     bool RunPressedChord(CommandScope scope) const;
+
+    // Every command with a default chord, in menu order (File, Edit, Asset, Actor, View, Tools, Window, Help, then
+    // "Other" and any menu an extension adds), by label within a menu. The cheat sheet draws exactly this.
+    std::vector<ShortcutRow> Shortcuts() const;
 
 private:
     std::vector<Command> commands_;
