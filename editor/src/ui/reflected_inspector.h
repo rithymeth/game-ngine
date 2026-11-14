@@ -1,6 +1,7 @@
 #pragma once
 
 #include "aether/assets/asset_guid.h"
+#include "aether/math/quaternion.h"
 #include "aether/reflection/reflection.h"
 
 #include <functional>
@@ -43,13 +44,19 @@ struct InspectOptions {
 // fields are internal and hidden. Nested struct fields inherit their parent's
 // editability. Widgets follow the field's type and Meta: sliders/drags
 // clamped to Meta ranges, units after numbers ("1.50 m"), enum dropdowns,
-// text fields for strings, compact X/Y/Z(/W) rows for small math types, and
-// collapsible sub-tables for other structs. Meta::category groups fields
-// under a heading; Meta::tooltip shows on hovering the label.
+// text fields for strings, Euler X/Y/Z(/W) rows for vectors, Euler angles in
+// degrees for a quaternion (X pitch, Y yaw, Z roll, turned about Y, then X,
+// then Z), and collapsible sub-tables for other structs. Meta::category groups
+// fields under a heading; Meta::tooltip shows on hovering the label.
 //
 // `id` scopes ImGui ids, so two inspectors of the same type can coexist.
 InspectResult InspectObject(const reflect::TypeInfo& type, void* object, const char* id);
 InspectResult InspectObject(const reflect::TypeInfo& type, void* object, const char* id, const InspectOptions& options);
+
+// A rotation as Euler angles in degrees and back: turned about Y (yaw), then X (pitch), then Z (roll), the order the editor's
+// cameras use. Pointing straight up or down is the one ambiguous case; it puts the whole turn into yaw.
+Vec3 EulerDegreesFromRotation(const Quaternion& rotation);
+Quaternion RotationFromEulerDegrees(const Vec3& degrees);
 
 template <typename T>
 InspectResult InspectObject(T& object, const char* id) {

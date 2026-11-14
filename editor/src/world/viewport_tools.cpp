@@ -43,6 +43,10 @@ void ViewportTools::DrawToolbar() {
     if (ImGui::Button(local ? "Local" : "World")) space_ = local ? GizmoSpace::World : GizmoSpace::Local;
     ImGui::SetItemTooltip("Move and Rotate handles follow the %s axes (Q)", local ? "object's own" : "world's");
     ImGui::SameLine();
+    const bool centre = pivot_ == GizmoPivot::Centre;
+    if (ImGui::Button(centre ? "Centre" : "Pivot")) pivot_ = centre ? GizmoPivot::Origin : GizmoPivot::Centre;
+    ImGui::SetItemTooltip("Handles sit at the %s (P)", centre ? "middle of the selection" : "first selected entity's origin");
+    ImGui::SameLine();
     ImGui::Checkbox("Snap", &snap_);
     ImGui::SetItemTooltip("Round a gizmo drag to the step");
     ImGui::SameLine();
@@ -61,6 +65,8 @@ void ViewportTools::HandleInput(SceneDocument& document, const SceneViewCamera& 
         if (ImGui::IsKeyPressed(ImGuiKey_E)) mode_ = GizmoMode::Rotate;
         if (ImGui::IsKeyPressed(ImGuiKey_R)) mode_ = GizmoMode::Scale;
         if (ImGui::IsKeyPressed(ImGuiKey_Q)) space_ = space_ == GizmoSpace::World ? GizmoSpace::Local : GizmoSpace::World;
+        if (!io.KeyCtrl && !io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_P)) // not Ctrl+Shift+P, the command palette
+            pivot_ = pivot_ == GizmoPivot::Origin ? GizmoPivot::Centre : GizmoPivot::Origin;
         if (io.KeyCtrl) { // not while looking, where A is the fly key
             if (ImGui::IsKeyPressed(ImGuiKey_A)) SelectAll(document);
             if (ImGui::IsKeyPressed(ImGuiKey_I)) InvertSelection(document);
@@ -73,7 +79,7 @@ void ViewportTools::HandleInput(SceneDocument& document, const SceneViewCamera& 
         gizmo_press_ = false;
         marquee_ = false;
         marquee_op_ = io.KeyAlt ? MarqueeOperation::Subtract : (io.KeyCtrl ? MarqueeOperation::Add : MarqueeOperation::Replace);
-        if (!io.KeyShift && !io.KeyAlt && gizmo_.Begin(document, camera, origin, size, io.MousePos, mode_, space_)) { // Alt selects through, so it never grabs a handle
+        if (!io.KeyShift && !io.KeyAlt && gizmo_.Begin(document, camera, origin, size, io.MousePos, mode_, space_, pivot_)) { // Alt selects through, so it never grabs a handle
             dragged_ = true;
             gizmo_press_ = true;
         }
@@ -158,20 +164,20 @@ void ViewportTools::DrawGizmo(ImDrawList* draw, const SceneDocument& document, c
     const ImGuiIO& io = ImGui::GetIO();
     const GizmoMode mode = gizmo_.Dragging() ? gizmo_.Mode() : mode_;
     const GizmoSpace space = gizmo_.Dragging() ? gizmo_.Space() : space_;
-    const GizmoAxis hot = gizmo_.Dragging() ? gizmo_.Axis() : (hovered ? gizmo_.HitTest(document, camera, origin, size, io.MousePos, mode, space) : GizmoAxis::None);
-    const Vec3 at = OriginOf(document, subject);
-    const f32 length = TransformGizmo::HandleLength(camera);
+    const GizmoAxis hot = gizmo_.Dragging() ? gizmo_.Axis() : (hovered ? gizmo_.HitTest(document, camera, origin, size, io.MousePos, mode, space, pivot_) : GizmoAxis::None);
+    const Vec3 at = TransformGizmo::Pivot(document, pivot_);
+    const f32 length = TransformGizmo::HandleLength(camera, at, size);
     struct Handle { GizmoAxis axis; ImU32 normal, bright; };
     const Handle handles[3] = {{GizmoAxis::X, Color(210, 70, 70), Color(255, 130, 120)},
                                {GizmoAxis::Y, Color(80, 190, 80), Color(140, 255, 140)},
                                {GizmoAxis::Z, Color(80, 120, 230), Color(140, 175, 255)}};
     ImVec2 from;
     if (!ProjectToViewport(vp, at, origin, size, from)) return;
-    if (mode == GizmoMode::Move) { // the plane squares, each in the colour of the axis it is flat against
+    if (mode != GizmoMode::Rotate) { // the plane squares, each in the colour of the axis it is flat against: slide (Move) or grow two axes (Scale)
         const struct { GizmoAxis plane; int r, g, b; } planes[3] = {{GizmoAxis::PlaneYZ, 210, 70, 70}, {GizmoAxis::PlaneXZ, 80, 190, 80}, {GizmoAxis::PlaneXY, 80, 120, 230}};
         for (const auto& pl : planes) {
             Vec3 corners[4];
-            TransformGizmo::PlaneCorners(document, subject, pl.plane, space, length, corners);
+            TransformGizmo::PlaneCorners(document, subject, pl.plane, mode, space, at, length, corners);
             ImVec2 p[4];
             bool visible = true;
             for (int i = 0; i < 4 && visible; ++i) visible = ProjectToViewport(vp, corners[i], origin, size, p[i]);
@@ -206,6 +212,13 @@ void ViewportTools::DrawGizmo(ImDrawList* draw, const SceneDocument& document, c
             if (mode == GizmoMode::Scale) draw->AddRectFilled(ImVec2(to.x - r, to.y - r), ImVec2(to.x + r, to.y + r), color);
             else draw->AddCircleFilled(to, r, color);
         }
+    }
+    if (mode == GizmoMode::Scale) { // the middle box: every axis at once
+        const bool lit = hot == GizmoAxis::Uniform;
+        const ImU32 fill = lit ? Color(255, 235, 140) : Color(205, 207, 215);
+        const f32 r = lit ? 7.0f : 5.5f;
+        draw->AddRectFilled(ImVec2(from.x - r, from.y - r), ImVec2(from.x + r, from.y + r), fill);
+        draw->AddRect(ImVec2(from.x - r, from.y - r), ImVec2(from.x + r, from.y + r), Color(80, 82, 90), 0.0f, 0, 1.5f);
     }
     draw->AddCircleFilled(from, 3.5f, Color(235, 238, 245));
 }

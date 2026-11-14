@@ -6,6 +6,7 @@
 
 #include <imgui.h>
 
+#include <cmath>
 #include <functional>
 #include <string>
 
@@ -171,8 +172,9 @@ AETHER_TEST(EditorUI_FixedStringFieldIsEditable) {
     HeadlessImGui ui;
     inspect_test::Settings settings;
     // Focusable widgets in order: title, speed, count, small, precise,
-    // enabled, shape, offset x/y/z, rotation x/y/z/w, matrix (tree node), tag.
-    auto results = TypeIntoField(ui, settings, /*widget=*/15, "renamed");
+    // enabled, shape, offset x/y/z, rotation X/Y/Z (one Euler row), matrix
+    // (tree node), tag.
+    auto results = TypeIntoField(ui, settings, /*widget=*/14, "renamed");
     AETHER_CHECK(std::string(settings.tag) == "renamed");
     AETHER_CHECK(AnyCommitted(results, "tag"));
     AETHER_CHECK(settings.hidden_internal == 42 && settings.computed == 9.0f);
@@ -183,4 +185,27 @@ AETHER_TEST(EditorUI_AddComponentButtonPicksNothingWithoutInput) {
     const TypeInfo* candidates[] = {&Reflect<inspect_test::Settings>(), &Reflect<inspect_test::Empty>()};
     ui.Frame([&] { AETHER_CHECK(editor::AddComponentButton(candidates) == -1); });
     ui.Frame([&] { AETHER_CHECK(editor::AddComponentButton({}) == -1); });
+}
+
+// A quaternion field (a Transform's rotation) is drawn as Euler angles in degrees, and typing one writes the quaternion back.
+AETHER_TEST(EditorUI_RotationIsShownAndEditedAsEulerDegrees) {
+    constexpr f32 kPi = 3.14159265358979f;
+    const Vec3 degrees(30.0f, -20.0f, 10.0f);
+    const Quaternion rotation = editor::RotationFromEulerDegrees(degrees);
+    const Vec3 shown = editor::EulerDegreesFromRotation(rotation);
+    AETHER_CHECK(std::fabs(shown.x - 30.0f) < 0.01f && std::fabs(shown.y + 20.0f) < 0.01f && std::fabs(shown.z - 10.0f) < 0.01f);
+    // The order is the camera's: yaw about Y, then pitch about X.
+    const Quaternion camera_like = (Quaternion::FromAxisAngle(Vec3(0, 1, 0), 0.5f) * Quaternion::FromAxisAngle(Vec3(1, 0, 0), -0.3f)).Normalized();
+    const Vec3 angles = editor::EulerDegreesFromRotation(camera_like);
+    AETHER_CHECK(std::fabs(angles.x + 0.3f * 180.0f / kPi) < 0.01f && std::fabs(angles.y - 0.5f * 180.0f / kPi) < 0.01f && std::fabs(angles.z) < 0.01f);
+
+    HeadlessImGui ui;
+    inspect_test::Settings settings; // rotation starts at identity
+    auto results = TypeIntoField(ui, settings, /*widget=*/10, "45"); // the X (pitch) entry of the rotation row
+    const Quaternion expected = Quaternion::FromAxisAngle(Vec3(1, 0, 0), 45.0f * kPi / 180.0f);
+    AETHER_CHECK(std::fabs(settings.rotation.x * expected.x + settings.rotation.y * expected.y + settings.rotation.z * expected.z +
+                            settings.rotation.w * expected.w) > 0.999f); // the same rotation, either sign
+    AETHER_CHECK(AnyCommitted(results, "rotation"));
+    const Vec3 after = editor::EulerDegreesFromRotation(settings.rotation);
+    AETHER_CHECK(std::fabs(after.x - 45.0f) < 0.1f && std::fabs(after.y) < 0.1f && std::fabs(after.z) < 0.1f);
 }

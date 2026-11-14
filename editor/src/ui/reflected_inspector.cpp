@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <limits>
@@ -315,6 +316,17 @@ void DrawValue(const TypeInfo& type, void* ptr, const reflect::Meta& meta, DrawC
         if (type.asset_type != nullptr && DrawAssetRef(type, ptr, ctx)) {
             return;
         }
+        // A rotation is shown as angles a person can type: three drags in degrees, written back as the quaternion it is.
+        if (std::strcmp(type.name, "Quaternion") == 0 && ctx.top_level_field != nullptr) {
+            auto& rotation = *static_cast<Quaternion*>(ptr);
+            const Vec3 degrees = EulerDegreesFromRotation(rotation);
+            f32 values[3] = {degrees.x, degrees.y, degrees.z};
+            const bool changed = ImGui::DragScalarN("##v", ImGuiDataType_Float, values, 3, 0.5f, nullptr, nullptr, "%.1f deg");
+            if (changed) rotation = RotationFromEulerDegrees(Vec3(values[0], values[1], values[2]));
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Euler angles in degrees: X pitch, Y yaw, Z roll");
+            NoteEdit(ctx, changed);
+            return;
+        }
         if (IsCompactFloatRow(type)) {
             const std::string format = NumberFormat(*type.fields[0].type, meta);
             NoteEdit(ctx, ImGui::DragScalarN("##v", ImGuiDataType_Float, ptr, static_cast<int>(type.fields.size()),
@@ -391,6 +403,33 @@ bool ContainsCaseInsensitive(std::string_view haystack, std::string_view needle)
 } // namespace
 
 void SetAssetListProvider(AssetListProvider provider) { AssetProvider() = std::move(provider); }
+
+namespace {
+constexpr f32 kEulerPi = 3.14159265358979f;
+constexpr f32 kEulerToDegrees = 180.0f / kEulerPi;
+constexpr f32 kEulerToRadians = kEulerPi / 180.0f;
+} // namespace
+
+Vec3 EulerDegreesFromRotation(const Quaternion& rotation) {
+    const Mat4 m = rotation.Normalized().ToMat4(); // R[row][col] is m.cols[col][row]
+    const f32 r12 = m.cols[2].y;
+    const f32 pitch = std::asin(std::clamp(-r12, -1.0f, 1.0f));
+    f32 yaw = 0.0f, roll = 0.0f;
+    if (std::fabs(r12) < 0.99999f) {
+        yaw = std::atan2(m.cols[2].x, m.cols[2].z);
+        roll = std::atan2(m.cols[0].y, m.cols[1].y);
+    } else {
+        yaw = std::atan2(-m.cols[0].z, m.cols[0].x); // straight up or down: yaw and roll are the same turn
+    }
+    return Vec3(pitch, yaw, roll) * kEulerToDegrees;
+}
+
+Quaternion RotationFromEulerDegrees(const Vec3& degrees) {
+    const f32 x = degrees.x * kEulerToRadians, y = degrees.y * kEulerToRadians, z = degrees.z * kEulerToRadians;
+    return (Quaternion::FromAxisAngle(Vec3(0.0f, 1.0f, 0.0f), y) * Quaternion::FromAxisAngle(Vec3(1.0f, 0.0f, 0.0f), x) *
+            Quaternion::FromAxisAngle(Vec3(0.0f, 0.0f, 1.0f), z))
+        .Normalized();
+}
 
 std::string AssetNameOf(const char* asset_type, const assets::AssetGuid& guid) {
     if (!AssetProvider() || guid.IsNull()) return {};

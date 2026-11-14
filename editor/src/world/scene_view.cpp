@@ -545,16 +545,16 @@ void TransformGizmo::PlaneAxes(GizmoAxis plane, GizmoAxis& first, GizmoAxis& sec
     normal = plane == GizmoAxis::PlaneXY ? GizmoAxis::Z : (plane == GizmoAxis::PlaneXZ ? GizmoAxis::Y : GizmoAxis::X);
 }
 
-void TransformGizmo::PlaneCorners(const SceneDocument& document, Entity subject, GizmoAxis plane, GizmoSpace space, f32 handle_length, Vec3* out) {
+void TransformGizmo::PlaneCorners(const SceneDocument& document, Entity subject, GizmoAxis plane, GizmoMode mode, GizmoSpace space, const Vec3& centre, f32 handle_length,
+                                  Vec3* out) {
     GizmoAxis first, second, normal;
     PlaneAxes(plane, first, second, normal);
-    const Vec3 u = HandleDirection(document, subject, first, GizmoMode::Move, space), v = HandleDirection(document, subject, second, GizmoMode::Move, space);
-    const Vec3 at = WorldOrigin(document, subject);
+    const Vec3 u = HandleDirection(document, subject, first, mode, space), v = HandleDirection(document, subject, second, mode, space);
     const f32 lo = handle_length * 0.25f, hi = handle_length * 0.5f;
-    out[0] = at + u * lo + v * lo;
-    out[1] = at + u * hi + v * lo;
-    out[2] = at + u * hi + v * hi;
-    out[3] = at + u * lo + v * hi;
+    out[0] = centre + u * lo + v * lo;
+    out[1] = centre + u * hi + v * lo;
+    out[2] = centre + u * hi + v * hi;
+    out[3] = centre + u * lo + v * hi;
 }
 
 std::vector<Entity> TransformGizmo::Subjects(const SceneDocument& document) {
@@ -578,6 +578,23 @@ Entity TransformGizmo::Subject(const SceneDocument& document) {
     return subjects.empty() ? kNullEntity : subjects[0];
 }
 
+Vec3 TransformGizmo::Pivot(const SceneDocument& document, GizmoPivot pivot) {
+    const std::vector<Entity> subjects = Subjects(document);
+    if (subjects.empty()) return Vec3(0.0f, 0.0f, 0.0f);
+    if (pivot == GizmoPivot::Origin) return WorldOrigin(document, subjects[0]);
+    Vec3 sum(0.0f, 0.0f, 0.0f);
+    for (const Entity entity : subjects) sum = sum + WorldOrigin(document, entity);
+    return sum * (1.0f / static_cast<f32>(subjects.size()));
+}
+
+f32 TransformGizmo::HandleLength(const SceneViewCamera& camera, const Vec3& at, const ImVec2& size, f32 pixels) {
+    const f32 height = std::max(size.y, 1.0f);
+    if (camera.projection == SceneViewProjection::Orthographic) return camera.ortho_height * pixels / height;
+    const Vec3 forward = (camera.target - camera.Eye()).Normalized();
+    const f32 depth = std::max((at - camera.Eye()).Dot(forward), 0.05f);
+    return 2.0f * depth * std::tan(camera.fov_degrees * kPi / 360.0f) * pixels / height;
+}
+
 Vec3 TransformGizmo::HandleDirection(const SceneDocument& document, Entity subject, GizmoAxis axis, GizmoMode mode, GizmoSpace space) {
     if ((mode != GizmoMode::Scale && space != GizmoSpace::Local) || subject == kNullEntity) return AxisUnit(axis);
     const Mat4 m = ComputeWorldTransform(document.GetWorld(), document.Guids(), subject);
@@ -595,13 +612,16 @@ void TransformGizmo::RingPoints(const Vec3& centre, const Vec3& axis_direction, 
     }
 }
 
-GizmoAxis TransformGizmo::HitTest(const SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, GizmoMode mode, GizmoSpace space) const {
+GizmoAxis TransformGizmo::HitTest(const SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, GizmoMode mode,
+                                  GizmoSpace space, GizmoPivot pivot) const {
     const Entity subject = Subject(document);
     if (subject == kNullEntity || size.x < 1.0f || size.y < 1.0f) return GizmoAxis::None;
     const Mat4 vp = camera.ViewProjection(size.x / size.y);
-    const Vec3 at = WorldOrigin(document, subject);
+    const Vec3 at = Pivot(document, pivot);
+    const f32 length = HandleLength(camera, at, size);
     ImVec2 from;
     if (!ProjectToViewport(vp, at, origin, size, from)) return GizmoAxis::None;
+    if (mode == GizmoMode::Scale && std::hypot(mouse.x - from.x, mouse.y - from.y) < 8.0f) return GizmoAxis::Uniform;
     GizmoAxis best = GizmoAxis::None;
     f32 best_distance = 9.0f; // pixels
     for (const GizmoAxis axis : {GizmoAxis::X, GizmoAxis::Y, GizmoAxis::Z}) {
@@ -609,7 +629,7 @@ GizmoAxis TransformGizmo::HitTest(const SceneDocument& document, const SceneView
         if (mode == GizmoMode::Rotate) {
             constexpr int kSegments = 48;
             Vec3 ring[kSegments];
-            RingPoints(at, HandleDirection(document, subject, axis, mode, space), HandleLength(camera), kSegments, ring);
+            RingPoints(at, HandleDirection(document, subject, axis, mode, space), length, kSegments, ring);
             ImVec2 previous;
             bool have_previous = ProjectToViewport(vp, ring[kSegments - 1], origin, size, previous);
             for (int i = 0; i < kSegments; ++i) {
@@ -621,15 +641,15 @@ GizmoAxis TransformGizmo::HitTest(const SceneDocument& document, const SceneView
             }
         } else {
             ImVec2 to;
-            if (!ProjectToViewport(vp, at + HandleDirection(document, subject, axis, mode, space) * HandleLength(camera), origin, size, to)) continue;
+            if (!ProjectToViewport(vp, at + HandleDirection(document, subject, axis, mode, space) * length, origin, size, to)) continue;
             distance = DistanceToSegment(mouse, from, to);
         }
         if (distance < best_distance) { best_distance = distance; best = axis; }
     }
-    if (mode == GizmoMode::Move && !(best != GizmoAxis::None && best_distance < 5.0f)) { // the plane squares: a press inside one wins over an arrow's pixel margin, but not over the arrow's own line drawn across it
+    if (mode != GizmoMode::Rotate && !(best != GizmoAxis::None && best_distance < 5.0f)) { // the plane squares: a press inside one wins over an arrow's pixel margin, but not over the arrow's own line drawn across it
         for (const GizmoAxis plane : {GizmoAxis::PlaneXY, GizmoAxis::PlaneXZ, GizmoAxis::PlaneYZ}) {
             Vec3 corners[4];
-            PlaneCorners(document, subject, plane, space, HandleLength(camera), corners);
+            PlaneCorners(document, subject, plane, mode, space, at, length, corners);
             ImVec2 p[4];
             bool visible = true;
             for (int i = 0; i < 4 && visible; ++i) visible = ProjectToViewport(vp, corners[i], origin, size, p[i]);
@@ -669,35 +689,13 @@ bool TransformGizmo::Measure(const SceneViewCamera& camera, const ImVec2& origin
     return true;
 }
 
-bool TransformGizmo::Begin(const SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, GizmoMode mode, GizmoSpace space) {
-    const GizmoAxis axis = HitTest(document, camera, origin, size, mouse, mode, space);
+bool TransformGizmo::Begin(const SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, GizmoMode mode,
+                           GizmoSpace space, GizmoPivot pivot) {
+    const GizmoAxis axis = HitTest(document, camera, origin, size, mouse, mode, space, pivot);
     if (axis == GizmoAxis::None) return false;
     const std::vector<Entity> entities = Subjects(document);
     if (entities.empty()) return false;
-    if (IsPlane(axis)) { // a Move square: the drag follows where the mouse ray meets the plane through the entity
-        GizmoAxis first, second, normal;
-        PlaneAxes(axis, first, second, normal);
-        const GizmoAxis old_axis = axis_;
-        const GizmoMode old_mode = mode_;
-        const GizmoSpace old_space = space_;
-        const Vec3 old_start = start_world_, old_direction = direction_;
-        axis_ = axis;
-        mode_ = GizmoMode::Move;
-        space_ = space;
-        start_world_ = WorldOrigin(document, entities[0]);
-        direction_ = HandleDirection(document, entities[0], normal, GizmoMode::Move, space);
-        Vec3 grab;
-        if (!MeasurePlane(camera, origin, size, mouse, grab)) {
-            axis_ = old_axis;
-            mode_ = old_mode;
-            space_ = old_space;
-            start_world_ = old_start;
-            direction_ = old_direction;
-            return false;
-        }
-        plane_u_ = HandleDirection(document, entities[0], first, GizmoMode::Move, space);
-        plane_v_ = HandleDirection(document, entities[0], second, GizmoMode::Move, space);
-        grab_point_ = grab;
+    const auto capture = [&]() {
         subjects_.clear();
         for (const Entity entity : entities) {
             const Transform* transform = document.GetWorld().GetComponent<Transform>(entity);
@@ -705,39 +703,94 @@ bool TransformGizmo::Begin(const SceneDocument& document, const SceneViewCamera&
             subjects_.push_back({entity, *transform, WorldOrigin(document, entity)});
         }
         return !subjects_.empty();
-    }
-    // Set up the state the measurement needs, and take it back if the first measurement fails.
+    };
+    const auto restore = [&](GizmoAxis axis, GizmoMode mode, GizmoSpace space, const Vec3& start_world, const Vec3& direction) {
+        axis_ = axis;
+        mode_ = mode;
+        space_ = space;
+        start_world_ = start_world;
+        direction_ = direction;
+    };
+    // Set up the state the measurement needs; each branch takes it back if the first measurement fails.
     const GizmoAxis old_axis = axis_;
     const GizmoMode old_mode = mode_;
     const GizmoSpace old_space = space_;
     const Vec3 old_start = start_world_, old_direction = direction_;
+    if (axis == GizmoAxis::Uniform) { // the middle box: the mouse's distance from the pivot, in pixels
+        axis_ = axis;
+        mode_ = GizmoMode::Scale;
+        space_ = space;
+        pivot_mode_ = pivot;
+        start_world_ = Pivot(document, pivot);
+        direction_ = Vec3(1.0f, 0.0f, 0.0f); // every axis at once; no single handle line
+        ImVec2 from;
+        if (!ProjectToViewport(camera.ViewProjection(size.x / size.y), start_world_, origin, size, from)) {
+            restore(old_axis, old_mode, old_space, old_start, old_direction);
+            return false;
+        }
+        grab_ = std::hypot(mouse.x - from.x, mouse.y - from.y); // where in the box the press landed, for the travel since
+        return capture();
+    }
+    if (IsPlane(axis) && mode == GizmoMode::Scale) { // a Scale square: both of its axes grow, measured along the square's diagonal
+        GizmoAxis first, second, normal;
+        PlaneAxes(axis, first, second, normal);
+        axis_ = axis;
+        mode_ = GizmoMode::Scale;
+        space_ = space;
+        pivot_mode_ = pivot;
+        start_world_ = Pivot(document, pivot);
+        plane_u_ = HandleDirection(document, entities[0], first, GizmoMode::Scale, space);
+        plane_v_ = HandleDirection(document, entities[0], second, GizmoMode::Scale, space);
+        direction_ = (plane_u_ + plane_v_).Normalized();
+        f32 value = 0.0f;
+        if (!Measure(camera, origin, size, mouse, value) || std::fabs(value) < 1e-3f) {
+            restore(old_axis, old_mode, old_space, old_start, old_direction);
+            return false;
+        }
+        grab_ = value;
+        return capture();
+    }
+    if (IsPlane(axis)) { // a Move square: the drag follows where the mouse ray meets the plane through the pivot
+        GizmoAxis first, second, normal;
+        PlaneAxes(axis, first, second, normal);
+        axis_ = axis;
+        mode_ = GizmoMode::Move;
+        space_ = space;
+        pivot_mode_ = pivot;
+        start_world_ = Pivot(document, pivot);
+        direction_ = HandleDirection(document, entities[0], normal, GizmoMode::Move, space);
+        Vec3 grab;
+        if (!MeasurePlane(camera, origin, size, mouse, grab)) {
+            restore(old_axis, old_mode, old_space, old_start, old_direction);
+            return false;
+        }
+        plane_u_ = HandleDirection(document, entities[0], first, GizmoMode::Move, space);
+        plane_v_ = HandleDirection(document, entities[0], second, GizmoMode::Move, space);
+        grab_point_ = grab;
+        return capture();
+    }
     axis_ = axis;
     mode_ = mode;
     space_ = space;
-    start_world_ = WorldOrigin(document, entities[0]);
+    pivot_mode_ = pivot;
+    start_world_ = Pivot(document, pivot);
     direction_ = HandleDirection(document, entities[0], axis, mode, space);
     f32 value = 0.0f;
     if (!Measure(camera, origin, size, mouse, value) || (mode != GizmoMode::Rotate && std::fabs(value) < 1e-3f)) {
-        axis_ = old_axis;
-        mode_ = old_mode;
-        space_ = old_space;
-        start_world_ = old_start;
-        direction_ = old_direction;
+        restore(old_axis, old_mode, old_space, old_start, old_direction);
         return false;
     }
-    subjects_.clear();
-    for (const Entity entity : entities) {
-        const Transform* transform = document.GetWorld().GetComponent<Transform>(entity);
-        if (!transform) continue;
-        subjects_.push_back({entity, *transform, WorldOrigin(document, entity)});
-    }
     grab_ = value;
-    return !subjects_.empty();
+    return capture();
 }
 
 bool TransformGizmo::Apply(SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, f32 snap_step) {
     if (!Dragging() || subjects_.empty()) return false;
-    if (IsPlane(axis_)) return ApplyPlane(document, camera, origin, size, mouse, snap_step);
+    if (axis_ == GizmoAxis::Uniform) return ApplyUniform(document, camera, origin, size, mouse, snap_step);
+    if (IsPlane(axis_)) {
+        if (mode_ == GizmoMode::Scale) return ApplyScalePlane(document, camera, origin, size, mouse, snap_step);
+        return ApplyPlane(document, camera, origin, size, mouse, snap_step);
+    }
     f32 value = 0.0f;
     if (!Measure(camera, origin, size, mouse, value)) return false;
     const GizmoAxis axis = axis_;
@@ -774,15 +827,17 @@ bool TransformGizmo::Apply(SceneDocument& document, const SceneViewCamera& camer
             Vec3 scale = held.before.scale;
             (axis == GizmoAxis::X ? scale.x : (axis == GizmoAxis::Y ? scale.y : scale.z)) *= ratio;
             transform->scale = scale;
+            if (pivot_mode_ == GizmoPivot::Centre) { // the group keeps its proportions: the others move out from the middle too
+                const f32 offset = (held.start_world - start_world_).Dot(direction_);
+                transform->position = LocalPositionFor(document, held.entity, held.start_world + direction_ * (offset * (ratio - 1.0f)));
+            }
         } else {
             const Quaternion turn = Quaternion::FromAxisAngle(LocalDirectionFor(document, held.entity, direction_), angle);
             transform->rotation = (turn * held.before.rotation).Normalized();
-            if (&held != &first) { // the others swing round the first one's position, as one rigid group
-                const Vec3 v = held.start_world - start_world_;
-                const f32 c = std::cos(angle), s = std::sin(angle);
-                const Vec3 turned = v * c + k.Cross(v) * s + k * (k.Dot(v) * (1.0f - c));
-                transform->position = LocalPositionFor(document, held.entity, start_world_ + turned);
-            }
+            const Vec3 v = held.start_world - start_world_; // each swings round the pivot as one rigid group (in place when it is the pivot)
+            const f32 c = std::cos(angle), s = std::sin(angle);
+            const Vec3 turned = v * c + k.Cross(v) * s + k * (k.Dot(v) * (1.0f - c));
+            transform->position = LocalPositionFor(document, held.entity, start_world_ + turned);
         }
     }
     return true;
@@ -805,6 +860,52 @@ bool TransformGizmo::ApplyPlane(SceneDocument& document, const SceneViewCamera& 
     for (const Held& held : subjects_) {
         if (!document.GetWorld().IsAlive(held.entity)) continue;
         if (Transform* transform = document.GetWorld().GetComponent<Transform>(held.entity)) transform->position = LocalPositionFor(document, held.entity, held.start_world + offset);
+    }
+    return true;
+}
+
+bool TransformGizmo::ApplyUniform(SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, f32 snap_step) {
+    ImVec2 from;
+    if (!ProjectToViewport(camera.ViewProjection(size.x / size.y), start_world_, origin, size, from)) return false;
+    const f32 pixels = std::hypot(mouse.x - from.x, mouse.y - from.y);
+    // Pressed on the box (within a few pixels of the middle), the ratio grows with the mouse's travel: an X on-screen handle's
+    // length of drag doubles and halves the size, so the feel does not depend on where in the box the press landed.
+    f32 ratio = std::max(1.0f + (pixels - grab_) / 90.0f, 0.01f);
+    const f32 start = subjects_[0].before.scale.x; // one axis is enough for a step: all three move together
+    if (snap_step > 0.0f && std::fabs(start) > 1e-6f) ratio = SnapScaleAxis(start * ratio, snap_step) / start;
+    document.TouchTransforms();
+    for (const Held& held : subjects_) {
+        if (!document.GetWorld().IsAlive(held.entity)) continue;
+        Transform* transform = document.GetWorld().GetComponent<Transform>(held.entity);
+        if (!transform) continue;
+        transform->scale = held.before.scale * ratio;
+        if (pivot_mode_ == GizmoPivot::Centre) transform->position = LocalPositionFor(document, held.entity, start_world_ + (held.start_world - start_world_) * ratio);
+    }
+    return true;
+}
+
+bool TransformGizmo::ApplyScalePlane(SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, f32 snap_step) {
+    f32 value = 0.0f;
+    if (!Measure(camera, origin, size, mouse, value)) return false;
+    f32 ratio = std::max(value / grab_, 0.01f);
+    GizmoAxis first, second, normal;
+    PlaneAxes(axis_, first, second, normal);
+    const f32 start = AxisComponent(subjects_[0].before.scale, first);
+    if (snap_step > 0.0f && std::fabs(start) > 1e-6f) ratio = SnapScaleAxis(start * ratio, snap_step) / start;
+    document.TouchTransforms();
+    for (const Held& held : subjects_) {
+        if (!document.GetWorld().IsAlive(held.entity)) continue;
+        Transform* transform = document.GetWorld().GetComponent<Transform>(held.entity);
+        if (!transform) continue;
+        Vec3 scale = held.before.scale;
+        (first == GizmoAxis::X ? scale.x : (first == GizmoAxis::Y ? scale.y : scale.z)) *= ratio;
+        (second == GizmoAxis::X ? scale.x : (second == GizmoAxis::Y ? scale.y : scale.z)) *= ratio;
+        transform->scale = scale;
+        if (pivot_mode_ == GizmoPivot::Centre) { // the group keeps its proportions in the plane
+            const Vec3 offset = held.start_world - start_world_;
+            const Vec3 moved = held.start_world + (plane_u_ * offset.Dot(plane_u_) + plane_v_ * offset.Dot(plane_v_)) * (ratio - 1.0f);
+            transform->position = LocalPositionFor(document, held.entity, moved);
+        }
     }
     return true;
 }

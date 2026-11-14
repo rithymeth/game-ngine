@@ -139,44 +139,53 @@ Entity PlaceModelAsset(SceneDocument& document, const std::string& content_path,
 Entity PlacePrefabAsset(SceneDocument& document, const std::filesystem::path& content_root, const std::string& content_path, const Vec3& position, std::string* error = nullptr,
                         Entity parent = kNullEntity);
 
-// X, Y and Z are the arrows; PlaneXY, PlaneXZ and PlaneYZ are the small squares (Move only) that slide the entity in that plane.
-enum class GizmoAxis { None, X, Y, Z, PlaneXY, PlaneXZ, PlaneYZ };
+// X, Y and Z are the arrows; PlaneXY, PlaneXZ and PlaneYZ are the small squares that slide the entity in that plane (Move) or
+// grow its two axes together (Scale); Uniform is the box in the middle that scales every axis at once (Scale).
+enum class GizmoAxis { None, X, Y, Z, PlaneXY, PlaneXZ, PlaneYZ, Uniform };
 enum class GizmoMode { Move, Rotate, Scale };
 // Whose axes the Move arrows and Rotate rings follow: the world's, or the entity's own (Scale always uses the entity's own).
 enum class GizmoSpace { World, Local };
+// Where the handles sit: on the first selected entity's origin, or at the middle of every selected entity.
+enum class GizmoPivot { Origin, Centre };
 
 // The transform gizmo on the first selected entity, in three modes. Move: arrows along world X, Y and Z. Rotate: a ring around
-// each world axis. Scale: handles along the entity's own (local) axes. A drag is one undoable edit however many frames it takes
-// (however many entities it moves), works in world space even under a parent, and snaps to `snap_step`, which means metres for Move,
-// degrees for Rotate and a scale step for Scale (0 = off). With several entities selected they all follow: the handles sit on the first,
-// Move shifts them all by the same amount, Scale applies the same ratio to each, and Rotate turns each about the same world axis and
-// swings the others round the first's position. An entity whose ancestor is also selected is left to ride along with it. While the
-// mouse is down the live values are written straight into the components; releasing puts the originals back and records the result
-// inside one transaction, so it is one undo step. No ImGui: the panel feeds it the mouse.
+// each world axis. Scale: handles along the entity's own (local) axes, a square for two axes at once and a box in the middle for
+// all three. A drag is one undoable edit however many frames it takes (however many entities it moves), works in world space
+// even under a parent, and snaps to `snap_step`, which means metres for Move, degrees for Rotate and a scale step for Scale (0 =
+// off). With several entities selected they all follow: the handles sit on the first (GizmoPivot::Origin) or at the middle of
+// them (GizmoPivot::Centre), Move shifts them all by the same amount, Scale applies the same ratio to each, and Rotate turns
+// each about the same world axis and swings the others round the pivot. An entity whose ancestor is also selected is left to
+// ride along with it. While the mouse is down the live values are written straight into the components; releasing puts the
+// originals back and records the result inside one transaction, so it is one undo step. No ImGui: the panel feeds it the mouse.
 class TransformGizmo {
 public:
-    // The handle length in world units, so it stays about the same size on screen at any zoom.
-    static f32 HandleLength(const SceneViewCamera& camera) {
-        return (camera.projection == SceneViewProjection::Orthographic ? camera.ortho_height : camera.distance) * 0.18f;
-    }
+    // The handle length in world units that draws a handle `pixels` long on screen at `at` (the pivot), so the gizmo is the
+    // same size at any zoom and at any distance from the camera (a metre a hair from the lens is not a metre across the scene).
+    static f32 HandleLength(const SceneViewCamera& camera, const Vec3& at, const ImVec2& size, f32 pixels = 90.0f);
     // The entity the gizmo is on (the first of Subjects), or kNullEntity.
     static Entity Subject(const SceneDocument& document);
     // The entities a drag moves: the selected, living ones with a Transform, leaving out any whose ancestor is also selected.
     static std::vector<Entity> Subjects(const SceneDocument& document);
+    // Where the handles sit: the first subject's world origin, or the middle of every subject's.
+    static Vec3 Pivot(const SceneDocument& document, GizmoPivot pivot = GizmoPivot::Origin);
     // The world-space direction of a handle: the world axis (Move, Rotate) or the entity's local axis (Scale).
     // With GizmoSpace::Local, Move and Rotate use the entity's local axis too.
     static Vec3 HandleDirection(const SceneDocument& document, Entity subject, GizmoAxis axis, GizmoMode mode, GizmoSpace space = GizmoSpace::World);
     static bool IsPlane(GizmoAxis axis) { return axis == GizmoAxis::PlaneXY || axis == GizmoAxis::PlaneXZ || axis == GizmoAxis::PlaneYZ; }
     // The two axes a plane handle spans (PlaneXZ: X and Z) and the one it is flat against (Y).
     static void PlaneAxes(GizmoAxis plane, GizmoAxis& first, GizmoAxis& second, GizmoAxis& normal);
-    // The four world-space corners of a plane handle square on `subject`, in order round the square: the quarter to the half of the handle length along both axes.
-    static void PlaneCorners(const SceneDocument& document, Entity subject, GizmoAxis plane, GizmoSpace space, f32 handle_length, Vec3* out);
+    // The four world-space corners of a plane handle square centred on `centre`, in order round the square: the quarter to the
+    // half of the handle length along both axes.
+    static void PlaneCorners(const SceneDocument& document, Entity subject, GizmoAxis plane, GizmoMode mode, GizmoSpace space, const Vec3& centre,
+                             f32 handle_length, Vec3* out);
     // Points of a rotate ring (a circle around `axis_direction`, radius `radius`, centred on `centre`), for drawing and hit-testing.
     static void RingPoints(const Vec3& centre, const Vec3& axis_direction, f32 radius, int count, Vec3* out);
 
-    GizmoAxis HitTest(const SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, GizmoMode mode, GizmoSpace space = GizmoSpace::World) const;
+    GizmoAxis HitTest(const SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, GizmoMode mode,
+                      GizmoSpace space = GizmoSpace::World, GizmoPivot pivot = GizmoPivot::Origin) const;
     // Starts a drag if `mouse` is on a handle; true if it did.
-    bool Begin(const SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, GizmoMode mode, GizmoSpace space = GizmoSpace::World);
+    bool Begin(const SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, GizmoMode mode,
+               GizmoSpace space = GizmoSpace::World, GizmoPivot pivot = GizmoPivot::Origin);
     // Edits the subject to follow the mouse, as an uncommitted edit; false if there is no drag (or the mouse ray is parallel to what it needs).
     bool Update(SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, f32 snap_step);
     // Ends the drag, committing it as one edit.
@@ -196,6 +205,9 @@ private:
     // Plane handles: where the mouse ray meets the handle's plane through the drag's start.
     bool MeasurePlane(const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, Vec3& point) const;
     bool ApplyPlane(SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, f32 snap_step);
+    // The centre box (every axis at once) and the two-axis squares, measured by how far the mouse is from the pivot.
+    bool ApplyUniform(SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, f32 snap_step);
+    bool ApplyScalePlane(SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, f32 snap_step);
 
     struct Held {
         Entity entity = kNullEntity;
@@ -206,11 +218,12 @@ private:
     GizmoAxis axis_ = GizmoAxis::None;
     GizmoMode mode_ = GizmoMode::Move;
     GizmoSpace space_ = GizmoSpace::World;
+    GizmoPivot pivot_mode_ = GizmoPivot::Origin;
     std::vector<Held> subjects_;            // the first is the one the handles are on
-    Vec3 start_world_{0.0f, 0.0f, 0.0f};   // the first subject's world position when the drag began
+    Vec3 start_world_{0.0f, 0.0f, 0.0f};   // the pivot when the drag began
     Vec3 direction_{1.0f, 0.0f, 0.0f};     // the handle's world direction (the axis a ring turns about)
     Vec3 plane_u_{1, 0, 0}, plane_v_{0, 1, 0}, grab_point_{0, 0, 0}; // a plane drag: the handle's two world directions, and where the mouse took hold
-    f32 grab_ = 0.0f;                      // Move/Scale: where along the handle the mouse took hold; Rotate: the angle it took hold at
+    f32 grab_ = 0.0f;                      // Move/Scale: where along the handle the mouse took hold; Rotate: the angle it took hold at; Uniform: pixels from the pivot
 };
 
 } // namespace aether::editor

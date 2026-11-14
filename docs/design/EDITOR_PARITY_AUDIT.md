@@ -53,7 +53,7 @@ as well. The verdicts are a judgement from the source audit; the evidence column
 | Hierarchy | Tree with name filter, drag reparent, Ctrl multi-select, create/duplicate/delete/copy/paste | Outliner/Scene dock with visibility, lock, icons, multi-edit | Partial |
 | Viewport | Wireframe overlay, orbit camera, ±20 m grid; Live Viewport is a separate rendered tool | Lit/wireframe modes, fly camera, orthographic views, bookmarks, show flags | Partial |
 | Selection | Click, Ctrl toggle, marquee (replace/add/subtract), Alt click-through, Ctrl+A and invert in the Scene View and Live Viewport | Marquee, click-through, select-all/invert in all three | Partial |
-| Transform | Move/rotate/scale, world/local, per-mode snap, plane handles for Move, quaternion fields | Pivot/center modes, plane and uniform scale handles, Euler entry, numeric transform | Partial |
+| Transform | Move/rotate/scale, world/local, per-mode snap, pivot/centre, plane squares for Move and Scale, uniform scale, Euler rotation fields | Pivot/center modes, plane and uniform scale handles, Euler entry, numeric transform | Partial |
 | Content browser | Flat folder list, name search, rename/move, references, VCS badges, drag sources; no thumbnails, filters, multi-select or import UI | Thumbnails, type filters, multi-select, import/reimport, create/duplicate/delete | Partial |
 | Inspector | Every reflected component, add/remove with search, prefab revert, asset drop targets; single-object only | Multi-object editing, property search, reset/copy/paste, mixed values | Partial |
 | Play in editor | Play/Pause/Resume/Stop in the Scene panel; a separate Live Viewport with **Run game**; `Step()` exists and is unreachable | Play/Simulate, Pause, Step, Eject/Possess in the viewport | Partial |
@@ -93,9 +93,9 @@ as well. The verdicts are a judgement from the source audit; the evidence column
 | Viewport stats | FPS, draw calls, triangles, memory | Stats overlay | Monitor/debug overlays | FPS and entity count only in Live Viewport | `editor/src/host/live_viewport_panel.cpp:224` | Partial |
 | Selection | Click, Ctrl, marquee, select-all, click-through | Click, Ctrl, marquee, select-all, scene picking | Click, Ctrl, box select, select-all | Click, Ctrl toggle, marquee, select-all/invert, Alt click-through | `editor/src/world/viewport_tools.cpp:51-110` | Partial |
 | Picking accuracy | Rendered object ID / physics | Rendered object ID | Rendered object ID | Bind-pose triangles (≤300k), else box; no animated/alpha-accurate pick | `editor/src/world/model_bounds.h:43`, `scene_view.cpp:126-206` | Partial |
-| Transform gizmo | Translate/rotate/scale, screen/plane handles, pivot modes | Translate/rotate/scale/rect, pivot/center, plane and uniform handles | Translate/rotate/scale, local/global, snap | Move/rotate/scale, world/local, plane Move handles, snap per mode | `editor/src/world/viewport_tools.h:16-56`, `scene_view.cpp:427` | Partial |
-| Pivot | Center of selection or each actor's pivot | Center/Pivot toggle | Local/global transform pivot | First selected entity's origin only | `viewport_tools.cpp:126-140` | Partial |
-| Numeric transform | Location/rotation/scale fields, relative/absolute | Vector fields, Euler rotation | Transform fields, Euler | Reflected Transform; quaternion fields, no Euler presentation | `editor/src/ui/reflected_inspector.cpp` | Partial |
+| Transform gizmo | Translate/rotate/scale, screen/plane handles, pivot modes | Translate/rotate/scale/rect, pivot/center, plane and uniform handles | Translate/rotate/scale, local/global, snap | Move/rotate/scale, world/local, pivot/centre, plane squares for Move and Scale, uniform scale box, snap per mode, handles a fixed number of pixels long | `editor/src/world/viewport_tools.h:16-56`, `scene_view.cpp:427` | Done |
+| Pivot | Center of selection or each actor's pivot | Center/Pivot toggle | Local/global transform pivot | Pivot (first selected origin) / Centre (middle of the selection) toggle in the toolbar and on P; turns and group scaling go round it | `viewport_tools.cpp:35-70`, `scene_view.cpp` (`TransformGizmo::Pivot`) | Done |
+| Numeric transform | Location/rotation/scale fields, relative/absolute | Vector fields, Euler rotation | Transform fields, Euler | Reflected Transform position/scale rows; rotation is three Euler drags in degrees (X pitch, Y yaw, Z roll), written back as the quaternion | `editor/src/ui/reflected_inspector.cpp` | Partial |
 | Multi-edit undo | One transaction per user action | One undo entry per action | One action per undo | Delete, duplicate and paste of several entities are one entry each; gizmo drags group the whole subject set | `editor/src/world/scene_panel.cpp:232-268` | Done |
 | Play state in the viewport | PIE border, pause tint, banner, eject | Play-mode tint, Game view, pause | Embedded game, pause overlay | No viewport PIE; `Run game` checkbox in Live Viewport | `live_viewport_panel.cpp:216` | Partial |
 
@@ -424,7 +424,7 @@ depth range's zero start makes visible as a negative z. The Scene View's toolbar
 buttons, lit for the current view. Tests: a world unit projects to the same pixel length at the target and 100 units
 beyond it, each projection keeps its zoom across switching, the top view puts +X right and -Z up, front and side keep +Y
 up, and orbiting a preset makes it free again; the existing perspective, focus, ground-point and gizmo tests still pass.
-Not yet: shading and grouped undo.
+Not yet: shading.
 
 Done so far (2026-11-14): the fly camera, focus by selection bounds and camera bookmarks. `SceneViewCamera` gained
 `Move`, which translates eye and target together along the view's own forward, right and up, and `HandleCameraInput` runs
@@ -454,7 +454,7 @@ into a subtract (Shift+drag is still the camera pan), draws the live rectangle i
 longer grab a gizmo handle, so Alt selects through even on the pivot. The rectangle is drawn over both pictures.
 Tests: a marquee replaces, a Ctrl marquee adds and an Alt marquee subtracts (each checked to leave an entity outside it
 alone), Alt-click cycling a two-deep stack both ways and starting behind the front from an empty selection, select-all
-and invert, and a marquee meeting a model's real box where only its origin would miss. Not yet: shading and grouped undo.
+and invert, and a marquee meeting a model's real box where only its origin would miss. Not yet: shading.
 
 Done so far (2026-11-14): the endless fading ground grid, and the framing limits gone with it. The panel draws the grid around the
 camera target instead of a fixed ±20 m square: its minor spacing is `GridSpacing(world_per_pixel)`, a power of ten that keeps a minor
@@ -475,6 +475,29 @@ does the same for a clipboard of several snapshots ("Paste 2 entities"), while p
 already grouped by the gizmo (`Move 3 entities`), so all four actions now answer to one undo. Tests: pasting two entities is one undo
 and the paste test says so, duplicate-then-delete of two entities undoes in two steps (one per action) rather than four, and a
 three-entity gizmo drag lands all three and one undo puts every one of them back.
+
+Done so far (2026-11-14): the transform upgrades -- pivot/centre, the uniform and plane scale handles, Euler rotation entry and a
+gizmo of constant pixel size. `GizmoPivot` (`editor/src/world/scene_view.h`) chooses where the handles sit:
+`TransformGizmo::Pivot` returns the first subject's world origin (Origin, the old behaviour and still the default) or the middle of
+every subject (Centre); `ViewportTools` owns the choice, toggles it with P and the new "Pivot"/"Centre" toolbar button, and passes
+it to hit-testing, dragging and drawing. With Centre, a turn swings every subject round the middle (the first included, instead of
+staying put), a per-axis Scale drag also moves the others out from the middle along that axis, and the uniform box scales their
+offsets too, so a group keeps its proportions. Scale gained the two handles the audit asked for: the three plane squares are drawn
+and hit-tested in Scale as well as Move, and a drag inside one is measured along its diagonal and grows both of its axes; the box in
+the middle (`GizmoAxis::Uniform`, first in the hit test within 8 px of the pivot) scales all three, with the ratio taken from the
+mouse's travel from where the box was pressed (90 px of travel doubles it), so it works from the centre and feels the same as an
+axis handle. `TransformGizmo::HandleLength` now takes the pivot and the viewport: it computes the world length that covers a fixed
+90 px at the pivot's depth (`2 * depth * tan(fov/2) * pixels / height`, or `ortho_height * pixels / height`), so the gizmo no
+longer shrinks as the selected entity moves away from where the camera aims. The inspector's reflection pass draws a top-level
+Quaternion field as three Euler drags in degrees -- `EulerDegreesFromRotation`/`RotationFromEulerDegrees`
+(`editor/src/ui/reflected_inspector.{h,cpp}`), turned about Y, then X, then Z, the order the editor's cameras already use, with a
+gimbal-locked straight-up/down case folded into yaw -- and writes the quaternion back as the field's edited value, so the existing
+command, dirty and prefab-override paths see an ordinary rotation change. Tests: the middle box doubles all three axes at 90 px of
+travel and one undo restores them; a Scale square doubles X and Z and leaves Y; Origin and Centre pivots sit at the expected
+points; a Centre move shifts a pair and a Centre quarter-turn puts them at (2, 0, ±2) round the middle; the handle projects to 90 px
+at the target, grows tenfold in world units after a tenfold zoom, halves at half the depth, and is `height`/90 px in an orthographic
+view; Euler round-trips (30, -20, 10), matches a camera's yaw-then-pitch rotation, and typing 45 into the rotation row's X entry
+yields a 45-degree pitch quaternion. Not yet: shading.
 
 ### Stage 3 — Content browser and importer parity (L)
 

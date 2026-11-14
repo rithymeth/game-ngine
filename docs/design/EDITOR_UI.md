@@ -267,6 +267,10 @@ Behavior rules for every property row:
   (`2*pi`, `+=5`). Units show greyed out after the number (`1.5 m`).
 - **Vectors:** three fields labeled X/Y/Z with the axis colors as a 2 px
   left bar; a lock icon for uniform scale.
+- **Rotations:** a quaternion field is presented as three Euler drags in
+  degrees (X pitch, Y yaw, Z roll, turned about Y, then X, then Z -- the
+  order the scene cameras use) and written back as the quaternion, so the
+  file and every consumer still see a rotation.
 - **Reset:** a small ↺ icon appears on hover when the value differs from
   its default; clicking it resets to default.
 - **Prefab override:** a 3 px `prefab`-colored bar at the left edge and a
@@ -334,9 +338,10 @@ right:
 - Save, Undo, Redo. Each is the command table's entry: the enabled state and
   the chord in the tooltip come from the registry, and Undo's tooltip names
   what it would undo.
-- The Scene View's transform tools: Move, Rotate, Scale, World/Local, Snap
-  with the step for the current mode. These are the same `ViewportTools` the
-  Scene View drives, so W/E/R/Q and the buttons cannot disagree.
+- The Scene View's transform tools: Move, Rotate, Scale, World/Local,
+  Pivot/Centre, Snap with the step for the current mode. These are the same
+  `ViewportTools` the Scene View drives, so W/E/R/Q/P and the buttons cannot
+  disagree.
 - Play controls. While editing there is one Play button. While playing it
   becomes Pause, Resume when paused, plus Step (enabled only while paused,
   and it advances exactly one frame) and Stop. The play state is also a thin
@@ -358,9 +363,14 @@ asset editor is focused once those documents adopt the contract in Stage 6.
   so it stays readable, and each line fades to nothing at the grid's radius,
   so there is no edge. The X and Z axes are coloured and labelled near the
   origin.
-- **Gizmo:** axis colors from tokens; the hovered axis turns yellow
-  (`#FFD33D`); plane handles for two-axis moves; a center handle for
-  screen-space moves.
+- **Gizmo:** axis colors from tokens; the hovered handle turns yellow
+  (`#FFD33D`). Move has the three arrows and the two-axis plane squares;
+  Scale has arrows on the entity's own axes, the same squares growing two
+  axes together, and a box in the middle that scales all three. The handles
+  are a fixed 90 px long on screen whatever the zoom. The toolbar's
+  Pivot/Centre choice (P) sits them on the first selected entity's origin or
+  at the middle of the selection; with Centre a turn and a group scale work
+  round that middle.
 - **In PIE:** 2 px `pie.border` around the viewport (amber when paused);
   a small banner at the top: "Playing — Shift+F1 to release the mouse,
   Esc to stop".

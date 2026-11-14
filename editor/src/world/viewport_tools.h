@@ -16,6 +16,8 @@ public:
     GizmoMode Mode() const { return mode_; }
     GizmoSpace Space() const { return space_; }
     void SetSpace(GizmoSpace space) { space_ = space; }
+    GizmoPivot Pivot() const { return pivot_; }
+    void SetPivot(GizmoPivot pivot) { pivot_ = pivot; }
     bool SnapEnabled() const { return snap_; }
     // The step of the current mode, or 0 while snapping is off (metres for Move, degrees for Rotate, a scale step for Scale).
     f32 SnapStep() const { return !snap_ ? 0.0f : (mode_ == GizmoMode::Move ? snap_move_ : (mode_ == GizmoMode::Rotate ? snap_rotate_ : snap_scale_)); }
@@ -28,7 +30,7 @@ public:
     void SetBounds(const ModelBoundsCache* bounds) { bounds_ = bounds; }
     const ModelBoundsCache* Bounds() const { return bounds_; }
 
-    // The mode buttons and the snap controls on the current line (the caller may SameLine and add to it).
+    // The mode buttons, the world/local and pivot choices and the snap controls on the current line (the caller may SameLine and add to it).
     void DrawToolbar();
     // For the ImGui item just submitted over the view (an invisible button covering `origin`, `size`): W, E and R choose the mode, a press on a
     // gizmo handle starts a drag that follows the mouse and records one undo step on release, and a click elsewhere selects (ctrl toggles, alt steps
@@ -58,6 +60,7 @@ private:
     const ModelBoundsCache* bounds_ = nullptr;
     GizmoMode mode_ = GizmoMode::Move;
     GizmoSpace space_ = GizmoSpace::World;
+    GizmoPivot pivot_ = GizmoPivot::Origin;
     bool snap_ = false;
     f32 snap_move_ = 0.5f;
     f32 snap_rotate_ = 15.0f;

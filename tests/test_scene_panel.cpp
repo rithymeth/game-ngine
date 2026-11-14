@@ -717,7 +717,8 @@ AETHER_TEST(TransformGizmo_ADragIsOneUndoableMoveAlongOneAxis) {
     const Mat4 vp = camera.ViewProjection(size.x / size.y);
     TransformGizmo gizmo;
     ImVec2 handle_start;
-    AETHER_CHECK(ProjectToViewport(vp, Vec3(1.0f, 2.0f, 3.0f) + Vec3(TransformGizmo::HandleLength(camera) * 0.5f, 0, 0), origin, size, handle_start));
+    const Vec3 pivot(1.0f, 2.0f, 3.0f);
+    AETHER_CHECK(ProjectToViewport(vp, pivot + Vec3(TransformGizmo::HandleLength(camera, pivot, size) * 0.5f, 0, 0), origin, size, handle_start));
     AETHER_CHECK(gizmo.HitTest(document, camera, origin, size, handle_start, GizmoMode::Move) == GizmoAxis::None); // nothing selected: no gizmo to hit
     document.SetSelection({thing});
     AETHER_CHECK(gizmo.HitTest(document, camera, origin, size, handle_start, GizmoMode::Move) == GizmoAxis::X);   // the middle of the X handle
@@ -727,7 +728,7 @@ AETHER_TEST(TransformGizmo_ADragIsOneUndoableMoveAlongOneAxis) {
     AETHER_CHECK(gizmo.Begin(document, camera, origin, size, handle_start, GizmoMode::Move) && gizmo.Dragging() && gizmo.Axis() == GizmoAxis::X);
 
     // Drag the grabbed point 4 units along world X, over several frames; the mouse path is a straight line on the screen.
-    const Vec3 grab_world = Vec3(1.0f, 2.0f, 3.0f) + Vec3(TransformGizmo::HandleLength(camera) * 0.5f, 0, 0);
+    const Vec3 grab_world = pivot + Vec3(TransformGizmo::HandleLength(camera, pivot, size) * 0.5f, 0, 0);
     ImVec2 target_pixel;
     AETHER_CHECK(ProjectToViewport(vp, grab_world + Vec3(4.0f, 0, 0), origin, size, target_pixel));
     ImVec2 mouse = handle_start;
@@ -760,9 +761,10 @@ AETHER_TEST(TransformGizmo_SnapsAndMovesAChildInWorldSpace) {
     const Mat4 vp = camera.ViewProjection(size.x / size.y);
     TransformGizmo gizmo;
     ImVec2 grab, to;
-    AETHER_CHECK(ProjectToViewport(vp, Vec3(11.0f, 0, 0) + Vec3(TransformGizmo::HandleLength(camera) * 0.5f, 0, 0), origin, size, grab));
+    const Vec3 pivot(11.0f, 0, 0);
+    AETHER_CHECK(ProjectToViewport(vp, pivot + Vec3(TransformGizmo::HandleLength(camera, pivot, size) * 0.5f, 0, 0), origin, size, grab));
     AETHER_CHECK(gizmo.Begin(document, camera, origin, size, grab, GizmoMode::Move));
-    AETHER_CHECK(ProjectToViewport(vp, Vec3(11.0f + 2.3f + TransformGizmo::HandleLength(camera) * 0.5f, 0, 0), origin, size, to)); // dragged 2.3 along X
+    AETHER_CHECK(ProjectToViewport(vp, Vec3(11.0f + 2.3f + TransformGizmo::HandleLength(camera, pivot, size) * 0.5f, 0, 0), origin, size, to)); // dragged 2.3 along X
     AETHER_CHECK(gizmo.Update(document, camera, origin, size, to, 0.5f));
     gizmo.End(document, camera, origin, size, to, 0.5f);
     const Vec3 world = WorldPositionOf(document, child);
@@ -783,7 +785,7 @@ struct GizmoRig {
         ProjectToViewport(camera.ViewProjection(size.x / size.y), world, origin, size, at);
         return at;
     }
-    f32 Length() const { return TransformGizmo::HandleLength(camera); }
+    f32 Length() const { return TransformGizmo::HandleLength(camera, Vec3(0.0f, 0.0f, 0.0f), size); }
 };
 
 Vec3 WorldAxisOf(const SceneDocument& document, Entity entity, int column) {
@@ -887,7 +889,7 @@ AETHER_TEST(TransformGizmo_PlaneSquaresSlideInTwoAxesAtOnce) {
     const f32 centre = rig.Length() * 0.375f; // the middle of the square, which runs from a quarter to a half of the handle
     const ImVec2 grab = rig.Pixel(Vec3(centre, 0, centre));
     AETHER_CHECK(gizmo.HitTest(document, rig.camera, rig.origin, rig.size, grab, GizmoMode::Move) == GizmoAxis::PlaneXZ);
-    AETHER_CHECK(gizmo.HitTest(document, rig.camera, rig.origin, rig.size, grab, GizmoMode::Scale) != GizmoAxis::PlaneXZ); // Move only
+    AETHER_CHECK(gizmo.HitTest(document, rig.camera, rig.origin, rig.size, grab, GizmoMode::Scale) == GizmoAxis::PlaneXZ); // Scale has the same squares
     AETHER_CHECK(gizmo.Begin(document, rig.camera, rig.origin, rig.size, grab, GizmoMode::Move));
     ImVec2 mouse = rig.Pixel(Vec3(centre + 2.0f, 0, centre + 3.0f));
     AETHER_CHECK(gizmo.Update(document, rig.camera, rig.origin, rig.size, mouse, 0.0f));
@@ -970,6 +972,115 @@ AETHER_TEST(TransformGizmo_RotateUnderATiltedParentTurnsAboutTheWorldAxis) {
     gizmo.End(document, rig.camera, rig.origin, rig.size, rig.Pixel(ring[3]), 0.0f);                // a quarter turn about world +Y
     AETHER_CHECK(NearVec(WorldAxisOf(document, child, 0), Vec3(0, 1, 0)));                           // its X was along Y, the axis it turned about: unmoved
     AETHER_CHECK(NearVec(WorldAxisOf(document, child, 1), Vec3(0, 0, 1)));                           // its Y was along -X, which a quarter turn about +Y sends to +Z
+}
+
+// The middle box of the Scale gizmo grows (or shrinks) all three axes by the mouse's travel, in one undoable step.
+AETHER_TEST(TransformGizmo_TheMiddleBoxScalesEveryAxisAtOnce) {
+    GizmoRig rig;
+    SceneDocument document;
+    const Entity thing = document.CreateEntity("Thing");
+    document.SetSelection({thing});
+    document.Commands().Clear();
+    TransformGizmo gizmo;
+    const ImVec2 middle = rig.Pixel(Vec3(0, 0, 0));
+    AETHER_CHECK(gizmo.HitTest(document, rig.camera, rig.origin, rig.size, middle, GizmoMode::Scale) == GizmoAxis::Uniform);
+    AETHER_CHECK(gizmo.Begin(document, rig.camera, rig.origin, rig.size, middle, GizmoMode::Scale));
+    AETHER_CHECK(gizmo.Update(document, rig.camera, rig.origin, rig.size, ImVec2(middle.x + 45.0f, middle.y), 0.0f));
+    const Transform* t = document.GetWorld().GetComponent<Transform>(thing);
+    AETHER_CHECK(t && std::fabs(t->scale.x - 1.5f) < 0.02f && std::fabs(t->scale.y - 1.5f) < 0.02f && std::fabs(t->scale.z - 1.5f) < 0.02f);
+    AETHER_CHECK(gizmo.Update(document, rig.camera, rig.origin, rig.size, ImVec2(middle.x + 90.0f, middle.y), 0.0f)); // 90 px of travel: doubled
+    t = document.GetWorld().GetComponent<Transform>(thing);
+    AETHER_CHECK(t && std::fabs(t->scale.x - 2.0f) < 0.02f && std::fabs(t->scale.y - 2.0f) < 0.02f && std::fabs(t->scale.z - 2.0f) < 0.02f);
+    gizmo.End(document, rig.camera, rig.origin, rig.size, ImVec2(middle.x + 90.0f, middle.y), 0.0f);
+    AETHER_CHECK(document.Undo() && !document.CanUndo());
+    t = document.GetWorld().GetComponent<Transform>(thing);
+    AETHER_CHECK(t && NearVec(t->scale, Vec3(1, 1, 1), 1e-3f));
+}
+
+// A Scale square grows its two axes together: the drag is measured along the square's diagonal.
+AETHER_TEST(TransformGizmo_ScaleSquaresGrowTwoAxesAtOnce) {
+    GizmoRig rig;
+    SceneDocument document;
+    const Entity thing = document.CreateEntity("Thing");
+    document.SetSelection({thing});
+    document.Commands().Clear();
+    TransformGizmo gizmo;
+    const f32 length = rig.Length();
+    const Vec3 grab_world(length * 0.375f, 0, length * 0.375f); // the middle of the XZ square (flat against Y)
+    const ImVec2 grab = rig.Pixel(grab_world);
+    AETHER_CHECK(gizmo.HitTest(document, rig.camera, rig.origin, rig.size, grab, GizmoMode::Scale) == GizmoAxis::PlaneXZ);
+    AETHER_CHECK(gizmo.Begin(document, rig.camera, rig.origin, rig.size, grab, GizmoMode::Scale));
+    const ImVec2 mouse = rig.Pixel(grab_world * 2.0f); // twice as far along the diagonal
+    AETHER_CHECK(gizmo.Update(document, rig.camera, rig.origin, rig.size, mouse, 0.0f));
+    gizmo.End(document, rig.camera, rig.origin, rig.size, mouse, 0.0f);
+    const Transform* t = document.GetWorld().GetComponent<Transform>(thing);
+    AETHER_CHECK(t && std::fabs(t->scale.x - 2.0f) < 0.02f && std::fabs(t->scale.z - 2.0f) < 0.02f && std::fabs(t->scale.y - 1.0f) < 1e-3f);
+    AETHER_CHECK(document.Undo() && !document.CanUndo()); // one drag, one undo
+}
+
+// Pivot and Centre: the handles sit on the first entity's origin or between them all, and a turn takes the group round that point.
+AETHER_TEST(TransformGizmo_CentrePivotSitsBetweenTheSelectionAndTurnsAroundIt) {
+    GizmoRig rig;
+    SceneDocument document;
+    const Entity a = document.CreateEntity("A");
+    const Entity b = document.CreateEntity("B");
+    document.SetPosition(b, Vec3(4, 0, 0), true);
+    document.SetSelection({a, b});
+    document.Commands().Clear();
+    AETHER_CHECK(NearVec(TransformGizmo::Pivot(document, GizmoPivot::Origin), Vec3(0, 0, 0)));
+    AETHER_CHECK(NearVec(TransformGizmo::Pivot(document, GizmoPivot::Centre), Vec3(2, 0, 0)));
+    AETHER_CHECK(NearVec(TransformGizmo::Pivot(document), Vec3(0, 0, 0))); // the first's origin unless asked for the centre
+
+    TransformGizmo gizmo;
+    const Vec3 middle(2, 0, 0);
+    const f32 half = TransformGizmo::HandleLength(rig.camera, middle, rig.size) * 0.5f;
+    const ImVec2 grab = rig.Pixel(middle + Vec3(half, 0, 0));
+    AETHER_CHECK(gizmo.HitTest(document, rig.camera, rig.origin, rig.size, grab, GizmoMode::Move, GizmoSpace::World, GizmoPivot::Centre) == GizmoAxis::X);
+    AETHER_CHECK(gizmo.Begin(document, rig.camera, rig.origin, rig.size, grab, GizmoMode::Move, GizmoSpace::World, GizmoPivot::Centre));
+    const ImVec2 mouse = rig.Pixel(middle + Vec3(half + 2.0f, 0, 0));
+    AETHER_CHECK(gizmo.Update(document, rig.camera, rig.origin, rig.size, mouse, 0.0f));
+    gizmo.End(document, rig.camera, rig.origin, rig.size, mouse, 0.0f);
+    AETHER_CHECK(NearVec(WorldPositionOf(document, a), Vec3(2, 0, 0), 0.02f) && NearVec(WorldPositionOf(document, b), Vec3(6, 0, 0), 0.02f));
+    AETHER_CHECK(document.Undo());
+
+    // A quarter turn about the middle: A and B swing round it to opposite sides of the same line.
+    Vec3 ring[8];
+    TransformGizmo::RingPoints(middle, Vec3(0, 1, 0), TransformGizmo::HandleLength(rig.camera, middle, rig.size), 8, ring);
+    AETHER_CHECK(gizmo.HitTest(document, rig.camera, rig.origin, rig.size, rig.Pixel(ring[1]), GizmoMode::Rotate, GizmoSpace::World, GizmoPivot::Centre) == GizmoAxis::Y);
+    AETHER_CHECK(gizmo.Begin(document, rig.camera, rig.origin, rig.size, rig.Pixel(ring[1]), GizmoMode::Rotate, GizmoSpace::World, GizmoPivot::Centre));
+    AETHER_CHECK(gizmo.Update(document, rig.camera, rig.origin, rig.size, rig.Pixel(ring[3]), 0.0f));
+    gizmo.End(document, rig.camera, rig.origin, rig.size, rig.Pixel(ring[3]), 0.0f);
+    AETHER_CHECK(NearVec(WorldPositionOf(document, a), Vec3(2, 0, 2), 0.05f) && NearVec(WorldPositionOf(document, b), Vec3(2, 0, -2), 0.05f));
+    AETHER_CHECK(document.Undo());
+    AETHER_CHECK(NearVec(WorldPositionOf(document, a), Vec3(0, 0, 0), 0.02f) && NearVec(WorldPositionOf(document, b), Vec3(4, 0, 0), 0.02f));
+}
+
+// The handles are a fixed number of pixels long: the same zoomed out, and for an entity far from where the camera aims.
+AETHER_TEST(SceneView_GizmoHandlesStayTheSameNumberOfPixels) {
+    SceneViewCamera camera;
+    camera.yaw = 0.0f;
+    camera.pitch = 0.0f;
+    camera.target = Vec3(0, 0, 0);
+    camera.distance = 10.0f;
+    const ImVec2 origin(0, 0), size(800, 600);
+    const Vec3 at(0, 0, 0);
+    const f32 near_length = TransformGizmo::HandleLength(camera, at, size);
+    const Mat4 vp = camera.ViewProjection(size.x / size.y);
+    ImVec2 from, to;
+    AETHER_CHECK(ProjectToViewport(vp, at, origin, size, from) && ProjectToViewport(vp, at + Vec3(near_length, 0, 0), origin, size, to));
+    AETHER_CHECK(std::fabs(std::hypot(to.x - from.x, to.y - from.y) - 90.0f) < 2.0f); // the handle as the viewer sees it
+
+    camera.distance = 100.0f; // ten times the zoom: ten times the handle in world units, the same on screen
+    const f32 far_length = TransformGizmo::HandleLength(camera, at, size);
+    AETHER_CHECK(std::fabs(far_length / near_length - 10.0f) < 0.2f);
+
+    camera.distance = 10.0f;
+    const Vec3 closer = camera.Eye() * 0.5f; // half as far from the eye as the target: half the world units for the same pixels
+    AETHER_CHECK(std::fabs(TransformGizmo::HandleLength(camera, closer, size) / near_length - 0.5f) < 0.02f);
+
+    camera.projection = SceneViewProjection::Orthographic;
+    camera.ortho_height = 5.0f;
+    AETHER_CHECK(std::fabs(TransformGizmo::HandleLength(camera, at, size) - 5.0f * 90.0f / 600.0f) < 1e-4f);
 }
 
 // Dropping an asset from the Content Browser into the Scene View: where on the ground, which paths place, and the placement itself.
@@ -1274,7 +1385,7 @@ AETHER_TEST(ViewportTools_DraggingAHandleWithTheMouseMovesTheSelectionInOneUndoS
     const Entity thing = rig.document.CreateEntity("Thing");
     rig.document.SetSelection({thing});
     rig.document.Commands().Clear();
-    const f32 half = TransformGizmo::HandleLength(rig.camera) * 0.5f;
+    const f32 half = TransformGizmo::HandleLength(rig.camera, Vec3(0, 0, 0), rig.size) * 0.5f;
     const ImVec2 grab = rig.Pixel(Vec3(half, 0, 0)), target = rig.Pixel(Vec3(half + 4.0f, 0, 0));
     rig.Step(grab, false);                                                       // hover the +X handle
     rig.Step(grab, true);                                                        // press: takes hold of it, and does not select anything else
@@ -1393,7 +1504,7 @@ AETHER_TEST(ViewportTools_MovingSeveralSelectedEntitiesIsOneUndoStep) {
     rig.document.SetPosition(c, Vec3(4, 0, 0), true);
     rig.document.SetSelection({a, b, c});
     rig.document.Commands().Clear(); // the setup above is not what is being tested
-    const f32 half = TransformGizmo::HandleLength(rig.camera) * 0.5f;
+    const f32 half = TransformGizmo::HandleLength(rig.camera, Vec3(0, 0, 0), rig.size) * 0.5f;
     const ImVec2 grab = rig.Pixel(Vec3(half, 0, 0)), target = rig.Pixel(Vec3(half + 4.0f, 0, 0));
     rig.Step(grab, false);
     rig.Step(grab, true);
