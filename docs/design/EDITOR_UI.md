@@ -29,7 +29,9 @@ Contents:
    search bars and confirmations use the same widget in every panel.
 3. **Everything is undoable, so confirmations are rare.** Only ask for
    confirmation when an action can't be undone (deleting files on disk,
-   discarding unsaved changes, overwriting a build).
+   discarding unsaved changes, overwriting a build). One user action is one
+   undo step: deleting, duplicating or pasting several entities, or dragging
+   a multi-selection with the gizmo, undoes as a whole.
 4. **Show state, don't hide it.** Unsaved changes, compile errors,
    overridden prefab values and PIE mode are always visible.
 5. **Keyboard reachable.** Every action has a name in the command

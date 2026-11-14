@@ -263,6 +263,9 @@ bool SceneDocument::CopySelection() {
 }
 
 usize SceneDocument::PasteClipboard(const Vec3& offset) {
+    // Several entities pasted at once are one action, so one undo takes the whole paste back.
+    const bool group = clipboard_.size() > 1;
+    if (group) commands_.BeginTransaction("Paste " + std::to_string(clipboard_.size()) + " entities");
     usize pasted = 0;
     for (const EntitySnapshot& snapshot : clipboard_) {
         Entity entity = snapshot.Restore(world_);
@@ -273,6 +276,7 @@ usize SceneDocument::PasteClipboard(const Vec3& offset) {
         commands_.Record(CreateEntityCommand::FromExisting(context_, entity, "Paste " + Name(entity)));
         ++pasted;
     }
+    if (group) commands_.EndTransaction();
     return pasted;
 }
 std::vector<Entity> SceneDocument::Entities() const {

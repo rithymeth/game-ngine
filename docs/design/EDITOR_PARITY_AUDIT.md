@@ -96,7 +96,7 @@ as well. The verdicts are a judgement from the source audit; the evidence column
 | Transform gizmo | Translate/rotate/scale, screen/plane handles, pivot modes | Translate/rotate/scale/rect, pivot/center, plane and uniform handles | Translate/rotate/scale, local/global, snap | Move/rotate/scale, world/local, plane Move handles, snap per mode | `editor/src/world/viewport_tools.h:16-56`, `scene_view.cpp:427` | Partial |
 | Pivot | Center of selection or each actor's pivot | Center/Pivot toggle | Local/global transform pivot | First selected entity's origin only | `viewport_tools.cpp:126-140` | Partial |
 | Numeric transform | Location/rotation/scale fields, relative/absolute | Vector fields, Euler rotation | Transform fields, Euler | Reflected Transform; quaternion fields, no Euler presentation | `editor/src/ui/reflected_inspector.cpp` | Partial |
-| Multi-edit undo | One transaction per user action | One undo entry per action | One action per undo | Delete/duplicate/paste record one entry per entity | `editor/src/world/scene_panel.cpp:146-163` | Partial |
+| Multi-edit undo | One transaction per user action | One undo entry per action | One action per undo | Delete, duplicate and paste of several entities are one entry each; gizmo drags group the whole subject set | `editor/src/world/scene_panel.cpp:232-268` | Done |
 | Play state in the viewport | PIE border, pause tint, banner, eject | Play-mode tint, Game view, pause | Embedded game, pause overlay | No viewport PIE; `Run game` checkbox in Live Viewport | `live_viewport_panel.cpp:216` | Partial |
 
 ## Content browser, inspector and hierarchy
@@ -158,15 +158,14 @@ These are the gaps where "it is missing" can be given a cost, or where the measu
    triangle cap is about 2 ms per pick — and the Scene View picks every frame for the hover outline
    (`docs/design/PERFORMANCE.md:1514`). A bounding-volume tree is not needed yet; it becomes needed if the cap rises or
    several large models overlap.
-3. **The viewport cannot show a large world.** The grid is ±20 m and the orbit distance is clamped to 1,000 m
-   (`scene_view_panel.cpp:78`, `scene_view.cpp:54`). The engine has large-world and world-partition systems; the
-   wireframe view cannot frame them.
+3. **The viewport cannot show a large world.** (Done 2026-11-14: the grid is endless and fades, and the orbit distance reaches
+   20,000 m, so the wireframe view can frame what the large-world systems make.)
 4. **Only four asset extensions have an opener.** `.dialogue`, `.astrings`, `.asav` and `.asettings`
    (`editor_workspace.cpp:155`, `:651`, `:753`). A `.amat`, `.abp`, `.avfx`, `.acue`, `.aui`, `.abt` or `.aseq`
    double-clicked in the Content Browser does nothing, although an editor for it exists as a tool.
-5. **Multi-entity actions are not one undo step.** `DeleteSelection` and `DuplicateSelection` call the per-entity
-   destroy/duplicate, so ten selected entities are ten undo entries (`scene_panel.cpp:146-163`). The fix is in the
-   command layer, not the UI.
+5. **Multi-entity actions are not one undo step.** (Done 2026-11-14: `DeleteSelection`, `DuplicateSelection` and
+   `PasteClipboard` wrap several entities in one transaction, so one undo takes the whole action back; the gizmo already
+   grouped a drag over its subject set.)
 6. **Step is implemented and unreachable.** `PlaySession::Step()` exists (`play_session.cpp:44`) and no editor code calls
    it or `ShouldSimulate()`. This is the cheapest parity win in the audit: one button and one caller in the toolbar.
 7. **The command palette and the error overlay were built but unused.** The palette is now bound to Ctrl+Shift+P through
@@ -468,6 +467,14 @@ the eye (`max(2000, EyeDistance() * 4)`) so a view backed off by kilometres stil
 ten that grows by tens when a metre would be 5 px and is safe for a zero or negative scale, the fade is full over the inner half and
 exactly nothing at the radius and beyond while never brightening outwards, and the camera can now zoom past the old kilometre cap with
 the target still projecting; the headless panel draw exercises the new grid every run.
+
+Done so far (2026-11-14): grouped undo for multi-entity actions. `ScenePanel::DeleteSelection` and `::DuplicateSelection` count what
+they are about to change and, when it is more than one entity, wrap the per-entity commands in one `CommandStack` transaction
+("Delete 3 entities"), so one undo brings the whole action back; a single entity keeps the per-entity label. `SceneDocument::PasteClipboard`
+does the same for a clipboard of several snapshots ("Paste 2 entities"), while pasting one stays "Paste <name>". Multi-transform was
+already grouped by the gizmo (`Move 3 entities`), so all four actions now answer to one undo. Tests: pasting two entities is one undo
+and the paste test says so, duplicate-then-delete of two entities undoes in two steps (one per action) rather than four, and a
+three-entity gizmo drag lands all three and one undo puts every one of them back.
 
 ### Stage 3 — Content browser and importer parity (L)
 

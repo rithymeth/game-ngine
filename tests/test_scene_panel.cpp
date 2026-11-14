@@ -206,6 +206,8 @@ AETHER_TEST(ScenePanel_DuplicateSelectsTheCopiesAndDeleteClearsTheSelection) {
     AETHER_CHECK(document.Entities().size() == before + 2);
     AETHER_CHECK(document.Selection().size() == 2 && document.Selection()[0] != a && document.Selection()[1] != b); // the copies are what is selected now
     AETHER_CHECK(panel.DeleteSelection() == 2 && document.Entities().size() == before && document.Selection().empty());
+    AETHER_CHECK(document.Undo() && document.Entities().size() == before + 2); // one undo brings both copies back
+    AETHER_CHECK(document.Undo() && document.Entities().size() == before);     // and one more undoes both duplicates
 }
 
 AETHER_TEST(ScenePanel_TheInspectorsEditsAreTheDocumentsOwnUndoableChanges) {
@@ -1380,6 +1382,32 @@ AETHER_TEST(ViewportTools_SelectAllAndInvertKeepEveryEntityWithATransform) {
     AETHER_CHECK(rig.document.Selection().size() == 2 && rig.document.IsSelected(a) && rig.document.IsSelected(c) && !rig.document.IsSelected(b));
     ViewportTools::InvertSelection(rig.document);
     AETHER_CHECK(rig.document.Selection().size() == 1 && rig.document.Selection()[0] == b);
+}
+
+AETHER_TEST(ViewportTools_MovingSeveralSelectedEntitiesIsOneUndoStep) {
+    ToolRig rig;
+    const Entity a = rig.document.CreateEntity("A");
+    const Entity b = rig.document.CreateEntity("B");
+    const Entity c = rig.document.CreateEntity("C");
+    rig.document.SetPosition(b, Vec3(2, 0, 0), true);
+    rig.document.SetPosition(c, Vec3(4, 0, 0), true);
+    rig.document.SetSelection({a, b, c});
+    rig.document.Commands().Clear(); // the setup above is not what is being tested
+    const f32 half = TransformGizmo::HandleLength(rig.camera) * 0.5f;
+    const ImVec2 grab = rig.Pixel(Vec3(half, 0, 0)), target = rig.Pixel(Vec3(half + 4.0f, 0, 0));
+    rig.Step(grab, false);
+    rig.Step(grab, true);
+    AETHER_CHECK(rig.tools.Dragging());
+    for (int i = 1; i <= 4; ++i) rig.Step(ImVec2(grab.x + (target.x - grab.x) * i / 4.0f, grab.y + (target.y - grab.y) * i / 4.0f), true);
+    rig.Step(target, false);
+    AETHER_CHECK(NearVec(WorldPositionOf(rig.document, a), Vec3(4, 0, 0), 0.05f)); // the handles' entity
+    AETHER_CHECK(NearVec(WorldPositionOf(rig.document, b), Vec3(6, 0, 0), 0.05f)); // and the two riding along
+    AETHER_CHECK(NearVec(WorldPositionOf(rig.document, c), Vec3(8, 0, 0), 0.05f));
+    AETHER_CHECK(rig.document.UndoLabel() == "Move 3 entities");
+    AETHER_CHECK(rig.document.Undo() && !rig.document.CanUndo()); // one undo takes all three edits back
+    AETHER_CHECK(NearVec(WorldPositionOf(rig.document, a), Vec3(0, 0, 0), 0.01f));
+    AETHER_CHECK(NearVec(WorldPositionOf(rig.document, b), Vec3(2, 0, 0), 0.01f));
+    AETHER_CHECK(NearVec(WorldPositionOf(rig.document, c), Vec3(4, 0, 0), 0.01f));
 }
 
 namespace {

@@ -80,7 +80,8 @@ public:
     void ClearSelection();
     // Phase 43.3: copy/paste of the selection. The clipboard holds entity *snapshots*, not handles,
     // so a paste still works after the originals are deleted or the scene is replaced. Paste gives
-    // each new entity a fresh GUID and records an undoable command per entity, like DuplicateEntity.
+    // each new entity a fresh GUID and records the whole paste as one undoable step (a single entity
+    // pasted alone is one command, as DuplicateEntity gives it).
     bool CopySelection();
     usize PasteClipboard(const Vec3& offset = Vec3{0.0f, 0.0f, 0.0f});
     bool HasClipboard() const { return !clipboard_.empty(); }

@@ -285,9 +285,7 @@ AETHER_TEST(SceneDocument_CopyAndPasteOutlivesTheScene) {
     AETHER_CHECK(document.Entities().size() == before + 2);
     AETHER_CHECK(document.CanUndo());
     AETHER_CHECK(document.Undo());
-    AETHER_CHECK(document.Entities().size() == before + 1); // one command per pasted entity
-    AETHER_CHECK(document.Undo());
-    AETHER_CHECK(document.Entities().size() == before);
+    AETHER_CHECK(document.Entities().size() == before); // the whole paste is one undo step
 
     // The clipboard does not hold handles, so replacing the scene does not empty it.
     document.NewScene();

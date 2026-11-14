@@ -231,21 +231,33 @@ bool ScenePanel::Reparent(Entity entity, Entity parent) {
 
 usize ScenePanel::DeleteSelection() {
     const std::vector<Entity> selected = document_.Selection(); // a copy: deleting changes the selection
+    usize deletable = 0;
+    for (const Entity entity : selected) {
+        if (document_.GetWorld().IsAlive(entity) && document_.GetWorld().HasComponent<IdComponent>(entity)) ++deletable;
+    }
+    const bool group = deletable > 1; // deleting several entities is one action: one undo brings them all back
+    if (group) document_.Commands().BeginTransaction("Delete " + std::to_string(deletable) + " entities");
     usize deleted = 0;
     for (const Entity entity : selected)
         if (document_.GetWorld().IsAlive(entity) && document_.DestroyEntity(entity)) ++deleted;
+    if (group) document_.Commands().EndTransaction();
     document_.ClearSelection();
     return deleted;
 }
 
 usize ScenePanel::DuplicateSelection() {
     const std::vector<Entity> selected = document_.Selection();
+    usize duplicable = 0;
+    for (const Entity entity : selected) duplicable += document_.GetWorld().IsAlive(entity) ? 1 : 0;
+    const bool group = duplicable > 1; // several copies are one action, like several deletes
+    if (group) document_.Commands().BeginTransaction("Duplicate " + std::to_string(duplicable) + " entities");
     std::vector<Entity> made;
     for (const Entity entity : selected)
         if (document_.GetWorld().IsAlive(entity)) {
             const Entity copy = document_.DuplicateEntity(entity);
             if (!copy.IsNull()) made.push_back(copy);
         }
+    if (group) document_.Commands().EndTransaction();
     if (!made.empty()) document_.SetSelection(made);
     return made.size();
 }
