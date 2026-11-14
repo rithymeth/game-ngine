@@ -45,8 +45,8 @@ void SceneViewPanel::FocusSelection(const SceneDocument& document, const ModelBo
     camera_.target = (low + high) * 0.5f;
     const Vec3 extent = high - low;
     const f32 span = std::max({extent.x, extent.y, extent.z});
-    camera_.distance = std::clamp(span * 1.6f + 5.0f, 3.0f, 1000.0f);
-    camera_.ortho_height = std::clamp(span * 1.6f + 5.0f, 3.0f, 10000.0f); // the orthographic zoom is its own, so focus sets both
+    camera_.distance = std::clamp(span * 1.6f + 5.0f, 3.0f, 20000.0f);
+    camera_.ortho_height = std::clamp(span * 1.6f + 5.0f, 3.0f, 100000.0f); // the orthographic zoom is its own, so focus sets both
 }
 
 void SceneViewPanel::Draw(SceneDocument& document, const ModelBoundsCache* bounds, const std::filesystem::path& content_root) {
@@ -127,16 +127,42 @@ void SceneViewPanel::Draw(SceneDocument& document, const ModelBoundsCache* bound
         if (ProjectToViewport(vp, a, origin, size, pa) && ProjectToViewport(vp, b, origin, size, pb)) draw->AddLine(pa, pb, color, thickness);
     };
 
-    // The ground: a grid on y = 0, every fifth line stronger, with the world axes through the origin.
-    constexpr int kHalf = 20;
-    for (int i = -kHalf; i <= kHalf; ++i) {
-        const ImU32 c = i % 5 == 0 ? Color(70, 76, 90) : Color(42, 46, 56);
-        line(Vec3(static_cast<f32>(i), 0, static_cast<f32>(-kHalf)), Vec3(static_cast<f32>(i), 0, static_cast<f32>(kHalf)), c);
-        line(Vec3(static_cast<f32>(-kHalf), 0, static_cast<f32>(i)), Vec3(static_cast<f32>(kHalf), 0, static_cast<f32>(i)), c);
+    // The ground: an endless grid on y = 0, fading out towards its edge so there is no edge to see. Its spacing is a power of ten picked to
+    // keep the minor lines apart on screen (metres and decametres, then tens and hundreds further out), every tenth line stronger; drawn in
+    // pieces so each line fades along its length as well. The world axes through the origin are coloured, with X and Z marked near it.
+    const f32 world_per_pixel = camera_.ViewHeight() / size.y;
+    const f32 step = GridSpacing(world_per_pixel);
+    const f32 radius = std::max(camera_.ViewHeight() * 3.0f, step * 20.0f);
+    const f32 major = step * 10.0f;
+    const Vec3 centre = camera_.target;
+    constexpr int kChunks = 6;
+    auto ground_line = [&](const Vec3& a, const Vec3& b, ImU32 base) {
+        for (int chunk = 0; chunk < kChunks; ++chunk) {
+            const Vec3 p0 = a + (b - a) * (static_cast<f32>(chunk) / kChunks);
+            const Vec3 p1 = a + (b - a) * (static_cast<f32>(chunk + 1) / kChunks);
+            const Vec3 mid = (p0 + p1) * 0.5f;
+            const f32 fade = GridFade(std::hypot(mid.x - centre.x, mid.z - centre.z), radius);
+            if (!(fade > 0.002f)) continue;
+            const ImU32 color = (base & 0x00FFFFFFu) | (static_cast<ImU32>(static_cast<f32>(base >> 24) * fade) << 24);
+            line(p0, p1, color);
+        }
+    };
+    const f32 first_x = std::floor((centre.x - radius) / step) * step, first_z = std::floor((centre.z - radius) / step) * step;
+    for (f32 x = first_x; x <= centre.x + radius; x += step) {
+        const bool strong = std::fabs(std::remainder(x, major)) < step * 0.5f;
+        ground_line(Vec3(x, 0.0f, centre.z - radius), Vec3(x, 0.0f, centre.z + radius), strong ? Color(70, 76, 90) : Color(42, 46, 56));
     }
-    line(Vec3(-kHalf, 0, 0), Vec3(kHalf, 0, 0), Color(150, 60, 60, 200), 1.5f);
-    line(Vec3(0, 0, -kHalf), Vec3(0, 0, kHalf), Color(60, 90, 160, 200), 1.5f);
+    for (f32 z = first_z; z <= centre.z + radius; z += step) {
+        const bool strong = std::fabs(std::remainder(z, major)) < step * 0.5f;
+        ground_line(Vec3(centre.x - radius, 0.0f, z), Vec3(centre.x + radius, 0.0f, z), strong ? Color(70, 76, 90) : Color(42, 46, 56));
+    }
+    ground_line(Vec3(centre.x - radius, 0.0f, 0.0f), Vec3(centre.x + radius, 0.0f, 0.0f), Color(150, 60, 60, 220));
+    ground_line(Vec3(0.0f, 0.0f, centre.z - radius), Vec3(0.0f, 0.0f, centre.z + radius), Color(60, 90, 160, 220));
     line(Vec3(0, 0, 0), Vec3(0, 3, 0), Color(70, 150, 80, 220), 1.5f);
+    const f32 label_distance = major * 2.0f;
+    ImVec2 label_at;
+    if (ProjectToViewport(vp, Vec3(label_distance, 0.0f, 0.0f), origin, size, label_at)) draw->AddText(ImVec2(label_at.x + 3.0f, label_at.y + 2.0f), Color(190, 95, 95), "X");
+    if (ProjectToViewport(vp, Vec3(0.0f, 0.0f, label_distance), origin, size, label_at)) draw->AddText(ImVec2(label_at.x + 3.0f, label_at.y + 2.0f), Color(100, 135, 200), "Z");
 
     // Each entity with a Transform: its box (the Transform's scale is the box's size), orange when selected, cyan for a camera.
     const World& world = document.GetWorld();

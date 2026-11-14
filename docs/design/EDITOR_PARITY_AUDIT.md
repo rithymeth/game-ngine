@@ -89,7 +89,7 @@ as well. The verdicts are a judgement from the source audit; the evidence column
 | View modes | Lit, Unlit, Wireframe, Buffer Visualization, show flags | Shaded, Wireframe, Shaded Wireframe, draw modes | Perspective/orthogonal, debug draw modes | Wireframe boxes and lines only; rendered picture only in Live Viewport | `editor/src/world/scene_view_panel.cpp:70-140` | Partial |
 | Projection | Perspective and orthographic (top/front/side) | Perspective and orthographic, 2D/3D toggle | Perspective and orthogonal, 3D/2D screens | Perspective only | `editor/src/world/scene_view.cpp:41` | Missing |
 | Camera navigation | Fly (WASD), orbit, pan, focus, speed control, bookmarks | Fly/orbit/pan, focus, speed, bookmarks | Fly/orbit/pan, focus, view menu | Right-drag orbit, middle/shift pan, wheel zoom, F focus | `scene_view.cpp:64-79`, `scene_view_panel.cpp:26-45` | Partial |
-| World extent | Large-world grid, snap to grid, world partition | Grid with configurable size | Grid with configurable size | Grid ±20 m; zoom 0.5–1000 m | `scene_view_panel.cpp:78-86`, `scene_view.cpp:54` | Missing |
+| World extent | Large-world grid, snap to grid, world partition | Grid with configurable size | Grid with configurable size | Endless fading grid; zoom 0.5–20 000 m | `scene_view_panel.cpp:78-86`, `scene_view.cpp:54` | Partial |
 | Viewport stats | FPS, draw calls, triangles, memory | Stats overlay | Monitor/debug overlays | FPS and entity count only in Live Viewport | `editor/src/host/live_viewport_panel.cpp:224` | Partial |
 | Selection | Click, Ctrl, marquee, select-all, click-through | Click, Ctrl, marquee, select-all, scene picking | Click, Ctrl, box select, select-all | Click, Ctrl toggle, marquee, select-all/invert, Alt click-through | `editor/src/world/viewport_tools.cpp:51-110` | Partial |
 | Picking accuracy | Rendered object ID / physics | Rendered object ID | Rendered object ID | Bind-pose triangles (≤300k), else box; no animated/alpha-accurate pick | `editor/src/world/model_bounds.h:43`, `scene_view.cpp:126-206` | Partial |
@@ -425,7 +425,7 @@ depth range's zero start makes visible as a negative z. The Scene View's toolbar
 buttons, lit for the current view. Tests: a world unit projects to the same pixel length at the target and 100 units
 beyond it, each projection keeps its zoom across switching, the top view puts +X right and -Z up, front and side keep +Y
 up, and orbiting a preset makes it free again; the existing perspective, focus, ground-point and gizmo tests still pass.
-Not yet: shading, the infinite grid and grouped undo.
+Not yet: shading and grouped undo.
 
 Done so far (2026-11-14): the fly camera, focus by selection bounds and camera bookmarks. `SceneViewCamera` gained
 `Move`, which translates eye and target together along the view's own forward, right and up, and `HandleCameraInput` runs
@@ -455,8 +455,19 @@ into a subtract (Shift+drag is still the camera pan), draws the live rectangle i
 longer grab a gizmo handle, so Alt selects through even on the pivot. The rectangle is drawn over both pictures.
 Tests: a marquee replaces, a Ctrl marquee adds and an Alt marquee subtracts (each checked to leave an entity outside it
 alone), Alt-click cycling a two-deep stack both ways and starting behind the front from an empty selection, select-all
-and invert, and a marquee meeting a model's real box where only its origin would miss. Not yet: the infinite grid,
-shading and grouped undo.
+and invert, and a marquee meeting a model's real box where only its origin would miss. Not yet: shading and grouped undo.
+
+Done so far (2026-11-14): the endless fading ground grid, and the framing limits gone with it. The panel draws the grid around the
+camera target instead of a fixed ±20 m square: its minor spacing is `GridSpacing(world_per_pixel)`, a power of ten that keeps a minor
+line at least ten pixels from the next (a metre at normal zoom -- metres and decametres -- then tens and hundreds as the view backs
+off), with every tenth line stronger, and each line drawn in six pieces whose alpha `GridFade` eases from full at half the radius to
+nothing at the radius, so the ground has no visible edge in any direction. The X and Z axes stay coloured through the whole visible
+ground and are labelled near the origin. The framing limits went with the old grid: `SceneViewCamera::Zoom` now backs the perspective
+camera off to 20 000 m (orthographic height to 100 000 m) rather than 1 000, Focus clamps match, and the perspective far plane follows
+the eye (`max(2000, EyeDistance() * 4)`) so a view backed off by kilometres still contains its scene. Tests: the spacing is a power of
+ten that grows by tens when a metre would be 5 px and is safe for a zero or negative scale, the fade is full over the inner half and
+exactly nothing at the radius and beyond while never brightening outwards, and the camera can now zoom past the old kilometre cap with
+the target still projecting; the headless panel draw exercises the new grid every run.
 
 ### Stage 3 — Content browser and importer parity (L)
 

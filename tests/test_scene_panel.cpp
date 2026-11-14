@@ -472,7 +472,8 @@ AETHER_TEST(SceneView_CameraProjectsAndPicks) {
     camera.Zoom(1.0f);
     AETHER_CHECK(camera.distance < before);                                // a wheel step in moves closer
     camera.Zoom(-1000.0f);
-    AETHER_CHECK(camera.distance <= 1000.0f);                              // and far out is capped
+    AETHER_CHECK(camera.distance > 1000.0f && camera.distance <= 20000.0f); // whole kilometres out, not the old one-kilometre cap
+    AETHER_CHECK(ProjectToViewport(camera.ViewProjection(size.x / size.y), camera.target, origin, size, at)); // and the target is still inside the far plane
     const Vec3 target_before = camera.target;
     camera.Pan(1.0f, 0.0f);
     AETHER_CHECK((camera.target - target_before).Length() > 0.99f);       // panning moves the target in the view plane
@@ -493,6 +494,24 @@ AETHER_TEST(SceneView_CameraProjectsAndPicks) {
     AETHER_CHECK(PickEntity(document, view, origin, size, p_far) == far_one);
     AETHER_CHECK(PickEntity(document, view, origin, size, ImVec2(origin.x + 2.0f, origin.y + 2.0f)) == kNullEntity); // empty space
     AETHER_CHECK(PickEntity(document, view, origin, ImVec2(0.0f, 0.0f), p_near) == kNullEntity);                      // a collapsed viewport picks nothing
+}
+
+// The endless grid: its spacing is a power of ten that keeps the minor lines at least ten pixels apart, and it fades to nothing at its edge.
+AETHER_TEST(SceneView_GridSpacingScalesWithTheViewAndFadesToNothing) {
+    AETHER_CHECK(GridSpacing(0.01f) == 1.0f);  // a metre is 100 px: metres and decametres
+    AETHER_CHECK(GridSpacing(0.05f) == 1.0f);  // 20 px
+    AETHER_CHECK(GridSpacing(0.2f) == 10.0f);  // a metre would be 5 px, so tens and hundreds take over
+    AETHER_CHECK(GridSpacing(2.0f) == 100.0f); // and so on, by tens
+    AETHER_CHECK(GridSpacing(0.0f) == 1.0f && GridSpacing(-1.0f) == 1.0f);
+    AETHER_CHECK(GridFade(0.0f, 100.0f) == 1.0f && GridFade(50.0f, 100.0f) == 1.0f); // full over the inner half
+    AETHER_CHECK(GridFade(100.0f, 100.0f) <= 1e-6f && GridFade(200.0f, 100.0f) == 0.0f); // nothing at or past the edge
+    AETHER_CHECK(GridFade(1.0f, 0.0f) == 0.0f);
+    f32 previous = 1.0f;
+    for (f32 distance = 0.0f; distance <= 100.0f; distance += 5.0f) {
+        const f32 fade = GridFade(distance, 100.0f);
+        AETHER_CHECK(fade <= previous + 1e-6f); // it never brightens on the way out
+        previous = fade;
+    }
 }
 
 // The orthographic views: parallel projection (a world unit is the same size at any depth), exact top/front/side angles, and a zoom of

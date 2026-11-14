@@ -64,7 +64,8 @@ Mat4 SceneViewCamera::ViewProjection(f32 aspect) const {
         const f32 height = std::max(ortho_height, 0.01f);
         return OrthographicRH(height * aspect, height, 0.1f, EyeDistance() * 2.0f) * View();
     }
-    return Mat4::PerspectiveRH(fov_degrees * kPi / 180.0f, aspect, 0.1f, 2000.0f) * View();
+    // The far plane follows the eye so a view backed off to whole kilometres still has its target and scene inside it.
+    return Mat4::PerspectiveRH(fov_degrees * kPi / 180.0f, aspect, 0.1f, std::max(2000.0f, EyeDistance() * 4.0f)) * View();
 }
 
 void SceneViewCamera::Orbit(f32 delta_yaw, f32 delta_pitch) {
@@ -74,10 +75,10 @@ void SceneViewCamera::Orbit(f32 delta_yaw, f32 delta_pitch) {
 
 void SceneViewCamera::Zoom(f32 wheel_steps) {
     if (projection == SceneViewProjection::Orthographic) {
-        ortho_height = std::clamp(ortho_height * std::pow(0.9f, wheel_steps), 0.25f, 10000.0f);
+        ortho_height = std::clamp(ortho_height * std::pow(0.9f, wheel_steps), 0.25f, 100000.0f);
         return;
     }
-    distance = std::clamp(distance * std::pow(0.9f, wheel_steps), 0.5f, 1000.0f);
+    distance = std::clamp(distance * std::pow(0.9f, wheel_steps), 0.5f, 20000.0f);
 }
 
 void SceneViewCamera::Look(SceneViewOrientation orientation) {
@@ -419,6 +420,20 @@ bool GroundPoint(const Mat4& view_projection, const ImVec2& origin, const ImVec2
     if (t < 0.0f) return false;
     point = ray_origin + ray_direction * t;
     return true;
+}
+
+f32 GridSpacing(f32 world_per_pixel) {
+    if (!(world_per_pixel > 0.0f)) return 1.0f;
+    f32 step = 1.0f;
+    constexpr f32 kMinPixels = 10.0f; // below this the minor lines read as a wash, so the next ten takes over
+    while (step / world_per_pixel < kMinPixels && step < 1e9f) step *= 10.0f;
+    return step;
+}
+
+f32 GridFade(f32 distance, f32 radius) {
+    if (!(radius > 0.0f)) return 0.0f;
+    const f32 t = std::clamp((distance - radius * 0.5f) / (radius * 0.5f), 0.0f, 1.0f);
+    return 1.0f - t * t * (3.0f - 2.0f * t);
 }
 
 Entity PlaceModelAsset(SceneDocument& document, const std::string& content_path, const Vec3& position, Entity parent) {

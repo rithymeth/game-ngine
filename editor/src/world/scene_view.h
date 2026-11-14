@@ -120,6 +120,13 @@ bool ClosestOnAxis(const Vec3& axis_origin, const Vec3& axis_direction, const Ve
 // Where the mouse ray meets the ground plane (y = 0); false when it never does (parallel to the ground, or pointing away from it).
 bool GroundPoint(const Mat4& view_projection, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, Vec3& point);
 
+// The ground grid's minor spacing in metres: a power of ten, starting at one metre and growing by tens while a metre would draw the lines
+// closer than ten pixels (so it is metres and decametres, then tens and hundreds, when the view is far out). Every tenth line is the major one.
+f32 GridSpacing(f32 world_per_pixel);
+// How opaque the grid is at `distance` from the view's centre: full to half `radius`, then easing to nothing at `radius`, so the ground
+// has no edge to see.
+f32 GridFade(f32 distance, f32 radius);
+
 // Puts a model from the content folder into the scene as an entity named after the file with a ModelRenderer at `position`, selects it,
 // and records the whole placement as one undoable step. Returns kNullEntity (and changes nothing) for a path that is not a glTF/GLB model.
 // With `parent`, the entity is created under it (`position` is then relative to the parent: Vec3(0) puts it at the parent's origin).

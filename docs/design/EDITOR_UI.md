@@ -350,8 +350,12 @@ asset editor is focused once those documents adopt the contract in Stage 6.
 - Overlays: see a retired planning doc (removed).
 - **Selection outline:** 2 px `accent` outline around selected meshes;
   hovered objects get a 1 px `text.secondary` outline.
-- **Grid:** infinite fading grid on the XZ plane, 1 m minor / 10 m major
-  lines, fading out with distance.
+- **Grid:** endless fading grid on the XZ plane around the camera target,
+  1 m minor / 10 m major lines at normal zoom; when a metre would be
+  closer than 10 px the spacing steps up by tens (10/100 m, then 100/1000 m)
+  so it stays readable, and each line fades to nothing at the grid's radius,
+  so there is no edge. The X and Z axes are coloured and labelled near the
+  origin.
 - **Gizmo:** axis colors from tokens; the hovered axis turns yellow
   (`#FFD33D`); plane handles for two-axis moves; a center handle for
   screen-space moves.
