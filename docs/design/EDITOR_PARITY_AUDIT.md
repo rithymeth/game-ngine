@@ -156,8 +156,9 @@ These are the gaps where "it is missing" can be given a cost, or where the measu
    "the editor is slow" cannot be separated from "this machine has no GPU driver".
 2. **Picking is linear in triangles.** 0.514 ms for an 81,920-triangle model, about 6 ns per triangle, so the 300,000
    triangle cap is about 2 ms per pick — and the Scene View picks every frame for the hover outline
-   (`docs/design/PERFORMANCE.md:1514`). A bounding-volume tree is not needed yet; it becomes needed if the cap rises or
-   several large models overlap.
+   (`docs/design/PERFORMANCE.md:1514`). Measured at the cap since: 1.3 ms a pick at 297,192 triangles (2.1 ms with the gate running
+   four jobs), and `ModelBounds_PickingAtTheTriangleCapStaysLinear` fails if the loop stops being linear. A bounding-volume tree is not
+   needed yet; it becomes needed if the cap rises or several large models overlap.
 3. **The viewport cannot show a large world.** (Done 2026-11-14: the grid is endless and fades, and the orbit distance reaches
    20,000 m, so the wireframe view can frame what the large-world systems make.)
 4. **Only four asset extensions have an opener.** `.dialogue`, `.astrings`, `.asav` and `.asettings`
@@ -519,7 +520,17 @@ physics link, so the portable editor has it too; a trigger is yellow). Tests: Li
 different picture; a scene with every camera removed gains exactly one editor camera and draws; the panel asks the shading for the chosen
 mode at the view's size and stops it in Wireframe; each show flag removes draw-list vertices and Collision adds them; and the bridge cooks
 on first use, follows a moved object by patch without reloading the scene, changes with the mode, and stops. Not yet: a GPU wireframe (it
-needs a line pipeline, which the Vulkan path has none of), and the gate's headless screenshots per mode and 300k picking regression.
+needs a line pipeline, which the Vulkan path has none of).
+
+Done so far (2026-11-14): the Stage 2 gate's last two checks. `LiveViewport_HeadlessScreenshotsOfEachViewModeAndAnOrthographicView` renders
+Lit, Unlit, Normals and an orthographic top view with no window, writes each as a PNG (to `AETHER_PARITY_OUT` when set, so the captures can be
+kept, else the test project's `Saved/Screenshots`), checks each file is a real, non-flat PNG and that no two looks are the same picture, and
+prints where they went -- a person can open the four files and see what the shader really draws. `ModelBounds_PickingAtTheTriangleCapStaysLinear`
+writes two flat grid models, one of 297,192 triangles (just under `ModelBoundsCache::kMaxPickTriangles`) and one of 300,288 (just over), each
+with a square hole a quarter of the way out, so the pick necessarily tells the two paths apart: the first is picked by triangles and the ray
+through its hole misses, the second is picked by its box and the same ray hits. Ten picks through the solid grid are then timed against a
+250 ms budget (2,500 ms under a sanitizer) -- the measured cost in a RelWithDebInfo build is 1.3 ms a pick alone and 2.1 ms with the gate
+running four jobs, so the budget only trips on a change that makes the triangle loop superlinear.
 
 ### Stage 3 — Content browser and importer parity (L)
 

@@ -345,6 +345,63 @@ AETHER_TEST(LiveViewport_UnlitNormalsAndOrthographicViewsDrawDifferently) {
     AETHER_CHECK(DifferingPixels(lit, ortho) > kWidth * kHeight / 10);
 }
 
+// The gate's headless screenshots: each look and an orthographic view, rendered with no window and written as a PNG a person can open, with each
+// checked to be a real picture rather than a flat or empty frame and not the same picture as another. The files go under the test project's
+// Saved/Screenshots, which the run removes with its scratch dir; set AETHER_PARITY_OUT (as the lit-parity captures do) to keep them.
+AETHER_TEST(LiveViewport_HeadlessScreenshotsOfEachViewModeAndAnOrthographicView) {
+    std::unique_ptr<gfx::rhi::IDevice> device = TryDevice();
+    if (!device) {
+        std::printf("    (no Vulkan device: install a driver, or Mesa's lavapipe, to run this)\n");
+        return;
+    }
+    const stdfs::path project = MakeProject("Screenshots");
+    stdfs::path cooked;
+    std::string error;
+    AETHER_CHECK(CookForPreview(project, "Scenes/Main.ascene", project.parent_path() / "Saved" / "ScreenshotTest", &cooked, &error));
+    LiveViewport view(*device);
+    constexpr u32 kWidth = 320, kHeight = 180;
+    AETHER_CHECK(view.Load(cooked, "Scenes/Main.ascene", kWidth, kHeight, &error));
+    const char* keep = std::getenv("AETHER_PARITY_OUT");
+    const stdfs::path out = (keep && *keep) ? stdfs::path(keep) : project.parent_path() / "Saved" / "Screenshots";
+    stdfs::create_directories(out);
+    SceneViewCamera camera;
+    auto shot = [&](const char* name, player::SceneRenderer::ViewMode mode, SceneViewProjection projection) {
+        camera.projection = projection;
+        view.SetViewMode(mode);
+        for (int frame = 0; frame < 3; ++frame) {
+            AETHER_CHECK(view.Frame(0.0f, camera.Eye(), camera.Rotation(), camera.fov_degrees,
+                                    projection == SceneViewProjection::Orthographic ? Projection::Orthographic : Projection::Perspective, camera.ortho_height));
+        }
+        const std::vector<u8>& rgba = view.Pixels();
+        std::vector<u8> rgb;
+        rgb.reserve(static_cast<std::size_t>(kWidth) * kHeight * 3);
+        for (usize i = 0; i + 3 < rgba.size(); i += 4) {
+            rgb.push_back(rgba[i]);
+            rgb.push_back(rgba[i + 1]);
+            rgb.push_back(rgba[i + 2]);
+        }
+        const std::vector<u8> png = assets::EncodePngRgb8(kWidth, kHeight, rgb);
+        std::ofstream(out / name, std::ios::binary).write(reinterpret_cast<const char*>(png.data()), static_cast<std::streamsize>(png.size()));
+        std::set<u32> colours;
+        for (usize i = 0; i + 3 < rgba.size(); i += 4 * 31) colours.insert(u32(rgba[i]) << 16 | u32(rgba[i + 1]) << 8 | rgba[i + 2]);
+        AETHER_CHECK(png.size() > 2000 && png[0] == 0x89 && png[1] == 'P'); // a real PNG of a scene, not a flat fill
+        AETHER_CHECK(colours.size() > 20);
+        return rgba;
+    };
+    const std::vector<u8> lit = shot("lit.png", player::SceneRenderer::ViewMode::Lit, SceneViewProjection::Perspective);
+    const std::vector<u8> unlit = shot("unlit.png", player::SceneRenderer::ViewMode::Unlit, SceneViewProjection::Perspective);
+    const std::vector<u8> normals = shot("normals.png", player::SceneRenderer::ViewMode::Normals, SceneViewProjection::Perspective);
+    camera.Look(SceneViewOrientation::Top);
+    camera.ortho_height = 24.0f;
+    const std::vector<u8> ortho = shot("ortho_top.png", player::SceneRenderer::ViewMode::Lit, SceneViewProjection::Orthographic);
+    AETHER_CHECK(DifferingPixels(lit, unlit) > kWidth * kHeight / 10);
+    AETHER_CHECK(DifferingPixels(lit, normals) > kWidth * kHeight / 10);
+    AETHER_CHECK(DifferingPixels(unlit, normals) > kWidth * kHeight / 10);
+    AETHER_CHECK(DifferingPixels(lit, ortho) > kWidth * kHeight / 10);
+    for (const char* name : {"lit.png", "unlit.png", "normals.png", "ortho_top.png"}) AETHER_CHECK(stdfs::file_size(out / name) > 2000);
+    std::printf("    screenshots: %s\n", out.string().c_str());
+}
+
 // A scene with no camera is drawn anyway: the viewport puts the editor's own camera in it, as the Scene View has one of its own.
 AETHER_TEST(LiveViewport_ASceneWithNoCameraGetsTheEditorCamera) {
     std::unique_ptr<gfx::rhi::IDevice> device = TryDevice();

@@ -26,6 +26,7 @@
 #include <imgui_internal.h> // the drag-drop target the mouse is over
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -1620,6 +1621,48 @@ void WriteBoxModel(const stdfs::path& content, const std::string& name, const Ve
     std::ofstream(content / name, std::ios::binary).write(reinterpret_cast<const char*>(glb.data()), static_cast<std::streamsize>(glb.size()));
 }
 
+// A .glb of a flat `cells` x `cells` grid in the XZ plane from -10 m to 10 m, with a `hole` x `hole` square of quads left open a quarter of the way
+// along each axis. Returns the middle of the hole in world units, so a pick through it can tell the triangles from the box. Written compactly (welded
+// vertices, one material), because these are the models the 300,000-triangle cap is measured on.
+Vec3 WriteGridModel(const stdfs::path& content, const std::string& name, u32 cells, u32 hole) {
+    assets::procedural::ProceduralMesh mesh;
+    mesh.materials.push_back(assets::MaterialData{});
+    assets::MeshPrimitiveData primitive;
+    primitive.material = 0;
+    const u32 stride = cells + 1;
+    const f32 step = 20.0f / static_cast<f32>(cells);
+    primitive.vertices.resize(static_cast<std::size_t>(stride) * stride);
+    for (u32 z = 0; z <= cells; ++z) {
+        for (u32 x = 0; x <= cells; ++x) {
+            assets::MeshVertex& vertex = primitive.vertices[static_cast<std::size_t>(z) * stride + x];
+            vertex.position[0] = -10.0f + static_cast<f32>(x) * step;
+            vertex.position[1] = 0.0f;
+            vertex.position[2] = -10.0f + static_cast<f32>(z) * step;
+            vertex.normal[1] = 1.0f;
+            vertex.tangent[0] = 1.0f;
+            vertex.tangent[3] = 1.0f;
+            vertex.uv[0] = static_cast<f32>(x);
+            vertex.uv[1] = static_cast<f32>(z);
+        }
+    }
+    const u32 hole_low = cells / 4, hole_high = hole_low + hole;
+    for (u32 z = 0; z < cells; ++z) {
+        for (u32 x = 0; x < cells; ++x) {
+            if (x >= hole_low && x < hole_high && z >= hole_low && z < hole_high) continue;
+            const u32 a = z * stride + x, b = a + 1, c = a + stride, d = c + 1;
+            primitive.indices.insert(primitive.indices.end(), {a, c, b, b, c, d});
+        }
+    }
+    primitive.bounds_min = Vec3(-10.0f, 0.0f, -10.0f);
+    primitive.bounds_max = Vec3(10.0f, 0.0f, 10.0f);
+    mesh.mesh.primitives.push_back(std::move(primitive));
+    const std::vector<u8> glb = assets::procedural::EncodeGlb(mesh);
+    stdfs::create_directories((content / name).parent_path());
+    std::ofstream(content / name, std::ios::binary).write(reinterpret_cast<const char*>(glb.data()), static_cast<std::streamsize>(glb.size()));
+    return Vec3(-10.0f + (static_cast<f32>(hole_low) + static_cast<f32>(hole) * 0.5f) * step, 0.0f,
+                -10.0f + (static_cast<f32>(hole_low) + static_cast<f32>(hole) * 0.5f) * step);
+}
+
 } // namespace
 
 AETHER_TEST(ModelBounds_AModelsRealExtentIsReadOnceAndForgottenOnRequest) {
@@ -1684,6 +1727,62 @@ AETHER_TEST(ModelBounds_APickedEntityIsFoundWhereverItsModelIsAndTheNearerOneWin
     AETHER_CHECK(PickEntity(document, camera, origin, size, pixel(Vec3(0, 0.5f, 0)), 14.0f, &cache) != kNullEntity);
     AETHER_CHECK(PickEntity(document, camera, origin, size, pixel(Vec3(8, 6, 8)), 14.0f, &cache) == camera_entity);   // no model: still found by its origin
     AETHER_CHECK(PickEntity(document, camera, origin, size, ImVec2(5, 5), 14.0f, &cache) == kNullEntity);             // empty space
+}
+
+// Sanitizers slow the triangle loop several times over; the budget scales with them, as the scene budget in test_bench does.
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
+constexpr double kCapPickBudgetMs = 2500.0;
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer)
+constexpr double kCapPickBudgetMs = 2500.0;
+#else
+constexpr double kCapPickBudgetMs = 250.0;
+#endif
+#else
+constexpr double kCapPickBudgetMs = 250.0;
+#endif
+
+// The 300,000-triangle cap (ModelBoundsCache::kMaxPickTriangles): a model under it is picked by its triangles, so a ray through a hole in the mesh is a
+// miss; one over it is picked by its box, so the same ray hits. A pick at the cap is timed against a wide budget -- about 2 ms measured, where a pick
+// that went quadratic over the triangles would take minutes -- so an accidental change to the loop fails here rather than in the editor's hover.
+AETHER_TEST(ModelBounds_PickingAtTheTriangleCapStaysLinear) {
+    const stdfs::path content = Scratch("aether_pick_cap");
+    const Vec3 near_hole = WriteGridModel(content, "Models/near_cap.glb", 386, 20);   // 297,192 triangles: kept and picked by shape
+    const Vec3 over_hole = WriteGridModel(content, "Models/over_cap.glb", 388, 20);   // 300,288: over the cap, so the box answers
+    ModelBoundsCache cache(content);
+    const ModelTriangles* near_shape = cache.Triangles("Models/near_cap.glb");
+    AETHER_CHECK(near_shape != nullptr && near_shape->TriangleCount() == 297192);
+    AETHER_CHECK(cache.Triangles("Models/over_cap.glb") == nullptr);
+    LocalBounds near_box, over_box;
+    AETHER_CHECK(cache.Get("Models/near_cap.glb", near_box) && cache.Get("Models/over_cap.glb", over_box));
+    AETHER_CHECK(NearVec(near_box.max, Vec3(10, 0, 10), 1e-3f) && NearVec(over_box.min, Vec3(-10, 0, -10), 1e-3f));
+
+    SceneDocument document;
+    const Vec3 over_at(40.0f, 0.0f, 0.0f);
+    const Entity near_cap = document.CreateEntity("NearCap", SceneEntityKind::Model, "Models/near_cap.glb");
+    const Entity over_cap = document.CreateEntity("OverCap", SceneEntityKind::Model, "Models/over_cap.glb");
+    document.SetPosition(over_cap, over_at, true);
+    AETHER_CHECK(near_cap != kNullEntity && over_cap != kNullEntity);
+    SceneViewCamera camera;
+    camera.pitch = 1.2f;
+    camera.distance = 30.0f;
+    const ImVec2 origin(0, 0), size(800, 600);
+    auto pixel = [&](const Vec3& world) {
+        ImVec2 at(-1, -1);
+        ProjectToViewport(camera.ViewProjection(size.x / size.y), world, origin, size, at);
+        return at;
+    };
+    const ImVec2 solid = pixel(Vec3(-8.0f, 0.0f, -8.0f));
+    // Through the hole: the box is hit but the triangles are not (and the origin is far from the mouse, so the origin test cannot answer for them).
+    AETHER_CHECK(PickEntity(document, camera, origin, size, pixel(near_hole), 14.0f, &cache) == kNullEntity);
+    AETHER_CHECK(PickEntity(document, camera, origin, size, solid, 14.0f, &cache) == near_cap);              // the solid grid around the hole
+    AETHER_CHECK(PickEntity(document, camera, origin, size, pixel(over_at + over_hole), 14.0f, &cache) == over_cap); // over the cap the box answers, hole and all
+
+    const auto start = std::chrono::steady_clock::now();
+    for (int pick = 0; pick < 10; ++pick) AETHER_CHECK(PickEntity(document, camera, origin, size, solid, 14.0f, &cache) == near_cap);
+    const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count() / 10.0;
+    std::printf("    pick at the 300k cap: %.2f ms\n", ms);
+    AETHER_CHECK(ms < kCapPickBudgetMs);
 }
 
 AETHER_TEST(SceneView_AMarqueeTouchesAModelsRealBoxNotJustItsOrigin) {
