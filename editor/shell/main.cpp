@@ -99,9 +99,11 @@ void DrawEditor(EditorWorkspace& workspace, const char* backend_label) {
     }
     ImGui::End();
     if (ImGui::BeginViewportSideBar("##status", viewport, ImGuiDir_Down, ImGui::GetFrameHeight(), ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings)) {
-        ImGui::TextDisabled("%s", backend_label);
-        ImGui::SameLine();
-        ImGui::TextDisabled("|  %.1f ms  (%.0f fps)  |  drag a panel's tab to dock it, or its edge to resize", 1000.0f / std::max(io.Framerate, 1.0f), io.Framerate);
+        workspace.DrawStatusBar();
+        ImGui::SameLine(0.0f, 10.0f);
+        ImGui::TextDisabled("|");
+        ImGui::SameLine(0.0f, 10.0f);
+        ImGui::TextDisabled("%s  |  %.1f ms  (%.0f fps)", backend_label, 1000.0f / std::max(io.Framerate, 1.0f), io.Framerate);
     }
     ImGui::End();
 

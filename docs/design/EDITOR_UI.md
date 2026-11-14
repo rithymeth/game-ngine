@@ -396,10 +396,13 @@ Covered in [ROADMAP.md Phase 8](../ROADMAP.md). Additional rules:
 
 ### 6.7 Status bar
 
-Left: current task or "Ready", plus a progress bar for background work
-(imports, shader compiles). Middle: selection count. Right: source control
-branch/state, autosave time, frame time. Clicking the frame time opens the
-Profiler.
+Left to right: the open project (tooltip: its full path), the active
+document's name with `*` while it has unsaved changes, the play state
+("Editing", or "Playing"/"Paused" in amber), an active cook/package
+("Cooking 42%") or "Game running", and the unread message count as a button —
+clicking "Messages (2)" opens the Messages tool and marks them read. The host
+appends the backend and frame time on the same line. The source-control branch
+and selection count are still to come.
 
 ### 6.8 Project Hub
 

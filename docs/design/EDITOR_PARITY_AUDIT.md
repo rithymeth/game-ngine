@@ -80,7 +80,7 @@ as well. The verdicts are a judgement from the source audit; the evidence column
 | Native file dialogs | Native open/save/import | Native | Native | Open Scene, Save Scene As and the toolbar's "..." use the system picker (`IFileDialog`; zenity/kdialog on Linux); the typed path remains the fallback | `editor/src/core/file_dialog.cpp`, `editor/src/world/scene_panel.cpp:74-100` | Partial |
 | Unsaved work on exit | Prompt per document | Prompt; play-mode changes discarded with warning | Prompt | Quit immediate; only New/Open prompt | `editor/shell/main.cpp:78`, `scene_panel.cpp:70-96` | Missing |
 | Autosave/recovery | Autosave and recovery | Autosave and recovery | Autosave backups | `SaveAutosave`/`LoadAutosave` exist and are unused | `editor/src/core/scene_document.cpp:202-226` | Missing |
-| Status bar | Project, source control, progress, PIE state | Scene, play state, console counts | Debug state, network, version | Backend name, frame time, docking hint | `editor/shell/main.cpp:92-97` | Partial |
+| Status bar | Project, source control, progress, PIE state | Scene, play state, console counts | Debug state, network, version | Project, document name with a dirty mark, play state, an active cook/package or launched game, and unread messages as a button; the host adds backend and frame time; no source-control branch yet | `editor/src/workspace/editor_workspace.cpp` (`StatusBar`, `DrawStatusBar`), `editor/shell/main.cpp` | Partial |
 
 ## World editing, viewport and transforms
 
@@ -307,9 +307,21 @@ names its context (`CommandScopeName`: anywhere, Scene tool, Scene hierarchy): a
 Scene tool has focus, and that is the part a reader needs. Help holds Keyboard Shortcuts (F1) and About Aether Editor
 (engine version, build kind, tool count, open project), and About links to the sheet. Tests: the rows are exactly the
 chorded commands, once each and carrying the table's label/chord/menu; menu ordering; F1 registered under Help; both
-commands opening their windows and drawing headlessly; and a chord-only command appearing under "Other". Still open in
-this stage: the rest of menu completion (Asset, Actor, Window with layout presets), document tabs, the status bar,
-layout presets, and the scene toolbar's recents list.
+commands opening their windows and drawing headlessly; and a chord-only command appearing under "Other".
+
+Done so far (2026-11-14): the status bar. `EditorWorkspace::StatusBar()` is the snapshot the bar draws -- the open
+project's name, the active document's display name, whether it is dirty, the play state, an active cook/package
+(with its stage and percent) or a launched game, and the unread message count -- and `DrawStatusBar` renders it into
+the shell's bottom side bar, which appends the backend and frame time on the same line. The play state is amber while
+not editing, matching the toolbar's underline. The message count is a `SmallButton`: clicking it opens the Messages
+tool and marks the list read; merely drawing the bar does not, so an unread count means "arrived since you last
+looked" in the bar too. Tests: the project/document/dirty snapshot following the document, the play state through
+Playing, Paused and back, the unread count through a post and a draw (drawing alone must not clear it), and the bar
+drawn headlessly in every play state.
+
+Still open in this stage: the rest of menu completion (Asset, Actor, Window with layout presets), document tabs,
+layout presets, the scene toolbar's recents list, and the status bar's source-control branch segment and selection
+count (`EDITOR_UI.md` §6.7).
 
 ### Stage 2 — Viewport and selection parity (L)
 

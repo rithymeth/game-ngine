@@ -148,6 +148,21 @@ public:
     // own, so a headless test can draw it too.
     void DrawMainToolbar();
 
+    // The bottom status bar (Stage 1 of docs/design/EDITOR_PARITY_AUDIT.md), into the current window: the open
+    // project, the active document with a dirty mark, the play state, an active cook/package or launched game, and
+    // the unread message count as a button that opens Messages. A host draws it along the bottom and may SameLine its
+    // own segments (backend, frame rate). StatusBar() is what the bar would show, so a test can read it.
+    struct StatusBarInfo {
+        std::string project;  // the project's file stem; "No project" when there is none
+        std::string document; // the active document's display name
+        bool dirty = false;
+        const char* play = "Editing"; // "Editing", "Playing" or "Paused"
+        std::string job;              // an active cook/package or a launched game; empty when idle
+        std::size_t unread = 0;
+    };
+    StatusBarInfo StatusBar();
+    void DrawStatusBar();
+
     // Data safety (Stage 0 of docs/design/EDITOR_PARITY_AUDIT.md): the editor writes the open scene into a
     // per-project recovery slot while it has unsaved changes, and offers it back when the last session did not end
     // cleanly. A clean save or a normal quit removes the slot; only an interrupted session leaves one to recover.

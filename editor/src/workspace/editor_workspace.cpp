@@ -1595,6 +1595,79 @@ void EditorWorkspace::DrawMainToolbar() {
     if (command_button("view.preferences", "Settings")) impl_->commands.Run("view.preferences");
 }
 
+namespace {
+
+const char* PlayStateName(PlaySession::State state) {
+    switch (state) {
+    case PlaySession::State::Playing: return "Playing";
+    case PlaySession::State::Paused: return "Paused";
+    default: return "Editing";
+    }
+}
+
+} // namespace
+
+EditorWorkspace::StatusBarInfo EditorWorkspace::StatusBar() {
+    StatusBarInfo info;
+    info.project = impl_->project_file.empty() ? "No project" : impl_->project_file.stem().string();
+    const EditorDocument& document = ActiveDocument();
+    info.document = document.DisplayName();
+    info.dirty = document.IsDirty();
+    info.play = PlayStateName(Scene().Document().PlayState());
+    if (impl_->build_window != nullptr) {
+        PackageRunner& runner = *impl_->build_window;
+        if (runner.Busy()) {
+            const std::string stage = runner.Stage();
+            const int percent = static_cast<int>(runner.Progress() * 100.0f + 0.5f);
+            info.job = (stage.empty() ? std::string("Building") : stage) + " " + std::to_string(percent) + "%";
+        } else if (runner.Game().Running()) {
+            info.job = "Game running";
+        }
+    }
+    info.unread = impl_->notifications.UnreadCount();
+    return info;
+}
+
+void EditorWorkspace::DrawStatusBar() {
+    const StatusBarInfo info = StatusBar();
+    const auto separator = [] {
+        ImGui::SameLine(0.0f, 10.0f);
+        ImGui::TextDisabled("|");
+        ImGui::SameLine(0.0f, 10.0f);
+    };
+
+    ImGui::TextUnformatted(info.project.c_str());
+    if (!impl_->project_file.empty()) ImGui::SetItemTooltip("%s", impl_->project_file.string().c_str());
+
+    separator();
+    ImGui::Text("%s%s", info.document.c_str(), info.dirty ? " *" : "");
+    if (info.dirty) ImGui::SetItemTooltip("Unsaved changes");
+
+    separator();
+    if (std::string(info.play) == "Editing") {
+        ImGui::TextDisabled("%s", info.play);
+    } else {
+        ImGui::TextColored(ImVec4(1.0f, 0.72f, 0.2f, 1.0f), "%s", info.play);
+    }
+
+    if (!info.job.empty()) {
+        separator();
+        ImGui::TextUnformatted(info.job.c_str());
+    }
+
+    separator();
+    const std::string label = info.unread > 0 ? "Messages (" + std::to_string(info.unread) + ")" : std::string("Messages");
+    if (ImGui::SmallButton(label.c_str())) {
+        const i64 messages = FindTool("Messages");
+        if (messages >= 0) {
+            Select(static_cast<usize>(messages));
+            SetWindowOpen(static_cast<usize>(messages), true);
+            impl_->notifications.MarkAllRead();
+        }
+    }
+    ImGui::SetItemTooltip("%s", info.unread > 0 ? "Unread messages: click to open the list" : "Open the message list");
+}
+
 void EditorWorkspace::DrawCommandPalette() {
     if (!command_palette_open) return;
     // Built per frame: it is a filter over the tool list, which is a few dozen entries, and
