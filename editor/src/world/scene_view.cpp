@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <filesystem>
 #include <limits>
 
@@ -103,18 +104,72 @@ void SceneViewCamera::Pan(f32 right_units, f32 up_units) {
     target = target + right * right_units + up * up_units;
 }
 
+void SceneViewCamera::Move(f32 forward_units, f32 right_units, f32 up_units) {
+    const Mat4 view = View();
+    const Vec3 forward = (target - Eye()).Normalized();
+    const Vec3 right(view.cols[0].x, view.cols[1].x, view.cols[2].x);
+    const Vec3 up(view.cols[0].y, view.cols[1].y, view.cols[2].y);
+    target = target + forward * forward_units + right * right_units + up * up_units;
+}
+
+SceneViewCamera::State SceneViewCamera::GetState() const { return State{yaw, pitch, distance, target, ortho_height, projection}; }
+
+void SceneViewCamera::SetState(const State& state) {
+    yaw = state.yaw;
+    pitch = state.pitch;
+    distance = state.distance;
+    target = state.target;
+    ortho_height = state.ortho_height;
+    projection = state.projection;
+}
+
+bool SceneViewCamera::SaveBookmark(int slot) {
+    if (slot < 1 || slot > kBookmarkCount) return false;
+    bookmarks_[static_cast<std::size_t>(slot - 1)] = GetState();
+    return true;
+}
+
+bool SceneViewCamera::RecallBookmark(int slot) {
+    if (slot < 1 || slot > kBookmarkCount || !bookmarks_[static_cast<std::size_t>(slot - 1)]) return false;
+    SetState(*bookmarks_[static_cast<std::size_t>(slot - 1)]);
+    return true;
+}
+
+bool SceneViewCamera::HasBookmark(int slot) const {
+    return slot >= 1 && slot <= kBookmarkCount && bookmarks_[static_cast<std::size_t>(slot - 1)].has_value();
+}
+
 void HandleCameraInput(SceneViewCamera& camera, bool hovered, bool active, const ImVec2& size) {
     const ImGuiIO& io = ImGui::GetIO();
+    const bool looking = active && ImGui::IsMouseDown(ImGuiMouseButton_Right);
     if (active) {
         const ImVec2 d = io.MouseDelta;
-        if (ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
+        if (looking) {
             camera.Orbit(-d.x * 0.008f, d.y * 0.008f);
         } else if (ImGui::IsMouseDown(ImGuiMouseButton_Middle) || (io.KeyShift && ImGui::IsMouseDown(ImGuiMouseButton_Left))) {
             const f32 per_pixel = camera.ViewHeight() / std::max(size.y, 1.0f);
             camera.Pan(-d.x * per_pixel, d.y * per_pixel);
         }
     }
-    if (hovered && io.MouseWheel != 0.0f) camera.Zoom(io.MouseWheel);
+    // The fly keys move the view only while looking (right mouse down), so W, E and R keep choosing the gizmo otherwise.
+    if (looking && !io.WantTextInput) {
+        const auto axis = [](ImGuiKey positive, ImGuiKey negative) {
+            return (ImGui::IsKeyDown(positive) ? 1.0f : 0.0f) - (ImGui::IsKeyDown(negative) ? 1.0f : 0.0f);
+        };
+        const f32 forward = axis(ImGuiKey_W, ImGuiKey_S);
+        const f32 right = axis(ImGuiKey_D, ImGuiKey_A);
+        const f32 up = axis(ImGuiKey_E, ImGuiKey_Q);
+        if (forward != 0.0f || right != 0.0f || up != 0.0f) {
+            const f32 dt = std::clamp(io.DeltaTime, 0.0f, 0.1f);
+            const f32 speed = camera.fly_speed * (io.KeyShift ? 4.0f : 1.0f); // shift runs
+            camera.Move(forward * speed * dt, right * speed * dt, up * speed * dt);
+        }
+    }
+    if (hovered && io.MouseWheel != 0.0f) {
+        // While flying the wheel is the speed control; otherwise it zooms.
+        if (looking) camera.fly_speed = std::clamp(camera.fly_speed * std::pow(1.25f, io.MouseWheel), 0.1f, 10000.0f);
+        else camera.Zoom(io.MouseWheel);
+    }
 }
 
 bool ProjectToViewport(const Mat4& view_projection, const Vec3& world, const ImVec2& origin, const ImVec2& size, ImVec2& out, f32* depth) {

@@ -360,6 +360,11 @@ asset editor is focused once those documents adopt the contract in Stage 6.
   Esc to stop".
 - **Camera speed:** shows briefly in the middle ("Speed 4") when changed
   with the mouse wheel during fly mode.
+- **Fly camera:** with the right mouse button held the view looks and
+  W/A/S/D (Q/E down/up) moves; Shift runs; the wheel changes the speed
+  instead of zooming. Focus (F) frames the selection by its models' boxes.
+- **Camera bookmarks:** Ctrl+1..9 stores the current pose and 1..9 returns
+  to it; a short message in the middle names the bookmark.
 - **Projection:** the Scene View opens on the perspective orbit camera.
   Persp/Ortho toggles a parallel projection without changing the angle, and
   Top, Front and Side jump to those axis views (orthographic); the orthographic

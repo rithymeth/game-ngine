@@ -42,7 +42,7 @@ void ViewportTools::DrawToolbar() {
 
 void ViewportTools::HandleInput(SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, bool hovered, bool active) {
     const ImGuiIO& io = ImGui::GetIO();
-    if (hovered && !io.WantTextInput && !gizmo_.Dragging()) { // W, E and R choose the gizmo, as in most editors
+    if (hovered && !io.WantTextInput && !gizmo_.Dragging() && !ImGui::IsMouseDown(ImGuiMouseButton_Right)) { // W, E and R choose the gizmo, as in most editors; while looking, W/A/S/D fly
         if (ImGui::IsKeyPressed(ImGuiKey_W)) mode_ = GizmoMode::Move;
         if (ImGui::IsKeyPressed(ImGuiKey_E)) mode_ = GizmoMode::Rotate;
         if (ImGui::IsKeyPressed(ImGuiKey_R)) mode_ = GizmoMode::Scale;

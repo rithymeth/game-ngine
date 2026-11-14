@@ -8,7 +8,9 @@
 
 #include <imgui.h>
 
+#include <array>
 #include <filesystem>
+#include <optional>
 
 #include <vector>
 
@@ -19,9 +21,10 @@ enum class SceneViewProjection { Perspective, Orthographic };
 // The axis-aligned orthographic views the Scene View offers; Free is any other orientation.
 enum class SceneViewOrientation { Free, Top, Front, Side };
 
-// An orbit camera around a target point, Y up: right-drag turns it, middle-drag (or shift + left-drag) pans, the wheel
-// zooms. In an orthographic projection the same angles give a parallel view and the wheel changes `ortho_height` instead.
-// Plain data and plain functions, so the maths is tested without a window.
+// An orbit camera around a target point, Y up: right-drag turns it, and moves it with W/A/S/D and Q/E (E up, Q down) at
+// `fly_speed`; middle-drag (or shift + left-drag) pans and the wheel zooms (or, while flying, changes the speed). In an
+// orthographic projection the same angles give a parallel view and the wheel changes `ortho_height` instead. Plain data
+// and plain functions, so the maths is tested without a window.
 struct SceneViewCamera {
     f32 yaw = 0.7f;      // radians around Y
     f32 pitch = 0.5f;    // radians above the horizon, kept clear of straight up and down
@@ -30,6 +33,7 @@ struct SceneViewCamera {
     f32 fov_degrees = 60.0f;
     SceneViewProjection projection = SceneViewProjection::Perspective;
     f32 ortho_height = 14.0f; // world units across the view's vertical when orthographic: its own zoom, kept apart from `distance`
+    f32 fly_speed = 8.0f;     // metres per second the fly keys move the view, before the shift multiplier
 
     Vec3 Eye() const;
     // The world up the view uses: +Y, or -Z/+Z when looking straight down/up, where +Y would be along the view direction.
@@ -45,10 +49,31 @@ struct SceneViewCamera {
     void Orbit(f32 delta_yaw, f32 delta_pitch);
     void Zoom(f32 wheel_steps);          // each step scales the perspective distance, or the orthographic height, by 0.9 (in) or 1/0.9 (out)
     void Pan(f32 right_units, f32 up_units); // in the view plane, in world units
+    // Translates eye and target together along the view's own forward, right and up, in world units (the fly keys).
+    void Move(f32 forward_units, f32 right_units, f32 up_units);
     // An orthographic top, front or side view, with exactly the angles that imply; Free does nothing.
     void Look(SceneViewOrientation orientation);
     // The preset the camera is on -- orthographic with matching angles -- else Free.
     SceneViewOrientation Orientation() const;
+
+    // Everything a bookmark puts back: where the view looks from and how it projects and zooms.
+    struct State {
+        f32 yaw = 0.7f;
+        f32 pitch = 0.5f;
+        f32 distance = 14.0f;
+        Vec3 target{0.0f, 0.0f, 0.0f};
+        f32 ortho_height = 14.0f;
+        SceneViewProjection projection = SceneViewProjection::Perspective;
+    };
+    State GetState() const;
+    void SetState(const State& state);
+    static constexpr int kBookmarkCount = 9;
+    bool SaveBookmark(int slot);    // 1..9; false for any other slot
+    bool RecallBookmark(int slot);  // false for an empty slot (or any other)
+    bool HasBookmark(int slot) const;
+
+private:
+    std::array<std::optional<State>, kBookmarkCount> bookmarks_;
 };
 
 // The mouse and keys of an orbit view, for the ImGui item just submitted (right-drag turns, middle-drag or shift + left-drag pans, the

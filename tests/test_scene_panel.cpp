@@ -86,6 +86,9 @@ std::vector<std::string> Names(const SceneDocument& document, const std::vector<
     return out;
 }
 
+// Defined with the gizmo helpers further down; the camera tests above them use it too.
+bool NearVec(const Vec3& a, const Vec3& b, f32 tolerance);
+
 } // namespace
 
 AETHER_TEST(ScenePanel_TheHierarchyIsATreeByParentSortedByName) {
@@ -544,6 +547,93 @@ AETHER_TEST(SceneView_OrthographicViewsProjectInParallelAndLookAlongAxes) {
     AETHER_CHECK(above.y < centre.y - 5.0f);
     camera.Orbit(0.0f, 0.1f);
     AETHER_CHECK(camera.Orientation() == SceneViewOrientation::Free);
+}
+
+// The fly keys: W/A/S/D and Q/E move the view along its own axes, but only while the right mouse button is looking, so the same
+// letters still choose the gizmo otherwise; the wheel is the speed while flying and the zoom when not.
+AETHER_TEST(SceneView_FlyKeysMoveTheViewOnlyWhileLooking) {
+    HeadlessImGui imgui;
+    SceneViewCamera camera;
+    camera.yaw = 0.0f;
+    camera.pitch = 0.0f;
+    camera.distance = 10.0f;
+    camera.fly_speed = 60.0f; // one metre a frame at 60 fps
+    const ImVec2 size(800.0f, 600.0f);
+    auto frame = [&](bool right_down, bool forward, bool wheel) {
+        ImGuiIO& io = ImGui::GetIO();
+        io.AddMousePosEvent(400.0f, 300.0f);
+        io.AddMouseButtonEvent(ImGuiMouseButton_Right, right_down);
+        io.AddKeyEvent(ImGuiKey_W, forward);
+        if (wheel) io.AddMouseWheelEvent(0.0f, 1.0f);
+        imgui.Frame([&] {
+            ImGui::InvisibleButton("##view", size, ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonMiddle);
+            HandleCameraInput(camera, ImGui::IsItemHovered(), ImGui::IsItemActive(), size);
+        });
+    };
+    frame(false, true, false); // W without looking: nothing moves
+    AETHER_CHECK(NearVec(camera.target, Vec3(0, 0, 0), 1e-4f));
+    frame(true, true, false);  // looking with W: forward along -Z at fly_speed
+    AETHER_CHECK(NearVec(camera.target, Vec3(0, 0, -1), 0.05f));
+    AETHER_CHECK(std::fabs((camera.Eye() - camera.target).Length() - 10.0f) < 1e-3f); // the eye travels with the target
+    frame(true, false, true);  // the wheel while flying changes the speed, not the zoom
+    AETHER_CHECK(camera.fly_speed > 60.0f && std::fabs(camera.distance - 10.0f) < 1e-4f);
+    frame(false, false, false); // release; (a button change and a wheel in one batch would be trickled a frame apart)
+    frame(false, false, true);  // the wheel without looking zooms
+    AETHER_CHECK(camera.distance < 10.0f);
+
+    // The translation itself: eye and target move together along the view's forward, right and up.
+    camera.yaw = 0.0f;
+    camera.pitch = 0.0f;
+    camera.distance = 10.0f;
+    camera.target = Vec3(1.0f, 2.0f, 3.0f);
+    const Vec3 eye = camera.Eye();
+    camera.Move(2.0f, 0.0f, 0.0f);
+    AETHER_CHECK(NearVec(camera.target, Vec3(1.0f, 2.0f, 1.0f), 1e-4f));  // forward is -Z at yaw 0
+    AETHER_CHECK(NearVec(camera.Eye(), eye + Vec3(0.0f, 0.0f, -2.0f), 1e-4f));
+    camera.Move(0.0f, 1.0f, 0.0f);
+    AETHER_CHECK(NearVec(camera.target, Vec3(2.0f, 2.0f, 1.0f), 1e-4f));  // right is +X
+    camera.Move(0.0f, 0.0f, 1.0f);
+    AETHER_CHECK(NearVec(camera.target, Vec3(2.0f, 3.0f, 1.0f), 1e-4f));  // up is +Y
+}
+
+// Camera bookmarks keep a whole pose (angles, target, both zooms and the projection) and put it back; the panel binds Ctrl+1..9 and 1..9.
+AETHER_TEST(SceneView_BookmarksStoreAWholePoseAndNumberKeysRecallIt) {
+    SceneViewCamera camera;
+    camera.projection = SceneViewProjection::Orthographic;
+    camera.yaw = 0.4f;
+    camera.pitch = -0.2f;
+    camera.distance = 9.0f;
+    camera.ortho_height = 7.0f;
+    camera.target = Vec3(1.0f, 2.0f, 3.0f);
+    AETHER_CHECK(!camera.HasBookmark(1) && !camera.RecallBookmark(1));
+    AETHER_CHECK(camera.SaveBookmark(1) && camera.HasBookmark(1));
+    AETHER_CHECK(!camera.SaveBookmark(0) && !camera.SaveBookmark(SceneViewCamera::kBookmarkCount + 1));
+    camera.SetState(SceneViewCamera::State{1.2f, 0.3f, 3.0f, Vec3(4.0f, 5.0f, 6.0f), 30.0f, SceneViewProjection::Perspective});
+    AETHER_CHECK(camera.RecallBookmark(1));
+    AETHER_CHECK(camera.projection == SceneViewProjection::Orthographic && std::fabs(camera.yaw - 0.4f) < 1e-5f && std::fabs(camera.pitch + 0.2f) < 1e-5f);
+    AETHER_CHECK(std::fabs(camera.distance - 9.0f) < 1e-5f && std::fabs(camera.ortho_height - 7.0f) < 1e-5f && NearVec(camera.target, Vec3(1.0f, 2.0f, 3.0f), 1e-5f));
+
+    // The panel's keys: Ctrl+3 stores, 3 recalls.
+    HeadlessImGui imgui;
+    SceneViewPanel panel;
+    SceneDocument document;
+    document.CreateEntity("A");
+    auto frame = [&](bool ctrl, bool key) {
+        ImGuiIO& io = ImGui::GetIO();
+        io.AddMousePosEvent(400.0f, 300.0f);
+        io.AddKeyEvent(ImGuiMod_Ctrl, ctrl);
+        io.AddKeyEvent(ImGuiKey_3, key);
+        imgui.Frame([&] { panel.Draw(document); });
+    };
+    frame(false, false); // lay the panel out under the mouse
+    panel.Camera().target = Vec3(7.0f, 0.0f, 0.0f);
+    frame(true, true);   // Ctrl+3 stores the pose
+    frame(true, false);
+    AETHER_CHECK(panel.Camera().HasBookmark(3));
+    panel.Camera().target = Vec3(-4.0f, 0.0f, 0.0f);
+    frame(false, true);  // 3 recalls it
+    frame(false, false);
+    AETHER_CHECK(NearVec(panel.Camera().target, Vec3(7.0f, 0.0f, 0.0f), 1e-4f));
 }
 
 AETHER_TEST(SceneView_FocusAndDrawHeadless) {
@@ -1213,6 +1303,24 @@ AETHER_TEST(ModelBounds_AModelsRealExtentIsReadOnceAndForgottenOnRequest) {
     AETHER_CHECK(!cache.Get("Models/crate.glb", box) && cache.CachedCount() == 1);
     ModelBoundsCache none;                                                              // no content root at all
     AETHER_CHECK(!none.Get("Models/crate.glb", box));
+}
+
+// F frames the selection by its models' real boxes in world space, not by the entities' origins; without the cache every entity is a unit box.
+AETHER_TEST(SceneView_FocusFramesAModelsBoxNotItsOrigin) {
+    const stdfs::path content = Scratch("aether_focus_bounds");
+    WriteBoxModel(content, "Models/crate.glb", Vec3(-1, 0, -2), Vec3(3, 4, 1));
+    ModelBoundsCache cache(content);
+    SceneDocument document;
+    const Entity crate = document.CreateEntity("Crate", SceneEntityKind::Model, "Models/crate.glb");
+    document.SetPosition(crate, Vec3(10.0f, 0.0f, 0.0f), true);
+    document.SetScale(crate, Vec3(2.0f, 2.0f, 2.0f), true);
+    document.SetSelection({crate});
+    SceneViewPanel panel;
+    panel.FocusSelection(document, &cache); // the box centre (1, 2, -0.5) doubled and moved to (10, 0, 0)
+    AETHER_CHECK(NearVec(panel.Camera().target, Vec3(12.0f, 4.0f, -1.0f), 1e-3f));
+    AETHER_CHECK(panel.Camera().distance > 15.0f); // backed off to fit the 8 m tall box
+    panel.FocusSelection(document);                // no cache: the unit box around the origin
+    AETHER_CHECK(NearVec(panel.Camera().target, Vec3(10.0f, 0.0f, 0.0f), 1e-3f));
 }
 
 AETHER_TEST(ModelBounds_APickedEntityIsFoundWhereverItsModelIsAndTheNearerOneWins) {

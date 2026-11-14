@@ -425,7 +425,23 @@ depth range's zero start makes visible as a negative z. The Scene View's toolbar
 buttons, lit for the current view. Tests: a world unit projects to the same pixel length at the target and 100 units
 beyond it, each projection keeps its zoom across switching, the top view puts +X right and -Z up, front and side keep +Y
 up, and orbiting a preset makes it free again; the existing perspective, focus, ground-point and gizmo tests still pass.
-Not yet: shading, fly mode, the infinite grid, marquee selection and grouped undo.
+Not yet: shading, the infinite grid, marquee selection and grouped undo.
+
+Done so far (2026-11-14): the fly camera, focus by selection bounds and camera bookmarks. `SceneViewCamera` gained
+`Move`, which translates eye and target together along the view's own forward, right and up, and `HandleCameraInput` runs
+the fly keys only while the right mouse button is looking (`active`), so W/A/S/D and Q/E do not fight the gizmo's W/E/R
+mode keys, which are suppressed during a look; Shift multiplies the speed four-fold. While flying the wheel is the speed
+control (`fly_speed`, clamped and shown as "Speed N m/s" in the middle for a second and a half) and outside it the wheel
+zooms as before. Focus (`FocusSelection`) now takes the model bounds cache: it frames every selected entity by its real
+box placed by its world transform -- all eight corners, so scale and rotation count -- and falls back to the unit box
+where no model is known, instead of framing origins; the F key passes the view's cache. Bookmarks are a whole camera pose
+(`SceneViewCamera::State`: angles, target, perspective distance, orthographic height and projection) kept by the camera in
+nine slots; the panel binds Ctrl+1..9 to store the current pose and 1..9 to return to one, with a brief message, and leaves
+Alt combinations alone. Tests: W does nothing without looking and moves a metre a frame while looking (the eye travels
+with the target), the wheel changes the speed while flying and the zoom otherwise, the move maths along all three view
+axes, focus framing a scaled model's box centre rather than its origin (and the unit box without a cache), a whole-pose
+save/recall round-trip with empty and out-of-range slots refused, and the panel's Ctrl+3/3 keys storing and recalling
+through headless frames.
 
 ### Stage 3 — Content browser and importer parity (L)
 
