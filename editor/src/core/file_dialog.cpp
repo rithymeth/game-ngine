@@ -265,7 +265,7 @@ private:
     bool FindAvailable() const {
         // Round-tripping through Run would launch the picker; ask the filesystem instead.
         const char* path = std::getenv("PATH");
-        if (path == nullptr) return found_ = false;
+        if (path == nullptr) return false;
         std::string search = path;
         std::size_t start = 0;
         while (start <= search.size()) {
@@ -273,11 +273,11 @@ private:
             const std::string folder = search.substr(start, end - start);
             if (!folder.empty() && (access((folder + "/zenity").c_str(), X_OK) == 0 || access((folder + "/zenity3").c_str(), X_OK) == 0 ||
                                     access((folder + "/kdialog").c_str(), X_OK) == 0))
-                return found_ = true;
+                return true;
             if (end == search.size()) break;
             start = end + 1;
         }
-        return found_ = false;
+        return false;
     }
 
     std::filesystem::path chosen_;
