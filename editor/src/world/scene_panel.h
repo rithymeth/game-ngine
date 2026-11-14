@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/recent_scenes.h"
 #include "core/scene_document.h"
 #include "world/model_bounds.h"
 
@@ -79,6 +80,13 @@ public:
     // to the typed path rather than reporting a cancel. `save` asks for a name to write instead of a file to read.
     std::optional<std::string> PickSceneFile(bool save);
 
+    // The scenes opened or saved recently, newest first, as the path box holds them. `file` is where they are kept
+    // (Saved/recent_scenes.json in a project); setting it reads the list, and each change writes it back.
+    void SetRecentScenesFile(const std::filesystem::path& file);
+    const std::vector<std::string>& RecentScenePaths() const { return recent_scenes_.Entries(); }
+    // Drops recent entries whose scene file no longer exists; returns how many went.
+    std::size_t RemoveMissingRecentScenes();
+
     // The actions the toolbar and the hierarchy run, public so that a test (and a command palette) can run them without clicking. Each one that would discard unsaved changes is
     // refused with a status line unless `discard` is true (the toolbar asks first and then passes true).
     bool NewScene(bool discard = false);
@@ -106,6 +114,7 @@ private:
     std::filesystem::path Resolve(const std::string& path) const;
     FileDialogOptions SceneFileDialogOptions(bool save) const;
     std::string DisplayPath(const std::filesystem::path& absolute) const;
+    void RecordRecent(const std::string& path);
     void DrawToolbar();
     void DrawHierarchy();
     void DrawNode(Entity entity, const HierarchyIndex& index);
@@ -120,6 +129,8 @@ private:
     FileDialog* dialog_ = nullptr;
     std::filesystem::path content_root_;
     ModelBoundsCache bounds_;
+    RecentScenes recent_scenes_;
+    std::filesystem::path recent_scenes_file_;
     std::filesystem::path pending_overwrite_; // the file a save was just refused for, so that asking again by name can confirm it
     std::string path_ = "Scenes/Main.ascene";
     std::string status_;

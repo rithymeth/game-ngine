@@ -918,6 +918,8 @@ struct EditorWorkspace::Impl {
         // The Scene tool works in the project's Content folder (its open scene is left as it is), and the preview renders that project.
         if (scene_panel) {
             scene_panel->SetContentRoot(ProjectPaths::ForFile(project_file).content);
+            // The toolbar's recents list is the project's, so it follows the project into Saved.
+            scene_panel->SetRecentScenesFile(ProjectPaths::ForFile(project_file).saved / "recent_scenes.json");
             scene_panel->on_document_replaced = [this] { OnDocumentReplaced(); };
         }
         if (scene_preview) scene_preview->SetProject(project_file);

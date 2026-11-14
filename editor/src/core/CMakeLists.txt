@@ -13,6 +13,7 @@ add_library(aether_editor_core STATIC
     commands.cpp
     package_runner.cpp
     recent_projects.cpp
+    recent_scenes.cpp
     scene_document.cpp
     play_session.cpp
     ../sequencer/sequence_document.cpp

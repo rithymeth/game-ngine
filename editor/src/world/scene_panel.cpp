@@ -6,6 +6,8 @@
 #include "ui/entity_inspector.h"
 #include "world/content_drop.h"
 
+#include "aether/core/log.h"
+
 #include <imgui.h>
 
 #include <algorithm>
@@ -74,11 +76,16 @@ std::filesystem::path ScenePanel::Resolve(const std::string& path) const {
 std::string ScenePanel::DisplayPath(const std::filesystem::path& absolute) const {
     std::error_code ec;
     const std::filesystem::path root = std::filesystem::absolute(content_root_, ec);
+    std::filesystem::path given = absolute;
+    if (!ec && given.is_relative()) { // the content folder can be relative too (a project opened by a relative path)
+        const std::filesystem::path full = std::filesystem::absolute(given, ec);
+        if (!ec) given = full;
+    }
     if (!ec) {
-        const std::string relative = absolute.lexically_relative(root).generic_string();
+        const std::string relative = given.lexically_relative(root).generic_string();
         if (!relative.empty() && relative.rfind("..", 0) != 0) return relative;
     }
-    return absolute.generic_string();
+    return given.is_absolute() ? given.generic_string() : absolute.generic_string();
 }
 
 FileDialogOptions ScenePanel::SceneFileDialogOptions(bool save) const {
@@ -97,6 +104,27 @@ std::optional<std::string> ScenePanel::PickSceneFile(bool save) {
     const std::filesystem::path chosen = dialog_->Show(SceneFileDialogOptions(save));
     if (chosen.empty()) return std::string();
     return DisplayPath(chosen);
+}
+
+void ScenePanel::SetRecentScenesFile(const std::filesystem::path& file) {
+    recent_scenes_file_ = file;
+    recent_scenes_.Load(file);
+}
+
+void ScenePanel::RecordRecent(const std::string& path) {
+    if (path.empty()) return;
+    recent_scenes_.Add(path);
+    if (!recent_scenes_file_.empty() && !recent_scenes_.Save(recent_scenes_file_))
+        AETHER_LOG_WARN("Editor", "Couldn't save the recent-scenes list to %s", recent_scenes_file_.string().c_str());
+}
+
+std::size_t ScenePanel::RemoveMissingRecentScenes() {
+    const std::size_t gone = recent_scenes_.RemoveMissing(content_root_);
+    if (gone == 0) return 0;
+    if (!recent_scenes_file_.empty()) recent_scenes_.Save(recent_scenes_file_);
+    status_ = "Removed " + std::to_string(gone) +
+              (gone == 1 ? " recent scene that no longer exists." : " recent scenes that no longer exist.");
+    return gone;
 }
 
 bool ScenePanel::NewScene(bool discard) {
@@ -125,6 +153,7 @@ bool ScenePanel::OpenScene(const std::string& path, bool discard) {
     path_ = path;
     bounds_.Clear(); // the models may have changed since they were last looked at
     status_ = "Opened " + file.string() + " (" + std::to_string(document_.Entities().size()) + " entities).";
+    RecordRecent(DisplayPath(file));
     if (on_document_replaced) on_document_replaced();
     return true;
 }
@@ -145,6 +174,7 @@ bool ScenePanel::LoadRecovered(const std::filesystem::path& autosave, const std:
     if (!relative.empty() && relative.rfind("..", 0) != 0) path_ = relative;
     else if (!source.empty()) path_ = source.string();
     status_ = "Recovered unsaved changes from the last session. Save to keep them.";
+    if (!source.empty()) RecordRecent(DisplayPath(source));
     if (on_document_replaced) on_document_replaced();
     return true;
 }
@@ -185,6 +215,7 @@ bool ScenePanel::SaveScene(const std::string& path, bool overwrite) {
     }
     if (to_new_path) path_ = path;
     status_ = "Saved " + file.string() + ".";
+    RecordRecent(DisplayPath(file));
     return true;
 }
 
@@ -272,6 +303,34 @@ void ScenePanel::DrawToolbar() {
         path_ = chosen;
         if (document_.IsDirty()) { pending_ = Pending::Open; ImGui::OpenPopup("Unsaved changes"); }
         else OpenScene(chosen, true);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Recent")) ImGui::OpenPopup("##recent_scenes");
+    ImGui::SetItemTooltip("Scenes opened or saved recently");
+    std::string recent_chosen;
+    bool remove_missing_recent = false;
+    if (ImGui::BeginPopup("##recent_scenes")) {
+        const std::vector<std::string>& recent = recent_scenes_.Entries();
+        if (recent.empty()) ImGui::TextDisabled("No recent scenes yet; open or save one");
+        bool any_missing = false;
+        for (const std::string& scene : recent) {
+            std::error_code ec;
+            const bool missing = !std::filesystem::exists(Resolve(scene), ec);
+            any_missing = any_missing || missing;
+            const std::string label = missing ? scene + "  (missing)" : scene;
+            if (ImGui::Selectable(label.c_str(), scene == path_)) recent_chosen = scene;
+        }
+        if (any_missing) {
+            ImGui::Separator();
+            remove_missing_recent = ImGui::MenuItem("Remove missing scenes");
+        }
+        ImGui::EndPopup();
+    }
+    if (remove_missing_recent) RemoveMissingRecentScenes();
+    if (!recent_chosen.empty()) {
+        path_ = recent_chosen;
+        if (document_.IsDirty()) { pending_ = Pending::Open; ImGui::OpenPopup("Unsaved changes"); }
+        else OpenScene(recent_chosen, true);
     }
     ImGui::SameLine();
     if (ImGui::Button("...")) {

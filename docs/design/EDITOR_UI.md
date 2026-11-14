@@ -536,6 +536,13 @@ will happen) before release. Invalid targets show a "no" cursor.
   Linux); where the platform has none, the toolbar's typed path is still the way, so the commands
   fall back to it instead of doing nothing. The toolbar's own *Save As* stays typed, for renaming
   without a dialog.
+- The Scene toolbar also keeps a *Recent* list: the last ten scenes opened, saved or recovered, newest
+  first, stored per project in `Saved/recent_scenes.json`. Opening or saving a scene that is already
+  listed moves it to the front rather than adding a duplicate, and a path written absolutely is shown
+  by its scene name when it is under the content folder. A listed file that no longer exists is marked
+  "(missing)", with a *Remove missing scenes* item to prune the list; choosing an entry goes through
+  the same unsaved-changes prompt as the content-folder list. The typed path and the picker therefore
+  remain one way in, not the only one.
 
 ---
 

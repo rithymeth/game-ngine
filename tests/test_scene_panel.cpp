@@ -1,6 +1,7 @@
 #include "world/scene_panel.h"
 
 #include "core/commands.h"
+#include "core/recent_scenes.h"
 #include "content/content_drag.h"
 #include "ui/builtin_components.h"
 #include "ui/editor_theme.h"
@@ -335,6 +336,62 @@ AETHER_TEST(ScenePanel_ListsTheScenesInTheContentFolder) {
     HeadlessImGui imgui;
     imgui.Frame([&] { panel.Draw(); });                        // the toolbar draws with the list available
     AETHER_CHECK(panel.OpenScene("Levels/Deep/a.ascene", true)); // and what it lists opens
+}
+
+// The toolbar's recents list: a newest-first, bounded list that round-trips through a file and survives a bad one.
+AETHER_TEST(RecentScenes_KeepsANewestFirstListThatSurvives) {
+    RecentScenes recents;
+    for (int i = 0; i < 12; ++i) recents.Add("Scenes/S" + std::to_string(i) + ".ascene");
+    AETHER_CHECK(recents.Entries().size() == RecentScenes::kMaxEntries);
+    AETHER_CHECK(!recents.Entries().empty() && recents.Entries().front() == "Scenes/S11.ascene");
+    recents.Add("Scenes/S5.ascene");                           // moved to the front, not repeated
+    AETHER_CHECK(recents.Entries().size() == RecentScenes::kMaxEntries);
+    AETHER_CHECK(!recents.Entries().empty() && recents.Entries().front() == "Scenes/S5.ascene");
+    recents.Remove("Scenes/S5.ascene");
+    AETHER_CHECK(!recents.Entries().empty() && recents.Entries().front() == "Scenes/S11.ascene");
+    const stdfs::path file = Scratch("aether_recent_scenes_file") / "nested" / "recent_scenes.json";
+    AETHER_CHECK(recents.Save(file));                          // makes the folder
+    RecentScenes back;
+    back.Load(file);
+    AETHER_CHECK(back.Entries() == recents.Entries());
+    std::ofstream(file, std::ios::binary | std::ios::trunc) << "{ not json";
+    RecentScenes damaged;
+    damaged.Add("Scenes/Kept.ascene");
+    damaged.Load(file);
+    AETHER_CHECK(damaged.Entries().empty());                   // a damaged file reads as an empty list
+    RecentScenes missing;
+    missing.Add("Scenes/Kept.ascene");
+    missing.Load(file / "absent" / "nowhere.json");
+    AETHER_CHECK(missing.Entries().empty());
+}
+
+// The panel records what it opens and saves, keeps one entry per scene however it is named, and prunes what is gone.
+AETHER_TEST(ScenePanel_RemembersRecentlyOpenedAndSavedScenes) {
+    const stdfs::path root = Scratch("aether_recent_scenes_panel");
+    const stdfs::path content = root / "Content";
+    const stdfs::path file = root / "Saved" / "recent_scenes.json";
+    ScenePanel panel(content);
+    AETHER_CHECK(panel.RecentScenePaths().empty());
+    panel.SetRecentScenesFile(file);
+    AETHER_CHECK(panel.SaveScene("Scenes/A.ascene"));          // saving records the scene
+    AETHER_CHECK(panel.SaveScene("Scenes/B.ascene"));
+    AETHER_CHECK(panel.RecentScenePaths().size() == 2 && panel.RecentScenePaths()[0] == "Scenes/B.ascene" &&
+                 panel.RecentScenePaths()[1] == "Scenes/A.ascene");
+    AETHER_CHECK(panel.OpenScene("Scenes/A.ascene", true));    // opening moves it to the front
+    AETHER_CHECK(panel.RecentScenePaths().size() == 2 && panel.RecentScenePaths()[0] == "Scenes/A.ascene");
+    AETHER_CHECK(panel.OpenScene((content / "Scenes" / "B.ascene").generic_string(), true)); // absolute form, one entry
+    AETHER_CHECK(panel.RecentScenePaths().size() == 2 && panel.RecentScenePaths()[0] == "Scenes/B.ascene");
+    HeadlessImGui imgui;
+    imgui.Frame([&] { panel.Draw(); });                        // the toolbar's Recent list draws
+    ScenePanel again(content);                                 // per project: another panel reads it back
+    again.SetRecentScenesFile(file);
+    AETHER_CHECK(again.RecentScenePaths() == panel.RecentScenePaths());
+    stdfs::remove(content / "Scenes" / "A.ascene");
+    AETHER_CHECK(panel.RemoveMissingRecentScenes() == 1);      // the list's own prune
+    AETHER_CHECK(panel.RecentScenePaths().size() == 1 && panel.RecentScenePaths()[0] == "Scenes/B.ascene");
+    ScenePanel pruned(content);
+    pruned.SetRecentScenesFile(file);
+    AETHER_CHECK(pruned.RecentScenePaths().size() == 1 && pruned.RecentScenePaths()[0] == "Scenes/B.ascene");
 }
 
 // The shell's remembered layout: it round-trips, and a missing, damaged or out-of-range file never gets in the way.

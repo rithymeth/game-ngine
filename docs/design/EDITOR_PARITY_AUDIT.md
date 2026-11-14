@@ -347,8 +347,20 @@ empty text refused with a reason, a missing or empty file reading as no preset, 
 separators, `../`, only dots or spaces, a 200-character name, a trailing dot). The shell layout file's round-trip test
 now covers the remembered preset name, including files from before the field existed.
 
-Still open in this stage: document tabs, the scene toolbar's recents list, and the status bar's source-control branch
-segment and selection count (`EDITOR_UI.md` §6.7).
+Done so far (2026-11-14): the Scene toolbar's recents list. `RecentScenes`
+(`editor/src/core/recent_scenes.{h,cpp}`) keeps at most ten scene paths newest first, moving a path that is opened or
+saved again to the front instead of repeating it, and persists them as `{"recent":[...]}` beside the project's other
+saved state (`Saved/recent_scenes.json`, through the same file helpers as `RecentProjects`). The toolbar has a Recent
+button after Scenes that lists those paths; one whose file is gone is marked "(missing)" and a "Remove missing scenes"
+item prunes them and saves the pruned list. A choice goes through the same unsaved-changes prompt as the Scenes list, and
+the toolbar records on open, on save and on recovering an autosave, so all three ways of naming a scene -- Recent, the
+content-folder list, and the typed path or picker -- feed the same list. Tests: the list capped at ten with the newest
+first, re-adding moving a path rather than duplicating it, removal, a save/load round-trip, and a damaged or missing file
+reading as an empty list; and the panel recording saves and opens, deduping a path written absolutely, persisting across
+two panels, and pruning a deleted scene (the persisted file is pruned too).
+
+Still open in this stage: document tabs, and the status bar's source-control branch segment and selection count
+(`EDITOR_UI.md` §6.7).
 
 ### Stage 2 — Viewport and selection parity (L)
 
