@@ -57,6 +57,30 @@ public:
     ThumbnailStore& Thumbnails() { return thumbnails_; }
     const ThumbnailStore& Thumbnails() const { return thumbnails_; }
 
+    // What is selected, as content paths in the order they were picked. Public with the operations below, so a
+    // headless test (or a host's menu) can select and act without clicking: every action is one batch and one rescan.
+    const std::vector<std::string>& Selection() const { return selection_; }
+    bool IsSelected(const std::string& path) const;
+    // Replaces the selection with `path`; `toggle` (Ctrl) adds or removes it; `extend` (Shift) takes the range from the
+    // anchor to it in the current listing.
+    void Select(const std::string& path, bool toggle = false, bool extend = false);
+    void SelectAll();
+    void ClearSelection();
+    // Everything whose tile touches this rectangle (window coordinates), replacing the selection -- or adding to it
+    // with `add` (Ctrl+drag). The grid's box-select.
+    void SelectInRect(float x0, float y0, float x1, float y1, bool add = false);
+
+    // The selection's actions: one call, one database rescan, one refresh. The asset database has no undo, so the batch
+    // is the transaction -- a delete is refused as a whole while anything outside it refers to what it would remove.
+    bool DuplicateSelection(std::string* error = nullptr);
+    bool DeleteSelection(std::string* error = nullptr);
+    bool MoveSelection(const std::string& destination, std::string* error = nullptr);
+    // Starts renaming one entry in place (F2 or the context menu); Enter commits, Escape cancels.
+    void BeginRename(const std::string& path);
+    // Renames one entry, what the inline editor commits with: a name with no extension keeps the asset's, and changing
+    // the extension is refused because it would change the type. One rescan; the renamed entry stays selected.
+    bool RenameEntry(const std::string& path, const std::string& new_name, std::string* error = nullptr);
+
     const assets::VcsStatus& Vcs() const { return vcs_; }
     // Phase 43.7: stage everything under Content/ and commit it, then refresh so the badges
     // update. The error is git's own message. Needs the project to be inside a repository.
@@ -70,7 +94,12 @@ public:
     const std::string& Error() const { return error_; }
 
 private:
-    enum class Action { None, Rename, Move, NewFolder };
+    enum class Action { None, Move, NewFolder };
+    enum class Pending { None, Delete, Duplicate, Move, Create };
+    struct TileRect {
+        std::string path;
+        float x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+    };
     void Rebuild();
     void DrawToolbar();
     void DrawTree();
@@ -78,12 +107,19 @@ private:
     void DrawGrid(std::string& folder_to_open, std::string& asset_to_open);
     void DrawRows(std::string& folder_to_open, std::string& asset_to_open);
     void DrawEntryMenu(const assets::ContentEntry& entry); // what a tile and a row both offer
+    void DrawCreateMenu(const std::string& folder);
+    void DrawBoxSelect();
+    void DrawSelectionKeys();
+    bool InlineRename(const assets::ContentEntry& entry);
+    void CommitRename();
+    void ApplyPending();
+    void ApplyAction();
     void DrawActionDialog();
     void DrawReferenceViewer();
     void DrawValidation();
     void StartAction(Action action, const std::string& source = {});
     void AcceptMoveDrop(const std::string& destination_folder);
-    void ApplyAction();
+    bool MovePaths(const std::vector<std::string>& paths, const std::string& destination, std::string* error);
     void RebaseOpenFolder(const std::string& old_path, const std::string& new_path);
 
     std::filesystem::path project_file_;
@@ -94,6 +130,20 @@ private:
         std::string key; // the thumbnail version the pixels were uploaded from
     };
     std::unordered_map<std::string, TileTexture> textures_; // by asset GUID, for the grid
+    std::vector<std::string> selection_;
+    std::string selection_anchor_;
+    std::vector<TileRect> tiles_; // the grid's tiles this frame, for box-select
+    bool box_active_ = false;
+    bool box_add_ = false;
+    float box_x0_ = 0, box_y0_ = 0;
+    std::string renaming_;
+    std::string rename_buffer_;
+    bool rename_focus_ = false;
+    bool commit_rename_ = false;
+    Pending pending_ = Pending::None;
+    std::string pending_destination_;
+    std::string pending_create_extension_;
+    std::string pending_create_folder_;
     assets::VcsStatus vcs_;
     bool vcs_injected_ = false;
     std::string folder_;

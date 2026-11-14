@@ -85,6 +85,18 @@ MoveResult RenameContent(AssetDatabase& database, const std::string& path, const
 bool CreateContentFolder(AssetDatabase& database, const std::string& parent, const std::string& name,
                          std::string* error = nullptr);
 
+// Duplicates `path` next to itself as "<name> copy", "<name> copy 2", ...: a source file with its .ameta (a fresh GUID and
+// no sub-assets; the copy imports on first use), or a folder with everything in it, every .ameta inside made fresh the
+// same way. `created` receives the new content path. Rescans the database.
+bool DuplicateContent(AssetDatabase& database, const std::string& path, std::string* created = nullptr,
+                      std::string* error = nullptr);
+
+// Deletes several paths as one action. Refused -- with nothing deleted -- if an asset outside the set uses one inside it
+// (the error names the users), for a sub-asset path, or for a path that isn't there; folders go with everything in them.
+// `deleted` receives how many paths went. Rescans once.
+bool DeleteContents(AssetDatabase& database, const std::vector<std::string>& paths, std::string* error = nullptr,
+                    usize* deleted = nullptr);
+
 // ---------------------------------------------------------------------------
 // Reference Viewer
 // ---------------------------------------------------------------------------

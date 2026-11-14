@@ -401,6 +401,190 @@ bool CreateContentFolder(AssetDatabase& database, const std::string& parent, con
     return true;
 }
 
+namespace {
+
+// A fresh GUID in a duplicated .ameta, and no sub-asset list: the copy's imports register their own pieces.
+bool RegenerateMeta(const stdfs::path& meta_file) {
+    AssetMeta meta;
+    if (!LoadAssetMeta(meta_file, meta)) {
+        return false; // left as it is: Scan reports it
+    }
+    meta.guid = NewAssetGuid();
+    meta.sub_assets.clear();
+    meta.source_hash.clear(); // the copy imports on first use, which is what creates its sub-assets
+    return SaveAssetMeta(meta_file, meta);
+}
+
+// "<stem> copy", "<stem> copy 2", ... in the same folder, free on disk.
+std::string CopyName(const AssetDatabase& database, const std::string& path, bool is_folder) {
+    const stdfs::path source(path);
+    const std::string folder = ParentFolder(path);
+    const std::string stem = is_folder ? source.filename().string() : source.stem().string();
+    const std::string extension = is_folder ? std::string() : source.extension().string();
+    std::error_code ec;
+    for (int n = 1; n < 1000; ++n) {
+        const std::string name = stem + " copy" + (n == 1 ? "" : " " + std::to_string(n));
+        const std::string candidate = (folder.empty() ? name : folder + "/" + name) + extension;
+        if (!stdfs::exists(database.ContentRoot() / candidate, ec)) {
+            return candidate;
+        }
+    }
+    return {};
+}
+
+} // namespace
+
+bool DuplicateContent(AssetDatabase& database, const std::string& path, std::string* created, std::string* error) {
+    const std::string from = Normalized(path);
+    if (!IsContentPath(from)) {
+        if (error != nullptr) *error = "The path must be inside the content folder";
+        return false;
+    }
+    if (from.find('#') != std::string::npos) {
+        if (error != nullptr) *error = from + " is part of another asset; duplicate its source instead";
+        return false;
+    }
+    if (Lower(stdfs::path(from).extension().string()) == AssetMeta::kExtension) {
+        if (error != nullptr) *error = ".ameta files are duplicated with their asset";
+        return false;
+    }
+    const stdfs::path from_abs = database.ContentRoot() / from;
+    std::error_code ec;
+    const bool is_folder = stdfs::is_directory(from_abs, ec);
+    if (!is_folder && !stdfs::is_regular_file(from_abs, ec)) {
+        if (error != nullptr) *error = from + " doesn't exist";
+        return false;
+    }
+    const std::string to = CopyName(database, from, is_folder);
+    if (to.empty()) {
+        if (error != nullptr) *error = "Couldn't find a free name for the copy";
+        return false;
+    }
+    const stdfs::path to_abs = database.ContentRoot() / to;
+
+    if (is_folder) {
+        stdfs::copy(from_abs, to_abs, stdfs::copy_options::recursive | stdfs::copy_options::copy_symlinks, ec);
+        if (ec) {
+            stdfs::remove_all(to_abs, ec);
+            if (error != nullptr) *error = "Couldn't copy " + from + ": " + ec.message();
+            return false;
+        }
+        std::error_code walk_ec;
+        for (stdfs::recursive_directory_iterator it(to_abs, walk_ec), end; !walk_ec && it != end; it.increment(walk_ec)) {
+            std::error_code entry_ec;
+            if (!it->is_regular_file(entry_ec)) continue;
+            if (Lower(it->path().extension().string()) != AssetMeta::kExtension) continue;
+            RegenerateMeta(it->path());
+        }
+    } else {
+        stdfs::copy_file(from_abs, to_abs, stdfs::copy_options::none, ec);
+        if (ec) {
+            if (error != nullptr) *error = "Couldn't copy " + from + ": " + ec.message();
+            return false;
+        }
+        stdfs::path from_meta = from_abs;
+        from_meta += AssetMeta::kExtension;
+        if (stdfs::exists(from_meta, ec)) {
+            stdfs::path to_meta = to_abs;
+            to_meta += AssetMeta::kExtension;
+            stdfs::copy_file(from_meta, to_meta, stdfs::copy_options::none, ec);
+            if (ec) {
+                stdfs::remove(to_abs, ec);
+                if (error != nullptr) *error = "Couldn't copy the .ameta of " + from + ": " + ec.message();
+                return false;
+            }
+            RegenerateMeta(to_meta);
+        }
+    }
+    database.Scan();
+    if (created != nullptr) *created = to;
+    return true;
+}
+
+bool DeleteContents(AssetDatabase& database, const std::vector<std::string>& paths, std::string* error,
+                    usize* deleted) {
+    if (deleted != nullptr) *deleted = 0; // filled in on success; a refused batch removed nothing
+    std::vector<std::string> targets; // normalized, with anything inside another target dropped
+    for (const std::string& raw : paths) {
+        const std::string path = Normalized(raw);
+        if (!IsContentPath(path)) {
+            if (error != nullptr) *error = "The path must be inside the content folder";
+            return false;
+        }
+        if (path.find('#') != std::string::npos) {
+            if (error != nullptr) *error = raw + " is part of another asset; delete its source instead";
+            return false;
+        }
+        if (Lower(stdfs::path(path).extension().string()) == AssetMeta::kExtension) {
+            if (error != nullptr) *error = ".ameta files are deleted with their asset";
+            return false;
+        }
+        std::error_code ec;
+        const stdfs::path absolute = database.ContentRoot() / path;
+        if (!stdfs::exists(absolute, ec) && !stdfs::is_symlink(absolute, ec)) {
+            if (error != nullptr) *error = path + " doesn't exist";
+            return false;
+        }
+        const bool covered = std::any_of(targets.begin(), targets.end(), [&](const std::string& other) {
+            return IsInside(path, other);
+        });
+        if (!covered) {
+            targets.push_back(path);
+            targets.erase(std::remove_if(targets.begin(), targets.end(), [&](const std::string& other) {
+                              return other != path && IsInside(other, path);
+                          }),
+                          targets.end());
+        }
+    }
+    if (targets.empty()) {
+        if (error != nullptr) *error = "Nothing to delete";
+        return false;
+    }
+    // Everything that will be gone, and every user of it that will stay.
+    const auto goes = [&](const std::string& path) {
+        const std::string source = path.substr(0, path.find('#'));
+        return std::any_of(targets.begin(), targets.end(), [&](const std::string& target) { return IsInside(source, target); });
+    };
+    std::unordered_set<AssetGuid> removed;
+    std::vector<const AssetRecord*> records = database.AllUnsorted();
+    for (const AssetRecord* record : records) {
+        if (goes(record->path)) removed.insert(record->guid);
+    }
+    std::set<std::string> users;
+    for (const AssetGuid& guid : removed) {
+        for (const AssetRecord* user : database.Referencers(guid)) {
+            if (!removed.count(user->guid)) users.insert(user->path);
+        }
+    }
+    if (!users.empty()) {
+        std::string message = (targets.size() == 1 ? targets[0] : "The selection") + " is used by " +
+                              std::to_string(users.size()) + " asset(s):";
+        for (const std::string& user : users) message += " " + user;
+        if (error != nullptr) *error = message;
+        return false;
+    }
+    for (const std::string& target : targets) {
+        std::error_code ec;
+        const stdfs::path absolute = database.ContentRoot() / target;
+        if (stdfs::is_directory(absolute, ec)) {
+            stdfs::remove_all(absolute, ec);
+        } else {
+            stdfs::remove(absolute, ec);
+            stdfs::path meta = absolute;
+            meta += AssetMeta::kExtension;
+            stdfs::remove(meta, ec);
+        }
+        if (ec) {
+            if (error != nullptr) *error = "Couldn't delete " + target + ": " + ec.message();
+            database.Scan(); // what did go is gone; the view must say so
+            return false;
+        }
+    }
+    database.Scan();
+    if (deleted != nullptr) *deleted = targets.size();
+    return true;
+}
+
 // ---------------------------------------------------------------------------
 // Reference Viewer
 // ---------------------------------------------------------------------------

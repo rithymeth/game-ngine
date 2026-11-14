@@ -117,6 +117,10 @@ bool ContentBrowserPanel::Commit(const std::string& message, std::string* error)
 }
 
 void ContentBrowserPanel::OpenFolder(const std::string& folder) {
+    if (folder_ != folder) {
+        selection_.clear(); // a selection belongs to the listing it was made in
+        selection_anchor_.clear();
+    }
     folder_ = folder;
     Rebuild();
 }
@@ -167,7 +171,19 @@ void ContentBrowserPanel::Draw() {
 void ContentBrowserPanel::DrawToolbar() {
     if (ImGui::Button("Refresh")) Refresh();
     ImGui::SameLine();
+    if (ImGui::Button("Create")) ImGui::OpenPopup("##create_menu");
+    if (ImGui::BeginPopup("##create_menu")) {
+        DrawCreateMenu(folder_);
+        ImGui::EndPopup();
+    }
+    ImGui::SameLine();
     if (ImGui::Button("New Folder")) StartAction(Action::NewFolder, folder_);
+    ImGui::SameLine();
+    if (ImGui::Button("Duplicate") && !selection_.empty()) pending_ = Pending::Duplicate;
+    ImGui::SameLine();
+    if (ImGui::Button("Delete") && !selection_.empty()) pending_ = Pending::Delete;
+    ImGui::SameLine();
+    ImGui::TextDisabled("%zu selected", selection_.size());
     ImGui::SameLine();
     // The grid shows a thumbnail (or a type tile) per asset; the list is the denser view.
     if (ImGui::Button(grid_view ? "[Grid]" : "Grid")) grid_view = true;
@@ -240,13 +256,39 @@ void ContentBrowserPanel::DrawListing() {
         OpenParent();
         return;
     }
+    tiles_.clear();
     std::string folder_to_open, asset_to_open;
     if (grid_view) {
         DrawGrid(folder_to_open, asset_to_open);
     } else {
         DrawRows(folder_to_open, asset_to_open);
     }
+    DrawBoxSelect(); // after the items: a press belongs to the box only when no tile claimed it
+    if (box_active_) {
+        const ImVec2 mouse = ImGui::GetIO().MousePos;
+        const ImVec2 low(std::min(box_x0_, mouse.x), std::min(box_y0_, mouse.y));
+        const ImVec2 high(std::max(box_x0_, mouse.x), std::max(box_y0_, mouse.y));
+        ImGui::GetWindowDrawList()->AddRectFilled(low, high, IM_COL32(255, 170, 60, 40));
+        ImGui::GetWindowDrawList()->AddRect(low, high, IM_COL32(255, 170, 60, 180), 0.0f, 0, 1.5f);
+    }
+    if (ImGui::BeginPopupContextWindow("##content_list", ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
+        if (ImGui::MenuItem("Select All", "Ctrl+A")) SelectAll();
+        if (ImGui::MenuItem("New Folder")) StartAction(Action::NewFolder, folder_);
+        if (ImGui::BeginMenu("Create")) {
+            DrawCreateMenu(folder_);
+            ImGui::EndMenu();
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Duplicate", "Ctrl+D", false, !selection_.empty())) pending_ = Pending::Duplicate;
+        if (ImGui::MenuItem("Delete", "Del", false, !selection_.empty())) pending_ = Pending::Delete;
+        ImGui::EndPopup();
+    }
     if (rows_.empty()) ImGui::TextDisabled(changed_only ? "Nothing here has changed." : "Empty.");
+    DrawSelectionKeys();
+    if (commit_rename_) {
+        commit_rename_ = false;
+        CommitRename();
+    }
     if (!folder_to_open.empty()) {
         OpenFolder(folder_to_open);
         return;
@@ -256,13 +298,32 @@ void ContentBrowserPanel::DrawListing() {
             ext->OpenAsset(project_file_.parent_path() / "Content" / asset_to_open);
         }
     }
+    ApplyPending(); // after the listing has drawn: an action must not clear rows_ under its own loop
 }
 
 void ContentBrowserPanel::DrawEntryMenu(const assets::ContentEntry& e) {
     if (!ImGui::BeginPopupContextItem("content_entry_context")) return;
-    if (ImGui::MenuItem("Rename")) StartAction(Action::Rename, e.path);
-    if (ImGui::MenuItem("Move")) StartAction(Action::Move, e.path);
-    if (e.is_folder && ImGui::MenuItem("New Subfolder")) StartAction(Action::NewFolder, e.path);
+    const bool multiple = selection_.size() > 1 && IsSelected(e.path);
+    if (ImGui::MenuItem("Rename", "F2", false, !multiple)) BeginRename(e.path);
+    if (ImGui::MenuItem(multiple ? "Duplicate selection" : "Duplicate", "Ctrl+D")) {
+        if (!IsSelected(e.path)) Select(e.path);
+        pending_ = Pending::Duplicate;
+    }
+    if (ImGui::MenuItem(multiple ? "Delete selection" : "Delete", "Del")) {
+        if (!IsSelected(e.path)) Select(e.path);
+        pending_ = Pending::Delete;
+    }
+    if (ImGui::MenuItem(multiple ? "Move selection..." : "Move...")) {
+        if (!IsSelected(e.path)) Select(e.path);
+        StartAction(Action::Move);
+    }
+    if (e.is_folder) {
+        if (ImGui::BeginMenu("Create")) {
+            DrawCreateMenu(e.path);
+            ImGui::EndMenu();
+        }
+        if (ImGui::MenuItem("New Subfolder")) StartAction(Action::NewFolder, e.path);
+    }
     if (!e.is_folder && e.asset && ImGui::BeginMenu("References")) {
         if (ImGui::MenuItem("Show Dependencies")) {
             reference_guid_ = e.asset->guid;
@@ -279,6 +340,66 @@ void ContentBrowserPanel::DrawEntryMenu(const assets::ContentEntry& e) {
     ImGui::EndPopup();
 }
 
+void ContentBrowserPanel::DrawCreateMenu(const std::string& folder) {
+    ExtensionRegistry* ext = ExtensionRegistry::Active();
+    if (ext == nullptr || ext->AssetTypes().empty()) {
+        ImGui::MenuItem("No asset types registered", nullptr, false, false);
+        return;
+    }
+    for (const ExtensionAssetType& type : ext->AssetTypes()) {
+        if (ImGui::MenuItem(type.name.c_str())) {
+            pending_ = Pending::Create;
+            pending_create_extension_ = type.extension;
+            pending_create_folder_ = folder;
+        }
+    }
+}
+
+void ContentBrowserPanel::DrawBoxSelect() {
+    if (!grid_view || !renaming_.empty() || !ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows)) return;
+    ImGuiIO& io = ImGui::GetIO();
+    if (!box_active_) {
+        if (ImGui::IsMouseClicked(0) && !ImGui::IsAnyItemHovered()) {
+            box_active_ = true;
+            box_x0_ = io.MousePos.x;
+            box_y0_ = io.MousePos.y;
+            box_add_ = io.KeyCtrl;
+            if (!box_add_) ClearSelection();
+        }
+        return;
+    }
+    if (!ImGui::IsMouseDown(0)) {
+        const float x1 = io.MousePos.x, y1 = io.MousePos.y;
+        if (std::abs(x1 - box_x0_) > 3.0f || std::abs(y1 - box_y0_) > 3.0f) {
+            SelectInRect(std::min(box_x0_, x1), std::min(box_y0_, y1), std::max(box_x0_, x1), std::max(box_y0_, y1), box_add_);
+        }
+        box_active_ = false;
+    }
+}
+
+void ContentBrowserPanel::DrawSelectionKeys() {
+    if (!renaming_.empty() || ImGui::GetIO().WantTextInput) return;
+    if (!ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) return;
+    ImGuiIO& io = ImGui::GetIO();
+    if (ImGui::IsKeyPressed(ImGuiKey_Delete)) pending_ = Pending::Delete;
+    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_D)) pending_ = Pending::Duplicate;
+    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_A)) SelectAll();
+    if (ImGui::IsKeyPressed(ImGuiKey_F2) && selection_.size() == 1) BeginRename(selection_[0]);
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape)) ClearSelection();
+}
+
+bool ContentBrowserPanel::InlineRename(const assets::ContentEntry& e) {
+    if (renaming_ != e.path) return false;
+    ImGui::SetNextItemWidth(kTile);
+    if (rename_focus_) {
+        ImGui::SetKeyboardFocusHere();
+        rename_focus_ = false;
+    }
+    if (ImGui::InputText("##rename", &rename_buffer_, ImGuiInputTextFlags_EnterReturnsTrue)) commit_rename_ = true;
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape)) renaming_.clear();
+    return true;
+}
+
 void ContentBrowserPanel::DrawGrid(std::string& folder_to_open, std::string& asset_to_open) {
     const f32 columns_width = std::max(ImGui::GetContentRegionAvail().x, kTile);
     const int columns = std::max(1, static_cast<int>((columns_width + kTileGap) / (kTile + kTileGap)));
@@ -287,22 +408,35 @@ void ContentBrowserPanel::DrawGrid(std::string& folder_to_open, std::string& ass
         const assets::ContentEntry e = rows_[i];
         ImGui::PushID(static_cast<int>(i));
         ImGui::BeginGroup();
-        ImGui::InvisibleButton("##tile", ImVec2(kTile, kTile));
-        const bool hovered = ImGui::IsItemHovered();
-        const bool activated = hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
-        if (hovered) {
-            ImGui::SetTooltip("%s\n%s", e.path.c_str(), e.is_folder ? "Folder" : (e.asset ? e.asset->importer.c_str() : "Asset"));
-        }
-        DrawEntryMenu(e);
-        if (ImGui::BeginDragDropSource()) {
-            const std::string label = e.is_folder ? e.name + "/" : e.name;
-            ImGui::SetDragDropPayload(kContentPathPayload, e.path.c_str(), e.path.size() + 1);
-            ImGui::TextUnformatted(label.c_str());
-            ImGui::EndDragDropSource();
+        const bool renaming = renaming_ == e.path;
+        bool hovered_tile = false;
+        bool activated = false;
+        if (!renaming) {
+            ImGui::InvisibleButton("##tile", ImVec2(kTile, kTile));
+            hovered_tile = ImGui::IsItemHovered();
+            if (hovered_tile) {
+                ImGui::SetTooltip("%s\n%s", e.path.c_str(), e.is_folder ? "Folder" : (e.asset ? e.asset->importer.c_str() : "Asset"));
+            }
+            const ImGuiIO& io = ImGui::GetIO();
+            if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) Select(e.path, io.KeyCtrl, io.KeyShift);
+            if (ImGui::IsItemClicked(ImGuiMouseButton_Right) && !IsSelected(e.path)) Select(e.path);
+            activated = !box_active_ && hovered_tile && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
+            DrawEntryMenu(e);
+            if (ImGui::BeginDragDropSource()) {
+                const bool many = selection_.size() > 1 && IsSelected(e.path);
+                const std::string label = many ? std::to_string(selection_.size()) + " assets"
+                                               : (e.is_folder ? e.name + "/" : e.name);
+                ImGui::SetDragDropPayload(kContentPathPayload, e.path.c_str(), e.path.size() + 1);
+                ImGui::TextUnformatted(label.c_str());
+                ImGui::EndDragDropSource();
+            }
+        } else {
+            ImGui::Dummy(ImVec2(kTile, kTile)); // keeps the tile's place while the name is edited
         }
         const ImVec2 low = ImGui::GetItemRectMin(), high = ImGui::GetItemRectMax();
         ImDrawList* draw = ImGui::GetWindowDrawList();
         draw->AddRectFilled(low, high, KindColor(e), 6.0f);
+        tiles_.push_back(TileRect{e.path, low.x, low.y, high.x, high.y});
         bool pictured = false;
         if (!e.is_folder && e.asset) {
             const ThumbnailStore::Picture picture = thumbnails_.Get(e);
@@ -325,20 +459,23 @@ void ContentBrowserPanel::DrawGrid(std::string& folder_to_open, std::string& ass
                 }
             }
         }
-        if (!pictured) { // no picture (yet, or for this kind): the kind's initial, on the kind's colour
+        if (!pictured && !renaming) { // no picture (yet, or for this kind): the kind's initial, on the kind's colour
             const std::string initial = e.name.empty() ? "?" : std::string(1, static_cast<char>(std::toupper(static_cast<unsigned char>(e.name[0]))));
             const ImVec2 text = ImGui::CalcTextSize(initial.c_str());
             draw->AddText(ImVec2((low.x + high.x - text.x) * 0.5f, (low.y + high.y - text.y) * 0.5f), IM_COL32(225, 225, 225, 220), initial.c_str());
         }
-        const ImU32 border = e.vcs != VcsState::Clean ? ImGui::GetColorU32(StateColor(e.vcs)) : IM_COL32(255, 255, 255, hovered ? 120 : 40);
-        draw->AddRect(low, high, border, 6.0f, 0, hovered ? 2.5f : 1.0f);
+        const bool selected = IsSelected(e.path);
+        const ImU32 border = selected                    ? IM_COL32(255, 170, 60, 255)
+                             : e.vcs != VcsState::Clean ? ImGui::GetColorU32(StateColor(e.vcs))
+                                                        : IM_COL32(255, 255, 255, hovered_tile ? 120 : 40);
+        draw->AddRect(low, high, border, 6.0f, 0, selected ? 2.5f : 1.0f);
         if (e.vcs != VcsState::Clean) {
             char letter[2] = {assets::VcsStateLetter(e.vcs), 0};
             draw->AddText(ImVec2(high.x - 12.0f, low.y + 3.0f), border, letter);
         }
-        ImGui::TextUnformatted(Elide(e.is_folder ? e.name + "/" : e.name, kTile).c_str());
+        if (!InlineRename(e)) ImGui::TextUnformatted(Elide(e.is_folder ? e.name + "/" : e.name, kTile).c_str());
         ImGui::EndGroup();
-        if (e.is_folder) AcceptMoveDrop(e.path);
+        if (e.is_folder && !renaming) AcceptMoveDrop(e.path);
         if (activated) {
             if (e.is_folder) folder_to_open = e.path;
             else asset_to_open = e.path;
@@ -352,27 +489,256 @@ void ContentBrowserPanel::DrawRows(std::string& folder_to_open, std::string& ass
     for (usize i = 0; i < rows_.size(); ++i) {
         const assets::ContentEntry e = rows_[i];
         ImGui::PushID(static_cast<int>(i));
-        Badge(e.vcs);
-        ImGui::SameLine();
-        const std::string label = e.is_folder ? e.name + "/" : e.name;
-        const bool activated = ImGui::Selectable(label.c_str(), false, ImGuiSelectableFlags_AllowDoubleClick) &&
-                               ImGui::IsMouseDoubleClicked(0);
-        if (activated) {
-            if (e.is_folder) folder_to_open = e.path;
-            else asset_to_open = e.path;
-        }
-        DrawEntryMenu(e);
-        if (ImGui::BeginDragDropSource()) {
-            ImGui::SetDragDropPayload(kContentPathPayload, e.path.c_str(), e.path.size() + 1);
-            ImGui::TextUnformatted(label.c_str());
-            ImGui::EndDragDropSource();
-        }
-        if (e.is_folder) AcceptMoveDrop(e.path);
-        if (!e.is_folder && e.asset) {
-            ImGui::SameLine(ImGui::GetContentRegionAvail().x - 80.0f);
-            ImGui::TextDisabled("%s", e.asset->importer.c_str());
+        const bool renaming = renaming_ == e.path;
+        if (renaming) {
+            ImGui::SetNextItemWidth(240.0f);
+            if (rename_focus_) {
+                ImGui::SetKeyboardFocusHere();
+                rename_focus_ = false;
+            }
+            if (ImGui::InputText("##rename", &rename_buffer_, ImGuiInputTextFlags_EnterReturnsTrue)) commit_rename_ = true;
+            if (ImGui::IsKeyPressed(ImGuiKey_Escape)) renaming_.clear();
+        } else {
+            Badge(e.vcs);
+            ImGui::SameLine();
+            const std::string label = e.is_folder ? e.name + "/" : e.name;
+            const bool selected = IsSelected(e.path);
+            const bool clicked = ImGui::Selectable(label.c_str(), selected, ImGuiSelectableFlags_AllowDoubleClick);
+            const ImGuiIO& io = ImGui::GetIO();
+            if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) Select(e.path, io.KeyCtrl, io.KeyShift);
+            if (ImGui::IsItemClicked(ImGuiMouseButton_Right) && !selected) Select(e.path);
+            if (clicked && ImGui::IsMouseDoubleClicked(0)) {
+                if (e.is_folder) folder_to_open = e.path;
+                else asset_to_open = e.path;
+            }
+            DrawEntryMenu(e);
+            if (ImGui::BeginDragDropSource()) {
+                const bool many = selection_.size() > 1 && selected;
+                const std::string drag_label = many ? std::to_string(selection_.size()) + " assets" : label;
+                ImGui::SetDragDropPayload(kContentPathPayload, e.path.c_str(), e.path.size() + 1);
+                ImGui::TextUnformatted(drag_label.c_str());
+                ImGui::EndDragDropSource();
+            }
+            if (e.is_folder) AcceptMoveDrop(e.path);
+            if (!e.is_folder && e.asset) {
+                ImGui::SameLine(ImGui::GetContentRegionAvail().x - 80.0f);
+                ImGui::TextDisabled("%s", e.asset->importer.c_str());
+            }
         }
         ImGui::PopID();
+    }
+}
+
+bool ContentBrowserPanel::IsSelected(const std::string& path) const {
+    return std::find(selection_.begin(), selection_.end(), path) != selection_.end();
+}
+
+void ContentBrowserPanel::Select(const std::string& path, bool toggle, bool extend) {
+    const auto index_of = [&](const std::string& wanted) -> int {
+        for (usize i = 0; i < rows_.size(); ++i) {
+            if (rows_[i].path == wanted) return static_cast<int>(i);
+        }
+        return -1;
+    };
+    if (extend && !selection_anchor_.empty()) {
+        const int anchor = index_of(selection_anchor_);
+        const int index = index_of(path);
+        if (anchor >= 0 && index >= 0) {
+            const int low = std::min(anchor, index), high = std::max(anchor, index);
+            selection_.clear();
+            for (int i = low; i <= high; ++i) selection_.push_back(rows_[static_cast<usize>(i)].path);
+            return;
+        }
+    }
+    if (toggle) {
+        const auto found = std::find(selection_.begin(), selection_.end(), path);
+        if (found != selection_.end()) {
+            selection_.erase(found);
+        } else {
+            selection_.push_back(path);
+        }
+        selection_anchor_ = path;
+        return;
+    }
+    selection_.assign(1, path);
+    selection_anchor_ = path;
+}
+
+void ContentBrowserPanel::SelectAll() {
+    selection_.clear();
+    for (const assets::ContentEntry& e : rows_) selection_.push_back(e.path);
+    selection_anchor_ = selection_.empty() ? std::string() : selection_.front();
+}
+
+void ContentBrowserPanel::ClearSelection() {
+    selection_.clear();
+    selection_anchor_.clear();
+}
+
+void ContentBrowserPanel::SelectInRect(float x0, float y0, float x1, float y1, bool add) {
+    std::vector<std::string> hits;
+    for (const TileRect& tile : tiles_) {
+        if (tile.x1 >= x0 && tile.x0 <= x1 && tile.y1 >= y0 && tile.y0 <= y1) hits.push_back(tile.path);
+    }
+    if (!add) {
+        selection_ = std::move(hits);
+    } else {
+        for (std::string& hit : hits) {
+            if (!IsSelected(hit)) selection_.push_back(std::move(hit));
+        }
+    }
+    selection_anchor_ = selection_.empty() ? std::string() : selection_.front();
+}
+
+bool ContentBrowserPanel::MovePaths(const std::vector<std::string>& paths, const std::string& destination, std::string* error) {
+    if (!database_ || paths.empty()) return false;
+    std::vector<std::string> moved;
+    std::string first_error;
+    for (const std::string& path : paths) {
+        const bool nested = std::any_of(paths.begin(), paths.end(), [&](const std::string& other) {
+            return other != path && path.size() > other.size() && path.compare(0, other.size(), other) == 0 &&
+                   path[other.size()] == '/';
+        });
+        if (nested) continue; // it goes with the folder above it
+        const std::string parent = stdfs::path(path).parent_path().generic_string();
+        if (parent == destination) {
+            moved.push_back(path);
+            continue;
+        }
+        const std::string target = destination.empty() ? stdfs::path(path).filename().string()
+                                                       : destination + "/" + stdfs::path(path).filename().string();
+        const assets::MoveResult result = assets::MoveContent(*database_, path, target);
+        if (!result.ok) {
+            if (first_error.empty()) first_error = result.error;
+            continue;
+        }
+        moved.push_back(target);
+        RebaseOpenFolder(path, target); // the open folder may have been this one, or below it
+    }
+    selection_ = moved;
+    selection_anchor_ = moved.empty() ? std::string() : moved.front();
+    Refresh();
+    if (!first_error.empty()) {
+        operation_warning_ = first_error;
+        if (error != nullptr) *error = first_error;
+    }
+    return first_error.empty() && !moved.empty();
+}
+
+bool ContentBrowserPanel::MoveSelection(const std::string& destination, std::string* error) {
+    return MovePaths(selection_, destination, error);
+}
+
+bool ContentBrowserPanel::DuplicateSelection(std::string* error) {
+    if (!database_ || selection_.empty()) return false;
+    std::vector<std::string> copies;
+    std::string first_error;
+    for (const std::string& path : selection_) {
+        std::string created, message;
+        if (assets::DuplicateContent(*database_, path, &created, &message)) {
+            copies.push_back(created);
+        } else if (first_error.empty()) {
+            first_error = message;
+        }
+    }
+    if (!copies.empty()) {
+        selection_ = copies;
+        selection_anchor_ = copies.front();
+    }
+    Refresh();
+    if (!first_error.empty()) {
+        operation_warning_ = first_error;
+        if (error != nullptr) *error = first_error;
+    }
+    return first_error.empty() && !copies.empty();
+}
+
+bool ContentBrowserPanel::DeleteSelection(std::string* error) {
+    if (!database_ || selection_.empty()) return false;
+    const std::vector<std::string> paths = selection_;
+    std::string message;
+    usize deleted = 0;
+    const bool ok = assets::DeleteContents(*database_, paths, &message, &deleted);
+    if (ok) {
+        selection_.clear();
+        selection_anchor_.clear();
+    }
+    Refresh(); // after a partial failure too: the view must match the disk
+    if (!ok) {
+        operation_warning_ = message;
+        if (error != nullptr) *error = message;
+    }
+    return ok;
+}
+
+void ContentBrowserPanel::BeginRename(const std::string& path) {
+    if (!database_ || path.empty()) return;
+    std::error_code ec;
+    const bool folder = stdfs::is_directory(database_->ContentRoot() / path, ec);
+    renaming_ = path;
+    rename_buffer_ = folder ? stdfs::path(path).filename().string() : stdfs::path(path).stem().string();
+    rename_focus_ = true;
+}
+
+void ContentBrowserPanel::CommitRename() {
+    if (renaming_.empty()) return;
+    const std::string path = renaming_;
+    renaming_.clear();
+    std::string error;
+    if (!RenameEntry(path, rename_buffer_, &error) && !error.empty()) operation_warning_ = error;
+}
+
+bool ContentBrowserPanel::RenameEntry(const std::string& path, const std::string& new_name, std::string* error) {
+    if (!database_ || path.empty()) return false;
+    std::error_code ec;
+    const bool folder = stdfs::is_directory(database_->ContentRoot() / path, ec);
+    const std::string old_name = stdfs::path(path).filename().string();
+    const std::string old_stem = stdfs::path(path).stem().string();
+    if (new_name.empty() || new_name == old_name || new_name == old_stem) return false; // nothing typed
+    const assets::MoveResult result = assets::RenameContent(*database_, path, new_name);
+    if (!result.ok) {
+        if (error != nullptr) *error = result.error;
+        return false;
+    }
+    std::string final_name = new_name;
+    if (!folder && stdfs::path(final_name).extension().empty()) final_name += stdfs::path(path).extension().string();
+    const std::string parent = stdfs::path(path).parent_path().generic_string();
+    const std::string created = parent.empty() ? final_name : parent + "/" + final_name;
+    selection_.assign(1, created);
+    selection_anchor_ = created;
+    RebaseOpenFolder(path, created); // renaming the folder being shown follows it
+    Refresh();
+    return true;
+}
+
+void ContentBrowserPanel::ApplyPending() {
+    const Pending pending = pending_;
+    pending_ = Pending::None;
+    std::string error;
+    switch (pending) {
+    case Pending::Delete: DeleteSelection(&error); break;
+    case Pending::Duplicate: DuplicateSelection(&error); break;
+    case Pending::Move: MoveSelection(pending_destination_, &error); break;
+    case Pending::Create: {
+        ExtensionRegistry* ext = ExtensionRegistry::Active();
+        if (ext == nullptr || !database_) break;
+        const ExtensionAssetType* type = ext->FindAssetTypeByExtension(pending_create_extension_);
+        if (type == nullptr) break;
+        std::string message;
+        const stdfs::path file = ext->CreateAsset(*type, database_->ContentRoot() / pending_create_folder_, &message);
+        if (file.empty()) {
+            Refresh();
+            operation_warning_ = message;
+            break;
+        }
+        const std::string path = stdfs::relative(file, database_->ContentRoot()).generic_string();
+        Refresh();
+        selection_.assign(1, path);
+        selection_anchor_ = path;
+        BeginRename(path); // a new asset starts with its name ready to type
+        break;
+    }
+    case Pending::None: break;
     }
 }
 
@@ -382,8 +748,7 @@ void ContentBrowserPanel::StartAction(Action action, const std::string& source) 
     action_source_ = source;
     action_value_.clear();
     action_error_.clear();
-    if (action == Action::Rename) action_value_ = stdfs::path(source).filename().string();
-    if (action == Action::Move) action_value_ = source;
+    if (action == Action::Move) action_value_ = folder_; // a starting point; the whole selection moves there
 }
 
 void ContentBrowserPanel::AcceptMoveDrop(const std::string& destination_folder) {
@@ -396,8 +761,9 @@ void ContentBrowserPanel::AcceptMoveDrop(const std::string& destination_folder) 
                                    (destination_folder.size() > source.size() && destination_folder.compare(0, source.size(), source) == 0 &&
                                     destination_folder[source.size()] == '/');
             if (source != destination_folder && parent != destination_folder && !into_self) {
-                StartAction(Action::Move, source);
-                action_value_ = (stdfs::path(destination_folder) / stdfs::path(source).filename()).generic_string();
+                if (!IsSelected(source)) Select(source); // a plain drag moves just the tile under the cursor
+                pending_ = Pending::Move; // the drop lands mid-loop; the batch runs after the listing has drawn
+                pending_destination_ = destination_folder;
             }
         }
     }
@@ -415,33 +781,20 @@ void ContentBrowserPanel::RebaseOpenFolder(const std::string& old_path, const st
 void ContentBrowserPanel::ApplyAction() {
     if (!database_) return;
     bool ok = false;
-    std::string new_path;
-    std::string warning;
     if (action_ == Action::NewFolder) {
         ok = assets::CreateContentFolder(*database_, action_source_, action_value_, &action_error_);
-    } else if (action_ == Action::Rename) {
-        std::filesystem::path path(action_source_);
-        std::string new_name = action_value_;
-        std::error_code ec;
-        if (!stdfs::is_directory(database_->ContentRoot() / action_source_, ec) && stdfs::path(action_value_).extension().empty()) {
-            new_name += path.extension().string();
+        if (ok) {
+            const std::string created = action_source_.empty() ? action_value_ : action_source_ + "/" + action_value_;
+            Refresh();
+            selection_.assign(1, created);
+            selection_anchor_ = created;
         }
-        new_path = (path.parent_path() / new_name).generic_string();
-        const assets::MoveResult result = assets::RenameContent(*database_, action_source_, action_value_);
-        ok = result.ok;
-        action_error_ = result.error;
-        warning = result.error;
     } else if (action_ == Action::Move) {
-        new_path = stdfs::path(action_value_).lexically_normal().generic_string();
-        const assets::MoveResult result = assets::MoveContent(*database_, action_source_, action_value_);
-        ok = result.ok;
-        action_error_ = result.error;
-        warning = result.error;
+        std::string error;
+        ok = MoveSelection(stdfs::path(action_value_).lexically_normal().generic_string(), &error);
+        action_error_ = error;
     }
     if (!ok) return;
-    if (action_ == Action::Rename || action_ == Action::Move) RebaseOpenFolder(action_source_, new_path);
-    Refresh();
-    operation_warning_ = std::move(warning);
     action_ = Action::None;
     ImGui::CloseCurrentPopup();
 }
@@ -454,10 +807,16 @@ void ContentBrowserPanel::DrawActionDialog() {
     }
     bool open = true;
     if (ImGui::BeginPopupModal("Content Browser Action", &open, ImGuiWindowFlags_AlwaysAutoResize)) {
-        const char* hint = action_ == Action::Rename ? "New name" : action_ == Action::Move ? "Content-relative destination" : "Folder name";
-        ImGui::TextUnformatted(action_ == Action::Rename ? "Rename" : action_ == Action::Move ? "Move" : "Create folder");
-        ImGui::SetNextItemWidth(360.0f);
-        ImGui::InputTextWithHint("##action_value", hint, &action_value_);
+        if (action_ == Action::Move) {
+            ImGui::Text("%d item%s to a Content-relative folder", static_cast<int>(selection_.size()),
+                        selection_.size() == 1 ? "" : "s");
+            ImGui::SetNextItemWidth(360.0f);
+            ImGui::InputTextWithHint("##action_value", "Content-relative destination", &action_value_);
+        } else {
+            ImGui::TextUnformatted("Create folder");
+            ImGui::SetNextItemWidth(360.0f);
+            ImGui::InputTextWithHint("##action_value", "Folder name", &action_value_);
+        }
         if (!action_error_.empty()) ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f), "%s", action_error_.c_str());
         if (ImGui::Button("Apply")) ApplyAction();
         ImGui::SameLine();

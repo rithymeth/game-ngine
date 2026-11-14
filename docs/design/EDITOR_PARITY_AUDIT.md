@@ -549,7 +549,8 @@ Outcome: assets can be found, judged, imported, fixed and opened without leaving
 - Reveal in Explorer and copy path in the context menu.
 
 Gate: thumbnail cache test (second open does not re-render unchanged assets); reimport identity test; multi-select
-operations and their undo count; headless open of every registered asset type; importer settings round-trip.
+operations and their batch count (one rescan and one refresh per operation -- asset operations are not in the ECS undo
+stack); headless open of every registered asset type; importer settings round-trip.
 
 Done so far (2026-11-14): the grid of thumbnails. `ThumbnailStore` (`editor/src/content/thumbnail_store.{h,cpp}`) is the
 whole of it: `Get(entry)` answers a picture or nothing, `Pump()` once a frame, and counters -- `Rendered`, `LoadedFromDisk`,
@@ -568,6 +569,23 @@ renders none; a changed source renders exactly one and does not accumulate files
 `ContentBrowserGrid_KindsWithoutAPictureGetATypeTile` (models are counted as picture-less and write nothing).
 
 Dependency: Stage 0's document contract and Stage 1's tabs, so opening an asset has somewhere to put it.
+
+Done so far (2026-11-15): selection and the batch operations. A click selects, Ctrl toggles, Shift extends from the anchor
+in the current listing, and a rectangle dragged over the grid's tiles selects what it touches (Ctrl+drag adds to the
+selection); Delete, Ctrl+D, Ctrl+A, F2 and Escape act while the listing has focus. Duplicate, Delete and Move take the whole
+selection as one batch -- `assets::DuplicateContent` and `assets::DeleteContents` (new in
+`engine/src/assets/content_browser.cpp`) and `MoveContent` per path, then one rescan and one refresh, which is the
+transaction the database can give since it has no undo. A delete is all-or-nothing: it is refused, naming the outside users,
+while anything outside the batch refers to something it would remove, and `deleted` then reports 0. Duplicates are named
+"<stem> copy", "<stem> copy 2", ... with a fresh GUID and no sub-assets or source hash, so the copy imports on first use, and
+the copies become the selection. Rename is inline (`BeginRename`/`RenameEntry`, or F2): a name with no extension keeps the
+asset's, a changed extension is refused as a type change, and renaming the folder being shown keeps it open. The toolbar's
+Create menu makes one asset of any registered type (`ExtensionRegistry::CreateAsset`) and starts its rename; the listing's
+own context menu offers Select All, Create, Duplicate and Delete, and an entry's menu acts on the selection when the clicked
+entry is part of it. Tests in `tests/test_content_multi_select.cpp`: `ContentOps_DuplicateMakesAnIndependentCopy`,
+`ContentOps_DeleteIsAllOrNothing`, `ContentSelection_SelectsExtendsTogglesAndBoxSelects`,
+`ContentSelection_DuplicateSelectsTheCopies`, `ContentSelection_DeleteRefusesTheWholeBatchOrTakesAllOfIt`,
+`ContentSelection_MoveTakesTheSelectionAndFollowsTheOpenFolder` and `ContentSelection_RenameEntryKeepsTheTypeAndTheSelection`.
 
 ### Stage 4 — Inspector and hierarchy parity (M)
 

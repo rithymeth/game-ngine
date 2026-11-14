@@ -1210,6 +1210,8 @@
   MoveResult RenameContent(AssetDatabase&database,const std::string&path,const std::string&new_name)
   Thumbnail MakeThumbnail(const std::vector<u8>&rgba,u32 width,u32 height,u32 max_size)
   bool CreateContentFolder(AssetDatabase&database,const std::string&parent,const std::string&name,std::string*error=nullptr)
+  bool DeleteContents(AssetDatabase&database,const std::vector<std::string>&paths,std::string*error=nullptr,usize*deleted=nullptr)
+  bool DuplicateContent(AssetDatabase&database,const std::string&path,std::string*created=nullptr,std::string*error=nullptr)
   bool IsValidAssetName(const std::string&name,std::string*error=nullptr)
   std::optional<Thumbnail>AssetThumbnail(AssetDatabase&database,const AssetGuid&guid,const ImporterRegistry&importers,DerivedDataCache&cache,u32 max_size)
   std::vector<ContentEntry>ListContent(const AssetDatabase&database,const ContentQuery&query)

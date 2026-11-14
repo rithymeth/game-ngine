@@ -449,6 +449,15 @@ the sidecar even when the result is a cache hit. A second open decodes those fil
 `Rendered()`, `LoadedFromDisk()` and `WithoutPicture()` so a test can tell. A changed source gets a new key, one render,
 and its old file is removed.
 
+Multi-select: click selects, Ctrl toggles, Shift extends from the anchor, and a rectangle dragged over the grid's tiles
+selects what it touches (Ctrl+drag adds); Delete, Ctrl+D, Ctrl+A, F2 and Escape work while the listing has focus. Duplicate,
+Delete and Move run on the whole selection as one batch -- then one rescan and one refresh, standing in for the grouped undo
+step the asset database cannot provide. A delete is all-or-nothing and is refused, naming the users, while anything outside
+the batch still refers to what it would remove. Duplicates are "<stem> copy", "copy 2", ..., with fresh GUIDs that import on
+first use, and become the selection. Rename is inline on the tile or row (`RenameEntry`): a name with no extension keeps the
+asset's and changing the extension is refused. The toolbar's Create menu creates one asset of any registered type with its
+name focused, and the listing's context menu (right-click on the background) offers Select All, Create, Duplicate and Delete.
+
 - Thumbnail size slider (64–256 px); list view for large folders.
 - Filter current-folder entries by supported asset type and name; search and
   type filters combine. Label the folder scope, show the visible/matching
