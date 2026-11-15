@@ -10,6 +10,7 @@
 #include "aether/script/crafting_api.h"
 #include "aether/script/dialogue_api.h"
 #include "aether/script/timeofday_api.h"
+#include "aether/script/achievements_api.h"
 #include "aether/script/inventory_api.h"
 #include "aether/script/loc_api.h"
 #include "aether/script/ui_api.h"
@@ -500,6 +501,7 @@ void ScriptSystem::InstallApi(bool install_kit_apis) {
         InstallKitApi("Crafting");
         InstallKitApi("Dialogue");
         InstallKitApi("TimeOfDay");
+        InstallKitApi("Achievements");
         InstallKitApi("Gameplay");
     }
 }
@@ -512,6 +514,7 @@ void ScriptSystem::InstallKitApi(const std::string& kit_name) {
     else if (kit_name == "Crafting") InstallCraftingApi(host_);
     else if (kit_name == "Dialogue") InstallDialogueApi(host_);
     else if (kit_name == "TimeOfDay") InstallTimeOfDayApi(host_);
+    else if (kit_name == "Achievements") InstallAchievementsApi(host_);
 }
 
 std::string ScriptSystem::DescribeEntity(Entity entity) const {

@@ -13,6 +13,9 @@
 #if AETHER_KIT_QUESTS
 #include "aether/quests/quest_def.h"
 #endif
+#if AETHER_KIT_ACHIEVEMENTS
+#include "aether/achievements/achievement_def.h"
+#endif
 #if AETHER_KIT_TIMEOFDAY
 #include "aether/timeofday/world_clock.h"
 #endif
@@ -446,6 +449,9 @@ private:
 #endif
 #if AETHER_KIT_QUESTS
     quest::QuestLibrary quests_;
+#endif
+#if AETHER_KIT_ACHIEVEMENTS
+    ach::AchievementLibrary achievements_;
 #endif
 #if AETHER_KIT_TIMEOFDAY
     tod::WorldClock clock_; // the game's, not the scene's: it runs on through a scene change
