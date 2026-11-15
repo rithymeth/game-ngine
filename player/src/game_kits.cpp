@@ -22,6 +22,9 @@
 #if AETHER_KIT_QUESTS
 #include "aether/quests/quests_kit.h"
 #endif
+#if AETHER_KIT_TIMEOFDAY
+#include "aether/timeofday/timeofday_kit.h"
+#endif
 #if AETHER_KIT_DIALOGUE
 #include "aether/dialogue/dialogue_kit.h"
 #endif
@@ -43,6 +46,9 @@ void Game::BuildKits() {
 #endif
 #if AETHER_KIT_QUESTS
     kits_.Add(quest::MakeQuestsKit(&quests_, &effects_));
+#endif
+#if AETHER_KIT_TIMEOFDAY
+    kits_.Add(tod::MakeTimeOfDayKit());
 #endif
 #if AETHER_KIT_DIALOGUE
     kits_.Add(dlg::MakeDialogueKit(&dialogues_));
@@ -253,6 +259,14 @@ void Game::AddQuestsStage() {
         if (kits_.Has(other)) quests.after.push_back(std::string("Player.") + other);
     }
     runtime_->stages[quests.name] = std::move(quests);
+#endif
+}
+
+void Game::AddTimeOfDayStage() {
+#if AETHER_KIT_TIMEOFDAY
+    SystemDesc time_of_day = tod::MakeTimeOfDaySystem(&clock_);
+    ApplyKitStage(time_of_day, "Player.TimeOfDay");
+    runtime_->stages[time_of_day.name] = std::move(time_of_day);
 #endif
 }
 

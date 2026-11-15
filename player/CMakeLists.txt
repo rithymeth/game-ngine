@@ -56,6 +56,13 @@ if(TARGET Aether::Quests)
 else()
     target_compile_definitions(aether_game PUBLIC AETHER_KIT_QUESTS=0)
 endif()
+# The time-of-day genre kit (the world clock), when built.
+if(TARGET Aether::TimeOfDay)
+    target_link_libraries(aether_game PUBLIC Aether::TimeOfDay)
+    target_compile_definitions(aether_game PUBLIC AETHER_KIT_TIMEOFDAY=1)
+else()
+    target_compile_definitions(aether_game PUBLIC AETHER_KIT_TIMEOFDAY=0)
+endif()
 # The dialogue genre kit (conversations), when built.
 if(TARGET Aether::Dialogue)
     target_link_libraries(aether_game PUBLIC Aether::Dialogue)

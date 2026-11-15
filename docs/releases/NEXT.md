@@ -6,6 +6,10 @@ A working draft of the next release's notes. It is rewritten into `vX.Y.Z.md` wh
 
 A new optional kit and engine plugin, **Crafting** (`AETHER_KIT_CRAFTING`, needs Inventory): `.arecipe` files list inputs and outputs, and `CraftingSystem::Craft` carries them out on an inventory all or nothing -- if the outputs do not fit, the inputs are given back. A Luau `Crafting` table (`Craft`, `CanCraft`, `MissingCount`, `Exists`, `GetTitle`, `Describe`) exposes it; see `docs/manual/16-crafting.md`.
 
+## Time of day
+
+A new optional kit and engine plugin, **Time of Day** (`AETHER_KIT_TIMEOFDAY`, no dependencies, no asset files): the game's world clock. An hour and a day count advance with each frame (a game day is 20 real minutes by default, scalable or pausable), with a phase of the day (dawn, day, dusk, night) and a sunlight level from 0 to 1 that scripts can use to light a scene. The clock belongs to the game, so it runs on through a scene change. A Luau `TimeOfDay` table exposes it; see `docs/manual/18-time-of-day.md`.
+
 ## Dialogue
 
 A new optional kit and engine plugin, **Dialogue** (`AETHER_KIT_DIALOGUE`, no dependencies): `.adialogue` files describe a conversation as nodes with a next node or choices, `DialogueSystem` runs one per listening entity (`Start`, `Advance`, `Choose`, `End`), and each line can carry a free `event` word a script reacts to. A Luau `Dialogue` table exposes it; see `docs/manual/17-dialogue.md`.

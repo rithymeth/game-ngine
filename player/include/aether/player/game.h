@@ -13,6 +13,9 @@
 #if AETHER_KIT_QUESTS
 #include "aether/quests/quest_def.h"
 #endif
+#if AETHER_KIT_TIMEOFDAY
+#include "aether/timeofday/world_clock.h"
+#endif
 #if AETHER_KIT_DIALOGUE
 #include "aether/dialogue/dialogue_def.h"
 #endif
@@ -389,6 +392,7 @@ private:
     void AddInventoryStage();
     void AddInteractionStage();
     void AddQuestsStage();
+    void AddTimeOfDayStage();
     // A kit stage as the registry describes it: its name and `after` list, for the system that runs it.
     void ApplyKitStage(SystemDesc& system, const std::string& name) const;
 
@@ -442,6 +446,9 @@ private:
 #endif
 #if AETHER_KIT_QUESTS
     quest::QuestLibrary quests_;
+#endif
+#if AETHER_KIT_TIMEOFDAY
+    tod::WorldClock clock_; // the game's, not the scene's: it runs on through a scene change
 #endif
 #if AETHER_KIT_DIALOGUE
     dlg::DialogueLibrary dialogues_;

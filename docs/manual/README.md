@@ -22,6 +22,7 @@ the workflow grows. The chapters describe current capabilities; build specs in
 15. [Dedicated servers](15-dedicated-server.md): `aether_server`, its config and command line, packaging and checking it with `aether_netclient`.
 16. [Crafting](16-crafting.md): the crafting kit, recipes and the `Crafting` script table.
 17. [Dialogue](17-dialogue.md): the dialogue kit, conversations and the `Dialogue` script table.
+18. [Time of day](18-time-of-day.md): the world clock kit and the `TimeOfDay` script table.
 
 Also: [Support policy](support_policy.md), a proposal for how long versions are supported.
 
