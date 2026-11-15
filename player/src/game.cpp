@@ -14,6 +14,9 @@
 #include "aether/gameplay/attribute_system.h"
 #include "aether/gameplay/effect_system.h"
 #include "aether/gameplay/gameplay_kit.h"
+#if AETHER_KIT_INVENTORY
+#include "aether/inventory/inventory.h"
+#endif
 #include "aether/loc/localized_path.h"
 #include "aether/reflection/serialize.h"
 #include "aether/scene/gameplay.h"
@@ -51,6 +54,30 @@ namespace {
 bool Fail(std::string* error, std::string message) {
     if (error) *error = std::move(message);
     return false;
+}
+
+// A component that follows its entity from the scene being left to the next one: collected from the old world before it is replaced, put back
+// on the next scene's entity with the same GUID (the player is the usual one) after. An entity with no GUID, or with no counterpart in the next
+// scene, is not carried; a counterpart that already has the component has it overwritten.
+template <typename T>
+std::vector<std::pair<EntityGuid, T>> CollectCarried(World* world) {
+    std::vector<std::pair<EntityGuid, T>> carried;
+    if (world) {
+        world->ForEach<IdComponent, T>([&](IdComponent& id, T& value) {
+            if (!id.guid.IsNull()) carried.emplace_back(id.guid, value);
+        });
+    }
+    return carried;
+}
+
+template <typename T>
+void RestoreCarried(World& world, const GuidIndex& guids, const std::vector<std::pair<EntityGuid, T>>& carried) {
+    for (const auto& [guid, value] : carried) {
+        const Entity entity = guids.Find(world, guid);
+        if (entity == kNullEntity) continue;
+        if (T* existing = world.GetComponent<T>(entity)) *existing = value;
+        else world.AddComponent(entity, value);
+    }
 }
 
 } // namespace
@@ -475,14 +502,13 @@ bool Game::LoadScene(const std::string& path, std::string* error) {
     if (!loaded) return Fail(error, "Can't load the scene " + path);
 
 #if AETHER_KIT_QUESTS
-    // Quest logs follow their entity from the scene being left to the next one: the new scene's entity with the same GUID (the player is the usual
-    // one) keeps the quests its predecessor had, with their objectives' progress. An entity with no GUID, or with no counterpart, is not carried.
-    std::vector<std::pair<EntityGuid, quest::QuestLog>> carried_quests;
-    if (world_) {
-        world_->ForEach<IdComponent, quest::QuestLog>([&](IdComponent& id, quest::QuestLog& log) {
-            if (!id.guid.IsNull()) carried_quests.emplace_back(id.guid, log);
-        });
-    }
+    // Quest logs follow their entity into the next scene: the new scene's entity with the same GUID (the player is the usual one) keeps the quests
+    // its predecessor had, with their objectives' progress.
+    const auto carried_quests = CollectCarried<quest::QuestLog>(world_.get());
+#endif
+#if AETHER_KIT_INVENTORY
+    // So does the pack: an Inventory (items, capacity, equipment) is the player's, not the scene's.
+    const auto carried_packs = CollectCarried<inv::Inventory>(world_.get());
 #endif
 
     if (saves_) saves_->SetWorldContext({}); // it points into the world being replaced
@@ -501,12 +527,10 @@ bool Game::LoadScene(const std::string& path, std::string* error) {
     }
     guids_.Rebuild(*world_);
 #if AETHER_KIT_QUESTS
-    for (const auto& [guid, log] : carried_quests) {
-        const Entity entity = guids_.Find(*world_, guid);
-        if (entity == kNullEntity) continue;
-        if (quest::QuestLog* existing = world_->GetComponent<quest::QuestLog>(entity)) *existing = log;
-        else world_->AddComponent(entity, log);
-    }
+    RestoreCarried(*world_, guids_, carried_quests);
+#endif
+#if AETHER_KIT_INVENTORY
+    RestoreCarried(*world_, guids_, carried_packs);
 #endif
     lifecycle_ = std::make_unique<Lifecycle>(*world_, guids_);
     RefreshSaveContext();

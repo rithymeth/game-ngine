@@ -10,6 +10,9 @@
 #if AETHER_KIT_QUESTS
 #include "aether/quests/quest_log.h"
 #endif
+#ifdef AETHER_TEST_HAS_INVENTORY
+#include "aether/inventory/inventory.h"
+#endif
 #include "aether/project/project.h"
 #include "aether/scene/components.h"
 #include "aether/scene/gameplay.h"
@@ -550,6 +553,79 @@ AETHER_TEST(Player_QuestLogsFollowTheirEntityThroughASceneChange) {
     if (carried != nullptr && !carried->quests.empty()) {
         CHECK(carried->quests[0].name == "Rescue" && carried->quests[0].state == quest::kActive);
         CHECK(!carried->quests[0].objectives.empty() && carried->quests[0].objectives[0].progress == 2);
+    } else {
+        CHECK(false);
+    }
+}
+#endif
+
+#ifdef AETHER_TEST_HAS_INVENTORY
+// A scene change keeps an entity's pack: the next scene's entity with the same GUID gets the inventory of the one being left (items, capacity); an
+// entity with no GUID is left behind, and an entity of the new scene with no counterpart keeps the inventory its own scene gave it.
+AETHER_TEST(Player_InventoriesFollowTheirEntityThroughASceneChange) {
+    if (!Game::HasScripting()) return;
+    const stdfs::path dir = TestDir("InventoryCarry");
+    const std::string player_guid = "00000000-0000-4000-8000-0000000000a1";
+    const std::string chest_guid = "00000000-0000-4000-8000-0000000000c3";
+    inv::Inventory pack;
+    pack.capacity = 7;
+    pack.Normalize();
+    pack.slots[0] = {"Scrap", 3};
+    inv::Inventory chest;
+    chest.capacity = 3;
+    chest.Normalize();
+    chest.slots[0] = {"Relic", 1};
+    const std::string script_guid = assets::ToString(assets::NewAssetGuid());
+    ScriptComponent component;
+    assets::AssetGuid parsed;
+    CHECK(assets::ParseAssetGuid(script_guid, parsed));
+    component.script.guid = parsed;
+    const json a = {{"$type", "Scene"}, {"$version", 1},
+        {"entities", json::array({{{"guid", player_guid}, {"components", {{"Inventory", reflect::ToJson(pack)}}}},
+                                  {{"components", {{"Inventory", reflect::ToJson(pack)}}}}, // no GUID: nothing to match it by
+                                  {{"components", {{"ScriptComponent", reflect::ToJson(component)}}}}})}};
+    const json b = {{"$type", "Scene"}, {"$version", 1},
+        {"entities", json::array({{{"guid", player_guid}, {"components", {{"Transform", {{"$v", 2}, {"position", {1, 2, 3}}, {"rotation", {0, 0, 0, 1}}, {"scale", {1, 1, 1}}}}}}},
+                                  {{"guid", chest_guid}, {"components", {{"Inventory", reflect::ToJson(chest)}}}}})}};
+    const char* script =
+        "local S = {}\n"
+        "function S:OnUpdate(dt)\n"
+        "  if not self.asked then self.asked = true; Scene.Load('Scenes/b.ascene') end\n"
+        "end\n"
+        "return S\n";
+    json manifest = Manifest("Scenes/a.ascene", "unused");
+    manifest["assets"] = json::array({{{"guid", assets::ToString(assets::NewAssetGuid())}, {"path", "Scenes/a.ascene"}, {"importer", "Scene"}},
+                                      {{"guid", assets::ToString(assets::NewAssetGuid())}, {"path", "Scenes/b.ascene"}, {"importer", "Scene"}},
+                                      {{"guid", script_guid}, {"path", "Scripts/Swap.luau"}, {"importer", "Script"}}});
+    pak::PakWriter writer;
+    CHECK(writer.Add("Manifest.json", manifest.dump()));
+    CHECK(writer.Add("Content/Scenes/a.ascene", a.dump()));
+    CHECK(writer.Add("Content/Scenes/b.ascene", b.dump()));
+    CHECK(writer.Add("Content/Scripts/Swap.luau", std::string(script)));
+    const stdfs::path pak = dir / "Game.apak";
+    CHECK(writer.Write(pak.string()));
+    GamePackage package;
+    std::string error;
+    CHECK(package.Mount(pak.string(), 0, &error));
+    CHECK(package.LoadManifest(&error));
+    Game game(package);
+    CHECK(game.LoadStartupScene(&error));
+    game.BeginPlay();
+    for (int i = 0; i < 4; ++i) game.Tick(1.0f / 60.0f);
+    CHECK(game.SceneName() == "Scenes/b.ascene");
+    CHECK(game.ScriptErrors().empty());
+    usize with_pack = 0;
+    const inv::Inventory* carried = nullptr;
+    const inv::Inventory* kept = nullptr;
+    game.GetWorld().ForEach<IdComponent, inv::Inventory>([&](IdComponent& id, inv::Inventory& p) {
+        ++with_pack;
+        if (aether::ToString(id.guid) == player_guid) carried = &p;
+        if (aether::ToString(id.guid) == chest_guid) kept = &p;
+    });
+    CHECK(with_pack == 2); // the player's, carried over, and the chest's own; the GUID-less one stayed behind
+    if (carried != nullptr && kept != nullptr && !carried->slots.empty() && !kept->slots.empty()) {
+        CHECK(carried->capacity == 7 && carried->slots[0].item == "Scrap" && carried->slots[0].count == 3);
+        CHECK(kept->capacity == 3 && kept->slots[0].item == "Relic"); // not overwritten by the pack of another entity
     } else {
         CHECK(false);
     }
