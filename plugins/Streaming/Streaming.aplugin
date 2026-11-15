@@ -1,0 +1,22 @@
+{
+  "$type": "Plugin",
+  "$v": 1,
+  "name": "Streaming",
+  "friendly_name": "Streaming",
+  "version": "1.0.0",
+  "description": "World partition cells, the world streamer and the floating origin.",
+  "category": "World",
+  "created_by": "Aether",
+  "engine_version": "",
+  "enabled_by_default": true,
+  "has_content": false,
+  "dependencies": [],
+  "modules": [
+    {
+      "$v": 1,
+      "name": "Streaming",
+      "type": "Runtime",
+      "phase": "PreDefault"
+    }
+  ]
+}

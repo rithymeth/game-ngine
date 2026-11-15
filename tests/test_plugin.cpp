@@ -254,17 +254,29 @@ AETHER_TEST(Plugin_TheEnginesModulesArePlugins) {
     PluginManager m;
     m.AddSearchPath(dir, PluginSource::Engine);
     CHECK(m.Discover().empty());
-    for (const char* name : {"Physics", "Audio", "Navigation", "AI", "Networking"}) {
+    // Every optional module of the engine is a plugin, on by default; a genre kit needs the Gameplay module under it.
+    const std::vector<std::string> engine_plugins = {"Physics", "Audio", "Navigation", "AI", "Networking", "Animation", "UI", "VFX", "Sprite2D",
+                                                      "Sequencer", "Streaming", "Gameplay", "Inventory", "Interaction", "Quests"};
+    for (const std::string& name : engine_plugins) {
         CHECK(m.Find(name) != nullptr && m.Find(name)->descriptor.enabled_by_default);
     }
     CHECK(m.Resolve({}));
     const std::vector<std::string> on = EnabledNames(m);
-    CHECK(on.size() == 5);
-    CHECK(std::find(on.begin(), on.end(), "Navigation") < std::find(on.begin(), on.end(), "AI"));
+    CHECK(on.size() == engine_plugins.size());
+    const auto position = [&](const char* name) { return std::find(on.begin(), on.end(), name) - on.begin(); };
+    CHECK(position("Navigation") < position("AI"));
+    for (const char* kit : {"Inventory", "Interaction", "Quests"}) CHECK(position("Gameplay") < position(kit)); // dependencies start first
     // This executable has the modules its build has (physics is optional).
-    for (const char* name : {"Audio", "Navigation", "AI", "Networking"}) CHECK(ModuleRegistry::Get().Has(name));
+    for (const std::string& name : engine_plugins) {
+        if (name != "Physics") CHECK(ModuleRegistry::Get().Has(name));
+    }
     const std::vector<std::string> warnings = m.StartModules(true, false);
     CHECK(warnings.size() == (ModuleRegistry::Get().Has("Physics") ? 0u : 1u));
+    // Starting the plugins registers their components, so a scene can name them.
+    for (const char* component : {"Animator", "WidgetComponent", "ParticleSystem", "Sprite", "SequenceComponent", "StreamingSource",
+                                  "AttributeSet", "Inventory", "Interactable", "QuestLog"}) {
+        CHECK(FindComponentIdByName(component) != kInvalidComponentId);
+    }
 }
 
 AETHER_TEST(Plugin_ThroughTheCookIntoThePlayer) {
