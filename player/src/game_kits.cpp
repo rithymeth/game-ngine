@@ -22,6 +22,9 @@
 #if AETHER_KIT_QUESTS
 #include "aether/quests/quests_kit.h"
 #endif
+#if AETHER_KIT_CRAFTING
+#include "aether/crafting/crafting_kit.h"
+#endif
 
 namespace aether::player {
 
@@ -37,6 +40,9 @@ void Game::BuildKits() {
 #endif
 #if AETHER_KIT_QUESTS
     kits_.Add(quest::MakeQuestsKit(&quests_, &effects_));
+#endif
+#if AETHER_KIT_CRAFTING && AETHER_KIT_INVENTORY
+    kits_.Add(craft::MakeCraftingKit(&recipes_, &items_));
 #endif
     if (!kits_.Resolve()) {
         for (const std::string& error : kits_.Errors()) AETHER_LOG_ERROR("Player", "Kits: %s", error.c_str());
@@ -86,6 +92,9 @@ void Game::CreateKitRuntime() {
 #endif
 #if AETHER_KIT_QUESTS
         if (std::strcmp(name, "quests.library") == 0) return &quests_;
+#endif
+#if AETHER_KIT_CRAFTING
+        if (std::strcmp(name, "crafting.recipes") == 0) return &recipes_;
 #endif
         return nullptr;
     };

@@ -13,6 +13,9 @@
 #if AETHER_KIT_QUESTS
 #include "aether/quests/quest_def.h"
 #endif
+#if AETHER_KIT_CRAFTING
+#include "aether/crafting/recipe_def.h"
+#endif
 #include "aether/input/bindings.h"
 #include "aether/math/math.h"
 #include "aether/pak/vfs.h"
@@ -436,6 +439,9 @@ private:
 #endif
 #if AETHER_KIT_QUESTS
     quest::QuestLibrary quests_;
+#endif
+#if AETHER_KIT_CRAFTING
+    craft::RecipeLibrary recipes_;
 #endif
     bool kit_assets_loaded_ = false;
     bool input_loaded_ = false;

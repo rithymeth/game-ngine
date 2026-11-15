@@ -1,0 +1,29 @@
+{
+  "$type": "Plugin",
+  "$v": 1,
+  "name": "Crafting",
+  "friendly_name": "Crafting",
+  "version": "1.0.0",
+  "description": "Recipes (.arecipe) crafted from an entity's inventory, with the Crafting script API (a genre kit on Inventory).",
+  "category": "Gameplay",
+  "created_by": "Aether",
+  "engine_version": "",
+  "enabled_by_default": true,
+  "has_content": false,
+  "dependencies": [
+    {
+      "$v": 1,
+      "name": "Inventory",
+      "min_version": "",
+      "optional": false
+    }
+  ],
+  "modules": [
+    {
+      "$v": 1,
+      "name": "Crafting",
+      "type": "Runtime",
+      "phase": "PreDefault"
+    }
+  ]
+}

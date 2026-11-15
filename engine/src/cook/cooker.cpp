@@ -226,6 +226,7 @@ std::vector<AssetGuid> CollectCookSet(const AssetDatabase& database,
         if (!record->IsSubAsset() && !record->missing && record->importer == "GameplayAbility") include(record->guid, "gameplay");
         if (!record->IsSubAsset() && !record->missing && record->importer == "ItemDefinition") include(record->guid, "gameplay");
         if (!record->IsSubAsset() && !record->missing && record->importer == "QuestDefinition") include(record->guid, "gameplay");
+        if (!record->IsSubAsset() && !record->missing && record->importer == "RecipeDefinition") include(record->guid, "gameplay");
     }
     std::vector<AssetGuid> result;
     while (!queue.empty()) {

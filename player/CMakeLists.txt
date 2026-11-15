@@ -56,6 +56,13 @@ if(TARGET Aether::Quests)
 else()
     target_compile_definitions(aether_game PUBLIC AETHER_KIT_QUESTS=0)
 endif()
+# The crafting genre kit (recipes on the inventory kit), when built.
+if(TARGET Aether::Crafting)
+    target_link_libraries(aether_game PUBLIC Aether::Crafting)
+    target_compile_definitions(aether_game PUBLIC AETHER_KIT_CRAFTING=1)
+else()
+    target_compile_definitions(aether_game PUBLIC AETHER_KIT_CRAFTING=0)
+endif()
 add_library(Aether::Game ALIAS aether_game)
 
 add_executable(aether_player main.cpp)
