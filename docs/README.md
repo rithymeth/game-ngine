@@ -79,6 +79,7 @@ without a server or network connection.
 | [manual/15-dedicated-server.md](manual/15-dedicated-server.md) | `aether_server`: hosting a cooked game without a window or GPU |
 | [manual/16-crafting.md](manual/16-crafting.md) | The crafting kit: recipes, all-or-nothing crafting and the script table |
 | [manual/17-dialogue.md](manual/17-dialogue.md) | The dialogue kit: conversations, choices and the script table |
+| [manual/18-time-of-day.md](manual/18-time-of-day.md) | The time-of-day kit: the world clock, phases, sunlight and the script table |
 | [manual/api_stability.md](manual/api_stability.md) | The three stability levels and what each promises |
 | [manual/core_api_inventory.md](manual/core_api_inventory.md) | Ownership and threading inventory for the APIs a game or plugin uses |
 | [manual/support_policy.md](manual/support_policy.md) | A support-policy proposal, explicitly not yet promised |

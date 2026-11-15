@@ -5133,6 +5133,7 @@
   void AddInteractionStage()
   void AddInventoryStage()
   void AddQuestsStage()
+  void AddTimeOfDayStage()
   void ApplyAudioSettings()
   void ApplyKitStage(SystemDesc&system,const std::string&name)const
   void ApplyPendingScene()
@@ -5948,6 +5949,8 @@
   void ReleaseOwner(u64 owner)
   void Tick(f32 dt)
   ~ScriptSystem()
+[scripting/include/aether/script/timeofday_api.h] experimental
+  void InstallTimeOfDayApi(LuauHost&host)
 [scripting/include/aether/script/ui_api.h] experimental
   void InstallUiApi(LuauHost&host)
 [sequencer/include/aether/sequencer/movie.h] experimental
@@ -6498,6 +6501,33 @@
   void DestroyBuffer(u64 buffer)override
   ~RhiTerrainGpu()override
   ~TerrainPass()
+[timeofday/include/aether/timeofday/timeofday_kit.h] experimental
+  SystemDesc MakeTimeOfDaySystem(WorldClock*clock)
+  std::unique_ptr<kit::IKit>MakeTimeOfDayKit()
+[timeofday/include/aether/timeofday/world_clock.h] experimental
+  type class WorldClock
+  type enum class Phase
+  Phase CurrentPhase()const
+  WorldClock&operator=(const WorldClock&)=delete
+  WorldClock()
+  WorldClock(const WorldClock&)=delete
+  bool IsNight()const
+  bool SetDay(i64 day)
+  bool SetDayLength(f64 seconds)
+  bool SetHour(f64 hour)
+  bool SetScale(f64 scale)
+  const char*PhaseName(Phase phase)
+  f64 DayLength()const
+  f64 Hour()const
+  f64 Scale()const
+  f64 Sunlight()const
+  f64 TotalHours()const
+  i64 Day()const
+  static WorldClock*Active()
+  std::string TimeText()const
+  void Advance(f64 dt)
+  void MakeActive()
+  ~WorldClock()
 [ui/include/aether/ui/animation.h] experimental
   type class UIAnimator
   type enum class Ease
