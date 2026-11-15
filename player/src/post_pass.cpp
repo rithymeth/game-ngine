@@ -22,7 +22,7 @@ struct PushConstants {
     uint g_Tonemapper;
     float g_Saturation;
     uint g_Lens;
-    uint g_Bloom;
+    uint g_PostTextures;
     float g_BloomIntensity;
     float g_BloomScale;
     uint g_Depth;
@@ -310,22 +310,25 @@ float4 PSMain(float4 position : SV_POSITION) : SV_TARGET {
             c = lerp(c, fog, 1.0 - exp(-optical_depth));
         }
     }
-    if (g_PC.g_Bloom < 128 && g_PC.g_BloomIntensity > 0.0) {
+    uint bloom_texture = g_PC.g_PostTextures & 255u;
+    if (bloom_texture < 128 && g_PC.g_BloomIntensity > 0.0) {
         // The chain's top level, half the screen's size, read with the same 3x3 tent the upsample uses.
         uint bloom_width, bloom_height;
-        g_Textures[g_PC.g_Bloom].GetDimensions(bloom_width, bloom_height);
+        g_Textures[bloom_texture].GetDimensions(bloom_width, bloom_height);
         float2 t = 1.0 / float2(bloom_width, bloom_height);
         float2 uv = position.xy / float2(width, height);
-        float3 bloom = BloomTap(g_PC.g_Bloom, uv, t) * 4.0;
-        bloom += (BloomTap(g_PC.g_Bloom, uv + float2(-t.x, 0), t) + BloomTap(g_PC.g_Bloom, uv + float2(t.x, 0), t) +
-                  BloomTap(g_PC.g_Bloom, uv + float2(0, -t.y), t) + BloomTap(g_PC.g_Bloom, uv + float2(0, t.y), t)) * 2.0;
-        bloom += BloomTap(g_PC.g_Bloom, uv + float2(-t.x, -t.y), t) + BloomTap(g_PC.g_Bloom, uv + float2(t.x, -t.y), t) +
-                 BloomTap(g_PC.g_Bloom, uv + float2(-t.x, t.y), t) + BloomTap(g_PC.g_Bloom, uv + float2(t.x, t.y), t);
+        float3 bloom = BloomTap(bloom_texture, uv, t) * 4.0;
+        bloom += (BloomTap(bloom_texture, uv + float2(-t.x, 0), t) + BloomTap(bloom_texture, uv + float2(t.x, 0), t) +
+                  BloomTap(bloom_texture, uv + float2(0, -t.y), t) + BloomTap(bloom_texture, uv + float2(0, t.y), t)) * 2.0;
+        bloom += BloomTap(bloom_texture, uv + float2(-t.x, -t.y), t) + BloomTap(bloom_texture, uv + float2(t.x, -t.y), t) +
+                 BloomTap(bloom_texture, uv + float2(-t.x, t.y), t) + BloomTap(bloom_texture, uv + float2(t.x, t.y), t);
         c = lerp(c, bloom * (g_PC.g_BloomScale / 16.0), g_PC.g_BloomIntensity);
     }
 #ifdef AETHER_HDR_COMPOSITE
     return float4(c, 1.0);
 #endif
+    uint exposure_texture = (g_PC.g_PostTextures >> 8u) & 255u;
+    if (exposure_texture < 128) c *= g_Textures[exposure_texture].Load(int3(0, 0, 0)).g;
     c *= g_PC.g_Exposure;
     float luminance = dot(c, float3(0.2126, 0.7152, 0.0722));
     c = max(luminance + (c - luminance) * g_PC.g_Saturation, 0.0);
@@ -343,6 +346,67 @@ float4 PSMain(float4 position : SV_POSITION) : SV_TARGET {
         encoded = saturate(encoded + noise * grain * 0.25 * (1.0 - abs(2.0 * encoded - 1.0)));
     }
     return float4(encoded, 1.0);
+}
+)";
+
+struct AutoExposureConstants {
+    u32 source = 0, history = 255, mode = 0, target_width = 1;
+    u32 target_height = 1;
+    f32 dt = 0, strength = 0;
+    f32 min_log2 = ExposureSettings{}.min_log2, max_log2 = ExposureSettings{}.max_log2;
+    f32 min_ev = ExposureSettings{}.min_ev100, max_ev = ExposureSettings{}.max_ev100;
+    f32 speed_up = ExposureSettings{}.speed_up, speed_down = ExposureSettings{}.speed_down;
+    f32 padding[3]{};
+};
+static_assert(sizeof(AutoExposureConstants) == 64);
+
+constexpr char kAutoExposureShader[] = R"(
+struct AutoExposureConstants {
+    uint source, history, mode, target_width;
+    uint target_height;
+    float dt, strength, min_log2, max_log2, min_ev, max_ev, speed_up, speed_down;
+    float padding0, padding1, padding2;
+};
+#ifdef __spirv__
+[[vk::push_constant]]
+#endif
+ConstantBuffer<AutoExposureConstants> g_PC : register(b0);
+Texture2D g_Textures[128] : register(t0, space0);
+
+float4 VSMain(uint id : SV_VertexID) : SV_Position {
+    float2 uv = float2((id << 1) & 2, id & 2);
+    return float4(uv * float2(2.0, -2.0) + float2(-1.0, 1.0), 0.0, 1.0);
+}
+float4 PSMain(float4 position : SV_Position) : SV_Target {
+    uint width, height;
+    g_Textures[g_PC.source].GetDimensions(width, height);
+    if (g_PC.mode == 0) {
+        int2 p = min(int2(position.xy * float2(width, height) / float2(g_PC.target_width, g_PC.target_height)), int2(width, height) - 1);
+        float3 color = g_Textures[g_PC.source].Load(int3(p, 0)).rgb;
+        float luminance = dot(max(color, 0.0), float3(0.2126, 0.7152, 0.0722));
+        if (!isfinite(luminance) || luminance <= 1e-6) return 0.0;
+        return float4(clamp(log2(luminance), g_PC.min_log2, g_PC.max_log2), 1.0, 0.0, 1.0);
+    }
+    if (g_PC.mode == 1) {
+        int2 base = int2(position.xy) * 4;
+        float2 sum = 0.0;
+        for (int y = 0; y < 4; ++y) {
+            for (int x = 0; x < 4; ++x) {
+                int2 p = base + int2(x, y);
+                if (p.x < (int)width && p.y < (int)height) sum += g_Textures[g_PC.source].Load(int3(p, 0)).rg;
+            }
+        }
+        return float4(sum, 0.0, 1.0);
+    }
+    float2 meter = g_Textures[g_PC.source].Load(int3(0, 0, 0)).rg;
+    float target = clamp((meter.y > 0.0 ? meter.x / meter.y : g_PC.min_log2) + 3.0, g_PC.min_ev, g_PC.max_ev);
+    float ev = target;
+    if (g_PC.history < 128) {
+        float previous = g_Textures[g_PC.history].Load(int3(0, 0, 0)).r;
+        float rate = target > previous ? g_PC.speed_up : g_PC.speed_down;
+        ev = lerp(previous, target, 1.0 - exp(-g_PC.dt * rate));
+    }
+    return float4(ev, lerp(1.0, exp2(-ev) / 1.2, g_PC.strength), 0.0, 1.0);
 }
 )";
 
@@ -570,6 +634,8 @@ PostPass::PostPass(gfx::rhi::IDevice& device, gfx::rhi::ISwapChain& swap_chain) 
 }
 
 PostPass::~PostPass() {
+    ReleaseAutoExposure();
+    if (exposure_pipeline_.IsValid()) device_.DestroyPipeline(exposure_pipeline_);
     ReleaseDepthOfField();
     if (depth_of_field_.IsValid()) device_.DestroyPipeline(depth_of_field_);
     if (hdr_composite_.IsValid()) device_.DestroyPipeline(hdr_composite_);
@@ -658,6 +724,98 @@ bool PostPass::RenderBloom(gfx::rhi::ICommandList& commands, const PostProcessSe
     return true;
 }
 
+void PostPass::ReleaseAutoExposure() {
+    for (const auto texture : exposure_levels_) device_.DestroyTexture(texture);
+    exposure_levels_.clear();
+    exposure_extents_.clear();
+    for (auto& texture : exposure_history_) {
+        if (texture.IsValid()) device_.DestroyTexture(texture);
+        texture = {};
+    }
+    exposure_width_ = exposure_height_ = exposure_current_ = 0;
+    ResetAutoExposure();
+}
+
+bool PostPass::EnsureAutoExposure(u32 width, u32 height) {
+    if (!exposure_pipeline_.IsValid()) {
+        gfx::rhi::PipelineDesc desc;
+        desc.hlsl_source = kAutoExposureShader;
+        desc.enable_bindless_textures = true;
+        desc.render_texture_target = true;
+        desc.push_constant_size_bytes = sizeof(AutoExposureConstants);
+        exposure_pipeline_ = device_.CreatePipeline(desc, swap_chain_);
+        if (!exposure_pipeline_.IsValid()) return false;
+    }
+    if (width == exposure_width_ && height == exposure_height_) return true;
+    ReleaseAutoExposure();
+    u32 w = std::min(width, 32u), h = std::min(height, 32u);
+    for (;;) {
+        const auto texture = device_.CreateRenderTexture(w, h);
+        if (!texture.IsValid() || texture.index >= gfx::rhi::kMaxBindlessTextures) {
+            if (texture.IsValid()) device_.DestroyTexture(texture);
+            ReleaseAutoExposure();
+            return false;
+        }
+        exposure_levels_.push_back(texture);
+        exposure_extents_.push_back({w, h});
+        if (w == 1 && h == 1) break;
+        w = (w + 3) / 4;
+        h = (h + 3) / 4;
+    }
+    for (auto& texture : exposure_history_) {
+        texture = device_.CreateRenderTexture(1, 1);
+        if (!texture.IsValid() || texture.index >= gfx::rhi::kMaxBindlessTextures) {
+            ReleaseAutoExposure();
+            return false;
+        }
+    }
+    exposure_width_ = width;
+    exposure_height_ = height;
+    return true;
+}
+
+bool PostPass::RenderAutoExposure(gfx::rhi::ICommandList& commands, const PostProcessSettings& settings, f32 dt, u64 camera) {
+    exposure_ready_ = false;
+    if (!std::isfinite(settings.auto_exposure) || settings.auto_exposure <= 0.0f) {
+        ReleaseAutoExposure();
+        return false;
+    }
+    if (!Valid() || !std::isfinite(dt) || dt < 0.0f || swap_chain_.Width() == 0 || swap_chain_.Height() == 0 ||
+        !EnsureAutoExposure(swap_chain_.Width(), swap_chain_.Height())) {
+        ResetAutoExposure();
+        return false;
+    }
+    AutoExposureConstants constants;
+    constants.source = Source();
+    constants.dt = dt;
+    constants.strength = std::clamp(settings.auto_exposure, 0.0f, 1.0f);
+    if (exposure_history_valid_ && camera == exposure_camera_) constants.history = exposure_history_[exposure_current_ ^ 1u].index;
+    exposure_history_valid_ = false;
+    for (usize i = 0; i < exposure_levels_.size(); ++i) {
+        constants.mode = i == 0 ? 0u : 1u;
+        constants.target_width = exposure_extents_[i].width;
+        constants.target_height = exposure_extents_[i].height;
+        if (!commands.BeginTexturePass(exposure_levels_[i], nullptr)) return false;
+        commands.BindPipeline(exposure_pipeline_);
+        commands.BindBindlessTextures();
+        commands.SetPushConstants(&constants, sizeof(constants));
+        commands.Draw(3);
+        commands.EndRenderPass();
+        constants.source = exposure_levels_[i].index;
+    }
+    constants.mode = 2;
+    if (!commands.BeginTexturePass(exposure_history_[exposure_current_], nullptr)) return false;
+    commands.BindPipeline(exposure_pipeline_);
+    commands.BindBindlessTextures();
+    commands.SetPushConstants(&constants, sizeof(constants));
+    commands.Draw(3);
+    commands.EndRenderPass();
+    exposure_current_ ^= 1u;
+    exposure_camera_ = camera;
+    exposure_ready_ = exposure_history_valid_ = true;
+    return true;
+}
+
 void PostPass::ReleaseDepthOfField() {
     if (dof_composite_.IsValid()) device_.DestroyTexture(dof_composite_);
     if (dof_result_.IsValid()) device_.DestroyTexture(dof_result_);
@@ -728,9 +886,10 @@ PostConstants PostPass::FrameConstants(const PostProcessSettings& settings) cons
     PostConstants constants = PackPostConstants(settings, Source());
     constants.tonemapper = PackTonemapperFrame(PostTonemapperOf(constants), frame_, PostScreenSpaceReflectionsOf(constants));
     if (bloom_ready_ && !bloom_levels_.empty()) {
-        constants.bloom = bloom_levels_.front().index;
+        constants.textures = PackPostTextures(bloom_levels_.front().index);
         constants.bloom_scale = 1.0f / static_cast<f32>(bloom_levels_.size());
     }
+    if (exposure_ready_) constants.textures = PackPostTextures(PostBloomOf(constants), exposure_history_[exposure_current_ ^ 1u].index);
     if (ao_.depth < gfx::rhi::kMaxBindlessTextures) {
         constants.fog_density = std::isfinite(settings.fog_density) ? std::clamp(settings.fog_density, 0.0f, 1.0f) : 0.0f;
         constants.fog_color[0] = fog_color_.x;
@@ -768,11 +927,13 @@ void PostPass::Draw(gfx::rhi::ICommandList& commands, const PostProcessSettings&
     if (dof_ready_) {
         constants.scene_color = dof_result_.index;
         constants.depth = 0xffffffffu;
-        constants.bloom = 0xffffffffu;
+        constants.textures = PackPostTextures(255u, PostExposureOf(constants));
         constants.lens &= 0x00ff00ffu;
         constants.tonemapper = PackTonemapperFrame(PostTonemapperOf(constants), frame_);
     }
     ++frame_;
+    if (!exposure_ready_) exposure_history_valid_ = false;
+    exposure_ready_ = false;
     dof_ready_ = false;
     bloom_ready_ = false;
     sun_set_ = false;

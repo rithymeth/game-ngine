@@ -2,6 +2,14 @@
 
 A working draft of the next release's notes. It is rewritten into `vX.Y.Z.md` when a version is tagged, so it describes what is on `master`, not a promise of a version number or a date.
 
+## Automatic exposure
+
+Post-process volumes gain **auto exposure** (`auto_exposure`, 0 to 1, off by default). It adapts exposure to the HDR scene's brightness; the existing exposure compensation still biases the result. The setting blends across volumes, and old scenes retain manual exposure.
+
+The GPU meters a grid of at most 32 by 32 samples before bloom, fog and depth of field, reduces their log luminance, and adapts EV100 in two alternating one-pixel textures. Black and non-finite samples are ignored, luminance is bounded to -10 to 10 stops, and the result is limited to -4 to 16 EV100. Brightening scenes adapt at 3/s and darkening scenes at 1/s. Camera switches, scene-name changes, time rewinds, resizes and skipped or disabled metering reset adaptation; the first valid frame uses its own brightness immediately. Disabling it releases the metering textures. This is coarse geometric-mean metering, not percentile histogram metering or local exposure, and small features between grid samples can be missed.
+
+The exposure multiplier stays on the GPU, with no readback or CPU wait, and is applied once before tone mapping, after depth of field. Its texture index shares a word with bloom, keeping the post constants at 128 bytes. D3D12 and Vulkan tests compare the output against the CPU exposure math, including adaptation, volume blending and serialization, black pixels, odd and one-pixel viewports, reset/fallback behavior and composition with bloom and depth of field.
+
 ## Cinematic depth of field
 
 The active perspective camera's `CineCamera` now drives depth of field from its focal length, sensor height, aperture and focus distance. Lower f-stops widen the blur; animating `focus_distance` racks focus. Ordinary cameras and non-HDR rendering remain unchanged. Invalid lens parameters or unavailable depth/render targets leave the image sharp.

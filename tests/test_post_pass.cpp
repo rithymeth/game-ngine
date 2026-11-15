@@ -794,6 +794,201 @@ void CheckDepthOfField(gfx::rhi::Backend backend) {
 
 } // namespace
 
+namespace {
+
+void CheckAutoExposure(gfx::rhi::Backend backend) {
+    auto device = MakeDevice(backend);
+    if (!device) return;
+    auto target = device->CreateSwapChain(nullptr, 32, 32, 2);
+    player::PostPass post(*device, *target);
+    if (!post.Valid()) return;
+    PostProcessSettings settings;
+    settings.screen_space_reflections = 0.0f;
+    bool meter = true, bloom = false, dof = false;
+    const char* capture = nullptr;
+    u64 camera = 1;
+    f32 dt = 0.25f;
+    std::vector<f32> image;
+    const auto timer = device->SupportsGpuTiming() ? device->CreateGpuTimer(2) : gfx::rhi::GpuTimerHandle{};
+    f64 metering_ms = 0;
+    u32 measured_frames = 0;
+    const auto render = [&](f32 luminance, f32 expected_ev, bool automatic) {
+        const u32 width = target->Width(), height = target->Height();
+        std::vector<u16> color;
+        for (usize i = 0; i < width * height; ++i) {
+            const u16 value = player::FloatToHalf(image.empty() ? luminance : image[i]);
+            color.insert(color.end(), {value, value, value, player::FloatToHalf(1.0f)});
+        }
+        const auto scene = device->CreateHalfFloatTexture(width, height, 1, color.data());
+        AETHER_CHECK(scene.IsValid());
+        if (!scene.IsValid()) return;
+        gfx::rhi::SampledTextureHandle depth;
+        if (dof) {
+            const std::vector<f32> depths(width * height, SsrDeviceDepth(1.0f));
+            depth = device->CreateR32FloatTexture(width, height, depths.data());
+            AETHER_CHECK(depth.IsValid());
+            if (!depth.IsValid()) { device->DestroyTexture(scene); return; }
+            post.SetAmbientOcclusion({depth.index, 0.0f, 1.0f, kSsrNear, kSsrFar, kSsrProjection, kSsrProjection});
+        }
+        post.SetSource(scene.index);
+        target->AcquireNextImage();
+        auto commands = device->CreateCommandList();
+        commands->Reset();
+        if (timer.IsValid()) commands->WriteGpuTimestamp(timer, 0);
+        if (meter) AETHER_CHECK(post.RenderAutoExposure(*commands, settings, dt, camera) == automatic);
+        if (timer.IsValid()) { commands->WriteGpuTimestamp(timer, 1); commands->ResolveGpuTimer(timer); }
+        if (bloom) AETHER_CHECK(post.RenderBloom(*commands, settings));
+        if (dof) {
+            CineCamera lens;
+            lens.focal_length_mm = 200.0f;
+            lens.aperture_f = 0.7f;
+            lens.focus_distance = 4.0f;
+            AETHER_CHECK(post.RenderDepthOfField(*commands, settings, lens));
+        }
+        commands->BeginRenderPass(*target, {1, 0, 1, 1});
+        post.Draw(*commands, settings);
+        commands->EndRenderPass();
+        commands->Close();
+        device->WaitForFence(device->Submit(*commands, target.get()));
+        std::vector<u8> pixels;
+        const bool read = target->ReadBack(pixels);
+        target->Present(false);
+        AETHER_CHECK(read && pixels.size() == width * height * 4);
+        if (read && pixels.size() == width * height * 4) {
+            if (const char* directory = std::getenv("AETHER_RENDER_TEST_OUT"); directory && capture) {
+                const auto png = assets::EncodePngRgba8(width, height, pixels);
+                const std::string name = std::string(backend == gfx::rhi::Backend::D3D12 ? "d3d12-" : "vulkan-") + capture + ".png";
+                std::ofstream file(std::filesystem::path(directory) / name, std::ios::binary);
+                file.write(reinterpret_cast<const char*>(png.data()), static_cast<std::streamsize>(png.size()));
+                AETHER_CHECK(file.good());
+            }
+            auto constants = player::PackPostConstants(settings, scene.index);
+            if (automatic) constants.exposure *= 1.0f + (ExposureFromEV100(expected_ev) - 1.0f) * std::clamp(settings.auto_exposure, 0.0f, 1.0f);
+            int worst = 0;
+            for (u32 y = 0; y < height; ++y) {
+                for (u32 x = 0; x < width; ++x) {
+                    const usize i = static_cast<usize>(y) * width + x;
+                    const f32 value = player::HalfToFloat(color[i * 4]);
+                    const auto expected = player::PostReference(Vec3(value, value, value), constants,
+                                                                 (x + 0.5f) / width, (y + 0.5f) / height);
+                    worst = std::max(worst, std::abs(static_cast<int>(pixels[i * 4 + 1]) - static_cast<int>(std::lround(expected.y * 255))));
+                }
+            }
+            if (worst > 2) std::printf("    auto exposure: luminance %g, EV %g, strength %g, worst error %d\n", luminance, expected_ev, settings.auto_exposure, worst);
+            AETHER_CHECK(worst <= 2);
+        }
+        if (timer.IsValid()) {
+            f64 times[2]{};
+            if (device->ReadGpuTimer(timer, times) && automatic) { metering_ms += times[1]; ++measured_frames; }
+        }
+        device->DestroyTexture(scene);
+        if (depth.IsValid()) device->DestroyTexture(depth);
+    };
+    render(1.0f, 0.0f, false);
+    settings.auto_exposure = 1.0f;
+    render(1.0f, 3.0f, true);
+    f32 ev = 3.0f;
+    for (const f32 luminance : {0.0625f, 0.0625f, 4.0f, 4.0f}) {
+        ev = AdaptEV100(ev, EV100FromLuminance(luminance), dt, {});
+        render(luminance, ev, true);
+        ev = player::HalfToFloat(player::FloatToHalf(ev));
+    }
+    dt = 0.0f;
+    render(0.125f, ev, true);
+    ++camera;
+    render(0.125f, 0.0f, true);
+    settings.auto_exposure = 0.5f;
+    render(0.125f, 0.0f, true);
+    post.ResetAutoExposure();
+    settings.auto_exposure = 1.0f;
+    render(4.0f, 5.0f, true);
+    meter = false;
+    render(1.0f, 0.0f, false);
+    meter = true;
+    render(0.125f, 0.0f, true);
+    for (const f32 invalid : {0.0f, -1.0f, std::nanf(""), HUGE_VALF}) {
+        settings.auto_exposure = invalid;
+        render(1.0f, 0.0f, false);
+        settings.auto_exposure = 1.0f;
+        render(0.125f, 0.0f, true);
+    }
+    for (const f32 invalid : {-1.0f, std::nanf(""), HUGE_VALF}) {
+        dt = invalid;
+        render(1.0f, 0.0f, false);
+    }
+    dt = 0.0f;
+    render(0.125f, 0.0f, true);
+    settings.auto_exposure = 2.0f;
+    render(0.125f, 0.0f, true);
+    settings.auto_exposure = 1.0f;
+    target->Resize(31, 17);
+    image.assign(31 * 17, 4.0f);
+    for (u32 y = 0; y < 17; ++y) for (u32 x = 0; x < 15; ++x) image[y * 31 + x] = 0.0f;
+    render(4.0f, 5.0f, true);
+    image.assign(31 * 17, 1.0f);
+    image[0] = 64.0f;
+    post.ResetAutoExposure();
+    render(1.0f, 3.0f + 6.0f / (31 * 17), true);
+    image.clear();
+    target->Resize(1, 1);
+    render(0.0f, -4.0f, true);
+    render(0.0625f, -4.0f, true);
+    target->Resize(64, 64);
+    image.resize(64 * 64);
+    for (u32 y = 0; y < 64; ++y) for (u32 x = 0; x < 64; ++x) image[y * 64 + x] = std::exp2(static_cast<f32>(x / 8) - 4.0f);
+    capture = "exposure-manual";
+    meter = false;
+    render(1.0f, 0.0f, false);
+    capture = "exposure-automatic";
+    meter = true;
+    render(1.0f, 2.5f, true);
+    capture = nullptr;
+    image.clear();
+    post.ResetAutoExposure();
+    bloom = dof = true;
+    settings.exposure_compensation = 1.5f;
+    settings.bloom_intensity = 0.4f;
+    settings.vignette = 0.5f;
+    render(0.125f, 0.0f, true);
+    if (measured_frames) std::printf("    %s GPU auto exposure: %.4f ms mean over %u test frames\n",
+                                     backend == gfx::rhi::Backend::D3D12 ? "D3D12" : "Vulkan", metering_ms / measured_frames, measured_frames);
+    if (timer.IsValid()) device->DestroyGpuTimer(timer);
+}
+
+} // namespace
+
+AETHER_TEST(PostPass_AutoExposureOnD3D12) { CheckAutoExposure(gfx::rhi::Backend::D3D12); }
+AETHER_TEST(PostPass_AutoExposureOnVulkan) { CheckAutoExposure(gfx::rhi::Backend::Vulkan); }
+
+AETHER_TEST(PostVolume_AutoExposureBlendsAndDefaultsOff) {
+    AETHER_CHECK(PostProcessVolume{}.auto_exposure == 0.0f && PostProcessSettings{}.auto_exposure == 0.0f);
+    RenderScene scene;
+    PostProcessVolume volume;
+    volume.auto_exposure = 1.0f;
+    volume.weight = 0.5f;
+    scene.post_volumes.push_back({Vec3(0, 0, 0), volume});
+    AETHER_CHECK(BlendPostProcess(scene, Vec3(0, 0, 0)).auto_exposure == 0.5f);
+    scene.post_volumes[0].settings.global = false;
+    scene.post_volumes[0].settings.blend_distance = 2.0f;
+    AETHER_CHECK(BlendPostProcess(scene, Vec3(6, 0, 0)).auto_exposure == 0.25f);
+    AETHER_CHECK(BlendPostProcess(scene, Vec3(8, 0, 0)).auto_exposure == 0.0f);
+    reflect::Json saved = reflect::ToJson(volume);
+    PostProcessVolume loaded;
+    AETHER_CHECK(reflect::FromJson(loaded, saved) && loaded.auto_exposure == 1.0f);
+    saved.erase("auto_exposure");
+    loaded = {};
+    AETHER_CHECK(reflect::FromJson(loaded, saved) && loaded.auto_exposure == 0.0f);
+}
+
+AETHER_TEST(PostPass_BloomAndExposureShareOneTextureWord) {
+    player::PostConstants constants;
+    AETHER_CHECK(sizeof(constants) == 128 && player::PostBloomOf(constants) == 255u && player::PostExposureOf(constants) == 255u);
+    constants.textures = player::PackPostTextures(17, 73);
+    AETHER_CHECK(player::PostBloomOf(constants) == 17u && player::PostExposureOf(constants) == 73u);
+    constants.textures = player::PackPostTextures(255, player::PostExposureOf(constants));
+    AETHER_CHECK(player::PostBloomOf(constants) == 255u && player::PostExposureOf(constants) == 73u);
+}
+
 AETHER_TEST(PostPass_DepthOfFieldOnD3D12) { CheckDepthOfField(gfx::rhi::Backend::D3D12); }
 AETHER_TEST(PostPass_DepthOfFieldOnVulkan) { CheckDepthOfField(gfx::rhi::Backend::Vulkan); }
 

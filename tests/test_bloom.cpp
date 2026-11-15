@@ -97,7 +97,7 @@ AETHER_TEST(Bloom_ConstantsAndChain) {
     PostProcessSettings s;
     player::PostConstants c = player::PackPostConstants(s, 3);
     // Off until RenderBloom has drawn: no bloom index, the setting's intensity kept (0.05 by default) for Draw to use.
-    AETHER_CHECK(c.bloom >= gfx::rhi::kMaxBindlessTextures && c.bloom_intensity == 0.05f && c.bloom_scale == 1.0f);
+    AETHER_CHECK(player::PostBloomOf(c) >= gfx::rhi::kMaxBindlessTextures && c.bloom_intensity == 0.05f && c.bloom_scale == 1.0f);
     s.bloom_intensity = 4.0f;
     AETHER_CHECK(player::PackPostConstants(s, 3).bloom_intensity == 1.0f);
     s.bloom_intensity = -1.0f;

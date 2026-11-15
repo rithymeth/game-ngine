@@ -56,7 +56,7 @@ struct PostConstants {
     u32 tonemapper = 0;   // low 2 bits: Tonemapper (0 ACES, 1 AgX, 2 None (clamp)); bits 2-9: the screen-space reflections' strength; the rest: the frame number, which moves the film grain
     f32 saturation = 1.0f;
     u32 lens = 0;         // four 8-bit strengths, each 0..1: vignette (bits 0-7), chromatic aberration (8-15), film grain (16-23), sharpen (24-31)
-    u32 bloom = 0xffffffffu;    // bindless index of the bloom chain's top level, or none (anything >= kMaxBindlessTextures)
+    u32 textures = 0xffffffffu; // bloom index in bits 0-7, exposure index in bits 8-15; 255 means absent
     f32 bloom_intensity = 0.0f; // 0..1, the composite's lerp weight
     f32 bloom_scale = 1.0f;     // 1 / levels: the accumulated chain back to the scene's brightness
     u32 depth = 0xffffffffu;    // bindless index of the scene depth copy, or none: ambient occlusion off
@@ -73,6 +73,12 @@ struct PostConstants {
     f32 height_fog[4] = {0, 1, 0, 0}; // xyz: world up in view space; w: the camera's height above the height fog's base, metres (fog_color.w: its density at the base)
 };
 static_assert(sizeof(PostConstants) == 128);
+
+constexpr u32 PackPostTextures(u32 bloom = 255u, u32 exposure = 255u) {
+    return (bloom & 255u) | ((exposure & 255u) << 8);
+}
+constexpr u32 PostBloomOf(const PostConstants& c) { return c.textures & 255u; }
+constexpr u32 PostExposureOf(const PostConstants& c) { return (c.textures >> 8) & 255u; }
 
 // The bloom passes' push constants: 32 bytes.
 struct BloomConstants {
@@ -99,8 +105,8 @@ constexpr u32 PostTonemapperOf(const PostConstants& c) { return c.tonemapper & 3
 constexpr u32 PostScreenSpaceReflectionsOf(const PostConstants& c) { return (c.tonemapper >> 2) & 255u; }
 constexpr u32 PostFrameOf(const PostConstants& c) { return c.tonemapper >> 10; }
 
-// The volume settings as push constants: exposure is 2^exposure_compensation (scene light values are not physical units, so there is no
-// EV100 metering yet), the rest are copied with their ranges clamped. Bloom is off in the result (PostPass::Draw turns it on when
+// The volume settings as push constants: exposure is 2^exposure_compensation; GPU metering is bound separately by Draw.
+// The rest are copied with their ranges clamped. Bloom is off in the result (PostPass::Draw turns it on when
 // RenderBloom drew this frame); bloom_intensity holds the clamped setting either way. The reflections ride in the tone mapper's word
 // (PostScreenSpaceReflectionsOf); they are off when the scene colour carries no roughness (alpha 1 everywhere) and the depth is not bound.
 PostConstants PackPostConstants(const PostProcessSettings& settings, u32 scene_color_index);
@@ -164,7 +170,12 @@ public:
     // After RenderBloom, outside a render pass: blur the HDR composite before Draw applies display effects.
     bool RenderDepthOfField(gfx::rhi::ICommandList& commands, const PostProcessSettings& settings, const CineCamera& camera);
 
+    bool RenderAutoExposure(gfx::rhi::ICommandList& commands, const PostProcessSettings& settings, f32 dt, u64 camera);
+    void ResetAutoExposure() { exposure_history_valid_ = false; exposure_ready_ = false; }
+
 private:
+    bool EnsureAutoExposure(u32 width, u32 height);
+    void ReleaseAutoExposure();
     PostConstants FrameConstants(const PostProcessSettings& settings) const;
     bool EnsureDepthOfField(u32 width, u32 height);
     void ReleaseDepthOfField();
@@ -180,6 +191,13 @@ private:
     gfx::rhi::SampledTextureHandle dof_composite_, dof_result_;
     u32 dof_width_ = 0, dof_height_ = 0;
     bool dof_ready_ = false;
+    gfx::rhi::PipelineHandle exposure_pipeline_;
+    std::vector<gfx::rhi::SampledTextureHandle> exposure_levels_;
+    std::vector<Extent> exposure_extents_;
+    gfx::rhi::SampledTextureHandle exposure_history_[2];
+    u32 exposure_width_ = 0, exposure_height_ = 0, exposure_current_ = 0;
+    u64 exposure_camera_ = 0;
+    bool exposure_history_valid_ = false, exposure_ready_ = false;
     u32 scene_color_ = 0;
     u32 source_ = 0; // SetSource's; 0: scene_color_
     std::vector<gfx::rhi::SampledTextureHandle> bloom_levels_;

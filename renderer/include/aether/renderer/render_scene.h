@@ -76,6 +76,7 @@ struct PostProcessSettings {
     f32 film_grain = 0.0f;           // 0..1
     f32 sharpen = 0.0f;              // 0..1
     f32 screen_space_reflections = 0.5f; // 0..1: how much of a smooth surface's mirror ray replaces its sky-lit reflection; 0 is off
+    f32 auto_exposure = 0.0f;
 };
 
 // What the renderer draws, copied from the ECS each frame (Phase 14 §14.1)

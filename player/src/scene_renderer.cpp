@@ -1135,6 +1135,8 @@ struct SceneRenderer::Impl {
     // The HDR path (render roadmap step 1): with a scene colour target the scene, decals and particles draw in linear light and the post
     // pass tone maps into the back buffer; without one (hdr false) they draw straight into the back buffer as before.
     std::unique_ptr<PostPass> post;
+    f64 previous_exposure_time = 0.0;
+    std::string exposure_scene;
     std::unique_ptr<ShadowPass> shadows; // where the device has frame constants and depth textures (D3D12)
     // Virtual shadow maps (virtual_shadow.h, vsm_pages.h, vsm_pass.h): pages of a much finer sun shadow near the camera, over the cascades, which
     // stay as the fallback. Where the device has frame constants, depth textures, readback and the HDR path. AETHER_RENDER_VSM=0 turns them off.
@@ -3570,6 +3572,12 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
             renderer.taa->Reset();
         }
         renderer.post->SetSource(resolved);
+        if (renderer.exposure_scene != game.SceneName() || game_time < renderer.previous_exposure_time) renderer.post->ResetAutoExposure();
+        const f32 exposure_dt = static_cast<f32>(std::max(0.0, game_time - renderer.previous_exposure_time));
+        renderer.previous_exposure_time = game_time;
+        renderer.exposure_scene = game.SceneName();
+        renderer.post->RenderAutoExposure(commands, post_settings, exposure_dt,
+                                          (static_cast<u64>(camera_entity.index) << 32) | camera_entity.generation);
         if (resolve && (renderer.ssao || renderer.ssr || cine_camera || post_settings.fog_density > 0.0f || post_settings.height_fog_density > 0.0f) &&
             renderer.swap_chain.SceneDepthTexture().IsValid()) {
             renderer.post->SetAmbientOcclusion({renderer.swap_chain.SceneDepthTexture().index, renderer.ssao ? renderer.ao_strength : 0.0f,
