@@ -1203,6 +1203,42 @@
   std::vector<std::string>Names()const
   usize Size()const
   void Clear()
+[destruction/include/aether/destruction/destructible.h] experimental
+  type struct Debris
+  type struct Destructible
+  ))AETHER_REFLECT(aether::destruction::Debris,1,AETHER_FIELD(remaining,Field_EditAnywhere,
+  ),AETHER_FIELD(break_speed,Field_EditAnywhere,
+  ),AETHER_FIELD(burst_speed,Field_EditAnywhere,
+  ),AETHER_FIELD(inherit_velocity,Field_EditAnywhere,
+  ),AETHER_FIELD(mass,Field_EditAnywhere,
+  ),AETHER_FIELD(piece_lifetime,Field_EditAnywhere,
+  ),AETHER_FIELD(pieces_x,Field_EditAnywhere,
+  ),AETHER_FIELD(pieces_y,Field_EditAnywhere,
+  ),AETHER_FIELD(pieces_z,Field_EditAnywhere,
+  ),AETHER_FIELD(serial,Field_ReadOnly))
+  AETHER_REFLECT(aether::destruction::Destructible,1,AETHER_FIELD(enabled,Field_EditAnywhere),AETHER_FIELD(health,Field_EditAnywhere,
+  void RegisterDestructionComponents()
+[destruction/include/aether/destruction/destruction_kit.h] experimental
+  std::unique_ptr<kit::IKit>MakeDestructionKit()
+[destruction/include/aether/destruction/destruction_system.h] experimental
+  type class DestructionSystem
+  type struct Mark
+  DestructionSystem&operator=(const DestructionSystem&)=delete
+  DestructionSystem(World&world,PhysicsScene&scene)
+  DestructionSystem(const DestructionSystem&)=delete
+  bool Damage(Entity entity,f32 amount,const Vec3*point=nullptr)
+  bool MarkBreak(Entity entity,const Vec3&from)
+  bool Shatter(Entity entity,const Vec3*point=nullptr)
+  static DestructionSystem*Active()
+  std::vector<Entity>Break(Entity entity,const Vec3&from)
+  usize DebrisCount()const
+  usize Pending()const
+  usize PieceCount(const Destructible&d)
+  usize Update(f32 dt)
+  void MakeActive()
+  void OnEvent(const PhysicsEvent&event)
+  void SetMaxDebris(usize cap)
+  ~DestructionSystem()
 [dialogue/include/aether/dialogue/dialogue_def.h] experimental
   type class DialogueLibrary
   type struct Choice
@@ -5966,6 +6002,8 @@
   void SetHandler(DebugHandler handler)
   void Stop(lua_State*state,StopReason reason,const Location&here)
   ~ScriptDebugger()
+[scripting/include/aether/script/destruction_api.h] experimental
+  void InstallDestructionApi(LuauHost&host)
 [scripting/include/aether/script/dialogue_api.h] experimental
   void InstallDialogueApi(LuauHost&host)
 [scripting/include/aether/script/forces_api.h] experimental

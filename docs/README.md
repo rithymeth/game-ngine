@@ -85,6 +85,7 @@ without a server or network connection.
 | [manual/21-checkpoints.md](manual/21-checkpoints.md) | The checkpoints kit: respawn points, the last one kept in the save bag, and the script table |
 | [manual/22-loot.md](manual/22-loot.md) | The loot kit: weighted, deterministic drops given to an inventory, and the script table |
 | [manual/23-force-fields.md](manual/23-force-fields.md) | The force-fields kit: physics volumes (wind, gravity wells, whirlpools, water, drag) and explosions |
+| [manual/24-destruction.md](manual/24-destruction.md) | The destruction kit: breakable things that shatter into physics debris |
 | [manual/api_stability.md](manual/api_stability.md) | The three stability levels and what each promises |
 | [manual/core_api_inventory.md](manual/core_api_inventory.md) | Ownership and threading inventory for the APIs a game or plugin uses |
 | [manual/support_policy.md](manual/support_policy.md) | A support-policy proposal, explicitly not yet promised |

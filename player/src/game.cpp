@@ -41,6 +41,9 @@
 #if AETHER_KIT_FORCEFIELDS
 #include "aether/forcefields/force_field_system.h"
 #endif
+#if AETHER_KIT_DESTRUCTION
+#include "aether/destruction/destruction_system.h"
+#endif
 #include "aether/physics/physics_world.h"
 #endif
 #if AETHER_GAME_SCRIPTING
@@ -267,6 +270,10 @@ struct Game::Physics {
     // Made with the scene and gone before it: it points at both the world and the physics scene of this load (the kit runtimes are made before the physics
     // scene exists, and would see the last scene's), so it cannot be a kit runtime.
     std::unique_ptr<ff::ForceFieldSystem> force_fields;
+#endif
+#if AETHER_KIT_DESTRUCTION
+    // Same reasoning as the force fields: it points at this load's world and physics scene. Destroyed before the scene (declared after it).
+    std::unique_ptr<destruction::DestructionSystem> destruction;
 #endif
 };
 #else
@@ -603,6 +610,27 @@ bool Game::LoadScene(const std::string& path, std::string* error) {
 #if AETHER_KIT_FORCEFIELDS
     physics_->force_fields = std::make_unique<ff::ForceFieldSystem>(*world_, *physics_->scene);
 #endif
+#if AETHER_KIT_DESTRUCTION
+    physics_->destruction = std::make_unique<destruction::DestructionSystem>(*world_, *physics_->scene);
+#endif
+    // The physics events go to the destruction kit and to scripts. This is set here, once the physics scene exists: the runtime above is made before it.
+    physics_->scene->SetEventHandler([this](const PhysicsEvent& event) {
+#if AETHER_KIT_DESTRUCTION
+        if (physics_ && physics_->destruction) physics_->destruction->OnEvent(event);
+#endif
+#if AETHER_GAME_SCRIPTING
+        if (!runtime_ || !runtime_->scripts) return;
+        const char* event_name = PhysicsEventName(event.type);
+        constexpr char prefix[] = "Event.";
+        const std::string full_name = event_name ? event_name : "";
+        const std::string method = full_name.rfind(prefix, 0) == 0 ? full_name.substr(sizeof(prefix) - 1) : full_name;
+        if (!method.empty()) {
+            runtime_->scripts->SendEvent(event.self, method, {script::EntityRef{event.other}, static_cast<f64>(event.approach_speed)});
+        }
+#else
+        (void)event;
+#endif
+    });
 #endif
     scene_ = path;
     for (const std::string& w : warnings_) AETHER_LOG_WARN("Player", "%s", w.c_str());
@@ -960,20 +988,6 @@ void Game::StartRuntime() {
     runtime_->scripts->BindSceneHooks({[this](const std::string& path, const std::string& spawn) { return RequestScene(path, spawn); }, [this]() { return scene_; }});
 #if AETHER_GAME_PHYSICS
     runtime_->scripts->BindPhysicsScene(physics_ ? physics_->scene.get() : nullptr);
-    if (physics_ && physics_->scene) {
-        physics_->scene->SetEventHandler([this](const PhysicsEvent& event) {
-            if (!runtime_ || !runtime_->scripts) return;
-            const char* event_name = PhysicsEventName(event.type);
-            constexpr char prefix[] = "Event.";
-            const std::string full_name = event_name ? event_name : "";
-            const std::string method = full_name.rfind(prefix, 0) == 0
-                ? full_name.substr(sizeof(prefix) - 1) : full_name;
-            if (!method.empty()) {
-                runtime_->scripts->SendEvent(event.self, method,
-                    {script::EntityRef{event.other}, static_cast<f64>(event.approach_speed)});
-            }
-        });
-    }
 #endif
     kit::KitScriptApiContext api_context;
     api_context.install = [this](const std::string& kit_name) { runtime_->scripts->InstallKitApi(kit_name); };
@@ -1127,6 +1141,10 @@ void Game::BuildFrame() {
 #if AETHER_KIT_FORCEFIELDS
             // The force fields push first: Jolt adds the forces up and the step below uses them.
             if (physics_->force_fields) physics_->force_fields->Apply();
+#endif
+#if AETHER_KIT_DESTRUCTION
+            // Marked things break here, between steps, never while the physics events are being delivered.
+            if (physics_->destruction) physics_->destruction->Update(frame.fixed_dt);
 #endif
             physics_->characters->Step(frame.fixed_dt);
             physics_->scene->Step(frame.fixed_dt);

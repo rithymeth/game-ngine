@@ -63,6 +63,13 @@ if(TARGET Aether::ForceFields)
 else()
     target_compile_definitions(aether_game PRIVATE AETHER_KIT_FORCEFIELDS=0)
 endif()
+# The destruction genre kit (breakable things), when built: the physics step in game.cpp feeds and updates it, so nothing outside the player needs its headers.
+if(TARGET Aether::Destruction)
+    target_link_libraries(aether_game PRIVATE Aether::Destruction)
+    target_compile_definitions(aether_game PRIVATE AETHER_KIT_DESTRUCTION=1)
+else()
+    target_compile_definitions(aether_game PRIVATE AETHER_KIT_DESTRUCTION=0)
+endif()
 # The checkpoints genre kit (respawn points), when built.
 if(TARGET Aether::Checkpoints)
     target_link_libraries(aether_game PUBLIC Aether::Checkpoints)
