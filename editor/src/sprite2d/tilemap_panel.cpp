@@ -63,7 +63,8 @@ void TilemapPanel::DrawTools() {
     ImGui::SetNextItemWidth(100);
     ImGui::SliderFloat("Zoom", &zoom, 6.0f, 64.0f, "%.0f px");
     ImGui::SameLine();
-    ImGui::TextDisabled("%ux%u%s", doc_.Map().width, doc_.Map().height, doc_.dirty() ? "  (unsaved)" : "");
+    const std::string file = doc_.TilemapFile().empty() ? std::string() : doc_.TilemapFile().filename().string() + "  ";
+    ImGui::TextDisabled("%s%ux%u%s", file.c_str(), doc_.Map().width, doc_.Map().height, doc_.dirty() ? "  (unsaved)" : "");
 }
 
 void TilemapPanel::DrawLayers() {

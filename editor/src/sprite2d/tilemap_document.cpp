@@ -171,10 +171,41 @@ bool TilemapEditDocument::SetAutotileTile(usize autotile, u8 mask, i32 tile) {
 }
 
 bool TilemapEditDocument::Save(const std::filesystem::path& tilemap_file, const std::filesystem::path& tileset_file,
-                               std::string* error) const {
+                               std::string* error) {
     if (!SaveTilemap(tilemap_file, map_, error) || !SaveTileset(tileset_file, tileset_, error)) return false;
-    const_cast<TilemapEditDocument*>(this)->dirty_ = false;
+    tilemap_file_ = tilemap_file;
+    tileset_file_ = tileset_file;
+    dirty_ = false;
     return true;
+}
+
+bool TilemapEditDocument::Load(const std::filesystem::path& tilemap_file, const std::filesystem::path& tileset_file,
+                               std::string* error) {
+    TilemapData map;
+    Tileset tileset;
+    if (!LoadTilemap(tilemap_file, map, error) || !LoadTileset(tileset_file, tileset, error)) return false;
+    map_ = std::move(map);
+    tileset_ = std::move(tileset);
+    if (map_.layers.empty()) map_.AddLayer("Layer 1");
+    tilemap_file_ = tilemap_file;
+    tileset_file_ = tileset_file;
+    undo_.clear();
+    redo_.clear();
+    in_stroke_ = false;
+    active_layer = 0;
+    tool = TileTool::Paint;
+    brush = 0;
+    ++revision_;
+    dirty_ = false;
+    return true;
+}
+
+bool TilemapEditDocument::Save(std::string* error) {
+    if (tilemap_file_.empty() || tileset_file_.empty()) {
+        if (error != nullptr) *error = "This tilemap has never been saved, so there is nowhere to write it.";
+        return false;
+    }
+    return Save(tilemap_file_, tileset_file_, error);
 }
 
 } // namespace aether::editor

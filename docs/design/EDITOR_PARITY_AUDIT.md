@@ -642,8 +642,15 @@ absolute path (`CopyPath`, `LastCopiedPath`) and Reveal in Explorer calls the ho
 every row selects its asset and shows its folder (`ShowEntry`), and the validation list's rows do the same, so a broken
 reference is one click from the asset. Tests in `tests/test_content_openers.cpp`:
 `Openers_EveryOpenableKindLoadsItsFileAndShowsItsTool`, `Openers_SayWhyAnAssetCannotOpen`,
-`Openers_ThePanelUsesTheHostOpenerAndFallsBackToTheRegistry`, `Openers_CopyPathRevealAndTheReferenceViewer` and
-`Openers_EveryRegisteredTypeWithAnOpenerOpensHeadless`.
+`Openers_ThePanelUsesTheHostOpenerAndFallsBackToTheRegistry`, `Openers_CopyPathRevealAndTheReferenceViewer`,
+`Openers_TilemapsAndTilesetsOpenTheirEditor` and `Openers_EveryRegisteredTypeWithAnOpenerOpensHeadless`.
+
+Done so far (2026-11-15): the 2D documents. A `.atilemap` now opens in the Tilemap tool: `TilemapEditDocument` gained
+`Load` (map and tileset together) and a `Save` to the paths it was opened from, and the map's tileset GUID is resolved
+through the Content Browser's asset database to the tileset's current path, so a moved tileset still opens and a missing
+one is named. A `.atileset` opens a tilemap that uses it (through the database's referencers) and says so when no map
+does: a tileset has no window of its own. The dirty guard applies as for the other kinds, and the panel's header shows
+the opened map's file name. Test in `tests/test_content_openers.cpp`: `Openers_TilemapsAndTilesetsOpenTheirEditor`.
 
 ### Stage 4 — Inspector and hierarchy parity (M)
 

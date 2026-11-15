@@ -62,6 +62,7 @@
 #include "aether/save/settings.h"
 #include "aether/scene/gameplay.h"
 #include "aether/scene/components.h"
+#include "aether/sprite2d/tilemap.h"
 #include "aether/streaming/partition.h"
 
 #include <imgui.h>
@@ -1069,6 +1070,34 @@ struct EditorWorkspace::Impl {
         if (ext == ".aui") return load(ui_doc, "UI Designer", "UI layout");
         if (ext == ".abt") return load(bt_doc, "Behavior Tree", "behavior tree");
         if (ext == ".avfx") return load(particle_doc, "Particle System", "particle system");
+        if (ext == ".atilemap" || ext == ".atileset") {
+            const assets::AssetDatabase* database = content_browser->Database();
+            if (database == nullptr) return fail("The asset database is not available.");
+            if (ext == ".atileset") {
+                // A tileset has no window of its own: it is edited with a map, so open one that uses it.
+                const assets::AssetRecord* tileset = database->FindByPath(relative);
+                const assets::AssetRecord* map = nullptr;
+                for (const assets::AssetRecord* user : tileset != nullptr ? database->Referencers(tileset->guid) : std::vector<const assets::AssetRecord*>{}) {
+                    if (user->importer == "Tilemap") {
+                        map = user;
+                        break;
+                    }
+                }
+                if (map == nullptr) return fail("No tilemap uses " + relative + "; a tileset is edited through the map that uses it.");
+                return OpenContentAsset(map->path, error);
+            }
+            if (tilemap_doc == nullptr) return fail("The tilemap editor is not available.");
+            if (tilemap_doc->dirty()) return fail("The tilemap has unsaved changes; save it before opening " + relative + ".");
+            std::string why;
+            sprite2d::TilemapData map;
+            if (!sprite2d::LoadTilemap(file, map, &why)) return fail(why.empty() ? "Couldn't open " + relative + "." : why);
+            const assets::AssetRecord* tileset = database->Find(map.tileset);
+            if (tileset == nullptr || tileset->missing) return fail(relative + " names a tileset that isn't in the project.");
+            const std::filesystem::path tileset_file = ProjectPaths::ForFile(project_file).content / tileset->path;
+            if (!tilemap_doc->Load(file, tileset_file, &why)) return fail(why.empty() ? "Couldn't open " + relative + "." : why);
+            ShowTool("Tilemap");
+            return true;
+        }
         if (ext == ".asequence") {
             if (sequence_doc == nullptr) return fail("The sequencer is not available.");
             if (sequence_doc->dirty()) return fail("The sequence has unsaved changes; save it before opening " + relative + ".");
@@ -1366,6 +1395,7 @@ void EditorWorkspace::DrawTool(usize tool) {
 }
 
 ScenePanel& EditorWorkspace::Scene() { return *impl_->scene_panel; }
+TilemapEditDocument& EditorWorkspace::Tilemap() { return *impl_->tilemap_doc; }
 SceneViewPanel& EditorWorkspace::SceneView() { return impl_->scene_view; }
 
 EditorDocument& EditorWorkspace::ActiveDocument() { return *impl_->document_tabs.Active(); }

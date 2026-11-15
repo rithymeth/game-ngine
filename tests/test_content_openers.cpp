@@ -16,9 +16,11 @@
 #include "aether/scene/model_assets.h"
 #include "aether/scene/serialization.h"
 #include "aether/sequencer/sequence.h"
+#include "aether/sprite2d/tilemap.h"
 #include "aether/vfx/emitter.h"
 #include "content/content_browser_panel.h"
 #include "core/notifications.h"
+#include "sprite2d/tilemap_document.h"
 #include "ui/extensions.h"
 #include "workspace/editor_workspace.h"
 #include "world/scene_panel.h"
@@ -330,6 +332,75 @@ AETHER_TEST(Openers_CopyPathRevealAndTheReferenceViewer) {
     CHECK(!panel.RevealInFileManager(""));
     panel.SetRevealer(std::function<bool(const std::string&)>{});
     CHECK(!panel.RevealInFileManager("Textures/splat.png"));
+
+    std::error_code ec;
+    stdfs::remove_all(project, ec);
+}
+
+AETHER_TEST(Openers_TilemapsAndTilesetsOpenTheirEditor) {
+    ProjectPaths paths;
+    const stdfs::path project = FreshProject("tilemaps", paths);
+    std::string error;
+    // A tileset the scan knows, and maps that name it.
+    sprite2d::Tileset tileset;
+    tileset.texture_width = 128;
+    tileset.texture_height = 64;
+    tileset.tile_width = tileset.tile_height = 16;
+    CHECK(sprite2d::SaveTileset(paths.content / "Tilesets/Ground.atileset", tileset, &error));
+    assets::AssetGuid ground;
+    {
+        assets::AssetDatabase scan(paths.content);
+        scan.Scan();
+        const assets::AssetRecord* record = scan.FindByPath("Tilesets/Ground.atileset");
+        CHECK(record != nullptr);
+        if (record != nullptr) ground = record->guid;
+    }
+    sprite2d::TilemapData map;
+    map.tileset = ground;
+    map.Resize(6, 4);
+    map.AddLayer("Ground");
+    map.Set(0, 1, 2, 7);
+    CHECK(sprite2d::SaveTilemap(paths.content / "Maps/Level_02.atilemap", map, &error));
+    CHECK(sprite2d::SaveTilemap(paths.content / "Maps/Third.atilemap", map, &error));
+    CHECK(sprite2d::SaveTileset(paths.content / "Tilesets/Unused.atileset", tileset, &error));
+    sprite2d::TilemapData broken;
+    broken.tileset = assets::NewAssetGuid();
+    broken.Resize(2, 2);
+    broken.AddLayer("L");
+    CHECK(sprite2d::SaveTilemap(paths.content / "Maps/Broken.atilemap", broken, &error));
+    EditorWorkspace ws(paths.file);
+
+    // The map loads with its tileset, and the tool shows it.
+    CHECK(ws.OpenAsset("Maps/Level_02.atilemap", &error));
+    CHECK(error.empty());
+    CHECK(ShowingTool(ws, "Tilemap"));
+    CHECK(ws.Tilemap().Map().width == 6 && ws.Tilemap().Map().height == 4);
+    CHECK(ws.Tilemap().Map().layers.size() == 1 && ws.Tilemap().Map().layers[0].name == "Ground");
+    CHECK(ws.Tilemap().Map().Get(0, 1, 2) == 7);
+    CHECK(ws.Tilemap().GetTileset().tile_width == 16);
+    CHECK(!ws.Tilemap().dirty());
+    CHECK(ws.Tilemap().TilemapFile().filename() == "Level_02.atilemap");
+
+    // A tileset opens the map that uses it; one no map uses says so.
+    CHECK(ws.OpenAsset("Tilesets/Ground.atileset", &error));
+    CHECK(error.empty() && ShowingTool(ws, "Tilemap") && ws.Tilemap().Map().width == 6);
+    CHECK(!ws.OpenAsset("Tilesets/Unused.atileset", &error));
+    CHECK(error.find("No tilemap uses") != std::string::npos);
+    CHECK(!ws.OpenAsset("Maps/Broken.atilemap", &error));
+    CHECK(error.find("tileset that isn't in the project") != std::string::npos);
+
+    // An edit is not lost silently, and Save writes it back where it came from.
+    ws.Tilemap().brush = 3;
+    ws.Tilemap().Apply(0, 0);
+    CHECK(ws.Tilemap().dirty());
+    CHECK(!ws.OpenAsset("Maps/Third.atilemap", &error));
+    CHECK(error.find("unsaved changes") != std::string::npos);
+    CHECK(ws.Tilemap().Save(&error));
+    CHECK(!ws.Tilemap().dirty());
+    sprite2d::TilemapData reread;
+    CHECK(sprite2d::LoadTilemap(paths.content / "Maps/Level_02.atilemap", reread, &error));
+    CHECK(reread.Get(0, 0, 0) == 3);
+    CHECK(ws.OpenAsset("Maps/Third.atilemap", &error));
 
     std::error_code ec;
     stdfs::remove_all(project, ec);

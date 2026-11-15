@@ -58,7 +58,17 @@ public:
     bool SetAutotileTile(usize autotile, u8 mask, i32 tile);
 
     bool Save(const std::filesystem::path& tilemap_file, const std::filesystem::path& tileset_file,
-              std::string* error = nullptr) const;
+              std::string* error = nullptr);
+    // Replaces what is open with the two files' (not undoable; clears the history); on failure the document is
+    // unchanged and `error` says why. A tileset is edited with the map that uses it, so both are loaded together.
+    bool Load(const std::filesystem::path& tilemap_file, const std::filesystem::path& tileset_file,
+              std::string* error = nullptr);
+    // Writes back to the files it was opened from or last saved to; false (with the reason) for a sample that has
+    // never been saved.
+    bool Save(std::string* error = nullptr);
+    // Those files, empty for a sample.
+    const std::filesystem::path& TilemapFile() const { return tilemap_file_; }
+    const std::filesystem::path& TilesetFile() const { return tileset_file_; }
     bool dirty() const { return dirty_; }
 
 private:
@@ -73,6 +83,8 @@ private:
 
     sprite2d::TilemapData map_;
     sprite2d::Tileset tileset_;
+    std::filesystem::path tilemap_file_;
+    std::filesystem::path tileset_file_;
     bool in_stroke_ = false;
     Snapshot stroke_start_;
     std::vector<Snapshot> undo_, redo_;

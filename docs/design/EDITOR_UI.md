@@ -477,12 +477,15 @@ different contents refuses the batch instead of overwriting, and identical conte
 
 Opening: a double-click on an asset opens it in the editor that edits it. `EditorWorkspace::OpenAsset` handles every
 kind the editor has a tool for (`.abp`, `.amat`, `.aanim`, `.ablend`, `.acue`, `.aui`, `.abt`, `.avfx`, `.asequence`,
-`.ascene`/`.aesc` and `.luau`), loading into the tool's open document and showing that tool; `.amat` and `.abt` are
-assets the scan knows now (their importers are `Material` and `BehaviorTree`), so the listing can show and open them. A
-kind an extension registered opens through its opener; when nothing edits the kind the open is refused with a warning
-in Messages ("No editor") that says why, and `ContentBrowserPanel::LastOpenError` keeps the same text. A document with
-unsaved changes is not replaced silently. The sample documents the tools start with are marked saved
-(`MarkSaved()`), so they never block the first open.
+`.ascene`/`.aesc`, `.atilemap`/`.atileset` and `.luau`), loading into the tool's open document and showing that tool;
+`.amat` and `.abt` are assets the scan knows now (their importers are `Material` and `BehaviorTree`), so the listing can
+show and open them. A tilemap loads with its tileset -- the map names it by GUID and the scan turns that into a path --
+and `TilemapEditDocument` keeps both files, so `Save` writes them back where they came from and the tool's header shows
+the map's file name. A `.atileset` opens a tilemap that uses it, since a tileset is edited through its map, and says
+so when no map does. A kind an extension registered opens through its opener; when nothing edits the kind the open
+is refused with a warning in Messages ("No editor") that says why, and `ContentBrowserPanel::LastOpenError` keeps the
+same text. A document with unsaved changes is not replaced silently. The sample documents the tools start with are
+marked saved (`MarkSaved()`), so they never block the first open.
 
 The context menu's Copy Path records the asset's absolute path (`CopyPath`, `LastCopiedPath`) on ImGui's clipboard, and
 Reveal in Explorer hands it to the host's revealer (`SetRevealer`; the workspace uses Explorer on Windows, `open -R`
