@@ -80,6 +80,7 @@ void InspectEntity(CommandContext& ctx, CommandStack& stack, Entity entity) {
             // change can be turned into a command instead.
             reflect::Any before = reflect::Any::CopyOf(type, component);
             InspectOptions options;
+            options.default_value = [&type](const reflect::FieldInfo& field) { return DefaultFieldValue(type, field); };
             if (in_instance && !(entity == instance_root && id == GetComponentId<Transform>())) {
                 options.is_overridden = [&](const reflect::FieldInfo& field) {
                     const PrefabInstance* instance = ctx.world.GetComponent<PrefabInstance>(instance_root);
@@ -183,7 +184,9 @@ void InspectEntities(CommandContext& ctx, CommandStack& stack, std::span<const E
                 data.push_back(component);
             }
             if (data.size() == entities.size()) {
-                InspectResult edit = InspectObjects(type, data, type.name);
+                InspectOptions options;
+                options.default_value = [&type](const reflect::FieldInfo& field) { return DefaultFieldValue(type, field); };
+                InspectResult edit = InspectObjects(type, data, type.name, options);
                 if (edit.Changed()) {
                     const reflect::FieldInfo& field = *edit.changed_field;
                     const reflect::Any new_value = field.Get(data.front());

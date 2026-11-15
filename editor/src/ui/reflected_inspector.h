@@ -35,6 +35,9 @@ struct InspectOptions {
     // (prefab instances, docs/design/EDITOR_UI.md: a blue bar and highlighted
     // label) and get a "Revert to Prefab" context menu. Empty = none.
     std::function<bool(const reflect::FieldInfo&)> is_overridden;
+    // The value "Reset to Default" in the property menu puts in a field; an
+    // empty Any means no default is known and the item is hidden.
+    std::function<reflect::Any(const reflect::FieldInfo&)> default_value;
 };
 
 // Draws `object`'s fields as a two-column (label | widget) property table.
@@ -50,6 +53,12 @@ struct InspectOptions {
 // fields under a heading; Meta::tooltip shows on hovering the label.
 //
 // `id` scopes ImGui ids, so two inspectors of the same type can coexist.
+//
+// Right-clicking a field's label opens the property menu: Copy Value, Paste
+// Value (only when the clipboard holds a value of that field's type) and
+// Reset to Default (only when InspectOptions::default_value supplies one).
+// A paste or reset is reported like the edit it is: changed_field names the
+// field and committed is true, so the caller records one undo step.
 InspectResult InspectObject(const reflect::TypeInfo& type, void* object, const char* id);
 InspectResult InspectObject(const reflect::TypeInfo& type, void* object, const char* id, const InspectOptions& options);
 
@@ -64,6 +73,20 @@ InspectResult InspectObjects(const reflect::TypeInfo& type, std::span<void*> obj
 // True if two live values of `type` hold the same data: numbers and enums byte for byte, strings and arrays by
 // value, structs field by field. How the multi-object inspector tells a shared value from a mixed one.
 bool ValuesEqual(const reflect::TypeInfo& type, const void* a, const void* b);
+
+// The inspector's property menu («Copy Value» / «Paste Value» / «Reset to Default»), also callable without a mouse.
+// The clipboard holds one value of one type: a copy can be pasted into any field of that type, on any object.
+void CopyFieldValue(const reflect::FieldInfo& field, const void* object);
+bool FieldClipboardFits(const reflect::FieldInfo& field);
+// Writes the clipboard into the field. False (and untouched) if it holds no value of the field's type, or the field
+// already holds it.
+bool PasteFieldValue(const reflect::FieldInfo& field, void* object);
+// Writes `default_value` into the field. False (and untouched) for an empty default or a field already holding it.
+bool ResetFieldValue(const reflect::FieldInfo& field, void* object, const reflect::Any& default_value);
+void ClearFieldClipboard();
+
+// The value `field` has in a default-constructed `type` — what "Reset to Default" restores in a component.
+reflect::Any DefaultFieldValue(const reflect::TypeInfo& type, const reflect::FieldInfo& field);
 
 // A rotation as Euler angles in degrees and back: turned about Y (yaw), then X (pitch), then Z (roll), the order the editor's
 // cameras use. Pointing straight up or down is the one ambiguous case; it puts the whole turn into yaw.

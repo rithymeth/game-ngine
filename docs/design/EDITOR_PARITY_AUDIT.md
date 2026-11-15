@@ -676,9 +676,22 @@ touched to the Live Viewport. Add Component adds to the entities that lack it an
 each one transaction. Tests in `tests/test_inspector_multi.cpp`: `MultiEdit_ValuesEqualComparesByValueNotByBytes`,
 `MultiEdit_DrawingAMixedSelectionLeavesItMixed`, `EntityInspector_EditAcrossSelectionIsOneUndoStep`,
 `EntityInspector_SharedComponentsAreWhatEveryEntityHas`, `SceneDocument_RenameSelectionIsOneUndoStep` and
-`ScenePanel_ADrawnMultiSelectionRecordsNothing`. Still open: property search, reset/copy/paste of values, granular
-prefab overrides, and the hierarchy items (toggles, icons, multi-drag reparent, `type:`/`name:` search); the Stage 4 gate
-still needs the multi-selection inspector screenshot.
+`ScenePanel_ADrawnMultiSelectionRecordsNothing`. Still open: property search, granular prefab overrides, and the
+hierarchy items (toggles, icons, multi-drag reparent, `type:`/`name:` search); the Stage 4 gate still needs the
+multi-selection inspector screenshot.
+
+Done so far (2026-11-15): reset/copy/paste of values. Right-clicking a field's label opens the property menu: Copy
+Value, Paste Value (offered only when the clipboard holds a value of that field's type — pasting into another type is
+refused, not memcpy'd) and Reset to Default (offered when the caller supplies defaults; the entity Inspector supplies
+the field of a default-constructed component, via `DefaultFieldValue`). The clipboard (`CopyFieldValue`,
+`PasteFieldValue`, `FieldClipboardFits`, `ClearFieldClipboard`) is typed and owns its value, so it survives the source
+being edited, and a paste or reset that changes nothing returns false and records no undo step. Both write in place
+through the same path as a widget edit — `changed_field` + `committed` — so one entity still becomes a
+`SetFieldCommand` through `CommitFieldEdit`, a selection becomes one `SetFieldOnEntitiesCommand`, a whole selection is
+reset to the same value in a single step, and a reset marks the prefab override like any other edit. Tests in
+`tests/test_inspector_values.cpp`: `InspectorValues_CopyAndPasteOnlyWithinOneType`,
+`InspectorValues_TheClipboardOwnsItsValue`, `InspectorValues_ResetUsesTheDefaultConstructedValue` and
+`InspectorValues_DrawingAFreePropertyMenuChangesNothing`.
 
 Gate: mixed-value semantics tests; edit-across-selection undo test; reset/copy/paste tests; hierarchy filter tests;
 screenshot of a multi-selection inspector.

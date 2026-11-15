@@ -444,6 +444,15 @@ selection in one transaction (`SceneDocument::RenameSelection`); "+ Add Componen
 "Remove Component" removes it from all, each one step. The identity line and prefab-override marks remain
 single-selection.
 
+Implemented: right-clicking a field's label opens the property menu — Copy Value, Paste Value and Reset to Default
+(plus Revert to Prefab on an overridden field). The clipboard is one value of one type: Paste is offered only for a
+field of that type and a paste into another type is refused rather than memcpy'd, and the clipboard owns its copy so
+later edits at the source do not change it. Reset writes the field of a default-constructed component
+(`DefaultFieldValue`), which the entity Inspector supplies as `InspectOptions::default_value`; asset documents that
+pass no defaults simply do not get the item. Both actions write in place through the same report as a widget edit, so
+they undo as one step — across the selection too — and a reset marks the prefab override. A paste or reset that would
+change nothing is not recorded. The ⋮ card menu's Copy/Paste of whole component values is still to come.
+
 ### 6.5 Content Browser
 
 Covered in [ROADMAP.md Phase 8](../ROADMAP.md). Additional rules:

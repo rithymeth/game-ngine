@@ -40,6 +40,17 @@ struct DrawContext {
     bool mixed = false; // the top-level field being drawn differs across the objects
 };
 
+// One value, the way the property menu's Copy Value keeps it: pasted into any field of the same type, on any object.
+struct ValueClipboard {
+    const TypeInfo* type = nullptr;
+    reflect::Any value;
+};
+
+ValueClipboard& Clipboard() {
+    static ValueClipboard clipboard;
+    return clipboard;
+}
+
 // The prefab-override marking: an accent bar at the row's left edge and the
 // label in the accent colour.
 constexpr ImVec4 kOverrideColor{0.35f, 0.65f, 1.0f, 1.0f};
@@ -54,6 +65,12 @@ void NoteEdit(DrawContext& ctx, bool changed) {
             ctx.result.changed_field = ctx.top_level_field;
         }
     }
+}
+
+// A property-menu action wrote a whole new value: report it like a finished widget edit.
+void NoteAction(DrawContext& ctx, const FieldInfo& field) {
+    ctx.result.changed_field = &field;
+    ctx.result.committed = true;
 }
 
 ImGuiDataType ScalarDataType(const TypeInfo& type) {
@@ -144,6 +161,10 @@ void DrawStructFields(const TypeInfo& type, void* object, DrawContext& ctx, bool
         ImGui::TableNextRow();
         ImGui::TableSetColumnIndex(0);
         ImGui::AlignTextToFramePadding();
+        const bool read_only = top_level && field.HasFlag(reflect::Field_ReadOnly);
+        // Before the menu too: a paste or reset below must reach the rest of the selection like a widget edit.
+        reflect::Any value_before;
+        if (multi && top_level && !read_only) value_before = field.Get(object);
         const bool overridden = top_level && ctx.options != nullptr && ctx.options->is_overridden &&
                                 ctx.options->is_overridden(field);
         if (overridden) {
@@ -156,6 +177,28 @@ void DrawStructFields(const TypeInfo& type, void* object, DrawContext& ctx, bool
             ImGui::TextUnformatted(field.name);
         }
         const bool label_hovered = ImGui::IsItemHovered();
+        if (top_level) {
+            ImGui::PushID(field.name);
+            if (ImGui::BeginPopupContextItem("property_menu", ImGuiPopupFlags_MouseButtonRight)) {
+                if (ImGui::MenuItem("Copy Value")) CopyFieldValue(field, field.Ptr(object));
+                if (ImGui::MenuItem("Paste Value", nullptr, false, !read_only && FieldClipboardFits(field))) {
+                    if (PasteFieldValue(field, field.Ptr(object))) NoteAction(ctx, field);
+                }
+                if (ctx.options != nullptr && ctx.options->default_value) {
+                    if (ImGui::MenuItem("Reset to Default", nullptr, false, !read_only)) {
+                        if (ResetFieldValue(field, field.Ptr(object), ctx.options->default_value(field))) NoteAction(ctx, field);
+                    }
+                }
+                if (overridden) {
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Revert to Prefab")) {
+                        ctx.result.revert_field = &field;
+                    }
+                }
+                ImGui::EndPopup();
+            }
+            ImGui::PopID();
+        }
         if (ctx.mixed && top_level) {
             ImGui::SameLine();
             ImGui::TextDisabled("(multiple values)");
@@ -167,22 +210,9 @@ void DrawStructFields(const TypeInfo& type, void* object, DrawContext& ctx, bool
                 ImGui::SetTooltip("Overridden in this instance");
             }
         }
-        if (overridden) {
-            ImGui::PushID(field.name);
-            if (ImGui::BeginPopupContextItem("override_menu", ImGuiPopupFlags_MouseButtonRight)) {
-                if (ImGui::MenuItem("Revert to Prefab")) {
-                    ctx.result.revert_field = &field;
-                }
-                ImGui::EndPopup();
-            }
-            ImGui::PopID();
-        }
 
         ImGui::TableSetColumnIndex(1);
         ImGui::PushID(field.name);
-        const bool read_only = top_level && field.HasFlag(reflect::Field_ReadOnly);
-        reflect::Any value_before;
-        if (multi && top_level && !read_only) value_before = field.Get(object);
         if (read_only) {
             ImGui::BeginDisabled();
         }
@@ -522,6 +552,43 @@ bool ValuesEqual(const reflect::TypeInfo& type, const void* a, const void* b) {
     }
     }
     return false;
+}
+
+void CopyFieldValue(const reflect::FieldInfo& field, const void* object) {
+    Clipboard().type = field.type;
+    Clipboard().value = field.Get(object);
+}
+
+bool FieldClipboardFits(const reflect::FieldInfo& field) {
+    return Clipboard().type != nullptr && Clipboard().type == field.type;
+}
+
+bool PasteFieldValue(const reflect::FieldInfo& field, void* object) {
+    if (!FieldClipboardFits(field) || ValuesEqual(*field.type, field.Ptr(object), Clipboard().value.Data())) {
+        return false;
+    }
+    field.type->copy_assign(field.Ptr(object), Clipboard().value.Data());
+    return true;
+}
+
+bool ResetFieldValue(const reflect::FieldInfo& field, void* object, const reflect::Any& default_value) {
+    if (!default_value.HasValue() || default_value.Type() != field.type ||
+        ValuesEqual(*field.type, field.Ptr(object), default_value.Data())) {
+        return false;
+    }
+    field.type->copy_assign(field.Ptr(object), default_value.Data());
+    return true;
+}
+
+void ClearFieldClipboard() {
+    Clipboard().type = nullptr;
+    Clipboard().value.Reset();
+}
+
+reflect::Any DefaultFieldValue(const reflect::TypeInfo& type, const reflect::FieldInfo& field) {
+    const reflect::Any default_object = reflect::Any::DefaultOf(type);
+    if (!default_object.HasValue()) return {};
+    return reflect::Any::CopyOf(*field.type, field.Ptr(default_object.Data()));
 }
 
 InspectResult InspectObject(const reflect::TypeInfo& type, void* object, const char* id, const InspectOptions& options) {
