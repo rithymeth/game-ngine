@@ -1,0 +1,29 @@
+{
+  "$type": "Plugin",
+  "$v": 1,
+  "name": "Quests",
+  "friendly_name": "Quests",
+  "version": "1.0.0",
+  "description": "Quest definitions, quest logs and objectives (a genre kit on Gameplay).",
+  "category": "Gameplay",
+  "created_by": "Aether",
+  "engine_version": "",
+  "enabled_by_default": true,
+  "has_content": false,
+  "dependencies": [
+    {
+      "$v": 1,
+      "name": "Gameplay",
+      "min_version": "",
+      "optional": false
+    }
+  ],
+  "modules": [
+    {
+      "$v": 1,
+      "name": "Quests",
+      "type": "Runtime",
+      "phase": "PreDefault"
+    }
+  ]
+}
