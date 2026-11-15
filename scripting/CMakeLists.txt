@@ -22,6 +22,7 @@ add_library(aether_scripting STATIC
     src/achievements_api.cpp
     src/spawner_api.cpp
     src/checkpoints_api.cpp
+    src/forces_api.cpp
     src/ai_api.cpp
 )
 
@@ -53,6 +54,12 @@ if(TARGET Aether::Quests)
     target_compile_definitions(aether_scripting PRIVATE AETHER_KIT_QUESTS=1)
 else()
     target_compile_definitions(aether_scripting PRIVATE AETHER_KIT_QUESTS=0)
+endif()
+if(TARGET Aether::ForceFields)
+    target_link_libraries(aether_scripting PRIVATE Aether::ForceFields)
+    target_compile_definitions(aether_scripting PRIVATE AETHER_KIT_FORCEFIELDS=1)
+else()
+    target_compile_definitions(aether_scripting PRIVATE AETHER_KIT_FORCEFIELDS=0)
 endif()
 if(TARGET Aether::Checkpoints)
     target_link_libraries(aether_scripting PRIVATE Aether::Checkpoints)

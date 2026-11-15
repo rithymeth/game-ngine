@@ -27,6 +27,7 @@ the workflow grows. The chapters describe current capabilities; build specs in
 20. [Spawner](20-spawner.md): the spawner kit, the `Spawner` component and its script table.
 21. [Checkpoints](21-checkpoints.md): the checkpoints kit, the `Checkpoint` component and its script table.
 22. [Loot](22-loot.md): the loot-tables kit, deterministic drops given to an inventory, and the `Loot` script table.
+23. [Force fields](23-force-fields.md): the physics-volumes kit (wind, gravity wells, whirlpools, water, drag) and explosions.
 
 Also: [Support policy](support_policy.md), a proposal for how long versions are supported.
 

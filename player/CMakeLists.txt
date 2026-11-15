@@ -56,6 +56,13 @@ if(TARGET Aether::Quests)
 else()
     target_compile_definitions(aether_game PUBLIC AETHER_KIT_QUESTS=0)
 endif()
+# The force-fields genre kit (physics volumes), when built: the physics step in game.cpp applies it, so nothing outside the player needs its headers.
+if(TARGET Aether::ForceFields)
+    target_link_libraries(aether_game PRIVATE Aether::ForceFields)
+    target_compile_definitions(aether_game PRIVATE AETHER_KIT_FORCEFIELDS=1)
+else()
+    target_compile_definitions(aether_game PRIVATE AETHER_KIT_FORCEFIELDS=0)
+endif()
 # The checkpoints genre kit (respawn points), when built.
 if(TARGET Aether::Checkpoints)
     target_link_libraries(aether_game PUBLIC Aether::Checkpoints)
