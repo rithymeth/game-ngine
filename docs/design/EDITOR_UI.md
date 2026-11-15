@@ -461,7 +461,19 @@ later edits at the source do not change it. Reset writes the field of a default-
 (`DefaultFieldValue`), which the entity Inspector supplies as `InspectOptions::default_value`; asset documents that
 pass no defaults simply do not get the item. Both actions write in place through the same report as a widget edit, so
 they undo as one step — across the selection too — and a reset marks the prefab override. A paste or reset that would
-change nothing is not recorded. The ⋮ card menu's Copy/Paste of whole component values is still to come.
+change nothing is not recorded.
+
+Implemented: the **card menu**. Each component header has a «...» button at its right edge, and right-clicking the
+header opens the same menu: Copy Component, Paste Component Values, Reset Component, Revert Component to Prefab (only on
+a prefab instance's component that has overrides) and Remove Component. Copy keeps the whole component in its own
+clipboard, separate from the single-value one, and owns the copy; Paste is offered only on a component of that type.
+Paste and Reset write every field the Inspector shows — read-only ones too, because a read-only field follows an
+editable one, as a model's path follows its asset — and never a hidden field, which is runtime state. Each changed
+field is one `SetFieldOnEntitiesCommand` carrying every entity's own old value, grouped in one transaction ("Paste X
+values", "Reset X on N entities"), so undo restores each entity and prefab overrides are recorded as for any edit. On a
+selection the menu acts on every selected entity; a selection where one entity lacks the component is refused whole, and
+an action that would change nothing records nothing. `CopyComponent`/`PasteComponentValues`/`ResetComponent` are
+callable without a mouse.
 
 Implemented: a **Search properties** box at the top of the Inspector (`ScenePanel::SetPropertySearch`,
 `property_search_`). It matches a top-level field when the field's name or its component's name contains the text

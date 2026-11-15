@@ -314,6 +314,7 @@ struct PrefabFixture : Fixture {
     assets::AssetGuid source = assets::NewAssetGuid();
 
     PrefabFixture() {
+        (void)GetComponentId<cmd_test::Vitals>(); // the prefab names the component; run alone, nothing else registers it
         PrefabEntity root;
         root.id = 1;
         cmd_test::Vitals vitals;

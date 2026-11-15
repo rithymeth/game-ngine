@@ -92,6 +92,18 @@ void ClearFieldClipboard();
 // The value `field` has in a default-constructed `type` — what "Reset to Default" restores in a component.
 reflect::Any DefaultFieldValue(const reflect::TypeInfo& type, const reflect::FieldInfo& field);
 
+// The component card's Copy Component: one whole object of one type, kept apart from the single-value clipboard.
+void CopyObjectValues(const reflect::TypeInfo& type, const void* object);
+bool ObjectClipboardFits(const reflect::TypeInfo& type);
+// The copied object, or nullptr when the clipboard holds none of `type`.
+const void* ObjectClipboardData(const reflect::TypeInfo& type);
+void ClearObjectClipboard();
+
+// The top-level fields a whole-object paste or reset writes: every field the inspector shows, read-only ones included,
+// because a read-only field is kept in step with an editable one (a model's path with its asset). Hidden fields are
+// runtime state and are never written.
+bool IsCopiedField(const reflect::FieldInfo& field);
+
 // A rotation as Euler angles in degrees and back: turned about Y (yaw), then X (pitch), then Z (roll), the order the editor's
 // cameras use. Pointing straight up or down is the one ambiguous case; it puts the whole turn into yaw.
 Vec3 EulerDegreesFromRotation(const Quaternion& rotation);

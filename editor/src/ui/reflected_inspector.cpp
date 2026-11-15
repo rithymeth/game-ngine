@@ -51,6 +51,11 @@ ValueClipboard& Clipboard() {
     return clipboard;
 }
 
+ValueClipboard& ObjectClipboard() {
+    static ValueClipboard clipboard;
+    return clipboard;
+}
+
 // The prefab-override marking: an accent bar at the row's left edge and the
 // label in the accent colour.
 constexpr ImVec4 kOverrideColor{0.35f, 0.65f, 1.0f, 1.0f};
@@ -593,6 +598,28 @@ reflect::Any DefaultFieldValue(const reflect::TypeInfo& type, const reflect::Fie
     const reflect::Any default_object = reflect::Any::DefaultOf(type);
     if (!default_object.HasValue()) return {};
     return reflect::Any::CopyOf(*field.type, field.Ptr(default_object.Data()));
+}
+
+void CopyObjectValues(const reflect::TypeInfo& type, const void* object) {
+    ObjectClipboard().type = &type;
+    ObjectClipboard().value = reflect::Any::CopyOf(type, object);
+}
+
+bool ObjectClipboardFits(const reflect::TypeInfo& type) {
+    return ObjectClipboard().type == &type && ObjectClipboard().value.HasValue();
+}
+
+const void* ObjectClipboardData(const reflect::TypeInfo& type) {
+    return ObjectClipboardFits(type) ? ObjectClipboard().value.Data() : nullptr;
+}
+
+void ClearObjectClipboard() {
+    ObjectClipboard().type = nullptr;
+    ObjectClipboard().value.Reset();
+}
+
+bool IsCopiedField(const reflect::FieldInfo& field) {
+    return field.HasFlag(reflect::Field_EditAnywhere) || field.HasFlag(reflect::Field_ReadOnly);
 }
 
 InspectResult InspectObject(const reflect::TypeInfo& type, void* object, const char* id, const InspectOptions& options) {

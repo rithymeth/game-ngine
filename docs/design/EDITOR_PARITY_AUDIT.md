@@ -710,9 +710,22 @@ and no match at all says "No entities match." The filter box's hint lists the gr
 `ScenePanel::SetHierarchyFilter` lets a command set it, and filtering records no command. Tests in
 `tests/test_hierarchy_search.cpp`: `HierarchyQuery_ParsesBareNameAndTypeTokens`,
 `HierarchySearch_MatchesNamesAndComponentTypes`, `HierarchySearch_KeepsTheAncestorsOfAMatchVisible` and
-`ScenePanel_AFilteredHierarchyDrawsWithoutEditing`. Still open: granular prefab overrides, the hierarchy's
-visibility/lock toggles, type icons and multi-drag reparenting, the card menu's copy/paste of whole components, and
-the multi-selection inspector screenshot gate.
+`ScenePanel_AFilteredHierarchyDrawsWithoutEditing`.
+
+Done so far (2026-11-16): the component card menu. Every component header has a «...» button (and a right-click on the
+header) opening Copy Component, Paste Component Values, Reset Component, Revert Component to Prefab (on an instance's
+component with overrides) and Remove Component, on one entity or the whole selection. The component clipboard is
+separate from the value clipboard, typed by `TypeInfo` and owns its copy (`CopyObjectValues`, `ObjectClipboardFits`).
+Paste and Reset write every shown field (`IsCopiedField`: EditAnywhere and ReadOnly, never hidden runtime state) that
+differs anywhere in the selection, one `SetFieldOnEntitiesCommand` per field inside one transaction, so one undo puts
+each entity's own values back and prefab overrides are recorded per field exactly as for a typed edit. A selection
+where any entity lacks the component is refused whole; a paste or reset that changes nothing records nothing. Tests in
+`tests/test_component_card.cpp`: `ComponentCard_PasteCopiesEveryShownFieldAsOneUndoStep`,
+`ComponentCard_PasteIsRefusedForAnotherTypeOrAMissingComponent`,
+`ComponentCard_ResetAcrossASelectionUndoesToEachOwnValue`, `ComponentCard_PastingIntoAPrefabInstanceRecordsOverrides`
+and `ComponentCard_DrawingTheCardsChangesNothing`. Still open: granular prefab overrides, the hierarchy's
+visibility/lock toggles, type icons and multi-drag reparenting, card reordering (Move Up/Down needs a per-entity
+component order the ECS does not keep), and the multi-selection inspector screenshot gate.
 
 Gate: mixed-value semantics tests; edit-across-selection undo test; reset/copy/paste tests; hierarchy filter tests;
 screenshot of a multi-selection inspector.

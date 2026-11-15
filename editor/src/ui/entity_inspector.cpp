@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <string>
 #include <vector>
 
 namespace aether::editor {
@@ -20,7 +21,110 @@ bool IsInspectable(ComponentId id) {
     return info.reflected != nullptr && HasInspectableFields(*info.reflected) && id != GetComponentId<IdComponent>();
 }
 
+// Writes `source`'s copied fields into `component` on every entity as one undo step: one SetFieldOnEntitiesCommand per
+// field that differs anywhere, each carrying every entity's own old value.
+bool ApplyComponentValues(CommandContext& ctx, CommandStack& stack, std::span<const Entity> entities, ComponentId id,
+                          const void* source, const std::string& label) {
+    const reflect::TypeInfo* type = GetComponentInfo(id).reflected;
+    if (type == nullptr || source == nullptr || entities.empty()) return false;
+    std::vector<void*> data;
+    for (const Entity entity : entities) {
+        void* component = ctx.world.GetComponentRaw(entity, id);
+        if (component == nullptr) return false;
+        data.push_back(component);
+    }
+    struct Change {
+        const reflect::FieldInfo* field;
+        std::vector<reflect::Any> old_values;
+    };
+    std::vector<Change> changes;
+    for (const reflect::FieldInfo& field : type->fields) {
+        if (!IsCopiedField(field)) continue;
+        const bool differs = std::any_of(data.begin(), data.end(), [&](const void* component) {
+            return !ValuesEqual(*field.type, field.Ptr(component), field.Ptr(source));
+        });
+        if (!differs) continue;
+        Change change{&field, {}};
+        for (const void* component : data) change.old_values.push_back(field.Get(component));
+        changes.push_back(std::move(change));
+    }
+    if (changes.empty()) return false;
+
+    std::vector<EntityGuid> guids;
+    for (const Entity entity : entities) guids.push_back(EnsureGuid(ctx.world, entity, &ctx.guids));
+    stack.BreakMergeChain();
+    stack.BeginTransaction(label);
+    for (Change& change : changes) {
+        stack.Execute(ctx, std::make_unique<SetFieldOnEntitiesCommand>(
+                               id, *change.field, guids, std::move(change.old_values),
+                               reflect::Any::CopyOf(*change.field->type, change.field->Ptr(source))));
+    }
+    stack.EndTransaction();
+    stack.BreakMergeChain();
+    return true;
+}
+
+std::string SelectionSuffix(usize count) {
+    return count > 1 ? " on " + std::to_string(count) + " entities" : std::string();
+}
+
+enum class CardAction { None, Edited, Remove, Revert };
+
+// The card header: a collapsing header with a «...» button at its right edge; the button and a right-click open the
+// same menu, whose edits act on every entity in `entities`.
+CardAction DrawComponentCard(CommandContext& ctx, CommandStack& stack, std::span<const Entity> entities,
+                             ComponentId id, bool can_revert, bool& open) {
+    const reflect::TypeInfo& type = *GetComponentInfo(id).reflected;
+    const float right = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;
+    open = ImGui::CollapsingHeader(type.name, ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_AllowOverlap);
+    ImGui::OpenPopupOnItemClick("component_menu", ImGuiPopupFlags_MouseButtonRight);
+    const float button = ImGui::CalcTextSize("...").x + ImGui::GetStyle().FramePadding.x * 2.0f;
+    ImGui::SameLine(right - button);
+    // Out of keyboard navigation: a focus request landing on it would click it and open the menu over the fields.
+    ImGui::PushItemFlag(ImGuiItemFlags_NoNav, true);
+    if (ImGui::SmallButton("...")) ImGui::OpenPopup("component_menu");
+    ImGui::PopItemFlag();
+
+    CardAction action = CardAction::None;
+    if (ImGui::BeginPopup("component_menu")) {
+        if (ImGui::MenuItem("Copy Component")) CopyComponent(ctx.world, entities.front(), id);
+        if (ImGui::MenuItem("Paste Component Values", nullptr, false, ObjectClipboardFits(type)) &&
+            PasteComponentValues(ctx, stack, entities, id)) {
+            action = CardAction::Edited;
+        }
+        if (ImGui::MenuItem("Reset Component") && ResetComponent(ctx, stack, entities, id)) action = CardAction::Edited;
+        if (can_revert && ImGui::MenuItem("Revert Component to Prefab")) action = CardAction::Revert;
+        ImGui::Separator();
+        if (ImGui::MenuItem("Remove Component")) action = CardAction::Remove;
+        ImGui::EndPopup();
+    }
+    return action;
+}
+
 } // namespace
+
+void CopyComponent(const World& world, Entity entity, ComponentId component) {
+    const reflect::TypeInfo* type = GetComponentInfo(component).reflected;
+    const void* data = world.GetComponentRaw(entity, component);
+    if (type != nullptr && data != nullptr) CopyObjectValues(*type, data);
+}
+
+bool PasteComponentValues(CommandContext& ctx, CommandStack& stack, std::span<const Entity> entities,
+                          ComponentId component) {
+    const reflect::TypeInfo* type = GetComponentInfo(component).reflected;
+    if (type == nullptr) return false;
+    return ApplyComponentValues(ctx, stack, entities, component, ObjectClipboardData(*type),
+                                std::string("Paste ") + type->name + " values" + SelectionSuffix(entities.size()));
+}
+
+bool ResetComponent(CommandContext& ctx, CommandStack& stack, std::span<const Entity> entities, ComponentId component) {
+    const reflect::TypeInfo* type = GetComponentInfo(component).reflected;
+    if (type == nullptr) return false;
+    const reflect::Any defaults = reflect::Any::DefaultOf(*type);
+    if (!defaults.HasValue()) return false;
+    return ApplyComponentValues(ctx, stack, entities, component, defaults.Data(),
+                                std::string("Reset ") + type->name + SelectionSuffix(entities.size()));
+}
 
 void InspectEntity(CommandContext& ctx, CommandStack& stack, Entity entity, std::string_view search) {
     const EntityGuid guid = EnsureGuid(ctx.world, entity, &ctx.guids);
@@ -66,16 +170,26 @@ void InspectEntity(CommandContext& ctx, CommandStack& stack, Entity entity, std:
         if (!HasMatchingFields(type, search)) continue;
         ++matching;
         ImGui::PushID(static_cast<int>(id));
-        const bool open = ImGui::CollapsingHeader(type.name, ImGuiTreeNodeFlags_DefaultOpen);
-        bool remove = false;
-        if (ImGui::BeginPopupContextItem("component_menu")) {
-            remove = ImGui::MenuItem("Remove Component");
-            ImGui::EndPopup();
+        bool can_revert = false;
+        if (in_instance) {
+            const PrefabInstance* instance = ctx.world.GetComponent<PrefabInstance>(instance_root);
+            can_revert = instance != nullptr && std::any_of(instance->overrides.begin(), instance->overrides.end(),
+                                                            [&](const PropertyOverride& o) {
+                                                                return o.entity == local_id && o.component == type.name;
+                                                            });
         }
-        if (remove) {
+        bool open = false;
+        const Entity one[] = {entity};
+        const CardAction action = DrawComponentCard(ctx, stack, one, id, can_revert, open);
+        if (action == CardAction::Remove) {
             stack.Execute(ctx, std::make_unique<RemoveComponentCommand>(guid, id));
             ImGui::PopID();
             continue; // the component no longer exists
+        }
+        if (action == CardAction::Revert) {
+            stack.Execute(ctx, std::make_unique<RevertPrefabOverrideCommand>(guid, id, ""));
+            ImGui::PopID();
+            return; // resolving may have changed the entity's components
         }
         if (open) {
             void* component = ctx.world.GetComponentRaw(entity, id);
@@ -172,13 +286,8 @@ void InspectEntities(CommandContext& ctx, CommandStack& stack, std::span<const E
         if (!HasMatchingFields(type, search)) continue;
         ++matching;
         ImGui::PushID(static_cast<int>(id));
-        const bool open = ImGui::CollapsingHeader(type.name, ImGuiTreeNodeFlags_DefaultOpen);
-        bool remove = false;
-        if (ImGui::BeginPopupContextItem("component_menu")) {
-            remove = ImGui::MenuItem("Remove Component");
-            ImGui::EndPopup();
-        }
-        if (remove) {
+        bool open = false;
+        if (DrawComponentCard(ctx, stack, entities, id, /*can_revert=*/false, open) == CardAction::Remove) {
             stack.BeginTransaction(std::string("Remove ") + type.name + " from " +
                                    std::to_string(entities.size()) + " entities");
             for (const EntityGuid& guid : guids) stack.Execute(ctx, std::make_unique<RemoveComponentCommand>(guid, id));

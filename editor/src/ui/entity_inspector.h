@@ -10,7 +10,8 @@ namespace aether::editor {
 
 // The Inspector's body for one entity: every reflected component with
 // inspectable fields, drawn with InspectObject, plus "+ Add Component" and a
-// per-component "Remove Component" context menu. Every change goes through
+// per-component card menu (Copy / Paste Values / Reset / Revert to Prefab /
+// Remove). Every change goes through
 // `stack` as an undoable command (SetField / AddComponent / RemoveComponent):
 // a slider drag is merged into one undo step and the merge chain is broken
 // when the edit is committed. Gives the entity a GUID if it has none, and
@@ -30,5 +31,15 @@ void InspectEntities(CommandContext& ctx, CommandStack& stack, std::span<const E
 
 // The components `entities` all have, in registration order: what the multi-selection Inspector shows.
 std::vector<ComponentId> SharedComponents(const World& world, std::span<const Entity> entities);
+
+// The component card menu («...» on the header, or right-click it), also callable without a mouse. Copy takes the
+// first entity's component. Paste and Reset write every field the inspector shows (IsCopiedField) that differs on any
+// of `entities` — the clipboard's values or a default-constructed component's — as one undo step that records prefab
+// overrides like any edit. They return false and record nothing when the clipboard holds another type, an entity
+// lacks the component, or nothing would change.
+void CopyComponent(const World& world, Entity entity, ComponentId component);
+bool PasteComponentValues(CommandContext& ctx, CommandStack& stack, std::span<const Entity> entities,
+                          ComponentId component);
+bool ResetComponent(CommandContext& ctx, CommandStack& stack, std::span<const Entity> entities, ComponentId component);
 
 } // namespace aether::editor
