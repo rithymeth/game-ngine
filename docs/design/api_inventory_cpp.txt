@@ -1100,6 +1100,40 @@
   void Tick(f32 delta_seconds)
   void Warn(const char*code,const Instance&instance,const CompiledFunction&fn,NodeId node,std::string message)
   void*ComponentOf(Entity target,const reflect::TypeInfo*owner)
+[crafting/include/aether/crafting/crafting_kit.h] experimental
+  type struct RecipeAssetDiagnostic
+  std::unique_ptr<kit::IKit>MakeCraftingKit(RecipeLibrary*recipes=nullptr,const inv::ItemLibrary*items=nullptr)
+  std::vector<RecipeAssetDiagnostic>LoadRecipeAssets(const std::vector<std::string>&paths,std::function<bool(const std::string&,std::vector<u8>&,std::string*)>read_content,const inv::ItemLibrary&items,RecipeLibrary&recipes)
+[crafting/include/aether/crafting/crafting_system.h] experimental
+  type class CraftingSystem
+  type enum class Result
+  CraftingSystem&operator=(const CraftingSystem&)=delete
+  CraftingSystem(const CraftingSystem&)=delete
+  CraftingSystem(inv::InventorySystem&inventory,const RecipeLibrary&recipes)
+  Result Craft(Entity owner,const std::string&recipe,i32 times=1)
+  bool CanCraft(Entity owner,const std::string&recipe,i32 times=1)const
+  const RecipeLibrary&Recipes()const
+  const char*ResultName(Result result)
+  static CraftingSystem*Active()
+  std::vector<Ingredient>Missing(Entity owner,const std::string&recipe,i32 times=1)const
+  void MakeActive()
+  ~CraftingSystem()
+[crafting/include/aether/crafting/recipe_def.h] experimental
+  type class RecipeLibrary
+  type struct Ingredient
+  type struct RecipeDef
+  bool RecipeFromJson(const std::string&text,RecipeDef&out,std::string*error=nullptr)
+  bool operator==(const Ingredient&)const=default
+  bool operator==(const RecipeDef&)const=default
+  const RecipeDef*Find(const std::string&name)const
+  public:bool Register(RecipeDef recipe,std::string*error=nullptr)
+  reflect::Json RecipeToJson(const RecipeDef&recipe)
+  static std::string CheckItems(const RecipeDef&recipe,const inv::ItemLibrary&items)
+  std::string Validate()const
+  std::vector<std::string>Check(const inv::ItemLibrary&items)const
+  std::vector<std::string>Names()const
+  usize Size()const
+  void Clear()
 [engine/include/aether/aether.h] experimental
 [engine/include/aether/assets/asset_database.h] experimental
   type class AssetDatabase
@@ -5666,6 +5700,8 @@
   type struct CompletionItem
   type struct CompletionResult
   CompletionResult CompleteScript(std::string_view source,usize cursor)
+[scripting/include/aether/script/crafting_api.h] experimental
+  void InstallCraftingApi(LuauHost&host)
 [scripting/include/aether/script/dap.h] experimental
   type class DapFraming
   type class DapSession

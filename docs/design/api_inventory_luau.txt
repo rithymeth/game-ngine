@@ -102,6 +102,13 @@ Audio.Stop function
 Audio.StopAll function
 Camera table
 Camera.Shake function
+Crafting table
+Crafting.CanCraft function
+Crafting.Craft function
+Crafting.Describe function
+Crafting.Exists function
+Crafting.GetTitle function
+Crafting.MissingCount function
 Draw table
 Draw.arrow function
 Draw.box function

@@ -15,6 +15,7 @@ add_library(aether_scripting STATIC
     src/inventory_api.cpp
     src/interaction_api.cpp
     src/quests_api.cpp
+    src/crafting_api.cpp
     src/ai_api.cpp
 )
 
@@ -46,5 +47,11 @@ if(TARGET Aether::Quests)
     target_compile_definitions(aether_scripting PRIVATE AETHER_KIT_QUESTS=1)
 else()
     target_compile_definitions(aether_scripting PRIVATE AETHER_KIT_QUESTS=0)
+endif()
+if(TARGET Aether::Crafting)
+    target_link_libraries(aether_scripting PRIVATE Aether::Crafting)
+    target_compile_definitions(aether_scripting PRIVATE AETHER_KIT_CRAFTING=1)
+else()
+    target_compile_definitions(aether_scripting PRIVATE AETHER_KIT_CRAFTING=0)
 endif()
 add_library(Aether::Scripting ALIAS aether_scripting)

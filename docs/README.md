@@ -77,6 +77,7 @@ without a server or network connection.
 | [manual/13-upgrading.md](manual/13-upgrading.md) | What to check when moving a project or plugin to a newer engine |
 | [manual/14-plugin-marketplace.md](manual/14-plugin-marketplace.md) | The plugin registry and marketplace format |
 | [manual/15-dedicated-server.md](manual/15-dedicated-server.md) | `aether_server`: hosting a cooked game without a window or GPU |
+| [manual/16-crafting.md](manual/16-crafting.md) | The crafting kit: recipes, all-or-nothing crafting and the script table |
 | [manual/api_stability.md](manual/api_stability.md) | The three stability levels and what each promises |
 | [manual/core_api_inventory.md](manual/core_api_inventory.md) | Ownership and threading inventory for the APIs a game or plugin uses |
 | [manual/support_policy.md](manual/support_policy.md) | A support-policy proposal, explicitly not yet promised |
