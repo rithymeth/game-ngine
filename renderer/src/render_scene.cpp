@@ -162,6 +162,7 @@ PostProcessSettings BlendPostProcess(const RenderScene& scene, const Vec3& posit
         out.chromatic_aberration = Lerp(out.chromatic_aberration, s.chromatic_aberration, w);
         out.film_grain = Lerp(out.film_grain, s.film_grain, w);
         out.sharpen = Lerp(out.sharpen, s.sharpen, w);
+        out.screen_space_reflections = Lerp(out.screen_space_reflections, s.screen_space_reflections, w);
         if (w >= 0.5f) out.tonemapper = s.tonemapper; // a choice, not a blend
     }
     return out;

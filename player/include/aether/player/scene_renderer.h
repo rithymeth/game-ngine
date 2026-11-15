@@ -15,7 +15,10 @@ namespace aether::player {
 // post pass tone maps it) instead of tone mapping and encoding for the back buffer itself.
 // With `graph_hlsl` (a drawable material graph's include, graph_material.h) the surface's base colour, metallic, roughness, occlusion and emissive come from
 // the graph's EvaluateMaterial instead of the model's own factors and textures.
-std::string SceneShaderSource(bool with_frame_data, bool hdr_target = false, bool ray_traced_shadows = false, const std::string& graph_hlsl = {});
+// With `screen_space_reflections` (only with `hdr_target`) an opaque surface's roughness goes into the HDR target's alpha, where the post pass's
+// reflections read it.
+std::string SceneShaderSource(bool with_frame_data, bool hdr_target = false, bool ray_traced_shadows = false, const std::string& graph_hlsl = {},
+                              bool screen_space_reflections = false);
 
 // Draws the current game's cooked ModelRenderer entities through the same
 // cross-API RHI used by the renderer demos. The player owns this alongside

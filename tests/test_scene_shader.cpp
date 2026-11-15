@@ -62,6 +62,12 @@ AETHER_TEST(SceneShader_SourceIsTheLibraryThenTheSceneShader) {
     AETHER_CHECK(hdr.rfind("#define AETHER_FRAME_DATA 1\n#define AETHER_HDR_TARGET 1\n", 0) == 0);
     AETHER_CHECK(!Contains(frame, "#define AETHER_HDR_TARGET") && Contains(hdr, "#ifdef AETHER_HDR_TARGET"));
     AETHER_CHECK(!Contains(plain, "ConstantBuffer<FrameData> g_Frame") || Contains(plain, "#ifdef AETHER_FRAME_DATA"));
+    // The reflections' variant writes the surface's roughness into the HDR target's alpha (water stays out of it), and only that variant does.
+    const std::string ssr = player::SceneShaderSource(true, true, false, {}, true);
+    AETHER_CHECK(ssr.rfind("#define AETHER_FRAME_DATA 1\n#define AETHER_HDR_TARGET 1\n#define AETHER_SSR 1\n", 0) == 0);
+    AETHER_CHECK(Contains(ssr, "if (((g_PC.g_AlphaOptions >> 11) & 1) == 0) output_alpha = roughness;"));
+    AETHER_CHECK(!Contains(hdr, "#define AETHER_SSR") && !Contains(plain, "#define AETHER_SSR"));
+    AETHER_CHECK(!Contains(player::SceneShaderSource(true, false, false, {}, true), "#define AETHER_SSR")); // no target to carry it
 }
 
 AETHER_TEST(SceneShader_CompilesWithGlslang) {
@@ -69,9 +75,9 @@ AETHER_TEST(SceneShader_CompilesWithGlslang) {
         std::printf("  (glslangValidator not found: skipping the HLSL compile check)\n");
         return;
     }
-    for (const int variant : {0, 1, 2, 3}) {
-        const bool with_frame_data = (variant & 1) != 0, hdr_target = (variant & 2) != 0;
-        const std::string source = player::SceneShaderSource(with_frame_data, hdr_target);
+    for (const int variant : {0, 1, 2, 3, 4}) {
+        const bool with_frame_data = (variant & 1) != 0, hdr_target = (variant & 2) != 0, reflections = variant == 4;
+        const std::string source = player::SceneShaderSource(with_frame_data, hdr_target, false, {}, reflections);
         std::string log;
         const bool vertex = Compiles(source, "vert", "VSMain", log);
         if (!vertex) std::printf("%s\n", log.c_str());

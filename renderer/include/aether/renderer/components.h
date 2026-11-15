@@ -92,6 +92,9 @@ struct PostProcessVolume {
     f32 chromatic_aberration = 0.0f; // 0..1
     f32 film_grain = 0.0f;           // 0..1
     f32 sharpen = 0.0f;              // 0..1
+    // Screen-space reflections: a smooth surface (roughness in the HDR target's alpha) reflects what the depth copy shows along its mirror ray,
+    // blended by Fresnel. Where the ray finds nothing the sky lighting's reflection stays, so no reflection probe is needed. 0 is off.
+    f32 screen_space_reflections = 0.5f; // 0..1
 };
 
 // A decal (Phase 39.4): a box, `size` metres across, at the entity's transform, that paints `texture` onto whatever opaque surfaces are inside it,
@@ -172,7 +175,8 @@ AETHER_REFLECT(aether::PostProcessVolume, 1,
     AETHER_FIELD(height_fog_base, Field_EditAnywhere, {.tooltip = "The world height where the mist is as thick as its density", .units = "m"}),
     AETHER_FIELD(chromatic_aberration, Field_EditAnywhere, {.tooltip = "Pulls the red and blue channels apart toward the edges of the screen, like a cheap lens", .range_min = 0.0, .range_max = 1.0}),
     AETHER_FIELD(film_grain, Field_EditAnywhere, {.tooltip = "Moving noise over the picture, strongest in the midtones, like film", .range_min = 0.0, .range_max = 1.0}),
-    AETHER_FIELD(sharpen, Field_EditAnywhere, {.tooltip = "Brings the edges out by sharpening luminance (colour is left alone)", .range_min = 0.0, .range_max = 1.0})
+    AETHER_FIELD(sharpen, Field_EditAnywhere, {.tooltip = "Brings the edges out by sharpening luminance (colour is left alone)", .range_min = 0.0, .range_max = 1.0}),
+    AETHER_FIELD(screen_space_reflections, Field_EditAnywhere, {.tooltip = "Smooth surfaces reflect what is on screen along their mirror ray; 0 keeps the sky lighting's reflection", .range_min = 0.0, .range_max = 1.0})
 )
 AETHER_REFLECT(aether::Decal, 1,
     AETHER_FIELD(texture, Field_EditAnywhere, {.tooltip = "A texture in the package; empty draws a flat tint. Drop one from the Content Browser", .asset_extensions = ".png;.jpg;.jpeg;.bmp;.tga;.hdr"}),

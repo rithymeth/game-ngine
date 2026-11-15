@@ -22,6 +22,13 @@
 // aberration (red and blue from opposite sides of the pixel, more toward the edges) and a luminance-only sharpen before anything else
 // touches it; the film grain is the last thing added, to the display-encoded colour. Their strengths, and the vignette's, travel as four 8-bit
 // values in one push-constant word (PostConstants::lens) so the constants stay within the 128 bytes every device guarantees.
+//
+// Screen-space reflections are in the composite as well (PostProcessSettings::screen_space_reflections). A smooth surface needs its
+// roughness and the ray a pixel reflects; there is no G-buffer, so the scene shader writes the roughness into the HDR target's alpha
+// (AETHER_SSR, opaque draws only: water already mirrors, transparent draws blend it) and the depth copy gives the view-space position and
+// normal. The mirror ray is marched in view space against that depth, refined by binary search, and the colour where it lands replaces the
+// surface's sky-lit reflection by the Fresnel term. A miss (off screen, behind something, or the ray into the surface), a rough surface and
+// the frame's edge all fade it back to what the sky lighting already gives, so nothing needs a reflection probe.
 
 namespace aether::player {
 
@@ -29,7 +36,7 @@ namespace aether::player {
 struct PostConstants {
     u32 scene_color = 0;  // bindless index of the HDR target
     f32 exposure = 1.0f;  // linear multiplier applied before the tone mapper
-    u32 tonemapper = 0;   // low 2 bits: Tonemapper (0 ACES, 1 AgX, 2 None (clamp)); the rest: the frame number, which moves the film grain
+    u32 tonemapper = 0;   // low 2 bits: Tonemapper (0 ACES, 1 AgX, 2 None (clamp)); bits 2-9: the screen-space reflections' strength; the rest: the frame number, which moves the film grain
     f32 saturation = 1.0f;
     u32 lens = 0;         // four 8-bit strengths, each 0..1: vignette (bits 0-7), chromatic aberration (8-15), film grain (16-23), sharpen (24-31)
     u32 bloom = 0xffffffffu;    // bindless index of the bloom chain's top level, or none (anything >= kMaxBindlessTextures)
@@ -67,14 +74,18 @@ f32 LensVignette(u32 lens);
 f32 LensChromaticAberration(u32 lens);
 f32 LensFilmGrain(u32 lens);
 f32 LensSharpen(u32 lens);
-// The two halves of PostConstants::tonemapper.
-constexpr u32 PackTonemapperFrame(u32 tonemapper, u32 frame) { return (tonemapper & 3u) | (frame << 2); }
+// The halves of PostConstants::tonemapper: the tone mapper, the screen-space reflections' strength (0..255, 0 off) and the frame number.
+constexpr u32 PackTonemapperFrame(u32 tonemapper, u32 frame, u32 screen_space_reflections = 0) {
+    return (tonemapper & 3u) | ((screen_space_reflections & 255u) << 2) | (frame << 10);
+}
 constexpr u32 PostTonemapperOf(const PostConstants& c) { return c.tonemapper & 3u; }
-constexpr u32 PostFrameOf(const PostConstants& c) { return c.tonemapper >> 2; }
+constexpr u32 PostScreenSpaceReflectionsOf(const PostConstants& c) { return (c.tonemapper >> 2) & 255u; }
+constexpr u32 PostFrameOf(const PostConstants& c) { return c.tonemapper >> 10; }
 
 // The volume settings as push constants: exposure is 2^exposure_compensation (scene light values are not physical units, so there is no
 // EV100 metering yet), the rest are copied with their ranges clamped. Bloom is off in the result (PostPass::Draw turns it on when
-// RenderBloom drew this frame); bloom_intensity holds the clamped setting either way.
+// RenderBloom drew this frame); bloom_intensity holds the clamped setting either way. The reflections ride in the tone mapper's word
+// (PostScreenSpaceReflectionsOf); they are off when the scene colour carries no roughness (alpha 1 everywhere) and the depth is not bound.
 PostConstants PackPostConstants(const PostProcessSettings& settings, u32 scene_color_index);
 
 // What the pass does to one linear HDR value, on the CPU, as the shader does it: the reference the GPU test compares against. `u`, `v` are

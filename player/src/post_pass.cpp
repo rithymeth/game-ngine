@@ -137,6 +137,93 @@ float AmbientOcclusion(int2 pixel, float2 size) {
     return saturate(1.0 - g_PC.g_AoStrength * occlusion * 2.0 / (float)taps);
 }
 
+// Screen-space reflections. The scene shader writes each opaque surface's roughness into the HDR target's alpha, so a pixel's mirror ray is
+// marched here in view space against the depth copy. The surface's normal comes from the depth's neighbours (as AmbientOcclusion takes it),
+// the ray from view-space reflection, and the colour where it lands replaces the surface's sky-lit reflection by the Fresnel term.
+float4 SceneSurfaceLoad(int2 p, int2 size) {
+    return g_Textures[g_PC.g_SceneColor].Load(int3(clamp(p, int2(0, 0), size - 1), 0));
+}
+
+// Where a view-space point projects on screen (AoViewPosition's inverse).
+float2 SsrProject(float3 view, float2 size) {
+    float2 ndc = float2(view.x * g_PC.g_ProjX, view.y * g_PC.g_ProjY) / max(-view.z, 1e-4);
+    return float2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5) * size;
+}
+float3 SsrViewAt(int2 p, float2 size) { return AoViewPosition(p, size, AoDepth(p, size)); }
+
+// The reflection colour at a pixel and how much of it to mix in; 0 with no weight where the ray finds nothing (the sky, the frame's edge, a
+// surface too rough to reflect, or a ray into the surface).
+float3 ScreenSpaceReflection(int2 pixel, float2 size, out float weight) {
+    weight = 0.0;
+    float strength = (float)((g_PC.g_Tonemapper >> 2u) & 255u) / 255.0;
+    float roughness = saturate(SceneSurfaceLoad(pixel, size).a);
+    float smooth_fade = 1.0 - smoothstep(0.05, 0.55, roughness); // rough surfaces keep the sky lighting's blurred reflection
+    if (strength <= 0.0 || smooth_fade <= 0.0) return 0.0;
+    float d = AoDepth(pixel, size);
+    if (d >= 1.0) return 0.0; // the sky
+    float3 p = AoViewPosition(pixel, size, d);
+    if (-p.z < g_PC.g_Near) return 0.0;
+    // The normal, as AmbientOcclusion takes it: the nearer neighbour on each axis, so a silhouette does not fold the surface over its edge.
+    float3 pl = SsrViewAt(pixel + int2(-1, 0), size), pr = SsrViewAt(pixel + int2(1, 0), size);
+    float3 pu = SsrViewAt(pixel + int2(0, -1), size), pd = SsrViewAt(pixel + int2(0, 1), size);
+    float3 dx = abs(pl.z - p.z) < abs(pr.z - p.z) ? p - pl : pr - p;
+    float3 dy = abs(pu.z - p.z) < abs(pd.z - p.z) ? p - pu : pd - p;
+    float3 n = normalize(cross(dx, dy));
+    if (n.z < 0.0) n = -n; // facing the camera
+    float3 v = normalize(p);
+    float3 r = reflect(v, n);
+    if (dot(r, n) <= 0.02) return 0.0; // into the surface (a silhouette)
+
+    float3 previous = p + n * max(0.02, -p.z * 0.002);
+    float metres_per_pixel = -p.z / (g_PC.g_ProjY * 0.5 * size.y);
+    float step_length = max(metres_per_pixel * 2.0, 0.01);
+    float thickness = max(0.1, -p.z * 0.01); // how far behind a surface the ray may pass and still count as hitting it
+    float2 hit = float2(0.0, 0.0);
+    bool found = false;
+    for (int i = 0; i < 24; ++i) {
+        float3 q = previous + r * step_length;
+        step_length *= 1.3;
+        if (-q.z < g_PC.g_Near || -q.z >= g_PC.g_Far) break;
+        float2 screen = SsrProject(q, size);
+        if (any(screen < 0.0) || any(screen >= size)) break; // off screen: the sky lighting stays
+        int2 texel = int2(screen);
+        float sd = AoDepth(texel, size);
+        if (sd < 1.0) {
+            float3 s = AoViewPosition(texel, size, sd);
+            if (q.z <= s.z) {
+                // The segment previous..q crossed the surface: refine it, then keep the hit only within the thickness.
+                float3 a = previous, b = q;
+                for (int j = 0; j < 6; ++j) {
+                    float3 middle = (a + b) * 0.5;
+                    int2 middle_texel = int2(SsrProject(middle, size));
+                    if (middle.z <= SsrViewAt(middle_texel, size).z) b = middle; else a = middle;
+                }
+                float2 crossing = SsrProject(b, size);
+                int2 crossing_texel = int2(crossing);
+                float crossing_depth = AoDepth(crossing_texel, size);
+                if (crossing_depth < 1.0 && abs(b.z - AoViewPosition(crossing_texel, size, crossing_depth).z) <= thickness) {
+                    hit = crossing;
+                    found = true;
+                    break;
+                }
+                previous = b; // passed behind a near surface (a silhouette): carry on
+                continue;
+            }
+        }
+        previous = q;
+    }
+    if (!found) return 0.0;
+    float2 uv = hit / size;
+    float2 edge = smoothstep(0.0, 0.08, uv) * smoothstep(0.0, 0.08, 1.0 - uv);
+    float fade = min(edge.x, edge.y); // the march is reliable only away from the frame's edges
+    if (fade <= 0.0) return 0.0;
+    float fresnel = 0.04 + 0.96 * pow(1.0 - saturate(dot(n, -v)), 5.0);
+    weight = min(saturate(strength * smooth_fade * fade) * fresnel, 0.9);
+    // A bilinear tap kept half a texel inside the edges (the shared sampler wraps).
+    float2 texel_size = 1.0 / size;
+    return g_Textures[g_PC.g_SceneColor].SampleLevel(g_Sampler, clamp(uv, 0.5 * texel_size, 1.0 - 0.5 * texel_size), 0).rgb;
+}
+
 // The lens word's four 8-bit strengths, 0..1 (PackLens on the CPU).
 float LensField(uint shift) { return (float)((g_PC.g_Lens >> shift) & 255u) / 255.0; }
 
@@ -182,11 +269,19 @@ float3 SceneColorThroughLens(int2 pixel, int2 size) {
     return c;
 }
 
+)" // split: MSVC caps one string literal at 16 KB
+R"(
 float4 PSMain(float4 position : SV_POSITION) : SV_TARGET {
     uint width, height;
     g_Textures[g_PC.g_SceneColor].GetDimensions(width, height);
     float3 c = SceneColorThroughLens(int2(position.xy), int2(width, height));
     if (g_PC.g_Depth < 128 && g_PC.g_AoStrength > 0.0) c *= AmbientOcclusion(int2(position.xy), float2(width, height));
+    if (g_PC.g_Depth < 128 && ((g_PC.g_Tonemapper >> 2u) & 255u) > 0u) {
+        // Screen-space reflections before the fog, so a reflected surface fades with its own distance.
+        float reflection_weight;
+        float3 reflected = ScreenSpaceReflection(int2(position.xy), float2(width, height), reflection_weight);
+        c = lerp(c, reflected, reflection_weight);
+    }
     if (g_PC.g_Depth < 128 && (g_PC.g_FogDensity > 0.0 || g_PC.g_FogColor.w > 0.0)) {
         // Distance haze: the scene fades toward the sky's colour with the distance from the camera (the sky itself is left alone).
         float d = AoDepth(int2(position.xy), float2(width, height));
@@ -239,7 +334,7 @@ float4 PSMain(float4 position : SV_POSITION) : SV_TARGET {
     float grain = LensField(16u);
     if (grain > 0.0) {
         // Film grain: the same noise on all three channels, strongest in the midtones, new every frame.
-        float noise = FilmGrainNoise((uint)position.x, (uint)position.y, g_PC.g_Tonemapper >> 2u);
+        float noise = FilmGrainNoise((uint)position.x, (uint)position.y, g_PC.g_Tonemapper >> 10u);
         encoded = saturate(encoded + noise * grain * 0.25 * (1.0 - abs(2.0 * encoded - 1.0)));
     }
     return float4(encoded, 1.0);
@@ -318,7 +413,9 @@ PostConstants PackPostConstants(const PostProcessSettings& settings, u32 scene_c
     c.exposure = std::exp2(std::clamp(settings.exposure_compensation, -10.0f, 10.0f));
     u32 tonemapper = static_cast<u32>(settings.tonemapper);
     if (tonemapper > 2) tonemapper = 0;
-    c.tonemapper = PackTonemapperFrame(tonemapper, 0); // Draw puts the frame number in
+    const f32 reflections = std::isfinite(settings.screen_space_reflections) ? std::clamp(settings.screen_space_reflections, 0.0f, 1.0f) : 0.0f;
+    const u32 reflection_strength = static_cast<u32>(std::lround(reflections * 255.0f));
+    c.tonemapper = PackTonemapperFrame(tonemapper, 0, reflection_strength); // Draw puts the frame number in
     c.saturation = std::clamp(settings.saturation, 0.0f, 2.0f);
     c.lens = PackLens(settings.vignette, settings.chromatic_aberration, settings.film_grain, settings.sharpen);
     c.bloom_intensity = std::isfinite(settings.bloom_intensity) ? std::clamp(settings.bloom_intensity, 0.0f, 1.0f) : 0.0f;
@@ -478,7 +575,8 @@ bool PostPass::RenderBloom(gfx::rhi::ICommandList& commands, const PostProcessSe
 void PostPass::Draw(gfx::rhi::ICommandList& commands, const PostProcessSettings& settings) {
     if (!Valid()) return;
     PostConstants constants = PackPostConstants(settings, Source());
-    constants.tonemapper = PackTonemapperFrame(PostTonemapperOf(constants), frame_++); // wraps at 2^30 frames: the grain just repeats
+    // The frame number wraps after 2^22 frames: the grain just repeats then.
+    constants.tonemapper = PackTonemapperFrame(PostTonemapperOf(constants), frame_++, PostScreenSpaceReflectionsOf(constants));
     if (bloom_ready_ && !bloom_levels_.empty()) {
         constants.bloom = bloom_levels_.front().index;
         constants.bloom_scale = 1.0f / static_cast<f32>(bloom_levels_.size());

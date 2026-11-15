@@ -35,7 +35,11 @@ float4 VSMain(uint id : SV_VertexID) : SV_Position {
 }
 
 int2 TargetSize() { return int2(round(1.0 / g_PC.g_Texel)); }
-float3 Current(int2 p) { return g_Textures[g_PC.g_Current].Load(int3(clamp(p, int2(0, 0), TargetSize() - 1), 0)).rgb; }
+float4 CurrentSurface(int2 p) { return g_Textures[g_PC.g_Current].Load(int3(clamp(p, int2(0, 0), TargetSize() - 1), 0)); }
+float3 Current(int2 p) { return CurrentSurface(p).rgb; }
+// The scene colour's alpha carries a surface's roughness for the post pass's screen-space reflections; it is not part of the resolved
+// colour, so it is passed through unfiltered (blending it over the history would smear it across edges).
+float CurrentRoughness(int2 p) { return CurrentSurface(p).a; }
 float Depth(int2 p) { return g_Textures[g_PC.g_Depth].Load(int3(clamp(p, int2(0, 0), TargetSize() - 1), 0)).r; }
 
 float3 ToYCoCg(float3 c) { return float3(dot(c, float3(0.25, 0.5, 0.25)), dot(c, float3(0.5, 0.0, -0.5)), dot(c, float3(-0.25, 0.5, -0.25))); }
@@ -78,7 +82,7 @@ float3 ClipToBox(float3 history, float3 center, float3 extent) {
 float4 PSMain(float4 position : SV_Position) : SV_Target {
     int2 p = int2(position.xy);
     float3 current = Current(p);
-    if (g_PC.g_Blend >= 1.0) return float4(current, 1.0);
+    if (g_PC.g_Blend >= 1.0) return float4(current, CurrentRoughness(p));
 
     // The neighbourhood: its colour moments, and its nearest depth (so an edge's pixels follow the surface in front).
     float3 m1 = float3(0, 0, 0), m2 = float3(0, 0, 0);
@@ -111,18 +115,18 @@ float4 PSMain(float4 position : SV_Position) : SV_Target {
     } else {
         float2 ndc = float2(position.x * g_PC.g_Texel.x * 2.0 - 1.0, 1.0 - position.y * g_PC.g_Texel.y * 2.0);
         float4 previous = mul(g_PC.g_Reprojection, float4(ndc, depth, 1.0));
-        if (previous.w <= 1e-6) return float4(current, 1.0);
+        if (previous.w <= 1e-6) return float4(current, CurrentRoughness(p));
         previous_uv = float2(previous.x / previous.w * 0.5 + 0.5, 0.5 - previous.y / previous.w * 0.5);
     }
-    if (any(previous_uv < 0.0) || any(previous_uv > 1.0)) return float4(current, 1.0); // off screen last frame: nothing to keep
+    if (any(previous_uv < 0.0) || any(previous_uv > 1.0)) return float4(current, CurrentRoughness(p)); // off screen last frame: nothing to keep
 
     float3 history = HistoryCatmullRom(previous_uv);
-    if (any(isnan(history)) || any(isinf(history))) return float4(current, 1.0);
+    if (any(isnan(history)) || any(isinf(history))) return float4(current, CurrentRoughness(p));
     history = FromYCoCg(ClipToBox(ToYCoCg(history), mean, 1.25 * sigma));
 
     float current_weight = g_PC.g_Blend / (1.0 + Luma(current));
     float history_weight = (1.0 - g_PC.g_Blend) / (1.0 + Luma(history));
-    return float4(max((current * current_weight + history * history_weight) / (current_weight + history_weight), 0.0), 1.0);
+    return float4(max((current * current_weight + history * history_weight) / (current_weight + history_weight), 0.0), CurrentRoughness(p));
 }
 )";
 

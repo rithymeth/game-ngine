@@ -5338,6 +5338,7 @@
   ),AETHER_FIELD(priority,Field_EditAnywhere,
   ),AETHER_FIELD(range,Field_EditAnywhere,
   ),AETHER_FIELD(saturation,Field_EditAnywhere,
+  ),AETHER_FIELD(screen_space_reflections,Field_EditAnywhere,
   ),AETHER_FIELD(sharpen,Field_EditAnywhere,
   ),AETHER_FIELD(size,Field_EditAnywhere,
   ),AETHER_FIELD(sort_order,Field_EditAnywhere,

@@ -1,5 +1,6 @@
 #include "../player/src/post_pass.h"
 #include "../player/src/decal_pass.h"
+#include "../player/src/environment.h"
 #include "../player/src/particle_pass.h"
 #include "aether/gfx/rhi/command_list.h"
 #include "aether/gfx/rhi/device.h"
@@ -8,6 +9,7 @@
 #include "aether/renderer/post.h"
 #include "test_framework.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -292,10 +294,10 @@ AETHER_TEST(PostPass_LensWordPacksFourStrengthsAndTheFrame) {
     AETHER_CHECK(player::LensFilmGrain(lens) == 0.0f && Near(player::LensSharpen(lens), 51.0f / 255.0f, 1e-6f));
     AETHER_CHECK(player::PackLens(-4.0f, 9.0f, std::nanf(""), INFINITY) == (0u | (255u << 8) | (0u << 16) | (0u << 24)));
     AETHER_CHECK(player::PackLens(0.0f, 0.0f, 0.0f, 0.0f) == 0u && player::PackLens(1.0f, 1.0f, 1.0f, 1.0f) == 0xffffffffu);
-    // The tone mapper keeps its 2 bits and the frame the other 30.
+    // The tone mapper keeps its 2 bits, the reflections take 8 and the frame the other 22.
     player::PostConstants c;
-    c.tonemapper = player::PackTonemapperFrame(2, 123456789u);
-    AETHER_CHECK(player::PostTonemapperOf(c) == 2 && player::PostFrameOf(c) == 123456789u);
+    c.tonemapper = player::PackTonemapperFrame(2, 123456u, 200u);
+    AETHER_CHECK(player::PostTonemapperOf(c) == 2 && player::PostScreenSpaceReflectionsOf(c) == 200u && player::PostFrameOf(c) == 123456u);
     // The pack carries the lens settings into the word, and the constants are still the 128 bytes every device guarantees.
     static_assert(sizeof(player::PostConstants) == 128);
     PostProcessSettings s;
@@ -350,6 +352,7 @@ AETHER_TEST(PostVolume_LensEffectsBlendAndSerialize) {
     loaded.film_grain = 0.9f; // not what the file says: the default is
     AETHER_CHECK(reflect::FromJson(loaded, old) && loaded.chromatic_aberration == 0.0f && loaded.sharpen == 0.0f);
 }
+
 
 namespace {
 
@@ -478,7 +481,207 @@ void PostPass_LensEffectsMatchTheCpuReference(gfx::rhi::Backend backend) {
     }
 }
 
+// --- Screen-space reflections on the GPU ------------------------------------------------------------------------------------------
+
+// The reflections' synthetic scene. The camera is at the origin looking down -Z with a 60 degree vertical field (an identity view), over a
+// floor at y = -1 and a wall at z = -20 behind it. Each pixel shows floor or wall, whichever its eye ray reaches first; the wall's green rises
+// with height and the floor is flat, so a floor pixel's mirror ray (up and forward, into the wall) lands on a colour the test works out
+// analytically. The scene colour is an RGBA16F texture (its alpha is the surface's roughness, as the scene shader writes it) and the depth an
+// R32F one, both sampled by the pass.
+constexpr f32 kSsrProjection = 1.7320508f; // 1 / tan(30 degrees): the projection's [1][1], and [0][0] on a square target
+constexpr f32 kSsrNear = 0.1f, kSsrFar = 100.0f, kSsrWallDepth = 20.0f;
+const Vec3 kSsrFloorColor{0.2f, 0.3f, 0.3f};
+
+f32 SsrWallGreen(f32 height) { return 0.05f + 1.5f * std::clamp((height + 1.0f) / 10.0f, 0.0f, 1.0f); }
+
+// The eye ray of a pixel centre, in view space (unit length).
+Vec3 SsrEyeRay(u32 x, u32 y) {
+    const f32 ndc_x = (static_cast<f32>(x) + 0.5f) / kSize * 2.0f - 1.0f;
+    const f32 ndc_y = 1.0f - (static_cast<f32>(y) + 0.5f) / kSize * 2.0f;
+    const f32 x_slope = ndc_x / kSsrProjection, y_slope = ndc_y / kSsrProjection;
+    const f32 inverse = 1.0f / std::sqrt(x_slope * x_slope + y_slope * y_slope + 1.0f);
+    return Vec3(x_slope * inverse, y_slope * inverse, -inverse);
+}
+
+struct SsrScenePixel {
+    f32 view_z = 1e30f; // metres to the surface
+    Vec3 color{0, 0, 0};
+    f32 roughness = 1.0f;
+};
+
+SsrScenePixel SsrPixel(u32 x, u32 y) {
+    const Vec3 ray = SsrEyeRay(x, y);
+    const f32 floor_t = ray.y < 0.0f ? -1.0f / ray.y : 1e30f; // the floor is y = -1
+    const f32 wall_t = -kSsrWallDepth / ray.z;                // the wall is z = -kSsrWallDepth
+    SsrScenePixel pixel;
+    if (floor_t < wall_t) {
+        pixel.view_z = floor_t;
+        pixel.color = kSsrFloorColor;
+        pixel.roughness = 0.0f; // a mirror: its reflection must be replaced
+    } else {
+        pixel.view_z = wall_t;
+        pixel.color = Vec3(0.2f, SsrWallGreen(ray.y * wall_t), 0.3f);
+        pixel.roughness = 1.0f; // rough: nothing reflects
+    }
+    return pixel;
+}
+
+f32 SsrDeviceDepth(f32 view_z) { return kSsrFar * (1.0f - kSsrNear / view_z) / (kSsrFar - kSsrNear); }
+
+void PostPass_ReflectionsLandWhereTheMirrorRayMeetsTheScene(gfx::rhi::Backend backend) {
+    std::unique_ptr<gfx::rhi::IDevice> device = MakeDevice(backend);
+    if (!device) return;
+    std::unique_ptr<gfx::rhi::ISwapChain> target = device->CreateSwapChain(nullptr, kSize, kSize, 2);
+    player::PostPass post(*device, *target);
+    if (!post.Valid()) {
+        std::printf("    (no HDR scene colour target on this device)\n");
+        return;
+    }
+    std::vector<u16> halves;
+    std::vector<f32> depths;
+    halves.reserve(kSize * kSize * 4);
+    depths.reserve(kSize * kSize);
+    for (u32 y = 0; y < kSize; ++y) {
+        for (u32 x = 0; x < kSize; ++x) {
+            const SsrScenePixel pixel = SsrPixel(x, y);
+            halves.insert(halves.end(), {player::FloatToHalf(pixel.color.x), player::FloatToHalf(pixel.color.y),
+                                         player::FloatToHalf(pixel.color.z), player::FloatToHalf(pixel.roughness)});
+            depths.push_back(SsrDeviceDepth(pixel.view_z));
+        }
+    }
+    const gfx::rhi::SampledTextureHandle scene = device->CreateHalfFloatTexture(kSize, kSize, 1, halves.data());
+    const gfx::rhi::SampledTextureHandle depth = device->CreateR32FloatTexture(kSize, kSize, depths.data());
+    if (!scene.IsValid() || !depth.IsValid()) {
+        std::printf("    (no half-float or R32F texture on this device: skipping)\n");
+        if (scene.IsValid()) device->DestroyTexture(scene);
+        if (depth.IsValid()) device->DestroyTexture(depth);
+        return;
+    }
+    const u32 px = 32, py = 48; // the floor
+    const u32 wall_px = 32, wall_py = 10;
+    const SsrScenePixel floor_pixel = SsrPixel(px, py), wall_pixel = SsrPixel(wall_px, wall_py);
+    AETHER_CHECK(floor_pixel.roughness == 0.0f && wall_pixel.roughness == 1.0f);
+    // The floor pixel's mirror ray and where it meets the wall: the colour the march must find.
+    const Vec3 ray = SsrEyeRay(px, py);
+    const Vec3 point = ray * floor_pixel.view_z;
+    const Vec3 mirror(ray.x, -ray.y, ray.z); // reflect about the floor's normal (0, 1, 0)
+    const f32 to_wall = (-kSsrWallDepth - point.z) / mirror.z;
+    const f32 hit_height = point.y + mirror.y * to_wall;
+    AETHER_CHECK(to_wall > 0.0f && mirror.z < 0.0f && hit_height > -1.0f && hit_height < 10.0f); // the hit is on the wall
+    const Vec3 hit(0.2f, SsrWallGreen(hit_height), 0.3f);
+    const f32 facing = -ray.y; // the floor's normal against the eye ray
+    const f32 weight = std::min(0.04f + 0.96f * std::pow(1.0f - facing, 5.0f), 0.9f); // strength 1, smooth, away from the edges
+    const Vec3 blended(floor_pixel.color.x + (hit.x - floor_pixel.color.x) * weight,
+                       floor_pixel.color.y + (hit.y - floor_pixel.color.y) * weight,
+                       floor_pixel.color.z + (hit.z - floor_pixel.color.z) * weight);
+    const f32 u = (static_cast<f32>(px) + 0.5f) / kSize, v = (static_cast<f32>(py) + 0.5f) / kSize;
+    const PostProcessSettings reflections = [] {
+        PostProcessSettings settings;
+        settings.screen_space_reflections = 1.0f;
+        return settings;
+    }();
+    const PostProcessSettings off = [] {
+        PostProcessSettings settings;
+        settings.screen_space_reflections = 0.0f;
+        return settings;
+    }();
+    const player::PostConstants constants = player::PackPostConstants(reflections, scene.index);
+    const auto steps = [&](const Vec3& linear) { return static_cast<int>(std::lround(player::PostReference(linear, constants, u, v).y * 255.0f)); };
+    const int expected = steps(blended), unreflected = steps(floor_pixel.color);
+    const int wall_expected = static_cast<int>(std::lround(
+        player::PostReference(wall_pixel.color, constants, (static_cast<f32>(wall_px) + 0.5f) / kSize, (static_cast<f32>(wall_py) + 0.5f) / kSize).y *
+        255.0f));
+
+    std::unique_ptr<gfx::rhi::ICommandList> cmd = device->CreateCommandList();
+    const auto render = [&](const PostProcessSettings& settings, std::vector<u8>& pixels) {
+        post.SetSource(scene.index);
+        // The pass takes its depth, projection and near/far from the occlusion constants (its strength 0: only the reflections read the depth).
+        post.SetAmbientOcclusion({depth.index, 0.0f, 1.0f, kSsrNear, kSsrFar, kSsrProjection, kSsrProjection});
+        target->AcquireNextImage();
+        cmd->Reset();
+        cmd->BeginRenderPass(*target, {1.0f, 0.0f, 1.0f, 1.0f}); // magenta: any pixel the pass misses shows
+        post.Draw(*cmd, settings);
+        cmd->EndRenderPass();
+        cmd->Close();
+        device->WaitForFence(device->Submit(*cmd, target.get()));
+        const bool read = target->ReadBack(pixels);
+        target->Present(false);
+        return read && pixels.size() == kSize * kSize * 4;
+    };
+    std::vector<u8> reflected, ignored;
+    AETHER_CHECK(render(reflections, reflected));
+    AETHER_CHECK(render(off, ignored));
+    if (reflected.size() != kSize * kSize * 4 || ignored.size() != reflected.size()) return;
+    // The mirror floor shows the wall; with the reflections off (and on a rough surface) it keeps its own colour.
+    const int got = PixelChannel(reflected, px, py, 1);
+    if (std::abs(got - expected) > 4) std::printf("    reflection: green %d, expected %d (unreflected %d)\n", got, expected, unreflected);
+    AETHER_CHECK(std::abs(expected - unreflected) > 6); // the check means something: the reflection moves the pixel
+    AETHER_CHECK(std::abs(got - expected) <= 4);
+    AETHER_CHECK(std::abs(PixelChannel(ignored, px, py, 1) - unreflected) <= 2);
+    AETHER_CHECK(std::abs(PixelChannel(reflected, wall_px, wall_py, 1) - wall_expected) <= 2); // the rough wall reflects nothing
+    device->DestroyTexture(scene);
+    device->DestroyTexture(depth);
+}
+
 } // namespace
 
 AETHER_TEST(PostPass_LensEffectsMatchTheCpuReferenceOnD3D12) { PostPass_LensEffectsMatchTheCpuReference(gfx::rhi::Backend::D3D12); }
 AETHER_TEST(PostPass_LensEffectsMatchTheCpuReferenceOnVulkan) { PostPass_LensEffectsMatchTheCpuReference(gfx::rhi::Backend::Vulkan); }
+AETHER_TEST(PostPass_ReflectionsLandWhereTheMirrorRayMeetsTheSceneOnD3D12) {
+    PostPass_ReflectionsLandWhereTheMirrorRayMeetsTheScene(gfx::rhi::Backend::D3D12);
+}
+AETHER_TEST(PostPass_ReflectionsLandWhereTheMirrorRayMeetsTheSceneOnVulkan) {
+    PostPass_ReflectionsLandWhereTheMirrorRayMeetsTheScene(gfx::rhi::Backend::Vulkan);
+}
+
+// --- Screen-space reflections: settings and packing ------------------------------------------------------------------------------
+// --- Screen-space reflections ----------------------------------------------------------------------------------------------------
+
+AETHER_TEST(PostPass_ReflectionStrengthRidesInTheTonemapperWord) {
+    // It is an 8-bit strength beside the tone mapper (0 is off), clamped, and what is not a number counts as 0.
+    PostProcessSettings s;
+    s.screen_space_reflections = 0.5f;
+    const player::PostConstants half = player::PackPostConstants(s, 1);
+    AETHER_CHECK(player::PostScreenSpaceReflectionsOf(half) == 128u);
+    AETHER_CHECK(player::PostTonemapperOf(half) == 0 && player::PostFrameOf(half) == 0u);
+    s.screen_space_reflections = 4.0f;
+    AETHER_CHECK(player::PostScreenSpaceReflectionsOf(player::PackPostConstants(s, 1)) == 255u);
+    s.screen_space_reflections = std::nanf("");
+    AETHER_CHECK(player::PostScreenSpaceReflectionsOf(player::PackPostConstants(s, 1)) == 0u);
+    s.screen_space_reflections = 0.0f;
+    AETHER_CHECK(player::PostScreenSpaceReflectionsOf(player::PackPostConstants(s, 1)) == 0u);
+    // A default volume reflects at half strength.
+    AETHER_CHECK(player::PostScreenSpaceReflectionsOf(player::PackPostConstants(PostProcessSettings{}, 1)) == 128u);
+    // It never reaches the reference the tone mapper is compared against: the pass reflects only what the depth shows.
+    player::PostConstants c;
+    c.tonemapper = player::PackTonemapperFrame(0, 0, 255u);
+    AETHER_CHECK(Near(player::PostReference(Vec3(1, 2, 3), c, 0.5f, 0.5f).y, player::PostReference(Vec3(1, 2, 3), player::PostConstants{}, 0.5f, 0.5f).y, 1e-6f));
+}
+
+AETHER_TEST(PostVolume_ReflectionsBlendAndDefaultOn) {
+    const auto near = [](f32 a, f32 b) { return std::fabs(a - b) < 1e-5f; };
+    AETHER_CHECK(near(PostProcessVolume{}.screen_space_reflections, 0.5f) && near(PostProcessSettings{}.screen_space_reflections, 0.5f));
+    RenderScene scene;
+    PostProcessVolume base;
+    base.screen_space_reflections = 0.2f;
+    scene.post_volumes.push_back({Vec3(0, 0, 0), base});
+    AETHER_CHECK(near(BlendPostProcess(scene, Vec3(500, 0, 0)).screen_space_reflections, 0.2f));
+    PostProcessVolume local;
+    local.global = false;
+    local.extents = Vec3(5, 5, 5);
+    local.blend_distance = 0.0f;
+    local.priority = 1;
+    local.screen_space_reflections = 1.0f;
+    scene.post_volumes.push_back({Vec3(0, 0, 0), local});
+    AETHER_CHECK(near(BlendPostProcess(scene, Vec3(0, 0, 0)).screen_space_reflections, 1.0f));
+    AETHER_CHECK(near(BlendPostProcess(scene, Vec3(500, 0, 0)).screen_space_reflections, 0.2f));
+    // A saved volume round-trips, and one saved before the field existed loads with the default.
+    const reflect::Json saved = reflect::ToJson(base);
+    PostProcessVolume back;
+    back.screen_space_reflections = 0.0f;
+    AETHER_CHECK(reflect::FromJson(back, saved) && near(back.screen_space_reflections, 0.2f));
+    reflect::Json old = saved;
+    old.erase("screen_space_reflections");
+    PostProcessVolume loaded;
+    AETHER_CHECK(reflect::FromJson(loaded, old) && near(loaded.screen_space_reflections, 0.5f));
+}

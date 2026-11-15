@@ -860,8 +860,14 @@ R"(
     }
 #endif
 #ifdef AETHER_HDR_TARGET
-    // Linear light into the HDR scene colour target; the post pass applies exposure, the tone mapper and the sRGB encoding.
-    return float4(max(color, 0.0), surface_alpha);
+    // Linear light into the HDR scene colour target; the post pass applies exposure, the tone mapper and the sRGB encoding. Under
+    // AETHER_SSR the alpha carries the surface's roughness for the post pass's screen-space reflections (the HDR target's alpha is otherwise
+    // unused by opaque draws). Water is left alone: it mirrors the scene by the reflection pass already.
+    float output_alpha = surface_alpha;
+#ifdef AETHER_SSR
+    if (((g_PC.g_AlphaOptions >> 11) & 1) == 0) output_alpha = roughness;
+#endif
+    return float4(max(color, 0.0), output_alpha);
 #else
     color = color / (color + 1.0);
     color = LinearToSRGB(color);
@@ -1088,7 +1094,7 @@ struct SceneRenderer::Impl {
                 auto built = std::make_unique<GraphShader>();
                 try {
                     PipelineDesc desc = scene_desc;
-                    desc.hlsl_source = SceneShaderSource(scene_frame_data, hdr, scene_rt, made->build.shader);
+                    desc.hlsl_source = SceneShaderSource(scene_frame_data, hdr, scene_rt, made->build.shader, ssr);
                     built->pipeline = device.CreatePipeline(desc, swap_chain);
                     desc.cull_back_face = true;
                     built->culled = device.CreatePipeline(desc, swap_chain);
@@ -1230,6 +1236,10 @@ struct SceneRenderer::Impl {
     u64 transform_frame = 0;
     // Screen-space ambient occlusion in the post pass (AETHER_RENDER_AO=0 turns it off; AETHER_RENDER_AO_STRENGTH and _RADIUS tune it).
     bool ssao = false;
+    // Screen-space reflections in the post pass (AETHER_RENDER_SSR=0 turns them off): the scene shader writes roughness into the HDR
+    // target's alpha and the post pass marches the mirror ray against the depth copy. Needs the HDR target; orthographic cameras can't
+    // reconstruct a view-space position from the depth, so the post pass fades them out by projection (counts.w holds the view mode, not this).
+    bool ssr = false;
     f32 fog_sun_scatter = 0.1f; // the sun's light the fog takes toward the sun, as a share of its colour (AETHER_RENDER_FOG_SUN tunes it)
     f32 ao_strength = 0.9f, ao_radius = 2.5f;
     bool taa_motion = false; // the motion pass (AETHER_RENDER_TAA_MOTION=0 turns it off)
@@ -1344,14 +1354,16 @@ struct SceneRenderer::Impl {
         }
         const char* ao_setting = std::getenv("AETHER_RENDER_AO");
         ssao = hdr && (ao_setting == nullptr || std::strcmp(ao_setting, "0") != 0);
+        const char* ssr_setting = std::getenv("AETHER_RENDER_SSR");
+        ssr = hdr && (ssr_setting == nullptr || std::strcmp(ssr_setting, "0") != 0);
         if (const char* v = std::getenv("AETHER_RENDER_FOG_SUN")) fog_sun_scatter = std::clamp(static_cast<f32>(std::atof(v)), 0.0f, 2.0f);
         if (const char* v = std::getenv("AETHER_RENDER_AO_STRENGTH")) ao_strength = std::clamp(static_cast<f32>(std::atof(v)), 0.0f, 1.0f);
         if (const char* v = std::getenv("AETHER_RENDER_AO_RADIUS")) ao_radius = std::clamp(static_cast<f32>(std::atof(v)), 0.05f, 20.0f);
         PipelineDesc desc;
-        desc.hlsl_source = SceneShaderSource(false, hdr);
+        desc.hlsl_source = SceneShaderSource(false, hdr, false, {}, ssr);
         desc.scene_color_target = hdr;
         if (device.SupportsFrameConstants()) {
-            desc.hlsl_source = SceneShaderSource(true, hdr);
+            desc.hlsl_source = SceneShaderSource(true, hdr, false, {}, ssr);
             desc.frame_constants_size_bytes = sizeof(FrameData);
             for (usize i = 0; i < kFrameBuffers; ++i) frame_buffers.push_back(device.CreateFrameConstantBuffer(sizeof(FrameData)));
             desc.frame_read_buffer = true;
@@ -1369,7 +1381,7 @@ struct SceneRenderer::Impl {
             const char* rt_setting = std::getenv("AETHER_RENDER_RT_SHADOWS");
             if (shadows && device.SupportsRayTracing() && rt_setting != nullptr && std::strcmp(rt_setting, "1") == 0) {
                 rt_shadows = true;
-                desc.hlsl_source = SceneShaderSource(true, hdr, true);
+                desc.hlsl_source = SceneShaderSource(true, hdr, true, {}, ssr);
                 desc.shader_model_6 = true;
                 desc.acceleration_structure = true;
             }
@@ -1425,7 +1437,7 @@ struct SceneRenderer::Impl {
                 rt_shadows = false;
                 if (pipeline.IsValid()) device.DestroyPipeline(pipeline);
                 pipeline = {};
-                desc.hlsl_source = SceneShaderSource(true, hdr);
+                desc.hlsl_source = SceneShaderSource(true, hdr, false, {}, ssr);
                 desc.shader_model_6 = false;
                 desc.acceleration_structure = false;
             }
@@ -1438,6 +1450,8 @@ struct SceneRenderer::Impl {
         PipelineDesc transparent_desc = desc;
         transparent_desc.enable_blending = true;
         transparent_desc.depth_write = false;
+        // A blended draw's alpha is the blend's, not a roughness: it must not overwrite what the opaque surface behind it left for the reflections.
+        transparent_desc.hlsl_source = SceneShaderSource(scene_frame_data, hdr, scene_rt);
         transparent_pipeline = device.CreatePipeline(transparent_desc, swap_chain);
         PipelineDesc culled_desc = desc;
         culled_desc.cull_back_face = true;
@@ -1450,6 +1464,8 @@ struct SceneRenderer::Impl {
             reflection_desc.scene_color_target = false;
             reflection_desc.render_texture_target = true;
             reflection_desc.render_texture_depth = true;
+            // The mirror texture's alpha is water's "something was drawn here" mask, not a roughness.
+            reflection_desc.hlsl_source = SceneShaderSource(scene_frame_data, hdr, scene_rt);
         } else {
             reflections = false;
         }
@@ -3533,8 +3549,13 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
         // in display space. Temporal anti-aliasing first blends it with the frames before (reading the depth copied here).
         RenderScene volumes;
         volumes.post_volumes = ExtractPostVolumes(world, guids);
-        const PostProcessSettings post_settings = BlendPostProcess(volumes, have_camera ? decal_camera_position : Vec3(0, 0, 0));
-        const bool resolve = (renderer.taa || vsm_record || renderer.ssao || post_settings.fog_density > 0.0f || post_settings.height_fog_density > 0.0f) && have_camera && commands.CopySceneDepth();
+        PostProcessSettings post_settings = BlendPostProcess(volumes, have_camera ? decal_camera_position : Vec3(0, 0, 0));
+        // The reflections reconstruct view-space positions from the depth, which is a perspective projection's inverse; an orthographic camera
+        // (or no camera) keeps the sky lighting's reflection.
+        if (!renderer.ssr || camera == nullptr || camera->projection != Projection::Perspective) post_settings.screen_space_reflections = 0.0f;
+        const bool resolve = (renderer.taa || vsm_record || renderer.ssao || renderer.ssr || post_settings.fog_density > 0.0f ||
+                              post_settings.height_fog_density > 0.0f) &&
+                             have_camera && commands.CopySceneDepth();
         commands.EndRenderPass();
         renderer.GpuStamp(commands, 2);
         if (resolve && vsm_record) renderer.vsm_feedback->Record(commands, vsm_feedback_params, frame_index);
@@ -3547,7 +3568,8 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
             renderer.taa->Reset();
         }
         renderer.post->SetSource(resolved);
-        if (resolve && (renderer.ssao || post_settings.fog_density > 0.0f || post_settings.height_fog_density > 0.0f) && renderer.swap_chain.SceneDepthTexture().IsValid()) {
+        if (resolve && (renderer.ssao || renderer.ssr || post_settings.fog_density > 0.0f || post_settings.height_fog_density > 0.0f) &&
+            renderer.swap_chain.SceneDepthTexture().IsValid()) {
             renderer.post->SetAmbientOcclusion({renderer.swap_chain.SceneDepthTexture().index, renderer.ssao ? renderer.ao_strength : 0.0f,
                                                 renderer.ao_radius, ao_near, ao_far, ao_proj_x, ao_proj_y});
             renderer.post->SetFogColor(Vec3(frame_data.sky_color[0], frame_data.sky_color[1], frame_data.sky_color[2]));
@@ -3571,8 +3593,10 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
 }
 
 // The advanced PBR library (anisotropic GGX, sheen, clear coat) goes ahead of the scene shader.
-std::string SceneShaderSource(bool with_frame_data, bool hdr_target, bool ray_traced_shadows, const std::string& graph_hlsl) {
+std::string SceneShaderSource(bool with_frame_data, bool hdr_target, bool ray_traced_shadows, const std::string& graph_hlsl,
+                              bool screen_space_reflections) {
     return std::string(with_frame_data ? "#define AETHER_FRAME_DATA 1\n" : "") + (hdr_target ? "#define AETHER_HDR_TARGET 1\n" : "") +
+           (hdr_target && screen_space_reflections ? "#define AETHER_SSR 1\n" : "") +
            (with_frame_data && ray_traced_shadows ? "#define AETHER_RT_SHADOWS 1\n" : "") + (graph_hlsl.empty() ? "" : "#define AETHER_GRAPH_MATERIAL 1\n") +
            mat::AdvancedPbrHlsl() + mat::ShadingModelsHlsl() + kSceneBindings + graph_hlsl + kSceneShader + (with_frame_data ? FrameDataHlsl() : "") + kSceneShaderVertex +
            (with_frame_data ? VsmShaderLibrary() : "") + (with_frame_data ? kSceneShaderVsm : "") + kSceneShaderFrame;
