@@ -429,8 +429,16 @@ with a `ModelRenderer`). Matching and the directives themselves ignore case, and
 term. A filtered hierarchy is still a tree rather than a flat result list: `VisibleEntities` adds every match's
 ancestors, matches draw where they hang, the chain to a match is forced open, and branches with no match disappear; a
 filter with no match says "No entities match." The box's hint spells the grammar out. Filtering is not an edit — no
-command is recorded, and the selection stays where it is. Visibility/lock toggles, type icons and multi-drag
-reparenting are still open.
+command is recorded, and the selection stays where it is. Visibility/lock toggles and type icons are still open.
+
+Implemented: dragging several rows. A drag that starts on a selected row carries the whole selection
+(`ScenePanel::DragSet`); one that starts on an unselected row carries just that row. Pressing a selected row of a
+multi-selection keeps the selection until release, so the press can become a drag; a release without a drag selects
+just that row, as a click always did. Dropping on a row or the heading reparents everything carried as one undo step
+(`ScenePanel::ReparentEntities`). An entity whose ancestor is carried too stays under that ancestor, so a subtree moves
+intact; one that would go under its own descendant is skipped and counted in the status line while the rest land. The row
+menu's "Move to the scene root" acts on the selection the same way. There is no above/below line indicator yet: a drop
+always goes "into", because sibling order is by name.
 
 ### 6.4 Inspector
 

@@ -727,6 +727,19 @@ and `ComponentCard_DrawingTheCardsChangesNothing`. Still open: granular prefab o
 visibility/lock toggles, type icons and multi-drag reparenting, card reordering (Move Up/Down needs a per-entity
 component order the ECS does not keep), and the multi-selection inspector screenshot gate.
 
+Done so far (2026-11-16): multi-drag reparenting. Dragging a row that is part of the selection carries the whole
+selection (`ScenePanel::DragSet`); the entity payload is now one or more `Entity` values back to back. Pressing a
+selected row of a multi-selection no longer collapses the selection on the press: it becomes just that row on release
+only if the press was a click, not the start of a drag. A drop on a row or on the heading reparents everything carried
+as one undo step (`ScenePanel::ReparentEntities`, "Parent N entities" / "Move N entities to the root"); a carried entity
+whose ancestor is carried too keeps its own parent, so a subtree arrives intact, and one that would go under its own
+descendant is skipped while the rest still land, with a status line. "Move to the scene root" in the row menu acts on
+the selection the same way. Tests in `tests/test_hierarchy_drag.cpp`: `HierarchyDrag_ReparentingManyIsOneUndoStep`,
+`HierarchyDrag_ACarriedChildKeepsItsCarriedParent`, `HierarchyDrag_AnEntityCannotGoUnderItsOwnChild`,
+`HierarchyDrag_TheDragSetIsTheSelectionOnlyFromASelectedRow`, `HierarchyDrag_ARealDragOfASelectedRowCarriesTheSelection`
+and `HierarchyDrag_AClickOnASelectedRowSelectsJustIt`. Still open: granular prefab overrides, the hierarchy's
+visibility/lock toggles and type icons, card reordering, and the multi-selection inspector screenshot gate.
+
 Gate: mixed-value semantics tests; edit-across-selection undo test; reset/copy/paste tests; hierarchy filter tests;
 screenshot of a multi-selection inspector.
 

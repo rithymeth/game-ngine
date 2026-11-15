@@ -22,7 +22,14 @@ namespace aether::editor {
 
 namespace {
 
-constexpr const char* kEntityPayload = "AETHER_ENTITY";
+constexpr const char* kEntityPayload = "AETHER_ENTITY"; // one or more Entity values, back to back
+
+std::vector<Entity> PayloadEntities(const ImGuiPayload& payload) {
+    if (payload.Data == nullptr || payload.DataSize <= 0 || payload.DataSize % static_cast<int>(sizeof(Entity)) != 0) return {};
+    std::vector<Entity> entities(static_cast<usize>(payload.DataSize) / sizeof(Entity));
+    std::memcpy(entities.data(), payload.Data, static_cast<usize>(payload.DataSize));
+    return entities;
+}
 
 std::string Lower(std::string text) {
     std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
@@ -277,13 +284,45 @@ bool ScenePanel::SaveScene(const std::string& path, bool overwrite) {
 }
 
 bool ScenePanel::Reparent(Entity entity, Entity parent) {
-    if (!document_.GetWorld().IsAlive(entity)) return false;
-    if (document_.ParentOf(entity) == parent) return false;
-    if (!document_.ReparentEntity(entity, parent)) {
-        status_ = "An entity cannot go under itself or one of its own children.";
-        return false;
+    return ReparentEntities(std::span<const Entity>(&entity, 1), parent) == 1;
+}
+
+usize ScenePanel::ReparentEntities(std::span<const Entity> entities, Entity parent) {
+    const World& world = document_.GetWorld();
+    const auto carried = [&](Entity entity) { return std::find(entities.begin(), entities.end(), entity) != entities.end(); };
+    std::vector<Entity> moving;
+    for (const Entity entity : entities) {
+        if (!world.IsAlive(entity) || std::find(moving.begin(), moving.end(), entity) != moving.end()) continue;
+        if (document_.ParentOf(entity) == parent) continue;
+        bool under_carried = false; // it travels inside a carried ancestor's subtree and keeps its own parent
+        usize depth = 0;
+        for (Entity up = document_.ParentOf(entity); !up.IsNull() && depth < world.EntityCount(); up = document_.ParentOf(up), ++depth) {
+            if (carried(up)) { under_carried = true; break; }
+        }
+        if (!under_carried) moving.push_back(entity);
     }
-    return true;
+    const bool group = moving.size() > 1;
+    if (group) {
+        const std::string count = std::to_string(moving.size()) + " entities";
+        document_.Commands().BeginTransaction(parent.IsNull() ? "Move " + count + " to the root" : "Parent " + count);
+    }
+    usize moved = 0;
+    for (const Entity entity : moving) moved += document_.ReparentEntity(entity, parent) ? 1 : 0;
+    if (group) document_.Commands().EndTransaction();
+    if (moved < moving.size()) {
+        status_ = moved == 0 ? "An entity cannot go under itself or one of its own children."
+                             : std::to_string(moving.size() - moved) + " of the dragged entities could not go under one of their own children; the rest moved.";
+    }
+    return moved;
+}
+
+std::vector<Entity> ScenePanel::DragSet(Entity entity) const {
+    if (!document_.IsSelected(entity)) return {entity};
+    std::vector<Entity> set;
+    for (const Entity selected : document_.Selection()) {
+        if (document_.GetWorld().IsAlive(selected)) set.push_back(selected);
+    }
+    return set;
 }
 
 usize ScenePanel::DeleteSelection() {
@@ -506,8 +545,9 @@ void ScenePanel::DrawEntityMenu(Entity entity) {
     if (ImGui::MenuItem("Duplicate", "Ctrl+D")) DuplicateSelection();
     if (ImGui::MenuItem("Copy", "Ctrl+C")) document_.CopySelection();
     if (ImGui::MenuItem("Paste", "Ctrl+V", false, document_.HasClipboard())) document_.PasteClipboard();
-    ImGui::BeginDisabled(document_.ParentOf(entity).IsNull());
-    if (ImGui::MenuItem("Move to the scene root")) Reparent(entity, kNullEntity);
+    const std::vector<Entity> acted_on = DragSet(entity); // the selection when this row is part of it, as Delete
+    ImGui::BeginDisabled(std::all_of(acted_on.begin(), acted_on.end(), [&](Entity e) { return document_.ParentOf(e).IsNull(); }));
+    if (ImGui::MenuItem("Move to the scene root")) ReparentEntities(acted_on, kNullEntity);
     ImGui::EndDisabled();
     ImGui::Separator();
     if (ImGui::MenuItem("Delete", "Del")) DeleteSelection();
@@ -540,18 +580,29 @@ void ScenePanel::DrawNode(Entity entity, const HierarchyIndex& index, const std:
         }
     } else {
         open = ImGui::TreeNodeEx("##node", flags, "%s", document_.Name(entity).c_str());
-        if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && !ImGui::IsItemToggledOpen()) Select(entity, ImGui::GetIO().KeyCtrl);
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && !ImGui::IsItemToggledOpen()) {
+            // Pressing a row of a multi-selection keeps the selection until release, so that the press can start dragging all of it.
+            const bool additive = ImGui::GetIO().KeyCtrl;
+            if (!additive && document_.IsSelected(entity) && document_.Selection().size() > 1) press_target_ = entity;
+            else Select(entity, additive);
+        }
+        if (press_target_ == entity && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+            if (ImGui::IsItemHovered()) Select(entity, false);
+            press_target_ = kNullEntity;
+        }
         if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) BeginRename(entity);
         if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None)) {
-            ImGui::SetDragDropPayload(kEntityPayload, &entity, sizeof(Entity));
-            ImGui::TextUnformatted(document_.Name(entity).c_str());
+            if (press_target_ == entity) press_target_ = kNullEntity; // a drag, not a click: the selection stays
+            const std::vector<Entity> carried = DragSet(entity);
+            ImGui::SetDragDropPayload(kEntityPayload, carried.data(), carried.size() * sizeof(Entity));
+            if (carried.size() > 1) ImGui::Text("%zu entities", carried.size());
+            else ImGui::TextUnformatted(document_.Name(entity).c_str());
             ImGui::EndDragDropSource();
         }
         if (ImGui::BeginDragDropTarget()) {
-            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kEntityPayload); payload != nullptr && payload->DataSize == sizeof(Entity)) {
-                Entity dragged;
-                std::memcpy(&dragged, payload->Data, sizeof(Entity));
-                Reparent(dragged, entity);
+            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kEntityPayload); payload != nullptr) {
+                const std::vector<Entity> dragged = PayloadEntities(*payload);
+                ReparentEntities(dragged, entity);
             }
             // A model or a prefab from the Content Browser goes in under this entity, at its origin, as one undo step.
             if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kContentPathPayload); payload != nullptr && payload->Data != nullptr) {
@@ -587,10 +638,9 @@ void ScenePanel::DrawHierarchy() {
     ImGui::Selectable((heading + "##hierarchy_heading").c_str(), false, ImGuiSelectableFlags_DontClosePopups);
     ImGui::PopStyleColor();
     if (ImGui::BeginDragDropTarget()) {
-        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kEntityPayload); payload != nullptr && payload->DataSize == sizeof(Entity)) {
-            Entity dragged;
-            std::memcpy(&dragged, payload->Data, sizeof(Entity));
-            Reparent(dragged, kNullEntity);
+        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kEntityPayload); payload != nullptr) {
+            const std::vector<Entity> dragged = PayloadEntities(*payload);
+            ReparentEntities(dragged, kNullEntity);
         }
         // An asset dropped on the heading is placed at the root, at the scene's origin.
         if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kContentPathPayload); payload != nullptr && payload->Data != nullptr) {
@@ -616,6 +666,7 @@ void ScenePanel::DrawHierarchy() {
             }
         }
     }
+    if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) press_target_ = kNullEntity; // its row may not have been drawn on the release frame
     // A right click on the empty part makes something at the root.
     if (ImGui::BeginPopupContextWindow("##hierarchy_menu", ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
         DrawCreateMenu(kNullEntity);

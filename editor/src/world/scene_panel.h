@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <functional>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -116,6 +117,11 @@ public:
     bool SaveScene(const std::string& path = {}, bool overwrite = false);
     // Drops `entity` under `parent` (kNullEntity: the scene root). False, and a status line, when that would put an entity under its own descendant, or it is already there.
     bool Reparent(Entity entity, Entity parent);
+    // Drops several entities under `parent` as one undo step. One whose ancestor is also among them moves with that ancestor and keeps its
+    // parent; one already there, or that would go under itself, is skipped. Returns how many moved; none moving with a cycle is a status line.
+    usize ReparentEntities(std::span<const Entity> entities, Entity parent);
+    // What dragging the hierarchy row of `entity` carries: the whole selection when the row is part of it, else just that entity.
+    std::vector<Entity> DragSet(Entity entity) const;
     // Deletes everything selected, one undo step each.
     usize DeleteSelection();
     usize DuplicateSelection();
@@ -161,6 +167,7 @@ private:
     std::array<char, 128> rename_buffer_{};
     bool rename_focus_ = false;
     bool multi_renaming_ = false; // a multi-selection name edit has an open undo transaction
+    Entity press_target_ = kNullEntity; // a selected row pressed without Ctrl: it becomes the whole selection on release unless it was dragged
     std::string property_search_; // the Inspector's property search box
     Pending pending_ = Pending::None;
 };
