@@ -3553,7 +3553,9 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
         // The reflections reconstruct view-space positions from the depth, which is a perspective projection's inverse; an orthographic camera
         // (or no camera) keeps the sky lighting's reflection.
         if (!renderer.ssr || camera == nullptr || camera->projection != Projection::Perspective) post_settings.screen_space_reflections = 0.0f;
-        const bool resolve = (renderer.taa || vsm_record || renderer.ssao || renderer.ssr || post_settings.fog_density > 0.0f ||
+        const CineCamera* cine_camera = camera && camera->projection == Projection::Perspective
+                                            ? world.GetComponent<CineCamera>(camera_entity) : nullptr;
+        const bool resolve = (renderer.taa || vsm_record || renderer.ssao || renderer.ssr || cine_camera || post_settings.fog_density > 0.0f ||
                               post_settings.height_fog_density > 0.0f) &&
                              have_camera && commands.CopySceneDepth();
         commands.EndRenderPass();
@@ -3568,7 +3570,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
             renderer.taa->Reset();
         }
         renderer.post->SetSource(resolved);
-        if (resolve && (renderer.ssao || renderer.ssr || post_settings.fog_density > 0.0f || post_settings.height_fog_density > 0.0f) &&
+        if (resolve && (renderer.ssao || renderer.ssr || cine_camera || post_settings.fog_density > 0.0f || post_settings.height_fog_density > 0.0f) &&
             renderer.swap_chain.SceneDepthTexture().IsValid()) {
             renderer.post->SetAmbientOcclusion({renderer.swap_chain.SceneDepthTexture().index, renderer.ssao ? renderer.ao_strength : 0.0f,
                                                 renderer.ao_radius, ao_near, ao_far, ao_proj_x, ao_proj_y});
@@ -3583,6 +3585,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
         }
         // Bloom reads the finished scene colour into its own chain of render textures, between the two passes.
         if (renderer.bloom) renderer.post->RenderBloom(commands, post_settings);
+        if (resolve && cine_camera) renderer.post->RenderDepthOfField(commands, post_settings, *cine_camera);
         commands.BeginRenderPass(renderer.swap_chain, kBackground);
         renderer.post->Draw(commands, post_settings);
     }

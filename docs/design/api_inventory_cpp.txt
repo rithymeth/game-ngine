@@ -1,6 +1,42 @@
 # C++ API inventory of installed Aether headers (M8.1). Generated; do not edit by hand.
 # Regenerate: python3 tools/api_inventory.py --update   (review the diff: it is the API change)
 # [header] level, then 'type <kind> <name>' and normalized declarations, sorted.
+[achievements/include/aether/achievements/achievement_def.h] experimental
+  type class AchievementLibrary
+  type struct AchievementDef
+  bool AchievementFromJson(const std::string&text,AchievementDef&out,std::string*error=nullptr)
+  bool operator==(const AchievementDef&)const=default
+  const AchievementDef*Find(const std::string&name)const
+  public:bool Register(AchievementDef achievement,std::string*error=nullptr)
+  reflect::Json AchievementToJson(const AchievementDef&achievement)
+  std::string Validate()const
+  std::vector<std::string>Names()const
+  usize Size()const
+  void Clear()
+[achievements/include/aether/achievements/achievement_system.h] experimental
+  type class AchievementSystem
+  type enum class Result
+  AchievementSystem&operator=(const AchievementSystem&)=delete
+  AchievementSystem(const AchievementSystem&)=delete
+  Result Add(const std::string&name,i32 amount=1)
+  Result Reset(const std::string&name)
+  Result Unlock(const std::string&name)
+  bool IsUnlocked(const std::string&name)const
+  const AchievementLibrary&Library()const
+  const char*ResultName(Result result)
+  i32 Progress(const std::string&name)const
+  public:AchievementSystem(save::SaveBag&bag,const AchievementLibrary&library)
+  static AchievementSystem*Active()
+  static std::string Key(const std::string&name)
+  std::string NextUnlocked()
+  std::vector<std::string>TakeUnlocked()
+  usize UnlockedCount()const
+  void MakeActive()
+  ~AchievementSystem()
+[achievements/include/aether/achievements/achievements_kit.h] experimental
+  type struct AchievementAssetDiagnostic
+  std::unique_ptr<kit::IKit>MakeAchievementsKit(AchievementLibrary*library=nullptr)
+  std::vector<AchievementAssetDiagnostic>LoadAchievementAssets(const std::vector<std::string>&paths,std::function<bool(const std::string&,std::vector<u8>&,std::string*)>read_content,AchievementLibrary&library)
 [ai/include/aether/ai/behavior_tree.h] experimental
   type enum class BtAbort
   type enum class BtCompare
@@ -5060,6 +5096,7 @@
   type struct RebindableInput
   type struct RenderSize
   type struct SequenceCue
+  Entity SpawnPrefab(const std::string&path,const Transform&place)
   FrameContext Tick(f32 dt)
   Game&operator=(const Game&)=delete
   Game(const Game&)=delete
@@ -5133,6 +5170,7 @@
   void AddInteractionStage()
   void AddInventoryStage()
   void AddQuestsStage()
+  void AddSpawnerStage()
   void AddTimeOfDayStage()
   void ApplyAudioSettings()
   void ApplyKitStage(SystemDesc&system,const std::string&name)const
@@ -5733,6 +5771,8 @@
   bool Tracking()const
   const std::vector<EntityGuid>&Baseline()const
   public:void Begin(World&world,GuidIndex&guids)
+[scripting/include/aether/script/achievements_api.h] experimental
+  void InstallAchievementsApi(LuauHost&host)
 [scripting/include/aether/script/ai_api.h] experimental
   type class AiDebugStore
   type struct AiDebugEntry
@@ -5959,6 +5999,8 @@
   void ReleaseOwner(u64 owner)
   void Tick(f32 dt)
   ~ScriptSystem()
+[scripting/include/aether/script/spawner_api.h] experimental
+  void InstallSpawnerApi(LuauHost&host)
 [scripting/include/aether/script/timeofday_api.h] experimental
   void InstallTimeOfDayApi(LuauHost&host)
 [scripting/include/aether/script/ui_api.h] experimental
@@ -6101,6 +6143,42 @@
   void StopAll()
   void Update(f32 dt)
   ~SequenceSystem()
+[spawner/include/aether/spawner/spawner.h] experimental
+  type struct Spawner
+  ),AETHER_FIELD(burst,Field_EditAnywhere,
+  ),AETHER_FIELD(interval,Field_EditAnywhere,
+  ),AETHER_FIELD(max_alive,Field_EditAnywhere,
+  ),AETHER_FIELD(radius,Field_EditAnywhere,
+  ),AETHER_FIELD(spawned,Field_EditAnywhere,
+  ),AETHER_FIELD(start_delay,Field_EditAnywhere,
+  ),AETHER_FIELD(timer,Field_EditAnywhere,
+  ),AETHER_FIELD(total,Field_EditAnywhere,
+  AETHER_REFLECT(aether::spawn::Spawner,1,AETHER_FIELD(enabled,Field_EditAnywhere),AETHER_FIELD(prefab,Field_EditAnywhere,
+  void RegisterSpawnerComponents()
+[spawner/include/aether/spawner/spawner_kit.h] experimental
+  SystemDesc MakeSpawnerSystem(SpawnerSystem*system,std::function<void(const SpawnEvent&)>on_event)
+  std::unique_ptr<kit::IKit>MakeSpawnerKit()
+[spawner/include/aether/spawner/spawner_system.h] experimental
+  type class SpawnerSystem
+  type struct SpawnEvent
+  SpawnerSystem&operator=(const SpawnerSystem&)=delete
+  SpawnerSystem(const SpawnerSystem&)=delete
+  Vec3 ScatterOffset(u32 seed,f32 radius)
+  const std::vector<SpawnEvent>&Events()const
+  i32 AliveCount(Entity spawner)
+  i32 Room(Entity spawner,const Spawner&s)
+  i32 SpawnNow(Entity spawner,i32 count=1)
+  i32 SpawnUpTo(Entity spawner,i32 wanted)
+  i32 TotalSpawned(Entity spawner)const
+  private:std::vector<Entity>Spawners()const
+  public:SpawnerSystem(World&world,SpawnFunction spawn)
+  static SpawnerSystem*Active()
+  using SpawnFunction=std::function<Entity(const std::string&prefab,const Transform&place)>
+  void ClearEvents()
+  void MakeActive()
+  void Prune(Entity spawner)
+  void Update(f32 dt)
+  ~SpawnerSystem()
 [sprite2d/include/aether/sprite2d/atlas.h] experimental
   type struct PackInput
   type struct PackResult

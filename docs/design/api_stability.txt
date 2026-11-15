@@ -20,6 +20,8 @@ physics_net experimental
 player experimental
 quests experimental
 crafting experimental
+spawner experimental
+achievements experimental
 timeofday experimental
 dialogue experimental
 renderer experimental

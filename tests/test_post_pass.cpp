@@ -2,11 +2,13 @@
 #include "../player/src/decal_pass.h"
 #include "../player/src/environment.h"
 #include "../player/src/particle_pass.h"
+#include "aether/assets/png_writer.h"
 #include "aether/gfx/rhi/command_list.h"
 #include "aether/gfx/rhi/device.h"
 #include "aether/reflection/serialize.h"
 #include "aether/renderer/components.h"
 #include "aether/renderer/post.h"
+#include "aether/scene/gameplay.h"
 #include "test_framework.h"
 
 #include <algorithm>
@@ -636,6 +638,164 @@ AETHER_TEST(PostPass_ReflectionsLandWhereTheMirrorRayMeetsTheSceneOnVulkan) {
 
 // --- Screen-space reflections: settings and packing ------------------------------------------------------------------------------
 // --- Screen-space reflections ----------------------------------------------------------------------------------------------------
+
+AETHER_TEST(PostPass_DepthOfFieldUsesThePhysicalLens) {
+    CineCamera lens;
+    lens.focal_length_mm = 50.0f;
+    lens.sensor_height_mm = 24.0f;
+    lens.aperture_f = 2.0f;
+    lens.focus_distance = 10.0f;
+    const auto packed = player::PackDepthOfField(lens, 1080, 0.1f, 100.0f);
+    const f32 scale = 1080.0f * 0.05f * 0.05f / (2.0f * 2.0f * 9.95f * 0.024f);
+    AETHER_CHECK(Near(packed.radius_scale, scale, 1e-5f));
+    AETHER_CHECK(player::DepthOfFieldRadius(packed, 10.0f) == 0.0f);
+    AETHER_CHECK(Near(player::DepthOfFieldRadius(packed, 5.0f), -scale, 1e-5f));
+    AETHER_CHECK(Near(player::DepthOfFieldRadius(packed, 20.0f), scale * 0.5f, 1e-5f));
+    AETHER_CHECK(player::DepthOfFieldRadius(packed, 0.1f) == -packed.max_radius);
+    AETHER_CHECK(Near(player::PackDepthOfField(lens, 2160, 0.1f, 100.0f).radius_scale, scale * 2.0f, 1e-5f));
+    lens.aperture_f *= 2.0f;
+    AETHER_CHECK(Near(player::PackDepthOfField(lens, 1080, 0.1f, 100.0f).radius_scale, scale * 0.5f, 1e-5f));
+    for (const f32 invalid : {0.0f, -1.0f, std::nanf(""), HUGE_VALF}) {
+        CineCamera bad = lens;
+        bad.aperture_f = invalid;
+        AETHER_CHECK(player::PackDepthOfField(bad, 1080, 0.1f, 100.0f).radius_scale == 0.0f);
+        bad = lens;
+        bad.focus_distance = invalid;
+        AETHER_CHECK(player::PackDepthOfField(bad, 1080, 0.1f, 100.0f).radius_scale == 0.0f);
+        bad = lens;
+        bad.sensor_height_mm = invalid;
+        AETHER_CHECK(player::PackDepthOfField(bad, 1080, 0.1f, 100.0f).radius_scale == 0.0f);
+        bad = lens;
+        bad.focal_length_mm = invalid;
+        AETHER_CHECK(player::PackDepthOfField(bad, 1080, 0.1f, 100.0f).radius_scale == 0.0f);
+    }
+    lens.focus_distance = 0.01f;
+    AETHER_CHECK(player::PackDepthOfField(lens, 1080, 0.1f, 100.0f).radius_scale == 0.0f);
+    AETHER_CHECK(player::PackDepthOfField(CineCamera{}, 0, 0.1f, 100.0f).radius_scale == 0.0f);
+    AETHER_CHECK(player::PackDepthOfField(CineCamera{}, 1080, 1.0f, 0.1f).radius_scale == 0.0f);
+}
+
+namespace {
+
+void CheckDepthOfField(gfx::rhi::Backend backend) {
+    auto device = MakeDevice(backend);
+    if (!device) return;
+    auto target = device->CreateSwapChain(nullptr, kSize, kSize, 2);
+    player::PostPass post(*device, *target);
+    if (!post.Valid()) return;
+    std::vector<u16> color;
+    std::vector<f32> depths;
+    for (u32 y = 0; y < kSize; ++y) {
+        const f32 distance = y < 21 ? 0.5f : y < 43 ? 1.0f : 4.0f;
+        for (u32 x = 0; x < kSize; ++x) {
+            const u16 value = player::FloatToHalf(x % 2 == 0 ? 0.125f : 4.0f);
+            color.insert(color.end(), {value, value, value, player::FloatToHalf(1.0f)});
+            depths.push_back(SsrDeviceDepth(distance));
+        }
+    }
+    auto scene = device->CreateHalfFloatTexture(kSize, kSize, 1, color.data());
+    auto depth = device->CreateR32FloatTexture(kSize, kSize, depths.data());
+    AETHER_CHECK(scene.IsValid() && depth.IsValid());
+    if (!scene.IsValid() || !depth.IsValid()) {
+        if (scene.IsValid()) device->DestroyTexture(scene);
+        if (depth.IsValid()) device->DestroyTexture(depth);
+        return;
+    }
+    CineCamera lens;
+    lens.focal_length_mm = 200.0f;
+    lens.aperture_f = 0.7f;
+    lens.focus_distance = 1.0f;
+    PostProcessSettings settings;
+    settings.screen_space_reflections = 0.0f;
+    u32 extent = kSize;
+    bool bloom = false;
+    auto commands = device->CreateCommandList();
+    const auto render = [&](const CineCamera* camera, bool bind_depth, bool blur_expected, std::vector<u8>& pixels) {
+        post.SetSource(scene.index);
+        if (bind_depth) post.SetAmbientOcclusion({depth.index, 0.0f, 1.0f, kSsrNear, kSsrFar, kSsrProjection, kSsrProjection});
+        target->AcquireNextImage();
+        commands->Reset();
+        if (bloom) AETHER_CHECK(post.RenderBloom(*commands, settings));
+        if (camera) AETHER_CHECK(post.RenderDepthOfField(*commands, settings, *camera) == blur_expected);
+        commands->BeginRenderPass(*target, {1, 0, 1, 1});
+        post.Draw(*commands, settings);
+        commands->EndRenderPass();
+        commands->Close();
+        device->WaitForFence(device->Submit(*commands, target.get()));
+        const bool read = target->ReadBack(pixels);
+        target->Present(false);
+        AETHER_CHECK(read && pixels.size() == extent * extent * 4);
+        return read && pixels.size() == extent * extent * 4;
+    };
+    std::vector<u8> sharp, blurred, reset, rack;
+    if (render(nullptr, true, false, sharp) && render(&lens, true, true, blurred) &&
+        render(&lens, false, false, reset)) {
+        AETHER_CHECK(sharp == reset);
+        if (const char* directory = std::getenv("AETHER_RENDER_TEST_OUT")) {
+            for (const auto& capture : {std::pair{"sharp", &sharp}, std::pair{"defocused", &blurred}}) {
+                const auto png = assets::EncodePngRgba8(kSize, kSize, *capture.second);
+                const std::string name = std::string(backend == gfx::rhi::Backend::D3D12 ? "d3d12-" : "vulkan-") + capture.first + ".png";
+                std::ofstream file(std::filesystem::path(directory) / name, std::ios::binary);
+                file.write(reinterpret_cast<const char*>(png.data()), static_cast<std::streamsize>(png.size()));
+                AETHER_CHECK(file.good());
+            }
+        }
+        for (const u32 y : {21u, 32u, 42u}) {
+            for (u32 x = 16; x < 48; ++x) {
+                AETHER_CHECK(std::abs(PixelChannel(sharp, x, y, 1) - PixelChannel(blurred, x, y, 1)) <= 2);
+            }
+        }
+        for (const u32 y : {10u, 53u}) {
+            const int original = std::abs(PixelChannel(sharp, 31, y, 1) - PixelChannel(sharp, 32, y, 1));
+            const int defocused = std::abs(PixelChannel(blurred, 31, y, 1) - PixelChannel(blurred, 32, y, 1));
+            AETHER_CHECK(original > 50);
+            AETHER_CHECK(defocused < original / 2);
+        }
+        lens.focus_distance = 4.0f;
+        if (render(&lens, true, true, rack)) {
+            AETHER_CHECK(std::abs(PixelChannel(rack, 32, 53, 1) - PixelChannel(sharp, 32, 53, 1)) <= 2);
+            AETHER_CHECK(PixelChannel(rack, 32, 32, 1) > PixelChannel(sharp, 32, 32, 1) + 20);
+        }
+        lens.focus_distance = 1.0f;
+        settings.fog_density = 0.1f;
+        settings.exposure_compensation = -1.0f;
+        settings.vignette = 0.5f;
+        settings.chromatic_aberration = 0.5f;
+        settings.sharpen = 0.2f;
+        settings.bloom_intensity = 0.3f;
+        bloom = true;
+        if (render(nullptr, true, false, sharp) && render(&lens, true, true, blurred)) {
+            for (u32 x = 16; x < 48; ++x) {
+                AETHER_CHECK(std::abs(PixelChannel(sharp, x, 32, 1) - PixelChannel(blurred, x, 32, 1)) <= 2);
+            }
+        }
+        lens.aperture_f = 0.0f;
+        if (render(&lens, true, false, reset)) AETHER_CHECK(sharp == reset);
+        device->DestroyTexture(scene);
+        device->DestroyTexture(depth);
+        extent = 32;
+        target->Resize(extent, extent);
+        color.assign(extent * extent * 4, player::FloatToHalf(0.5f));
+        depths.assign(extent * extent, SsrDeviceDepth(1.0f));
+        scene = device->CreateHalfFloatTexture(extent, extent, 1, color.data());
+        depth = device->CreateR32FloatTexture(extent, extent, depths.data());
+        AETHER_CHECK(scene.IsValid() && depth.IsValid());
+        lens.aperture_f = 0.7f;
+        lens.focus_distance = 4.0f;
+        settings = {};
+        settings.screen_space_reflections = 0.0f;
+        if (scene.IsValid() && depth.IsValid() && render(nullptr, true, false, sharp) && render(&lens, true, true, blurred)) {
+            for (usize i = 1; i < sharp.size(); i += 4) AETHER_CHECK(std::abs(static_cast<int>(sharp[i]) - blurred[i]) <= 2);
+        }
+    }
+    device->DestroyTexture(scene);
+    device->DestroyTexture(depth);
+}
+
+} // namespace
+
+AETHER_TEST(PostPass_DepthOfFieldOnD3D12) { CheckDepthOfField(gfx::rhi::Backend::D3D12); }
+AETHER_TEST(PostPass_DepthOfFieldOnVulkan) { CheckDepthOfField(gfx::rhi::Backend::Vulkan); }
 
 AETHER_TEST(PostPass_ReflectionStrengthRidesInTheTonemapperWord) {
     // It is an 8-bit strength beside the tone mapper (0 is off), clamped, and what is not a number counts as 0.

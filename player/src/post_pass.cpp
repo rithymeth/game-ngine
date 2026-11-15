@@ -2,9 +2,11 @@
 
 #include "aether/core/log.h"
 #include "aether/renderer/post.h"
+#include "aether/scene/gameplay.h"
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace aether::player {
 
@@ -321,6 +323,9 @@ float4 PSMain(float4 position : SV_POSITION) : SV_TARGET {
                  BloomTap(g_PC.g_Bloom, uv + float2(-t.x, t.y), t) + BloomTap(g_PC.g_Bloom, uv + float2(t.x, t.y), t);
         c = lerp(c, bloom * (g_PC.g_BloomScale / 16.0), g_PC.g_BloomIntensity);
     }
+#ifdef AETHER_HDR_COMPOSITE
+    return float4(c, 1.0);
+#endif
     c *= g_PC.g_Exposure;
     float luminance = dot(c, float3(0.2126, 0.7152, 0.0722));
     c = max(luminance + (c - luminance) * g_PC.g_Saturation, 0.0);
@@ -338,6 +343,62 @@ float4 PSMain(float4 position : SV_POSITION) : SV_TARGET {
         encoded = saturate(encoded + noise * grain * 0.25 * (1.0 - abs(2.0 * encoded - 1.0)));
     }
     return float4(encoded, 1.0);
+}
+)";
+
+constexpr char kDepthOfFieldShader[] = R"(
+struct DepthOfFieldConstants {
+    uint source;
+    uint depth;
+    float near_plane;
+    float far_plane;
+    float focus_distance;
+    float radius_scale;
+    float max_radius;
+    float padding;
+};
+#ifdef __spirv__
+[[vk::push_constant]]
+#endif
+ConstantBuffer<DepthOfFieldConstants> g_PC : register(b0);
+Texture2D g_Textures[128] : register(t0, space0);
+SamplerState g_Sampler : register(s0, space1);
+
+float4 VSMain(uint id : SV_VertexID) : SV_Position {
+    float2 uv = float2((id << 1) & 2, id & 2);
+    return float4(uv * float2(2.0, -2.0) + float2(-1.0, 1.0), 0.0, 1.0);
+}
+float ViewDepth(int2 p) {
+    float d = g_Textures[g_PC.depth].Load(int3(p, 0)).r;
+    return g_PC.far_plane * g_PC.near_plane / (g_PC.far_plane - d * (g_PC.far_plane - g_PC.near_plane));
+}
+float Radius(float z) {
+    return clamp(g_PC.radius_scale * (1.0 - g_PC.focus_distance / z), -g_PC.max_radius, g_PC.max_radius);
+}
+float4 PSMain(float4 position : SV_Position) : SV_Target {
+    uint width, height;
+    g_Textures[g_PC.source].GetDimensions(width, height);
+    int2 size = int2(width, height);
+    int2 p = int2(position.xy);
+    float3 center = g_Textures[g_PC.source].Load(int3(p, 0)).rgb;
+    float z = ViewDepth(p);
+    float radius = abs(Radius(z));
+    if (radius < 0.5) return float4(center, 1.0);
+    float3 sum = center;
+    float weight = 1.0;
+    for (int i = 0; i < 32; ++i) {
+        float distance = sqrt(((float)i + 0.5) / 32.0) * radius;
+        float angle = (float)i * 2.3999632;
+        int2 q = clamp(p + int2(round(float2(cos(angle), sin(angle)) * distance)), int2(0, 0), size - 1);
+        float sample_z = ViewDepth(q);
+        float sample_radius = abs(Radius(sample_z));
+        // A sharp foreground must neither bleed into a blurred background nor accept colour from behind it.
+        if (sample_z < z - max(0.01, z * 0.01) && sample_radius < distance) continue;
+        if (sample_z > z + max(0.01, z * 0.01)) continue;
+        sum += g_Textures[g_PC.source].Load(int3(q, 0)).rgb;
+        weight += 1.0;
+    }
+    return float4(sum / weight, 1.0);
 }
 )";
 
@@ -406,6 +467,28 @@ const char* PostShaderSource() { return kPostShader; }
 std::string BloomShaderSource(bool upsample) { return std::string(upsample ? "#define AETHER_BLOOM_UPSAMPLE 1\n" : "") + kBloomShader; }
 
 std::vector<Extent> PostBloomChain(u32 width, u32 height) { return BloomChain(width, height, kBloomLevels, 8); }
+
+DepthOfFieldConstants PackDepthOfField(const CineCamera& camera, u32 height, f32 near_plane, f32 far_plane) {
+    DepthOfFieldConstants constants;
+    const double focal = static_cast<double>(camera.focal_length_mm) * 0.001;
+    const double sensor = static_cast<double>(camera.sensor_height_mm) * 0.001;
+    if (!std::isfinite(focal) || focal <= 0.0 || !std::isfinite(sensor) || sensor <= 0.0 ||
+        !std::isfinite(camera.aperture_f) || camera.aperture_f <= 0.0f || !std::isfinite(camera.focus_distance) ||
+        camera.focus_distance <= focal || !std::isfinite(near_plane) || !std::isfinite(far_plane) ||
+        near_plane <= 0.0f || far_plane <= near_plane || height == 0) return constants;
+    const double scale = 0.5 * height * focal * focal / (camera.aperture_f * (camera.focus_distance - focal) * sensor);
+    if (!std::isfinite(scale) || scale > std::numeric_limits<f32>::max()) return constants;
+    constants.near_plane = near_plane;
+    constants.far_plane = far_plane;
+    constants.focus_distance = camera.focus_distance;
+    constants.radius_scale = static_cast<f32>(scale);
+    return constants;
+}
+
+f32 DepthOfFieldRadius(const DepthOfFieldConstants& constants, f32 distance) {
+    if (!std::isfinite(distance) || distance <= 0.0f || constants.radius_scale == 0.0f) return 0.0f;
+    return std::clamp(constants.radius_scale * (1.0f - constants.focus_distance / distance), -constants.max_radius, constants.max_radius);
+}
 
 PostConstants PackPostConstants(const PostProcessSettings& settings, u32 scene_color_index) {
     PostConstants c;
@@ -487,6 +570,9 @@ PostPass::PostPass(gfx::rhi::IDevice& device, gfx::rhi::ISwapChain& swap_chain) 
 }
 
 PostPass::~PostPass() {
+    ReleaseDepthOfField();
+    if (depth_of_field_.IsValid()) device_.DestroyPipeline(depth_of_field_);
+    if (hdr_composite_.IsValid()) device_.DestroyPipeline(hdr_composite_);
     ReleaseBloom();
     if (bloom_up_.IsValid()) device_.DestroyPipeline(bloom_up_);
     if (bloom_down_.IsValid()) device_.DestroyPipeline(bloom_down_);
@@ -572,16 +658,79 @@ bool PostPass::RenderBloom(gfx::rhi::ICommandList& commands, const PostProcessSe
     return true;
 }
 
-void PostPass::Draw(gfx::rhi::ICommandList& commands, const PostProcessSettings& settings) {
-    if (!Valid()) return;
+void PostPass::ReleaseDepthOfField() {
+    if (dof_composite_.IsValid()) device_.DestroyTexture(dof_composite_);
+    if (dof_result_.IsValid()) device_.DestroyTexture(dof_result_);
+    dof_composite_ = {};
+    dof_result_ = {};
+    dof_width_ = dof_height_ = 0;
+    dof_ready_ = false;
+}
+
+bool PostPass::EnsureDepthOfField(u32 width, u32 height) {
+    gfx::rhi::PipelineDesc desc;
+    desc.enable_bindless_textures = true;
+    desc.render_texture_target = true;
+    if (!hdr_composite_.IsValid()) {
+        const std::string source = std::string("#define AETHER_HDR_COMPOSITE 1\n") + kPostShader;
+        desc.hlsl_source = source.c_str();
+        desc.push_constant_size_bytes = sizeof(PostConstants);
+        hdr_composite_ = device_.CreatePipeline(desc, swap_chain_);
+    }
+    if (!depth_of_field_.IsValid()) {
+        desc.hlsl_source = kDepthOfFieldShader;
+        desc.push_constant_size_bytes = sizeof(DepthOfFieldConstants);
+        depth_of_field_ = device_.CreatePipeline(desc, swap_chain_);
+    }
+    if (!hdr_composite_.IsValid() || !depth_of_field_.IsValid()) return false;
+    if (dof_width_ == width && dof_height_ == height) return true;
+    ReleaseDepthOfField();
+    for (auto* texture : {&dof_composite_, &dof_result_}) {
+        *texture = device_.CreateRenderTexture(width, height);
+        if (!texture->IsValid() || texture->index >= gfx::rhi::kMaxBindlessTextures) {
+            ReleaseDepthOfField();
+            return false;
+        }
+    }
+    dof_width_ = width;
+    dof_height_ = height;
+    return true;
+}
+
+bool PostPass::RenderDepthOfField(gfx::rhi::ICommandList& commands, const PostProcessSettings& settings, const CineCamera& camera) {
+    dof_ready_ = false;
+    if (!Valid() || ao_.depth >= gfx::rhi::kMaxBindlessTextures || ao_.proj_x <= 0.0f || ao_.proj_y <= 0.0f) return false;
+    const u32 width = swap_chain_.Width(), height = swap_chain_.Height();
+    DepthOfFieldConstants blur = PackDepthOfField(camera, height, ao_.near_plane, ao_.far_plane);
+    if (width == 0 || height == 0 || std::max(std::fabs(DepthOfFieldRadius(blur, ao_.near_plane)),
+                                           std::fabs(DepthOfFieldRadius(blur, ao_.far_plane))) < 0.5f) return false;
+    if (!EnsureDepthOfField(width, height)) return false;
+    const PostConstants composite = FrameConstants(settings);
+    if (!commands.BeginTexturePass(dof_composite_, nullptr)) return false;
+    commands.BindPipeline(hdr_composite_);
+    commands.BindBindlessTextures();
+    commands.SetPushConstants(&composite, sizeof(composite));
+    commands.Draw(3);
+    commands.EndRenderPass();
+    blur.source = dof_composite_.index;
+    blur.depth = ao_.depth;
+    if (!commands.BeginTexturePass(dof_result_, nullptr)) return false;
+    commands.BindPipeline(depth_of_field_);
+    commands.BindBindlessTextures();
+    commands.SetPushConstants(&blur, sizeof(blur));
+    commands.Draw(3);
+    commands.EndRenderPass();
+    dof_ready_ = true;
+    return true;
+}
+
+PostConstants PostPass::FrameConstants(const PostProcessSettings& settings) const {
     PostConstants constants = PackPostConstants(settings, Source());
-    // The frame number wraps after 2^22 frames: the grain just repeats then.
-    constants.tonemapper = PackTonemapperFrame(PostTonemapperOf(constants), frame_++, PostScreenSpaceReflectionsOf(constants));
+    constants.tonemapper = PackTonemapperFrame(PostTonemapperOf(constants), frame_, PostScreenSpaceReflectionsOf(constants));
     if (bloom_ready_ && !bloom_levels_.empty()) {
         constants.bloom = bloom_levels_.front().index;
         constants.bloom_scale = 1.0f / static_cast<f32>(bloom_levels_.size());
     }
-    bloom_ready_ = false;
     if (ao_.depth < gfx::rhi::kMaxBindlessTextures) {
         constants.fog_density = std::isfinite(settings.fog_density) ? std::clamp(settings.fog_density, 0.0f, 1.0f) : 0.0f;
         constants.fog_color[0] = fog_color_.x;
@@ -610,6 +759,22 @@ void PostPass::Draw(gfx::rhi::ICommandList& commands, const PostProcessSettings&
         constants.sun_color[1] = sun_color_.y;
         constants.sun_color[2] = sun_color_.z;
     }
+    return constants;
+}
+
+void PostPass::Draw(gfx::rhi::ICommandList& commands, const PostProcessSettings& settings) {
+    if (!Valid()) return;
+    PostConstants constants = FrameConstants(settings);
+    if (dof_ready_) {
+        constants.scene_color = dof_result_.index;
+        constants.depth = 0xffffffffu;
+        constants.bloom = 0xffffffffu;
+        constants.lens &= 0x00ff00ffu;
+        constants.tonemapper = PackTonemapperFrame(PostTonemapperOf(constants), frame_);
+    }
+    ++frame_;
+    dof_ready_ = false;
+    bloom_ready_ = false;
     sun_set_ = false;
     ao_ = {}; // for one frame
     commands.BindPipeline(pipeline_);

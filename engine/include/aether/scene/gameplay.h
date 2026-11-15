@@ -91,13 +91,7 @@ struct Camera {
     i32 priority = 0;
 };
 
-// A film-style camera (Phase 27 step 6, §27.7): the field of view comes from
-// the lens, not a number. Add it beside a Camera; the vertical field of view
-// is 2 * atan(sensor_height / (2 * focal_length)), written into the Camera
-// by ApplyCineCameras (so the renderer needs nothing new, and the CineCamera
-// wins over a hand-edited Camera.fov_degrees). Every field is keyable by a
-// sequence's Property track, so a lens can zoom or rack focus in a cutscene.
-// Aperture and focus distance are stored for depth of field to use later.
+// Beside Camera, the lens drives its FOV and HDR depth of field; all fields can be animated by sequence Property tracks.
 struct CineCamera {
     f32 focal_length_mm = 35.0f;
     f32 sensor_width_mm = 36.0f;
@@ -203,8 +197,8 @@ AETHER_REFLECT(aether::CineCamera, 1,
     AETHER_FIELD(focal_length_mm, Field_EditAnywhere, {.tooltip = "Lens focal length", .range_min = 1, .range_max = 1000, .units = "mm"}),
     AETHER_FIELD(sensor_width_mm, Field_EditAnywhere, {.tooltip = "Film back width", .range_min = 1, .range_max = 100, .units = "mm"}),
     AETHER_FIELD(sensor_height_mm, Field_EditAnywhere, {.tooltip = "Film back height: with the focal length it sets the vertical field of view", .range_min = 1, .range_max = 100, .units = "mm"}),
-    AETHER_FIELD(aperture_f, Field_EditAnywhere, {.tooltip = "f-stop (stored for depth of field)", .range_min = 0.7, .range_max = 64}),
-    AETHER_FIELD(focus_distance, Field_EditAnywhere, {.tooltip = "Focus distance (stored for depth of field)", .range_min = 0.01, .range_max = 100000, .units = "m"})
+    AETHER_FIELD(aperture_f, Field_EditAnywhere, {.tooltip = "Lens f-stop: lower values increase depth-of-field blur", .range_min = 0.7, .range_max = 64}),
+    AETHER_FIELD(focus_distance, Field_EditAnywhere, {.tooltip = "Distance along the camera's forward axis that stays in focus", .range_min = 0.01, .range_max = 100000, .units = "m"})
 )
 
 AETHER_REFLECT(aether::Tags, 1, AETHER_FIELD(names, Field_EditAnywhere, {.tooltip = "Labels for finding entities"}))

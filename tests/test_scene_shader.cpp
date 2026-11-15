@@ -76,7 +76,8 @@ AETHER_TEST(SceneShader_CompilesWithGlslang) {
         return;
     }
     for (const int variant : {0, 1, 2, 3, 4}) {
-        const bool with_frame_data = (variant & 1) != 0, hdr_target = (variant & 2) != 0, reflections = variant == 4;
+        const bool reflections = variant == 4;
+        const bool with_frame_data = (variant & 1) != 0 || reflections, hdr_target = (variant & 2) != 0 || reflections;
         const std::string source = player::SceneShaderSource(with_frame_data, hdr_target, false, {}, reflections);
         std::string log;
         const bool vertex = Compiles(source, "vert", "VSMain", log);

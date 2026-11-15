@@ -30,9 +30,26 @@
 // surface's sky-lit reflection by the Fresnel term. A miss (off screen, behind something, or the ray into the surface), a rough surface and
 // the frame's edge all fade it back to what the sky lighting already gives, so nothing needs a reflection probe.
 
+namespace aether { struct CineCamera; }
+
 namespace aether::player {
 
-// The push constants: 32 bytes.
+struct DepthOfFieldConstants {
+    u32 source = 0;
+    u32 depth = 0xffffffffu;
+    f32 near_plane = 0.1f;
+    f32 far_plane = 1000.0f;
+    f32 focus_distance = 10.0f;
+    f32 radius_scale = 0.0f;
+    f32 max_radius = 12.0f;
+    f32 padding = 0.0f;
+};
+static_assert(sizeof(DepthOfFieldConstants) == 32);
+
+DepthOfFieldConstants PackDepthOfField(const CineCamera& camera, u32 height, f32 near_plane, f32 far_plane);
+f32 DepthOfFieldRadius(const DepthOfFieldConstants& constants, f32 distance);
+
+// The push constants: 128 bytes.
 struct PostConstants {
     u32 scene_color = 0;  // bindless index of the HDR target
     f32 exposure = 1.0f;  // linear multiplier applied before the tone mapper
@@ -144,7 +161,13 @@ public:
     // Frees the chain's render textures (they come back on the next RenderBloom); for when bloom is turned off.
     void ReleaseBloom();
 
+    // After RenderBloom, outside a render pass: blur the HDR composite before Draw applies display effects.
+    bool RenderDepthOfField(gfx::rhi::ICommandList& commands, const PostProcessSettings& settings, const CineCamera& camera);
+
 private:
+    PostConstants FrameConstants(const PostProcessSettings& settings) const;
+    bool EnsureDepthOfField(u32 width, u32 height);
+    void ReleaseDepthOfField();
     bool EnsureBloomChain(u32 width, u32 height);
     u32 frame_ = 0; // counts the Draws: it moves the film grain
 
@@ -153,6 +176,10 @@ private:
     gfx::rhi::PipelineHandle pipeline_;
     gfx::rhi::PipelineHandle bloom_down_;
     gfx::rhi::PipelineHandle bloom_up_;
+    gfx::rhi::PipelineHandle hdr_composite_, depth_of_field_;
+    gfx::rhi::SampledTextureHandle dof_composite_, dof_result_;
+    u32 dof_width_ = 0, dof_height_ = 0;
+    bool dof_ready_ = false;
     u32 scene_color_ = 0;
     u32 source_ = 0; // SetSource's; 0: scene_color_
     std::vector<gfx::rhi::SampledTextureHandle> bloom_levels_;
