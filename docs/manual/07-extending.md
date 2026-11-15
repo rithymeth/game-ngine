@@ -7,7 +7,7 @@ depends on, and its modules, each **runtime** or **editor** and loaded in a
 phase (PreDefault, Default, PostDefault). The engine's optional modules are
 plugins: Physics, Audio, Navigation, AI, Networking, Animation, UI, VFX, Sprite2D,
 Sequencer, Streaming, Blueprint, Renderer, Gameplay and the genre kits on it
-(Inventory, Interaction, Quests, Crafting). A module is a class registered with `AETHER_MODULE`
+(Inventory, Interaction, Quests, Crafting, Dialogue). A module is a class registered with `AETHER_MODULE`
 with `Startup` and `Shutdown`; dependencies start first, and a cycle is
 reported.
 
