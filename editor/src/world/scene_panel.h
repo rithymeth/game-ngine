@@ -138,6 +138,7 @@ private:
     Entity rename_target_ = kNullEntity;
     std::array<char, 128> rename_buffer_{};
     bool rename_focus_ = false;
+    bool multi_renaming_ = false; // a multi-selection name edit has an open undo transaction
     Pending pending_ = Pending::None;
 };
 

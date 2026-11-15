@@ -665,6 +665,21 @@ Outcome: editing many objects and finding a property are as fast as in the refer
 - Prefab overrides shown at the instance level, with revert per property (revert-to-prefab exists; it needs the
   granular view).
 
+Done so far (2026-11-15): multi-object editing. `reflected_inspector` gained `InspectObjects` (several objects of one
+type drawn together: the first value is shown, a field whose values differ across them reads "(multiple values)", and a
+real edit is copied to every object — a focused field merely committed is left mixed) and `ValuesEqual` (string and
+array values compared by value, structs field by field). The entity Inspector gained `InspectEntities`, which draws
+only `SharedComponents` — the components every selected entity has — and `ScenePanel` edits the Name across the
+selection too. An edit across the selection is one `SetFieldOnEntitiesCommand`: it carries each entity's own old value
+for undo, merges successive edits of the same field so a drag is one step, and reports every (entity, component) it
+touched to the Live Viewport. Add Component adds to the entities that lack it and Remove Component removes it from all,
+each one transaction. Tests in `tests/test_inspector_multi.cpp`: `MultiEdit_ValuesEqualComparesByValueNotByBytes`,
+`MultiEdit_DrawingAMixedSelectionLeavesItMixed`, `EntityInspector_EditAcrossSelectionIsOneUndoStep`,
+`EntityInspector_SharedComponentsAreWhatEveryEntityHas`, `SceneDocument_RenameSelectionIsOneUndoStep` and
+`ScenePanel_ADrawnMultiSelectionRecordsNothing`. Still open: property search, reset/copy/paste of values, granular
+prefab overrides, and the hierarchy items (toggles, icons, multi-drag reparent, `type:`/`name:` search); the Stage 4 gate
+still needs the multi-selection inspector screenshot.
+
 Gate: mixed-value semantics tests; edit-across-selection undo test; reset/copy/paste tests; hierarchy filter tests;
 screenshot of a multi-selection inspector.
 

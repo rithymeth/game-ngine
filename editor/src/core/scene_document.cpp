@@ -316,6 +316,46 @@ bool SceneDocument::Rename(Entity entity, const std::string& name, bool committe
     return true;
 }
 
+usize SceneDocument::RenameSelection(const std::string& name, bool committed) {
+    const auto& type = reflect::Reflect<EntityName>();
+    const auto field = std::find_if(type.fields.begin(), type.fields.end(),
+                                    [](const reflect::FieldInfo& candidate) {
+                                        return std::strcmp(candidate.name, "value") == 0;
+                                    });
+    if (field == type.fields.end()) return 0;
+    std::vector<Entity> alive;
+    for (const Entity entity : selection_) {
+        if (world_.IsAlive(entity) && world_.HasComponent<EntityName>(entity)) alive.push_back(entity);
+    }
+    if (alive.empty()) return 0;
+    if (alive.size() == 1) {
+        const bool changed = Name(alive[0]) != name;
+        Rename(alive[0], name, committed);
+        return changed ? 1 : 0;
+    }
+    std::vector<EntityGuid> guids;
+    std::vector<reflect::Any> old_values;
+    usize changed = 0;
+    for (const Entity entity : alive) {
+        const auto* id = world_.GetComponent<IdComponent>(entity);
+        if (id == nullptr) continue;
+        if (world_.GetComponent<EntityName>(entity)->value != name) ++changed;
+        guids.push_back(id->guid);
+        old_values.push_back(field->Get(world_.GetComponent<EntityName>(entity)));
+    }
+    if (changed == 0) {
+        if (committed) commands_.BreakMergeChain();
+        return 0;
+    }
+    commands_.Execute(context_,
+                      std::make_unique<SetFieldOnEntitiesCommand>(GetComponentId<EntityName>(), *field,
+                                                                  std::move(guids), std::move(old_values),
+                                                                  reflect::Any(name)),
+                      MergePolicy::Allow);
+    if (committed) commands_.BreakMergeChain();
+    return changed;
+}
+
 Entity SceneDocument::CreateEntity(const std::string& name, SceneEntityKind kind,
                                    const std::string& model_asset_path, Entity parent) {
     const EntityGuid guid = NewEntityGuid();

@@ -87,6 +87,9 @@ public:
     bool HasClipboard() const { return !clipboard_.empty(); }
     std::string Name(Entity entity) const;
     bool Rename(Entity entity, const std::string& name, bool committed = true);
+    // Renames every selected entity to `name`: one undo step for the whole selection, merging while `committed` is
+    // false so typing a name is one step too. Returns how many entities get a different name.
+    usize RenameSelection(const std::string& name, bool committed = true);
     Entity CreateEntity(const std::string& name, SceneEntityKind kind = SceneEntityKind::Empty,
                         const std::string& model_asset_path = {}, Entity parent = kNullEntity);
     Entity DuplicateEntity(Entity entity, const Vec3& offset = Vec3{1.0f, 0.0f, 1.0f});

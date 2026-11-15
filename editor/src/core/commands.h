@@ -35,6 +35,31 @@ struct EntitySnapshot {
     usize MemoryBytes() const;
 };
 
+// Sets one top-level field of one component on several entities (Do), putting each entity's own old value back
+// (Undo): an edit made while several entities are selected is one undo step. The new value is the same for every
+// entity — what editing a selection means. Successive edits of the same field on the same entities merge, so a
+// whole drag is one step, exactly as SetFieldCommand merges for one entity.
+class SetFieldOnEntitiesCommand final : public ICommand {
+public:
+    SetFieldOnEntitiesCommand(ComponentId component, const reflect::FieldInfo& field, std::vector<EntityGuid> entities,
+                              std::vector<reflect::Any> old_values, reflect::Any new_value);
+    void Do(CommandContext& ctx) override;
+    void Undo(CommandContext& ctx) override;
+    std::string Label() const override;
+    bool TryMerge(const ICommand& next) override;
+    usize MemoryBytes() const override;
+    bool PatchableChange(std::vector<CommandStackEdit>* targets) const override;
+
+private:
+    void Apply(CommandContext& ctx, const EntityGuid& entity, const reflect::Any& value);
+
+    ComponentId component_;
+    const reflect::FieldInfo* field_;
+    std::vector<EntityGuid> entities_;
+    std::vector<reflect::Any> old_values_;
+    reflect::Any new_value_;
+};
+
 // Sets one top-level field of one component. Successive edits of the same
 // field merge (MergePolicy::Allow), so a whole slider drag is one undo step.
 class SetFieldCommand final : public ICommand {

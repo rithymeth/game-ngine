@@ -434,6 +434,16 @@ asset editor is focused once those documents adopt the contract in Stage 6.
 - **Lock** icon in the header keeps the Inspector showing the current
   entity while you select others.
 
+Implemented: a selection of more than one entity is edited together. `InspectEntities` draws only the components every
+selected entity has (`SharedComponents`), each through `InspectObjects`: the first entity's value is what the widgets
+show, a field whose values differ reads "(multiple values)" (`ValuesEqual` compares strings by value and arrays element
+by element, not by bytes), and an edit is copied to every entity and recorded as one `SetFieldOnEntitiesCommand` — a
+whole drag merges to one step, and its label says "on N entities". Merely focusing or committing a mixed field does not
+unify it. The Name box is shared the same way (the shared name, or "(multiple values)"), and typing renames the whole
+selection in one transaction (`SceneDocument::RenameSelection`); "+ Add Component" adds to the entities that lack it and
+"Remove Component" removes it from all, each one step. The identity line and prefab-override marks remain
+single-selection.
+
 ### 6.5 Content Browser
 
 Covered in [ROADMAP.md Phase 8](../ROADMAP.md). Additional rules:

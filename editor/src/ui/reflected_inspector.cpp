@@ -34,6 +34,10 @@ struct DrawContext {
     bool read_only = false; // the field being drawn is shown but not editable
     const FieldInfo* top_level_field = nullptr; // attributed as the changed field
     const InspectOptions* options = nullptr;
+    // Multi-object editing: the objects after the first. An edit to a field of the first object is copied to them,
+    // and a field whose values differ is marked mixed.
+    std::span<void*> others;
+    bool mixed = false; // the top-level field being drawn differs across the objects
 };
 
 // The prefab-override marking: an accent bar at the row's left edge and the
@@ -111,12 +115,22 @@ void DrawValue(const TypeInfo& type, void* ptr, const reflect::Meta& meta, DrawC
 
 void DrawStructFields(const TypeInfo& type, void* object, DrawContext& ctx, bool top_level) {
     const char* current_category = nullptr;
+    const bool multi = !ctx.others.empty();
     for (const FieldInfo& field : type.fields) {
         if (top_level && !field.HasFlag(reflect::Field_EditAnywhere) && !field.HasFlag(reflect::Field_ReadOnly)) {
             continue;
         }
         if (top_level) {
             ctx.top_level_field = &field;
+            ctx.mixed = false;
+            if (multi) {
+                for (void* other : ctx.others) {
+                    if (!ValuesEqual(*field.type, field.Ptr(object), field.Ptr(other))) {
+                        ctx.mixed = true;
+                        break;
+                    }
+                }
+            }
         }
 
         const char* category = field.meta.category;
@@ -141,7 +155,12 @@ void DrawStructFields(const TypeInfo& type, void* object, DrawContext& ctx, bool
         } else {
             ImGui::TextUnformatted(field.name);
         }
-        if (ImGui::IsItemHovered()) {
+        const bool label_hovered = ImGui::IsItemHovered();
+        if (ctx.mixed && top_level) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("(multiple values)");
+        }
+        if (label_hovered) {
             if (field.meta.tooltip != nullptr) {
                 ImGui::SetTooltip("%s%s", field.meta.tooltip, overridden ? "\n(overridden in this instance)" : "");
             } else if (overridden) {
@@ -162,6 +181,8 @@ void DrawStructFields(const TypeInfo& type, void* object, DrawContext& ctx, bool
         ImGui::TableSetColumnIndex(1);
         ImGui::PushID(field.name);
         const bool read_only = top_level && field.HasFlag(reflect::Field_ReadOnly);
+        reflect::Any value_before;
+        if (multi && top_level && !read_only) value_before = field.Get(object);
         if (read_only) {
             ImGui::BeginDisabled();
         }
@@ -171,6 +192,11 @@ void DrawStructFields(const TypeInfo& type, void* object, DrawContext& ctx, bool
         ctx.read_only = false;
         if (read_only) {
             ImGui::EndDisabled();
+        }
+        // An edit made here goes to the rest of the selection too — but only a real change, not the commit of a
+        // field the user merely focused: that would unify values that were deliberately left mixed.
+        if (value_before.HasValue() && !ValuesEqual(*field.type, value_before.Data(), field.Ptr(object))) {
+            for (void* other : ctx.others) field.type->copy_assign(field.Ptr(other), field.Ptr(object));
         }
         ImGui::PopID();
     }
@@ -441,6 +467,61 @@ std::string AssetNameOf(const char* asset_type, const assets::AssetGuid& guid) {
 
 InspectResult InspectObject(const reflect::TypeInfo& type, void* object, const char* id) {
     return InspectObject(type, object, id, InspectOptions{});
+}
+
+InspectResult InspectObjects(const reflect::TypeInfo& type, std::span<void*> objects, const char* id) {
+    return InspectObjects(type, objects, id, InspectOptions{});
+}
+
+InspectResult InspectObjects(const reflect::TypeInfo& type, std::span<void*> objects, const char* id,
+                             const InspectOptions& options) {
+    DrawContext ctx;
+    ctx.options = &options;
+    if (objects.empty()) return ctx.result;
+    ctx.others = objects.subspan(1);
+    ImGui::PushID(id);
+    if (type.kind == TypeKind::Struct) {
+        if (ImGui::BeginTable("##properties", 2, ImGuiTableFlags_SizingStretchProp)) {
+            ImGui::TableSetupColumn("label", ImGuiTableColumnFlags_WidthStretch, 0.38f);
+            ImGui::TableSetupColumn("value", ImGuiTableColumnFlags_WidthStretch, 0.62f);
+            DrawStructFields(type, objects[0], ctx, /*top_level=*/true);
+            ImGui::EndTable();
+        }
+    } else {
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        DrawValue(type, objects[0], {}, ctx);
+    }
+    ImGui::PopID();
+    return ctx.result;
+}
+
+bool ValuesEqual(const reflect::TypeInfo& type, const void* a, const void* b) {
+    switch (type.kind) {
+    case TypeKind::Bool:
+    case TypeKind::Int:
+    case TypeKind::UInt:
+    case TypeKind::Float:
+    case TypeKind::Enum:
+        return std::memcmp(a, b, type.size) == 0;
+    case TypeKind::String:
+        return *static_cast<const std::string*>(a) == *static_cast<const std::string*>(b);
+    case TypeKind::FixedString:
+        return std::strncmp(static_cast<const char*>(a), static_cast<const char*>(b), type.size) == 0;
+    case TypeKind::Struct:
+        for (const FieldInfo& field : type.fields) {
+            if (!ValuesEqual(*field.type, field.Ptr(a), field.Ptr(b))) return false;
+        }
+        return true;
+    case TypeKind::Array: {
+        const usize count = type.array_size(a);
+        if (count != type.array_size(b)) return false;
+        for (usize i = 0; i < count; ++i) {
+            if (!ValuesEqual(*type.element, type.ArrayElement(a, i), type.ArrayElement(b, i))) return false;
+        }
+        return true;
+    }
+    }
+    return false;
 }
 
 InspectResult InspectObject(const reflect::TypeInfo& type, void* object, const char* id, const InspectOptions& options) {

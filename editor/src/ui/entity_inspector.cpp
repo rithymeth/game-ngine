@@ -13,6 +13,15 @@
 
 namespace aether::editor {
 
+namespace {
+
+bool IsInspectable(ComponentId id) {
+    const ComponentInfo& info = GetComponentInfo(id);
+    return info.reflected != nullptr && HasInspectableFields(*info.reflected) && id != GetComponentId<IdComponent>();
+}
+
+} // namespace
+
 void InspectEntity(CommandContext& ctx, CommandStack& stack, Entity entity) {
     const EntityGuid guid = EnsureGuid(ctx.world, entity, &ctx.guids);
     // The permanent ID is identity, not editable data: a quiet line, not a card.
@@ -111,6 +120,104 @@ void InspectEntity(CommandContext& ctx, CommandStack& stack, Entity entity) {
     int picked = AddComponentButton(addable);
     if (picked >= 0) {
         stack.Execute(ctx, std::make_unique<AddComponentCommand>(guid, addable_ids[static_cast<usize>(picked)]));
+    }
+}
+
+std::vector<ComponentId> SharedComponents(const World& world, std::span<const Entity> entities) {
+    std::vector<ComponentId> shared;
+    if (entities.empty()) return shared;
+    for (ComponentId id = 0; id < RegisteredComponentCount(); ++id) {
+        if (!IsInspectable(id)) continue;
+        const bool all_have_it = std::all_of(entities.begin(), entities.end(), [&](Entity entity) {
+            return world.HasComponentRaw(entity, id);
+        });
+        if (all_have_it) shared.push_back(id);
+    }
+    return shared;
+}
+
+void InspectEntities(CommandContext& ctx, CommandStack& stack, std::span<const Entity> entities) {
+    if (entities.empty()) return;
+    if (entities.size() == 1) {
+        InspectEntity(ctx, stack, entities[0]);
+        return;
+    }
+    std::vector<EntityGuid> guids;
+    guids.reserve(entities.size());
+    for (const Entity entity : entities) guids.push_back(EnsureGuid(ctx.world, entity, &ctx.guids));
+    ImGui::TextDisabled("%zu entities selected", entities.size());
+
+    std::vector<ComponentId> shared = SharedComponents(ctx.world, entities);
+    std::vector<const reflect::TypeInfo*> addable;
+    std::vector<ComponentId> addable_ids;
+    for (ComponentId id = 0; id < RegisteredComponentCount(); ++id) {
+        if (!IsInspectable(id) || std::find(shared.begin(), shared.end(), id) != shared.end()) continue;
+        addable.push_back(GetComponentInfo(id).reflected);
+        addable_ids.push_back(id);
+    }
+
+    for (const ComponentId id : shared) {
+        const reflect::TypeInfo& type = *GetComponentInfo(id).reflected;
+        ImGui::PushID(static_cast<int>(id));
+        const bool open = ImGui::CollapsingHeader(type.name, ImGuiTreeNodeFlags_DefaultOpen);
+        bool remove = false;
+        if (ImGui::BeginPopupContextItem("component_menu")) {
+            remove = ImGui::MenuItem("Remove Component");
+            ImGui::EndPopup();
+        }
+        if (remove) {
+            stack.BeginTransaction(std::string("Remove ") + type.name + " from " +
+                                   std::to_string(entities.size()) + " entities");
+            for (const EntityGuid& guid : guids) stack.Execute(ctx, std::make_unique<RemoveComponentCommand>(guid, id));
+            stack.EndTransaction();
+            ImGui::PopID();
+            continue; // the component is gone from every selected entity
+        }
+        if (open) {
+            std::vector<void*> data;
+            std::vector<reflect::Any> before;
+            for (const Entity entity : entities) {
+                void* component = ctx.world.GetComponentRaw(entity, id);
+                if (component == nullptr) break;
+                before.push_back(reflect::Any::CopyOf(type, component));
+                data.push_back(component);
+            }
+            if (data.size() == entities.size()) {
+                InspectResult edit = InspectObjects(type, data, type.name);
+                if (edit.Changed()) {
+                    const reflect::FieldInfo& field = *edit.changed_field;
+                    const reflect::Any new_value = field.Get(data.front());
+                    // The old values are the field's, taken from each entity's component before it was drawn.
+                    std::vector<reflect::Any> old_values;
+                    old_values.reserve(before.size());
+                    for (const reflect::Any& whole : before) {
+                        old_values.push_back(reflect::Any::CopyOf(*field.type, field.Ptr(whole.Data())));
+                    }
+                    for (usize i = 0; i < data.size(); ++i) field.Set(data[i], old_values[i]); // the command re-applies it
+                    stack.Execute(ctx,
+                                  std::make_unique<SetFieldOnEntitiesCommand>(id, field, guids,
+                                                                              std::move(old_values), new_value),
+                                  MergePolicy::Allow);
+                } else if (edit.committed) {
+                    stack.BreakMergeChain();
+                }
+            }
+        }
+        ImGui::PopID();
+    }
+
+    const int picked = AddComponentButton(addable);
+    if (picked >= 0) {
+        const ComponentId id = addable_ids[static_cast<usize>(picked)];
+        stack.BeginTransaction(std::string("Add ") + GetComponentInfo(id).reflected->name + " to " +
+                               std::to_string(entities.size()) + " entities");
+        for (const EntityGuid& guid : guids) {
+            const Entity live = ctx.guids.Find(ctx.world, guid);
+            if (!live.IsNull() && !ctx.world.HasComponentRaw(live, id)) {
+                stack.Execute(ctx, std::make_unique<AddComponentCommand>(guid, id));
+            }
+        }
+        stack.EndTransaction();
     }
 }
 

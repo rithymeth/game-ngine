@@ -126,6 +126,62 @@ usize SetFieldCommand::MemoryBytes() const {
 }
 
 // ---------------------------------------------------------------------------
+// SetFieldOnEntitiesCommand
+// ---------------------------------------------------------------------------
+
+SetFieldOnEntitiesCommand::SetFieldOnEntitiesCommand(ComponentId component, const reflect::FieldInfo& field,
+                                                     std::vector<EntityGuid> entities,
+                                                     std::vector<reflect::Any> old_values, reflect::Any new_value)
+    : component_(component), field_(&field), entities_(std::move(entities)), old_values_(std::move(old_values)),
+      new_value_(std::move(new_value)) {}
+
+void SetFieldOnEntitiesCommand::Apply(CommandContext& ctx, const EntityGuid& entity, const reflect::Any& value) {
+    Entity live = Resolve(ctx, entity);
+    void* component = ctx.world.GetComponentRaw(live, component_);
+    AETHER_ASSERT(component != nullptr);
+    field_->Set(component, value);
+    RecordPrefabEdit(ctx, live, component_);
+    if (ctx.hooks != nullptr && ctx.hooks->on_field_changed) {
+        ctx.hooks->on_field_changed(live, component_, *field_);
+    }
+}
+
+void SetFieldOnEntitiesCommand::Do(CommandContext& ctx) {
+    for (const EntityGuid& entity : entities_) Apply(ctx, entity, new_value_);
+}
+
+void SetFieldOnEntitiesCommand::Undo(CommandContext& ctx) {
+    for (usize i = 0; i < entities_.size(); ++i) Apply(ctx, entities_[i], old_values_[i]);
+}
+
+std::string SetFieldOnEntitiesCommand::Label() const {
+    return std::string("Edit ") + ComponentName(component_) + "." + field_->name + " on " +
+           std::to_string(entities_.size()) + " entities";
+}
+
+bool SetFieldOnEntitiesCommand::TryMerge(const ICommand& next) {
+    const auto* other = dynamic_cast<const SetFieldOnEntitiesCommand*>(&next);
+    if (other == nullptr || other->component_ != component_ || other->field_ != field_ ||
+        other->entities_ != entities_) {
+        return false;
+    }
+    new_value_ = other->new_value_;
+    return true;
+}
+
+usize SetFieldOnEntitiesCommand::MemoryBytes() const {
+    return sizeof(*this) + (old_values_.size() + 1) * static_cast<usize>(field_->type->size) +
+           entities_.size() * sizeof(EntityGuid);
+}
+
+bool SetFieldOnEntitiesCommand::PatchableChange(std::vector<CommandStackEdit>* targets) const {
+    for (const EntityGuid& entity : entities_) {
+        if (targets != nullptr) targets->push_back({entity, component_});
+    }
+    return true;
+}
+
+// ---------------------------------------------------------------------------
 // CreateEntityCommand / DestroyEntityCommand
 // ---------------------------------------------------------------------------
 

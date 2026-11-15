@@ -559,22 +559,50 @@ void ScenePanel::DrawHierarchy() {
 }
 
 void ScenePanel::DrawInspector() {
-    Entity shown = kNullEntity;
+    std::vector<Entity> shown;
     for (const Entity entity : document_.Selection())
-        if (document_.GetWorld().IsAlive(entity)) { shown = entity; break; }
-    if (shown.IsNull()) {
+        if (document_.GetWorld().IsAlive(entity)) shown.push_back(entity);
+    if (shown.empty()) {
         ImGui::TextDisabled("Select an entity in the hierarchy to edit it.");
         return;
     }
-    const usize selected = document_.Selection().size();
-    if (selected > 1) ImGui::TextDisabled("%zu entities selected; showing the first.", selected);
-    // The name, with typing merged into one undo step.
-    char name[128];
-    std::snprintf(name, sizeof(name), "%s", document_.Name(shown).c_str());
-    if (ImGui::InputText("Name", name, sizeof(name))) document_.Rename(shown, name, false);
-    if (ImGui::IsItemDeactivatedAfterEdit()) document_.Rename(shown, name, true);
+    if (multi_renaming_ && shown.size() < 2) { // the name box went away mid-rename
+        document_.Commands().EndTransaction();
+        multi_renaming_ = false;
+    }
+    if (shown.size() == 1) {
+        // The name, with typing merged into one undo step.
+        char name[128];
+        std::snprintf(name, sizeof(name), "%s", document_.Name(shown[0]).c_str());
+        if (ImGui::InputText("Name", name, sizeof(name))) document_.Rename(shown[0], name, false);
+        if (ImGui::IsItemDeactivatedAfterEdit()) document_.Rename(shown[0], name, true);
+    } else {
+        // One name for all of them: the shared one, or nothing when they differ. Typing is one undo step for the
+        // whole selection (a transaction around the keystrokes), not one per entity.
+        bool mixed = false;
+        for (usize i = 1; i < shown.size() && !mixed; ++i) mixed = document_.Name(shown[i]) != document_.Name(shown[0]);
+        char name[128] = {};
+        if (!mixed) std::snprintf(name, sizeof(name), "%s", document_.Name(shown[0]).c_str());
+        if (mixed) ImGui::InputTextWithHint("Name", "(multiple values)", name, sizeof(name));
+        else ImGui::InputText("Name", name, sizeof(name));
+        if (ImGui::IsItemEdited()) {
+            if (!multi_renaming_) {
+                document_.Commands().BeginTransaction("Rename " + std::to_string(shown.size()) + " entities");
+                multi_renaming_ = true;
+            }
+            document_.RenameSelection(name, false);
+        }
+        if (ImGui::IsItemDeactivated()) {
+            if (multi_renaming_) {
+                if (ImGui::IsItemDeactivatedAfterEdit()) document_.RenameSelection(name, true);
+                document_.Commands().EndTransaction();
+                multi_renaming_ = false;
+            }
+        }
+    }
     ImGui::Separator();
-    InspectEntity(document_.Context(), document_.Commands(), shown);
+    if (shown.size() == 1) InspectEntity(document_.Context(), document_.Commands(), shown[0]);
+    else InspectEntities(document_.Context(), document_.Commands(), shown);
 }
 
 } // namespace aether::editor

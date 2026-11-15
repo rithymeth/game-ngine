@@ -53,6 +53,18 @@ struct InspectOptions {
 InspectResult InspectObject(const reflect::TypeInfo& type, void* object, const char* id);
 InspectResult InspectObject(const reflect::TypeInfo& type, void* object, const char* id, const InspectOptions& options);
 
+// Several objects edited together, the way a multi-selection is: the first object's value is what the widgets
+// show, a field whose values differ across the objects is marked "(multiple values)", and an edit is written to
+// every object. The result names the field that changed once — the point at which the caller records one undo step
+// for the whole selection.
+InspectResult InspectObjects(const reflect::TypeInfo& type, std::span<void*> objects, const char* id);
+InspectResult InspectObjects(const reflect::TypeInfo& type, std::span<void*> objects, const char* id,
+                             const InspectOptions& options);
+
+// True if two live values of `type` hold the same data: numbers and enums byte for byte, strings and arrays by
+// value, structs field by field. How the multi-object inspector tells a shared value from a mixed one.
+bool ValuesEqual(const reflect::TypeInfo& type, const void* a, const void* b);
+
 // A rotation as Euler angles in degrees and back: turned about Y (yaw), then X (pitch), then Z (roll), the order the editor's
 // cameras use. Pointing straight up or down is the one ambiguous case; it puts the whole turn into yaw.
 Vec3 EulerDegreesFromRotation(const Quaternion& rotation);
