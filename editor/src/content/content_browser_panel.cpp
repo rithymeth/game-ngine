@@ -11,6 +11,8 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <map>
+#include <unordered_set>
 
 namespace aether::editor {
 
@@ -21,6 +23,11 @@ namespace {
 
 constexpr f32 kTile = 96.0f;
 constexpr f32 kTileGap = 12.0f;
+
+std::string LowerAscii(std::string text) {
+    std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) { return std::tolower(c); });
+    return text;
+}
 
 ImVec4 StateColor(VcsState s) {
     switch (s) {
@@ -133,17 +140,68 @@ void ContentBrowserPanel::OpenParent() {
 void ContentBrowserPanel::Rebuild() {
     rows_.clear();
     folders_.clear();
+    chips_.clear();
+    base_count_ = 0;
     if (!database_) return;
     folders_ = assets::ContentFolders(*database_);
     assets::ContentQuery query;
     query.folder = folder_;
     query.search = search;
+    query.recursive = scope_recursive;
     rows_ = assets::ListContent(*database_, query);
     assets::ApplyVcsStatus(rows_, vcs_);
-    if (changed_only) {
-        rows_.erase(std::remove_if(rows_.begin(), rows_.end(), [](const assets::ContentEntry& e) { return e.vcs == VcsState::Clean; }),
-                    rows_.end());
+    base_count_ = rows_.size();
+
+    // The chips describe what is in scope before they filter it; a selected chip stays listed even after its entries are
+    // filtered out, so it can be switched off again.
+    std::map<std::string, usize> counts;
+    for (const assets::ContentEntry& e : rows_) {
+        if (e.is_folder || e.asset == nullptr || e.asset->importer.empty()) continue;
+        ++counts[e.asset->importer];
     }
+    for (const std::string& selected : type_filter) counts.emplace(selected, 0);
+    for (const auto& [importer, count] : counts) chips_.push_back({importer, count});
+
+    const std::unordered_set<std::string> selected_types(type_filter.begin(), type_filter.end());
+    rows_.erase(std::remove_if(rows_.begin(), rows_.end(),
+                               [&](const assets::ContentEntry& e) {
+                                   const bool wrong_type = !selected_types.empty() && !e.is_folder &&
+                                                           (e.asset == nullptr || selected_types.count(e.asset->importer) == 0);
+                                   return wrong_type || (changed_only && e.vcs == VcsState::Clean);
+                               }),
+                rows_.end());
+
+    const auto key = [&](const assets::ContentEntry& e) {
+        switch (sort_column) {
+        case SortColumn::Name: return LowerAscii(e.name);
+        case SortColumn::Type: return e.asset != nullptr ? LowerAscii(e.asset->importer) : std::string();
+        }
+        return LowerAscii(e.name);
+    };
+    std::stable_sort(rows_.begin(), rows_.end(), [&](const assets::ContentEntry& a, const assets::ContentEntry& b) {
+        if (a.is_folder != b.is_folder) return a.is_folder; // folders stay on top, always by name
+        if (a.is_folder) return LowerAscii(a.name) < LowerAscii(b.name);
+        const std::string left = key(a), right = key(b);
+        if (left != right) return sort_descending ? left > right : left < right;
+        return a.path < b.path;
+    });
+}
+
+void ContentBrowserPanel::ClearFilters() {
+    search.clear();
+    type_filter.clear();
+    changed_only = false;
+    Rebuild();
+}
+
+void ContentBrowserPanel::SortBy(SortColumn column) {
+    if (sort_column == column) {
+        sort_descending = !sort_descending;
+    } else {
+        sort_column = column;
+        sort_descending = false;
+    }
+    Rebuild();
 }
 
 usize ContentBrowserPanel::ChangedRows() const {
@@ -183,7 +241,13 @@ void ContentBrowserPanel::DrawToolbar() {
     ImGui::SameLine();
     if (ImGui::Button("Delete") && !selection_.empty()) pending_ = Pending::Delete;
     ImGui::SameLine();
-    ImGui::TextDisabled("%zu selected", selection_.size());
+    if (!selection_.empty()) {
+        ImGui::TextDisabled("%zu selected", selection_.size());
+    } else if (!search.empty() || !type_filter.empty() || changed_only) {
+        ImGui::TextDisabled("%zu of %zu item%s", rows_.size(), base_count_, rows_.size() == 1 ? "" : "s");
+    } else {
+        ImGui::TextDisabled("%zu item%s", rows_.size(), rows_.size() == 1 ? "" : "s");
+    }
     ImGui::SameLine();
     // The grid shows a thumbnail (or a type tile) per asset; the list is the denser view.
     if (ImGui::Button(grid_view ? "[Grid]" : "Grid")) grid_view = true;
@@ -191,7 +255,14 @@ void ContentBrowserPanel::DrawToolbar() {
     if (ImGui::Button(grid_view ? "List" : "[List]")) grid_view = false;
     ImGui::SameLine();
     ImGui::SetNextItemWidth(200);
-    if (ImGui::InputTextWithHint("##search", "Search", &search)) Rebuild();
+    if (search_focus_) {
+        ImGui::SetKeyboardFocusHere(); // Ctrl+F from the listing lands here one frame later
+        search_focus_ = false;
+    }
+    if (ImGui::InputTextWithHint("##search", "Search (type: path:)", &search)) Rebuild();
+    ImGui::SameLine();
+    if (ImGui::Checkbox("Subfolders", &scope_recursive)) Rebuild();
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Include the subfolders' entries; the entries are counted like the\nlisting shows them (a search always looks in them)");
     ImGui::SameLine();
     if (ImGui::Checkbox("Changed only", &changed_only)) Rebuild();
     ImGui::SameLine();
@@ -227,6 +298,37 @@ void ContentBrowserPanel::DrawToolbar() {
         if (ImGui::Button(label.c_str())) validation_open = true;
     }
     if (!operation_warning_.empty()) ImGui::TextColored(ImVec4(1.0f, 0.70f, 0.20f, 1.0f), "%s", operation_warning_.c_str());
+    DrawTypeChips();
+}
+
+void ContentBrowserPanel::DrawTypeChips() {
+    if (chips_.empty()) return; // no typed assets in scope: nothing to filter
+    std::string toggled;
+    bool all = false;
+    if (ImGui::SmallButton(type_filter.empty() ? "[All]" : "All")) all = true;
+    ImGui::SameLine();
+    ImGui::TextDisabled("Type:");
+    for (const TypeChip& chip : chips_) {
+        ImGui::SameLine();
+        const bool on = std::find(type_filter.begin(), type_filter.end(), chip.importer) != type_filter.end();
+        const std::string label = chip.importer + " (" + std::to_string(chip.count) + ")";
+        if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.30f, 0.52f, 0.80f, 1.0f));
+        if (ImGui::SmallButton(label.c_str())) toggled = chip.importer;
+        if (on) ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s entries%s", chip.importer.c_str(), on ? " -- click to stop filtering by it" : "");
+    }
+    if (all && !type_filter.empty()) {
+        type_filter.clear();
+        Rebuild();
+    } else if (!toggled.empty()) {
+        const auto found = std::find(type_filter.begin(), type_filter.end(), toggled);
+        if (found != type_filter.end()) {
+            type_filter.erase(found);
+        } else {
+            type_filter.push_back(toggled);
+        }
+        Rebuild(); // after the loop: chips_ is rebuilt
+    }
 }
 
 void ContentBrowserPanel::DrawTree() {
@@ -250,12 +352,45 @@ void ContentBrowserPanel::DrawTree() {
     if (change_folder) OpenFolder(next_folder);
 }
 
-void ContentBrowserPanel::DrawListing() {
-    ImGui::TextDisabled("Content/%s", folder_.c_str());
-    if (!folder_.empty() && ImGui::Selectable("..")) {
-        OpenParent();
-        return;
+bool ContentBrowserPanel::DrawBreadcrumbs() {
+    bool changed = false;
+    std::string target;
+    if (folder_.empty()) {
+        ImGui::TextUnformatted("Content");
+    } else if (ImGui::SmallButton("Content")) {
+        changed = true;
     }
+    std::string prefix;
+    usize start = 0;
+    while (start < folder_.size()) {
+        const usize slash = folder_.find('/', start);
+        const std::string segment = folder_.substr(start, slash == std::string::npos ? std::string::npos : slash - start);
+        prefix = prefix.empty() ? segment : prefix + "/" + segment;
+        const std::string crumb = prefix;
+        ImGui::SameLine();
+        ImGui::TextDisabled("/");
+        ImGui::SameLine();
+        ImGui::PushID(crumb.c_str());
+        if (slash == std::string::npos) {
+            ImGui::TextUnformatted(segment.c_str()); // where we are, not a way back
+        } else if (ImGui::SmallButton(segment.c_str())) {
+            changed = true;
+            target = crumb;
+        }
+        ImGui::PopID();
+        if (slash == std::string::npos) break;
+        start = slash + 1;
+    }
+    if (scope_recursive) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("(with subfolders)");
+    }
+    if (changed) OpenFolder(target);
+    return changed;
+}
+
+void ContentBrowserPanel::DrawListing() {
+    if (DrawBreadcrumbs()) return; // the folder changed: the rest of this frame's listing is stale
     tiles_.clear();
     std::string folder_to_open, asset_to_open;
     if (grid_view) {
@@ -283,7 +418,19 @@ void ContentBrowserPanel::DrawListing() {
         if (ImGui::MenuItem("Delete", "Del", false, !selection_.empty())) pending_ = Pending::Delete;
         ImGui::EndPopup();
     }
-    if (rows_.empty()) ImGui::TextDisabled(changed_only ? "Nothing here has changed." : "Empty.");
+    if (rows_.empty()) {
+        if (!search.empty() || !type_filter.empty() || changed_only) {
+            ImGui::TextDisabled("No entries match.");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Clear filters")) ClearFilters();
+            if (!search.empty()) {
+                ImGui::SameLine();
+                ImGui::TextDisabled("(a search looks in subfolders too)");
+            }
+        } else {
+            ImGui::TextDisabled("Empty.");
+        }
+    }
     DrawSelectionKeys();
     if (commit_rename_) {
         commit_rename_ = false;
@@ -378,9 +525,10 @@ void ContentBrowserPanel::DrawBoxSelect() {
 }
 
 void ContentBrowserPanel::DrawSelectionKeys() {
-    if (!renaming_.empty() || ImGui::GetIO().WantTextInput) return;
     if (!ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) return;
     ImGuiIO& io = ImGui::GetIO();
+    if (renaming_.empty() && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_F)) search_focus_ = true;
+    if (!renaming_.empty() || io.WantTextInput) return;
     if (ImGui::IsKeyPressed(ImGuiKey_Delete)) pending_ = Pending::Delete;
     if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_D)) pending_ = Pending::Duplicate;
     if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_A)) SelectAll();
@@ -486,6 +634,27 @@ void ContentBrowserPanel::DrawGrid(std::string& folder_to_open, std::string& ass
 }
 
 void ContentBrowserPanel::DrawRows(std::string& folder_to_open, std::string& asset_to_open) {
+    // Clicking a column sorts by it; clicking the sorted one again flips the order.
+    bool sort_clicked = false;
+    SortColumn clicked = SortColumn::Name;
+    const auto header_label = [&](const char* text, SortColumn column) {
+        if (sort_column != column) return std::string(text);
+        return std::string(text) + (sort_descending ? " v" : " ^");
+    };
+    const std::string name_label = header_label("Name", SortColumn::Name);
+    if (ImGui::Selectable(name_label.c_str(), false, ImGuiSelectableFlags_None, ImVec2(240.0f, 0.0f))) {
+        sort_clicked = true;
+        clicked = SortColumn::Name;
+    }
+    ImGui::SameLine();
+    const std::string type_label = header_label("Type", SortColumn::Type);
+    if (ImGui::Selectable(type_label.c_str(), false, ImGuiSelectableFlags_None, ImVec2(140.0f, 0.0f))) {
+        sort_clicked = true;
+        clicked = SortColumn::Type;
+    }
+    ImGui::Separator();
+    if (sort_clicked) SortBy(clicked);
+
     for (usize i = 0; i < rows_.size(); ++i) {
         const assets::ContentEntry e = rows_[i];
         ImGui::PushID(static_cast<int>(i));

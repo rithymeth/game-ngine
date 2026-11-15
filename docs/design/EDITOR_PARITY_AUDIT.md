@@ -550,7 +550,8 @@ Outcome: assets can be found, judged, imported, fixed and opened without leaving
 
 Gate: thumbnail cache test (second open does not re-render unchanged assets); reimport identity test; multi-select
 operations and their batch count (one rescan and one refresh per operation -- asset operations are not in the ECS undo
-stack); headless open of every registered asset type; importer settings round-trip.
+stack); the search grammar, the chips' counts and the folder scope (filter tests); headless open of every registered asset
+type; importer settings round-trip.
 
 Done so far (2026-11-14): the grid of thumbnails. `ThumbnailStore` (`editor/src/content/thumbnail_store.{h,cpp}`) is the
 whole of it: `Get(entry)` answers a picture or nothing, `Pump()` once a frame, and counters -- `Rendered`, `LoadedFromDisk`,
@@ -586,6 +587,23 @@ entry is part of it. Tests in `tests/test_content_multi_select.cpp`: `ContentOps
 `ContentOps_DeleteIsAllOrNothing`, `ContentSelection_SelectsExtendsTogglesAndBoxSelects`,
 `ContentSelection_DuplicateSelectsTheCopies`, `ContentSelection_DeleteRefusesTheWholeBatchOrTakesAllOfIt`,
 `ContentSelection_MoveTakesTheSelectionAndFollowsTheOpenFolder` and `ContentSelection_RenameEntryKeepsTheTypeAndTheSelection`.
+
+Done so far (2026-11-15): narrowing the listing. The search field now understands a small grammar, parsed in
+`ListContent` (`engine/src/assets/content_browser.cpp`): whitespace separates words, every word has to match, and a word
+prefixed `type:` matches the importer's name while `path:` matches the content path, both lowercased substrings, so
+"crate type:Model", "type:tex" and "path:props/ type:Texture" work; a word with an empty value is not a term at all. A
+search still implies `recursive`, and plain words still match the name, so every old query means what it did. Below the
+toolbar, a chip per importer present in scope shows how many entries it has; clicking one keeps only that type, clicking
+again drops it, "All" clears the chips -- the chips are counted before they filter and keep a selected chip listed at 0
+when nothing is left, so it can be switched off again. A "Subfolders" checkbox sets the folder scope (the listing's
+"3 of 12 items" counts what the scope and the search leave, before the chips and Changed only narrow it), the
+"Content/Models/Crate" line under the toolbar became breadcrumbs where every segment but the current one navigates,
+and in the list view the Name and Type headers sort the listing -- the sorted column says "^" or "v", clicking it again
+flips the order, and folders stay on top by name either way. Ctrl+F focuses the search field. An empty listing that was
+narrowed says so and offers "Clear filters" (`ClearFilters()`), instead of claiming the folder is empty. Tests in
+`tests/test_content_filters.cpp`: `ContentBrowser_SearchSyntaxFiltersByTypeAndPath`,
+`ContentBrowser_TypeChipsAndSearchCombine`, `ContentBrowser_FolderScopeAndItemCounts` and
+`ContentBrowser_SortsByColumnAndKeepsFoldersOnTop`.
 
 ### Stage 4 — Inspector and hierarchy parity (M)
 

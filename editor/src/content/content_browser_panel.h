@@ -50,6 +50,24 @@ public:
     bool changed_only = false;
     // The listing as tiles (the default) or as rows; a host or a test can pick without clicking the toolbar.
     bool grid_view = true;
+    // Importer names the type chips keep (empty = every type), and whether the listing includes subfolders. Plain UI
+    // state like `search`, so a host (or a headless test) can filter without clicking.
+    std::vector<std::string> type_filter;
+    bool scope_recursive = false;
+    // The list view's columns; clicking a header sorts by it, clicking it again flips the order.
+    enum class SortColumn { Name, Type };
+    SortColumn sort_column = SortColumn::Name;
+    bool sort_descending = false;
+    // A type chip: an importer present in the listing before the chips apply, with how many entries it has.
+    struct TypeChip {
+        std::string importer;
+        usize count = 0;
+    };
+    const std::vector<TypeChip>& TypeChips() const { return chips_; }
+    // The entries in scope before the type chips and the changed-only filter, for "3 of 12 items".
+    usize UnfilteredCount() const { return base_count_; }
+    // Empties the search and clears the type chips and the changed-only filter.
+    void ClearFilters();
     // Phase 43.6: the asset issue list. Like `search` and `changed_only` this is plain UI
     // state, public so a host (or a headless test) can open it without clicking.
     bool validation_open = false;
@@ -102,12 +120,15 @@ private:
     };
     void Rebuild();
     void DrawToolbar();
+    void DrawTypeChips();
     void DrawTree();
     void DrawListing();
+    bool DrawBreadcrumbs(); // true when it changed folder (the rest of the frame is then stale)
     void DrawGrid(std::string& folder_to_open, std::string& asset_to_open);
     void DrawRows(std::string& folder_to_open, std::string& asset_to_open);
     void DrawEntryMenu(const assets::ContentEntry& entry); // what a tile and a row both offer
     void DrawCreateMenu(const std::string& folder);
+    void SortBy(SortColumn column);
     void DrawBoxSelect();
     void DrawSelectionKeys();
     bool InlineRename(const assets::ContentEntry& entry);
@@ -144,6 +165,9 @@ private:
     std::string pending_destination_;
     std::string pending_create_extension_;
     std::string pending_create_folder_;
+    std::vector<TypeChip> chips_;
+    usize base_count_ = 0;
+    bool search_focus_ = false;
     assets::VcsStatus vcs_;
     bool vcs_injected_ = false;
     std::string folder_;

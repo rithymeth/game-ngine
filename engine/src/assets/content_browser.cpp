@@ -51,6 +51,46 @@ MoveResult Fail(std::string message) {
     return result;
 }
 
+// Words all have to match; a `type:` word matches the importer and a `path:` word the content path, the rest the name.
+struct SearchTerms {
+    std::vector<std::string> names;
+    std::vector<std::string> types;
+    std::vector<std::string> paths;
+    bool empty() const { return names.empty() && types.empty() && paths.empty(); }
+};
+
+SearchTerms ParseSearch(const std::string& text) {
+    SearchTerms terms;
+    std::string token;
+    for (usize i = 0; i <= text.size(); ++i) {
+        const char c = i < text.size() ? text[i] : ' ';
+        if (!std::isspace(static_cast<unsigned char>(c))) {
+            token += c;
+            continue;
+        }
+        if (token.empty()) continue;
+        const std::string lower = Lower(token);
+        constexpr std::string_view kType = "type:";
+        constexpr std::string_view kPath = "path:";
+        if (lower.rfind(kType, 0) == 0) {
+            if (lower.size() > kType.size()) terms.types.push_back(lower.substr(kType.size()));
+        } else if (lower.rfind(kPath, 0) == 0) {
+            if (lower.size() > kPath.size()) terms.paths.push_back(lower.substr(kPath.size()));
+        } else {
+            terms.names.push_back(lower);
+        }
+        token.clear();
+    }
+    return terms;
+}
+
+bool ContainsAll(const std::string& text, const std::vector<std::string>& words) {
+    for (const std::string& word : words) {
+        if (text.find(word) == std::string::npos) return false;
+    }
+    return true;
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -80,13 +120,19 @@ std::vector<std::string> ContentFolders(const AssetDatabase& database) {
 
 std::vector<ContentEntry> ListContent(const AssetDatabase& database, const ContentQuery& query) {
     const std::string folder = Normalized(query.folder);
-    const std::string search = Lower(query.search);
-    const bool recursive = query.recursive || !search.empty();
+    const SearchTerms terms = ParseSearch(query.search);
+    const bool recursive = query.recursive || !terms.empty();
     const std::unordered_set<std::string> types(query.types.begin(), query.types.end());
     std::vector<ContentEntry> folders;
     std::vector<ContentEntry> assets;
 
-    auto matches = [&](const std::string& name) { return search.empty() || Lower(name).find(search) != std::string::npos; };
+    const auto matches = [&](const std::string& name, const std::string& path, const std::string& importer) {
+        const std::string lowered_name = Lower(name);
+        const std::string lowered_path = Lower(path);
+        const std::string lowered_importer = Lower(importer);
+        return ContainsAll(lowered_name, terms.names) && ContainsAll(lowered_path, terms.paths) &&
+               ContainsAll(lowered_importer, terms.types);
+    };
 
     if (!recursive) {
         for (const std::string& path : ContentFolders(database)) {
@@ -111,7 +157,7 @@ std::vector<ContentEntry> ListContent(const AssetDatabase& database, const Conte
             continue;
         }
         std::string name = record->IsSubAsset() ? record->sub_key : stdfs::path(record->path).filename().string();
-        if (!matches(name)) {
+        if (!matches(name, record->path, record->importer)) {
             continue;
         }
         assets.push_back({false, std::move(name), record->path, record});

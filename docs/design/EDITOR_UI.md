@@ -458,6 +458,15 @@ first use, and become the selection. Rename is inline on the tile or row (`Renam
 asset's and changing the extension is refused. The toolbar's Create menu creates one asset of any registered type with its
 name focused, and the listing's context menu (right-click on the background) offers Select All, Create, Duplicate and Delete.
 
+Narrowing: the search field takes words that must all match, `type:<importer>` (a substring of the importer's name) and
+`path:<text>` (a substring of the content path); a search looks in subfolders, as it always did. A chip row under the
+toolbar lists each importer in scope with its entry count -- click to keep only that type, click again to drop it, "All"
+clears the chips; a selected chip stays listed at 0 when a search leaves nothing, so it can be switched off. "Subfolders"
+widens the scope to the whole subtree; the count next to the toolbar reads "3 of 12 items" while anything narrows the
+listing, and an empty narrowed listing says so and offers "Clear filters". Folder navigation is a breadcrumb line
+("Content/Models/Crate") where every segment but the current one is a button. The list view's Name and Type headers sort;
+the sorted one shows `^`/`v` and clicking it again flips the order, with folders always first. Ctrl+F focuses search.
+
 - Thumbnail size slider (64–256 px); list view for large folders.
 - Filter current-folder entries by supported asset type and name; search and
   type filters combine. Label the folder scope, show the visible/matching

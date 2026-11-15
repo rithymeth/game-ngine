@@ -32,7 +32,10 @@ struct ContentEntry {
 
 struct ContentQuery {
     std::string folder;                  // "" = the content root
-    std::string search;                  // case-insensitive substring of the name; searches subfolders too
+    // Case-insensitive name search that also looks in subfolders. Words all have to match; `type:<importer>` matches the
+    // importer's name ("type:Model", "type:tex") and `path:<text>` the content path ("path:props/"), so "crate type:Model"
+    // or "path:props/ type:Texture" work. A search implies `recursive`.
+    std::string search;
     std::vector<std::string> types;      // importer names to show ("Texture", ...); empty = all
     bool recursive = false;              // include subfolders' assets (implied by a search)
     bool include_sub_assets = false;     // list a model's meshes/materials/animations too
