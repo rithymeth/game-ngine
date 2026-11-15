@@ -83,6 +83,7 @@ without a server or network connection.
 | [manual/19-achievements.md](manual/19-achievements.md) | The achievements kit: goals, progress kept in the save bag and the script table |
 | [manual/20-spawner.md](manual/20-spawner.md) | The spawner kit: prefabs that appear around an entity on a timer, and the script table |
 | [manual/21-checkpoints.md](manual/21-checkpoints.md) | The checkpoints kit: respawn points, the last one kept in the save bag, and the script table |
+| [manual/22-loot.md](manual/22-loot.md) | The loot kit: weighted, deterministic drops given to an inventory, and the script table |
 | [manual/api_stability.md](manual/api_stability.md) | The three stability levels and what each promises |
 | [manual/core_api_inventory.md](manual/core_api_inventory.md) | Ownership and threading inventory for the APIs a game or plugin uses |
 | [manual/support_policy.md](manual/support_policy.md) | A support-policy proposal, explicitly not yet promised |

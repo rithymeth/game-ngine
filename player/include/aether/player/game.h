@@ -28,6 +28,9 @@
 #if AETHER_KIT_DIALOGUE
 #include "aether/dialogue/dialogue_def.h"
 #endif
+#if AETHER_KIT_LOOT
+#include "aether/loot/loot_table.h"
+#endif
 #if AETHER_KIT_CRAFTING
 #include "aether/crafting/recipe_def.h"
 #endif
@@ -478,6 +481,9 @@ private:
 #endif
 #if AETHER_KIT_DIALOGUE
     dlg::DialogueLibrary dialogues_;
+#endif
+#if AETHER_KIT_LOOT
+    loot::LootLibrary loot_tables_;
 #endif
 #if AETHER_KIT_CRAFTING
     craft::RecipeLibrary recipes_;

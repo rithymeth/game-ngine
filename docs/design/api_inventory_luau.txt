@@ -205,6 +205,13 @@ Localization.GetLanguage function
 Localization.GetText function
 Localization.HasText function
 Localization.SetLanguage function
+Loot table
+Loot.Exists function
+Loot.GetTitle function
+Loot.Give function
+Loot.LastGiven function
+Loot.Roll function
+Loot.SetSeed function
 Nav table
 Nav.FindPath function
 Nav.IsReady function

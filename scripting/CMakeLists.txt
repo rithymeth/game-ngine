@@ -16,6 +16,7 @@ add_library(aether_scripting STATIC
     src/interaction_api.cpp
     src/quests_api.cpp
     src/crafting_api.cpp
+    src/loot_api.cpp
     src/dialogue_api.cpp
     src/timeofday_api.cpp
     src/achievements_api.cpp
@@ -82,6 +83,12 @@ if(TARGET Aether::Dialogue)
     target_compile_definitions(aether_scripting PRIVATE AETHER_KIT_DIALOGUE=1)
 else()
     target_compile_definitions(aether_scripting PRIVATE AETHER_KIT_DIALOGUE=0)
+endif()
+if(TARGET Aether::Loot)
+    target_link_libraries(aether_scripting PRIVATE Aether::Loot)
+    target_compile_definitions(aether_scripting PRIVATE AETHER_KIT_LOOT=1)
+else()
+    target_compile_definitions(aether_scripting PRIVATE AETHER_KIT_LOOT=0)
 endif()
 if(TARGET Aether::Crafting)
     target_link_libraries(aether_scripting PRIVATE Aether::Crafting)
