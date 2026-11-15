@@ -8,6 +8,8 @@
     "Data/",
     "Textures/",
     "UI/",
+    "Items/",
+    "Recipes/",
     "fonts/",
     "Audio/",
     "Scenes/AssemblyHall.ascene",

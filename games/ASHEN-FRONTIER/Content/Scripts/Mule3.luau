@@ -66,13 +66,15 @@ function Mule:OnUpdate(dt)
         end
         if Input.IsTriggered("Interact") then
             if self.state == "broken" then
-                local have = SaveGames.GetNumber("pack.components", 0)
+                local have = Inventory.Count(self.player, "Component")
                 if have >= self.repair_cost then
-                    SaveGames.SetNumber("pack.components", have - self.repair_cost)
+                    Inventory.Remove(self.player, "Component", self.repair_cost)
+                    SaveGames.CaptureWorld() -- the pack is saved with Kael
                     SaveGames.SaveToSlot("autosave")
                     UI.SetText("ComponentText", string.format("COMPONENTS  %d", have - self.repair_cost))
                     self.state = "follow"
                     SaveGames.SetNumber("mule.repaired", 1)
+                    SaveGames.CaptureWorld()
                     SaveGames.SaveToSlot("autosave")
                     Sfx("repair")
                     print("MULE-3 repaired: it follows Kael")
