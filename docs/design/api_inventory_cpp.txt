@@ -1134,6 +1134,48 @@
   std::vector<std::string>Names()const
   usize Size()const
   void Clear()
+[dialogue/include/aether/dialogue/dialogue_def.h] experimental
+  type class DialogueLibrary
+  type struct Choice
+  type struct DialogueDef
+  type struct Node
+  bool DialogueFromJson(const std::string&text,DialogueDef&out,std::string*error=nullptr)
+  bool operator==(const Choice&)const=default
+  bool operator==(const DialogueDef&)const=default
+  bool operator==(const Node&)const=default
+  const DialogueDef*Find(const std::string&name)const
+  const Node*Find(const std::string&id)const
+  public:bool Register(DialogueDef dialogue,std::string*error=nullptr)
+  reflect::Json DialogueToJson(const DialogueDef&dialogue)
+  std::string Validate()const
+  std::vector<std::string>Names()const
+  usize Size()const
+  void Clear()
+[dialogue/include/aether/dialogue/dialogue_kit.h] experimental
+  type struct DialogueAssetDiagnostic
+  std::unique_ptr<kit::IKit>MakeDialogueKit(DialogueLibrary*dialogues=nullptr)
+  std::vector<DialogueAssetDiagnostic>LoadDialogueAssets(const std::vector<std::string>&paths,std::function<bool(const std::string&,std::vector<u8>&,std::string*)>read_content,DialogueLibrary&dialogues)
+[dialogue/include/aether/dialogue/dialogue_system.h] experimental
+  type class DialogueSystem
+  type enum class Result
+  type struct Line
+  type struct Session
+  DialogueSystem&operator=(const DialogueSystem&)=delete
+  DialogueSystem(const DialogueSystem&)=delete
+  Result Advance(Entity listener)
+  Result Choose(Entity listener,i32 index)
+  Result Start(Entity listener,const std::string&dialogue)
+  bool IsActive(Entity listener)const
+  const DialogueLibrary&Dialogues()const
+  const Session*Find(Entity listener)const
+  const char*ResultName(Result result)
+  public:DialogueSystem(World&world,const DialogueLibrary&dialogues)
+  static DialogueSystem*Active()
+  std::optional<Line>Current(Entity listener)const
+  void End(Entity listener)
+  void Go(Entity listener,Session&session,const std::string&next)
+  void MakeActive()
+  ~DialogueSystem()
 [engine/include/aether/aether.h] experimental
 [engine/include/aether/assets/asset_database.h] experimental
   type class AssetDatabase
@@ -5766,6 +5808,8 @@
   void SetHandler(DebugHandler handler)
   void Stop(lua_State*state,StopReason reason,const Location&here)
   ~ScriptDebugger()
+[scripting/include/aether/script/dialogue_api.h] experimental
+  void InstallDialogueApi(LuauHost&host)
 [scripting/include/aether/script/gameplay_api.h] experimental
   void InstallGameplayApi(LuauHost&host)
 [scripting/include/aether/script/interaction_api.h] experimental

@@ -56,6 +56,13 @@ if(TARGET Aether::Quests)
 else()
     target_compile_definitions(aether_game PUBLIC AETHER_KIT_QUESTS=0)
 endif()
+# The dialogue genre kit (conversations), when built.
+if(TARGET Aether::Dialogue)
+    target_link_libraries(aether_game PUBLIC Aether::Dialogue)
+    target_compile_definitions(aether_game PUBLIC AETHER_KIT_DIALOGUE=1)
+else()
+    target_compile_definitions(aether_game PUBLIC AETHER_KIT_DIALOGUE=0)
+endif()
 # The crafting genre kit (recipes on the inventory kit), when built.
 if(TARGET Aether::Crafting)
     target_link_libraries(aether_game PUBLIC Aether::Crafting)

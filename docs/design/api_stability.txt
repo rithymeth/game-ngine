@@ -20,6 +20,7 @@ physics_net experimental
 player experimental
 quests experimental
 crafting experimental
+dialogue experimental
 renderer experimental
 save experimental
 scripting experimental
