@@ -20,6 +20,7 @@ add_library(aether_scripting STATIC
     src/timeofday_api.cpp
     src/achievements_api.cpp
     src/spawner_api.cpp
+    src/checkpoints_api.cpp
     src/ai_api.cpp
 )
 
@@ -51,6 +52,12 @@ if(TARGET Aether::Quests)
     target_compile_definitions(aether_scripting PRIVATE AETHER_KIT_QUESTS=1)
 else()
     target_compile_definitions(aether_scripting PRIVATE AETHER_KIT_QUESTS=0)
+endif()
+if(TARGET Aether::Checkpoints)
+    target_link_libraries(aether_scripting PRIVATE Aether::Checkpoints)
+    target_compile_definitions(aether_scripting PRIVATE AETHER_KIT_CHECKPOINTS=1)
+else()
+    target_compile_definitions(aether_scripting PRIVATE AETHER_KIT_CHECKPOINTS=0)
 endif()
 if(TARGET Aether::Spawner)
     target_link_libraries(aether_scripting PRIVATE Aether::Spawner)

@@ -1136,6 +1136,39 @@
   void Tick(f32 delta_seconds)
   void Warn(const char*code,const Instance&instance,const CompiledFunction&fn,NodeId node,std::string message)
   void*ComponentOf(Entity target,const reflect::TypeInfo*owner)
+[checkpoints/include/aether/checkpoints/checkpoint.h] experimental
+  type struct Checkpoint
+  ),AETHER_FIELD(activator_tag,Field_EditAnywhere,
+  ),AETHER_FIELD(radius,Field_EditAnywhere,
+  ),AETHER_FIELD(respawn_offset,Field_EditAnywhere,
+  AETHER_REFLECT(aether::chk::Checkpoint,1,AETHER_FIELD(enabled,Field_EditAnywhere),AETHER_FIELD(name,Field_EditAnywhere,
+  void RegisterCheckpointComponents()
+[checkpoints/include/aether/checkpoints/checkpoint_system.h] experimental
+  type class CheckpointSystem
+  type enum class Result
+  type struct CheckpointEvent
+  CheckpointSystem&operator=(const CheckpointSystem&)=delete
+  CheckpointSystem(const CheckpointSystem&)=delete
+  Entity Find(const std::string&name)const
+  Result Respawn(Entity who)
+  bool Activate(const std::string&name)
+  bool IsReached(const std::string&name)const
+  const char*ResultName(Result result)
+  const std::vector<CheckpointEvent>&Events()const
+  private:std::vector<Entity>Checkpoints()const
+  public:CheckpointSystem(World&world,save::SaveBag&bag,std::function<std::string()>current_scene=
+  static CheckpointSystem*Active()
+  std::function<std::string()>scene_
+  std::string Last()const
+  std::string LastScene()const
+  void ClearEvents()
+  void MakeActive()
+  void Reach(Entity checkpoint,const Checkpoint&c,Entity activator)
+  void Update()
+  ~CheckpointSystem()
+[checkpoints/include/aether/checkpoints/checkpoints_kit.h] experimental
+  SystemDesc MakeCheckpointsSystem(CheckpointSystem*system,std::function<void(const CheckpointEvent&)>on_event)
+  std::unique_ptr<kit::IKit>MakeCheckpointsKit()
 [crafting/include/aether/crafting/crafting_kit.h] experimental
   type struct RecipeAssetDiagnostic
   std::unique_ptr<kit::IKit>MakeCraftingKit(RecipeLibrary*recipes=nullptr,const inv::ItemLibrary*items=nullptr)
@@ -5096,6 +5129,7 @@
   type struct RebindableInput
   type struct RenderSize
   type struct SequenceCue
+  #endif #if AETHER_KIT_CHECKPOINTS std::function<std::string()>scene_name_function_
   Entity SpawnPrefab(const std::string&path,const Transform&place)
   FrameContext Tick(f32 dt)
   Game&operator=(const Game&)=delete
@@ -5167,6 +5201,7 @@
   ui::Viewport*Ui()
   vfx::ParticleWorld*Particles()
   void ActivateInputContexts()
+  void AddCheckpointsStage()
   void AddInteractionStage()
   void AddInventoryStage()
   void AddQuestsStage()
@@ -5787,6 +5822,8 @@
   std::vector<AiDebugEntry>Collect(World&world)const
   void SetBrainDebug(Entity entity,std::string kind,std::string detail)
   void SetState(Entity entity,std::string state)
+[scripting/include/aether/script/checkpoints_api.h] experimental
+  void InstallCheckpointsApi(LuauHost&host)
 [scripting/include/aether/script/completion.h] experimental
   type enum class CompletionKind
   type struct CompletionItem
