@@ -91,6 +91,13 @@ if(TARGET Aether::Dialogue)
 else()
     target_compile_definitions(aether_game PUBLIC AETHER_KIT_DIALOGUE=0)
 endif()
+# The loot genre kit (loot tables on the inventory kit), when built.
+if(TARGET Aether::Loot)
+    target_link_libraries(aether_game PUBLIC Aether::Loot)
+    target_compile_definitions(aether_game PUBLIC AETHER_KIT_LOOT=1)
+else()
+    target_compile_definitions(aether_game PUBLIC AETHER_KIT_LOOT=0)
+endif()
 # The crafting genre kit (recipes on the inventory kit), when built.
 if(TARGET Aether::Crafting)
     target_link_libraries(aether_game PUBLIC Aether::Crafting)

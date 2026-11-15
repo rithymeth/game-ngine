@@ -20,6 +20,7 @@ physics_net experimental
 player experimental
 quests experimental
 crafting experimental
+loot experimental
 checkpoints experimental
 spawner experimental
 achievements experimental

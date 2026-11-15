@@ -4256,6 +4256,47 @@
   usize Count(std::string_view language)const
   usize KeyCount()const
   void Clear()
+[loot/include/aether/loot/loot_kit.h] experimental
+  type struct LootAssetDiagnostic
+  std::unique_ptr<kit::IKit>MakeLootKit(LootLibrary*tables=nullptr,const inv::ItemLibrary*items=nullptr)
+  std::vector<LootAssetDiagnostic>LoadLootAssets(const std::vector<std::string>&paths,std::function<bool(const std::string&,std::vector<u8>&,std::string*)>read_content,const inv::ItemLibrary&items,LootLibrary&tables)
+[loot/include/aether/loot/loot_system.h] experimental
+  type class LootSystem
+  type enum class Result
+  LootSystem&operator=(const LootSystem&)=delete
+  LootSystem(const LootSystem&)=delete
+  Result Give(Entity owner,const std::string&table,std::vector<Drop>*given=nullptr)
+  Result GiveSeeded(Entity owner,const std::string&table,u64 seed,std::vector<Drop>*given=nullptr)
+  const LootLibrary&Tables()const
+  const char*ResultName(Result result)
+  i32 LastGiven()const
+  private:Result GiveDrops(Entity owner,const std::vector<Drop>&drops,std::vector<Drop>*given)
+  public:LootSystem(inv::InventorySystem&inventory,const LootLibrary&tables)
+  static LootSystem*Active()
+  std::vector<Drop>Roll(const std::string&table)
+  u64 NextSeed()
+  void MakeActive()
+  void SetSeed(u64 seed)
+  ~LootSystem()
+[loot/include/aether/loot/loot_table.h] experimental
+  type class LootLibrary
+  type struct Drop
+  type struct LootEntry
+  type struct LootTableDef
+  bool LootTableFromJson(const std::string&text,LootTableDef&out,std::string*error=nullptr)
+  bool operator==(const Drop&)const=default
+  bool operator==(const LootEntry&)const=default
+  bool operator==(const LootTableDef&)const=default
+  const LootTableDef*Find(const std::string&name)const
+  public:bool Register(LootTableDef table,std::string*error=nullptr)
+  reflect::Json LootTableToJson(const LootTableDef&table)
+  static std::string CheckItems(const LootTableDef&table,const inv::ItemLibrary&items)
+  std::string DescribeDrops(const std::vector<Drop>&drops)
+  std::string Validate()const
+  std::vector<Drop>RollLoot(const LootTableDef&table,u64 seed)
+  std::vector<std::string>Names()const
+  usize Size()const
+  void Clear()
 [nav/include/aether/nav/components.h] experimental
   type class NavWorld
   type enum class NavObstacleShape
@@ -5906,6 +5947,8 @@
   void InstallInventoryApi(LuauHost&host)
 [scripting/include/aether/script/loc_api.h] experimental
   void InstallLocApi(LuauHost&host)
+[scripting/include/aether/script/loot_api.h] experimental
+  void InstallLootApi(LuauHost&host)
 [scripting/include/aether/script/luau_host.h] experimental
   type class LuauHost
   type class NativeCall

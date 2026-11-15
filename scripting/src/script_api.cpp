@@ -8,6 +8,7 @@
 #include "aether/script/interaction_api.h"
 #include "aether/script/quests_api.h"
 #include "aether/script/crafting_api.h"
+#include "aether/script/loot_api.h"
 #include "aether/script/dialogue_api.h"
 #include "aether/script/timeofday_api.h"
 #include "aether/script/achievements_api.h"
@@ -501,6 +502,7 @@ void ScriptSystem::InstallApi(bool install_kit_apis) {
         InstallKitApi("Interaction");
         InstallKitApi("Inventory");
         InstallKitApi("Crafting");
+        InstallKitApi("Loot");
         InstallKitApi("Dialogue");
         InstallKitApi("TimeOfDay");
         InstallKitApi("Achievements");
@@ -516,6 +518,7 @@ void ScriptSystem::InstallKitApi(const std::string& kit_name) {
     else if (kit_name == "Interaction") InstallInteractionApi(host_);
     else if (kit_name == "Quests") InstallQuestsApi(host_);
     else if (kit_name == "Crafting") InstallCraftingApi(host_);
+    else if (kit_name == "Loot") InstallLootApi(host_);
     else if (kit_name == "Dialogue") InstallDialogueApi(host_);
     else if (kit_name == "TimeOfDay") InstallTimeOfDayApi(host_);
     else if (kit_name == "Achievements") InstallAchievementsApi(host_);
