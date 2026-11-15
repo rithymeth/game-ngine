@@ -550,8 +550,8 @@ Outcome: assets can be found, judged, imported, fixed and opened without leaving
 
 Gate: thumbnail cache test (second open does not re-render unchanged assets); reimport identity test; multi-select
 operations and their batch count (one rescan and one refresh per operation -- asset operations are not in the ECS undo
-stack); the search grammar, the chips' counts and the folder scope (filter tests); headless open of every registered asset
-type; importer settings round-trip.
+stack); the search grammar, the chips' counts and the folder scope (filter tests); the settings round-trip, reimport identity
+and the drop-import batch (import tests); headless open of every registered asset type.
 
 Done so far (2026-11-14): the grid of thumbnails. `ThumbnailStore` (`editor/src/content/thumbnail_store.{h,cpp}`) is the
 whole of it: `Get(entry)` answers a picture or nothing, `Pump()` once a frame, and counters -- `Rendered`, `LoadedFromDisk`,
@@ -604,6 +604,26 @@ narrowed says so and offers "Clear filters" (`ClearFilters()`), instead of claim
 `tests/test_content_filters.cpp`: `ContentBrowser_SearchSyntaxFiltersByTypeAndPath`,
 `ContentBrowser_TypeChipsAndSearchCombine`, `ContentBrowser_FolderScopeAndItemCounts` and
 `ContentBrowser_SortsByColumnAndKeepsFoldersOnTop`.
+
+Done so far (2026-11-15): import settings, reimport and dropping files from Explorer. `assets::ImportSettingsFor` and
+`assets::SetImportSettings` (in `engine/src/assets/importer.cpp`) read and write an asset's effective settings -- the
+importer's defaults with the `.ameta`'s choices merged over them, the same merge `ImportAsset` uses. A change is checked
+against the defaults: an unknown key and a value of the wrong JSON kind are refused by name (`The Texture importer has no
+setting "quality"`, `"srgb" must be a boolean, not a string`), which is what keeps the drawer and a hand-edited `.ameta`
+meaning the same thing. Writing the settings clears the `.ameta`'s recorded source hash, so the next scan marks the asset
+`needs_import` -- there is no second flag to forget. Sub-assets are refused with a pointer to their source. The Content
+Browser's import drawer draws one widget per setting (booleans, integers, floats and strings; anything else says to edit
+the `.ameta`), opens from the toolbar or an entry's menu, and offers Apply and Reimport, Reimport, Defaults and Close;
+Apply stores the settings and imports, Reimport alone re-runs `ImportAsset` through the panel's importer registry and the
+project's `Intermediate/DDC` and says when the answer was a cache hit. The context menu's Reimport is deferred to the end
+of the frame, because a reimport re-registers sub-assets and rebuilds the rows the menu is being drawn from. Dropping
+files from Explorer arrives as `Window::on_files_dropped` -- `WM_DROPFILES` in the Win32 window, `glfwSetDropCallback` in
+the GLFW one, called from `PumpMessages` -- and `EditorWorkspace::ImportDroppedFiles` hands them to
+`ContentBrowserPanel::ImportFiles`, which plans the batch first (regular files, known extensions), copies each file (the
+scan writes its `.ameta`), compares `HashFile` for a name already in the folder (identical selects without copying,
+different refuses the batch), rolls the copies back on a write failure, selects what it copied, refreshes once and posts a
+notification either way. Tests in `tests/test_content_import.cpp`: `ImportSettings_RoundTripAndReimportIdentity`,
+`ImportFiles_CopiesIntoTheOpenFolderAndSelects` and `ImportSettings_DrawerEditsAppliesAndDraws`.
 
 ### Stage 4 — Inspector and hierarchy parity (M)
 

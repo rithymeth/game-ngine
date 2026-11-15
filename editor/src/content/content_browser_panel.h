@@ -2,8 +2,11 @@
 
 #include "aether/assets/asset_database.h"
 #include "aether/assets/content_browser.h"
+#include "aether/assets/importer.h"
 #include "aether/assets/vcs.h"
 #include "content/thumbnail_store.h"
+
+#include <nlohmann/json.hpp>
 
 #include <filesystem>
 #include <memory>
@@ -111,9 +114,31 @@ public:
     usize ChangedRows() const;
     const std::string& Error() const { return error_; }
 
+    // Stage 3: the import settings drawer and reimport. The drawer is a window, and its state is public like the search
+    // box's, so a host (or a headless test) can open it and edit the draft without clicking.
+    bool import_open = false;
+    std::string import_path;                  // the source asset the drawer edits
+    nlohmann::json import_draft;              // the settings being edited
+    std::string import_status;                // what the last reimport did
+    std::string import_error;                 // why it was refused, or the importer's error
+    // Opens the drawer on `path` with its effective settings (defaults plus the .ameta's choices). Refused for folders,
+    // sub-assets and kinds with no importer: they have nothing to configure.
+    bool OpenImportSettings(const std::string& path, std::string* error = nullptr);
+    // Validates and saves ImportDraft into the .ameta, then reimports. The drawer stays open with ImportStatus or
+    // ImportError set; the listing rescans either way.
+    bool ApplyImportSettings();
+    // Imports `path` (a source asset) again with the settings its .ameta holds, then rescans. Fills the drawer's status
+    // and error as well as `error`.
+    bool Reimport(const std::string& path, std::string* error = nullptr);
+    // Imports files from outside the project into the folder the browser shows (an Explorer drop), with the .ameta the
+    // scan makes. All or nothing: one refused file (no importer, a folder, a name already used with other contents)
+    // copies nothing. Files that are already there unchanged are selected rather than copied. `imported` counts the
+    // copies; the new assets become the selection.
+    bool ImportFiles(const std::vector<std::string>& files, usize* imported = nullptr, std::string* error = nullptr);
+
 private:
     enum class Action { None, Move, NewFolder };
-    enum class Pending { None, Delete, Duplicate, Move, Create };
+    enum class Pending { None, Delete, Duplicate, Move, Create, Reimport };
     struct TileRect {
         std::string path;
         float x0 = 0, y0 = 0, x1 = 0, y1 = 0;
@@ -138,6 +163,10 @@ private:
     void DrawActionDialog();
     void DrawReferenceViewer();
     void DrawValidation();
+    void DrawImportSettings();
+    // The record `path` names when it is a source asset whose kind has an importer in `importers_`, else null.
+    const assets::AssetRecord* ImportEditable(const std::string& path) const;
+    bool EnsureCache();
     void StartAction(Action action, const std::string& source = {});
     void AcceptMoveDrop(const std::string& destination_folder);
     bool MovePaths(const std::vector<std::string>& paths, const std::string& destination, std::string* error);
@@ -145,6 +174,8 @@ private:
 
     std::filesystem::path project_file_;
     std::shared_ptr<assets::AssetDatabase> database_;
+    assets::ImporterRegistry importers_; // the built-ins: reimport and the settings drawer use them
+    std::unique_ptr<assets::DerivedDataCache> cache_; // Intermediate/DDC, made on the first reimport
     ThumbnailStore thumbnails_;
     struct TileTexture {
         std::unique_ptr<ImageTexture> texture;
@@ -165,6 +196,7 @@ private:
     std::string pending_destination_;
     std::string pending_create_extension_;
     std::string pending_create_folder_;
+    std::string pending_reimport_path_;
     std::vector<TypeChip> chips_;
     usize base_count_ = 0;
     bool search_focus_ = false;

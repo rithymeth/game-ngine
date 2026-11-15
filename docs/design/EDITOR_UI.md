@@ -467,6 +467,14 @@ listing, and an empty narrowed listing says so and offers "Clear filters". Folde
 ("Content/Models/Crate") where every segment but the current one is a button. The list view's Name and Type headers sort;
 the sorted one shows `^`/`v` and clicking it again flips the order, with folders always first. Ctrl+F focuses search.
 
+Importing: the Import Settings drawer (toolbar, or an entry's menu) lists the asset's effective settings -- the importer's
+defaults with its `.ameta`'s choices merged over them -- one widget per value, with Apply and Reimport, Reimport, Defaults
+and Close. A value of the wrong kind or an unknown key is refused by name rather than written. Settings come from
+`assets::ImportSettingsFor`/`SetImportSettings`; writing them makes the next scan reimport the asset. Reimport runs the
+importer at once and says when the result came from the derived data cache. Files dropped from Explorer onto the window are
+copied into the open folder (the scan writes each `.ameta`), selected, and reported in one notification; a name already there with
+different contents refuses the batch instead of overwriting, and identical contents are just selected.
+
 - Thumbnail size slider (64–256 px); list view for large folders.
 - Filter current-folder entries by supported asset type and name; search and
   type filters combine. Label the folder scope, show the visible/matching

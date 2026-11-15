@@ -93,4 +93,16 @@ struct ImportAllResult {
 ImportAllResult ImportAll(AssetDatabase& database, const ImporterRegistry& importers, DerivedDataCache& cache,
                           const std::string& platform = "default");
 
+// The settings the next import would use: the importer's DefaultSettings with the .ameta's choices on top (the same
+// merge ImportAsset does). Fails for an unknown, missing, sub-asset or importer-less asset.
+nlohmann::json ImportSettingsFor(const AssetDatabase& database, const ImporterRegistry& importers,
+                                 const AssetGuid& guid, std::string* error = nullptr);
+
+// Remembers import settings in the asset's .ameta and clears its recorded source hash, which is what marks it
+// needs_import on the next scan. Only keys the importer's DefaultSettings declares are accepted, each of the same JSON
+// kind (boolean, number, string, array, object), so a typo or a "yes" for a boolean is refused rather than ignored.
+// Storing `{}` means "all defaults". The import itself is ImportAsset's job.
+[[nodiscard]] bool SetImportSettings(AssetDatabase& database, const ImporterRegistry& importers, const AssetGuid& guid,
+                                     const nlohmann::json& settings, std::string* error = nullptr);
+
 } // namespace aether::assets

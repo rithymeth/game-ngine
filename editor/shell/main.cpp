@@ -382,6 +382,16 @@ int main(int argc, char** argv) {
             close_approved = true;
             quit = true;
         };
+        if (window) {
+            // Files dragged from Explorer land in the Content Browser's open folder (Stage 3). The workspace posts the
+            // notification; a refusal copies nothing.
+            window->on_files_dropped = [&workspace](const std::vector<std::string>& files) {
+                std::string error;
+                if (!workspace.ImportDroppedFiles(files, &error)) {
+                    AETHER_LOG_WARN("Editor", "Import refused: %s", error.c_str());
+                }
+            };
+        }
         // The Live Viewport tool: the project's scene running under the real renderer, drawn on this same device. It is made here, not in the
         // workspace, because the workspace has no graphics device (it also runs headless in tests).
         LiveViewportPanel live(*device, workspace.Scene(), [&workspace] { return workspace.ProjectFile(); });

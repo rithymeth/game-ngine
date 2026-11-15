@@ -101,6 +101,10 @@ public:
     // allowed to. With no callback the window closes.
     std::function<bool()> on_close;
 
+    // Fired synchronously from PumpMessages when files are dragged onto the window from the OS (Explorer, Finder):
+    // absolute paths, in the order the OS gave them. Nothing is copied or opened here; the host decides.
+    std::function<void(const std::vector<std::string>& files)> on_files_dropped;
+
     // Win32 only: called with every raw message this window's WndProc
     // receives, before Window's own handling - the hook a UI library's
     // Win32 backend (e.g. Dear ImGui's ImGui_ImplWin32_WndProcHandler)

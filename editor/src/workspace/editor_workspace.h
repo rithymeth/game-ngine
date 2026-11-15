@@ -249,6 +249,11 @@ public:
     void SetAssetDatabase(const assets::AssetDatabase* database);
     void SetAssetOpener(std::function<void(const std::string&)> opener);
 
+    // Stage 3: files dragged from the OS window (Explorer) onto the editor. The host calls this from the window's drop
+    // hook; the files land in the Content Browser's open folder unless one is refused, and the result is a notification.
+    // Focuses the browser on success.
+    bool ImportDroppedFiles(const std::vector<std::string>& files, std::string* error = nullptr);
+
 private:
     void RegisterCommands();
     // Runs the Global commands whose chord was pressed this frame; called from DrawWindows, inside a frame.

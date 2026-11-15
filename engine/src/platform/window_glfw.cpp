@@ -142,6 +142,16 @@ Window::Window(const WindowDesc& desc) : width_(desc.width), height_(desc.height
         if (self->on_close && !self->on_close()) return;
         self->NotifyClosed();
     });
+    glfwSetDropCallback(w, [](GLFWwindow* gw, int count, const char** paths) {
+        Window* self = Owner(gw);
+        if (!self->on_files_dropped || count <= 0) return;
+        std::vector<std::string> files;
+        files.reserve(static_cast<usize>(count));
+        for (int i = 0; i < count; ++i) {
+            if (paths[i] != nullptr) files.emplace_back(paths[i]);
+        }
+        if (!files.empty()) self->on_files_dropped(files);
+    });
     int fw = 0, fh = 0;
     glfwGetFramebufferSize(w, &fw, &fh);
     width_ = static_cast<u32>(fw), height_ = static_cast<u32>(fh);

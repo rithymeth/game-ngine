@@ -73,7 +73,8 @@ std::string Elide(const std::string& text, f32 width) {
 } // namespace
 
 ContentBrowserPanel::ContentBrowserPanel(stdfs::path project_file)
-    : project_file_(std::move(project_file)), thumbnails_(project_file_) {
+    : project_file_(std::move(project_file)), importers_(assets::ImporterRegistry::WithBuiltins()),
+      thumbnails_(project_file_) {
     Refresh();
 }
 
@@ -120,6 +121,172 @@ bool ContentBrowserPanel::Commit(const std::string& message, std::string* error)
     if (!assets::GitStageAll(content, error)) return false;
     if (!assets::GitCommit(content, message, error)) return false;
     Refresh(); // the badges and the issue list describe the new state
+    return true;
+}
+
+const assets::AssetRecord* ContentBrowserPanel::ImportEditable(const std::string& path) const {
+    if (!database_ || path.empty()) return nullptr;
+    const assets::AssetRecord* record = database_->FindByPath(path);
+    if (record == nullptr || record->IsSubAsset() || record->missing) return nullptr;
+    return importers_.Find(record->importer) != nullptr ? record : nullptr;
+}
+
+bool ContentBrowserPanel::EnsureCache() {
+    if (!database_) return false;
+    if (!cache_) {
+        const ProjectPaths paths = ProjectPaths::ForFile(project_file_);
+        cache_ = std::make_unique<assets::DerivedDataCache>(paths.intermediate / "DDC");
+    }
+    return true;
+}
+
+bool ContentBrowserPanel::OpenImportSettings(const std::string& path, std::string* error) {
+    import_error.clear();
+    import_status.clear();
+    if (error != nullptr) error->clear();
+    const assets::AssetRecord* record = ImportEditable(path);
+    if (record == nullptr) {
+        std::string why;
+        const assets::AssetRecord* any = database_ ? database_->FindByPath(path) : nullptr;
+        if (!database_) {
+            why = "No project is open.";
+        } else if (any == nullptr) {
+            why = path + " is not an asset.";
+        } else if (any->IsSubAsset()) {
+            why = any->path + " is imported with its source; edit the source's settings.";
+        } else if (any->missing) {
+            why = any->path + " has no source file.";
+        } else {
+            why = "No importer for \"" + any->importer + "\" assets (" + any->path + ")";
+        }
+        import_error = why;
+        if (error != nullptr) *error = why;
+        return false;
+    }
+    std::string load_error;
+    nlohmann::json settings = assets::ImportSettingsFor(*database_, importers_, record->guid, &load_error);
+    if (!load_error.empty()) {
+        import_error = load_error;
+        if (error != nullptr) *error = load_error;
+        return false;
+    }
+    import_path = path;
+    import_draft = std::move(settings);
+    import_open = true;
+    return true;
+}
+
+bool ContentBrowserPanel::ApplyImportSettings() {
+    import_error.clear();
+    import_status.clear();
+    const assets::AssetRecord* record = ImportEditable(import_path);
+    if (record == nullptr) {
+        import_error = import_path.empty() ? "No asset is open in the drawer." : import_path + " is no longer an importable asset.";
+        return false;
+    }
+    std::string error;
+    if (!assets::SetImportSettings(*database_, importers_, record->guid, import_draft, &error)) {
+        import_error = error;
+        return false;
+    }
+    return Reimport(import_path);
+}
+
+bool ContentBrowserPanel::Reimport(const std::string& path, std::string* error) {
+    import_error.clear();
+    if (error != nullptr) error->clear();
+    const assets::AssetRecord* record = ImportEditable(path);
+    if (record == nullptr) {
+        import_error = "Nothing to reimport: " + (path.empty() ? std::string("no asset") : path);
+        if (error != nullptr) *error = import_error;
+        return false;
+    }
+    if (!EnsureCache()) {
+        import_error = "No project is open.";
+        if (error != nullptr) *error = import_error;
+        return false;
+    }
+    const assets::ImportOutput output = assets::ImportAsset(*database_, record->guid, importers_, *cache_);
+    Refresh(); // the sub-assets may have come and gone, and the .ameta's recorded hash is new
+    if (!output.ok) {
+        import_error = output.error;
+        if (error != nullptr) *error = output.error;
+        return false;
+    }
+    import_status = "Reimported " + path + (output.from_cache ? " (from the cache)" : "");
+    if (!output.warnings.empty()) {
+        import_status += " with " + std::to_string(output.warnings.size()) + " warning(s): " + output.warnings.front();
+    }
+    return true;
+}
+
+bool ContentBrowserPanel::ImportFiles(const std::vector<std::string>& files, usize* imported, std::string* error) {
+    if (imported != nullptr) *imported = 0;
+    if (error != nullptr) error->clear();
+    if (!database_) {
+        if (error != nullptr) *error = "No project is open.";
+        return false;
+    }
+    if (files.empty()) {
+        if (error != nullptr) *error = "No files to import.";
+        return false;
+    }
+    const stdfs::path root = database_->ContentRoot();
+    const stdfs::path folder = folder_.empty() ? root : root / folder_;
+    std::error_code ec;
+    struct Planned {
+        stdfs::path source;
+        stdfs::path target;
+        std::string relative;
+        bool copy = false;
+    };
+    std::vector<Planned> plan;
+    for (const std::string& file : files) {
+        const stdfs::path source(file);
+        if (file.empty() || !stdfs::is_regular_file(source, ec)) {
+            if (error != nullptr) *error = file + " is not a file.";
+            return false;
+        }
+        if (assets::ImporterForExtension(source).empty()) {
+            if (error != nullptr) *error = "\"" + source.filename().string() + "\" is not an asset kind this engine imports.";
+            return false;
+        }
+        Planned planned;
+        planned.source = source;
+        planned.target = folder / source.filename();
+        planned.relative = (stdfs::path(folder_) / source.filename()).generic_string();
+        if (stdfs::exists(planned.target, ec)) {
+            // The same bytes are already there (a second drop, or a drag from the folder itself): select, don't copy.
+            const std::string from_hash = assets::HashFile(source);
+            const std::string to_hash = assets::HashFile(planned.target);
+            if (from_hash.empty() || from_hash != to_hash) {
+                if (error != nullptr) *error = planned.relative + " already exists with different contents.";
+                return false;
+            }
+        } else {
+            planned.copy = true;
+        }
+        plan.push_back(std::move(planned));
+    }
+    std::vector<stdfs::path> copied;
+    for (const Planned& planned : plan) {
+        if (!planned.copy) continue;
+        std::error_code copy_error;
+        if (!stdfs::copy_file(planned.source, planned.target, stdfs::copy_options::none, copy_error)) {
+            for (const stdfs::path& undone : copied) {
+                std::error_code ignored;
+                stdfs::remove(undone, ignored);
+            }
+            if (error != nullptr) *error = "Couldn't copy " + planned.source.filename().string() + ": " + copy_error.message();
+            return false;
+        }
+        copied.push_back(planned.target);
+    }
+    selection_.clear();
+    for (const Planned& planned : plan) selection_.push_back(planned.relative);
+    selection_anchor_ = selection_.back();
+    Refresh(); // the scan writes the .ameta files; the selection is made of paths, which survive it
+    if (imported != nullptr) *imported = copied.size();
     return true;
 }
 
@@ -224,6 +391,7 @@ void ContentBrowserPanel::Draw() {
     DrawActionDialog();
     DrawReferenceViewer();
     DrawValidation();
+    DrawImportSettings();
 }
 
 void ContentBrowserPanel::DrawToolbar() {
@@ -240,6 +408,15 @@ void ContentBrowserPanel::DrawToolbar() {
     if (ImGui::Button("Duplicate") && !selection_.empty()) pending_ = Pending::Duplicate;
     ImGui::SameLine();
     if (ImGui::Button("Delete") && !selection_.empty()) pending_ = Pending::Delete;
+    ImGui::SameLine();
+    {
+        const assets::AssetRecord* single = selection_.size() == 1 ? ImportEditable(selection_.front()) : nullptr;
+        ImGui::BeginDisabled(single == nullptr);
+        if (ImGui::Button("Import Settings") && single != nullptr) OpenImportSettings(selection_.front());
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered() && single == nullptr)
+            ImGui::SetTooltip("Select one source asset whose kind has an importer");
+    }
     ImGui::SameLine();
     if (!selection_.empty()) {
         ImGui::TextDisabled("%zu selected", selection_.size());
@@ -483,6 +660,15 @@ void ContentBrowserPanel::DrawEntryMenu(const assets::ContentEntry& e) {
             references_open_ = true;
         }
         ImGui::EndMenu();
+    }
+    if (!e.is_folder && ImportEditable(e.path) != nullptr) {
+        ImGui::Separator();
+        if (ImGui::MenuItem("Import Settings...", nullptr, false, !multiple)) OpenImportSettings(e.path);
+        if (ImGui::MenuItem("Reimport")) {
+            if (!IsSelected(e.path)) Select(e.path);
+            pending_reimport_path_ = e.path;
+            pending_ = Pending::Reimport; // after the listing loops: a reimport rebuilds the rows they walk
+        }
     }
     ImGui::EndPopup();
 }
@@ -907,6 +1093,12 @@ void ContentBrowserPanel::ApplyPending() {
         BeginRename(path); // a new asset starts with its name ready to type
         break;
     }
+    case Pending::Reimport: {
+        const std::string path = pending_reimport_path_;
+        pending_reimport_path_.clear();
+        Reimport(path);
+        break;
+    }
     case Pending::None: break;
     }
 }
@@ -1033,6 +1225,73 @@ void ContentBrowserPanel::DrawValidation() {
     }
     ImGui::End();
     validation_open = open;
+}
+
+void ContentBrowserPanel::DrawImportSettings() {
+    if (!import_open) return;
+    bool open = import_open;
+    ImGui::SetNextWindowSize(ImVec2(420, 0), ImGuiCond_FirstUseEver);
+    if (ImGui::Begin("Import Settings", &open, ImGuiWindowFlags_AlwaysAutoResize)) {
+        const assets::AssetRecord* record = ImportEditable(import_path);
+        if (record == nullptr) {
+            ImGui::TextDisabled("%s", import_error.empty() ? "No asset is open in the drawer." : import_error.c_str());
+        } else {
+            const assets::IAssetImporter* importer = importers_.Find(record->importer);
+            ImGui::TextDisabled("%s", record->path.c_str());
+            ImGui::TextDisabled("%s importer, version %u", record->importer.c_str(), importer != nullptr ? importer->Version() : 0u);
+            ImGui::Separator();
+            if (import_draft.empty()) ImGui::TextDisabled("This importer has no settings.");
+            if (import_draft.is_object()) {
+                for (auto& item : import_draft.items()) {
+                    nlohmann::json& value = item.value();
+                    ImGui::PushID(item.key().c_str());
+                    if (value.is_boolean()) {
+                        bool on = value.get<bool>();
+                        if (ImGui::Checkbox(item.key().c_str(), &on)) value = on;
+                    } else if (value.is_number_integer() || value.is_number_unsigned()) {
+                        const i64 number = value.get<i64>();
+                        int shown = static_cast<int>(std::clamp<i64>(number, -1000000000, 1000000000));
+                        if (ImGui::InputInt(item.key().c_str(), &shown, 1, 8)) value = static_cast<i64>(shown);
+                    } else if (value.is_number_float()) {
+                        f64 number = value.get<f64>();
+                        if (ImGui::InputDouble(item.key().c_str(), &number, 1.0, 8.0, "%.3f")) value = number;
+                    } else if (value.is_string()) {
+                        std::string text = value.get<std::string>();
+                        if (ImGui::InputText(item.key().c_str(), &text)) value = text;
+                    } else {
+                        ImGui::TextDisabled("%s: edit it in the asset's .ameta", item.key().c_str());
+                    }
+                    ImGui::PopID();
+                }
+            } else if (!import_draft.empty()) {
+                ImGui::TextDisabled("These settings are not editable here.");
+            }
+            ImGui::Separator();
+            if (!import_error.empty()) {
+                ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.4f, 1.0f), "%s", import_error.c_str());
+            } else if (!import_status.empty()) {
+                ImGui::TextColored(ImVec4(0.45f, 0.80f, 0.45f, 1.0f), "%s", import_status.c_str());
+            }
+            const bool apply = ImGui::Button("Apply and Reimport", ImVec2(160.0f, 0.0f));
+            ImGui::SameLine();
+            const bool reimport = ImGui::Button("Reimport");
+            ImGui::SameLine();
+            if (ImGui::Button("Defaults")) {
+                import_draft = importer != nullptr ? importer->DefaultSettings() : nlohmann::json::object();
+                import_error.clear();
+                import_status = "Defaults restored in the drawer; Apply writes them.";
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Close")) import_open = false;
+            if (apply) {
+                ApplyImportSettings();
+            } else if (reimport) {
+                Reimport(import_path);
+            }
+        }
+    }
+    ImGui::End();
+    import_open = open;
 }
 
 } // namespace aether::editor

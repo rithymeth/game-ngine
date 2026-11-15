@@ -1955,6 +1955,31 @@ void EditorWorkspace::SetAssetOpener(std::function<void(const std::string&)> ope
     impl_->asset_opener = std::move(opener);
 }
 
+bool EditorWorkspace::ImportDroppedFiles(const std::vector<std::string>& files, std::string* error) {
+    ContentBrowserPanel* browser = impl_->content_browser.get();
+    if (browser == nullptr) {
+        if (error != nullptr) *error = "No project is open.";
+        return false;
+    }
+    usize imported = 0;
+    std::string refusal;
+    if (!browser->ImportFiles(files, &imported, &refusal)) {
+        impl_->notifications.Post(NotificationSeverity::Error, "Import failed", refusal);
+        if (error != nullptr) *error = refusal;
+        return false;
+    }
+    const std::string where = browser->Folder().empty() ? std::string("Content") : "Content/" + browser->Folder();
+    if (imported == 0) {
+        impl_->notifications.Post(NotificationSeverity::Info, "Nothing to import",
+                                  "The dropped files are already in " + where + ".");
+    } else {
+        impl_->notifications.Post(NotificationSeverity::Success, "Imported",
+                                  std::to_string(imported) + " file" + (imported == 1 ? "" : "s") + " into " + where + ".");
+    }
+    impl_->ShowTool("Content Browser");
+    return true;
+}
+
 EditorSettings& EditorWorkspace::Settings() { return impl_->editor_settings; }
 
 bool EditorWorkspace::SaveSettings() { return impl_->editor_settings.Save(EditorSettings::DefaultFile()); }

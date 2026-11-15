@@ -235,4 +235,94 @@ ImportAllResult ImportAll(AssetDatabase& database, const ImporterRegistry& impor
     return summary;
 }
 
+namespace {
+
+// A record's importer, refusing the cases where there is nothing to configure.
+const IAssetImporter* ImporterForSettings(const AssetDatabase& database, const ImporterRegistry& importers,
+                                          const AssetGuid& guid, std::string* error) {
+    const AssetRecord* record = database.Find(guid);
+    if (record == nullptr) {
+        if (error != nullptr) *error = "No asset with that GUID";
+        return nullptr;
+    }
+    if (record->IsSubAsset()) {
+        if (error != nullptr) *error = record->path + " is imported with its source; edit the source's settings";
+        return nullptr;
+    }
+    if (record->missing) {
+        if (error != nullptr) *error = record->path + " has no source file";
+        return nullptr;
+    }
+    const IAssetImporter* importer = importers.Find(record->importer);
+    if (importer == nullptr) {
+        if (error != nullptr) *error = "No importer for \"" + record->importer + "\" assets (" + record->path + ")";
+        return nullptr;
+    }
+    return importer;
+}
+
+const char* JsonKind(const nlohmann::json& value) {
+    if (value.is_boolean()) return "a boolean";
+    if (value.is_number()) return "a number";
+    if (value.is_string()) return "a string";
+    if (value.is_array()) return "an array";
+    if (value.is_object()) return "an object";
+    if (value.is_null()) return "null";
+    return "unknown";
+}
+
+bool SameJsonKind(const nlohmann::json& a, const nlohmann::json& b) {
+    if (a.is_boolean()) return b.is_boolean();
+    if (a.is_number()) return b.is_number();
+    if (a.is_string()) return b.is_string();
+    if (a.is_array()) return b.is_array();
+    if (a.is_object()) return b.is_object();
+    return a.type() == b.type();
+}
+
+} // namespace
+
+nlohmann::json ImportSettingsFor(const AssetDatabase& database, const ImporterRegistry& importers,
+                                 const AssetGuid& guid, std::string* error) {
+    if (error != nullptr) error->clear();
+    const IAssetImporter* importer = ImporterForSettings(database, importers, guid, error);
+    if (importer == nullptr) return nlohmann::json::object();
+    AssetMeta meta;
+    if (!LoadAssetMeta(database.MetaPath(guid), meta, error)) return nlohmann::json::object();
+    nlohmann::json settings = importer->DefaultSettings();
+    settings.merge_patch(meta.settings);
+    return settings;
+}
+
+bool SetImportSettings(AssetDatabase& database, const ImporterRegistry& importers, const AssetGuid& guid,
+                       const nlohmann::json& settings, std::string* error) {
+    if (error != nullptr) error->clear();
+    const IAssetImporter* importer = ImporterForSettings(database, importers, guid, error);
+    if (importer == nullptr) return false;
+    if (!settings.is_object()) {
+        if (error != nullptr) *error = "Import settings must be a JSON object";
+        return false;
+    }
+    const nlohmann::json defaults = importer->DefaultSettings();
+    for (auto it = settings.begin(); it != settings.end(); ++it) {
+        const auto declared = defaults.find(it.key());
+        if (declared == defaults.end()) {
+            if (error != nullptr) *error = "The " + std::string(importer->Name()) + " importer has no setting \"" + it.key() + "\"";
+            return false;
+        }
+        if (!SameJsonKind(*declared, it.value())) {
+            if (error != nullptr)
+                *error = "\"" + it.key() + "\" must be " + JsonKind(*declared) + ", not " + JsonKind(it.value());
+            return false;
+        }
+    }
+    AssetMeta meta;
+    if (!LoadAssetMeta(database.MetaPath(guid), meta, error)) return false;
+    meta.settings = settings;
+    // The source has not been imported with these settings: clearing the recorded hash is what Scan turns into
+    // needs_import, and MarkImported puts it back.
+    meta.source_hash.clear();
+    return SaveAssetMeta(database.MetaPath(guid), meta, error);
+}
+
 } // namespace aether::assets

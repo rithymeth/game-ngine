@@ -10,6 +10,7 @@
 #define _UNICODE
 #endif
 #include <Windows.h>
+#include <shellapi.h> // WM_DROPFILES: DragAcceptFiles and DragQueryFileW
 
 #include <vector>
 
@@ -55,6 +56,14 @@ std::wstring ToWide(const std::string& s) {
     int len = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), static_cast<int>(s.size()), nullptr, 0);
     std::wstring result(static_cast<usize>(len), L'\0');
     MultiByteToWideChar(CP_UTF8, 0, s.c_str(), static_cast<int>(s.size()), result.data(), len);
+    return result;
+}
+
+std::string FromWide(const wchar_t* s, int length) {
+    if (s == nullptr || length <= 0) return {};
+    int len = WideCharToMultiByte(CP_UTF8, 0, s, length, nullptr, 0, nullptr, nullptr);
+    std::string result(static_cast<usize>(len), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, s, length, result.data(), len, nullptr, nullptr);
     return result;
 }
 
@@ -182,6 +191,23 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
         case WM_DESTROY:
             PostQuitMessage(0);
             return 0;
+        case WM_DROPFILES: {
+            if (window) {
+                HDROP drop = reinterpret_cast<HDROP>(wparam);
+                const UINT count = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
+                std::vector<std::string> files;
+                files.reserve(count);
+                for (UINT i = 0; i < count; ++i) {
+                    const UINT length = DragQueryFileW(drop, i, nullptr, 0);
+                    std::vector<wchar_t> buffer(static_cast<usize>(length) + 1);
+                    if (DragQueryFileW(drop, i, buffer.data(), length + 1) == 0) continue;
+                    files.push_back(FromWide(buffer.data(), static_cast<int>(length)));
+                }
+                DragFinish(drop);
+                if (window->on_files_dropped && !files.empty()) window->on_files_dropped(files);
+            }
+            return 0;
+        }
         case WM_SIZE:
             if (window) WindowBackendAccess::ApplyCursorClip(*window);
             if (window && wparam != SIZE_MINIMIZED) {
@@ -223,6 +249,7 @@ Window::Window(const WindowDesc& desc) : width_(desc.width), height_(desc.height
     AETHER_ASSERT(hwnd != nullptr);
     native_handle_ = hwnd;
     RegisterTouchWindow(hwnd, 0); // WM_TOUCH for each finger (a no-op without a touch screen)
+    DragAcceptFiles(hwnd, TRUE); // WM_DROPFILES for files dragged from Explorer; on_files_dropped gets their paths
 
     ShowWindow(hwnd, desc.visible ? SW_SHOW : SW_HIDE);
     AETHER_LOG_INFO("Window", "Created %ux%u window \"%s\"", desc.width, desc.height, desc.title.c_str());

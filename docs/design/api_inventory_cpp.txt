@@ -1327,7 +1327,9 @@
   type struct SubAssetOutput
   ImportAllResult ImportAll(AssetDatabase&database,const ImporterRegistry&importers,DerivedDataCache&cache,const std::string&platform="")
   ImportOutput ImportAsset(AssetDatabase&database,const AssetGuid&guid,const ImporterRegistry&importers,DerivedDataCache&cache,const std::string&platform="")
+  [[nodiscard]]bool SetImportSettings(AssetDatabase&database,const ImporterRegistry&importers,const AssetGuid&guid,const nlohmann::json&settings,std::string*error=nullptr)
   const IAssetImporter*Find(const std::string&name)const
+  nlohmann::json ImportSettingsFor(const AssetDatabase&database,const ImporterRegistry&importers,const AssetGuid&guid,std::string*error=nullptr)
   public:static ImporterRegistry WithBuiltins()
   public:virtual ~IAssetImporter()=default
   virtual ImportResult Import(const ImportContext&context)const=0
@@ -3033,6 +3035,7 @@
   input::Key KeyFromVirtualKey(u32 vk)
   public:explicit Window(const WindowDesc&desc)
   std::function<bool()>on_close
+  std::function<void(const std::vector<std::string>&files)>on_files_dropped
   std::function<void(u32 width,u32 height)>on_resize
   std::function<void(void*hwnd,u32 msg,u64 wparam,i64 lparam)>native_message_hook
   std::vector<WindowEvent>TakeEvents()
