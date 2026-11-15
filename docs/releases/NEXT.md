@@ -14,6 +14,10 @@ A new optional kit and engine plugin, **Dialogue** (`AETHER_KIT_DIALOGUE`, no de
 
 Ten more optional modules are now plugins with an `.aplugin` descriptor and a runtime module that registers their components: **Animation**, **UI**, **VFX**, **Sprite2D**, **Sequencer**, **Streaming**, **Gameplay**, and the genre kits **Inventory**, **Interaction** and **Quests** (each kit depends on Gameplay, which starts first). Like Physics, Audio, Navigation, AI and Networking they are enabled by default and built when their module is, so a project can turn one off in the Plugins panel. A new engine plugin is a descriptor, a short module and one name in `plugins/CMakeLists.txt`.
 
+## Packs survive a scene change
+
+An `Inventory` now follows its entity through a scene change the same way a quest log does: the next scene's entity with the same GUID (usually the player) keeps its items, capacity and equipment. An entity with no GUID is left behind, and an entity of the new scene with no counterpart keeps the inventory its own scene gave it. Before this a scene change emptied the player's pack, so a game with the Inventory (or Crafting) kit across several scenes had to keep its items elsewhere.
+
 ## Quests survive a scene change
 
 A quest log (`QuestLog`) now follows its entity through a scene change (`Scene.Load`, a door, a respawn): the next scene's entity with the same GUID, usually the player, gets the log of the one being left, with every objective's progress. An entity with no GUID, or with no counterpart in the next scene, is not carried. Before this a scene change started the player's quests over, because the log lives on the entity and the world was replaced.
