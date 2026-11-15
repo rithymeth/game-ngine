@@ -11,7 +11,7 @@ import numpy as np
 
 import terrain
 import world
-from scenelib import Scene, give_hands, mule, workbench, generator, beacon, sentinel, sample, flag_light
+from scenelib import Scene, give_hands, mule, workbench, generator, beacon, sentinel, sample, flag_light, checkpoint
 
 LIGHT = lambda color, intensity, rng_: {"PointLight": {"$v": 1, "cast_shadows": False, "color": list(color), "intensity": intensity, "range": rng_}}
 BLUE, AMBER, GREEN = (0.2, 0.5, 1.0), (1.0, 0.5, 0.1), (0.3, 1.0, 0.6)
@@ -225,6 +225,13 @@ def build(playable=True, camera=None, door_script=None):
         s.model("KaelBody", "Kael", position=(0, 0, 0), tags=("PlayerBody",), snap=False)
         s.entities[-1]["components"]["Parent"] = {"$v": 1, "parent": player}
         give_hands(s)
+        # respawn points: where Kael is put back when he is disabled (the last one he reached). The camp is the spawn, so a new game starts with one.
+        checkpoint(s, "Camp", (world.SPAWN["position"][0], 0, world.SPAWN["position"][2]), radius=14.0, snap=True)
+        checkpoint(s, "Outpost", (0, 0, 0), radius=12.0, snap=True)
+        for cp_name, poi, cp_radius in (("DistressRelay", "distress_relay", 10.0), ("WardenCheckpoint", "warden_checkpoint", 12.0),
+                                        ("LivingDome", "living_dome", 14.0), ("CoreApproach", "core_approach", 14.0)):
+            px, pz = world.poi_position(poi)
+            checkpoint(s, cp_name, (px, 0, pz), radius=cp_radius, snap=True)
         sx, sz = world.SPAWN["position"][0], world.SPAWN["position"][2]
         s.camera((sx, float(terrain.height(sx, sz + 6)) + 3.2, sz + 6), yaw=0, pitch=-12, fov=62, far=2500)
     else:

@@ -1,0 +1,6 @@
+{
+  "name": "Scavenger",
+  "title": "Scavenger",
+  "description": "Take 10 pieces of salvage.",
+  "target": 10
+}

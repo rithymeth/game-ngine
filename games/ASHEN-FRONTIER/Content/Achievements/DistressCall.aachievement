@@ -1,0 +1,6 @@
+{
+  "name": "DistressCall",
+  "title": "Distress Call",
+  "description": "Reach the distress relay.",
+  "target": 1
+}

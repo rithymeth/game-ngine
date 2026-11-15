@@ -60,5 +60,6 @@ end
 | `Checkpoints.Activate(name)` | makes it the last one at once; `false` if this scene has none by that name |
 | `Checkpoints.Respawn(entity)` | `"ok"`, `"no_checkpoint"`, `"not_in_scene"` (the last one is in another scene), `"dead_entity"` or `"no_transform"` |
 
-`Respawn` moves the entity's `Transform` (position to the checkpoint's plus `respawn_offset`, rotation to the checkpoint's). An entity driven by a
-physics body or a character controller should be reset by its own script afterwards (its velocity, for instance): the kit does not know what moves it.
+`Respawn` moves the entity's `Transform` (position to the checkpoint's plus `respawn_offset`, rotation to the checkpoint's). The engine's character
+system (`CharacterMovement`) takes a changed `Transform` as a teleport, so a player moved this way ends up where it was put. Anything else a physics
+body drives keeps its velocity: the kit does not know what moves it, so such an entity's own script should reset that afterwards.

@@ -41,6 +41,7 @@ function Console:OnUpdate(dt)
         if Input.IsTriggered("Interact") then
             Inventory.Remove(self.player, "Sample", self.samples_needed)
             SaveGames.SetNumber("mission.dome", 1)
+            Achievements.Unlock("GreenThumb")
             SaveGames.CaptureWorld() -- the pack is saved with Kael
             SaveGames.SaveToSlot("autosave")
             UI.SetText("SamplesText", string.format("SEED SAMPLES  %d / 3", have - self.samples_needed))

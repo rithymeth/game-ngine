@@ -43,6 +43,7 @@ function Workbench:OnUpdate(dt)
             local result = Crafting.Craft(self.player, RECIPE)
             if result == "ok" then
                 SaveGames.SetNumber("crafted.generator_core", 1)
+                Achievements.Unlock("Fabricator")
                 SaveGames.CaptureWorld() -- the pack is saved with Kael
                 SaveGames.SaveToSlot("autosave")
                 UI.SetText("ScrapText", string.format("SCRAP  %d", Inventory.Count(self.player, "Scrap")))

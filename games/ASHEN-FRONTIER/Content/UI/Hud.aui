@@ -196,6 +196,56 @@
    },
    {
     "type": "Border",
+    "name": "ToastPanel",
+    "visibility": "Collapsed",
+    "background": {
+     "kind": "Color",
+     "tint": [
+      0.02,
+      0.04,
+      0.09,
+      0.78
+     ]
+    },
+    "padding": [
+     18,
+     8,
+     18,
+     8
+    ],
+    "slot": {
+     "anchors": [
+      0.5,
+      0,
+      0.5,
+      0
+     ],
+     "position": [
+      -320,
+      96
+     ],
+     "size": [
+      640,
+      48
+     ]
+    },
+    "children": [
+     {
+      "type": "Text",
+      "name": "ToastText",
+      "text": "",
+      "size": 26,
+      "color": [
+       0.55,
+       1.0,
+       0.7,
+       1.0
+      ]
+     }
+    ]
+   },
+   {
+    "type": "Border",
     "name": "ScanPanel",
     "visibility": "Collapsed",
     "background": {

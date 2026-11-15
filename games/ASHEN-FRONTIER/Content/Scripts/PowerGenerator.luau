@@ -51,6 +51,7 @@ function Generator:OnUpdate(dt)
         Prompt(self, "[E] Install the Generator Core and start the generator")
         if Input.IsTriggered("Interact") then
             SaveGames.SetNumber("power.outpost", 1)
+            Achievements.Unlock("LightsOn")
             SaveGames.SaveToSlot("autosave")
             Camera.Shake(0.4)
             Sfx("power_up")

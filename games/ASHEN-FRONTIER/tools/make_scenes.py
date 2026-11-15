@@ -11,7 +11,7 @@ import random
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from scenelib import Scene, give_hands, mule, workbench, generator, beacon, sentinel, sample, console, flag_light, grows, terminal  # noqa: E402
+from scenelib import Scene, give_hands, mule, workbench, generator, beacon, sentinel, sample, console, flag_light, grows, terminal, checkpoint  # noqa: E402
 import world  # noqa: E402
 import world_scene  # noqa: E402
 import interior_scene  # noqa: E402
@@ -231,6 +231,20 @@ def combat_tests():
         s.save(OUT / (name + ".ascene"))
 
 
+def checkpoint_test():
+    """CheckpointTest: a respawn point where Kael starts, a sentinel that hits hard 6 m away, and the checkpoint's respawn point set 30 m north of it, so that
+    where Kael ends up after he is disabled (standing still, three strikes of 40) shows that he was put back at the checkpoint, not left where he fell."""
+    s = Scene()
+    s.sky(1.2)
+    s.sun(yaw=-25, pitch=-38)
+    s.model("Ground", "Ground", position=(0, 0, 0), scale=(200, 1, 200), color=SAND, snap=False)
+    s.add("GroundCollider", {"BoxCollider": {"$v": 1, "center": [0, 0, 0], "friction": 0.8, "half_extents": [100, 0.5, 100], "is_trigger": False, "report_stay": False, "restitution": 0.0}}, position=(0, -0.5, 0))
+    checkpoint(s, "Start", (0, 0, 0), radius=6.0, snap=False, respawn_offset=(0.0, 0.5, -30.0))
+    sentinel(s, "Test_Sentinel", (0, 0, 6), snap=False, damage=40)
+    interior_scene.kael(s, (0, 0.1, 0), 0, script_guid("ThirdPersonController"))
+    s.save(OUT / "CheckpointTest.ascene")
+
+
 def scan_test():
     """ScanTest: Kael on a floor with a salvage crate 5 m north-east, the fab bench 9 m south and a weak sentinel 30 m west (out of its notice): a scan lists
     them by category with distance and direction."""
@@ -290,6 +304,7 @@ def main():
     craft_test()
     beacon_test()
     combat_tests()
+    checkpoint_test()
     scan_test()
     sample_tests()
     visible_tests()
