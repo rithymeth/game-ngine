@@ -6076,8 +6076,9 @@ thread, with a progress bar and a log:
 - **Where they live**: the engine's in `plugins/`, a project's in its
   `Plugins/` folder.
 - **Engine plugins**: Physics, Audio, Navigation, AI, Networking, Animation,
-  UI, VFX, Sprite2D, Sequencer, Streaming, Gameplay and the genre kits
-  (Inventory, Interaction, Quests) are plugins now, enabled by default.
+  UI, VFX, Sprite2D, Sequencer, Streaming, Blueprint, Renderer, Gameplay and
+  the genre kits (Inventory, Interaction, Quests) are plugins now, enabled by
+  default.
 - **Loading**: plugins are resolved with their dependencies and version
   checks. Their modules start in order, in the player and in the editor.
   The cooker records which ones the game runs and cooks their content.

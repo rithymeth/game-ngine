@@ -1,0 +1,22 @@
+{
+  "$type": "Plugin",
+  "$v": 1,
+  "name": "Renderer",
+  "friendly_name": "Renderer",
+  "version": "1.0.0",
+  "description": "Lights (directional, sky, point, spot), post-process volumes and the other render components.",
+  "category": "Rendering",
+  "created_by": "Aether",
+  "engine_version": "",
+  "enabled_by_default": true,
+  "has_content": false,
+  "dependencies": [],
+  "modules": [
+    {
+      "$v": 1,
+      "name": "Renderer",
+      "type": "Runtime",
+      "phase": "PreDefault"
+    }
+  ]
+}
