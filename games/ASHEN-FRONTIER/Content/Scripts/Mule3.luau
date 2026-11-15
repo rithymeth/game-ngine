@@ -74,6 +74,7 @@ function Mule:OnUpdate(dt)
                     UI.SetText("ComponentText", string.format("COMPONENTS  %d", have - self.repair_cost))
                     self.state = "follow"
                     SaveGames.SetNumber("mule.repaired", 1)
+                    Achievements.Unlock("PackMule")
                     SaveGames.CaptureWorld()
                     SaveGames.SaveToSlot("autosave")
                     Sfx("repair")

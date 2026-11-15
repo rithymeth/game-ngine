@@ -53,6 +53,7 @@ function Terminal:OnUpdate(dt)
         Prompt(self, "[E] Start the assembly line")
         if Input.IsTriggered("Interact") then
             SaveGames.SetNumber("mission.assembly", 1)
+            Achievements.Unlock("AssemblyLine")
             SaveGames.SaveToSlot("autosave")
             Camera.Shake(0.4)
             Sfx("power_up")

@@ -1,0 +1,6 @@
+{
+  "name": "LightsOn",
+  "title": "Lights On",
+  "description": "Start the outpost generator.",
+  "target": 1
+}

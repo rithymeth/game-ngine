@@ -30055,6 +30055,246 @@
     },
     {
       "components": {
+        "Checkpoint": {
+          "$v": 1,
+          "enabled": true,
+          "name": "Camp",
+          "radius": 14.0,
+          "activator_tag": "Player",
+          "respawn_offset": [
+            0.0,
+            0.5,
+            0.0
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -107.0,
+            -3.499658853258335,
+            133.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Checkpoint_Camp"
+        }
+      },
+      "guid": "f626619e-6fe6-5023-9ec3-d426f45c6b22"
+    },
+    {
+      "components": {
+        "Checkpoint": {
+          "$v": 1,
+          "enabled": true,
+          "name": "Outpost",
+          "radius": 12.0,
+          "activator_tag": "Player",
+          "respawn_offset": [
+            0.0,
+            0.5,
+            0.0
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            -0.23081579928183416,
+            0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Checkpoint_Outpost"
+        }
+      },
+      "guid": "b035708a-797d-59e9-9aaa-93b8ebbd1748"
+    },
+    {
+      "components": {
+        "Checkpoint": {
+          "$v": 1,
+          "enabled": true,
+          "name": "DistressRelay",
+          "radius": 10.0,
+          "activator_tag": "Player",
+          "respawn_offset": [
+            0.0,
+            0.5,
+            0.0
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -65.0,
+            2.6906877828360525,
+            55.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Checkpoint_DistressRelay"
+        }
+      },
+      "guid": "e290abc3-6c57-5f99-a99c-7f90c4414b0e"
+    },
+    {
+      "components": {
+        "Checkpoint": {
+          "$v": 1,
+          "enabled": true,
+          "name": "WardenCheckpoint",
+          "radius": 12.0,
+          "activator_tag": "Player",
+          "respawn_offset": [
+            0.0,
+            0.5,
+            0.0
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            115.0,
+            3.8129999999999997,
+            115.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Checkpoint_WardenCheckpoint"
+        }
+      },
+      "guid": "de3a76ea-082e-5d26-bad2-bb71edc22d1e"
+    },
+    {
+      "components": {
+        "Checkpoint": {
+          "$v": 1,
+          "enabled": true,
+          "name": "LivingDome",
+          "radius": 14.0,
+          "activator_tag": "Player",
+          "respawn_offset": [
+            0.0,
+            0.5,
+            0.0
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            -115.0,
+            -0.9415812489273524,
+            -75.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Checkpoint_LivingDome"
+        }
+      },
+      "guid": "59c2e664-1731-5e3f-a5d0-c23de5f16399"
+    },
+    {
+      "components": {
+        "Checkpoint": {
+          "$v": 1,
+          "enabled": true,
+          "name": "CoreApproach",
+          "radius": 14.0,
+          "activator_tag": "Player",
+          "respawn_offset": [
+            0.0,
+            0.5,
+            0.0
+          ]
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            115.0,
+            0.7561873598568011,
+            -17.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Checkpoint_CoreApproach"
+        }
+      },
+      "guid": "bfa3e5ec-0176-5605-8d62-4e3b2896c22e"
+    },
+    {
+      "components": {
         "Camera": {
           "$v": 1,
           "far_plane": 2500,

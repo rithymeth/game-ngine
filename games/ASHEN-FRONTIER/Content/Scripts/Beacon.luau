@@ -20,6 +20,7 @@ function Beacon:OnUpdate(dt)
     local dx, dz = a.x - b.x, a.z - b.z
     if dx * dx + dz * dz <= self.radius * self.radius then
         SaveGames.SetNumber("mission.relay", 1)
+        Achievements.Unlock("DistressCall")
         SaveGames.SaveToSlot("autosave")
         Camera.Shake(0.35)
         Sfx("relay")

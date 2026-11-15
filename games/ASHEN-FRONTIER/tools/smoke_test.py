@@ -149,9 +149,11 @@ def salvage(work):
     result, text = run(60)
     check(result.returncode == 0, f"the player runs the salvage test and exits cleanly (exit {result.returncode})")
     check("Salvaged Test_Crate: +2 components (pack: 0 scrap, 2 components)" in text, "pressing Interact beside a crate takes it (+2 components)")
+    check("Achievement unlocked: FirstHaul" in text, "the first piece of salvage unlocks the First Haul achievement")
     check(not re.search(r"\[ERROR\]", text), "no errors while salvaging")
     result, text = run(60)
     check("Pack at start: 0 scrap, 2 components" in text, "the pack was saved: the next run starts with the 2 components of the first")
+    check("achievements: 1 unlocked" in text and "Achievement unlocked" not in text, "the unlock was saved with the game: the next run starts with it, and does not announce it again")
     check("Salvaged Test_Crate" not in text, "a crate that was taken stays taken in the next run (no farming by reloading)")
 
 
@@ -166,6 +168,7 @@ def mule(work):
     check(result.returncode == 0, f"the player runs the MULE-3 test and exits cleanly (exit {result.returncode})")
     check("MULE-3 repaired" in text, "Interact beside the broken MULE-3 with enough components repairs it")
     check("MULE-3 reached Kael" in text, "the repaired MULE-3 follows Kael and comes up to him")
+    check("Achievement unlocked: PackMule" in text, "repairing MULE-3 unlocks the Pack Mule achievement")
     check(not re.search(r"\[ERROR\]", text), "no errors with MULE-3")
 
 
@@ -183,9 +186,11 @@ def craft(work):
     result, text = run("Scenes/CraftTest.ascene", "user5")
     check(result.returncode == 0, f"the player runs the crafting test and exits cleanly (exit {result.returncode})")
     check("Crafted Generator Core" in text, "Interact beside the fab bench with the cost in the pack crafts the Generator Core")
+    check("Achievement unlocked: Fabricator" in text, "crafting the Generator Core unlocks the Fabricator achievement")
     check(not re.search(r"\[ERROR\]", text), "no errors while crafting")
     result, text = run("Scenes/PowerTest.ascene", "user5")
     check("Generator powered" in text, "the saved Generator Core lets Kael power the generator in the next run")
+    check("Achievement unlocked: LightsOn" in text, "powering the generator unlocks the Lights On achievement")
     check(not re.search(r"\[ERROR\]", text), "no errors while powering the generator")
     result, text = run("Scenes/PowerTest.ascene", "user6")
     check("Generator powered" not in text, "without the Generator Core the generator stays off")
@@ -206,6 +211,7 @@ def chapter(work):
     (clears the pack and the autosave and loads the world again)."""
     result, text = run_player(work, "Scenes/BeaconTest.ascene", "user7", press="W")
     check("Distress relay reached" in text, "walking up to the distress relay reaches it")
+    check("Achievement unlocked: DistressCall" in text, "reaching the relay unlocks the Distress Call achievement")
     check(not re.search(r"\[ERROR\]", text), "no errors at the relay")
     result, text = run_player(work, "Scenes/MuleTest.ascene", "user8")
     check("MULE-3 repaired" in text, "MULE-3 is repaired (first run)")
@@ -251,6 +257,31 @@ def combat(work):
     check("Sentinel hit Kael" not in text and "Pack at start: 0 scrap, 2 components" in text, "a disabled sentinel stays gone in the next run, and its drop was saved")
 
 
+def checkpoints(work):
+    """Kael starts inside a checkpoint whose respawn point is 30 m north of it, and stands still while a sentinel disables him: he is put at the respawn point
+    (the same scene: no reload), which the character controller took as a teleport. The last checkpoint is saved with the game, and a death in another
+    scene goes back to the scene the checkpoint is in."""
+    result, text = run_player(work, "Scenes/CheckpointTest.ascene", "user_checkpoint", press="Z", frames=200)
+    check(result.returncode == 0, f"the player runs the checkpoint test and exits cleanly (exit {result.returncode})")
+    check("Checkpoint reached: Start" in text, "Kael starting inside a checkpoint reaches it")
+    check("Kael disabled" in text, "the sentinel disables him")
+    check("Kael respawned at Start" in text, "being disabled puts Kael back at the last checkpoint")
+    loads = re.findall(r"Loaded (Scenes/\S+\.ascene)", text)
+    check(loads == ["Scenes/CheckpointTest.ascene"], f"the respawn does not reload the world (loaded: {loads})")
+    match = re.search(r"Kael after respawn at \(([-\d.]+), ([-\d.]+)\)", text)
+    if check(match is not None, "the player reports where Kael is a few frames after the respawn"):
+        x, z = (float(v) for v in match.groups())
+        check(abs(x) < 5 and abs(z + 30) < 5, f"the character controller took the respawn as a teleport: Kael is at ({x:.1f}, {z:.1f}), 30 m north of the checkpoint")
+    check(not re.search(r"\[ERROR\]", text), "no errors in the checkpoint test")
+    result, text = run_player(work, "Scenes/CheckpointTest.ascene", "user_checkpoint", press="Z", frames=40)
+    check("Checkpoint at start: Start" in text, "the last checkpoint is saved with the game: the next run starts knowing it")
+    result, text = run_player(work, "Scenes/CombatTest.ascene", "user_checkpoint", press="Z", frames=400)
+    loads = re.findall(r"Loaded (Scenes/\S+\.ascene)", text)
+    check("Kael disabled" in text and loads[-1:] == ["Scenes/CheckpointTest.ascene"], f"disabled in another scene, Kael goes back to the scene of his checkpoint (loaded: {loads})")
+    check("Kael respawned at Start" in text, "and is put on the checkpoint there")
+    check(not re.search(r"\[ERROR\]", text), "no errors on the way back")
+
+
 def scan(work):
     """The scanner lists what is near by category, with distance and compass direction, nearest first (crate 5 m NE, fab bench 9 m S, a sentinel 30 m W)."""
     result, text = run_player(work, "Scenes/ScanTest.ascene", "user14", press="Q", frames=40)
@@ -291,6 +322,7 @@ def chapter2(work):
     check(not re.search(r"\[ERROR\]", text), "no errors collecting a sample")
     result, text = run_player(work, "Scenes/ConsoleTest.ascene", "user16")
     check("Living dome restored" in text, "three samples beside the console restore the living dome")
+    check("Achievement unlocked: GreenThumb" in text, "restoring the dome unlocks the Green Thumb achievement")
     check(not re.search(r"\[ERROR\]", text), "no errors at the console")
     result, text = run_player(work, "Scenes/ConsoleTest.ascene", "user17", press="Z")
     check("Living dome restored" not in text, "the console does nothing without a key press")
@@ -323,6 +355,7 @@ def chapter3(work):
     run_player(work, "Scenes/CombatKill.ascene", "user24", press="F", frames=120)
     result, text = run_player(work, "Scenes/TerminalTest.ascene", "user24")
     check("Assembly line started" in text and "Terminal locked" not in text, "with the sentinel disabled, the terminal starts the assembly line")
+    check("Achievement unlocked: AssemblyLine" in text, "starting the assembly line unlocks the Assembly Line achievement")
     check(not re.search(r"\[ERROR\]", text), "no errors at the terminal")
     layout_text = (HERE / "Content" / "Scenes" / "AssemblyHall.ascene").read_text(encoding="utf-8")
     check("AssemblyTerminal" in layout_text, "the assembly hall holds its terminal")
@@ -344,6 +377,7 @@ def main():
             dome(work)
             reactor(work)
             combat(work)
+            checkpoints(work)
             scan(work)
             chapter2(work)
             visible(work)

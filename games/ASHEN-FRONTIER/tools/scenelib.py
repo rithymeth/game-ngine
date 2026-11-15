@@ -109,6 +109,13 @@ def give_hands(scene, components=0, scrap=0, samples=0, calm="ambient_calm"):
     scene.add("Music", {"ScriptComponent": {"$v": 1, "properties": [{"name": "calm", "value": json.dumps("Audio/" + calm + ".acue")}], "script": script_guid("Music")}})
 
 
+def checkpoint(scene, name, position, radius=8.0, rotation=(0, 0, 0), respawn_offset=(0.0, 0.5, 0.0), **kwargs):
+    """A respawn point (the engine's Checkpoint component): when Kael comes within `radius` it becomes the last one, and he is put back there when he is
+    disabled. `name` is what the scripts and the save call it. It has no model: the HUD says when one is reached."""
+    comps = {"Checkpoint": {"$v": 1, "enabled": True, "name": name, "radius": radius, "activator_tag": "Player", "respawn_offset": list(respawn_offset)}}
+    return scene.add("Checkpoint_" + name, comps, position=position, rotation=rotation, **kwargs)
+
+
 def mule(scene, name, position, rotation=(0, 0, 0), **kwargs):
     """MULE-3, broken, with its script: repaired in play, then it follows Kael. (No collider: it moves.)"""
     guid_ = scene.model(name, "MULE3", position=position, rotation=rotation, tags=("MULE3",), **kwargs)

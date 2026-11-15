@@ -1,4 +1,4 @@
-"""Writes Ashen Frontier's items (.aitem) and recipes (.arecipe) into Content/, each with its .ameta (a stable GUID from its name).
+"""Writes Ashen Frontier's items (.aitem), recipes (.arecipe) and achievements (.aachievement) into Content/, each with its .ameta (a stable GUID from its name).
 
 The pack is Kael's Inventory: Scrap, Component and Sample stack to 99, the Generator Core is a single part. The Generator Core recipe is the fab
 bench's: 4 Scrap and 2 Components make 1 Generator Core.
@@ -17,6 +17,18 @@ ITEMS = {
     "Component": {"name": "Component", "max_stack": 99},
     "Sample": {"name": "Sample", "max_stack": 99},
     "GeneratorCore": {"name": "GeneratorCore", "max_stack": 1},
+}
+
+ACHIEVEMENTS = {
+    "FirstHaul": {"name": "FirstHaul", "title": "First Haul", "description": "Take your first piece of salvage.", "target": 1},
+    "Scavenger": {"name": "Scavenger", "title": "Scavenger", "description": "Take 10 pieces of salvage.", "target": 10},
+    "Fabricator": {"name": "Fabricator", "title": "Fabricator", "description": "Craft a Generator Core at the fab bench.", "target": 1},
+    "LightsOn": {"name": "LightsOn", "title": "Lights On", "description": "Start the outpost generator.", "target": 1},
+    "PackMule": {"name": "PackMule", "title": "Pack Mule", "description": "Repair MULE-3.", "target": 1},
+    "DistressCall": {"name": "DistressCall", "title": "Distress Call", "description": "Reach the distress relay.", "target": 1},
+    "GreenThumb": {"name": "GreenThumb", "title": "Green Thumb", "description": "Restore the living dome.", "target": 1},
+    "Scrapper": {"name": "Scrapper", "title": "Scrapper", "description": "Disable 3 sentinels.", "target": 3},
+    "AssemblyLine": {"name": "AssemblyLine", "title": "Assembly Line", "description": "Start the assembly line.", "target": 1},
 }
 
 RECIPES = {
@@ -40,4 +52,6 @@ if __name__ == "__main__":
         write("Items", name, ".aitem", "ItemDefinition", item)
     for name, recipe in RECIPES.items():
         write("Recipes", name, ".arecipe", "RecipeDefinition", recipe)
-    print("wrote", len(ITEMS), "items and", len(RECIPES), "recipes")
+    for name, achievement in ACHIEVEMENTS.items():
+        write("Achievements", name, ".aachievement", "AchievementDefinition", achievement)
+    print("wrote", len(ITEMS), "items,", len(RECIPES), "recipes and", len(ACHIEVEMENTS), "achievements")
