@@ -72,6 +72,9 @@ struct PostProcessSettings {
     f32 height_fog_density = 0.0f; // 1 / m at height_fog_base
     f32 height_fog_falloff = 0.02f;
     f32 height_fog_base = 0.0f;
+    f32 chromatic_aberration = 0.0f; // 0..1, lens effects of the post pass
+    f32 film_grain = 0.0f;           // 0..1
+    f32 sharpen = 0.0f;              // 0..1
 };
 
 // What the renderer draws, copied from the ECS each frame (Phase 14 §14.1)

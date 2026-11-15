@@ -5315,6 +5315,7 @@
   ),AETHER_FIELD(cast_shadows,Field_EditAnywhere))AETHER_REFLECT(aether::PointLight,1,AETHER_FIELD(color,Field_EditAnywhere),AETHER_FIELD(intensity,Field_EditAnywhere,
   ),AETHER_FIELD(cast_shadows,Field_EditAnywhere))AETHER_REFLECT(aether::SkyLight,1,AETHER_FIELD(color,Field_EditAnywhere),AETHER_FIELD(intensity,Field_EditAnywhere,
   ),AETHER_FIELD(cast_shadows,Field_EditAnywhere))AETHER_REFLECT(aether::SpotLight,1,AETHER_FIELD(color,Field_EditAnywhere),AETHER_FIELD(intensity,Field_EditAnywhere,
+  ),AETHER_FIELD(chromatic_aberration,Field_EditAnywhere,
   ),AETHER_FIELD(cloud_coverage,Field_EditAnywhere,
   ),AETHER_FIELD(cloud_scale,Field_EditAnywhere,
   ),AETHER_FIELD(cloud_speed,Field_EditAnywhere,
@@ -5326,6 +5327,7 @@
   ),AETHER_FIELD(exposure_compensation,Field_EditAnywhere,
   ),AETHER_FIELD(extents,Field_EditAnywhere,
   ),AETHER_FIELD(falloff,Field_EditAnywhere,
+  ),AETHER_FIELD(film_grain,Field_EditAnywhere,
   ),AETHER_FIELD(gust_speed,Field_EditAnywhere,
   ),AETHER_FIELD(gustiness,Field_EditAnywhere,
   ),AETHER_FIELD(height_fog_base,Field_EditAnywhere,
@@ -5336,6 +5338,7 @@
   ),AETHER_FIELD(priority,Field_EditAnywhere,
   ),AETHER_FIELD(range,Field_EditAnywhere,
   ),AETHER_FIELD(saturation,Field_EditAnywhere,
+  ),AETHER_FIELD(sharpen,Field_EditAnywhere,
   ),AETHER_FIELD(size,Field_EditAnywhere,
   ),AETHER_FIELD(sort_order,Field_EditAnywhere,
   ),AETHER_FIELD(strength,Field_EditAnywhere,
@@ -5510,22 +5513,28 @@
   type struct Extent
   Mat4 JitterProjection(const Mat4&projection,f32 offset_x_pixels,f32 offset_y_pixels,u32 width,u32 height)
   Vec3 AdjustSaturation(const Vec3&rgb,f32 saturation)
+  Vec3 ChromaticOffset(f32 u,f32 v,f32 strength)
   Vec3 TaaJitter(u64 frame,u32 count=8)
   Vec3 Tonemap(const Vec3&linear_rgb,Tonemapper mapper)
   Vec3 TonemapACES(const Vec3&linear_rgb)
   Vec3 TonemapAgX(const Vec3&linear_rgb)
   bool operator==(const Extent&o)const
   f32 AdaptEV100(f32 current,f32 target,f32 dt,const ExposureSettings&settings)
+  f32 ApplyFilmGrain(f32 encoded,f32 strength,f32 noise)
   f32 AverageLuminance(const std::vector<u32>&histogram,const ExposureSettings&settings)
   f32 EV100FromLuminance(f32 average_luminance)
   f32 ExposureFromEV100(f32 ev100,f32 compensation=0.0f)
+  f32 FilmGrainNoise(u32 x,u32 y,u32 frame)
+  f32 FilmGrainResponse(f32 display_value)
   f32 Halton(u32 index,u32 base)
   f32 LinearToSrgb(f32 linear)
   f32 Luminance(const Vec3&linear_rgb)
+  f32 SharpenLuminance(f32 luminance,f32 neighbour_luminance,f32 strength)
   f32 SrgbToLinear(f32 encoded)
   f32 VignetteFactor(f32 u,f32 v,f32 strength)
   std::vector<Extent>BloomChain(u32 width,u32 height,u32 max_levels=6,u32 min_size=8)
   std::vector<u32>LuminanceHistogram(const std::vector<f32>&luminances,const ExposureSettings&settings)
+  u32 GrainHash(u32 value)
 [renderer/include/aether/renderer/render_scene.h] experimental
   type struct Aabb
   type struct ExtractOptions

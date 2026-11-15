@@ -17,6 +17,11 @@
 // per level (with a Karis average on the first, so a single very bright pixel can't flash), then a 3x3 tent upsample back up the chain,
 // each level added onto the one above it. The composite mixes the result into the scene before exposure: lerp(scene, bloom / levels,
 // intensity), the energy-conserving form, so bright light spreads without the frame getting brighter overall.
+//
+// Lens effects (chromatic aberration, sharpen and film grain) are in the composite too. The scene colour is read through chromatic
+// aberration (red and blue from opposite sides of the pixel, more toward the edges) and a luminance-only sharpen before anything else
+// touches it; the film grain is the last thing added, to the display-encoded colour. Their strengths, and the vignette's, travel as four 8-bit
+// values in one push-constant word (PostConstants::lens) so the constants stay within the 128 bytes every device guarantees.
 
 namespace aether::player {
 
@@ -24,9 +29,9 @@ namespace aether::player {
 struct PostConstants {
     u32 scene_color = 0;  // bindless index of the HDR target
     f32 exposure = 1.0f;  // linear multiplier applied before the tone mapper
-    u32 tonemapper = 0;   // Tonemapper: 0 ACES, 1 AgX, 2 None (clamp)
+    u32 tonemapper = 0;   // low 2 bits: Tonemapper (0 ACES, 1 AgX, 2 None (clamp)); the rest: the frame number, which moves the film grain
     f32 saturation = 1.0f;
-    f32 vignette = 0.0f;  // 0..1
+    u32 lens = 0;         // four 8-bit strengths, each 0..1: vignette (bits 0-7), chromatic aberration (8-15), film grain (16-23), sharpen (24-31)
     u32 bloom = 0xffffffffu;    // bindless index of the bloom chain's top level, or none (anything >= kMaxBindlessTextures)
     f32 bloom_intensity = 0.0f; // 0..1, the composite's lerp weight
     f32 bloom_scale = 1.0f;     // 1 / levels: the accumulated chain back to the scene's brightness
@@ -56,14 +61,28 @@ struct BloomConstants {
 };
 static_assert(sizeof(BloomConstants) == 32);
 
+// The lens word: each strength clamped to 0..1 (anything that is not a number counts as 0) and kept in 8 bits.
+u32 PackLens(f32 vignette, f32 chromatic_aberration, f32 film_grain, f32 sharpen);
+f32 LensVignette(u32 lens);
+f32 LensChromaticAberration(u32 lens);
+f32 LensFilmGrain(u32 lens);
+f32 LensSharpen(u32 lens);
+// The two halves of PostConstants::tonemapper.
+constexpr u32 PackTonemapperFrame(u32 tonemapper, u32 frame) { return (tonemapper & 3u) | (frame << 2); }
+constexpr u32 PostTonemapperOf(const PostConstants& c) { return c.tonemapper & 3u; }
+constexpr u32 PostFrameOf(const PostConstants& c) { return c.tonemapper >> 2; }
+
 // The volume settings as push constants: exposure is 2^exposure_compensation (scene light values are not physical units, so there is no
 // EV100 metering yet), the rest are copied with their ranges clamped. Bloom is off in the result (PostPass::Draw turns it on when
 // RenderBloom drew this frame); bloom_intensity holds the clamped setting either way.
 PostConstants PackPostConstants(const PostProcessSettings& settings, u32 scene_color_index);
 
 // What the pass does to one linear HDR value, on the CPU, as the shader does it: the reference the GPU test compares against. `u`, `v` are
-// the pixel's position in 0..1 (for the vignette). Returns display-encoded (sRGB) values in 0..1.
+// the pixel's position in 0..1 (for the vignette). Returns display-encoded (sRGB) values in 0..1. The lens effects that read neighbouring
+// pixels (chromatic aberration, sharpen) are not here, and neither is the grain: see PostReferenceWithGrain.
 Vec3 PostReference(const Vec3& linear, const PostConstants& constants, f32 u, f32 v);
+// PostReference, then the film grain of the pixel at column `x`, row `y`, as the shader adds it (the same noise on all three channels).
+Vec3 PostReferenceWithGrain(const Vec3& linear, const PostConstants& constants, f32 u, f32 v, u32 x, u32 y);
 
 // The HLSL (VSMain, PSMain), for the pipeline and for tests.
 const char* PostShaderSource();
@@ -116,6 +135,7 @@ public:
 
 private:
     bool EnsureBloomChain(u32 width, u32 height);
+    u32 frame_ = 0; // counts the Draws: it moves the film grain
 
     gfx::rhi::IDevice& device_;
     gfx::rhi::ISwapChain& swap_chain_;

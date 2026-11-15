@@ -117,3 +117,54 @@ AETHER_TEST(Post_GradingBloomAndJitter) {
         }
     }
 }
+
+// The post pass's lens effects, as CPU references: the film grain, the luminance sharpen and the chromatic offset (the GPU pass is checked against
+// them in test_post_pass.cpp).
+AETHER_TEST(Post_LensEffectReferencesAreWellBehaved) {
+    // The grain's hash is deterministic, covers [-0.5, 0.5) with a mean near 0, and depends on the column, the row and the frame.
+    AETHER_CHECK(GrainHash(12345u) == GrainHash(12345u) && GrainHash(0u) != GrainHash(1u));
+    f64 sum = 0.0;
+    f32 lo = 1.0f, hi = -1.0f;
+    for (u32 y = 0; y < 64; ++y) {
+        for (u32 x = 0; x < 64; ++x) {
+            const f32 n = FilmGrainNoise(x, y, 7);
+            lo = std::min(lo, n);
+            hi = std::max(hi, n);
+            sum += n;
+        }
+    }
+    AETHER_CHECK(lo >= -0.5f && hi < 0.5f && lo < -0.45f && hi > 0.45f && std::fabs(sum / 4096.0) < 0.02);
+    AETHER_CHECK(FilmGrainNoise(3, 4, 5) != FilmGrainNoise(4, 3, 5) && FilmGrainNoise(3, 4, 5) != FilmGrainNoise(3, 4, 6) &&
+                 FilmGrainNoise(3, 4, 5) != FilmGrainNoise(3, 5, 5));
+
+    // Grain is for the midtones: nothing at black or white, strongest at middle grey; strength 0 changes nothing; the result stays in 0..1.
+    AETHER_CHECK(FilmGrainResponse(0.0f) == 0.0f && FilmGrainResponse(1.0f) == 0.0f && FilmGrainResponse(0.5f) == 1.0f && FilmGrainResponse(5.0f) == 0.0f);
+    AETHER_CHECK(ApplyFilmGrain(0.4f, 0.0f, 0.5f) == 0.4f && ApplyFilmGrain(0.0f, 1.0f, 0.5f) == 0.0f && ApplyFilmGrain(1.0f, 1.0f, -0.5f) == 1.0f);
+    AETHER_CHECK(ApplyFilmGrain(0.5f, 1.0f, 0.5f) > 0.5f && ApplyFilmGrain(0.5f, 1.0f, -0.5f) < 0.5f);
+    for (const f32 e : {0.05f, 0.5f, 0.95f}) {
+        for (const f32 n : {-0.5f, 0.0f, 0.4999f}) {
+            const f32 g = ApplyFilmGrain(e, 1.0f, n);
+            AETHER_CHECK(g >= 0.0f && g <= 1.0f);
+        }
+    }
+
+    // Sharpen: strength 0 and a flat area leave the luminance alone; a pixel brighter than its surroundings gets brighter, a darker one darker;
+    // and no input (a very bright one, a negative one) makes a NaN or a runaway.
+    AETHER_CHECK(std::fabs(SharpenLuminance(0.8f, 0.2f, 0.0f) - 0.8f) < 1e-5f && std::fabs(SharpenLuminance(0.5f, 0.5f, 1.0f) - 0.5f) < 1e-5f);
+    AETHER_CHECK(SharpenLuminance(0.8f, 0.2f, 0.5f) > 0.8f && SharpenLuminance(0.2f, 0.8f, 0.5f) < 0.2f);
+    AETHER_CHECK(SharpenLuminance(0.8f, 0.2f, 1.0f) > SharpenLuminance(0.8f, 0.2f, 0.5f));
+    for (const f32 l : {-3.0f, 0.0f, 1e-6f, 4.0f, 1e6f}) {
+        for (const f32 n : {0.0f, 0.5f, 1e6f}) {
+            const f32 s = SharpenLuminance(l, n, 1.0f);
+            AETHER_CHECK(std::isfinite(s) && s >= 0.0f);
+        }
+    }
+    AETHER_CHECK(SharpenLuminance(1e6f, 0.0f, 1.0f) < 1e6f * 4.0f); // the highlight is not blown up further
+
+    // Chromatic aberration: nothing at the centre or at strength 0, opposite on opposite sides, growing with strength, 2.5% of the frame at the most.
+    const Vec3 centre = ChromaticOffset(0.5f, 0.5f, 1.0f);
+    AETHER_CHECK(centre.x == 0.0f && centre.y == 0.0f && ChromaticOffset(0.9f, 0.1f, 0.0f).x == 0.0f);
+    const Vec3 left = ChromaticOffset(0.0f, 0.5f, 1.0f), right = ChromaticOffset(1.0f, 0.5f, 1.0f);
+    AETHER_CHECK(std::fabs(left.x + right.x) < 1e-6f && std::fabs(right.x - 0.025f) < 1e-6f && left.y == 0.0f);
+    AETHER_CHECK(std::fabs(ChromaticOffset(1.0f, 0.5f, 0.5f).x - 0.0125f) < 1e-6f && ChromaticOffset(1.0f, 0.5f, 5.0f).x == right.x);
+}
