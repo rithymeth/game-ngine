@@ -22,6 +22,9 @@
 #if AETHER_KIT_QUESTS
 #include "aether/quests/quests_kit.h"
 #endif
+#if AETHER_KIT_CHECKPOINTS
+#include "aether/checkpoints/checkpoints_kit.h"
+#endif
 #if AETHER_KIT_SPAWNER
 #include "aether/spawner/spawner_kit.h"
 #endif
@@ -52,6 +55,9 @@ void Game::BuildKits() {
 #endif
 #if AETHER_KIT_QUESTS
     kits_.Add(quest::MakeQuestsKit(&quests_, &effects_));
+#endif
+#if AETHER_KIT_CHECKPOINTS
+    kits_.Add(chk::MakeCheckpointsKit());
 #endif
 #if AETHER_KIT_SPAWNER
     kits_.Add(spawn::MakeSpawnerKit());
@@ -125,7 +131,15 @@ void Game::CreateKitRuntime() {
 #endif
 #if AETHER_KIT_ACHIEVEMENTS
         if (std::strcmp(name, "achievements.library") == 0) return &achievements_;
-        if (std::strcmp(name, "save.bag") == 0) return saves_ ? &saves_->Bag() : nullptr; // the bag a save slot writes: progress lives in it
+#endif
+#if AETHER_KIT_ACHIEVEMENTS || AETHER_KIT_CHECKPOINTS
+        if (std::strcmp(name, "save.bag") == 0) return saves_ ? &saves_->Bag() : nullptr; // the bag a save slot writes: these kits keep their progress in it
+#endif
+#if AETHER_KIT_CHECKPOINTS
+        if (std::strcmp(name, "checkpoints.scene") == 0) {
+            scene_name_function_ = [this]() { return scene_; };
+            return &scene_name_function_;
+        }
 #endif
 #if AETHER_KIT_DIALOGUE
         if (std::strcmp(name, "dialogue.library") == 0) return &dialogues_;
@@ -281,6 +295,20 @@ void Game::AddQuestsStage() {
         if (kits_.Has(other)) quests.after.push_back(std::string("Player.") + other);
     }
     runtime_->stages[quests.name] = std::move(quests);
+#endif
+}
+
+void Game::AddCheckpointsStage() {
+#if AETHER_KIT_CHECKPOINTS
+    chk::CheckpointSystem* checkpoint_system = runtime_ ? runtime_->kit_runtimes.Get<chk::CheckpointSystem>("Checkpoints", "CheckpointSystem") : nullptr;
+    SystemDesc checkpoints = chk::MakeCheckpointsSystem(checkpoint_system, [this](const chk::CheckpointEvent& e) {
+        if (!runtime_) return;
+#if AETHER_GAME_SCRIPTING
+        if (runtime_->scripts) runtime_->scripts->SendEvent(e.checkpoint, "OnCheckpoint", {script::EntityRef{e.activator}});
+#endif
+    });
+    ApplyKitStage(checkpoints, "Player.Checkpoints");
+    runtime_->stages[checkpoints.name] = std::move(checkpoints);
 #endif
 }
 

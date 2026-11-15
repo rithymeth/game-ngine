@@ -13,6 +13,9 @@
 #if AETHER_KIT_QUESTS
 #include "aether/quests/quest_def.h"
 #endif
+#if AETHER_KIT_CHECKPOINTS
+#include "aether/checkpoints/checkpoint_system.h"
+#endif
 #if AETHER_KIT_SPAWNER
 #include "aether/spawner/spawner_system.h"
 #endif
@@ -54,6 +57,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <functional>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -404,6 +408,7 @@ private:
     void AddQuestsStage();
     void AddTimeOfDayStage();
     void AddSpawnerStage();
+    void AddCheckpointsStage();
     // A kit stage as the registry describes it: its name and `after` list, for the system that runs it.
     void ApplyKitStage(SystemDesc& system, const std::string& name) const;
 
@@ -457,6 +462,9 @@ private:
 #endif
 #if AETHER_KIT_QUESTS
     quest::QuestLibrary quests_;
+#endif
+#if AETHER_KIT_CHECKPOINTS
+    std::function<std::string()> scene_name_function_; // the current scene, for the Checkpoints kit (set when the kit runtime is made)
 #endif
 #if AETHER_KIT_SPAWNER
     spawn::SpawnFunction spawn_function_; // what the Spawner kit calls to make a prefab appear (set when the kit runtime is made)

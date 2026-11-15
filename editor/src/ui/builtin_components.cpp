@@ -39,6 +39,9 @@
 #if AETHER_EDITOR_KIT_SPAWNER
 #include "aether/spawner/spawner.h"
 #endif
+#if AETHER_EDITOR_KIT_CHECKPOINTS
+#include "aether/checkpoints/checkpoint.h"
+#endif
 
 namespace aether::editor {
 
@@ -99,6 +102,9 @@ void RegisterEditorComponents() {
 #endif
 #if AETHER_EDITOR_KIT_SPAWNER
     spawn::RegisterSpawnerComponents();
+#endif
+#if AETHER_EDITOR_KIT_CHECKPOINTS
+    chk::RegisterCheckpointComponents();
 #endif
 }
 

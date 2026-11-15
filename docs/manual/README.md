@@ -25,6 +25,7 @@ the workflow grows. The chapters describe current capabilities; build specs in
 18. [Time of day](18-time-of-day.md): the world clock kit and the `TimeOfDay` script table.
 19. [Achievements](19-achievements.md): the achievements kit, goals and the `Achievements` script table.
 20. [Spawner](20-spawner.md): the spawner kit, the `Spawner` component and its script table.
+21. [Checkpoints](21-checkpoints.md): the checkpoints kit, the `Checkpoint` component and its script table.
 
 Also: [Support policy](support_policy.md), a proposal for how long versions are supported.
 

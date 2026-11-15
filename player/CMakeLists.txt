@@ -56,6 +56,13 @@ if(TARGET Aether::Quests)
 else()
     target_compile_definitions(aether_game PUBLIC AETHER_KIT_QUESTS=0)
 endif()
+# The checkpoints genre kit (respawn points), when built.
+if(TARGET Aether::Checkpoints)
+    target_link_libraries(aether_game PUBLIC Aether::Checkpoints)
+    target_compile_definitions(aether_game PUBLIC AETHER_KIT_CHECKPOINTS=1)
+else()
+    target_compile_definitions(aether_game PUBLIC AETHER_KIT_CHECKPOINTS=0)
+endif()
 # The spawner genre kit (prefabs on a timer), when built.
 if(TARGET Aether::Spawner)
     target_link_libraries(aether_game PUBLIC Aether::Spawner)
