@@ -56,6 +56,13 @@ if(TARGET Aether::Quests)
 else()
     target_compile_definitions(aether_game PUBLIC AETHER_KIT_QUESTS=0)
 endif()
+# The achievements genre kit (goals), when built.
+if(TARGET Aether::Achievements)
+    target_link_libraries(aether_game PUBLIC Aether::Achievements)
+    target_compile_definitions(aether_game PUBLIC AETHER_KIT_ACHIEVEMENTS=1)
+else()
+    target_compile_definitions(aether_game PUBLIC AETHER_KIT_ACHIEVEMENTS=0)
+endif()
 # The time-of-day genre kit (the world clock), when built.
 if(TARGET Aether::TimeOfDay)
     target_link_libraries(aether_game PUBLIC Aether::TimeOfDay)

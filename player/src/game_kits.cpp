@@ -22,6 +22,9 @@
 #if AETHER_KIT_QUESTS
 #include "aether/quests/quests_kit.h"
 #endif
+#if AETHER_KIT_ACHIEVEMENTS
+#include "aether/achievements/achievements_kit.h"
+#endif
 #if AETHER_KIT_TIMEOFDAY
 #include "aether/timeofday/timeofday_kit.h"
 #endif
@@ -46,6 +49,9 @@ void Game::BuildKits() {
 #endif
 #if AETHER_KIT_QUESTS
     kits_.Add(quest::MakeQuestsKit(&quests_, &effects_));
+#endif
+#if AETHER_KIT_ACHIEVEMENTS
+    kits_.Add(ach::MakeAchievementsKit(&achievements_));
 #endif
 #if AETHER_KIT_TIMEOFDAY
     kits_.Add(tod::MakeTimeOfDayKit());
@@ -104,6 +110,10 @@ void Game::CreateKitRuntime() {
 #endif
 #if AETHER_KIT_QUESTS
         if (std::strcmp(name, "quests.library") == 0) return &quests_;
+#endif
+#if AETHER_KIT_ACHIEVEMENTS
+        if (std::strcmp(name, "achievements.library") == 0) return &achievements_;
+        if (std::strcmp(name, "save.bag") == 0) return saves_ ? &saves_->Bag() : nullptr; // the bag a save slot writes: progress lives in it
 #endif
 #if AETHER_KIT_DIALOGUE
         if (std::strcmp(name, "dialogue.library") == 0) return &dialogues_;
