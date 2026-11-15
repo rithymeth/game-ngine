@@ -22,6 +22,26 @@ void BlendSpaceDocument::Changed() {
     anim::Triangulate(space_);
     diagnostics_ = anim::ValidateBlendSpace(space_);
 }
+bool BlendSpaceDocument::Load(const std::filesystem::path& path, std::string* error) {
+    std::ifstream file(path);
+    if (!file) {
+        if (error) *error = "can't read " + path.string();
+        return false;
+    }
+    json j = json::parse(file, nullptr, false);
+    if (j.is_discarded()) {
+        if (error) *error = path.filename().string() + " isn't valid JSON";
+        return false;
+    }
+    BlendSpace loaded;
+    if (!anim::BlendSpaceFromJson(j, loaded, error)) return false;
+    space_ = std::move(loaded);
+    path_ = path;
+    dirty_ = false;
+    history_.Clear();
+    Changed();
+    return true;
+}
 bool BlendSpaceDocument::Save(std::string* error) {
     if (path_.empty()) {
         if (error) *error = "the blend space has no file yet; use Save As";
@@ -39,6 +59,10 @@ bool BlendSpaceDocument::SaveAs(const std::filesystem::path& path, std::string* 
     path_ = path;
     dirty_ = false;
     return true;
+}
+void BlendSpaceDocument::MarkSaved() {
+    dirty_ = false;
+    history_.Clear();
 }
 std::string BlendSpaceDocument::Name() const { return path_.empty() ? "Untitled" : path_.stem().string(); }
 void BlendSpaceDocument::Edit(const std::string& label, const std::function<void(BlendSpace&)>& change,

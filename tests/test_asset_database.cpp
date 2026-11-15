@@ -63,6 +63,7 @@ AETHER_TEST(AssetGuid_StringAndReflection) {
     AETHER_CHECK(ImporterForExtension("Audio/alert.ACUE") == "SoundCue");
     AETHER_CHECK(ImporterForExtension("UI/Hud.aui") == "UILayout" && ImporterForExtension("UI/Dark.ATHEME") == "UITheme");
     AETHER_CHECK(ImporterForExtension("Fx/Sparks.avfx") == "ParticleSystem");
+    AETHER_CHECK(ImporterForExtension("Graphs/M_Lit.amat") == "Material" && ImporterForExtension("AI/BT_Guard.abt") == "BehaviorTree");
     AETHER_CHECK(ImporterForExtension("notes.txt").empty());
 }
 
@@ -296,5 +297,22 @@ AETHER_TEST(AssetDatabase_ValidateReportsMissingSources) {
     AETHER_CHECK(issues[0].path == "Textures/brick.png");
     AETHER_CHECK(db.Find(issues[0].guid) != nullptr); // the record is still there, its source is not
 
+    stdfs::remove_all(root);
+}
+
+// A material graph names its textures by asset GUID inside the file, so nothing else would follow them: the cook used to
+// carry them only because a .amat was not an asset and its roots were handled as plain files. Now that the Content
+// Browser lists graphs, the scan has to record the references a graph makes.
+AETHER_TEST(AssetDatabase_AMaterialGraphsTexturesAreDependencies) {
+    stdfs::path root = FreshContent("aether_test_material_dependencies");
+    Write(root / "Textures/sky.png", "fake png bytes");
+    AssetDatabase db(root);
+    AETHER_CHECK(db.Scan().assets == 1);
+    const AssetGuid sky = db.FindByPath("Textures/sky.png")->guid;
+    Write(root / "Materials/Sky.amat", "{\"parameters\":[{\"name\":\"Albedo\",\"type\":\"texture\",\"texture\":\"" + ToString(sky) + "\"}]}");
+    db.Scan();
+    const AssetRecord* material = db.FindByPath("Materials/Sky.amat");
+    AETHER_CHECK(material != nullptr && material->importer == "Material");
+    if (material != nullptr) AETHER_CHECK(material->dependencies == std::vector<AssetGuid>{sky});
     stdfs::remove_all(root);
 }

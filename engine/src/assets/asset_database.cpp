@@ -254,6 +254,7 @@ std::string ImporterForExtension(const stdfs::path& file) {
         {".aui", "UILayout"}, {".atheme", "UITheme"}, // UI layouts and themes, shown by WidgetComponent and read by path
         {".aanim", "AnimGraph"}, {".amontage", "AnimMontage"}, {".ablend", "BlendSpace"}, // animation data, read by path (M8.6)
         {".avfx", "ParticleSystem"}, // particle systems, read by path by the player's particle world (M8.7)
+        {".amat", "Material"}, {".abt", "BehaviorTree"}, // graphs the editor's own tools write (Stage 3 openers)
     };
     auto it = kImporters.find(ToLower(file.extension().string()));
     return it != kImporters.end() ? it->second : std::string();
@@ -522,7 +523,8 @@ void AssetDatabase::RebuildDependencies() {
                    record.importer != "Tileset" && record.importer != "Tilemap" && record.importer != "Sequence" &&
                    record.importer != "SoundCue" && record.importer != "UILayout" && record.importer != "UITheme" &&
                    record.importer != "AnimGraph" && record.importer != "AnimMontage" && record.importer != "BlendSpace" &&
-                   record.importer != "ParticleSystem") {
+                   record.importer != "ParticleSystem" &&
+                   record.importer != "Material") { // its textures are GUID parameters: a graph cooked without them draws nothing
             continue;
         }
         std::vector<u8> bytes;

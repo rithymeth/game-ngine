@@ -97,6 +97,11 @@ bool AnimGraphDocument::SaveAs(const std::filesystem::path& path, std::string* e
     dirty_ = false;
     return true;
 }
+void AnimGraphDocument::MarkSaved() {
+    dirty_ = false;
+    history_.Clear();
+    ++revision_;
+}
 
 std::string AnimGraphDocument::Name() const { return path_.empty() ? "Untitled" : path_.stem().string(); }
 

@@ -32,6 +32,9 @@ public:
     bool Load(const std::filesystem::path& path, std::string* error = nullptr);
     bool Save(std::string* error = nullptr);
     bool SaveAs(const std::filesystem::path& path, std::string* error = nullptr);
+    // Treats what is there as saved: clears the dirty flag and the undo history, for a document seeded with a
+    // sample (its construction edits, not the user's).
+    void MarkSaved();
     std::string Text() const { return ai::SaveBehaviorTree(tree_).dump(2); }
 
     const ai::BehaviorTreeAsset& Get() const { return tree_; }

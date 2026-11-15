@@ -617,12 +617,65 @@ void ContentBrowserPanel::DrawListing() {
         OpenFolder(folder_to_open);
         return;
     }
-    if (!asset_to_open.empty()) {
-        if (ExtensionRegistry* ext = ExtensionRegistry::Active()) {
-            ext->OpenAsset(project_file_.parent_path() / "Content" / asset_to_open);
+    if (!asset_to_open.empty()) OpenEntry(asset_to_open);
+    ApplyPending(); // after the listing has drawn: an action must not clear rows_ under its own loop
+}
+
+std::filesystem::path ContentBrowserPanel::ContentPath(const std::string& path) const {
+    const std::filesystem::path root =
+        database_ ? database_->ContentRoot() : project_file_.parent_path() / "Content";
+    return (root / path).lexically_normal();
+}
+
+void ContentBrowserPanel::SetAssetOpener(AssetOpener opener) { opener_ = std::move(opener); }
+
+bool ContentBrowserPanel::OpenEntry(const std::string& path, std::string* error) {
+    last_open_error_.clear();
+    if (error != nullptr) error->clear();
+    if (path.empty()) return false;
+    bool opened = false;
+    if (opener_) {
+        opened = opener_(path, &last_open_error_);
+    } else if (ExtensionRegistry* extensions = ExtensionRegistry::Active()) {
+        const std::filesystem::path file = ContentPath(path);
+        opened = extensions->OpenAsset(file);
+        if (!opened) {
+            const ExtensionAssetType* type = extensions->FindAssetTypeForPath(file);
+            last_open_error_ = type == nullptr ? "No editor opens " + path + "."
+                                               : type->name + " assets have no editor (" + path + ").";
         }
     }
-    ApplyPending(); // after the listing has drawn: an action must not clear rows_ under its own loop
+    if (!opened && last_open_error_.empty()) last_open_error_ = "No editor opens " + path + ".";
+    if (error != nullptr) *error = last_open_error_;
+    return opened;
+}
+
+void ContentBrowserPanel::SetRevealer(std::function<bool(const std::string&)> reveal) { revealer_ = std::move(reveal); }
+
+void ContentBrowserPanel::ShowEntry(const std::string& path) {
+    if (path.empty()) return;
+    const std::string parent = std::filesystem::path(path).parent_path().generic_string();
+    if (parent != folder_) OpenFolder(parent);
+    Select(path);
+}
+std::string ContentBrowserPanel::CopyPath(const std::string& path) {
+    if (path.empty()) return {};
+    last_copied_path_ = ContentPath(path).string();
+    ImGui::SetClipboardText(last_copied_path_.c_str());
+    return last_copied_path_;
+}
+bool ContentBrowserPanel::RevealInFileManager(const std::string& path) {
+    if (path.empty() || !revealer_) return false;
+    return revealer_(ContentPath(path).string());
+}
+bool ContentBrowserPanel::ShowReferences(const std::string& path, assets::ReferenceDirection direction) {
+    if (!database_) return false;
+    const assets::AssetRecord* record = database_->FindByPath(path);
+    if (record == nullptr) return false;
+    reference_guid_ = record->guid;
+    reference_direction_ = direction;
+    references_open_ = true;
+    return true;
 }
 
 void ContentBrowserPanel::DrawEntryMenu(const assets::ContentEntry& e) {
@@ -649,16 +702,8 @@ void ContentBrowserPanel::DrawEntryMenu(const assets::ContentEntry& e) {
         if (ImGui::MenuItem("New Subfolder")) StartAction(Action::NewFolder, e.path);
     }
     if (!e.is_folder && e.asset && ImGui::BeginMenu("References")) {
-        if (ImGui::MenuItem("Show Dependencies")) {
-            reference_guid_ = e.asset->guid;
-            reference_direction_ = assets::ReferenceDirection::Dependencies;
-            references_open_ = true;
-        }
-        if (ImGui::MenuItem("Show Referencers")) {
-            reference_guid_ = e.asset->guid;
-            reference_direction_ = assets::ReferenceDirection::Referencers;
-            references_open_ = true;
-        }
+        if (ImGui::MenuItem("Show Dependencies")) ShowReferences(e.path, assets::ReferenceDirection::Dependencies);
+        if (ImGui::MenuItem("Show Referencers")) ShowReferences(e.path, assets::ReferenceDirection::Referencers);
         ImGui::EndMenu();
     }
     if (!e.is_folder && ImportEditable(e.path) != nullptr) {
@@ -670,6 +715,11 @@ void ContentBrowserPanel::DrawEntryMenu(const assets::ContentEntry& e) {
             pending_ = Pending::Reimport; // after the listing loops: a reimport rebuilds the rows they walk
         }
     }
+    ImGui::Separator();
+    if (ImGui::MenuItem("Copy Path")) CopyPath(e.path);
+    if (ImGui::MenuItem("Reveal in Explorer", nullptr, false, revealer_ != nullptr)) RevealInFileManager(e.path);
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && !revealer_)
+        ImGui::SetTooltip("This host has no file manager to show it in");
     ImGui::EndPopup();
 }
 
@@ -1195,13 +1245,22 @@ void ContentBrowserPanel::DrawReferenceViewer() {
     bool open = references_open_;
     if (ImGui::Begin("Asset References", &open)) {
         ImGui::TextDisabled("%s", database_->Find(reference_guid_) ? database_->Find(reference_guid_)->path.c_str() : "Unknown asset");
+        const bool dependencies = reference_direction_ == assets::ReferenceDirection::Dependencies;
+        if (ImGui::RadioButton("Dependencies", dependencies)) reference_direction_ = assets::ReferenceDirection::Dependencies;
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Find usages (referencers)", !dependencies)) reference_direction_ = assets::ReferenceDirection::Referencers;
+        ImGui::Separator();
         const std::vector<assets::ReferenceNode> nodes = assets::CollectReferences(*database_, reference_guid_, reference_direction_);
         for (const assets::ReferenceNode& node : nodes) {
             ImGui::Indent(14.0f * static_cast<f32>(node.depth));
-            ImGui::BulletText("%s%s", node.path.c_str(), node.repeated ? " (already shown)" : "");
+            const std::string label = node.path + (node.repeated ? " (already shown)" : "");
+            if (ImGui::Selectable(label.c_str())) ShowEntry(node.path);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Select it in the Content Browser");
             ImGui::Unindent(14.0f * static_cast<f32>(node.depth));
         }
-        if (nodes.empty()) ImGui::TextDisabled("No references.");
+        if (nodes.empty()) {
+            ImGui::TextDisabled(dependencies ? "This asset uses nothing." : "Nothing uses this asset.");
+        }
     }
     ImGui::End();
     references_open_ = open;
@@ -1215,12 +1274,14 @@ void ContentBrowserPanel::DrawValidation() {
             ImGui::TextDisabled("No asset problems.");
         }
         for (const assets::AssetIssue& issue : issues_) {
-            if (issue.kind == assets::AssetIssueKind::MissingSource) {
-                ImGui::TextColored(ImVec4(1.0f, 0.62f, 0.2f, 1.0f), "missing source: %s", issue.path.c_str());
-            } else {
-                ImGui::BulletText("%s refers to %s, which is gone", issue.path.c_str(),
-                                  assets::ToString(issue.dependency).c_str());
-            }
+            const std::string label = issue.kind == assets::AssetIssueKind::MissingSource
+                                          ? "missing source: " + issue.path
+                                          : issue.path + " refers to " + assets::ToString(issue.dependency) + ", which is gone";
+            const bool missing = issue.kind == assets::AssetIssueKind::MissingSource;
+            if (missing) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.62f, 0.2f, 1.0f));
+            if (ImGui::Selectable(label.c_str())) ShowEntry(issue.path);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Select it in the Content Browser");
+            if (missing) ImGui::PopStyleColor();
         }
     }
     ImGui::End();

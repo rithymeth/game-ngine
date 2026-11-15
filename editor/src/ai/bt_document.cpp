@@ -84,6 +84,11 @@ bool BehaviorTreeDocument::SaveAs(const std::filesystem::path& path, std::string
     dirty_ = false;
     return true;
 }
+void BehaviorTreeDocument::MarkSaved() {
+    dirty_ = false;
+    history_.Clear();
+    ++revision_;
+}
 
 std::string BehaviorTreeDocument::Name() const {
     if (!path_.empty()) return path_.stem().string();

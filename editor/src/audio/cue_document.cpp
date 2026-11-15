@@ -49,6 +49,11 @@ bool SoundCueDocument::SaveAs(const std::filesystem::path& path, std::string* er
     path_ = path;
     return Save(error);
 }
+void SoundCueDocument::MarkSaved() {
+    dirty_ = false;
+    history_.Clear();
+    ++revision_;
+}
 
 std::string SoundCueDocument::Name() const {
     if (!cue_.name.empty()) return cue_.name;

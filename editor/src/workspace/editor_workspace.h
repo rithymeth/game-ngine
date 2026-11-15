@@ -254,6 +254,13 @@ public:
     // Focuses the browser on success.
     bool ImportDroppedFiles(const std::vector<std::string>& files, std::string* error = nullptr);
 
+    // Stage 3: opens a content asset (a path relative to Content/) in the editor that edits it. The material,
+    // blueprint, animation graph, blend space, sound cue, UI layout, behavior tree, sequence and particle tools load
+    // their document and come to the front; a scene opens in the Scene tool and a .luau script in the Luau editor; a
+    // type a plugin or editor script registered goes to its opener. False, with the reason in `error`, when nothing
+    // edits that kind -- the same reason is posted to Messages, so a double-click that opens nothing says why.
+    bool OpenAsset(const std::string& path, std::string* error = nullptr);
+
 private:
     void RegisterCommands();
     // Runs the Global commands whose chord was pressed this frame; called from DrawWindows, inside a frame.

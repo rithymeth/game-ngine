@@ -625,6 +625,26 @@ different refuses the batch), rolls the copies back on a write failure, selects 
 notification either way. Tests in `tests/test_content_import.cpp`: `ImportSettings_RoundTripAndReimportIdentity`,
 `ImportFiles_CopiesIntoTheOpenFolderAndSelects` and `ImportSettings_DrawerEditsAppliesAndDraws`.
 
+Done so far (2026-11-15): opening, the reference viewer's two directions, and the file actions. A double-click in the
+Content Browser goes through `ContentBrowserPanel::OpenEntry` to the host's opener -- the workspace installs
+`EditorWorkspace::OpenAsset`, which loads every kind the editor edits into that tool's open document and shows the tool:
+`.abp`, `.amat`, `.aanim`, `.ablend`, `.acue`, `.aui`, `.abt`, `.avfx`, `.asequence`, `.ascene`/`.aesc` and `.luau`.
+`BlendSpaceDocument` gained the `Load` it was missing, and `.amat`/`.abt` joined `ImporterForExtension` as `Material`
+and `BehaviorTree`, so those graphs are assets the scan and the listing know. A material graph also joined the
+dependency scan (`RebuildDependencies`): a graph names its textures as GUID parameters, and once the graph itself was an
+asset the cook stopped following them (the live viewport drew the model's own surface instead of the graph's blue); the
+scan now records them, so they cook with the graph. A refusal is never silent: a kind no
+extension claims, or one whose registered type has no opener, posts a "No editor" warning naming the reason, and
+`LastOpenError` keeps it; a document with unsaved changes is not replaced. The tools' seed documents are marked saved
+(`MarkSaved()`) when they are built, so a sample never blocks the first open. The context menu's Copy Path records the
+absolute path (`CopyPath`, `LastCopiedPath`) and Reveal in Explorer calls the host's `SetRevealer` (Explorer /select,
+`open -R`, or the parent folder). The reference viewer has Dependencies and Find usages (referencers) side by side,
+every row selects its asset and shows its folder (`ShowEntry`), and the validation list's rows do the same, so a broken
+reference is one click from the asset. Tests in `tests/test_content_openers.cpp`:
+`Openers_EveryOpenableKindLoadsItsFileAndShowsItsTool`, `Openers_SayWhyAnAssetCannotOpen`,
+`Openers_ThePanelUsesTheHostOpenerAndFallsBackToTheRegistry`, `Openers_CopyPathRevealAndTheReferenceViewer` and
+`Openers_EveryRegisteredTypeWithAnOpenerOpensHeadless`.
+
 ### Stage 4 — Inspector and hierarchy parity (M)
 
 Outcome: editing many objects and finding a property are as fast as in the reference editors.

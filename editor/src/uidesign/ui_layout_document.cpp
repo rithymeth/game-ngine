@@ -136,6 +136,11 @@ bool UILayoutDocument::SaveAs(const std::filesystem::path& path, std::string* er
     path_ = old;
     return false;
 }
+void UILayoutDocument::MarkSaved() {
+    dirty_ = false;
+    history_.Clear();
+    ++revision_;
+}
 
 std::string UILayoutDocument::Text() const { return ui::SaveLayout(*layout_.root, layout_.bindings, layout_.animations); }
 

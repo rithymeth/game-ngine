@@ -13,8 +13,13 @@ namespace aether::editor {
 class BlendSpaceDocument {
 public:
     explicit BlendSpaceDocument(anim::BlendSpace space = {}, std::filesystem::path path = {});
+    // Replaces the space with the file's; false (and unchanged) when it can't be read.
+    bool Load(const std::filesystem::path& path, std::string* error = nullptr);
     bool Save(std::string* error = nullptr);
     bool SaveAs(const std::filesystem::path& path, std::string* error = nullptr);
+    // Treats what is there as saved: clears the dirty flag and the undo history, for a document seeded with a
+    // sample (its construction edits, not the user's).
+    void MarkSaved();
     const anim::BlendSpace& Get() const { return space_; }
     bool Dirty() const { return dirty_; }
     const std::filesystem::path& Path() const { return path_; }

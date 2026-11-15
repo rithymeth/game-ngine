@@ -475,6 +475,22 @@ importer at once and says when the result came from the derived data cache. File
 copied into the open folder (the scan writes each `.ameta`), selected, and reported in one notification; a name already there with
 different contents refuses the batch instead of overwriting, and identical contents are just selected.
 
+Opening: a double-click on an asset opens it in the editor that edits it. `EditorWorkspace::OpenAsset` handles every
+kind the editor has a tool for (`.abp`, `.amat`, `.aanim`, `.ablend`, `.acue`, `.aui`, `.abt`, `.avfx`, `.asequence`,
+`.ascene`/`.aesc` and `.luau`), loading into the tool's open document and showing that tool; `.amat` and `.abt` are
+assets the scan knows now (their importers are `Material` and `BehaviorTree`), so the listing can show and open them. A
+kind an extension registered opens through its opener; when nothing edits the kind the open is refused with a warning
+in Messages ("No editor") that says why, and `ContentBrowserPanel::LastOpenError` keeps the same text. A document with
+unsaved changes is not replaced silently. The sample documents the tools start with are marked saved
+(`MarkSaved()`), so they never block the first open.
+
+The context menu's Copy Path records the asset's absolute path (`CopyPath`, `LastCopiedPath`) on ImGui's clipboard, and
+Reveal in Explorer hands it to the host's revealer (`SetRevealer`; the workspace uses Explorer on Windows, `open -R`
+on macOS and the parent folder elsewhere). The References submenu opens the viewer on Dependencies or Find usages
+(referencers), switchable in the window, with every row a button that selects the asset and shows its folder
+(`ShowReferences`/`ShowEntry`); the validation list's rows do the same, so a missing source or a broken reference is
+one click from the asset.
+
 - Thumbnail size slider (64–256 px); list view for large folders.
 - Filter current-folder entries by supported asset type and name; search and
   type filters combine. Label the folder scope, show the visible/matching

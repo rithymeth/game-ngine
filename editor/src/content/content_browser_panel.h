@@ -9,6 +9,7 @@
 #include <nlohmann/json.hpp>
 
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -19,7 +20,8 @@
 // folders and assets, each with a badge for its git status (M modified, A
 // added, ? untracked, D deleted, R renamed, ! conflict; a folder shows its
 // worst child), a search, a "changed only" filter, and double-click to open
-// a folder or an asset type an extension registered. The listing is a grid of
+// a folder or an asset in its editor (the host's opener, else an asset type
+// an extension registered). The listing is a grid of
 // thumbnails (textures and materials; other kinds get a type tile) or a list.
 // Draws into the current window.
 
@@ -136,6 +138,33 @@ public:
     // copies; the new assets become the selection.
     bool ImportFiles(const std::vector<std::string>& files, usize* imported = nullptr, std::string* error = nullptr);
 
+    // Stage 3: a double-click on a file. The host installs what "opening" means (the workspace loads it into the tool
+    // that edits it); with none installed the panel asks the extension registry, as it always did for plugin types.
+    // A double-click that opens nothing leaves the reason in LastOpenError() so it can be said rather than ignored.
+    using AssetOpener = std::function<bool(const std::string& path, std::string* error)>;
+    void SetAssetOpener(AssetOpener opener);
+    bool OpenEntry(const std::string& path, std::string* error = nullptr);
+    const std::string& LastOpenError() const { return last_open_error_; }
+    // What the context menu's Reveal in Explorer calls, with the asset's absolute path. Without one the item is
+    // disabled (a headless host has no desktop to show anything on).
+    void SetRevealer(std::function<bool(const std::string& absolute_path)> reveal);
+    // The absolute path Copy Path last put on the clipboard (the clipboard is ImGui's).
+    const std::string& LastCopiedPath() const { return last_copied_path_; }
+    // The context menu's Copy Path: the asset's absolute path, recorded in LastCopiedPath and put on ImGui's
+    // clipboard. A host's menu calls the same thing.
+    std::string CopyPath(const std::string& path);
+    // Reveal in Explorer: hands the absolute path to the host's revealer; false with no revealer or a missing name.
+    bool RevealInFileManager(const std::string& path);
+
+    // The References submenu's two items, callable without the menu: shows the viewer on `path` with its
+    // dependencies or everything that uses it, the asset it named, and which direction it is showing.
+    bool ShowReferences(const std::string& path, assets::ReferenceDirection direction = assets::ReferenceDirection::Dependencies);
+    bool ReferencesOpen() const { return references_open_; }
+    assets::AssetGuid ReferencesTarget() const { return reference_guid_; }
+    assets::ReferenceDirection ReferencesDirection() const { return reference_direction_; }
+    // Selects `path` and shows its folder: what the reference viewer's rows and the issue list do when clicked.
+    void ShowEntry(const std::string& path);
+
 private:
     enum class Action { None, Move, NewFolder };
     enum class Pending { None, Delete, Duplicate, Move, Create, Reimport };
@@ -171,6 +200,7 @@ private:
     void AcceptMoveDrop(const std::string& destination_folder);
     bool MovePaths(const std::vector<std::string>& paths, const std::string& destination, std::string* error);
     void RebaseOpenFolder(const std::string& old_path, const std::string& new_path);
+    std::filesystem::path ContentPath(const std::string& path) const; // absolute, for the OS actions
 
     std::filesystem::path project_file_;
     std::shared_ptr<assets::AssetDatabase> database_;
@@ -216,6 +246,10 @@ private:
     bool references_open_ = false;
     assets::AssetGuid reference_guid_;
     assets::ReferenceDirection reference_direction_ = assets::ReferenceDirection::Dependencies;
+    AssetOpener opener_;
+    std::function<bool(const std::string&)> revealer_;
+    std::string last_open_error_;
+    std::string last_copied_path_;
 };
 
 } // namespace aether::editor

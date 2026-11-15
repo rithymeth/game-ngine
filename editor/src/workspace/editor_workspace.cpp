@@ -70,11 +70,23 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <functional>
 #include <optional>
 #include <vector>
+
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <Windows.h>
+#include <shellapi.h>
+#endif
 
 namespace aether::editor {
 
@@ -125,6 +137,30 @@ bool StartsWithNoCase(const char* text, std::string_view prefix) {
         }
     }
     return k == prefix.size();
+}
+
+#if !defined(_WIN32)
+std::string ShellQuote(const std::string& text) {
+    std::string out = "'";
+    for (char c : text) out += c == '\'' ? std::string("'\\''") : std::string(1, c);
+    out += '\'';
+    return out;
+}
+#endif
+
+// The Content Browser's Reveal in Explorer: shows `path` in the desktop's file manager, selecting it where the
+// platform can. False when no file manager could be started.
+bool RevealInOSFileManager(const std::filesystem::path& path) {
+#if defined(_WIN32)
+    const std::wstring args = L"/select,\"" + path.wstring() + L"\"";
+    const auto result = reinterpret_cast<std::intptr_t>(
+        ShellExecuteW(nullptr, L"open", L"explorer.exe", args.c_str(), nullptr, SW_SHOWNORMAL));
+    return result > 32;
+#elif defined(__APPLE__)
+    return std::system(("open -R " + ShellQuote(path.string())).c_str()) == 0;
+#else
+    return std::system(("xdg-open " + ShellQuote(path.parent_path().string())).c_str()) == 0;
+#endif
 }
 
 bool ContainsNoCase(std::string_view text, std::string_view query) {
@@ -342,6 +378,14 @@ struct EditorWorkspace::Impl {
         BuildNetworking();
         BuildDebug();
         BuildProject();
+
+        // The sample documents are the tools' initial state, not unsaved work: without this a double-click on an
+        // asset of that kind would be refused until the sample was saved somewhere.
+        anim_doc->MarkSaved();
+        blend_doc->MarkSaved();
+        cue_doc->MarkSaved();
+        ui_doc->MarkSaved();
+        bt_doc->MarkSaved();
 
         tools = {
             {"Blueprint - BP_Door", "Scripting", [this] { blueprint_editor->Draw(); }},
@@ -918,6 +962,11 @@ struct EditorWorkspace::Impl {
         build_window = std::make_unique<BuildPackageWindow>(project_file);
         plugins_panel = std::make_unique<PluginsPanel>(project_file);
         content_browser = std::make_unique<ContentBrowserPanel>(project_file);
+        // Double-clicking an asset opens it in the editor that edits it (Stage 3); "Reveal in Explorer" hands the
+        // path to the OS.
+        content_browser->SetAssetOpener(
+            [this](const std::string& path, std::string* why) { return OpenContentAsset(path, why); });
+        content_browser->SetRevealer([](const std::string& path) { return RevealInOSFileManager(path); });
         // An asset reference in the inspector (a model's, a sky's) offers the project's assets of that kind, read from the browser's database at the time it is drawn.
         SetAssetListProvider([this](const char* asset_type) {
             std::vector<AssetChoice> choices;
@@ -987,6 +1036,66 @@ struct EditorWorkspace::Impl {
                 return;
             }
         }
+    }
+
+    // Stage 3: what a double-click on an asset in the Content Browser does. One document per tool, so opening
+    // another file of the same kind replaces the open one -- which a dirty document must not lose silently.
+    bool OpenContentAsset(const std::string& relative, std::string* error) {
+        auto fail = [&](const std::string& why) {
+            if (error != nullptr) *error = why;
+            notifications.Post(NotificationSeverity::Warning, "No editor", why);
+            return false;
+        };
+        if (content_browser == nullptr) return fail("No project is open.");
+        const std::filesystem::path file = ProjectPaths::ForFile(project_file).content / relative;
+        std::error_code ec;
+        if (!std::filesystem::is_regular_file(file, ec)) return fail(relative + " doesn't exist.");
+        std::string ext = file.extension().string();
+        for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        const auto load = [&](auto& document, const char* tool, const char* kind) -> bool {
+            if (document == nullptr) return fail(std::string("The ") + kind + " editor is not available.");
+            if (document->Dirty())
+                return fail(std::string("The ") + kind + " has unsaved changes; save it before opening " + relative + ".");
+            std::string why;
+            if (!document->Load(file, &why)) return fail(why.empty() ? "Couldn't open " + relative + "." : why);
+            ShowTool(tool);
+            return true;
+        };
+        if (ext == ".abp") return load(blueprint_doc, "Blueprint", "blueprint");
+        if (ext == ".amat") return load(material_doc, "Material", "material");
+        if (ext == ".aanim") return load(anim_doc, "Animation", "animation graph");
+        if (ext == ".ablend") return load(blend_doc, "Animation", "blend space");
+        if (ext == ".acue") return load(cue_doc, "Sound Cue", "sound cue");
+        if (ext == ".aui") return load(ui_doc, "UI Designer", "UI layout");
+        if (ext == ".abt") return load(bt_doc, "Behavior Tree", "behavior tree");
+        if (ext == ".avfx") return load(particle_doc, "Particle System", "particle system");
+        if (ext == ".asequence") {
+            if (sequence_doc == nullptr) return fail("The sequencer is not available.");
+            if (sequence_doc->dirty()) return fail("The sequence has unsaved changes; save it before opening " + relative + ".");
+            std::string why;
+            if (!sequence_doc->Load(file, &why)) return fail(why.empty() ? "Couldn't open " + relative + "." : why);
+            ShowTool("Sequencer");
+            return true;
+        }
+        if (ext == ".ascene" || ext == ".aesc") {
+            if (scene_panel == nullptr) return fail("The scene editor is not available.");
+            if (scene_panel->OpenScene(relative, false)) {
+                ShowTool("Scene");
+                return true;
+            }
+            return fail(scene_panel->Status().empty() ? "The scene could not be opened." : scene_panel->Status());
+        }
+        if (ext == ".luau") {
+            std::string text;
+            if (!fs::ReadFileText(file.string(), text)) return fail("Couldn't read " + relative + ".");
+            script_doc->SetText(text);
+            ShowTool("Luau Script");
+            return true;
+        }
+        if (extensions.OpenAsset(file)) return true;
+        const ExtensionAssetType* type = extensions.FindAssetTypeForPath(file);
+        if (type != nullptr) return fail(type->name + " assets have no editor (" + relative + ").");
+        return fail("No editor opens " + relative + ".");
     }
 
     // The Messages tool. A click on a target opens it the way the command palette opens an asset --
@@ -1978,6 +2087,11 @@ bool EditorWorkspace::ImportDroppedFiles(const std::vector<std::string>& files, 
     }
     impl_->ShowTool("Content Browser");
     return true;
+}
+
+bool EditorWorkspace::OpenAsset(const std::string& path, std::string* error) {
+    if (error != nullptr) error->clear();
+    return impl_->OpenContentAsset(path, error);
 }
 
 EditorSettings& EditorWorkspace::Settings() { return impl_->editor_settings; }
