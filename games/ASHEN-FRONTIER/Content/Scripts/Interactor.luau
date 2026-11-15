@@ -1,6 +1,6 @@
 -- Kael's hands (put it on his body, a child of the character: the character has the controller): the nearest thing tagged Salvage within reach can be taken with the Interact action (E, or X on a pad).
--- Taking it removes it from the world and adds what it gives to the pack. The pack lives in SaveGames ("pack.scrap", "pack.components"), so it
--- survives a scene change (a door) and is written to the "autosave" slot at every change: the next run picks up where this one left off.
+-- Taking it removes it from the world and adds what it gives to the pack. The pack is Kael's Inventory (Scrap, Component, Sample): the engine carries
+-- it through a scene change (a door), and every change saves it (SaveGames.CaptureWorld, then the "autosave" slot) so the next run picks up where this one left off.
 local Interactor = {}
 
 --@range 0.5 8
@@ -21,11 +21,22 @@ local YIELDS = {
     { "Wreck", "components", 5 },
 }
 
-local function Get(kind) return SaveGames.GetNumber("pack." .. kind, 0) end
+-- The pack's items, by the word the scripts use for them. Kael (the entity with the controller) holds the Inventory.
+local ITEM = { scrap = "Scrap", components = "Component", samples = "Sample" }
+local ALL_ITEMS = { "Scrap", "Component", "Sample", "GeneratorCore" }
+local owner = nil
 
-local function Set(kind, value)
-    SaveGames.SetNumber("pack." .. kind, value)
+local function Get(kind) return owner ~= nil and Inventory.Count(owner, ITEM[kind]) or 0 end
+
+-- The pack is saved with Kael: capture him into the bag, then write the slot.
+local function Persist()
+    SaveGames.CaptureWorld()
     SaveGames.SaveToSlot("autosave")
+end
+
+local function Give(kind, amount)
+    if owner ~= nil then Inventory.Add(owner, ITEM[kind], amount) end
+    Persist()
 end
 
 -- Taken pickups stay taken: "taken.<scene>.<name>" in SaveGames (so they do not come back after a door or a restart, and F9 clears them).
@@ -47,17 +58,25 @@ end
 function Interactor:OnCreate()
     self.attack_cool = 0
     if not SaveGames.HasKey("player.hp") then SaveGames.SetNumber("player.hp", 100) end
-    if not SaveGames.HasKey("pack.scrap") and SaveGames.DoesSaveExist("autosave") then SaveGames.LoadFromSlot("autosave") end
-    if not SaveGames.HasKey("pack.scrap") then
-        SaveGames.SetNumber("pack.scrap", self.start_scrap)
-        SaveGames.SetNumber("pack.samples", self.start_samples)
-        SaveGames.SetNumber("pack.components", self.start_components)
+    self.player = world:EntitiesWith("CharacterMovement")[1]
+    owner = self.player
+    -- the first scene of a run: pick the saved game up (the bag, then Kael's pack with it); a later scene finds the pack already on Kael
+    if not SaveGames.HasKey("pack.init") and SaveGames.DoesSaveExist("autosave") then
+        SaveGames.LoadFromSlot("autosave")
+        if SaveGames.HasKey("pack.init") then SaveGames.RestoreWorld() end
+    end
+    if not SaveGames.HasKey("pack.init") then
+        SaveGames.SetNumber("pack.init", 1)
+        if owner ~= nil then
+            if self.start_scrap > 0 then Inventory.Add(owner, "Scrap", self.start_scrap) end
+            if self.start_samples > 0 then Inventory.Add(owner, "Sample", self.start_samples) end
+            if self.start_components > 0 then Inventory.Add(owner, "Component", self.start_components) end
+        end
     end
     print(string.format("Pack at start: %d scrap, %d components", Get("scrap"), Get("components")))
     self.hud_ready = false
     self.nearest = nil
     self.shown = nil
-    self.player = world:EntitiesWith("CharacterMovement")[1]
 end
 
 local function Yield(name)
@@ -92,8 +111,14 @@ end
 
 -- Everything the first chapter saves, cleared for a new game (F9).
 local function NewGame()
-    SaveGames.CreateSaveObject() -- the whole bag: the pack, the chapter, Kael's health and every sentinel's
+    SaveGames.CreateSaveObject() -- the whole bag: the chapter, Kael's health and every sentinel's
     SaveGames.DeleteSave("autosave")
+    if owner ~= nil then -- and the pack, which the scene change would otherwise carry into the new game
+        for _, item in ipairs(ALL_ITEMS) do
+            local have = Inventory.Count(owner, item)
+            if have > 0 then Inventory.Remove(owner, item, have) end
+        end
+    end
     print("New game: progress cleared")
     Scene.Load("Scenes/OpenWorld.ascene")
 end
@@ -108,7 +133,7 @@ function Interactor:OnUpdate(dt)
     if hp <= 0 then
         print("Kael disabled: back to the start, his health restored")
         SaveGames.SetNumber("player.hp", 100)
-        SaveGames.SaveToSlot("autosave")
+        Persist()
         return Scene.Load("Scenes/OpenWorld.ascene")
     end
     UI.SetText("HealthText", string.format("HEALTH  %d", hp))
@@ -171,7 +196,7 @@ function Interactor:OnUpdate(dt)
         local name = best:Get("EntityName").value
         local kind, amount = Yield(name)
         SaveGames.SetNumber(TakenKey(best), 1)
-        Set(kind, Get(kind) + amount)
+        Give(kind, amount)
         world:Destroy(best)
         Sfx("pickup")
         self.nearest = nil

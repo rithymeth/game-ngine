@@ -1,13 +1,12 @@
--- The fab bench: where salvage becomes a part. Walk up to it and Interact to craft a Generator Core (the cost is spent from the pack in SaveGames,
--- and "crafted.generator_core" is set, which the generator and the objective line read).
+-- The fab bench: where salvage becomes a part. Walk up to it and Interact to craft a Generator Core. What it costs is the "GeneratorCore" recipe
+-- (Content/Recipes), taken from Kael's pack by the engine's Crafting kit, all or nothing; "crafted.generator_core" is set, which the generator and the
+-- objective line read.
 local Workbench = {}
 
 --@range 0.5 8
 Workbench.reach = 3
---@tooltip Scrap the Generator Core costs
-Workbench.scrap_cost = 4
---@tooltip Components the Generator Core costs
-Workbench.component_cost = 2
+
+local RECIPE = "GeneratorCore"
 
 local function Sfx(name)
     if not Audio.PlaySound2D("Audio/" .. name .. ".acue") then print("Missing sound: " .. name) end
@@ -35,28 +34,29 @@ function Workbench:OnUpdate(dt)
         if self.prompt ~= nil then Prompt(self, nil) end
         return
     end
-    local scrap = SaveGames.GetNumber("pack.scrap", 0)
-    local components = SaveGames.GetNumber("pack.components", 0)
     local built = SaveGames.GetNumber("crafted.generator_core", 0) > 0
-    local affordable = scrap >= self.scrap_cost and components >= self.component_cost
     if built then
         Prompt(self, "Fab bench: the Generator Core is built")
-    elseif affordable then
-        Prompt(self, string.format("[E] Craft Generator Core  (%d scrap, %d components)", self.scrap_cost, self.component_cost))
+    elseif Crafting.CanCraft(self.player, RECIPE) then
+        Prompt(self, string.format("[E] Craft %s  (%s)", Crafting.GetTitle(RECIPE), Crafting.Describe(RECIPE)))
         if Input.IsTriggered("Interact") then
-            SaveGames.SetNumber("pack.scrap", scrap - self.scrap_cost)
-            SaveGames.SetNumber("pack.components", components - self.component_cost)
-            SaveGames.SetNumber("crafted.generator_core", 1)
-            SaveGames.SaveToSlot("autosave")
-            UI.SetText("ScrapText", string.format("SCRAP  %d", scrap - self.scrap_cost))
-            UI.SetText("ComponentText", string.format("COMPONENTS  %d", components - self.component_cost))
-            Camera.Shake(0.25)
-            Sfx("craft")
-            self.prompt = nil
-            print("Crafted Generator Core")
+            local result = Crafting.Craft(self.player, RECIPE)
+            if result == "ok" then
+                SaveGames.SetNumber("crafted.generator_core", 1)
+                SaveGames.CaptureWorld() -- the pack is saved with Kael
+                SaveGames.SaveToSlot("autosave")
+                UI.SetText("ScrapText", string.format("SCRAP  %d", Inventory.Count(self.player, "Scrap")))
+                UI.SetText("ComponentText", string.format("COMPONENTS  %d", Inventory.Count(self.player, "Component")))
+                Camera.Shake(0.25)
+                Sfx("craft")
+                self.prompt = nil
+                print("Crafted Generator Core")
+            else
+                print("Could not craft the Generator Core: " .. result)
+            end
         end
     else
-        Prompt(self, string.format("Fab bench: needs %d scrap and %d components", self.scrap_cost, self.component_cost))
+        Prompt(self, "Fab bench: needs " .. Crafting.Describe(RECIPE))
     end
 end
 

@@ -44,10 +44,10 @@ function Sentinel:OnUpdate(dt)
     end
     local hp = SaveGames.GetNumber(self.key, self.max_hp)
     if hp <= 0 then
-        local components = SaveGames.GetNumber("pack.components", 0) + self.reward
-        SaveGames.SetNumber("pack.components", components)
+        if self.player ~= nil then Inventory.Add(self.player, "Component", self.reward) end
+        SaveGames.CaptureWorld() -- the pack is saved with Kael
         SaveGames.SaveToSlot("autosave")
-        UI.SetText("ComponentText", string.format("COMPONENTS  %d", components))
+        UI.SetText("ComponentText", string.format("COMPONENTS  %d", self.player ~= nil and Inventory.Count(self.player, "Component") or 0))
         Camera.Shake(0.2)
         Sfx("sentinel_down")
         print(string.format("Sentinel disabled: +%d components", self.reward))

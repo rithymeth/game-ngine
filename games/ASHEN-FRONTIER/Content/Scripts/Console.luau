@@ -33,14 +33,15 @@ function Console:OnUpdate(dt)
         if self.prompt ~= nil then Prompt(self, nil) end
         return
     end
-    local have = SaveGames.GetNumber("pack.samples", 0)
+    local have = Inventory.Count(self.player, "Sample")
     if SaveGames.GetNumber("mission.dome", 0) > 0 then
         Prompt(self, "The irrigation console is running")
     elseif have >= self.samples_needed then
         Prompt(self, string.format("[E] Load the %d seed samples into the console", self.samples_needed))
         if Input.IsTriggered("Interact") then
-            SaveGames.SetNumber("pack.samples", have - self.samples_needed)
+            Inventory.Remove(self.player, "Sample", self.samples_needed)
             SaveGames.SetNumber("mission.dome", 1)
+            SaveGames.CaptureWorld() -- the pack is saved with Kael
             SaveGames.SaveToSlot("autosave")
             UI.SetText("SamplesText", string.format("SEED SAMPLES  %d / 3", have - self.samples_needed))
             Camera.Shake(0.4)

@@ -281,6 +281,20 @@
           "names": [
             "Player"
           ]
+        },
+        "Inventory": {
+          "$v": 1,
+          "capacity": 12,
+          "max_weight": 0.0,
+          "slots": [],
+          "equipment": []
+        },
+        "SaveableEntity": {
+          "$v": 1,
+          "tag": "pack",
+          "fields": [
+            "Inventory"
+          ]
         }
       },
       "guid": "5c1eb06f-7395-5b91-9ffa-44e00927933f"

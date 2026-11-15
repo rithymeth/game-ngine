@@ -1,0 +1,20 @@
+{
+  "name": "GeneratorCore",
+  "title": "Generator Core",
+  "inputs": [
+    {
+      "item": "Scrap",
+      "count": 4
+    },
+    {
+      "item": "Component",
+      "count": 2
+    }
+  ],
+  "outputs": [
+    {
+      "item": "GeneratorCore",
+      "count": 1
+    }
+  ]
+}

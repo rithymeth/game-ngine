@@ -98,7 +98,11 @@ def script_guid(name):
 
 
 def give_hands(scene, components=0, scrap=0, samples=0, calm="ambient_calm"):
-    """Puts the Interactor script on the entity added last (Kael's body): what lets him take salvage. Adds the HUD (pack counts, the prompt) too."""
+    """Puts the Interactor script on the entity added last (Kael's body): what lets him take salvage. Gives Kael his pack (an Inventory, saved with him) and adds the HUD (pack counts, the prompt) too."""
+    for e in scene.entities:  # the pack is Kael's Inventory, and it is saved with him (SaveGames.CaptureWorld / RestoreWorld)
+        if e["components"].get("EntityName", {}).get("value") == "Kael":
+            e["components"]["Inventory"] = {"$v": 1, "capacity": 12, "max_weight": 0.0, "slots": [], "equipment": []}
+            e["components"]["SaveableEntity"] = {"$v": 1, "tag": "pack", "fields": ["Inventory"]}
     scene.entities[-1]["components"]["ScriptComponent"] = {"$v": 1, "properties": ([{"name": "start_components", "value": str(components)}] if components else []) + ([{"name": "start_scrap", "value": str(scrap)}] if scrap else []) + ([{"name": "start_samples", "value": str(samples)}] if samples else []), "script": script_guid("Interactor")}
     scene.add("Hud", {"WidgetComponent": {"$v": 1, "layout": "UI/Hud.aui", "z": 0, "visible": True},
                       "ScriptComponent": {"$v": 1, "properties": [], "script": script_guid("Scanner")}})  # the HUD entity also carries the scanner
