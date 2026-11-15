@@ -107,6 +107,10 @@ public:
     // Renames while typing is merged into one undo step, and committed when it ends.
     void BeginRename(Entity entity);
     bool Renaming() const { return !rename_target_.IsNull(); }
+    // The Inspector's property search: only properties whose field or component name contains it are drawn. Kept
+    // across selections; empty shows everything.
+    void SetPropertySearch(std::string text) { property_search_ = std::move(text); }
+    const std::string& PropertySearch() const { return property_search_; }
 
 private:
     enum class Pending : u8 { None, New, Open };
@@ -139,6 +143,7 @@ private:
     std::array<char, 128> rename_buffer_{};
     bool rename_focus_ = false;
     bool multi_renaming_ = false; // a multi-selection name edit has an open undo transaction
+    std::string property_search_; // the Inspector's property search box
     Pending pending_ = Pending::None;
 };
 

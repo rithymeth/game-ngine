@@ -137,6 +137,10 @@ void DrawStructFields(const TypeInfo& type, void* object, DrawContext& ctx, bool
         if (top_level && !field.HasFlag(reflect::Field_EditAnywhere) && !field.HasFlag(reflect::Field_ReadOnly)) {
             continue;
         }
+        if (top_level && ctx.options != nullptr && !ctx.options->search.empty() &&
+            !FieldMatchesSearch(type.name, field, ctx.options->search)) {
+            continue;
+        }
         if (top_level) {
             ctx.top_level_field = &field;
             ctx.mixed = false;
@@ -613,6 +617,20 @@ InspectResult InspectObject(const reflect::TypeInfo& type, void* object, const c
 bool HasInspectableFields(const reflect::TypeInfo& type) {
     return std::any_of(type.fields.begin(), type.fields.end(), [](const FieldInfo& field) {
         return field.HasFlag(reflect::Field_EditAnywhere) || field.HasFlag(reflect::Field_ReadOnly);
+    });
+}
+
+bool FieldMatchesSearch(const char* component_name, const reflect::FieldInfo& field, std::string_view query) {
+    if (query.empty()) return true;
+    if (ContainsCaseInsensitive(field.name, query)) return true;
+    return component_name != nullptr && ContainsCaseInsensitive(component_name, query);
+}
+
+bool HasMatchingFields(const reflect::TypeInfo& type, std::string_view query) {
+    if (query.empty()) return HasInspectableFields(type);
+    return std::any_of(type.fields.begin(), type.fields.end(), [&](const FieldInfo& field) {
+        return (field.HasFlag(reflect::Field_EditAnywhere) || field.HasFlag(reflect::Field_ReadOnly)) &&
+               FieldMatchesSearch(type.name, field, query);
     });
 }
 

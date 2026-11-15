@@ -22,7 +22,7 @@ bool IsInspectable(ComponentId id) {
 
 } // namespace
 
-void InspectEntity(CommandContext& ctx, CommandStack& stack, Entity entity) {
+void InspectEntity(CommandContext& ctx, CommandStack& stack, Entity entity, std::string_view search) {
     const EntityGuid guid = EnsureGuid(ctx.world, entity, &ctx.guids);
     // The permanent ID is identity, not editable data: a quiet line, not a card.
     ImGui::TextDisabled("ID %s", ToString(guid).c_str());
@@ -49,6 +49,7 @@ void InspectEntity(CommandContext& ctx, CommandStack& stack, Entity entity) {
 
     std::vector<const reflect::TypeInfo*> addable;
     std::vector<ComponentId> addable_ids;
+    usize matching = 0;
     for (ComponentId id = 0; id < RegisteredComponentCount(); ++id) {
         const ComponentInfo& info = GetComponentInfo(id);
         if (info.reflected == nullptr || !HasInspectableFields(*info.reflected) ||
@@ -62,6 +63,8 @@ void InspectEntity(CommandContext& ctx, CommandStack& stack, Entity entity) {
         }
 
         const reflect::TypeInfo& type = *info.reflected;
+        if (!HasMatchingFields(type, search)) continue;
+        ++matching;
         ImGui::PushID(static_cast<int>(id));
         const bool open = ImGui::CollapsingHeader(type.name, ImGuiTreeNodeFlags_DefaultOpen);
         bool remove = false;
@@ -81,6 +84,7 @@ void InspectEntity(CommandContext& ctx, CommandStack& stack, Entity entity) {
             reflect::Any before = reflect::Any::CopyOf(type, component);
             InspectOptions options;
             options.default_value = [&type](const reflect::FieldInfo& field) { return DefaultFieldValue(type, field); };
+            options.search = search;
             if (in_instance && !(entity == instance_root && id == GetComponentId<Transform>())) {
                 options.is_overridden = [&](const reflect::FieldInfo& field) {
                     const PrefabInstance* instance = ctx.world.GetComponent<PrefabInstance>(instance_root);
@@ -118,9 +122,13 @@ void InspectEntity(CommandContext& ctx, CommandStack& stack, Entity entity) {
         ImGui::PopID();
     }
 
-    int picked = AddComponentButton(addable);
-    if (picked >= 0) {
-        stack.Execute(ctx, std::make_unique<AddComponentCommand>(guid, addable_ids[static_cast<usize>(picked)]));
+    if (search.empty()) {
+        int picked = AddComponentButton(addable);
+        if (picked >= 0) {
+            stack.Execute(ctx, std::make_unique<AddComponentCommand>(guid, addable_ids[static_cast<usize>(picked)]));
+        }
+    } else if (matching == 0) {
+        ImGui::TextDisabled("No properties match \"%.*s\".", static_cast<int>(search.size()), search.data());
     }
 }
 
@@ -137,10 +145,11 @@ std::vector<ComponentId> SharedComponents(const World& world, std::span<const En
     return shared;
 }
 
-void InspectEntities(CommandContext& ctx, CommandStack& stack, std::span<const Entity> entities) {
+void InspectEntities(CommandContext& ctx, CommandStack& stack, std::span<const Entity> entities,
+                     std::string_view search) {
     if (entities.empty()) return;
     if (entities.size() == 1) {
-        InspectEntity(ctx, stack, entities[0]);
+        InspectEntity(ctx, stack, entities[0], search);
         return;
     }
     std::vector<EntityGuid> guids;
@@ -157,8 +166,11 @@ void InspectEntities(CommandContext& ctx, CommandStack& stack, std::span<const E
         addable_ids.push_back(id);
     }
 
+    usize matching = 0;
     for (const ComponentId id : shared) {
         const reflect::TypeInfo& type = *GetComponentInfo(id).reflected;
+        if (!HasMatchingFields(type, search)) continue;
+        ++matching;
         ImGui::PushID(static_cast<int>(id));
         const bool open = ImGui::CollapsingHeader(type.name, ImGuiTreeNodeFlags_DefaultOpen);
         bool remove = false;
@@ -186,6 +198,7 @@ void InspectEntities(CommandContext& ctx, CommandStack& stack, std::span<const E
             if (data.size() == entities.size()) {
                 InspectOptions options;
                 options.default_value = [&type](const reflect::FieldInfo& field) { return DefaultFieldValue(type, field); };
+                options.search = search;
                 InspectResult edit = InspectObjects(type, data, type.name, options);
                 if (edit.Changed()) {
                     const reflect::FieldInfo& field = *edit.changed_field;
@@ -209,6 +222,10 @@ void InspectEntities(CommandContext& ctx, CommandStack& stack, std::span<const E
         ImGui::PopID();
     }
 
+    if (!search.empty()) {
+        if (matching == 0) ImGui::TextDisabled("No properties match \"%.*s\".", static_cast<int>(search.size()), search.data());
+        return;
+    }
     const int picked = AddComponentButton(addable);
     if (picked >= 0) {
         const ComponentId id = addable_ids[static_cast<usize>(picked)];

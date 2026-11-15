@@ -453,6 +453,14 @@ pass no defaults simply do not get the item. Both actions write in place through
 they undo as one step — across the selection too — and a reset marks the prefab override. A paste or reset that would
 change nothing is not recorded. The ⋮ card menu's Copy/Paste of whole component values is still to come.
 
+Implemented: a **Search properties** box at the top of the Inspector (`ScenePanel::SetPropertySearch`,
+`property_search_`). It matches a top-level field when the field's name or its component's name contains the text
+without regard to case (an empty box shows everything), so "range" finds `Weapon.range` and "Weapon" shows that
+component's whole card. Components with no match are not drawn at all — their headers disappear too — and a search with
+no results says "No properties match". Fields that would not be shown anyway (not EditAnywhere/ReadOnly) never match.
+The box stays put while the selection changes, Add Component is hidden while a search is active, and filtering is not
+an edit: no command is recorded. `FieldMatchesSearch`/`HasMatchingFields` hold the rule so other panels can use it.
+
 ### 6.5 Content Browser
 
 Covered in [ROADMAP.md Phase 8](../ROADMAP.md). Additional rules:

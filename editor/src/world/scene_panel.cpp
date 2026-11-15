@@ -9,6 +9,7 @@
 #include "aether/core/log.h"
 
 #include <imgui.h>
+#include <misc/cpp/imgui_stdlib.h>
 
 #include <algorithm>
 #include <cctype>
@@ -559,6 +560,9 @@ void ScenePanel::DrawHierarchy() {
 }
 
 void ScenePanel::DrawInspector() {
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    ImGui::InputTextWithHint("##property_search", "Search properties", &property_search_);
+    if (!property_search_.empty()) ImGui::SetItemTooltip("Only properties whose name or component matches are shown");
     std::vector<Entity> shown;
     for (const Entity entity : document_.Selection())
         if (document_.GetWorld().IsAlive(entity)) shown.push_back(entity);
@@ -601,8 +605,8 @@ void ScenePanel::DrawInspector() {
         }
     }
     ImGui::Separator();
-    if (shown.size() == 1) InspectEntity(document_.Context(), document_.Commands(), shown[0]);
-    else InspectEntities(document_.Context(), document_.Commands(), shown);
+    if (shown.size() == 1) InspectEntity(document_.Context(), document_.Commands(), shown[0], property_search_);
+    else InspectEntities(document_.Context(), document_.Commands(), shown, property_search_);
 }
 
 } // namespace aether::editor

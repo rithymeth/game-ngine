@@ -8,6 +8,7 @@
 
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 // Generic, reflection-driven property editing for the editor (Phase 6 step 6;
@@ -38,6 +39,9 @@ struct InspectOptions {
     // The value "Reset to Default" in the property menu puts in a field; an
     // empty Any means no default is known and the item is hidden.
     std::function<reflect::Any(const reflect::FieldInfo&)> default_value;
+    // The Inspector's property search: only top-level fields whose name (or
+    // whose component's name) contains this, ignoring case, are drawn.
+    std::string_view search;
 };
 
 // Draws `object`'s fields as a two-column (label | widget) property table.
@@ -113,6 +117,11 @@ std::string AssetNameOf(const char* asset_type, const assets::AssetGuid& guid);
 
 // True if InspectObject would show at least one field of `type`.
 bool HasInspectableFields(const reflect::TypeInfo& type);
+
+// The property search: true if `field`'s name, or `component_name` when given, contains `query` without regard to
+// case (an empty query matches everything), and if any field `type` shows matches `query`.
+bool FieldMatchesSearch(const char* component_name, const reflect::FieldInfo& field, std::string_view query);
+bool HasMatchingFields(const reflect::TypeInfo& type, std::string_view query);
 
 // A full-width "Add Component" button with a searchable popup listing
 // `candidates` by name. Returns the index of the candidate picked this frame,
