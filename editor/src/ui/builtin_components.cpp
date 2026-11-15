@@ -42,6 +42,9 @@
 #if AETHER_EDITOR_KIT_CHECKPOINTS
 #include "aether/checkpoints/checkpoint.h"
 #endif
+#if AETHER_EDITOR_KIT_FORCEFIELDS
+#include "aether/forcefields/force_field.h"
+#endif
 
 namespace aether::editor {
 
@@ -105,6 +108,9 @@ void RegisterEditorComponents() {
 #endif
 #if AETHER_EDITOR_KIT_CHECKPOINTS
     chk::RegisterCheckpointComponents();
+#endif
+#if AETHER_EDITOR_KIT_FORCEFIELDS
+    ff::RegisterForceFieldComponents();
 #endif
 }
 

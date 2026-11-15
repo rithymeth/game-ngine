@@ -158,6 +158,8 @@ Effects.Remove function
 Effects.RemoveByTag function
 Event table
 Event.new function
+Forces table
+Forces.Explode function
 GameplayTags table
 GameplayTags.GetDepth function
 GameplayTags.GetParent function

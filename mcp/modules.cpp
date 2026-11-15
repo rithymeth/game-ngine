@@ -43,6 +43,9 @@
 #if AETHER_MCP_CHECKPOINTS
 #include "aether/checkpoints/checkpoint.h"
 #endif
+#if AETHER_MCP_FORCEFIELDS
+#include "aether/forcefields/force_field.h"
+#endif
 
 // Note: no Aether::AI (behaviour trees, perception) -- the editor/MCP side
 // must not link gameplay AI (docs/design/agent_gameplay_ai_boundary.md).
@@ -110,6 +113,9 @@ void RegisterBuiltinComponents() {
 #endif
 #if AETHER_MCP_CHECKPOINTS
     chk::RegisterCheckpointComponents();
+#endif
+#if AETHER_MCP_FORCEFIELDS
+    ff::RegisterForceFieldComponents();
 #endif
 }
 

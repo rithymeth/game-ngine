@@ -3758,6 +3758,34 @@
   void Add(std::function<FunctionalTest()>make)
   void Fail(const std::string&message)
   void Log(const std::string&text)
+[forcefields/include/aether/forcefields/force_field.h] experimental
+  type enum class FieldMode
+  type enum class FieldShape
+  type struct ForceField
+  ),AETHER_FIELD(direction,Field_EditAnywhere,
+  ),AETHER_FIELD(falloff,Field_EditAnywhere,
+  ),AETHER_FIELD(fluid_drag,Field_EditAnywhere,
+  ),AETHER_FIELD(half_extents,Field_EditAnywhere,
+  ),AETHER_FIELD(mass_independent,Field_EditAnywhere,
+  ),AETHER_FIELD(mode,Field_EditAnywhere),AETHER_FIELD(strength,Field_EditAnywhere,
+  AETHER_ENUM(aether::ff::FieldShape,1,AETHER_ENUM_VALUE(Sphere),AETHER_ENUM_VALUE(Box))AETHER_ENUM(aether::ff::FieldMode,1,AETHER_ENUM_VALUE(Directional),AETHER_ENUM_VALUE(Radial),AETHER_ENUM_VALUE(Vortex),AETHER_ENUM_VALUE(Buoyancy),AETHER_ENUM_VALUE(Drag))AETHER_REFLECT(aether::ff::ForceField,1,AETHER_FIELD(enabled,Field_EditAnywhere),AETHER_FIELD(shape,Field_EditAnywhere),AETHER_FIELD(radius,Field_EditAnywhere,
+  void RegisterForceFieldComponents()
+[forcefields/include/aether/forcefields/force_field_system.h] experimental
+  type class ForceFieldSystem
+  ForceFieldSystem&operator=(const ForceFieldSystem&)=delete
+  ForceFieldSystem(const ForceFieldSystem&)=delete
+  Vec3 FieldPush(const ForceField&field,const Vec3&centre,const Quaternion&rotation,const Vec3&position,const Vec3&velocity,const Vec3&gravity,f32 submersion)
+  Vec3 Rotated(const Quaternion&q,const Vec3&v)
+  f32 FieldSurfaceHeight(const ForceField&field,const Vec3&centre)
+  private:std::vector<Entity>Fields()const
+  public:ForceFieldSystem(World&world,PhysicsScene&scene)
+  static ForceFieldSystem*Active()
+  usize Apply()
+  usize Explode(const Vec3&centre,f32 radius,f32 strength,f32 upward=0.0f)
+  void MakeActive()
+  ~ForceFieldSystem()
+[forcefields/include/aether/forcefields/forcefields_kit.h] experimental
+  std::unique_ptr<kit::IKit>MakeForceFieldsKit()
 [gameplay/include/aether/gameplay/ability_library.h] experimental
   type struct Abilities
   ),AETHER_METHOD(CanActivateAbility,Fn_BlueprintCallable | Fn_Pure,
@@ -5940,6 +5968,8 @@
   ~ScriptDebugger()
 [scripting/include/aether/script/dialogue_api.h] experimental
   void InstallDialogueApi(LuauHost&host)
+[scripting/include/aether/script/forces_api.h] experimental
+  void InstallForcesApi(LuauHost&host)
 [scripting/include/aether/script/gameplay_api.h] experimental
   void InstallGameplayApi(LuauHost&host)
 [scripting/include/aether/script/interaction_api.h] experimental

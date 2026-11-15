@@ -22,6 +22,9 @@
 #if AETHER_KIT_QUESTS
 #include "aether/quests/quests_kit.h"
 #endif
+#if AETHER_KIT_FORCEFIELDS
+#include "aether/forcefields/forcefields_kit.h"
+#endif
 #if AETHER_KIT_CHECKPOINTS
 #include "aether/checkpoints/checkpoints_kit.h"
 #endif
@@ -58,6 +61,9 @@ void Game::BuildKits() {
 #endif
 #if AETHER_KIT_QUESTS
     kits_.Add(quest::MakeQuestsKit(&quests_, &effects_));
+#endif
+#if AETHER_KIT_FORCEFIELDS
+    kits_.Add(ff::MakeForceFieldsKit());
 #endif
 #if AETHER_KIT_CHECKPOINTS
     kits_.Add(chk::MakeCheckpointsKit());

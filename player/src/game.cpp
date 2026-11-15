@@ -38,6 +38,9 @@
 #include "aether/physics/components.h"
 #include "aether/physics/character.h"
 #include "aether/physics/physics_scene.h"
+#if AETHER_KIT_FORCEFIELDS
+#include "aether/forcefields/force_field_system.h"
+#endif
 #include "aether/physics/physics_world.h"
 #endif
 #if AETHER_GAME_SCRIPTING
@@ -260,6 +263,11 @@ struct Game::Physics {
     PhysicsWorld world{jobs};
     std::unique_ptr<PhysicsScene> scene;
     std::unique_ptr<CharacterSystem> characters;
+#if AETHER_KIT_FORCEFIELDS
+    // Made with the scene and gone before it: it points at both the world and the physics scene of this load (the kit runtimes are made before the physics
+    // scene exists, and would see the last scene's), so it cannot be a kit runtime.
+    std::unique_ptr<ff::ForceFieldSystem> force_fields;
+#endif
 };
 #else
 struct Game::Physics {};
@@ -592,6 +600,9 @@ bool Game::LoadScene(const std::string& path, std::string* error) {
     physics_->world.SetCollisionMatrix(MakeCollisionMatrix(settings));
     physics_->scene = std::make_unique<PhysicsScene>(*world_, physics_->world);
     physics_->characters = std::make_unique<CharacterSystem>(*world_, physics_->world, physics_->scene.get());
+#if AETHER_KIT_FORCEFIELDS
+    physics_->force_fields = std::make_unique<ff::ForceFieldSystem>(*world_, *physics_->scene);
+#endif
 #endif
     scene_ = path;
     for (const std::string& w : warnings_) AETHER_LOG_WARN("Player", "%s", w.c_str());
@@ -1113,6 +1124,10 @@ void Game::BuildFrame() {
     physics.run = [this](World&, const FrameContext& frame) {
 #if AETHER_GAME_PHYSICS
         if (physics_ && !authoritative_physics_client_) {
+#if AETHER_KIT_FORCEFIELDS
+            // The force fields push first: Jolt adds the forces up and the step below uses them.
+            if (physics_->force_fields) physics_->force_fields->Apply();
+#endif
             physics_->characters->Step(frame.fixed_dt);
             physics_->scene->Step(frame.fixed_dt);
         }
