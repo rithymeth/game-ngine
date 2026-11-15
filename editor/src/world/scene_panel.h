@@ -9,7 +9,9 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace aether::editor {
@@ -34,7 +36,20 @@ private:
 };
 
 // The entities whose name contains `filter` (without regard to case), by name; an empty filter matches all of them.
+// The filter is also a small search grammar, like the Content Browser's: whitespace-separated terms all have to match,
+// `name:<text>` (or a bare term) is part of the entity's name, and `type:<text>` matches a component's type name.
+// Matching and the directives themselves ignore case; an empty directive (`type:`) is ignored.
+struct HierarchyQuery {
+    std::vector<std::string> name_terms;
+    std::vector<std::string> type_terms;
+
+    bool Empty() const { return name_terms.empty() && type_terms.empty(); }
+    bool Matches(const SceneDocument& document, Entity entity) const;
+};
+HierarchyQuery ParseHierarchyQuery(std::string_view text);
 std::vector<Entity> MatchingEntities(const SceneDocument& document, const std::string& filter);
+// Every match plus its ancestors: what a filtered hierarchy has to draw so a match is still seen where it hangs.
+std::unordered_set<Entity> VisibleEntities(const SceneDocument& document, const std::vector<Entity>& matches);
 
 // The scene editor of the portable (ImGui) editor: a toolbar (new, open, save, undo and redo, play), the hierarchy (filter, select, rename, create, duplicate, delete, copy and paste, and
 // drag one entity onto another to make it a child) and the inspector for the selected entity (every reflected component, add and remove, all undoable). It edits a SceneDocument, the same
@@ -111,6 +126,9 @@ public:
     // across selections; empty shows everything.
     void SetPropertySearch(std::string text) { property_search_ = std::move(text); }
     const std::string& PropertySearch() const { return property_search_; }
+    // The hierarchy filter (the grammar above). Kept across scenes; empty shows the whole tree.
+    void SetHierarchyFilter(std::string text) { filter_ = std::move(text); }
+    const std::string& HierarchyFilter() const { return filter_; }
 
 private:
     enum class Pending : u8 { None, New, Open };
@@ -121,7 +139,7 @@ private:
     void RecordRecent(const std::string& path);
     void DrawToolbar();
     void DrawHierarchy();
-    void DrawNode(Entity entity, const HierarchyIndex& index);
+    void DrawNode(Entity entity, const HierarchyIndex& index, const std::unordered_set<Entity>* shown = nullptr);
     void DrawEntityMenu(Entity entity);
     void DrawCreateMenu(Entity parent);
     void DrawInspector();
@@ -138,7 +156,7 @@ private:
     std::filesystem::path pending_overwrite_; // the file a save was just refused for, so that asking again by name can confirm it
     std::string path_ = "Scenes/Main.ascene";
     std::string status_;
-    std::array<char, 128> filter_{};
+    std::string filter_; // the hierarchy filter box
     Entity rename_target_ = kNullEntity;
     std::array<char, 128> rename_buffer_{};
     bool rename_focus_ = false;

@@ -422,6 +422,16 @@ asset editor is focused once those documents adopt the contract in Stage 6.
   prefab.
 - Inactive (disabled) entities: `text.disabled`.
 
+Implemented: the filter box (`ScenePanel::SetHierarchyFilter`) is a small search grammar, the same shape as the
+Content Browser's: whitespace-separated terms all have to match; a bare term or `name:<text>` has to appear in the
+entity's name; `type:<text>` has to appear in the name of one of its component types (so `type:model` finds everything
+with a `ModelRenderer`). Matching and the directives themselves ignore case, and an empty directive (`type:`) adds no
+term. A filtered hierarchy is still a tree rather than a flat result list: `VisibleEntities` adds every match's
+ancestors, matches draw where they hang, the chain to a match is forced open, and branches with no match disappear; a
+filter with no match says "No entities match." The box's hint spells the grammar out. Filtering is not an edit — no
+command is recorded, and the selection stays where it is. Visibility/lock toggles, type icons and multi-drag
+reparenting are still open.
+
 ### 6.4 Inspector
 
 - Header: entity icon, editable name, enabled checkbox, tag dropdown,

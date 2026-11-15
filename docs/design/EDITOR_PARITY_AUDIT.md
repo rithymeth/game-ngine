@@ -677,8 +677,7 @@ each one transaction. Tests in `tests/test_inspector_multi.cpp`: `MultiEdit_Valu
 `MultiEdit_DrawingAMixedSelectionLeavesItMixed`, `EntityInspector_EditAcrossSelectionIsOneUndoStep`,
 `EntityInspector_SharedComponentsAreWhatEveryEntityHas`, `SceneDocument_RenameSelectionIsOneUndoStep` and
 `ScenePanel_ADrawnMultiSelectionRecordsNothing`. Still open: granular prefab overrides and the hierarchy items (toggles,
-icons, multi-drag reparent, `type:`/`name:` search); the Stage 4 gate still needs the multi-selection inspector
-screenshot.
+icons, multi-drag reparent); the Stage 4 gate still needs the multi-selection inspector screenshot.
 
 Done so far (2026-11-15): reset/copy/paste of values. Right-clicking a field's label opens the property menu: Copy
 Value, Paste Value (offered only when the clipboard holds a value of that field's type — pasting into another type is
@@ -699,9 +698,21 @@ that matches a top-level field by its own name or its component's, ignoring case
 `DrawStructFields`, a search with no results says so, and Add Component is hidden while searching.
 Filtering records no command. Tests in `tests/test_inspector_search.cpp`:
 `InspectorSearch_MatchesFieldAndComponentNames`, `InspectorSearch_OnlyMatchingRowsAreDrawn` (a filtered Inspector
-occupies fewer rows, measured by the cursor) and `ScenePanel_APropertySearchFiltersAndEditsNothing`. Still open:
-granular prefab overrides, the hierarchy items (toggles, icons, multi-drag reparent, `type:`/`name:` search — the
-hierarchy filter today is a plain name substring) and the multi-selection inspector screenshot gate.
+occupies fewer rows, measured by the cursor) and `ScenePanel_APropertySearchFiltersAndEditsNothing`.
+
+Done so far (2026-11-15): hierarchy search. The hierarchy's filter box is a small grammar like the Content Browser's:
+whitespace-separated terms all have to match, a bare term or `name:<text>` matches the entity's name, and
+`type:<text>` matches the name of one of its component types (`HierarchyQuery`, `ParseHierarchyQuery`). Matching and
+the directives ignore case, an empty directive is no term, and `MatchingEntities` keeps its by-name order. A filtered
+hierarchy is still drawn as a tree: `VisibleEntities` adds every match's ancestors (bounded by `kMaxHierarchyDepth`),
+matches are drawn where they hang rather than flattened, the chain is forced open, branches with no match disappear,
+and no match at all says "No entities match." The filter box's hint lists the grammar,
+`ScenePanel::SetHierarchyFilter` lets a command set it, and filtering records no command. Tests in
+`tests/test_hierarchy_search.cpp`: `HierarchyQuery_ParsesBareNameAndTypeTokens`,
+`HierarchySearch_MatchesNamesAndComponentTypes`, `HierarchySearch_KeepsTheAncestorsOfAMatchVisible` and
+`ScenePanel_AFilteredHierarchyDrawsWithoutEditing`. Still open: granular prefab overrides, the hierarchy's
+visibility/lock toggles, type icons and multi-drag reparenting, the card menu's copy/paste of whole components, and
+the multi-selection inspector screenshot gate.
 
 Gate: mixed-value semantics tests; edit-across-selection undo test; reset/copy/paste tests; hierarchy filter tests;
 screenshot of a multi-selection inspector.

@@ -52,15 +52,71 @@ const std::vector<Entity>& HierarchyIndex::Children(Entity parent) const {
 }
 
 std::vector<Entity> MatchingEntities(const SceneDocument& document, const std::string& filter) {
-    const std::string needle = Lower(filter);
+    const HierarchyQuery query = ParseHierarchyQuery(filter);
     std::vector<Entity> out;
     for (const Entity entity : document.Entities())
-        if (needle.empty() || Lower(document.Name(entity)).find(needle) != std::string::npos) out.push_back(entity);
+        if (query.Matches(document, entity)) out.push_back(entity);
     std::stable_sort(out.begin(), out.end(), [&](Entity a, Entity b) {
         const std::string left = Lower(document.Name(a)), right = Lower(document.Name(b));
         return left != right ? left < right : a.index < b.index;
     });
     return out;
+}
+
+HierarchyQuery ParseHierarchyQuery(std::string_view text) {
+    constexpr std::string_view kType = "type:";
+    constexpr std::string_view kName = "name:";
+    HierarchyQuery query;
+    usize pos = 0;
+    while (pos < text.size()) {
+        while (pos < text.size() && std::isspace(static_cast<unsigned char>(text[pos]))) ++pos;
+        const usize start = pos;
+        while (pos < text.size() && !std::isspace(static_cast<unsigned char>(text[pos]))) ++pos;
+        if (start == pos) break;
+        const std::string_view term = text.substr(start, pos - start);
+        // Directives are recognized in any case; their value is lowercased like a bare term.
+        const std::string lowered = Lower(std::string(term));
+        if (lowered.compare(0, kType.size(), kType) == 0) {
+            const std::string value = lowered.substr(kType.size());
+            if (!value.empty()) query.type_terms.push_back(value); // an empty directive is no term
+        } else if (lowered.compare(0, kName.size(), kName) == 0) {
+            const std::string value = lowered.substr(kName.size());
+            if (!value.empty()) query.name_terms.push_back(value);
+        } else {
+            query.name_terms.push_back(lowered);
+        }
+    }
+    return query;
+}
+
+bool HierarchyQuery::Matches(const SceneDocument& document, Entity entity) const {
+    const std::string name = Lower(document.Name(entity));
+    for (const std::string& term : name_terms) {
+        if (name.find(term) == std::string::npos) return false;
+    }
+    if (type_terms.empty()) return true;
+    const World& world = document.GetWorld();
+    for (const std::string& term : type_terms) {
+        bool found = false;
+        for (ComponentId id = 0; id < RegisteredComponentCount() && !found; ++id) {
+            if (!world.HasComponentRaw(entity, id)) continue;
+            found = Lower(GetComponentInfo(id).name).find(term) != std::string::npos;
+        }
+        if (!found) return false;
+    }
+    return true;
+}
+
+std::unordered_set<Entity> VisibleEntities(const SceneDocument& document, const std::vector<Entity>& matches) {
+    std::unordered_set<Entity> shown;
+    for (const Entity match : matches) {
+        Entity current = match;
+        for (int depth = 0; depth < kMaxHierarchyDepth && !current.IsNull(); ++depth) {
+            if (!shown.insert(current).second) break; // the rest of this chain is already in
+            current = GetParent(document.GetWorld(), document.Guids(), current);
+        }
+    }
+    return shown;
 }
 
 ScenePanel::ScenePanel(std::filesystem::path content_root) : content_root_(std::move(content_root)), bounds_(content_root_) {
@@ -457,13 +513,19 @@ void ScenePanel::DrawEntityMenu(Entity entity) {
     if (ImGui::MenuItem("Delete", "Del")) DeleteSelection();
 }
 
-void ScenePanel::DrawNode(Entity entity, const HierarchyIndex& index) {
+void ScenePanel::DrawNode(Entity entity, const HierarchyIndex& index, const std::unordered_set<Entity>* shown) {
     if (!document_.GetWorld().IsAlive(entity)) return;
-    const bool has_children = index.HasChildren(entity);
+    if (shown != nullptr && shown->count(entity) == 0) return;
+    bool has_children = index.HasChildren(entity);
+    if (shown != nullptr) {
+        has_children = std::any_of(index.Children(entity).begin(), index.Children(entity).end(),
+                                   [&](Entity child) { return shown->count(child) != 0; });
+    }
     ImGui::PushID(static_cast<int>(entity.index));
     ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_DefaultOpen;
     if (!has_children) flags |= ImGuiTreeNodeFlags_Leaf;
     if (document_.IsSelected(entity)) flags |= ImGuiTreeNodeFlags_Selected;
+    if (shown != nullptr && has_children) ImGui::SetNextItemOpen(true, ImGuiCond_Always); // a match is never behind a collapse
     bool open = false;
     if (rename_target_ == entity) {
         // The name as a text box, until Enter or a click elsewhere; typing is one undo step.
@@ -503,7 +565,10 @@ void ScenePanel::DrawNode(Entity entity, const HierarchyIndex& index) {
         }
     }
     if (open) {
-        for (const Entity child : index.Children(entity)) DrawNode(child, index);
+        for (const Entity child : index.Children(entity)) {
+            if (shown != nullptr && shown->count(child) == 0) continue;
+            DrawNode(child, index, shown);
+        }
         ImGui::TreePop();
     }
     ImGui::PopID();
@@ -511,8 +576,9 @@ void ScenePanel::DrawNode(Entity entity, const HierarchyIndex& index) {
 
 void ScenePanel::DrawHierarchy() {
     ImGui::SetNextItemWidth(-1.0f);
-    ImGui::InputTextWithHint("##scene_filter", "Filter by name", filter_.data(), filter_.size());
-    const std::string filter = filter_.data();
+    ImGui::InputTextWithHint("##scene_filter", "Filter: name, name:term, type:Transform", &filter_);
+    const std::string filter = filter_;
+    const HierarchyQuery query = ParseHierarchyQuery(filter);
     // Dropping on the heading makes an entity a root again.
     // An item with an ID of its own and the full width: a drop is delivered only when the same target took it the frame before, and plain text has no ID (its
     // target flickered between two, so a drop on the heading was never delivered), and a heading as wide as the list is also easier to hit.
@@ -533,18 +599,21 @@ void ScenePanel::DrawHierarchy() {
         ImGui::EndDragDropTarget();
     }
     ImGui::Separator();
-    if (filter.empty()) {
+    if (query.Empty()) {
         const HierarchyIndex index(document_);
         for (const Entity root : index.Children(kNullEntity)) DrawNode(root, index);
     } else {
-        for (const Entity entity : MatchingEntities(document_, filter)) {
-            ImGui::PushID(static_cast<int>(entity.index));
-            if (ImGui::Selectable(document_.Name(entity).c_str(), document_.IsSelected(entity))) Select(entity, ImGui::GetIO().KeyCtrl);
-            if (ImGui::BeginPopupContextItem("##entity_menu")) {
-                DrawEntityMenu(entity);
-                ImGui::EndPopup();
+        // Matches stay in the tree with their ancestors rather than flattening into a list, so a match still reads as
+        // where it lives ("Leaf B under Zebra"), and the chain is opened so it is on screen.
+        const std::vector<Entity> matches = MatchingEntities(document_, filter);
+        if (matches.empty()) {
+            ImGui::TextDisabled("No entities match.");
+        } else {
+            const std::unordered_set<Entity> shown = VisibleEntities(document_, matches);
+            const HierarchyIndex index(document_);
+            for (const Entity root : index.Children(kNullEntity)) {
+                if (shown.count(root) != 0) DrawNode(root, index, &shown);
             }
-            ImGui::PopID();
         }
     }
     // A right click on the empty part makes something at the root.
