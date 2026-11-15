@@ -36,6 +36,9 @@
 #if AETHER_EDITOR_KIT_QUESTS
 #include "aether/quests/quest_system.h"
 #endif
+#if AETHER_EDITOR_KIT_SPAWNER
+#include "aether/spawner/spawner.h"
+#endif
 
 namespace aether::editor {
 
@@ -93,6 +96,9 @@ void RegisterEditorComponents() {
 #endif
 #if AETHER_EDITOR_KIT_QUESTS
     quest::RegisterQuestComponents();
+#endif
+#if AETHER_EDITOR_KIT_SPAWNER
+    spawn::RegisterSpawnerComponents();
 #endif
 }
 

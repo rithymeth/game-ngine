@@ -2,6 +2,10 @@
 
 A working draft of the next release's notes. It is rewritten into `vX.Y.Z.md` when a version is tagged, so it describes what is on `master`, not a promise of a version number or a date.
 
+## Spawner
+
+A new optional kit and engine plugin, **Spawner** (`AETHER_KIT_SPAWNER`, no dependencies): a `Spawner` component on an entity makes instances of a package prefab appear around it, `burst` at a time every `interval` seconds, while fewer than `max_alive` of its spawns are alive and until `total` have been made, scattered within `radius` by a deterministic function so a run is the same every time. The interval counts only while there is room, the spawner's script hears `OnSpawned` with each new entity, and a Luau `Spawner` table (`SpawnNow`, `AliveCount`, `TotalSpawned`) lets a script call a wave at once. The component is available in the editor and through the MCP like the other kits'. See `docs/manual/20-spawner.md`.
+
 ## Achievements
 
 A new optional kit and engine plugin, **Achievements** (`AETHER_KIT_ACHIEVEMENTS`, no dependencies): `.aachievement` files describe goals with a name, a title and a target count, and `AchievementSystem` counts progress toward them (`Add`, `Unlock`, `Reset`), unlocking the moment a target is reached and queuing each unlock once for the game's toast (`NextUnlocked`). Progress lives in the game's save bag, as an integer under `achievement.<name>`, so it is saved and loaded with the slot and a scene change does not touch it. A Luau `Achievements` table exposes it; see `docs/manual/19-achievements.md`.

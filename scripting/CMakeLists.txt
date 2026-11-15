@@ -19,6 +19,7 @@ add_library(aether_scripting STATIC
     src/dialogue_api.cpp
     src/timeofday_api.cpp
     src/achievements_api.cpp
+    src/spawner_api.cpp
     src/ai_api.cpp
 )
 
@@ -50,6 +51,12 @@ if(TARGET Aether::Quests)
     target_compile_definitions(aether_scripting PRIVATE AETHER_KIT_QUESTS=1)
 else()
     target_compile_definitions(aether_scripting PRIVATE AETHER_KIT_QUESTS=0)
+endif()
+if(TARGET Aether::Spawner)
+    target_link_libraries(aether_scripting PRIVATE Aether::Spawner)
+    target_compile_definitions(aether_scripting PRIVATE AETHER_KIT_SPAWNER=1)
+else()
+    target_compile_definitions(aether_scripting PRIVATE AETHER_KIT_SPAWNER=0)
 endif()
 if(TARGET Aether::Achievements)
     target_link_libraries(aether_scripting PRIVATE Aether::Achievements)

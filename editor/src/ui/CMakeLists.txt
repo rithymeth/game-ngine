@@ -97,7 +97,7 @@ else()
     target_compile_definitions(aether_editor_ui PUBLIC AETHER_EDITOR_NET_PHYSICS=0)
 endif()
 # The kits whose components a scene may carry (see builtin_components.h), where this build has them.
-foreach(kit Inventory Interaction Quests)
+foreach(kit Inventory Interaction Quests Spawner)
     string(TOUPPER ${kit} kit_upper)
     if(TARGET Aether::${kit})
         target_link_libraries(aether_editor_ui PRIVATE Aether::${kit})
