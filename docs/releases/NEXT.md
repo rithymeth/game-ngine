@@ -2,6 +2,10 @@
 
 A working draft of the next release's notes. It is rewritten into `vX.Y.Z.md` when a version is tagged, so it describes what is on `master`, not a promise of a version number or a date.
 
+## Lens effects in the post volume
+
+The post-process volume gains three Unreal-style lens effects, each from 0 (off, the default) to 1: **chromatic aberration** pulls the red and blue channels apart toward the edges of the screen, **film grain** adds moving noise to the display image (strongest in the midtones, new every frame, the same on all three channels), and **sharpen** brings edges out by sharpening luminance only, in a compressed domain so a bright highlight can not ring. They blend between volumes like the other settings, and a scene saved before they existed loads with them off. They are in the post pass's single composite, so there is no extra pass. To keep the push constants within the 128 bytes every device guarantees, the vignette and the three new strengths now travel as four 8-bit values in one word, and the tone mapper shares its word with the frame number that moves the grain; `PostConstants` has `lens` where it had `vignette`. The CPU references (`FilmGrainNoise`, `SharpenLuminance`, `ChromaticOffset` in `renderer/post.h`) are what the GPU test compares the pass against, pixel for pixel.
+
 ## Crafting
 
 A new optional kit and engine plugin, **Crafting** (`AETHER_KIT_CRAFTING`, needs Inventory): `.arecipe` files list inputs and outputs, and `CraftingSystem::Craft` carries them out on an inventory all or nothing -- if the outputs do not fit, the inputs are given back. A Luau `Crafting` table (`Craft`, `CanCraft`, `MissingCount`, `Exists`, `GetTitle`, `Describe`) exposes it; see `docs/manual/16-crafting.md`.

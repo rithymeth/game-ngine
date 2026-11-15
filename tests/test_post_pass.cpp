@@ -3,6 +3,8 @@
 #include "../player/src/particle_pass.h"
 #include "aether/gfx/rhi/command_list.h"
 #include "aether/gfx/rhi/device.h"
+#include "aether/reflection/serialize.h"
+#include "aether/renderer/components.h"
 #include "aether/renderer/post.h"
 #include "test_framework.h"
 
@@ -52,6 +54,18 @@ float4 PSMain(float4 position : SV_POSITION) : SV_TARGET {
 f32 RampValue(u32 x) { return std::exp2(static_cast<f32>(x) / 63.0f * 14.0f - 8.0f); }
 
 constexpr u32 kSize = 64;
+
+// A step edge: grey 0.2 before column kStepColumn, 1.0 from it on (the lens effects that read neighbouring pixels have something to do there).
+constexpr u32 kStepColumn = 10;
+constexpr char kStepShader[] = R"(
+float4 VSMain(uint id : SV_VertexID) : SV_POSITION {
+    float2 uv = float2((id << 1) & 2, id & 2);
+    return float4(uv * float2(2.0, -2.0) + float2(-1.0, 1.0), 0.5, 1.0);
+}
+float4 PSMain(float4 position : SV_POSITION) : SV_TARGET {
+    return float4((floor(position.x) < 10.0 ? 0.2 : 1.0).xxx, 1.0);
+}
+)";
 
 // Draws the ramp into the scene colour target, then the post pass with `settings`; the back buffer in `pixels`.
 bool RenderRamp(gfx::rhi::IDevice& device, gfx::rhi::ISwapChain& target, player::PostPass& post, gfx::rhi::PipelineHandle ramp,
@@ -145,8 +159,8 @@ AETHER_TEST(PostPass_ConstantsAre32BytesAndClampTheSettings) {
     s.vignette = -1.0f;
     s.tonemapper = Tonemapper::AgX;
     const player::PostConstants c = player::PackPostConstants(s, 7);
-    AETHER_CHECK(c.scene_color == 7 && Near(c.exposure, 4.0f, 1e-6f) && c.tonemapper == 1);
-    AETHER_CHECK(c.saturation == 2.0f && c.vignette == 0.0f);
+    AETHER_CHECK(c.scene_color == 7 && Near(c.exposure, 4.0f, 1e-6f) && player::PostTonemapperOf(c) == 1 && player::PostFrameOf(c) == 0);
+    AETHER_CHECK(c.saturation == 2.0f && player::LensVignette(c.lens) == 0.0f);
     s.exposure_compensation = 40.0f; // clamped to the volume's own +-10 EV range
     AETHER_CHECK(Near(player::PackPostConstants(s, 7).exposure, 1024.0f, 1e-3f));
 }
@@ -162,10 +176,10 @@ AETHER_TEST(PostPass_ReferenceIsTheRendererTonemapThenSrgb) {
     c.exposure = 2.0f;
     AETHER_CHECK(Near(player::PostReference(Vec3(0.5f, 0.5f, 0.5f), c, 0.5f, 0.5f).x, LinearToSrgb(TonemapACES(Vec3(1, 1, 1)).x), 1e-6f));
     c.exposure = 1.0f;
-    c.vignette = 1.0f;
+    c.lens = player::PackLens(1.0f, 0.0f, 0.0f, 0.0f);
     AETHER_CHECK(player::PostReference(hdr, c, 0.5f, 0.5f).x == got.x);
     AETHER_CHECK(player::PostReference(hdr, c, 0.0f, 0.0f).x < 1e-6f);
-    c.vignette = 0.0f;
+    c.lens = 0;
     c.saturation = 0.0f;
     const Vec3 grey = player::PostReference(hdr, c, 0.5f, 0.5f);
     AETHER_CHECK(Near(grey.x, grey.y, 1e-5f) && Near(grey.y, grey.z, 1e-5f));
@@ -268,3 +282,203 @@ AETHER_TEST(PostVolume_HeightFogBlendsLikeTheOtherSettings) {
     // A plain default volume has no height fog.
     AETHER_CHECK(PostProcessVolume{}.height_fog_density == 0.0f);
 }
+
+// --- Lens effects: chromatic aberration, film grain and sharpen --------------------------------------------------------------------
+
+AETHER_TEST(PostPass_LensWordPacksFourStrengthsAndTheFrame) {
+    // Each strength is clamped to 0..1, kept in 8 bits and read back in its own byte; what is not a number counts as 0.
+    const u32 lens = player::PackLens(0.5f, 1.0f, 0.0f, 0.2f);
+    AETHER_CHECK(Near(player::LensVignette(lens), 128.0f / 255.0f, 1e-6f) && player::LensChromaticAberration(lens) == 1.0f);
+    AETHER_CHECK(player::LensFilmGrain(lens) == 0.0f && Near(player::LensSharpen(lens), 51.0f / 255.0f, 1e-6f));
+    AETHER_CHECK(player::PackLens(-4.0f, 9.0f, std::nanf(""), INFINITY) == (0u | (255u << 8) | (0u << 16) | (0u << 24)));
+    AETHER_CHECK(player::PackLens(0.0f, 0.0f, 0.0f, 0.0f) == 0u && player::PackLens(1.0f, 1.0f, 1.0f, 1.0f) == 0xffffffffu);
+    // The tone mapper keeps its 2 bits and the frame the other 30.
+    player::PostConstants c;
+    c.tonemapper = player::PackTonemapperFrame(2, 123456789u);
+    AETHER_CHECK(player::PostTonemapperOf(c) == 2 && player::PostFrameOf(c) == 123456789u);
+    // The pack carries the lens settings into the word, and the constants are still the 128 bytes every device guarantees.
+    static_assert(sizeof(player::PostConstants) == 128);
+    PostProcessSettings s;
+    s.vignette = 0.25f;
+    s.chromatic_aberration = 0.5f;
+    s.film_grain = 0.75f;
+    s.sharpen = 1.0f;
+    const player::PostConstants packed = player::PackPostConstants(s, 3);
+    AETHER_CHECK(Near(player::LensVignette(packed.lens), 0.25f, 1.0f / 255.0f) && Near(player::LensChromaticAberration(packed.lens), 0.5f, 1.0f / 255.0f) &&
+                 Near(player::LensFilmGrain(packed.lens), 0.75f, 1.0f / 255.0f) && player::LensSharpen(packed.lens) == 1.0f);
+    AETHER_CHECK(player::PackPostConstants(PostProcessSettings{}, 3).lens == 0u); // a default volume has no lens effects
+}
+
+AETHER_TEST(PostVolume_LensEffectsBlendAndSerialize) {
+    const auto near = [](f32 a, f32 b) { return std::fabs(a - b) < 1e-5f; };
+    // Off by default, in the volume and in what a scene with no volume gets.
+    AETHER_CHECK(PostProcessVolume{}.chromatic_aberration == 0.0f && PostProcessVolume{}.film_grain == 0.0f && PostProcessVolume{}.sharpen == 0.0f);
+    RenderScene scene;
+    const PostProcessSettings none = BlendPostProcess(scene, Vec3(0, 0, 0));
+    AETHER_CHECK(none.chromatic_aberration == 0.0f && none.film_grain == 0.0f && none.sharpen == 0.0f);
+    // They blend like the other settings: a global volume everywhere, a bounded one over it inside its box.
+    PostProcessVolume base;
+    base.global = true;
+    base.chromatic_aberration = 0.2f;
+    base.film_grain = 0.4f;
+    base.sharpen = 0.6f;
+    scene.post_volumes.push_back({Vec3(0, 0, 0), base});
+    PostProcessVolume local;
+    local.global = false;
+    local.extents = Vec3(5, 5, 5);
+    local.blend_distance = 0.0f;
+    local.chromatic_aberration = 1.0f;
+    local.film_grain = 0.0f;
+    local.sharpen = 0.1f;
+    local.priority = 1;
+    scene.post_volumes.push_back({Vec3(0, 0, 0), local});
+    const PostProcessSettings inside = BlendPostProcess(scene, Vec3(0, 0, 0)), outside = BlendPostProcess(scene, Vec3(500, 0, 0));
+    AETHER_CHECK(near(inside.chromatic_aberration, 1.0f) && near(inside.film_grain, 0.0f) && near(inside.sharpen, 0.1f));
+    AETHER_CHECK(near(outside.chromatic_aberration, 0.2f) && near(outside.film_grain, 0.4f) && near(outside.sharpen, 0.6f));
+    // Half weight is the midpoint.
+    scene.post_volumes[1].settings.weight = 0.5f;
+    AETHER_CHECK(near(BlendPostProcess(scene, Vec3(0, 0, 0)).chromatic_aberration, 0.6f));
+    // A saved volume round-trips, and one saved before these fields existed loads with them off.
+    const reflect::Json saved = reflect::ToJson(base);
+    PostProcessVolume back;
+    AETHER_CHECK(reflect::FromJson(back, saved) && near(back.chromatic_aberration, 0.2f) && near(back.film_grain, 0.4f) && near(back.sharpen, 0.6f));
+    reflect::Json old = saved;
+    old.erase("chromatic_aberration");
+    old.erase("film_grain");
+    old.erase("sharpen");
+    PostProcessVolume loaded;
+    loaded.film_grain = 0.9f; // not what the file says: the default is
+    AETHER_CHECK(reflect::FromJson(loaded, old) && loaded.chromatic_aberration == 0.0f && loaded.sharpen == 0.0f);
+}
+
+namespace {
+
+// The ramp (greys) through the post pass `frames` times with `settings`, the last frame's back buffer in `pixels`.
+bool RenderLensFrames(gfx::rhi::IDevice& device, gfx::rhi::ISwapChain& target, player::PostPass& post, gfx::rhi::PipelineHandle ramp,
+                      const PostProcessSettings& settings, int frames, std::vector<u8>& pixels) {
+    for (int i = 0; i < frames; ++i) {
+        if (!RenderRamp(device, target, post, ramp, settings, pixels)) return false;
+    }
+    return true;
+}
+
+int PixelChannel(const std::vector<u8>& pixels, u32 x, u32 y, u32 channel) { return pixels[(static_cast<usize>(y) * kSize + x) * 4 + channel]; }
+
+void PostPass_LensEffectsMatchTheCpuReference(gfx::rhi::Backend backend) {
+    std::unique_ptr<gfx::rhi::IDevice> device = MakeDevice(backend);
+    if (!device) return;
+    std::unique_ptr<gfx::rhi::ISwapChain> target = device->CreateSwapChain(nullptr, kSize, kSize, 2);
+    player::PostPass post(*device, *target);
+    if (!post.Valid()) {
+        std::printf("    (no HDR scene colour target on this device)\n");
+        return;
+    }
+    gfx::rhi::PipelineDesc ramp_desc;
+    ramp_desc.hlsl_source = kRampShader;
+    ramp_desc.scene_color_target = true;
+    const gfx::rhi::PipelineHandle ramp = device->CreatePipeline(ramp_desc, *target);
+    AETHER_CHECK(ramp.IsValid());
+    if (!ramp.IsValid()) return;
+    const auto grey = [](f32 v) { return Vec3(v, v, v); };
+
+    // Film grain: the shader's noise is the CPU's, pixel for pixel, and a new frame brings new noise. The first Draw of a pass is frame 0.
+    PostProcessSettings grain;
+    grain.film_grain = 1.0f;
+    std::vector<u8> first, second;
+    AETHER_CHECK(RenderLensFrames(*device, *target, post, ramp, grain, 1, first));
+    AETHER_CHECK(RenderLensFrames(*device, *target, post, ramp, grain, 1, second));
+    if (first.size() != kSize * kSize * 4 || second.size() != first.size()) return;
+    for (u32 frame = 0; frame < 2; ++frame) {
+        player::PostConstants constants = player::PackPostConstants(grain, post.SceneColorIndex());
+        constants.tonemapper = player::PackTonemapperFrame(player::PostTonemapperOf(constants), frame);
+        int worst = 0;
+        for (u32 y = 0; y < kSize; y += 7) {
+            for (u32 x = 0; x < kSize; ++x) {
+                const f32 u = (static_cast<f32>(x) + 0.5f) / kSize, v = (static_cast<f32>(y) + 0.5f) / kSize;
+                const f32 expected = player::PostReferenceWithGrain(grey(RampValue(x)), constants, u, v, x, y).y * 255.0f;
+                const int got = PixelChannel(frame == 0 ? first : second, x, y, 1);
+                worst = std::max(worst, std::abs(got - static_cast<int>(std::lround(expected))));
+            }
+        }
+        if (worst > 2) std::printf("    grain, frame %u: worst error %d steps\n", frame, worst);
+        AETHER_CHECK(worst <= 2);
+    }
+    int moved = 0;
+    for (u32 x = 0; x < kSize; ++x) moved += std::abs(PixelChannel(first, x, 20, 1) - PixelChannel(second, x, 20, 1)) > 3;
+    AETHER_CHECK(moved > 10); // the grain is not the same on the next frame
+    // The grain is monochrome: all three channels move together.
+    for (u32 x = 0; x < kSize; x += 5) AETHER_CHECK(std::abs(PixelChannel(first, x, 20, 0) - PixelChannel(first, x, 20, 1)) <= 1 && std::abs(PixelChannel(first, x, 20, 2) - PixelChannel(first, x, 20, 1)) <= 1);
+
+    // The effects that read neighbouring pixels are checked on an edge, where they have something to do: grey 0.2 up to column 9, 1.0 from column 10.
+    gfx::rhi::PipelineDesc step_desc;
+    step_desc.hlsl_source = kStepShader;
+    step_desc.scene_color_target = true;
+    const gfx::rhi::PipelineHandle step = device->CreatePipeline(step_desc, *target);
+    AETHER_CHECK(step.IsValid());
+    if (!step.IsValid()) return;
+    const auto step_value = [](u32 x) { return x < kStepColumn ? 0.2f : 1.0f; };
+    const auto clamp_column = [](int c) { return static_cast<u32>(std::clamp(c, 0, static_cast<int>(kSize) - 1)); };
+    std::vector<u8> pixels;
+
+    // Chromatic aberration: red is read from one side of the pixel and blue from the other, by an amount that grows toward the edges of the frame,
+    // so the edge near the left of the frame grows a red and a blue fringe; the middle of the frame is left alone.
+    PostProcessSettings aberration;
+    aberration.chromatic_aberration = 1.0f;
+    const player::PostConstants plain = player::PackPostConstants(aberration, post.SceneColorIndex());
+    for (const bool use_step : {false, true}) {
+        AETHER_CHECK(RenderRamp(*device, *target, post, use_step ? step : ramp, aberration, pixels));
+        if (pixels.size() != kSize * kSize * 4) return;
+        const auto value = [&](u32 x) { return use_step ? step_value(x) : RampValue(x); };
+        int worst = 0, fringes = 0;
+        for (u32 x = 0; x < kSize; ++x) {
+            const f32 uv_x = (static_cast<f32>(x) + 0.5f) / kSize;
+            const int shift = static_cast<int>(std::lround(ChromaticOffset(uv_x, 0.5f, 1.0f).x * kSize));
+            // The colour the pass tone maps is red from one pixel, green from this one and blue from the other side (the tone mapper mixes the
+            // channels, so the three can not be mapped apart).
+            const Vec3 sampled(value(clamp_column(static_cast<int>(x) + shift)), value(x), value(clamp_column(static_cast<int>(x) - shift)));
+            const Vec3 want = player::PostReference(sampled, plain, 0.5f, 0.5f);
+            worst = std::max({worst, std::abs(PixelChannel(pixels, x, 32, 0) - static_cast<int>(std::lround(want.x * 255.0f))),
+                              std::abs(PixelChannel(pixels, x, 32, 1) - static_cast<int>(std::lround(want.y * 255.0f))),
+                              std::abs(PixelChannel(pixels, x, 32, 2) - static_cast<int>(std::lround(want.z * 255.0f)))});
+            fringes += std::abs(PixelChannel(pixels, x, 32, 0) - PixelChannel(pixels, x, 32, 2)) > 40;
+        }
+        if (worst > 2) std::printf("    chromatic aberration (%s): worst error %d steps\n", use_step ? "edge" : "ramp", worst);
+        AETHER_CHECK(worst <= 2);
+        if (use_step) AETHER_CHECK(fringes == 2); // the two pixels beside the edge: red and blue are on opposite sides of it
+    }
+    // Away from the edge a flat area of the step image has equal channels, however far the channels are shifted.
+    AETHER_CHECK(std::abs(PixelChannel(pixels, kSize - 8, 32, 0) - PixelChannel(pixels, kSize - 8, 32, 2)) <= 1);
+
+    // Sharpen: the luminance moves away from its four neighbours' average, so the dark side of the edge goes darker and the bright side brighter,
+    // and the flat areas stay as they were.
+    PostProcessSettings sharpen;
+    sharpen.sharpen = 0.6f;
+    const player::PostConstants sharp_constants = player::PackPostConstants(sharpen, post.SceneColorIndex());
+    for (const bool use_step : {false, true}) {
+        AETHER_CHECK(RenderRamp(*device, *target, post, use_step ? step : ramp, sharpen, pixels));
+        if (pixels.size() != kSize * kSize * 4) return;
+        const auto value = [&](u32 x) { return use_step ? step_value(x) : RampValue(x); };
+        int worst = 0, changed = 0;
+        for (u32 x = 0; x < kSize; ++x) {
+            const f32 l = value(x), left = value(clamp_column(static_cast<int>(x) - 1)), right = value(clamp_column(static_cast<int>(x) + 1));
+            const f32 neighbours = (left + right + l + l) * 0.25f;
+            const f32 sharpened = SharpenLuminance(l, neighbours, player::LensSharpen(sharp_constants.lens));
+            const f32 expected = player::PostReference(grey(sharpened), sharp_constants, 0.5f, 0.5f).y * 255.0f;
+            const f32 unsharpened = player::PostReference(grey(l), sharp_constants, 0.5f, 0.5f).y * 255.0f;
+            worst = std::max(worst, std::abs(PixelChannel(pixels, x, 32, 1) - static_cast<int>(std::lround(expected))));
+            changed += std::fabs(expected - unsharpened) > 10.0f;
+        }
+        if (worst > 3) std::printf("    sharpen (%s): worst error %d steps\n", use_step ? "edge" : "ramp", worst);
+        AETHER_CHECK(worst <= 3);
+        if (use_step) {
+            AETHER_CHECK(changed == 2); // the reference moves exactly the two pixels beside the edge by a lot, so the match above means something
+            AETHER_CHECK(PixelChannel(pixels, kStepColumn - 1, 32, 1) < PixelChannel(pixels, kStepColumn - 3, 32, 1)); // darker beside the edge than away from it
+            AETHER_CHECK(PixelChannel(pixels, kStepColumn, 32, 1) > PixelChannel(pixels, kStepColumn + 3, 32, 1));      // brighter beside it
+        }
+    }
+}
+
+} // namespace
+
+AETHER_TEST(PostPass_LensEffectsMatchTheCpuReferenceOnD3D12) { PostPass_LensEffectsMatchTheCpuReference(gfx::rhi::Backend::D3D12); }
+AETHER_TEST(PostPass_LensEffectsMatchTheCpuReferenceOnVulkan) { PostPass_LensEffectsMatchTheCpuReference(gfx::rhi::Backend::Vulkan); }

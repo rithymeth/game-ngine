@@ -87,6 +87,11 @@ struct PostProcessVolume {
     f32 height_fog_density = 0.0f; // 1 / m
     f32 height_fog_falloff = 0.02f; // 1 / m: 0.02 halves the density about every 35 m of height
     f32 height_fog_base = 0.0f;     // m: the world height where the density is `height_fog_density`
+    // Lens effects (each 0 is off): the red and blue channels pulled apart toward the screen's edge, moving film grain in the midtones, and a
+    // luminance sharpen that brings the edges out.
+    f32 chromatic_aberration = 0.0f; // 0..1
+    f32 film_grain = 0.0f;           // 0..1
+    f32 sharpen = 0.0f;              // 0..1
 };
 
 // A decal (Phase 39.4): a box, `size` metres across, at the entity's transform, that paints `texture` onto whatever opaque surfaces are inside it,
@@ -164,7 +169,10 @@ AETHER_REFLECT(aether::PostProcessVolume, 1,
     AETHER_FIELD(fog_density, Field_EditAnywhere, {.tooltip = "Distance haze toward the sky colour: 1 - exp(-density * distance)", .range_min = 0.0, .range_max = 1.0, .units = "1/m"}),
     AETHER_FIELD(height_fog_density, Field_EditAnywhere, {.tooltip = "Mist that pools low: this thick at the base height, thinner above it (adds to the distance haze)", .range_min = 0.0, .range_max = 1.0, .units = "1/m"}),
     AETHER_FIELD(height_fog_falloff, Field_EditAnywhere, {.tooltip = "How fast the mist thins with height: it falls by e every 1 / this many metres", .range_min = 0.0, .range_max = 1.0, .units = "1/m"}),
-    AETHER_FIELD(height_fog_base, Field_EditAnywhere, {.tooltip = "The world height where the mist is as thick as its density", .units = "m"})
+    AETHER_FIELD(height_fog_base, Field_EditAnywhere, {.tooltip = "The world height where the mist is as thick as its density", .units = "m"}),
+    AETHER_FIELD(chromatic_aberration, Field_EditAnywhere, {.tooltip = "Pulls the red and blue channels apart toward the edges of the screen, like a cheap lens", .range_min = 0.0, .range_max = 1.0}),
+    AETHER_FIELD(film_grain, Field_EditAnywhere, {.tooltip = "Moving noise over the picture, strongest in the midtones, like film", .range_min = 0.0, .range_max = 1.0}),
+    AETHER_FIELD(sharpen, Field_EditAnywhere, {.tooltip = "Brings the edges out by sharpening luminance (colour is left alone)", .range_min = 0.0, .range_max = 1.0})
 )
 AETHER_REFLECT(aether::Decal, 1,
     AETHER_FIELD(texture, Field_EditAnywhere, {.tooltip = "A texture in the package; empty draws a flat tint. Drop one from the Content Browser", .asset_extensions = ".png;.jpg;.jpeg;.bmp;.tga;.hdr"}),

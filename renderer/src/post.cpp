@@ -180,4 +180,38 @@ Mat4 JitterProjection(const Mat4& projection, f32 offset_x_pixels, f32 offset_y_
     return m;
 }
 
+u32 GrainHash(u32 value) {
+    const u32 state = value * 747796405u + 2891336453u;
+    const u32 word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    return (word >> 22u) ^ word;
+}
+
+f32 FilmGrainNoise(u32 x, u32 y, u32 frame) {
+    const u32 h = GrainHash(x + GrainHash(y + GrainHash(frame)));
+    return static_cast<f32>(h & 0xffffffu) / 16777216.0f - 0.5f;
+}
+
+f32 FilmGrainResponse(f32 display_value) {
+    const f32 v = std::clamp(display_value, 0.0f, 1.0f);
+    return 1.0f - std::fabs(2.0f * v - 1.0f);
+}
+
+f32 ApplyFilmGrain(f32 encoded, f32 strength, f32 noise) {
+    const f32 s = std::clamp(strength, 0.0f, 1.0f);
+    return std::clamp(encoded + noise * s * 0.25f * FilmGrainResponse(encoded), 0.0f, 1.0f);
+}
+
+f32 SharpenLuminance(f32 luminance, f32 neighbour_luminance, f32 strength) {
+    const f32 s = std::clamp(strength, 0.0f, 1.0f);
+    const f32 l = std::max(luminance, 0.0f), n = std::max(neighbour_luminance, 0.0f);
+    const f32 compressed = l / (1.0f + l), neighbours = n / (1.0f + n);
+    const f32 sharp = std::clamp(compressed + s * 2.0f * (compressed - neighbours), 0.0f, 0.999f);
+    return sharp / (1.0f - sharp);
+}
+
+Vec3 ChromaticOffset(f32 u, f32 v, f32 strength) {
+    const f32 s = std::clamp(strength, 0.0f, 1.0f) * 0.05f;
+    return Vec3((u - 0.5f) * s, (v - 0.5f) * s, 0.0f);
+}
+
 } // namespace aether

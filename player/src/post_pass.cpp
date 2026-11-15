@@ -11,14 +11,15 @@ namespace aether::player {
 namespace {
 
 // The order matches PostReference exactly: exposure, saturation (in linear light, before the curve compresses it), the tone mapper, the
-// vignette, then the sRGB encoding. The tone mappers are the fits renderer/post.cpp holds as CPU references.
+// vignette, then the sRGB encoding (and, last, the film grain, which PostReferenceWithGrain adds). The tone mappers are the fits
+// renderer/post.cpp holds as CPU references, and so are the lens effects.
 constexpr char kPostShader[] = R"(
 struct PushConstants {
     uint g_SceneColor;
     float g_Exposure;
     uint g_Tonemapper;
     float g_Saturation;
-    float g_Vignette;
+    uint g_Lens;
     uint g_Bloom;
     float g_BloomIntensity;
     float g_BloomScale;
@@ -136,10 +137,55 @@ float AmbientOcclusion(int2 pixel, float2 size) {
     return saturate(1.0 - g_PC.g_AoStrength * occlusion * 2.0 / (float)taps);
 }
 
+// The lens word's four 8-bit strengths, 0..1 (PackLens on the CPU).
+float LensField(uint shift) { return (float)((g_PC.g_Lens >> shift) & 255u) / 255.0; }
+
+// The film grain's hash: integer arithmetic only, so it is the CPU's GrainHash bit for bit.
+uint GrainHash(uint value) {
+    uint state = value * 747796405u + 2891336453u;
+    uint word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    return (word >> 22u) ^ word;
+}
+float FilmGrainNoise(uint x, uint y, uint frame) {
+    uint h = GrainHash(x + GrainHash(y + GrainHash(frame)));
+    return (float)(h & 0xffffffu) / 16777216.0 - 0.5;
+}
+
+float3 SceneLoad(int2 p, int2 size) {
+    return g_Textures[g_PC.g_SceneColor].Load(int3(clamp(p, int2(0, 0), size - 1), 0)).rgb;
+}
+
+// The scene colour at a pixel, through the lens: chromatic aberration reads red and blue from opposite sides of the pixel (more toward the
+// edges of the frame), then the sharpen moves the luminance away from its four neighbours' average (in L / (1 + L), so highlights can't ring).
+float3 SceneColorThroughLens(int2 pixel, int2 size) {
+    float aberration = LensField(8u);
+    float sharpen = LensField(24u);
+    float3 c;
+    if (aberration > 0.0) {
+        float2 uv = ((float2)pixel + 0.5) / (float2)size;
+        int2 shift = (int2)round((uv - 0.5) * aberration * 0.05 * (float2)size);
+        c = float3(SceneLoad(pixel + shift, size).r, SceneLoad(pixel, size).g, SceneLoad(pixel - shift, size).b);
+    } else {
+        c = SceneLoad(pixel, size);
+    }
+    if (sharpen > 0.0) {
+        float3 w = float3(0.2126, 0.7152, 0.0722);
+        float n = (dot(SceneLoad(pixel + int2(-1, 0), size), w) + dot(SceneLoad(pixel + int2(1, 0), size), w) +
+                   dot(SceneLoad(pixel + int2(0, -1), size), w) + dot(SceneLoad(pixel + int2(0, 1), size), w)) * 0.25;
+        float l = max(dot(c, w), 0.0);
+        n = max(n, 0.0);
+        float compressed = l / (1.0 + l);
+        float neighbours = n / (1.0 + n);
+        float sharp = clamp(compressed + sharpen * 2.0 * (compressed - neighbours), 0.0, 0.999);
+        c *= (sharp / (1.0 - sharp)) / max(l, 1e-4);
+    }
+    return c;
+}
+
 float4 PSMain(float4 position : SV_POSITION) : SV_TARGET {
     uint width, height;
     g_Textures[g_PC.g_SceneColor].GetDimensions(width, height);
-    float3 c = g_Textures[g_PC.g_SceneColor].Load(int3(int2(position.xy), 0)).rgb;
+    float3 c = SceneColorThroughLens(int2(position.xy), int2(width, height));
     if (g_PC.g_Depth < 128 && g_PC.g_AoStrength > 0.0) c *= AmbientOcclusion(int2(position.xy), float2(width, height));
     if (g_PC.g_Depth < 128 && (g_PC.g_FogDensity > 0.0 || g_PC.g_FogColor.w > 0.0)) {
         // Distance haze: the scene fades toward the sky's colour with the distance from the camera (the sky itself is left alone).
@@ -183,12 +229,20 @@ float4 PSMain(float4 position : SV_POSITION) : SV_TARGET {
     c *= g_PC.g_Exposure;
     float luminance = dot(c, float3(0.2126, 0.7152, 0.0722));
     c = max(luminance + (c - luminance) * g_PC.g_Saturation, 0.0);
-    if (g_PC.g_Tonemapper == 0) c = TonemapAces(c);
-    else if (g_PC.g_Tonemapper == 1) c = TonemapAgx(c);
+    uint tonemapper = g_PC.g_Tonemapper & 3u;
+    if (tonemapper == 0) c = TonemapAces(c);
+    else if (tonemapper == 1) c = TonemapAgx(c);
     else c = saturate(c);
     float2 d = position.xy / float2(width, height) - 0.5;
-    c *= 1.0 - saturate(g_PC.g_Vignette) * saturate(dot(d, d) / 0.5);
-    return float4(LinearToSrgb(c), 1.0);
+    c *= 1.0 - LensField(0u) * saturate(dot(d, d) / 0.5);
+    float3 encoded = LinearToSrgb(c);
+    float grain = LensField(16u);
+    if (grain > 0.0) {
+        // Film grain: the same noise on all three channels, strongest in the midtones, new every frame.
+        float noise = FilmGrainNoise((uint)position.x, (uint)position.y, g_PC.g_Tonemapper >> 2u);
+        encoded = saturate(encoded + noise * grain * 0.25 * (1.0 - abs(2.0 * encoded - 1.0)));
+    }
+    return float4(encoded, 1.0);
 }
 )";
 
@@ -262,21 +316,47 @@ PostConstants PackPostConstants(const PostProcessSettings& settings, u32 scene_c
     PostConstants c;
     c.scene_color = scene_color_index;
     c.exposure = std::exp2(std::clamp(settings.exposure_compensation, -10.0f, 10.0f));
-    c.tonemapper = static_cast<u32>(settings.tonemapper);
-    if (c.tonemapper > 2) c.tonemapper = 0;
+    u32 tonemapper = static_cast<u32>(settings.tonemapper);
+    if (tonemapper > 2) tonemapper = 0;
+    c.tonemapper = PackTonemapperFrame(tonemapper, 0); // Draw puts the frame number in
     c.saturation = std::clamp(settings.saturation, 0.0f, 2.0f);
-    c.vignette = std::clamp(settings.vignette, 0.0f, 1.0f);
+    c.lens = PackLens(settings.vignette, settings.chromatic_aberration, settings.film_grain, settings.sharpen);
     c.bloom_intensity = std::isfinite(settings.bloom_intensity) ? std::clamp(settings.bloom_intensity, 0.0f, 1.0f) : 0.0f;
     return c;
 }
+
+namespace {
+f32 LensByte(u32 lens, u32 shift) { return static_cast<f32>((lens >> shift) & 255u) / 255.0f; }
+u32 ToByte(f32 strength) {
+    if (!std::isfinite(strength)) return 0;
+    return static_cast<u32>(std::lround(std::clamp(strength, 0.0f, 1.0f) * 255.0f));
+}
+} // namespace
+
+u32 PackLens(f32 vignette, f32 chromatic_aberration, f32 film_grain, f32 sharpen) {
+    return ToByte(vignette) | (ToByte(chromatic_aberration) << 8) | (ToByte(film_grain) << 16) | (ToByte(sharpen) << 24);
+}
+f32 LensVignette(u32 lens) { return LensByte(lens, 0); }
+f32 LensChromaticAberration(u32 lens) { return LensByte(lens, 8); }
+f32 LensFilmGrain(u32 lens) { return LensByte(lens, 16); }
+f32 LensSharpen(u32 lens) { return LensByte(lens, 24); }
 
 Vec3 PostReference(const Vec3& linear, const PostConstants& constants, f32 u, f32 v) {
     Vec3 c = linear * constants.exposure;
     c = AdjustSaturation(c, constants.saturation);
     c = Vec3(std::max(c.x, 0.0f), std::max(c.y, 0.0f), std::max(c.z, 0.0f));
-    c = Tonemap(c, constants.tonemapper == 1 ? Tonemapper::AgX : constants.tonemapper == 2 ? Tonemapper::None : Tonemapper::ACES);
-    c = c * VignetteFactor(u, v, constants.vignette);
+    const u32 mapper = PostTonemapperOf(constants);
+    c = Tonemap(c, mapper == 1 ? Tonemapper::AgX : mapper == 2 ? Tonemapper::None : Tonemapper::ACES);
+    c = c * VignetteFactor(u, v, LensVignette(constants.lens));
     return Vec3(LinearToSrgb(c.x), LinearToSrgb(c.y), LinearToSrgb(c.z));
+}
+
+Vec3 PostReferenceWithGrain(const Vec3& linear, const PostConstants& constants, f32 u, f32 v, u32 x, u32 y) {
+    const Vec3 encoded = PostReference(linear, constants, u, v);
+    const f32 strength = LensFilmGrain(constants.lens);
+    if (!(strength > 0.0f)) return encoded;
+    const f32 noise = FilmGrainNoise(x, y, PostFrameOf(constants));
+    return Vec3(ApplyFilmGrain(encoded.x, strength, noise), ApplyFilmGrain(encoded.y, strength, noise), ApplyFilmGrain(encoded.z, strength, noise));
 }
 
 PostPass::PostPass(gfx::rhi::IDevice& device, gfx::rhi::ISwapChain& swap_chain) : device_(device), swap_chain_(swap_chain) {
@@ -398,6 +478,7 @@ bool PostPass::RenderBloom(gfx::rhi::ICommandList& commands, const PostProcessSe
 void PostPass::Draw(gfx::rhi::ICommandList& commands, const PostProcessSettings& settings) {
     if (!Valid()) return;
     PostConstants constants = PackPostConstants(settings, Source());
+    constants.tonemapper = PackTonemapperFrame(PostTonemapperOf(constants), frame_++); // wraps at 2^30 frames: the grain just repeats
     if (bloom_ready_ && !bloom_levels_.empty()) {
         constants.bloom = bloom_levels_.front().index;
         constants.bloom_scale = 1.0f / static_cast<f32>(bloom_levels_.size());
