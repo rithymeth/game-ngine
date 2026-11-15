@@ -159,6 +159,9 @@ PostProcessSettings BlendPostProcess(const RenderScene& scene, const Vec3& posit
         out.height_fog_density = Lerp(out.height_fog_density, s.height_fog_density, w);
         out.height_fog_falloff = Lerp(out.height_fog_falloff, s.height_fog_falloff, w);
         out.height_fog_base = Lerp(out.height_fog_base, s.height_fog_base, w);
+        out.chromatic_aberration = Lerp(out.chromatic_aberration, s.chromatic_aberration, w);
+        out.film_grain = Lerp(out.film_grain, s.film_grain, w);
+        out.sharpen = Lerp(out.sharpen, s.sharpen, w);
         if (w >= 0.5f) out.tonemapper = s.tonemapper; // a choice, not a blend
     }
     return out;

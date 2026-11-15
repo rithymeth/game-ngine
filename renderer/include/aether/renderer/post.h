@@ -53,6 +53,24 @@ struct Extent {
 // source, until a side would drop below `min_size` or `max_levels` is reached.
 std::vector<Extent> BloomChain(u32 width, u32 height, u32 max_levels = 6, u32 min_size = 8);
 
+// --- Lens effects ------------------------------------------------------------------------
+// The CPU references of the post pass's film grain, sharpen and chromatic aberration: integer and float arithmetic the shader repeats, so the
+// GPU test can compare them pixel for pixel.
+//
+// Film grain is noise added to the display-encoded colour: a hash of the pixel and the frame, so it moves from frame to frame, weighted toward
+// the midtones (the dark and the bright ends of a film's response show little grain).
+u32 GrainHash(u32 value);                           // PCG: well mixed, the same on every device
+f32 FilmGrainNoise(u32 x, u32 y, u32 frame);        // [-0.5, 0.5)
+f32 FilmGrainResponse(f32 display_value);           // 0 at black and white, 1 at middle grey
+// One channel: `encoded` (0..1, sRGB) moved by strength (0..1) of the noise at that pixel, clamped to 0..1.
+f32 ApplyFilmGrain(f32 encoded, f32 strength, f32 noise);
+// Sharpen acts on luminance only (colour fringes would show otherwise) in a compressed domain, L / (1 + L), so a bright highlight can't ring:
+// the luminance moves away from its neighbours' average by `strength` (0..1). Returns the new luminance.
+f32 SharpenLuminance(f32 luminance, f32 neighbour_luminance, f32 strength);
+// Chromatic aberration: red is read from `uv + offset` and blue from `uv - offset` (green stays), the offset growing from nothing at the
+// centre to `strength` x 2.5% of the frame at the middle of an edge. `strength` is 0..1; the result is a uv offset (x, y), z unused.
+Vec3 ChromaticOffset(f32 u, f32 v, f32 strength);
+
 // --- TAA -------------------------------------------------------------------------------
 f32 Halton(u32 index, u32 base); // index from 1
 // Sub-pixel offsets in [-0.5, 0.5], Halton(2, 3), repeating every `count` frames.
