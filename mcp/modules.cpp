@@ -40,6 +40,9 @@
 #if AETHER_MCP_SPAWNER
 #include "aether/spawner/spawner.h"
 #endif
+#if AETHER_MCP_CHECKPOINTS
+#include "aether/checkpoints/checkpoint.h"
+#endif
 
 // Note: no Aether::AI (behaviour trees, perception) -- the editor/MCP side
 // must not link gameplay AI (docs/design/agent_gameplay_ai_boundary.md).
@@ -104,6 +107,9 @@ void RegisterBuiltinComponents() {
 #endif
 #if AETHER_MCP_SPAWNER
     spawn::RegisterSpawnerComponents();
+#endif
+#if AETHER_MCP_CHECKPOINTS
+    chk::RegisterCheckpointComponents();
 #endif
 }
 

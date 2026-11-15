@@ -115,6 +115,13 @@ Audio.Stop function
 Audio.StopAll function
 Camera table
 Camera.Shake function
+Checkpoints table
+Checkpoints.Activate function
+Checkpoints.Exists function
+Checkpoints.GetScene function
+Checkpoints.IsReached function
+Checkpoints.Last function
+Checkpoints.Respawn function
 Crafting table
 Crafting.CanCraft function
 Crafting.Craft function
