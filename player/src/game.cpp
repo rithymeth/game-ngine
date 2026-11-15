@@ -414,6 +414,19 @@ std::vector<std::string> Game::StartedModules() const {
     return names;
 }
 
+Entity Game::SpawnPrefab(const std::string& path, const Transform& place) {
+    assets::AssetGuid guid;
+    const GameManifest::Asset* asset = package_.FindAsset(path);
+    const PrefabData* data = asset && assets::ParseAssetGuid(asset->guid, guid) ? FindPrefab(guid) : nullptr;
+    if (!data || !world_) {
+#if AETHER_KIT_SPAWNER
+        if (missing_spawn_prefabs_.insert(path).second) warnings_.push_back("A spawner makes '" + path + "', which isn't a prefab in the package");
+#endif
+        return kNullEntity;
+    }
+    return InstantiatePrefab(*world_, guids_, guid, *data, &place);
+}
+
 const PrefabData* Game::FindPrefab(const assets::AssetGuid& guid) {
     if (const auto it = prefabs_.find(guid); it != prefabs_.end()) return it->second.get();
     std::unique_ptr<PrefabData>& slot = prefabs_[guid]; // a miss is remembered as null
@@ -1073,6 +1086,7 @@ void Game::BuildRuntimeStages() {
     AddInteractionStage();
     AddQuestsStage();
     AddTimeOfDayStage();
+    AddSpawnerStage();
     SystemDesc attributes = gas::MakeAttributeSystem(runtime_ ? runtime_->attributes.get() : nullptr, [this](const gas::AttributeEvent& e) {
         if (!runtime_) return;
 #if AETHER_GAME_SCRIPTING
@@ -1366,7 +1380,7 @@ void Game::BuildFrame() {
     // Kit factories bind scene-owned systems. Keep their descriptors in the
     // runtime and have the persistent scheduler resolve the current scene.
     if (runtime_) for (const auto* name : {"Player.Effects", "Player.Abilities", "Player.Inventory",
-                                         "Player.Interaction", "Player.Quests", "Player.TimeOfDay", "Player.Attributes"}) {
+                                         "Player.Interaction", "Player.Quests", "Player.TimeOfDay", "Player.Spawner", "Player.Attributes"}) {
         const auto found = runtime_->stages.find(name);
         if (found == runtime_->stages.end()) continue;
         SystemDesc stage = found->second;

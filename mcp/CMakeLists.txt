@@ -16,7 +16,7 @@ target_link_libraries(aether_mcp PRIVATE
     Aether::Animation Aether::Audio Aether::Blueprint Aether::Gameplay Aether::Nav
     Aether::Renderer Aether::Sequencer Aether::Sprite2D Aether::Streaming Aether::Terrain Aether::UI Aether::VFX
     Aether::Game Aether::Loc)
-foreach(kit Physics Inventory Interaction Quests)
+foreach(kit Physics Inventory Interaction Quests Spawner)
     string(TOUPPER ${kit} kit_upper)
     if(TARGET Aether::${kit})
         target_link_libraries(aether_mcp PRIVATE Aether::${kit})

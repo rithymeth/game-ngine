@@ -257,6 +257,10 @@ SaveGames.SetVector function
 Scene table
 Scene.Current function
 Scene.Load function
+Spawner table
+Spawner.AliveCount function
+Spawner.SpawnNow function
+Spawner.TotalSpawned function
 TimeOfDay table
 TimeOfDay.GetDay function
 TimeOfDay.GetDayLength function

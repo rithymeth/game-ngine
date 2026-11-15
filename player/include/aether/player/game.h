@@ -13,6 +13,9 @@
 #if AETHER_KIT_QUESTS
 #include "aether/quests/quest_def.h"
 #endif
+#if AETHER_KIT_SPAWNER
+#include "aether/spawner/spawner_system.h"
+#endif
 #if AETHER_KIT_ACHIEVEMENTS
 #include "aether/achievements/achievement_def.h"
 #endif
@@ -52,6 +55,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace aether::ui {
@@ -377,6 +381,9 @@ public:
 
 private:
     const PrefabData* FindPrefab(const assets::AssetGuid& guid);
+    // A new instance of a package prefab, by path, at `place` (null entity, and a warning the first time, for a path that is no prefab). The
+    // Spawner kit's spawns come through here.
+    Entity SpawnPrefab(const std::string& path, const Transform& place);
     // A level sequence by asset path (cached for the scene; null with a warning if unreadable).
     const seq::LevelSequence* FindSequence(const std::string& path);
     void BuildFrame();
@@ -396,6 +403,7 @@ private:
     void AddInteractionStage();
     void AddQuestsStage();
     void AddTimeOfDayStage();
+    void AddSpawnerStage();
     // A kit stage as the registry describes it: its name and `after` list, for the system that runs it.
     void ApplyKitStage(SystemDesc& system, const std::string& name) const;
 
@@ -449,6 +457,10 @@ private:
 #endif
 #if AETHER_KIT_QUESTS
     quest::QuestLibrary quests_;
+#endif
+#if AETHER_KIT_SPAWNER
+    spawn::SpawnFunction spawn_function_; // what the Spawner kit calls to make a prefab appear (set when the kit runtime is made)
+    std::unordered_set<std::string> missing_spawn_prefabs_;
 #endif
 #if AETHER_KIT_ACHIEVEMENTS
     ach::AchievementLibrary achievements_;

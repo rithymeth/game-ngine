@@ -22,6 +22,9 @@
 #if AETHER_KIT_QUESTS
 #include "aether/quests/quests_kit.h"
 #endif
+#if AETHER_KIT_SPAWNER
+#include "aether/spawner/spawner_kit.h"
+#endif
 #if AETHER_KIT_ACHIEVEMENTS
 #include "aether/achievements/achievements_kit.h"
 #endif
@@ -49,6 +52,9 @@ void Game::BuildKits() {
 #endif
 #if AETHER_KIT_QUESTS
     kits_.Add(quest::MakeQuestsKit(&quests_, &effects_));
+#endif
+#if AETHER_KIT_SPAWNER
+    kits_.Add(spawn::MakeSpawnerKit());
 #endif
 #if AETHER_KIT_ACHIEVEMENTS
     kits_.Add(ach::MakeAchievementsKit(&achievements_));
@@ -110,6 +116,12 @@ void Game::CreateKitRuntime() {
 #endif
 #if AETHER_KIT_QUESTS
         if (std::strcmp(name, "quests.library") == 0) return &quests_;
+#endif
+#if AETHER_KIT_SPAWNER
+        if (std::strcmp(name, "spawner.spawn") == 0) {
+            spawn_function_ = [this](const std::string& prefab, const Transform& place) { return SpawnPrefab(prefab, place); };
+            return &spawn_function_;
+        }
 #endif
 #if AETHER_KIT_ACHIEVEMENTS
         if (std::strcmp(name, "achievements.library") == 0) return &achievements_;
@@ -269,6 +281,20 @@ void Game::AddQuestsStage() {
         if (kits_.Has(other)) quests.after.push_back(std::string("Player.") + other);
     }
     runtime_->stages[quests.name] = std::move(quests);
+#endif
+}
+
+void Game::AddSpawnerStage() {
+#if AETHER_KIT_SPAWNER
+    spawn::SpawnerSystem* spawner_system = runtime_ ? runtime_->kit_runtimes.Get<spawn::SpawnerSystem>("Spawner", "SpawnerSystem") : nullptr;
+    SystemDesc spawner = spawn::MakeSpawnerSystem(spawner_system, [this](const spawn::SpawnEvent& e) {
+        if (!runtime_) return;
+#if AETHER_GAME_SCRIPTING
+        if (runtime_->scripts) runtime_->scripts->SendEvent(e.spawner, "OnSpawned", {script::EntityRef{e.spawned}});
+#endif
+    });
+    ApplyKitStage(spawner, "Player.Spawner");
+    runtime_->stages[spawner.name] = std::move(spawner);
 #endif
 }
 

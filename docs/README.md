@@ -81,6 +81,7 @@ without a server or network connection.
 | [manual/17-dialogue.md](manual/17-dialogue.md) | The dialogue kit: conversations, choices and the script table |
 | [manual/18-time-of-day.md](manual/18-time-of-day.md) | The time-of-day kit: the world clock, phases, sunlight and the script table |
 | [manual/19-achievements.md](manual/19-achievements.md) | The achievements kit: goals, progress kept in the save bag and the script table |
+| [manual/20-spawner.md](manual/20-spawner.md) | The spawner kit: prefabs that appear around an entity on a timer, and the script table |
 | [manual/api_stability.md](manual/api_stability.md) | The three stability levels and what each promises |
 | [manual/core_api_inventory.md](manual/core_api_inventory.md) | Ownership and threading inventory for the APIs a game or plugin uses |
 | [manual/support_policy.md](manual/support_policy.md) | A support-policy proposal, explicitly not yet promised |
