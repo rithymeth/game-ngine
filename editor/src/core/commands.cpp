@@ -393,6 +393,13 @@ RevertPrefabOverrideCommand::RevertPrefabOverrideCommand(EntityGuid entity, Pref
                                                          ComponentId component, std::string field_path)
     : entity_(entity), component_(component), field_path_(std::move(field_path)), local_id_(local_id), has_local_id_(true) {}
 
+std::unique_ptr<RevertPrefabOverrideCommand> RevertPrefabOverrideCommand::ByName(EntityGuid entity, PrefabLocalId local_id,
+                                                                                 std::string component, std::string field_path) {
+    auto command = std::make_unique<RevertPrefabOverrideCommand>(entity, local_id, kInvalidComponentId, std::move(field_path));
+    command->component_name_ = std::move(component);
+    return command;
+}
+
 void RevertPrefabOverrideCommand::Resolve(CommandContext& ctx, Entity root) {
     if (!ctx.find_prefab) {
         last_report_ = {false, "Prefab lookup is unavailable"};
@@ -436,8 +443,9 @@ void RevertPrefabOverrideCommand::Do(CommandContext& ctx) {
     }
     const PrefabLocalId local_id = has_local_id_ ? local_id_ : link->local_id;
     before_ = instance->overrides;
-    const std::string component = component_ == kInvalidComponentId ? std::string() : ComponentName(component_);
-    RevertOverrides(*instance, local_id, component, component_ == kInvalidComponentId ? std::string() : field_path_);
+    const std::string component = !component_name_.empty() ? component_name_
+                                  : component_ == kInvalidComponentId ? std::string() : ComponentName(component_);
+    RevertOverrides(*instance, local_id, component, component.empty() ? std::string() : field_path_);
     Resolve(ctx, root);
 }
 
@@ -460,6 +468,7 @@ void RevertPrefabOverrideCommand::Undo(CommandContext& ctx) {
 }
 
 std::string RevertPrefabOverrideCommand::Label() const {
+    if (!component_name_.empty()) return "Revert " + component_name_ + (field_path_.empty() ? "" : "." + field_path_);
     if (component_ == kInvalidComponentId) {
         return "Revert to Prefab";
     }
@@ -467,7 +476,7 @@ std::string RevertPrefabOverrideCommand::Label() const {
 }
 
 usize RevertPrefabOverrideCommand::MemoryBytes() const {
-    usize bytes = sizeof(*this) + field_path_.size();
+    usize bytes = sizeof(*this) + field_path_.size() + component_name_.size();
     for (const PropertyOverride& o : before_) {
         bytes += sizeof(o) + o.component.size() + o.field_path.size() + o.value.size();
     }

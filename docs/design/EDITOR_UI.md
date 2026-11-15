@@ -483,6 +483,15 @@ selection the menu acts on every selected entity; a selection where one entity l
 an action that would change nothing records nothing. `CopyComponent`/`PasteComponentValues`/`ResetComponent` are
 callable without a mouse.
 
+Implemented: the **instance override list**. On any entity of a prefab instance, the Inspector's prefab line is followed
+by a collapsed "Overrides in this instance (N)". Opened, it lists every override of the instance across all its entities:
+the entity's name, `Component.field_path`, and "prefab value -> instance value". The inspected entity's own rows are in
+the override color. Each row has a Revert, and the list has Revert Whole Instance; each is one undo step that removes
+the override(s) and re-resolves the instance (`InstanceOverrides`, `RevertInstanceOverride`, `RevertWholeInstance`).
+An override the prefab no longer has a place for is listed as "no longer in the prefab" and reverts alone, by its
+component's declared name, even when that type is not registered any more. Apply to Prefab and restoring removed
+entities are not in the Inspector yet.
+
 Implemented: a **Search properties** box at the top of the Inspector (`ScenePanel::SetPropertySearch`,
 `property_search_`). It matches a top-level field when the field's name or its component's name contains the text
 without regard to case (an empty box shows everything), so "range" finds `Weapon.range` and "Weapon" shows that

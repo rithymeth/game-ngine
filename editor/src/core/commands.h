@@ -196,6 +196,9 @@ class RevertPrefabOverrideCommand final : public ICommand {
 public:
     RevertPrefabOverrideCommand(EntityGuid entity, ComponentId component, std::string field_path);
     RevertPrefabOverrideCommand(EntityGuid entity, PrefabLocalId local_id, ComponentId component, std::string field_path);
+    // By the component's declared name, for an override whose component type is no longer registered (orphaned).
+    static std::unique_ptr<RevertPrefabOverrideCommand> ByName(EntityGuid entity, PrefabLocalId local_id,
+                                                               std::string component, std::string field_path);
     void Do(CommandContext& ctx) override;
     void Undo(CommandContext& ctx) override;
     std::string Label() const override;
@@ -208,6 +211,7 @@ private:
     EntityGuid entity_;
     ComponentId component_;
     std::string field_path_;
+    std::string component_name_; // set by ByName; else the name of component_
     PrefabLocalId local_id_ = 0;
     bool has_local_id_ = false;
     std::vector<PropertyOverride> before_; // the instance's overrides before Do

@@ -1,8 +1,10 @@
 #pragma once
 
 #include "core/command_stack.h"
+#include "aether/scene/prefab.h"
 
 #include <span>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -41,5 +43,28 @@ void CopyComponent(const World& world, Entity entity, ComponentId component);
 bool PasteComponentValues(CommandContext& ctx, CommandStack& stack, std::span<const Entity> entities,
                           ComponentId component);
 bool ResetComponent(CommandContext& ctx, CommandStack& stack, std::span<const Entity> entities, ComponentId component);
+
+// One override of a prefab instance, as the Inspector's override list shows it.
+struct InstanceOverride {
+    PrefabLocalId local_id = 0;
+    Entity entity = kNullEntity; // the instance's entity it is on; null when the prefab no longer has that entity
+    std::string entity_name;
+    std::string component;
+    std::string field_path;      // "" = the whole component
+    std::string value;           // the instance's value, as JSON text
+    std::string prefab_value;    // the prefab's value at the same path, as JSON text; empty when orphaned
+    bool orphaned = false;       // the prefab has no such entity, component or field: kept, but it applies to nothing
+};
+
+// Every override of the instance `entity` belongs to, in the instance's order. Empty when `entity` is not part of an
+// instance or its prefab cannot be found (CommandContext::find_prefab).
+std::vector<InstanceOverride> InstanceOverrides(const CommandContext& ctx, Entity entity);
+
+// Removes one listed override of the instance `entity` belongs to, so the value goes back to the prefab's, as one undo
+// step. False when there is no such override.
+bool RevertInstanceOverride(CommandContext& ctx, CommandStack& stack, Entity entity, const InstanceOverride& row);
+
+// Removes every override of the instance `entity` belongs to, on all its entities, as one undo step.
+bool RevertWholeInstance(CommandContext& ctx, CommandStack& stack, Entity entity);
 
 } // namespace aether::editor

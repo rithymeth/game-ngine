@@ -740,6 +740,24 @@ the selection the same way. Tests in `tests/test_hierarchy_drag.cpp`: `Hierarchy
 and `HierarchyDrag_AClickOnASelectedRowSelectsJustIt`. Still open: granular prefab overrides, the hierarchy's
 visibility/lock toggles and type icons, card reordering, and the multi-selection inspector screenshot gate.
 
+Done so far (2026-11-16): the instance-level override view. Inspecting any entity of a prefab instance shows "Overrides
+in this instance (N)": every override on every entity of the instance, not just the inspected one. Each row gives the
+entity's name, `Component.field_path`, and the prefab's value next to the instance's. Each row has its own Revert, and
+the list has Revert Whole Instance; each is one undo step (`InstanceOverrides`, `RevertInstanceOverride`,
+`RevertWholeInstance`). An orphaned override (the prefab no longer has its entity, component or field) is listed as
+such and can be reverted alone. That includes one whose component type is no longer registered:
+`RevertPrefabOverrideCommand::ByName` reverts by the declared name. Before, the only way to name such a component was
+"every component of the entity". Tests in `tests/test_instance_overrides.cpp`:
+`InstanceOverrides_ListsEveryOverrideOfTheInstanceWithBothValues`, `InstanceOverrides_RevertingOneRowIsOneUndoStep`,
+`InstanceOverrides_AnOrphanedRowRevertsAloneEvenForAnUnknownComponent`,
+`InstanceOverrides_RevertingTheWholeInstanceIsOneUndoStep` and `InstanceOverrides_DrawingTheOpenListChangesNothing`.
+Not in the Inspector yet:
+- Apply to Prefab per row. It writes and saves the prefab asset, which only the MCP's asset host does today.
+- Restoring removed entities.
+
+Still open: the hierarchy's visibility/lock toggles and type icons, card reordering, and the multi-selection inspector
+screenshot gate.
+
 Gate: mixed-value semantics tests; edit-across-selection undo test; reset/copy/paste tests; hierarchy filter tests;
 screenshot of a multi-selection inspector.
 

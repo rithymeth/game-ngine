@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cstring>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace aether::editor {
@@ -101,7 +102,148 @@ CardAction DrawComponentCard(CommandContext& ctx, CommandStack& stack, std::span
     return action;
 }
 
+// The JSON at "stats.max", "items[2].tint" or "" (the whole value) inside `root`, or null if any step is missing.
+const nlohmann::json* JsonAtPath(const nlohmann::json& root, const std::string& path) {
+    const nlohmann::json* node = &root;
+    usize i = 0;
+    while (i < path.size()) {
+        if (path[i] == '.') {
+            ++i;
+            continue;
+        }
+        if (path[i] == '[') {
+            const usize close = path.find(']', i);
+            if (close == std::string::npos || close == i + 1 || close - i > 7 || !node->is_array()) return nullptr;
+            usize index = 0;
+            for (usize d = i + 1; d < close; ++d) {
+                if (path[d] < '0' || path[d] > '9') return nullptr;
+                index = index * 10 + static_cast<usize>(path[d] - '0');
+            }
+            if (index >= node->size()) return nullptr;
+            node = &(*node)[index];
+            i = close + 1;
+            continue;
+        }
+        usize end = i;
+        while (end < path.size() && path[end] != '.' && path[end] != '[') ++end;
+        if (!node->is_object()) return nullptr;
+        const auto it = node->find(path.substr(i, end - i));
+        if (it == node->end()) return nullptr;
+        node = &*it;
+        i = end;
+    }
+    return node;
+}
+
+std::string Shortened(const std::string& text) {
+    constexpr usize kMax = 48;
+    return text.size() <= kMax ? text : text.substr(0, kMax - 3) + "...";
+}
+
+// The instance-wide override list: every override on every entity of the instance, each with the prefab's value, the
+// instance's, and a Revert of its own. True when an action ran (resolving may have changed the entity's components).
+bool DrawInstanceOverrides(CommandContext& ctx, CommandStack& stack, Entity entity) {
+    const std::vector<InstanceOverride> rows = InstanceOverrides(ctx, entity);
+    if (rows.empty()) return false;
+    if (!ImGui::TreeNode("instance_overrides", "Overrides in this instance (%zu)", rows.size())) return false;
+    bool acted = false;
+    if (ImGui::SmallButton("Revert Whole Instance")) acted = RevertWholeInstance(ctx, stack, entity);
+    for (usize i = 0; i < rows.size() && !acted; ++i) {
+        const InstanceOverride& row = rows[i];
+        ImGui::PushID(static_cast<int>(i));
+        if (ImGui::SmallButton("Revert")) acted = RevertInstanceOverride(ctx, stack, entity, row);
+        ImGui::SameLine();
+        const std::string where = row.entity_name + " / " + row.component + (row.field_path.empty() ? "" : "." + row.field_path);
+        if (row.orphaned) {
+            ImGui::TextDisabled("%s: no longer in the prefab", where.c_str());
+        } else {
+            if (row.entity == entity) ImGui::TextColored(ImVec4(0.35f, 0.65f, 1.0f, 1.0f), "%s", where.c_str());
+            else ImGui::TextUnformatted(where.c_str());
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s -> %s", Shortened(row.prefab_value).c_str(), Shortened(row.value).c_str());
+        }
+        ImGui::PopID();
+    }
+    ImGui::TreePop();
+    return acted;
+}
+
 } // namespace
+
+std::vector<InstanceOverride> InstanceOverrides(const CommandContext& ctx, Entity entity) {
+    if (!ctx.find_prefab || !ctx.world.IsAlive(entity)) return {};
+    const Entity root = FindInstanceRoot(ctx.world, ctx.guids, entity);
+    const PrefabInstance* instance = root.IsNull() ? nullptr : ctx.world.GetComponent<PrefabInstance>(root);
+    if (instance == nullptr) return {};
+    const PrefabData* prefab = ctx.find_prefab(instance->source.guid);
+    const IdComponent* root_id = ctx.world.GetComponent<IdComponent>(root);
+    if (prefab == nullptr || root_id == nullptr) return {};
+
+    std::unordered_map<PrefabLocalId, Entity> members;
+    const ComponentId link_id = GetComponentId<PrefabLink>();
+    ctx.world.ForEachArchetype([&](const Archetype& archetype) {
+        if (!archetype.Mask().test(link_id)) return;
+        for (usize c = 0; c < archetype.ChunkCount(); ++c) {
+            const Entity* entities = archetype.EntityArray(c);
+            for (u32 i = 0; i < archetype.ChunkEntityCount(c); ++i) {
+                const PrefabLink* link = ctx.world.GetComponent<PrefabLink>(entities[i]);
+                if (link != nullptr && link->instance == root_id->guid) members[link->local_id] = entities[i];
+            }
+        }
+    });
+
+    std::vector<InstanceOverride> rows;
+    for (const PropertyOverride& o : instance->overrides) {
+        InstanceOverride row;
+        row.local_id = o.entity;
+        row.component = o.component;
+        row.field_path = o.field_path;
+        row.value = o.value;
+        const auto member = members.find(o.entity);
+        row.entity = member == members.end() ? kNullEntity : member->second;
+        const EntityName* name = row.entity.IsNull() ? nullptr : ctx.world.GetComponent<EntityName>(row.entity);
+        row.entity_name = name != nullptr && !name->value.empty() ? name->value : "Entity #" + std::to_string(o.entity);
+        const PrefabEntity* source = prefab->Find(o.entity);
+        const nlohmann::json* value = nullptr;
+        if (source != nullptr) {
+            const auto component = source->components.find(o.component);
+            if (component != source->components.end()) value = JsonAtPath(*component, o.field_path);
+        }
+        row.orphaned = row.entity.IsNull() || value == nullptr;
+        if (value != nullptr) row.prefab_value = value->dump();
+        rows.push_back(std::move(row));
+    }
+    std::stable_sort(rows.begin(), rows.end(), [](const InstanceOverride& a, const InstanceOverride& b) { return a.local_id < b.local_id; });
+    return rows;
+}
+
+bool RevertInstanceOverride(CommandContext& ctx, CommandStack& stack, Entity entity, const InstanceOverride& row) {
+    if (!ctx.world.IsAlive(entity)) return false;
+    const Entity root = FindInstanceRoot(ctx.world, ctx.guids, entity);
+    const PrefabInstance* instance = root.IsNull() ? nullptr : ctx.world.GetComponent<PrefabInstance>(root);
+    if (instance == nullptr || row.component.empty()) return false;
+    const bool exists = std::any_of(instance->overrides.begin(), instance->overrides.end(), [&](const PropertyOverride& o) {
+        return o.entity == row.local_id && o.component == row.component && o.field_path == row.field_path;
+    });
+    if (!exists) return false;
+    const EntityGuid guid = EnsureGuid(ctx.world, root, &ctx.guids);
+    stack.BreakMergeChain();
+    stack.Execute(ctx, RevertPrefabOverrideCommand::ByName(guid, row.local_id, row.component, row.field_path));
+    stack.BreakMergeChain();
+    return true;
+}
+
+bool RevertWholeInstance(CommandContext& ctx, CommandStack& stack, Entity entity) {
+    if (!ctx.world.IsAlive(entity)) return false;
+    const Entity root = FindInstanceRoot(ctx.world, ctx.guids, entity);
+    const PrefabInstance* instance = root.IsNull() ? nullptr : ctx.world.GetComponent<PrefabInstance>(root);
+    if (instance == nullptr || instance->overrides.empty()) return false;
+    const EntityGuid guid = EnsureGuid(ctx.world, root, &ctx.guids);
+    stack.BreakMergeChain();
+    stack.Execute(ctx, std::make_unique<RevertPrefabOverrideCommand>(guid, PrefabLocalId{0}, kInvalidComponentId, std::string()));
+    stack.BreakMergeChain();
+    return true;
+}
 
 void CopyComponent(const World& world, Entity entity, ComponentId component) {
     const reflect::TypeInfo* type = GetComponentInfo(component).reflected;
@@ -149,6 +291,7 @@ void InspectEntity(CommandContext& ctx, CommandStack& stack, Entity entity, std:
             stack.Execute(ctx, std::make_unique<RevertPrefabOverrideCommand>(guid, kInvalidComponentId, ""));
             return; // resolving may have changed the entity's components
         }
+        if (DrawInstanceOverrides(ctx, stack, entity)) return;
     }
 
     std::vector<const reflect::TypeInfo*> addable;
