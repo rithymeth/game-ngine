@@ -7,6 +7,9 @@
 #include "aether/physics/character.h"
 #include "aether/player/camera_shake.h"
 #include "aether/player/frame_report.h"
+#if AETHER_KIT_QUESTS
+#include "aether/quests/quest_log.h"
+#endif
 #include "aether/project/project.h"
 #include "aether/scene/components.h"
 #include "aether/scene/gameplay.h"
@@ -483,6 +486,75 @@ AETHER_TEST(Player_ScriptsCanShakeTheCamera) {
     CHECK(game.Shake().Trauma() == 0.0f);
     CHECK(camera_y() == 5.0f); // drained away, and the camera is back where the scene put it
 }
+
+#if AETHER_KIT_QUESTS
+// A scene change keeps an entity's quests: the next scene's entity with the same GUID gets the quest log of the one being left, objectives' progress
+// included; an entity with no GUID, or with no counterpart in the next scene, is not carried.
+AETHER_TEST(Player_QuestLogsFollowTheirEntityThroughASceneChange) {
+    if (!Game::HasScripting()) return;
+    const stdfs::path dir = TestDir("QuestCarry");
+    const std::string player_guid = "00000000-0000-4000-8000-0000000000a1";
+    quest::QuestLog log;
+    quest::QuestState state;
+    state.name = "Rescue";
+    state.state = quest::kActive;
+    state.objectives.push_back({"find", 2, false});
+    log.quests.push_back(state);
+    const json log_json = reflect::ToJson(log);
+    const std::string script_guid = assets::ToString(assets::NewAssetGuid());
+    ScriptComponent component;
+    assets::AssetGuid parsed;
+    CHECK(assets::ParseAssetGuid(script_guid, parsed));
+    component.script.guid = parsed;
+    const json a = {{"$type", "Scene"}, {"$version", 1},
+        {"entities", json::array({{{"guid", player_guid}, {"components", {{"QuestLog", log_json}}}},
+                                  {{"components", {{"QuestLog", log_json}}}}, // no GUID: nothing to match it by
+                                  {{"components", {{"ScriptComponent", reflect::ToJson(component)}}}}})}};
+    const json b = {{"$type", "Scene"}, {"$version", 1},
+        {"entities", json::array({{{"guid", player_guid}, {"components", {{"Transform", {{"$v", 2}, {"position", {1, 2, 3}}, {"rotation", {0, 0, 0, 1}}, {"scale", {1, 1, 1}}}}}}},
+                                  {{"guid", "00000000-0000-4000-8000-0000000000b2"}, {"components", {{"Transform", {{"$v", 2}, {"position", {4, 5, 6}}, {"rotation", {0, 0, 0, 1}}, {"scale", {1, 1, 1}}}}}}}})}};
+    const char* script =
+        "local S = {}\n"
+        "function S:OnUpdate(dt)\n"
+        "  if not self.asked then self.asked = true; Scene.Load('Scenes/b.ascene') end\n"
+        "end\n"
+        "return S\n";
+    json manifest = Manifest("Scenes/a.ascene", "unused");
+    manifest["assets"] = json::array({{{"guid", assets::ToString(assets::NewAssetGuid())}, {"path", "Scenes/a.ascene"}, {"importer", "Scene"}},
+                                      {{"guid", assets::ToString(assets::NewAssetGuid())}, {"path", "Scenes/b.ascene"}, {"importer", "Scene"}},
+                                      {{"guid", script_guid}, {"path", "Scripts/Swap.luau"}, {"importer", "Script"}}});
+    pak::PakWriter writer;
+    CHECK(writer.Add("Manifest.json", manifest.dump()));
+    CHECK(writer.Add("Content/Scenes/a.ascene", a.dump()));
+    CHECK(writer.Add("Content/Scenes/b.ascene", b.dump()));
+    CHECK(writer.Add("Content/Scripts/Swap.luau", std::string(script)));
+    const stdfs::path pak = dir / "Game.apak";
+    CHECK(writer.Write(pak.string()));
+    GamePackage package;
+    std::string error;
+    CHECK(package.Mount(pak.string(), 0, &error));
+    CHECK(package.LoadManifest(&error));
+    Game game(package);
+    CHECK(game.LoadStartupScene(&error));
+    game.BeginPlay();
+    for (int i = 0; i < 4; ++i) game.Tick(1.0f / 60.0f);
+    CHECK(game.SceneName() == "Scenes/b.ascene");
+    CHECK(game.ScriptErrors().empty());
+    usize with_log = 0;
+    const quest::QuestLog* carried = nullptr;
+    game.GetWorld().ForEach<IdComponent, quest::QuestLog>([&](IdComponent& id, quest::QuestLog& l) {
+        ++with_log;
+        if (aether::ToString(id.guid) == player_guid) carried = &l; // it is the player's, not just any log
+    });
+    CHECK(with_log == 1); // the player's; the GUID-less one stayed behind, and the other entity of the new scene had no counterpart
+    if (carried != nullptr && !carried->quests.empty()) {
+        CHECK(carried->quests[0].name == "Rescue" && carried->quests[0].state == quest::kActive);
+        CHECK(!carried->quests[0].objectives.empty() && carried->quests[0].objectives[0].progress == 2);
+    } else {
+        CHECK(false);
+    }
+}
+#endif
 
 // A script can move the game to another scene (a door, a fast-travel point): Scene.Load asks, the game swaps at the start of the next frame, the new
 // scene's scripts run, and a scene that is missing or does not parse leaves the current one running.
