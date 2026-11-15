@@ -474,6 +474,17 @@ bool Game::LoadScene(const std::string& path, std::string* error) {
     const bool loaded = is_json ? LoadSceneJsonFromMemory(*world, bytes, path) : LoadSceneFromMemory(*world, bytes, path);
     if (!loaded) return Fail(error, "Can't load the scene " + path);
 
+#if AETHER_KIT_QUESTS
+    // Quest logs follow their entity from the scene being left to the next one: the new scene's entity with the same GUID (the player is the usual
+    // one) keeps the quests its predecessor had, with their objectives' progress. An entity with no GUID, or with no counterpart, is not carried.
+    std::vector<std::pair<EntityGuid, quest::QuestLog>> carried_quests;
+    if (world_) {
+        world_->ForEach<IdComponent, quest::QuestLog>([&](IdComponent& id, quest::QuestLog& log) {
+            if (!id.guid.IsNull()) carried_quests.emplace_back(id.guid, log);
+        });
+    }
+#endif
+
     if (saves_) saves_->SetWorldContext({}); // it points into the world being replaced
     world_ = std::move(world);
     guids_.Clear();
@@ -489,6 +500,14 @@ bool Game::LoadScene(const std::string& path, std::string* error) {
         }
     }
     guids_.Rebuild(*world_);
+#if AETHER_KIT_QUESTS
+    for (const auto& [guid, log] : carried_quests) {
+        const Entity entity = guids_.Find(*world_, guid);
+        if (entity == kNullEntity) continue;
+        if (quest::QuestLog* existing = world_->GetComponent<quest::QuestLog>(entity)) *existing = log;
+        else world_->AddComponent(entity, log);
+    }
+#endif
     lifecycle_ = std::make_unique<Lifecycle>(*world_, guids_);
     RefreshSaveContext();
     StartRuntime();
