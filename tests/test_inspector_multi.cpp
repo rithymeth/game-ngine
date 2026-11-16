@@ -134,7 +134,7 @@ AETHER_TEST(EntityInspector_EditAcrossSelectionIsOneUndoStep) {
     const std::vector<Entity> selection{a, b};
     auto frame = [&](bool focus_first_field) {
         ui.Frame([&] {
-            if (focus_first_field) ImGui::SetKeyboardFocusHere(1); // widget 0 is the component header
+            if (focus_first_field) ImGui::SetKeyboardFocusHere(2); // widget 0 is the header, 1 its «...» menu button
             InspectEntities(f.ctx, f.stack, selection);
         });
     };

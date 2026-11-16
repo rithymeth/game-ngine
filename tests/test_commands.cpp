@@ -212,7 +212,7 @@ AETHER_TEST(EntityInspector_EditsBecomeUndoableCommands) {
     auto frame = [&](bool focus_first_field) {
         ui.Frame([&] {
             if (focus_first_field) {
-                ImGui::SetKeyboardFocusHere(1); // widget 0 is the collapsing header
+                ImGui::SetKeyboardFocusHere(2); // widget 0 is the collapsing header, 1 its «...» menu button
             }
             InspectEntity(f.ctx, f.stack, e); // adding components migrates storage but keeps the handle
         });
