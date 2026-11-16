@@ -51,6 +51,9 @@
 #if AETHER_EDITOR_KIT_VEHICLES
 #include "aether/vehicles/vehicle.h"
 #endif
+#if AETHER_EDITOR_KIT_ROPES
+#include "aether/ropes/rope.h"
+#endif
 
 namespace aether::editor {
 
@@ -123,6 +126,9 @@ void RegisterEditorComponents() {
 #endif
 #if AETHER_EDITOR_KIT_VEHICLES
     vehicles::RegisterVehicleComponents();
+#endif
+#if AETHER_EDITOR_KIT_ROPES
+    ropes::RegisterRopeComponents();
 #endif
 }
 

@@ -77,6 +77,13 @@ if(TARGET Aether::Vehicles)
 else()
     target_compile_definitions(aether_game PRIVATE AETHER_KIT_VEHICLES=0)
 endif()
+# The ropes genre kit (ropes and chains), when built: the physics step in game.cpp applies it, so nothing outside the player needs its headers.
+if(TARGET Aether::Ropes)
+    target_link_libraries(aether_game PRIVATE Aether::Ropes)
+    target_compile_definitions(aether_game PRIVATE AETHER_KIT_ROPES=1)
+else()
+    target_compile_definitions(aether_game PRIVATE AETHER_KIT_ROPES=0)
+endif()
 # The checkpoints genre kit (respawn points), when built.
 if(TARGET Aether::Checkpoints)
     target_link_libraries(aether_game PUBLIC Aether::Checkpoints)

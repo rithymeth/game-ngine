@@ -91,3 +91,7 @@ A quest log (`QuestLog`) now follows its entity through a scene change (`Scene.L
 ## Blueprint and Renderer plugins
 
 **Blueprint** (visual scripting: `BlueprintInstance`) and **Renderer** (lights, sky light, post-process volumes and the other render components) are now plugins too, enabled by default like the rest, so every engine module that registers components of its own is a plugin. The modules that register none (Terrain, Loc, Save, Scripting, Templates) are not.
+
+## Ropes
+
+A new optional kit and engine plugin, **Ropes** (`AETHER_KIT_ROPES`, needs physics), on the physics joints: a `Rope` component becomes a chain of small bodies joined by ball-and-socket joints, hanging from the world or from another body, optionally carrying a body at its free end, with an optional model drawn per segment. Luau gets the `Ropes` table (`Cut`, `Length`, `Segments`, `SegmentPosition`). A cut wakes the rope's bodies: one that had hung at rest would otherwise stay in the air. See the manual's Ropes chapter.

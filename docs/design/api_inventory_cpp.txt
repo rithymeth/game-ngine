@@ -5793,6 +5793,38 @@
   bool MakeViewFromActiveCamera(const World&world,const GuidIndex&guids,f32 aspect,View&out)
   f32 Distance(const Vec3&p)const
   static Frustum FromViewProjection(const Mat4&view_projection)
+[ropes/include/aether/ropes/rope.h] experimental
+  type struct Rope
+  type struct RopeSegment
+  ))AETHER_REFLECT(aether::ropes::RopeSegment,1,AETHER_FIELD(rope,Field_ReadOnly),AETHER_FIELD(index,Field_ReadOnly))
+  ),AETHER_FIELD(damping,Field_EditAnywhere,
+  ),AETHER_FIELD(direction,Field_EditAnywhere,
+  ),AETHER_FIELD(end_anchor,Field_EditAnywhere,
+  ),AETHER_FIELD(end_entity,Field_EditAnywhere,
+  ),AETHER_FIELD(mass,Field_EditAnywhere,
+  ),AETHER_FIELD(pin_start,Field_EditAnywhere,
+  ),AETHER_FIELD(radius,Field_EditAnywhere,
+  ),AETHER_FIELD(segment_model,Field_EditAnywhere,
+  ),AETHER_FIELD(segments,Field_EditAnywhere,
+  ),AETHER_FIELD(start_entity,Field_EditAnywhere,
+  AETHER_REFLECT(aether::ropes::Rope,1,AETHER_FIELD(enabled,Field_EditAnywhere),AETHER_FIELD(length,Field_EditAnywhere,
+  void RegisterRopeComponents()
+[ropes/include/aether/ropes/rope_system.h] experimental
+  type class RopeSystem
+  RopeSystem&operator=(const RopeSystem&)=delete
+  RopeSystem(const RopeSystem&)=delete
+  bool Cut(Entity rope,f32 fraction)
+  bool SegmentPosition(Entity rope,u32 index,Vec3&out)const
+  f32 CurrentLength(Entity rope)const
+  public:RopeSystem(World&world,PhysicsScene&scene)
+  static RopeSystem*Active()
+  std::vector<Entity>Segments(Entity rope)const
+  usize Apply()
+  usize RopeCount()const
+  void MakeActive()
+  ~RopeSystem()
+[ropes/include/aether/ropes/ropes_kit.h] experimental
+  std::unique_ptr<kit::IKit>MakeRopesKit()
 [save/include/aether/save/envelope.h] experimental
   type struct EnvelopeInfo
   EnvelopeInfo Inspect(const std::filesystem::path&file)
@@ -6122,6 +6154,8 @@
   ~LuauHost()
 [scripting/include/aether/script/quests_api.h] experimental
   void InstallQuestsApi(LuauHost&host)
+[scripting/include/aether/script/ropes_api.h] experimental
+  void InstallRopesApi(LuauHost&host)
 [scripting/include/aether/script/save_api.h] experimental
   void InstallSaveApi(LuauHost&host)
 [scripting/include/aether/script/script_system.h] experimental

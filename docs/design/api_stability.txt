@@ -23,6 +23,7 @@ crafting experimental
 forcefields experimental
 destruction experimental
 vehicles experimental
+ropes experimental
 loot experimental
 checkpoints experimental
 spawner experimental

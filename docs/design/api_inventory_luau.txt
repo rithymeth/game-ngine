@@ -252,6 +252,11 @@ Quests.IsCompleted function
 Quests.Notify function
 Quests.Progress function
 Quests.Start function
+Ropes table
+Ropes.Cut function
+Ropes.Length function
+Ropes.SegmentPosition function
+Ropes.Segments function
 SaveGames table
 SaveGames.CaptureWorld function
 SaveGames.CreateSaveObject function

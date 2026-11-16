@@ -25,6 +25,7 @@ add_library(aether_scripting STATIC
     src/forces_api.cpp
     src/destruction_api.cpp
     src/vehicles_api.cpp
+    src/ropes_api.cpp
     src/ai_api.cpp
 )
 
@@ -74,6 +75,12 @@ if(TARGET Aether::Vehicles)
     target_compile_definitions(aether_scripting PRIVATE AETHER_KIT_VEHICLES=1)
 else()
     target_compile_definitions(aether_scripting PRIVATE AETHER_KIT_VEHICLES=0)
+endif()
+if(TARGET Aether::Ropes)
+    target_link_libraries(aether_scripting PRIVATE Aether::Ropes)
+    target_compile_definitions(aether_scripting PRIVATE AETHER_KIT_ROPES=1)
+else()
+    target_compile_definitions(aether_scripting PRIVATE AETHER_KIT_ROPES=0)
 endif()
 if(TARGET Aether::Checkpoints)
     target_link_libraries(aether_scripting PRIVATE Aether::Checkpoints)

@@ -1,0 +1,29 @@
+{
+  "$type": "Plugin",
+  "$v": 1,
+  "name": "Ropes",
+  "friendly_name": "Ropes",
+  "version": "1.0.0",
+  "description": "Ropes and chains: a Rope component becomes a chain of small bodies joined by ball-and-socket joints, pinned to the world or a body, optionally carrying a body, and cut by the Ropes script API (a genre kit on Physics).",
+  "category": "Physics",
+  "created_by": "Aether",
+  "engine_version": "",
+  "enabled_by_default": true,
+  "has_content": false,
+  "dependencies": [
+    {
+      "$v": 1,
+      "name": "Physics",
+      "min_version": "",
+      "optional": false
+    }
+  ],
+  "modules": [
+    {
+      "$v": 1,
+      "name": "Ropes",
+      "type": "Runtime",
+      "phase": "PreDefault"
+    }
+  ]
+}
