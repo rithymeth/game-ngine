@@ -450,6 +450,17 @@ void DrawWorld(const abyss::Game& game, const std::vector<DrawTri>& mesh, const 
                   {relay_col.r * pulse, relay_col.g * pulse, relay_col.b * pulse});
             r.Gem({rp.x, rp.y + 3.6f, rp.z}, 0.45f, anim, relay_col);
         }
+        if (relay.restored) {
+            f32 radius = 3.0f + std::fmod(anim, 2.4f) * 4.0f;
+            constexpr int kSegs = 14;
+            for (int i = 0; i < kSegs; ++i) {
+                f32 a0 = (6.2831853f * i) / kSegs;
+                f32 a1 = (6.2831853f * (i + 1)) / kSegs;
+                Vec3 p0{rp.x + std::cos(a0) * radius, rp.y + 1.2f, rp.z + std::sin(a0) * radius};
+                Vec3 p1{rp.x + std::cos(a1) * radius, rp.y + 1.2f, rp.z + std::sin(a1) * radius};
+                r.Quad(p0, p1, p1 + Vec3{0, 0.2f, 0}, p0 + Vec3{0, 0.2f, 0}, {0.35f, 1.0f, 0.75f});
+            }
+        }
     }
 }
 

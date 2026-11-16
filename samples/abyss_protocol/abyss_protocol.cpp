@@ -185,6 +185,15 @@ void Game::UpdateCreature(CreatureAI& creature, float dt) {
             consider(ev.position, heard);
         }
     }
+    if (relay_.restored) {
+        float relay_dist = Distance(creature.position, relay_.position);
+        constexpr float kCall = 34.0f;
+        if (relay_dist < kCall) {
+            float heard = 0.7f * (1.0f - relay_dist / kCall);
+            noise_influence += heard;
+            consider(relay_.position, heard);
+        }
+    }
     if (best > 0.04f) {
         creature.interest = heard_at;
         creature.has_interest = true;
@@ -230,9 +239,9 @@ void Game::UpdateCreature(CreatureAI& creature, float dt) {
 
 void Game::UpdatePressure(float dt) {
     float depth = -sub_.position.y;
-    if (depth > 50.0f) {
-        float excess = (depth - 50.0f) / 150.0f;
-        sub_.battery -= excess * 0.05f * dt;
+    if (depth > 26.0f) {
+        float excess = (depth - 26.0f) / 40.0f;
+        sub_.battery -= excess * 0.1f * dt;
     }
     if (sub_.lights_on) sub_.battery -= 0.03f * dt;
     sub_.battery = std::max(0.0f, sub_.battery);
@@ -381,6 +390,7 @@ std::string Game::StatusText() const {
         << (alert ? "  [ALERT]" : "")
         << (InCurrent() ? "  CURRENT" : "")
         << (leak_ > 0.0f ? "  LEAK" : "")
+        << ((-sub_.position.y) > 26.0f ? "  PRESSURE" : "");
         << (!cache_.taken ? "  Cache: live" : "");
     if (mission_ == Mission::Won) oss << "  MISSION COMPLETE  " << int(time_) << "s";
     else if (mission_ == Mission::Lost) oss << "  FAILED: " << fail_ << "  (R retry)";
