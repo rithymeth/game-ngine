@@ -173,7 +173,15 @@ public:
     bool RenderAutoExposure(gfx::rhi::ICommandList& commands, const PostProcessSettings& settings, f32 dt, u64 camera);
     void ResetAutoExposure() { exposure_history_valid_ = false; exposure_ready_ = false; }
 
+    // After depth of field, before Draw; motion is TaaPass::LastMotion() from this frame, or 0 for camera motion only.
+    bool RenderMotionBlur(gfx::rhi::ICommandList& commands, const PostProcessSettings& settings,
+                          const Mat4& view_projection, f32 dt, u64 camera, u32 motion = 0);
+    void ResetMotionBlur() { motion_history_valid_ = false; motion_ready_ = false; }
+
 private:
+    bool EnsureHdrComposite();
+    bool EnsureMotionBlur(u32 width, u32 height);
+    void ReleaseMotionBlur();
     bool EnsureAutoExposure(u32 width, u32 height);
     void ReleaseAutoExposure();
     PostConstants FrameConstants(const PostProcessSettings& settings) const;
@@ -191,6 +199,13 @@ private:
     gfx::rhi::SampledTextureHandle dof_composite_, dof_result_;
     u32 dof_width_ = 0, dof_height_ = 0;
     bool dof_ready_ = false;
+    gfx::rhi::PipelineHandle motion_blur_;
+    gfx::rhi::SampledTextureHandle motion_composite_, motion_result_;
+    u32 motion_width_ = 0, motion_height_ = 0, motion_frame_ = 0;
+    Extent motion_view_size_{};
+    Mat4 motion_previous_view_projection_;
+    u64 motion_camera_ = 0;
+    bool motion_ready_ = false, motion_history_valid_ = false;
     gfx::rhi::PipelineHandle exposure_pipeline_;
     std::vector<gfx::rhi::SampledTextureHandle> exposure_levels_;
     std::vector<Extent> exposure_extents_;

@@ -5548,6 +5548,7 @@
   ),AETHER_FIELD(height_scale,Field_EditAnywhere,
   ),AETHER_FIELD(hydraulic_droplets,Field_EditAnywhere,
   ),AETHER_FIELD(inner_angle_degrees,Field_EditAnywhere,
+  ),AETHER_FIELD(motion_blur,Field_EditAnywhere,
   ),AETHER_FIELD(outer_angle_degrees,Field_EditAnywhere,
   ),AETHER_FIELD(priority,Field_EditAnywhere,
   ),AETHER_FIELD(range,Field_EditAnywhere,

@@ -153,6 +153,7 @@ PostProcessSettings BlendPostProcess(const RenderScene& scene, const Vec3& posit
         if (w <= 0.0f) continue;
         out.exposure_compensation = Lerp(out.exposure_compensation, s.exposure_compensation, w);
         out.auto_exposure = Lerp(out.auto_exposure, s.auto_exposure, w);
+        out.motion_blur = Lerp(out.motion_blur, s.motion_blur, w);
         out.bloom_intensity = Lerp(out.bloom_intensity, s.bloom_intensity, w);
         out.vignette = Lerp(out.vignette, s.vignette, w);
         out.saturation = Lerp(out.saturation, s.saturation, w);

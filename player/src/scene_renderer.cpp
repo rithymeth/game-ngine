@@ -3573,9 +3573,10 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
         // The reflections reconstruct view-space positions from the depth, which is a perspective projection's inverse; an orthographic camera
         // (or no camera) keeps the sky lighting's reflection.
         if (!renderer.ssr || camera == nullptr || camera->projection != Projection::Perspective) post_settings.screen_space_reflections = 0.0f;
+        if (camera == nullptr || camera->projection != Projection::Perspective) post_settings.motion_blur = 0.0f;
         const CineCamera* cine_camera = camera && camera->projection == Projection::Perspective
                                             ? world.GetComponent<CineCamera>(camera_entity) : nullptr;
-        const bool resolve = (renderer.taa || vsm_record || renderer.ssao || renderer.ssr || cine_camera || post_settings.fog_density > 0.0f ||
+        const bool resolve = (renderer.taa || vsm_record || renderer.ssao || renderer.ssr || cine_camera || post_settings.motion_blur > 0.0f || post_settings.fog_density > 0.0f ||
                               post_settings.height_fog_density > 0.0f) &&
                              have_camera && commands.CopySceneDepth();
         commands.EndRenderPass();
@@ -3590,13 +3591,16 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
             renderer.taa->Reset();
         }
         renderer.post->SetSource(resolved);
-        if (renderer.exposure_scene != game.SceneName() || game_time < renderer.previous_exposure_time) renderer.post->ResetAutoExposure();
+        if (renderer.exposure_scene != game.SceneName() || game_time < renderer.previous_exposure_time) {
+            renderer.post->ResetAutoExposure();
+            renderer.post->ResetMotionBlur();
+        }
         const f32 exposure_dt = static_cast<f32>(std::max(0.0, game_time - renderer.previous_exposure_time));
         renderer.previous_exposure_time = game_time;
         renderer.exposure_scene = game.SceneName();
         renderer.post->RenderAutoExposure(commands, post_settings, exposure_dt,
                                           (static_cast<u64>(camera_entity.index) << 32) | camera_entity.generation);
-        if (resolve && (renderer.ssao || renderer.ssr || cine_camera || post_settings.fog_density > 0.0f || post_settings.height_fog_density > 0.0f) &&
+        if (resolve && (renderer.ssao || renderer.ssr || cine_camera || post_settings.motion_blur > 0.0f || post_settings.fog_density > 0.0f || post_settings.height_fog_density > 0.0f) &&
             renderer.swap_chain.SceneDepthTexture().IsValid()) {
             renderer.post->SetAmbientOcclusion({renderer.swap_chain.SceneDepthTexture().index, renderer.ssao ? renderer.ao_strength : 0.0f,
                                                 renderer.ao_radius, ao_near, ao_far, ao_proj_x, ao_proj_y});
@@ -3612,6 +3616,9 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
         // Bloom reads the finished scene colour into its own chain of render textures, between the two passes.
         if (renderer.bloom) renderer.post->RenderBloom(commands, post_settings);
         if (resolve && cine_camera) renderer.post->RenderDepthOfField(commands, post_settings, *cine_camera);
+        renderer.post->RenderMotionBlur(commands, post_settings, taa_view_projection, exposure_dt,
+                                       (static_cast<u64>(camera_entity.index) << 32) | camera_entity.generation,
+                                       resolved && renderer.taa ? renderer.taa->LastMotion() : 0u);
         commands.BeginRenderPass(renderer.swap_chain, kBackground);
         renderer.post->Draw(commands, post_settings);
     }

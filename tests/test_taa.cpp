@@ -238,7 +238,7 @@ AETHER_TEST(Taa_OnlyATransformThatChangedCountsAsMoving) {
 // A bar of pixel-aligned stripes (2 pixels white, 2 black) moving 2 pixels a frame over a still background. With the camera's
 // reprojection alone every pixel's history is the opposite stripe, inside the neighbourhood's colour box, so the stripes blur toward grey;
 // with the bar as a mover the history follows it and they stay sharp. Pixels the bar has just uncovered keep the camera's reprojection.
-static void Taa_AMovingObjectKeepsItsDetailWithMotionVectors(rhi::Backend backend) {
+static void Taa_AMovingObjectKeepsItsDetailWithMotionVectors(rhi::Backend backend, bool motion_blur = false) {
     if (!rhi::IsBackendAvailable(backend)) return;
     std::unique_ptr<rhi::IDevice> device;
     try {
@@ -323,6 +323,11 @@ float4 PSMain(float4 position : SV_Position) : SV_Target {
     const auto run = [&](Mode mode, std::vector<u8>& row) {
         TaaPass taa(*device, *target);
         if (!taa.Valid()) return false;
+        std::unique_ptr<PostPass> post;
+        if (motion_blur) post = std::make_unique<PostPass>(*device, *target);
+        PostProcessSettings settings;
+        settings.motion_blur = 1.0f;
+        settings.bloom_intensity = settings.screen_space_reflections = 0.0f;
         const Mat4 view_projection = Mat4::Identity();
         Mat4 previous_model = Mat4::Identity();
         f32 previous_positions[16 + 12]{};
@@ -357,12 +362,22 @@ float4 PSMain(float4 position : SV_Position) : SV_Target {
             const u32 resolved = taa.Resolve(*cmd, view_projection, 1, movers, mode == kDeforming ? previous_buffer : rhi::BufferHandle{});
             if (resolved == 0) return false;
             drew_motion = drew_motion || taa.LastMotion() != 0;
+            if (post) {
+                post->SetSource(resolved);
+                post->SetAmbientOcclusion({target->SceneDepthTexture().index, 0.0f, 1.0f, 0.1f, 100.0f, 1.0f, 1.0f});
+                AETHER_CHECK(post->RenderMotionBlur(*cmd, settings, view_projection, 1.0f / 240.0f, 1, taa.LastMotion()) ==
+                             (f > 0 && mode != kCameraOnly));
+            }
             cmd->BeginRenderPass(*target, {1, 0, 1, 1});
-            cmd->BindPipeline(show_pipeline);
-            cmd->BindBindlessTextures();
-            const u32 index[4] = {resolved, 0, 0, 0};
-            cmd->SetPushConstants(index, sizeof(index));
-            cmd->Draw(3);
+            if (post) {
+                post->Draw(*cmd, settings);
+            } else {
+                cmd->BindPipeline(show_pipeline);
+                cmd->BindBindlessTextures();
+                const u32 index[4] = {resolved, 0, 0, 0};
+                cmd->SetPushConstants(index, sizeof(index));
+                cmd->Draw(3);
+            }
             cmd->EndRenderPass();
             cmd->Close();
             device->WaitForFence(device->Submit(*cmd, target.get()));
@@ -405,8 +420,12 @@ float4 PSMain(float4 position : SV_Position) : SV_Target {
             lowest = std::min<int>(lowest, blurred[x]);
             highest = std::max<int>(highest, blurred[x]);
         }
-        AETHER_CHECK(grey_with == 0);             // every stripe pixel still white or black
-        AETHER_CHECK(highest - lowest < 128);     // the test can tell: without the motion pass the stripes wash out
+        if (motion_blur) {
+            AETHER_CHECK(grey_with >= 4);
+        } else {
+            AETHER_CHECK(grey_with == 0);
+            AETHER_CHECK(highest - lowest < 128);
+        }
         AETHER_CHECK(sharp[4] < 5 && sharp[12] < 5); // the uncovered background stays the background
     }
     device->DestroyBuffer(vertex_buffer);
@@ -415,6 +434,9 @@ float4 PSMain(float4 position : SV_Position) : SV_Target {
     device->DestroyPipeline(scene_pipeline);
     device->DestroyPipeline(show_pipeline);
 }
+
+AETHER_TEST(Taa_MotionBlurReadsRigidAndSkinnedVelocities_D3D12) { Taa_AMovingObjectKeepsItsDetailWithMotionVectors(rhi::Backend::D3D12, true); }
+AETHER_TEST(Taa_MotionBlurReadsRigidAndSkinnedVelocities_Vulkan) { Taa_AMovingObjectKeepsItsDetailWithMotionVectors(rhi::Backend::Vulkan, true); }
 
 // On both backends.
 AETHER_TEST(Taa_AMovingObjectKeepsItsDetailWithMotionVectors_D3D12) { Taa_AMovingObjectKeepsItsDetailWithMotionVectors(rhi::Backend::D3D12); }

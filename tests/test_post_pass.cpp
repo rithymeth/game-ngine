@@ -957,6 +957,233 @@ void CheckAutoExposure(gfx::rhi::Backend backend) {
 
 } // namespace
 
+namespace {
+
+void CheckMotionBlur(gfx::rhi::Backend backend) {
+    auto device = MakeDevice(backend);
+    if (!device) return;
+    auto target = device->CreateSwapChain(nullptr, 128, 64, 2);
+    player::PostPass post(*device, *target);
+    if (!post.Valid()) return;
+    PostProcessSettings settings;
+    settings.bloom_intensity = settings.screen_space_reflections = 0.0f;
+    settings.tonemapper = Tonemapper::None;
+    settings.motion_blur = 1.0f;
+    f32 dt = 1.0f / 60.0f, object_velocity = 0.0f;
+    u64 camera = 1;
+    bool object = false, skip = false, bind_depth = true, split_depth = false, sky = false, effects = false;
+    f32 object_alpha = 1.0f;
+    const char* capture = nullptr;
+    const auto timer = device->SupportsGpuTiming() ? device->CreateGpuTimer(2) : gfx::rhi::GpuTimerHandle{};
+    f64 elapsed = 0.0;
+    u32 measured = 0;
+    const auto render = [&](const Mat4& vp, bool draws, f32 camera_velocity = 0.0f) {
+        const u32 width = target->Width(), height = target->Height();
+        std::vector<u16> image, velocities;
+        std::vector<f32> depths;
+        for (u32 y = 0; y < height; ++y) for (u32 x = 0; x < width; ++x) {
+            const f32 value = effects ? 0.125f : (x / 4) % 2 ? 0.5f : 0.0f;
+            const u16 half = player::FloatToHalf(value);
+            image.insert(image.end(), {half, half, half, player::FloatToHalf(1.0f)});
+            velocities.insert(velocities.end(), {player::FloatToHalf(object_velocity / width), 0, 0, player::FloatToHalf(object_alpha)});
+            depths.push_back(sky ? 1.0f : SsrDeviceDepth(split_depth && x < width / 2 ? 1.0f : 4.0f));
+        }
+        const auto source = device->CreateHalfFloatTexture(width, height, 1, image.data());
+        const auto depth = device->CreateR32FloatTexture(width, height, depths.data());
+        const auto motion = object ? device->CreateHalfFloatTexture(width, height, 1, velocities.data()) : gfx::rhi::SampledTextureHandle{};
+        AETHER_CHECK(source.IsValid() && depth.IsValid() && (!object || motion.IsValid()));
+        if (!source.IsValid() || !depth.IsValid() || (object && !motion.IsValid())) return;
+        post.SetSource(source.index);
+        if (bind_depth) post.SetAmbientOcclusion({depth.index, 0.0f, 1.0f, kSsrNear, kSsrFar, kSsrProjection, kSsrProjection});
+        target->AcquireNextImage();
+        auto cmd = device->CreateCommandList();
+        cmd->Reset();
+        if (effects) {
+            AETHER_CHECK(post.RenderAutoExposure(*cmd, settings, dt, camera));
+            AETHER_CHECK(post.RenderBloom(*cmd, settings));
+            CineCamera lens;
+            lens.focal_length_mm = 200.0f;
+            lens.aperture_f = 0.7f;
+            lens.focus_distance = 1.0f;
+            AETHER_CHECK(post.RenderDepthOfField(*cmd, settings, lens));
+        }
+        if (timer.IsValid()) cmd->WriteGpuTimestamp(timer, 0);
+        if (!skip) AETHER_CHECK(post.RenderMotionBlur(*cmd, settings, vp, dt, camera, object ? motion.index : 0u) == draws);
+        if (timer.IsValid()) { cmd->WriteGpuTimestamp(timer, 1); cmd->ResolveGpuTimer(timer); }
+        cmd->BeginRenderPass(*target, {1, 0, 1, 1});
+        post.Draw(*cmd, settings);
+        cmd->EndRenderPass();
+        cmd->Close();
+        device->WaitForFence(device->Submit(*cmd, target.get()));
+        std::vector<u8> pixels;
+        const bool read = target->ReadBack(pixels);
+        target->Present(false);
+        AETHER_CHECK(read && pixels.size() == width * height * 4);
+        if (read && pixels.size() == width * height * 4) {
+            auto constants = player::PackPostConstants(settings, source.index);
+            if (effects) constants.exposure *= player::HalfToFloat(player::FloatToHalf(ExposureFromEV100(0.0f)));
+            int worst = 0, changed = 0;
+            for (u32 y = 0; y < height; ++y) for (u32 x = 0; x < width; ++x) {
+                const usize at = static_cast<usize>(y) * width + x;
+                f32 value = player::HalfToFloat(image[at * 4]);
+                const f32 velocity = object && object_alpha > 0.5f ? player::HalfToFloat(velocities[at * 4]) * width : camera_velocity;
+                const f32 previous_x = x + 0.5f + velocity;
+                if (draws && !sky && std::isfinite(velocity) && previous_x >= 0.0f && previous_x <= width) {
+                    const f32 span = std::clamp(velocity * std::clamp(settings.motion_blur, 0.0f, 1.0f) / (120.0f * dt), -32.0f, 32.0f);
+                    if (std::fabs(span) >= 0.5f) {
+                        f32 sum = value, count = 1.0f;
+                        for (u32 i = 0; i < 16; ++i) {
+                            const int sample = static_cast<int>(std::floor(x + 0.5f + span * ((i + 0.5f) / 16.0f - 0.5f)));
+                            if (sample < 0 || sample >= static_cast<int>(width)) continue;
+                            if (split_depth && (x < width / 2) != (sample < static_cast<int>(width / 2))) continue;
+                            sum += player::HalfToFloat(image[(static_cast<usize>(y) * width + sample) * 4]);
+                            count += 1.0f;
+                        }
+                        value = player::HalfToFloat(player::FloatToHalf(sum / count));
+                    }
+                }
+                const auto expected = player::PostReference(Vec3(value, value, value), constants, (x + 0.5f) / width, (y + 0.5f) / height);
+                worst = std::max(worst, std::abs(static_cast<int>(pixels[at * 4 + 1]) - static_cast<int>(std::lround(expected.y * 255.0f))));
+                const f32 original = player::HalfToFloat(image[at * 4]);
+                const auto sharp = player::PostReference(Vec3(original, original, original), constants, (x + 0.5f) / width, (y + 0.5f) / height);
+                if (std::abs(static_cast<int>(pixels[at * 4 + 1]) - static_cast<int>(std::lround(sharp.y * 255.0f))) > 3) ++changed;
+            }
+            if (worst > 2) std::printf("    motion blur: draw %d, velocity %g, strength %g, worst error %d\n", draws, object ? object_velocity : camera_velocity, settings.motion_blur, worst);
+            AETHER_CHECK(worst <= 2);
+            const f32 visible_velocity = object && object_alpha > 0.5f ? object_velocity : camera_velocity;
+            if (draws && !sky && !effects && width >= 128 && std::fabs(visible_velocity) == 32.0f &&
+                dt == 1.0f / 60.0f) AETHER_CHECK(changed > 0);
+            if (const char* directory = std::getenv("AETHER_RENDER_TEST_OUT"); directory && capture) {
+                const auto png = assets::EncodePngRgba8(width, height, pixels);
+                const std::string name = std::string(backend == gfx::rhi::Backend::D3D12 ? "d3d12-" : "vulkan-") + capture + ".png";
+                std::ofstream file(std::filesystem::path(directory) / name, std::ios::binary);
+                file.write(reinterpret_cast<const char*>(png.data()), static_cast<std::streamsize>(png.size()));
+                AETHER_CHECK(file.good());
+            }
+        }
+        if (timer.IsValid()) {
+            f64 times[2]{};
+            if (draws && device->ReadGpuTimer(timer, times)) { elapsed += times[1]; ++measured; }
+        }
+        device->DestroyTexture(source);
+        device->DestroyTexture(depth);
+        if (motion.IsValid()) device->DestroyTexture(motion);
+    };
+    const auto translated = [](f32 x) { return Mat4::Translation(Vec3(x, 0, 0)); };
+    capture = "motion-sharp";
+    render(translated(0), false);
+    capture = "motion-camera";
+    render(translated(0.5f), true, -32.0f);
+    capture = nullptr;
+    render(translated(0.5f), false);
+    render(translated(0), true, 32.0f);
+    dt = 1.0f / 30.0f;
+    render(translated(1.0f), true, -64.0f);
+    dt = 1.0f / 120.0f;
+    render(translated(0.75f), true, 16.0f);
+    dt = 1.0f / 60.0f;
+    settings.motion_blur = 0.5f;
+    render(translated(0.25f), true, 32.0f);
+    settings.motion_blur = 2.0f;
+    render(translated(0.75f), true, -32.0f);
+    settings.motion_blur = 1.0f;
+    for (f32 invalid : {0.0f, -1.0f, std::nanf(""), HUGE_VALF}) {
+        settings.motion_blur = invalid;
+        render(translated(0), false);
+        settings.motion_blur = 1.0f;
+        render(translated(0), false);
+        render(translated(0.5f), true, -32.0f);
+    }
+    for (f32 invalid : {0.0f, -1.0f, 0.5f, std::nanf(""), HUGE_VALF}) {
+        dt = invalid;
+        render(translated(0), false);
+        dt = 1.0f / 60.0f;
+        render(translated(0), false);
+    }
+    ++camera;
+    render(translated(0.5f), false);
+    post.ResetMotionBlur();
+    render(translated(0), false);
+    skip = true;
+    render(translated(0.5f), false);
+    skip = false;
+    render(translated(0.5f), false);
+    bind_depth = false;
+    render(translated(0), false);
+    bind_depth = true;
+    render(translated(0), false);
+    Mat4 singular;
+    singular.cols[0] = Vec4(0, 0, 0, 0);
+    render(singular, false);
+    render(translated(0), false);
+    object = true;
+    object_velocity = -32.0f;
+    capture = "motion-object";
+    render(translated(0), true);
+    capture = nullptr;
+    split_depth = true;
+    render(translated(0), true);
+    split_depth = false;
+    sky = true;
+    render(translated(0), true);
+    sky = false;
+    for (f32 velocity : {0.0f, -512.0f, std::nanf(""), HUGE_VALF, -96.0f}) {
+        object_velocity = velocity;
+        render(translated(0), true);
+    }
+    object_velocity = -32.0f;
+    object_alpha = 0.0f;
+    render(translated(0), true);
+    render(translated(0.5f), true, -32.0f);
+    object_alpha = 1.0f;
+    target->Resize(63, 17);
+    render(translated(0), false);
+    render(translated(0), true);
+    target->Resize(1, 1);
+    render(translated(0), false);
+    render(translated(0), true);
+    target->Resize(128, 64);
+    effects = true;
+    settings.auto_exposure = 1.0f;
+    settings.bloom_intensity = 0.4f;
+    settings.exposure_compensation = 1.5f;
+    settings.vignette = 0.5f;
+    settings.saturation = 0.7f;
+    settings.chromatic_aberration = settings.sharpen = 0.5f;
+    post.ResetAutoExposure();
+    render(translated(0), false);
+    render(translated(0), true);
+    if (measured) std::printf("    %s GPU motion blur: %.4f ms mean over %u synthetic frames\n",
+                              backend == gfx::rhi::Backend::D3D12 ? "D3D12" : "Vulkan", elapsed / measured, measured);
+    if (timer.IsValid()) device->DestroyGpuTimer(timer);
+}
+
+} // namespace
+
+AETHER_TEST(PostPass_MotionBlurOnD3D12) { CheckMotionBlur(gfx::rhi::Backend::D3D12); }
+AETHER_TEST(PostPass_MotionBlurOnVulkan) { CheckMotionBlur(gfx::rhi::Backend::Vulkan); }
+
+AETHER_TEST(PostVolume_MotionBlurBlendsAndDefaultsOff) {
+    AETHER_CHECK(PostProcessVolume{}.motion_blur == 0.0f && PostProcessSettings{}.motion_blur == 0.0f);
+    RenderScene scene;
+    PostProcessVolume volume;
+    volume.motion_blur = 1.0f;
+    volume.weight = 0.5f;
+    scene.post_volumes.push_back({Vec3(0, 0, 0), volume});
+    AETHER_CHECK(BlendPostProcess(scene, Vec3(0, 0, 0)).motion_blur == 0.5f);
+    scene.post_volumes[0].settings.global = false;
+    scene.post_volumes[0].settings.blend_distance = 2.0f;
+    AETHER_CHECK(BlendPostProcess(scene, Vec3(6, 0, 0)).motion_blur == 0.25f);
+    AETHER_CHECK(BlendPostProcess(scene, Vec3(8, 0, 0)).motion_blur == 0.0f);
+    reflect::Json saved = reflect::ToJson(volume);
+    PostProcessVolume loaded;
+    AETHER_CHECK(reflect::FromJson(loaded, saved) && loaded.motion_blur == 1.0f);
+    saved.erase("motion_blur");
+    loaded = {};
+    AETHER_CHECK(reflect::FromJson(loaded, saved) && loaded.motion_blur == 0.0f);
+    static_assert(sizeof(player::PostConstants) == 128);
+}
+
 AETHER_TEST(PostPass_AutoExposureOnD3D12) { CheckAutoExposure(gfx::rhi::Backend::D3D12); }
 AETHER_TEST(PostPass_AutoExposureOnVulkan) { CheckAutoExposure(gfx::rhi::Backend::Vulkan); }
 

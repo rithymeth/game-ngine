@@ -2,6 +2,16 @@
 
 A working draft of the next release's notes. It is rewritten into `vX.Y.Z.md` when a version is tagged, so it describes what is on `master`, not a promise of a version number or a date.
 
+## Motion blur
+
+Post-process volumes gain **motion blur** (`motion_blur`, 0 to 1, off by default). At 1 the blur is the movement a 1/120-second shutter would see, so the streak stays the same physical length at any frame rate. The setting blends across volumes, old scenes stay sharp, and orthographic cameras never blur.
+
+Each pixel's velocity is the temporal anti-aliasing motion vector where a rigid or skinned mover wrote one. Everywhere else it is the camera's reprojection through the depth copy, so camera blur works without TAA. A 16-tap centred line blur gathers along that velocity, capped at 32 pixels. Taps that are off screen, sky, or more than 5% away in linear depth are skipped, which keeps a moving object from smearing over a still background and the reverse. The blur runs on the HDR composite after depth of field (or on its own composite when depth of field is off), before exposure, tone mapping, vignette and film grain. Its constants are a separate 96-byte block, so the post constants stay at 128 bytes, and its two textures are allocated only while it is on.
+
+A camera switch, scene or time reset, resize, skipped frame, invalid frame time, missing depth or singular view-projection starts it again from a sharp frame. A still camera with no movers draws nothing extra. This is a bounded gather, not a tile-max/neighbourhood reconstruction: a fast object's blur does not spread past its own silhouette, and transparent surfaces use the opaque depth behind them.
+
+D3D12 and Vulkan tests compare the result against a CPU reference of the same gather. They cover camera and object velocity, frame-time scaling, strength clamping, invalid inputs, resets, depth discontinuities, sky, extreme velocities, odd and one-pixel viewports, and composition with auto exposure, bloom, lens effects and depth of field. A TAA test checks that rigid and skinned movers blur through their motion vectors.
+
 ## Automatic exposure
 
 Post-process volumes gain **auto exposure** (`auto_exposure`, 0 to 1, off by default). It adapts exposure to the HDR scene's brightness; the existing exposure compensation still biases the result. The setting blends across volumes, and old scenes retain manual exposure.

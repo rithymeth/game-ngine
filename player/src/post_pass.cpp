@@ -6,11 +6,86 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <limits>
 
 namespace aether::player {
 
 namespace {
+
+struct MotionBlurConstants {
+    f32 reprojection[16]{};
+    u32 source = 0, depth = 0, motion = 0;
+    f32 scale = 0.0f;
+    f32 near_plane = 0.1f, far_plane = 1000.0f;
+    f32 padding[2]{};
+};
+static_assert(sizeof(MotionBlurConstants) == 96);
+
+constexpr char kMotionBlurShader[] = R"(
+struct MotionBlurConstants {
+    float4x4 reprojection;
+    uint source;
+    uint depth;
+    uint motion;
+    float scale;
+    float near_plane;
+    float far_plane;
+    float2 padding;
+};
+#ifdef __spirv__
+[[vk::push_constant]]
+#endif
+ConstantBuffer<MotionBlurConstants> g_PC : register(b0);
+Texture2D g_Textures[128] : register(t0, space0);
+
+float4 VSMain(uint id : SV_VertexID) : SV_POSITION {
+    float2 uv = float2((id << 1) & 2, id & 2);
+    return float4(uv * float2(2.0, -2.0) + float2(-1.0, 1.0), 0.0, 1.0);
+}
+float Distance(float depth) {
+    return g_PC.near_plane * g_PC.far_plane / (g_PC.far_plane - depth * (g_PC.far_plane - g_PC.near_plane));
+}
+float4 PSMain(float4 position : SV_POSITION) : SV_TARGET {
+    int2 p = int2(position.xy);
+    uint width, height;
+    g_Textures[g_PC.source].GetDimensions(width, height);
+    float2 size = float2(width, height);
+    float2 uv = (float2(p) + 0.5) / size;
+    float4 current = g_Textures[g_PC.source].Load(int3(p, 0));
+    float depth = g_Textures[g_PC.depth].Load(int3(p, 0)).r;
+    if (!isfinite(depth) || depth < 0.0 || depth >= 1.0) return current;
+    float2 velocity;
+    float4 motion = 0.0;
+    if (g_PC.motion > 0 && g_PC.motion < 128) motion = g_Textures[g_PC.motion].Load(int3(p, 0));
+    if (motion.a > 0.5) {
+        velocity = motion.xy;
+    } else {
+        float4 previous = mul(g_PC.reprojection, float4(uv * float2(2.0, -2.0) + float2(-1.0, 1.0), depth, 1.0));
+        if (!all(isfinite(previous)) || previous.w <= 1e-6) return current;
+        velocity = previous.xy / previous.w * float2(0.5, -0.5) + 0.5 - uv;
+    }
+    if (!all(isfinite(velocity)) || any(uv + velocity < 0.0) || any(uv + velocity > 1.0)) return current;
+    float2 pixels = velocity * size * g_PC.scale;
+    float extent = length(pixels);
+    if (!isfinite(extent) || extent < 0.5) return current;
+    pixels *= min(1.0, 32.0 / extent);
+    float distance = Distance(depth);
+    float3 sum = current.rgb;
+    float weight = 1.0;
+    [unroll] for (int i = 0; i < 16; ++i) {
+        float t = (float(i) + 0.5) / 16.0 - 0.5;
+        int2 sample_pixel = int2(floor(float2(p) + 0.5 + pixels * t));
+        if (any(sample_pixel < 0) || any(sample_pixel >= int2(width, height))) continue;
+        float sample_depth = g_Textures[g_PC.depth].Load(int3(sample_pixel, 0)).r;
+        if (!isfinite(sample_depth) || sample_depth < 0.0 || sample_depth >= 1.0) continue;
+        if (abs(Distance(sample_depth) - distance) > max(0.01, distance * 0.05)) continue;
+        sum += g_Textures[g_PC.source].Load(int3(sample_pixel, 0)).rgb;
+        weight += 1.0;
+    }
+    return float4(sum / weight, current.a);
+}
+)";
 
 // The order matches PostReference exactly: exposure, saturation (in linear light, before the curve compresses it), the tone mapper, the
 // vignette, then the sRGB encoding (and, last, the film grain, which PostReferenceWithGrain adds). The tone mappers are the fits
@@ -634,6 +709,8 @@ PostPass::PostPass(gfx::rhi::IDevice& device, gfx::rhi::ISwapChain& swap_chain) 
 }
 
 PostPass::~PostPass() {
+    ReleaseMotionBlur();
+    if (motion_blur_.IsValid()) device_.DestroyPipeline(motion_blur_);
     ReleaseAutoExposure();
     if (exposure_pipeline_.IsValid()) device_.DestroyPipeline(exposure_pipeline_);
     ReleaseDepthOfField();
@@ -825,16 +902,23 @@ void PostPass::ReleaseDepthOfField() {
     dof_ready_ = false;
 }
 
-bool PostPass::EnsureDepthOfField(u32 width, u32 height) {
+bool PostPass::EnsureHdrComposite() {
+    if (hdr_composite_.IsValid()) return true;
+    const std::string source = std::string("#define AETHER_HDR_COMPOSITE 1\n") + kPostShader;
     gfx::rhi::PipelineDesc desc;
     desc.enable_bindless_textures = true;
     desc.render_texture_target = true;
-    if (!hdr_composite_.IsValid()) {
-        const std::string source = std::string("#define AETHER_HDR_COMPOSITE 1\n") + kPostShader;
-        desc.hlsl_source = source.c_str();
-        desc.push_constant_size_bytes = sizeof(PostConstants);
-        hdr_composite_ = device_.CreatePipeline(desc, swap_chain_);
-    }
+    desc.hlsl_source = source.c_str();
+    desc.push_constant_size_bytes = sizeof(PostConstants);
+    hdr_composite_ = device_.CreatePipeline(desc, swap_chain_);
+    return hdr_composite_.IsValid();
+}
+
+bool PostPass::EnsureDepthOfField(u32 width, u32 height) {
+    if (!EnsureHdrComposite()) return false;
+    gfx::rhi::PipelineDesc desc;
+    desc.enable_bindless_textures = true;
+    desc.render_texture_target = true;
     if (!depth_of_field_.IsValid()) {
         desc.hlsl_source = kDepthOfFieldShader;
         desc.push_constant_size_bytes = sizeof(DepthOfFieldConstants);
@@ -882,6 +966,100 @@ bool PostPass::RenderDepthOfField(gfx::rhi::ICommandList& commands, const PostPr
     return true;
 }
 
+void PostPass::ReleaseMotionBlur() {
+    for (auto* texture : {&motion_composite_, &motion_result_}) {
+        if (texture->IsValid()) device_.DestroyTexture(*texture);
+        *texture = {};
+    }
+    motion_width_ = motion_height_ = 0;
+    motion_ready_ = false;
+}
+
+bool PostPass::EnsureMotionBlur(u32 width, u32 height) {
+    if (!EnsureHdrComposite()) return false;
+    if (!motion_blur_.IsValid()) {
+        gfx::rhi::PipelineDesc desc;
+        desc.enable_bindless_textures = true;
+        desc.render_texture_target = true;
+        desc.hlsl_source = kMotionBlurShader;
+        desc.push_constant_size_bytes = sizeof(MotionBlurConstants);
+        motion_blur_ = device_.CreatePipeline(desc, swap_chain_);
+        if (!motion_blur_.IsValid()) return false;
+    }
+    if (motion_width_ == width && motion_height_ == height) return true;
+    ReleaseMotionBlur();
+    for (auto* texture : {&motion_composite_, &motion_result_}) {
+        *texture = device_.CreateRenderTexture(width, height);
+        if (!texture->IsValid() || texture->index >= gfx::rhi::kMaxBindlessTextures) {
+            ReleaseMotionBlur();
+            return false;
+        }
+    }
+    motion_width_ = width;
+    motion_height_ = height;
+    return true;
+}
+
+bool PostPass::RenderMotionBlur(gfx::rhi::ICommandList& commands, const PostProcessSettings& settings,
+                                const Mat4& view_projection, f32 dt, u64 camera, u32 motion) {
+    motion_ready_ = false;
+    if (!std::isfinite(settings.motion_blur) || settings.motion_blur <= 0.0f) {
+        ReleaseMotionBlur();
+        ResetMotionBlur();
+        return false;
+    }
+    const u32 width = swap_chain_.Width(), height = swap_chain_.Height();
+    Mat4 inverse;
+    if (!Valid() || width == 0 || height == 0 || !std::isfinite(dt) || dt <= 0.0f || dt > 0.25f ||
+        ao_.depth >= gfx::rhi::kMaxBindlessTextures || !(ao_.proj_x > 0.0f) || !(ao_.proj_y > 0.0f) ||
+        !std::isfinite(ao_.near_plane) || !std::isfinite(ao_.far_plane) || ao_.near_plane <= 0.0f || ao_.far_plane <= ao_.near_plane ||
+        !view_projection.TryInverse(inverse)) {
+        ResetMotionBlur();
+        return false;
+    }
+    const bool keep = motion_history_valid_ && motion_camera_ == camera && motion_frame_ + 1u == frame_ &&
+                      motion_view_size_ == Extent{width, height};
+    const bool camera_moved = std::memcmp(&motion_previous_view_projection_.cols[0], &view_projection.cols[0], sizeof(Mat4)) != 0;
+    const Mat4 reprojection = motion_previous_view_projection_ * inverse;
+    motion_previous_view_projection_ = view_projection;
+    motion_camera_ = camera;
+    motion_view_size_ = {width, height};
+    motion_frame_ = frame_;
+    motion_history_valid_ = true;
+    if (!keep) return false;
+    if (motion >= gfx::rhi::kMaxBindlessTextures) motion = 0;
+    if (!camera_moved && motion == 0) return false;
+    MotionBlurConstants blur;
+    std::memcpy(blur.reprojection, &reprojection.cols[0], sizeof(blur.reprojection));
+    for (f32 value : blur.reprojection) {
+        if (!std::isfinite(value)) { ResetMotionBlur(); return false; }
+    }
+    if (!EnsureMotionBlur(width, height)) { ResetMotionBlur(); return false; }
+    blur.source = dof_ready_ ? dof_result_.index : motion_composite_.index;
+    blur.depth = ao_.depth;
+    blur.motion = motion;
+    blur.scale = std::clamp(settings.motion_blur, 0.0f, 1.0f) / (120.0f * dt);
+    blur.near_plane = ao_.near_plane;
+    blur.far_plane = ao_.far_plane;
+    if (!dof_ready_) {
+        const PostConstants composite = FrameConstants(settings);
+        if (!commands.BeginTexturePass(motion_composite_, nullptr)) { ResetMotionBlur(); return false; }
+        commands.BindPipeline(hdr_composite_);
+        commands.BindBindlessTextures();
+        commands.SetPushConstants(&composite, sizeof(composite));
+        commands.Draw(3);
+        commands.EndRenderPass();
+    }
+    if (!commands.BeginTexturePass(motion_result_, nullptr)) { ResetMotionBlur(); return false; }
+    commands.BindPipeline(motion_blur_);
+    commands.BindBindlessTextures();
+    commands.SetPushConstants(&blur, sizeof(blur));
+    commands.Draw(3);
+    commands.EndRenderPass();
+    motion_ready_ = true;
+    return true;
+}
+
 PostConstants PostPass::FrameConstants(const PostProcessSettings& settings) const {
     PostConstants constants = PackPostConstants(settings, Source());
     constants.tonemapper = PackTonemapperFrame(PostTonemapperOf(constants), frame_, PostScreenSpaceReflectionsOf(constants));
@@ -924,8 +1102,8 @@ PostConstants PostPass::FrameConstants(const PostProcessSettings& settings) cons
 void PostPass::Draw(gfx::rhi::ICommandList& commands, const PostProcessSettings& settings) {
     if (!Valid()) return;
     PostConstants constants = FrameConstants(settings);
-    if (dof_ready_) {
-        constants.scene_color = dof_result_.index;
+    if (motion_ready_ || dof_ready_) {
+        constants.scene_color = motion_ready_ ? motion_result_.index : dof_result_.index;
         constants.depth = 0xffffffffu;
         constants.textures = PackPostTextures(255u, PostExposureOf(constants));
         constants.lens &= 0x00ff00ffu;
@@ -934,6 +1112,7 @@ void PostPass::Draw(gfx::rhi::ICommandList& commands, const PostProcessSettings&
     ++frame_;
     if (!exposure_ready_) exposure_history_valid_ = false;
     exposure_ready_ = false;
+    motion_ready_ = false;
     dof_ready_ = false;
     bloom_ready_ = false;
     sun_set_ = false;
