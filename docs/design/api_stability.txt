@@ -21,6 +21,7 @@ player experimental
 quests experimental
 crafting experimental
 forcefields experimental
+destruction experimental
 loot experimental
 checkpoints experimental
 spawner experimental

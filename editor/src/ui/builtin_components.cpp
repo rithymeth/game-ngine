@@ -45,6 +45,9 @@
 #if AETHER_EDITOR_KIT_FORCEFIELDS
 #include "aether/forcefields/force_field.h"
 #endif
+#if AETHER_EDITOR_KIT_DESTRUCTION
+#include "aether/destruction/destructible.h"
+#endif
 
 namespace aether::editor {
 
@@ -111,6 +114,9 @@ void RegisterEditorComponents() {
 #endif
 #if AETHER_EDITOR_KIT_FORCEFIELDS
     ff::RegisterForceFieldComponents();
+#endif
+#if AETHER_EDITOR_KIT_DESTRUCTION
+    destruction::RegisterDestructionComponents();
 #endif
 }
 

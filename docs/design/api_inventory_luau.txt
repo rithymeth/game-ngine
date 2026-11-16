@@ -129,6 +129,10 @@ Crafting.Describe function
 Crafting.Exists function
 Crafting.GetTitle function
 Crafting.MissingCount function
+Destruction table
+Destruction.Damage function
+Destruction.Debris function
+Destruction.Shatter function
 Dialogue table
 Dialogue.Advance function
 Dialogue.Choice function
