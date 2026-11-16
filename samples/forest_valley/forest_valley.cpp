@@ -52,9 +52,52 @@ bool FarFromPicked(const std::vector<Vec3>& picked, const Vec3& p) {
     return true;
 }
 
+// 1 for every cell in the largest 4-connected piece of walkable ground. An area outside it could not be reached on foot, however good the
+// spot looks, so no area is picked outside it.
+std::vector<u8> MainLandmass(const GeneratedTerrain& t) {
+    const i32 w = static_cast<i32>(t.Width()), h = static_cast<i32>(t.Height());
+    std::vector<i32> label(static_cast<usize>(w) * static_cast<usize>(h), -1);
+    std::vector<usize> stack;
+    i32 best = -1;
+    usize best_size = 0;
+    i32 next = 0;
+    for (usize seed = 0; seed < label.size(); ++seed) {
+        if (label[seed] >= 0 || !CellWalkable(t, static_cast<u32>(seed % static_cast<usize>(w)), static_cast<u32>(seed / static_cast<usize>(w)))) continue;
+        usize size = 0;
+        label[seed] = next;
+        stack.push_back(seed);
+        while (!stack.empty()) {
+            const usize k = stack.back();
+            stack.pop_back();
+            ++size;
+            const i32 x = static_cast<i32>(k % static_cast<usize>(w)), z = static_cast<i32>(k / static_cast<usize>(w));
+            for (i32 dz = -1; dz <= 1; ++dz) {
+                for (i32 dx = -1; dx <= 1; ++dx) {
+                    if (dx != 0 && dz != 0) continue; // 4-connected: the route search never cuts a corner, so neither may this
+                    const i32 nx = x + dx, nz = z + dz;
+                    if (nx < 0 || nz < 0 || nx >= w || nz >= h) continue;
+                    const usize m = static_cast<usize>(nz) * static_cast<usize>(w) + static_cast<usize>(nx);
+                    if (label[m] >= 0 || !CellWalkable(t, static_cast<u32>(nx), static_cast<u32>(nz))) continue;
+                    label[m] = next;
+                    stack.push_back(m);
+                }
+            }
+        }
+        if (size > best_size) {
+            best_size = size;
+            best = next;
+        }
+        ++next;
+    }
+    std::vector<u8> in_main(label.size(), 0);
+    for (usize i = 0; i < label.size(); ++i) in_main[i] = label[i] == best ? 1 : 0;
+    return in_main;
+}
+
 struct Picker {
     const GeneratedTerrain& t;
     const f32 cell;
+    const std::vector<u8>& main_land;
     std::vector<Vec3> picked;
 
     // Best candidate (stride 4 cells) by `score` (higher wins) among those `accept` allows; false when none qualifies.
@@ -66,7 +109,7 @@ struct Picker {
         for (i32 z = margin; z < static_cast<i32>(t.Height()) - margin; z += 4) {
             for (i32 x = margin; x < static_cast<i32>(t.Width()) - margin; x += 4) {
                 const Vec3 p = Surface(t, static_cast<f32>(x) * cell, static_cast<f32>(z) * cell);
-                if (!FarFromPicked(picked, p) || !accept(x, z, p)) continue;
+                if (!main_land[t.Index(static_cast<u32>(x), static_cast<u32>(z))] || !FarFromPicked(picked, p) || !accept(x, z, p)) continue;
                 const f32 s = score(x, z, p);
                 if (s > best) {
                     best = s;
@@ -163,21 +206,28 @@ World BuildWorld(u32 seed) {
     world.settings.width = kSamples;
     world.settings.height = kSamples;
     world.settings.cell_size = 1.0f;
-    world.settings.height_scale = 70.0f;
+    // Tuned by measurement, not taste: the generator's defaults give a map 46% water and 21% walkable in its largest piece, which no
+    // route can cross. A low sea, gentler ridges and fewer, larger rivers give about 85% walkable ground in one piece.
+    world.settings.height_scale = 50.0f;
+    world.settings.ridge_amount = 0.3f;
+    world.settings.frequency = 2.0f;
+    world.settings.sea_level = 0.04f;
+    world.settings.river_min_catchment = 1500;
     world.settings = terrain::SanitizeSettings(world.settings);
     world.terrain = terrain::GenerateTerrain(world.settings);
     const GeneratedTerrain& t = world.terrain;
     const f32 cell = world.settings.cell_size;
-    Picker pick{t, cell, {}};
+    const std::vector<u8> main_land = MainLandmass(t);
+    Picker pick{t, cell, main_land, {}};
 
     Vec3 meadow, woodland, river, ruins, overlook;
     const f32 span = t.height_max - t.height_min;
     const auto set = [&](AreaId id, const Vec3& c, f32 radius) { world.areas[static_cast<usize>(id)] = Area{id, c, radius}; };
 
-    // A. Meadow: the lowest wide flat grass or forest floor, so the spawn looks up at the valley.
-    pick.Pick([&](i32 x, i32 z, const Vec3&) { return FlatDisc(t, x, z, 14, 0.2f); }, [](i32, i32, const Vec3& p) { return -p.y; }, meadow);
-    // E. Overlook: the highest ground with a flat standing place.
+    // E. Overlook, picked first so nothing else takes the high ground: the highest flat standing place.
     pick.Pick([&](i32 x, i32 z, const Vec3&) { return FlatDisc(t, x, z, 5, 0.3f); }, [](i32, i32, const Vec3& p) { return p.y; }, overlook);
+    // A. Meadow, the lowest wide flat ground (picked second, so it cannot take the overlook's plateau): the lowest wide flat grass or forest floor, so the spawn looks up at the valley.
+    pick.Pick([&](i32 x, i32 z, const Vec3&) { return FlatDisc(t, x, z, 14, 0.2f); }, [](i32, i32, const Vec3& p) { return -p.y; }, meadow);
     // C. River: the river cell carrying the most water, with walkable banks.
     pick.Pick([&](i32 x, i32 z, const Vec3&) { return t.river[t.Index(static_cast<u32>(x), static_cast<u32>(z))] != 0; },
               [&](i32 x, i32 z, const Vec3&) { return t.flow[t.Index(static_cast<u32>(x), static_cast<u32>(z))]; }, river);
@@ -214,7 +264,7 @@ World BuildWorld(u32 seed) {
     // The route visits the areas in order and is proof that they are joined: any leg with no walkable path leaves `connected` false.
     world.connected = true;
     for (u32 i = 0; i + 1 < kAreaCount; ++i) {
-        const std::vector<Vec3> leg = FindPath(t, cell, world.areas[i].center, world.areas[i + 1].center, 2);
+        const std::vector<Vec3> leg = FindPath(t, cell, world.areas[i].center, world.areas[i + 1].center, 1);
         if (leg.empty()) {
             world.connected = false;
             break;
@@ -234,7 +284,10 @@ std::vector<terrain::ScatterRule> ShowcaseScatterRules(const ScatterBudget& b) {
         else if (rule.name == "Grass") rule.max_instances = share(b.plants_max, 0.8f);
         else if (rule.name == "Shrub") rule.max_instances = share(b.plants_max, 0.15f);
         else if (rule.name == "Reeds") rule.max_instances = share(b.plants_max, 0.05f);
-        else if (rule.name == "Boulder") rule.max_instances = b.rocks_max;
+        else if (rule.name == "Boulder") {
+            rule.max_instances = b.rocks_max;
+            rule.density = 2.0f; // the default 0.35 gives a few dozen boulders in this valley, a tenth of the budget
+        }
         else continue; // the desert and snow rules do not belong in a temperate valley
         rules.push_back(std::move(rule));
     }

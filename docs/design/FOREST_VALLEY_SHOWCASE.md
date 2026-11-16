@@ -1,7 +1,8 @@
 # Forest Valley: the Aether integrated showcase
 
-Status: **proposal.** Every number below is a target, not a measurement of the current engine. Nothing here has been
-built; the first step is to measure the existing renderer (Phase 4, pulled forward to Phase 1).
+Status: **Phase 1 in progress.** Every number in the tables below is a target, not a measurement of the current engine. The
+measured facts so far are in "Phase 1 findings" at the end. The first step that is still open is measuring the existing
+renderer (Phase 4, pulled forward to Phase 1).
 
 Forest Valley is a 512 x 512 m explorable 3D environment with a controllable character. It exists to validate the
 engine as an integrated whole (rendering, physics, destruction, audio, editor, packaging), not to be a game. It adds no
@@ -102,3 +103,28 @@ route). Check each against the showcase needs before assuming coverage; gaps fou
 - Which GPU is the "midrange" reference?
 - Does the cluster/hierarchy work in draft PR #989 land before Phase 4, or does the showcase run on the old path first?
 - Where do source meshes come from (authored, glTF import, procedural), and under what license?
+
+## Phase 1 findings
+
+`samples/forest_valley` is the portable, headless core: the generated valley, the five areas, the walkable route, an
+on-foot controller, the benchmark camera path and the gate arithmetic. `tests/test_forest_valley.cpp` covers it (10
+tests, passing on Linux/GCC in a standalone build; the full `aether_tests` link needs the windowing backend).
+
+Measured, not assumed:
+
+- **The generator's defaults cannot make this world.** At the defaults the 513 x 513 map is 46% water and only 21% of it
+  is walkable in its largest piece, so no route crosses it. A low sea (`sea_level` 0.04), gentler ridges
+  (`ridge_amount` 0.3), `frequency` 2.0 and `river_min_catchment` 1500 give about 85% walkable ground in one piece.
+- **Areas are chosen by rule and must lie on the main walkable landmass.** The overlook is picked first (highest flat
+  standing place), then the meadow (lowest wide flat ground). Picking the meadow first put it on the high plateau, above
+  the overlook.
+- **Route: 1,240 m, 5.9 minutes at 3.5 m/s walking pace**, inside the 5-10 minute target. Rivers are wadeable; the
+  bridge is Phase 2 art, not yet a collision or navigation feature.
+- **Scatter within the asset budget:** 1,181 trees, 30,000 plants (the cap; grass is the limit), 805 rocks. The default
+  boulder density gave 62 rocks, so the showcase rule raises it.
+
+Not done in Phase 1 so far, and not claimed:
+
+- Nothing renders this world. `aether_player` has no terrain pass wired in; the terrain renderer exists in `terrain/`.
+- The Windows build and packaged launch are unverified (this environment is Linux).
+- No performance baseline has been taken: that needs a GPU.
