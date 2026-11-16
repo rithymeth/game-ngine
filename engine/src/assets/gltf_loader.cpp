@@ -861,6 +861,42 @@ void ApplyAnimationToNodes(const GltfScene& scene, const GltfAnimation& animatio
 
 } // namespace
 
+// Filters run after the vertex decode, in place, and only on ATTRIBUTES.
+// OCTAHEDRAL (normals, tangents): stride 4 is 8-bit, stride 8 is 16-bit. The bytes stay
+// normalized integers; the accessor turns them into floats.
+// QUATERNION: stride 8, four 16-bit components, largest component rebuilt.
+// EXPONENTIAL: stride multiple of 4. Each 32-bit slot becomes a float (8-bit exponent, 24-bit mantissa).
+bool MeshoptFilterFits(usize view_index, const std::string& mode, const std::string& filter, usize stride) {
+    if (filter == "NONE") return true;
+    if (mode != "ATTRIBUTES") {
+        GltfError("bufferView %zu EXT_meshopt_compression filter %s is only valid on ATTRIBUTES", view_index, filter.c_str());
+        return false;
+    }
+    if (filter == "OCTAHEDRAL") {
+        if (stride != 4 && stride != 8) {
+            GltfError("bufferView %zu EXT_meshopt_compression OCTAHEDRAL byteStride must be 4 or 8", view_index);
+            return false;
+        }
+        return true;
+    }
+    if (filter == "QUATERNION") {
+        if (stride != 8) {
+            GltfError("bufferView %zu EXT_meshopt_compression QUATERNION byteStride must be 8", view_index);
+            return false;
+        }
+        return true;
+    }
+    if (filter == "EXPONENTIAL") {
+        if (stride % 4 != 0) {
+            GltfError("bufferView %zu EXT_meshopt_compression EXPONENTIAL byteStride must be a multiple of 4", view_index);
+            return false;
+        }
+        return true;
+    }
+    GltfError("bufferView %zu EXT_meshopt_compression filter \"%s\" is not supported", view_index, filter.c_str());
+    return false;
+}
+
 // EXT_meshopt_compression: the view's payload is a meshoptimizer blob. Decode it
 // into a fresh buffer and point the view at that, so the rest of the loader
 // reads plain bytes. The compressed source stays in its original buffer.
@@ -895,6 +931,7 @@ bool DecodeMeshoptViews(Json& gltf, std::vector<std::vector<u8>>& buffers) {
             GltfError("bufferView %zu EXT_meshopt_compression count is too large", view_index);
             return false;
         }
+        if (!MeshoptFilterFits(view_index, mode, filter, stride)) return false;
         std::vector<u8> decoded(count * stride);
         const u8* source = buffers[buffer_index].data() + byte_offset;
         int result = -1;
@@ -921,9 +958,6 @@ bool DecodeMeshoptViews(Json& gltf, std::vector<std::vector<u8>>& buffers) {
             meshopt_decodeFilterQuat(decoded.data(), count, stride);
         } else if (filter == "EXPONENTIAL") {
             meshopt_decodeFilterExp(decoded.data(), count, stride);
-        } else if (filter != "NONE") {
-            GltfError("bufferView %zu EXT_meshopt_compression filter \"%s\" is not supported", view_index, filter.c_str());
-            return false;
         }
         buffers.push_back(std::move(decoded));
         view["buffer"] = buffers.size() - 1;
