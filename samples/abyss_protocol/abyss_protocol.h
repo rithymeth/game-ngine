@@ -111,6 +111,7 @@ public:
     aether::Vec3 BearingDir() const { return bearing_; }
     float Noise() const { return noise_; }
     float Leak() const { return leak_; }
+    bool QuietApproach() const;
     Mission GetMission() const { return mission_; }
     aether::Vec3 Objective() const;
     float Time() const { return time_; }
@@ -126,6 +127,7 @@ private:
     void ResolveRocks();
     void ApplyCurrent(float dt);
     void UpdateCache();
+    bool AnyAlert() const;
 
     aether::World world_;
     Submarine sub_;

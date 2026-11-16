@@ -418,9 +418,10 @@ void DrawWorld(const abyss::Game& game, const std::vector<DrawTri>& mesh, const 
     bool heading_home = game.GetMission() == abyss::Mission::Return;
     if (Visible(game, haven.position, 30.0f, 50.0f, 12.0f)) {
         if (!haven_mesh.empty()) {
-            DrawPlaced(r, haven_mesh, haven.position, 1.0f, heading_home ? Color{2.0f, 1.5f, 0.45f} : Color{1, 1, 1}, 0.0f);
+            DrawPlaced(r, haven_mesh, haven.position, 1.0f,
+                       heading_home && game.QuietApproach() ? Color{2.0f, 1.5f, 0.45f} : Color{1, 1, 1}, 0.0f);
         } else {
-            Color pad = heading_home ? Color{0.85f, 0.7f, 0.2f} : Color{0.12f, 0.28f, 0.36f};
+            Color pad = heading_home && game.QuietApproach() ? Color{0.85f, 0.7f, 0.2f} : Color{0.12f, 0.28f, 0.36f};
             r.Box({haven.position.x - 6.0f, haven.position.y - 0.5f, haven.position.z - 6.0f},
                   {haven.position.x + 6.0f, haven.position.y, haven.position.z + 6.0f}, pad);
             r.Box({haven.position.x - 0.25f, haven.position.y, haven.position.z - 0.25f},

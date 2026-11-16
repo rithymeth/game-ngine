@@ -18,7 +18,7 @@ Underwater exploration / survival mystery for Aether Engine. Stylized 3D, single
 - No model found: an orange placeholder hull is drawn instead.
 - **Run**: leave Haven, restore the silent relay, then get home. `F` fires one sonar ping and spends battery. For a few seconds you can see farther and a bright marker points at the objective. After it fades, a dim marker keeps the last heading. It does not update until you ping again, and it clears when the relay answers. Lights show what is nearby, spend battery, and give you away. Two creatures listen. Rocks are solid even when you cannot see them.
 - A rock hit also opens a leak. Oxygen falls faster until you reach the cache, which seals it, patches some hull, and refills battery. The creatures patrol, and when they wake they swim to the last sound they heard, not to you. Full thrust leaves a fading wake they can follow. Creep with Shift leaves none. A ping only wakes a creature inside the pulse.
-- Once the relay is restored it keeps calling. A green ring marks that sound, and a creature inside it comes to the mast. Leave before it arrives. Deeper than 26 metres the title says `PRESSURE` and the battery drains. The relay sits in that band, so do not wait there.
+- Once the relay is restored it keeps calling. A green ring marks that sound, and a creature inside it comes to the mast. Leave before it arrives. Deeper than 26 metres the title says `PRESSURE` and the battery drains. The relay sits in that band, so do not wait there. Haven only lets you finish with the lights off and every creature calm. Close in, the title says why it is shut.
 
 | Key | Action |
 | --- | --- |

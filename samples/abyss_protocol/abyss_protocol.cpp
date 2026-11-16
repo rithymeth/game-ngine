@@ -368,15 +368,25 @@ void Game::UpdateMission() {
         mission_ = Mission::Return;
         bearing_valid_ = false;
     }
-    if (mission_ == Mission::Return && Distance(sub_.position, haven_.position) < 8.0f) mission_ = Mission::Won;
+    if (mission_ == Mission::Return && Distance(sub_.position, haven_.position) < 8.0f && QuietApproach() &&
+        !sub_.sonar_active) {
+        mission_ = Mission::Won;
+    }
 }
+
+bool Game::AnyAlert() const {
+    for (const CreatureAI& creature : creatures_) {
+        if (creature.is_alerted) return true;
+    }
+    return false;
+}
+
+bool Game::QuietApproach() const { return !sub_.lights_on && !AnyAlert(); }
 
 void Game::UpdateRelay() {
     if (relay_.restored) return;
-    bool alert = false;
-    for (const CreatureAI& creature : creatures_) alert = alert || creature.is_alerted;
     float dist = Distance(sub_.position, relay_.position);
-    if (dist < 6.0f && !sub_.sonar_active && !sub_.lights_on && !alert) relay_.restored = true;
+    if (dist < 6.0f && !sub_.sonar_active && !sub_.lights_on && !AnyAlert()) relay_.restored = true;
 }
 
 std::string Game::StatusText() const {
@@ -396,12 +406,16 @@ std::string Game::StatusText() const {
         << (alert ? "  [ALERT]" : "")
         << (InCurrent() ? "  CURRENT" : "")
         << (leak_ > 0.0f ? "  LEAK" : "")
-        << ((-sub_.position.y) > 26.0f ? "  PRESSURE" : "");
+        << ((-sub_.position.y) > 26.0f ? "  PRESSURE" : "")
         << (!cache_.taken ? "  Cache: live" : "");
     if (mission_ == Mission::Won) oss << "  MISSION COMPLETE  " << int(time_) << "s";
     else if (mission_ == Mission::Lost) oss << "  FAILED: " << fail_ << "  (R retry)";
-    else if (mission_ == Mission::Return) oss << "  Return to Haven";
-    else oss << "  Relay: silent";
+    else if (mission_ == Mission::Return) {
+        float home = Distance(sub_.position, haven_.position);
+        if (home < 12.0f && sub_.lights_on) oss << "  Haven: lights off";
+        else if (home < 12.0f && alert) oss << "  Haven: creature awake";
+        else oss << "  Return to Haven";
+    } else oss << "  Relay: silent";
     return oss.str();
 }
 
