@@ -3043,6 +3043,18 @@
   f64 LengthSq()const
   static Vec3d FromVec3(const Vec3&v)
   struct AETHER_ALIGN(16)Vec4
+[engine/include/aether/math/vector_quant.h] experimental
+  type struct ResidualNormals
+  type struct VecBook
+  Vec3 Decode(Vec3 sample)const
+  Vec3 Decode(int index)const
+  f32 NearestDot(Vec3 v)const
+  int Encode(Vec3 v)const
+  int EncodeDistance(Vec3 v)const
+  static ResidualNormals Train(const Vec3*samples,int sample_count,int coarse_size,int fine_size,int iterations)
+  static VecBook Fibonacci(int count)
+  static VecBook Train(const Vec3*samples,int sample_count,int codebook_size,int iterations)
+  static VecBook TrainNormals(const Vec3*samples,int sample_count,int codebook_size,int iterations)
 [engine/include/aether/math/world_origin.h] experimental
   type struct WorldOrigin
   Vec3 ToRelative(const Vec3d&world)const
