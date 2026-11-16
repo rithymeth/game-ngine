@@ -6,64 +6,57 @@ Underwater exploration / survival mystery for Aether Engine. Stylized 3D, single
 
 ## Concept pillars
 
-1. **The ocean listens** — Sound is both a tool and a threat. Active sonar reveals the world but attracts predators. Machinery, collisions, and movement create acoustic signatures.
-2. **Darkness is a resource** — Lights improve visibility and navigation but increase detection and drain batteries. Sometimes darkness protects you.
-3. **Depth changes the rules** — Greater depths increase pressure, degrade equipment, and introduce specialized creatures.
+1. **The ocean listens** — Sound is both a tool and a threat. Active sonar reveals the world but attracts predators.
+2. **Darkness is a resource** — Lights help you see, and they also give you away.
+3. **Depth changes the rules** — Deeper water drains the battery faster.
 
-Core loop: launch from Haven-01 research hub → explore a region with submarine + EVA diver → manage acoustic signature, lights, oxygen/battery/pressure → recover data or samples → return or establish modular habitats.
+## Current prototype
 
-## Current prototype status
+- Acoustic pulses, a sound-sensitive creature, battery and oxygen.
+- Win32 software rasterizer (no GPU), same approach as Gem Hop.
+- Pass a `.gltf` or `.glb` and it is centered, scaled to about 4 metres, and drawn on the submarine. Base-color materials are used. Meshes over 4000 triangles are strided down so the software view stays interactive.
+- No model: an orange placeholder hull is drawn instead.
+- **Run**: leave Haven, restore the silent relay, then get home. `F` fires one sonar ping and spends battery. For a few seconds you can see farther and a bright marker points at the objective. After it fades, a dim marker keeps the last heading. It does not update until you ping again, and it clears when the relay answers. Lights show what is nearby, spend battery, and give you away. Two creatures listen. Rocks are solid even when you cannot see them.
+- Reach the relay with lights off and the creature calm. A ping on top of it does not count.
+- The creature catching you, or running out of oxygen or battery, fails the run. `R` restarts.
 
-The sample now contains a working simulation of the core systems:
+| Key | Action |
+| --- | --- |
+| W / A / S / D | Thrust, relative to the camera |
+| Q / E | Dive / rise |
+| Mouse or arrows | Look |
+| F | Sonar ping (reveals the bearing, the creature hears it) |
+| L | Toggle lights (the view goes dark) |
+| R | Restart |
+| Esc | Quit |
 
-- **Acoustic events** — continuous noise from thrusters + discrete sonar pulses that decay over time.
-- **Creature AI** — one sound-sensitive creature that raises awareness from noise/light, investigates when alerted, and drifts back to home when calm.
-- **Pressure / resources** — simple depth-based battery drain and oxygen consumption.
-- Console demo in `main.cpp` that runs a 10-second simulation and prints status.
+The window title shows depth, battery, lights, sonar contact time, creature awareness, and the objective. HUD bars are battery (gold), oxygen (blue), and awareness. A cyan mark means a ping is still showing you the water.
 
-This is still a pure C++ simulation library (no renderer yet). Next step is wiring it into the full Aether window + renderer and loading real meshes.
+## Build
 
-## High-quality 3D / asset models
-
-Recommended approach for stylized, moderately detailed assets with strong silhouettes, bioluminescent accents, and atmospheric fog:
-
-### Recommended free / high-quality sources
-- **Sketchfab**: Search "stylized underwater", "sci-fi submersible", "bioluminescent coral". Many free CC-BY models; prefer ones that export clean glTF.
-- **Meshy.ai**: Free underwater and sci-fi vehicle models (CC0). Good starting points for coral, rocks, and small props.
-- **CGTrader free section**: Stylized nature packs and low-poly underwater environments.
-- **Hugging Face**: Packs of 100+ deep-sea fish species as optimized GLB files (excellent for the creature ecology).
-- **Poly Haven**: High-quality PBR textures (water caustics, ice, metal, coral-like materials) that you can apply to simple geometry or imported meshes.
-
-### Technical notes for Aether
-- Prefer **glTF 2.0 (.glb)** with PBR metallic-roughness workflow.
-- Keep poly counts moderate for real-time (the engine has meshoptimizer support in the cooker).
-- Use emissive maps for bioluminescence and interior lights.
-- The engine already pulls nlohmann/json and has glTF loading paths in the asset pipeline.
-
-**License note**: Always verify commercial-use rights before shipping. Prefer CC0 or properly licensed assets.
-
-## How to build (once integrated)
-
-Add this line near the other samples in the root `CMakeLists.txt`:
-
-```cmake
-add_subdirectory(samples/abyss_protocol)
-```
-
-Then:
-
+The sample is already registered in the root `CMakeLists.txt`.
 ```powershell
 cmake --build build --config RelWithDebInfo --target abyss_protocol
+.\abyss_protocol.exe path\to\submarine.glb
 ```
 
-(Windows; mirrors the gem_hop / coin_run setup.)
+`AETHER_ABYSS_MODEL` is used when no path is passed. `AETHER_ABYSS_MAX_FRAMES` auto-quits. `AETHER_ABYSS_SCREENSHOT` writes the last frame as a BMP.
 
-## Next steps
+Textures are not sampled in this view (flat base color only). The engine's `gltf_demo` is the D3D12 path with real texture sampling and skinning.
 
-1. Add the `add_subdirectory` line to the root CMakeLists.txt and verify the sample builds.
-2. Replace the console `main.cpp` with a real Win32 / GLFW window + software or D3D12 renderer (copy patterns from `samples/gem_hop`).
-3. Load at least one high-quality glTF model for the submarine and one for the creature.
-4. Expand the acoustic system into a proper ECS system that can run on the job system.
-5. Add a simple research hub entity and one complete short mission (restore the silent relay).
+## Assets
 
-See the original design discussion for the full story (Protocol Zero, MIRA AI, Neris-9 regions) and longer-term scope.
+Prefer glTF 2.0 / GLB, PBR metallic-roughness, moderate triangle counts.
+
+- Sketchfab: stylized submersible, bioluminescent coral
+- Meshy.ai and CGTrader free packs: underwater props
+- Hugging Face deep-sea fish GLBs for creatures
+- Poly Haven for PBR textures when the GPU path is wired
+
+Check the license before shipping. Prefer CC0.
+
+## Next
+
+1. Play the run: quiet approach, then home.
+2. Move mesh drawing onto the D3D12 path (`gltf_demo`) so textures and skinning show up.
+3. Turn acoustics into a job-friendly ECS system.
