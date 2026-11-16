@@ -109,3 +109,7 @@ A new optional kit and engine plugin, **Ropes** (`AETHER_KIT_ROPES`, needs physi
 ## Weather
 
 A new optional kit and engine plugin, **Weather** (`AETHER_KIT_WEATHER`): the sky's mood as numbers (clouds, rain, snow, fog, wind with gusts, lightning with a thunder delay, wet ground) that blend smoothly from one kind of weather to the next, by hand (`Weather.Set`) or on their own from a seed, the same at any frame rate. It is the game's, like the clock, so it keeps going through a scene change. It adds a frame stage, `Player.Weather`, after `Player.Update` (the stage-order snapshot test now lists it). The kit only keeps the numbers; what a scene does with them is the game's. Luau gets the `Weather` table. See the manual's Weather chapter.
+
+## Water and boats
+
+A new optional kit and engine plugin, **Water** (`AETHER_KIT_WATER`, needs physics): a `WaterSurface` (still level, two travelling waves, a current, a density), a `Floater` that lifts a body column by column at points so it bobs, rolls with the swell and rights itself, and a `Boat` with a propeller, a rudder and a keel. Luau gets the `Water` table (`HeightAt`, `IsWater`, `Current`, `Submersion`, `Drive`, `Time`). Unlike the force-field `Buoyancy` mode (a lift from a bounding box under a flat top), the surface has waves and a body tips. See the manual's Water and boats chapter.

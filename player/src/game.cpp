@@ -50,6 +50,9 @@
 #if AETHER_KIT_ROPES
 #include "aether/ropes/rope_system.h"
 #endif
+#if AETHER_KIT_WATER
+#include "aether/water/water_system.h"
+#endif
 #include "aether/physics/physics_world.h"
 #endif
 #if AETHER_GAME_SCRIPTING
@@ -288,6 +291,10 @@ struct Game::Physics {
 #if AETHER_KIT_ROPES
     // Same again: it makes and destroys the rope's segments in this load's world, beside this load's physics scene.
     std::unique_ptr<ropes::RopeSystem> ropes;
+#endif
+#if AETHER_KIT_WATER
+    // The water kit pushes floaters and boats of this load's world, beside this load's physics scene.
+    std::unique_ptr<water::WaterSystem> water;
 #endif
 };
 #else
@@ -632,6 +639,9 @@ bool Game::LoadScene(const std::string& path, std::string* error) {
 #endif
 #if AETHER_KIT_ROPES
     physics_->ropes = std::make_unique<ropes::RopeSystem>(*world_, *physics_->scene);
+#endif
+#if AETHER_KIT_WATER
+    physics_->water = std::make_unique<water::WaterSystem>(*world_, *physics_->scene);
 #endif
     // The physics events go to the destruction kit and to scripts. This is set here, once the physics scene exists: the runtime above is made before it.
     physics_->scene->SetEventHandler([this](const PhysicsEvent& event) {
@@ -1174,6 +1184,10 @@ void Game::BuildFrame() {
 #if AETHER_KIT_ROPES
             // Ropes are built (and taken apart) here, before the bodies move, so their segments and joints are made by this step's sync.
             if (physics_->ropes) physics_->ropes->Apply();
+#endif
+#if AETHER_KIT_WATER
+            // Floaters and boats get the water's push just before the bodies move.
+            if (physics_->water) physics_->water->Apply(frame.fixed_dt);
 #endif
             physics_->characters->Step(frame.fixed_dt);
             physics_->scene->Step(frame.fixed_dt);
