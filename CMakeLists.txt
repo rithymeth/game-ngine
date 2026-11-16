@@ -536,6 +536,11 @@ option(AETHER_KIT_DESTRUCTION "Build the destruction (breakable things) genre ki
 if(AETHER_KIT_DESTRUCTION AND TARGET Aether::Physics)
     add_subdirectory(destruction)
 endif()
+# Wheeled vehicles: a Vehicle component gives a dynamic body four wheels on springs, an engine and brakes (needs the physics module).
+option(AETHER_KIT_VEHICLES "Build the vehicles (wheeled vehicle) genre kit" ON)
+if(AETHER_KIT_VEHICLES AND TARGET Aether::Physics)
+    add_subdirectory(vehicles)
+endif()
 # Respawn points: the last one reached is kept in the save bag.
 option(AETHER_KIT_CHECKPOINTS "Build the checkpoints genre kit" ON)
 if(AETHER_KIT_CHECKPOINTS AND TARGET Aether::Save)
@@ -774,6 +779,7 @@ aether_install_target(aether_interaction Interaction BUILD_INCLUDES "${PROJECT_S
 aether_install_target(aether_quests Quests BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/quests/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/quests/include")
 aether_install_target(aether_forcefields ForceFields BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/forcefields/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/forcefields/include")
 aether_install_target(aether_destruction Destruction BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/destruction/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/destruction/include")
+aether_install_target(aether_vehicles Vehicles BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/vehicles/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/vehicles/include")
 aether_install_target(aether_checkpoints Checkpoints BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/checkpoints/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/checkpoints/include")
 aether_install_target(aether_spawner Spawner BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/spawner/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/spawner/include")
 aether_install_target(aether_achievements Achievements BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/achievements/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/achievements/include")

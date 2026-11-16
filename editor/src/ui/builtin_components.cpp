@@ -48,6 +48,9 @@
 #if AETHER_EDITOR_KIT_DESTRUCTION
 #include "aether/destruction/destructible.h"
 #endif
+#if AETHER_EDITOR_KIT_VEHICLES
+#include "aether/vehicles/vehicle.h"
+#endif
 
 namespace aether::editor {
 
@@ -117,6 +120,9 @@ void RegisterEditorComponents() {
 #endif
 #if AETHER_EDITOR_KIT_DESTRUCTION
     destruction::RegisterDestructionComponents();
+#endif
+#if AETHER_EDITOR_KIT_VEHICLES
+    vehicles::RegisterVehicleComponents();
 #endif
 }
 

@@ -32,6 +32,10 @@ A new optional kit and engine plugin, **Destruction** (`AETHER_KIT_DESTRUCTION`,
 
 The player now installs its physics event handler once the physics scene exists. It was installed while the runtime started, before the scene was made, so scripts did not receive `OnCollisionBegin` and the other physics events in the first scene.
 
+## Vehicles
+
+A new optional kit and engine plugin, **Vehicles** (`AETHER_KIT_VEHICLES`, needs physics), on Jolt's vehicle constraint: a `Vehicle` component on a dynamic body with a box collider gives it four wheels on springs (front wheels steer), an engine with an automatic gearbox, brakes and a handbrake, and front, rear or all-wheel drive. A `VehicleInput` component (or Luau `Vehicles.Drive`) drives it, `VehicleState` reports speed, rpm, gear and wheel contact, and `Vehicles.Flip` rights a rolled car. Luau gets the `Vehicles` table (`Drive`, `Speed`, `WheelsOnGround`, `WheelPosition`, `WheelSpin`, `Flip`). See the manual's Vehicles chapter.
+
 ## Loot
 
 A new optional kit and engine plugin, **Loot** (`AETHER_KIT_LOOT`, needs Inventory): `.aloot` files describe a loot table as weighted entries (each with a count range, and an empty item for "nothing") and a number of rolls, and `LootSystem` rolls one and gives the drops to an entity's inventory. Rolls are deterministic (the same table and seed always drop the same, and the kit's own seed stream starts the same every run unless a script seeds it); loot is not all or nothing, so what does not fit is lost and `LastGiven` says what went in. A Luau `Loot` table (`Give`, `LastGiven`, `Roll`, `SetSeed`, `Exists`, `GetTitle`) exposes it; see `docs/manual/22-loot.md`.

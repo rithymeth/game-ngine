@@ -16,6 +16,7 @@
 #include "aether/script/checkpoints_api.h"
 #include "aether/script/forces_api.h"
 #include "aether/script/destruction_api.h"
+#include "aether/script/vehicles_api.h"
 #include "aether/script/inventory_api.h"
 #include "aether/script/loc_api.h"
 #include "aether/script/ui_api.h"
@@ -512,6 +513,7 @@ void ScriptSystem::InstallApi(bool install_kit_apis) {
         InstallKitApi("Checkpoints");
         InstallKitApi("ForceFields");
         InstallKitApi("Destruction");
+        InstallKitApi("Vehicles");
         InstallKitApi("Gameplay");
     }
 }
@@ -530,6 +532,7 @@ void ScriptSystem::InstallKitApi(const std::string& kit_name) {
     else if (kit_name == "Checkpoints") InstallCheckpointsApi(host_);
     else if (kit_name == "ForceFields") InstallForcesApi(host_);
     else if (kit_name == "Destruction") InstallDestructionApi(host_);
+    else if (kit_name == "Vehicles") InstallVehiclesApi(host_);
 }
 
 std::string ScriptSystem::DescribeEntity(Entity entity) const {

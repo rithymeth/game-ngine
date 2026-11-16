@@ -70,6 +70,13 @@ if(TARGET Aether::Destruction)
 else()
     target_compile_definitions(aether_game PRIVATE AETHER_KIT_DESTRUCTION=0)
 endif()
+# The vehicles genre kit (wheeled vehicles), when built: the physics step in game.cpp applies it, so nothing outside the player needs its headers.
+if(TARGET Aether::Vehicles)
+    target_link_libraries(aether_game PRIVATE Aether::Vehicles)
+    target_compile_definitions(aether_game PRIVATE AETHER_KIT_VEHICLES=1)
+else()
+    target_compile_definitions(aether_game PRIVATE AETHER_KIT_VEHICLES=0)
+endif()
 # The checkpoints genre kit (respawn points), when built.
 if(TARGET Aether::Checkpoints)
     target_link_libraries(aether_game PUBLIC Aether::Checkpoints)

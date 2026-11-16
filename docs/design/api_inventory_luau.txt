@@ -308,6 +308,13 @@ UI.SetValue function
 UI.SetVisible function
 UI.ValueChanged function
 UI.WasClicked function
+Vehicles table
+Vehicles.Drive function
+Vehicles.Flip function
+Vehicles.Speed function
+Vehicles.WheelPosition function
+Vehicles.WheelSpin function
+Vehicles.WheelsOnGround function
 world table
 world.Destroy function
 world.EntitiesWith function
