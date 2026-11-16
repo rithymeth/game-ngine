@@ -18,6 +18,7 @@ add_library(aether_engine STATIC
     src/cook/mesh_cook.cpp
     src/cook/mesh_summary.cpp
     src/cook/meshlet_cook.cpp
+    src/cook/cluster_hierarchy.cpp
     src/platform/process.cpp
     src/pak/pak.cpp
     src/pak/vfs.cpp

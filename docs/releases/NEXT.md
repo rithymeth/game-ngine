@@ -36,6 +36,10 @@ The player now installs its physics event handler once the physics scene exists.
 
 A new optional kit and engine plugin, **Vehicles** (`AETHER_KIT_VEHICLES`, needs physics), on Jolt's vehicle constraint: a `Vehicle` component on a dynamic body with a box collider gives it four wheels on springs (front wheels steer), an engine with an automatic gearbox, brakes and a handbrake, and front, rear or all-wheel drive. A `VehicleInput` component (or Luau `Vehicles.Drive`) drives it, `VehicleState` reports speed, rpm, gear and wheel contact, and `Vehicles.Flip` rights a rolled car. Luau gets the `Vehicles` table (`Drive`, `Speed`, `WheelsOnGround`, `WheelPosition`, `WheelSpin`, `Flip`). See the manual's Vehicles chapter.
 
+## Virtual geometry, stage 1
+
+The first stage of a Nanite-style renderer: `BuildClusterHierarchy` (`aether/cook/cluster_hierarchy.h`) builds a DAG of meshlet clusters offline, each level about half the triangles of the one below, with group borders locked so the pieces always join. `SelectClusters` is the CPU reference for the cut: a cluster is drawn when its own error looks small enough on screen and its parent's does not, and the result is watertight at every distance. Nothing is cooked or drawn yet, so no format changes. See `docs/design/VIRTUAL_GEOMETRY.md` for the plan, the measurements and the known limits.
+
 ## Loot
 
 A new optional kit and engine plugin, **Loot** (`AETHER_KIT_LOOT`, needs Inventory): `.aloot` files describe a loot table as weighted entries (each with a count range, and an empty item for "nothing") and a number of rolls, and `LootSystem` rolls one and gives the drops to an entity's inventory. Rolls are deterministic (the same table and seed always drop the same, and the kit's own seed stream starts the same every run unless a script seeds it); loot is not all or nothing, so what does not fit is lost and `LastGiven` says what went in. A Luau `Loot` table (`Give`, `LastGiven`, `Roll`, `SetSeed`, `Exists`, `GetTitle`) exposes it; see `docs/manual/22-loot.md`.
