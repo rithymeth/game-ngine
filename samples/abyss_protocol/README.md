@@ -19,9 +19,10 @@ The sample contains a working simulation of the core systems:
 - **Acoustic events** — continuous noise from thrusters + discrete sonar pulses that decay over time.
 - **Creature AI** — one sound-sensitive creature that raises awareness from noise/light, investigates when alerted, and drifts back to home when calm.
 - **Pressure / resources** — simple depth-based battery drain and oxygen consumption.
-- Console demo in `main.cpp` that runs a 10-second simulation and prints status.
+- **glTF loading** — `Game::LoadModel` uses `aether::assets::LoadGltf` and reports mesh/vertex/material counts plus axis-aligned bounds.
+- Console demo in `main.cpp` that runs a 10-second simulation and can load a model if you pass a path.
 
-This is still a pure C++ simulation library (no renderer yet). Next step is wiring it into the full Aether window + renderer and loading real meshes.
+This is still a pure C++ simulation library (no GPU upload or renderer yet). The loaded `GltfScene` is kept so a future renderer can consume it.
 
 ## Build integration (required)
 
@@ -36,6 +37,23 @@ Then configure and build as usual:
 ```powershell
 cmake --build build --config RelWithDebInfo --target abyss_protocol
 ```
+
+Run with an optional model:
+
+```powershell
+.\abyss_protocol.exe path\to\submarine.glb
+```
+
+## glTF integration
+
+Aether’s loader (`aether::assets::LoadGltf`) already handles:
+- Positions, normals, UVs, tangents, indices
+- PBR metallic-roughness materials + texture paths
+- Node hierarchy and world transforms
+- Skins and animations (evaluate with `EvaluateAnimation` / `ComputeSkinMatrices`)
+- Both `.gltf` + external `.bin` and self-contained `.glb`
+
+The sample’s `LoadModel` currently only extracts statistics and bounds. Full GPU upload and drawing is demonstrated in the engine’s `gltf_demo` (D3D12 + bindless textures + optional skinning).
 
 ## High-quality 3D / asset models
 
@@ -58,9 +76,9 @@ Recommended approach for stylized, moderately detailed assets with strong silhou
 
 ## Next steps
 
-1. Add the `add_subdirectory` line above and verify the sample builds and runs the console demo.
-2. Replace the console `main.cpp` with a real Win32 / GLFW window + software or D3D12 renderer (copy patterns from `samples/gem_hop`).
-3. Load at least one high-quality glTF model for the submarine and one for the creature.
+1. Add the `add_subdirectory` line above and verify the sample builds and runs the console demo (with and without a model path).
+2. Replace the console `main.cpp` with a real Win32 / GLFW window + software or D3D12 renderer (copy patterns from `gltf_demo` and `samples/gem_hop`).
+3. Upload the loaded `GltfScene` primitives to GPU buffers and draw them at the submarine / creature positions.
 4. Expand the acoustic system into a proper ECS system that can run on the job system.
 5. Add a simple research hub entity and one complete short mission (restore the silent relay).
 
