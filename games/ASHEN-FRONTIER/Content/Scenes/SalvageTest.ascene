@@ -179,6 +179,36 @@
           "$v": 1,
           "asset_path": "Models/SalvageCrate.glb"
         },
+        "BoxCollider": {
+          "$v": 1,
+          "center": [
+            0,
+            0.4,
+            0
+          ],
+          "friction": 0.6,
+          "half_extents": [
+            0.45,
+            0.4,
+            0.3
+          ],
+          "is_trigger": false,
+          "report_stay": false,
+          "restitution": 0.0
+        },
+        "Destructible": {
+          "$v": 1,
+          "enabled": true,
+          "health": 0.0,
+          "break_speed": 0.0,
+          "pieces_x": 2,
+          "pieces_y": 2,
+          "pieces_z": 2,
+          "mass": 20.0,
+          "burst_speed": 2.5,
+          "inherit_velocity": 0.0,
+          "piece_lifetime": 8.0
+        },
         "Transform": {
           "$v": 2,
           "position": [

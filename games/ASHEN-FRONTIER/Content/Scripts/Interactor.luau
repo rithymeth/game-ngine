@@ -159,6 +159,13 @@ local ATTACK_DAMAGE = 25
 
 function Interactor:OnUpdate(dt)
     if Input.IsTriggered("NewGame") then return NewGame() end
+    if self.shatter_t ~= nil then
+        self.shatter_t = self.shatter_t - dt
+        if self.shatter_t <= 0 then
+            self.shatter_t = nil
+            print(string.format("Crate shattered: %d pieces on the ground", Destruction.Debris()))
+        end
+    end
     local hp = SaveGames.GetNumber("player.hp", 100)
     if hp <= 0 then
         print("Kael disabled: back to the last checkpoint, his health restored")
@@ -275,7 +282,14 @@ function Interactor:OnUpdate(dt)
             Achievements.Add("Scavenger") -- counts every piece of salvage; the unlock is saved with the pack just below
         end
         Give(kind, amount)
-        world:Destroy(best)
+        if best:Get("Destructible") ~= nil then
+            -- a crate breaks up rather than vanishing: the Destruction kit turns it into pieces at the next physics step, and `shatter_t` waits for them
+            -- before saying so
+            Destruction.Shatter(best)
+            self.shatter_t = 0.4
+        else
+            world:Destroy(best)
+        end
         Sfx("pickup")
         self.nearest = nil
         self.shown = nil

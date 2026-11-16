@@ -106,7 +106,7 @@ def fallen_basin(playable=True):
     mule(s, "MULE3_Wreck", (-20, 0, -12), rotation=(0, 70, 8))
     for i, (x, z) in enumerate(((-28, -10), (30, -30), (-58, 26))):
         s.model(f"SalvageSite_{i}_Pile", "ScrapPile", position=(x, 0, z), rotation=(0, rng.uniform(0, 360), 0), tags=("Salvage",), collider=((0, 0.6, 0), (1.2, 0.7, 1.0)))
-        s.model(f"SalvageSite_{i}_Crate", "SalvageCrate", position=(x + 2.4, 0, z + 1.2), rotation=(0, rng.uniform(0, 90), 0), tags=("Salvage",), collider=((0, 0.4, 0), (0.45, 0.4, 0.3)))
+        s.model(f"SalvageSite_{i}_Crate", "SalvageCrate", position=(x + 2.4, 0, z + 1.2), rotation=(0, rng.uniform(0, 90), 0), tags=("Salvage",), collider=((0, 0.4, 0), (0.45, 0.4, 0.3)), breakable=True)
         s.add(f"SalvageSite_{i}_Glow", {"PointLight": {"$v": 1, "cast_shadows": False, "color": [0.2, 0.5, 1.0], "intensity": 4.0, "range": 7.0}}, position=(x + 0.4, 1.4, z - 0.2))
 
     # the distress relay the first chain leads to, and the hazard zone on the way to it
@@ -172,7 +172,7 @@ def salvage_test():
     s.sun(yaw=-25, pitch=-38)
     s.model("Ground", "Ground", position=(0, 0, 0), scale=(60, 1, 60), color=SAND, snap=False)
     s.add("GroundCollider", {"BoxCollider": {"$v": 1, "center": [0, 0, 0], "friction": 0.8, "half_extents": [30, 0.5, 30], "is_trigger": False, "report_stay": False, "restitution": 0.0}}, position=(0, -0.5, 0))
-    s.model("Test_Crate", "SalvageCrate", position=(1.5, 0, 0), tags=("Salvage",), snap=False)
+    s.model("Test_Crate", "SalvageCrate", position=(1.5, 0, 0), tags=("Salvage",), collider=((0, 0.4, 0), (0.45, 0.4, 0.3)), snap=False, breakable=True)
     interior_scene.kael(s, (0, 0.1, 0), 0, script_guid("ThirdPersonController"))
     s.save(OUT / "SalvageTest.ascene")
 
@@ -253,7 +253,7 @@ def scan_test():
     s.sun(yaw=-25, pitch=-38)
     s.model("Ground", "Ground", position=(0, 0, 0), scale=(100, 1, 100), color=SAND, snap=False)
     s.add("GroundCollider", {"BoxCollider": {"$v": 1, "center": [0, 0, 0], "friction": 0.8, "half_extents": [50, 0.5, 50], "is_trigger": False, "report_stay": False, "restitution": 0.0}}, position=(0, -0.5, 0))
-    s.model("Test_Crate", "SalvageCrate", position=(3.5, 0, -3.5), tags=("Salvage",), snap=False)
+    s.model("Test_Crate", "SalvageCrate", position=(3.5, 0, -3.5), tags=("Salvage",), collider=((0, 0.4, 0), (0.45, 0.4, 0.3)), snap=False, breakable=True)
     workbench(s, "Test_FabBench", (0, 0, 9), snap=False)
     sentinel(s, "Test_Sentinel", (-30, 0, 0), snap=False)
     interior_scene.kael(s, (0, 0.1, 0), 0, script_guid("ThirdPersonController"))

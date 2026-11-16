@@ -15490,6 +15490,19 @@
           "report_stay": false,
           "restitution": 0.0
         },
+        "Destructible": {
+          "$v": 1,
+          "enabled": true,
+          "health": 0.0,
+          "break_speed": 0.0,
+          "pieces_x": 2,
+          "pieces_y": 2,
+          "pieces_z": 2,
+          "mass": 20.0,
+          "burst_speed": 2.5,
+          "inherit_velocity": 0.0,
+          "piece_lifetime": 8.0
+        },
         "Transform": {
           "$v": 2,
           "position": [
@@ -15639,6 +15652,19 @@
           "report_stay": false,
           "restitution": 0.0
         },
+        "Destructible": {
+          "$v": 1,
+          "enabled": true,
+          "health": 0.0,
+          "break_speed": 0.0,
+          "pieces_x": 2,
+          "pieces_y": 2,
+          "pieces_z": 2,
+          "mass": 20.0,
+          "burst_speed": 2.5,
+          "inherit_velocity": 0.0,
+          "piece_lifetime": 8.0
+        },
         "Transform": {
           "$v": 2,
           "position": [
@@ -15787,6 +15813,19 @@
           "is_trigger": false,
           "report_stay": false,
           "restitution": 0.0
+        },
+        "Destructible": {
+          "$v": 1,
+          "enabled": true,
+          "health": 0.0,
+          "break_speed": 0.0,
+          "pieces_x": 2,
+          "pieces_y": 2,
+          "pieces_z": 2,
+          "mass": 20.0,
+          "burst_speed": 2.5,
+          "inherit_velocity": 0.0,
+          "piece_lifetime": 8.0
         },
         "Transform": {
           "$v": 2,
@@ -23283,6 +23322,19 @@
           "report_stay": false,
           "restitution": 0.0
         },
+        "Destructible": {
+          "$v": 1,
+          "enabled": true,
+          "health": 0.0,
+          "break_speed": 0.0,
+          "pieces_x": 2,
+          "pieces_y": 2,
+          "pieces_z": 2,
+          "mass": 20.0,
+          "burst_speed": 2.5,
+          "inherit_velocity": 0.0,
+          "piece_lifetime": 8.0
+        },
         "Transform": {
           "$v": 2,
           "position": [
@@ -23338,6 +23390,19 @@
           "report_stay": false,
           "restitution": 0.0
         },
+        "Destructible": {
+          "$v": 1,
+          "enabled": true,
+          "health": 0.0,
+          "break_speed": 0.0,
+          "pieces_x": 2,
+          "pieces_y": 2,
+          "pieces_z": 2,
+          "mass": 20.0,
+          "burst_speed": 2.5,
+          "inherit_velocity": 0.0,
+          "piece_lifetime": 8.0
+        },
         "Transform": {
           "$v": 2,
           "position": [
@@ -23392,6 +23457,19 @@
           "is_trigger": false,
           "report_stay": false,
           "restitution": 0.0
+        },
+        "Destructible": {
+          "$v": 1,
+          "enabled": true,
+          "health": 0.0,
+          "break_speed": 0.0,
+          "pieces_x": 2,
+          "pieces_y": 2,
+          "pieces_z": 2,
+          "mass": 20.0,
+          "burst_speed": 2.5,
+          "inherit_velocity": 0.0,
+          "piece_lifetime": 8.0
         },
         "Transform": {
           "$v": 2,

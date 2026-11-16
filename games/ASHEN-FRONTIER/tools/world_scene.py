@@ -77,7 +77,7 @@ def basin(s, rng):
     x, z = world.poi_position("salvage_field")
     for i, (dx, dz) in enumerate(((0, 0), (14, -8), (-12, 9))):
         s.model(f"Salvage_{i}_Pile", "ScrapPile", position=(x + dx, 0, z + dz), rotation=(0, rng.uniform(0, 360), 0), tags=("Salvage",), collider=((0, 0.6, 0), (1.2, 0.7, 1.0)))
-        s.model(f"Salvage_{i}_Crate", "SalvageCrate", position=(x + dx + 2.4, 0, z + dz + 1.2), rotation=(0, rng.uniform(0, 90), 0), tags=("Salvage",), collider=((0, 0.4, 0), (0.45, 0.4, 0.3)))
+        s.model(f"Salvage_{i}_Crate", "SalvageCrate", position=(x + dx + 2.4, 0, z + dz + 1.2), rotation=(0, rng.uniform(0, 90), 0), tags=("Salvage",), collider=((0, 0.4, 0), (0.45, 0.4, 0.3)), breakable=True)
         s.add(f"Salvage_{i}_Glow", LIGHT(BLUE, 4.0, 7.0), position=(x + dx + 0.4, 1.4, z + dz - 0.2), snap=True)
     x, z = world.poi_position("distress_relay")
     beacon(s, "DistressRelay", "RelayNode", (x, 0, z), collider=((0, 2, 0), (1.0, 2.5, 1.0)))
@@ -148,7 +148,7 @@ def verdant(s, rng, door_script=None):
     s.model("AnnexRelay", "RelayNode", position=(x, 0, z), tags=("Relay",), collider=((0, 2, 0), (1.0, 2.5, 1.0)))
     s.model("AnnexBench", "FabBench", position=(x + 5, 0, z + 3), collider=((0, 0.5, 0), (0.9, 0.5, 0.45)))
     for i in range(3):
-        s.model(f"AnnexCrate_{i}", "SalvageCrate", position=(x - 4 + i * 1.3, 0, z + 4), rotation=(0, rng.uniform(0, 90), 0), tags=("Salvage",), collider=((0, 0.4, 0), (0.45, 0.4, 0.3)))
+        s.model(f"AnnexCrate_{i}", "SalvageCrate", position=(x - 4 + i * 1.3, 0, z + 4), rotation=(0, rng.uniform(0, 90), 0), tags=("Salvage",), collider=((0, 0.4, 0), (0.45, 0.4, 0.3)), breakable=True)
     # chapter 2: three seed samples lie out in the array (by the greenhouses, in the garden, at the annex)
     for i, (poi, dx, dz) in enumerate((("greenhouse_rows", -8, 14), ("repaired_garden", 6, -2), ("research_annex", -9, -4))):
         px, pz = world.poi_position(poi)
