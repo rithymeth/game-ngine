@@ -171,6 +171,26 @@ bool ContainsNoCase(std::string_view text, std::string_view query) {
     }) != text.end();
 }
 
+// The badge before a tool's name: one letter on its category's colour, so the list reads by shape and colour as well as
+// by text (the hierarchy's entity badges work the same way).
+ImU32 CategoryColor(std::string_view category) {
+    if (category == "Scripting") return IM_COL32(76, 141, 255, 255);
+    if (category == "Rendering") return IM_COL32(63, 185, 80, 255);
+    if (category == "Animation") return IM_COL32(210, 153, 34, 255);
+    if (category == "AI") return IM_COL32(188, 140, 255, 255);
+    if (category == "Audio") return IM_COL32(58, 150, 160, 255);
+    if (category == "UI") return IM_COL32(247, 120, 186, 255);
+    if (category == "Scene") return IM_COL32(139, 148, 158, 255);
+    if (category == "World") return IM_COL32(150, 130, 80, 255);
+    if (category == "2D") return IM_COL32(70, 170, 200, 255);
+    if (category == "Cinematics") return IM_COL32(255, 166, 87, 255);
+    if (category == "Data") return IM_COL32(130, 130, 150, 255);
+    if (category == "Networking") return IM_COL32(90, 169, 230, 255);
+    if (category == "Debug") return IM_COL32(229, 72, 77, 255);
+    if (category == "Project") return IM_COL32(200, 170, 90, 255);
+    return IM_COL32(110, 110, 118, 255);
+}
+
 // An editor script (§26.5): a panel, a menu item and an asset type. Written
 // into a sample project that doesn't have it yet (an older one gains it).
 void WriteSampleEditorScript(const std::filesystem::path& content) {
@@ -209,6 +229,7 @@ struct EditorWorkspace::Impl {
     struct Tool {
         std::string name;
         std::string category;
+        std::string description; // what the tool is for; drawn under its name
         std::function<void()> draw;
         bool window_open = false;
         bool extension = false; // a panel an extension registered
@@ -389,46 +410,80 @@ struct EditorWorkspace::Impl {
         bt_doc->MarkSaved();
 
         tools = {
-            {"Blueprint - BP_Door", "Scripting", [this] { blueprint_editor->Draw(); }},
-            {"Luau Script - door.luau", "Scripting", [this] { DrawCodeEditor("##luau", *script_doc, script_state); }},
-            {"Material - M_Lit", "Rendering", [this] { material_editor->Draw(); }},
-            {"Particle System - PS_Sparks", "Rendering", [this] { particle_editor->Draw(); }},
-            {"Animation - ABP_Character", "Animation", [this] { DrawAnimation(); }}, // graph, blend space, clip,
-            {"Behavior Tree - BT_Guard", "AI", [this] { bt_editor->Draw(); }},
-            {"Navigation", "AI", [this] { nav_panel->Draw(); }},
-            {"Sound Cue - SC_Blip", "Audio", [this] { cue_editor->Draw(); }},
-            {"Mixer", "Audio", [this] { mixer_panel->Draw(); }},
-            {"UI Designer - WBP_MainMenu", "UI", [this] { ui_designer->Draw(); }},
-            {"Scene", "Scene", [this] { scene_panel->Draw(); }},
-            {"Scene View", "Scene", [this] { scene_view.Draw(scene_panel->Document(), &scene_panel->ModelBounds(), scene_panel->ContentRoot()); }},
-            {"Render Preview", "Scene", [this] { scene_preview->Draw(); }},
-            {"Terrain", "World", [this] { terrain_panel->Draw(); }},
-            {"Foliage", "World", [this] { foliage_panel->Draw(); }},
-            {"Procedural World", "World", [this] { procedural_panel->Draw(); }},
-            {"Spline", "World", [this] { spline_panel->Draw(); }},
-            {"World Partition", "World", [this] { partition_panel->Draw(); }},
-            {"Tilemap - Level 1", "2D", [this] { tilemap_panel->Draw(); }},
-            {"Sequencer - Intro", "Cinematics", [this] { sequencer_panel->Draw(); }},
-            {"Save Inspector", "Data", [this] { save_panel->Draw(); }},
-            {"Localization", "Data", [this] { loc_panel->Draw(); }},
-            {"Gameplay Debugger", "Debug", [this] { gameplay_panel->Draw(); }},
-            {"Net Play", "Networking", [this] { net_panel->Draw(); }},
-            {"Net Profiler", "Networking", [this] { net_profiler->Draw(); }},
-            {"Console", "Debug", [this] { console_panel->Draw(); }},
-            {"Profiler", "Debug", [this] { profiler_panel->Draw(); }},
-            {"Messages", "Debug", [this] { DrawMessages(); }},
-            {"Crash Reports", "Debug", [this] { DrawCrashReports(); }},
-            {"Content Browser", "Project", [this] {
+            {"Blueprint - BP_Door", "Scripting", "Graph the door's events, variables and functions; play and debug it.",
+             [this] { blueprint_editor->Draw(); }},
+            {"Luau Script - door.luau", "Scripting", "Write door.luau with syntax highlighting and diagnostics.",
+             [this] { DrawCodeEditor("##luau", *script_doc, script_state); }},
+            {"Material - M_Lit", "Rendering", "Build M_Lit from nodes: textures, maths and the material's output.",
+             [this] { material_editor->Draw(); }},
+            {"Particle System - PS_Sparks", "Rendering", "Tune the sparks emitter's spawn, life and rendering modules.",
+             [this] { particle_editor->Draw(); }},
+            {"Animation - ABP_Character", "Animation", "Edit the anim graph, state machine, blend spaces and clips.",
+             [this] { DrawAnimation(); }}, // graph, blend space, clip,
+            {"Behavior Tree - BT_Guard", "AI", "Lay out the guard's logic: sequences, selectors, tasks and decorators.",
+             [this] { bt_editor->Draw(); }},
+            {"Navigation", "AI", "Bake and inspect the navigation mesh for the open scene.",
+             [this] { nav_panel->Draw(); }},
+            {"Sound Cue - SC_Blip", "Audio", "Wire the blip cue's sound nodes and mix settings.",
+             [this] { cue_editor->Draw(); }},
+            {"Mixer", "Audio", "Balance buses, gains and effects for the running mix.",
+             [this] { mixer_panel->Draw(); }},
+            {"UI Designer - WBP_MainMenu", "UI", "Lay out the menu: widgets, anchors, styling and events.",
+             [this] { ui_designer->Draw(); }},
+            {"Scene", "Scene", "The open scene's hierarchy and Inspector, with Play controls.",
+             [this] { scene_panel->Draw(); }},
+            {"Scene View", "Scene", "Fly around the 3D scene; select and transform entities in it.",
+             [this] { scene_view.Draw(scene_panel->Document(), &scene_panel->ModelBounds(), scene_panel->ContentRoot()); }},
+            {"Render Preview", "Scene", "See the saved scene as the game draws it, from its camera.",
+             [this] { scene_preview->Draw(); }},
+            {"Terrain", "World", "Sculpt and paint the landscape: raise, lower, smooth, flatten, paint layers.",
+             [this] { terrain_panel->Draw(); }},
+            {"Foliage", "World", "Scatter grass, flowers and trees over the terrain.",
+             [this] { foliage_panel->Draw(); }},
+            {"Procedural World", "World", "Generate terrain, biomes and scatter from procedural rules.",
+             [this] { procedural_panel->Draw(); }},
+            {"Spline", "World", "Draw and edit splines, roads and paths, then place them.",
+             [this] { spline_panel->Draw(); }},
+            {"World Partition", "World", "Stream the world in cells and inspect what is loaded.",
+             [this] { partition_panel->Draw(); }},
+            {"Tilemap - Level 1", "2D", "Paint tiles and collisions on Level 1's grid.",
+             [this] { tilemap_panel->Draw(); }},
+            {"Sequencer - Intro", "Cinematics", "Animate the intro on a timeline of tracks and keys.",
+             [this] { sequencer_panel->Draw(); }},
+            {"Save Inspector", "Data", "Inspect and edit the game's save data.",
+             [this] { save_panel->Draw(); }},
+            {"Localization", "Data", "Manage translatable text and the strings for each language.",
+             [this] { loc_panel->Draw(); }},
+            {"Gameplay Debugger", "Debug", "Watch the running game's AI, physics and gameplay state.",
+             [this] { gameplay_panel->Draw(); }},
+            {"Net Play", "Networking", "Host or join a session and watch network traffic.",
+             [this] { net_panel->Draw(); }},
+            {"Net Profiler", "Networking", "Profile replication bandwidth and RPC timing.",
+             [this] { net_profiler->Draw(); }},
+            {"Console", "Debug", "Run console commands and read the engine log.",
+             [this] { console_panel->Draw(); }},
+            {"Profiler", "Debug", "Sample frame time by system and see where it goes.",
+             [this] { profiler_panel->Draw(); }},
+            {"Messages", "Debug", "Everything the editor reported, with the tool that reported it.",
+             [this] { DrawMessages(); }},
+            {"Crash Reports", "Debug", "Read the last crash's report and call stack.",
+             [this] { DrawCrashReports(); }},
+            {"Content Browser", "Project", "Browse, import and organise the project's assets.",
+             [this] {
                  if (content_browser) {
                      content_browser->Draw();
                  } else {
                      ImGui::TextDisabled("No project is open.");
                  }
              }},
-            {"New Project", "Project", [this] { new_project.Draw(); }},
-            {"Project Settings", "Project", [this] { DrawProjectTool(true); }},
-            {"Build and Package", "Project", [this] { DrawProjectTool(false); }},
-            {"Plugins", "Project", [this] {
+            {"New Project", "Project", "Start a project from a template.",
+             [this] { new_project.Draw(); }},
+            {"Project Settings", "Project", "The project's plugins, renderer, input and window settings.",
+             [this] { DrawProjectTool(true); }},
+            {"Build and Package", "Project", "Cook the project and package a runnable build.",
+             [this] { DrawProjectTool(false); }},
+            {"Plugins", "Project", "Turn the project's plugins on and off.",
+             [this] {
                  if (plugins_panel) {
                      plugins_panel->Draw();
                  } else {
@@ -1204,6 +1259,7 @@ struct EditorWorkspace::Impl {
             Tool tool;
             tool.name = p->name;
             tool.category = p->category;
+            tool.description = p->owner.empty() ? "A panel added by an extension." : "A panel added by " + p->owner + ".";
             tool.extension = true;
             tool.window_open = std::find(open.begin(), open.end(), p->name) != open.end();
             const std::string name = p->name;
@@ -1370,6 +1426,7 @@ void EditorWorkspace::SetGameplayWorld(World* world, gas::AttributeSystem* attri
 usize EditorWorkspace::ToolCount() const { return impl_->tools.size(); }
 const char* EditorWorkspace::ToolName(usize tool) const { return impl_->tools[tool].name.c_str(); }
 const char* EditorWorkspace::ToolCategory(usize tool) const { return impl_->tools[tool].category.c_str(); }
+const char* EditorWorkspace::ToolDescription(usize tool) const { return impl_->tools[tool].description.c_str(); }
 
 i64 EditorWorkspace::FindTool(std::string_view name) const {
     if (name.empty()) return -1;
@@ -1747,7 +1804,7 @@ void EditorWorkspace::DrawToolsMenu() {
     impl_->extensions.DrawMenus("Tools");
 }
 
-void EditorWorkspace::DrawHubContents() {
+void EditorWorkspace::DrawToolList(f32 width) {
     struct WorkspaceEntry { const char* label; const char* tool; };
     static constexpr WorkspaceEntry workspaces[] = {
         {"World", "Terrain"}, {"Script", "Luau"}, {"Blueprint", "Blueprint"},
@@ -1765,7 +1822,9 @@ void EditorWorkspace::DrawHubContents() {
     }
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, ImGui::GetStyle().ItemSpacing.y));
     for (usize i = 0; i < std::size(workspaces); ++i) {
-        if (i != 0) ImGui::SameLine();
+        // Narrow docks wrap the buttons into more rows instead of clipping the last ones.
+        const f32 button_w = ImGui::CalcTextSize(workspaces[i].label).x + ImGui::GetStyle().FramePadding.x * 2.0f;
+        if (i != 0 && ImGui::GetContentRegionAvail().x >= button_w) ImGui::SameLine();
         if (i == active_workspace) {
             ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
             ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_Text));
@@ -1778,41 +1837,78 @@ void EditorWorkspace::DrawHubContents() {
     }
     ImGui::PopStyleVar();
     ImGui::Separator();
-    ImGui::SetNextItemWidth(260.0f);
-    ImGui::InputTextWithHint("##tool_filter", "Search tools…", impl_->tool_filter.data(), impl_->tool_filter.size());
+    const std::string count = std::to_string(impl_->tools.size()) + " tools";
+    ImGui::SetNextItemWidth(std::max(ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize(count.c_str()).x - 12.0f, 80.0f));
+    ImGui::InputTextWithHint("##tool_filter", "Search tools...", impl_->tool_filter.data(), impl_->tool_filter.size());
     ImGui::SameLine();
-    ImGui::TextDisabled("%zu tools", impl_->tools.size());
+    ImGui::TextDisabled("%s", count.c_str());
 
-    const f32 list_w = 230.0f;
+    const f32 list_w = width > 0.0f ? width : std::max(ImGui::GetContentRegionAvail().x, 180.0f);
     if (ImGui::BeginChild("##tool_list", ImVec2(list_w, 0), ImGuiChildFlags_Borders)) {
         const char* category = nullptr;
         usize visible_tools = 0;
         for (usize i = 0; i < impl_->tools.size(); ++i) {
             const Impl::Tool& t = impl_->tools[i];
             if (!ContainsNoCase(t.name, impl_->tool_filter.data()) &&
-                !ContainsNoCase(t.category, impl_->tool_filter.data())) continue;
+                !ContainsNoCase(t.category, impl_->tool_filter.data()) &&
+                !ContainsNoCase(t.description, impl_->tool_filter.data()))
+                continue;
             ++visible_tools;
             if (!category || std::strcmp(category, t.category.c_str()) != 0) {
                 category = t.category.c_str();
                 ImGui::SeparatorText(category);
             }
-            if (ImGui::Selectable(t.name.c_str(), impl_->selected == i)) impl_->selected = i;
+            // A row is two lines: the badge and name, then the description in the muted colour, so a tool says what
+            // it is for without being opened. The whole row is one item; the full description is also its tooltip.
+            ImGui::PushID(static_cast<int>(i));
+            const ImVec2 row_min = ImGui::GetCursorScreenPos();
+            const f32 row_h = ImGui::GetTextLineHeight() * 2.0f + 6.0f;
+            if (ImGui::Selectable("##row", impl_->selected == i, ImGuiSelectableFlags_None, ImVec2(0.0f, row_h))) impl_->selected = i;
+            const ImVec2 row_max = ImGui::GetItemRectMax();
+            if (ImGui::IsItemHovered() && !t.description.empty()) ImGui::SetTooltip("%s", t.description.c_str());
             if (ImGui::BeginPopupContextItem()) {
                 if (ImGui::MenuItem("Open in its own window")) impl_->tools[i].window_open = true;
                 ImGui::EndPopup();
             }
+            ImDrawList* draw = ImGui::GetWindowDrawList();
+            const f32 badge = ImGui::GetFontSize();
+            const ImVec2 badge_at(row_min.x + 2.0f, row_min.y + 2.0f);
+            draw->AddRectFilled(badge_at, ImVec2(badge_at.x + badge, badge_at.y + badge), CategoryColor(t.category), badge * 0.25f);
+            const char glyph[2] = {t.category.empty() ? '?' : t.category[0], '\0'};
+            const ImVec2 glyph_size = ImGui::CalcTextSize(glyph);
+            draw->AddText(ImVec2(badge_at.x + (badge - glyph_size.x) * 0.5f, badge_at.y + (badge - glyph_size.y) * 0.5f),
+                          IM_COL32(20, 20, 24, 255), glyph);
+            const f32 text_x = badge_at.x + badge + 6.0f;
+            draw->AddText(ImVec2(text_x, row_min.y + 2.0f), ImGui::GetColorU32(ImGuiCol_Text), t.name.c_str());
+            draw->PushClipRect(ImVec2(text_x, row_min.y), ImVec2(row_max.x - 4.0f, row_max.y), true);
+            draw->AddText(ImVec2(text_x, row_min.y + 2.0f + ImGui::GetTextLineHeight()), ImGui::GetColorU32(ImGuiCol_TextDisabled),
+                          t.description.c_str());
+            draw->PopClipRect();
+            ImGui::PopID();
         }
         if (visible_tools == 0) ImGui::TextDisabled("No tools match this search.");
     }
     ImGui::EndChild();
-    ImGui::SameLine();
+}
+
+void EditorWorkspace::DrawSelectedTool() {
+    if (impl_->tools.empty()) {
+        ImGui::TextDisabled("No tools.");
+        return;
+    }
+    const usize sel = impl_->selected;
     if (ImGui::BeginChild("##tool", ImVec2(0, 0), ImGuiChildFlags_Borders)) {
-        const usize sel = impl_->selected;
         if (ImGui::SmallButton("Pop out")) impl_->tools[sel].window_open = true;
+        ImGui::SetItemTooltip("Open the tool in its own window");
         ImGui::SameLine();
         ImGui::TextUnformatted(impl_->tools[sel].name.c_str());
         ImGui::SameLine();
         ImGui::TextDisabled("(%s)", impl_->tools[sel].category.c_str());
+        if (!impl_->tools[sel].description.empty()) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+            ImGui::TextWrapped("%s", impl_->tools[sel].description.c_str());
+            ImGui::PopStyleColor();
+        }
         ImGui::Separator();
         // A popped-out tool draws in its own window, not twice.
         if (impl_->tools[sel].window_open) {
@@ -1822,6 +1918,12 @@ void EditorWorkspace::DrawHubContents() {
         }
     }
     ImGui::EndChild();
+}
+
+void EditorWorkspace::DrawHubContents() {
+    DrawToolList(300.0f);
+    ImGui::SameLine();
+    DrawSelectedTool();
 }
 
 void EditorWorkspace::DrawHub(const char* title, bool* open) {

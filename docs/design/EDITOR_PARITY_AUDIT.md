@@ -532,6 +532,30 @@ through its hole misses, the second is picked by its box and the same ray hits. 
 250 ms budget (2,500 ms under a sanitizer) -- the measured cost in a RelWithDebInfo build is 1.3 ms a pick alone and 2.1 ms with the gate
 running four jobs, so the budget only trips on a change that makes the triangle loop superlinear.
 
+Done so far (2026-11-16): entity identity in the Scene View. An entity's box is drawn in its kind's colour
+(`EntityKindColor`, the same colour as its hierarchy badge: camera blue, light amber, model teal, script tan, audio violet,
+physics green), and every kind except a model gets a screen-space icon at its origin (camera
+body and lens, sun, speaker, page, sparks, ...) plus its name even when it is not selected, so a camera, a light and a player
+are told apart at a glance. A legend at the top right lists the kinds in the scene, and all of it is under the Helpers show
+flag. The default scene now carries a real `DirectionalLight` (rotated) and a `ScriptComponent` on the player, so the sample
+matches its names instead of drawing five identical boxes. `SceneView_EntityKindsAreColouredIconedAndNamed` checks the kinds,
+the distinct colours, and that the icons, names and legend draw more vertices than a scene of plain entities.
+
+Done so far (2026-11-16): the viewport chrome and what cameras and lights draw, from `docs/design/qt-editor-concept.png`.
+The Scene View's own controls are now chips inside the picture, where the concept draws them: the viewport's name,
+projection, view mode and Show along the top left; the gizmo's space, the snap step for the current tool and the grid
+along the top right; the selection along the bottom left and the scene's entity, selection and FPS counts along the
+bottom right. Each interactive chip is hit-tested before the picture sees the mouse, so a click on one neither picks nor
+moves what is under it, and hover picking and tool input are suppressed while over one. `SceneViewPanel::LastChrome()`
+records the nine rectangles, and `SceneView_ThePictureOwnsItsControls` clicks projection, mode, grid, snap and space at
+those rectangles, checks the obvious consequences (the projection flips without clearing the selection, and so on), and
+then still selects an entity by clicking the picture itself -- the chips do not eat ordinary clicks. A camera now draws
+its frustum (four rays, a far rectangle from the FOV or orthographic height, an up tick), a point light three rings at
+its range, a spot light a disc at its range with spokes, and a directional light an arrow with barbs; the sizes come
+from the components via their reflected fields, so the portable editor still has no renderer dependency.
+`SceneView_CamerasAndLightsDrawWhatTheyDo` compares the vertices a camera and a point light add against the same entity
+without the component.
+
 ### Stage 3 — Content browser and importer parity (L)
 
 Outcome: assets can be found, judged, imported, fixed and opened without leaving the editor.

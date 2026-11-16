@@ -29,8 +29,25 @@ public:
     SceneViewShading* shading = nullptr;
     // The overlays drawn on top, in either mode.
     SceneViewShowFlags show;
+    // What the picture's own controls were last frame, in screen coordinates, as the design puts them: the viewport's
+    // name and look along the top left, the gizmo's space, snapping and the grid along the top right, the selection at
+    // the bottom left and the scene's counts at the bottom right. A host drawing its own overlays keeps clear of them,
+    // and a test clicks them.
+    struct Chrome {
+        ImVec2 viewport_label_min{}, viewport_label_max{};
+        ImVec2 projection_min{}, projection_max{};
+        ImVec2 view_mode_min{}, view_mode_max{};
+        ImVec2 show_min{}, show_max{};
+        ImVec2 space_min{}, space_max{};
+        ImVec2 snap_min{}, snap_max{};
+        ImVec2 grid_min{}, grid_max{};
+        ImVec2 selection_min{}, selection_max{};
+        ImVec2 stats_min{}, stats_max{};
+    };
+    const Chrome& LastChrome() const { return chrome_; }
 
 private:
+    Chrome chrome_;
     SceneViewCamera camera_;
     ViewportTools tools_;
     ContentDrop drop_;          // an asset dragged in from the Content Browser: where it would land, and the last thing to say about a drop

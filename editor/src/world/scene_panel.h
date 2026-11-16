@@ -6,6 +6,8 @@
 
 #include "aether/scene/prefab.h"
 
+#include <imgui.h>
+
 #include <array>
 #include <filesystem>
 #include <functional>
@@ -62,6 +64,8 @@ EntityKind ClassifyEntity(const World& world, Entity entity);
 EntityKind ComponentKind(std::string_view component_name); // "aether::PointLight" -> Light
 const char* EntityKindName(EntityKind kind);
 char EntityKindGlyph(EntityKind kind); // the letter in the badge
+// The badge's colour, which the Scene View uses for the same kind too, so a colour means one thing in both.
+ImVec4 EntityKindColor(EntityKind kind);
 
 // A hierarchy row's prefab state. `missing_source` needs `find_prefab`; without one it is never set.
 struct PrefabRowState {

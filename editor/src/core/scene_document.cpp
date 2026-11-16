@@ -3,6 +3,7 @@
 #include "aether/ecs/archetype.h"
 #include "aether/scene/gameplay.h"
 #include "aether/scene/hierarchy.h"
+#include "aether/scene/script_component.h"
 #include "aether/scene/serialization.h"
 #include "core/commands.h"
 
@@ -92,11 +93,20 @@ void SceneDocument::NewScene() {
             ? world_.CreateEntity(EntityName{name}, Transform{position, Quaternion::Identity()}, Camera{}, IdComponent{guid})
             : world_.CreateEntity(EntityName{name}, Transform{position, Quaternion::Identity()}, IdComponent{guid});
         guids_.Add(guid, entity);
+        return entity;
     };
     add("Camera", Vec3{0.0f, 3.0f, -8.0f}, true);
-    add("Directional Light", Vec3{2.0f, 4.0f, 0.0f}, false);
+    // The light is a light and the player has a script slot: the Scene View colours and names them for what they are,
+    // and a Lit view of the scene has a light to work with. The light is added by name because the editor core links
+    // the engine only; the renderer module's component is there when the host registered its components.
+    const Entity sun = add("Directional Light", Vec3{2.0f, 4.0f, 0.0f}, false);
+    ComponentId light_component = FindComponentIdByName("aether::DirectionalLight");
+    if (light_component == kInvalidComponentId) light_component = FindComponentIdByName("DirectionalLight");
+    if (light_component != kInvalidComponentId) world_.AddComponentRaw(sun, light_component);
+    if (auto* transform = world_.GetComponent<Transform>(sun)) transform->rotation = Quaternion::FromAxisAngle(Vec3{1.0f, 0.0f, 0.0f}, -0.9f);
     add("Environment", Vec3{0.0f, 0.0f, 0.0f}, false);
-    add("Player", Vec3{0.0f, 1.8f, -6.0f}, false);
+    const Entity player = add("Player", Vec3{0.0f, 1.8f, -6.0f}, false);
+    world_.AddComponent(player, ScriptComponent{});
     add("Ground", Vec3{0.0f, -0.5f, 0.0f}, false);
     commands_.MarkSaved();
 }

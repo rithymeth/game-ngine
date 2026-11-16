@@ -43,23 +43,6 @@ void Copy(std::array<char, 128>& buffer, const std::string& text) {
 constexpr ImVec4 kPrefabColor{0.35f, 0.65f, 1.0f, 1.0f};        // the Inspector's override blue
 constexpr ImVec4 kMissingPrefabColor{0.95f, 0.4f, 0.35f, 1.0f};
 
-ImVec4 KindColor(EntityKind kind) {
-    switch (kind) {
-        case EntityKind::Camera: return {0.38f, 0.62f, 0.92f, 1.0f};
-        case EntityKind::Light: return {0.95f, 0.8f, 0.3f, 1.0f};
-        case EntityKind::Model: return {0.32f, 0.76f, 0.7f, 1.0f};
-        case EntityKind::Particles: return {0.95f, 0.56f, 0.3f, 1.0f};
-        case EntityKind::Audio: return {0.7f, 0.52f, 0.92f, 1.0f};
-        case EntityKind::Ui: return {0.9f, 0.46f, 0.66f, 1.0f};
-        case EntityKind::Physics: return {0.48f, 0.8f, 0.4f, 1.0f};
-        case EntityKind::Script: return {0.78f, 0.72f, 0.46f, 1.0f};
-        case EntityKind::Volume: return {0.54f, 0.56f, 0.95f, 1.0f};
-        case EntityKind::Other: return {0.62f, 0.62f, 0.62f, 1.0f};
-        case EntityKind::Empty: return {0.42f, 0.42f, 0.42f, 1.0f};
-    }
-    return {0.62f, 0.62f, 0.62f, 1.0f};
-}
-
 // The badge and the name of a tree row whose own label is empty, drawn over it so the row keeps one item (selection,
 // drag and the context menu all go on it) and its height. Returns the badge's top-left corner; it is a font size square.
 ImVec2 DrawRowLabel(ImVec2 row_min, ImVec2 row_max, EntityKind kind, const PrefabRowState& prefab, const std::string& name, bool hidden) {
@@ -67,7 +50,7 @@ ImVec2 DrawRowLabel(ImVec2 row_min, ImVec2 row_max, EntityKind kind, const Prefa
     const f32 size = ImGui::GetFontSize();
     const ImVec2 badge(row_min.x + ImGui::GetTreeNodeToLabelSpacing(), row_min.y + (row_max.y - row_min.y - size) * 0.5f);
     const ImVec2 badge_max(badge.x + size, badge.y + size);
-    draw->AddRectFilled(badge, badge_max, ImGui::GetColorU32(KindColor(kind)), size * 0.25f);
+    draw->AddRectFilled(badge, badge_max, ImGui::GetColorU32(EntityKindColor(kind)), size * 0.25f);
     const char glyph[2] = {EntityKindGlyph(kind), '\0'};
     const ImVec2 glyph_size = ImGui::CalcTextSize(glyph);
     draw->AddText(ImVec2(badge.x + (size - glyph_size.x) * 0.5f, badge.y + (size - glyph_size.y) * 0.5f), IM_COL32(20, 20, 24, 255),
@@ -112,6 +95,25 @@ bool RowToggle(const ImVec2& at, f32 size, RowGlyph glyph, bool on, const char* 
 }
 
 } // namespace
+
+// One colour per kind, shared by the hierarchy badges and the viewport's icons and legend, so an entity reads as the
+// same thing in both panels.
+ImVec4 EntityKindColor(EntityKind kind) {
+    switch (kind) {
+        case EntityKind::Camera: return {0.38f, 0.62f, 0.92f, 1.0f};
+        case EntityKind::Light: return {0.95f, 0.8f, 0.3f, 1.0f};
+        case EntityKind::Model: return {0.32f, 0.76f, 0.7f, 1.0f};
+        case EntityKind::Particles: return {0.95f, 0.56f, 0.3f, 1.0f};
+        case EntityKind::Audio: return {0.7f, 0.52f, 0.92f, 1.0f};
+        case EntityKind::Ui: return {0.9f, 0.46f, 0.66f, 1.0f};
+        case EntityKind::Physics: return {0.48f, 0.8f, 0.4f, 1.0f};
+        case EntityKind::Script: return {0.78f, 0.72f, 0.46f, 1.0f};
+        case EntityKind::Volume: return {0.54f, 0.56f, 0.95f, 1.0f};
+        case EntityKind::Other: return {0.62f, 0.62f, 0.62f, 1.0f};
+        case EntityKind::Empty: return {0.42f, 0.42f, 0.42f, 1.0f};
+    }
+    return {0.62f, 0.62f, 0.62f, 1.0f};
+}
 
 HierarchyIndex::HierarchyIndex(const SceneDocument& document) {
     const std::vector<Entity> entities = document.Entities();

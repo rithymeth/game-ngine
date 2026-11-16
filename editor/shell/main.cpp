@@ -48,6 +48,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <fstream>
+#include <iterator>
 #include <memory>
 #include <string>
 #include <vector>
@@ -59,38 +61,50 @@ namespace rhi = aether::gfx::rhi;
 namespace {
 
 // The arrangements Window > Layout offers under LayoutPresets::BuiltinNames(), each a docking of the three windows
-// this shell owns: the tool list and editor ("Editors"), the Terrain tool, and the console/profiler ("Debug").
+// this shell owns: the tool list ("Tools") on the left, the open tool ("Editor") in the middle, and the
+// console/profiler ("Debug") where the preset puts it.
 void BuildDockLayout(ImGuiID dockspace, const ImVec2& size, const std::string& preset) {
     ImGui::DockBuilderRemoveNode(dockspace);
     ImGui::DockBuilderAddNode(dockspace, ImGuiDockNodeFlags_DockSpace);
     ImGui::DockBuilderSetNodeSize(dockspace, size);
+    // The tool list is a column on the left and the open tool fills the rest; the console is the only dock a preset
+    // moves. No tool is docked on the right on its own: that is what used to stack every tool there.
     ImGuiID main = dockspace;
-    ImGuiID top_right = 0;
-    ImGuiID bottom = 0;
-    if (preset == "Level design") {
-        // The editor takes the room a level needs; the side panels narrow to a quarter.
-        const ImGuiID side = ImGui::DockBuilderSplitNode(main, ImGuiDir_Right, 0.24f, nullptr, &main);
-        top_right = side;
-        bottom = ImGui::DockBuilderSplitNode(side, ImGuiDir_Down, 0.5f, nullptr, &top_right);
-    } else if (preset == "Scripting") {
-        // The editor in the centre, a small scene at the top right, Output large below it.
-        const ImGuiID side = ImGui::DockBuilderSplitNode(main, ImGuiDir_Right, size.x > 1100.0f ? 420.0f / size.x : 0.3f, nullptr, &main);
-        top_right = side;
-        bottom = ImGui::DockBuilderSplitNode(side, ImGuiDir_Down, 0.65f, nullptr, &top_right);
+    const ImGuiID tools = ImGui::DockBuilderSplitNode(main, ImGuiDir_Left, size.x > 1100.0f ? 300.0f / size.x : 0.3f, nullptr, &main);
+    ImGuiID debug = 0;
+    if (preset == "Scripting") {
+        // The editor in the centre, Output large on the right.
+        debug = ImGui::DockBuilderSplitNode(main, ImGuiDir_Right, size.x > 1100.0f ? 420.0f / size.x : 0.3f, nullptr, &main);
     } else if (preset == "Animation") {
-        // The editor in the centre, the timeline along the bottom, Details on the right.
-        bottom = ImGui::DockBuilderSplitNode(main, ImGuiDir_Down, 0.28f, nullptr, &main);
-        top_right = ImGui::DockBuilderSplitNode(main, ImGuiDir_Right, 0.3f, nullptr, &main);
-    } else { // Default: the tools left and middle, Terrain top right, the console and profiler under it
-        const ImGuiID side = ImGui::DockBuilderSplitNode(main, ImGuiDir_Right, size.x > 1100.0f ? 420.0f / size.x : 0.3f, nullptr, &main);
-        top_right = side;
-        bottom = ImGui::DockBuilderSplitNode(side, ImGuiDir_Down, 0.5f, nullptr, &top_right);
+        // The editor in the centre, the timeline along the bottom.
+        debug = ImGui::DockBuilderSplitNode(main, ImGuiDir_Down, 0.3f, nullptr, &main);
+    } else if (preset == "Level design") {
+        // The room a level needs; the console narrows to a strip.
+        debug = ImGui::DockBuilderSplitNode(main, ImGuiDir_Down, 0.22f, nullptr, &main);
+    } else { // Default: the editor above a console strip
+        debug = ImGui::DockBuilderSplitNode(main, ImGuiDir_Down, 0.3f, nullptr, &main);
     }
-    ImGui::DockBuilderDockWindow("Editors", main);
-    ImGui::DockBuilderDockWindow("Terrain", top_right);
-    ImGui::DockBuilderDockWindow("Debug", bottom);
+    ImGui::DockBuilderDockWindow("Tools", tools);
+    ImGui::DockBuilderDockWindow("Editor", main);
+    ImGui::DockBuilderDockWindow("Debug", debug);
     ImGui::DockBuilderFinish(dockspace);
 }
+
+// ImGui's panel ini is its memory of the docking tree. One from before the tool list became its own window names
+// windows this shell no longer has, so the new ones would open floating; it is set aside once (kept as .old) and the
+// default layout is rebuilt.
+void MigratePanelLayout(const std::filesystem::path& file) {
+    std::ifstream in(file, std::ios::binary);
+    if (!in) return;
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    if (text.find("[Window][Tools]") != std::string::npos) return;
+    in.close();
+    std::error_code ignored;
+    std::filesystem::rename(file, file.string() + ".old", ignored);
+}
+
+// A saved layout is the same ini text, so the same staleness check applies to it.
+bool IsStaleLayout(const std::string& ini) { return ini.find("[Window][Tools]") == std::string::npos; }
 
 // What Window > Layout is showing and what it still has to apply: a saved preset's ini is loaded before the next
 // NewFrame, a built-in arrangement is rebuilt once the dockspace exists, and Save Layout As captures the current one.
@@ -272,11 +286,11 @@ void DrawEditor(EditorWorkspace& workspace, LayoutState& layouts, const char* ba
     }
 
     constexpr ImGuiWindowFlags kPanel = ImGuiWindowFlags_NoCollapse;
-    // Every tool: the list by category on the left, the selected one beside it.
-    if (ImGui::Begin("Editors", nullptr, kPanel)) workspace.DrawHubContents();
+    // Every tool by category on the left, with what each one is for; the selected one fills the middle.
+    if (ImGui::Begin("Tools", nullptr, kPanel)) workspace.DrawToolList();
     ImGui::End();
 
-    if (ImGui::Begin("Terrain", nullptr, kPanel)) workspace.DrawTool(static_cast<usize>(workspace.FindTool("Terrain")));
+    if (ImGui::Begin("Editor", nullptr, kPanel)) workspace.DrawSelectedTool();
     ImGui::End();
 
     if (ImGui::Begin("Debug", nullptr, kPanel) && ImGui::BeginTabBar("##debug")) {
@@ -410,6 +424,7 @@ int main(int argc, char** argv) {
         static std::string imgui_ini;
         if (!layout_file.empty()) {
             imgui_ini = (layout_file.parent_path() / "editor_panels.ini").string();
+            MigratePanelLayout(imgui_ini);
             io.IniFilename = imgui_ini.c_str();
         }
         // The tool to open on: the one asked for, else the one left open last time. A tool an extension adds (the Live Viewport is one) only
@@ -478,8 +493,13 @@ int main(int argc, char** argv) {
 
             Profiler::Get().BeginFrame();
             if (!layouts.apply_text.empty()) { // Window > Layout chose a saved arrangement: its ini replaces the current one
-                ImGui::LoadIniSettingsFromMemory(layouts.apply_text.data(), layouts.apply_text.size());
-                layouts.apply_text.clear();
+                if (IsStaleLayout(layouts.apply_text)) { // saved by a shell whose windows this one no longer has
+                    layouts.apply_text.clear();
+                    layouts.apply_builtin = layouts.active;
+                } else {
+                    ImGui::LoadIniSettingsFromMemory(layouts.apply_text.data(), layouts.apply_text.size());
+                    layouts.apply_text.clear();
+                }
             }
             host.NewFrame();
             ImGui::NewFrame();

@@ -101,6 +101,9 @@ public:
     usize ToolCount() const;
     const char* ToolName(usize tool) const;
     const char* ToolCategory(usize tool) const;
+    // One sentence on what the tool is for, shown under its name in the list and at the top of the open tool: the hub
+    // should not be a list of bare names.
+    const char* ToolDescription(usize tool) const;
     // The tool whose name starts with `name` (case-insensitive), or -1.
     i64 FindTool(std::string_view name) const;
 
@@ -166,6 +169,11 @@ public:
     void DrawToolsMenu();
     // A window with every tool. `open` (optional) gets the title-bar X.
     void DrawHub(const char* title = "Tools", bool* open = nullptr);
+    // The hub in two pieces for a host that docks them separately (the shell puts the list on the left and the open
+    // tool in the middle): the workspace buttons, the search and the list by category; and the selected tool with its
+    // name, category and description. DrawHubContents is both side by side.
+    void DrawToolList(f32 width = 0.0f);
+    void DrawSelectedTool();
     // The hub's contents into the current window (the shell fills its main area with this).
     void DrawHubContents();
     // The popped-out tool windows.

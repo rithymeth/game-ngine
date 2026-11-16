@@ -1,5 +1,6 @@
 #include "world/scene_view_panel.h"
 #include "world/content_drop.h"
+#include "world/scene_panel.h"
 
 #include "aether/reflection/registry.h"
 #include "aether/scene/components.h"
@@ -10,6 +11,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <functional>
 #include <string_view>
@@ -89,6 +91,216 @@ void DrawColliders(const SceneDocument& document, const SceneViewCamera& camera,
                 line(place(matrix, centre + Vec3(0.0f, half, radius)), place(matrix, centre + Vec3(0.0f, -half, radius)), color, 1.5f);
                 line(place(matrix, centre + Vec3(0.0f, half, -radius)), place(matrix, centre + Vec3(0.0f, -half, -radius)), color, 1.5f);
             }
+        }
+    }
+}
+
+// A small icon at an entity's projected origin saying what it is, so the viewport does not read as a field of identical
+// boxes: a camera's body and lens, a sun, a speaker, a page, sparks. Models keep the box alone (the box is the model).
+void DrawKindIcon(ImDrawList* draw, const ImVec2& at, EntityKind kind, ImU32 color) {
+    const f32 r = 7.0f;
+    switch (kind) {
+        case EntityKind::Camera:
+            draw->AddRectFilled(ImVec2(at.x - r, at.y - r * 0.65f), ImVec2(at.x + r * 0.15f, at.y + r * 0.65f), IM_COL32(16, 17, 21, 210), 2.0f);
+            draw->AddRect(ImVec2(at.x - r, at.y - r * 0.65f), ImVec2(at.x + r * 0.15f, at.y + r * 0.65f), color, 2.0f, 0, 1.5f);
+            draw->AddCircle(ImVec2(at.x + r * 0.55f, at.y), r * 0.5f, color, 12, 1.5f);
+            break;
+        case EntityKind::Light:
+            draw->AddCircleFilled(at, r * 0.45f, color, 12);
+            for (int ray = 0; ray < 8; ++ray) {
+                const f32 angle = static_cast<f32>(ray) * 3.14159265f / 4.0f;
+                const ImVec2 dir(std::cos(angle), std::sin(angle));
+                draw->AddLine(ImVec2(at.x + dir.x * r * 0.7f, at.y + dir.y * r * 0.7f),
+                              ImVec2(at.x + dir.x * r * 1.3f, at.y + dir.y * r * 1.3f), color, 1.5f);
+            }
+            break;
+        case EntityKind::Audio:
+            draw->AddRectFilled(ImVec2(at.x - r, at.y - r * 0.35f), ImVec2(at.x - r * 0.4f, at.y + r * 0.35f), color);
+            draw->AddTriangleFilled(ImVec2(at.x - r * 0.45f, at.y - r * 0.7f), ImVec2(at.x - r * 0.45f, at.y + r * 0.7f),
+                                    ImVec2(at.x + r * 0.35f, at.y), color);
+            for (int arc = 1; arc <= 2; ++arc) {
+                draw->PathArcTo(ImVec2(at.x + r * 0.35f, at.y), r * 0.4f * static_cast<f32>(arc), -0.7f, 0.7f, 8);
+                draw->PathStroke(color, 0, 1.5f);
+            }
+            break;
+        case EntityKind::Script:
+            draw->AddRect(ImVec2(at.x - r * 0.7f, at.y - r), ImVec2(at.x + r * 0.7f, at.y + r), color, 1.5f, 0, 1.5f);
+            for (int line = -1; line <= 1; ++line)
+                draw->AddLine(ImVec2(at.x - r * 0.45f, at.y + static_cast<f32>(line) * r * 0.45f),
+                              ImVec2(at.x + r * (line == 1 ? 0.2f : 0.5f), at.y + static_cast<f32>(line) * r * 0.45f), color, 1.5f);
+            break;
+        case EntityKind::Particles:
+            for (int spark = 0; spark < 4; ++spark) {
+                const f32 angle = static_cast<f32>(spark) * 1.5707963f;
+                draw->AddLine(ImVec2(at.x - std::cos(angle) * r, at.y - std::sin(angle) * r),
+                              ImVec2(at.x + std::cos(angle) * r, at.y + std::sin(angle) * r), color, 1.5f);
+            }
+            draw->AddCircleFilled(at, 1.8f, color);
+            break;
+        case EntityKind::Physics:
+            draw->AddCircle(at, r * 0.7f, color, 12, 1.5f);
+            draw->AddRect(ImVec2(at.x - r * 0.3f, at.y + r * 0.3f), ImVec2(at.x + r * 0.6f, at.y + r * 0.9f), color, 1.0f, 0, 1.5f);
+            break;
+        case EntityKind::Volume:
+            draw->AddRect(ImVec2(at.x - r, at.y - r * 0.7f), ImVec2(at.x + r, at.y + r * 0.7f), color, 1.5f, 0, 1.5f);
+            draw->AddRect(ImVec2(at.x - r * 0.6f, at.y - r * 0.4f), ImVec2(at.x + r * 0.6f, at.y + r * 0.4f), color, 1.0f, 0, 1.0f);
+            break;
+        case EntityKind::Ui:
+            draw->AddRect(ImVec2(at.x - r, at.y - r * 0.7f), ImVec2(at.x + r, at.y + r * 0.7f), color, 1.5f, 0, 1.5f);
+            draw->AddRectFilled(ImVec2(at.x - r * 0.7f, at.y - r * 0.4f), ImVec2(at.x + r * 0.1f, at.y + r * 0.1f), color);
+            break;
+        case EntityKind::Empty:
+        case EntityKind::Other:
+            draw->AddCircle(at, r * 0.35f, color, 10, 1.5f);
+            break;
+        case EntityKind::Model: break; // the box says it
+    }
+}
+
+// What a colour in the viewport means.
+struct KindLegendEntry {
+    EntityKind kind;
+    const char* label;
+};
+constexpr KindLegendEntry kLegend[] = {
+    {EntityKind::Camera, "Camera"}, {EntityKind::Light, "Light"},       {EntityKind::Model, "Model"},
+    {EntityKind::Particles, "Particles"}, {EntityKind::Audio, "Audio"}, {EntityKind::Ui, "UI"},
+    {EntityKind::Physics, "Physics"}, {EntityKind::Script, "Script"},   {EntityKind::Volume, "Volume"},
+    {EntityKind::Other, "Entity"}, {EntityKind::Empty, "Empty"},
+};
+
+// The view modes the in-picture chip steps through, in the order it cycles them.
+struct ViewModeEntry {
+    SceneViewMode mode;
+    const char* name;
+};
+constexpr ViewModeEntry kViewModes[] = {
+    {SceneViewMode::Wireframe, "Wireframe"}, {SceneViewMode::Lit, "Lit"}, {SceneViewMode::Unlit, "Unlit"}, {SceneViewMode::Normals, "Normals"}};
+
+// A control drawn into the picture rather than a widget above it, as the editor concept does: its rectangle, and whether
+// the mouse is over it. The panel hit-tests these itself, so a click on one never reaches selection or the gizmo.
+struct PictureChip {
+    ImVec2 min{};
+    ImVec2 max{};
+    bool hovered = false;
+};
+
+constexpr f32 kChipHeight = 22.0f;
+constexpr f32 kChipPadding = 9.0f;
+constexpr f32 kChipGap = 6.0f;
+constexpr f32 kChipCaret = 14.0f; // room for the little triangle of a chip that stands for a choice
+
+PictureChip PlaceChip(f32& x, f32 y, const char* text, const ImVec2& mouse, bool in_view, bool caret = false) {
+    PictureChip chip;
+    chip.min = ImVec2(x, y);
+    chip.max = ImVec2(x + ImGui::CalcTextSize(text).x + kChipPadding * 2.0f + (caret ? kChipCaret : 0.0f), y + kChipHeight);
+    chip.hovered = in_view && mouse.x >= chip.min.x && mouse.x <= chip.max.x && mouse.y >= chip.min.y && mouse.y <= chip.max.y;
+    x = chip.max.x + kChipGap;
+    return chip;
+}
+
+PictureChip PlaceChipRight(f32& right, f32 y, const char* text, const ImVec2& mouse, bool in_view) {
+    const f32 width = ImGui::CalcTextSize(text).x + kChipPadding * 2.0f;
+    PictureChip chip;
+    chip.max = ImVec2(right, y + kChipHeight);
+    chip.min = ImVec2(right - width, y);
+    chip.hovered = in_view && mouse.x >= chip.min.x && mouse.x <= chip.max.x && mouse.y >= chip.min.y && mouse.y <= chip.max.y;
+    right = chip.min.x - kChipGap;
+    return chip;
+}
+
+void DrawChip(ImDrawList* draw, const PictureChip& chip, const char* text, bool interactive, bool caret = false) {
+    const bool lit = interactive && chip.hovered;
+    draw->AddRectFilled(chip.min, chip.max, lit ? Color(31, 35, 44, 235) : Color(15, 17, 22, 215), 4.0f);
+    draw->AddRect(chip.min, chip.max, lit ? Color(115, 125, 145, 235) : Color(58, 64, 76, 220), 4.0f);
+    const ImVec2 text_size = ImGui::CalcTextSize(text);
+    const f32 text_x = chip.min.x + kChipPadding;
+    draw->AddText(ImVec2(text_x, chip.min.y + (kChipHeight - text_size.y) * 0.5f), lit ? Color(242, 245, 250) : Color(204, 210, 220), text);
+    if (caret) {
+        const ImVec2 centre(chip.max.x - kChipPadding - 2.0f, chip.min.y + kChipHeight * 0.5f);
+        draw->AddTriangleFilled(ImVec2(centre.x - 3.5f, centre.y - 2.0f), ImVec2(centre.x + 3.5f, centre.y - 2.0f), ImVec2(centre.x, centre.y + 2.5f),
+                                Color(165, 172, 185));
+    }
+}
+
+// A camera's frustum, a point light's range, a spot light's cone and a directional light's direction, drawn where they
+// are: the picture shows what an entity does, not just that a box is there. The lens, range and angles are the entity's
+// own -- the Camera component, or the light's reflected fields -- so the portable editor need not link the renderer.
+void DrawKindGizmo(const SceneDocument& document, Entity entity, EntityKind kind,
+                   const std::function<void(const Vec3&, const Vec3&, ImU32, f32)>& line, ImU32 color) {
+    const World& world = document.GetWorld();
+    const Mat4 matrix = ComputeWorldTransform(world, document.Guids(), entity);
+    const Vec4& position = matrix.cols[3];
+    const Vec3 origin(position.x, position.y, position.z);
+    auto axis = [&](int column) {
+        const Vec4& column_data = matrix.cols[column];
+        return Vec3(column_data.x, column_data.y, column_data.z).Normalized();
+    };
+    auto ring = [&](const Vec3& centre, const Vec3& a, const Vec3& b, f32 radius) {
+        constexpr int kSegments = 24;
+        Vec3 previous = centre + a * radius;
+        for (int segment = 1; segment <= kSegments; ++segment) {
+            const f32 angle = static_cast<f32>(segment) / kSegments * 2.0f * 3.14159265f;
+            const Vec3 next = centre + a * (radius * std::cos(angle)) + b * (radius * std::sin(angle));
+            line(previous, next, color, 1.2f);
+            previous = next;
+        }
+    };
+    if (kind == EntityKind::Camera) {
+        const Camera* camera = world.GetComponent<Camera>(entity);
+        const f32 fov = camera != nullptr ? std::clamp(camera->fov_degrees, 5.0f, 170.0f) : 60.0f;
+        const bool orthographic = camera != nullptr && camera->projection == Projection::Orthographic;
+        const Vec3 right = axis(0), up = axis(1);
+        const Vec3 forward = axis(2) * -1.0f; // a camera looks down its own -Z
+        const f32 depth = 2.5f;
+        const f32 half_height = orthographic ? 0.9f : depth * std::tan(fov * 0.5f * 3.14159265f / 180.0f);
+        const f32 half_width = half_height * 1.6f;
+        const Vec3 centre = origin + forward * depth;
+        const Vec3 corners[4] = {centre + right * half_width + up * half_height, centre - right * half_width + up * half_height,
+                                 centre - right * half_width - up * half_height, centre + right * half_width - up * half_height};
+        for (const Vec3& corner : corners) line(origin, corner, color, 1.2f);
+        for (int corner = 0; corner < 4; ++corner) line(corners[corner], corners[(corner + 1) % 4], color, 1.2f);
+        line(origin, origin + up * 0.7f, color, 2.0f); // which way is up in its picture
+        return;
+    }
+    if (kind != EntityKind::Light) return;
+    for (ComponentId id = 0; id < RegisteredComponentCount(); ++id) {
+        if (!world.HasComponentRaw(entity, id)) continue;
+        const ComponentInfo& info = GetComponentInfo(id);
+        if (info.reflected == nullptr) continue;
+        const void* component = world.GetComponentRaw(entity, id);
+        if (component == nullptr) continue;
+        std::string_view name = info.name;
+        if (const usize colons = name.rfind("::"); colons != std::string_view::npos) name.remove_prefix(colons + 2);
+        if (name == "PointLight") {
+            const f32* range = Field<f32>(*info.reflected, component, "range");
+            const f32 radius = std::clamp(range != nullptr ? *range : 10.0f, 0.1f, 500.0f);
+            ring(origin, Vec3(1.0f, 0.0f, 0.0f), Vec3(0.0f, 1.0f, 0.0f), radius);
+            ring(origin, Vec3(1.0f, 0.0f, 0.0f), Vec3(0.0f, 0.0f, 1.0f), radius);
+            ring(origin, Vec3(0.0f, 1.0f, 0.0f), Vec3(0.0f, 0.0f, 1.0f), radius);
+        } else if (name == "SpotLight") {
+            const f32* range = Field<f32>(*info.reflected, component, "range");
+            const f32* outer = Field<f32>(*info.reflected, component, "outer_angle_degrees");
+            const f32 reach = std::clamp(range != nullptr ? *range : 10.0f, 0.1f, 500.0f);
+            const f32 half_angle = std::clamp(outer != nullptr ? *outer : 30.0f, 1.0f, 89.0f) * 3.14159265f / 180.0f;
+            const Vec3 forward = axis(2) * -1.0f, right = axis(0), up = axis(1);
+            const f32 radius = reach * std::tan(half_angle);
+            const Vec3 disc = origin + forward * reach;
+            ring(disc, right, up, radius);
+            for (int spoke = 0; spoke < 4; ++spoke) {
+                const f32 angle = static_cast<f32>(spoke) * 1.5707963f;
+                line(origin, disc + right * (radius * std::cos(angle)) + up * (radius * std::sin(angle)), color, 1.2f);
+            }
+        } else if (name == "DirectionalLight") {
+            const Vec3 forward = axis(2) * -1.0f; // the way its light travels
+            const Vec3 tip = origin + forward * 2.5f;
+            const Vec3 right = axis(0), up = axis(1);
+            line(origin, tip, color, 2.0f);
+            line(tip, tip - forward * 0.6f + right * 0.35f, color, 2.0f);
+            line(tip, tip - forward * 0.6f - right * 0.35f, color, 2.0f);
+            line(tip, tip - forward * 0.6f + up * 0.35f, color, 2.0f);
+            line(tip, tip - forward * 0.6f - up * 0.35f, color, 2.0f);
+            ring(origin, right, up, 0.5f); // the sun disc, facing the way it shines
         }
     }
 }
@@ -180,12 +392,83 @@ void SceneViewPanel::Draw(SceneDocument& document, const ModelBoundsCache* bound
     const ImVec2 avail = ImGui::GetContentRegionAvail();
     const ImVec2 size(std::max(avail.x, 64.0f), std::max(avail.y, 64.0f));
     const ImVec2 origin = ImGui::GetCursorScreenPos();
+    const ImVec2 end(origin.x + size.x, origin.y + size.y);
     ImGui::InvisibleButton("##scene_view", size, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
     const bool hovered = ImGui::IsItemHovered();
     const bool active = ImGui::IsItemActive();
     // An asset dragged in from the Content Browser: a model or a prefab is placed on the ground under the mouse (rounded to the move step if Snap is on).
     drop_.Accept(document, content_root, camera_, origin, size, tools_.MoveSnapStep());
     const ImGuiIO& io = ImGui::GetIO();
+
+    // The picture's own controls, where the editor concept puts them: the viewport's name and look along the top left, the
+    // gizmo's space, snapping and the grid along the top right, the selection at the bottom left and the scene's counts at
+    // the bottom right. They are drawn into the picture and hit-tested here, so a click on one never selects or moves what
+    // is under it.
+    const bool ortho_now = camera_.projection == SceneViewProjection::Orthographic;
+    const char* projection_text = ortho_now ? "Orthographic" : "Perspective";
+    auto snap_label = [&] {
+        if (tools_.SnapStep() <= 0.0f) return std::string("Snap off");
+        char text[32];
+        if (tools_.Mode() == GizmoMode::Move) std::snprintf(text, sizeof text, "Snap %.2g m", static_cast<f64>(tools_.SnapStep()));
+        else if (tools_.Mode() == GizmoMode::Rotate) std::snprintf(text, sizeof text, "Snap %.0f deg", static_cast<f64>(tools_.SnapStep()));
+        else std::snprintf(text, sizeof text, "Snap %.2g", static_cast<f64>(tools_.SnapStep()));
+        return std::string(text);
+    };
+    const std::string snap_before = snap_label();
+    f32 chip_x = origin.x + 10.0f;
+    const f32 chip_y = origin.y + 10.0f;
+    const PictureChip viewport_label = PlaceChip(chip_x, chip_y, "Viewport 1", io.MousePos, false);
+    const PictureChip projection_chip = PlaceChip(chip_x, chip_y, projection_text, io.MousePos, hovered, true);
+    const PictureChip view_mode_chip = PlaceChip(chip_x, chip_y, kViewModes[static_cast<int>(mode)].name, io.MousePos, hovered, true);
+    const PictureChip show_chip = PlaceChip(chip_x, chip_y, "Show", io.MousePos, hovered, true);
+    f32 chip_right = end.x - 10.0f;
+    const PictureChip grid_chip = PlaceChipRight(chip_right, chip_y, show.grid ? "Grid on" : "Grid off", io.MousePos, hovered);
+    const PictureChip snap_chip = PlaceChipRight(chip_right, chip_y, snap_before.c_str(), io.MousePos, hovered);
+    const PictureChip space_chip = PlaceChipRight(chip_right, chip_y, tools_.Space() == GizmoSpace::Local ? "Local" : "World", io.MousePos, hovered);
+    const std::vector<Entity> selection = document.Selection();
+    const std::string selection_text = selection.empty() ? "Nothing selected"
+                                      : selection.size() == 1 ? document.Name(selection.front()) + "  |  Selected"
+                                                              : std::to_string(selection.size()) + " selected";
+    char stats_text[96];
+    std::snprintf(stats_text, sizeof stats_text, "%zu entities  |  %zu selected  |  %d fps", document.Entities().size(), selection.size(),
+                  static_cast<int>(std::lround(io.Framerate)));
+    f32 bottom_left = origin.x + 10.0f;
+    const f32 bottom_y = end.y - kChipHeight - 10.0f;
+    const PictureChip selection_chip = PlaceChip(bottom_left, bottom_y, selection_text.c_str(), io.MousePos, false);
+    f32 bottom_right = end.x - 10.0f;
+    const PictureChip stats_chip = PlaceChipRight(bottom_right, bottom_y, stats_text, io.MousePos, false);
+
+    if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        if (projection_chip.hovered) camera_.projection = ortho_now ? SceneViewProjection::Perspective : SceneViewProjection::Orthographic;
+        if (view_mode_chip.hovered) mode = kViewModes[(static_cast<int>(mode) + 1) % IM_ARRAYSIZE(kViewModes)].mode;
+        if (show_chip.hovered) ImGui::OpenPopup("##scene_view_show_flags");
+        if (space_chip.hovered) tools_.SetSpace(tools_.Space() == GizmoSpace::Local ? GizmoSpace::World : GizmoSpace::Local);
+        if (snap_chip.hovered) tools_.SetSnap(!tools_.SnapEnabled());
+        if (grid_chip.hovered) show.grid = !show.grid;
+    }
+    const bool over_chrome =
+        projection_chip.hovered || view_mode_chip.hovered || show_chip.hovered || space_chip.hovered || snap_chip.hovered || grid_chip.hovered;
+    const char* drawn_projection = camera_.projection == SceneViewProjection::Orthographic ? "Orthographic" : "Perspective";
+    const char* drawn_mode = kViewModes[static_cast<int>(mode)].name;
+    chrome_ = Chrome{};
+    chrome_.viewport_label_min = viewport_label.min;
+    chrome_.viewport_label_max = viewport_label.max;
+    chrome_.projection_min = projection_chip.min;
+    chrome_.projection_max = projection_chip.max;
+    chrome_.view_mode_min = view_mode_chip.min;
+    chrome_.view_mode_max = view_mode_chip.max;
+    chrome_.show_min = show_chip.min;
+    chrome_.show_max = show_chip.max;
+    chrome_.space_min = space_chip.min;
+    chrome_.space_max = space_chip.max;
+    chrome_.snap_min = snap_chip.min;
+    chrome_.snap_max = snap_chip.max;
+    chrome_.grid_min = grid_chip.min;
+    chrome_.grid_max = grid_chip.max;
+    chrome_.selection_min = selection_chip.min;
+    chrome_.selection_max = selection_chip.max;
+    chrome_.stats_min = stats_chip.min;
+    chrome_.stats_max = stats_chip.max;
 
     // Input: right-drag looks and W/A/S/D (Q/E down/up) fly, middle-drag or shift + left-drag pans, the wheel zooms (changes the speed while
     // flying), F focuses, number keys are camera bookmarks; the tools take the gizmo and the clicks.
@@ -212,10 +495,9 @@ void SceneViewPanel::Draw(SceneDocument& document, const ModelBoundsCache* bound
     }
     notice_left_ = std::max(0.0f, notice_left_ - io.DeltaTime);
     speed_notice_ = std::max(0.0f, speed_notice_ - io.DeltaTime);
-    tools_.HandleInput(document, camera_, origin, size, hovered, active);
+    tools_.HandleInput(document, camera_, origin, size, hovered && !over_chrome, active && !over_chrome);
 
     ImDrawList* draw = ImGui::GetWindowDrawList();
-    const ImVec2 end(origin.x + size.x, origin.y + size.y);
     draw->PushClipRect(origin, end, true);
     draw->AddRectFilled(origin, end, Color(22, 24, 29));
     // A rendered picture behind the overlays: the shell's shading draws the scene with the real renderer at this view's camera and size. Without one
@@ -281,16 +563,21 @@ void SceneViewPanel::Draw(SceneDocument& document, const ModelBoundsCache* bound
         if (ProjectToViewport(vp, Vec3(0.0f, 0.0f, label_distance), origin, size, label_at)) draw->AddText(ImVec2(label_at.x + 3.0f, label_at.y + 2.0f), Color(100, 135, 200), "Z");
     }
 
-    // Each entity with a Transform: its box (the Transform's scale is the box's size), orange when selected, cyan for a camera.
+    // Each entity with a Transform: its box (the Transform's scale is the box's size) in its kind's colour, orange when
+    // selected and white when hovered; a marker kind also gets an icon at its origin and its name, so a camera, a light
+    // and a player are not three identical grey boxes.
     const World& world = document.GetWorld();
     Entity hovered_entity = kNullEntity;
-    if (hovered) hovered_entity = PickEntity(document, camera_, origin, size, io.MousePos, 14.0f, bounds);
+    if (hovered && !over_chrome) hovered_entity = PickEntity(document, camera_, origin, size, io.MousePos, 14.0f, bounds);
+    bool kind_present[11] = {};
     for (const Entity entity : document.Entities()) {
         if (!world.HasComponent<Transform>(entity) || document.IsHidden(entity)) continue;
         const Mat4 m = ComputeWorldTransform(world, document.Guids(), entity);
         const bool selected = document.IsSelected(entity);
-        const bool is_camera = world.HasComponent<::aether::Camera>(entity);
-        const ImU32 color = selected ? Color(255, 170, 40) : (entity == hovered_entity ? Color(255, 255, 255) : (is_camera ? Color(80, 200, 220) : Color(150, 158, 175)));
+        const EntityKind kind = ClassifyEntity(world, entity);
+        kind_present[static_cast<int>(kind)] = true;
+        const ImU32 color = selected ? Color(255, 170, 40)
+                                     : (entity == hovered_entity ? Color(255, 255, 255) : ImGui::GetColorU32(EntityKindColor(kind)));
         // Over a rendered picture only the selected (and the hovered) are boxed: every entity's box over the lit scene would hide it.
         if (show.bounds && (!shaded || selected || entity == hovered_entity)) {
             ViewportTools::DrawEntityBox(draw, document, camera_, origin, size, entity, color, selected ? 2.0f : 1.0f, bounds);
@@ -303,9 +590,37 @@ void SceneViewPanel::Draw(SceneDocument& document, const ModelBoundsCache* bound
             line(origin_w, origin_w + y * (1.2f / ly), Color(90, 210, 90), 2.0f);
             line(origin_w, origin_w + z * (1.2f / lz), Color(80, 120, 240), 2.0f);
         }
-        if (show.helpers && (selected || entity == hovered_entity)) {
-            ImVec2 at;
-            if (ProjectToViewport(vp, origin_w, origin, size, at)) draw->AddText(ImVec2(at.x + 8.0f, at.y - 18.0f), color, document.Name(entity).c_str());
+        ImVec2 at;
+        const bool projected = ProjectToViewport(vp, origin_w, origin, size, at);
+        if (show.helpers && projected) {
+            DrawKindIcon(draw, at, kind, color);
+            // A model is its box; the other kinds are markers, so they are always named (the selected and hovered too).
+            if (selected || entity == hovered_entity || kind != EntityKind::Model) {
+                draw->AddText(ImVec2(at.x + 9.0f, at.y - 18.0f), color, document.Name(entity).c_str());
+            }
+            // A camera shows the frustum it sees through and a light the volume or direction it casts: what it does, not
+            // just where it is.
+            if (kind == EntityKind::Camera || kind == EntityKind::Light) DrawKindGizmo(document, entity, kind, line, color);
+        }
+    }
+    // What the colours mean, so a box's colour says what it is without selecting it. Only the kinds in the scene.
+    if (show.helpers) {
+        usize rows = 0;
+        for (const KindLegendEntry& entry : kLegend)
+            if (kind_present[static_cast<int>(entry.kind)]) ++rows;
+        if (rows > 0) {
+            const f32 line_height = ImGui::GetTextLineHeight();
+            const f32 width = 96.0f;
+            const ImVec2 low(end.x - width - 10.0f, origin.y + kChipHeight + 18.0f); // under the top-right chips
+            const ImVec2 high(end.x - 10.0f, low.y + static_cast<f32>(rows) * line_height + 10.0f);
+            draw->AddRectFilled(low, high, Color(18, 20, 25, 205), 4.0f);
+            f32 y = low.y + 5.0f;
+            for (const KindLegendEntry& entry : kLegend) {
+                if (!kind_present[static_cast<int>(entry.kind)]) continue;
+                draw->AddCircleFilled(ImVec2(low.x + 8.0f, y + line_height * 0.5f), 3.0f, ImGui::GetColorU32(EntityKindColor(entry.kind)));
+                draw->AddText(ImVec2(low.x + 16.0f, y), Color(200, 205, 214), entry.label);
+                y += line_height;
+            }
         }
     }
     if (show.collision) DrawColliders(document, camera_, origin, size, line);
@@ -319,8 +634,27 @@ void SceneViewPanel::Draw(SceneDocument& document, const ModelBoundsCache* bound
         const ImVec2 extent = ImGui::CalcTextSize(message.c_str());
         draw->AddText(ImVec2(origin.x + (size.x - extent.x) * 0.5f, origin.y + 14.0f), Color(235, 238, 245, 220), message.c_str());
     }
+    // The chips last, above everything the picture holds: the viewport's name and look, the gizmo's space, snapping and
+    // the grid, the selection and the counts.
+    DrawChip(draw, viewport_label, "Viewport 1", false);
+    DrawChip(draw, projection_chip, drawn_projection, true, true);
+    DrawChip(draw, view_mode_chip, drawn_mode, true, true);
+    DrawChip(draw, show_chip, "Show", true, true);
+    DrawChip(draw, space_chip, tools_.Space() == GizmoSpace::Local ? "Local" : "World", true);
+    DrawChip(draw, snap_chip, snap_label().c_str(), true);
+    DrawChip(draw, grid_chip, show.grid ? "Grid on" : "Grid off", true);
+    DrawChip(draw, selection_chip, selection_text.c_str(), false);
+    DrawChip(draw, stats_chip, stats_text, false);
+    if (ImGui::BeginPopup("##scene_view_show_flags")) {
+        ImGui::Checkbox("Grid", &show.grid);
+        ImGui::Checkbox("Gizmos", &show.gizmos);
+        ImGui::Checkbox("Bounds", &show.bounds);
+        ImGui::Checkbox("Helpers", &show.helpers);
+        ImGui::Checkbox("Collision", &show.collision);
+        ImGui::EndPopup();
+    }
     if (show.helpers) {
-        draw->AddText(ImVec2(origin.x + 8.0f, end.y - 22.0f), Color(128, 135, 148),
+        draw->AddText(ImVec2(origin.x + 10.0f, bottom_y - ImGui::GetTextLineHeight() - 4.0f), Color(128, 135, 148),
                       "right-drag: look + WASD/QE: fly   middle-drag / shift+drag: pan   wheel: zoom (speed flying)   click: select   F: focus   1-9 / Ctrl+1-9: bookmarks");
     }
     draw->PopClipRect();

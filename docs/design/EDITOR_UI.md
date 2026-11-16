@@ -202,17 +202,36 @@ Users can save their own layouts. Layouts are stored per project in
 `Saved/Layouts/*.ini` (the per-user config folder when no project is open).
 **Reset Layout** always restores Default.
 
-As implemented: the four built-ins are `DockBuilder` arrangements the shell
-builds (`BuildDockLayout`); a saved layout is exactly the ini text ImGui
-already writes for its own settings, captured with
-`SaveIniSettingsToMemory` and applied with `LoadIniSettingsFromMemory`, so
-the docking tree needs no second format. Window > Layout lists the built-ins
-first (marked "(custom)" when a saved file of that name exists) and the saved
-layouts after them, then Save Layout As... and Reset to Default. A file saved
-under a built-in name wins when that name is chosen; Reset to Default ignores
-it and rebuilds the built-in. The chosen name is remembered with the open
-tool in `editor_layout.json`, and panel positions stay in `editor_panels.ini`
-beside it.
+As implemented, the shell owns three windows and docks them; no tool is
+docked as a window of its own, so choosing one only changes what "Editor"
+shows:
+
+| Window | Contents |
+|---|---|
+| Tools | The workspace buttons (World, Script, Blueprint, ...), the search box and every tool by category, each row with a category-colored badge, its name and one line saying what it is for (the full sentence is also the hover tooltip). |
+| Editor | The selected tool's name, category and description, a **Pop out** button, and the tool itself. |
+| Debug | Console and Profiler as tabs. |
+
+The four built-ins differ in where the Debug dock goes: Default and Level
+design put it in a strip along the bottom (22–30% height), Scripting puts it
+large on the right, Animation along the bottom; Tools is a 300 px column on
+the left in all of them. A tool's **Pop out** (or its list context menu)
+gives it a window of its own, which docks wherever the user drops it — that
+is opt-in per tool, not a default right-hand stack.
+
+A saved layout is exactly the ini text ImGui already writes for its own
+settings, captured with `SaveIniSettingsToMemory` and applied with
+`LoadIniSettingsFromMemory`, so the docking tree needs no second format.
+Window > Layout lists the built-ins first (marked "(custom)" when a saved
+file of that name exists) and the saved layouts after them, then Save Layout
+As... and Reset to Default. A file saved under a built-in name wins when that
+name is chosen; Reset to Default ignores it and rebuilds the built-in. The
+chosen name is remembered with the open tool in `editor_layout.json`, and
+panel positions stay in `editor_panels.ini` beside it. An ini from before
+Tools and Editor existed (it names "Editors" or "Terrain") is renamed to
+`editor_panels.ini.old` once and the default arrangement rebuilt, so the new
+windows never open floating; a saved layout of that vintage is ignored the
+same way.
 
 ### 4.3 Document tabs
 
@@ -354,7 +373,20 @@ asset editor is focused once those documents adopt the contract in Stage 6.
 
 ### 6.2 Viewport
 
-- Overlays: see a retired planning doc (removed).
+- **In-picture controls:** as in the concept, the picture carries its own
+  chrome as small dark, rounded chips. Along the top left: the viewport's
+  name ("Viewport 1"), the projection (Perspective/Orthographic), the view
+  mode (Wireframe/Lit/Unlit/Normals) and Show, the last three with a caret.
+  Along the top right: the gizmo's space (Local/World), the snap step for
+  the current tool ("Snap 1 m", "Snap 15 deg", "Snap 0.1", "Snap off") and
+  the grid ("Grid on"/"Grid off"). Along the bottom left, the selection
+  ("BP_Player | Selected", or "Nothing selected"); along the bottom right,
+  the scene's counts ("24 entities | 2 selected | 120 fps"). An interactive
+  chip acts on the click and never passes it to the picture, so clicking the
+  projection chip cannot also select or move what is behind it; hover
+  highlighting and the hover pick are suppressed over chips the same way.
+  The chips record their rectangles (`SceneViewPanel::LastChrome`) so tests
+  can click one by position instead of by guessed pixel.
 - **Selection outline:** 2 px `accent` outline around selected meshes;
   hovered objects get a 1 px `text.secondary` outline.
 - **Grid:** endless fading grid on the XZ plane around the camera target,
@@ -363,19 +395,37 @@ asset editor is focused once those documents adopt the contract in Stage 6.
   so it stays readable, and each line fades to nothing at the grid's radius,
   so there is no edge. The X and Z axes are coloured and labelled near the
   origin.
-- **View modes:** the toolbar's combo picks Wireframe (boxes over the grid;
-  the default, and the only look in a build without a graphics device) or a
-  picture from the real renderer: Lit, Unlit (each surface's base colour, no
+- **View modes:** the picture's mode chip cycles Wireframe (boxes over the
+  grid; the default, and the only look in a build without a graphics device)
+  and a picture from the real renderer: Lit, Unlit (each surface's base colour, no
   light on it) and Normals (the world-space normal as a colour). A shaded
   picture runs the open scene in-process with the Scene View's own camera, at
   up to 30 fps with the world frozen; edits show as they are made, the
   project's models being cooked the first time a shaded look is chosen. Over
   a picture only the selected and hovered entities are boxed, so the lit
   scene shows through.
+- **Entity identity:** a box is drawn in its entity kind's colour, the
+  same as the hierarchy badge (`EntityKindColor`: camera blue `#619EEB`,
+  light amber `#F2CC4D`, model teal `#52C2B3`, particles orange, audio
+  violet, UI pink, physics green, script tan, volume indigo, other grey).
+  Every kind except a model also gets a small screen-space icon at its
+  origin — a camera body and lens, a sun, a speaker, a page, sparks — and
+  its name, selected or not, so a camera, a light and a player are told
+  apart without clicking. A legend at the top right lists the kinds the
+  scene contains. All of this is under Helpers.
+- **Cameras and lights draw what they do:** a camera draws its frustum, four
+  rays out to 2.5 units with the far rectangle sized by its vertical field of
+  view (a fixed box when orthographic), and a tick up its up axis; a point light three
+  rings at its range; a spot light a disc at its range, sized by the outer
+  angle, with four spokes; a directional light an arrow along its direction
+  with four barbs and a small ring. The values come from the components, so
+  changing a range or a field of view in the Inspector changes the drawing.
+  The kinds are matched by their reflected component names, which keeps the
+  portable editor free of renderer linkage. Under Helpers.
 - **Show flags:** the Show popup toggles the Grid, Gizmos, Bounds (entity
-  boxes), Helpers (entity labels, the selected entity's axes, the key hints)
-  and Collision (every box, sphere and capsule collider as a wireframe; a
-  trigger is yellow).
+  boxes), Helpers (the kind icons, names and legend, the selected entity's
+  axes, the key hints) and Collision (every box, sphere and capsule collider
+  as a wireframe; a trigger is yellow).
 - **Gizmo:** axis colors from tokens; the hovered handle turns yellow
   (`#FFD33D`). Move has the three arrows and the two-axis plane squares;
   Scale has arrows on the entity's own axes, the same squares growing two
@@ -395,8 +445,9 @@ asset editor is focused once those documents adopt the contract in Stage 6.
 - **Camera bookmarks:** Ctrl+1..9 stores the current pose and 1..9 returns
   to it; a short message in the middle names the bookmark.
 - **Projection:** the Scene View opens on the perspective orbit camera.
-  Persp/Ortho toggles a parallel projection without changing the angle, and
-  Top, Front and Side jump to those axis views (orthographic); the orthographic
+  The picture's Perspective chip (or Persp/Ortho above it) toggles a parallel
+  projection without changing the angle, and Top, Front and Side above the
+  picture jump to those axis views (orthographic); the orthographic
   zoom is kept apart from the perspective distance, so switching back restores
   the other.
 - **Selection:** click picks (Ctrl toggles); a plain drag draws a marquee that

@@ -20,6 +20,7 @@
 #include "aether/scene/hierarchy.h"
 #include "aether/reflection/serialize.h"
 #include "aether/scene/prefab.h"
+#include "aether/scene/script_component.h"
 #include "test_framework.h"
 
 #include <imgui.h>
@@ -764,6 +765,165 @@ AETHER_TEST(SceneView_FocusAndDrawHeadless) {
     frame();                                                               // boxes, axes, a camera and a label
     document.DestroyEntity(a);
     frame();                                                               // a selection that is gone does not break the view
+}
+
+// The Scene View says what an entity is: its kind's colour, an icon at its origin and its name, so a camera, a light and
+// a player are not three identical grey boxes. The draw-list vertex count says the icons and the legend drew.
+AETHER_TEST(SceneView_EntityKindsAreColouredIconedAndNamed) {
+    HeadlessImGui imgui;
+    SceneViewPanel panel;
+    SceneDocument document;
+    const Entity spawn = document.CreateEntity("Spawn");
+    const Entity camera = document.CreateEntity("Cam", SceneEntityKind::Camera);
+    const Entity light = document.CreateEntity("Sun");
+    document.GetWorld().AddComponent(light, DirectionalLight{});
+    const Entity player = document.CreateEntity("Player");
+    document.GetWorld().AddComponent(player, ScriptComponent{});
+    AETHER_CHECK(ClassifyEntity(document.GetWorld(), camera) == EntityKind::Camera);
+    AETHER_CHECK(ClassifyEntity(document.GetWorld(), light) == EntityKind::Light);
+    AETHER_CHECK(ClassifyEntity(document.GetWorld(), player) == EntityKind::Script);
+    AETHER_CHECK(ClassifyEntity(document.GetWorld(), spawn) == EntityKind::Empty);
+    const ImVec4 camera_color = EntityKindColor(EntityKind::Camera), light_color = EntityKindColor(EntityKind::Light);
+    const ImVec4 script_color = EntityKindColor(EntityKind::Script), empty_color = EntityKindColor(EntityKind::Empty);
+    AETHER_CHECK(!(camera_color.x == light_color.x && camera_color.y == light_color.y && camera_color.z == light_color.z));
+    AETHER_CHECK(!(light_color.x == script_color.x && light_color.y == script_color.y && light_color.z == script_color.z));
+    AETHER_CHECK(!(script_color.x == empty_color.x && script_color.y == empty_color.y && script_color.z == empty_color.z));
+
+    int vertices = 0;
+    auto frame = [&](SceneDocument& scene, bool helpers) {
+        panel.show.helpers = helpers;
+        imgui.Frame([&] {
+            ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f));
+            ImGui::SetNextWindowSize(ImVec2(1200.0f, 800.0f));
+            ImGui::Begin("view", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize);
+            panel.Draw(scene);
+            vertices = static_cast<int>(ImGui::GetWindowDrawList()->VtxBuffer.Size);
+            ImGui::End();
+        });
+        return vertices;
+    };
+    const int with_marks = frame(document, true);
+    const int without_marks = frame(document, false);
+    AETHER_CHECK(with_marks > without_marks); // the icons, names and the legend are helpers
+
+    // The same four entities with nothing but a Transform get no icons and no legend: the marks are what the kinds add.
+    SceneDocument plain;
+    for (const char* name : {"A", "B", "C", "D"}) plain.CreateEntity(name);
+    AETHER_CHECK(frame(plain, true) < with_marks);
+}
+
+// A camera shows the frustum it sees through and a light the volume or direction it casts, drawn in the world: the
+// picture says what an entity does and not only that a box stands there.
+AETHER_TEST(SceneView_CamerasAndLightsDrawWhatTheyDo) {
+    HeadlessImGui imgui;
+    SceneViewPanel plain_panel, camera_panel;
+    SceneDocument plain, with_camera;
+    const Entity plain_entity = plain.CreateEntity("Camera");
+    plain.SetPosition(plain_entity, Vec3(2.0f, 1.0f, 0.0f), true);
+    const Entity camera_entity = with_camera.CreateEntity("Camera");
+    with_camera.SetPosition(camera_entity, Vec3(2.0f, 1.0f, 0.0f), true);
+    const ComponentId camera = FindComponentIdByName("Camera");
+    AETHER_CHECK(camera != kInvalidComponentId);
+    AETHER_CHECK(with_camera.AddComponent(camera_entity, camera));
+    AETHER_CHECK(ClassifyEntity(with_camera.GetWorld(), camera_entity) == EntityKind::Camera);
+
+    int vertices = 0;
+    auto frame = [&](SceneViewPanel& panel, SceneDocument& document) {
+        imgui.Frame([&] {
+            ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f));
+            ImGui::SetNextWindowSize(ImVec2(1200.0f, 800.0f));
+            ImGui::Begin("view", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize);
+            panel.Draw(document);
+            vertices = static_cast<int>(ImGui::GetWindowDrawList()->VtxBuffer.Size);
+            ImGui::End();
+        });
+        return vertices;
+    };
+    const int plain_vertices = frame(plain_panel, plain);
+    const int camera_vertices = frame(camera_panel, with_camera);
+    AETHER_CHECK(camera_vertices > plain_vertices + 20); // the frustum's four edges and its far rectangle
+
+    // A point light draws the range it fades over.
+    const ComponentId point = FindComponentIdByName("PointLight");
+    if (point != kInvalidComponentId) {
+        SceneViewPanel light_panel;
+        SceneDocument with_light;
+        const Entity lamp = with_light.CreateEntity("Camera"); // as the plain scene has it, so only what the light adds differs
+        with_light.SetPosition(lamp, Vec3(2.0f, 1.0f, 0.0f), true);
+        AETHER_CHECK(with_light.AddComponent(lamp, point));
+        AETHER_CHECK(ClassifyEntity(with_light.GetWorld(), lamp) == EntityKind::Light);
+        AETHER_CHECK(frame(light_panel, with_light) > plain_vertices + 20); // the range's three rings
+    }
+}
+
+// The picture's own controls, as the editor concept has them: the projection, the view mode and the show popup along the
+// top left; the gizmo's space, snapping and the grid along the top right; the selection and the counts along the bottom.
+// They are drawn into the picture; a click changes that control and never selects what is under it.
+AETHER_TEST(SceneView_ThePictureOwnsItsControls) {
+    HeadlessImGui imgui;
+    SceneViewPanel panel;
+    SceneDocument document;
+    const Entity a = document.CreateEntity("A");
+    document.SetPosition(a, Vec3(0.0f, 1.0f, 0.0f), true);
+    document.ClearSelection();
+    auto step = [&](const ImVec2& mouse, bool down) {
+        ImGuiIO& io = ImGui::GetIO();
+        io.AddMousePosEvent(mouse.x, mouse.y);
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, down);
+        imgui.Frame([&] {
+            ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f));
+            ImGui::SetNextWindowSize(ImVec2(1200.0f, 800.0f));
+            ImGui::Begin("view", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoScrollbar);
+            panel.Draw(document);
+            ImGui::End();
+        });
+    };
+    auto click = [&](const ImVec2& at) {
+        step(ImVec2(4.0f, 4.0f), false);
+        step(at, false);
+        step(at, true);
+        step(at, false);
+    };
+    auto centre = [](const ImVec2& low, const ImVec2& high) { return ImVec2((low.x + high.x) * 0.5f, (low.y + high.y) * 0.5f); };
+    step(ImVec2(4.0f, 4.0f), false);
+    SceneViewPanel::Chrome chrome = panel.LastChrome();
+    AETHER_CHECK(chrome.projection_max.x > chrome.projection_min.x); // laid out inside the picture
+    AETHER_CHECK(chrome.stats_min.x > chrome.selection_max.x);       // the counts bottom right, the selection bottom left
+
+    AETHER_CHECK(panel.Camera().projection == SceneViewProjection::Perspective);
+    click(centre(chrome.projection_min, chrome.projection_max));
+    AETHER_CHECK(panel.Camera().projection == SceneViewProjection::Orthographic);
+    AETHER_CHECK(document.Selection().empty()); // the chip's click did not reach the scene
+
+    chrome = panel.LastChrome();
+    const SceneViewMode mode_before = panel.mode;
+    click(centre(chrome.view_mode_min, chrome.view_mode_max));
+    AETHER_CHECK(panel.mode != mode_before);
+
+    chrome = panel.LastChrome();
+    const bool grid_before = panel.show.grid;
+    click(centre(chrome.grid_min, chrome.grid_max));
+    AETHER_CHECK(panel.show.grid != grid_before);
+
+    chrome = panel.LastChrome();
+    const bool snap_before = panel.Tools().SnapEnabled();
+    click(centre(chrome.snap_min, chrome.snap_max));
+    AETHER_CHECK(panel.Tools().SnapEnabled() != snap_before);
+
+    chrome = panel.LastChrome();
+    const GizmoSpace space_before = panel.Tools().Space();
+    click(centre(chrome.space_min, chrome.space_max));
+    AETHER_CHECK(panel.Tools().Space() != space_before);
+
+    // The picture still takes clicks of its own: A, under the camera's target, is selected by clicking it.
+    chrome = panel.LastChrome();
+    const ImVec2 origin(chrome.viewport_label_min.x - 10.0f, chrome.viewport_label_min.y - 10.0f);
+    const ImVec2 end(chrome.stats_max.x + 10.0f, chrome.stats_max.y + 10.0f);
+    const ImVec2 size(end.x - origin.x, end.y - origin.y);
+    ImVec2 entity_pixel;
+    AETHER_CHECK(ProjectToViewport(panel.Camera().ViewProjection(size.x / size.y), Vec3(0.0f, 1.0f, 0.0f), origin, size, entity_pixel));
+    click(entity_pixel);
+    AETHER_CHECK(document.Selection().size() == 1 && document.Selection().front() == a);
 }
 
 // The move gizmo: the mouse ray, a drag along one axis as one undoable edit, snapping, and an entity under a parent.

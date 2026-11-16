@@ -197,8 +197,38 @@ AETHER_TEST(EditorWorkspace_HasEveryTool) {
                           "Net Profiler", "Console", "Profiler", "Crash", "Sequencer", "Messages"}) {
         CHECK(ws.FindTool(t) >= 0);
     }
+    // Every tool says what it is for: the hub must not be a list of bare names.
+    for (usize i = 0; i < ws.ToolCount(); ++i) {
+        const std::string description = ws.ToolDescription(i);
+        CHECK(description.size() >= 20);
+        CHECK(description != ws.ToolName(i));
+        CHECK(description.find(ws.ToolCategory(i)) == std::string::npos); // a description, not the category again
+    }
     CHECK(ws.FindTool("material") == ws.FindTool("Material - M_Lit")); // any case, a prefix
     CHECK(ws.FindTool("Gizmo") == -1 && ws.FindTool("") == -1);
+}
+
+// The tool list and the open tool are two panels a host docks apart; drawn headless they still select and draw.
+AETHER_TEST(EditorWorkspace_ToolListAndOpenToolDrawApart) {
+    HeadlessImGui imgui;
+    EditorWorkspace ws;
+    const i64 terrain = ws.FindTool("Terrain");
+    CHECK(terrain >= 0);
+    ws.Select(static_cast<usize>(terrain));
+    for (int frame = 0; frame < 2; ++frame) {
+        imgui.Frame([&] {
+            ImGui::SetNextWindowSize(ImVec2(300.0f, 900.0f), ImGuiCond_Always);
+            ImGui::Begin("Tools");
+            ws.DrawToolList();
+            ImGui::End();
+            ImGui::SetNextWindowSize(ImVec2(1000.0f, 900.0f), ImGuiCond_Always);
+            ImGui::Begin("Editor");
+            ws.DrawSelectedTool();
+            ImGui::End();
+        });
+    }
+    CHECK(ws.Selected() == static_cast<usize>(terrain));
+    CHECK(std::string(ws.ToolDescription(static_cast<usize>(terrain))).find("landscape") != std::string::npos);
 }
 
 AETHER_TEST(EditorWorkspace_DrawsEveryToolHeadless) {
