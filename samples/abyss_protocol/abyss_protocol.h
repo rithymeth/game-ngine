@@ -111,6 +111,7 @@ public:
     aether::Vec3 BearingDir() const { return bearing_; }
     float Noise() const { return noise_; }
     float Leak() const { return leak_; }
+    float Signal() const { return signal_; }
     bool QuietApproach() const;
     Mission GetMission() const { return mission_; }
     aether::Vec3 Objective() const;
@@ -123,7 +124,7 @@ private:
     void UpdateCreature(CreatureAI& creature, float dt);
     void UpdatePressure(float dt);
     void UpdateRelay();
-    void UpdateMission();
+    void UpdateMission(float dt);
     void ResolveRocks();
     void ApplyCurrent(float dt);
     void UpdateCache();
@@ -145,6 +146,7 @@ private:
     float ping_cooldown_ = 0.0f;
     float impact_cooldown_ = 0.0f;
     float wake_cooldown_ = 0.0f;
+    float signal_ = 0.0f;
     float noise_ = 0.0f;
     float leak_ = 0.0f;
     std::string fail_;

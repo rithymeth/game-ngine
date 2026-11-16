@@ -346,7 +346,8 @@ void DrawWorld(const abyss::Game& game, const std::vector<DrawTri>& mesh, const 
         r.Box({p.x - 0.5f, p.y + 0.2f, p.z + 0.3f}, {p.x + 0.5f, p.y + 1.0f, p.z + 1.6f}, {0.55f, 0.85f, 0.95f});
     }
     if (game.GetRelay().restored && game.GetMission() != abyss::Mission::Won) {
-        f32 pulse = 0.55f + 0.45f * std::sin(anim * 4.0f);
+        f32 left = std::clamp(game.Signal() / 55.0f, 0.0f, 1.0f);
+        f32 pulse = 0.55f + 0.45f * std::sin(anim * (2.0f + (1.0f - left) * 8.0f));
         r.Gem({sub.position.x, sub.position.y + 1.15f, sub.position.z}, 0.22f, anim * 2.0f,
               {1.0f * pulse, 0.72f * pulse, 0.25f * pulse});
     }
@@ -493,6 +494,11 @@ void DrawHud(const abyss::Game& game, std::vector<u32>& px, bool has_mesh) {
     if (has_mesh) FillRect(px, 240, 8, 14, 32, Rgb(0.9f, 0.45f, 0.15f));
     FillRect(px, 270, 18, 90, 10, Rgb(0.08f, 0.1f, 0.12f));
     FillRect(px, 270, 18, static_cast<i32>(90 * std::clamp(game.Noise(), 0.0f, 1.0f)), 10, Rgb(0.3f, 0.95f, 0.85f));
+    if (game.GetMission() == abyss::Mission::Return) {
+        FillRect(px, 270, 6, 90, 10, Rgb(0.08f, 0.1f, 0.12f));
+        FillRect(px, 270, 6, static_cast<i32>(90 * std::clamp(game.Signal() / 55.0f, 0.0f, 1.0f)), 10,
+                 game.Signal() < 15.0f ? Rgb(1.0f, 0.35f, 0.2f) : Rgb(1.0f, 0.72f, 0.25f));
+    }
     if (game.GetMission() == abyss::Mission::Won) FillRect(px, 0, kH / 2 - 18, kW, 36, Rgb(0.08f, 0.28f, 0.16f));
     if (game.GetMission() == abyss::Mission::Lost) FillRect(px, 0, kH / 2 - 18, kW, 36, Rgb(0.32f, 0.06f, 0.06f));
 }

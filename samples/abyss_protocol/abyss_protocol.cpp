@@ -31,6 +31,7 @@ void Game::Restart() {
     ping_cooldown_ = 0.0f;
     impact_cooldown_ = 0.0f;
     wake_cooldown_ = 0.0f;
+    signal_ = 0.0f;
     noise_ = 0.0f;
     leak_ = 0.0f;
     CreatureAI outbound;
@@ -285,7 +286,7 @@ void Game::Step(float dt) {
     UpdatePressure(dt);
     UpdateCache();
     UpdateRelay();
-    UpdateMission();
+    UpdateMission(dt);
     sub_.sonar_active = false;
     contact_ = std::max(0.0f, contact_ - dt);
     ping_cooldown_ = std::max(0.0f, ping_cooldown_ - dt);
@@ -348,7 +349,7 @@ aether::Vec3 Game::Objective() const {
     return relay_.position;
 }
 
-void Game::UpdateMission() {
+void Game::UpdateMission(float dt) {
     for (const CreatureAI& creature : creatures_) {
         if (creature.is_alerted && Distance(sub_.position, creature.position) < 4.0f) {
             mission_ = Mission::Lost;
@@ -374,10 +375,19 @@ void Game::UpdateMission() {
     if (mission_ == Mission::Outbound && relay_.restored) {
         mission_ = Mission::Return;
         bearing_valid_ = false;
+        signal_ = 55.0f;
     }
     if (mission_ == Mission::Return && Distance(sub_.position, haven_.position) < 8.0f && QuietApproach() &&
         !sub_.sonar_active) {
         mission_ = Mission::Won;
+        return;
+    }
+    if (mission_ == Mission::Return) {
+        signal_ = std::max(0.0f, signal_ - dt);
+        if (signal_ <= 0.0f) {
+            mission_ = Mission::Lost;
+            fail_ = "signal";
+        }
     }
 }
 
@@ -429,7 +439,7 @@ std::string Game::StatusText() const {
         float home = Distance(sub_.position, haven_.position);
         if (home < 12.0f && sub_.lights_on) oss << "  Haven: lights off";
         else if (home < 12.0f && ThreatNearHaven()) oss << "  Haven: creature awake";
-        else oss << "  Return to Haven";
+        else if (mission_ == Mission::Return) oss << "  Signal: " << int(signal_) << "s";
     } else oss << "  Relay: silent";
     return oss.str();
 }
