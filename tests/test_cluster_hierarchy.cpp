@@ -220,6 +220,47 @@ AETHER_TEST(ClusterHierarchy_NearIsFullDetailAndFarIsAFewClusters) {
     CHECK(loose.triangles < tight.triangles);
 }
 
+AETHER_TEST(ClusterHierarchy_BackfaceCullingOnlyDropsClustersWhoseTrianglesAllFaceAway) {
+    std::vector<Vec3> positions;
+    std::vector<u32> indices;
+    MakeSphere(40, positions, indices);
+    ClusterHierarchy h;
+    CHECK(BuildClusterHierarchy(positions, indices, {}, h));
+    for (const f32 distance : {2.0f, 4.0f, 12.0f, 60.0f}) {
+        ClusterView view = ViewAt(distance);
+        ClusterSelection open, culled;
+        CHECK(SelectClusters(h, view, 1.0f, open));
+        view.cull_backfaces = true;
+        CHECK(SelectClusters(h, view, 1.0f, culled));
+        const std::set<u32> kept(culled.clusters.begin(), culled.clusters.end());
+        const std::set<u32> all(open.clusters.begin(), open.clusters.end());
+        CHECK(!kept.empty() && kept.size() <= all.size());
+        if (distance <= 4.0f) CHECK(kept.size() < all.size()); // close up the far side of the sphere is dropped (far away the coarse clusters' cones are too wide to cull)
+        for (const u32 id : kept) CHECK(all.count(id) == 1); // culling only removes
+        // Every cluster it dropped really has every triangle facing away from the viewer (the cone test is conservative, never wrong the other way).
+        for (const u32 id : all) {
+            if (kept.count(id)) continue;
+            const Cluster& c = h.clusters[id];
+            bool all_away = true;
+            for (u32 t = 0; t < c.triangle_count && all_away; ++t) {
+                const Vec3 a = positions[h.indices[c.index_offset + 3 * t]], b = positions[h.indices[c.index_offset + 3 * t + 1]], d = positions[h.indices[c.index_offset + 3 * t + 2]];
+                const Vec3 normal = (b - a).Cross(d - a);
+                const Vec3 centroid = (a + b + d) * (1.0f / 3.0f);
+                all_away = normal.Dot(centroid - view.position) >= -1e-4f * normal.Length() * (centroid - view.position).Length();
+            }
+            CHECK(all_away);
+        }
+    }
+    // A viewer inside the sphere sees no back faces to drop (every cluster's cone points away from the centre, towards the viewer's side of the shell).
+    ClusterView inside = ViewAt(0.0f);
+    inside.cull_backfaces = true;
+    ClusterSelection a, b;
+    CHECK(SelectClusters(h, inside, 1.0f, a));
+    inside.cull_backfaces = false;
+    CHECK(SelectClusters(h, inside, 1.0f, b));
+    CHECK(a.clusters.size() <= b.clusters.size());
+}
+
 AETHER_TEST(ClusterHierarchy_FrustumCullingDropsWhatIsOutOfView) {
     std::vector<Vec3> positions;
     std::vector<u32> indices;

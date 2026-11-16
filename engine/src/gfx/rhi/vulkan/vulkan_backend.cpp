@@ -1311,6 +1311,15 @@ bool VulkanDevice::ReadReadbackBuffer(BufferHandle buffer, void* out, u64 size_b
     return true;
 }
 
+bool VulkanDevice::ReadStorageBuffer(BufferHandle buffer, void* out, u64 size_bytes, u64 offset) {
+    if (!IsBufferAlive(buffer) || !buffers_[buffer.index].is_storage || buffers_[buffer.index].mapped == nullptr || out == nullptr || size_bytes == 0 ||
+        offset > buffers_[buffer.index].size_bytes || size_bytes > buffers_[buffer.index].size_bytes - offset) {
+        return false;
+    }
+    std::memcpy(out, static_cast<const u8*>(buffers_[buffer.index].mapped) + offset, static_cast<usize>(size_bytes));
+    return true;
+}
+
 BufferHandle VulkanDevice::CreateVertexBuffer(const void* data, u64 size_bytes) {
     const BufferHandle handle = CreateBufferInternal(data, size_bytes);
     buffers_[handle.index].is_vertex = true;
@@ -4621,6 +4630,23 @@ void VulkanCommandList::ComputeBufferBarrier(BufferHandle buffer) {
     barrier.size = record.size_bytes;
     vkCmdPipelineBarrier(command_buffer_, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                          0, 0, nullptr, 1, &barrier, 0, nullptr);
+}
+
+void VulkanCommandList::HostReadBarrier(BufferHandle buffer) {
+    if (!recording_ || !compute_queue_ || !buffer.IsValid() || !device_.IsBufferAlive(buffer) || !device_.GetBuffer(buffer).is_storage) {
+        AETHER_LOG_ERROR("Vulkan", "HostReadBarrier requires a recording compute command list and a storage buffer");
+        return;
+    }
+    const BufferRecord& record = device_.GetBuffer(buffer);
+    VkBufferMemoryBarrier barrier{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER};
+    barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.buffer = record.buffer;
+    barrier.offset = 0;
+    barrier.size = record.size_bytes;
+    vkCmdPipelineBarrier(command_buffer_, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 0, nullptr, 1, &barrier, 0, nullptr);
 }
 
 void VulkanCommandList::Dispatch(u32 groups_x, u32 groups_y, u32 groups_z) {

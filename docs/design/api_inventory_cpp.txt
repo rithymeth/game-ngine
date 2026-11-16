@@ -2230,6 +2230,7 @@
   virtual void Draw(u32 vertex_count,u32 first_vertex=0)=0
   virtual void DrawIndexed(u32 index_count)=0
   virtual void EndRenderPass()=0
+  virtual void HostReadBarrier(BufferHandle)
   virtual void Reset()=0
   virtual void SetPushConstants(const void*data,u32 size_bytes)=0
   virtual void SetViewportAndScissor(const Viewport&viewport,const Rect&scissor)=0
@@ -2451,11 +2452,13 @@
   virtual bool IsFenceComplete(u64 fence_value)const=0
   virtual bool ReadGpuTimer(GpuTimerHandle,std::span<f64>)
   virtual bool ReadReadbackBuffer(BufferHandle,void*,u64,u64=0)
+  virtual bool ReadStorageBuffer(BufferHandle,void*,u64,u64=0)
   virtual bool SupportsCompressedTexture(CompressedTextureFormat)const
   virtual bool SupportsFrameConstants()const
   virtual bool SupportsGpuTiming()const
   virtual bool SupportsRayTracing()const
   virtual bool SupportsReadback()const
+  virtual bool SupportsStorageBufferRead()const
   virtual bool WriteBufferUnsynchronized(BufferHandle,const void*,u64,u64=0)
   virtual std::unique_ptr<ICommandList>CreateCommandList()=0
   virtual std::unique_ptr<ICommandList>CreateComputeCommandList()=0
@@ -2617,6 +2620,7 @@
   bool ReadBack(std::vector<u8>&rgba8)override
   bool ReadGpuTimer(GpuTimerHandle timer,std::span<f64>milliseconds)override
   bool ReadReadbackBuffer(BufferHandle buffer,void*out,u64 size_bytes,u64 offset=0)override
+  bool ReadStorageBuffer(BufferHandle buffer,void*out,u64 size_bytes,u64 offset=0)override
   bool ResolveGpuTimer(GpuTimerHandle timer)override
   bool SceneColorEnabled()const
   bool SceneDepthEnabled()const
@@ -2626,6 +2630,7 @@
   bool SupportsRayTracing()const override
   bool SupportsReadback()const override
   bool SupportsRenderTargets()const
+  bool SupportsStorageBufferRead()const override
   bool TextureTableFull()const
   bool WriteBufferUnsynchronized(BufferHandle buffer,const void*data,u64 size_bytes,u64 offset=0)override
   bool WriteGpuTimestamp(GpuTimerHandle timer,u32 index)override
@@ -2704,6 +2709,7 @@
   void EndRenderPass()override
   void FlushRetired()noexcept
   void GraphicsQueueWaitOnCompute(u64 compute_fence_value)override
+  void HostReadBarrier(BufferHandle buffer)override
   void MakeShaderReadable(VkImage image,VkImageAspectFlags aspect,bool wait)
   void MarkSubmitted(u64 fence_value)
   void NoteGpuTimersSubmitted(const std::vector<u32>&timers,u64 fence)

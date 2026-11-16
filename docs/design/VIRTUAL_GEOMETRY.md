@@ -10,8 +10,8 @@ This is built in stages, each tested before the next starts. This document recor
 
 1. **Cluster hierarchy and a CPU reference selector** (this stage, `engine/include/aether/cook/cluster_hierarchy.h`). Offline, CPU only, no cooked format
    change.
-2. **GPU culling.** A compute pass runs the same test as `SelectClusters` on every cluster, plus frustum, normal-cone and occlusion (Hi-Z) culling, and writes an
-   indirect draw list. The CPU selector is its reference.
+2. **GPU culling** (done, below). A compute pass runs the same test as `SelectClusters` on every cluster, plus frustum and normal-cone culling, and writes a list
+   of the clusters to draw. The CPU selector is its reference. Occlusion (Hi-Z) culling and the indirect draw list are not in this stage.
 3. **Indirect rendering.** One multi-draw of the surviving clusters into the existing depth and G-buffer passes and the existing materials. This is where the
    cooked mesh format gains the hierarchy and the plugin shell appears.
 4. **Streaming** of cluster pages by what is visible.
@@ -51,11 +51,33 @@ A lumpy sphere of 102 400 triangles (software-only, one thread, a Linux containe
 | 2 000 m | 54 clusters, 1 598 triangles |
 | Selection cost | about 50 microseconds on the CPU for 3 067 clusters, whatever the distance |
 
+## Stage 2: the cut and the culling on the GPU
+
+`player/src/cluster_cull_pass.h` is a compute pass: one thread per cluster runs the same test as `cook::SelectClusters` (its own error projects to at most the pixel
+threshold, its parent's to more), then the frustum test and the normal-cone back-face test, and appends the survivors to a list with an atomic counter (the list's
+order is therefore not fixed). `cook::SelectClusters` gained `cull_backfaces` so the CPU reference has the cone test too.
+
+To check it on real hardware the RHI gained two optional calls, `ICommandList::HostReadBarrier` and `IDevice::ReadStorageBuffer` (with
+`SupportsStorageBufferRead`, false by default). Vulkan implements them; **D3D12 does not yet, so the GPU test skips there with a note.** They read the storage buffer's
+own host-visible memory, which is slow on a real GPU; a shipping pass will copy to a readback buffer or, as stage 3 will, read the list on the GPU.
+
+### What the tests prove (on Vulkan: lavapipe in this container)
+
+- The GPU picks exactly the same clusters as the CPU selector for 7 distances x 4 thresholds x 4 culling modes (none, frustum, cone, both): 112 runs, zero
+  differences, and the same triangle totals.
+- Culling and the threshold move the list the right way; a frustum that sees nothing gives an empty list; the pass can be reused (its counters start at zero).
+- A full output reports how many clusters were needed, and what fit is a subset of the right answer.
+- A cone-culled cluster has every triangle facing away from the viewer (checked on the real triangles).
+- Dropping the parent test, flipping the frustum comparison, inverting the cone test or not counting triangles each fails the comparison.
+
 ### Known limits
 
 - **It stops at 54 root clusters (1.6% of the triangles), not at one.** Locked group borders keep the top levels from shrinking further, and a group that
   cannot shrink waits to be merged at a later level. A later stage can regroup across levels or lift the locks near the root.
 - The simplifier works on positions only: UV seams and normals are not protected, so a textured mesh may show seams at coarse levels until attribute-aware
   simplification is added.
-- Everything is in memory: nothing is cooked or drawn yet. Stage 3 changes the cooked format and so the format-versions table.
-- Whether clusters beat the current draw path is **unmeasured**: that needs the GPU stages and a real GPU. It is the first thing to measure in stage 2.
+- Nothing is cooked or drawn yet. Stage 3 changes the cooked format and so the format-versions table, and adds an indirect draw to the RHI (it has none).
+- No occlusion (Hi-Z) culling yet: it needs a depth pyramid, which is a graphics-side pass.
+- Whether clusters beat the current draw path is **still unmeasured**. This container has only a software Vulkan device (lavapipe), so the GPU pass is verified
+  for correctness, not speed. Measuring it on a real GPU against the existing draw path is the first thing to do before stage 3, and the design doc's benchmark gate
+  (`CLUSTER_GEOMETRY_LOD.md`) applies.

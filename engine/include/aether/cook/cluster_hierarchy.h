@@ -87,6 +87,7 @@ struct ClusterView {
     f32 vertical_fov = 1.0f;       // radians
     f32 viewport_height = 1080.0f; // pixels
     f32 near_distance = 0.1f;      // distances are held to at least this, so nothing is infinitely large on screen
+    bool cull_backfaces = false;   // drop clusters whose triangles all face away: dot(normalize(centre - position), cone axis) >= cone cutoff + radius / distance
     bool has_frustum = false;
     std::array<ClusterPlane, 6> frustum{};
 };
@@ -101,7 +102,7 @@ struct ClusterSelection {
 };
 
 // The clusters to draw: the cut through the hierarchy where each cluster's own error projects to at most `threshold_pixels` and its parent's to more than
-// that, then (with a frustum) only the ones in view. Without a frustum the result covers the whole mesh exactly once. A threshold of 0 or less gives the
+// that, then (with a frustum) only the ones in view, then (with cull_backfaces) only the ones that can face the viewer. Without a frustum the result covers the whole mesh exactly once. A threshold of 0 or less gives the
 // finest cut (the leaves, or the coarsest clusters that lose nothing). Deterministic. False for a threshold or view that is not a number.
 bool SelectClusters(const ClusterHierarchy& hierarchy, const ClusterView& view, f32 threshold_pixels, ClusterSelection& out);
 

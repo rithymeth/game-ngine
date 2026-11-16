@@ -98,6 +98,10 @@ public:
     virtual void BindComputeSampledTexture(u32 slot, SampledTextureHandle texture) = 0;
     virtual void BindComputeConstantBuffer(u32 slot, BufferHandle buffer) = 0;
     virtual void ComputeBufferBarrier(BufferHandle buffer) = 0;
+    // Makes what the compute shaders wrote to `buffer` (a storage buffer) visible to the CPU once the submission carrying this has finished, so
+    // IDevice::ReadStorageBuffer can read it. Record it after the last dispatch that writes the buffer, on a compute list. Does nothing on devices
+    // without IDevice::SupportsStorageBufferRead (the default).
+    virtual void HostReadBarrier(BufferHandle /*buffer*/) {}
     virtual void Dispatch(u32 groups_x, u32 groups_y = 1, u32 groups_z = 1) = 0;
 
     // Binds the device-global bindless texture table (IDevice::CreateTexture)
