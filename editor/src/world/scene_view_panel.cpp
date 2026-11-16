@@ -338,57 +338,59 @@ void SceneViewPanel::FocusSelection(const SceneDocument& document, const ModelBo
     camera_.ortho_height = std::clamp(span * 1.6f + 5.0f, 3.0f, 100000.0f); // the orthographic zoom is its own, so focus sets both
 }
 
-void SceneViewPanel::Draw(SceneDocument& document, const ModelBoundsCache* bounds, const std::filesystem::path& content_root) {
+void SceneViewPanel::Draw(SceneDocument& document, const ModelBoundsCache* bounds, const std::filesystem::path& content_root, bool with_toolbar) {
     tools_.SetBounds(bounds);
-    tools_.DrawToolbar();
-    ImGui::SameLine();
-    ImGui::TextDisabled("|");
-    ImGui::SameLine();
-    // Perspective or an orthographic top/front/side view; choosing a preset switches to orthographic, and each projection keeps its own zoom.
-    const bool ortho = camera_.projection == SceneViewProjection::Orthographic;
-    const SceneViewOrientation orientation = camera_.Orientation();
-    auto view_button = [](const char* label, bool active) {
-        if (active) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
-        const bool pressed = ImGui::Button(label);
-        if (active) ImGui::PopStyleColor();
-        return pressed;
-    };
-    if (view_button("Persp", !ortho)) camera_.projection = SceneViewProjection::Perspective;
-    ImGui::SetItemTooltip("Perspective orbit camera");
-    ImGui::SameLine();
-    if (view_button("Ortho", ortho)) camera_.projection = SceneViewProjection::Orthographic;
-    ImGui::SetItemTooltip("Orthographic projection, keeping the current angle");
-    ImGui::SameLine();
-    if (view_button("Top", orientation == SceneViewOrientation::Top)) camera_.Look(SceneViewOrientation::Top);
-    ImGui::SetItemTooltip("Top view: orthographic, looking down -Y");
-    ImGui::SameLine();
-    if (view_button("Front", orientation == SceneViewOrientation::Front)) camera_.Look(SceneViewOrientation::Front);
-    ImGui::SetItemTooltip("Front view: orthographic, looking along -Z");
-    ImGui::SameLine();
-    if (view_button("Side", orientation == SceneViewOrientation::Side)) camera_.Look(SceneViewOrientation::Side);
-    ImGui::SetItemTooltip("Side view: orthographic, looking along -X");
-    ImGui::SameLine();
-    ImGui::TextDisabled("|");
-    ImGui::SameLine();
-    // Wireframe is the boxes below; the rest are the real renderer (the shell's shading), Lit being its ordinary look.
-    ImGui::SetNextItemWidth(112.0f);
-    int mode_index = static_cast<int>(mode);
-    constexpr const char* kModes[] = {"Wireframe", "Lit", "Unlit", "Normals"};
-    if (ImGui::Combo("##view_mode", &mode_index, kModes, IM_ARRAYSIZE(kModes))) mode = static_cast<SceneViewMode>(mode_index);
-    ImGui::SetItemTooltip("Wireframe: boxes over the grid. Lit, Unlit and Normals: the scene drawn by the renderer (needs the Vulkan editor)");
-    ImGui::SameLine();
-    if (ImGui::Button("Show")) ImGui::OpenPopup("##show_flags");
-    ImGui::SetItemTooltip("Which overlays are drawn");
-    if (ImGui::BeginPopup("##show_flags")) {
-        ImGui::Checkbox("Grid", &show.grid);
-        ImGui::Checkbox("Gizmos", &show.gizmos);
-        ImGui::Checkbox("Bounds", &show.bounds);
-        ImGui::Checkbox("Helpers", &show.helpers);
-        ImGui::Checkbox("Collision", &show.collision);
-        ImGui::EndPopup();
+    if (with_toolbar) {
+        tools_.DrawToolbar();
+        ImGui::SameLine();
+        ImGui::TextDisabled("|");
+        ImGui::SameLine();
+        // Perspective or an orthographic top/front/side view; choosing a preset switches to orthographic, and each projection keeps its own zoom.
+        const bool ortho = camera_.projection == SceneViewProjection::Orthographic;
+        const SceneViewOrientation orientation = camera_.Orientation();
+        auto view_button = [](const char* label, bool active) {
+            if (active) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+            const bool pressed = ImGui::Button(label);
+            if (active) ImGui::PopStyleColor();
+            return pressed;
+        };
+        if (view_button("Persp", !ortho)) camera_.projection = SceneViewProjection::Perspective;
+        ImGui::SetItemTooltip("Perspective orbit camera");
+        ImGui::SameLine();
+        if (view_button("Ortho", ortho)) camera_.projection = SceneViewProjection::Orthographic;
+        ImGui::SetItemTooltip("Orthographic projection, keeping the current angle");
+        ImGui::SameLine();
+        if (view_button("Top", orientation == SceneViewOrientation::Top)) camera_.Look(SceneViewOrientation::Top);
+        ImGui::SetItemTooltip("Top view: orthographic, looking down -Y");
+        ImGui::SameLine();
+        if (view_button("Front", orientation == SceneViewOrientation::Front)) camera_.Look(SceneViewOrientation::Front);
+        ImGui::SetItemTooltip("Front view: orthographic, looking along -Z");
+        ImGui::SameLine();
+        if (view_button("Side", orientation == SceneViewOrientation::Side)) camera_.Look(SceneViewOrientation::Side);
+        ImGui::SetItemTooltip("Side view: orthographic, looking along -X");
+        ImGui::SameLine();
+        ImGui::TextDisabled("|");
+        ImGui::SameLine();
+        // Wireframe is the boxes below; the rest are the real renderer (the shell's shading), Lit being its ordinary look.
+        ImGui::SetNextItemWidth(112.0f);
+        int mode_index = static_cast<int>(mode);
+        constexpr const char* kModes[] = {"Wireframe", "Lit", "Unlit", "Normals"};
+        if (ImGui::Combo("##view_mode", &mode_index, kModes, IM_ARRAYSIZE(kModes))) mode = static_cast<SceneViewMode>(mode_index);
+        ImGui::SetItemTooltip("Wireframe: boxes over the grid. Lit, Unlit and Normals: the scene drawn by the renderer (needs the Vulkan editor)");
+        ImGui::SameLine();
+        if (ImGui::Button("Show")) ImGui::OpenPopup("##show_flags");
+        ImGui::SetItemTooltip("Which overlays are drawn");
+        if (ImGui::BeginPopup("##show_flags")) {
+            ImGui::Checkbox("Grid", &show.grid);
+            ImGui::Checkbox("Gizmos", &show.gizmos);
+            ImGui::Checkbox("Bounds", &show.bounds);
+            ImGui::Checkbox("Helpers", &show.helpers);
+            ImGui::Checkbox("Collision", &show.collision);
+            ImGui::EndPopup();
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", drop_.note.empty() ? "drop a model or a prefab from the Content Browser to place it" : drop_.note.c_str());
     }
-    ImGui::SameLine();
-    ImGui::TextDisabled("%s", drop_.note.empty() ? "drop a model or a prefab from the Content Browser to place it" : drop_.note.c_str());
     const ImVec2 avail = ImGui::GetContentRegionAvail();
     const ImVec2 size(std::max(avail.x, 64.0f), std::max(avail.y, 64.0f));
     const ImVec2 origin = ImGui::GetCursorScreenPos();
@@ -420,6 +422,8 @@ void SceneViewPanel::Draw(SceneDocument& document, const ModelBoundsCache* bound
     const PictureChip viewport_label = PlaceChip(chip_x, chip_y, "Viewport 1", io.MousePos, false);
     const PictureChip projection_chip = PlaceChip(chip_x, chip_y, projection_text, io.MousePos, hovered, true);
     const PictureChip view_mode_chip = PlaceChip(chip_x, chip_y, kViewModes[static_cast<int>(mode)].name, io.MousePos, hovered, true);
+    const char* gizmo_text = tools_.Mode() == GizmoMode::Move ? "Move" : (tools_.Mode() == GizmoMode::Rotate ? "Rotate" : "Scale");
+    const PictureChip gizmo_chip = PlaceChip(chip_x, chip_y, gizmo_text, io.MousePos, hovered, true);
     const PictureChip show_chip = PlaceChip(chip_x, chip_y, "Show", io.MousePos, hovered, true);
     f32 chip_right = end.x - 10.0f;
     const PictureChip grid_chip = PlaceChipRight(chip_right, chip_y, show.grid ? "Grid on" : "Grid off", io.MousePos, hovered);
@@ -441,13 +445,16 @@ void SceneViewPanel::Draw(SceneDocument& document, const ModelBoundsCache* bound
     if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
         if (projection_chip.hovered) camera_.projection = ortho_now ? SceneViewProjection::Perspective : SceneViewProjection::Orthographic;
         if (view_mode_chip.hovered) mode = kViewModes[(static_cast<int>(mode) + 1) % IM_ARRAYSIZE(kViewModes)].mode;
+        if (gizmo_chip.hovered) {
+            tools_.SetMode(tools_.Mode() == GizmoMode::Move ? GizmoMode::Rotate : (tools_.Mode() == GizmoMode::Rotate ? GizmoMode::Scale : GizmoMode::Move));
+        }
         if (show_chip.hovered) ImGui::OpenPopup("##scene_view_show_flags");
         if (space_chip.hovered) tools_.SetSpace(tools_.Space() == GizmoSpace::Local ? GizmoSpace::World : GizmoSpace::Local);
         if (snap_chip.hovered) tools_.SetSnap(!tools_.SnapEnabled());
         if (grid_chip.hovered) show.grid = !show.grid;
     }
     const bool over_chrome =
-        projection_chip.hovered || view_mode_chip.hovered || show_chip.hovered || space_chip.hovered || snap_chip.hovered || grid_chip.hovered;
+        projection_chip.hovered || view_mode_chip.hovered || gizmo_chip.hovered || show_chip.hovered || space_chip.hovered || snap_chip.hovered || grid_chip.hovered;
     const char* drawn_projection = camera_.projection == SceneViewProjection::Orthographic ? "Orthographic" : "Perspective";
     const char* drawn_mode = kViewModes[static_cast<int>(mode)].name;
     chrome_ = Chrome{};
@@ -457,6 +464,8 @@ void SceneViewPanel::Draw(SceneDocument& document, const ModelBoundsCache* bound
     chrome_.projection_max = projection_chip.max;
     chrome_.view_mode_min = view_mode_chip.min;
     chrome_.view_mode_max = view_mode_chip.max;
+    chrome_.gizmo_min = gizmo_chip.min;
+    chrome_.gizmo_max = gizmo_chip.max;
     chrome_.show_min = show_chip.min;
     chrome_.show_max = show_chip.max;
     chrome_.space_min = space_chip.min;
@@ -639,12 +648,16 @@ void SceneViewPanel::Draw(SceneDocument& document, const ModelBoundsCache* bound
     DrawChip(draw, viewport_label, "Viewport 1", false);
     DrawChip(draw, projection_chip, drawn_projection, true, true);
     DrawChip(draw, view_mode_chip, drawn_mode, true, true);
+    DrawChip(draw, gizmo_chip, gizmo_text, true, true);
     DrawChip(draw, show_chip, "Show", true, true);
     DrawChip(draw, space_chip, tools_.Space() == GizmoSpace::Local ? "Local" : "World", true);
     DrawChip(draw, snap_chip, snap_label().c_str(), true);
     DrawChip(draw, grid_chip, show.grid ? "Grid on" : "Grid off", true);
     DrawChip(draw, selection_chip, selection_text.c_str(), false);
     DrawChip(draw, stats_chip, stats_text, false);
+    if (!with_toolbar && !drop_.note.empty()) { // no toolbar row to say it in: the last drop's word goes under the chips
+        draw->AddText(ImVec2(origin.x + 10.0f, chip_y + kChipHeight + 6.0f), Color(200, 205, 214), drop_.note.c_str());
+    }
     if (ImGui::BeginPopup("##scene_view_show_flags")) {
         ImGui::Checkbox("Grid", &show.grid);
         ImGui::Checkbox("Gizmos", &show.gizmos);

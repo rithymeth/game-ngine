@@ -23,6 +23,7 @@ namespace aether::editor {
 
 class CommandRegistry;
 class FileDialog;
+class SceneViewPanel;
 struct FileDialogOptions;
 
 // The entities of a scene as a tree, for the hierarchy: who is directly under whom (by the Parent component), each level by name and then by creation order. Built once from a document
@@ -171,6 +172,17 @@ public:
     bool IsHidden(Entity entity) const { return document_.IsHidden(entity); }
     bool IsLocked(Entity entity) const { return document_.IsLocked(entity); }
 
+    // The view drawn between the hierarchy and the Inspector, as the editor concept lays the level editor out. Not owned; null
+    // keeps the two-pane layout (the panel on its own, as tests and the portable editor use it).
+    void SetSceneView(SceneViewPanel* view) { view_ = view; }
+    // The three panes' rectangles last frame, in screen coordinates; the viewport is empty when no view is set.
+    struct Layout {
+        ImVec2 hierarchy_min{}, hierarchy_max{};
+        ImVec2 viewport_min{}, viewport_max{};
+        ImVec2 inspector_min{}, inspector_max{};
+    };
+    const Layout& LastLayout() const { return layout_; }
+
 private:
     enum class Pending : u8 { None, New, Open };
 
@@ -190,6 +202,8 @@ private:
     SceneDocument document_;
     const CommandRegistry* commands_ = nullptr;
     FileDialog* dialog_ = nullptr;
+    SceneViewPanel* view_ = nullptr;
+    Layout layout_;
     std::filesystem::path content_root_;
     ModelBoundsCache bounds_;
     RecentScenes recent_scenes_;

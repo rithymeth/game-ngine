@@ -204,7 +204,7 @@ struct WorkspaceEntry {
 };
 
 constexpr WorkspaceEntry kWorkspaces[] = {
-    {"World", "Terrain", "World", "Terrain, foliage, splines and the world partition", WorkspaceGlyph::World},
+    {"World", "Scene", "Scene", "The scene's hierarchy, viewport and Inspector", WorkspaceGlyph::World},
     {"Script", "Luau", "Scripting", "Luau scripts and code", WorkspaceGlyph::Script},
     {"Blueprint", "Blueprint", "Scripting", "Visual scripting graphs", WorkspaceGlyph::Blueprint},
     {"Animation", "Animation", "Animation", "Animation graphs and blend spaces", WorkspaceGlyph::Animation},
@@ -529,7 +529,7 @@ struct EditorWorkspace::Impl {
              [this] { mixer_panel->Draw(); }},
             {"UI Designer - WBP_MainMenu", "UI", "Lay out the menu: widgets, anchors, styling and events.",
              [this] { ui_designer->Draw(); }},
-            {"Scene", "Scene", "The open scene's hierarchy and Inspector, with Play controls.",
+            {"Scene", "Scene", "The open scene: its hierarchy, viewport and Inspector, with Play controls.",
              [this] { scene_panel->Draw(); }},
             {"Scene View", "Scene", "Fly around the 3D scene; select and transform entities in it.",
              [this] { scene_view.Draw(scene_panel->Document(), &scene_panel->ModelBounds(), scene_panel->ContentRoot()); }},
@@ -590,8 +590,18 @@ struct EditorWorkspace::Impl {
                  }
              }},
         };
-        // The scene panel matches its own keys through the same table the menus read.
+        // The scene panel matches its own keys through the same table the menus read, and draws the Scene View between its
+        // hierarchy and its Inspector, as the concept lays the level editor out.
         scene_panel->SetCommands(&commands);
+        scene_panel->SetSceneView(&scene_view);
+        // A project opens on the level editor rather than on whichever tool happens to be first: the scene's hierarchy,
+        // viewport and Inspector, which is the screen the concept draws. A remembered or requested tool replaces it later.
+        for (usize i = 0; i < tools.size(); ++i) {
+            if (tools[i].name == "Scene") {
+                selected = i;
+                break;
+            }
+        }
         document_tabs.Open(scene_panel->Document()); // the first tab; the scene stays open as long as it is the last
     }
 

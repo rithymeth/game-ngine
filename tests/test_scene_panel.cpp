@@ -901,6 +901,11 @@ AETHER_TEST(SceneView_ThePictureOwnsItsControls) {
     AETHER_CHECK(panel.mode != mode_before);
 
     chrome = panel.LastChrome();
+    const GizmoMode gizmo_before = panel.Tools().Mode();
+    click(centre(chrome.gizmo_min, chrome.gizmo_max));
+    AETHER_CHECK(panel.Tools().Mode() != gizmo_before); // the tool the gizmo draws, reachable without the toolbar row
+
+    chrome = panel.LastChrome();
     const bool grid_before = panel.show.grid;
     click(centre(chrome.grid_min, chrome.grid_max));
     AETHER_CHECK(panel.show.grid != grid_before);
@@ -924,6 +929,34 @@ AETHER_TEST(SceneView_ThePictureOwnsItsControls) {
     AETHER_CHECK(ProjectToViewport(panel.Camera().ViewProjection(size.x / size.y), Vec3(0.0f, 1.0f, 0.0f), origin, size, entity_pixel));
     click(entity_pixel);
     AETHER_CHECK(document.Selection().size() == 1 && document.Selection().front() == a);
+}
+
+// The level editor the concept draws: the hierarchy, the viewport and the Inspector side by side, the picture between the
+// two side columns and taking most of the width. Without a view (the panel on its own) the two-pane layout stays.
+AETHER_TEST(ScenePanel_TheViewportSitsBetweenHierarchyAndInspector) {
+    HeadlessImGui imgui;
+    ScenePanel panel;
+    SceneViewPanel view;
+    panel.SetSceneView(&view);
+    for (int frame = 0; frame < 2; ++frame) imgui.Frame([&] { panel.Draw(); });
+    const ScenePanel::Layout layout = panel.LastLayout();
+    AETHER_CHECK(layout.viewport_max.x > layout.viewport_min.x);           // the viewport is where the concept puts it
+    AETHER_CHECK(layout.hierarchy_max.x <= layout.viewport_min.x);         // left to right: no pane overlaps the next
+    AETHER_CHECK(layout.viewport_max.x <= layout.inspector_min.x);
+    AETHER_CHECK(layout.viewport_max.y > layout.viewport_min.y);
+    AETHER_CHECK(layout.viewport_max.x - layout.viewport_min.x > layout.hierarchy_max.x - layout.hierarchy_min.x); // the picture is the widest
+    AETHER_CHECK(layout.viewport_max.x - layout.viewport_min.x > layout.inspector_max.x - layout.inspector_min.x);
+    // The picture's own chips are drawn inside that pane, along its top left, as in the concept.
+    const SceneViewPanel::Chrome chrome = view.LastChrome();
+    AETHER_CHECK(chrome.viewport_label_min.x >= layout.viewport_min.x && chrome.viewport_label_min.y >= layout.viewport_min.y);
+    AETHER_CHECK(chrome.viewport_label_max.x <= layout.viewport_max.x && chrome.viewport_label_max.y <= layout.viewport_max.y);
+    AETHER_CHECK(chrome.gizmo_max.x > chrome.gizmo_min.x); // the mode chip, since the embedded view has no toolbar row
+
+    ScenePanel plain; // no view: the two-pane layout the panel has on its own
+    imgui.Frame([&] { plain.Draw(); });
+    const ScenePanel::Layout two = plain.LastLayout();
+    AETHER_CHECK(two.viewport_min.x == 0.0f && two.viewport_max.x == 0.0f);
+    AETHER_CHECK(two.inspector_min.x > two.hierarchy_max.x);
 }
 
 // The move gizmo: the mouse ray, a drag along one axis as one undoable edit, snapping, and an entity under a parent.

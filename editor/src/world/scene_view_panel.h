@@ -16,7 +16,9 @@ class SceneViewPanel {
 public:
     // Fills the current ImGui window, editing the selection of `document`. With `bounds`, objects are picked and outlined by their models' real extents.
     // `content_root` is the project's content folder, where a prefab dropped from the Content Browser is read from (empty: prefabs cannot be placed).
-    void Draw(SceneDocument& document, const ModelBoundsCache* bounds = nullptr, const std::filesystem::path& content_root = {});
+    // `with_toolbar` false skips the row of controls above the picture: a host that embeds the view in a narrower pane (the Scene tool's centre
+    // column) relies on the picture's own chips and the W/E/R keys instead.
+    void Draw(SceneDocument& document, const ModelBoundsCache* bounds = nullptr, const std::filesystem::path& content_root = {}, bool with_toolbar = true);
     // Moves the camera's target to the middle of the selection's boxes (or the whole scene if nothing is selected) and backs off to fit. `bounds` frames
     // an entity by its model's real extent; without it every entity is a unit box.
     void FocusSelection(const SceneDocument& document, const ModelBoundsCache* bounds = nullptr);
@@ -37,6 +39,7 @@ public:
         ImVec2 viewport_label_min{}, viewport_label_max{};
         ImVec2 projection_min{}, projection_max{};
         ImVec2 view_mode_min{}, view_mode_max{};
+        ImVec2 gizmo_min{}, gizmo_max{};
         ImVec2 show_min{}, show_max{};
         ImVec2 space_min{}, space_max{};
         ImVec2 snap_min{}, snap_max{};

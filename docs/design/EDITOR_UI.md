@@ -223,6 +223,15 @@ drift. The strip's tabs report their rectangles (`WorkspaceTabs`), the active
 one is read back from the open tool (`ActiveWorkspace`), and clicking uses
 `SelectWorkspace`; a headless test clicks a tab at its rectangle.
 
+The strip's **World** tab is the level editor, so it opens the Scene tool,
+which lays out the concept's centre: the hierarchy, the Scene View and the
+Inspector side by side, the viewport taking the room the two side columns
+leave (`ScenePanel::SetSceneView`; the rectangles are reported by
+`ScenePanel::LastLayout`). A project with no remembered tool opens on it, so
+the first screen is the scene rather than an asset editor. The standalone
+**Scene View** tool keeps its toolbar row for a full-width viewport; the
+embedded one draws the picture and its chips only.
+
 The four built-ins differ in where the Debug dock goes: Default and Level
 design put it in a strip along the bottom (22–30% height), Scripting puts it
 large on the right, Animation along the bottom; Tools is a 300 px column on
@@ -387,7 +396,8 @@ asset editor is focused once those documents adopt the contract in Stage 6.
 - **In-picture controls:** as in the concept, the picture carries its own
   chrome as small dark, rounded chips. Along the top left: the viewport's
   name ("Viewport 1"), the projection (Perspective/Orthographic), the view
-  mode (Wireframe/Lit/Unlit/Normals) and Show, the last three with a caret.
+  mode (Wireframe/Lit/Unlit/Normals), the gizmo's tool (Move/Rotate/Scale)
+  and Show, each choice with a caret.
   Along the top right: the gizmo's space (Local/World), the snap step for
   the current tool ("Snap 1 m", "Snap 15 deg", "Snap 0.1", "Snap off") and
   the grid ("Grid on"/"Grid off"). Along the bottom left, the selection
@@ -398,6 +408,10 @@ asset editor is focused once those documents adopt the contract in Stage 6.
   highlighting and the hover pick are suppressed over chips the same way.
   The chips record their rectangles (`SceneViewPanel::LastChrome`) so tests
   can click one by position instead of by guessed pixel.
+  When the Scene tool embeds the view between its hierarchy and Inspector
+  (`SceneViewPanel::Draw(..., with_toolbar = false)`), the view draws without
+  its separate toolbar row, which the narrower centre column cannot hold:
+  the chips and the W/E/R keys carry those controls there.
 - **Selection outline:** 2 px `accent` outline around selected meshes;
   hovered objects get a 1 px `text.secondary` outline.
 - **Grid:** endless fading grid on the XZ plane around the camera target,

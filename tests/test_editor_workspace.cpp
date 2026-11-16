@@ -260,14 +260,18 @@ AETHER_TEST(EditorWorkspace_WorkspaceStripOpensEachTool) {
     CHECK(blueprint < tabs.size());
 
     const usize before = ws.Selected();
+    CHECK(std::string(ws.ToolName(before)) == "Scene"); // a project opens on the level editor, as the concept draws it
     CHECK(!ws.SelectWorkspace("Gizmo")); // not a workspace: nothing changes
     CHECK(ws.Selected() == before);
     CHECK(ws.SelectWorkspace("Blueprint"));
     CHECK(ws.ActiveWorkspace() == "Blueprint");
     CHECK(std::string(ws.ToolName(ws.Selected())).rfind("Blueprint", 0) == 0);
-    // The active workspace is read from the open tool, not remembered separately.
+    // The active workspace is read from the open tool, not remembered separately, and World is the level editor.
     ws.Select(static_cast<usize>(ws.FindTool("Terrain")));
+    CHECK(ws.ActiveWorkspace().empty());
+    CHECK(ws.SelectWorkspace("World"));
     CHECK(ws.ActiveWorkspace() == "World");
+    CHECK(std::string(ws.ToolName(ws.Selected())) == "Scene");
 
     // And a click on the tab switches, which is how a person does it.
     frame();

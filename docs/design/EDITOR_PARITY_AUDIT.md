@@ -556,6 +556,18 @@ from the components via their reflected fields, so the portable editor still has
 `SceneView_CamerasAndLightsDrawWhatTheyDo` compares the vertices a camera and a point light add against the same entity
 without the component.
 
+Done so far (2026-11-17): the concept's second row and its centre. The workspace strip sits above the toolbar, one tab per
+workspace with a drawn icon, the tool's category colour and an accent underline on the active one; a click opens that
+workspace's tool, and `EditorWorkspace_WorkspaceStripOpensEachTool` clicks a tab at its recorded rectangle. The **World**
+tab now opens the Scene tool, which lays the level editor out as the concept draws it: the hierarchy, the Scene View and
+the Inspector side by side, the viewport taking the room the two side columns leave (`ScenePanel::SetSceneView`, with
+`ScenePanel::LastLayout` reporting the three rectangles). The embedded view draws the picture and its chips without its
+separate toolbar row, which the centre column cannot hold, so the gizmo's Move/Rotate/Scale choice joined the top-left
+chips (cycling on a click, as W/E/R do in a full-width view). A project with no remembered tool now opens on the Scene
+tool rather than on the first asset editor, so the first screen is the scene. `ScenePanel_TheViewportSitsBetweenHierarchyAndInspector`
+checks the three panes do not overlap, the viewport is the widest, the chips sit inside it and the two-pane fallback
+remains without a view; `SceneView_ThePictureOwnsItsControls` also clicks the new chip.
+
 ### Stage 3 — Content browser and importer parity (L)
 
 Outcome: assets can be found, judged, imported, fixed and opened without leaving the editor.

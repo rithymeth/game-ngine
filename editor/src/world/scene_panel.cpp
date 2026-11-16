@@ -5,6 +5,7 @@
 #include "workspace/command_registry.h"
 #include "ui/entity_inspector.h"
 #include "world/content_drop.h"
+#include "world/scene_view_panel.h"
 
 #include "aether/core/log.h"
 
@@ -569,12 +570,52 @@ void ScenePanel::Select(Entity entity, bool additive) {
 void ScenePanel::Draw() {
     DrawToolbar();
     ImGui::Separator();
+    layout_ = Layout{};
     const float total = ImGui::GetContentRegionAvail().x;
+    auto record_pane = [](ImVec2& min, ImVec2& max) { // a child window's rectangle, for the layout a test or a host reads
+        min = ImGui::GetWindowPos();
+        const ImVec2 size = ImGui::GetWindowSize();
+        max = ImVec2(min.x + size.x, min.y + size.y);
+    };
+    if (view_ != nullptr) {
+        // The concept's level editor: the hierarchy, the viewport and the Inspector side by side, the viewport taking the room
+        // the other two leave. The view draws without its own toolbar row, which the centre column is too narrow for; the
+        // picture's chips and W, E and R carry those controls there.
+        const float spacing = ImGui::GetStyle().ItemSpacing.x;
+        const float left = std::clamp(total * 0.20f, 190.0f, 320.0f);
+        const float right = std::clamp(total * 0.26f, 250.0f, 440.0f);
+        const float middle = std::max(total - left - right - spacing * 2.0f, 160.0f);
+        if (ImGui::BeginChild("##scene_hierarchy", ImVec2(left, 0.0f), true)) {
+            record_pane(layout_.hierarchy_min, layout_.hierarchy_max);
+            DrawHierarchy();
+        }
+        ImGui::EndChild();
+        ImGui::SameLine();
+        if (ImGui::BeginChild("##scene_viewport", ImVec2(middle, 0.0f), true)) {
+            record_pane(layout_.viewport_min, layout_.viewport_max);
+            view_->Draw(document_, &bounds_, content_root_, false);
+        }
+        ImGui::EndChild();
+        ImGui::SameLine();
+        if (ImGui::BeginChild("##scene_inspector", ImVec2(right, 0.0f), true)) {
+            record_pane(layout_.inspector_min, layout_.inspector_max);
+            DrawInspector();
+        }
+        ImGui::EndChild();
+        DrawDiscardPrompt();
+        return;
+    }
     const float left = std::clamp(total * 0.38f, 220.0f, 460.0f);
-    if (ImGui::BeginChild("##scene_hierarchy", ImVec2(left, 0.0f), true)) DrawHierarchy();
+    if (ImGui::BeginChild("##scene_hierarchy", ImVec2(left, 0.0f), true)) {
+        record_pane(layout_.hierarchy_min, layout_.hierarchy_max);
+        DrawHierarchy();
+    }
     ImGui::EndChild();
     ImGui::SameLine();
-    if (ImGui::BeginChild("##scene_inspector", ImVec2(0.0f, 0.0f), true)) DrawInspector();
+    if (ImGui::BeginChild("##scene_inspector", ImVec2(0.0f, 0.0f), true)) {
+        record_pane(layout_.inspector_min, layout_.inspector_max);
+        DrawInspector();
+    }
     ImGui::EndChild();
     DrawDiscardPrompt();
 }
