@@ -71,6 +71,7 @@ void SceneDocument::Reset() {
     guids_.Clear();
     selection_.clear(); // Phase 43.3: the selection belongs to the scene that was open
     play_selection_.clear();
+    locked_.clear();
     commands_.Clear();
     ++local_revision_; // a new or loaded scene is a change to whoever is looking at the old one
     file_.clear();
@@ -314,6 +315,36 @@ bool SceneDocument::Rename(Entity entity, const std::string& name, bool committe
     CommitFieldEdit(context_, commands_, id->guid, GetComponentId<EntityName>(), *field, component,
                     old_value, committed);
     return true;
+}
+
+bool SceneDocument::IsActive(Entity entity) const {
+    if (!world_.IsAlive(entity)) return false;
+    const Active* active = world_.GetComponent<Active>(entity);
+    return active == nullptr || active->active;
+}
+
+bool SceneDocument::IsHidden(Entity entity) const {
+    return world_.IsAlive(entity) && !IsActiveInHierarchy(world_, guids_, entity);
+}
+
+bool SceneDocument::SetActive(Entity entity, bool active) {
+    if (!world_.IsAlive(entity) || IsActive(entity) == active) return false;
+    const IdComponent* id = world_.GetComponent<IdComponent>(entity);
+    if (id == nullptr) return false;
+    commands_.Execute(context_, std::make_unique<SetEntityActiveCommand>(id->guid, active));
+    return true;
+}
+
+bool SceneDocument::IsLocked(Entity entity) const {
+    const IdComponent* id = world_.IsAlive(entity) ? world_.GetComponent<IdComponent>(entity) : nullptr;
+    return id != nullptr && IsLocked(id->guid);
+}
+
+void SceneDocument::SetLocked(Entity entity, bool locked) {
+    const IdComponent* id = world_.IsAlive(entity) ? world_.GetComponent<IdComponent>(entity) : nullptr;
+    if (id == nullptr) return;
+    if (locked) locked_.insert(id->guid);
+    else locked_.erase(id->guid);
 }
 
 usize SceneDocument::RenameSelection(const std::string& name, bool committed) {

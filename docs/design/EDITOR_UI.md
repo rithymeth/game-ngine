@@ -429,7 +429,21 @@ with a `ModelRenderer`). Matching and the directives themselves ignore case, and
 term. A filtered hierarchy is still a tree rather than a flat result list: `VisibleEntities` adds every match's
 ancestors, matches draw where they hang, the chain to a match is forced open, and branches with no match disappear; a
 filter with no match says "No entities match." The box's hint spells the grammar out. Filtering is not an edit — no
-command is recorded, and the selection stays where it is. Visibility/lock toggles are still open.
+command is recorded, and the selection stays where it is.
+
+Implemented: the eye and the lock. Every row ends with an eye and a lock, drawn as shapes onto invisible buttons
+(`RowToggle`) rather than as items that change the row: pressing inside that strip acts on the toggle, not on the
+selection, drag or rename. The eye shows or hides the row's entity -- the whole selection when the entity is selected
+-- through the engine's `Active` component (`SceneDocument::SetActive`, one `SetEntityActiveCommand` per entity inside
+one transaction for a set). Hiding is saved with the scene, inherited by the entity's children, and honored by the
+render scene, picking, the marquee and the update, because those already read `Active`/`IsActiveInHierarchy`; the
+viewport also leaves it out of its selection outline and gizmo subjects. Undo puts
+back exactly what was there, including "no Active component". A row whose entity or ancestor is hidden has its name in
+`text.disabled`; the eye shows the entity's own flag, so a row hidden by a parent still shows an open eye and says in
+its tooltip that a parent hides it. The lock is editor-only and not saved (`SceneDocument::SetLocked`, cleared with the
+scene): the viewport neither picks, marquee-selects nor moves a locked entity, and the gizmo leaves it out of `Subjects`,
+while the hierarchy still selects, renames, reparents and inspects it. Locking records no undo step. The row menu has
+Hide/Show and Lock/Unlock for the same set.
 
 Implemented: dragging several rows. A drag that starts on a selected row carries the whole selection
 (`ScenePanel::DragSet`); one that starts on an unselected row carries just that row. Pressing a selected row of a
@@ -451,7 +465,7 @@ cannot be found. An entity with overrides of its own gets the Inspector's overri
 (`PrefabRowStateOf`). Hovering the badge names all of it, for example "Model - part of a prefab instance (2
 overrides)". The badge and the name are drawn over the row rather than as items of their own, so a row is still one item
 for selection, drag and the context menu, and its height does not change. An icon font for the badges and the eye/lock
-toggles are still open.
+shapes is still open.
 
 ### 6.4 Inspector
 

@@ -62,7 +62,7 @@ ImVec4 KindColor(EntityKind kind) {
 
 // The badge and the name of a tree row whose own label is empty, drawn over it so the row keeps one item (selection,
 // drag and the context menu all go on it) and its height. Returns the badge's top-left corner; it is a font size square.
-ImVec2 DrawRowLabel(ImVec2 row_min, ImVec2 row_max, EntityKind kind, const PrefabRowState& prefab, const std::string& name) {
+ImVec2 DrawRowLabel(ImVec2 row_min, ImVec2 row_max, EntityKind kind, const PrefabRowState& prefab, const std::string& name, bool hidden) {
     ImDrawList* draw = ImGui::GetWindowDrawList();
     const f32 size = ImGui::GetFontSize();
     const ImVec2 badge(row_min.x + ImGui::GetTreeNodeToLabelSpacing(), row_min.y + (row_max.y - row_min.y - size) * 0.5f);
@@ -73,11 +73,42 @@ ImVec2 DrawRowLabel(ImVec2 row_min, ImVec2 row_max, EntityKind kind, const Prefa
     draw->AddText(ImVec2(badge.x + (size - glyph_size.x) * 0.5f, badge.y + (size - glyph_size.y) * 0.5f), IM_COL32(20, 20, 24, 255),
                   glyph);
     ImU32 text = ImGui::GetColorU32(ImGuiCol_Text);
-    if (prefab.role != PrefabRowState::Role::None) text = ImGui::GetColorU32(prefab.missing_source ? kMissingPrefabColor : kPrefabColor);
+    if (hidden) text = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+    else if (prefab.role != PrefabRowState::Role::None) text = ImGui::GetColorU32(prefab.missing_source ? kMissingPrefabColor : kPrefabColor);
     draw->AddText(ImVec2(badge_max.x + ImGui::GetStyle().ItemInnerSpacing.x, badge.y), text, name.c_str());
     if (prefab.overrides > 0) // the Inspector marks an overridden field the same way
         draw->AddRectFilled(ImVec2(row_min.x - 4.0f, row_min.y), ImVec2(row_min.x - 1.0f, row_max.y), ImGui::GetColorU32(kPrefabColor));
     return badge;
+}
+
+enum class RowGlyph { Eye, Lock };
+
+// The eye and the lock at the end of a row, drawn onto an invisible button. `on` is "shown" for the eye and "locked"
+// for the lock; an off eye carries a slash, an unlocked lock an open shackle. Returns a click on it.
+bool RowToggle(const ImVec2& at, f32 size, RowGlyph glyph, bool on, const char* id, const char* tooltip) {
+    ImGui::SetCursorScreenPos(at);
+    const bool pressed = ImGui::InvisibleButton(id, ImVec2(size, size));
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    const ImU32 color = ImGui::GetColorU32(on ? ImGuiCol_Text : ImGuiCol_TextDisabled);
+    constexpr f32 kPi = 3.14159265f;
+    const f32 x = at.x, y = at.y;
+    if (glyph == RowGlyph::Eye) {
+        // Two arcs for the lids and a pupil: an eye. Closed, the same outline with a slash through it.
+        draw->AddBezierQuadratic(ImVec2(x + 1.0f, y + size * 0.5f), ImVec2(x + size * 0.5f, y - size * 0.08f), ImVec2(x + size - 1.0f, y + size * 0.5f),
+                                 color, 1.4f, 12);
+        draw->AddBezierQuadratic(ImVec2(x + 1.0f, y + size * 0.5f), ImVec2(x + size * 0.5f, y + size * 1.08f), ImVec2(x + size - 1.0f, y + size * 0.5f),
+                                 color, 1.4f, 12);
+        if (on) draw->AddCircleFilled(ImVec2(x + size * 0.5f, y + size * 0.5f), size * 0.13f, color);
+        else draw->AddLine(ImVec2(x + 2.0f, y + size - 2.0f), ImVec2(x + size - 2.0f, y + 2.0f), color, 1.4f);
+    } else {
+        const f32 body_top = y + size * 0.46f;
+        draw->AddRectFilled(ImVec2(x + size * 0.2f, body_top), ImVec2(x + size * 0.8f, y + size * 0.92f), color, size * 0.08f);
+        if (on) draw->PathArcTo(ImVec2(x + size * 0.5f, body_top), size * 0.2f, kPi, 2.0f * kPi, 12); // a closed shackle
+        else draw->PathArcTo(ImVec2(x + size * 0.56f, y + size * 0.4f), size * 0.2f, kPi, 1.7f * kPi, 12); // swung up and open
+        draw->PathStroke(color, 0, 1.4f);
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tooltip);
+    return pressed;
 }
 
 } // namespace
@@ -453,6 +484,32 @@ usize ScenePanel::ReparentEntities(std::span<const Entity> entities, Entity pare
     return moved;
 }
 
+usize ScenePanel::SetHidden(std::span<const Entity> entities, bool hidden) {
+    std::vector<Entity> changing;
+    for (const Entity entity : entities) {
+        if (!document_.GetWorld().IsAlive(entity) || document_.IsActive(entity) == !hidden) continue;
+        if (std::find(changing.begin(), changing.end(), entity) != changing.end()) continue;
+        changing.push_back(entity);
+    }
+    if (changing.empty()) return 0;
+    if (changing.size() > 1) {
+        document_.Commands().BeginTransaction((hidden ? "Hide " : "Show ") + std::to_string(changing.size()) + " entities");
+    }
+    for (const Entity entity : changing) document_.SetActive(entity, !hidden);
+    if (changing.size() > 1) document_.Commands().EndTransaction();
+    return changing.size();
+}
+
+usize ScenePanel::SetLocked(std::span<const Entity> entities, bool locked) {
+    usize changed = 0;
+    for (const Entity entity : entities) {
+        if (!document_.GetWorld().IsAlive(entity) || document_.IsLocked(entity) == locked) continue;
+        document_.SetLocked(entity, locked);
+        ++changed;
+    }
+    return changed;
+}
+
 std::vector<Entity> ScenePanel::DragSet(Entity entity) const {
     if (!document_.IsSelected(entity)) return {entity};
     std::vector<Entity> set;
@@ -683,6 +740,10 @@ void ScenePanel::DrawEntityMenu(Entity entity) {
     if (ImGui::MenuItem("Copy", "Ctrl+C")) document_.CopySelection();
     if (ImGui::MenuItem("Paste", "Ctrl+V", false, document_.HasClipboard())) document_.PasteClipboard();
     const std::vector<Entity> acted_on = DragSet(entity); // the selection when this row is part of it, as Delete
+    const bool any_hidden = std::any_of(acted_on.begin(), acted_on.end(), [&](Entity e) { return !document_.IsActive(e); });
+    if (ImGui::MenuItem(any_hidden ? "Show" : "Hide")) SetHidden(acted_on, !any_hidden);
+    const bool any_unlocked = std::any_of(acted_on.begin(), acted_on.end(), [&](Entity e) { return !document_.IsLocked(e); });
+    if (ImGui::MenuItem(any_unlocked ? "Lock" : "Unlock")) SetLocked(acted_on, any_unlocked);
     ImGui::BeginDisabled(std::all_of(acted_on.begin(), acted_on.end(), [&](Entity e) { return document_.ParentOf(e).IsNull(); }));
     if (ImGui::MenuItem("Move to the scene root")) ReparentEntities(acted_on, kNullEntity);
     ImGui::EndDisabled();
@@ -719,7 +780,12 @@ void ScenePanel::DrawNode(Entity entity, const HierarchyIndex& index, const std:
         open = ImGui::TreeNodeEx("##node", flags);
         const ImVec2 row_min = ImGui::GetItemRectMin(), row_max = ImGui::GetItemRectMax();
         const bool row_hovered = ImGui::IsItemHovered();
-        if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && !ImGui::IsItemToggledOpen()) {
+        // The eye and the lock at the end of the row are not part of the row's click: pressing there acts on them, not
+        // on the selection.
+        const f32 toggle = ImGui::GetFontSize() + 2.0f;
+        const f32 strip = toggle * 2.0f + 4.0f;
+        const bool in_strip = ImGui::GetIO().MousePos.x >= row_max.x - strip;
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && !ImGui::IsItemToggledOpen() && !in_strip) {
             // Pressing a row of a multi-selection keeps the selection until release, so that the press can start dragging all of it.
             const bool additive = ImGui::GetIO().KeyCtrl;
             if (!additive && document_.IsSelected(entity) && document_.Selection().size() > 1) press_target_ = entity;
@@ -729,7 +795,7 @@ void ScenePanel::DrawNode(Entity entity, const HierarchyIndex& index, const std:
             if (ImGui::IsItemHovered()) Select(entity, false);
             press_target_ = kNullEntity;
         }
-        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) BeginRename(entity);
+        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && !in_strip) BeginRename(entity);
         if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None)) {
             if (press_target_ == entity) press_target_ = kNullEntity; // a drag, not a click: the selection stays
             const std::vector<Entity> carried = DragSet(entity);
@@ -757,10 +823,25 @@ void ScenePanel::DrawNode(Entity entity, const HierarchyIndex& index, const std:
         if (world.IsAlive(entity)) { // the menu can delete it
             const EntityKind kind = ClassifyEntity(world, entity);
             const PrefabRowState prefab = PrefabRowStateOf(world, document_.Guids(), document_.Context().find_prefab, entity);
-            const ImVec2 badge = DrawRowLabel(row_min, row_max, kind, prefab, document_.Name(entity));
+            const ImVec2 badge = DrawRowLabel(row_min, row_max, kind, prefab, document_.Name(entity), document_.IsHidden(entity));
             const f32 size = ImGui::GetFontSize();
             if (row_hovered && ImGui::IsMouseHoveringRect(badge, ImVec2(badge.x + size, badge.y + size)))
                 ImGui::SetTooltip("%s", HierarchyRowTooltip(kind, prefab).c_str());
+            // The eye and the lock, on the whole selection when this row is part of it. The cursor is put back afterwards
+            // so the buttons, which sit inside the row, do not push the next row down.
+            const ImVec2 row_end = ImGui::GetCursorScreenPos();
+            const f32 top = row_min.y + (row_max.y - row_min.y - toggle) * 0.5f;
+            const bool own_active = document_.IsActive(entity);
+            if (RowToggle(ImVec2(row_max.x - strip, top), toggle, RowGlyph::Eye, own_active, "##eye",
+                          own_active ? (document_.IsHidden(entity) ? "Its own flag is on; a parent hides it" : "Hide (and everything under it)")
+                                     : "Show"))
+                SetHidden(DragSet(entity), /*hidden=*/own_active);
+            const bool locked = document_.IsLocked(entity);
+            if (RowToggle(ImVec2(row_max.x - strip + toggle + 4.0f, top), toggle, RowGlyph::Lock, locked, "##lock",
+                          locked ? "Unlock" : "Lock: not picked or moved in the viewport"))
+                SetLocked(DragSet(entity), !locked);
+            ImGui::SetCursorScreenPos(row_end);
+            ImGui::Dummy(ImVec2(0.0f, 0.0f)); // the buttons moved the cursor inside the row; this closes the row without growing it
         }
     }
     if (open) {

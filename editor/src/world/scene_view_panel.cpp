@@ -47,7 +47,7 @@ void DrawColliders(const SceneDocument& document, const SceneViewCamera& camera,
         }
     };
     for (const Entity entity : document.Entities()) {
-        if (!world.HasComponent<Transform>(entity)) continue;
+        if (!world.HasComponent<Transform>(entity) || document.IsHidden(entity)) continue;
         const Mat4 matrix = ComputeWorldTransform(world, document.Guids(), entity);
         for (ComponentId id = 0; id < RegisteredComponentCount(); ++id) {
             if (!world.HasComponentRaw(entity, id)) continue;
@@ -286,7 +286,7 @@ void SceneViewPanel::Draw(SceneDocument& document, const ModelBoundsCache* bound
     Entity hovered_entity = kNullEntity;
     if (hovered) hovered_entity = PickEntity(document, camera_, origin, size, io.MousePos, 14.0f, bounds);
     for (const Entity entity : document.Entities()) {
-        if (!world.HasComponent<Transform>(entity)) continue;
+        if (!world.HasComponent<Transform>(entity) || document.IsHidden(entity)) continue;
         const Mat4 m = ComputeWorldTransform(world, document.Guids(), entity);
         const bool selected = document.IsSelected(entity);
         const bool is_camera = world.HasComponent<::aether::Camera>(entity);
