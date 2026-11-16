@@ -429,7 +429,7 @@ with a `ModelRenderer`). Matching and the directives themselves ignore case, and
 term. A filtered hierarchy is still a tree rather than a flat result list: `VisibleEntities` adds every match's
 ancestors, matches draw where they hang, the chain to a match is forced open, and branches with no match disappear; a
 filter with no match says "No entities match." The box's hint spells the grammar out. Filtering is not an edit — no
-command is recorded, and the selection stays where it is. Visibility/lock toggles and type icons are still open.
+command is recorded, and the selection stays where it is. Visibility/lock toggles are still open.
 
 Implemented: dragging several rows. A drag that starts on a selected row carries the whole selection
 (`ScenePanel::DragSet`); one that starts on an unselected row carries just that row. Pressing a selected row of a
@@ -439,6 +439,19 @@ just that row, as a click always did. Dropping on a row or the heading reparents
 intact; one that would go under its own descendant is skipped and counted in the status line while the rest land. The row
 menu's "Move to the scene root" acts on the selection the same way. There is no above/below line indicator yet: a drop
 always goes "into", because sibling order is by name.
+
+Implemented: type badges and prefab state. Every row starts with a small coloured badge with a letter, saying what the
+entity is (`ClassifyEntity`): Camera (C), Light (L), Model (M, also sprites, decals, terrain and tilemaps), Particles (F),
+Audio (A), UI (U), Physics (P, bodies and colliders), Script (S, scripts and Blueprints), Volume (V), an entity with other
+components (E) and an empty one with nothing but name, transform, parenting, tags and prefab bookkeeping (G). Kinds are
+judged by component type names (`ComponentKind`), so a module's components get a badge without the hierarchy depending
+on that module. When several apply, the earlier one in that list wins, so a camera with a model on it reads as a
+camera. A prefab instance's root and parts have their name in the `prefab` blue, or in red when the instance's prefab
+cannot be found. An entity with overrides of its own gets the Inspector's override bar at the row's left edge
+(`PrefabRowStateOf`). Hovering the badge names all of it, for example "Model - part of a prefab instance (2
+overrides)". The badge and the name are drawn over the row rather than as items of their own, so a row is still one item
+for selection, drag and the context menu, and its height does not change. An icon font for the badges and the eye/lock
+toggles are still open.
 
 ### 6.4 Inspector
 

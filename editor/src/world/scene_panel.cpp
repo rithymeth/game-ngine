@@ -40,6 +40,46 @@ void Copy(std::array<char, 128>& buffer, const std::string& text) {
     std::snprintf(buffer.data(), buffer.size(), "%s", text.c_str());
 }
 
+constexpr ImVec4 kPrefabColor{0.35f, 0.65f, 1.0f, 1.0f};        // the Inspector's override blue
+constexpr ImVec4 kMissingPrefabColor{0.95f, 0.4f, 0.35f, 1.0f};
+
+ImVec4 KindColor(EntityKind kind) {
+    switch (kind) {
+        case EntityKind::Camera: return {0.38f, 0.62f, 0.92f, 1.0f};
+        case EntityKind::Light: return {0.95f, 0.8f, 0.3f, 1.0f};
+        case EntityKind::Model: return {0.32f, 0.76f, 0.7f, 1.0f};
+        case EntityKind::Particles: return {0.95f, 0.56f, 0.3f, 1.0f};
+        case EntityKind::Audio: return {0.7f, 0.52f, 0.92f, 1.0f};
+        case EntityKind::Ui: return {0.9f, 0.46f, 0.66f, 1.0f};
+        case EntityKind::Physics: return {0.48f, 0.8f, 0.4f, 1.0f};
+        case EntityKind::Script: return {0.78f, 0.72f, 0.46f, 1.0f};
+        case EntityKind::Volume: return {0.54f, 0.56f, 0.95f, 1.0f};
+        case EntityKind::Other: return {0.62f, 0.62f, 0.62f, 1.0f};
+        case EntityKind::Empty: return {0.42f, 0.42f, 0.42f, 1.0f};
+    }
+    return {0.62f, 0.62f, 0.62f, 1.0f};
+}
+
+// The badge and the name of a tree row whose own label is empty, drawn over it so the row keeps one item (selection,
+// drag and the context menu all go on it) and its height. Returns the badge's top-left corner; it is a font size square.
+ImVec2 DrawRowLabel(ImVec2 row_min, ImVec2 row_max, EntityKind kind, const PrefabRowState& prefab, const std::string& name) {
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    const f32 size = ImGui::GetFontSize();
+    const ImVec2 badge(row_min.x + ImGui::GetTreeNodeToLabelSpacing(), row_min.y + (row_max.y - row_min.y - size) * 0.5f);
+    const ImVec2 badge_max(badge.x + size, badge.y + size);
+    draw->AddRectFilled(badge, badge_max, ImGui::GetColorU32(KindColor(kind)), size * 0.25f);
+    const char glyph[2] = {EntityKindGlyph(kind), '\0'};
+    const ImVec2 glyph_size = ImGui::CalcTextSize(glyph);
+    draw->AddText(ImVec2(badge.x + (size - glyph_size.x) * 0.5f, badge.y + (size - glyph_size.y) * 0.5f), IM_COL32(20, 20, 24, 255),
+                  glyph);
+    ImU32 text = ImGui::GetColorU32(ImGuiCol_Text);
+    if (prefab.role != PrefabRowState::Role::None) text = ImGui::GetColorU32(prefab.missing_source ? kMissingPrefabColor : kPrefabColor);
+    draw->AddText(ImVec2(badge_max.x + ImGui::GetStyle().ItemInnerSpacing.x, badge.y), text, name.c_str());
+    if (prefab.overrides > 0) // the Inspector marks an overridden field the same way
+        draw->AddRectFilled(ImVec2(row_min.x - 4.0f, row_min.y), ImVec2(row_min.x - 1.0f, row_max.y), ImGui::GetColorU32(kPrefabColor));
+    return badge;
+}
+
 } // namespace
 
 HierarchyIndex::HierarchyIndex(const SceneDocument& document) {
@@ -124,6 +164,103 @@ std::unordered_set<Entity> VisibleEntities(const SceneDocument& document, const 
         }
     }
     return shown;
+}
+
+EntityKind ComponentKind(std::string_view component_name) {
+    const usize colons = component_name.rfind("::");
+    if (colons != std::string_view::npos) component_name.remove_prefix(colons + 2);
+    else if (const usize space = component_name.rfind(' '); space != std::string_view::npos) component_name.remove_prefix(space + 1);
+    const std::string name = Lower(std::string(component_name));
+    const auto has = [&](std::string_view part) { return name.find(part) != std::string::npos; };
+    const auto starts = [&](std::string_view part) { return name.compare(0, part.size(), part) == 0; };
+    const auto ends = [&](std::string_view part) {
+        return name.size() >= part.size() && name.compare(name.size() - part.size(), part.size(), part) == 0;
+    };
+    static constexpr std::string_view kBookkeeping[] = {"entityname", "parent",    "idcomponent", "active",        "tags",
+                                                        "layer",      "datalayer", "prefablink",  "prefabinstance"};
+    for (const std::string_view core : kBookkeeping)
+        if (name == core) return EntityKind::Empty;
+    if (ends("transform")) return EntityKind::Empty; // Transform, PreviousTransform
+    if (ends("camera")) return EntityKind::Camera;
+    if (has("light")) return EntityKind::Light;
+    if (has("collider") || has("rigidbody") || has("charactermovement") || has("physics")) return EntityKind::Physics;
+    if (name == "modelrenderer" || starts("sprite") || has("mesh") || has("terrain") || has("decal") || has("tilemap"))
+        return EntityKind::Model;
+    if (has("particle")) return EntityKind::Particles;
+    if (starts("audio")) return EntityKind::Audio;
+    if (has("widget")) return EntityKind::Ui;
+    if (has("script") || has("blueprint")) return EntityKind::Script;
+    if (has("volume") || ends("zone") || has("trigger")) return EntityKind::Volume;
+    return EntityKind::Other;
+}
+
+EntityKind ClassifyEntity(const World& world, Entity entity) {
+    EntityKind best = EntityKind::Empty;
+    if (!world.IsAlive(entity)) return best;
+    for (ComponentId id = 0; id < RegisteredComponentCount(); ++id) {
+        if (!world.HasComponentRaw(entity, id)) continue;
+        best = std::min(best, ComponentKind(GetComponentInfo(id).name));
+    }
+    return best;
+}
+
+const char* EntityKindName(EntityKind kind) {
+    switch (kind) {
+        case EntityKind::Camera: return "Camera";
+        case EntityKind::Light: return "Light";
+        case EntityKind::Model: return "Model";
+        case EntityKind::Particles: return "Particles";
+        case EntityKind::Audio: return "Audio";
+        case EntityKind::Ui: return "UI";
+        case EntityKind::Physics: return "Physics";
+        case EntityKind::Script: return "Script";
+        case EntityKind::Volume: return "Volume";
+        case EntityKind::Other: return "Entity";
+        case EntityKind::Empty: return "Empty";
+    }
+    return "Entity";
+}
+
+char EntityKindGlyph(EntityKind kind) {
+    switch (kind) {
+        case EntityKind::Camera: return 'C';
+        case EntityKind::Light: return 'L';
+        case EntityKind::Model: return 'M';
+        case EntityKind::Particles: return 'F';
+        case EntityKind::Audio: return 'A';
+        case EntityKind::Ui: return 'U';
+        case EntityKind::Physics: return 'P';
+        case EntityKind::Script: return 'S';
+        case EntityKind::Volume: return 'V';
+        case EntityKind::Other: return 'E';
+        case EntityKind::Empty: return 'G';
+    }
+    return 'E';
+}
+
+PrefabRowState PrefabRowStateOf(const World& world, const GuidIndex& guids, const PrefabLookup& find_prefab, Entity entity) {
+    PrefabRowState state;
+    const Entity root = FindInstanceRoot(world, guids, entity);
+    if (root.IsNull()) return state;
+    state.role = root == entity ? PrefabRowState::Role::Root : PrefabRowState::Role::Part;
+    const PrefabInstance* instance = world.GetComponent<PrefabInstance>(root);
+    const PrefabLink* link = world.HasComponent<PrefabLink>(entity) ? world.GetComponent<PrefabLink>(entity) : nullptr;
+    if (link != nullptr) {
+        state.overrides = static_cast<usize>(std::count_if(instance->overrides.begin(), instance->overrides.end(),
+                                                           [&](const PropertyOverride& o) { return o.entity == link->local_id; }));
+    }
+    if (find_prefab) state.missing_source = find_prefab(instance->source.guid) == nullptr;
+    return state;
+}
+
+std::string HierarchyRowTooltip(EntityKind kind, const PrefabRowState& prefab) {
+    std::string text = EntityKindName(kind);
+    if (prefab.role == PrefabRowState::Role::None) return text;
+    text += prefab.role == PrefabRowState::Role::Root ? " - prefab instance" : " - part of a prefab instance";
+    if (prefab.missing_source) text += " whose prefab is missing";
+    if (prefab.overrides == 1) text += " (1 override)";
+    else if (prefab.overrides > 1) text += " (" + std::to_string(prefab.overrides) + " overrides)";
+    return text;
 }
 
 ScenePanel::ScenePanel(std::filesystem::path content_root) : content_root_(std::move(content_root)), bounds_(content_root_) {
@@ -579,7 +716,9 @@ void ScenePanel::DrawNode(Entity entity, const HierarchyIndex& index, const std:
             rename_target_ = kNullEntity;
         }
     } else {
-        open = ImGui::TreeNodeEx("##node", flags, "%s", document_.Name(entity).c_str());
+        open = ImGui::TreeNodeEx("##node", flags);
+        const ImVec2 row_min = ImGui::GetItemRectMin(), row_max = ImGui::GetItemRectMax();
+        const bool row_hovered = ImGui::IsItemHovered();
         if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && !ImGui::IsItemToggledOpen()) {
             // Pressing a row of a multi-selection keeps the selection until release, so that the press can start dragging all of it.
             const bool additive = ImGui::GetIO().KeyCtrl;
@@ -613,6 +752,15 @@ void ScenePanel::DrawNode(Entity entity, const HierarchyIndex& index, const std:
         if (ImGui::BeginPopupContextItem("##entity_menu")) {
             DrawEntityMenu(entity);
             ImGui::EndPopup();
+        }
+        const World& world = document_.GetWorld();
+        if (world.IsAlive(entity)) { // the menu can delete it
+            const EntityKind kind = ClassifyEntity(world, entity);
+            const PrefabRowState prefab = PrefabRowStateOf(world, document_.Guids(), document_.Context().find_prefab, entity);
+            const ImVec2 badge = DrawRowLabel(row_min, row_max, kind, prefab, document_.Name(entity));
+            const f32 size = ImGui::GetFontSize();
+            if (row_hovered && ImGui::IsMouseHoveringRect(badge, ImVec2(badge.x + size, badge.y + size)))
+                ImGui::SetTooltip("%s", HierarchyRowTooltip(kind, prefab).c_str());
         }
     }
     if (open) {

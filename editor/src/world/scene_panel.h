@@ -4,6 +4,8 @@
 #include "core/scene_document.h"
 #include "world/model_bounds.h"
 
+#include "aether/scene/prefab.h"
+
 #include <array>
 #include <filesystem>
 #include <functional>
@@ -51,6 +53,26 @@ HierarchyQuery ParseHierarchyQuery(std::string_view text);
 std::vector<Entity> MatchingEntities(const SceneDocument& document, const std::string& filter);
 // Every match plus its ancestors: what a filtered hierarchy has to draw so a match is still seen where it hangs.
 std::unordered_set<Entity> VisibleEntities(const SceneDocument& document, const std::vector<Entity>& matches);
+
+// What a hierarchy row's badge says the entity is, judged by its component type names. When several apply, the earliest
+// in this order wins (a camera with a light on it reads as a camera). Empty: nothing but name, transform, parenting,
+// tags and prefab bookkeeping; Other: components none of the kinds claim.
+enum class EntityKind : u8 { Camera, Light, Model, Particles, Audio, Ui, Physics, Script, Volume, Other, Empty };
+EntityKind ClassifyEntity(const World& world, Entity entity);
+EntityKind ComponentKind(std::string_view component_name); // "aether::PointLight" -> Light
+const char* EntityKindName(EntityKind kind);
+char EntityKindGlyph(EntityKind kind); // the letter in the badge
+
+// A hierarchy row's prefab state. `missing_source` needs `find_prefab`; without one it is never set.
+struct PrefabRowState {
+    enum class Role : u8 { None, Root, Part };
+    Role role = Role::None;
+    usize overrides = 0;  // overrides of this entity (not of the rest of its instance)
+    bool missing_source = false; // the instance's prefab cannot be found
+};
+PrefabRowState PrefabRowStateOf(const World& world, const GuidIndex& guids, const PrefabLookup& find_prefab, Entity entity);
+// "Light", "Light - prefab instance (2 overrides)", "Empty - part of a prefab instance whose prefab is missing".
+std::string HierarchyRowTooltip(EntityKind kind, const PrefabRowState& prefab);
 
 // The scene editor of the portable (ImGui) editor: a toolbar (new, open, save, undo and redo, play), the hierarchy (filter, select, rename, create, duplicate, delete, copy and paste, and
 // drag one entity onto another to make it a child) and the inspector for the selected entity (every reflected component, add and remove, all undoable). It edits a SceneDocument, the same
