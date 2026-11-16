@@ -170,10 +170,27 @@ public:
     // A window with every tool. `open` (optional) gets the title-bar X.
     void DrawHub(const char* title = "Tools", bool* open = nullptr);
     // The hub in two pieces for a host that docks them separately (the shell puts the list on the left and the open
-    // tool in the middle): the workspace buttons, the search and the list by category; and the selected tool with its
-    // name, category and description. DrawHubContents is both side by side.
+    // tool in the middle): the search and the list by category; and the selected tool with its name, category and
+    // description. DrawHubContents is both side by side.
     void DrawToolList(f32 width = 0.0f);
     void DrawSelectedTool();
+    // The workspaces across the top, where the editor concept puts them (World, Script, Blueprint, Animation, AI,
+    // Audio, UI, Material, Sequence, Network, Profiler): each tab opens the tool it is named for, with its icon and
+    // the active one lit. DrawWorkspaceStrip fills the current window, which a host makes a short strip of its own;
+    // WorkspaceTabs is what the last draw laid out -- each tab's label, the tool it opens, its rectangle in screen
+    // coordinates and whether it is the active one -- so a host can align its own chrome and a test can click a tab.
+    struct WorkspaceTab {
+        std::string label;
+        std::string tool;
+        f32 min_x = 0.0f, min_y = 0.0f, max_x = 0.0f, max_y = 0.0f;
+        bool active = false;
+    };
+    void DrawWorkspaceStrip();
+    const std::vector<WorkspaceTab>& WorkspaceTabs() const;
+    // Opens the tool a workspace tab stands for; false (and nothing changes) when no workspace has that label.
+    bool SelectWorkspace(std::string_view label);
+    // The label of the workspace the open tool belongs to; empty for a tool that no tab opens.
+    std::string ActiveWorkspace() const;
     // The hub's contents into the current window (the shell fills its main area with this).
     void DrawHubContents();
     // The popped-out tool windows.

@@ -252,9 +252,13 @@ void DrawEditor(EditorWorkspace& workspace, LayoutState& layouts, const char* ba
     }
     DrawSaveLayoutPopup(layouts);
 
-    // The main toolbar claims the strip under the menu bar, and the status bar the one along the bottom, so the
-    // dockspace fills what is left.
+    // The workspaces run across the top as the concept draws them, the toolbar claims the strip below, and the status
+    // bar the one along the bottom, so the dockspace fills what is left.
     ImGuiViewport* viewport = ImGui::GetMainViewport();
+    if (ImGui::BeginViewportSideBar("##workspaces", viewport, ImGuiDir_Up, ImGui::GetFrameHeight(), ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings)) {
+        workspace.DrawWorkspaceStrip();
+    }
+    ImGui::End();
     if (ImGui::BeginViewportSideBar("##toolbar", viewport, ImGuiDir_Up, ImGui::GetFrameHeight(), ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings)) {
         workspace.DrawMainToolbar();
     }

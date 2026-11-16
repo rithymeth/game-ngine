@@ -208,9 +208,20 @@ shows:
 
 | Window | Contents |
 |---|---|
-| Tools | The workspace buttons (World, Script, Blueprint, ...), the search box and every tool by category, each row with a category-colored badge, its name and one line saying what it is for (the full sentence is also the hover tooltip). |
+| Workspaces (a strip above the toolbar, not a dock) | World, Script, Blueprint, Animation, AI, Audio, UI, Material, Sequence, Network and Profiler, each an icon and its name, the tool's category color on the icon; the active one is a lit pill with an accent underline. A click opens that workspace's tool in Editor. |
+| Tools | The search box and every tool by category, each row with a category-colored badge, its name and one line saying what it is for (the full sentence is also the hover tooltip). |
 | Editor | The selected tool's name, category and description, a **Pop out** button, and the tool itself. |
 | Debug | Console and Profiler as tabs. |
+
+The workspace strip is the concept's second row: a full-width bar between the
+menu bar and the main toolbar (the window is `Workspaces`, drawn by
+`EditorWorkspace::DrawWorkspaceStrip`). Its icons are drawn, not loaded (`DrawWorkspaceGlyph`:
+a globe, a page of code, connected nodes, a play head, a chip, a speaker, a
+window, a sphere, a film strip, network nodes and a bar chart), and each tab
+opens one tool — the same tools the rest of the editor lists, so nothing can
+drift. The strip's tabs report their rectangles (`WorkspaceTabs`), the active
+one is read back from the open tool (`ActiveWorkspace`), and clicking uses
+`SelectWorkspace`; a headless test clicks a tab at its rectangle.
 
 The four built-ins differ in where the Debug dock goes: Default and Level
 design put it in a strip along the bottom (22–30% height), Scripting puts it

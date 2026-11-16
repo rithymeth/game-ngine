@@ -191,6 +191,104 @@ ImU32 CategoryColor(std::string_view category) {
     return IM_COL32(110, 110, 118, 255);
 }
 
+// The workspaces across the top of the editor, as the concept lays them out: each names one tool and draws a small icon
+// for its kind of work. The order is the concept's; Profiler keeps the last place it had.
+enum class WorkspaceGlyph { World, Script, Blueprint, Animation, Ai, Audio, Ui, Material, Sequence, Network, Profiler };
+
+struct WorkspaceEntry {
+    const char* label;
+    const char* tool;     // the tool whose name starts with this
+    const char* category; // the tool's category, for the icon's colour
+    const char* hint;
+    WorkspaceGlyph glyph;
+};
+
+constexpr WorkspaceEntry kWorkspaces[] = {
+    {"World", "Terrain", "World", "Terrain, foliage, splines and the world partition", WorkspaceGlyph::World},
+    {"Script", "Luau", "Scripting", "Luau scripts and code", WorkspaceGlyph::Script},
+    {"Blueprint", "Blueprint", "Scripting", "Visual scripting graphs", WorkspaceGlyph::Blueprint},
+    {"Animation", "Animation", "Animation", "Animation graphs and blend spaces", WorkspaceGlyph::Animation},
+    {"AI", "Behavior Tree", "AI", "Behavior trees and navigation", WorkspaceGlyph::Ai},
+    {"Audio", "Sound Cue", "Audio", "Sound cues and the mixer", WorkspaceGlyph::Audio},
+    {"UI", "UI Designer", "UI", "UI layouts", WorkspaceGlyph::Ui},
+    {"Material", "Material", "Rendering", "Material graphs and particle systems", WorkspaceGlyph::Material},
+    {"Sequence", "Sequencer", "Cinematics", "Cinematic sequences and shots", WorkspaceGlyph::Sequence},
+    {"Network", "Net", "Networking", "Networking and network play", WorkspaceGlyph::Network},
+    {"Profiler", "Profiler", "Debug", "The frame profiler", WorkspaceGlyph::Profiler},
+};
+
+// A workspace's icon, drawn rather than loaded: a globe, a page of code, three connected nodes, a play head, a chip with
+// legs, a speaker, a window, a lit sphere, a film strip, two network nodes and a bar chart.
+void DrawWorkspaceGlyph(ImDrawList* draw, WorkspaceGlyph glyph, const ImVec2& centre, f32 size, ImU32 color) {
+    const f32 r = size * 0.5f;
+    const ImVec2 min(centre.x - r, centre.y - r), max(centre.x + r, centre.y + r);
+    switch (glyph) {
+        case WorkspaceGlyph::World:
+            draw->AddCircle(centre, r, color, 16, 1.4f);
+            draw->AddLine(ImVec2(centre.x, min.y), ImVec2(centre.x, max.y), color, 1.2f);
+            draw->AddLine(ImVec2(min.x, centre.y), ImVec2(max.x, centre.y), color, 1.2f);
+            break;
+        case WorkspaceGlyph::Script:
+            draw->AddRect(ImVec2(min.x + r * 0.4f, min.y), ImVec2(max.x - r * 0.4f, max.y), color, 1.5f, 0, 1.2f);
+            draw->AddLine(ImVec2(centre.x - r * 0.2f, centre.y - r * 0.3f), ImVec2(centre.x + r * 0.3f, centre.y - r * 0.3f), color, 1.2f);
+            draw->AddLine(ImVec2(centre.x - r * 0.2f, centre.y + r * 0.1f), ImVec2(centre.x + r * 0.3f, centre.y + r * 0.1f), color, 1.2f);
+            draw->AddLine(ImVec2(centre.x - r * 0.2f, centre.y + r * 0.5f), ImVec2(centre.x + r * 0.1f, centre.y + r * 0.5f), color, 1.2f);
+            break;
+        case WorkspaceGlyph::Blueprint: {
+            const f32 node = r * 0.55f;
+            draw->AddRectFilled(ImVec2(min.x, min.y), ImVec2(min.x + node, min.y + node), color, 1.0f);
+            draw->AddRect(ImVec2(max.x - node, max.y - node), ImVec2(max.x, max.y), color, 1.0f);
+            draw->AddLine(ImVec2(min.x + node, min.y + node), ImVec2(max.x - node, max.y - node), color, 1.2f);
+            break;
+        }
+        case WorkspaceGlyph::Animation:
+            draw->AddTriangleFilled(ImVec2(min.x + r * 0.4f, min.y), ImVec2(min.x + r * 0.4f, max.y), ImVec2(max.x - r * 0.2f, centre.y), color);
+            break;
+        case WorkspaceGlyph::Ai:
+            draw->AddRect(ImVec2(min.x + r * 0.3f, min.y + r * 0.3f), ImVec2(max.x - r * 0.3f, max.y - r * 0.3f), color, 1.0f, 0, 1.2f);
+            for (f32 offset : {-r * 0.45f, r * 0.45f}) {
+                draw->AddLine(ImVec2(centre.x + offset, min.y), ImVec2(centre.x + offset, min.y + r * 0.3f), color, 1.0f);
+                draw->AddLine(ImVec2(centre.x + offset, max.y - r * 0.3f), ImVec2(centre.x + offset, max.y), color, 1.0f);
+            }
+            break;
+        case WorkspaceGlyph::Audio:
+            draw->AddRectFilled(ImVec2(min.x, centre.y - r * 0.3f), ImVec2(min.x + r * 0.45f, centre.y + r * 0.3f), color);
+            draw->AddTriangleFilled(ImVec2(min.x + r * 0.4f, centre.y - r * 0.7f), ImVec2(min.x + r * 0.4f, centre.y + r * 0.7f),
+                                    ImVec2(centre.x + r * 0.1f, centre.y), color);
+            for (int arc = 1; arc <= 2; ++arc) {
+                draw->PathArcTo(ImVec2(centre.x + r * 0.1f, centre.y), r * 0.35f * static_cast<f32>(arc), -0.8f, 0.8f, 6);
+                draw->PathStroke(color, 0, 1.1f);
+            }
+            break;
+        case WorkspaceGlyph::Ui:
+            draw->AddRect(min, max, color, 1.5f, 0, 1.2f);
+            draw->AddRectFilled(ImVec2(min.x + r * 0.35f, min.y + r * 0.35f), ImVec2(centre.x + r * 0.2f, centre.y + r * 0.1f), color);
+            break;
+        case WorkspaceGlyph::Material:
+            draw->AddCircleFilled(centre, r, color, 16);
+            draw->AddCircle(ImVec2(centre.x - r * 0.3f, centre.y - r * 0.3f), r * 0.25f, IM_COL32(255, 255, 255, 200), 8, 1.0f);
+            break;
+        case WorkspaceGlyph::Sequence:
+            draw->AddRect(min, max, color, 1.0f, 0, 1.2f);
+            draw->AddLine(ImVec2(centre.x - r * 0.45f, min.y), ImVec2(centre.x - r * 0.45f, max.y), color, 1.0f);
+            draw->AddLine(ImVec2(centre.x + r * 0.45f, min.y), ImVec2(centre.x + r * 0.45f, max.y), color, 1.0f);
+            break;
+        case WorkspaceGlyph::Network: {
+            const ImVec2 a(min.x + r * 0.3f, max.y - r * 0.3f), b(max.x - r * 0.3f, min.y + r * 0.3f), c(centre.x + r * 0.2f, max.y - r * 0.1f);
+            draw->AddLine(a, b, color, 1.2f);
+            draw->AddLine(b, c, color, 1.2f);
+            for (const ImVec2& node : {a, b, c}) draw->AddCircleFilled(node, r * 0.28f, color);
+            break;
+        }
+        case WorkspaceGlyph::Profiler:
+            draw->AddLine(ImVec2(min.x, max.y), ImVec2(max.x, max.y), color, 1.2f);
+            draw->AddRectFilled(ImVec2(min.x + r * 0.1f, centre.y + r * 0.1f), ImVec2(min.x + r * 0.5f, max.y), color);
+            draw->AddRectFilled(ImVec2(centre.x - r * 0.2f, min.y + r * 0.3f), ImVec2(centre.x + r * 0.2f, max.y), color);
+            draw->AddRectFilled(ImVec2(max.x - r * 0.5f, centre.y), ImVec2(max.x - r * 0.1f, max.y), color);
+            break;
+    }
+}
+
 // An editor script (§26.5): a panel, a menu item and an asset type. Written
 // into a sample project that doesn't have it yet (an older one gains it).
 void WriteSampleEditorScript(const std::filesystem::path& content) {
@@ -245,6 +343,7 @@ struct EditorWorkspace::Impl {
     std::function<void(const std::string&)> asset_opener;  // what it does with a chosen asset
     usize selected = 0;
     std::array<char, 128> tool_filter{};
+    std::vector<WorkspaceTab> workspace_tabs; // what DrawWorkspaceStrip last laid out
 
     // Scripting.
     std::unique_ptr<BlueprintDocument> blueprint_doc;
@@ -1804,39 +1903,69 @@ void EditorWorkspace::DrawToolsMenu() {
     impl_->extensions.DrawMenus("Tools");
 }
 
-void EditorWorkspace::DrawToolList(f32 width) {
-    struct WorkspaceEntry { const char* label; const char* tool; };
-    static constexpr WorkspaceEntry workspaces[] = {
-        {"World", "Terrain"}, {"Script", "Luau"}, {"Blueprint", "Blueprint"},
-        {"Animation", "Animation"}, {"AI", "Behavior Tree"}, {"Audio", "Sound Cue"},
-        {"UI", "UI Designer"}, {"Material", "Material"}, {"Sequence", "Sequencer"},
-        {"Network", "Net"}, {"Profiler", "Profiler"},
-    };
-    usize active_workspace = std::size(workspaces);
-    for (usize i = 0; i < std::size(workspaces); ++i) {
-        if (!impl_->tools.empty() && impl_->selected < impl_->tools.size() &&
-            StartsWithNoCase(impl_->tools[impl_->selected].name.c_str(), workspaces[i].tool)) {
-            active_workspace = i;
-            break;
-        }
+std::string EditorWorkspace::ActiveWorkspace() const {
+    if (impl_->selected >= impl_->tools.size()) return {};
+    const std::string& name = impl_->tools[impl_->selected].name;
+    for (const WorkspaceEntry& workspace : kWorkspaces) {
+        if (StartsWithNoCase(name.c_str(), workspace.tool)) return workspace.label;
     }
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, ImGui::GetStyle().ItemSpacing.y));
-    for (usize i = 0; i < std::size(workspaces); ++i) {
-        // Narrow docks wrap the buttons into more rows instead of clipping the last ones.
-        const f32 button_w = ImGui::CalcTextSize(workspaces[i].label).x + ImGui::GetStyle().FramePadding.x * 2.0f;
-        if (i != 0 && ImGui::GetContentRegionAvail().x >= button_w) ImGui::SameLine();
-        if (i == active_workspace) {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
-            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_Text));
-        }
-        if (ImGui::Button(workspaces[i].label)) {
-            const i64 tool = FindTool(workspaces[i].tool);
-            if (tool >= 0) impl_->selected = static_cast<usize>(tool);
-        }
-        if (i == active_workspace) ImGui::PopStyleColor(2);
+    return {};
+}
+
+bool EditorWorkspace::SelectWorkspace(std::string_view label) {
+    for (const WorkspaceEntry& workspace : kWorkspaces) {
+        if (label != workspace.label) continue;
+        const i64 tool = FindTool(workspace.tool);
+        if (tool < 0) return false;
+        impl_->selected = static_cast<usize>(tool);
+        return true;
+    }
+    return false;
+}
+
+const std::vector<EditorWorkspace::WorkspaceTab>& EditorWorkspace::WorkspaceTabs() const { return impl_->workspace_tabs; }
+
+// The strip the concept puts above the toolbar: the workspaces side by side, each an icon and its name, the active one
+// lit with an accent underline. The panel draws and hit-tests its own tabs, so the host window needs nothing else in it.
+void EditorWorkspace::DrawWorkspaceStrip() {
+    const std::string active = ActiveWorkspace();
+    const f32 height = ImGui::GetFrameHeight();
+    const f32 glyph = ImGui::GetFontSize() * 0.8f;
+    const f32 pad = 8.0f;
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(2.0f, ImGui::GetStyle().ItemSpacing.y));
+    impl_->workspace_tabs.clear();
+    for (usize i = 0; i < std::size(kWorkspaces); ++i) {
+        const WorkspaceEntry& entry = kWorkspaces[i];
+        const f32 text_width = ImGui::CalcTextSize(entry.label).x;
+        const f32 width = pad + glyph + 6.0f + text_width + pad;
+        ImGui::PushID(static_cast<int>(i));
+        if (i > 0) ImGui::SameLine();
+        ImGui::InvisibleButton(entry.label, ImVec2(width, height));
+        const bool hovered = ImGui::IsItemHovered();
+        const bool is_active = active == entry.label;
+        const ImVec2 min = ImGui::GetItemRectMin();
+        const ImVec2 max = ImGui::GetItemRectMax();
+        const ImU32 accent = IM_COL32(79, 142, 247, 255);
+        if (is_active) draw->AddRectFilled(min, max, IM_COL32(41, 47, 60, 255), 4.0f);
+        else if (hovered) draw->AddRectFilled(min, max, IM_COL32(32, 36, 45, 255), 4.0f);
+        if (is_active) draw->AddRectFilled(ImVec2(min.x + 6.0f, max.y - 2.0f), ImVec2(max.x - 6.0f, max.y), accent, 1.0f);
+        // The icon carries the tool's category colour, faded until its workspace is active or hovered.
+        ImU32 tint = CategoryColor(entry.category);
+        if (!is_active && !hovered) tint = (tint & 0x00FFFFFFu) | (0x0000009Au);
+        const ImVec2 centre(min.x + pad + glyph * 0.5f, (min.y + max.y) * 0.5f);
+        DrawWorkspaceGlyph(draw, entry.glyph, centre, glyph, tint);
+        draw->AddText(ImVec2(centre.x + glyph * 0.5f + 6.0f, min.y + (height - ImGui::GetTextLineHeight()) * 0.5f),
+                      is_active || hovered ? ImGui::GetColorU32(ImGuiCol_Text) : ImGui::GetColorU32(ImGuiCol_TextDisabled), entry.label);
+        if (hovered) ImGui::SetTooltip("%s  -  %s", entry.label, entry.hint);
+        if (ImGui::IsItemClicked()) SelectWorkspace(entry.label);
+        impl_->workspace_tabs.push_back({entry.label, entry.tool, min.x, min.y, max.x, max.y, is_active});
+        ImGui::PopID();
     }
     ImGui::PopStyleVar();
-    ImGui::Separator();
+}
+
+void EditorWorkspace::DrawToolList(f32 width) {
     const std::string count = std::to_string(impl_->tools.size()) + " tools";
     ImGui::SetNextItemWidth(std::max(ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize(count.c_str()).x - 12.0f, 80.0f));
     ImGui::InputTextWithHint("##tool_filter", "Search tools...", impl_->tool_filter.data(), impl_->tool_filter.size());
@@ -1921,6 +2050,8 @@ void EditorWorkspace::DrawSelectedTool() {
 }
 
 void EditorWorkspace::DrawHubContents() {
+    DrawWorkspaceStrip();
+    ImGui::Separator();
     DrawToolList(300.0f);
     ImGui::SameLine();
     DrawSelectedTool();

@@ -231,6 +231,60 @@ AETHER_TEST(EditorWorkspace_ToolListAndOpenToolDrawApart) {
     CHECK(std::string(ws.ToolDescription(static_cast<usize>(terrain))).find("landscape") != std::string::npos);
 }
 
+// The workspaces across the top, as the concept draws them: one tab per workspace with its tool, laid out side by side,
+// and a click on a tab opens that workspace's tool.
+AETHER_TEST(EditorWorkspace_WorkspaceStripOpensEachTool) {
+    HeadlessImGui imgui;
+    EditorWorkspace ws;
+    ImGuiIO& io = ImGui::GetIO();
+    auto frame = [&] {
+        imgui.Frame([&] {
+            ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f));
+            ImGui::SetNextWindowSize(ImVec2(1400.0f, 40.0f));
+            ImGui::Begin("strip", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar);
+            ws.DrawWorkspaceStrip();
+            ImGui::End();
+        });
+    };
+    frame();
+    const std::vector<EditorWorkspace::WorkspaceTab> tabs = ws.WorkspaceTabs();
+    CHECK(tabs.size() == 11);
+    CHECK(tabs.front().label == "World" && tabs.back().label == "Profiler");
+    usize blueprint = tabs.size();
+    for (usize i = 0; i < tabs.size(); ++i) {
+        CHECK(ws.FindTool(tabs[i].tool) >= 0); // every tab opens a tool that exists
+        CHECK(tabs[i].max_x > tabs[i].min_x && tabs[i].max_y > tabs[i].min_y);
+        if (i > 0) CHECK(tabs[i].min_x > tabs[i - 1].max_x); // side by side, left to right, with no overlap
+        if (tabs[i].label == "Blueprint") blueprint = i;
+    }
+    CHECK(blueprint < tabs.size());
+
+    const usize before = ws.Selected();
+    CHECK(!ws.SelectWorkspace("Gizmo")); // not a workspace: nothing changes
+    CHECK(ws.Selected() == before);
+    CHECK(ws.SelectWorkspace("Blueprint"));
+    CHECK(ws.ActiveWorkspace() == "Blueprint");
+    CHECK(std::string(ws.ToolName(ws.Selected())).rfind("Blueprint", 0) == 0);
+    // The active workspace is read from the open tool, not remembered separately.
+    ws.Select(static_cast<usize>(ws.FindTool("Terrain")));
+    CHECK(ws.ActiveWorkspace() == "World");
+
+    // And a click on the tab switches, which is how a person does it.
+    frame();
+    const EditorWorkspace::WorkspaceTab target = ws.WorkspaceTabs()[blueprint];
+    const ImVec2 at((target.min_x + target.max_x) * 0.5f, (target.min_y + target.max_y) * 0.5f);
+    auto step = [&](const ImVec2& mouse, bool down) {
+        io.AddMousePosEvent(mouse.x, mouse.y);
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, down);
+        frame();
+    };
+    step(ImVec2(2.0f, 2.0f), false);
+    step(at, false);
+    step(at, true);
+    step(at, false);
+    CHECK(ws.ActiveWorkspace() == "Blueprint");
+}
+
 AETHER_TEST(EditorWorkspace_DrawsEveryToolHeadless) {
     HeadlessImGui imgui;
     EditorWorkspace ws;
