@@ -10,9 +10,9 @@ namespace aether::cook {
 namespace {
 
 constexpr char kMagic[4] = {'A', 'M', 'S', 'C'};
-constexpr u32 kVersion = 2;
+constexpr u32 kVersion = 3;
 // v1: primitives only. v2: a trailing HLOD proxy table (Phase 42.4); a v1 file
-// loads with no proxies.
+// loads with no proxies. v3: a trailing table of per-primitive cluster hierarchies; a v1 or v2 file loads with none.
 
 bool Fail(std::string* error, const std::string& message) {
     if (error) *error = message;
@@ -77,6 +77,31 @@ private:
     usize pos_ = 0;
 };
 
+void WriteClusters(Writer& w, const ClusterHierarchy& h) {
+    w.U32(h.level_count);
+    w.U32(h.leaf_count);
+    w.F32(h.mesh_extent);
+    w.U32(static_cast<u32>(h.indices.size()));
+    for (u32 i : h.indices) w.U32(i);
+    w.U32(static_cast<u32>(h.clusters.size()));
+    for (const Cluster& c : h.clusters) {
+        w.U32(c.index_offset); w.U32(c.triangle_count); w.U32(c.level);
+        w.F32(c.center.x); w.F32(c.center.y); w.F32(c.center.z); w.F32(c.radius); w.F32(c.error);
+        w.F32(c.parent_center.x); w.F32(c.parent_center.y); w.F32(c.parent_center.z); w.F32(c.parent_radius); w.F32(c.parent_error);
+        w.F32(c.bounds.center.x); w.F32(c.bounds.center.y); w.F32(c.bounds.center.z); w.F32(c.bounds.radius);
+        w.F32(c.bounds.cone_axis.x); w.F32(c.bounds.cone_axis.y); w.F32(c.bounds.cone_axis.z); w.F32(c.bounds.cone_cutoff);
+        w.I32(c.group); w.I32(c.source_group);
+    }
+    w.U32(static_cast<u32>(h.groups.size()));
+    for (const ClusterGroup& g : h.groups) {
+        w.U32(static_cast<u32>(g.inputs.size()));
+        for (u32 i : g.inputs) w.U32(i);
+        w.U32(static_cast<u32>(g.outputs.size()));
+        for (u32 i : g.outputs) w.U32(i);
+        w.F32(g.center.x); w.F32(g.center.y); w.F32(g.center.z); w.F32(g.radius); w.F32(g.error);
+    }
+}
+
 void WriteMeshlets(Writer& w, const MeshletMesh& m) {
     w.U32(static_cast<u32>(m.meshlets.size()));
     for (const Meshlet& ml : m.meshlets) {
@@ -93,6 +118,63 @@ void WriteMeshlets(Writer& w, const MeshletMesh& m) {
         w.F32(b.center.x); w.F32(b.center.y); w.F32(b.center.z); w.F32(b.radius);
         w.F32(b.cone_axis.x); w.F32(b.cone_axis.y); w.F32(b.cone_axis.z); w.F32(b.cone_cutoff);
     }
+}
+
+// Reads one primitive's cluster hierarchy, checking every count against the bytes left and every reference against what it points into: indices against the
+// primitive's vertices, a cluster's triangles against the index array, group references and group members against their tables.
+bool ReadClusters(Reader& r, ClusterHierarchy& h, u32 vertex_count, std::string* error) {
+    constexpr usize kClusterBytes = 23 * 4;
+    constexpr usize kGroupMinBytes = 28;
+    u32 index_count = 0, cluster_count = 0, group_count = 0;
+    if (!r.U32(h.level_count) || !r.U32(h.leaf_count) || !r.F32(h.mesh_extent) || !r.U32(index_count)) return Fail(error, "truncated cluster header");
+    if (h.level_count > 256 || !std::isfinite(h.mesh_extent) || h.mesh_extent < 0.0f) return Fail(error, "bad cluster header");
+    if (index_count % 3 != 0 || !r.Fits(index_count, 4)) return Fail(error, "bad cluster indices");
+    h.indices.resize(index_count);
+    for (u32& i : h.indices) {
+        if (!r.U32(i)) return Fail(error, "truncated cluster indices");
+        if (i >= vertex_count) return Fail(error, "cluster index out of range");
+    }
+    if (!r.U32(cluster_count) || !r.Fits(cluster_count, kClusterBytes)) return Fail(error, "truncated clusters");
+    if (h.leaf_count > cluster_count) return Fail(error, "cluster leaf count out of range");
+    h.clusters.resize(cluster_count);
+    const auto finite = [](f32 v) { return std::isfinite(v); };
+    for (Cluster& c : h.clusters) {
+        r.U32(c.index_offset); r.U32(c.triangle_count); r.U32(c.level);
+        r.F32(c.center.x); r.F32(c.center.y); r.F32(c.center.z); r.F32(c.radius); r.F32(c.error);
+        r.F32(c.parent_center.x); r.F32(c.parent_center.y); r.F32(c.parent_center.z); r.F32(c.parent_radius); r.F32(c.parent_error);
+        r.F32(c.bounds.center.x); r.F32(c.bounds.center.y); r.F32(c.bounds.center.z); r.F32(c.bounds.radius);
+        r.F32(c.bounds.cone_axis.x); r.F32(c.bounds.cone_axis.y); r.F32(c.bounds.cone_axis.z); r.F32(c.bounds.cone_cutoff);
+        r.I32(c.group); r.I32(c.source_group);
+        if (c.index_offset % 3 != 0 || static_cast<u64>(c.index_offset) + 3ull * c.triangle_count > h.indices.size())
+            return Fail(error, "cluster triangles out of range");
+        if (h.level_count == 0 || c.level >= h.level_count) return Fail(error, "cluster level out of range");
+        if (!finite(c.center.x) || !finite(c.center.y) || !finite(c.center.z) || !finite(c.radius) || c.radius < 0.0f || !finite(c.error) || c.error < 0.0f ||
+            !finite(c.parent_center.x) || !finite(c.parent_center.y) || !finite(c.parent_center.z) || !finite(c.parent_radius) || c.parent_radius < 0.0f ||
+            !finite(c.parent_error) || c.parent_error < 0.0f || !finite(c.bounds.center.x) || !finite(c.bounds.center.y) || !finite(c.bounds.center.z) ||
+            !finite(c.bounds.radius) || c.bounds.radius < 0.0f || !finite(c.bounds.cone_axis.x) || !finite(c.bounds.cone_axis.y) ||
+            !finite(c.bounds.cone_axis.z) || !finite(c.bounds.cone_cutoff))
+            return Fail(error, "non-finite or negative cluster bounds");
+    }
+    if (!r.U32(group_count) || !r.Fits(group_count, kGroupMinBytes)) return Fail(error, "truncated cluster groups");
+    for (const Cluster& c : h.clusters)
+        if (c.group < -1 || c.source_group < -1 || c.group >= static_cast<i64>(group_count) || c.source_group >= static_cast<i64>(group_count))
+            return Fail(error, "cluster group reference out of range");
+    h.groups.resize(group_count);
+    for (ClusterGroup& g : h.groups) {
+        u32 n = 0;
+        for (std::vector<u32>* list : {&g.inputs, &g.outputs}) {
+            if (!r.U32(n) || !r.Fits(n, 4)) return Fail(error, "truncated cluster group");
+            list->resize(n);
+            for (u32& id : *list) {
+                if (!r.U32(id)) return Fail(error, "truncated cluster group");
+                if (id >= cluster_count) return Fail(error, "cluster group member out of range");
+            }
+        }
+        if (!r.F32(g.center.x) || !r.F32(g.center.y) || !r.F32(g.center.z) || !r.F32(g.radius) || !r.F32(g.error)) return Fail(error, "truncated cluster group");
+        if (!finite(g.center.x) || !finite(g.center.y) || !finite(g.center.z) || !finite(g.radius) || g.radius < 0.0f || !finite(g.error) || g.error < 0.0f)
+            return Fail(error, "non-finite cluster group bounds");
+    }
+    return true;
 }
 
 bool ReadMeshlets(Reader& r, MeshletMesh& m, u32 vertex_count, std::string* error) {
@@ -178,6 +260,9 @@ bool CookMesh(const assets::MeshData& mesh, const MeshCookSettings& settings, Co
                     return Fail(error, label + reason);
             }
             prim.lods.push_back(std::move(cl));
+        }
+        if (settings.build_clusters && !skinned && !src.indices.empty()) {
+            if (!BuildClusterHierarchy(positions, src.indices, settings.clusters, prim.clusters, &reason)) return Fail(error, label + reason);
         }
         out.primitives.push_back(std::move(prim));
     }
@@ -272,6 +357,16 @@ std::vector<u8> SaveAmesh(const CookedMesh& mesh) {
             WriteMeshlets(w, l.meshlets);
         }
     }
+    // v3: cluster hierarchies, for the primitives that have one.
+    u32 with_clusters = 0;
+    for (const CookedMeshPrimitive& p : mesh.primitives) with_clusters += p.clusters.clusters.empty() ? 0u : 1u;
+    w.U32(with_clusters);
+    for (usize i = 0; i < mesh.primitives.size(); ++i) {
+        if (!mesh.primitives[i].clusters.clusters.empty()) {
+            w.U32(static_cast<u32>(i));
+            WriteClusters(w, mesh.primitives[i].clusters);
+        }
+    }
     const u32 crc = pak::Crc32(w.bytes());
     w.U32(crc);
     return std::move(w.bytes());
@@ -289,7 +384,7 @@ bool LoadAmesh(std::span<const u8> bytes, CookedMesh& out, std::string* error) {
     Reader r(body.subspan(4));
     u32 version = 0, prim_count = 0;
     if (!r.U32(version)) return Fail(error, "truncated header");
-    if (version != 1 && version != kVersion) return Fail(error, "unsupported version");
+    if (version < 1 || version > kVersion) return Fail(error, "unsupported version");
     if (!r.U32(prim_count) || !r.Fits(prim_count, 36)) return Fail(error, "truncated primitive table");
     out.primitives.resize(prim_count);
     for (CookedMeshPrimitive& p : out.primitives) {
@@ -362,6 +457,18 @@ bool LoadAmesh(std::span<const u8> bytes, CookedMesh& out, std::string* error) {
                 }
                 if (!ReadMeshlets(r, l.meshlets, vcount, error)) return false;
             }
+        }
+    }
+    // v3: cluster hierarchies (a v1 or v2 file has none).
+    if (version >= 3) {
+        u32 count = 0;
+        if (!r.U32(count) || count > out.primitives.size() || !r.Fits(count, 4)) return Fail(error, "bad cluster table");
+        i64 previous = -1;
+        for (u32 n = 0; n < count; ++n) {
+            u32 index = 0;
+            if (!r.U32(index) || index >= out.primitives.size() || static_cast<i64>(index) <= previous) return Fail(error, "bad cluster primitive index");
+            previous = index;
+            if (!ReadClusters(r, out.primitives[index].clusters, static_cast<u32>(out.primitives[index].vertices.size()), error)) return false;
         }
     }
     if (r.Remaining() != 0) return Fail(error, "trailing bytes");

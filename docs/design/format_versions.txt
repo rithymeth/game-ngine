@@ -27,7 +27,7 @@ texture (imported)   engine/src/assets/texture_importer.cpp  1        refused   
 texture (cooked)     engine/src/cook/texture_cook.cpp        1        refused             refused
 environment (cooked) engine/src/assets/environment.cpp       1        refused             refused
 mesh (imported)      engine/src/assets/model_importer.cpp    2        version 1 loads     refused
-mesh (cooked)        engine/src/cook/mesh_cook.cpp           1        refused             refused
+mesh (cooked)        engine/src/cook/mesh_cook.cpp           3        versions 1, 2 load  refused
 derived data cache   engine/src/assets/importer.cpp          1        refused             refused
 save/settings envelope save/src/envelope.cpp                 1        refused             refused
 CookManifest         player/src/game.cpp                     1        refused             refused

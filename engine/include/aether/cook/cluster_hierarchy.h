@@ -15,7 +15,7 @@
 // the cut cheap and crack-free: a cluster is drawn when its own error looks small enough on screen but its parent's does not, which depends on that cluster
 // alone, and the clusters picked this way always cover the mesh exactly once. SelectClusters is that test, on the CPU, as the reference for a GPU pass.
 //
-// The results are in memory only: no cooked format changes.
+// The hierarchy is cooked into the mesh container (mesh_cook.h, AMSC v3) when MeshCookSettings::build_clusters is set.
 
 #include "aether/cook/meshlet_cook.h"
 #include "aether/core/base.h"

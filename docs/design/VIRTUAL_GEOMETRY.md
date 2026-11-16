@@ -115,6 +115,15 @@ cluster counts. Batched, the GPU is 4.4x cheaper at 68k and only 1.5x cheaper at
 (it scales 4.6x for 3.1x the clusters), which is worth profiling before stage 3 relies on it. The case for the GPU pass is that its list stays on the GPU for an
 indirect draw (no readback, no CPU cull), not that the cull itself is faster. This measures culling only, not the draw-path comparison the gate asks for.
 
+## Stage 3: the cooked cluster hierarchy (AMSC v3)
+
+`MeshCookSettings::build_clusters` (off by default; skinned primitives are skipped) bakes each primitive's `ClusterHierarchy` from its level-0 mesh. `SaveAmesh` writes
+version 3: after the HLOD table, a count and then, for each primitive that has one, its index and the hierarchy (indices, 92-byte clusters, groups). Version 1 and 2 files
+still load, with no clusters. The reader checks every count against the bytes left and every reference against what it points into (indices against the primitive's
+vertices, a cluster's triangles against the index array, group references and members against their tables, finite and non-negative bounds), and
+`MeshCook_RefusesClusterHierarchiesThatPointOutsideThemselves` tampers with each of those. A loaded hierarchy selects exactly the clusters the cooked one does. The fuzz
+corpus has a cluster seed (`tools/fuzz/corpus/amesh/valid_clusters.amesh`, about 28 KB for a 12 x 12 grid). The format-versions table row now says 3.
+
 ### Known limits
 
 - **Fixed 16 November 2026: compute results did not reach the CPU on a real GPU.** The Vulkan backend bound each compute descriptor set before writing the buffers into it; lavapipe tolerated that, NVIDIA read empty descriptors, so every compute shader wrote nothing. Sets are now bound in `Dispatch`. `ComputeReadback_AShaderWriteReachesTheCpu_Vulkan` guards it and `ClusterCullGpu_*` now agree with the CPU on the RTX 3050.
@@ -122,7 +131,7 @@ indirect draw (no readback, no CPU cull), not that the cull itself is faster. Th
   cannot shrink waits to be merged at a later level. A later stage can regroup across levels or lift the locks near the root.
 - The simplifier works on positions only: UV seams and normals are not protected, so a textured mesh may show seams at coarse levels until attribute-aware
   simplification is added.
-- Nothing is cooked or drawn yet. Stage 3 changes the cooked format and so the format-versions table, and adds an indirect draw to the RHI (it has none).
+- Stage 3 so far: the hierarchy is cooked (AMSC v3, below) and the RHI has an indirect indexed draw (Vulkan). **No cluster is drawn yet**: the draw pass that feeds the cull list to `DrawIndexedIndirect` is next.
 - No occlusion (Hi-Z) culling yet: it needs a depth pyramid, which is a graphics-side pass.
 - Whether clusters beat the current draw path is **still unmeasured**. This container has only a software Vulkan device (lavapipe), so the GPU pass is verified
   for correctness, not speed. Measuring it on a real GPU against the existing draw path is the first thing to do before stage 3, and the design doc's benchmark gate

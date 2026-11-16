@@ -6,7 +6,7 @@ Status: **in progress**. Initial CPU reference: `engine/include/aether/cook/clus
 
 - **Cluster hierarchy and CPU cut selector: done** (`engine/include/aether/cook/cluster_hierarchy.h`, see `VIRTUAL_GEOMETRY.md`). It builds the per-cluster DAG
   in memory with locked group borders and a selector that picks a watertight mixed-detail cut. It does **not** change the cooked format yet: the "Next PR"
-  list below is partly done (items 1 and 3 in memory; item 2's versioned format and item 4 remain).
+  list below is mostly done (items 1 and 3 in memory; items 2 and 4: the versioned format, strict reader and fuzz seed landed as AMSC v3, 16 November 2026).
 - **Tests for `cluster_reference.h`: done** (`tests/test_cluster_reference.cpp`). Against the "required before GPU work" list below, covered: zero error, bad
   viewport and field of view, camera inside the bounds, tiny distances, LOD choice at and around the threshold and by distance, non-monotonic errors, plane
   tangency, non-unit normals, no planes, rejected meshlets. Covered for the hierarchy instead: multi-root DAGs (the build ends with several roots), no overlap

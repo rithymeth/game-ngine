@@ -84,6 +84,43 @@ std::vector<u8> CheckerAtex() {
     return cook::SaveAtex(cooked);
 }
 
+// A small lumpy grid cooked with a cluster hierarchy (v3), so the fuzzer starts from the cluster section's layout.
+std::vector<u8> ClusterAmesh() {
+    assets::MeshPrimitiveData primitive;
+    constexpr u32 n = 12;
+    for (u32 z = 0; z <= n; ++z) {
+        for (u32 x = 0; x <= n; ++x) {
+            assets::MeshVertex vertex{};
+            vertex.position[0] = static_cast<f32>(x);
+            vertex.position[1] = 0.25f * static_cast<f32>((x * 7 + z * 3) % 5);
+            vertex.position[2] = static_cast<f32>(z);
+            vertex.normal[1] = 1.0f;
+            vertex.tangent[0] = 1.0f;
+            vertex.tangent[3] = 1.0f;
+            primitive.vertices.push_back(vertex);
+        }
+    }
+    for (u32 z = 0; z < n; ++z) {
+        for (u32 x = 0; x < n; ++x) {
+            const u32 i = z * (n + 1) + x;
+            for (u32 v : {i, i + n + 1, i + 1, i + 1, i + n + 1, i + n + 2}) primitive.indices.push_back(v);
+        }
+    }
+    primitive.bounds_min = Vec3{0.0f, 0.0f, 0.0f};
+    primitive.bounds_max = Vec3{static_cast<f32>(n), 1.0f, static_cast<f32>(n)};
+    assets::MeshData mesh;
+    mesh.primitives.push_back(std::move(primitive));
+    cook::MeshCookSettings settings;
+    settings.build_clusters = true;
+    cook::CookedMesh cooked;
+    std::string error;
+    if (!cook::CookMesh(mesh, settings, cooked, &error)) {
+        std::fprintf(stderr, "CookMesh (clusters) failed: %s\n", error.c_str());
+        return {};
+    }
+    return cook::SaveAmesh(cooked);
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -91,6 +128,7 @@ int main(int argc, char** argv) {
     const std::string sep = dir.empty() || dir.back() == '/' ? "" : "/";
     bool ok = true;
     ok = WriteAll(dir + sep + "amesh/valid_triangle.amesh", TriangleAmesh()) && ok;
+    ok = WriteAll(dir + sep + "amesh/valid_clusters.amesh", ClusterAmesh()) && ok;
     ok = WriteAll(dir + sep + "atex_cook/valid_checker.atex", CheckerAtex()) && ok;
     return ok ? 0 : 1;
 }
