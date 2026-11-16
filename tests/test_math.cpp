@@ -218,3 +218,40 @@ AETHER_TEST(VectorQuant_TrainedBookBeatsUniformOnBiasedNormals) {
     AETHER_CHECK(trained_mean < oct4);
     AETHER_CHECK(oct8 < 1.0f);
 }
+
+// A second book on the residual, 16 + 16 entries, beats stopping after the
+// 16-entry coarse book. Same search shape as one small book, two indexes.
+AETHER_TEST(VectorQuant_ResidualStageCutsNormalError) {
+    auto fib = [](int i, int n, f32 phase) {
+        const f32 golden = 3.14159265f * (3.0f - std::sqrt(5.0f));
+        const f32 y = 1.0f - (static_cast<f32>(i) / static_cast<f32>(n - 1)) * 2.0f;
+        const f32 radius = std::sqrt(std::max(0.0f, 1.0f - y * y));
+        const f32 theta = static_cast<f32>(i) * golden + phase;
+        return Vec3{std::cos(theta) * radius, y, std::sin(theta) * radius};
+    };
+    auto bias = [&](int i, int n, f32 phase) {
+        Vec3 v = fib(i, n, phase);
+        if (v.y < 0.0f) v.y *= 0.25f;
+        return v.Normalized();
+    };
+    constexpr int kTrain = 400;
+    constexpr int kTest = 80;
+    Vec3 train[kTrain];
+    Vec3 test[kTest];
+    for (int i = 0; i < kTrain; ++i) train[i] = bias(i, kTrain, 0.0f);
+    for (int i = 0; i < kTest; ++i) test[i] = bias(i, kTest, 0.7f);
+
+    const VecBook coarse = VecBook::TrainNormals(train, kTrain, 16, 4);
+    const ResidualNormals residual = ResidualNormals::Train(train, kTrain, 16, 16, 4);
+    const auto mean_degrees = [](auto&& decode, const Vec3* samples, int count) {
+        f32 sum = 0.0f;
+        for (int i = 0; i < count; ++i) {
+            const Vec3 got = decode(samples[i]);
+            sum += std::acos(std::clamp(samples[i].Dot(got.Normalized()), -1.0f, 1.0f)) * (180.0f / 3.14159265f);
+        }
+        return sum / static_cast<f32>(count);
+    };
+    const f32 coarse_mean = mean_degrees([&](Vec3 v) { return coarse.Decode(coarse.Encode(v)); }, test, kTest);
+    const f32 residual_mean = mean_degrees([&](Vec3 v) { return residual.Decode(v); }, test, kTest);
+    AETHER_CHECK(residual_mean < coarse_mean * 0.7f);
+}

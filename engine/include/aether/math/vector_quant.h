@@ -14,6 +14,12 @@
 // normals that beats both a uniform Fibonacci book of the same size and
 // 4-bit octahedral (also 8 bits). It loses on the rare directions it was
 // not trained on, and it loses to 8-bit octahedral, which spends 16 bits.
+//
+// Residual quantization spends a second index on what the first book missed.
+// The coarse book is directions. The fine book is the 3D error, not a
+// direction. Decode adds them and normalizes. Sixteen plus sixteen entries
+// (8 bits) cut the error of a 16-entry book roughly in half on the same
+// upward-biased set, and the search stays 32 comparisons instead of 256.
 
 #include "aether/math/vec.h"
 
@@ -103,6 +109,84 @@ struct VecBook {
     Vec3 Decode(int index) const { return entries[static_cast<usize>(index)]; }
 
     f32 NearestDot(Vec3 v) const { return v.Dot(Decode(Encode(v))); }
+
+    int EncodeDistance(Vec3 v) const {
+        int best = 0;
+        f32 best_dist = 1.0e30f;
+        for (int i = 0; i < static_cast<int>(entries.size()); ++i) {
+            const Vec3 delta = v - entries[static_cast<usize>(i)];
+            const f32 dist = delta.LengthSq();
+            if (dist < best_dist) {
+                best_dist = dist;
+                best = i;
+            }
+        }
+        return best;
+    }
+
+    // Euclidean k-means. Entries are means, not directions. Used for residuals.
+    static VecBook Train(const Vec3* samples, int sample_count, int codebook_size, int iterations) {
+        VecBook book;
+        const int k = std::clamp(codebook_size, 1, std::max(sample_count, 1));
+        auto farthest = [&]() {
+            int far = 0;
+            f32 far_dist = -1.0f;
+            for (int i = 0; i < sample_count; ++i) {
+                const Vec3 delta = samples[i] - book.Decode(book.EncodeDistance(samples[i]));
+                const f32 dist = delta.LengthSq();
+                if (dist > far_dist) {
+                    far_dist = dist;
+                    far = i;
+                }
+            }
+            return far;
+        };
+        book.entries.push_back(samples[0]);
+        while (static_cast<int>(book.entries.size()) < k) book.entries.push_back(samples[farthest()]);
+        std::vector<Vec3> sum(static_cast<usize>(k));
+        std::vector<int> count(static_cast<usize>(k));
+        for (int iter = 0; iter < iterations; ++iter) {
+            std::fill(sum.begin(), sum.end(), Vec3{});
+            std::fill(count.begin(), count.end(), 0);
+            for (int i = 0; i < sample_count; ++i) {
+                const int entry = book.EncodeDistance(samples[i]);
+                sum[static_cast<usize>(entry)] = sum[static_cast<usize>(entry)] + samples[i];
+                ++count[static_cast<usize>(entry)];
+            }
+            for (int i = 0; i < k; ++i) {
+                if (count[static_cast<usize>(i)] == 0) {
+                    book.entries[static_cast<usize>(i)] = samples[farthest()];
+                    continue;
+                }
+                book.entries[static_cast<usize>(i)] = sum[static_cast<usize>(i)] * (1.0f / static_cast<f32>(count[static_cast<usize>(i)]));
+            }
+        }
+        return book;
+    }
+};
+
+// Two indexes. The second book corrects the first book's miss.
+struct ResidualNormals {
+    VecBook coarse;
+    VecBook fine;
+
+    static ResidualNormals Train(const Vec3* samples, int sample_count, int coarse_size, int fine_size, int iterations) {
+        ResidualNormals books;
+        books.coarse = VecBook::TrainNormals(samples, sample_count, coarse_size, iterations);
+        std::vector<Vec3> residuals(static_cast<usize>(sample_count));
+        for (int i = 0; i < sample_count; ++i) {
+            const Vec3 decoded = books.coarse.Decode(books.coarse.Encode(samples[i]));
+            residuals[static_cast<usize>(i)] = samples[i] - decoded;
+        }
+        books.fine = VecBook::Train(residuals.data(), sample_count, fine_size, iterations);
+        return books;
+    }
+
+    Vec3 Decode(Vec3 sample) const {
+        const Vec3 base = coarse.Decode(coarse.Encode(sample));
+        const Vec3 fix = fine.Decode(fine.EncodeDistance(sample - base));
+        return (base + fix).Normalized();
+    }
 };
 
 }  // namespace aether
