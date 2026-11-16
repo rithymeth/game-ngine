@@ -1,7 +1,7 @@
 #pragma once
 
 #include <aether/ecs/world.h>
-#include <aether/math/vec3.h>
+#include <aether/math/vec.h>
 #include <aether/assets/gltf_loader.h>
 #include <vector>
 #include <string>
