@@ -81,6 +81,12 @@ struct ProceduralTerrain {
     f32 sea_level = 0.18f;             // 0 to 1 of the height range: below it is water
     u32 river_min_catchment = 400;     // cells upstream before a cell is a river (larger: fewer, larger rivers)
     u32 hydraulic_droplets = 60000;    // erosion droplets (0 skips erosion)
+    // Plants scattered over it by rule (pines and birches on the forest slopes, shrubs, grass, boulders, reeds by the water). Placeholder
+    // procedural shapes, merged per chunk and culled by distance; a density of 1 is the showcase budget (800-1,500 trees, 12,000-30,000
+    // plants, 500-1,000 rocks) where the ground allows it.
+    bool vegetation = false;
+    f32 vegetation_density = 1.0f;     // a multiplier on the plant budget, 0 to 4
+    u32 vegetation_seed = 1;
 };
 
 enum class Tonemapper : u8 { ACES, AgX, None };
@@ -186,7 +192,10 @@ AETHER_REFLECT(aether::ProceduralTerrain, 1,
     AETHER_FIELD(ridge_amount, Field_EditAnywhere, {.tooltip = "0 rolling hills, 1 all mountain chains", .range_min = 0.0, .range_max = 1.0}),
     AETHER_FIELD(sea_level, Field_EditAnywhere, {.tooltip = "Below this share of the height range is water", .range_min = 0.0, .range_max = 0.9}),
     AETHER_FIELD(river_min_catchment, Field_EditAnywhere, {.tooltip = "Cells upstream before a cell is a river: larger gives fewer, larger rivers", .range_min = 10.0, .range_max = 100000.0}),
-    AETHER_FIELD(hydraulic_droplets, Field_EditAnywhere, {.tooltip = "Erosion droplets: more carve deeper gullies and cost load time (0 skips erosion)", .range_min = 0.0, .range_max = 1000000.0})
+    AETHER_FIELD(hydraulic_droplets, Field_EditAnywhere, {.tooltip = "Erosion droplets: more carve deeper gullies and cost load time (0 skips erosion)", .range_min = 0.0, .range_max = 1000000.0}),
+    AETHER_FIELD(vegetation, Field_EditAnywhere, {.tooltip = "Scatter pines, birches, shrubs, grass, boulders and reeds over the ground"}),
+    AETHER_FIELD(vegetation_density, Field_EditAnywhere, {.tooltip = "A multiplier on the plant budget: 1 is up to 1,500 trees and 30,000 plants", .range_min = 0.0, .range_max = 4.0}),
+    AETHER_FIELD(vegetation_seed, Field_EditAnywhere, {.tooltip = "The same seed gives the same plants"})
 )
 AETHER_ENUM(aether::Tonemapper, 1, AETHER_ENUM_VALUE(ACES), AETHER_ENUM_VALUE(AgX), AETHER_ENUM_VALUE(None))
 AETHER_REFLECT(aether::PostProcessVolume, 1,

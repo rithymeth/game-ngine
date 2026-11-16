@@ -62,7 +62,7 @@ def scene(camera_from, camera_to):
                            "Transform": transform((0, 0, 0), quat(sun_yaw, sun_pitch))}),
             entity("Valley", {"ProceduralTerrain": {"$v": 1, "visible": True, "seed": 20260101, "samples": 513, "cell_size": 1.0, "height_scale": 50.0,
                                                    "frequency": 2.0, "ridge_amount": 0.3, "sea_level": 0.04, "river_min_catchment": 1500,
-                                                   "hydraulic_droplets": 60000},
+                                                   "hydraulic_droplets": 60000, "vegetation": True, "vegetation_density": 1.0, "vegetation_seed": 20260101},
                               "Transform": transform((0, 0, 0))}),
             entity("Haze", {"PostProcessVolume": {"$v": 1, "global": True, "fog_density": 0.0005}, "Transform": transform((0, 0, 0))}),
             entity("MainCamera", {"Camera": {"$v": 1, "far_plane": 1000, "fov_degrees": 60, "near_plane": 0.1, "ortho_height": 10.0, "priority": 0,
@@ -73,15 +73,16 @@ def scene(camera_from, camera_to):
 
 
 # Meadow (area 0) and overlook (area 4) as BuildWorld picks them for the showcase seed.
-MEADOW, OVERLOOK = (52.0, 9.6, 336.0), (468.0, 49.9, 172.0)
+MEADOW, OVERLOOK, WOODLAND = (52.0, 9.6, 336.0), (468.0, 49.9, 172.0), (148.0, 11.6, 160.0)
 SCENES = {
     "Valley": ((440.0, 78.0, 150.0), (200.0, 10.0, 300.0)),                # from above the overlook, across the whole valley
     "Meadow": ((MEADOW[0], MEADOW[1] + 1.7, MEADOW[2]), (150.0, 20.0, 200.0)),  # at the spawn, looking toward the woodland
+    "Woodland": ((WOODLAND[0], WOODLAND[1] + 1.7, WOODLAND[2]), (190.0, 16.0, 120.0)),  # among the trees of area B
 }
 
 PROJECT = {
     "$type": "Project", "$v": 1,
-    "always_cook": ["Scenes/Valley.ascene", "Scenes/Meadow.ascene"],
+    "always_cook": ["Scenes/Valley.ascene", "Scenes/Meadow.ascene", "Scenes/Woodland.ascene"],
     "collision_matrix": [], "default_quality": "High", "engine_version": "0.29.0", "fixed_timestep_hz": 60.0, "gravity": [0.0, -9.81, 0.0],
     "icon": "", "layers": ["Default"], "name": "Forest Valley", "plugins": [], "startup_scene": "Scenes/Valley.ascene", "version": "0.1.0",
     "vsync": True, "window_height": 720, "window_title": "Forest Valley", "window_width": 1280,

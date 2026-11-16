@@ -2,6 +2,8 @@
 
 #include "aether/assets/image.h"
 #include "aether/core/log.h"
+#include "vegetation_pass.h"
+#include "view_cull.h"
 
 #include <algorithm>
 #include <chrono>
@@ -15,7 +17,8 @@ namespace {
 bool SameTerrain(const ProceduralTerrain& a, const ProceduralTerrain& b) {
     return a.seed == b.seed && a.samples == b.samples && a.cell_size == b.cell_size && a.height_scale == b.height_scale && a.frequency == b.frequency &&
            a.ridge_amount == b.ridge_amount && a.sea_level == b.sea_level && a.river_min_catchment == b.river_min_catchment &&
-           a.hydraulic_droplets == b.hydraulic_droplets;
+           a.hydraulic_droplets == b.hydraulic_droplets && a.vegetation == b.vegetation && a.vegetation_density == b.vegetation_density &&
+           a.vegetation_seed == b.vegetation_seed;
 }
 
 f32 Hash01(u32 x, u32 y, u32 seed) {
@@ -73,6 +76,7 @@ struct TerrainView::Impl {
     terrain::RhiTerrainGpu gpu; // before `renderer`: the renderer frees its chunks through it
     terrain::TerrainRenderer renderer;
     terrain::TerrainPass pass;
+    VegetationPass vegetation;
 
     ProceduralTerrain built;
     bool have_ground = false;
@@ -82,7 +86,7 @@ struct TerrainView::Impl {
     terrain::TerrainDrawParams params;
     Stats stats;
 
-    Impl(gfx::rhi::IDevice& d, gfx::rhi::ISwapChain& s, bool hdr) : device(d), swap_chain(s), gpu(d), renderer(gpu), pass(d, s, hdr) {}
+    Impl(gfx::rhi::IDevice& d, gfx::rhi::ISwapChain& s, bool hdr) : device(d), swap_chain(s), gpu(d), renderer(gpu), pass(d, s, hdr), vegetation(d, s, hdr) {}
 
     // The splatmap and layer textures this view made (the device retires them once the frames still drawing with them finish).
     void FreeTextures() {
@@ -91,6 +95,29 @@ struct TerrainView::Impl {
             if (layer.albedo_height.IsValid()) device.DestroyTexture(layer.albedo_height);
         }
         params = terrain::TerrainDrawParams{};
+    }
+
+    // Scatters the plants over `ground`, merges them per chunk and uploads the meshes.
+    void BuildVegetation(const ProceduralTerrain& t, const terrain::TerrainGenSettings& gen) {
+        const auto start = std::chrono::steady_clock::now();
+        vegetation.Clear();
+        stats.plants = stats.plant_meshes = 0;
+        stats.plant_vertices = 0;
+        stats.plants_build_ms = 0.0;
+        if (!t.vegetation || !vegetation.Valid() || t.vegetation_density <= 0.0f) return;
+        const VegetationRules rules = MakeVegetationRules(t);
+        terrain::ScatterSettings scatter;
+        scatter.seed = t.vegetation_seed;
+        const std::vector<terrain::ScatterInstance> instances = terrain::Scatter(ground, gen, rules.rules, scatter);
+        const VegetationBatch batch = BatchVegetation(instances, rules.kinds, settings.chunk_world_size);
+        stats.plants = batch.instances;
+        stats.plant_vertices = batch.vertices;
+        stats.plant_meshes = vegetation.Upload(batch);
+        stats.plants_build_ms = std::chrono::duration<f64, std::milli>(std::chrono::steady_clock::now() - start).count();
+        AETHER_LOG_INFO("Terrain", "Placed %u plants (%u pines, %u birches, %u shrubs, %u grass, %u boulders, %u reeds) in %.0f ms: %u meshes, %.1f MB", batch.instances,
+                        batch.instances_by_kind[0], batch.instances_by_kind[1], batch.instances_by_kind[2], batch.instances_by_kind[3],
+                        batch.instances_by_kind[4], batch.instances_by_kind[5], stats.plants_build_ms, stats.plant_meshes,
+                        static_cast<double>(vegetation.GpuBytes()) / 1048576.0);
     }
 
     void Build(const ProceduralTerrain& t) {
@@ -142,6 +169,7 @@ struct TerrainView::Impl {
         }
         have_ground = textures_ok && renderer.UploadedCount() > 0;
         if (!textures_ok) AETHER_LOG_WARN("Terrain", "The device has no room for the terrain's textures; terrain is not drawn");
+        BuildVegetation(t, gen);
         built = t;
         ++stats.builds;
         stats.build_ms = std::chrono::duration<f64, std::milli>(std::chrono::steady_clock::now() - start).count();
@@ -170,7 +198,7 @@ bool TerrainView::Update(const ProceduralTerrain& terrain, const Vec3& camera_po
 }
 
 u32 TerrainView::Draw(gfx::rhi::ICommandList& commands, const Mat4& view_projection, const Vec3& camera_position, const Vec3& sun_direction,
-                      f32 sun_intensity) {
+                      f32 sun_intensity, f32 time_seconds) {
     Impl& s = *impl_;
     s.stats.chunks_drawn = 0;
     s.stats.triangles_drawn = 0;
@@ -181,6 +209,10 @@ u32 TerrainView::Draw(gfx::rhi::ICommandList& commands, const Mat4& view_project
     const u32 drawn = s.pass.Draw(commands, s.gpu, s.renderer.Chunks(), view_projection, s.params);
     s.stats.chunks_drawn = drawn;
     for (const terrain::RenderChunk& c : s.renderer.Chunks()) s.stats.triangles_drawn += c.index_count / 3;
+    const VegetationPass::DrawStats plants =
+        s.vegetation.Draw(commands, view_projection, MakeViewFrustum(view_projection), camera_position, sun_direction, sun_intensity, time_seconds);
+    s.stats.plant_meshes_drawn = plants.meshes_drawn;
+    s.stats.plant_triangles_drawn = plants.triangles_drawn;
     return drawn;
 }
 

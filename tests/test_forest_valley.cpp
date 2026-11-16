@@ -1,5 +1,6 @@
 #include "../player/src/camera_path.h"
 #include "../player/src/terrain_view.h"
+#include "../player/src/vegetation_batch.h"
 #include "forest_valley.h"
 #include "valley_terrain.h"
 #include "test_framework.h"
@@ -147,22 +148,23 @@ AETHER_TEST(ForestValley_GatesPassOnlyWhenMeasuredAndWithinBudget) {
 
 AETHER_TEST(ForestValley_ScatterStaysInsideTheAssetBudget) {
     const World& w = Shared();
-    const ScatterBudget budget;
-    const auto rules = ShowcaseScatterRules(budget);
+    // The rules the player uses for the scene's component: one source for the budget, not a copy here.
+    const player::VegetationRules vegetation = player::MakeVegetationRules(ValleyTerrainComponent());
     terrain::ScatterSettings s;
     s.seed = kShowcaseSeed;
-    const auto instances = terrain::Scatter(w.terrain, w.settings, rules, s);
+    const auto instances = terrain::Scatter(w.terrain, w.settings, vegetation.rules, s);
     u32 trees = 0, plants = 0, rocks = 0;
     for (const auto& inst : instances) {
-        const std::string& name = rules[inst.rule].name;
-        if (name == "Pine" || name == "Birch") ++trees;
-        else if (name == "Boulder") ++rocks;
-        else ++plants;
+        switch (vegetation.kinds[inst.rule]) {
+        case player::PlantKind::Pine:
+        case player::PlantKind::Birch: ++trees; break;
+        case player::PlantKind::Boulder: ++rocks; break;
+        default: ++plants; break;
+        }
     }
-    std::printf("  scatter: %u trees, %u plants, %u rocks (budget %u-%u, %u-%u, %u-%u)\n", trees, plants, rocks, budget.trees_min, budget.trees_max,
-                budget.plants_min, budget.plants_max, budget.rocks_min, budget.rocks_max);
-    AETHER_CHECK(trees <= budget.trees_max && plants <= budget.plants_max && rocks <= budget.rocks_max);
-    AETHER_CHECK(trees >= budget.trees_min && plants >= budget.plants_min && rocks >= budget.rocks_min);
+    std::printf("  scatter: %u trees, %u plants, %u rocks (budget 800-1500, 12000-30000, 500-1000)\n", trees, plants, rocks);
+    AETHER_CHECK(trees <= 1500 && plants <= 30000 && rocks <= 1000);
+    AETHER_CHECK(trees >= 800 && plants >= 12000 && rocks >= 500);
 }
 
 namespace {

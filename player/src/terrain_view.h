@@ -4,6 +4,8 @@
 // (terrain/terrain_pass.h) wired to one component. SceneRenderer owns one and draws it inside the scene pass, after the sky and before the
 // models, so models and particles are depth-tested against the ground.
 //
+// Plants (ProceduralTerrain::vegetation) are scattered over the ground and drawn with it: see vegetation_batch.h and vegetation_pass.h.
+//
 // Not yet done: the terrain casts and receives no sun shadows and takes no part in the water reflection, its four layers are small generated
 // textures (no authored albedo maps), and the sun is the scene's first DirectionalLight's direction and brightness only.
 
@@ -49,14 +51,23 @@ public:
     // it creates textures and buffers on the device. Generation is synchronous: seconds at 513 samples.
     bool Update(const ProceduralTerrain& terrain, const Vec3& camera_position);
 
-    // Records the chunks' draws in the current render pass (what Update prepared). Returns the chunks drawn.
-    u32 Draw(gfx::rhi::ICommandList& commands, const Mat4& view_projection, const Vec3& camera_position, const Vec3& sun_direction, f32 sun_intensity);
+    // Records the chunks' draws, then the plants', in the current render pass (what Update prepared). `time_seconds` drives the plants' sway.
+    // Returns the terrain chunks drawn.
+    u32 Draw(gfx::rhi::ICommandList& commands, const Mat4& view_projection, const Vec3& camera_position, const Vec3& sun_direction, f32 sun_intensity,
+             f32 time_seconds = 0.0f);
 
     struct Stats {
         u32 builds = 0;         // times the terrain has been generated
         f64 build_ms = 0.0;     // the last build, generation and upload
         u32 chunks_drawn = 0;   // the last Draw
         u64 triangles_drawn = 0;
+        // Vegetation: what was scattered and merged at the last build, and what the last Draw issued after culling.
+        u32 plants = 0;
+        u64 plant_vertices = 0;
+        u32 plant_meshes = 0;
+        f64 plants_build_ms = 0.0;
+        u32 plant_meshes_drawn = 0;
+        u64 plant_triangles_drawn = 0;
     };
     Stats GetStats() const;
 
