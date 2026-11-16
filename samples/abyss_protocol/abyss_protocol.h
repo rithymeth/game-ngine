@@ -2,8 +2,10 @@
 
 #include <aether/ecs/world.h>
 #include <aether/math/vec3.h>
+#include <aether/assets/gltf_loader.h>
 #include <vector>
 #include <string>
+#include <optional>
 
 namespace abyss {
 
@@ -42,6 +44,19 @@ struct Submarine {
     float oxygen = 1.0f;
 };
 
+// Simple summary of a loaded glTF model for the prototype.
+struct ModelInfo {
+    std::string path;
+    size_t mesh_count = 0;
+    size_t primitive_count = 0;
+    size_t vertex_count = 0;
+    size_t material_count = 0;
+    aether::Vec3 bounds_min{0, 0, 0};
+    aether::Vec3 bounds_max{0, 0, 0};
+    bool loaded = false;
+    std::string error;
+};
+
 class Game {
 public:
     Game();
@@ -49,6 +64,9 @@ public:
     void SetSonar(bool active);
     void SetLights(bool on);
     void ApplyThrust(const aether::Vec3& thrust);
+
+    // Load a glTF/GLB and store a summary (does not yet upload to GPU).
+    bool LoadModel(const std::string& path, ModelInfo& out_info);
 
     const Submarine& GetSub() const { return sub_; }
     const CreatureAI& GetCreature() const { return creature_; }
@@ -64,6 +82,7 @@ private:
     Submarine sub_;
     CreatureAI creature_;
     std::vector<AcousticEvent> events_;
+    std::optional<aether::assets::GltfScene> loaded_scene_;
 };
 
 }  // namespace abyss
