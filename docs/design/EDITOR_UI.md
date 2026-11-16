@@ -230,6 +230,22 @@ box's rectangle; `EditorWorkspace_TheMenuBarSearchOpensThePalette` clicks it
 and types, and `EditorWorkspace_OpeningThePalettePutsTheKeyboardInTheSearchBox`
 checks the Ctrl+K path.
 
+Beside the mark the bar names the project and its save state, and past the
+search box sits the user's avatar, as the concept draws both.
+`EditorWorkspace::DrawProjectChip` draws the project's file stem in the bar's
+text colour, then a dot that is green while the active document is saved and
+amber once it has changes, then "All changes saved" or "Unsaved changes" in
+the muted colour -- the same `IsDirty` flag the toolbar's breadcrumb reads, so
+the two cannot disagree. It is display only, as in the concept: the invisible
+button behind the text gives it a rectangle (`LastProjectChip`) without
+pretending a click does something. `DrawUserAvatar` draws the initials in a
+slate circle (`LastAvatar`); they are the first letters of the OS user name
+("Ada Lovelace" gives AL, a single "ada" gives AD) unless a host or a test
+calls `SetUserInitials`. `EditorWorkspace_TheMenuBarNamesTheProjectAndItsSaveState`
+checks the words against the project and the clean document, the change to
+"Unsaved changes" after an edit, and that the avatar sits to the chip's
+right.
+
 The workspace strip is the concept's second row: a full-width bar between the
 menu bar and the main toolbar (the window is `Workspaces`, drawn by
 `EditorWorkspace::DrawWorkspaceStrip`). Its icons are drawn, not loaded (`DrawWorkspaceGlyph`:

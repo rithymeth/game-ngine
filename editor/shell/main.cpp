@@ -228,7 +228,9 @@ void DrawEditor(EditorWorkspace& workspace, LayoutState& layouts, const char* ba
     SyncPresetFolder(layouts, workspace); // a project opened this frame switches Saved/Layouts before the menu lists it
     if (ImGui::BeginMainMenuBar()) {
         ImGui::TextColored(ImVec4(0.36f, 0.62f, 1.0f, 1.0f), "AETHER"); // the concept's mark at the bar's left
-        ImGui::SameLine(0.0f, 14.0f);
+        ImGui::SameLine(0.0f, 12.0f);
+        workspace.DrawProjectChip(); // "Ironvale · All changes saved", between the mark and the menus
+        ImGui::SameLine(0.0f, 12.0f);
         if (ImGui::BeginMenu("File")) {
             workspace.DrawMenuItems("File"); // New, Open, Save, Save as, Quit: the registry's File commands
             ImGui::EndMenu();
@@ -251,11 +253,14 @@ void DrawEditor(EditorWorkspace& workspace, LayoutState& layouts, const char* ba
         workspace.DrawHelpMenu(); // Keyboard Shortcuts (F1), About
 
         // The concept's right end: the command and asset search, which opens the palette on its first click or
-        // character, so the visible box and Ctrl+K are the same door.
+        // character, so the visible box and Ctrl+K are the same door, then the user's avatar past it.
         const f32 search_width = 280.0f;
-        const f32 right = ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x - 8.0f;
+        const f32 avatar_width = ImGui::GetFrameHeight();
+        const f32 right = ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x - 8.0f - avatar_width - 10.0f;
         ImGui::SameLine(std::max(right - search_width, ImGui::GetCursorPosX() + 12.0f));
         workspace.DrawCommandSearch(search_width);
+        ImGui::SameLine(0.0f, 10.0f);
+        workspace.DrawUserAvatar();
         ImGui::EndMainMenuBar();
     }
     DrawSaveLayoutPopup(layouts);

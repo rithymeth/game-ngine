@@ -346,6 +346,9 @@ struct EditorWorkspace::Impl {
     std::vector<WorkspaceTab> workspace_tabs; // what DrawWorkspaceStrip last laid out
     StripPlay strip_play;                     // the strip's Play chip and its neighbours, as last drawn
     CommandSearchBox command_search;          // the menu bar's search box, as last drawn
+    MenuChip project_chip;                    // the menu bar's project chip, as last drawn
+    MenuChip avatar;                          // the menu bar's avatar, as last drawn
+    std::string user_initials;                // empty until asked for, so the environment is read once
     bool palette_focus = false;               // the palette's own box has not taken the keyboard yet this open
 
     // Scripting.
@@ -2372,6 +2375,104 @@ void EditorWorkspace::DrawCommandSearch(f32 width) {
     impl_->command_search.max_x = ImGui::GetItemRectMax().x;
     impl_->command_search.max_y = ImGui::GetItemRectMax().y;
     ImGui::PopStyleVar();
+}
+
+// "Ironvale · All changes saved", in the active document's words: the chip beside the mark and the breadcrumb read the
+// same flag, so the two cannot disagree about whether anything is unsaved.
+std::string EditorWorkspace::ProjectChipLabel() const {
+    const std::string project =
+        impl_->project_file.empty() ? std::string("Untitled Project") : impl_->project_file.stem().string();
+    return project + (ActiveDocument().IsDirty() ? " · Unsaved changes" : " · All changes saved");
+}
+
+const EditorWorkspace::MenuChip& EditorWorkspace::LastProjectChip() const { return impl_->project_chip; }
+
+const EditorWorkspace::MenuChip& EditorWorkspace::LastAvatar() const { return impl_->avatar; }
+
+// The concept's chip: the project's name in the bar's text colour, a dot that turns amber while the scene has changes,
+// and the state in the muted colour. Drawn onto an invisible button so it has a rectangle without pretending to be a
+// button -- a click on it does nothing, as in the concept.
+void EditorWorkspace::DrawProjectChip() {
+    impl_->project_chip = MenuChip{};
+    const std::string project =
+        impl_->project_file.empty() ? std::string("Untitled Project") : impl_->project_file.stem().string();
+    const char* state = ActiveDocument().IsDirty() ? "Unsaved changes" : "All changes saved";
+    const f32 pad = 8.0f;
+    const f32 gap = 7.0f;
+    const ImVec2 project_size = ImGui::CalcTextSize(project.c_str());
+    const ImVec2 state_size = ImGui::CalcTextSize(state);
+    const f32 width = pad * 2.0f + project_size.x + gap * 2.0f + 5.0f + state_size.x;
+    ImGui::InvisibleButton("##project_chip", ImVec2(width, ImGui::GetFrameHeight()));
+    const ImVec2 min = ImGui::GetItemRectMin();
+    const ImVec2 max = ImGui::GetItemRectMax();
+    const f32 y = std::floor(min.y + (max.y - min.y - project_size.y) * 0.5f);
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    draw->AddText(ImVec2(min.x + pad, y), ImGui::GetColorU32(ImGuiCol_Text), project.c_str());
+    const ImVec2 dot(min.x + pad + project_size.x + gap, y + project_size.y * 0.5f);
+    draw->AddCircleFilled(dot, 3.0f, ActiveDocument().IsDirty() ? IM_COL32(255, 184, 51, 255) : IM_COL32(88, 196, 118, 255));
+    draw->AddText(ImVec2(dot.x + gap, y), ImGui::GetColorU32(ImGuiCol_TextDisabled), state);
+    ImGui::SetItemTooltip("The project the editor is working on, and whether its scene is saved");
+    impl_->project_chip.visible = true;
+    impl_->project_chip.min_x = min.x;
+    impl_->project_chip.min_y = min.y;
+    impl_->project_chip.max_x = max.x;
+    impl_->project_chip.max_y = max.y;
+}
+
+// The OS user's first letters: "Ada Lovelace" gives AL, "ada" gives AD, and a name with none gives the editor's own.
+std::string EditorWorkspace::UserInitials() const {
+    if (!impl_->user_initials.empty()) return impl_->user_initials;
+    for (const char* key : {"USERNAME", "USER", "LOGNAME"}) {
+        const char* name = std::getenv(key);
+        if (name == nullptr || *name == '\0') continue;
+        std::vector<std::string> words(1);
+        for (const char c : std::string(name)) {
+            const bool separator = c == '.' || c == '-' || c == '_' || std::isspace(static_cast<unsigned char>(c)) != 0;
+            if (separator) {
+                if (!words.back().empty()) words.emplace_back();
+            } else {
+                words.back().push_back(c);
+            }
+        }
+        std::string initials;
+        for (const std::string& word : words) {
+            if (word.empty() || initials.size() >= 2) continue;
+            const usize take = words.size() == 2 ? 1 : 2; // one name gives its first two letters, two give one each
+            for (usize i = 0; i < take && i < word.size() && initials.size() < 2; ++i)
+                initials.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(word[i]))));
+        }
+        if (!initials.empty()) return initials;
+    }
+    return "AE";
+}
+
+void EditorWorkspace::SetUserInitials(std::string initials) {
+    for (char& c : initials) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    impl_->user_initials = std::move(initials);
+}
+
+// The concept's avatar at the bar's right end: a quiet slate circle with the initials, after the search box.
+void EditorWorkspace::DrawUserAvatar() {
+    impl_->avatar = MenuChip{};
+    const std::string initials = UserInitials();
+    const f32 size = ImGui::GetFrameHeight();
+    ImGui::InvisibleButton("##user_avatar", ImVec2(size, size));
+    const ImVec2 min = ImGui::GetItemRectMin();
+    const ImVec2 max = ImGui::GetItemRectMax();
+    const ImVec2 center((min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f);
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    draw->AddCircleFilled(center, size * 0.46f, IM_COL32(74, 88, 112, 255));
+    ImGui::PushFont(ImGui::GetFont(), ImGui::GetFontSize() * 0.72f);
+    const ImVec2 text = ImGui::CalcTextSize(initials.c_str());
+    draw->AddText(ImVec2(std::floor(center.x - text.x * 0.5f), std::floor(center.y - text.y * 0.5f)), IM_COL32(235, 240, 248, 255),
+                  initials.c_str());
+    ImGui::PopFont();
+    ImGui::SetItemTooltip("Local session as %s", initials.c_str());
+    impl_->avatar.visible = true;
+    impl_->avatar.min_x = min.x;
+    impl_->avatar.min_y = min.y;
+    impl_->avatar.max_x = max.x;
+    impl_->avatar.max_y = max.y;
 }
 
 void EditorWorkspace::DrawCommandPalette() {

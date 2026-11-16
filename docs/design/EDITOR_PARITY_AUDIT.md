@@ -609,7 +609,17 @@ the same `CreateEntity` call as the menu (same components, one undo step), selec
 The **+** popup offers the same items and **...** offers Paste and Deselect All.
 `ScenePanel_TheHierarchyHeaderSwitchesToThePlaceCatalog` clicks the tabs and a row at their recorded rectangles and
 checks the order, the add with its one undo and that switching back clears the catalog. Still open from the concept's
-column: the world/outliner labels it puts beside the tabs and the project chip and avatar in the menu bar.
+column: the world/outliner labels it puts beside the tabs.
+
+Done so far (2026-11-17): the menu bar's project chip and avatar, the rest of the concept's first row. Beside the
+**AETHER** mark the bar now reads "Ironvale · All changes saved": the project's file stem in the bar's text colour, a
+green dot while the active document is saved (amber once it has changes -- the same `IsDirty` the toolbar's breadcrumb
+reads) and "All changes saved" or "Unsaved changes" in the muted colour
+(`EditorWorkspace::DrawProjectChip`, `ProjectChipLabel`, `LastProjectChip`). The chip is display only, as in the
+concept. Past the search box the user's initials sit in a slate circle (`DrawUserAvatar`, `LastAvatar`), the first
+letters of the OS user name unless a host or test calls `SetUserInitials`. Tests in `tests/test_editor_workspace.cpp`:
+`EditorWorkspace_TheMenuBarNamesTheProjectAndItsSaveState` checks the project's stem and "All changes saved", the change
+to "Unsaved changes" after an edit, and the avatar's rectangle to the chip's right.
 
 ### Stage 3 — Content browser and importer parity (L)
 

@@ -412,6 +412,41 @@ AETHER_TEST(EditorWorkspace_OpeningThePalettePutsTheKeyboardInTheSearchBox) {
     CHECK(ws.command_palette_open && ws.PaletteQuery() == "save");
 }
 
+// The concept's first row names the project and its save state beside the mark, and puts the user's initials in a
+// circle at the far right. The chip reads the active document, so the first unsaved edit changes its words.
+AETHER_TEST(EditorWorkspace_TheMenuBarNamesTheProjectAndItsSaveState) {
+    HeadlessImGui imgui;
+    EditorWorkspace ws;
+    auto frame = [&] {
+        imgui.Frame([&] {
+            if (ImGui::BeginMainMenuBar()) {
+                ws.DrawProjectChip();
+                ImGui::SameLine();
+                ws.DrawUserAvatar();
+                ImGui::EndMainMenuBar();
+            }
+        });
+    };
+    frame();
+    const EditorWorkspace::MenuChip chip = ws.LastProjectChip();
+    const EditorWorkspace::MenuChip avatar = ws.LastAvatar();
+    CHECK(chip.visible && avatar.visible);
+    CHECK(chip.max_x > chip.min_x && chip.max_y > chip.min_y);
+    CHECK(avatar.max_x > chip.max_x && avatar.max_y > chip.min_y); // the avatar sits to the chip's right
+    if (!ws.ProjectFile().empty()) // the default workspace opens the sample project
+        CHECK(ws.ProjectChipLabel().rfind(ws.ProjectFile().stem().string() + " · ", 0) == 0);
+    CHECK(ws.ProjectChipLabel().find("All changes saved") != std::string::npos);
+    CHECK(!ws.ActiveDocument().IsDirty());
+
+    ws.Scene().Document().CreateEntity("Chip Test");
+    CHECK(ws.ActiveDocument().IsDirty());
+    frame();
+    CHECK(ws.ProjectChipLabel().find("Unsaved changes") != std::string::npos);
+
+    ws.SetUserInitials("rm");
+    CHECK(ws.UserInitials() == "RM"); // the circle draws capitals whatever a host passes
+}
+
 AETHER_TEST(EditorWorkspace_DrawsEveryToolHeadless) {
     HeadlessImGui imgui;
     EditorWorkspace ws;

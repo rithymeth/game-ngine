@@ -201,6 +201,22 @@ public:
     // The trail the toolbar's right end shows: "Game / <project> / <document>", the concept's "Game / Ironvale /
     // Main World". The project slot says "Untitled Project" and the document one the active document's name.
     std::string Breadcrumb() const;
+    // The concept's menu bar names the project beside the mark -- "Ironvale" with a dot and "All changes saved" (or
+    // "Unsaved changes") in the active document's words -- and puts the user's initials in a circle at the right end
+    // past the search box. Both are drawn into the host's menu bar, and their rectangles are reported so a host can
+    // align its own chrome and a test can find them.
+    struct MenuChip {
+        bool visible = false;
+        f32 min_x = 0.0f, min_y = 0.0f, max_x = 0.0f, max_y = 0.0f;
+    };
+    std::string ProjectChipLabel() const;
+    const MenuChip& LastProjectChip() const;
+    const MenuChip& LastAvatar() const;
+    void DrawProjectChip();
+    void DrawUserAvatar();
+    // The avatar's letters: the first letters of the OS user name unless a host (or a test) sets them.
+    std::string UserInitials() const;
+    void SetUserInitials(std::string initials);
     // Opens the tool a workspace tab stands for; false (and nothing changes) when no workspace has that label.
     bool SelectWorkspace(std::string_view label);
     // The label of the workspace the open tool belongs to; empty for a tool that no tab opens.
