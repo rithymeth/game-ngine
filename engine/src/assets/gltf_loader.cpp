@@ -1253,8 +1253,9 @@ static bool ParseGltfText(const std::string& text, const std::string& path, bool
                     if (has_normal) {
                         ReadFloatN(normal_info, i, primitive.vertices[i].normal, 3);
                         // gltfpack's octahedral normals are VEC3 snorm with byteStride 4 (8-bit) or 8
-                        // (16-bit). The filter rebuilds XYZ into that slot and leaves a padding
-                        // component we do not read. The lattice point is not unit length.
+                        // (16-bit): the same projection as aether::OctEncodeDirect, stored for the
+                        // meshopt filter. The extra component is padding. The lattice point is not
+                        // unit length, so renormalize. Best-fit encoding lives in octahedral.h.
                         if (normal_info.normalized) {
                             f32* n = primitive.vertices[i].normal;
                             const f32 len = std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
