@@ -14,7 +14,7 @@ Core loop: launch from Haven-01 research hub → explore a region with submarine
 
 ## Current prototype status
 
-The sample now contains a working simulation of the core systems:
+The sample contains a working simulation of the core systems:
 
 - **Acoustic events** — continuous noise from thrusters + discrete sonar pulses that decay over time.
 - **Creature AI** — one sound-sensitive creature that raises awareness from noise/light, investigates when alerted, and drifts back to home when calm.
@@ -22,6 +22,20 @@ The sample now contains a working simulation of the core systems:
 - Console demo in `main.cpp` that runs a 10-second simulation and prints status.
 
 This is still a pure C++ simulation library (no renderer yet). Next step is wiring it into the full Aether window + renderer and loading real meshes.
+
+## Build integration (required)
+
+Add this single line near the other samples in the root `CMakeLists.txt` (after `add_subdirectory(samples/frozen_api_game)`):
+
+```cmake
+add_subdirectory(samples/abyss_protocol)
+```
+
+Then configure and build as usual:
+
+```powershell
+cmake --build build --config RelWithDebInfo --target abyss_protocol
+```
 
 ## High-quality 3D / asset models
 
@@ -32,35 +46,19 @@ Recommended approach for stylized, moderately detailed assets with strong silhou
 - **Meshy.ai**: Free underwater and sci-fi vehicle models (CC0). Good starting points for coral, rocks, and small props.
 - **CGTrader free section**: Stylized nature packs and low-poly underwater environments.
 - **Hugging Face**: Packs of 100+ deep-sea fish species as optimized GLB files (excellent for the creature ecology).
-- **Poly Haven**: High-quality PBR textures (water caustics, ice, metal, coral-like materials) that you can apply to simple geometry or imported meshes.
+- **Poly Haven**: High-quality PBR textures (water caustics, ice, metal, coral-like materials).
 
 ### Technical notes for Aether
 - Prefer **glTF 2.0 (.glb)** with PBR metallic-roughness workflow.
 - Keep poly counts moderate for real-time (the engine has meshoptimizer support in the cooker).
 - Use emissive maps for bioluminescence and interior lights.
-- The engine already pulls nlohmann/json and has glTF loading paths in the asset pipeline.
+- The engine already has glTF loading support via the asset pipeline.
 
 **License note**: Always verify commercial-use rights before shipping. Prefer CC0 or properly licensed assets.
 
-## How to build (once integrated)
-
-Add this line near the other samples in the root `CMakeLists.txt`:
-
-```cmake
-add_subdirectory(samples/abyss_protocol)
-```
-
-Then:
-
-```powershell
-cmake --build build --config RelWithDebInfo --target abyss_protocol
-```
-
-(Windows; mirrors the gem_hop / coin_run setup.)
-
 ## Next steps
 
-1. Add the `add_subdirectory` line to the root CMakeLists.txt and verify the sample builds.
+1. Add the `add_subdirectory` line above and verify the sample builds and runs the console demo.
 2. Replace the console `main.cpp` with a real Win32 / GLFW window + software or D3D12 renderer (copy patterns from `samples/gem_hop`).
 3. Load at least one high-quality glTF model for the submarine and one for the creature.
 4. Expand the acoustic system into a proper ECS system that can run on the job system.
