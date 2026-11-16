@@ -12,43 +12,58 @@ Underwater exploration / survival mystery for Aether Engine. Stylized 3D, single
 
 Core loop: launch from Haven-01 research hub → explore a region with submarine + EVA diver → manage acoustic signature, lights, oxygen/battery/pressure → recover data or samples → return or establish modular habitats.
 
-## First playable target
+## Current prototype status
 
-- One compact underwater region (handcrafted, not infinite ocean).
-- Controllable submarine with basic propulsion and sonar.
-- Simple diver EVA mode.
-- One sound-sensitive creature that reacts to acoustic events.
-- One complete short investigation mission (e.g. restore a silent relay).
+The sample now contains a working simulation of the core systems:
+
+- **Acoustic events** — continuous noise from thrusters + discrete sonar pulses that decay over time.
+- **Creature AI** — one sound-sensitive creature that raises awareness from noise/light, investigates when alerted, and drifts back to home when calm.
+- **Pressure / resources** — simple depth-based battery drain and oxygen consumption.
+- Console demo in `main.cpp` that runs a 10-second simulation and prints status.
+
+This is still a pure C++ simulation library (no renderer yet). Next step is wiring it into the full Aether window + renderer and loading real meshes.
 
 ## High-quality 3D / asset models
 
 Recommended approach for stylized, moderately detailed assets with strong silhouettes, bioluminescent accents, and atmospheric fog:
 
-- **Submarine / vehicle**: Search Sketchfab or CGTrader for "stylized sci-fi submersible" or "deep sea drone" (prefer glTF/GLB with PBR). Free or CC0 options exist on Meshy.ai and Poly Haven-adjacent packs.
-- **Marine life**: Hugging Face packs of 100+ deep-sea fish species as GLB (low-poly, game-ready). Also Meshy.ai underwater tags and Sketchfab CC-BY coral/reef environments.
-- **Environment**: Low-poly / stylized coral, rock formations, ice, research wreckage. Sources: Sketchfab "underwater environment", CGTrader free stylized nature packs, Poly Haven textures for materials.
-- **Research base / habitats**: Modular snap-point pieces. Start with simple kitbash of cylinders, spheres, and panels, then replace with high-quality models.
-- Format: Prefer **glTF 2.0 (.glb)** with PBR metallic-roughness. Engine has glTF loading support via nlohmann/json and asset pipeline.
-- Optimization: Keep poly counts moderate for real-time (use meshoptimizer if available). Bake lighting where possible; use emissive maps for bioluminescence.
+### Recommended free / high-quality sources
+- **Sketchfab**: Search "stylized underwater", "sci-fi submersible", "bioluminescent coral". Many free CC-BY models; prefer ones that export clean glTF.
+- **Meshy.ai**: Free underwater and sci-fi vehicle models (CC0). Good starting points for coral, rocks, and small props.
+- **CGTrader free section**: Stylized nature packs and low-poly underwater environments.
+- **Hugging Face**: Packs of 100+ deep-sea fish species as optimized GLB files (excellent for the creature ecology).
+- **Poly Haven**: High-quality PBR textures (water caustics, ice, metal, coral-like materials) that you can apply to simple geometry or imported meshes.
 
-**License note**: Always verify commercial use rights. Prefer CC0 / public domain or purchased assets for the commercial path.
+### Technical notes for Aether
+- Prefer **glTF 2.0 (.glb)** with PBR metallic-roughness workflow.
+- Keep poly counts moderate for real-time (the engine has meshoptimizer support in the cooker).
+- Use emissive maps for bioluminescence and interior lights.
+- The engine already pulls nlohmann/json and has glTF loading paths in the asset pipeline.
+
+**License note**: Always verify commercial-use rights before shipping. Prefer CC0 or properly licensed assets.
 
 ## How to build (once integrated)
 
-Add `add_subdirectory(samples/abyss_protocol)` to the root CMakeLists.txt near the other samples, then:
+Add this line near the other samples in the root `CMakeLists.txt`:
 
+```cmake
+add_subdirectory(samples/abyss_protocol)
 ```
+
+Then:
+
+```powershell
 cmake --build build --config RelWithDebInfo --target abyss_protocol
 ```
 
-(Windows, similar to gem_hop / coin_run.)
+(Windows; mirrors the gem_hop / coin_run setup.)
 
 ## Next steps
 
-1. Integrate into root CMakeLists.txt.
-2. Expand the simple ECS-style entities in abyss_protocol.cpp into full systems (acoustic propagation, pressure, light management).
-3. Load real glTF models instead of placeholder geometry.
-4. Add Luau or Blueprint scripting for mission logic once the player/submarine movement is solid.
-5. Hook into the full renderer, physics (Jolt), and audio systems.
+1. Add the `add_subdirectory` line to the root CMakeLists.txt and verify the sample builds.
+2. Replace the console `main.cpp` with a real Win32 / GLFW window + software or D3D12 renderer (copy patterns from `samples/gem_hop`).
+3. Load at least one high-quality glTF model for the submarine and one for the creature.
+4. Expand the acoustic system into a proper ECS system that can run on the job system.
+5. Add a simple research hub entity and one complete short mission (restore the silent relay).
 
-See the full concept from the design discussion for story (Protocol Zero, MIRA AI, Neris-9), regions, and progression.
+See the original design discussion for the full story (Protocol Zero, MIRA AI, Neris-9 regions) and longer-term scope.
