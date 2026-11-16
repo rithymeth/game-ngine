@@ -5,6 +5,7 @@
 #include "aether/platform/filesystem.h"
 
 #include <nlohmann/json.hpp>
+#include <meshoptimizer.h>
 
 #include <algorithm>
 #include <filesystem>
@@ -860,6 +861,81 @@ void ApplyAnimationToNodes(const GltfScene& scene, const GltfAnimation& animatio
 
 } // namespace
 
+// EXT_meshopt_compression: the view's payload is a meshoptimizer blob. Decode it
+// into a fresh buffer and point the view at that, so the rest of the loader
+// reads plain bytes. The compressed source stays in its original buffer.
+bool DecodeMeshoptViews(Json& gltf, std::vector<std::vector<u8>>& buffers) {
+    if (!gltf.contains("bufferViews") || !gltf["bufferViews"].is_array()) return true;
+    for (usize view_index = 0; view_index < gltf["bufferViews"].size(); ++view_index) {
+        Json& view = gltf["bufferViews"][view_index];
+        if (!view.is_object() || !view.contains("extensions") || !view["extensions"].is_object()) continue;
+        Json& extensions = view["extensions"];
+        if (!extensions.contains("EXT_meshopt_compression")) continue;
+        const Json& ext = extensions["EXT_meshopt_compression"];
+        if (!ext.is_object()) {
+            GltfError("bufferView %zu EXT_meshopt_compression is not an object", view_index);
+            return false;
+        }
+        const std::string mode = ext.value("mode", std::string());
+        const std::string filter = ext.value("filter", std::string("NONE"));
+        const usize count = ext.value("count", static_cast<usize>(0));
+        const usize stride = ext.value("byteStride", static_cast<usize>(0));
+        const usize byte_length = ext.value("byteLength", static_cast<usize>(0));
+        const usize byte_offset = ext.value("byteOffset", static_cast<usize>(0));
+        const usize buffer_index = ext.value("buffer", static_cast<usize>(0));
+        if (count == 0 || stride == 0 || byte_length == 0 || buffer_index >= buffers.size()) {
+            GltfError("bufferView %zu EXT_meshopt_compression is missing count, byteStride, byteLength, or a valid buffer", view_index);
+            return false;
+        }
+        if (byte_offset > buffers[buffer_index].size() || byte_length > buffers[buffer_index].size() - byte_offset) {
+            GltfError("bufferView %zu EXT_meshopt_compression reads past the end of buffer %zu", view_index, buffer_index);
+            return false;
+        }
+        if (stride != 0 && count > (std::numeric_limits<usize>::max() / stride)) {
+            GltfError("bufferView %zu EXT_meshopt_compression count is too large", view_index);
+            return false;
+        }
+        std::vector<u8> decoded(count * stride);
+        const u8* source = buffers[buffer_index].data() + byte_offset;
+        int result = -1;
+        if (mode == "ATTRIBUTES") {
+            result = meshopt_decodeVertexBuffer(decoded.data(), count, stride, source, byte_length);
+        } else if (mode == "TRIANGLES" || mode == "INDICES") {
+            if (stride != 2 && stride != 4) {
+                GltfError("bufferView %zu EXT_meshopt_compression %s byteStride must be 2 or 4", view_index, mode.c_str());
+                return false;
+            }
+            result = mode == "TRIANGLES" ? meshopt_decodeIndexBuffer(decoded.data(), count, stride, source, byte_length)
+                                         : meshopt_decodeIndexSequence(decoded.data(), count, stride, source, byte_length);
+        } else {
+            GltfError("bufferView %zu EXT_meshopt_compression mode \"%s\" is not supported", view_index, mode.c_str());
+            return false;
+        }
+        if (result != 0) {
+            GltfError("bufferView %zu EXT_meshopt_compression failed to decode", view_index);
+            return false;
+        }
+        if (filter == "OCTAHEDRAL") {
+            meshopt_decodeFilterOct(decoded.data(), count, stride);
+        } else if (filter == "QUATERNION") {
+            meshopt_decodeFilterQuat(decoded.data(), count, stride);
+        } else if (filter == "EXPONENTIAL") {
+            meshopt_decodeFilterExp(decoded.data(), count, stride);
+        } else if (filter != "NONE") {
+            GltfError("bufferView %zu EXT_meshopt_compression filter \"%s\" is not supported", view_index, filter.c_str());
+            return false;
+        }
+        buffers.push_back(std::move(decoded));
+        view["buffer"] = buffers.size() - 1;
+        view["byteOffset"] = 0;
+        view["byteLength"] = count * stride;
+        view["byteStride"] = stride;
+        extensions.erase("EXT_meshopt_compression");
+        if (extensions.empty()) view.erase("extensions");
+    }
+    return true;
+}
+
 static bool ParseGltfText(const std::string& text, const std::string& path, bool allow_external,
                           GltfScene& out_scene, std::vector<u8>* glb_bin = nullptr) {
     // Parsed without exceptions. A malformed document used to die inside Json::parse itself -- the trace showed the call
@@ -936,6 +1012,7 @@ static bool ParseGltfText(const std::string& text, const std::string& path, bool
             buffers.push_back(std::move(data));
         }
     }
+    if (!DecodeMeshoptViews(gltf, buffers)) return false;
 
     auto resolve_texture_path = [&](const Json& texture_ref) -> std::string {
         if (!texture_ref.contains("index") || !gltf.contains("textures")) {

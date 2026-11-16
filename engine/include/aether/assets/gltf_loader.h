@@ -276,7 +276,9 @@ void ComputeSkinMatrices(const GltfScene& scene, const GltfAnimation* animation,
 // parsed joint/weight/skin-matrix data is there, but no demo wires it into
 // an actual skinned draw call yet), embedded (data-URI) images,
 // non-metallic-roughness material extensions (KHR_materials_*, etc), and
-// multiple/non-default scenes.
+// multiple/non-default scenes. Buffer views using EXT_meshopt_compression
+// are decoded (ATTRIBUTES, TRIANGLES, INDICES, and the octahedral, quaternion,
+// and exponential filters) before the accessors are read.
 [[nodiscard]] bool LoadGltf(const std::string& path, GltfScene& out_scene);
 // As above; on failure `error` (if given) gets the first reason, e.g. a parse error or a missing buffer.
 [[nodiscard]] bool LoadGltf(const std::string& path, GltfScene& out_scene, std::string* error);
