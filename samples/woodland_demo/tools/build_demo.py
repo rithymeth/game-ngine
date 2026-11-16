@@ -187,6 +187,11 @@ MESHY_FIT = {
     "crate": ("crate", (0.92, 0.92, 0.92), {}),
     "lantern": ("lantern", (0.55, 0.88, 0.55), {}),
     "jeep_body": ("jeep", (1.9, 1.5, 4.2), {"uniform": False, "bottom": -0.34}),
+    # Environment props, scattered through the clearing when they are there: (fitted size is the largest each may be).
+    "oak_tree": ("oak", (7.0, 8.5, 7.0), {"bottom": 0.0}),
+    "grass_clump": ("grass", (0.8, 0.7, 0.8), {"bottom": 0.0}),
+    "wildflowers": ("flowers", (0.7, 0.55, 0.7), {"bottom": 0.0}),
+    "ruin_arch": ("arch", (5.5, 5.0, 1.6), {"bottom": 0.0}),
 }
 
 
@@ -320,7 +325,7 @@ def box_collider(half, center=(0, 0, 0), friction=0.6):
     return {"$v": 1, "center": list(center), "half_extents": list(half), "friction": friction, "is_trigger": False, "report_stay": False, "restitution": 0.0}
 
 
-def build_scene(src, ground, site, down, sea):
+def build_scene(src, ground, site, down, sea, props=()):
     scene = json.loads(src.read_text())
     ents = scene["entities"]
     frame = Frame(ground, site[0], site[1], down)
@@ -354,6 +359,34 @@ def build_scene(src, ground, site, down, sea):
     for asset in ("RainLight", "RainHeavy"):
         sb.add(asset, {"ParticleSystem": {"$v": 1, "asset": f"Fx/{asset}.avfx", "auto_activate": False}})
     sb.add("BlastLight", {"PointLight": {"$v": 1, "color": [1.0, 0.65, 0.3], "intensity": 0.0, "range": 28.0, "cast_shadows": False}}, tags=("BlastLight",))
+
+    # The environment: oaks round the edge, grass and wildflowers over the ground, a ruined arch for a backdrop. Visual only (no colliders), kept off the
+    # car's route (a corridor along the slope), the gallows and the pile.
+    import random
+    rng = random.Random(7)
+    keep_out = [(-2.0, -11.0, 4.5), (2.0, 13.0, 5.0)]
+
+    def usable(a, r, margin=0.0):
+        if -26.0 < a < 46.0 and -13.0 < r < 8.0:   # the car's corridor
+            return False
+        return all((a - ka) ** 2 + (r - kr) ** 2 > (kd + margin) ** 2 for ka, kr, kd in keep_out)
+
+    if "oak" in props:
+        for i, (a, r) in enumerate([(-12, -24), (8, -24), (14, -19), (18, 14), (6, 27), (-14, 22), (-26, 12), (-26, -14), (30, 24), (-4, 34)]):
+            sb.add(f"Oak{i}", {"ModelRenderer": model("Models/oak.glb")}, pos=frame.at(a, r), rot=quat_y(rng.uniform(0, 6.28)), scale=[rng.uniform(0.85, 1.25)] * 3)
+    for name, count in (("grass", 170), ("flowers", 70)):
+        if name not in props:
+            continue
+        placed = 0
+        while placed < count:
+            a, r = rng.uniform(-30, 36), rng.uniform(-28, 30)
+            if not usable(a, r, 0.5):
+                continue
+            sb.add(f"{name.title()}{placed}", {"ModelRenderer": model(f"Models/{name}.glb")}, pos=frame.at(a, r), rot=quat_y(rng.uniform(0, 6.28)),
+                   scale=[rng.uniform(0.8, 1.4)] * 3)
+            placed += 1
+    if "arch" in props:
+        sb.add("Arch", {"ModelRenderer": model("Models/arch.glb")}, pos=frame.at(26, 24), rot=quat_y(frame.yaw() + math.pi / 2), scale=(1, 1, 1))
 
     # The gallows, with a lantern on a rope in a field of wind.
     gx, gz = frame.xz(-2, -11)
@@ -521,6 +554,7 @@ def main():
     for name, build_model in MODELS.items():
         mm.write_glb(build_model(), content / "Models" / f"{name}.glb")
         asset_meta(content, f"Models/{name}.glb", "Model")
+    props = set()
     if args.meshy_dir:
         for source, (target, size, options) in MESHY_FIT.items():
             glb = pathlib.Path(args.meshy_dir) / f"{source}.glb"
@@ -529,6 +563,7 @@ def main():
                 if source == "jeep_body":
                     options["yaw_degrees"] = args.jeep_yaw
                 dims = fit_glb(glb, content / "Models" / f"{target}.glb", size, **options)
+                props.add(target)
                 print(f"meshy {source}: {dims[0]:.2f} x {dims[1]:.2f} x {dims[2]:.2f} -> Models/{target}.glb", flush=True)
 
     # 3. The scene.
@@ -538,7 +573,7 @@ def main():
     sea, lakes = read_water(bake / "Generated" / "Woodland" / "Woodland_terrain.glb")
     site = ground.find_site(sea, lakes)
     down = ground.direction_to_water(site[0], site[1], sea)
-    scene, frame, removed, crates = build_scene(src, ground, site, down, sea)
+    scene, frame, removed, crates = build_scene(src, ground, site, down, sea, props)
     (content / "Scenes").mkdir(exist_ok=True)
     (content / "Scenes" / "WoodlandDemo.ascene").write_text(json.dumps(scene, separators=(",", ":")))
     asset_meta(content, "Scenes/WoodlandDemo.ascene", "Scene")

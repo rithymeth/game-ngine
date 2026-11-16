@@ -12,7 +12,7 @@ a script through the engine's own kits; nothing is animated by hand.
 | 35 s | The pile of crates is blown up and breaks into pieces | Force Fields, Destruction |
 | 36–48 s | Lightning, rain and a pull back over the bay | Weather |
 
-The crates, the lantern and the jeep body are generated with [Meshy](https://docs.meshy.ai) (`tools/meshy_assets.py`);
+The crates, lantern, jeep body, oaks, grass, wildflowers and a ruined arch are generated with [Meshy](https://docs.meshy.ai) (`tools/meshy_assets.py`);
 without them `build_demo.py` uses simple placeholder models and the film still runs.
 
 ## Layout
