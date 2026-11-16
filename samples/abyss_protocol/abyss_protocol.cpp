@@ -20,6 +20,7 @@ void Game::Restart() {
     sub_ = {};
     relay_ = {};
     haven_ = {};
+    cache_ = {};
     events_.clear();
     creatures_.clear();
     mission_ = Mission::Outbound;
@@ -221,17 +222,38 @@ void Game::Step(float dt) {
     sub_.velocity.x *= 0.95f;
     sub_.velocity.y *= 0.95f;
     sub_.velocity.z *= 0.95f;
+    ApplyCurrent(dt);
     ResolveRocks();
 
     UpdateAcoustics(dt);
     for (CreatureAI& creature : creatures_) UpdateCreature(creature, dt);
     UpdatePressure(dt);
+    UpdateCache();
     UpdateRelay();
     UpdateMission();
     sub_.sonar_active = false;
     contact_ = std::max(0.0f, contact_ - dt);
     ping_cooldown_ = std::max(0.0f, ping_cooldown_ - dt);
     impact_cooldown_ = std::max(0.0f, impact_cooldown_ - dt);
+}
+
+bool Game::InCurrent() const {
+    return sub_.position.x > 18.0f && sub_.position.x < 46.0f && sub_.position.z > -16.0f && sub_.position.z < 6.0f;
+}
+
+void Game::ApplyCurrent(float dt) {
+    if (!InCurrent()) return;
+    // Pushes you off a straight bearing, toward +z.
+    sub_.position.z += 2.6f * dt;
+    sub_.position.x += 0.5f * dt;
+}
+
+void Game::UpdateCache() {
+    if (cache_.taken) return;
+    if (Distance(sub_.position, cache_.position) > 4.0f) return;
+    cache_.taken = true;
+    sub_.battery = std::min(1.0f, sub_.battery + 0.5f);
+    events_.push_back({cache_.position, 0.45f, 12.0f, 1.2f});
 }
 
 void Game::ResolveRocks() {
@@ -320,7 +342,9 @@ std::string Game::StatusText() const {
         << "  Lights: " << (sub_.lights_on ? "ON" : "off")
         << "  Contact: " << int(contact_ * 10) / 10.0f << "s"
         << "  Creature awareness: " << int(awareness * 100) << "%"
-        << (alert ? "  [ALERT]" : "");
+        << (alert ? "  [ALERT]" : "")
+        << (InCurrent() ? "  CURRENT" : "")
+        << (!cache_.taken ? "  Cache: live" : "");
     if (mission_ == Mission::Won) oss << "  MISSION COMPLETE  " << int(time_) << "s";
     else if (mission_ == Mission::Lost) oss << "  FAILED: " << fail_ << "  (R retry)";
     else if (mission_ == Mission::Return) oss << "  Return to Haven";

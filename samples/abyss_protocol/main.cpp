@@ -355,6 +355,21 @@ void DrawWorld(const abyss::Game& game, const std::vector<DrawTri>& mesh, Render
               {0.22f, 0.24f, 0.28f});
     }
 
+    if (game.InCurrent()) {
+        for (int i = 0; i < 5; ++i) {
+            f32 slide = std::fmod(anim * 3.0f + i * 1.3f, 8.0f);
+            Vec3 p{20.0f + slide * 3.0f, sub.position.y - 0.2f, -12.0f + i * 3.0f};
+            r.Box({p.x, p.y, p.z}, {p.x + 1.6f, p.y + 0.15f, p.z + 0.35f}, {0.25f, 0.7f, 0.85f});
+        }
+    }
+
+    const abyss::Cache& cache = game.GetCache();
+    if (Visible(game, cache.position, 24.0f, 40.0f, 8.0f)) {
+        Color col = cache.taken ? Color{0.2f, 0.22f, 0.24f} : Color{0.95f, 0.78f, 0.25f};
+        r.Box({cache.position.x - 0.6f, cache.position.y, cache.position.z - 0.6f},
+              {cache.position.x + 0.6f, cache.position.y + 1.2f, cache.position.z + 0.6f}, col);
+    }
+
     for (const abyss::CreatureAI& creature : game.GetCreatures()) {
         if (!Visible(game, creature.position, 26.0f, 40.0f, 7.0f)) continue;
         Color creature_col = creature.is_alerted ? Color{1.0f, 0.25f, 0.2f} : Color{0.25f, 0.85f, 1.0f};

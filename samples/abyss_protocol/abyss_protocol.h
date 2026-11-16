@@ -47,6 +47,11 @@ struct Rock {
     float radius = 3.0f;
 };
 
+struct Cache {
+    aether::Vec3 position{28.0f, -22.0f, 12.0f};
+    bool taken = false;
+};
+
 struct Haven {
     aether::Vec3 position{0.0f, -15.0f, 0.0f};
 };
@@ -91,6 +96,8 @@ public:
     const std::vector<CreatureAI>& GetCreatures() const { return creatures_; }
     const Relay& GetRelay() const { return relay_; }
     const Haven& GetHaven() const { return haven_; }
+    const Cache& GetCache() const { return cache_; }
+    bool InCurrent() const;
     const std::vector<Rock>& GetRocks() const { return rocks_; }
     bool HasContact() const { return contact_ > 0.05f; }
     float Contact() const { return contact_; }
@@ -110,11 +117,14 @@ private:
     void UpdateRelay();
     void UpdateMission();
     void ResolveRocks();
+    void ApplyCurrent(float dt);
+    void UpdateCache();
 
     aether::World world_;
     Submarine sub_;
     Relay relay_;
     Haven haven_;
+    Cache cache_;
     std::vector<Rock> rocks_;
     std::vector<CreatureAI> creatures_;
     aether::Vec3 bearing_{0.0f, 0.0f, 1.0f};

@@ -17,7 +17,7 @@ Underwater exploration / survival mystery for Aether Engine. Stylized 3D, single
 - Pass a `.gltf` or `.glb` and it is centered, scaled to about 4 metres, and drawn on the submarine. Base-color materials are used. Meshes over 4000 triangles are strided down so the software view stays interactive.
 - No model: an orange placeholder hull is drawn instead.
 - **Run**: leave Haven, restore the silent relay, then get home. `F` fires one sonar ping and spends battery. For a few seconds you can see farther and a bright marker points at the objective. After it fades, a dim marker keeps the last heading. It does not update until you ping again, and it clears when the relay answers. Lights show what is nearby, spend battery, and give you away. Two creatures listen. Rocks are solid even when you cannot see them.
-- Hold Shift to creep. Full thrust is loud enough for a nearby creature to wake. Hitting a rock rings the hull, spends hull, and is louder than a ping. Hull at zero fails the run.
+- Between Haven and the relay the water pushes you sideways. The title says `CURRENT` while you are in it, and pale streaks show the flow. A gold cache off that line refills about half the battery and makes a small noise. It is dark once taken.
 - The creature catching you, or running out of oxygen or battery, fails the run. `R` restarts.
 
 | Key | Action |
