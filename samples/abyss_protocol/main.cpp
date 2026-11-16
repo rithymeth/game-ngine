@@ -220,7 +220,7 @@ int CountPrimitives(const GltfScene& scene, const GltfPrimitive& prim) {
     return static_cast<int>(prim.vertices.size() / 3);
 }
 
-std::vector<DrawTri> BuildMesh(const GltfScene& scene) {
+std::vector<DrawTri> BuildMesh(const GltfScene& scene, f32 size) {
     int total = 0;
     auto visit = [&](auto&& consume) {
         if (!scene.node_instances.empty()) {
@@ -258,7 +258,7 @@ std::vector<DrawTri> BuildMesh(const GltfScene& scene) {
     }
     Vec3 center{(lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f, (lo.z + hi.z) * 0.5f};
     f32 extent = std::max({hi.x - lo.x, hi.y - lo.y, hi.z - lo.z, 1e-4f});
-    f32 scale = 4.0f / extent;
+    f32 scale = size / extent;
     for (DrawTri& t : tris) {
         auto fit = [&](Vec3 p) { return Vec3{(p.x - center.x) * scale, (p.y - center.y) * scale, (p.z - center.z) * scale}; };
         t.a = fit(t.a);
@@ -293,7 +293,15 @@ bool Visible(const abyss::Game& game, const Vec3& p, f32 light_range, f32 sonar_
     return false;
 }
 
-void DrawWorld(const abyss::Game& game, const std::vector<DrawTri>& mesh, Renderer& r, f32 yaw, f32 pitch, f32 anim) {
+void DrawPlaced(Renderer& r, const std::vector<DrawTri>& tris, Vec3 at, f32 scale, Color tint) {
+    for (const DrawTri& t : tris) {
+        r.Tri(t.a * scale + at, t.b * scale + at, t.c * scale + at,
+              {t.col.r * tint.r, t.col.g * tint.g, t.col.b * tint.b});
+    }
+}
+
+void DrawWorld(const abyss::Game& game, const std::vector<DrawTri>& mesh, const std::vector<DrawTri>& creature_mesh,
+               const std::vector<DrawTri>& rock_mesh, Renderer& r, f32 yaw, f32 pitch, f32 anim) {
     const abyss::Submarine& sub = game.GetSub();
     Vec3 target = sub.position;
     f32 dist = 8.0f;
@@ -354,9 +362,13 @@ void DrawWorld(const abyss::Game& game, const std::vector<DrawTri>& mesh, Render
 
     for (const abyss::Rock& rock : game.GetRocks()) {
         if (!Visible(game, rock.position, 22.0f, 36.0f, 5.0f)) continue;
-        r.Box({rock.position.x - rock.radius, rock.position.y - rock.radius * 0.6f, rock.position.z - rock.radius},
-              {rock.position.x + rock.radius, rock.position.y + rock.radius * 0.45f, rock.position.z + rock.radius},
-              {0.22f, 0.24f, 0.28f});
+        if (!rock_mesh.empty()) {
+            DrawPlaced(r, rock_mesh, rock.position, rock.radius, {1, 1, 1});
+        } else {
+            r.Box({rock.position.x - rock.radius, rock.position.y - rock.radius * 0.6f, rock.position.z - rock.radius},
+                  {rock.position.x + rock.radius, rock.position.y + rock.radius * 0.45f, rock.position.z + rock.radius},
+                  {0.22f, 0.24f, 0.28f});
+        }
     }
 
     if (game.InCurrent() || Visible(game, {32.0f, -26.0f, -5.0f}, 24.0f, 40.0f, 0.0f)) {
@@ -376,8 +388,13 @@ void DrawWorld(const abyss::Game& game, const std::vector<DrawTri>& mesh, Render
 
     for (const abyss::CreatureAI& creature : game.GetCreatures()) {
         if (!Visible(game, creature.position, 26.0f, 40.0f, 7.0f)) continue;
-        Color creature_col = creature.is_alerted ? Color{1.0f, 0.25f, 0.2f} : Color{0.25f, 0.85f, 1.0f};
-        r.Gem(creature.position, creature.is_alerted ? 1.1f : 0.8f, anim * 1.5f, creature_col);
+        if (!creature_mesh.empty()) {
+            Color tint = creature.is_alerted ? Color{1.6f, 0.35f, 0.3f} : Color{1, 1, 1};
+            DrawPlaced(r, creature_mesh, creature.position, creature.is_alerted ? 1.15f : 1.0f, tint);
+        } else {
+            Color creature_col = creature.is_alerted ? Color{1.0f, 0.25f, 0.2f} : Color{0.25f, 0.85f, 1.0f};
+            r.Gem(creature.position, creature.is_alerted ? 1.1f : 0.8f, anim * 1.5f, creature_col);
+        }
     }
 
     const abyss::Haven& haven = game.GetHaven();
@@ -477,7 +494,7 @@ int main(int argc, char** argv) {
         GltfScene scene;
         std::string error;
         if (LoadGltf(model_path, scene, &error)) {
-            mesh = BuildMesh(scene);
+            mesh = BuildMesh(scene, 4.0f);
             game.LoadModel(model_path, info);
             AETHER_LOG_INFO("Abyss", "Drew %d triangles from \"%s\" (%zu source vertices).",
                             static_cast<int>(mesh.size()), model_path, info.vertex_count);
@@ -486,6 +503,24 @@ int main(int argc, char** argv) {
         }
     }
 
+    std::vector<DrawTri> creature_mesh;
+    std::vector<DrawTri> rock_mesh;
+#ifdef ABYSS_ASSET_DIR
+    auto load_prop = [](const char* name, f32 size) {
+        std::string path = std::string(ABYSS_ASSET_DIR) + "/" + name;
+        GltfScene scene;
+        std::string error;
+        if (!LoadGltf(path, scene, &error)) {
+            AETHER_LOG_ERROR("Abyss", "glTF load failed: %s", error.c_str());
+            return std::vector<DrawTri>{};
+        }
+        auto tris = BuildMesh(scene, size);
+        AETHER_LOG_INFO("Abyss", "Drew %d triangles from \"%s\".", static_cast<int>(tris.size()), path.c_str());
+        return tris;
+    };
+    creature_mesh = load_prop("creature.glb", 2.4f);
+    rock_mesh = load_prop("rock.glb", 2.0f);
+#endif
     WindowDesc desc;
     desc.title = "Abyss Protocol";
     desc.width = kW;
@@ -592,7 +627,7 @@ int main(int argc, char** argv) {
             accumulator -= 1.0f / 60.0f;
         }
 
-        DrawWorld(game, mesh, renderer, yaw, pitch, anim);
+        DrawWorld(game, mesh, creature_mesh, rock_mesh, renderer, yaw, pitch, anim);
         std::vector<u32> frame_px = renderer.Pixels();
         DrawHud(game, frame_px, !mesh.empty());
 
