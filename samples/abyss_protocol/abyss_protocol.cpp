@@ -135,6 +135,7 @@ void Game::UpdateAcoustics(float dt) {
     // Full thrust is loud. A creep (Shift) stays under the creatures' hearing.
     noise_ = std::min(0.9f, speed * 0.09f);
     if (sub_.lights_on) noise_ += 0.08f;
+    if (relay_.restored) noise_ += 0.2f;
     if (sub_.sonar_active) {
         noise_ = std::max(noise_, 0.75f);
         events_.push_back({sub_.position, 0.7f, 22.0f, 2.0f});
@@ -198,6 +199,12 @@ void Game::UpdateCreature(CreatureAI& creature, float dt) {
             float heard = 0.7f * (1.0f - relay_dist / kCall);
             noise_influence += heard;
             consider(relay_.position, heard);
+        }
+        constexpr float kHum = 16.0f;
+        if (dist < kHum) {
+            float heard = 0.34f * (1.0f - dist / kHum);
+            noise_influence += heard;
+            consider(sub_.position, heard);
         }
     }
     if (best > 0.04f) {
@@ -381,7 +388,14 @@ bool Game::AnyAlert() const {
     return false;
 }
 
-bool Game::QuietApproach() const { return !sub_.lights_on && !AnyAlert(); }
+bool Game::QuietApproach() const { return !sub_.lights_on && !ThreatNearHaven(); }
+
+bool Game::ThreatNearHaven() const {
+    for (const CreatureAI& creature : creatures_) {
+        if (creature.is_alerted && Distance(creature.position, haven_.position) < 18.0f) return true;
+    }
+    return false;
+}
 
 void Game::UpdateRelay() {
     if (relay_.restored) return;
@@ -407,13 +421,14 @@ std::string Game::StatusText() const {
         << (InCurrent() ? "  CURRENT" : "")
         << (leak_ > 0.0f ? "  LEAK" : "")
         << ((-sub_.position.y) > 26.0f ? "  PRESSURE" : "")
+        << (relay_.restored && mission_ != Mission::Won ? "  SIGNAL" : "")
         << (!cache_.taken ? "  Cache: live" : "");
     if (mission_ == Mission::Won) oss << "  MISSION COMPLETE  " << int(time_) << "s";
     else if (mission_ == Mission::Lost) oss << "  FAILED: " << fail_ << "  (R retry)";
     else if (mission_ == Mission::Return) {
         float home = Distance(sub_.position, haven_.position);
         if (home < 12.0f && sub_.lights_on) oss << "  Haven: lights off";
-        else if (home < 12.0f && alert) oss << "  Haven: creature awake";
+        else if (home < 12.0f && ThreatNearHaven()) oss << "  Haven: creature awake";
         else oss << "  Return to Haven";
     } else oss << "  Relay: silent";
     return oss.str();

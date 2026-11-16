@@ -128,6 +128,7 @@ private:
     void ApplyCurrent(float dt);
     void UpdateCache();
     bool AnyAlert() const;
+    bool ThreatNearHaven() const;
 
     aether::World world_;
     Submarine sub_;
