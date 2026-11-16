@@ -260,6 +260,12 @@ bool SelectClusters(const ClusterHierarchy& h, const ClusterView& view, f32 thre
             }
             if (!inside) continue;
         }
+        if (view.cull_backfaces) {
+            // A cluster whose normal cone points away from the viewer (cutoff 1 means it has no useful cone: never culled).
+            const Vec3 to_cluster = c.bounds.center - view.position;
+            const f32 distance = to_cluster.Length();
+            if (distance > 1e-6f && to_cluster.Dot(c.bounds.cone_axis) >= (c.bounds.cone_cutoff * distance + c.bounds.radius)) continue;
+        }
         out.clusters.push_back(i);
         out.triangles += c.triangle_count;
     }

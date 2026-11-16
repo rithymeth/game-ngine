@@ -316,6 +316,14 @@ public:
     // the copy into it.
     virtual bool ReadReadbackBuffer(BufferHandle /*buffer*/, void* /*out*/, u64 /*size_bytes*/, u64 /*offset*/ = 0) { return false; }
 
+    // Reading a storage buffer a compute pass wrote, on the CPU: for checking a GPU pass against its CPU reference. Record ICommandList::HostReadBarrier
+    // for the buffer after the last dispatch that writes it; once the submission has finished (WaitForComputeFence), ReadStorageBuffer copies
+    // `size_bytes` from `offset`. False (nothing read) for a dead handle, a buffer that is not a storage buffer, or a range outside it. It reads the
+    // buffer's own host-visible memory, which is slow on a real GPU: a shipping pass copies to a readback buffer instead. Devices without it
+    // (SupportsStorageBufferRead false, the default) return false; Vulkan has it, D3D12 does not yet.
+    virtual bool SupportsStorageBufferRead() const { return false; }
+    virtual bool ReadStorageBuffer(BufferHandle /*buffer*/, void* /*out*/, u64 /*size_bytes*/, u64 /*offset*/ = 0) { return false; }
+
     // Block-compressed textures (BC1, BC3, BC7: see CompressedTextureFormat), kept compressed on the GPU with their whole mip chain: a quarter
     // of the memory of RGBA8, and mips for the sampler. The handle indexes the same bindless table as CreateTexture. Devices that cannot (Vulkan
     // here until it is implemented; ASTC is not offered anywhere yet) answer false and an invalid handle, and the caller decodes to RGBA8 and

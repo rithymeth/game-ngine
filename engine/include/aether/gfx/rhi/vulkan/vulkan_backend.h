@@ -187,6 +187,8 @@ public:
     }
     BufferHandle CreateReadbackBuffer(u64 size_bytes) override;
     bool ReadReadbackBuffer(BufferHandle buffer, void* out, u64 size_bytes, u64 offset = 0) override;
+    bool SupportsStorageBufferRead() const override { return true; }
+    bool ReadStorageBuffer(BufferHandle buffer, void* out, u64 size_bytes, u64 offset = 0) override;
     VkDescriptorSetLayout FrameConstantsSetLayout() const { return frame_constants_set_layout_; }
     SampledTextureHandle CreateR32FloatTexture(u32 width, u32 height, const f32* values) override;
     // Render textures (RGBA16F) and depth textures (D32), drawn in their own passes (TargetPass) and sampled between them. The player makes
@@ -613,6 +615,7 @@ public:
     void BindComputeSampledTexture(u32 slot, SampledTextureHandle texture) override;
     void BindComputeConstantBuffer(u32 slot, BufferHandle buffer) override;
     void ComputeBufferBarrier(BufferHandle buffer) override;
+    void HostReadBarrier(BufferHandle buffer) override;
     void Dispatch(u32 groups_x, u32 groups_y, u32 groups_z) override;
     void BindBindlessTextures() override;
     void BindFrameConstants(BufferHandle buffer) override;

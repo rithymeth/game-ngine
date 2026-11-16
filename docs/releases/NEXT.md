@@ -40,6 +40,10 @@ A new optional kit and engine plugin, **Vehicles** (`AETHER_KIT_VEHICLES`, needs
 
 The first stage of a Nanite-style renderer: `BuildClusterHierarchy` (`aether/cook/cluster_hierarchy.h`) builds a DAG of meshlet clusters offline, each level about half the triangles of the one below, with group borders locked so the pieces always join. `SelectClusters` is the CPU reference for the cut: a cluster is drawn when its own error looks small enough on screen and its parent's does not, and the result is watertight at every distance. Nothing is cooked or drawn yet, so no format changes. See `docs/design/VIRTUAL_GEOMETRY.md` for the plan, the measurements and the known limits.
 
+## Virtual geometry, stage 2
+
+The cluster cut and the culling now run on the GPU: `ClusterCullPass` (`player/src/cluster_cull_pass.h`) is a compute pass that picks the same clusters as the CPU selector (checked over 112 distance, threshold and culling-mode combinations, with no differences), with frustum and normal-cone back-face culling. `cook::SelectClusters` gained `cull_backfaces`. The RHI gained two optional calls, `ICommandList::HostReadBarrier` and `IDevice::ReadStorageBuffer` (with `SupportsStorageBufferRead`), implemented on Vulkan only. Not drawn yet and not benchmarked on a real GPU. See `docs/design/VIRTUAL_GEOMETRY.md`.
+
 ## Loot
 
 A new optional kit and engine plugin, **Loot** (`AETHER_KIT_LOOT`, needs Inventory): `.aloot` files describe a loot table as weighted entries (each with a count range, and an empty item for "nothing") and a number of rolls, and `LootSystem` rolls one and gives the drops to an entity's inventory. Rolls are deterministic (the same table and seed always drop the same, and the kit's own seed stream starts the same every run unless a script seeds it); loot is not all or nothing, so what does not fit is lost and `LastGiven` says what went in. A Luau `Loot` table (`Give`, `LastGiven`, `Roll`, `SetSeed`, `Exists`, `GetTitle`) exposes it; see `docs/manual/22-loot.md`.
