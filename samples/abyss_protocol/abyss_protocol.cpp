@@ -171,6 +171,16 @@ void Game::Step(float dt) {
     UpdateAcoustics(dt);
     UpdateCreature(dt);
     UpdatePressure(dt);
+    UpdateRelay();
+}
+
+void Game::UpdateRelay() {
+    if (relay_.restored) return;
+    float dist = Distance(sub_.position, relay_.position);
+    // The relay only answers a quiet boat: no sonar, lights off, creature calm.
+    if (dist < 6.0f && !sub_.sonar_active && !sub_.lights_on && !creature_.is_alerted) {
+        relay_.restored = true;
+    }
 }
 
 std::string Game::StatusText() const {
@@ -180,7 +190,8 @@ std::string Game::StatusText() const {
         << "  Sonar: " << (sub_.sonar_active ? "ON" : "off")
         << "  Lights: " << (sub_.lights_on ? "ON" : "off")
         << "  Creature awareness: " << int(creature_.awareness * 100) << "%"
-        << (creature_.is_alerted ? "  [ALERT]" : "");
+        << (creature_.is_alerted ? "  [ALERT]" : "")
+        << (relay_.restored ? "  RELAY RESTORED" : "  Relay: silent");
     return oss.str();
 }
 

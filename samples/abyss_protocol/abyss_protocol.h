@@ -35,6 +35,11 @@ struct CreatureAI {
     bool is_alerted = false;
 };
 
+struct Relay {
+    aether::Vec3 position{48.0f, -32.0f, -18.0f};
+    bool restored = false;
+};
+
 struct Submarine {
     aether::Vec3 position{0.0f, -15.0f, 0.0f};
     aether::Vec3 velocity{0.0f, 0.0f, 0.0f};
@@ -70,6 +75,7 @@ public:
 
     const Submarine& GetSub() const { return sub_; }
     const CreatureAI& GetCreature() const { return creature_; }
+    const Relay& GetRelay() const { return relay_; }
     const std::vector<AcousticEvent>& GetEvents() const { return events_; }
     std::string StatusText() const;
 
@@ -77,10 +83,12 @@ private:
     void UpdateAcoustics(float dt);
     void UpdateCreature(float dt);
     void UpdatePressure(float dt);
+    void UpdateRelay();
 
     aether::World world_;
     Submarine sub_;
     CreatureAI creature_;
+    Relay relay_;
     std::vector<AcousticEvent> events_;
     std::optional<aether::assets::GltfScene> loaded_scene_;
 };

@@ -659,6 +659,7 @@ add_subdirectory(samples/gem_hop)
 add_subdirectory(samples/forest_valley)
 add_subdirectory(samples/beacon_run)
 add_subdirectory(samples/frozen_api_game)
+add_subdirectory(samples/abyss_protocol)
 
 # Phase 24 step 5: the portable editor shell - the editor's panels in a
 # GLFW (or Win32) window, or offscreen, drawn through the Vulkan RHI.

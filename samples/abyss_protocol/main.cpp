@@ -333,6 +333,14 @@ void DrawWorld(const abyss::Game& game, const std::vector<DrawTri>& mesh, Render
 
     Color creature_col = creature.is_alerted ? Color{1.0f, 0.25f, 0.2f} : Color{0.25f, 0.85f, 1.0f};
     r.Gem(creature.position, creature.is_alerted ? 1.1f : 0.8f, anim * 1.5f, creature_col);
+
+    const abyss::Relay& relay = game.GetRelay();
+    Color relay_col = relay.restored ? Color{0.35f, 1.0f, 0.75f} : Color{0.18f, 0.22f, 0.28f};
+    f32 pulse = relay.restored ? (0.6f + 0.4f * std::sin(anim * 3.0f)) : 1.0f;
+    Vec3 rp = relay.position;
+    r.Box({rp.x - 0.4f, rp.y, rp.z - 0.4f}, {rp.x + 0.4f, rp.y + 3.2f, rp.z + 0.4f},
+          {relay_col.r * pulse, relay_col.g * pulse, relay_col.b * pulse});
+    r.Gem({rp.x, rp.y + 3.6f, rp.z}, 0.45f, anim, relay_col);
 }
 
 void DrawHud(const abyss::Game& game, std::vector<u32>& px, bool has_mesh) {
@@ -343,6 +351,9 @@ void DrawHud(const abyss::Game& game, std::vector<u32>& px, bool has_mesh) {
     if (sub.sonar_active) FillRect(px, 200, 8, 14, 22, Rgb(0.3f, 0.95f, 0.85f));
     if (sub.lights_on) FillRect(px, 220, 8, 14, 22, Rgb(1.0f, 0.9f, 0.4f));
     if (has_mesh) FillRect(px, 240, 8, 14, 22, Rgb(0.9f, 0.45f, 0.15f));
+    if (game.GetRelay().restored) {
+        FillRect(px, 0, kH / 2 - 18, kW, 36, Rgb(0.08f, 0.22f, 0.18f));
+    }
 }
 
 void SaveBmp(const char* path, const std::vector<u32>& px) {

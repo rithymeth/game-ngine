@@ -16,6 +16,7 @@ Underwater exploration / survival mystery for Aether Engine. Stylized 3D, single
 - Win32 software rasterizer (no GPU), same approach as Gem Hop.
 - Pass a `.gltf` or `.glb` and it is centered, scaled to about 4 metres, and drawn on the submarine. Base-color materials are used. Meshes over 4000 triangles are strided down so the software view stays interactive.
 - No model: an orange placeholder hull is drawn instead.
+- **Silent relay**: a mast sits out in the dark. It only comes back if you reach it with sonar off, lights off, and the creature calm. The window title says `RELAY RESTORED` when it answers.
 
 | Key | Action |
 | --- | --- |
@@ -30,12 +31,7 @@ The window title shows depth, battery, sonar, lights, and creature awareness. Th
 
 ## Build
 
-Add this next to the other samples in the root `CMakeLists.txt`:
-
-```cmake
-add_subdirectory(samples/abyss_protocol)
-```
-
+The sample is already registered in the root `CMakeLists.txt`.
 ```powershell
 cmake --build build --config RelWithDebInfo --target abyss_protocol
 .\abyss_protocol.exe path\to\submarine.glb
@@ -58,6 +54,6 @@ Check the license before shipping. Prefer CC0.
 
 ## Next
 
-1. Add the `add_subdirectory` line and run the window with a real model.
-2. Move the raster upload into the D3D12 path (`gltf_demo`) so textures and skinning show up.
-3. Turn acoustics into a job-friendly ECS system, then add the relay mission.
+1. Run the window and restore the relay without waking the creature.
+2. Move mesh drawing onto the D3D12 path (`gltf_demo`) so textures and skinning show up.
+3. Turn acoustics into a job-friendly ECS system.
