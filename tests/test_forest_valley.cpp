@@ -1,5 +1,6 @@
 #include "../player/src/camera_path.h"
 #include "forest_valley.h"
+#include "valley_terrain.h"
 #include "test_framework.h"
 
 #include <cmath>
@@ -161,4 +162,60 @@ AETHER_TEST(ForestValley_ScatterStaysInsideTheAssetBudget) {
                 budget.plants_min, budget.plants_max, budget.rocks_min, budget.rocks_max);
     AETHER_CHECK(trees <= budget.trees_max && plants <= budget.plants_max && rocks <= budget.rocks_max);
     AETHER_CHECK(trees >= budget.trees_min && plants >= budget.plants_min && rocks >= budget.rocks_min);
+}
+
+namespace {
+const ValleyTerrain& SharedTerrain() {
+    static const ValleyTerrain v = BuildValleyTerrain(Shared());
+    return v;
+}
+// The splatmap texel's weights (grass, rock, sand, snow) at a world position.
+std::array<u8, 4> SplatAt(const ValleyTerrain& v, f32 x, f32 z) {
+    const u32 px = static_cast<u32>(std::lround(x / kWorldSize * static_cast<f32>(v.splatmap.width - 1)));
+    const u32 pz = static_cast<u32>(std::lround(z / kWorldSize * static_cast<f32>(v.splatmap.height - 1)));
+    const usize i = (static_cast<usize>(pz) * v.splatmap.width + px) * 4;
+    return {v.splatmap.pixels[i], v.splatmap.pixels[i + 1], v.splatmap.pixels[i + 2], v.splatmap.pixels[i + 3]};
+}
+} // namespace
+
+AETHER_TEST(ForestValley_TerrainIsSixteenBySixteenChunksWithAFullSplatmap) {
+    const ValleyTerrain& v = SharedTerrain();
+    AETHER_CHECK(v.data.chunk_count_x == 16 && v.data.chunk_count_z == 16);
+    AETHER_CHECK(v.layers.size() == 4);
+    AETHER_CHECK(v.splatmap.width == kSplatResolution && v.splatmap.height == kSplatResolution);
+    AETHER_CHECK(v.splatmap.pixels.size() == static_cast<usize>(kSplatResolution) * kSplatResolution * 4);
+}
+
+AETHER_TEST(ForestValley_SplatmapPaintsGrassAtTheMeadowAndSnowAtTheOverlook) {
+    const World& w = Shared();
+    const ValleyTerrain& v = SharedTerrain();
+    const Vec3 m = w.GetArea(AreaId::Meadow).center, o = w.GetArea(AreaId::Overlook).center;
+    const auto at_meadow = SplatAt(v, m.x, m.z), at_overlook = SplatAt(v, o.x, o.z);
+    std::printf("  meadow weights  grass %u rock %u sand %u snow %u\n  overlook weights grass %u rock %u sand %u snow %u\n", at_meadow[0], at_meadow[1],
+                at_meadow[2], at_meadow[3], at_overlook[0], at_overlook[1], at_overlook[2], at_overlook[3]);
+    // The meadow is grass, the first layer: not sand (the beach) and not snow.
+    AETHER_CHECK(at_meadow[0] > at_meadow[1] && at_meadow[0] > at_meadow[3]);
+    AETHER_CHECK(at_meadow[0] >= 2 * at_meadow[2]); // clearly grass, not a coin toss with sand
+    AETHER_CHECK(at_overlook[3] > 0);
+    AETHER_CHECK(at_overlook[3] > at_meadow[3]);
+}
+
+AETHER_TEST(ForestValley_FramePlanUsesLodAndCostsLessThanFullDetail) {
+    const World& w = Shared();
+    const ValleyTerrain& v = SharedTerrain();
+    const Vec3 eye = w.GetArea(AreaId::Meadow).center + Vec3(0, 1.7f, 0);
+    const TerrainFramePlan plan = PlanTerrainFrame(v, eye);
+    std::printf("  frame plan at the meadow: %u chunks, LOD0 %u LOD1 %u LOD2 %u LOD3 %u, %llu triangles, %.1f MB\n", plan.chunks, plan.lod_chunks[0],
+                plan.lod_chunks[1], plan.lod_chunks[2], plan.lod_chunks[3], static_cast<unsigned long long>(plan.triangles),
+                static_cast<double>(plan.gpu_bytes) / 1048576.0);
+    AETHER_CHECK(plan.chunks == 256);
+    AETHER_CHECK(plan.lod_chunks[0] > 0); // the ground under the camera is at full detail
+    u32 coarse = 0;
+    for (usize i = 1; i < plan.lod_chunks.size(); ++i) coarse += plan.lod_chunks[i];
+    AETHER_CHECK(coarse > 0); // and the far valley is not
+    const u64 full_detail = 256ull * 32 * 32 * 2; // every chunk at LOD 0
+    AETHER_CHECK(plan.triangles < full_detail);
+    // Deterministic: the same camera gives the same plan.
+    const TerrainFramePlan again = PlanTerrainFrame(v, eye);
+    AETHER_CHECK(again.triangles == plan.triangles && again.gpu_bytes == plan.gpu_bytes);
 }

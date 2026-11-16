@@ -227,7 +227,13 @@ World BuildWorld(u32 seed) {
     // E. Overlook, picked first so nothing else takes the high ground: the highest flat standing place.
     pick.Pick([&](i32 x, i32 z, const Vec3&) { return FlatDisc(t, x, z, 5, 0.3f); }, [](i32, i32, const Vec3& p) { return p.y; }, overlook);
     // A. Meadow, the lowest wide flat ground (picked second, so it cannot take the overlook's plateau): the lowest wide flat grass or forest floor, so the spawn looks up at the valley.
-    pick.Pick([&](i32 x, i32 z, const Vec3&) { return FlatDisc(t, x, z, 14, 0.2f); }, [](i32, i32, const Vec3& p) { return -p.y; }, meadow);
+    pick.Pick(
+        [&](i32 x, i32 z, const Vec3& p) {
+            // Grass or forest floor well clear of the beach band: the lowest flat ground is the shore, and a meadow painted as sand is not one.
+            const Biome b = t.biome[t.Index(static_cast<u32>(x), static_cast<u32>(z))];
+            return (b == Biome::Grassland || b == Biome::Forest) && p.y > t.sea_height + 5.0f && FlatDisc(t, x, z, 14, 0.2f);
+        },
+        [](i32, i32, const Vec3& p) { return -p.y; }, meadow);
     // C. River: the river cell carrying the most water, with walkable banks.
     pick.Pick([&](i32 x, i32 z, const Vec3&) { return t.river[t.Index(static_cast<u32>(x), static_cast<u32>(z))] != 0; },
               [&](i32 x, i32 z, const Vec3&) { return t.flow[t.Index(static_cast<u32>(x), static_cast<u32>(z))]; }, river);

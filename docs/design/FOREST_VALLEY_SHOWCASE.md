@@ -118,13 +118,23 @@ Measured, not assumed:
 - **Areas are chosen by rule and must lie on the main walkable landmass.** The overlook is picked first (highest flat
   standing place), then the meadow (lowest wide flat ground). Picking the meadow first put it on the high plateau, above
   the overlook.
-- **Route: 1,240 m, 5.9 minutes at 3.5 m/s walking pace**, inside the 5-10 minute target. Rivers are wadeable; the
+- **Route: 1,267 m, 6.0 minutes at 3.5 m/s walking pace**, inside the 5-10 minute target. Rivers are wadeable; the
   bridge is Phase 2 art, not yet a collision or navigation feature.
 - **Scatter within the asset budget:** 1,181 trees, 30,000 plants (the cap; grass is the limit), 805 rocks. The default
   boulder density gave 62 rocks, so the showcase rule raises it.
 
+- **The valley is chunked terrain the renderer can take.** `valley_terrain.h` builds 16 x 16 chunks (33 vertices a side),
+  a 512 x 512 four-layer splatmap (grass, rock, sand, snow) and the layer colours. `PlanTerrainFrame` runs the real
+  `TerrainRenderer` against a counting GPU: from the meadow it keeps all 256 chunks resident at 47,360 triangles and
+  1.4 MB (10 chunks at LOD 0, 144 at LOD 3), against 524,288 triangles with every chunk at full detail. That is a CPU
+  count of meshes, not a GPU timing.
+- **The first meadow was a beach.** Picking the lowest flat ground put the spawn on the beach band, 98% sand in the
+  splatmap. The meadow must now be grass or forest floor 5 m above the sea; its splatmap texel is pure grass.
+
 Not done in Phase 1 so far, and not claimed:
 
-- Nothing renders this world. `aether_player` has no terrain pass wired in; the terrain renderer exists in `terrain/`.
+- Nothing draws this world. The GPU pass (`terrain::TerrainPass` over `RhiTerrainGpu`) exists and has parity tests, but
+  nothing in the scene, cooker or `aether_player`'s `SceneRenderer` references it: there is no terrain component to
+  cook or load. Wiring that needs a D3D12 or Vulkan device to verify.
 - The Windows build and packaged launch are unverified (this environment is Linux).
 - No performance baseline has been taken: that needs a GPU.
