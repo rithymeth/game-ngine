@@ -1252,6 +1252,18 @@ static bool ParseGltfText(const std::string& text, const std::string& path, bool
                     ReadFloatN(position_info, i, primitive.vertices[i].position, 3);
                     if (has_normal) {
                         ReadFloatN(normal_info, i, primitive.vertices[i].normal, 3);
+                        // gltfpack's octahedral normals are VEC3 snorm with byteStride 4 (8-bit) or 8
+                        // (16-bit). The filter rebuilds XYZ into that slot and leaves a padding
+                        // component we do not read. The lattice point is not unit length.
+                        if (normal_info.normalized) {
+                            f32* n = primitive.vertices[i].normal;
+                            const f32 len = std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+                            if (len > 1e-8f) {
+                                n[0] /= len;
+                                n[1] /= len;
+                                n[2] /= len;
+                            }
+                        }
                     } else {
                         primitive.vertices[i].normal[0] = 0.0f;
                         primitive.vertices[i].normal[1] = 1.0f;

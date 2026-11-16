@@ -279,8 +279,9 @@ void ComputeSkinMatrices(const GltfScene& scene, const GltfAnimation* animation,
 // multiple/non-default scenes. Buffer views using EXT_meshopt_compression
 // are decoded before the accessors are read. Quantization filters apply to
 // ATTRIBUTES only: OCTAHEDRAL (byte stride 4 or 8), QUATERNION (stride 8),
-// EXPONENTIAL (stride a multiple of 4). Octahedral and quaternion data stays
-// normalized integers; exponential data becomes floats.
+// EXPONENTIAL (stride a multiple of 4). An octahedral normal is a VEC3 snorm
+// in that wider slot; the extra component is padding, and the loader stores a
+// unit float. Exponential data is already floats. Quaternion data stays 16-bit.
 [[nodiscard]] bool LoadGltf(const std::string& path, GltfScene& out_scene);
 // As above; on failure `error` (if given) gets the first reason, e.g. a parse error or a missing buffer.
 [[nodiscard]] bool LoadGltf(const std::string& path, GltfScene& out_scene, std::string* error);

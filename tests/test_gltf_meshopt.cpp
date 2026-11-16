@@ -75,7 +75,8 @@ AETHER_TEST(GltfMeshopt_ExponentialPositionsRoundTrip) {
     }
 }
 
-// OCTAHEDRAL stride 4 is 8-bit snorm. The filter rebuilds Z; the accessor is a normalized byte vector.
+// gltfpack writes octahedral normals as VEC3 normalized bytes in a stride-4 slot
+// (16-bit uses stride 8). The fourth component is padding. The loader must rebuild a unit vector.
 AETHER_TEST(GltfMeshopt_OctahedralNormalsRoundTrip) {
     const f32 src[12] = {0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f};
     u8 filtered[3 * 4];
@@ -95,6 +96,13 @@ AETHER_TEST(GltfMeshopt_OctahedralNormalsRoundTrip) {
     AETHER_CHECK(scene.meshes.size() == 1);
     const GltfPrimitive& prim = scene.meshes[0].primitives[0];
     AETHER_CHECK(prim.vertices.size() == 3);
+    auto unit = [](const f32 n[3]) {
+        const f32 len = std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+        return std::fabs(len - 1.0f) < 1e-4f;
+    };
+    AETHER_CHECK(unit(prim.vertices[0].normal));
+    AETHER_CHECK(unit(prim.vertices[1].normal));
+    AETHER_CHECK(unit(prim.vertices[2].normal));
     AETHER_CHECK(Near(prim.vertices[0].normal[2], 1.0f, 0.05f));
     AETHER_CHECK(Near(prim.vertices[1].normal[1], 1.0f, 0.05f));
     AETHER_CHECK(Near(prim.vertices[2].normal[0], 1.0f, 0.05f));
