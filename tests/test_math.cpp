@@ -1,5 +1,6 @@
 #include "aether/math/math.h"
 #include "aether/math/octahedral.h"
+#include "aether/math/vector_quant.h"
 #include "aether/math/world_origin.h"
 #include "test_framework.h"
 
@@ -163,4 +164,94 @@ AETHER_TEST(Octahedral_BestFitBeatsDirectAt8Bit) {
     AETHER_CHECK(direct_max < 1.0f);
     AETHER_CHECK(fit_max < 0.7f);
     AETHER_CHECK(wide_max < 0.01f);
+}
+
+// An 8-bit codebook (256 normals) trained on upward-biased directions beats a
+// uniform book of the same size, and beats 4-bit octahedral, which is also 8 bits.
+// 8-bit octahedral spends 16 bits and is still much finer.
+AETHER_TEST(VectorQuant_TrainedBookBeatsUniformOnBiasedNormals) {
+    auto fib = [](int i, int n, f32 phase) {
+        const f32 golden = 3.14159265f * (3.0f - std::sqrt(5.0f));
+        const f32 y = 1.0f - (static_cast<f32>(i) / static_cast<f32>(n - 1)) * 2.0f;
+        const f32 radius = std::sqrt(std::max(0.0f, 1.0f - y * y));
+        const f32 theta = static_cast<f32>(i) * golden + phase;
+        return Vec3{std::cos(theta) * radius, y, std::sin(theta) * radius};
+    };
+    auto bias = [&](int i, int n, f32 phase) {
+        Vec3 v = fib(i, n, phase);
+        if (v.y < 0.0f) v.y *= 0.25f;
+        return v.Normalized();
+    };
+    constexpr int kTrain = 600;
+    constexpr int kTest = 120;
+    Vec3 train[kTrain];
+    Vec3 test[kTest];
+    for (int i = 0; i < kTrain; ++i) train[i] = bias(i, kTrain, 0.0f);
+    for (int i = 0; i < kTest; ++i) test[i] = bias(i, kTest, 0.7f);
+
+    const VecBook trained = VecBook::TrainNormals(train, kTrain, 256, 4);
+    const VecBook uniform = VecBook::Fibonacci(256);
+    const auto mean_error = [](const VecBook& book, const Vec3* samples, int count) {
+        f32 sum = 0.0f;
+        for (int i = 0; i < count; ++i) {
+            const Vec3 got = book.Decode(book.Encode(samples[i]));
+            const f32 degrees = std::acos(std::clamp(samples[i].Dot(got), -1.0f, 1.0f)) * (180.0f / 3.14159265f);
+            sum += degrees;
+        }
+        return sum / static_cast<f32>(count);
+    };
+    f32 oct4 = 0.0f;
+    f32 oct8 = 0.0f;
+    for (int i = 0; i < kTest; ++i) {
+        const auto degrees = [&](int bits) {
+            const Vec3 got = OctDecode(OctEncodeDirect(test[i], bits), bits);
+            return std::acos(std::clamp(test[i].Dot(got), -1.0f, 1.0f)) * (180.0f / 3.14159265f);
+        };
+        oct4 += degrees(4);
+        oct8 += degrees(8);
+    }
+    oct4 /= kTest;
+    oct8 /= kTest;
+    const f32 trained_mean = mean_error(trained, test, kTest);
+    const f32 uniform_mean = mean_error(uniform, test, kTest);
+    AETHER_CHECK(trained_mean < uniform_mean);
+    AETHER_CHECK(trained_mean < oct4);
+    AETHER_CHECK(oct8 < 1.0f);
+}
+
+// A second book on the residual, 16 + 16 entries, beats stopping after the
+// 16-entry coarse book. Same search shape as one small book, two indexes.
+AETHER_TEST(VectorQuant_ResidualStageCutsNormalError) {
+    auto fib = [](int i, int n, f32 phase) {
+        const f32 golden = 3.14159265f * (3.0f - std::sqrt(5.0f));
+        const f32 y = 1.0f - (static_cast<f32>(i) / static_cast<f32>(n - 1)) * 2.0f;
+        const f32 radius = std::sqrt(std::max(0.0f, 1.0f - y * y));
+        const f32 theta = static_cast<f32>(i) * golden + phase;
+        return Vec3{std::cos(theta) * radius, y, std::sin(theta) * radius};
+    };
+    auto bias = [&](int i, int n, f32 phase) {
+        Vec3 v = fib(i, n, phase);
+        if (v.y < 0.0f) v.y *= 0.25f;
+        return v.Normalized();
+    };
+    constexpr int kTrain = 400;
+    constexpr int kTest = 80;
+    Vec3 train[kTrain];
+    Vec3 test[kTest];
+    for (int i = 0; i < kTrain; ++i) train[i] = bias(i, kTrain, 0.0f);
+    for (int i = 0; i < kTest; ++i) test[i] = bias(i, kTest, 0.7f);
+
+    const VecBook coarse = VecBook::TrainNormals(train, kTrain, 16, 4);
+    const ResidualNormals residual = ResidualNormals::Train(train, kTrain, 16, 16, 4);
+    const auto mean_degrees = [](auto&& decode, const Vec3* samples, int count) {
+        f32 sum = 0.0f;
+        for (int i = 0; i < count; ++i) {
+            const Vec3 got = decode(samples[i]);
+            sum += std::acos(std::clamp(samples[i].Dot(got.Normalized()), -1.0f, 1.0f)) * (180.0f / 3.14159265f);
+        }
+        return sum / static_cast<f32>(count);
+    };
+    const f32 coarse_mean = mean_degrees([&](Vec3 v) { return coarse.Decode(coarse.Encode(v)); }, test, kTest);
+    const f32 residual_mean = mean_degrees([&](Vec3 v) { return residual.Decode(v); }, test, kTest);
+    AETHER_CHECK(residual_mean < coarse_mean * 0.7f);
 }

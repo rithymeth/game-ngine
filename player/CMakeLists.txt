@@ -91,6 +91,13 @@ if(TARGET Aether::Water)
 else()
     target_compile_definitions(aether_game PRIVATE AETHER_KIT_WATER=0)
 endif()
+# The fire genre kit (burning and spreading), when built: the player owns its frame stage.
+if(TARGET Aether::Fire)
+    target_link_libraries(aether_game PRIVATE Aether::Fire)
+    target_compile_definitions(aether_game PUBLIC AETHER_KIT_FIRE=1)
+else()
+    target_compile_definitions(aether_game PUBLIC AETHER_KIT_FIRE=0)
+endif()
 # The checkpoints genre kit (respawn points), when built.
 if(TARGET Aether::Checkpoints)
     target_link_libraries(aether_game PUBLIC Aether::Checkpoints)

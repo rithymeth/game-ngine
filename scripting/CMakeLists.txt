@@ -28,6 +28,7 @@ add_library(aether_scripting STATIC
     src/vehicles_api.cpp
     src/ropes_api.cpp
     src/water_api.cpp
+    src/fire_api.cpp
     src/ai_api.cpp
 )
 
@@ -89,6 +90,12 @@ if(TARGET Aether::Water)
     target_compile_definitions(aether_scripting PRIVATE AETHER_KIT_WATER=1)
 else()
     target_compile_definitions(aether_scripting PRIVATE AETHER_KIT_WATER=0)
+endif()
+if(TARGET Aether::Fire)
+    target_link_libraries(aether_scripting PRIVATE Aether::Fire)
+    target_compile_definitions(aether_scripting PRIVATE AETHER_KIT_FIRE=1)
+else()
+    target_compile_definitions(aether_scripting PRIVATE AETHER_KIT_FIRE=0)
 endif()
 if(TARGET Aether::Checkpoints)
     target_link_libraries(aether_scripting PRIVATE Aether::Checkpoints)

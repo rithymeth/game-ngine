@@ -755,8 +755,19 @@ Not in the Inspector yet:
 - Apply to Prefab per row. It writes and saves the prefab asset, which only the MCP's asset host does today.
 - Restoring removed entities.
 
-Still open: the hierarchy's visibility/lock toggles and type icons, card reordering, and the multi-selection inspector
-screenshot gate.
+Done so far (2026-11-16): type badges and prefab state in the hierarchy. Each row starts with a coloured lettered badge
+for what the entity is: camera, light, model, particles, audio, UI, physics, script, volume, other or empty
+(`ClassifyEntity`). The kind is judged by component type names (`ComponentKind`), so a module's components need no
+hierarchy code; a collider is physics even when its name says mesh, and when several kinds apply the stronger one wins.
+A prefab instance's root and parts are named in the prefab blue, in red when their prefab cannot be found, and an
+entity with overrides of its own carries the Inspector's override bar (`PrefabRowStateOf`). Hovering the badge names
+the kind and the prefab state (`HierarchyRowTooltip`). The badge and name are drawn over the row's single item, so
+selection, drag, the context menu and the row height are unchanged (the multi-drag tests still drive real rows). Tests in
+`tests/test_hierarchy_rows.cpp`: `HierarchyRows_ComponentNamesMapToKinds`, `HierarchyRows_AnEntityIsItsStrongestKind`,
+`HierarchyRows_PrefabStateNamesRootPartsOverridesAndAMissingPrefab` and `ScenePanel_BadgedRowsDrawWithoutEditing`.
+The badges are letters, not pictures: the editor has no icon font yet.
+
+Still open: the hierarchy's visibility/lock toggles, card reordering, and the multi-selection inspector screenshot gate.
 
 Gate: mixed-value semantics tests; edit-across-selection undo test; reset/copy/paste tests; hierarchy filter tests;
 screenshot of a multi-selection inspector.
