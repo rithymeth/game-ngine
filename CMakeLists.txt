@@ -651,6 +651,7 @@ endif()
 
 add_subdirectory(samples/coin_run)
 add_subdirectory(samples/gem_hop)
+add_subdirectory(samples/forest_valley)
 add_subdirectory(samples/beacon_run)
 add_subdirectory(samples/frozen_api_game)
 
