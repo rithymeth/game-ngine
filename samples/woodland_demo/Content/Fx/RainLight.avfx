@@ -1,0 +1,105 @@
+{
+ "name": "RainLight",
+ "version": 1,
+ "emitters": [
+  {
+   "name": "Rain",
+   "duration": 1.0,
+   "looping": true,
+   "max_particles": 6000,
+   "space": "World",
+   "spawn": [
+    {
+     "module": "SpawnRate",
+     "rate": 900.0
+    }
+   ],
+   "init": [
+    {
+     "module": "InitLifetime",
+     "seconds": [
+      1.1,
+      1.5
+     ]
+    },
+    {
+     "module": "InitShape",
+     "shape": "Box",
+     "half_extents": [
+      24.0,
+      0.5,
+      24.0
+     ],
+     "radius": 0.35,
+     "thickness": 1.0
+    },
+    {
+     "module": "InitVelocity",
+     "mode": "Cone",
+     "direction": [
+      0.14,
+      -1.0,
+      0.06
+     ],
+     "cone_angle": 0.03,
+     "speed": [
+      22.0,
+      27.0
+     ]
+    },
+    {
+     "module": "InitSize",
+     "size": [
+      0.01,
+      0.016
+     ]
+    },
+    {
+     "module": "InitColor",
+     "color": {
+      "colors": [
+       [
+        0.78,
+        0.85,
+        1.0,
+        0.3
+       ]
+      ],
+      "alphas": [
+       [
+        0.0,
+        1.0
+       ]
+      ]
+     }
+    }
+   ],
+   "update": [],
+   "render": [
+    {
+     "module": "SpriteRenderer",
+     "material": "",
+     "blend": "Alpha",
+     "sort": "None",
+     "facing": "Velocity",
+     "axis": [
+      0.0,
+      1.0,
+      0.0
+     ],
+     "aspect": 1.0,
+     "stretch": 0.035,
+     "columns": 1,
+     "rows": 1,
+     "frames": 0,
+     "flipbook": "OverLife",
+     "cycles": 1.0,
+     "fps": 10.0,
+     "blend_frames": false,
+     "soft_fade": 0.0,
+     "camera_offset": 0.0
+    }
+   ]
+  }
+ ]
+}
