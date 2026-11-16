@@ -301,7 +301,9 @@ void DrawPlaced(Renderer& r, const std::vector<DrawTri>& tris, Vec3 at, f32 scal
 }
 
 void DrawWorld(const abyss::Game& game, const std::vector<DrawTri>& mesh, const std::vector<DrawTri>& creature_mesh,
-               const std::vector<DrawTri>& rock_mesh, Renderer& r, f32 yaw, f32 pitch, f32 anim) {
+               const std::vector<DrawTri>& rock_mesh, const std::vector<DrawTri>& haven_mesh,
+               const std::vector<DrawTri>& relay_mesh, const std::vector<DrawTri>& cache_mesh, Renderer& r, f32 yaw,
+               f32 pitch, f32 anim) {
     const abyss::Submarine& sub = game.GetSub();
     Vec3 target = sub.position;
     f32 dist = 8.0f;
@@ -381,9 +383,14 @@ void DrawWorld(const abyss::Game& game, const std::vector<DrawTri>& mesh, const 
 
     const abyss::Cache& cache = game.GetCache();
     if (Visible(game, cache.position, 24.0f, 40.0f, 8.0f)) {
-        Color col = cache.taken ? Color{0.2f, 0.22f, 0.24f} : Color{0.95f, 0.78f, 0.25f};
-        r.Box({cache.position.x - 0.6f, cache.position.y, cache.position.z - 0.6f},
-              {cache.position.x + 0.6f, cache.position.y + 1.2f, cache.position.z + 0.6f}, col);
+        if (!cache_mesh.empty()) {
+            DrawPlaced(r, cache_mesh, cache.position, cache.taken ? 0.85f : 1.0f,
+                       cache.taken ? Color{0.35f, 0.35f, 0.38f} : Color{1, 1, 1});
+        } else {
+            Color col = cache.taken ? Color{0.2f, 0.22f, 0.24f} : Color{0.95f, 0.78f, 0.25f};
+            r.Box({cache.position.x - 0.6f, cache.position.y, cache.position.z - 0.6f},
+                  {cache.position.x + 0.6f, cache.position.y + 1.2f, cache.position.z + 0.6f}, col);
+        }
     }
 
     for (const abyss::CreatureAI& creature : game.GetCreatures()) {
@@ -400,12 +407,16 @@ void DrawWorld(const abyss::Game& game, const std::vector<DrawTri>& mesh, const 
     const abyss::Haven& haven = game.GetHaven();
     bool heading_home = game.GetMission() == abyss::Mission::Return;
     if (Visible(game, haven.position, 30.0f, 50.0f, 12.0f)) {
-        Color pad = heading_home ? Color{0.85f, 0.7f, 0.2f} : Color{0.12f, 0.28f, 0.36f};
-        r.Box({haven.position.x - 6.0f, haven.position.y - 0.5f, haven.position.z - 6.0f},
-              {haven.position.x + 6.0f, haven.position.y, haven.position.z + 6.0f}, pad);
-        r.Box({haven.position.x - 0.25f, haven.position.y, haven.position.z - 0.25f},
-              {haven.position.x + 0.25f, haven.position.y + 4.0f, haven.position.z + 0.25f}, {0.2f, 0.45f, 0.55f});
-        r.Gem({haven.position.x, haven.position.y + 4.4f, haven.position.z}, 0.35f, anim, {0.45f, 0.9f, 1.0f});
+        if (!haven_mesh.empty()) {
+            DrawPlaced(r, haven_mesh, haven.position, 1.0f, heading_home ? Color{2.0f, 1.5f, 0.45f} : Color{1, 1, 1});
+        } else {
+            Color pad = heading_home ? Color{0.85f, 0.7f, 0.2f} : Color{0.12f, 0.28f, 0.36f};
+            r.Box({haven.position.x - 6.0f, haven.position.y - 0.5f, haven.position.z - 6.0f},
+                  {haven.position.x + 6.0f, haven.position.y, haven.position.z + 6.0f}, pad);
+            r.Box({haven.position.x - 0.25f, haven.position.y, haven.position.z - 0.25f},
+                  {haven.position.x + 0.25f, haven.position.y + 4.0f, haven.position.z + 0.25f}, {0.2f, 0.45f, 0.55f});
+            r.Gem({haven.position.x, haven.position.y + 4.4f, haven.position.z}, 0.35f, anim, {0.45f, 0.9f, 1.0f});
+        }
     }
 
     if (game.HasContact() && (game.GetMission() == abyss::Mission::Outbound || heading_home)) {
@@ -428,9 +439,13 @@ void DrawWorld(const abyss::Game& game, const std::vector<DrawTri>& mesh, const 
         Color relay_col = relay.restored ? Color{0.35f, 1.0f, 0.75f} : Color{0.45f, 0.55f, 0.62f};
         f32 pulse = relay.restored ? (0.6f + 0.4f * std::sin(anim * 3.0f)) : 1.0f;
         Vec3 rp = relay.position;
-        r.Box({rp.x - 0.4f, rp.y, rp.z - 0.4f}, {rp.x + 0.4f, rp.y + 3.2f, rp.z + 0.4f},
-              {relay_col.r * pulse, relay_col.g * pulse, relay_col.b * pulse});
-        r.Gem({rp.x, rp.y + 3.6f, rp.z}, 0.45f, anim, relay_col);
+        if (!relay_mesh.empty()) {
+            DrawPlaced(r, relay_mesh, rp, 1.0f, {relay_col.r * pulse * 1.6f, relay_col.g * pulse, relay_col.b * pulse});
+        } else {
+            r.Box({rp.x - 0.4f, rp.y, rp.z - 0.4f}, {rp.x + 0.4f, rp.y + 3.2f, rp.z + 0.4f},
+                  {relay_col.r * pulse, relay_col.g * pulse, relay_col.b * pulse});
+            r.Gem({rp.x, rp.y + 3.6f, rp.z}, 0.45f, anim, relay_col);
+        }
     }
 }
 
@@ -505,6 +520,9 @@ int main(int argc, char** argv) {
 
     std::vector<DrawTri> creature_mesh;
     std::vector<DrawTri> rock_mesh;
+    std::vector<DrawTri> haven_mesh;
+    std::vector<DrawTri> relay_mesh;
+    std::vector<DrawTri> cache_mesh;
 #ifdef ABYSS_ASSET_DIR
     auto load_prop = [](const char* name, f32 size) {
         std::string path = std::string(ABYSS_ASSET_DIR) + "/" + name;
@@ -520,6 +538,9 @@ int main(int argc, char** argv) {
     };
     creature_mesh = load_prop("creature.glb", 2.4f);
     rock_mesh = load_prop("rock.glb", 2.0f);
+    haven_mesh = load_prop("haven.glb", 12.0f);
+    relay_mesh = load_prop("relay.glb", 4.2f);
+    cache_mesh = load_prop("cache.glb", 1.4f);
 #endif
     WindowDesc desc;
     desc.title = "Abyss Protocol";
@@ -627,7 +648,7 @@ int main(int argc, char** argv) {
             accumulator -= 1.0f / 60.0f;
         }
 
-        DrawWorld(game, mesh, creature_mesh, rock_mesh, renderer, yaw, pitch, anim);
+        DrawWorld(game, mesh, creature_mesh, rock_mesh, haven_mesh, relay_mesh, cache_mesh, renderer, yaw, pitch, anim);
         std::vector<u32> frame_px = renderer.Pixels();
         DrawHud(game, frame_px, !mesh.empty());
 
