@@ -11,7 +11,6 @@
 #include "aether/math/math.h"
 #include "aether/renderer/components.h"
 #include "aether/terrain/generator.h"
-#include "aether/terrain/scatter.h"
 
 #include <array>
 #include <string>
@@ -52,14 +51,6 @@ ProceduralTerrain ValleyTerrainComponent(u32 seed = kShowcaseSeed);
 
 // Deterministic: the same seed gives the same world on every machine.
 World BuildWorld(u32 seed = kShowcaseSeed);
-
-// The terrain scatter budget for the world (docs/design/FOREST_VALLEY_SHOWCASE.md, asset budget): instance counts by category.
-struct ScatterBudget {
-    u32 trees_min = 800, trees_max = 1500;
-    u32 plants_min = 12000, plants_max = 30000;
-    u32 rocks_min = 500, rocks_max = 1000;
-};
-std::vector<terrain::ScatterRule> ShowcaseScatterRules(const ScatterBudget& budget = {});
 
 // --- The on-foot controller -------------------------------------------------------------------------------------------------------
 

@@ -91,7 +91,10 @@
           "ridge_amount": 0.3,
           "sea_level": 0.04,
           "river_min_catchment": 1500,
-          "hydraulic_droplets": 60000
+          "hydraulic_droplets": 60000,
+          "vegetation": true,
+          "vegetation_density": 1.0,
+          "vegetation_seed": 20260101
         },
         "Transform": {
           "$v": 2,

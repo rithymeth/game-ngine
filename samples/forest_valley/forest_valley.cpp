@@ -213,6 +213,8 @@ ProceduralTerrain ValleyTerrainComponent(u32 seed) {
     t.sea_level = 0.04f;
     t.river_min_catchment = 1500;
     t.hydraulic_droplets = terrain::TerrainGenSettings{}.hydraulic_droplets;
+    t.vegetation = true; // the plants of the asset budget; see player/src/vegetation_batch.h
+    t.vegetation_seed = seed;
     return t;
 }
 
@@ -294,25 +296,6 @@ World BuildWorld(u32 seed) {
     }
     for (usize i = 1; i < world.route.size(); ++i) world.route_length += Dist2D(world.route[i - 1], world.route[i]);
     return world;
-}
-
-std::vector<terrain::ScatterRule> ShowcaseScatterRules(const ScatterBudget& b) {
-    std::vector<terrain::ScatterRule> rules;
-    for (terrain::ScatterRule rule : terrain::DefaultScatterRules()) {
-        const auto share = [](u32 total, f32 f) { return static_cast<u32>(static_cast<f32>(total) * f); };
-        if (rule.name == "Pine") rule.max_instances = share(b.trees_max, 0.7f);
-        else if (rule.name == "Birch") rule.max_instances = share(b.trees_max, 0.3f);
-        else if (rule.name == "Grass") rule.max_instances = share(b.plants_max, 0.8f);
-        else if (rule.name == "Shrub") rule.max_instances = share(b.plants_max, 0.15f);
-        else if (rule.name == "Reeds") rule.max_instances = share(b.plants_max, 0.05f);
-        else if (rule.name == "Boulder") {
-            rule.max_instances = b.rocks_max;
-            rule.density = 2.0f; // the default 0.35 gives a few dozen boulders in this valley, a tenth of the budget
-        }
-        else continue; // the desert and snow rules do not belong in a temperate valley
-        rules.push_back(std::move(rule));
-    }
-    return rules;
 }
 
 Walker::Walker(const World& world, Vec3 start, WalkerConfig config) : world_(&world), config_(config), pos_(start) {

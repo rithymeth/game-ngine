@@ -3492,7 +3492,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
         commands.BeginRenderPass(renderer.swap_chain, kBackground);
     }
     if (draw_sky) renderer.sky->Draw(commands, shadow_view, frame_buffer);
-    if (draw_terrain) renderer.terrain->Draw(commands, terrain_view_projection, terrain_camera_position, terrain_sun_direction, terrain_sun_intensity);
+    if (draw_terrain) renderer.terrain->Draw(commands, terrain_view_projection, terrain_camera_position, terrain_sun_direction, terrain_sun_intensity, static_cast<f32>(game_time));
     if (!opaque_draws.empty()) {
         // Culled draws first, then the two-sided ones: one pipeline switch.
         // (and a material graph's draws together, each graph with its own pipelines)

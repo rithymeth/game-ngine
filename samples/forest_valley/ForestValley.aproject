@@ -3,7 +3,8 @@
   "$v": 1,
   "always_cook": [
     "Scenes/Valley.ascene",
-    "Scenes/Meadow.ascene"
+    "Scenes/Meadow.ascene",
+    "Scenes/Woodland.ascene"
   ],
   "collision_matrix": [],
   "default_quality": "High",

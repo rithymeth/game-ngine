@@ -147,21 +147,44 @@ Reproduce the screenshots (Linux, Mesa's lavapipe; on Windows run the packaged p
         --scene Scenes/Valley.ascene --backend vulkan --frames 12 --size 1280x720 --screenshot valley.bmp
 
 ![The valley from above the overlook](images/forest-valley-overlook.png)
-![The meadow at eye height](images/forest-valley-meadow.png)
+![Among the pines of the woodland](images/forest-valley-woodland.png)
+![The spawn point](images/forest-valley-meadow.png)
 
 Measured on this run (software Vulkan, `RelWithDebInfo`; not a GPU number): the 513 x 513 terrain generates and uploads in
-0.8-0.9 s, 256 chunks, 14.9 MB of vertex and index buffers at the camera's level of detail. The frame rate on lavapipe says
+0.8-0.9 s (256 chunks, 14.9 MB), and the plants add about 0.13 s: 31,986 of them (1,050 pines, 131 birches, 4,500 shrubs,
+24,000 grass tufts, 1,500 reed clumps, 805 boulders) in 978 merged meshes and 38.7 MB. The frame rate on lavapipe says
 nothing about a real GPU and is not recorded.
 
-What the screenshots honestly show: ground, sky, clouds and haze, and little else. It looks flat and soft. Specifically:
+### Vegetation is drawn
 
-- **The terrain neither casts nor receives sun shadows**, and is not in the water reflection.
-- **The layer textures are 64 x 64 generated placeholders**, tiled every 4-8 m, so close ground is blurry. There are no authored
-  albedo or normal maps.
+`ProceduralTerrain::vegetation` scatters plants over the ground by the terrain module's rules (pines and birches on forest
+slopes, shrubs in the gaps, grass between, boulders in clumps, reeds at the water). The counts follow the asset budget above
+(`MakeVegetationRules`: 1,500 trees, 30,000 plants, 1,000 rocks at density 1, times `vegetation_density`), and the test that
+checks the budget uses the same function the player does.
+
+The RHI has no instanced draw, so the plants are **statically batched**: every plant of one kind in one 32 m chunk is merged
+into one mesh on the CPU (`vegetation_batch.h`) and drawn with the ordinary indexed draw (`vegetation_pass.h`), culled by
+the view frustum and by a distance per kind (grass 80 m, reeds 120, shrubs 170, boulders 300, trees 450). Adding an instanced
+draw to both backends would cut the memory but is a bigger change and could not be checked on D3D12 here. A vertex shader
+sways what bends in the wind (tips most, trunks and rocks not at all).
+
+What the plants honestly are: **placeholder procedural shapes**, not art. A pine is a trunk and four cones, a birch a trunk
+and three blobs, grass a fan of seven triangles, a boulder a faceted icosahedron, each with one flat palette colour (three
+shades a kind, picked from where the plant stands). The scene reads as a low-poly forest, not a photographic one.
+
+What the screenshots honestly show: ground, plants, sky, clouds and haze. Specifically:
+
+- **The spawn "meadow" is a pine stand.** The meadow rule accepts forest floor as well as grassland, and nothing keeps plants
+  clear of the spawn point, so the player starts among trees. Nothing collides with the plants yet.
+- **Woodland is sparse.** The budget is 1,181 trees over 512 x 512 m, about one a 220 m^2; "dense woodland" needs a higher
+  density, which the budget would have to allow.
+- **Grass pops in and out** at its 80 m limit; there is no fade.
+- **Nothing here casts or receives sun shadows**, plants included, and the terrain is not in the water reflection.
+- **The layer textures are 64 x 64 generated placeholders**, tiled every 4-8 m, so close ground is blurry.
 - **Rivers are grey scratches, not water**: there is no water surface, and no bridge.
-- **No vegetation, rocks or buildings**: the scatter instances exist (see above) but are not placed or drawn.
+- **No flowers, logs, ferns or buildings** (the plan's meadow and woodland call for them); no ruins, props or interactables.
 - **The sun is only the first DirectionalLight's direction and brightness**, not its colour.
-- The generation runs on the frame a scene first shows the terrain, so that frame stalls for about a second.
+- The generation and scatter run on the frame a scene first shows the terrain, so that frame stalls for about a second.
 
 Not done in Phase 1 so far, and not claimed:
 
