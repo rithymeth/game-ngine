@@ -16,7 +16,9 @@ Underwater exploration / survival mystery for Aether Engine. Stylized 3D, single
 - Win32 software rasterizer (no GPU), same approach as Gem Hop.
 - Pass a `.gltf` or `.glb` and it is centered, scaled to about 4 metres, and drawn on the submarine. Base-color materials are used. Meshes over 4000 triangles are strided down so the software view stays interactive.
 - No model: an orange placeholder hull is drawn instead.
-- **Silent relay**: a mast sits out in the dark. It only comes back if you reach it with sonar off, lights off, and the creature calm. The window title says `RELAY RESTORED` when it answers.
+- **Run**: leave Haven, restore the silent relay (sonar off, lights off, creature calm), then follow the gold marker home. The title says `MISSION COMPLETE`.
+- The creature catching you, or running out of oxygen or battery, fails the run. `R` restarts.
+- A marker floats ahead of the boat: white toward the relay, gold toward Haven.
 
 | Key | Action |
 | --- | --- |
@@ -25,9 +27,10 @@ Underwater exploration / survival mystery for Aether Engine. Stylized 3D, single
 | Mouse or arrows | Look |
 | F | Toggle sonar (the creature hears it) |
 | L | Toggle lights (the view goes dark) |
+| R | Restart |
 | Esc | Quit |
 
-The window title shows depth, battery, sonar, lights, and creature awareness. The HUD bars are battery (gold) and awareness (cyan, red when alerted).
+The window title shows depth, battery, sonar, lights, creature awareness, and the objective. HUD bars are battery (gold), oxygen (blue), and awareness.
 
 ## Build
 
@@ -54,6 +57,6 @@ Check the license before shipping. Prefer CC0.
 
 ## Next
 
-1. Run the window and restore the relay without waking the creature.
+1. Play the run: quiet approach, then home.
 2. Move mesh drawing onto the D3D12 path (`gltf_demo`) so textures and skinning show up.
 3. Turn acoustics into a job-friendly ECS system.

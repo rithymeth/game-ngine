@@ -40,6 +40,12 @@ struct Relay {
     bool restored = false;
 };
 
+enum class Mission { Outbound, Return, Won, Lost };
+
+struct Haven {
+    aether::Vec3 position{0.0f, -15.0f, 0.0f};
+};
+
 struct Submarine {
     aether::Vec3 position{0.0f, -15.0f, 0.0f};
     aether::Vec3 velocity{0.0f, 0.0f, 0.0f};
@@ -69,6 +75,7 @@ public:
     void SetSonar(bool active);
     void SetLights(bool on);
     void ApplyThrust(const aether::Vec3& thrust);
+    void Restart();
 
     // Load a glTF/GLB and store a summary (does not yet upload to GPU).
     bool LoadModel(const std::string& path, ModelInfo& out_info);
@@ -76,6 +83,10 @@ public:
     const Submarine& GetSub() const { return sub_; }
     const CreatureAI& GetCreature() const { return creature_; }
     const Relay& GetRelay() const { return relay_; }
+    const Haven& GetHaven() const { return haven_; }
+    Mission GetMission() const { return mission_; }
+    aether::Vec3 Objective() const;
+    float Time() const { return time_; }
     const std::vector<AcousticEvent>& GetEvents() const { return events_; }
     std::string StatusText() const;
 
@@ -84,11 +95,16 @@ private:
     void UpdateCreature(float dt);
     void UpdatePressure(float dt);
     void UpdateRelay();
+    void UpdateMission();
 
     aether::World world_;
     Submarine sub_;
     CreatureAI creature_;
     Relay relay_;
+    Haven haven_;
+    Mission mission_ = Mission::Outbound;
+    float time_ = 0.0f;
+    std::string fail_;
     std::vector<AcousticEvent> events_;
     std::optional<aether::assets::GltfScene> loaded_scene_;
 };

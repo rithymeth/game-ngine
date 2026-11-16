@@ -14,7 +14,17 @@ float Distance(const aether::Vec3& a, const aether::Vec3& b) {
 }
 }  // namespace
 
-Game::Game() {
+Game::Game() { Restart(); }
+
+void Game::Restart() {
+    sub_ = {};
+    creature_ = {};
+    relay_ = {};
+    haven_ = {};
+    events_.clear();
+    mission_ = Mission::Outbound;
+    time_ = 0.0f;
+    fail_.clear();
     creature_.position = {25.0f, -20.0f, 10.0f};
     creature_.home = creature_.position;
 }
@@ -161,6 +171,12 @@ void Game::UpdatePressure(float dt) {
 }
 
 void Game::Step(float dt) {
+    time_ += dt;
+    if (mission_ == Mission::Won || mission_ == Mission::Lost) {
+        sub_.velocity = {0.0f, 0.0f, 0.0f};
+        return;
+    }
+
     sub_.position.x += sub_.velocity.x * dt;
     sub_.position.y += sub_.velocity.y * dt;
     sub_.position.z += sub_.velocity.z * dt;
@@ -172,6 +188,33 @@ void Game::Step(float dt) {
     UpdateCreature(dt);
     UpdatePressure(dt);
     UpdateRelay();
+    UpdateMission();
+}
+
+aether::Vec3 Game::Objective() const {
+    if (mission_ == Mission::Return || mission_ == Mission::Won) return haven_.position;
+    return relay_.position;
+}
+
+void Game::UpdateMission() {
+    float creature_dist = Distance(sub_.position, creature_.position);
+    if (creature_.is_alerted && creature_dist < 4.0f) {
+        mission_ = Mission::Lost;
+        fail_ = "caught";
+        return;
+    }
+    if (sub_.oxygen <= 0.0f) {
+        mission_ = Mission::Lost;
+        fail_ = "oxygen";
+        return;
+    }
+    if (sub_.battery <= 0.0f) {
+        mission_ = Mission::Lost;
+        fail_ = "battery";
+        return;
+    }
+    if (mission_ == Mission::Outbound && relay_.restored) mission_ = Mission::Return;
+    if (mission_ == Mission::Return && Distance(sub_.position, haven_.position) < 8.0f) mission_ = Mission::Won;
 }
 
 void Game::UpdateRelay() {
@@ -190,8 +233,11 @@ std::string Game::StatusText() const {
         << "  Sonar: " << (sub_.sonar_active ? "ON" : "off")
         << "  Lights: " << (sub_.lights_on ? "ON" : "off")
         << "  Creature awareness: " << int(creature_.awareness * 100) << "%"
-        << (creature_.is_alerted ? "  [ALERT]" : "")
-        << (relay_.restored ? "  RELAY RESTORED" : "  Relay: silent");
+        << (creature_.is_alerted ? "  [ALERT]" : "");
+    if (mission_ == Mission::Won) oss << "  MISSION COMPLETE  " << int(time_) << "s";
+    else if (mission_ == Mission::Lost) oss << "  FAILED: " << fail_ << "  (R retry)";
+    else if (mission_ == Mission::Return) oss << "  Return to Haven";
+    else oss << "  Relay: silent";
     return oss.str();
 }
 

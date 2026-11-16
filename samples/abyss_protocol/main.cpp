@@ -334,6 +334,23 @@ void DrawWorld(const abyss::Game& game, const std::vector<DrawTri>& mesh, Render
     Color creature_col = creature.is_alerted ? Color{1.0f, 0.25f, 0.2f} : Color{0.25f, 0.85f, 1.0f};
     r.Gem(creature.position, creature.is_alerted ? 1.1f : 0.8f, anim * 1.5f, creature_col);
 
+    const abyss::Haven& haven = game.GetHaven();
+    bool heading_home = game.GetMission() == abyss::Mission::Return;
+    Color pad = heading_home ? Color{0.85f, 0.7f, 0.2f} : Color{0.12f, 0.28f, 0.36f};
+    r.Box({haven.position.x - 6.0f, haven.position.y - 0.5f, haven.position.z - 6.0f},
+          {haven.position.x + 6.0f, haven.position.y, haven.position.z + 6.0f}, pad);
+
+    if (game.GetMission() == abyss::Mission::Outbound || heading_home) {
+        Vec3 goal = game.Objective();
+        Vec3 delta{goal.x - sub.position.x, goal.y - sub.position.y, goal.z - sub.position.z};
+        f32 len = std::sqrt(delta.x * delta.x + delta.y * delta.y + delta.z * delta.z);
+        if (len > 10.0f) {
+            Vec3 tip{sub.position.x + delta.x / len * 8.0f, sub.position.y + delta.y / len * 8.0f + 1.4f,
+                     sub.position.z + delta.z / len * 8.0f};
+            r.Gem(tip, 0.32f, anim * 4.0f, heading_home ? Color{1.0f, 0.85f, 0.25f} : Color{0.85f, 0.95f, 1.0f});
+        }
+    }
+
     const abyss::Relay& relay = game.GetRelay();
     Color relay_col = relay.restored ? Color{0.35f, 1.0f, 0.75f} : Color{0.18f, 0.22f, 0.28f};
     f32 pulse = relay.restored ? (0.6f + 0.4f * std::sin(anim * 3.0f)) : 1.0f;
@@ -345,15 +362,15 @@ void DrawWorld(const abyss::Game& game, const std::vector<DrawTri>& mesh, Render
 
 void DrawHud(const abyss::Game& game, std::vector<u32>& px, bool has_mesh) {
     const abyss::Submarine& sub = game.GetSub();
-    FillRect(px, 0, 0, kW, 36, Rgb(0.02f, 0.04f, 0.06f));
-    DrawBar(px, 16, 8, sub.battery, Rgb(0.95f, 0.75f, 0.2f));
-    DrawBar(px, 16, 20, game.GetCreature().awareness, game.GetCreature().is_alerted ? Rgb(1, 0.3f, 0.2f) : Rgb(0.3f, 0.85f, 1));
-    if (sub.sonar_active) FillRect(px, 200, 8, 14, 22, Rgb(0.3f, 0.95f, 0.85f));
-    if (sub.lights_on) FillRect(px, 220, 8, 14, 22, Rgb(1.0f, 0.9f, 0.4f));
-    if (has_mesh) FillRect(px, 240, 8, 14, 22, Rgb(0.9f, 0.45f, 0.15f));
-    if (game.GetRelay().restored) {
-        FillRect(px, 0, kH / 2 - 18, kW, 36, Rgb(0.08f, 0.22f, 0.18f));
-    }
+    FillRect(px, 0, 0, kW, 48, Rgb(0.02f, 0.04f, 0.06f));
+    DrawBar(px, 16, 6, sub.battery, Rgb(0.95f, 0.75f, 0.2f));
+    DrawBar(px, 16, 18, sub.oxygen, Rgb(0.45f, 0.75f, 0.95f));
+    DrawBar(px, 16, 30, game.GetCreature().awareness, game.GetCreature().is_alerted ? Rgb(1, 0.3f, 0.2f) : Rgb(0.3f, 0.85f, 1));
+    if (sub.sonar_active) FillRect(px, 200, 8, 14, 32, Rgb(0.3f, 0.95f, 0.85f));
+    if (sub.lights_on) FillRect(px, 220, 8, 14, 32, Rgb(1.0f, 0.9f, 0.4f));
+    if (has_mesh) FillRect(px, 240, 8, 14, 32, Rgb(0.9f, 0.45f, 0.15f));
+    if (game.GetMission() == abyss::Mission::Won) FillRect(px, 0, kH / 2 - 18, kW, 36, Rgb(0.08f, 0.28f, 0.16f));
+    if (game.GetMission() == abyss::Mission::Lost) FillRect(px, 0, kH / 2 - 18, kW, 36, Rgb(0.32f, 0.06f, 0.06f));
 }
 
 void SaveBmp(const char* path, const std::vector<u32>& px) {
@@ -428,6 +445,7 @@ int main(int argc, char** argv) {
     bool cursor_hidden = false;
     bool prev_sonar = false;
     bool prev_lights = false;
+    bool prev_restart = false;
     bool sonar = false;
     bool lights = true;
     i64 frame = 0;
@@ -475,6 +493,13 @@ int main(int argc, char** argv) {
             bool light_key = Down('L');
             if (light_key && !prev_lights) lights = !lights;
             prev_lights = light_key;
+            bool restart = Down('R');
+            if (restart && !prev_restart) {
+                game.Restart();
+                sonar = false;
+                lights = true;
+            }
+            prev_restart = restart;
         } else {
             mouse_ready = false;
             if (cursor_hidden) {
