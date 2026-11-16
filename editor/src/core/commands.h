@@ -257,6 +257,23 @@ private:
     bool active_ = false;
 };
 
+// Turns one entity on or off (the Active component). Undo restores exactly what was there, including "no Active
+// component at all", which is what a newly made entity has.
+class SetEntityActiveCommand final : public ICommand {
+public:
+    SetEntityActiveCommand(EntityGuid entity, bool active);
+    void Do(CommandContext& ctx) override;
+    void Undo(CommandContext& ctx) override;
+    std::string Label() const override;
+    bool ComponentEditTarget(EntityGuid& entity, ComponentId& component) const override;
+
+private:
+    EntityGuid entity_;
+    bool active_ = true;
+    bool had_component_ = false;
+    bool was_active_ = true;
+};
+
 // Phase 42.6: expanding a level instance places a whole scene, which is one edit and must be undoable as
 // one. The caller loads the scene into prefab data (that needs a file system, which a command has no
 // business owning); this places it and, on undo, destroys exactly what the instantiation reported it

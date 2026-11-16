@@ -767,7 +767,23 @@ selection, drag, the context menu and the row height are unchanged (the multi-dr
 `HierarchyRows_PrefabStateNamesRootPartsOverridesAndAMissingPrefab` and `ScenePanel_BadgedRowsDrawWithoutEditing`.
 The badges are letters, not pictures: the editor has no icon font yet.
 
-Still open: the hierarchy's visibility/lock toggles, card reordering, and the multi-selection inspector screenshot gate.
+Done so far (2026-11-16): the hierarchy's eye and lock. Every row ends with an eye and a lock. The eye shows and hides
+the row's entity — the whole set when the row is part of the selection — through the engine's Active component
+(`SceneDocument::SetActive`, `SetEntityActiveCommand`), so hiding is saved with the scene, inherited down the tree, one
+undo step for the whole set, and honored everywhere Active already is: the render scene, picking, marquee and update.
+The viewport also leaves a hidden entity out of its selection outline and the gizmo's subjects.
+Undo restores exactly what was there, including "no Active component at all". A hidden entity's own row is dimmed; a
+row hidden by an ancestor still shows its own (active) eye and says so in the tooltip. The lock is editor-only
+(`SceneDocument::SetLocked`): the viewport does not pick, marquee-select or move a locked entity, or include it in the
+gizmo's Subjects, while the hierarchy still selects, renames and edits it. It is not saved, not undoable and cleared
+with the scene, which is stated in `EDITOR_UI.md`. Both are also on the row menu (Hide/Show, Lock/Unlock) for the whole
+selection. Tests in `tests/test_hierarchy_visibility.cpp`: `HierarchyVisibility_HidingIsTheActiveFlagAndUndoesExactly`,
+`HierarchyVisibility_PanelHidesASetAsOneStepAndLocksWithoutUndo`,
+`HierarchyVisibility_HiddenEntitiesLeaveTheRenderScene`,
+`HierarchyVisibility_HiddenAndLockedEntitiesAreNotPickedOrMoved` and
+`ScenePanel_HiddenAndLockedRowsDrawWithoutEditing`.
+
+Still open: card reordering, and the multi-selection inspector screenshot gate.
 
 Gate: mixed-value semantics tests; edit-across-selection undo test; reset/copy/paste tests; hierarchy filter tests;
 screenshot of a multi-selection inspector.

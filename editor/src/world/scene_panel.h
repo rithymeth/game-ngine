@@ -157,6 +157,15 @@ public:
     // The hierarchy filter (the grammar above). Kept across scenes; empty shows the whole tree.
     void SetHierarchyFilter(std::string text) { filter_ = std::move(text); }
     const std::string& HierarchyFilter() const { return filter_; }
+    // The eye and the lock on a hierarchy row, also on the row menu. Hiding sets the engine's Active flag (one undo step
+    // for the whole set; a hidden entity is not drawn, picked or updated, and neither is anything under it). Locking is
+    // editor-only and records no undo step: the viewport will not pick or move a locked entity.
+    usize SetHidden(std::span<const Entity> entities, bool hidden);
+    bool SetHidden(Entity entity, bool hidden) { return SetHidden(std::span<const Entity>(&entity, 1), hidden) != 0; }
+    usize SetLocked(std::span<const Entity> entities, bool locked);
+    bool SetLocked(Entity entity, bool locked) { return SetLocked(std::span<const Entity>(&entity, 1), locked) != 0; }
+    bool IsHidden(Entity entity) const { return document_.IsHidden(entity); }
+    bool IsLocked(Entity entity) const { return document_.IsLocked(entity); }
 
 private:
     enum class Pending : u8 { None, New, Open };

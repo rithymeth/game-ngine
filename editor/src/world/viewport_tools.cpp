@@ -259,7 +259,7 @@ void ViewportTools::DrawSelectionOutlines(ImDrawList* draw, const SceneDocument&
         label(under_mouse, Color(255, 255, 255));
     }
     for (const Entity entity : document.Selection()) {
-        if (!world.IsAlive(entity) || !world.HasComponent<Transform>(entity)) continue;
+        if (!world.IsAlive(entity) || !world.HasComponent<Transform>(entity) || document.IsHidden(entity)) continue;
         Vec3 shift(0.0f, 0.0f, 0.0f);
         Vec3 live;
         if (live_position && live_position(entity, live)) shift = live - OriginOf(document, entity);

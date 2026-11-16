@@ -29,6 +29,11 @@ Vec3 WorldOrigin(const SceneDocument& document, Entity entity) {
 
 ImU32 Color(int r, int g, int b, int a = 255) { return IM_COL32(r, g, b, a); }
 
+// What the viewport can pick: not hidden (an inactive entity, or one under an inactive ancestor) and not locked.
+bool Pickable(const SceneDocument& document, Entity entity) {
+    return !document.IsHidden(entity) && !document.IsLocked(entity);
+}
+
 } // namespace
 
 Vec3 SceneViewCamera::Eye() const {
@@ -268,6 +273,7 @@ Entity PickEntity(const SceneDocument& document, const SceneViewCamera& camera, 
         for (const Entity entity : document.Entities()) {
             const ModelRenderer* renderer = document.GetWorld().GetComponent<ModelRenderer>(entity);
             if (!renderer || renderer->asset_path[0] == '\0' || !document.GetWorld().HasComponent<Transform>(entity)) continue;
+            if (!Pickable(document, entity)) continue;
             LocalBounds known;
             if (!bounds->Get(renderer->asset_path, known)) continue; // no box for it: found by its origin below
             f32 distance = 0.0f;
@@ -285,7 +291,7 @@ Entity PickEntity(const SceneDocument& document, const SceneViewCamera& camera, 
     Entity best = kNullEntity;
     f32 best_distance = radius, best_depth = std::numeric_limits<f32>::max();
     for (const Entity entity : document.Entities()) {
-        if (!document.GetWorld().HasComponent<Transform>(entity)) continue;
+        if (!document.GetWorld().HasComponent<Transform>(entity) || !Pickable(document, entity)) continue;
         ImVec2 at;
         f32 depth = 0.0f;
         if (!ProjectToViewport(vp, WorldOrigin(document, entity), origin, size, at, &depth)) continue;
@@ -315,7 +321,7 @@ std::vector<Entity> PickEntities(const SceneDocument& document, const SceneViewC
     const Mat4 vp = camera.ViewProjection(size.x / size.y);
     std::vector<std::pair<f32, Entity>> found; // distance along the ray, entity
     for (const Entity entity : document.Entities()) {
-        if (!document.GetWorld().HasComponent<Transform>(entity)) continue;
+        if (!document.GetWorld().HasComponent<Transform>(entity) || !Pickable(document, entity)) continue;
         bool hit = false;
         f32 distance = 0.0f;
         if (bounds && have_ray) {
@@ -385,7 +391,7 @@ std::vector<Entity> EntitiesInRectangle(const SceneDocument& document, const Sce
     const ImVec2 rect_high(std::max(first.x, second.x), std::max(first.y, second.y));
     const Mat4 vp = camera.ViewProjection(size.x / size.y);
     for (const Entity entity : document.Entities()) {
-        if (!document.GetWorld().HasComponent<Transform>(entity)) continue;
+        if (!document.GetWorld().HasComponent<Transform>(entity) || !Pickable(document, entity)) continue;
         ImVec2 low, high;
         if (!ScreenBox(document, entity, EntityBounds(document, entity, bounds), vp, origin, size, low, high)) continue;
         if (low.x > rect_high.x || high.x < rect_low.x || low.y > rect_high.y || high.y < rect_low.y) continue;
@@ -559,7 +565,9 @@ void TransformGizmo::PlaneCorners(const SceneDocument& document, Entity subject,
 
 std::vector<Entity> TransformGizmo::Subjects(const SceneDocument& document) {
     const World& world = document.GetWorld();
-    auto movable = [&](Entity e) { return world.IsAlive(e) && world.HasComponent<Transform>(e); };
+    auto movable = [&](Entity e) {
+        return world.IsAlive(e) && world.HasComponent<Transform>(e) && !document.IsLocked(e) && !document.IsHidden(e);
+    };
     std::vector<Entity> out;
     for (const Entity entity : document.Selection()) {
         if (!movable(entity) || std::find(out.begin(), out.end(), entity) != out.end()) continue;

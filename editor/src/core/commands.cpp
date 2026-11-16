@@ -546,6 +546,49 @@ std::string SetDataLayerActiveCommand::Label() const {
     return std::string(active_ ? "Show " : "Hide ") + layer_ + " layer";
 }
 
+SetEntityActiveCommand::SetEntityActiveCommand(EntityGuid entity, bool active) : entity_(entity), active_(active) {}
+
+void SetEntityActiveCommand::Do(CommandContext& ctx) {
+    const Entity entity = ctx.guids.Find(ctx.world, entity_);
+    if (entity.IsNull()) return;
+    Active* current = ctx.world.GetComponent<Active>(entity);
+    if (current == nullptr) {
+        had_component_ = false;
+        was_active_ = true; // an entity without the component is active
+        ctx.world.AddComponent(entity, Active{active_});
+        if (ctx.hooks != nullptr && ctx.hooks->on_component_added) ctx.hooks->on_component_added(entity, GetComponentId<Active>());
+        return;
+    }
+    was_active_ = current->active;
+    had_component_ = true;
+    current->active = active_;
+}
+
+void SetEntityActiveCommand::Undo(CommandContext& ctx) {
+    const Entity entity = ctx.guids.Find(ctx.world, entity_);
+    if (entity.IsNull()) return;
+    if (!had_component_) {
+        if (ctx.hooks != nullptr && ctx.hooks->on_component_removing) ctx.hooks->on_component_removing(entity, GetComponentId<Active>());
+        ctx.world.RemoveComponent<Active>(entity);
+        return;
+    }
+    Active* current = ctx.world.GetComponent<Active>(entity);
+    if (current == nullptr) {
+        ctx.world.AddComponent(entity, Active{was_active_});
+        if (ctx.hooks != nullptr && ctx.hooks->on_component_added) ctx.hooks->on_component_added(entity, GetComponentId<Active>());
+    } else {
+        current->active = was_active_;
+    }
+}
+
+std::string SetEntityActiveCommand::Label() const { return active_ ? "Show entity" : "Hide entity"; }
+
+bool SetEntityActiveCommand::ComponentEditTarget(EntityGuid& entity, ComponentId& component) const {
+    entity = entity_;
+    component = GetComponentId<Active>();
+    return true;
+}
+
 // ---------------------------------------------------------------- level instances (Phase 42.6)
 
 std::unique_ptr<ICommand> ExpandLevelInstanceCommand::Make(const CommandContext& ctx, const EntityGuid& instance,

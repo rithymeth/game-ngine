@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace aether::editor {
@@ -90,6 +91,16 @@ public:
     // Renames every selected entity to `name`: one undo step for the whole selection, merging while `committed` is
     // false so typing a name is one step too. Returns how many entities get a different name.
     usize RenameSelection(const std::string& name, bool committed = true);
+    // Visibility is the engine's Active component: a hidden entity and everything under it is not drawn, not picked and
+    // gets no update. Hidden is `!IsActiveInHierarchy`; one undo step, saved with the scene.
+    bool IsActive(Entity entity) const; // its own flag (an entity with no Active component is active)
+    bool IsHidden(Entity entity) const; // itself, or an ancestor, is inactive
+    bool SetActive(Entity entity, bool active); // false when that changes nothing
+    // Locking is editor-only: the viewport does not pick, marquee-select or move a locked entity. It can still be
+    // selected in the hierarchy and edited in the Inspector. Not saved, not undoable, and cleared with the scene.
+    bool IsLocked(EntityGuid guid) const { return locked_.count(guid) != 0; }
+    bool IsLocked(Entity entity) const;
+    void SetLocked(Entity entity, bool locked);
     Entity CreateEntity(const std::string& name, SceneEntityKind kind = SceneEntityKind::Empty,
                         const std::string& model_asset_path = {}, Entity parent = kNullEntity);
     Entity DuplicateEntity(Entity entity, const Vec3& offset = Vec3{1.0f, 0.0f, 1.0f});
@@ -128,6 +139,7 @@ private:
     Vec3d origin_;
     std::vector<Entity> selection_; // Phase 43.3: multi-selection, not an undoable edit
     std::vector<EntityGuid> play_selection_; // authored selection, captured once on entry to Play; handles do not survive Stop
+    std::unordered_set<EntityGuid> locked_; // editor-only: not picked or moved in the viewport
     std::vector<EntitySnapshot> clipboard_; // Phase 43.3: snapshots, so paste outlives the originals
     CommandStack commands_;
     CommandContext context_;
