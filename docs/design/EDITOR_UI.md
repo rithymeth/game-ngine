@@ -606,6 +606,15 @@ An override the prefab no longer has a place for is listed as "no longer in the 
 component's declared name, even when that type is not registered any more. Apply to Prefab and restoring removed
 entities are not in the Inspector yet.
 
+Implemented: the **header**, where the concept puts the entity's identity. The selection's name is the panel's title,
+drawn a third larger and framed only while hovered; it is the rename field (`##inspector_title`), so clicking it edits
+the name in place with the same merged undo step as before. Under it, muted, is what the entity is: its kind from the
+components (`EntityKindName(ClassifyEntity)` — the word the hierarchy badge uses), "Blueprint instance" for an entity of
+a prefab instance, and its first tag after a middle dot, as in "Blueprint instance · Gameplay". With several entities
+the title is "N entities" over "Multiple selection", and the shared Name box stays below the search. The title and
+subtitle rectangles are reported (`ScenePanel::LastInspectorHeader`) so a test checks the stack and the wording
+(`ScenePanel_TheInspectorLeadsWithTheEntitysNameAndKind`). Not yet: the header's tag and layer dropdowns.
+
 Implemented: a **Search properties** box at the top of the Inspector (`ScenePanel::SetPropertySearch`,
 `property_search_`). It matches a top-level field when the field's name or its component's name contains the text
 without regard to case (an empty box shows everything), so "range" finds `Weapon.range` and "Weapon" shows that

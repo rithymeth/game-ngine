@@ -183,6 +183,19 @@ public:
     };
     const Layout& LastLayout() const { return layout_; }
 
+    // The Inspector's header, as the concept draws it ("BP_Player" over "Blueprint instance · Gameplay"): the
+    // selection's name as the title -- the rename field itself, for a single entity -- and what it is under it: the
+    // entity's kind from its components (the hierarchy badge's name), a prefab instance as "Blueprint instance", and
+    // its first tag after a middle dot. With several entities: "N entities" over "Multiple selection".
+    struct InspectorHeader {
+        std::string title;
+        std::string subtitle;
+        ImVec2 title_min{}, title_max{};
+        ImVec2 subtitle_min{}, subtitle_max{};
+        bool editable = false; // the title is the name field, for a single selection
+    };
+    const InspectorHeader& LastInspectorHeader() const { return inspector_header_; }
+
 private:
     enum class Pending : u8 { None, New, Open };
 
@@ -196,6 +209,7 @@ private:
     void DrawEntityMenu(Entity entity);
     void DrawCreateMenu(Entity parent);
     void DrawInspector();
+    void DrawInspectorHeader(std::span<const Entity> shown);
     void DrawDiscardPrompt();
     void Select(Entity entity, bool additive);
 
@@ -204,6 +218,7 @@ private:
     FileDialog* dialog_ = nullptr;
     SceneViewPanel* view_ = nullptr;
     Layout layout_;
+    InspectorHeader inspector_header_;
     std::filesystem::path content_root_;
     ModelBoundsCache bounds_;
     RecentScenes recent_scenes_;

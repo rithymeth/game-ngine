@@ -578,6 +578,15 @@ scene is saved and amber while it has changes, then "World saved" or "Unsaved ch
 (`EditorWorkspace_BreadcrumbNamesTheProjectAndTheOpenScene`). A narrow window drops the strip's right end rather than
 drawing it over the tabs.
 
+Done so far (2026-11-17): the Inspector's heading from the concept -- "BP_Player" over "Blueprint instance · Gameplay".
+`ScenePanel::DrawInspector` now leads with the selection's name as a large title that is itself the rename field
+(clicking it edits the name, still one merged undo step), and a muted subtitle under it: the entity's kind
+(`EntityKindName(ClassifyEntity)`, the hierarchy badge's word), "Blueprint instance" for a prefab instance, and its first
+tag after a middle dot. Several entities read "N entities" over "Multiple selection" and keep the shared Name box.
+`ScenePanel::LastInspectorHeader` reports the wording and the two rectangles;
+`ScenePanel_TheInspectorLeadsWithTheEntitysNameAndKind` checks the stack, the kind word, the tag and the multi-selection
+form. The header's tag and layer dropdowns from the concept's list are not implemented.
+
 ### Stage 3 — Content browser and importer parity (L)
 
 Outcome: assets can be found, judged, imported, fixed and opened without leaving the editor.

@@ -931,6 +931,38 @@ AETHER_TEST(SceneView_ThePictureOwnsItsControls) {
     AETHER_CHECK(document.Selection().size() == 1 && document.Selection().front() == a);
 }
 
+// The Inspector's heading, as the concept draws it: the entity's name over what it is. The title is the rename field,
+// the subtitle names the kind (the hierarchy badge's word) and the first tag, and several entities get their count.
+AETHER_TEST(ScenePanel_TheInspectorLeadsWithTheEntitysNameAndKind) {
+    HeadlessImGui imgui;
+    ScenePanel panel;
+    SceneDocument& document = panel.Document();
+    const Entity player = document.CreateEntity("BP_Player");
+    document.GetWorld().AddComponent<Tags>(player, Tags{{"Gameplay"}});
+    document.SetSelection({player});
+    for (int frame = 0; frame < 2; ++frame) imgui.Frame([&] { panel.Draw(); });
+    const ScenePanel::InspectorHeader header = panel.LastInspectorHeader();
+    AETHER_CHECK(header.title == "BP_Player");
+    AETHER_CHECK(header.subtitle == "Empty · Gameplay"); // nothing but a name and a tag: the hierarchy's word for it
+    AETHER_CHECK(header.editable);
+    AETHER_CHECK(header.title_max.x > header.title_min.x);
+    AETHER_CHECK(header.subtitle_min.y >= header.title_max.y); // under the title, as the concept stacks them
+    const ScenePanel::Layout layout = panel.LastLayout();
+    AETHER_CHECK(header.title_min.x >= layout.inspector_min.x && header.title_max.x <= layout.inspector_max.x);
+
+    // A model says what the entity is; several entities get their count instead of a name.
+    document.GetWorld().AddComponent<ModelRenderer>(player);
+    imgui.Frame([&] { panel.Draw(); });
+    AETHER_CHECK(panel.LastInspectorHeader().subtitle == "Model · Gameplay");
+    const Entity other = document.CreateEntity("Crate");
+    document.SetSelection({player, other});
+    imgui.Frame([&] { panel.Draw(); });
+    const ScenePanel::InspectorHeader many = panel.LastInspectorHeader();
+    AETHER_CHECK(many.title == "2 entities");
+    AETHER_CHECK(many.subtitle == "Multiple selection");
+    AETHER_CHECK(!many.editable);
+}
+
 // The level editor the concept draws: the hierarchy, the viewport and the Inspector side by side, the picture between the
 // two side columns and taking most of the width. Without a view (the panel on its own) the two-pane layout stays.
 AETHER_TEST(ScenePanel_TheViewportSitsBetweenHierarchyAndInspector) {

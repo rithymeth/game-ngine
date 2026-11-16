@@ -8,6 +8,7 @@
 #include "world/scene_view_panel.h"
 
 #include "aether/core/log.h"
+#include "aether/scene/gameplay.h"
 
 #include <imgui.h>
 #include <misc/cpp/imgui_stdlib.h>
@@ -951,13 +952,63 @@ void ScenePanel::DrawHierarchy() {
         commands_->RunPressedChord(CommandScope::SceneTree);
 }
 
+// The Inspector's heading, where the concept puts the entity's identity: the name as the title (the rename field, so
+// clicking it edits it) and what the entity is under it -- its kind, "Blueprint instance" for a prefab instance, and the
+// first tag. Several entities get their count instead; the shared name stays the row below.
+void ScenePanel::DrawInspectorHeader(std::span<const Entity> shown) {
+    inspector_header_ = InspectorHeader{};
+    if (shown.empty()) return;
+    if (shown.size() == 1) {
+        const Entity entity = shown.front();
+        const World& world = document_.GetWorld();
+        inspector_header_.title = document_.Name(entity);
+        const PrefabRowState prefab = PrefabRowStateOf(world, document_.Guids(), document_.Context().find_prefab, entity);
+        std::string subtitle =
+            prefab.role != PrefabRowState::Role::None ? "Blueprint instance" : EntityKindName(ClassifyEntity(world, entity));
+        if (const Tags* tags = world.GetComponent<Tags>(entity); tags != nullptr && !tags->names.empty())
+            subtitle += " · " + tags->names.front();
+        inspector_header_.subtitle = std::move(subtitle);
+        inspector_header_.editable = true;
+
+        ImGui::PushFont(ImGui::GetFont(), ImGui::GetFontSize() * 1.3f);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(3.0f, 4.0f));
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+        ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(1.0f, 1.0f, 1.0f, 0.05f));
+        ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(1.0f, 1.0f, 1.0f, 0.08f));
+        char name[128];
+        std::snprintf(name, sizeof(name), "%s", inspector_header_.title.c_str());
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        if (ImGui::InputText("##inspector_title", name, sizeof(name))) document_.Rename(entity, name, false);
+        if (ImGui::IsItemDeactivatedAfterEdit()) document_.Rename(entity, name, true);
+        if (ImGui::IsItemHovered() && !ImGui::IsItemActive()) ImGui::SetTooltip("Click to rename");
+        inspector_header_.title_min = ImGui::GetItemRectMin();
+        inspector_header_.title_max = ImGui::GetItemRectMax();
+        ImGui::PopStyleColor(3);
+        ImGui::PopStyleVar();
+        ImGui::PopFont();
+    } else {
+        inspector_header_.title = std::to_string(shown.size()) + " entities";
+        inspector_header_.subtitle = "Multiple selection";
+        ImGui::PushFont(ImGui::GetFont(), ImGui::GetFontSize() * 1.3f);
+        ImGui::TextUnformatted(inspector_header_.title.c_str());
+        inspector_header_.title_min = ImGui::GetItemRectMin();
+        inspector_header_.title_max = ImGui::GetItemRectMax();
+        ImGui::PopFont();
+    }
+    ImGui::TextDisabled("%s", inspector_header_.subtitle.c_str());
+    inspector_header_.subtitle_min = ImGui::GetItemRectMin();
+    inspector_header_.subtitle_max = ImGui::GetItemRectMax();
+    ImGui::Separator();
+}
+
 void ScenePanel::DrawInspector() {
-    ImGui::SetNextItemWidth(-FLT_MIN);
-    ImGui::InputTextWithHint("##property_search", "Search properties", &property_search_);
-    if (!property_search_.empty()) ImGui::SetItemTooltip("Only properties whose name or component matches are shown");
     std::vector<Entity> shown;
     for (const Entity entity : document_.Selection())
         if (document_.GetWorld().IsAlive(entity)) shown.push_back(entity);
+    if (!shown.empty()) DrawInspectorHeader(shown);
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    ImGui::InputTextWithHint("##property_search", "Search properties", &property_search_);
+    if (!property_search_.empty()) ImGui::SetItemTooltip("Only properties whose name or component matches are shown");
     if (shown.empty()) {
         ImGui::TextDisabled("Select an entity in the hierarchy to edit it.");
         return;
@@ -966,13 +1017,7 @@ void ScenePanel::DrawInspector() {
         document_.Commands().EndTransaction();
         multi_renaming_ = false;
     }
-    if (shown.size() == 1) {
-        // The name, with typing merged into one undo step.
-        char name[128];
-        std::snprintf(name, sizeof(name), "%s", document_.Name(shown[0]).c_str());
-        if (ImGui::InputText("Name", name, sizeof(name))) document_.Rename(shown[0], name, false);
-        if (ImGui::IsItemDeactivatedAfterEdit()) document_.Rename(shown[0], name, true);
-    } else {
+    if (shown.size() > 1) {
         // One name for all of them: the shared one, or nothing when they differ. Typing is one undo step for the
         // whole selection (a transaction around the keystrokes), not one per entity.
         bool mixed = false;
