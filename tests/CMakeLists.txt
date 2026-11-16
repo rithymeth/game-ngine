@@ -30,10 +30,15 @@ add_executable(aether_tests
     test_input_bindings.cpp
     test_assets.cpp
     test_gltf_loader.cpp
+    test_gltf_meshopt.cpp
     test_skinning.cpp
 )
 
 target_link_libraries(aether_tests PRIVATE Aether::Engine)
+if(meshoptimizer_SOURCE_DIR)
+    target_include_directories(aether_tests PRIVATE "${meshoptimizer_SOURCE_DIR}/src")
+    target_link_libraries(aether_tests PRIVATE aether_meshopt)
+endif()
 if(WIN32)
     # Package_ThePackagedGameCarriesItsOwnVersionInformation reads a staged exe's
     # version resource back with the Windows version APIs.

@@ -85,6 +85,9 @@ target_link_libraries(aether_engine PRIVATE
     "$<INSTALL_INTERFACE:zstd::libzstd_static>"
     aether_bcenc aether_meshopt
 )
+if(meshoptimizer_SOURCE_DIR)
+    target_include_directories(aether_engine PRIVATE "${meshoptimizer_SOURCE_DIR}/src")
+endif()
 
 if(WIN32)
     target_sources(aether_engine PRIVATE
