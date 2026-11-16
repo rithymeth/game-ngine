@@ -50,7 +50,7 @@
             0.93,
             0.82
           ],
-          "intensity": 3.0
+          "intensity": 2.4
         },
         "Transform": {
           "$v": 2,
@@ -124,7 +124,7 @@
         "PostProcessVolume": {
           "$v": 1,
           "global": true,
-          "fog_density": 0.0012
+          "fog_density": 0.0005
         },
         "Transform": {
           "$v": 2,

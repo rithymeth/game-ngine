@@ -84,9 +84,19 @@ struct TerrainView::Impl {
 
     Impl(gfx::rhi::IDevice& d, gfx::rhi::ISwapChain& s, bool hdr) : device(d), swap_chain(s), gpu(d), renderer(gpu), pass(d, s, hdr) {}
 
+    // The splatmap and layer textures this view made (the device retires them once the frames still drawing with them finish).
+    void FreeTextures() {
+        if (params.splatmap.IsValid()) device.DestroyTexture(params.splatmap);
+        for (terrain::TerrainLayerBinding& layer : params.layers) {
+            if (layer.albedo_height.IsValid()) device.DestroyTexture(layer.albedo_height);
+        }
+        params = terrain::TerrainDrawParams{};
+    }
+
     void Build(const ProceduralTerrain& t) {
         const auto start = std::chrono::steady_clock::now();
         renderer.Destroy();
+        FreeTextures();
         have_ground = false;
         const terrain::TerrainGenSettings gen = ToGenSettings(t);
         ground = terrain::GenerateTerrain(gen);
@@ -144,7 +154,9 @@ TerrainView::TerrainView(gfx::rhi::IDevice& device, gfx::rhi::ISwapChain& swap_c
     : impl_(std::make_unique<Impl>(device, swap_chain, hdr_target)) {}
 
 TerrainView::~TerrainView() {
-    if (impl_) impl_->renderer.Destroy();
+    if (!impl_) return;
+    impl_->renderer.Destroy();
+    impl_->FreeTextures();
 }
 
 bool TerrainView::Valid() const { return impl_->pass.Valid(); }
