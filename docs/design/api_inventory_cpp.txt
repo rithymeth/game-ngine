@@ -2988,6 +2988,15 @@
 [engine/include/aether/math/math.h] stable
   inline constexpr f32 Degrees(f32 radians)
   inline constexpr f32 Radians(f32 degrees)
+[engine/include/aether/math/octahedral.h] experimental
+  type struct OctCode
+  inline OctCode OctEncodeBestFit(Vec3 n,int bits)
+  inline OctCode OctEncodeDirect(Vec3 n,int bits)
+  inline Vec3 OctDecode(OctCode code,int bits)
+  inline f32 OctDequantize(int q,int bits)
+  inline f32 OctSign(f32 v)
+  inline int OctQuantize(f32 v,int bits)
+  inline int OctSnormMax(int bits)
 [engine/include/aether/math/quaternion.h] stable
   Mat4 ToMat4()const
   Quaternion Normalized()const
