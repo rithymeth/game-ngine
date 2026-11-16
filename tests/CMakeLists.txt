@@ -30,10 +30,15 @@ add_executable(aether_tests
     test_input_bindings.cpp
     test_assets.cpp
     test_gltf_loader.cpp
+    test_gltf_meshopt.cpp
     test_skinning.cpp
 )
 
 target_link_libraries(aether_tests PRIVATE Aether::Engine)
+if(meshoptimizer_SOURCE_DIR)
+    target_include_directories(aether_tests PRIVATE "${meshoptimizer_SOURCE_DIR}/src")
+    target_link_libraries(aether_tests PRIVATE aether_meshopt)
+endif()
 if(WIN32)
     # Package_ThePackagedGameCarriesItsOwnVersionInformation reads a staged exe's
     # version resource back with the Windows version APIs.
@@ -175,6 +180,11 @@ if(TARGET aether_ropes)
     target_sources(aether_tests PRIVATE test_ropes.cpp)
     target_link_libraries(aether_tests PRIVATE Aether::Ropes)
     target_compile_definitions(aether_tests PRIVATE AETHER_TEST_HAS_ROPES=1)
+endif()
+if(TARGET aether_water)
+    target_sources(aether_tests PRIVATE test_water.cpp)
+    target_link_libraries(aether_tests PRIVATE Aether::Water)
+    target_compile_definitions(aether_tests PRIVATE AETHER_TEST_HAS_WATER=1)
 endif()
 if(TARGET aether_checkpoints)
     target_sources(aether_tests PRIVATE test_checkpoints.cpp)

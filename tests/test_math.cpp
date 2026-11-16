@@ -1,4 +1,5 @@
 #include "aether/math/math.h"
+#include "aether/math/octahedral.h"
 #include "aether/math/world_origin.h"
 #include "test_framework.h"
 
@@ -117,4 +118,49 @@ AETHER_TEST(WorldOrigin_RebasesIntoRelativeSpace) {
     AETHER_CHECK(RebaseOrigin(origin, world, 1.0));
     AETHER_CHECK_NEAR(origin.absolute.x, world.x, 1e-9);
     AETHER_CHECK_NEAR(origin.ToRelative(world).Length(), 0.0f, 1e-6);
+}
+
+// 8-bit octahedral is about a degree. Best-fit searches the 3x3 around the
+// direct code and keeps the closer decode, so the worst error drops.
+AETHER_TEST(Octahedral_BestFitBeatsDirectAt8Bit) {
+    const Vec3 axes[] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}, {0, 0, -1}};
+    for (const Vec3& n : axes) {
+        const Vec3 back = OctDecode(OctEncodeDirect(n, 8), 8);
+        AETHER_CHECK_NEAR(back.x, n.x, 1e-5f);
+        AETHER_CHECK_NEAR(back.y, n.y, 1e-5f);
+        AETHER_CHECK_NEAR(back.z, n.z, 1e-5f);
+    }
+
+    constexpr int kCount = 128;
+    const f32 gold = 3.14159265f * (3.0f - std::sqrt(5.0f));
+    f32 direct_sum = 0.0f;
+    f32 fit_sum = 0.0f;
+    f32 direct_max = 0.0f;
+    f32 fit_max = 0.0f;
+    f32 wide_max = 0.0f;
+    int improved = 0;
+    for (int i = 0; i < kCount; ++i) {
+        const f32 y = 1.0f - (static_cast<f32>(i) / (kCount - 1)) * 2.0f;
+        const f32 r = std::sqrt(std::max(0.0f, 1.0f - y * y));
+        const f32 t = static_cast<f32>(i) * gold;
+        const Vec3 n{std::cos(t) * r, y, std::sin(t) * r};
+        const auto degrees = [](Vec3 a, Vec3 b) {
+            return std::acos(std::clamp(a.Dot(b), -1.0f, 1.0f)) * (180.0f / 3.14159265f);
+        };
+        const f32 direct = degrees(n, OctDecode(OctEncodeDirect(n, 8), 8));
+        const f32 fit = degrees(n, OctDecode(OctEncodeBestFit(n, 8), 8));
+        const f32 wide = degrees(n, OctDecode(OctEncodeDirect(n, 16), 16));
+        direct_sum += direct;
+        fit_sum += fit;
+        direct_max = std::max(direct_max, direct);
+        fit_max = std::max(fit_max, fit);
+        wide_max = std::max(wide_max, wide);
+        if (fit < direct - 1e-4f) ++improved;
+    }
+    AETHER_CHECK(fit_max <= direct_max);
+    AETHER_CHECK(fit_sum < direct_sum);
+    AETHER_CHECK(improved > 0);
+    AETHER_CHECK(direct_max < 1.0f);
+    AETHER_CHECK(fit_max < 0.7f);
+    AETHER_CHECK(wide_max < 0.01f);
 }

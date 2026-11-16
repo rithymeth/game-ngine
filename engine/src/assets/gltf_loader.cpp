@@ -5,6 +5,7 @@
 #include "aether/platform/filesystem.h"
 
 #include <nlohmann/json.hpp>
+#include <meshoptimizer.h>
 
 #include <algorithm>
 #include <filesystem>
@@ -860,6 +861,115 @@ void ApplyAnimationToNodes(const GltfScene& scene, const GltfAnimation& animatio
 
 } // namespace
 
+// Filters run after the vertex decode, in place, and only on ATTRIBUTES.
+// OCTAHEDRAL (normals, tangents): stride 4 is 8-bit, stride 8 is 16-bit. The bytes stay
+// normalized integers; the accessor turns them into floats.
+// QUATERNION: stride 8, four 16-bit components, largest component rebuilt.
+// EXPONENTIAL: stride multiple of 4. Each 32-bit slot becomes a float (8-bit exponent, 24-bit mantissa).
+bool MeshoptFilterFits(usize view_index, const std::string& mode, const std::string& filter, usize stride) {
+    if (filter == "NONE") return true;
+    if (mode != "ATTRIBUTES") {
+        GltfError("bufferView %zu EXT_meshopt_compression filter %s is only valid on ATTRIBUTES", view_index, filter.c_str());
+        return false;
+    }
+    if (filter == "OCTAHEDRAL") {
+        if (stride != 4 && stride != 8) {
+            GltfError("bufferView %zu EXT_meshopt_compression OCTAHEDRAL byteStride must be 4 or 8", view_index);
+            return false;
+        }
+        return true;
+    }
+    if (filter == "QUATERNION") {
+        if (stride != 8) {
+            GltfError("bufferView %zu EXT_meshopt_compression QUATERNION byteStride must be 8", view_index);
+            return false;
+        }
+        return true;
+    }
+    if (filter == "EXPONENTIAL") {
+        if (stride % 4 != 0) {
+            GltfError("bufferView %zu EXT_meshopt_compression EXPONENTIAL byteStride must be a multiple of 4", view_index);
+            return false;
+        }
+        return true;
+    }
+    GltfError("bufferView %zu EXT_meshopt_compression filter \"%s\" is not supported", view_index, filter.c_str());
+    return false;
+}
+
+// EXT_meshopt_compression: the view's payload is a meshoptimizer blob. Decode it
+// into a fresh buffer and point the view at that, so the rest of the loader
+// reads plain bytes. The compressed source stays in its original buffer.
+bool DecodeMeshoptViews(Json& gltf, std::vector<std::vector<u8>>& buffers) {
+    if (!gltf.contains("bufferViews") || !gltf["bufferViews"].is_array()) return true;
+    for (usize view_index = 0; view_index < gltf["bufferViews"].size(); ++view_index) {
+        Json& view = gltf["bufferViews"][view_index];
+        if (!view.is_object() || !view.contains("extensions") || !view["extensions"].is_object()) continue;
+        Json& extensions = view["extensions"];
+        if (!extensions.contains("EXT_meshopt_compression")) continue;
+        const Json& ext = extensions["EXT_meshopt_compression"];
+        if (!ext.is_object()) {
+            GltfError("bufferView %zu EXT_meshopt_compression is not an object", view_index);
+            return false;
+        }
+        const std::string mode = ext.value("mode", std::string());
+        const std::string filter = ext.value("filter", std::string("NONE"));
+        const usize count = ext.value("count", static_cast<usize>(0));
+        const usize stride = ext.value("byteStride", static_cast<usize>(0));
+        const usize byte_length = ext.value("byteLength", static_cast<usize>(0));
+        const usize byte_offset = ext.value("byteOffset", static_cast<usize>(0));
+        const usize buffer_index = ext.value("buffer", static_cast<usize>(0));
+        if (count == 0 || stride == 0 || byte_length == 0 || buffer_index >= buffers.size()) {
+            GltfError("bufferView %zu EXT_meshopt_compression is missing count, byteStride, byteLength, or a valid buffer", view_index);
+            return false;
+        }
+        if (byte_offset > buffers[buffer_index].size() || byte_length > buffers[buffer_index].size() - byte_offset) {
+            GltfError("bufferView %zu EXT_meshopt_compression reads past the end of buffer %zu", view_index, buffer_index);
+            return false;
+        }
+        if (stride != 0 && count > (std::numeric_limits<usize>::max() / stride)) {
+            GltfError("bufferView %zu EXT_meshopt_compression count is too large", view_index);
+            return false;
+        }
+        if (!MeshoptFilterFits(view_index, mode, filter, stride)) return false;
+        std::vector<u8> decoded(count * stride);
+        const u8* source = buffers[buffer_index].data() + byte_offset;
+        int result = -1;
+        if (mode == "ATTRIBUTES") {
+            result = meshopt_decodeVertexBuffer(decoded.data(), count, stride, source, byte_length);
+        } else if (mode == "TRIANGLES" || mode == "INDICES") {
+            if (stride != 2 && stride != 4) {
+                GltfError("bufferView %zu EXT_meshopt_compression %s byteStride must be 2 or 4", view_index, mode.c_str());
+                return false;
+            }
+            result = mode == "TRIANGLES" ? meshopt_decodeIndexBuffer(decoded.data(), count, stride, source, byte_length)
+                                         : meshopt_decodeIndexSequence(decoded.data(), count, stride, source, byte_length);
+        } else {
+            GltfError("bufferView %zu EXT_meshopt_compression mode \"%s\" is not supported", view_index, mode.c_str());
+            return false;
+        }
+        if (result != 0) {
+            GltfError("bufferView %zu EXT_meshopt_compression failed to decode", view_index);
+            return false;
+        }
+        if (filter == "OCTAHEDRAL") {
+            meshopt_decodeFilterOct(decoded.data(), count, stride);
+        } else if (filter == "QUATERNION") {
+            meshopt_decodeFilterQuat(decoded.data(), count, stride);
+        } else if (filter == "EXPONENTIAL") {
+            meshopt_decodeFilterExp(decoded.data(), count, stride);
+        }
+        buffers.push_back(std::move(decoded));
+        view["buffer"] = buffers.size() - 1;
+        view["byteOffset"] = 0;
+        view["byteLength"] = count * stride;
+        view["byteStride"] = stride;
+        extensions.erase("EXT_meshopt_compression");
+        if (extensions.empty()) view.erase("extensions");
+    }
+    return true;
+}
+
 static bool ParseGltfText(const std::string& text, const std::string& path, bool allow_external,
                           GltfScene& out_scene, std::vector<u8>* glb_bin = nullptr) {
     // Parsed without exceptions. A malformed document used to die inside Json::parse itself -- the trace showed the call
@@ -936,6 +1046,7 @@ static bool ParseGltfText(const std::string& text, const std::string& path, bool
             buffers.push_back(std::move(data));
         }
     }
+    if (!DecodeMeshoptViews(gltf, buffers)) return false;
 
     auto resolve_texture_path = [&](const Json& texture_ref) -> std::string {
         if (!texture_ref.contains("index") || !gltf.contains("textures")) {
@@ -1141,6 +1252,19 @@ static bool ParseGltfText(const std::string& text, const std::string& path, bool
                     ReadFloatN(position_info, i, primitive.vertices[i].position, 3);
                     if (has_normal) {
                         ReadFloatN(normal_info, i, primitive.vertices[i].normal, 3);
+                        // gltfpack's octahedral normals are VEC3 snorm with byteStride 4 (8-bit) or 8
+                        // (16-bit): the same projection as aether::OctEncodeDirect, stored for the
+                        // meshopt filter. The extra component is padding. The lattice point is not
+                        // unit length, so renormalize. Best-fit encoding lives in octahedral.h.
+                        if (normal_info.normalized) {
+                            f32* n = primitive.vertices[i].normal;
+                            const f32 len = std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+                            if (len > 1e-8f) {
+                                n[0] /= len;
+                                n[1] /= len;
+                                n[2] /= len;
+                            }
+                        }
                     } else {
                         primitive.vertices[i].normal[0] = 0.0f;
                         primitive.vertices[i].normal[1] = 1.0f;

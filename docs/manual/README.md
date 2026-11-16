@@ -32,6 +32,7 @@ the workflow grows. The chapters describe current capabilities; build specs in
 25. [Vehicles](25-vehicles.md): the wheeled-vehicles kit; a `Vehicle` gets wheels on springs, an engine and brakes.
 26. [Ropes](26-ropes.md): the ropes kit; a `Rope` becomes a chain of jointed bodies that swings, carries a weight and can be cut.
 27. [Weather](27-weather.md): the weather kit; clouds, rain, wind, lightning and wet ground as numbers that blend and can change by themselves.
+28. [Water and boats](28-water.md): the water kit; a `WaterSurface` with waves, `Floater` bodies that bob and right themselves, and `Boat`s with a propeller and rudder.
 
 Also: [Support policy](support_policy.md), a proposal for how long versions are supported.
 

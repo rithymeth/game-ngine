@@ -54,6 +54,9 @@
 #if AETHER_EDITOR_KIT_ROPES
 #include "aether/ropes/rope.h"
 #endif
+#if AETHER_EDITOR_KIT_WATER
+#include "aether/water/water.h"
+#endif
 
 namespace aether::editor {
 
@@ -129,6 +132,9 @@ void RegisterEditorComponents() {
 #endif
 #if AETHER_EDITOR_KIT_ROPES
     ropes::RegisterRopeComponents();
+#endif
+#if AETHER_EDITOR_KIT_WATER
+    water::RegisterWaterComponents();
 #endif
 }
 

@@ -34,6 +34,9 @@
 #if AETHER_KIT_ROPES
 #include "aether/ropes/ropes_kit.h"
 #endif
+#if AETHER_KIT_WATER
+#include "aether/water/water_kit.h"
+#endif
 #if AETHER_KIT_CHECKPOINTS
 #include "aether/checkpoints/checkpoints_kit.h"
 #endif
@@ -85,6 +88,9 @@ void Game::BuildKits() {
 #endif
 #if AETHER_KIT_ROPES
     kits_.Add(ropes::MakeRopesKit());
+#endif
+#if AETHER_KIT_WATER
+    kits_.Add(water::MakeWaterKit());
 #endif
 #if AETHER_KIT_CHECKPOINTS
     kits_.Add(chk::MakeCheckpointsKit());

@@ -546,6 +546,11 @@ option(AETHER_KIT_ROPES "Build the ropes (rope and chain) genre kit" ON)
 if(AETHER_KIT_ROPES AND TARGET Aether::Physics)
     add_subdirectory(ropes)
 endif()
+# Water and boats: floaters on waves, and boats with a propeller and a rudder (needs the physics module).
+option(AETHER_KIT_WATER "Build the water (buoyancy and boats) genre kit" ON)
+if(AETHER_KIT_WATER AND TARGET Aether::Physics)
+    add_subdirectory(water)
+endif()
 # Respawn points: the last one reached is kept in the save bag.
 option(AETHER_KIT_CHECKPOINTS "Build the checkpoints genre kit" ON)
 if(AETHER_KIT_CHECKPOINTS AND TARGET Aether::Save)
@@ -664,6 +669,7 @@ add_subdirectory(samples/gem_hop)
 add_subdirectory(samples/forest_valley)
 add_subdirectory(samples/beacon_run)
 add_subdirectory(samples/frozen_api_game)
+add_subdirectory(samples/abyss_protocol)
 
 # Phase 24 step 5: the portable editor shell - the editor's panels in a
 # GLFW (or Win32) window, or offscreen, drawn through the Vulkan RHI.
@@ -792,6 +798,7 @@ aether_install_target(aether_forcefields ForceFields BUILD_INCLUDES "${PROJECT_S
 aether_install_target(aether_destruction Destruction BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/destruction/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/destruction/include")
 aether_install_target(aether_vehicles Vehicles BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/vehicles/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/vehicles/include")
 aether_install_target(aether_ropes Ropes BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/ropes/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/ropes/include")
+aether_install_target(aether_water Water BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/water/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/water/include")
 aether_install_target(aether_weather Weather BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/weather/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/weather/include")
 aether_install_target(aether_checkpoints Checkpoints BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/checkpoints/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/checkpoints/include")
 aether_install_target(aether_spawner Spawner BUILD_INCLUDES "${PROJECT_SOURCE_DIR}/spawner/include" INSTALL_INCLUDES "${CMAKE_INSTALL_INCLUDEDIR}" HEADERS "${PROJECT_SOURCE_DIR}/spawner/include")
