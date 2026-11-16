@@ -28,6 +28,9 @@
 #if AETHER_KIT_DESTRUCTION
 #include "aether/destruction/destruction_kit.h"
 #endif
+#if AETHER_KIT_VEHICLES
+#include "aether/vehicles/vehicles_kit.h"
+#endif
 #if AETHER_KIT_CHECKPOINTS
 #include "aether/checkpoints/checkpoints_kit.h"
 #endif
@@ -70,6 +73,9 @@ void Game::BuildKits() {
 #endif
 #if AETHER_KIT_DESTRUCTION
     kits_.Add(destruction::MakeDestructionKit());
+#endif
+#if AETHER_KIT_VEHICLES
+    kits_.Add(vehicles::MakeVehiclesKit());
 #endif
 #if AETHER_KIT_CHECKPOINTS
     kits_.Add(chk::MakeCheckpointsKit());

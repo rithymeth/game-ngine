@@ -44,6 +44,9 @@
 #if AETHER_KIT_DESTRUCTION
 #include "aether/destruction/destruction_system.h"
 #endif
+#if AETHER_KIT_VEHICLES
+#include "aether/vehicles/vehicle_system.h"
+#endif
 #include "aether/physics/physics_world.h"
 #endif
 #if AETHER_GAME_SCRIPTING
@@ -274,6 +277,10 @@ struct Game::Physics {
 #if AETHER_KIT_DESTRUCTION
     // Same reasoning as the force fields: it points at this load's world and physics scene. Destroyed before the scene (declared after it).
     std::unique_ptr<destruction::DestructionSystem> destruction;
+#endif
+#if AETHER_KIT_VEHICLES
+    // Same reasoning again; its constraints go before the scene's bodies do (it is declared after the scene, so it is destroyed first).
+    std::unique_ptr<vehicles::VehicleSystem> vehicles;
 #endif
 };
 #else
@@ -612,6 +619,9 @@ bool Game::LoadScene(const std::string& path, std::string* error) {
 #endif
 #if AETHER_KIT_DESTRUCTION
     physics_->destruction = std::make_unique<destruction::DestructionSystem>(*world_, *physics_->scene);
+#endif
+#if AETHER_KIT_VEHICLES
+    physics_->vehicles = std::make_unique<vehicles::VehicleSystem>(*world_, *physics_->scene);
 #endif
     // The physics events go to the destruction kit and to scripts. This is set here, once the physics scene exists: the runtime above is made before it.
     physics_->scene->SetEventHandler([this](const PhysicsEvent& event) {
@@ -1145,6 +1155,10 @@ void Game::BuildFrame() {
 #if AETHER_KIT_DESTRUCTION
             // Marked things break here, between steps, never while the physics events are being delivered.
             if (physics_->destruction) physics_->destruction->Update(frame.fixed_dt);
+#endif
+#if AETHER_KIT_VEHICLES
+            // The vehicles take their input and push their wheels just before the bodies move.
+            if (physics_->vehicles) physics_->vehicles->Apply();
 #endif
             physics_->characters->Step(frame.fixed_dt);
             physics_->scene->Step(frame.fixed_dt);

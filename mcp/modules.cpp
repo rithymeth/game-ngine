@@ -49,6 +49,9 @@
 #if AETHER_MCP_DESTRUCTION
 #include "aether/destruction/destructible.h"
 #endif
+#if AETHER_MCP_VEHICLES
+#include "aether/vehicles/vehicle.h"
+#endif
 
 // Note: no Aether::AI (behaviour trees, perception) -- the editor/MCP side
 // must not link gameplay AI (docs/design/agent_gameplay_ai_boundary.md).
@@ -122,6 +125,9 @@ void RegisterBuiltinComponents() {
 #endif
 #if AETHER_MCP_DESTRUCTION
     destruction::RegisterDestructionComponents();
+#endif
+#if AETHER_MCP_VEHICLES
+    vehicles::RegisterVehicleComponents();
 #endif
 }
 

@@ -6154,6 +6154,8 @@
   void InstallTimeOfDayApi(LuauHost&host)
 [scripting/include/aether/script/ui_api.h] experimental
   void InstallUiApi(LuauHost&host)
+[scripting/include/aether/script/vehicles_api.h] experimental
+  void InstallVehiclesApi(LuauHost&host)
 [sequencer/include/aether/sequencer/movie.h] experimental
   type struct MovieOptions
   type struct MovieResult
@@ -7349,6 +7351,53 @@
   void Report(const std::string&key,const std::string&message)
   void Update(const WorldCamera&camera,f32 dt)
   ~WorldUISystem()
+[vehicles/include/aether/vehicles/vehicle.h] experimental
+  type enum class DriveType
+  type struct Vehicle
+  type struct VehicleInput
+  type struct VehicleState
+  ))AETHER_REFLECT(aether::vehicles::VehicleInput,1,AETHER_FIELD(throttle,Field_EditAnywhere,
+  ))AETHER_REFLECT(aether::vehicles::VehicleState,1,AETHER_FIELD(speed,Field_ReadOnly,
+  ),AETHER_FIELD(brake,Field_EditAnywhere,
+  ),AETHER_FIELD(brake_torque,Field_EditAnywhere,
+  ),AETHER_FIELD(engine_torque,Field_EditAnywhere,
+  ),AETHER_FIELD(grip,Field_EditAnywhere,
+  ),AETHER_FIELD(ground_clearance,Field_EditAnywhere,
+  ),AETHER_FIELD(handbrake,Field_EditAnywhere,
+  ),AETHER_FIELD(handbrake_torque,Field_EditAnywhere,
+  ),AETHER_FIELD(max_rpm,Field_EditAnywhere,
+  ),AETHER_FIELD(max_steer_degrees,Field_EditAnywhere,
+  ),AETHER_FIELD(rpm,Field_ReadOnly),AETHER_FIELD(gear,Field_ReadOnly),AETHER_FIELD(steer_angle,Field_ReadOnly,
+  ),AETHER_FIELD(steer,Field_EditAnywhere,
+  ),AETHER_FIELD(suspension_damping,Field_EditAnywhere,
+  ),AETHER_FIELD(suspension_frequency,Field_EditAnywhere,
+  ),AETHER_FIELD(suspension_max,Field_EditAnywhere,
+  ),AETHER_FIELD(suspension_min,Field_EditAnywhere,
+  ),AETHER_FIELD(track_fraction,Field_EditAnywhere,
+  ),AETHER_FIELD(wheel_radius,Field_EditAnywhere,
+  ),AETHER_FIELD(wheel_width,Field_EditAnywhere,
+  ),AETHER_FIELD(wheelbase_fraction,Field_EditAnywhere,
+  ),AETHER_FIELD(wheels_on_ground,Field_ReadOnly),AETHER_FIELD(airborne,Field_ReadOnly))
+  AETHER_ENUM(aether::vehicles::DriveType,1,AETHER_ENUM_VALUE(FrontWheel),AETHER_ENUM_VALUE(RearWheel),AETHER_ENUM_VALUE(AllWheel))AETHER_REFLECT(aether::vehicles::Vehicle,1,AETHER_FIELD(enabled,Field_EditAnywhere),AETHER_FIELD(drive,Field_EditAnywhere,
+  void RegisterVehicleComponents()
+[vehicles/include/aether/vehicles/vehicle_system.h] experimental
+  type class VehicleSystem
+  type struct WheelInfo
+  Quaternion rotation=Quaternion::Identity()
+  VehicleSystem&operator=(const VehicleSystem&)=delete
+  VehicleSystem(const VehicleSystem&)=delete
+  bool Drive(Entity entity,f32 throttle,f32 steer,f32 brake=0.0f,f32 handbrake=0.0f)
+  bool Flip(Entity entity)
+  bool Wheel(Entity entity,u32 index,WheelInfo&out)const
+  const VehicleState*StateOf(Entity entity)const
+  public:VehicleSystem(World&world,PhysicsScene&scene)
+  static VehicleSystem*Active()
+  usize Apply()
+  usize VehicleCount()const
+  void MakeActive()
+  ~VehicleSystem()
+[vehicles/include/aether/vehicles/vehicles_kit.h] experimental
+  std::unique_ptr<kit::IKit>MakeVehiclesKit()
 [vfx/include/aether/vfx/collision.h] experimental
   type class DepthBufferCollider
   type class FunctionCollider

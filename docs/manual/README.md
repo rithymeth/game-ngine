@@ -29,6 +29,7 @@ the workflow grows. The chapters describe current capabilities; build specs in
 22. [Loot](22-loot.md): the loot-tables kit, deterministic drops given to an inventory, and the `Loot` script table.
 23. [Force fields](23-force-fields.md): the physics-volumes kit (wind, gravity wells, whirlpools, water, drag) and explosions.
 24. [Destruction](24-destruction.md): the breakable-things kit; a `Destructible` shatters into physics debris.
+25. [Vehicles](25-vehicles.md): the wheeled-vehicles kit; a `Vehicle` gets wheels on springs, an engine and brakes.
 
 Also: [Support policy](support_policy.md), a proposal for how long versions are supported.
 
