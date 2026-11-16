@@ -256,7 +256,7 @@ AETHER_TEST(Plugin_TheEnginesModulesArePlugins) {
     CHECK(m.Discover().empty());
     // Every optional module of the engine is a plugin, on by default; a genre kit needs the Gameplay module under it.
     const std::vector<std::string> engine_plugins = {"Physics", "Audio", "Navigation", "AI", "Networking", "Animation", "UI", "VFX", "Sprite2D",
-                                                      "Sequencer", "Streaming", "Gameplay", "Inventory", "Interaction", "Blueprint", "Renderer", "Quests", "Crafting", "Dialogue", "TimeOfDay", "Achievements", "Spawner", "Checkpoints", "Loot", "ForceFields", "Destruction", "Vehicles"};
+                                                      "Sequencer", "Streaming", "Gameplay", "Inventory", "Interaction", "Blueprint", "Renderer", "Quests", "Crafting", "Dialogue", "TimeOfDay", "Achievements", "Spawner", "Checkpoints", "Loot", "ForceFields", "Destruction", "Vehicles", "Ropes"};
     for (const std::string& name : engine_plugins) {
         CHECK(m.Find(name) != nullptr && m.Find(name)->descriptor.enabled_by_default);
     }
@@ -270,6 +270,7 @@ AETHER_TEST(Plugin_TheEnginesModulesArePlugins) {
     CHECK(position("Physics") < position("ForceFields"));
     CHECK(position("Physics") < position("Destruction"));
     CHECK(position("Physics") < position("Vehicles"));
+    CHECK(position("Physics") < position("Ropes"));
     for (const char* kit : {"Inventory", "Interaction", "Quests", "Crafting", "Loot"}) CHECK(position("Gameplay") < position(kit)); // dependencies start first
     // This executable has the modules its build has (physics is optional).
     for (const std::string& name : engine_plugins) {
@@ -279,7 +280,7 @@ AETHER_TEST(Plugin_TheEnginesModulesArePlugins) {
     CHECK(warnings.size() == (ModuleRegistry::Get().Has("Physics") ? 0u : 1u));
     // Starting the plugins registers their components, so a scene can name them.
     for (const char* component : {"Animator", "WidgetComponent", "ParticleSystem", "Sprite", "SequenceComponent", "StreamingSource",
-                                  "AttributeSet", "Inventory", "Interactable", "QuestLog", "BlueprintInstance", "PointLight", "ForceField", "Destructible", "Debris", "Vehicle", "VehicleInput", "VehicleState"}) {
+                                  "AttributeSet", "Inventory", "Interactable", "QuestLog", "BlueprintInstance", "PointLight", "ForceField", "Destructible", "Debris", "Vehicle", "VehicleInput", "VehicleState", "Rope", "RopeSegment"}) {
         CHECK(FindComponentIdByName(component) != kInvalidComponentId);
     }
 }

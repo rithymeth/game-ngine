@@ -52,6 +52,9 @@
 #if AETHER_MCP_VEHICLES
 #include "aether/vehicles/vehicle.h"
 #endif
+#if AETHER_MCP_ROPES
+#include "aether/ropes/rope.h"
+#endif
 
 // Note: no Aether::AI (behaviour trees, perception) -- the editor/MCP side
 // must not link gameplay AI (docs/design/agent_gameplay_ai_boundary.md).
@@ -128,6 +131,9 @@ void RegisterBuiltinComponents() {
 #endif
 #if AETHER_MCP_VEHICLES
     vehicles::RegisterVehicleComponents();
+#endif
+#if AETHER_MCP_ROPES
+    ropes::RegisterRopeComponents();
 #endif
 }
 
