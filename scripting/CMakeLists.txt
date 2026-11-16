@@ -27,6 +27,7 @@ add_library(aether_scripting STATIC
     src/destruction_api.cpp
     src/vehicles_api.cpp
     src/ropes_api.cpp
+    src/water_api.cpp
     src/ai_api.cpp
 )
 
@@ -82,6 +83,12 @@ if(TARGET Aether::Ropes)
     target_compile_definitions(aether_scripting PRIVATE AETHER_KIT_ROPES=1)
 else()
     target_compile_definitions(aether_scripting PRIVATE AETHER_KIT_ROPES=0)
+endif()
+if(TARGET Aether::Water)
+    target_link_libraries(aether_scripting PRIVATE Aether::Water)
+    target_compile_definitions(aether_scripting PRIVATE AETHER_KIT_WATER=1)
+else()
+    target_compile_definitions(aether_scripting PRIVATE AETHER_KIT_WATER=0)
 endif()
 if(TARGET Aether::Checkpoints)
     target_link_libraries(aether_scripting PRIVATE Aether::Checkpoints)

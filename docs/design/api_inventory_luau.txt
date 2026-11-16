@@ -320,6 +320,13 @@ Vehicles.Speed function
 Vehicles.WheelPosition function
 Vehicles.WheelSpin function
 Vehicles.WheelsOnGround function
+Water table
+Water.Current function
+Water.Drive function
+Water.HeightAt function
+Water.IsWater function
+Water.Submersion function
+Water.Time function
 Weather table
 Weather.Blend function
 Weather.Clouds function

@@ -55,6 +55,9 @@
 #if AETHER_MCP_ROPES
 #include "aether/ropes/rope.h"
 #endif
+#if AETHER_MCP_WATER
+#include "aether/water/water.h"
+#endif
 
 // Note: no Aether::AI (behaviour trees, perception) -- the editor/MCP side
 // must not link gameplay AI (docs/design/agent_gameplay_ai_boundary.md).
@@ -134,6 +137,9 @@ void RegisterBuiltinComponents() {
 #endif
 #if AETHER_MCP_ROPES
     ropes::RegisterRopeComponents();
+#endif
+#if AETHER_MCP_WATER
+    water::RegisterWaterComponents();
 #endif
 }
 
