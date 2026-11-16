@@ -27,6 +27,21 @@ void Game::Restart() {
     fail_.clear();
     creature_.position = {25.0f, -20.0f, 10.0f};
     creature_.home = creature_.position;
+    contact_ = 0.0f;
+    ping_cooldown_ = 0.0f;
+    rocks_ = {
+        {{16.0f, -18.0f, -2.0f}, 3.2f},
+        {{30.0f, -24.0f, -6.0f}, 4.0f},
+        {{42.0f, -29.0f, 4.0f}, 2.8f},
+    };
+}
+
+void Game::Ping() {
+    if (mission_ == Mission::Won || mission_ == Mission::Lost) return;
+    if (ping_cooldown_ > 0.0f) return;
+    ping_cooldown_ = 1.6f;
+    sub_.sonar_active = true;
+    contact_ = 3.2f;
 }
 
 void Game::SetSonar(bool active) { sub_.sonar_active = active; }
@@ -91,7 +106,7 @@ void Game::UpdateAcoustics(float dt) {
     }
     if (sub_.sonar_active) {
         continuous += 0.6f;
-        events_.push_back({sub_.position, 0.85f, 40.0f, 2.0f});
+        events_.push_back({sub_.position, 0.7f, 22.0f, 2.0f});
     }
     if (sub_.lights_on) {
         continuous += 0.1f;
@@ -183,12 +198,40 @@ void Game::Step(float dt) {
     sub_.velocity.x *= 0.95f;
     sub_.velocity.y *= 0.95f;
     sub_.velocity.z *= 0.95f;
+    ResolveRocks();
 
     UpdateAcoustics(dt);
     UpdateCreature(dt);
     UpdatePressure(dt);
     UpdateRelay();
     UpdateMission();
+    sub_.sonar_active = false;
+    contact_ = std::max(0.0f, contact_ - dt);
+    ping_cooldown_ = std::max(0.0f, ping_cooldown_ - dt);
+}
+
+void Game::ResolveRocks() {
+    constexpr float kHull = 1.3f;
+    for (const Rock& rock : rocks_) {
+        float dx = sub_.position.x - rock.position.x;
+        float dy = sub_.position.y - rock.position.y;
+        float dz = sub_.position.z - rock.position.z;
+        float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+        float min_d = kHull + rock.radius;
+        if (dist < 1e-4f) {
+            sub_.position.x += min_d;
+            continue;
+        }
+        if (dist < min_d) {
+            float push = (min_d - dist) / dist;
+            sub_.position.x += dx * push;
+            sub_.position.y += dy * push;
+            sub_.position.z += dz * push;
+            sub_.velocity.x *= 0.35f;
+            sub_.velocity.y *= 0.35f;
+            sub_.velocity.z *= 0.35f;
+        }
+    }
 }
 
 aether::Vec3 Game::Objective() const {
@@ -230,8 +273,8 @@ std::string Game::StatusText() const {
     std::ostringstream oss;
     oss << "Depth: " << (-sub_.position.y)
         << "  Battery: " << int(sub_.battery * 100) << "%"
-        << "  Sonar: " << (sub_.sonar_active ? "ON" : "off")
         << "  Lights: " << (sub_.lights_on ? "ON" : "off")
+        << "  Contact: " << int(contact_ * 10) / 10.0f << "s"
         << "  Creature awareness: " << int(creature_.awareness * 100) << "%"
         << (creature_.is_alerted ? "  [ALERT]" : "");
     if (mission_ == Mission::Won) oss << "  MISSION COMPLETE  " << int(time_) << "s";

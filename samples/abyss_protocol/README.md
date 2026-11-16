@@ -16,21 +16,21 @@ Underwater exploration / survival mystery for Aether Engine. Stylized 3D, single
 - Win32 software rasterizer (no GPU), same approach as Gem Hop.
 - Pass a `.gltf` or `.glb` and it is centered, scaled to about 4 metres, and drawn on the submarine. Base-color materials are used. Meshes over 4000 triangles are strided down so the software view stays interactive.
 - No model: an orange placeholder hull is drawn instead.
-- **Run**: leave Haven, restore the silent relay (sonar off, lights off, creature calm), then follow the gold marker home. The title says `MISSION COMPLETE`.
+- **Run**: leave Haven, restore the silent relay, then get home. `F` fires one sonar ping. For a few seconds you can see farther and a marker points at the objective. The creature hears the ping. Lights show what is nearby, and they also give you away. Rocks are solid even when you cannot see them.
+- Reach the relay with lights off and the creature calm. A ping on top of it does not count.
 - The creature catching you, or running out of oxygen or battery, fails the run. `R` restarts.
-- A marker floats ahead of the boat: white toward the relay, gold toward Haven.
 
 | Key | Action |
 | --- | --- |
 | W / A / S / D | Thrust, relative to the camera |
 | Q / E | Dive / rise |
 | Mouse or arrows | Look |
-| F | Toggle sonar (the creature hears it) |
+| F | Sonar ping (reveals the bearing, the creature hears it) |
 | L | Toggle lights (the view goes dark) |
 | R | Restart |
 | Esc | Quit |
 
-The window title shows depth, battery, sonar, lights, creature awareness, and the objective. HUD bars are battery (gold), oxygen (blue), and awareness.
+The window title shows depth, battery, lights, sonar contact time, creature awareness, and the objective. HUD bars are battery (gold), oxygen (blue), and awareness. A cyan mark means a ping is still showing you the water.
 
 ## Build
 

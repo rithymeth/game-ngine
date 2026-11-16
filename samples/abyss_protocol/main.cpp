@@ -4,7 +4,7 @@
 // glTF draws without a GPU. Gameplay stays in abyss_protocol.cpp.
 //
 //   W/A/S/D   thrust (camera-relative)     Q/E     dive / rise
-//   Mouse or arrows   look                 F       toggle sonar
+//   Mouse or arrows   look                 F       sonar ping
 //   L         toggle lights                Esc     quit
 //
 //   abyss_protocol.exe path\to\model.glb
@@ -278,6 +278,20 @@ void DrawBar(std::vector<u32>& px, i32 x, i32 y, f32 amount, u32 fill) {
     FillRect(px, x, y, static_cast<i32>(160 * std::clamp(amount, 0.0f, 1.0f)), 10, fill);
 }
 
+bool Near(const Vec3& a, const Vec3& b, f32 range) {
+    f32 dx = a.x - b.x, dy = a.y - b.y, dz = a.z - b.z;
+    return dx * dx + dy * dy + dz * dz <= range * range;
+}
+
+// Lights show what is close. A sonar ping shows farther, for a few seconds.
+bool Visible(const abyss::Game& game, const Vec3& p, f32 light_range, f32 sonar_range, f32 always) {
+    const Vec3& sub = game.GetSub().position;
+    if (Near(sub, p, always)) return true;
+    if (game.GetSub().lights_on && Near(sub, p, light_range)) return true;
+    if (game.HasContact() && Near(sub, p, sonar_range)) return true;
+    return false;
+}
+
 void DrawWorld(const abyss::Game& game, const std::vector<DrawTri>& mesh, Renderer& r, f32 yaw, f32 pitch, f32 anim) {
     const abyss::Submarine& sub = game.GetSub();
     const abyss::CreatureAI& creature = game.GetCreature();
@@ -299,8 +313,9 @@ void DrawWorld(const abyss::Game& game, const std::vector<DrawTri>& mesh, Render
     f32 floor_y = -42.0f;
     i32 gx = static_cast<i32>(std::floor(sub.position.x / 10.0f));
     i32 gz = static_cast<i32>(std::floor(sub.position.z / 10.0f));
-    for (i32 iz = -2; iz <= 2; ++iz) {
-        for (i32 ix = -2; ix <= 2; ++ix) {
+    i32 span = sub.lights_on ? 2 : (game.HasContact() ? 1 : 0);
+    for (i32 iz = -span; iz <= span; ++iz) {
+        for (i32 ix = -span; ix <= span; ++ix) {
             f32 x = (gx + ix) * 10.0f;
             f32 z = (gz + iz) * 10.0f;
             bool alt = ((gx + ix + gz + iz) & 1) != 0;
@@ -319,8 +334,9 @@ void DrawWorld(const abyss::Game& game, const std::vector<DrawTri>& mesh, Render
         r.Box({p.x - 0.35f, p.y + 0.15f, p.z + 0.4f}, {p.x + 0.35f, p.y + 0.7f, p.z + 1.3f}, {0.55f, 0.85f, 0.95f});
     }
 
-    if (sub.sonar_active) {
-        f32 radius = 4.0f + std::fmod(anim, 2.2f) * 7.0f;
+    if (game.HasContact()) {
+        f32 age = 1.0f - std::clamp(game.Contact() / 3.2f, 0.0f, 1.0f);
+        f32 radius = 3.0f + age * 16.0f;
         constexpr int kSegs = 18;
         for (int i = 0; i < kSegs; ++i) {
             f32 a0 = (6.2831853f * i) / kSegs;
@@ -331,16 +347,27 @@ void DrawWorld(const abyss::Game& game, const std::vector<DrawTri>& mesh, Render
         }
     }
 
-    Color creature_col = creature.is_alerted ? Color{1.0f, 0.25f, 0.2f} : Color{0.25f, 0.85f, 1.0f};
-    r.Gem(creature.position, creature.is_alerted ? 1.1f : 0.8f, anim * 1.5f, creature_col);
+    for (const abyss::Rock& rock : game.GetRocks()) {
+        if (!Visible(game, rock.position, 22.0f, 36.0f, 5.0f)) continue;
+        r.Box({rock.position.x - rock.radius, rock.position.y - rock.radius * 0.6f, rock.position.z - rock.radius},
+              {rock.position.x + rock.radius, rock.position.y + rock.radius * 0.45f, rock.position.z + rock.radius},
+              {0.22f, 0.24f, 0.28f});
+    }
+
+    if (Visible(game, creature.position, 26.0f, 40.0f, 7.0f)) {
+        Color creature_col = creature.is_alerted ? Color{1.0f, 0.25f, 0.2f} : Color{0.25f, 0.85f, 1.0f};
+        r.Gem(creature.position, creature.is_alerted ? 1.1f : 0.8f, anim * 1.5f, creature_col);
+    }
 
     const abyss::Haven& haven = game.GetHaven();
     bool heading_home = game.GetMission() == abyss::Mission::Return;
-    Color pad = heading_home ? Color{0.85f, 0.7f, 0.2f} : Color{0.12f, 0.28f, 0.36f};
-    r.Box({haven.position.x - 6.0f, haven.position.y - 0.5f, haven.position.z - 6.0f},
-          {haven.position.x + 6.0f, haven.position.y, haven.position.z + 6.0f}, pad);
+    if (Visible(game, haven.position, 30.0f, 50.0f, 12.0f)) {
+        Color pad = heading_home ? Color{0.85f, 0.7f, 0.2f} : Color{0.12f, 0.28f, 0.36f};
+        r.Box({haven.position.x - 6.0f, haven.position.y - 0.5f, haven.position.z - 6.0f},
+              {haven.position.x + 6.0f, haven.position.y, haven.position.z + 6.0f}, pad);
+    }
 
-    if (game.GetMission() == abyss::Mission::Outbound || heading_home) {
+    if (game.HasContact() && (game.GetMission() == abyss::Mission::Outbound || heading_home)) {
         Vec3 goal = game.Objective();
         Vec3 delta{goal.x - sub.position.x, goal.y - sub.position.y, goal.z - sub.position.z};
         f32 len = std::sqrt(delta.x * delta.x + delta.y * delta.y + delta.z * delta.z);
@@ -352,12 +379,14 @@ void DrawWorld(const abyss::Game& game, const std::vector<DrawTri>& mesh, Render
     }
 
     const abyss::Relay& relay = game.GetRelay();
-    Color relay_col = relay.restored ? Color{0.35f, 1.0f, 0.75f} : Color{0.18f, 0.22f, 0.28f};
-    f32 pulse = relay.restored ? (0.6f + 0.4f * std::sin(anim * 3.0f)) : 1.0f;
-    Vec3 rp = relay.position;
-    r.Box({rp.x - 0.4f, rp.y, rp.z - 0.4f}, {rp.x + 0.4f, rp.y + 3.2f, rp.z + 0.4f},
-          {relay_col.r * pulse, relay_col.g * pulse, relay_col.b * pulse});
-    r.Gem({rp.x, rp.y + 3.6f, rp.z}, 0.45f, anim, relay_col);
+    if (relay.restored || Visible(game, relay.position, 28.0f, 55.0f, 8.0f)) {
+        Color relay_col = relay.restored ? Color{0.35f, 1.0f, 0.75f} : Color{0.45f, 0.55f, 0.62f};
+        f32 pulse = relay.restored ? (0.6f + 0.4f * std::sin(anim * 3.0f)) : 1.0f;
+        Vec3 rp = relay.position;
+        r.Box({rp.x - 0.4f, rp.y, rp.z - 0.4f}, {rp.x + 0.4f, rp.y + 3.2f, rp.z + 0.4f},
+              {relay_col.r * pulse, relay_col.g * pulse, relay_col.b * pulse});
+        r.Gem({rp.x, rp.y + 3.6f, rp.z}, 0.45f, anim, relay_col);
+    }
 }
 
 void DrawHud(const abyss::Game& game, std::vector<u32>& px, bool has_mesh) {
@@ -366,7 +395,7 @@ void DrawHud(const abyss::Game& game, std::vector<u32>& px, bool has_mesh) {
     DrawBar(px, 16, 6, sub.battery, Rgb(0.95f, 0.75f, 0.2f));
     DrawBar(px, 16, 18, sub.oxygen, Rgb(0.45f, 0.75f, 0.95f));
     DrawBar(px, 16, 30, game.GetCreature().awareness, game.GetCreature().is_alerted ? Rgb(1, 0.3f, 0.2f) : Rgb(0.3f, 0.85f, 1));
-    if (sub.sonar_active) FillRect(px, 200, 8, 14, 32, Rgb(0.3f, 0.95f, 0.85f));
+    if (game.HasContact()) FillRect(px, 200, 8, 14, 32, Rgb(0.3f, 0.95f, 0.85f));
     if (sub.lights_on) FillRect(px, 220, 8, 14, 32, Rgb(1.0f, 0.9f, 0.4f));
     if (has_mesh) FillRect(px, 240, 8, 14, 32, Rgb(0.9f, 0.45f, 0.15f));
     if (game.GetMission() == abyss::Mission::Won) FillRect(px, 0, kH / 2 - 18, kW, 36, Rgb(0.08f, 0.28f, 0.16f));
@@ -443,10 +472,9 @@ int main(int argc, char** argv) {
     f32 pitch = 0.35f;
     bool mouse_ready = false;
     bool cursor_hidden = false;
-    bool prev_sonar = false;
+    bool prev_ping = false;
     bool prev_lights = false;
     bool prev_restart = false;
-    bool sonar = false;
     bool lights = true;
     i64 frame = 0;
 
@@ -487,16 +515,15 @@ int main(int argc, char** argv) {
             }
             pitch = std::clamp(pitch, -0.4f, 1.2f);
 
-            bool sonar_key = Down('F');
-            if (sonar_key && !prev_sonar) sonar = !sonar;
-            prev_sonar = sonar_key;
+            bool ping = Down('F');
+            if (ping && !prev_ping) game.Ping();
+            prev_ping = ping;
             bool light_key = Down('L');
             if (light_key && !prev_lights) lights = !lights;
             prev_lights = light_key;
             bool restart = Down('R');
             if (restart && !prev_restart) {
                 game.Restart();
-                sonar = false;
                 lights = true;
             }
             prev_restart = restart;
@@ -516,7 +543,6 @@ int main(int argc, char** argv) {
                 dive = (Down('E') ? 1.0f : 0.0f) - (Down('Q') ? 1.0f : 0.0f);
             }
             f32 fx = std::sin(yaw), fz = std::cos(yaw);
-            game.SetSonar(sonar);
             game.SetLights(lights);
             game.ApplyThrust({(fx * fwd + fz * side) * 0.35f, dive * 0.22f, (fz * fwd - fx * side) * 0.35f});
             game.Step(1.0f / 60.0f);

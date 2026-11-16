@@ -42,6 +42,11 @@ struct Relay {
 
 enum class Mission { Outbound, Return, Won, Lost };
 
+struct Rock {
+    aether::Vec3 position;
+    float radius = 3.0f;
+};
+
 struct Haven {
     aether::Vec3 position{0.0f, -15.0f, 0.0f};
 };
@@ -75,6 +80,7 @@ public:
     void SetSonar(bool active);
     void SetLights(bool on);
     void ApplyThrust(const aether::Vec3& thrust);
+    void Ping();
     void Restart();
 
     // Load a glTF/GLB and store a summary (does not yet upload to GPU).
@@ -84,6 +90,9 @@ public:
     const CreatureAI& GetCreature() const { return creature_; }
     const Relay& GetRelay() const { return relay_; }
     const Haven& GetHaven() const { return haven_; }
+    const std::vector<Rock>& GetRocks() const { return rocks_; }
+    bool HasContact() const { return contact_ > 0.05f; }
+    float Contact() const { return contact_; }
     Mission GetMission() const { return mission_; }
     aether::Vec3 Objective() const;
     float Time() const { return time_; }
@@ -96,14 +105,18 @@ private:
     void UpdatePressure(float dt);
     void UpdateRelay();
     void UpdateMission();
+    void ResolveRocks();
 
     aether::World world_;
     Submarine sub_;
     CreatureAI creature_;
     Relay relay_;
     Haven haven_;
+    std::vector<Rock> rocks_;
     Mission mission_ = Mission::Outbound;
     float time_ = 0.0f;
+    float contact_ = 0.0f;
+    float ping_cooldown_ = 0.0f;
     std::string fail_;
     std::vector<AcousticEvent> events_;
     std::optional<aether::assets::GltfScene> loaded_scene_;
