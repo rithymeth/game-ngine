@@ -131,10 +131,40 @@ Measured, not assumed:
 - **The first meadow was a beach.** Picking the lowest flat ground put the spawn on the beach band, 98% sand in the
   splatmap. The meadow must now be grass or forest floor 5 m above the sea; its splatmap texel is pure grass.
 
+### The terrain is drawn
+
+A scene now carries a `ProceduralTerrain` component (generator settings, no heightmap), and `aether_player` draws the first one
+in the world: `SceneRenderer` builds a `TerrainView` (`player/src/terrain_view.h`) that generates the ground, uploads 16 x 16
+chunks and the splatmap, and records them inside the scene pass after the sky and before the models. `ValleyTerrainComponent()`
+holds the one set of settings; a test regenerates the ground from the component and compares it to the world the areas and
+route were built on. `samples/forest_valley/ForestValley.aproject` and `Content/Scenes/` (written by `tools/make_scenes.py`)
+are the project.
+
+Reproduce the screenshots (Linux, Mesa's lavapipe; on Windows run the packaged player instead):
+
+    aether_cook samples/forest_valley/ForestValley.aproject --out paks --config development
+    VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json xvfb-run -a aether_player --pak paks \
+        --scene Scenes/Valley.ascene --backend vulkan --frames 12 --size 1280x720 --screenshot valley.bmp
+
+![The valley from above the overlook](images/forest-valley-overlook.png)
+![The meadow at eye height](images/forest-valley-meadow.png)
+
+Measured on this run (software Vulkan, `RelWithDebInfo`; not a GPU number): the 513 x 513 terrain generates and uploads in
+0.8-0.9 s, 256 chunks, 14.9 MB of vertex and index buffers at the camera's level of detail. The frame rate on lavapipe says
+nothing about a real GPU and is not recorded.
+
+What the screenshots honestly show: ground, sky, clouds and haze, and little else. It looks flat and soft. Specifically:
+
+- **The terrain neither casts nor receives sun shadows**, and is not in the water reflection.
+- **The layer textures are 64 x 64 generated placeholders**, tiled every 4-8 m, so close ground is blurry. There are no authored
+  albedo or normal maps.
+- **Rivers are grey scratches, not water**: there is no water surface, and no bridge.
+- **No vegetation, rocks or buildings**: the scatter instances exist (see above) but are not placed or drawn.
+- **The sun is only the first DirectionalLight's direction and brightness**, not its colour.
+- The generation runs on the frame a scene first shows the terrain, so that frame stalls for about a second.
+
 Not done in Phase 1 so far, and not claimed:
 
-- Nothing draws this world. The GPU pass (`terrain::TerrainPass` over `RhiTerrainGpu`) exists and has parity tests, but
-  nothing in the scene, cooker or `aether_player`'s `SceneRenderer` references it: there is no terrain component to
-  cook or load. Wiring that needs a D3D12 or Vulkan device to verify.
-- The Windows build and packaged launch are unverified (this environment is Linux).
-- No performance baseline has been taken: that needs a GPU.
+- The Windows build, D3D12 drawing and packaged launch are unverified (this environment is Linux; the HDR path of the terrain
+  shader is exercised here through Vulkan only).
+- No performance baseline has been taken: that needs a real GPU.

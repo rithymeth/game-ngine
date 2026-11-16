@@ -5506,12 +5506,14 @@
   type struct DirectionalLight
   type struct PointLight
   type struct PostProcessVolume
+  type struct ProceduralTerrain
   type struct SkyLight
   type struct SpotLight
   type struct Wind
   type struct WindZone
   ))AETHER_ENUM(aether::Tonemapper,1,AETHER_ENUM_VALUE(ACES),AETHER_ENUM_VALUE(AgX),AETHER_ENUM_VALUE(None))AETHER_REFLECT(aether::PostProcessVolume,1,AETHER_FIELD(global,Field_EditAnywhere,
   ))AETHER_REFLECT(aether::Decal,1,AETHER_FIELD(texture,Field_EditAnywhere,
+  ))AETHER_REFLECT(aether::ProceduralTerrain,1,AETHER_FIELD(visible,Field_EditAnywhere),AETHER_FIELD(seed,Field_EditAnywhere,
   ))AETHER_REFLECT(aether::Wind,1,AETHER_FIELD(direction_degrees,Field_EditAnywhere,
   ))AETHER_REFLECT(aether::WindZone,1,AETHER_FIELD(radius,Field_EditAnywhere,
   ),AETHER_FIELD(angle_fade_end,Field_EditAnywhere,
@@ -5522,6 +5524,7 @@
   ),AETHER_FIELD(cast_shadows,Field_EditAnywhere))AETHER_REFLECT(aether::PointLight,1,AETHER_FIELD(color,Field_EditAnywhere),AETHER_FIELD(intensity,Field_EditAnywhere,
   ),AETHER_FIELD(cast_shadows,Field_EditAnywhere))AETHER_REFLECT(aether::SkyLight,1,AETHER_FIELD(color,Field_EditAnywhere),AETHER_FIELD(intensity,Field_EditAnywhere,
   ),AETHER_FIELD(cast_shadows,Field_EditAnywhere))AETHER_REFLECT(aether::SpotLight,1,AETHER_FIELD(color,Field_EditAnywhere),AETHER_FIELD(intensity,Field_EditAnywhere,
+  ),AETHER_FIELD(cell_size,Field_EditAnywhere,
   ),AETHER_FIELD(chromatic_aberration,Field_EditAnywhere,
   ),AETHER_FIELD(cloud_coverage,Field_EditAnywhere,
   ),AETHER_FIELD(cloud_scale,Field_EditAnywhere,
@@ -5535,17 +5538,24 @@
   ),AETHER_FIELD(extents,Field_EditAnywhere,
   ),AETHER_FIELD(falloff,Field_EditAnywhere,
   ),AETHER_FIELD(film_grain,Field_EditAnywhere,
+  ),AETHER_FIELD(frequency,Field_EditAnywhere,
   ),AETHER_FIELD(gust_speed,Field_EditAnywhere,
   ),AETHER_FIELD(gustiness,Field_EditAnywhere,
   ),AETHER_FIELD(height_fog_base,Field_EditAnywhere,
   ),AETHER_FIELD(height_fog_density,Field_EditAnywhere,
   ),AETHER_FIELD(height_fog_falloff,Field_EditAnywhere,
+  ),AETHER_FIELD(height_scale,Field_EditAnywhere,
+  ),AETHER_FIELD(hydraulic_droplets,Field_EditAnywhere,
   ),AETHER_FIELD(inner_angle_degrees,Field_EditAnywhere,
   ),AETHER_FIELD(outer_angle_degrees,Field_EditAnywhere,
   ),AETHER_FIELD(priority,Field_EditAnywhere,
   ),AETHER_FIELD(range,Field_EditAnywhere,
+  ),AETHER_FIELD(ridge_amount,Field_EditAnywhere,
+  ),AETHER_FIELD(river_min_catchment,Field_EditAnywhere,
+  ),AETHER_FIELD(samples,Field_EditAnywhere,
   ),AETHER_FIELD(saturation,Field_EditAnywhere,
   ),AETHER_FIELD(screen_space_reflections,Field_EditAnywhere,
+  ),AETHER_FIELD(sea_level,Field_EditAnywhere,
   ),AETHER_FIELD(sharpen,Field_EditAnywhere,
   ),AETHER_FIELD(size,Field_EditAnywhere,
   ),AETHER_FIELD(sort_order,Field_EditAnywhere,
@@ -6758,7 +6768,7 @@
   const std::vector<gfx::parity::Scene>&TerrainParityScenes()
   gfx::rhi::BufferHandle Find(u64 buffer)const
   gfx::rhi::SampledTextureHandle UploadSplatmap(gfx::rhi::IDevice&device,const SplatmapData&splatmap)
-  public:TerrainPass(gfx::rhi::IDevice&device,gfx::rhi::ISwapChain&swap_chain)
+  public:TerrainPass(gfx::rhi::IDevice&device,gfx::rhi::ISwapChain&swap_chain,bool hdr_target=false)
   public:explicit RhiTerrainGpu(gfx::rhi::IDevice&device):device_(device)
   static_assert(sizeof(TerrainConstants)==128)
   std::array<u8,3>TerrainReferenceColor(const std::array<Vec3,4>&albedo_linear,const std::array<f32,4>&painted_weights,const std::array<f32,4>&heights,const TerrainDrawParams&params,const Vec3&world_position=Vec3(0.0f,0.0f,0.0f))

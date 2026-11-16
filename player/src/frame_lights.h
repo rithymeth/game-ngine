@@ -75,6 +75,8 @@ Camera LimitViewDistance(const Camera& camera, f32 view_distance);
 FrameData BuildFrameData(const World& world, const GuidIndex& guids, const Vec3& camera_position);
 // The first SkyLight in the world (the one BuildFrameData uses), or null.
 const SkyLight* FindSkyLight(const World& world);
+// The first ProceduralTerrain in the world (the one the player draws), or null.
+const ProceduralTerrain* FindProceduralTerrain(const World& world);
 // The first Wind in the world (the one BuildFrameData uses), or null.
 const Wind* FindWind(const World& world);
 

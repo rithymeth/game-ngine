@@ -1,4 +1,5 @@
 #include "../player/src/camera_path.h"
+#include "../player/src/terrain_view.h"
 #include "forest_valley.h"
 #include "valley_terrain.h"
 #include "test_framework.h"
@@ -218,4 +219,14 @@ AETHER_TEST(ForestValley_FramePlanUsesLodAndCostsLessThanFullDetail) {
     // Deterministic: the same camera gives the same plan.
     const TerrainFramePlan again = PlanTerrainFrame(v, eye);
     AETHER_CHECK(again.triangles == plan.triangles && again.gpu_bytes == plan.gpu_bytes);
+}
+
+AETHER_TEST(ForestValley_TheScenesTerrainComponentRegeneratesTheWorldsGround) {
+    // What the player draws must be the ground the areas, route and walker were built on, not a lookalike.
+    const World& w = Shared();
+    const ProceduralTerrain component = ValleyTerrainComponent();
+    const terrain::GeneratedTerrain regenerated = terrain::GenerateTerrain(player::ToGenSettings(component));
+    AETHER_CHECK(regenerated.heightmap.width == w.terrain.heightmap.width);
+    AETHER_CHECK(regenerated.heightmap.heights == w.terrain.heightmap.heights);
+    AETHER_CHECK(component.samples == 513 && component.cell_size == 1.0f);
 }

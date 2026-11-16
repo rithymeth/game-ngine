@@ -200,19 +200,34 @@ bool World::Walkable(f32 x, f32 z) const {
     return CellWalkable(terrain, static_cast<u32>(std::lround(gx)), static_cast<u32>(std::lround(gz)));
 }
 
+ProceduralTerrain ValleyTerrainComponent(u32 seed) {
+    // Tuned by measurement, not taste: the generator's defaults give a map 46% water and 21% walkable in its largest piece, which no route can
+    // cross. A low sea, gentler ridges and fewer, larger rivers give about 85% walkable ground in one piece.
+    ProceduralTerrain t;
+    t.seed = seed;
+    t.samples = kSamples;
+    t.cell_size = 1.0f;
+    t.height_scale = 50.0f;
+    t.ridge_amount = 0.3f;
+    t.frequency = 2.0f;
+    t.sea_level = 0.04f;
+    t.river_min_catchment = 1500;
+    t.hydraulic_droplets = terrain::TerrainGenSettings{}.hydraulic_droplets;
+    return t;
+}
+
 World BuildWorld(u32 seed) {
     World world;
-    world.settings.seed = seed;
-    world.settings.width = kSamples;
-    world.settings.height = kSamples;
-    world.settings.cell_size = 1.0f;
-    // Tuned by measurement, not taste: the generator's defaults give a map 46% water and 21% walkable in its largest piece, which no
-    // route can cross. A low sea, gentler ridges and fewer, larger rivers give about 85% walkable ground in one piece.
-    world.settings.height_scale = 50.0f;
-    world.settings.ridge_amount = 0.3f;
-    world.settings.frequency = 2.0f;
-    world.settings.sea_level = 0.04f;
-    world.settings.river_min_catchment = 1500;
+    const ProceduralTerrain component = ValleyTerrainComponent(seed);
+    world.settings.seed = component.seed;
+    world.settings.width = world.settings.height = component.samples;
+    world.settings.cell_size = component.cell_size;
+    world.settings.height_scale = component.height_scale;
+    world.settings.ridge_amount = component.ridge_amount;
+    world.settings.frequency = component.frequency;
+    world.settings.sea_level = component.sea_level;
+    world.settings.river_min_catchment = component.river_min_catchment;
+    world.settings.hydraulic_droplets = component.hydraulic_droplets;
     world.settings = terrain::SanitizeSettings(world.settings);
     world.terrain = terrain::GenerateTerrain(world.settings);
     const GeneratedTerrain& t = world.terrain;

@@ -1,0 +1,199 @@
+{
+  "$type": "Scene",
+  "$version": 1,
+  "entities": [
+    {
+      "components": {
+        "SkyLight": {
+          "$v": 1,
+          "color": [
+            0.75,
+            0.82,
+            0.95
+          ],
+          "intensity": 1.0,
+          "cloud_coverage": 0.35
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Sky"
+        }
+      },
+      "guid": "173cecc0-c1fa-5873-8996-5c35458bebb2"
+    },
+    {
+      "components": {
+        "DirectionalLight": {
+          "$v": 1,
+          "cast_shadows": true,
+          "color": [
+            1.0,
+            0.93,
+            0.82
+          ],
+          "intensity": 2.4
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            -0.06260930273783083,
+            -0.9345833452831553,
+            -0.28221541544887196,
+            0.20733669528824328
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Sun"
+        }
+      },
+      "guid": "6e5562c9-e4d3-59c7-9c0d-57b0c170c066"
+    },
+    {
+      "components": {
+        "ProceduralTerrain": {
+          "$v": 1,
+          "visible": true,
+          "seed": 20260101,
+          "samples": 513,
+          "cell_size": 1.0,
+          "height_scale": 50.0,
+          "frequency": 2.0,
+          "ridge_amount": 0.3,
+          "sea_level": 0.04,
+          "river_min_catchment": 1500,
+          "hydraulic_droplets": 60000
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Valley"
+        }
+      },
+      "guid": "4eb75771-641a-5156-85f8-12f0bfee594c"
+    },
+    {
+      "components": {
+        "PostProcessVolume": {
+          "$v": 1,
+          "global": true,
+          "fog_density": 0.0005
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "Haze"
+        }
+      },
+      "guid": "8ea50cde-94b5-5096-b935-90d038364083"
+    },
+    {
+      "components": {
+        "Camera": {
+          "$v": 1,
+          "far_plane": 1000,
+          "fov_degrees": 60,
+          "near_plane": 0.1,
+          "ortho_height": 10.0,
+          "priority": 0,
+          "projection": "Perspective"
+        },
+        "Transform": {
+          "$v": 2,
+          "position": [
+            440.0,
+            78.0,
+            150.0
+          ],
+          "rotation": [
+            -0.05702108550989209,
+            0.8685707471910232,
+            0.10288015904739607,
+            0.481403288112663
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "Tags": {
+          "$v": 1,
+          "names": [
+            "MainCamera"
+          ]
+        },
+        "EntityName": {
+          "$v": 1,
+          "value": "MainCamera"
+        }
+      },
+      "guid": "03677d18-1ede-5556-b230-18bff87728e1"
+    }
+  ]
+}

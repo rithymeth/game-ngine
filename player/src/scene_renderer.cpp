@@ -24,6 +24,7 @@
 #include "post_pass.h"
 #include "shadow_pass.h"
 #include "sky_pass.h"
+#include "terrain_view.h"
 #include "taa_pass.h"
 #include "view_cull.h"
 #include "mesh_lod.h"
@@ -1132,6 +1133,8 @@ struct SceneRenderer::Impl {
     // The particle pass (M8.7), drawn after the scene's surfaces.
     std::unique_ptr<ParticlePass> particles;
     std::unique_ptr<DecalPass> decals;
+    // The first ProceduralTerrain in the world, generated and drawn after the sky and before the models; made when a scene first has one.
+    std::unique_ptr<TerrainView> terrain;
     // The HDR path (render roadmap step 1): with a scene colour target the scene, decals and particles draw in linear light and the post
     // pass tone maps into the back buffer; without one (hdr false) they draw straight into the back buffer as before.
     std::unique_ptr<PostPass> post;
@@ -2638,6 +2641,11 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
     const Camera* camera = world.IsAlive(camera_entity) ? world.GetComponent<Camera>(camera_entity) : nullptr;
     Mat4 particle_view_projection, particle_projection;
     vfx::ParticleCamera particle_camera;
+    bool draw_terrain = false; // a ProceduralTerrain is ready, drawn once the scene pass begins
+    Mat4 terrain_view_projection;
+    Vec3 terrain_camera_position;
+    Vec3 terrain_sun_direction{-0.4f, 0.8f, -0.35f}; // towards the sun: the terrain shader's own default until the frame's sun is known
+    f32 terrain_sun_intensity = 3.0f;
     bool draw_particles = false;
     bool draw_sprite2d = false;
     Mat4 decal_view_projection;
@@ -2787,6 +2795,13 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
             view_frustum = MakeViewFrustum(view_projection, projection.cols[1].y, static_cast<f32>(renderer.swap_chain.Height()));
         }
         decal_camera_position = camera_position;
+        // A ProceduralTerrain in the world: generated and uploaded now, before the scene pass opens (it creates device resources).
+        if (const ProceduralTerrain* ground = FindProceduralTerrain(world); ground != nullptr && ground->visible) {
+            if (!renderer.terrain) renderer.terrain = std::make_unique<TerrainView>(renderer.device, renderer.swap_chain, renderer.hdr);
+            draw_terrain = renderer.terrain->Update(*ground, camera_position);
+            terrain_view_projection = view_projection;
+            terrain_camera_position = camera_position;
+        }
         have_camera = true;
         shadow_view = MakeView(LimitViewDistance(*camera, renderer.view_distance), camera_transform, aspect);
         // Mesh particles get the scene shader's sun and sky: the frame's lights where the device has frame constants, else the shader's
@@ -2825,6 +2840,8 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                 }
             }
             particle_lighting.sun_direction = Vec3(frame_data.sun_direction[0], frame_data.sun_direction[1], frame_data.sun_direction[2]);
+            terrain_sun_direction = particle_lighting.sun_direction;
+            terrain_sun_intensity = std::max({frame_data.sun_color[0], frame_data.sun_color[1], frame_data.sun_color[2]});
             particle_lighting.sun_color = Vec3(frame_data.sun_color[0], frame_data.sun_color[1], frame_data.sun_color[2]);
             particle_lighting.sky_color = Vec3(frame_data.sky_color[0], frame_data.sky_color[1], frame_data.sky_color[2]);
             // Lit sprites take the frame's point lights too (the scene's and the particles' own).
@@ -3475,6 +3492,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
         commands.BeginRenderPass(renderer.swap_chain, kBackground);
     }
     if (draw_sky) renderer.sky->Draw(commands, shadow_view, frame_buffer);
+    if (draw_terrain) renderer.terrain->Draw(commands, terrain_view_projection, terrain_camera_position, terrain_sun_direction, terrain_sun_intensity);
     if (!opaque_draws.empty()) {
         // Culled draws first, then the two-sided ones: one pipeline switch.
         // (and a material graph's draws together, each graph with its own pipelines)
