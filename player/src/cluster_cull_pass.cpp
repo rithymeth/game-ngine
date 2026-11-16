@@ -34,6 +34,7 @@ f32 Bits(u32 v) {
 constexpr char kShader[] = R"(
 RWStructuredBuffer<float4> Clusters : register(u0);
 RWByteAddressBuffer Output : register(u1);
+RWByteAddressBuffer Draws : register(u2); // one indexed-draw record per selected cluster: index count, 1 instance, first index, 0, 0
 cbuffer Constants : register(b0, space1) {
     float4 Camera;   // xyz position, w pixels per unit
     float4 Params;   // x near, y threshold, z cluster count (bits), w capacity (bits)
@@ -55,7 +56,7 @@ void CSMain(uint3 id : SV_DispatchThreadID) {
     if (index >= count) return;
     float4 a = Clusters[index * 5 + 0]; // centre, radius
     float4 b = Clusters[index * 5 + 1]; // parent centre, parent radius
-    float4 c = Clusters[index * 5 + 2]; // error, parent error, triangles (bits), -
+    float4 c = Clusters[index * 5 + 2]; // error, parent error, triangles (bits), first index (bits)
     float4 d = Clusters[index * 5 + 3]; // tight sphere
     float4 e = Clusters[index * 5 + 4]; // cone axis, cutoff
     float threshold = Params.y;
@@ -74,7 +75,15 @@ void CSMain(uint3 id : SV_DispatchThreadID) {
     uint slot, unused;
     Output.InterlockedAdd(0, 1u, slot);           // how many were selected (may pass the capacity: Read reports it)
     Output.InterlockedAdd(4, asuint(c.z), unused); // their triangles
-    if (slot < asuint(Params.w)) Output.Store((2 + slot) * 4, index);
+    if (slot < asuint(Params.w)) {
+        Output.Store((2 + slot) * 4, index);
+        uint at = slot * 20;
+        Draws.Store(at, asuint(c.z) * 3u);
+        Draws.Store(at + 4, 1u);
+        Draws.Store(at + 8, asuint(c.w));
+        Draws.Store(at + 12, 0u);
+        Draws.Store(at + 16, 0u);
+    }
 }
 )";
 
@@ -100,7 +109,7 @@ bool ClusterCullPass::Initialize(IDevice& device, const cook::ClusterHierarchy& 
             const f32 cluster[kClusterFloat4s * 4] = {
                 c.center.x, c.center.y, c.center.z, c.radius,
                 c.parent_center.x, c.parent_center.y, c.parent_center.z, c.parent_radius,
-                c.error, c.parent_error, Bits(c.triangle_count), 0.0f,
+                c.error, c.parent_error, Bits(c.triangle_count), Bits(c.index_offset),
                 c.bounds.center.x, c.bounds.center.y, c.bounds.center.z, c.bounds.radius,
                 c.bounds.cone_axis.x, c.bounds.cone_axis.y, c.bounds.cone_axis.z, c.bounds.cone_cutoff};
             std::memcpy(t, cluster, sizeof(cluster));
@@ -108,10 +117,11 @@ bool ClusterCullPass::Initialize(IDevice& device, const cook::ClusterHierarchy& 
         clusters_ = device.CreateStorageBuffer(table.size() * sizeof(f32), 16, table.data());
         const u64 output_bytes = (static_cast<u64>(kOutputHeaderWords) + capacity_) * sizeof(u32);
         output_ = device.CreateStorageBuffer(output_bytes);
+        draws_ = device.CreateStorageBuffer(static_cast<u64>(capacity_) * 20);
         constants_ = device.CreateConstantBuffer(sizeof(Constants));
         ComputePipelineDesc desc;
         desc.hlsl_source = kShader;
-        desc.storage_buffer_count = 2;
+        desc.storage_buffer_count = 3;
         desc.constant_buffer_count = 1;
         pipeline_ = device.CreateComputePipeline(desc);
     } catch (const std::exception& e) {
@@ -119,7 +129,7 @@ bool ClusterCullPass::Initialize(IDevice& device, const cook::ClusterHierarchy& 
         Release();
         return false;
     }
-    if (!clusters_.IsValid() || !output_.IsValid() || !constants_.IsValid() || !pipeline_.IsValid()) return fail("the device could not make the pass's resources");
+    if (!clusters_.IsValid() || !output_.IsValid() || !draws_.IsValid() || !constants_.IsValid() || !pipeline_.IsValid()) return fail("the device could not make the pass's resources");
     valid_ = true;
     return true;
 }
@@ -128,10 +138,11 @@ void ClusterCullPass::Release() {
     if (device_) {
         if (clusters_.IsValid()) device_->DestroyBuffer(clusters_);
         if (output_.IsValid()) device_->DestroyBuffer(output_);
+        if (draws_.IsValid()) device_->DestroyBuffer(draws_);
         if (constants_.IsValid()) device_->DestroyBuffer(constants_);
         if (pipeline_.IsValid()) device_->DestroyComputePipeline(pipeline_);
     }
-    clusters_ = output_ = constants_ = {};
+    clusters_ = output_ = draws_ = constants_ = {};
     pipeline_ = {};
     device_ = nullptr;
     cluster_count_ = capacity_ = 0;
@@ -168,6 +179,7 @@ bool ClusterCullPass::Record(ICommandList& cmd, const cook::ClusterView& view, f
     cmd.BindComputePipeline(pipeline_);
     cmd.BindComputeStorageBuffer(0, clusters_);
     cmd.BindComputeStorageBuffer(1, output_);
+    cmd.BindComputeStorageBuffer(2, draws_);
     cmd.BindComputeConstantBuffer(0, constants_);
     cmd.Dispatch((cluster_count_ + kThreadGroup - 1) / kThreadGroup);
     cmd.HostReadBarrier(output_);

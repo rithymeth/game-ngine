@@ -431,7 +431,7 @@ bool ProbeRayTracing(VkPhysicalDevice physical_device) {
 }
 
 VkDevice CreateLogicalDevice(VkPhysicalDevice physical_device, const PhysicalDeviceChoice& choice, bool& update_after_bind,
-                             bool& ray_tracing, bool& host_query_reset) {
+                             bool& ray_tracing, bool& host_query_reset, bool& indirect_count) {
     f32 priorities[2] = {1.0f, 1.0f};
     std::vector<VkDeviceQueueCreateInfo> queue_infos;
 
@@ -472,6 +472,11 @@ VkDevice CreateLogicalDevice(VkPhysicalDevice physical_device, const PhysicalDev
     vkGetPhysicalDeviceFeatures2(physical_device, &supported_2);
     update_after_bind = supported_12.descriptorBindingSampledImageUpdateAfterBind == VK_TRUE &&
                         supported_12.descriptorBindingUpdateUnusedWhilePending == VK_TRUE;
+    // Draws whose count a shader wrote (vkCmdDrawIndexedIndirectCount) need both of these.
+    VkPhysicalDeviceFeatures supported_core{};
+    vkGetPhysicalDeviceFeatures(physical_device, &supported_core);
+    indirect_count = supported_12.drawIndirectCount == VK_TRUE && supported_core.multiDrawIndirect == VK_TRUE;
+    features_12.drawIndirectCount = indirect_count ? VK_TRUE : VK_FALSE;
     features_12.descriptorBindingSampledImageUpdateAfterBind = update_after_bind ? VK_TRUE : VK_FALSE;
     features_12.descriptorBindingUpdateUnusedWhilePending = update_after_bind ? VK_TRUE : VK_FALSE;
     std::vector<const char*> extensions = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
@@ -512,6 +517,7 @@ VkDevice CreateLogicalDevice(VkPhysicalDevice physical_device, const PhysicalDev
     vkGetPhysicalDeviceFeatures(physical_device, &supported_features);
     VkPhysicalDeviceFeatures enabled_features{};
     enabled_features.shaderSampledImageArrayDynamicIndexing = VK_TRUE;
+    enabled_features.multiDrawIndirect = indirect_count ? VK_TRUE : VK_FALSE;
     enabled_features.textureCompressionBC = supported_features.textureCompressionBC;
     enabled_features.textureCompressionASTC_LDR = supported_features.textureCompressionASTC_LDR; // what phones have instead
 
@@ -559,7 +565,7 @@ VulkanDevice::VulkanDevice(bool enable_debug_layer) {
 
         bool update_after_bind = false;
         bool host_query_reset = false;
-        device_ = CreateLogicalDevice(physical_device_, choice, update_after_bind, ray_tracing_supported_, host_query_reset);
+        device_ = CreateLogicalDevice(physical_device_, choice, update_after_bind, ray_tracing_supported_, host_query_reset, indirect_count_);
         {
             u32 family_count = 0;
             vkGetPhysicalDeviceQueueFamilyProperties(physical_device_, &family_count, nullptr);
@@ -4426,6 +4432,31 @@ void VulkanCommandList::DrawIndexed(u32 index_count) {
         return;
     }
     vkCmdDrawIndexed(command_buffer_, index_count, 1, 0, 0, 0);
+}
+
+bool VulkanCommandList::DrawIndexedIndirectCount(BufferHandle args, BufferHandle count, u32 max_draws, u64 args_offset, u64 count_offset) {
+    if (!recording_ || !render_pass_active_ || !graphics_pipeline_bound_ || !graphics_uses_vertex_buffer_ || !vertex_buffer_bound_ ||
+        !index_buffer_bound_ || (graphics_bindless_enabled_ && !graphics_bindless_bound_) || !device_.SupportsIndirectCount() || max_draws == 0) {
+        AETHER_LOG_ERROR("Vulkan", "DrawIndexedIndirectCount requires a valid bound graphics pipeline, a device with indirect count and a draw count");
+        return false;
+    }
+    if (!args.IsValid() || !device_.IsBufferAlive(args) || !device_.GetBuffer(args).is_storage || !count.IsValid() || !device_.IsBufferAlive(count) ||
+        !device_.GetBuffer(count).is_storage) {
+        AETHER_LOG_ERROR("Vulkan", "DrawIndexedIndirectCount needs storage buffers for its arguments and its count");
+        return false;
+    }
+    const BufferRecord& args_record = device_.GetBuffer(args);
+    const BufferRecord& count_record = device_.GetBuffer(count);
+    constexpr u64 kArgBytes = sizeof(VkDrawIndexedIndirectCommand);
+    if (args_offset % 4 != 0 || count_offset % 4 != 0 || args_offset > args_record.size_bytes ||
+        (args_record.size_bytes - args_offset) / kArgBytes < max_draws || count_offset > count_record.size_bytes ||
+        count_record.size_bytes - count_offset < 4) {
+        AETHER_LOG_ERROR("Vulkan", "DrawIndexedIndirectCount arguments must be 4-byte aligned and inside their buffers");
+        return false;
+    }
+    vkCmdDrawIndexedIndirectCount(command_buffer_, args_record.buffer, args_offset, count_record.buffer, count_offset, max_draws,
+                                  static_cast<u32>(kArgBytes));
+    return true;
 }
 
 bool VulkanCommandList::DrawIndexedIndirect(BufferHandle args, u64 offset) {

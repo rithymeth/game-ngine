@@ -324,6 +324,8 @@ public:
     virtual bool SupportsStorageBufferRead() const { return false; }
     // True when ICommandList::DrawIndexedIndirect works (Vulkan; D3D12 does not yet). Storage buffers are then usable as draw arguments.
     virtual bool SupportsIndirectDraw() const { return false; }
+    // True when ICommandList::DrawIndexedIndirectCount works (Vulkan with drawIndirectCount and multiDrawIndirect, which desktop GPUs have).
+    virtual bool SupportsIndirectCount() const { return false; }
     virtual bool ReadStorageBuffer(BufferHandle /*buffer*/, void* /*out*/, u64 /*size_bytes*/, u64 /*offset*/ = 0) { return false; }
 
     // Block-compressed textures (BC1, BC3, BC7: see CompressedTextureFormat), kept compressed on the GPU with their whole mip chain: a quarter

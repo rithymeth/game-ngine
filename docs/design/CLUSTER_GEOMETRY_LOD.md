@@ -11,6 +11,7 @@ Status: **in progress**. Initial CPU reference: `engine/include/aether/cook/clus
   viewport and field of view, camera inside the bounds, tiny distances, LOD choice at and around the threshold and by distance, non-monotonic errors, plane
   tangency, non-unit normals, no planes, rejected meshlets. Covered for the hierarchy instead: multi-root DAGs (the build ends with several roots), no overlap
   and no holes in the cut, and a sweep over seven distances.
+- **Draw (stage 3, 17 November 2026):** the GPU cull list drives `DrawIndexedIndirectCount` on Vulkan and matches the direct draw pixel for pixel at the leaf cut (`test_cluster_draw_gpu.cpp`).
 - **Still open:** skinned-primitive fallback, malformed cooked data, transform scaling, screenshot regression, the benchmark gate, the cooked format change,
   and everything GPU.
 

@@ -2210,6 +2210,7 @@
   virtual bool CopyRenderTextureToReadback(SampledTextureHandle,BufferHandle)
   virtual bool CopySceneDepth()
   virtual bool DrawIndexedIndirect(BufferHandle,u64=0)
+  virtual bool DrawIndexedIndirectCount(BufferHandle,BufferHandle,u32,u64=0,u64=0)
   virtual bool ResolveGpuTimer(GpuTimerHandle)
   virtual bool WriteGpuTimestamp(GpuTimerHandle,u32)
   virtual void BeginRenderPass(ISwapChain&swap_chain,const ClearColor&clear_color)=0
@@ -2457,6 +2458,7 @@
   virtual bool SupportsCompressedTexture(CompressedTextureFormat)const
   virtual bool SupportsFrameConstants()const
   virtual bool SupportsGpuTiming()const
+  virtual bool SupportsIndirectCount()const
   virtual bool SupportsIndirectDraw()const
   virtual bool SupportsRayTracing()const
   virtual bool SupportsReadback()const
@@ -2606,6 +2608,7 @@
   bool DestroyPipeline(PipelineHandle pipeline)override
   bool DestroyTexture(SampledTextureHandle texture)override
   bool DrawIndexedIndirect(BufferHandle args,u64 offset=0)override
+  bool DrawIndexedIndirectCount(BufferHandle args,BufferHandle count,u32 max_draws,u64 args_offset=0,u64 count_offset=0)override
   bool IsAccelerationStructureAlive(AccelerationStructureHandle h)const
   bool IsBufferAlive(BufferHandle h)const
   bool IsComputeDispatchWithinLimits(u32 groups_x,u32 groups_y,u32 groups_z)const
@@ -2630,6 +2633,7 @@
   bool SupportsCompressedTexture(CompressedTextureFormat format)const override
   bool SupportsFrameConstants()const override
   bool SupportsGpuTiming()const override
+  bool SupportsIndirectCount()const override
   bool SupportsIndirectDraw()const override
   bool SupportsRayTracing()const override
   bool SupportsReadback()const override

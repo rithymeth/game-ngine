@@ -96,6 +96,12 @@ public:
     // and index buffer as DrawIndexed does, and IDevice::SupportsIndirectDraw. A compute list that wrote the buffer must be ordered before this
     // graphics list by a semaphore or a fence (the buffer is shared between both queues). False, nothing recorded, otherwise (the default).
     virtual bool DrawIndexedIndirect(BufferHandle /*args*/, u64 /*offset*/ = 0) { return false; }
+    // Like DrawIndexedIndirect for up to `max_draws` draws: the arguments are consecutive five-word records from `args` at `args_offset`, and the number
+    // actually drawn is the u32 at `count_offset` of `count` (a storage buffer, usually written by the same compute pass), clamped to `max_draws`. A shader
+    // that selects objects appends their records and bumps the count; nothing is read back. Needs IDevice::SupportsIndirectCount; false otherwise.
+    virtual bool DrawIndexedIndirectCount(BufferHandle /*args*/, BufferHandle /*count*/, u32 /*max_draws*/, u64 /*args_offset*/ = 0, u64 /*count_offset*/ = 0) {
+        return false;
+    }
 
     // Compute dispatch. BindComputePipeline must precede Dispatch; dimensions
     // are workgroup counts and must be non-zero.

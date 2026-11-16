@@ -124,6 +124,19 @@ vertices, a cluster's triangles against the index array, group references and me
 `MeshCook_RefusesClusterHierarchiesThatPointOutsideThemselves` tampers with each of those. A loaded hierarchy selects exactly the clusters the cooked one does. The fuzz
 corpus has a cluster seed (`tools/fuzz/corpus/amesh/valid_clusters.amesh`, about 28 KB for a 12 x 12 grid). The format-versions table row now says 3.
 
+### The draw: the cull list drives the GPU draw
+
+`ICommandList::DrawIndexedIndirect` reads one draw record from a storage buffer; `DrawIndexedIndirectCount` reads up to `max_draws` records and the number to draw from a second
+buffer (`IDevice::SupportsIndirectCount`: Vulkan 1.2 `drawIndirectCount` plus `multiDrawIndirect`, which the device now enables where it has them). The cull pass writes, for each
+selected cluster, a record `{triangles * 3, 1, first index, 0, 0}` into `ClusterCullPass::DrawArguments()` next to the cluster list, and its atomic counter at offset 0 of
+`DrawCount()` is the draw count (the draw clamps it to the capacity). Bind a vertex buffer of the mesh's vertices and an index buffer holding exactly `hierarchy.indices`, and nothing
+is read back: the CPU never learns how many clusters were drawn. Compute and graphics are on different queues, so the graphics submission must wait on the compute fence
+(`GraphicsQueueWaitOnCompute`); the test waits on the CPU instead.
+
+`ClusterDrawGpu_TheCullListDrivesTheDrawWithNothingReadBack` renders a lumpy sphere (RTX 3050 Laptop, Vulkan): at a threshold of 0 the leaf cut is the whole mesh and the picture equals drawing
+the mesh's own indices **pixel for pixel**; a coarser cut draws fewer than half the triangles and covers about the same silhouette; a frustum that sees nothing draws nothing; and the
+call refuses a zero draw count, a non-storage buffer, more draws than the arguments hold, a misaligned offset and a dead handle.
+
 ### Known limits
 
 - **Fixed 16 November 2026: compute results did not reach the CPU on a real GPU.** The Vulkan backend bound each compute descriptor set before writing the buffers into it; lavapipe tolerated that, NVIDIA read empty descriptors, so every compute shader wrote nothing. Sets are now bound in `Dispatch`. `ComputeReadback_AShaderWriteReachesTheCpu_Vulkan` guards it and `ClusterCullGpu_*` now agree with the CPU on the RTX 3050.
@@ -131,7 +144,7 @@ corpus has a cluster seed (`tools/fuzz/corpus/amesh/valid_clusters.amesh`, about
   cannot shrink waits to be merged at a later level. A later stage can regroup across levels or lift the locks near the root.
 - The simplifier works on positions only: UV seams and normals are not protected, so a textured mesh may show seams at coarse levels until attribute-aware
   simplification is added.
-- Stage 3 so far: the hierarchy is cooked (AMSC v3, below) and the RHI has an indirect indexed draw (Vulkan). **No cluster is drawn yet**: the draw pass that feeds the cull list to `DrawIndexedIndirect` is next.
+- Stage 3 draws clusters on Vulkan (below) but is not wired into the player or the scene renderer, has no Hi-Z occlusion, no streaming, and **its speed against the existing draw path is unmeasured** (the benchmark gate in `CLUSTER_GEOMETRY_LOD.md`). D3D12 has no indirect draw yet.
 - No occlusion (Hi-Z) culling yet: it needs a depth pyramid, which is a graphics-side pass.
 - Whether clusters beat the current draw path is **still unmeasured**. This container has only a software Vulkan device (lavapipe), so the GPU pass is verified
   for correctness, not speed. Measuring it on a real GPU against the existing draw path is the first thing to do before stage 3, and the design doc's benchmark gate
