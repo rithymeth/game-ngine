@@ -30,6 +30,7 @@ void Game::Restart() {
     contact_ = 0.0f;
     ping_cooldown_ = 0.0f;
     impact_cooldown_ = 0.0f;
+    wake_cooldown_ = 0.0f;
     noise_ = 0.0f;
     leak_ = 0.0f;
     CreatureAI outbound;
@@ -138,7 +139,12 @@ void Game::UpdateAcoustics(float dt) {
         noise_ = std::max(noise_, 0.75f);
         events_.push_back({sub_.position, 0.7f, 22.0f, 2.0f});
     }
-    (void)dt;
+    // Full thrust leaves a trail. Creep does not.
+    if (speed > 4.5f && wake_cooldown_ <= 0.0f) {
+        wake_cooldown_ = 0.45f;
+        events_.push_back({sub_.position, 0.38f, 12.0f, 2.8f});
+    }
+    wake_cooldown_ = std::max(0.0f, wake_cooldown_ - dt);
 
     for (auto it = events_.begin(); it != events_.end();) {
         it->remaining_time -= dt;

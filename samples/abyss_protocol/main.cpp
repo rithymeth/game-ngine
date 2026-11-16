@@ -349,6 +349,12 @@ void DrawWorld(const abyss::Game& game, const std::vector<DrawTri>& mesh, const 
         f32 rise = std::fmod(anim * 1.4f, 1.6f);
         r.Gem({sub.position.x, sub.position.y + 0.6f + rise, sub.position.z - 1.4f}, 0.18f, 0.0f, {0.65f, 0.9f, 1.0f});
     }
+    for (const abyss::AcousticEvent& ev : game.GetEvents()) {
+        if (ev.radius > 16.0f) continue;
+        if (!Visible(game, ev.position, 20.0f, 36.0f, 6.0f)) continue;
+        f32 fade = std::clamp(ev.remaining_time / 2.8f, 0.0f, 1.0f);
+        r.Gem(ev.position, 0.16f, 0.0f, {0.25f * fade, 0.75f * fade, 0.9f * fade});
+    }
 
     if (game.HasContact()) {
         f32 age = 1.0f - std::clamp(game.Contact() / 3.2f, 0.0f, 1.0f);

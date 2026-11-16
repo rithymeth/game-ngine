@@ -141,6 +141,7 @@ private:
     float contact_ = 0.0f;
     float ping_cooldown_ = 0.0f;
     float impact_cooldown_ = 0.0f;
+    float wake_cooldown_ = 0.0f;
     float noise_ = 0.0f;
     float leak_ = 0.0f;
     std::string fail_;
