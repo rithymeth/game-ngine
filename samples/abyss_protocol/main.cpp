@@ -26,6 +26,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <queue>
 #include <string>
 #include <vector>
 
@@ -191,21 +192,32 @@ Vec3 TransformPoint(const Mat4& m, const f32 p[3]) {
     return {r.x, r.y, r.z};
 }
 
-void EmitPrimitive(const GltfScene& scene, const GltfPrimitive& prim, const Mat4& world, int stride, int& seen,
-                   std::vector<DrawTri>& out) {
+struct ByArea {
+    bool operator()(const std::pair<f32, DrawTri>& a, const std::pair<f32, DrawTri>& b) const { return a.first > b.first; }
+};
+
+void EmitPrimitive(const GltfScene& scene, const GltfPrimitive& prim, const Mat4& world, int& submitted,
+                   std::priority_queue<std::pair<f32, DrawTri>, std::vector<std::pair<f32, DrawTri>>, ByArea>& keep) {
     Color col{0.92f, 0.48f, 0.16f};
     if (prim.material_index >= 0 && static_cast<usize>(prim.material_index) < scene.materials.size()) {
         const GltfMaterial& mat = scene.materials[static_cast<usize>(prim.material_index)];
         col = {mat.base_color[0], mat.base_color[1], mat.base_color[2]};
     }
-    auto vert = [&](u32 index) {
-        return TransformPoint(world, prim.vertices[index].position);
-    };
+    auto vert = [&](u32 index) { return TransformPoint(world, prim.vertices[index].position); };
     auto push = [&](u32 i0, u32 i1, u32 i2) {
         if (i0 >= prim.vertices.size() || i1 >= prim.vertices.size() || i2 >= prim.vertices.size()) return;
-        if ((seen++ % stride) != 0) return;
-        if (static_cast<int>(out.size()) >= kMaxTris) return;
-        out.push_back({vert(i0), vert(i1), vert(i2), col});
+        ++submitted;
+        Vec3 a = vert(i0), b = vert(i1), c = vert(i2);
+        Vec3 e1 = b - a, e2 = c - a;
+        Vec3 n{e1.y * e2.z - e1.z * e2.y, e1.z * e2.x - e1.x * e2.z, e1.x * e2.y - e1.y * e2.x};
+        f32 area = std::sqrt(n.x * n.x + n.y * n.y + n.z * n.z);
+        if (area < 1e-10f) return;
+        if (static_cast<int>(keep.size()) < kMaxTris) {
+            keep.emplace(area, DrawTri{a, b, c, col});
+        } else if (area > keep.top().first) {
+            keep.pop();
+            keep.emplace(area, DrawTri{a, b, c, col});
+        }
     };
     if (!prim.indices.empty()) {
         for (usize i = 0; i + 2 < prim.indices.size(); i += 3) push(prim.indices[i], prim.indices[i + 1], prim.indices[i + 2]);
@@ -215,32 +227,32 @@ void EmitPrimitive(const GltfScene& scene, const GltfPrimitive& prim, const Mat4
     }
 }
 
-int CountPrimitives(const GltfScene& scene, const GltfPrimitive& prim) {
-    if (!prim.indices.empty()) return static_cast<int>(prim.indices.size() / 3);
-    return static_cast<int>(prim.vertices.size() / 3);
-}
-
 std::vector<DrawTri> BuildMesh(const GltfScene& scene, f32 size) {
-    int total = 0;
-    auto visit = [&](auto&& consume) {
-        if (!scene.node_instances.empty()) {
-            for (const GltfNodeInstance& inst : scene.node_instances) {
-                if (inst.mesh_index >= scene.meshes.size()) continue;
-                for (const GltfPrimitive& prim : scene.meshes[inst.mesh_index].primitives) consume(prim, inst.world_transform);
-            }
-        } else {
-            for (const GltfMesh& mesh : scene.meshes) {
-                for (const GltfPrimitive& prim : mesh.primitives) consume(prim, Mat4::Identity());
-            }
+    std::priority_queue<std::pair<f32, DrawTri>, std::vector<std::pair<f32, DrawTri>>, ByArea> keep;
+    int submitted = 0;
+    auto visit = [&](const GltfPrimitive& prim, const Mat4& world) { EmitPrimitive(scene, prim, world, submitted, keep); };
+    if (!scene.node_instances.empty()) {
+        for (const GltfNodeInstance& inst : scene.node_instances) {
+            if (inst.mesh_index >= scene.meshes.size()) continue;
+            for (const GltfPrimitive& prim : scene.meshes[inst.mesh_index].primitives) visit(prim, inst.world_transform);
         }
-    };
-    visit([&](const GltfPrimitive& prim, const Mat4&) { total += CountPrimitives(scene, prim); });
-    int stride = std::max(1, total / kMaxTris);
+    } else {
+        for (const GltfMesh& mesh : scene.meshes) {
+            for (const GltfPrimitive& prim : mesh.primitives) visit(prim, Mat4::Identity());
+        }
+    }
+    if (keep.empty()) return {};
+    if (submitted > static_cast<int>(keep.size())) {
+        AETHER_LOG_INFO("Abyss", "glTF budget kept %d of %d triangles (largest faces).", static_cast<int>(keep.size()),
+                        submitted);
+    }
 
     std::vector<DrawTri> tris;
-    int seen = 0;
-    visit([&](const GltfPrimitive& prim, const Mat4& world) { EmitPrimitive(scene, prim, world, stride, seen, tris); });
-    if (tris.empty()) return tris;
+    tris.reserve(keep.size());
+    while (!keep.empty()) {
+        tris.push_back(keep.top().second);
+        keep.pop();
+    }
 
     Vec3 lo = tris[0].a, hi = tris[0].a;
     auto grow = [&](const Vec3& p) {
