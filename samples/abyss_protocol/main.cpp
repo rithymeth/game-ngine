@@ -294,7 +294,6 @@ bool Visible(const abyss::Game& game, const Vec3& p, f32 light_range, f32 sonar_
 
 void DrawWorld(const abyss::Game& game, const std::vector<DrawTri>& mesh, Renderer& r, f32 yaw, f32 pitch, f32 anim) {
     const abyss::Submarine& sub = game.GetSub();
-    const abyss::CreatureAI& creature = game.GetCreature();
     Vec3 target = sub.position;
     f32 dist = 14.0f;
     Vec3 eye = target + Vec3{std::sin(yaw) * std::cos(pitch), std::sin(pitch), std::cos(yaw) * std::cos(pitch)} * dist;
@@ -354,7 +353,8 @@ void DrawWorld(const abyss::Game& game, const std::vector<DrawTri>& mesh, Render
               {0.22f, 0.24f, 0.28f});
     }
 
-    if (Visible(game, creature.position, 26.0f, 40.0f, 7.0f)) {
+    for (const abyss::CreatureAI& creature : game.GetCreatures()) {
+        if (!Visible(game, creature.position, 26.0f, 40.0f, 7.0f)) continue;
         Color creature_col = creature.is_alerted ? Color{1.0f, 0.25f, 0.2f} : Color{0.25f, 0.85f, 1.0f};
         r.Gem(creature.position, creature.is_alerted ? 1.1f : 0.8f, anim * 1.5f, creature_col);
     }
@@ -376,6 +376,10 @@ void DrawWorld(const abyss::Game& game, const std::vector<DrawTri>& mesh, Render
                      sub.position.z + delta.z / len * 8.0f};
             r.Gem(tip, 0.32f, anim * 4.0f, heading_home ? Color{1.0f, 0.85f, 0.25f} : Color{0.85f, 0.95f, 1.0f});
         }
+    } else if (game.HasBearing() && (game.GetMission() == abyss::Mission::Outbound || heading_home)) {
+        Vec3 dir = game.BearingDir();
+        Vec3 tip{sub.position.x + dir.x * 8.0f, sub.position.y + dir.y * 8.0f + 1.4f, sub.position.z + dir.z * 8.0f};
+        r.Gem(tip, 0.22f, 0.0f, {0.35f, 0.4f, 0.45f});
     }
 
     const abyss::Relay& relay = game.GetRelay();
@@ -394,7 +398,13 @@ void DrawHud(const abyss::Game& game, std::vector<u32>& px, bool has_mesh) {
     FillRect(px, 0, 0, kW, 48, Rgb(0.02f, 0.04f, 0.06f));
     DrawBar(px, 16, 6, sub.battery, Rgb(0.95f, 0.75f, 0.2f));
     DrawBar(px, 16, 18, sub.oxygen, Rgb(0.45f, 0.75f, 0.95f));
-    DrawBar(px, 16, 30, game.GetCreature().awareness, game.GetCreature().is_alerted ? Rgb(1, 0.3f, 0.2f) : Rgb(0.3f, 0.85f, 1));
+    float awareness = 0.0f;
+    bool alert = false;
+    for (const abyss::CreatureAI& creature : game.GetCreatures()) {
+        awareness = std::max(awareness, creature.awareness);
+        alert = alert || creature.is_alerted;
+    }
+    DrawBar(px, 16, 30, awareness, alert ? Rgb(1, 0.3f, 0.2f) : Rgb(0.3f, 0.85f, 1));
     if (game.HasContact()) FillRect(px, 200, 8, 14, 32, Rgb(0.3f, 0.95f, 0.85f));
     if (sub.lights_on) FillRect(px, 220, 8, 14, 32, Rgb(1.0f, 0.9f, 0.4f));
     if (has_mesh) FillRect(px, 240, 8, 14, 32, Rgb(0.9f, 0.45f, 0.15f));

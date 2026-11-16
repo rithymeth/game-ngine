@@ -18,17 +18,24 @@ Game::Game() { Restart(); }
 
 void Game::Restart() {
     sub_ = {};
-    creature_ = {};
     relay_ = {};
     haven_ = {};
     events_.clear();
+    creatures_.clear();
     mission_ = Mission::Outbound;
     time_ = 0.0f;
     fail_.clear();
-    creature_.position = {25.0f, -20.0f, 10.0f};
-    creature_.home = creature_.position;
+    bearing_valid_ = false;
     contact_ = 0.0f;
     ping_cooldown_ = 0.0f;
+    CreatureAI outbound;
+    outbound.position = {25.0f, -20.0f, 10.0f};
+    outbound.home = outbound.position;
+    CreatureAI inbound;
+    inbound.position = {22.0f, -26.0f, -14.0f};
+    inbound.home = inbound.position;
+    creatures_.push_back(outbound);
+    creatures_.push_back(inbound);
     rocks_ = {
         {{16.0f, -18.0f, -2.0f}, 3.2f},
         {{30.0f, -24.0f, -6.0f}, 4.0f},
@@ -39,13 +46,26 @@ void Game::Restart() {
 void Game::Ping() {
     if (mission_ == Mission::Won || mission_ == Mission::Lost) return;
     if (ping_cooldown_ > 0.0f) return;
+    if (sub_.battery < 0.08f) return;
     ping_cooldown_ = 1.6f;
+    sub_.battery -= 0.08f;
     sub_.sonar_active = true;
     contact_ = 3.2f;
+    aether::Vec3 goal = Objective();
+    aether::Vec3 dir{goal.x - sub_.position.x, goal.y - sub_.position.y, goal.z - sub_.position.z};
+    float len = Distance(sub_.position, goal);
+    if (len > 0.5f) {
+        bearing_ = {dir.x / len, dir.y / len, dir.z / len};
+        bearing_valid_ = true;
+    }
+}
+
+void Game::SetLights(bool on) {
+    if (on && sub_.battery <= 0.02f) on = false;
+    sub_.lights_on = on;
 }
 
 void Game::SetSonar(bool active) { sub_.sonar_active = active; }
-void Game::SetLights(bool on) { sub_.lights_on = on; }
 
 void Game::ApplyThrust(const aether::Vec3& thrust) {
     sub_.velocity.x += thrust.x;
@@ -122,56 +142,56 @@ void Game::UpdateAcoustics(float dt) {
     }
 }
 
-void Game::UpdateCreature(float dt) {
-    float dist = Distance(creature_.position, sub_.position);
+void Game::UpdateCreature(CreatureAI& creature, float dt) {
+    float dist = Distance(creature.position, sub_.position);
     float noise_influence = 0.0f;
 
     if (sub_.sonar_active) noise_influence += 0.7f;
     if (sub_.lights_on && dist < 30.0f) noise_influence += 0.3f;
 
     for (const auto& ev : events_) {
-        float ev_dist = Distance(creature_.position, ev.position);
+        float ev_dist = Distance(creature.position, ev.position);
         if (ev_dist < ev.radius) {
             noise_influence += ev.intensity * (1.0f - ev_dist / ev.radius);
         }
     }
 
-    creature_.awareness = std::min(1.0f, creature_.awareness + noise_influence * dt * 2.0f);
-    creature_.awareness = std::max(0.0f, creature_.awareness - dt * 0.15f);
+    creature.awareness = std::min(1.0f, creature.awareness + noise_influence * dt * 2.0f);
+    creature.awareness = std::max(0.0f, creature.awareness - dt * 0.15f);
 
-    if (creature_.awareness > 0.45f) {
-        creature_.is_alerted = true;
-        creature_.investigation_timer = 4.0f;
-        aether::Vec3 dir = {sub_.position.x - creature_.position.x,
-                            sub_.position.y - creature_.position.y,
-                            sub_.position.z - creature_.position.z};
-        float len = Distance(creature_.position, sub_.position);
+    if (creature.awareness > 0.45f) {
+        creature.is_alerted = true;
+        creature.investigation_timer = 4.0f;
+        aether::Vec3 dir = {sub_.position.x - creature.position.x,
+                            sub_.position.y - creature.position.y,
+                            sub_.position.z - creature.position.z};
+        float len = Distance(creature.position, sub_.position);
         if (len > 1.0f) {
             dir.x /= len;
             dir.y /= len;
             dir.z /= len;
-            creature_.position.x += dir.x * 3.0f * dt;
-            creature_.position.y += dir.y * 3.0f * dt;
-            creature_.position.z += dir.z * 3.0f * dt;
+            creature.position.x += dir.x * 3.0f * dt;
+            creature.position.y += dir.y * 3.0f * dt;
+            creature.position.z += dir.z * 3.0f * dt;
         }
     } else {
-        creature_.is_alerted = false;
-        aether::Vec3 home_dir = {creature_.home.x - creature_.position.x,
-                                 creature_.home.y - creature_.position.y,
-                                 creature_.home.z - creature_.position.z};
-        float hlen = Distance(creature_.position, creature_.home);
+        creature.is_alerted = false;
+        aether::Vec3 home_dir = {creature.home.x - creature.position.x,
+                                 creature.home.y - creature.position.y,
+                                 creature.home.z - creature.position.z};
+        float hlen = Distance(creature.position, creature.home);
         if (hlen > 0.5f) {
             home_dir.x /= hlen;
             home_dir.y /= hlen;
             home_dir.z /= hlen;
-            creature_.position.x += home_dir.x * 1.0f * dt;
-            creature_.position.y += home_dir.y * 1.0f * dt;
-            creature_.position.z += home_dir.z * 1.0f * dt;
+            creature.position.x += home_dir.x * 1.0f * dt;
+            creature.position.y += home_dir.y * 1.0f * dt;
+            creature.position.z += home_dir.z * 1.0f * dt;
         }
     }
 
-    if (creature_.investigation_timer > 0.0f) {
-        creature_.investigation_timer -= dt;
+    if (creature.investigation_timer > 0.0f) {
+        creature.investigation_timer -= dt;
     }
 }
 
@@ -181,7 +201,9 @@ void Game::UpdatePressure(float dt) {
         float excess = (depth - 50.0f) / 150.0f;
         sub_.battery -= excess * 0.05f * dt;
     }
+    if (sub_.lights_on) sub_.battery -= 0.03f * dt;
     sub_.battery = std::max(0.0f, sub_.battery);
+    if (sub_.battery <= 0.0f) sub_.lights_on = false;
     sub_.oxygen = std::max(0.0f, sub_.oxygen - 0.01f * dt);
 }
 
@@ -201,7 +223,7 @@ void Game::Step(float dt) {
     ResolveRocks();
 
     UpdateAcoustics(dt);
-    UpdateCreature(dt);
+    for (CreatureAI& creature : creatures_) UpdateCreature(creature, dt);
     UpdatePressure(dt);
     UpdateRelay();
     UpdateMission();
@@ -240,11 +262,12 @@ aether::Vec3 Game::Objective() const {
 }
 
 void Game::UpdateMission() {
-    float creature_dist = Distance(sub_.position, creature_.position);
-    if (creature_.is_alerted && creature_dist < 4.0f) {
-        mission_ = Mission::Lost;
-        fail_ = "caught";
-        return;
+    for (const CreatureAI& creature : creatures_) {
+        if (creature.is_alerted && Distance(sub_.position, creature.position) < 4.0f) {
+            mission_ = Mission::Lost;
+            fail_ = "caught";
+            return;
+        }
     }
     if (sub_.oxygen <= 0.0f) {
         mission_ = Mission::Lost;
@@ -256,27 +279,35 @@ void Game::UpdateMission() {
         fail_ = "battery";
         return;
     }
-    if (mission_ == Mission::Outbound && relay_.restored) mission_ = Mission::Return;
+    if (mission_ == Mission::Outbound && relay_.restored) {
+        mission_ = Mission::Return;
+        bearing_valid_ = false;
+    }
     if (mission_ == Mission::Return && Distance(sub_.position, haven_.position) < 8.0f) mission_ = Mission::Won;
 }
 
 void Game::UpdateRelay() {
     if (relay_.restored) return;
+    bool alert = false;
+    for (const CreatureAI& creature : creatures_) alert = alert || creature.is_alerted;
     float dist = Distance(sub_.position, relay_.position);
-    // The relay only answers a quiet boat: no sonar, lights off, creature calm.
-    if (dist < 6.0f && !sub_.sonar_active && !sub_.lights_on && !creature_.is_alerted) {
-        relay_.restored = true;
-    }
+    if (dist < 6.0f && !sub_.sonar_active && !sub_.lights_on && !alert) relay_.restored = true;
 }
 
 std::string Game::StatusText() const {
+    float awareness = 0.0f;
+    bool alert = false;
+    for (const CreatureAI& creature : creatures_) {
+        awareness = std::max(awareness, creature.awareness);
+        alert = alert || creature.is_alerted;
+    }
     std::ostringstream oss;
     oss << "Depth: " << (-sub_.position.y)
         << "  Battery: " << int(sub_.battery * 100) << "%"
         << "  Lights: " << (sub_.lights_on ? "ON" : "off")
         << "  Contact: " << int(contact_ * 10) / 10.0f << "s"
-        << "  Creature awareness: " << int(creature_.awareness * 100) << "%"
-        << (creature_.is_alerted ? "  [ALERT]" : "");
+        << "  Creature awareness: " << int(awareness * 100) << "%"
+        << (alert ? "  [ALERT]" : "");
     if (mission_ == Mission::Won) oss << "  MISSION COMPLETE  " << int(time_) << "s";
     else if (mission_ == Mission::Lost) oss << "  FAILED: " << fail_ << "  (R retry)";
     else if (mission_ == Mission::Return) oss << "  Return to Haven";

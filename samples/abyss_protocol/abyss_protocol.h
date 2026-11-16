@@ -87,12 +87,14 @@ public:
     bool LoadModel(const std::string& path, ModelInfo& out_info);
 
     const Submarine& GetSub() const { return sub_; }
-    const CreatureAI& GetCreature() const { return creature_; }
+    const std::vector<CreatureAI>& GetCreatures() const { return creatures_; }
     const Relay& GetRelay() const { return relay_; }
     const Haven& GetHaven() const { return haven_; }
     const std::vector<Rock>& GetRocks() const { return rocks_; }
     bool HasContact() const { return contact_ > 0.05f; }
     float Contact() const { return contact_; }
+    bool HasBearing() const { return bearing_valid_; }
+    aether::Vec3 BearingDir() const { return bearing_; }
     Mission GetMission() const { return mission_; }
     aether::Vec3 Objective() const;
     float Time() const { return time_; }
@@ -101,7 +103,7 @@ public:
 
 private:
     void UpdateAcoustics(float dt);
-    void UpdateCreature(float dt);
+    void UpdateCreature(CreatureAI& creature, float dt);
     void UpdatePressure(float dt);
     void UpdateRelay();
     void UpdateMission();
@@ -109,10 +111,12 @@ private:
 
     aether::World world_;
     Submarine sub_;
-    CreatureAI creature_;
     Relay relay_;
     Haven haven_;
     std::vector<Rock> rocks_;
+    std::vector<CreatureAI> creatures_;
+    aether::Vec3 bearing_{0.0f, 0.0f, 1.0f};
+    bool bearing_valid_ = false;
     Mission mission_ = Mission::Outbound;
     float time_ = 0.0f;
     float contact_ = 0.0f;

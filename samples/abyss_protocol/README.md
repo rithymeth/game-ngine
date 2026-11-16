@@ -16,7 +16,7 @@ Underwater exploration / survival mystery for Aether Engine. Stylized 3D, single
 - Win32 software rasterizer (no GPU), same approach as Gem Hop.
 - Pass a `.gltf` or `.glb` and it is centered, scaled to about 4 metres, and drawn on the submarine. Base-color materials are used. Meshes over 4000 triangles are strided down so the software view stays interactive.
 - No model: an orange placeholder hull is drawn instead.
-- **Run**: leave Haven, restore the silent relay, then get home. `F` fires one sonar ping. For a few seconds you can see farther and a marker points at the objective. The creature hears the ping. Lights show what is nearby, and they also give you away. Rocks are solid even when you cannot see them.
+- **Run**: leave Haven, restore the silent relay, then get home. `F` fires one sonar ping and spends battery. For a few seconds you can see farther and a bright marker points at the objective. After it fades, a dim marker keeps the last heading. It does not update until you ping again, and it clears when the relay answers. Lights show what is nearby, spend battery, and give you away. Two creatures listen. Rocks are solid even when you cannot see them.
 - Reach the relay with lights off and the creature calm. A ping on top of it does not count.
 - The creature catching you, or running out of oxygen or battery, fails the run. `R` restarts.
 
