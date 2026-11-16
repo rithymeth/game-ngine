@@ -3,9 +3,10 @@
 // Software 3D rasteriser blitted with GDI, same idea as Gem Hop, so a loaded
 // glTF draws without a GPU. Gameplay stays in abyss_protocol.cpp.
 //
-//   W/A/S/D   thrust (camera-relative)     Q/E     dive / rise
-//   Mouse or arrows   look                 F       sonar ping
-//   L         toggle lights                Esc     quit
+//   W/A/S/D   thrust (camera-relative)     Shift   quiet thrust
+//   Q/E       dive / rise                  F       sonar ping
+//   Mouse or arrows   look                 L       toggle lights
+//   R         restart                      Esc     quit
 //
 //   abyss_protocol.exe path\to\model.glb
 //   AETHER_ABYSS_MODEL, AETHER_ABYSS_MAX_FRAMES, AETHER_ABYSS_SCREENSHOT
@@ -552,9 +553,11 @@ int main(int argc, char** argv) {
                 side = (Down('D') ? 1.0f : 0.0f) - (Down('A') ? 1.0f : 0.0f);
                 dive = (Down('E') ? 1.0f : 0.0f) - (Down('Q') ? 1.0f : 0.0f);
             }
+            f32 quiet = Down(VK_SHIFT) ? 0.28f : 1.0f;
             f32 fx = std::sin(yaw), fz = std::cos(yaw);
             game.SetLights(lights);
-            game.ApplyThrust({(fx * fwd + fz * side) * 0.35f, dive * 0.22f, (fz * fwd - fx * side) * 0.35f});
+            game.ApplyThrust({(fx * fwd + fz * side) * 0.35f * quiet, dive * 0.22f * quiet,
+                              (fz * fwd - fx * side) * 0.35f * quiet});
             game.Step(1.0f / 60.0f);
             accumulator -= 1.0f / 60.0f;
         }

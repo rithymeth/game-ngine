@@ -58,6 +58,7 @@ struct Submarine {
     bool lights_on = true;
     float battery = 1.0f;
     float oxygen = 1.0f;
+    float hull = 1.0f;
 };
 
 // Simple summary of a loaded glTF model for the prototype.
@@ -95,6 +96,7 @@ public:
     float Contact() const { return contact_; }
     bool HasBearing() const { return bearing_valid_; }
     aether::Vec3 BearingDir() const { return bearing_; }
+    float Noise() const { return noise_; }
     Mission GetMission() const { return mission_; }
     aether::Vec3 Objective() const;
     float Time() const { return time_; }
@@ -121,6 +123,8 @@ private:
     float time_ = 0.0f;
     float contact_ = 0.0f;
     float ping_cooldown_ = 0.0f;
+    float impact_cooldown_ = 0.0f;
+    float noise_ = 0.0f;
     std::string fail_;
     std::vector<AcousticEvent> events_;
     std::optional<aether::assets::GltfScene> loaded_scene_;

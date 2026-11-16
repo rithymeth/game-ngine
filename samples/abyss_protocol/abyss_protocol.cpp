@@ -28,6 +28,8 @@ void Game::Restart() {
     bearing_valid_ = false;
     contact_ = 0.0f;
     ping_cooldown_ = 0.0f;
+    impact_cooldown_ = 0.0f;
+    noise_ = 0.0f;
     CreatureAI outbound;
     outbound.position = {25.0f, -20.0f, 10.0f};
     outbound.home = outbound.position;
@@ -119,18 +121,16 @@ bool Game::LoadModel(const std::string& path, ModelInfo& out_info) {
 }
 
 void Game::UpdateAcoustics(float dt) {
-    float continuous = 0.05f;
-    if (sub_.velocity.x * sub_.velocity.x + sub_.velocity.y * sub_.velocity.y +
-            sub_.velocity.z * sub_.velocity.z > 0.1f) {
-        continuous += 0.25f;
-    }
+    float speed = std::sqrt(sub_.velocity.x * sub_.velocity.x + sub_.velocity.y * sub_.velocity.y +
+                            sub_.velocity.z * sub_.velocity.z);
+    // Full thrust is loud. A creep (Shift) stays under the creatures' hearing.
+    noise_ = std::min(0.9f, speed * 0.09f);
+    if (sub_.lights_on) noise_ += 0.08f;
     if (sub_.sonar_active) {
-        continuous += 0.6f;
+        noise_ = std::max(noise_, 0.75f);
         events_.push_back({sub_.position, 0.7f, 22.0f, 2.0f});
     }
-    if (sub_.lights_on) {
-        continuous += 0.1f;
-    }
+    (void)dt;
 
     for (auto it = events_.begin(); it != events_.end();) {
         it->remaining_time -= dt;
@@ -145,9 +145,10 @@ void Game::UpdateAcoustics(float dt) {
 void Game::UpdateCreature(CreatureAI& creature, float dt) {
     float dist = Distance(creature.position, sub_.position);
     float noise_influence = 0.0f;
-
-    if (sub_.sonar_active) noise_influence += 0.7f;
-    if (sub_.lights_on && dist < 30.0f) noise_influence += 0.3f;
+    float hear_radius = 8.0f + noise_ * 20.0f;
+    if (dist < hear_radius) noise_influence += noise_ * (1.0f - dist / hear_radius);
+    if (sub_.lights_on && dist < 18.0f) noise_influence += 0.22f;
+    if (sub_.sonar_active) noise_influence += 0.55f;
 
     for (const auto& ev : events_) {
         float ev_dist = Distance(creature.position, ev.position);
@@ -230,6 +231,7 @@ void Game::Step(float dt) {
     sub_.sonar_active = false;
     contact_ = std::max(0.0f, contact_ - dt);
     ping_cooldown_ = std::max(0.0f, ping_cooldown_ - dt);
+    impact_cooldown_ = std::max(0.0f, impact_cooldown_ - dt);
 }
 
 void Game::ResolveRocks() {
@@ -252,6 +254,11 @@ void Game::ResolveRocks() {
             sub_.velocity.x *= 0.35f;
             sub_.velocity.y *= 0.35f;
             sub_.velocity.z *= 0.35f;
+            if (impact_cooldown_ <= 0.0f) {
+                impact_cooldown_ = 0.7f;
+                sub_.hull = std::max(0.0f, sub_.hull - 0.18f);
+                events_.push_back({sub_.position, 0.95f, 18.0f, 1.4f});
+            }
         }
     }
 }
@@ -279,6 +286,11 @@ void Game::UpdateMission() {
         fail_ = "battery";
         return;
     }
+    if (sub_.hull <= 0.0f) {
+        mission_ = Mission::Lost;
+        fail_ = "hull";
+        return;
+    }
     if (mission_ == Mission::Outbound && relay_.restored) {
         mission_ = Mission::Return;
         bearing_valid_ = false;
@@ -304,6 +316,7 @@ std::string Game::StatusText() const {
     std::ostringstream oss;
     oss << "Depth: " << (-sub_.position.y)
         << "  Battery: " << int(sub_.battery * 100) << "%"
+        << "  Hull: " << int(sub_.hull * 100) << "%"
         << "  Lights: " << (sub_.lights_on ? "ON" : "off")
         << "  Contact: " << int(contact_ * 10) / 10.0f << "s"
         << "  Creature awareness: " << int(awareness * 100) << "%"
