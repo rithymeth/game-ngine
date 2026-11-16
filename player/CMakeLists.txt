@@ -112,6 +112,13 @@ if(TARGET Aether::TimeOfDay)
 else()
     target_compile_definitions(aether_game PUBLIC AETHER_KIT_TIMEOFDAY=0)
 endif()
+# The weather genre kit (clouds, rain, wind, lightning as numbers), when built.
+if(TARGET Aether::Weather)
+    target_link_libraries(aether_game PUBLIC Aether::Weather)
+    target_compile_definitions(aether_game PUBLIC AETHER_KIT_WEATHER=1)
+else()
+    target_compile_definitions(aether_game PUBLIC AETHER_KIT_WEATHER=0)
+endif()
 # The dialogue genre kit (conversations), when built.
 if(TARGET Aether::Dialogue)
     target_link_libraries(aether_game PUBLIC Aether::Dialogue)

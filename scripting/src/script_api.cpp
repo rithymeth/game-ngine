@@ -11,6 +11,7 @@
 #include "aether/script/loot_api.h"
 #include "aether/script/dialogue_api.h"
 #include "aether/script/timeofday_api.h"
+#include "aether/script/weather_api.h"
 #include "aether/script/achievements_api.h"
 #include "aether/script/spawner_api.h"
 #include "aether/script/checkpoints_api.h"
@@ -509,6 +510,7 @@ void ScriptSystem::InstallApi(bool install_kit_apis) {
         InstallKitApi("Loot");
         InstallKitApi("Dialogue");
         InstallKitApi("TimeOfDay");
+        InstallKitApi("Weather");
         InstallKitApi("Achievements");
         InstallKitApi("Spawner");
         InstallKitApi("Checkpoints");
@@ -529,6 +531,7 @@ void ScriptSystem::InstallKitApi(const std::string& kit_name) {
     else if (kit_name == "Loot") InstallLootApi(host_);
     else if (kit_name == "Dialogue") InstallDialogueApi(host_);
     else if (kit_name == "TimeOfDay") InstallTimeOfDayApi(host_);
+    else if (kit_name == "Weather") InstallWeatherApi(host_);
     else if (kit_name == "Achievements") InstallAchievementsApi(host_);
     else if (kit_name == "Spawner") InstallSpawnerApi(host_);
     else if (kit_name == "Checkpoints") InstallCheckpointsApi(host_);

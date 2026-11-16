@@ -46,6 +46,9 @@
 #if AETHER_KIT_TIMEOFDAY
 #include "aether/timeofday/timeofday_kit.h"
 #endif
+#if AETHER_KIT_WEATHER
+#include "aether/weather/weather_kit.h"
+#endif
 #if AETHER_KIT_DIALOGUE
 #include "aether/dialogue/dialogue_kit.h"
 #endif
@@ -94,6 +97,9 @@ void Game::BuildKits() {
 #endif
 #if AETHER_KIT_TIMEOFDAY
     kits_.Add(tod::MakeTimeOfDayKit());
+#endif
+#if AETHER_KIT_WEATHER
+    kits_.Add(weather::MakeWeatherKit());
 #endif
 #if AETHER_KIT_DIALOGUE
     kits_.Add(dlg::MakeDialogueKit(&dialogues_));
@@ -364,6 +370,14 @@ void Game::AddTimeOfDayStage() {
     SystemDesc time_of_day = tod::MakeTimeOfDaySystem(&clock_);
     ApplyKitStage(time_of_day, "Player.TimeOfDay");
     runtime_->stages[time_of_day.name] = std::move(time_of_day);
+#endif
+}
+
+void Game::AddWeatherStage() {
+#if AETHER_KIT_WEATHER
+    SystemDesc weather = weather::MakeWeatherSystem(&weather_);
+    ApplyKitStage(weather, "Player.Weather");
+    runtime_->stages[weather.name] = std::move(weather);
 #endif
 }
 

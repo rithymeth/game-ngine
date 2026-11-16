@@ -91,6 +91,7 @@ without a server or network connection.
 | [manual/24-destruction.md](manual/24-destruction.md) | The destruction kit: breakable things that shatter into physics debris |
 | [manual/25-vehicles.md](manual/25-vehicles.md) | The vehicles kit: wheeled vehicles with suspension, an engine, a gearbox and brakes |
 | [manual/26-ropes.md](manual/26-ropes.md) | The ropes kit: ropes and chains as jointed bodies that hang, swing, carry a weight and can be cut |
+| [manual/27-weather.md](manual/27-weather.md) | The weather kit: clouds, rain, snow, fog, gusty wind, lightning and wet ground as numbers that blend and can change by themselves |
 | [manual/api_stability.md](manual/api_stability.md) | The three stability levels and what each promises |
 | [manual/core_api_inventory.md](manual/core_api_inventory.md) | Ownership and threading inventory for the APIs a game or plugin uses |
 | [manual/support_policy.md](manual/support_policy.md) | A support-policy proposal, explicitly not yet promised |

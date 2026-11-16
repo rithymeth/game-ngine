@@ -95,3 +95,7 @@ A quest log (`QuestLog`) now follows its entity through a scene change (`Scene.L
 ## Ropes
 
 A new optional kit and engine plugin, **Ropes** (`AETHER_KIT_ROPES`, needs physics), on the physics joints: a `Rope` component becomes a chain of small bodies joined by ball-and-socket joints, hanging from the world or from another body, optionally carrying a body at its free end, with an optional model drawn per segment. Luau gets the `Ropes` table (`Cut`, `Length`, `Segments`, `SegmentPosition`). A cut wakes the rope's bodies: one that had hung at rest would otherwise stay in the air. See the manual's Ropes chapter.
+
+## Weather
+
+A new optional kit and engine plugin, **Weather** (`AETHER_KIT_WEATHER`): the sky's mood as numbers (clouds, rain, snow, fog, wind with gusts, lightning with a thunder delay, wet ground) that blend smoothly from one kind of weather to the next, by hand (`Weather.Set`) or on their own from a seed, the same at any frame rate. It is the game's, like the clock, so it keeps going through a scene change. It adds a frame stage, `Player.Weather`, after `Player.Update` (the stage-order snapshot test now lists it). The kit only keeps the numbers; what a scene does with them is the game's. Luau gets the `Weather` table. See the manual's Weather chapter.
