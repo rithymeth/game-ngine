@@ -185,8 +185,22 @@ public:
         f32 min_x = 0.0f, min_y = 0.0f, max_x = 0.0f, max_y = 0.0f;
         bool active = false;
     };
-    void DrawWorkspaceStrip();
+    // The strip's right end, where the concept puts Play: a green chip while editing, then Pause (or Resume), Step and
+    // Stop beside it, and the backend's name after a divider. All three are the open document's own calls, so the chip
+    // cannot disagree with the toolbar, the menu or the status bar. WorkspaceStripPlays is what the last draw laid out
+    // (screen rectangles), so a test can click them as a person does.
+    struct StripPlay {
+        bool visible = false;
+        f32 main_min_x = 0.0f, main_min_y = 0.0f, main_max_x = 0.0f, main_max_y = 0.0f; // Play / Pause / Resume
+        f32 step_min_x = 0.0f, step_min_y = 0.0f, step_max_x = 0.0f, step_max_y = 0.0f;
+        f32 stop_min_x = 0.0f, stop_min_y = 0.0f, stop_max_x = 0.0f, stop_max_y = 0.0f;
+    };
+    void DrawWorkspaceStrip(const char* backend = nullptr);
     const std::vector<WorkspaceTab>& WorkspaceTabs() const;
+    const StripPlay& WorkspaceStripPlays() const;
+    // The trail the toolbar's right end shows: "Game / <project> / <document>", the concept's "Game / Ironvale /
+    // Main World". The project slot says "Untitled Project" and the document one the active document's name.
+    std::string Breadcrumb() const;
     // Opens the tool a workspace tab stands for; false (and nothing changes) when no workspace has that label.
     bool SelectWorkspace(std::string_view label);
     // The label of the workspace the open tool belongs to; empty for a tool that no tab opens.
@@ -196,9 +210,9 @@ public:
     // The popped-out tool windows.
     void DrawWindows();
     // The main toolbar (Stage 1 of docs/design/EDITOR_PARITY_AUDIT.md), into the current window: Save, Undo and Redo
-    // from the command table, the Scene View's transform mode, space and snap, Play/Pause/Step/Stop for the open
-    // document, and Build and Package and Settings. A host draws it along the top; the toolbar adds no state of its
-    // own, so a headless test can draw it too.
+    // from the command table, the Scene View's transform mode, space and snap, Build and Package and Settings, and the
+    // concept's breadcrumb with its save dot at the right end. Play lives on the strip above, where the concept puts it.
+    // A host draws it along the top; the toolbar adds no state of its own, so a headless test can draw it too.
     void DrawMainToolbar();
 
     // The bottom status bar (Stage 1 of docs/design/EDITOR_PARITY_AUDIT.md), into the current window: the open

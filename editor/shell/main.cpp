@@ -256,7 +256,7 @@ void DrawEditor(EditorWorkspace& workspace, LayoutState& layouts, const char* ba
     // bar the one along the bottom, so the dockspace fills what is left.
     ImGuiViewport* viewport = ImGui::GetMainViewport();
     if (ImGui::BeginViewportSideBar("##workspaces", viewport, ImGuiDir_Up, ImGui::GetFrameHeight(), ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings)) {
-        workspace.DrawWorkspaceStrip();
+        workspace.DrawWorkspaceStrip(backend_label);
     }
     ImGui::End();
     if (ImGui::BeginViewportSideBar("##toolbar", viewport, ImGuiDir_Up, ImGui::GetFrameHeight(), ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings)) {

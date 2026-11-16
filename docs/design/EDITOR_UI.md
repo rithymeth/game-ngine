@@ -223,6 +223,13 @@ drift. The strip's tabs report their rectangles (`WorkspaceTabs`), the active
 one is read back from the open tool (`ActiveWorkspace`), and clicking uses
 `SelectWorkspace`; a headless test clicks a tab at its rectangle.
 
+The strip's right end is the concept's **Play**: a green chip while editing,
+Pause (amber) while playing, Resume when paused, with Step and Stop beside it
+while the game runs, and the backend's name after a divider. The chips are the
+open document's own calls (`PlaySession`), and their rectangles are reported by
+`WorkspaceStripPlays`, so a headless test clicks them the way a person does.
+A narrow window drops the right end rather than drawing it over the tabs.
+
 The strip's **World** tab is the level editor, so it opens the Scene tool,
 which lays out the concept's centre: the hierarchy, the Scene View and the
 Inspector side by side, the viewport taking the room the two side columns
@@ -381,11 +388,15 @@ right:
   Pivot/Centre, Snap with the step for the current mode. These are the same
   `ViewportTools` the Scene View drives, so W/E/R/Q/P and the buttons cannot
   disagree.
-- Play controls. While editing there is one Play button. While playing it
-  becomes Pause, Resume when paused, plus Step (enabled only while paused,
-  and it advances exactly one frame) and Stop. The play state is also a thin
-  amber underline across the toolbar, so it is visible without reading labels.
-- Build and Package, and Settings (Preferences), at the right.
+- Play controls live on the workspace strip above, where the concept puts them
+  (a green chip, Pause/Resume, Step and Stop); the toolbar has none, so the
+  two rows cannot disagree and neither is a second copy of the other.
+- Build and Package, and Settings (Preferences).
+- The breadcrumb at the right end, the concept's "Game / Ironvale / Main
+  World": `Game / <project> / <open document>` from `Breadcrumb()`, with a dot
+  that is green once the scene is saved and amber while it has changes, then
+  "World saved" or "Unsaved changes". Text, not a button -- Save is the
+  action.
 
 The current scene is not chosen here: the toolbar acts on the focused
 document -- the active tab's -- which is the scene today and becomes whichever

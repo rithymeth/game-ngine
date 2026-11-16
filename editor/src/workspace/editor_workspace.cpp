@@ -344,6 +344,7 @@ struct EditorWorkspace::Impl {
     usize selected = 0;
     std::array<char, 128> tool_filter{};
     std::vector<WorkspaceTab> workspace_tabs; // what DrawWorkspaceStrip last laid out
+    StripPlay strip_play;                     // the strip's Play chip and its neighbours, as last drawn
 
     // Scripting.
     std::unique_ptr<BlueprintDocument> blueprint_doc;
@@ -1935,16 +1936,27 @@ bool EditorWorkspace::SelectWorkspace(std::string_view label) {
 
 const std::vector<EditorWorkspace::WorkspaceTab>& EditorWorkspace::WorkspaceTabs() const { return impl_->workspace_tabs; }
 
+const EditorWorkspace::StripPlay& EditorWorkspace::WorkspaceStripPlays() const { return impl_->strip_play; }
+
+std::string EditorWorkspace::Breadcrumb() const {
+    const std::string project =
+        impl_->project_file.empty() ? std::string("Untitled Project") : impl_->project_file.stem().string();
+    return "Game / " + project + " / " + ActiveDocument().DisplayName();
+}
+
 // The strip the concept puts above the toolbar: the workspaces side by side, each an icon and its name, the active one
-// lit with an accent underline. The panel draws and hit-tests its own tabs, so the host window needs nothing else in it.
-void EditorWorkspace::DrawWorkspaceStrip() {
+// lit with an accent underline, and Play at the right end. The panel draws and hit-tests its own tabs and chips, so the
+// host window needs nothing else in it.
+void EditorWorkspace::DrawWorkspaceStrip(const char* backend) {
     const std::string active = ActiveWorkspace();
     const f32 height = ImGui::GetFrameHeight();
     const f32 glyph = ImGui::GetFontSize() * 0.8f;
     const f32 pad = 8.0f;
+    const f32 row_y = ImGui::GetCursorScreenPos().y;
     ImDrawList* draw = ImGui::GetWindowDrawList();
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(2.0f, ImGui::GetStyle().ItemSpacing.y));
     impl_->workspace_tabs.clear();
+    impl_->strip_play = StripPlay{};
     for (usize i = 0; i < std::size(kWorkspaces); ++i) {
         const WorkspaceEntry& entry = kWorkspaces[i];
         const f32 text_width = ImGui::CalcTextSize(entry.label).x;
@@ -1973,6 +1985,75 @@ void EditorWorkspace::DrawWorkspaceStrip() {
         ImGui::PopID();
     }
     ImGui::PopStyleVar();
+
+    // The right end: the concept's green Play chip, Pause (or Resume), Step and Stop while the game runs, then the
+    // backend. All of them are the open document's own calls, so this row cannot disagree with the toolbar or the
+    // status bar about what the game is doing.
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const f32 gap = style.ItemSpacing.x;
+    const f32 content_start = ImGui::GetWindowPos().x + style.WindowPadding.x;
+    const f32 content_right = ImGui::GetWindowPos().x + ImGui::GetWindowWidth() - style.WindowPadding.x;
+    const auto chip_width = [&style](const char* label) {
+        return ImGui::CalcTextSize(label).x + style.FramePadding.x * 2.0f + 12.0f;
+    };
+    SceneDocument& document = impl_->scene_panel->Document();
+    const PlaySession::State state = document.PlayState();
+    const char* main_label = state == PlaySession::State::Editing ? "Play"
+                             : (state == PlaySession::State::Playing ? "Pause" : "Resume");
+    f32 group = chip_width(main_label);
+    if (state != PlaySession::State::Editing) group += gap + chip_width("Step") + gap + chip_width("Stop");
+    const f32 backend_width = backend != nullptr ? gap * 2.0f + 1.0f + gap + ImGui::CalcTextSize(backend).x : 0.0f;
+    const f32 tabs_end = impl_->workspace_tabs.empty() ? content_start : impl_->workspace_tabs.back().max_x;
+    const f32 start = content_right - group - backend_width;
+    if (start >= tabs_end + gap * 2.0f) {
+        impl_->strip_play.visible = true;
+        ImGui::SetCursorScreenPos(ImVec2(start, row_y));
+        const auto chip = [&](const char* label, ImU32 fill, ImU32 hover_fill, ImU32 text_color, bool enabled,
+                              f32& min_x, f32& min_y, f32& max_x, f32& max_y) {
+            ImGui::PushID(label);
+            ImGui::InvisibleButton("##strip_chip", ImVec2(chip_width(label), height));
+            const bool hovered = ImGui::IsItemHovered();
+            const bool clicked = enabled && ImGui::IsItemClicked();
+            const ImVec2 min = ImGui::GetItemRectMin();
+            const ImVec2 max = ImGui::GetItemRectMax();
+            min_x = min.x;
+            min_y = min.y;
+            max_x = max.x;
+            max_y = max.y;
+            ImGui::PopID();
+            draw->AddRectFilled(min, max, enabled && hovered ? hover_fill : fill, 5.0f);
+            const ImVec2 text = ImGui::CalcTextSize(label);
+            draw->AddText(ImVec2((min.x + max.x - text.x) * 0.5f, (min.y + max.y - text.y) * 0.5f),
+                          enabled ? text_color : IM_COL32(122, 128, 140, 255), label);
+            return clicked;
+        };
+        const bool primary = state != PlaySession::State::Playing;
+        StripPlay& laid = impl_->strip_play;
+        if (chip(main_label, primary ? IM_COL32(46, 160, 67, 255) : IM_COL32(196, 132, 26, 255),
+                 primary ? IM_COL32(58, 176, 82, 255) : IM_COL32(216, 148, 34, 255), IM_COL32(255, 255, 255, 255), true,
+                 laid.main_min_x, laid.main_min_y, laid.main_max_x, laid.main_max_y)) {
+            if (state == PlaySession::State::Playing) document.Pause();
+            else document.Play();
+        }
+        if (state != PlaySession::State::Editing) {
+            ImGui::SameLine(0.0f, gap);
+            const bool can_step = state == PlaySession::State::Paused;
+            if (chip("Step", IM_COL32(41, 47, 60, 255), IM_COL32(52, 58, 72, 255), IM_COL32(212, 217, 226, 255),
+                     can_step, laid.step_min_x, laid.step_min_y, laid.step_max_x, laid.step_max_y))
+                document.Step();
+            ImGui::SetItemTooltip("Advance the game exactly one frame while paused");
+            ImGui::SameLine(0.0f, gap);
+            if (chip("Stop", IM_COL32(41, 47, 60, 255), IM_COL32(52, 58, 72, 255), IM_COL32(212, 217, 226, 255),
+                     true, laid.stop_min_x, laid.stop_min_y, laid.stop_max_x, laid.stop_max_y))
+                document.Stop();
+        }
+        if (backend != nullptr) {
+            ImGui::SameLine(0.0f, gap * 2.0f);
+            ImGui::TextDisabled("|");
+            ImGui::SameLine(0.0f, gap);
+            ImGui::TextDisabled("%s", backend);
+        }
+    }
 }
 
 void EditorWorkspace::DrawToolList(f32 width) {
@@ -2139,38 +2220,28 @@ void EditorWorkspace::DrawMainToolbar() {
     ImGui::SameLine();
     ImGui::TextDisabled("|");
     ImGui::SameLine();
-
-    const PlaySession::State state = document.PlayState();
-    if (state == PlaySession::State::Editing) {
-        if (ImGui::Button("Play")) document.Play();
-    } else {
-        if (ImGui::Button(state == PlaySession::State::Playing ? "Pause" : "Resume")) {
-            if (state == PlaySession::State::Playing) document.Pause();
-            else document.Play();
-        }
-        ImGui::SameLine();
-        ImGui::BeginDisabled(state != PlaySession::State::Paused);
-        if (ImGui::Button("Step")) document.Step();
-        ImGui::EndDisabled();
-        ImGui::SetItemTooltip("Advance the game exactly one frame while paused");
-        ImGui::SameLine();
-        if (ImGui::Button("Stop")) document.Stop();
-        ImGui::SameLine();
-        ImGui::TextColored(ImVec4(1.0f, 0.72f, 0.2f, 1.0f), "%s",
-                           state == PlaySession::State::Playing ? "Playing" : "Paused");
-        // The state is also an underline, so it is visible without reading the labels.
-        ImDrawList* draw = ImGui::GetWindowDrawList();
-        const ImVec2 origin = ImGui::GetWindowPos();
-        draw->AddLine(ImVec2(origin.x, origin.y + ImGui::GetWindowHeight() - 1.0f),
-                      ImVec2(origin.x + ImGui::GetWindowWidth(), origin.y + ImGui::GetWindowHeight() - 1.0f),
-                      IM_COL32(255, 184, 51, 255), 2.0f);
-    }
-    ImGui::SameLine();
-    ImGui::TextDisabled("|");
-    ImGui::SameLine();
     if (command_button("project.build", "Build and Package")) impl_->commands.Run("project.build");
     ImGui::SameLine();
     if (command_button("view.preferences", "Settings")) impl_->commands.Run("view.preferences");
+
+    // The concept's right end: where in the project the open scene sits, and a dot that is green once it is saved and
+    // amber while it is not. Text, not a button -- Save above is the action.
+    const std::string crumb = Breadcrumb();
+    const std::string saved = document.IsDirty() ? "Unsaved changes" : "World saved";
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const f32 right = ImGui::GetWindowPos().x + ImGui::GetWindowWidth() - style.WindowPadding.x;
+    const f32 crumb_w = ImGui::CalcTextSize(crumb.c_str()).x;
+    const f32 saved_w = ImGui::CalcTextSize(saved.c_str()).x;
+    const f32 dot_gap = 18.0f;
+    const f32 left = right - crumb_w - saved_w - dot_gap;
+    if (left > ImGui::GetItemRectMax().x + 16.0f) {
+        const f32 y = ImGui::GetWindowPos().y + (ImGui::GetWindowHeight() - ImGui::GetTextLineHeight()) * 0.5f;
+        draw->AddText(ImVec2(left, y), ImGui::GetColorU32(ImGuiCol_TextDisabled), crumb.c_str());
+        const ImVec2 dot(right - saved_w - dot_gap * 0.5f, y + ImGui::GetTextLineHeight() * 0.5f);
+        draw->AddCircleFilled(dot, 3.0f, document.IsDirty() ? IM_COL32(255, 184, 51, 255) : IM_COL32(88, 196, 118, 255));
+        draw->AddText(ImVec2(right - saved_w, y), ImGui::GetColorU32(ImGuiCol_TextDisabled), saved.c_str());
+    }
 }
 
 namespace {

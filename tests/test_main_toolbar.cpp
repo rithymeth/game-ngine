@@ -123,11 +123,11 @@ AETHER_TEST(MainToolbar_DrawsInEveryPlayState) {
         ImGui::End();
         ImGui::Render();
     };
-    draw_once(); // editing: Save, Undo, Redo, the transform tools, Play, Build, Settings
+    draw_once(); // editing: Save, Undo, Redo, the transform tools, Build, Settings, the breadcrumb
     document.Play();
-    draw_once(); // playing: Pause, Step (disabled), Stop, the playing underline
+    draw_once(); // playing: the breadcrumb turns amber while the scene has no file
     document.Pause();
-    draw_once(); // paused: Resume, Step (enabled)
+    draw_once(); // paused
     document.Stop();
     CHECK(document.PlayState() == PlaySession::State::Editing);
 }

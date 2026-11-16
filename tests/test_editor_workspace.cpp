@@ -289,6 +289,64 @@ AETHER_TEST(EditorWorkspace_WorkspaceStripOpensEachTool) {
     CHECK(ws.ActiveWorkspace() == "Blueprint");
 }
 
+AETHER_TEST(EditorWorkspace_WorkspaceStripPlaysAndStopsTheScene) {
+    HeadlessImGui imgui;
+    EditorWorkspace ws;
+    ImGuiIO& io = ImGui::GetIO();
+    auto frame = [&] {
+        imgui.Frame([&] {
+            ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f));
+            ImGui::SetNextWindowSize(ImVec2(1400.0f, 40.0f));
+            ImGui::Begin("strip", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar);
+            ws.DrawWorkspaceStrip("Vulkan");
+            ImGui::End();
+        });
+    };
+    auto move = [&](const ImVec2& mouse, bool down) {
+        io.AddMousePosEvent(mouse.x, mouse.y);
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, down);
+        frame();
+    };
+    auto click = [&](const EditorWorkspace::StripPlay& rect, bool main) {
+        const f32 x = main ? (rect.main_min_x + rect.main_max_x) * 0.5f : (rect.stop_min_x + rect.stop_max_x) * 0.5f;
+        const f32 y = main ? (rect.main_min_y + rect.main_max_y) * 0.5f : (rect.stop_min_y + rect.stop_max_y) * 0.5f;
+        move(ImVec2(2.0f, 2.0f), false);
+        move(ImVec2(x, y), false);
+        move(ImVec2(x, y), true);
+        move(ImVec2(x, y), false);
+    };
+    frame();
+    const EditorWorkspace::StripPlay editing = ws.WorkspaceStripPlays();
+    CHECK(editing.visible);
+    CHECK(editing.main_max_x > editing.main_min_x); // the concept's green Play chip
+    CHECK(editing.main_min_x > ws.WorkspaceTabs().back().max_x); // at the strip's right end, not among the tabs
+    CHECK(editing.step_max_x == 0.0f && editing.stop_max_x == 0.0f); // nothing to step or stop while editing
+
+    click(editing, true);
+    CHECK(ws.Scene().Document().PlayState() == PlaySession::State::Playing);
+    frame();
+    const EditorWorkspace::StripPlay playing = ws.WorkspaceStripPlays();
+    CHECK(playing.visible);
+    CHECK(playing.step_max_x > playing.main_max_x); // Pause, Step, Stop, left to right
+    CHECK(playing.stop_min_x > playing.step_max_x);
+
+    click(playing, true); // Pause
+    CHECK(ws.Scene().Document().PlayState() == PlaySession::State::Paused);
+    click(ws.WorkspaceStripPlays(), false); // Stop
+    CHECK(ws.Scene().Document().PlayState() == PlaySession::State::Editing);
+}
+
+AETHER_TEST(EditorWorkspace_BreadcrumbNamesTheProjectAndTheOpenScene) {
+    EditorWorkspace ws;
+    const std::string crumb = ws.Breadcrumb();
+    CHECK(crumb.rfind("Game / ", 0) == 0);
+    CHECK(crumb.size() > 7 + ws.ActiveDocument().DisplayName().size());
+    CHECK(crumb.compare(crumb.size() - ws.ActiveDocument().DisplayName().size(), std::string::npos,
+                        ws.ActiveDocument().DisplayName()) == 0);
+    if (!ws.ProjectFile().empty()) // the default workspace opens the sample project
+        CHECK(crumb.find(" / " + ws.ProjectFile().stem().string() + " / ") != std::string::npos);
+}
+
 AETHER_TEST(EditorWorkspace_DrawsEveryToolHeadless) {
     HeadlessImGui imgui;
     EditorWorkspace ws;

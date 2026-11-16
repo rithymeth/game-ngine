@@ -568,6 +568,16 @@ tool rather than on the first asset editor, so the first screen is the scene. `S
 checks the three panes do not overlap, the viewport is the widest, the chips sit inside it and the two-pane fallback
 remains without a view; `SceneView_ThePictureOwnsItsControls` also clicks the new chip.
 
+Done so far (2026-11-17): Play and the breadcrumb, where the concept puts them. The strip's right end is the green **Play**
+chip; while the game runs it is Pause (amber) with Step and Stop beside it, Resume when paused, and the backend's name
+after a divider -- all the open document's `PlaySession` calls, so the strip, the toolbar, the menu and the status bar
+cannot disagree. `WorkspaceStripPlays` reports the chips' rectangles and `EditorWorkspace_WorkspaceStripPlaysAndStopsTheScene`
+clicks Play, then Pause, then Stop through them. The main toolbar no longer carries a second Play group; its right end is
+the concept's breadcrumb -- `Game / <project> / <open document>` from `Breadcrumb()`, with a dot that is green once the
+scene is saved and amber while it has changes, then "World saved" or "Unsaved changes"
+(`EditorWorkspace_BreadcrumbNamesTheProjectAndTheOpenScene`). A narrow window drops the strip's right end rather than
+drawing it over the tabs.
+
 ### Stage 3 — Content browser and importer parity (L)
 
 Outcome: assets can be found, judged, imported, fixed and opened without leaving the editor.
