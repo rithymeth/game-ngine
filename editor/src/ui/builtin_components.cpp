@@ -57,6 +57,9 @@
 #if AETHER_EDITOR_KIT_WATER
 #include "aether/water/water.h"
 #endif
+#if AETHER_EDITOR_KIT_FIRE
+#include "aether/fire/fire.h"
+#endif
 
 namespace aether::editor {
 
@@ -135,6 +138,9 @@ void RegisterEditorComponents() {
 #endif
 #if AETHER_EDITOR_KIT_WATER
     water::RegisterWaterComponents();
+#endif
+#if AETHER_EDITOR_KIT_FIRE
+    fire::RegisterFireComponents();
 #endif
 }
 

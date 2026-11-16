@@ -93,6 +93,7 @@ without a server or network connection.
 | [manual/26-ropes.md](manual/26-ropes.md) | The ropes kit: ropes and chains as jointed bodies that hang, swing, carry a weight and can be cut |
 | [manual/27-weather.md](manual/27-weather.md) | The weather kit: clouds, rain, snow, fog, gusty wind, lightning and wet ground as numbers that blend and can change by themselves |
 | [manual/28-water.md](manual/28-water.md) | The water kit: waves and a current, bodies that float point by point, and boats with a propeller and a rudder |
+| [manual/29-fire.md](manual/29-fire.md) | The fire kit: things that catch, burn on their fuel, spread to what is near and are put out by rain, drawn with flames and a light |
 | [manual/api_stability.md](manual/api_stability.md) | The three stability levels and what each promises |
 | [manual/core_api_inventory.md](manual/core_api_inventory.md) | Ownership and threading inventory for the APIs a game or plugin uses |
 | [manual/support_policy.md](manual/support_policy.md) | A support-policy proposal, explicitly not yet promised |

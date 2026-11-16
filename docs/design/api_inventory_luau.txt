@@ -162,6 +162,17 @@ Effects.Remove function
 Effects.RemoveByTag function
 Event table
 Event.new function
+Fire table
+Fire.Burning function
+Fire.Extinguish function
+Fire.FuelLeft function
+Fire.Heat function
+Fire.Ignite function
+Fire.IgniteNear function
+Fire.IsBurning function
+Fire.IsBurnt function
+Fire.SetWetness function
+Fire.WetAll function
 Forces table
 Forces.Explode function
 GameplayTags table

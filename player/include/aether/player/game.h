@@ -414,6 +414,7 @@ private:
     void AddQuestsStage();
     void AddTimeOfDayStage();
     void AddWeatherStage();
+    void AddFireStage();
     void AddSpawnerStage();
     void AddCheckpointsStage();
     // A kit stage as the registry describes it: its name and `after` list, for the system that runs it.

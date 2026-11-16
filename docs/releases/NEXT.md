@@ -113,3 +113,7 @@ A new optional kit and engine plugin, **Weather** (`AETHER_KIT_WEATHER`): the sk
 ## Water and boats
 
 A new optional kit and engine plugin, **Water** (`AETHER_KIT_WATER`, needs physics): a `WaterSurface` (still level, two travelling waves, a current, a density), a `Floater` that lifts a body column by column at points so it bobs, rolls with the swell and rights itself, and a `Boat` with a propeller, a rudder and a keel. Luau gets the `Water` table (`HeightAt`, `IsWater`, `Current`, `Submersion`, `Drive`, `Time`). Unlike the force-field `Buoyancy` mode (a lift from a bounding box under a flat top), the surface has waves and a body tips. See the manual's Water and boats chapter.
+
+## Fire
+
+A new optional kit and engine plugin, **Fire** (`AETHER_KIT_FIRE`, needs VFX and Renderer; no physics): a `Flammable` component catches from a burning neighbour (nearer sooner, wetness slows it), burns on its fuel while its flames heat what is within its radius, is put out by wetness, and is left burnt or consumed. A burning thing carries a flame (a particle system) and a light that follow it. The kit has a frame stage (`Player.Fire`, after the update, before scripts) and Luau gets the `Fire` table (`Ignite`, `IgniteNear`, `Extinguish`, `IsBurning`, `IsBurnt`, `Heat`, `FuelLeft`, `Burning`, `SetWetness`, `WetAll`). See the manual's Fire chapter.

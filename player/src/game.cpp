@@ -1142,6 +1142,7 @@ void Game::BuildRuntimeStages() {
     AddQuestsStage();
     AddTimeOfDayStage();
     AddWeatherStage();
+    AddFireStage();
     AddSpawnerStage();
     AddCheckpointsStage();
     SystemDesc attributes = gas::MakeAttributeSystem(runtime_ ? runtime_->attributes.get() : nullptr, [this](const gas::AttributeEvent& e) {
@@ -1457,7 +1458,7 @@ void Game::BuildFrame() {
     // Kit factories bind scene-owned systems. Keep their descriptors in the
     // runtime and have the persistent scheduler resolve the current scene.
     if (runtime_) for (const auto* name : {"Player.Effects", "Player.Abilities", "Player.Inventory",
-                                         "Player.Interaction", "Player.Quests", "Player.TimeOfDay", "Player.Weather", "Player.Spawner", "Player.Checkpoints", "Player.Attributes"}) {
+                                         "Player.Interaction", "Player.Quests", "Player.TimeOfDay", "Player.Weather", "Player.Fire", "Player.Spawner", "Player.Checkpoints", "Player.Attributes"}) {
         const auto found = runtime_->stages.find(name);
         if (found == runtime_->stages.end()) continue;
         SystemDesc stage = found->second;
