@@ -1628,6 +1628,19 @@
   inline int VcsSeverity(VcsState s)
   std::string QueryGitBranch(const std::filesystem::path&directory,std::string*error=nullptr)
   usize ChangedCount()const
+[engine/include/aether/cook/cluster_hierarchy.h] experimental
+  type struct Cluster
+  type struct ClusterGroup
+  type struct ClusterHierarchy
+  type struct ClusterParams
+  type struct ClusterPlane
+  type struct ClusterSelection
+  type struct ClusterView
+  bool BuildClusterHierarchy(std::span<const Vec3>positions,std::span<const u32>indices,const ClusterParams&params,ClusterHierarchy&out,std::string*error=nullptr)
+  bool SelectClusters(const ClusterHierarchy&hierarchy,const ClusterView&view,f32 threshold_pixels,ClusterSelection&out)
+  f32 ProjectedError(const Vec3&center,f32 radius,f32 error,const ClusterView&view)
+  usize leaf_triangles()const
+  usize root_count()const
 [engine/include/aether/cook/cooker.h] experimental
   type enum class BuildConfiguration
   type struct CookOptions
