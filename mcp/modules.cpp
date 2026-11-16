@@ -58,6 +58,9 @@
 #if AETHER_MCP_WATER
 #include "aether/water/water.h"
 #endif
+#if AETHER_MCP_FIRE
+#include "aether/fire/fire.h"
+#endif
 
 // Note: no Aether::AI (behaviour trees, perception) -- the editor/MCP side
 // must not link gameplay AI (docs/design/agent_gameplay_ai_boundary.md).
@@ -140,6 +143,9 @@ void RegisterBuiltinComponents() {
 #endif
 #if AETHER_MCP_WATER
     water::RegisterWaterComponents();
+#endif
+#if AETHER_MCP_FIRE
+    fire::RegisterFireComponents();
 #endif
 }
 

@@ -37,6 +37,9 @@
 #if AETHER_KIT_WATER
 #include "aether/water/water_kit.h"
 #endif
+#if AETHER_KIT_FIRE
+#include "aether/fire/fire_kit.h"
+#endif
 #if AETHER_KIT_CHECKPOINTS
 #include "aether/checkpoints/checkpoints_kit.h"
 #endif
@@ -91,6 +94,9 @@ void Game::BuildKits() {
 #endif
 #if AETHER_KIT_WATER
     kits_.Add(water::MakeWaterKit());
+#endif
+#if AETHER_KIT_FIRE
+    kits_.Add(fire::MakeFireKit());
 #endif
 #if AETHER_KIT_CHECKPOINTS
     kits_.Add(chk::MakeCheckpointsKit());
@@ -384,6 +390,15 @@ void Game::AddWeatherStage() {
     SystemDesc weather = weather::MakeWeatherSystem(&weather_);
     ApplyKitStage(weather, "Player.Weather");
     runtime_->stages[weather.name] = std::move(weather);
+#endif
+}
+
+void Game::AddFireStage() {
+#if AETHER_KIT_FIRE
+    fire::FireSystem* fire_system = runtime_ ? runtime_->kit_runtimes.Get<fire::FireSystem>("Fire", "FireSystem") : nullptr;
+    SystemDesc fire = fire::MakeFireSystem(fire_system);
+    ApplyKitStage(fire, "Player.Fire");
+    runtime_->stages[fire.name] = std::move(fire);
 #endif
 }
 

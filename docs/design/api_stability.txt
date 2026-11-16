@@ -25,6 +25,7 @@ destruction experimental
 vehicles experimental
 ropes experimental
 water experimental
+fire experimental
 weather experimental
 loot experimental
 checkpoints experimental

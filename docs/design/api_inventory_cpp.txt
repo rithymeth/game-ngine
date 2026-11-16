@@ -3822,6 +3822,45 @@
   void Add(std::function<FunctionalTest()>make)
   void Fail(const std::string&message)
   void Log(const std::string&text)
+[fire/include/aether/fire/fire.h] experimental
+  type struct Flammable
+  ),AETHER_FIELD(consume,Field_EditAnywhere,
+  ),AETHER_FIELD(cool_rate,Field_EditAnywhere,
+  ),AETHER_FIELD(douse_wetness,Field_EditAnywhere,
+  ),AETHER_FIELD(flame_effect,Field_EditAnywhere,
+  ),AETHER_FIELD(flame_offset,Field_EditAnywhere,
+  ),AETHER_FIELD(heat_rate,Field_EditAnywhere,
+  ),AETHER_FIELD(ignition_heat,Field_EditAnywhere,
+  ),AETHER_FIELD(light_color,Field_EditAnywhere,
+  ),AETHER_FIELD(light_intensity,Field_EditAnywhere,
+  ),AETHER_FIELD(light_range,Field_EditAnywhere,
+  ),AETHER_FIELD(spread_radius,Field_EditAnywhere,
+  ),AETHER_FIELD(wetness,Field_EditAnywhere,
+  AETHER_REFLECT(aether::fire::Flammable,1,AETHER_FIELD(enabled,Field_EditAnywhere),AETHER_FIELD(fuel,Field_EditAnywhere,
+  void RegisterFireComponents()
+[fire/include/aether/fire/fire_kit.h] experimental
+  SystemDesc MakeFireSystem(FireSystem*system)
+  std::unique_ptr<kit::IKit>MakeFireKit()
+[fire/include/aether/fire/fire_system.h] experimental
+  type class FireSystem
+  Entity FlameOf(Entity entity)const
+  FireSystem&operator=(const FireSystem&)=delete
+  FireSystem(const FireSystem&)=delete
+  bool Extinguish(Entity entity)
+  bool Ignite(Entity entity)
+  bool IsBurning(Entity entity)const
+  bool IsBurnt(Entity entity)const
+  bool SetWetness(Entity entity,f32 wetness)
+  f32 FuelLeft(Entity entity)const
+  f32 Heat(Entity entity)const
+  public:explicit FireSystem(World&world)
+  static FireSystem*Active()
+  usize Advance(f32 dt)
+  usize BurningCount()const
+  usize IgniteNear(const Vec3&centre,f32 radius)
+  usize WetAll(f32 wetness)
+  void MakeActive()
+  ~FireSystem()
 [forcefields/include/aether/forcefields/force_field.h] experimental
   type enum class FieldMode
   type enum class FieldShape
@@ -5335,6 +5374,7 @@
   vfx::ParticleWorld*Particles()
   void ActivateInputContexts()
   void AddCheckpointsStage()
+  void AddFireStage()
   void AddInteractionStage()
   void AddInventoryStage()
   void AddQuestsStage()
@@ -6081,6 +6121,8 @@
   void InstallDestructionApi(LuauHost&host)
 [scripting/include/aether/script/dialogue_api.h] experimental
   void InstallDialogueApi(LuauHost&host)
+[scripting/include/aether/script/fire_api.h] experimental
+  void InstallFireApi(LuauHost&host)
 [scripting/include/aether/script/forces_api.h] experimental
   void InstallForcesApi(LuauHost&host)
 [scripting/include/aether/script/gameplay_api.h] experimental
