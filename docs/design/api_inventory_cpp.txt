@@ -1641,6 +1641,15 @@
   f32 ProjectedError(const Vec3&center,f32 radius,f32 error,const ClusterView&view)
   usize leaf_triangles()const
   usize root_count()const
+[engine/include/aether/cook/cluster_reference.h] experimental
+  type struct ClusterReferenceCamera
+  type struct ClusterReferencePlane
+  type struct ClusterReferenceSelection
+  inline ClusterReferenceSelection CullReferenceMeshlets(const CookedMeshPrimitive&primitive,float mesh_extent,const ClusterReferenceCamera&camera,const std::vector<ClusterReferencePlane>&planes)
+  inline bool ClusterSphereInFrustum(const MeshletBounds&sphere,const std::vector<ClusterReferencePlane>&planes)
+  inline float ClusterReferenceDistance(Vec3 a,Vec3 b)
+  inline float ProjectedClusterErrorPixels(float error_world,float distance_to_nearest_bound,const ClusterReferenceCamera&camera)
+  inline u32 SelectReferenceLod(const CookedMeshPrimitive&primitive,float mesh_extent,const ClusterReferenceCamera&camera)
 [engine/include/aether/cook/cooker.h] experimental
   type enum class BuildConfiguration
   type struct CookOptions

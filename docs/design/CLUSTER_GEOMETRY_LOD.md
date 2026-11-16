@@ -2,6 +2,18 @@
 
 Status: **in progress**. Initial CPU reference: `engine/include/aether/cook/cluster_reference.h`.
 
+## Status
+
+- **Cluster hierarchy and CPU cut selector: done** (`engine/include/aether/cook/cluster_hierarchy.h`, see `VIRTUAL_GEOMETRY.md`). It builds the per-cluster DAG
+  in memory with locked group borders and a selector that picks a watertight mixed-detail cut. It does **not** change the cooked format yet: the "Next PR"
+  list below is partly done (items 1 and 3 in memory; item 2's versioned format and item 4 remain).
+- **Tests for `cluster_reference.h`: done** (`tests/test_cluster_reference.cpp`). Against the "required before GPU work" list below, covered: zero error, bad
+  viewport and field of view, camera inside the bounds, tiny distances, LOD choice at and around the threshold and by distance, non-monotonic errors, plane
+  tangency, non-unit normals, no planes, rejected meshlets. Covered for the hierarchy instead: multi-root DAGs (the build ends with several roots), no overlap
+  and no holes in the cut, and a sweep over seven distances.
+- **Still open:** skinned-primitive fallback, malformed cooked data, transform scaling, screenshot regression, the benchmark gate, the cooked format change,
+  and everything GPU.
+
 ## Existing infrastructure
 
 - `engine/include/aether/cook/meshlet_cook.h`: deterministic meshlets, bounds, simplified LODs and error values.
