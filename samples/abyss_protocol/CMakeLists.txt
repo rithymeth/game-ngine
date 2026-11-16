@@ -7,6 +7,7 @@ target_link_libraries(abyss_protocol_game PUBLIC Aether::Engine)
 if(WIN32)
     add_executable(abyss_protocol main.cpp)
     target_link_libraries(abyss_protocol PRIVATE abyss_protocol_game)
+    target_compile_definitions(abyss_protocol PRIVATE ABYSS_ASSET_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets")
 
     if(AETHER_DXCOMPILER_DLL)
         add_custom_command(TARGET abyss_protocol POST_BUILD

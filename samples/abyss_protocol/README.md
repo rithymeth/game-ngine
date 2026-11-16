@@ -14,8 +14,8 @@ Underwater exploration / survival mystery for Aether Engine. Stylized 3D, single
 
 - Acoustic pulses, a sound-sensitive creature, battery and oxygen.
 - Win32 software rasterizer (no GPU), same approach as Gem Hop.
-- Pass a `.gltf` or `.glb` and it is centered, scaled to about 4 metres, and drawn on the submarine. Base-color materials are used. Meshes over 4000 triangles are strided down so the software view stays interactive.
-- No model: an orange placeholder hull is drawn instead.
+- The boat is a normal glTF. [assets/hull.glb](assets/hull.glb) loads by itself. Pass another file to replace it: `abyss_protocol.exe path\to\model.glb`, or set `AETHER_ABYSS_MODEL`. The mesh is centered and scaled to about 4 metres. This view uses base color only. Textures, normal maps, and skinning are not drawn yet. Creatures, rocks, Haven, and the relay are still simple shapes.
+- No model found: an orange placeholder hull is drawn instead.
 - **Run**: leave Haven, restore the silent relay, then get home. `F` fires one sonar ping and spends battery. For a few seconds you can see farther and a bright marker points at the objective. After it fades, a dim marker keeps the last heading. It does not update until you ping again, and it clears when the relay answers. Lights show what is nearby, spend battery, and give you away. Two creatures listen. Rocks are solid even when you cannot see them.
 - A rock hit also opens a leak. Oxygen falls faster until you reach the cache, which seals it, patches some hull, and refills battery. The creatures patrol instead of waiting in one spot. Current streaks show up under lights or a ping, not only after you are already inside.
 - The creature catching you, or running out of oxygen or battery, fails the run. `R` restarts.

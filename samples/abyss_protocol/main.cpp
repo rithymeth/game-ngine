@@ -8,7 +8,7 @@
 //   Mouse or arrows   look                 L       toggle lights
 //   R         restart                      Esc     quit
 //
-//   abyss_protocol.exe path\to\model.glb
+//   abyss_protocol.exe path\to\model.glb   (optional; assets/hull.glb is the default)
 //   AETHER_ABYSS_MODEL, AETHER_ABYSS_MAX_FRAMES, AETHER_ABYSS_SCREENSHOT
 
 #include "abyss_protocol.h"
@@ -463,7 +463,14 @@ bool Down(int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; }
 
 int main(int argc, char** argv) {
     abyss::Game game;
+    std::string default_model;
     const char* model_path = argc > 1 ? argv[1] : std::getenv("AETHER_ABYSS_MODEL");
+#ifdef ABYSS_ASSET_DIR
+    if (!model_path || !model_path[0]) {
+        default_model = std::string(ABYSS_ASSET_DIR) + "/hull.glb";
+        model_path = default_model.c_str();
+    }
+#endif
     std::vector<DrawTri> mesh;
     if (model_path && model_path[0]) {
         abyss::ModelInfo info;
