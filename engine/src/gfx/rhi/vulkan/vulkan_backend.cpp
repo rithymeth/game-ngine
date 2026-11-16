@@ -1350,7 +1350,8 @@ BufferHandle VulkanDevice::CreateStorageBuffer(u64 size_bytes, u32 element_strid
     }
     ScopedBufferRecord owned_record(device_);
     owned_record.Get() = CreateHostVisibleBuffer(device_, physical_device_, size_bytes,
-        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+            VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
         initial_data, true, queue_family_index_, compute_queue_family_index_);
     owned_record.Get().is_storage = true;
     const u32 slot = AcquireBufferSlot(owned_record.Get());
@@ -4427,6 +4428,26 @@ void VulkanCommandList::DrawIndexed(u32 index_count) {
     vkCmdDrawIndexed(command_buffer_, index_count, 1, 0, 0, 0);
 }
 
+bool VulkanCommandList::DrawIndexedIndirect(BufferHandle args, u64 offset) {
+    if (!recording_ || !render_pass_active_ || !graphics_pipeline_bound_ || !graphics_uses_vertex_buffer_ || !vertex_buffer_bound_ ||
+        !index_buffer_bound_ || (graphics_bindless_enabled_ && !graphics_bindless_bound_)) {
+        AETHER_LOG_ERROR("Vulkan", "DrawIndexedIndirect requires a valid bound graphics pipeline");
+        return false;
+    }
+    if (!args.IsValid() || !device_.IsBufferAlive(args) || !device_.GetBuffer(args).is_storage) {
+        AETHER_LOG_ERROR("Vulkan", "DrawIndexedIndirect needs a storage buffer for its arguments");
+        return false;
+    }
+    const BufferRecord& record = device_.GetBuffer(args);
+    constexpr u64 kArgBytes = sizeof(VkDrawIndexedIndirectCommand);
+    if (offset % 4 != 0 || offset > record.size_bytes || record.size_bytes - offset < kArgBytes) {
+        AETHER_LOG_ERROR("Vulkan", "DrawIndexedIndirect arguments must be 4-byte aligned and inside the buffer");
+        return false;
+    }
+    vkCmdDrawIndexedIndirect(command_buffer_, record.buffer, offset, 1, 0);
+    return true;
+}
+
 void VulkanCommandList::BindFrameConstants(BufferHandle buffer) {
     if (!device_.IsBufferAlive(buffer) || device_.GetBuffer(buffer).constants_set == VK_NULL_HANDLE) {
         AETHER_LOG_ERROR("Vulkan", "BindFrameConstants needs a buffer made by CreateConstantBuffer");
@@ -4520,8 +4541,8 @@ void VulkanCommandList::BindComputePipeline(ComputePipelineHandle pipeline) {
     bound_compute_constant_set_ = sets[1];
     bound_compute_sampled_set_ = sets[2];
     vkCmdBindPipeline(command_buffer_, VK_PIPELINE_BIND_POINT_COMPUTE, record.pipeline);
-    vkCmdBindDescriptorSets(command_buffer_, VK_PIPELINE_BIND_POINT_COMPUTE, record.layout, 0, 3,
-                            sets, 0, nullptr);
+    // The sets are bound in Dispatch, once the buffers and textures have been written into them: a set updated after vkCmdBindDescriptorSets
+    // is invalid to use, and a real driver reads the descriptors at bind time (lavapipe tolerates it, NVIDIA read empty descriptors).
 }
 
 void VulkanCommandList::BindComputeConstantBuffer(u32 slot, BufferHandle buffer) {
@@ -4681,6 +4702,9 @@ void VulkanCommandList::Dispatch(u32 groups_x, u32 groups_y, u32 groups_z) {
             return;
         }
     }
+    const ComputePipelineRecord& bound = device_.GetComputePipeline(bound_compute_pipeline_);
+    const VkDescriptorSet sets[3] = {bound_compute_descriptor_set_, bound_compute_constant_set_, bound_compute_sampled_set_};
+    vkCmdBindDescriptorSets(command_buffer_, VK_PIPELINE_BIND_POINT_COMPUTE, bound.layout, 0, 3, sets, 0, nullptr);
     vkCmdDispatch(command_buffer_, groups_x, groups_y, groups_z);
 }
 

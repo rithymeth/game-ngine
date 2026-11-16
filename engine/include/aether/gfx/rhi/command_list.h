@@ -90,6 +90,12 @@ public:
     virtual void BindVertexBuffer(BufferHandle buffer, u32 stride_bytes) = 0;
     virtual void BindIndexBuffer(BufferHandle buffer, IndexFormat format) = 0;
     virtual void DrawIndexed(u32 index_count) = 0;
+    // Like DrawIndexed, but the draw's arguments are read by the GPU from a storage buffer (IDevice::CreateStorageBuffer) at submission time: five
+    // u32s, {index_count, instance_count, first_index, vertex_offset (as i32), first_instance}, at byte `offset` (4-byte aligned, the five words
+    // must fit). This is how a compute pass (cluster culling) drives a draw without the CPU reading its result. Needs a bound pipeline, vertex buffer
+    // and index buffer as DrawIndexed does, and IDevice::SupportsIndirectDraw. A compute list that wrote the buffer must be ordered before this
+    // graphics list by a semaphore or a fence (the buffer is shared between both queues). False, nothing recorded, otherwise (the default).
+    virtual bool DrawIndexedIndirect(BufferHandle /*args*/, u64 /*offset*/ = 0) { return false; }
 
     // Compute dispatch. BindComputePipeline must precede Dispatch; dimensions
     // are workgroup counts and must be non-zero.

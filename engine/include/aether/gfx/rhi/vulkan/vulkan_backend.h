@@ -188,6 +188,7 @@ public:
     BufferHandle CreateReadbackBuffer(u64 size_bytes) override;
     bool ReadReadbackBuffer(BufferHandle buffer, void* out, u64 size_bytes, u64 offset = 0) override;
     bool SupportsStorageBufferRead() const override { return true; }
+    bool SupportsIndirectDraw() const override { return true; }
     bool ReadStorageBuffer(BufferHandle buffer, void* out, u64 size_bytes, u64 offset = 0) override;
     VkDescriptorSetLayout FrameConstantsSetLayout() const { return frame_constants_set_layout_; }
     SampledTextureHandle CreateR32FloatTexture(u32 width, u32 height, const f32* values) override;
@@ -610,6 +611,7 @@ public:
     void BindVertexBuffer(BufferHandle buffer, u32 stride_bytes) override;
     void BindIndexBuffer(BufferHandle buffer, IndexFormat format) override;
     void DrawIndexed(u32 index_count) override;
+    bool DrawIndexedIndirect(BufferHandle args, u64 offset = 0) override;
     void BindComputePipeline(ComputePipelineHandle pipeline) override;
     void BindComputeStorageBuffer(u32 slot, BufferHandle buffer) override;
     void BindComputeSampledTexture(u32 slot, SampledTextureHandle texture) override;

@@ -97,8 +97,27 @@ Measured in the Linux container (the only numbers taken so far; **the GPU rows r
 The CPU selector costs about 16 ns per cluster on one thread, so it is cheap until there are many tens of thousands of clusters in view (many instances of dense
 meshes): that is where a GPU pass has to win, and where the real-GPU numbers are needed.
 
+Measured on a real GPU: **NVIDIA GeForce RTX 3050 Laptop (Vulkan, discrete). This is not an RTX 3060**; GDD section 57's 3060 class is still unmeasured.
+`aether_bench --filter cluster/ --repeat 15`, RelWithDebInfo, 16 November 2026 (calibration 1.76 ms), **after** the descriptor-binding fix below. An earlier run the same day
+is withdrawn: its GPU cull read empty descriptors and so measured an empty shader.
+
+| | clusters | median | p95 | per cull |
+| --- | --- | --- | --- | --- |
+| CPU `SelectClusters`, 68k triangles | 2 050 | 0.062 ms | 0.065 ms | 0.062 ms |
+| GPU one cull + submit + wait, 68k | 2 050 | 0.145 ms | 0.202 ms | 0.145 ms |
+| GPU 16 culls in one submission, 68k | 2 050 | 0.224 ms | 0.301 ms | 0.014 ms |
+| CPU `SelectClusters`, 212k triangles | 6 349 | 0.098 ms | 0.099 ms | 0.098 ms |
+| GPU one cull + submit + wait, 212k | 6 349 | 0.693 ms | 1.296 ms | 0.693 ms |
+| GPU 16 culls in one submission, 212k | 6 349 | 1.043 ms | 1.555 ms | 0.065 ms |
+
+Reading: a single GPU cull is **slower** than the CPU at both sizes (2.3x at 68k, 7x at 212k), so culling one view on the GPU does not pay for itself at these
+cluster counts. Batched, the GPU is 4.4x cheaper at 68k and only 1.5x cheaper at 212k, and the 212k batch is dominated by something other than launch cost
+(it scales 4.6x for 3.1x the clusters), which is worth profiling before stage 3 relies on it. The case for the GPU pass is that its list stays on the GPU for an
+indirect draw (no readback, no CPU cull), not that the cull itself is faster. This measures culling only, not the draw-path comparison the gate asks for.
+
 ### Known limits
 
+- **Fixed 16 November 2026: compute results did not reach the CPU on a real GPU.** The Vulkan backend bound each compute descriptor set before writing the buffers into it; lavapipe tolerated that, NVIDIA read empty descriptors, so every compute shader wrote nothing. Sets are now bound in `Dispatch`. `ComputeReadback_AShaderWriteReachesTheCpu_Vulkan` guards it and `ClusterCullGpu_*` now agree with the CPU on the RTX 3050.
 - **It stops at 54 root clusters (1.6% of the triangles), not at one.** Locked group borders keep the top levels from shrinking further, and a group that
   cannot shrink waits to be merged at a later level. A later stage can regroup across levels or lift the locks near the root.
 - The simplifier works on positions only: UV seams and normals are not protected, so a textured mesh may show seams at coarse levels until attribute-aware
