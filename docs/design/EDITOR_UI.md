@@ -571,6 +571,19 @@ overrides)". The badge and the name are drawn over the row rather than as items 
 for selection, drag and the context menu, and its height does not change. An icon font for the badges and the eye/lock
 shapes is still open.
 
+Implemented: the column's header from the concept -- "Hierarchy | Place" tabs at the left, + and ... at the right. The
+tabs are drawn onto invisible buttons (`DrawHierarchyHeader`) rather than as ImGui tabs, which would take the whole
+column and cannot report a separate rectangle per tab; the active one is in full `text` with an accent underline, the
+other in `text.disabled`. `ScenePanel::LastHierarchyHeader` reports both tab rectangles and both buttons, and
+`ActiveHierarchyTab`/`SetHierarchyTab` switch pages. **Place** is the catalog of actor kinds: a "Search actors" box and
+one row per kind the Create menu offers (Empty Actor, Camera, Cine Camera), each with a one-line description. A click
+adds the kind at the scene root through the same `CreateEntity` call the menu makes -- the same components, one undo step
+-- selects the new entity and says so in the status line; the search hides rows whose label does not contain the text,
+ignoring case. The **+** opens the same three items as a popup, and **...** offers Paste and Deselect All, so the actions
+that need no page switch stay one click away. `ScenePanel_TheHierarchyHeaderSwitchesToThePlaceCatalog` checks the
+rectangles' order, that a Place click lists the three kinds, that adding a Camera makes the same entity the menu makes,
+that one undo removes it, and that the Hierarchy tab goes back and clears the catalog.
+
 ### 6.4 Inspector
 
 - Header: entity icon, editable name, enabled checkbox, tag dropdown,

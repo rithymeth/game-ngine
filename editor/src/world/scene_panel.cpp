@@ -766,6 +766,13 @@ void ScenePanel::DrawDiscardPrompt() {
 void ScenePanel::DrawCreateMenu(Entity parent) {
     const char* label = parent.IsNull() ? "Create" : "Create child";
     if (!ImGui::BeginMenu(label)) return;
+    DrawCreateItems(parent);
+    ImGui::EndMenu();
+}
+
+// The kinds the Create menu, the header's + and the Actor menu all add. One list, so a kind offered in one place is
+// offered in the others.
+void ScenePanel::DrawCreateItems(Entity parent) {
     struct Kind { const char* name; SceneEntityKind kind; };
     for (const Kind& k : {Kind{"Empty", SceneEntityKind::Empty}, Kind{"Camera", SceneEntityKind::Camera}, Kind{"Cine Camera", SceneEntityKind::CineCamera}}) {
         if (ImGui::MenuItem(k.name)) {
@@ -773,7 +780,138 @@ void ScenePanel::DrawCreateMenu(Entity parent) {
             if (!made.IsNull()) document_.SetSelection({made});
         }
     }
-    ImGui::EndMenu();
+}
+
+// The concept's hierarchy header: "Hierarchy | Place" at the left, + and ... at the right. The tabs are drawn rather
+// than ImGui's, which would take the whole column and cannot report separate rectangles for a test's click.
+void ScenePanel::DrawHierarchyHeader() {
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    hierarchy_header_ = HierarchyHeader{};
+    const auto tab = [&](const char* label, HierarchyTab page, ImVec2& min, ImVec2& max) {
+        const ImVec2 text = ImGui::CalcTextSize(label);
+        ImGui::InvisibleButton(label, ImVec2(text.x + 16.0f, ImGui::GetFrameHeight()));
+        min = ImGui::GetItemRectMin();
+        max = ImGui::GetItemRectMax();
+        if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        const bool active = hierarchy_tab_ == page;
+        if (ImGui::IsItemClicked()) hierarchy_tab_ = page;
+        draw->AddText(ImVec2(std::floor((min.x + max.x - text.x) * 0.5f), std::floor((min.y + max.y - text.y) * 0.5f)),
+                      ImGui::GetColorU32(active ? ImGuiCol_Text : ImGuiCol_TextDisabled), label);
+        if (active) {
+            draw->AddRectFilled(ImVec2(min.x + 4.0f, max.y - 2.0f), ImVec2(max.x - 4.0f, max.y),
+                                ImGui::GetColorU32(ImGuiCol_HeaderActive), 1.0f);
+        }
+    };
+    tab("Hierarchy", HierarchyTab::Hierarchy, hierarchy_header_.hierarchy_min, hierarchy_header_.hierarchy_max);
+    ImGui::SameLine();
+    tab("Place", HierarchyTab::Place, hierarchy_header_.place_min, hierarchy_header_.place_max);
+
+    // The + and ... glyphs are drawn (the + as two lines, the ... as three dots) so they need no glyph the default font
+    // may lack, and they sit at the header's right end as the concept draws them.
+    const f32 size = 18.0f;
+    const auto glyph_button = [&](const char* id, ImVec2& min, ImVec2& max, const std::function<void(const ImVec2&, const ImVec2&)>& glyph) {
+        ImGui::InvisibleButton(id, ImVec2(size, size));
+        min = ImGui::GetItemRectMin();
+        max = ImGui::GetItemRectMax();
+        const bool hovered = ImGui::IsItemHovered();
+        if (hovered) {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+            draw->AddRectFilled(min, max, ImGui::GetColorU32(ImGuiCol_HeaderHovered), 3.0f);
+        }
+        glyph(min, max);
+        return ImGui::IsItemClicked();
+    };
+    const ImU32 glyph_color = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+    const f32 spacing = ImGui::GetStyle().ItemSpacing.x;
+    const f32 right = ImGui::GetWindowContentRegionMax().x - size * 2.0f - spacing;
+    ImGui::SameLine(std::max(right, ImGui::GetCursorPosX() + 8.0f));
+    const bool add_clicked = glyph_button("##hierarchy_add", hierarchy_header_.add_min, hierarchy_header_.add_max,
+                                          [&](const ImVec2& min, const ImVec2& max) {
+                                              const ImVec2 center((min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f);
+                                              draw->AddLine(ImVec2(center.x - 4.0f, center.y), ImVec2(center.x + 4.0f, center.y), glyph_color);
+                                              draw->AddLine(ImVec2(center.x, center.y - 4.0f), ImVec2(center.x, center.y + 4.0f), glyph_color);
+                                          });
+    ImGui::SetItemTooltip("Add an actor to the scene");
+    ImGui::SameLine();
+    const bool more_clicked = glyph_button("##hierarchy_more", hierarchy_header_.more_min, hierarchy_header_.more_max,
+                                           [&](const ImVec2& min, const ImVec2& max) {
+                                               const ImVec2 center((min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f);
+                                               for (int dot = -1; dot <= 1; ++dot) {
+                                                   draw->AddCircleFilled(ImVec2(center.x + static_cast<f32>(dot) * 4.0f, center.y), 1.4f, glyph_color);
+                                               }
+                                           });
+    ImGui::SetItemTooltip("Paste, or clear the selection");
+    if (add_clicked) ImGui::OpenPopup("##hierarchy_add");
+    if (more_clicked) ImGui::OpenPopup("##hierarchy_more");
+    if (ImGui::BeginPopup("##hierarchy_add")) {
+        DrawCreateItems(kNullEntity);
+        ImGui::EndPopup();
+    }
+    if (ImGui::BeginPopup("##hierarchy_more")) {
+        if (ImGui::MenuItem("Paste", "Ctrl+V", false, document_.HasClipboard())) document_.PasteClipboard();
+        if (ImGui::MenuItem("Deselect All", nullptr, false, !document_.Selection().empty())) document_.ClearSelection();
+        ImGui::EndPopup();
+    }
+    hierarchy_header_.active = hierarchy_tab_;
+}
+
+// The Place page: the actor kinds the scene can add, each row one click away. Clicking adds at the root and selects the
+// new actor, the same call the Create menu makes, so the two cannot disagree about what a kind contains.
+void ScenePanel::DrawPlacePanel() {
+    ImGui::SetNextItemWidth(-1.0f);
+    ImGui::InputTextWithHint("##place_filter", "Search actors", &place_filter_);
+    struct Entry { const char* label; const char* description; SceneEntityKind kind; };
+    static constexpr Entry kEntries[] = {
+        {"Empty Actor", "A transform only: a parent for other entities", SceneEntityKind::Empty},
+        {"Camera", "A perspective camera", SceneEntityKind::Camera},
+        {"Cine Camera", "A camera with focus and film settings", SceneEntityKind::CineCamera},
+    };
+    const std::string query = Lower(place_filter_);
+    const f32 line = ImGui::GetTextLineHeight();
+    const f32 width = ImGui::GetContentRegionAvail().x;
+    usize shown = 0;
+    for (const Entry& entry : kEntries) {
+        if (!query.empty() && Lower(entry.label).find(query) == std::string::npos) continue;
+        ++shown;
+        const f32 height = line * 2.0f + 6.0f;
+        const ImVec2 start = ImGui::GetCursorScreenPos();
+        ImGui::PushID(entry.label);
+        ImGui::InvisibleButton("##place_row", ImVec2(width, height));
+        const ImVec2 min = ImGui::GetItemRectMin();
+        const ImVec2 max = ImGui::GetItemRectMax();
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+            ImGui::GetWindowDrawList()->AddRectFilled(min, max, ImGui::GetColorU32(ImGuiCol_HeaderHovered), 3.0f);
+        }
+        const auto fit = [&](const std::string& text) { // the column is narrow: cut with an ellipsis rather than spilling out
+            if (ImGui::CalcTextSize(text.c_str()).x <= width - 12.0f) return text;
+            std::string cut = text;
+            while (!cut.empty() && ImGui::CalcTextSize((cut + "...").c_str()).x > width - 12.0f) cut.pop_back();
+            return cut + "...";
+        };
+        ImGui::GetWindowDrawList()->AddText(ImVec2(min.x + 6.0f, min.y + 2.0f), ImGui::GetColorU32(ImGuiCol_Text), fit(entry.label).c_str());
+        ImGui::GetWindowDrawList()->AddText(ImVec2(min.x + 6.0f, min.y + 2.0f + line), ImGui::GetColorU32(ImGuiCol_TextDisabled),
+                                            fit(entry.description).c_str());
+        ImGui::SetItemTooltip("%s: click to add it to the scene", fit(entry.description).c_str());
+        placeables_.push_back(Placeable{entry.label, entry.description, entry.kind, min, max});
+        if (ImGui::IsItemClicked()) PlaceActor(entry.kind);
+        ImGui::PopID();
+        ImGui::SetCursorScreenPos(ImVec2(start.x, start.y + height));
+    }
+    if (shown == 0) ImGui::TextDisabled("No actors match.");
+}
+
+Entity ScenePanel::PlaceActor(SceneEntityKind kind) {
+    const char* name = kind == SceneEntityKind::Camera   ? "Camera"
+                       : kind == SceneEntityKind::CineCamera ? "Cine Camera"
+                       : kind == SceneEntityKind::Model      ? "Model"
+                                                             : "Actor";
+    const Entity made = document_.CreateEntity(name, kind);
+    if (!made.IsNull()) {
+        document_.SetSelection({made});
+        status_ = std::string("Added ") + name;
+    }
+    return made;
 }
 
 void ScenePanel::DrawEntityMenu(Entity entity) {
@@ -899,6 +1037,12 @@ void ScenePanel::DrawNode(Entity entity, const HierarchyIndex& index, const std:
 }
 
 void ScenePanel::DrawHierarchy() {
+    placeables_.clear();
+    DrawHierarchyHeader();
+    if (hierarchy_tab_ == HierarchyTab::Place) {
+        DrawPlacePanel();
+        return;
+    }
     ImGui::SetNextItemWidth(-1.0f);
     ImGui::InputTextWithHint("##scene_filter", "Filter: name, name:term, type:Transform", &filter_);
     const std::string filter = filter_;

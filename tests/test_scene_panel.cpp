@@ -21,6 +21,7 @@
 #include "aether/reflection/serialize.h"
 #include "aether/scene/prefab.h"
 #include "aether/scene/script_component.h"
+#include "aether/scene/components.h"
 #include "test_framework.h"
 
 #include <imgui.h>
@@ -126,6 +127,62 @@ AETHER_TEST(ScenePanel_TheHierarchyIsATreeByParentSortedByName) {
     };
     walk(kNullEntity);
     AETHER_CHECK(reached == document.Entities().size());
+}
+
+// The concept's hierarchy header: "Hierarchy | Place" at the left, + and ... at the right. Place is the catalog of the
+// actor kinds the Create menu adds, and a click adds one to the scene root as one undoable step.
+AETHER_TEST(ScenePanel_TheHierarchyHeaderSwitchesToThePlaceCatalog) {
+    HeadlessImGui imgui;
+    ScenePanel panel;
+    SceneDocument& document = panel.Document();
+    document.NewScene();
+    const usize before = document.Entities().size();
+    auto step = [&](const ImVec2& at, bool down) {
+        ImGuiIO& io = ImGui::GetIO();
+        io.AddMousePosEvent(at.x, at.y);
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, down);
+        imgui.Frame([&] { panel.Draw(); });
+    };
+    auto click = [&](const ImVec2& at) {
+        step(ImVec2(2.0f, 2.0f), false);
+        step(at, false);
+        step(at, true);
+        step(at, false);
+        imgui.Frame([&] { panel.Draw(); }); // the page the click switched to, settled
+    };
+    for (int frame = 0; frame < 2; ++frame) imgui.Frame([&] { panel.Draw(); });
+    const ScenePanel::HierarchyHeader header = panel.LastHierarchyHeader();
+    AETHER_CHECK(header.active == HierarchyTab::Hierarchy);
+    AETHER_CHECK(header.hierarchy_max.x > header.hierarchy_min.x && header.place_max.x > header.place_min.x);
+    AETHER_CHECK(header.place_min.x >= header.hierarchy_max.x);             // the tabs sit side by side
+    AETHER_CHECK(header.add_max.x > header.add_min.x && header.more_max.x > header.more_min.x);
+    AETHER_CHECK(header.add_min.x >= header.place_max.x);                   // + and ... at the right end, after the tabs
+    const auto center = [](const ImVec2& min, const ImVec2& max) { return ImVec2((min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f); };
+
+    click(center(header.place_min, header.place_max));
+    AETHER_CHECK(panel.ActiveHierarchyTab() == HierarchyTab::Place);
+    const std::vector<ScenePanel::Placeable> rows = panel.LastPlaceables();
+    AETHER_CHECK(rows.size() == 3); // the kinds the Create menu offers
+    const auto camera = std::find_if(rows.begin(), rows.end(), [](const ScenePanel::Placeable& row) { return row.label == "Camera"; });
+    AETHER_CHECK(camera != rows.end());
+    if (camera != rows.end()) {
+        click(center(camera->min, camera->max));
+        AETHER_CHECK(document.Entities().size() == before + 1);
+        AETHER_CHECK(document.Selection().size() == 1);
+        if (document.Selection().size() == 1) {
+            const Entity made = document.Selection().front();
+            AETHER_CHECK(document.Name(made) == "Camera");
+            AETHER_CHECK(document.GetWorld().HasComponent<Camera>(made)); // the same components the Create menu adds
+        }
+        AETHER_CHECK(document.Undo() && document.Entities().size() == before); // one undo step
+    }
+
+    // Back to the tree: the tab switches again and the hierarchy's own header (the filter) is what is drawn. The
+    // document's status line ("Added Camera") sits under the toolbar, so the header moved down since the rects above.
+    const ScenePanel::HierarchyHeader moved = panel.LastHierarchyHeader();
+    click(center(moved.hierarchy_min, moved.hierarchy_max));
+    AETHER_CHECK(panel.ActiveHierarchyTab() == HierarchyTab::Hierarchy);
+    AETHER_CHECK(panel.LastPlaceables().empty());
 }
 
 AETHER_TEST(ScenePanel_TheFilterMatchesNamesWithoutRegardToCase) {

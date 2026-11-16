@@ -600,6 +600,17 @@ menu bar's menu layer does not take keyboard focus from `SetKeyboardFocusHere`. 
 `EditorWorkspace_OpeningThePalettePutsTheKeyboardInTheSearchBox` (open, type); `EditorWorkspace_GlobalChordsComeFromTheTable`
 now presses Ctrl+K too.
 
+Done so far (2026-11-17): the hierarchy column header from the concept -- "Hierarchy | Place" tabs at its left and + and
+... buttons at its right. The tabs are drawn over invisible buttons rather than as ImGui tabs (which are full-column and
+give no per-tab rectangle), the active one under an accent underline; `ScenePanel::LastHierarchyHeader` reports the four
+rectangles and `ActiveHierarchyTab`/`SetHierarchyTab` switch pages. **Place** lists the actor kinds the Create menu adds
+(Empty Actor, Camera, Cine Camera) with descriptions and a "Search actors" box; a click adds the kind at the root through
+the same `CreateEntity` call as the menu (same components, one undo step), selects it and names it in the status line.
+The **+** popup offers the same items and **...** offers Paste and Deselect All.
+`ScenePanel_TheHierarchyHeaderSwitchesToThePlaceCatalog` clicks the tabs and a row at their recorded rectangles and
+checks the order, the add with its one undo and that switching back clears the catalog. Still open from the concept's
+column: the world/outliner labels it puts beside the tabs and the project chip and avatar in the menu bar.
+
 ### Stage 3 — Content browser and importer parity (L)
 
 Outcome: assets can be found, judged, imported, fixed and opened without leaving the editor.

@@ -57,6 +57,10 @@ std::vector<Entity> MatchingEntities(const SceneDocument& document, const std::s
 // Every match plus its ancestors: what a filtered hierarchy has to draw so a match is still seen where it hangs.
 std::unordered_set<Entity> VisibleEntities(const SceneDocument& document, const std::vector<Entity>& matches);
 
+// The hierarchy column's two pages, as the concept's "Hierarchy | Place" header switches them: the open scene's tree, or
+// the actor kinds that can be added to it.
+enum class HierarchyTab : u8 { Hierarchy, Place };
+
 // What a hierarchy row's badge says the entity is, judged by its component type names. When several apply, the earliest
 // in this order wins (a camera with a light on it reads as a camera). Empty: nothing but name, transform, parenting,
 // tags and prefab bookkeeping; Other: components none of the kinds claim.
@@ -162,6 +166,26 @@ public:
     // The hierarchy filter (the grammar above). Kept across scenes; empty shows the whole tree.
     void SetHierarchyFilter(std::string text) { filter_ = std::move(text); }
     const std::string& HierarchyFilter() const { return filter_; }
+    // The hierarchy column's header, where the concept puts its "Hierarchy | Place" tabs and the + and ... buttons.
+    // Place shows the actor kinds the scene can add; a row adds one at the scene root and selects it (one undo step,
+    // as the Actor menu and the Create menu do). The page, the header's rectangles and the rows' are what a host
+    // aligns its chrome to and a test clicks.
+    HierarchyTab ActiveHierarchyTab() const { return hierarchy_tab_; }
+    void SetHierarchyTab(HierarchyTab tab) { hierarchy_tab_ = tab; }
+    struct HierarchyHeader {
+        HierarchyTab active = HierarchyTab::Hierarchy;
+        ImVec2 hierarchy_min{}, hierarchy_max{}, place_min{}, place_max{};
+        ImVec2 add_min{}, add_max{}, more_min{}, more_max{};
+    };
+    const HierarchyHeader& LastHierarchyHeader() const { return hierarchy_header_; }
+    struct Placeable {
+        std::string label;
+        std::string description;
+        SceneEntityKind kind = SceneEntityKind::Empty;
+        ImVec2 min{}, max{}; // the row's rectangle, so a test clicks it where a person would
+    };
+    const std::vector<Placeable>& LastPlaceables() const { return placeables_; }
+    Entity PlaceActor(SceneEntityKind kind);
     // The eye and the lock on a hierarchy row, also on the row menu. Hiding sets the engine's Active flag (one undo step
     // for the whole set; a hidden entity is not drawn, picked or updated, and neither is anything under it). Locking is
     // editor-only and records no undo step: the viewport will not pick or move a locked entity.
@@ -205,9 +229,12 @@ private:
     void RecordRecent(const std::string& path);
     void DrawToolbar();
     void DrawHierarchy();
+    void DrawHierarchyHeader();
+    void DrawPlacePanel();
     void DrawNode(Entity entity, const HierarchyIndex& index, const std::unordered_set<Entity>* shown = nullptr);
     void DrawEntityMenu(Entity entity);
     void DrawCreateMenu(Entity parent);
+    void DrawCreateItems(Entity parent);
     void DrawInspector();
     void DrawInspectorHeader(std::span<const Entity> shown);
     void DrawDiscardPrompt();
@@ -227,6 +254,10 @@ private:
     std::string path_ = "Scenes/Main.ascene";
     std::string status_;
     std::string filter_; // the hierarchy filter box
+    HierarchyTab hierarchy_tab_ = HierarchyTab::Hierarchy;
+    HierarchyHeader hierarchy_header_;
+    std::vector<Placeable> placeables_; // the Place tab's rows, as last drawn
+    std::string place_filter_;          // the Place tab's search box
     Entity rename_target_ = kNullEntity;
     std::array<char, 128> rename_buffer_{};
     bool rename_focus_ = false;
