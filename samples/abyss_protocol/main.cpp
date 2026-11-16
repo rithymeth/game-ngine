@@ -296,7 +296,7 @@ bool Visible(const abyss::Game& game, const Vec3& p, f32 light_range, f32 sonar_
 void DrawWorld(const abyss::Game& game, const std::vector<DrawTri>& mesh, Renderer& r, f32 yaw, f32 pitch, f32 anim) {
     const abyss::Submarine& sub = game.GetSub();
     Vec3 target = sub.position;
-    f32 dist = 14.0f;
+    f32 dist = 8.0f;
     Vec3 eye = target + Vec3{std::sin(yaw) * std::cos(pitch), std::sin(pitch), std::cos(yaw) * std::cos(pitch)} * dist;
     Camera cam;
     cam.LookAt(eye, target);
@@ -319,8 +319,9 @@ void DrawWorld(const abyss::Game& game, const std::vector<DrawTri>& mesh, Render
             f32 x = (gx + ix) * 10.0f;
             f32 z = (gz + iz) * 10.0f;
             bool alt = ((gx + ix + gz + iz) & 1) != 0;
-            r.Box({x, floor_y - 1.2f, z}, {x + 9.2f, floor_y, z + 9.2f},
-                  alt ? Color{0.05f, 0.16f, 0.18f} : Color{0.04f, 0.11f, 0.14f});
+            Color tile = sub.lights_on ? (alt ? Color{0.12f, 0.34f, 0.38f} : Color{0.08f, 0.22f, 0.28f})
+                                       : (alt ? Color{0.04f, 0.10f, 0.12f} : Color{0.02f, 0.06f, 0.08f});
+            r.Box({x, floor_y - 1.2f, z}, {x + 9.2f, floor_y, z + 9.2f}, tile);
         }
     }
 
@@ -330,8 +331,8 @@ void DrawWorld(const abyss::Game& game, const std::vector<DrawTri>& mesh, Render
         }
     } else {
         Vec3 p = sub.position;
-        r.Box({p.x - 0.7f, p.y - 0.45f, p.z - 1.6f}, {p.x + 0.7f, p.y + 0.45f, p.z + 1.6f}, {0.85f, 0.32f, 0.12f});
-        r.Box({p.x - 0.35f, p.y + 0.15f, p.z + 0.4f}, {p.x + 0.35f, p.y + 0.7f, p.z + 1.3f}, {0.55f, 0.85f, 0.95f});
+        r.Box({p.x - 1.1f, p.y - 0.55f, p.z - 2.2f}, {p.x + 1.1f, p.y + 0.55f, p.z + 2.2f}, {0.85f, 0.32f, 0.12f});
+        r.Box({p.x - 0.5f, p.y + 0.2f, p.z + 0.3f}, {p.x + 0.5f, p.y + 1.0f, p.z + 1.6f}, {0.55f, 0.85f, 0.95f});
     }
 
     if (game.HasContact()) {
@@ -366,6 +367,9 @@ void DrawWorld(const abyss::Game& game, const std::vector<DrawTri>& mesh, Render
         Color pad = heading_home ? Color{0.85f, 0.7f, 0.2f} : Color{0.12f, 0.28f, 0.36f};
         r.Box({haven.position.x - 6.0f, haven.position.y - 0.5f, haven.position.z - 6.0f},
               {haven.position.x + 6.0f, haven.position.y, haven.position.z + 6.0f}, pad);
+        r.Box({haven.position.x - 0.25f, haven.position.y, haven.position.z - 0.25f},
+              {haven.position.x + 0.25f, haven.position.y + 4.0f, haven.position.z + 0.25f}, {0.2f, 0.45f, 0.55f});
+        r.Gem({haven.position.x, haven.position.y + 4.4f, haven.position.z}, 0.35f, anim, {0.45f, 0.9f, 1.0f});
     }
 
     if (game.HasContact() && (game.GetMission() == abyss::Mission::Outbound || heading_home)) {
