@@ -30,6 +30,8 @@ struct PressureState {
 struct CreatureAI {
     aether::Vec3 position;
     aether::Vec3 home;
+    aether::Vec3 interest{0.0f, 0.0f, 0.0f};
+    bool has_interest = false;
     float awareness = 0.0f;     // 0..1, rises with noise/light
     float investigation_timer = 0.0f;
     float patrol_radius = 6.0f;

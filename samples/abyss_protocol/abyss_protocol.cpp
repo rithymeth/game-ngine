@@ -35,11 +35,13 @@ void Game::Restart() {
     CreatureAI outbound;
     outbound.position = {25.0f, -20.0f, 10.0f};
     outbound.home = outbound.position;
+    outbound.interest = outbound.position;
     outbound.patrol_radius = 8.0f;
     outbound.phase = 0.4f;
     CreatureAI inbound;
     inbound.position = {22.0f, -26.0f, -14.0f};
     inbound.home = inbound.position;
+    inbound.interest = inbound.position;
     inbound.patrol_radius = 6.0f;
     inbound.phase = 2.2f;
     creatures_.push_back(outbound);
@@ -151,16 +153,41 @@ void Game::UpdateAcoustics(float dt) {
 void Game::UpdateCreature(CreatureAI& creature, float dt) {
     float dist = Distance(creature.position, sub_.position);
     float noise_influence = 0.0f;
+    float best = 0.0f;
+    aether::Vec3 heard_at = creature.interest;
+    auto consider = [&](const aether::Vec3& at, float amount) {
+        if (amount > best) {
+            best = amount;
+            heard_at = at;
+        }
+    };
+
     float hear_radius = 8.0f + noise_ * 20.0f;
-    if (dist < hear_radius) noise_influence += noise_ * (1.0f - dist / hear_radius);
-    if (sub_.lights_on && dist < 18.0f) noise_influence += 0.22f;
-    if (sub_.sonar_active) noise_influence += 0.55f;
+    if (dist < hear_radius) {
+        float heard = noise_ * (1.0f - dist / hear_radius);
+        noise_influence += heard;
+        consider(sub_.position, heard);
+    }
+    if (sub_.lights_on && dist < 18.0f) {
+        noise_influence += 0.22f;
+        consider(sub_.position, 0.22f);
+    }
+    if (sub_.sonar_active && dist < 22.0f) {
+        noise_influence += 0.55f;
+        consider(sub_.position, 0.55f);
+    }
 
     for (const auto& ev : events_) {
         float ev_dist = Distance(creature.position, ev.position);
         if (ev_dist < ev.radius) {
-            noise_influence += ev.intensity * (1.0f - ev_dist / ev.radius);
+            float heard = ev.intensity * (1.0f - ev_dist / ev.radius);
+            noise_influence += heard;
+            consider(ev.position, heard);
         }
+    }
+    if (best > 0.04f) {
+        creature.interest = heard_at;
+        creature.has_interest = true;
     }
 
     creature.awareness = std::min(1.0f, creature.awareness + noise_influence * dt * 2.0f);
@@ -169,11 +196,10 @@ void Game::UpdateCreature(CreatureAI& creature, float dt) {
     if (creature.awareness > 0.45f) {
         creature.is_alerted = true;
         creature.investigation_timer = 4.0f;
-        aether::Vec3 dir = {sub_.position.x - creature.position.x,
-                            sub_.position.y - creature.position.y,
-                            sub_.position.z - creature.position.z};
-        float len = Distance(creature.position, sub_.position);
-        if (len > 1.0f) {
+        aether::Vec3 target = creature.has_interest ? creature.interest : sub_.position;
+        aether::Vec3 dir = {target.x - creature.position.x, target.y - creature.position.y, target.z - creature.position.z};
+        float len = std::sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
+        if (len > 1.6f) {
             dir.x /= len;
             dir.y /= len;
             dir.z /= len;

@@ -403,6 +403,9 @@ void DrawWorld(const abyss::Game& game, const std::vector<DrawTri>& mesh, const 
             Color creature_col = creature.is_alerted ? Color{1.0f, 0.25f, 0.2f} : Color{0.25f, 0.85f, 1.0f};
             r.Gem(creature.position, creature.is_alerted ? 1.1f : 0.8f, anim * 1.5f, creature_col);
         }
+        if (creature.is_alerted && creature.has_interest) {
+            r.Gem(creature.interest, 0.22f, 0.0f, {0.95f, 0.35f, 0.25f});
+        }
     }
 
     const abyss::Haven& haven = game.GetHaven();
