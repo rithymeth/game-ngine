@@ -20,6 +20,12 @@
 // direction. Decode adds them and normalizes. Sixteen plus sixteen entries
 // (8 bits) cut the error of a 16-entry book roughly in half on the same
 // upward-biased set, and the search stays 32 comparisons instead of 256.
+//
+// Product quantization splits a tangent frame into two vectors and gives each
+// its own book. Sixteen normals plus sixteen tangents can form 256 frames,
+// while a joint book of sixteen can form only sixteen. The twist around the
+// normal is mostly independent of which way the normal points, so the product
+// book wins. The decoded tangent is not forced to stay perpendicular.
 
 #include "aether/math/vec.h"
 
@@ -187,6 +193,23 @@ struct ResidualNormals {
         const Vec3 fix = fine.Decode(fine.EncodeDistance(sample - base));
         return (base + fix).Normalized();
     }
+};
+
+// One index for the normal, one for the tangent. The books are trained apart.
+struct ProductFrame {
+    VecBook normals;
+    VecBook tangents;
+
+    static ProductFrame Train(const Vec3* normal_samples, const Vec3* tangent_samples, int sample_count, int normal_size, int tangent_size,
+                              int iterations) {
+        ProductFrame frame;
+        frame.normals = VecBook::TrainNormals(normal_samples, sample_count, normal_size, iterations);
+        frame.tangents = VecBook::TrainNormals(tangent_samples, sample_count, tangent_size, iterations);
+        return frame;
+    }
+
+    Vec3 Normal(Vec3 normal) const { return normals.Decode(normals.Encode(normal)); }
+    Vec3 Tangent(Vec3 tangent) const { return tangents.Decode(tangents.Encode(tangent)); }
 };
 
 }  // namespace aether

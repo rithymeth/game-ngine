@@ -255,3 +255,84 @@ AETHER_TEST(VectorQuant_ResidualStageCutsNormalError) {
     const f32 residual_mean = mean_degrees([&](Vec3 v) { return residual.Decode(v); }, test, kTest);
     AETHER_CHECK(residual_mean < coarse_mean * 0.7f);
 }
+
+// Sixteen normals plus sixteen tangents beat one book of sixteen whole frames.
+// The twist around the normal is not tied to which way the normal faces.
+AETHER_TEST(VectorQuant_ProductFrameBeatsJointBook) {
+    auto fib = [](int i, int n, f32 phase) {
+        const f32 golden = 3.14159265f * (3.0f - std::sqrt(5.0f));
+        const f32 y = 1.0f - (static_cast<f32>(i) / static_cast<f32>(n - 1)) * 2.0f;
+        const f32 radius = std::sqrt(std::max(0.0f, 1.0f - y * y));
+        const f32 theta = static_cast<f32>(i) * golden + phase;
+        return Vec3{std::cos(theta) * radius, y, std::sin(theta) * radius};
+    };
+    auto bias = [&](int i, int n, f32 phase) {
+        Vec3 v = fib(i, n, phase);
+        if (v.y < 0.0f) v.y *= 0.25f;
+        return v.Normalized();
+    };
+    struct Frame {
+        Vec3 normal;
+        Vec3 tangent;
+    };
+    auto make = [&](int i, int n, f32 phase) {
+        const Vec3 normal = bias(i, n, phase);
+        const Vec3 helper = std::fabs(normal.x) < 0.9f ? Vec3{1, 0, 0} : Vec3{0, 1, 0};
+        const Vec3 t = normal.Cross(helper).Normalized();
+        const Vec3 b = normal.Cross(t).Normalized();
+        const f32 a = (static_cast<f32>(i) * 0.37f + phase) * 2.3f;
+        const Vec3 tangent = (t * std::cos(a) + b * std::sin(a)).Normalized();
+        return Frame{normal, tangent};
+    };
+    constexpr int kTrain = 300;
+    constexpr int kTest = 60;
+    Vec3 train_n[kTrain], train_t[kTrain];
+    Frame test[kTest];
+    Frame train[kTrain];
+    for (int i = 0; i < kTrain; ++i) {
+        train[i] = make(i, kTrain, 0.0f);
+        train_n[i] = train[i].normal;
+        train_t[i] = train[i].tangent;
+    }
+    for (int i = 0; i < kTest; ++i) test[i] = make(i, kTest, 0.7f);
+
+    const ProductFrame product = ProductFrame::Train(train_n, train_t, kTrain, 16, 16, 4);
+    Frame joint[16];
+    joint[0] = train[0];
+    for (int k = 1; k < 16; ++k) {
+        int far = 0;
+        f32 far_dist = -1.0f;
+        for (int i = 0; i < kTrain; ++i) {
+            f32 nearest = 1.0e30f;
+            for (int j = 0; j < k; ++j) {
+                const f32 dist = (1.0f - train[i].normal.Dot(joint[j].normal)) + (1.0f - train[i].tangent.Dot(joint[j].tangent));
+                nearest = std::min(nearest, dist);
+            }
+            if (nearest > far_dist) {
+                far_dist = nearest;
+                far = i;
+            }
+        }
+        joint[k] = train[far];
+    }
+
+    const auto degrees = [](Vec3 a, Vec3 b) {
+        return std::acos(std::clamp(a.Dot(b.Normalized()), -1.0f, 1.0f)) * (180.0f / 3.14159265f);
+    };
+    f32 joint_sum = 0.0f;
+    f32 product_sum = 0.0f;
+    for (const Frame& frame : test) {
+        f32 best = 1.0e30f;
+        int pick = 0;
+        for (int j = 0; j < 16; ++j) {
+            const f32 dist = (1.0f - frame.normal.Dot(joint[j].normal)) + (1.0f - frame.tangent.Dot(joint[j].tangent));
+            if (dist < best) {
+                best = dist;
+                pick = j;
+            }
+        }
+        joint_sum += degrees(frame.normal, joint[pick].normal) + degrees(frame.tangent, joint[pick].tangent);
+        product_sum += degrees(frame.normal, product.Normal(frame.normal)) + degrees(frame.tangent, product.Tangent(frame.tangent));
+    }
+    AETHER_CHECK(product_sum < joint_sum * 0.75f);
+}
