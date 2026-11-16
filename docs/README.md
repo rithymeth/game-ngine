@@ -30,6 +30,7 @@ without a server or network connection.
 | [design/EDITOR_UI.md](design/EDITOR_UI.md) | Editor UI design system: color/type/spacing tokens, icons, layouts, widgets, panel specs, interaction rules, feedback, accessibility, and the plan for splitting editor/main.cpp |
 | [design/AETHER_ENGINE_UX.md](design/AETHER_ENGINE_UX.md) | Complete product UX architecture: Project Hub, editor workspaces, shared panels/services, core workflows, accessibility, toolkit boundary, migration, and acceptance criteria |
 | [design/EDITOR_UI_TOOLKIT_ADR.md](design/EDITOR_UI_TOOLKIT_ADR.md) | The editor UI framework decision: Dear ImGui is the editor, the Qt editor was removed, and why (the original Qt recommendation is kept as history) |
+| [design/CLUSTER_GEOMETRY_LOD.md](design/CLUSTER_GEOMETRY_LOD.md) | Cluster-based geometry LOD: the implementation sequence, the CPU reference's tests, the validation and benchmark gates, and what is done |
 | [design/VIRTUAL_GEOMETRY.md](design/VIRTUAL_GEOMETRY.md) | The staged plan for a Nanite-style virtual geometry renderer, and what stage 1 (the cluster hierarchy and its CPU selector) built and measured |
 | [design/EDITOR_ROADMAP.md](design/EDITOR_ROADMAP.md) | The gap between the ImGui editor and an advanced editor, in priority order: rendered viewport, gizmos, content browser, previews, prefab workflow |
 | [design/FOREST_VALLEY_SHOWCASE.md](design/FOREST_VALLEY_SHOWCASE.md) | Proposal for the Forest Valley integrated showcase: five areas, asset budget, rendering priorities, performance gates and roadmap (targets, not measurements) |

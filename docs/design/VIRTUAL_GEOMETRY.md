@@ -1,5 +1,8 @@
 # Virtual geometry (a Nanite-style renderer, in stages)
 
+This is the same effort as `CLUSTER_GEOMETRY_LOD.md`, which holds the validation and benchmark gates the stages below must meet and the status
+against its list. `cluster_reference.h` there is the whole-mesh LOD reference; the hierarchy here is the per-cluster one.
+
 The goal is meshes of any density with automatic detail: the renderer draws only as many triangles as the screen can show, with no popping and no cracks.
 This is built in stages, each tested before the next starts. This document records the plan, what stage 1 does and what it measured.
 
