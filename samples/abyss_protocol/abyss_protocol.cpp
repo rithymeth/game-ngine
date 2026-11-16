@@ -1,6 +1,7 @@
 #include "abyss_protocol.h"
 #include <cmath>
 #include <sstream>
+#include <limits>
 
 namespace abyss {
 
@@ -27,8 +28,52 @@ void Game::ApplyThrust(const aether::Vec3& thrust) {
     sub_.velocity.z += thrust.z;
 }
 
+bool Game::LoadModel(const std::string& path, ModelInfo& out_info) {
+    out_info = ModelInfo{};
+    out_info.path = path;
+
+    aether::assets::GltfScene scene;
+    std::string error;
+    if (!aether::assets::LoadGltf(path, scene, &error)) {
+        out_info.error = error.empty() ? "LoadGltf failed" : error;
+        return false;
+    }
+
+    out_info.loaded = true;
+    out_info.mesh_count = scene.meshes.size();
+    out_info.material_count = scene.materials.size();
+
+    float min_x = std::numeric_limits<float>::max();
+    float min_y = min_x, min_z = min_x;
+    float max_x = -min_x, max_y = -min_x, max_z = -min_x;
+    bool any_vert = false;
+
+    for (const auto& mesh : scene.meshes) {
+        for (const auto& prim : mesh.primitives) {
+            out_info.primitive_count++;
+            out_info.vertex_count += prim.vertices.size();
+            for (const auto& v : prim.vertices) {
+                any_vert = true;
+                min_x = std::min(min_x, v.position[0]);
+                min_y = std::min(min_y, v.position[1]);
+                min_z = std::min(min_z, v.position[2]);
+                max_x = std::max(max_x, v.position[0]);
+                max_y = std::max(max_y, v.position[1]);
+                max_z = std::max(max_z, v.position[2]);
+            }
+        }
+    }
+
+    if (any_vert) {
+        out_info.bounds_min = {min_x, min_y, min_z};
+        out_info.bounds_max = {max_x, max_y, max_z};
+    }
+
+    loaded_scene_ = std::move(scene);
+    return true;
+}
+
 void Game::UpdateAcoustics(float dt) {
-    // Continuous noise from engines / thrusters
     float continuous = 0.05f;
     if (sub_.velocity.x * sub_.velocity.x + sub_.velocity.y * sub_.velocity.y +
             sub_.velocity.z * sub_.velocity.z > 0.1f) {
@@ -36,14 +81,12 @@ void Game::UpdateAcoustics(float dt) {
     }
     if (sub_.sonar_active) {
         continuous += 0.6f;
-        // Emit a sonar pulse event
         events_.push_back({sub_.position, 0.85f, 40.0f, 2.0f});
     }
     if (sub_.lights_on) {
-        continuous += 0.1f;  // lights are quieter but still detectable
+        continuous += 0.1f;
     }
 
-    // Decay old events
     for (auto it = events_.begin(); it != events_.end();) {
         it->remaining_time -= dt;
         if (it->remaining_time <= 0.0f) {
@@ -52,18 +95,12 @@ void Game::UpdateAcoustics(float dt) {
             ++it;
         }
     }
-
-    // Simple signature for the sub
-    AcousticSignature sig;
-    sig.noise_level = std::min(1.0f, continuous);
-    (void)sig;
 }
 
 void Game::UpdateCreature(float dt) {
     float dist = Distance(creature_.position, sub_.position);
     float noise_influence = 0.0f;
 
-    // React to continuous noise and events
     if (sub_.sonar_active) noise_influence += 0.7f;
     if (sub_.lights_on && dist < 30.0f) noise_influence += 0.3f;
 
@@ -80,7 +117,6 @@ void Game::UpdateCreature(float dt) {
     if (creature_.awareness > 0.45f) {
         creature_.is_alerted = true;
         creature_.investigation_timer = 4.0f;
-        // Simple move toward the sub
         aether::Vec3 dir = {sub_.position.x - creature_.position.x,
                             sub_.position.y - creature_.position.y,
                             sub_.position.z - creature_.position.z};
@@ -95,7 +131,6 @@ void Game::UpdateCreature(float dt) {
         }
     } else {
         creature_.is_alerted = false;
-        // Drift back toward home
         aether::Vec3 home_dir = {creature_.home.x - creature_.position.x,
                                  creature_.home.y - creature_.position.y,
                                  creature_.home.z - creature_.position.z};
@@ -116,26 +151,19 @@ void Game::UpdateCreature(float dt) {
 }
 
 void Game::UpdatePressure(float dt) {
-    // Depth is negative Y for underwater
     float depth = -sub_.position.y;
     if (depth > 50.0f) {
         float excess = (depth - 50.0f) / 150.0f;
         sub_.battery -= excess * 0.05f * dt;
-        // Hull slowly degrades at extreme depth
-        if (depth > 180.0f) {
-            // placeholder damage
-        }
     }
     sub_.battery = std::max(0.0f, sub_.battery);
     sub_.oxygen = std::max(0.0f, sub_.oxygen - 0.01f * dt);
 }
 
 void Game::Step(float dt) {
-    // Integrate simple movement
     sub_.position.x += sub_.velocity.x * dt;
     sub_.position.y += sub_.velocity.y * dt;
     sub_.position.z += sub_.velocity.z * dt;
-    // Drag
     sub_.velocity.x *= 0.95f;
     sub_.velocity.y *= 0.95f;
     sub_.velocity.z *= 0.95f;
