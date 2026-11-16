@@ -10,7 +10,8 @@ add_library(Aether::Bench ALIAS aether_bench_lib)
 
 # The benchmark sources go straight into the executable (not a static library, which would drop the
 # self-registering objects). Blueprint and Luau benchmarks are there when those modules are built.
-add_executable(aether_bench src/main.cpp src/bench_engine.cpp src/bench_skinning.cpp)
+# The cluster-culling bench compiles the player's GPU pass straight in (it needs only the engine and its RHI), so the bench does not depend on the player.
+add_executable(aether_bench src/main.cpp src/bench_engine.cpp src/bench_skinning.cpp src/bench_cluster_cull.cpp ../player/src/cluster_cull_pass.cpp)
 target_link_libraries(aether_bench PRIVATE Aether::Bench)
 if(CMAKE_CONFIGURATION_TYPES)
     set(_aether_bench_build_config "$<CONFIG>")

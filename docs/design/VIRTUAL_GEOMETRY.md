@@ -70,6 +70,33 @@ own host-visible memory, which is slow on a real GPU; a shipping pass will copy 
 - A cone-culled cluster has every triangle facing away from the viewer (checked on the real triangles).
 - Dropping the parent test, flipping the frustum comparison, inverting the cone test or not counting triangles each fails the comparison.
 
+### Benchmark: cluster culling on the CPU against the GPU
+
+`bench/src/bench_cluster_cull.cpp` (in `aether_bench`) times one cut-and-cull of a lumpy sphere's whole hierarchy: on the CPU (`cluster/cpu_select_*`), and on the
+GPU as one cull with its submit and wait (`cluster/gpu_cull_*`, the latency of asking once) and as 16 dispatches in one submission (`cluster/gpu_cull_x16_*`, divide by
+16). It answers one narrow question, whether culling clusters on the GPU is cheaper than on the CPU at a given scale. It is **not** the benchmark gate in
+`CLUSTER_GEOMETRY_LOD.md` (the existing draw path against cluster rendering): that needs the draw stage.
+
+To run it on a Windows machine with a real GPU (the GPU entries use Vulkan, which NVIDIA, AMD and Intel drivers provide):
+
+```
+cmake --build build --config RelWithDebInfo --target aether_bench
+build\bench\RelWithDebInfo\aether_bench.exe --filter cluster/ --repeat 15
+```
+
+Set `AETHER_BENCH_CLUSTER_LARGE=1` first to add a 1-million-triangle density (its hierarchy takes tens of seconds to build). Without a Vulkan device the GPU entries
+do nothing and say so on stderr. The same machine also runs the GPU-against-CPU comparison test for real: `AETHER_TEST_FILTER=ClusterCullGpu_` with `aether_tests`.
+
+Measured in the Linux container (the only numbers taken so far; **the GPU rows ran on lavapipe, a CPU emulation of Vulkan, and say nothing about a real GPU**):
+
+| | clusters | median |
+| --- | --- | --- |
+| CPU `SelectClusters`, 68k-triangle sphere | 2 010 | 0.033 ms |
+| CPU `SelectClusters`, 212k-triangle sphere | 6 389 | 0.104 ms |
+
+The CPU selector costs about 16 ns per cluster on one thread, so it is cheap until there are many tens of thousands of clusters in view (many instances of dense
+meshes): that is where a GPU pass has to win, and where the real-GPU numbers are needed.
+
 ### Known limits
 
 - **It stops at 54 root clusters (1.6% of the triangles), not at one.** Locked group borders keep the top levels from shrinking further, and a group that
