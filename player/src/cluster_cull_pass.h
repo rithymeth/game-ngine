@@ -47,13 +47,19 @@ public:
     // or threshold that is not a number, or a list that is not recording.
     bool Record(gfx::rhi::ICommandList& compute_cmd, const cook::ClusterView& view, f32 threshold_pixels);
 
+    // What the indirect draw reads (ICommandList::DrawIndexedIndirectCount, max_draws = Capacity()): one five-word indexed-draw record per selected
+    // cluster, and the number selected, as the u32 at offset 0 of the count buffer (more than Capacity() when the output overflowed; the draw clamps it).
+    // The records index the hierarchy's index array, so draw with an index buffer holding exactly `hierarchy.indices` as 32-bit indices.
+    gfx::rhi::BufferHandle DrawArguments() const { return draws_; }
+    gfx::rhi::BufferHandle DrawCount() const { return output_; }
+
     // After the submission that carried Record has finished: the selection. False when the device cannot read storage buffers.
     bool Read(GpuClusterSelection& out) const;
 
 private:
     gfx::rhi::IDevice* device_ = nullptr;
     gfx::rhi::ComputePipelineHandle pipeline_;
-    gfx::rhi::BufferHandle clusters_, output_, constants_;
+    gfx::rhi::BufferHandle clusters_, output_, draws_, constants_;
     u32 cluster_count_ = 0;
     u32 capacity_ = 0;
     bool valid_ = false;

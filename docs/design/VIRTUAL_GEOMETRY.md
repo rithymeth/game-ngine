@@ -97,13 +97,81 @@ Measured in the Linux container (the only numbers taken so far; **the GPU rows r
 The CPU selector costs about 16 ns per cluster on one thread, so it is cheap until there are many tens of thousands of clusters in view (many instances of dense
 meshes): that is where a GPU pass has to win, and where the real-GPU numbers are needed.
 
+Measured on a real GPU: **NVIDIA GeForce RTX 3050 Laptop (Vulkan, discrete). This is not an RTX 3060**; GDD section 57's 3060 class is still unmeasured.
+`aether_bench --filter cluster/ --repeat 15`, RelWithDebInfo, 16 November 2026 (calibration 1.76 ms), **after** the descriptor-binding fix below. An earlier run the same day
+is withdrawn: its GPU cull read empty descriptors and so measured an empty shader.
+
+| | clusters | median | p95 | per cull |
+| --- | --- | --- | --- | --- |
+| CPU `SelectClusters`, 68k triangles | 2 050 | 0.062 ms | 0.065 ms | 0.062 ms |
+| GPU one cull + submit + wait, 68k | 2 050 | 0.145 ms | 0.202 ms | 0.145 ms |
+| GPU 16 culls in one submission, 68k | 2 050 | 0.224 ms | 0.301 ms | 0.014 ms |
+| CPU `SelectClusters`, 212k triangles | 6 349 | 0.098 ms | 0.099 ms | 0.098 ms |
+| GPU one cull + submit + wait, 212k | 6 349 | 0.693 ms | 1.296 ms | 0.693 ms |
+| GPU 16 culls in one submission, 212k | 6 349 | 1.043 ms | 1.555 ms | 0.065 ms |
+
+Reading: a single GPU cull is **slower** than the CPU at both sizes (2.3x at 68k, 7x at 212k), so culling one view on the GPU does not pay for itself at these
+cluster counts. Batched, the GPU is 4.4x cheaper at 68k and only 1.5x cheaper at 212k, and the 212k batch is dominated by something other than launch cost
+(it scales 4.6x for 3.1x the clusters), which is worth profiling before stage 3 relies on it. The case for the GPU pass is that its list stays on the GPU for an
+indirect draw (no readback, no CPU cull), not that the cull itself is faster. This measures culling only, not the draw-path comparison the gate asks for.
+
+## Stage 3: the cooked cluster hierarchy (AMSC v3)
+
+`MeshCookSettings::build_clusters` (off by default; skinned primitives are skipped) bakes each primitive's `ClusterHierarchy` from its level-0 mesh. `SaveAmesh` writes
+version 3: after the HLOD table, a count and then, for each primitive that has one, its index and the hierarchy (indices, 92-byte clusters, groups). Version 1 and 2 files
+still load, with no clusters. The reader checks every count against the bytes left and every reference against what it points into (indices against the primitive's
+vertices, a cluster's triangles against the index array, group references and members against their tables, finite and non-negative bounds), and
+`MeshCook_RefusesClusterHierarchiesThatPointOutsideThemselves` tampers with each of those. A loaded hierarchy selects exactly the clusters the cooked one does. The fuzz
+corpus has a cluster seed (`tools/fuzz/corpus/amesh/valid_clusters.amesh`, about 28 KB for a 12 x 12 grid). The format-versions table row now says 3.
+
+### The draw: the cull list drives the GPU draw
+
+`ICommandList::DrawIndexedIndirect` reads one draw record from a storage buffer; `DrawIndexedIndirectCount` reads up to `max_draws` records and the number to draw from a second
+buffer (`IDevice::SupportsIndirectCount`: Vulkan 1.2 `drawIndirectCount` plus `multiDrawIndirect`, which the device now enables where it has them). The cull pass writes, for each
+selected cluster, a record `{triangles * 3, 1, first index, 0, 0}` into `ClusterCullPass::DrawArguments()` next to the cluster list, and its atomic counter at offset 0 of
+`DrawCount()` is the draw count (the draw clamps it to the capacity). Bind a vertex buffer of the mesh's vertices and an index buffer holding exactly `hierarchy.indices`, and nothing
+is read back: the CPU never learns how many clusters were drawn. Compute and graphics are on different queues, so the graphics submission must wait on the compute fence
+(`GraphicsQueueWaitOnCompute`); the test waits on the CPU instead.
+
+`ClusterDrawGpu_TheCullListDrivesTheDrawWithNothingReadBack` renders a lumpy sphere (RTX 3050 Laptop, Vulkan): at a threshold of 0 the leaf cut is the whole mesh and the picture equals drawing
+the mesh's own indices **pixel for pixel**; a coarser cut draws fewer than half the triangles and covers about the same silhouette; a frustum that sees nothing draws nothing; and the
+call refuses a zero draw count, a non-storage buffer, more draws than the arguments hold, a misaligned offset and a dead handle.
+
+### Benchmark: the draw path, one frame end to end
+
+`bench/src/bench_cluster_draw.cpp` (`aether_bench --filter draw/ --repeat 15`) draws one lumpy sphere at 1920x1080 from 8 m three ways and times a whole frame (record, submit, wait for the GPU):
+**direct** (the existing path: the whole mesh in one `DrawIndexed`, no LOD), **cpu_cull** (`SelectClusters` on the CPU, its draw records written by the CPU, one `DrawIndexedIndirectCount`) and
+**gpu_cull** (the cull on the compute queue, the graphics queue waits on its fence, one `DrawIndexedIndirectCount`, no CPU work). The cluster paths use a 1-pixel error budget and back-face
+culling. Measured on the **NVIDIA GeForce RTX 3050 Laptop (not a 3060)**, Vulkan, RelWithDebInfo, 17 November 2026, calibration 1.67 ms:
+
+| scene | path | draws | triangles submitted | graphics GPU time | frame, median (p95) |
+| --- | --- | --- | --- | --- | --- |
+| 68k triangles | direct | 1 | 67 600 | 0.175 ms | 0.273 ms (0.310) |
+| | cpu_cull | 261 | 14 061 | 0.100 ms | 0.251 ms (0.288) |
+| | gpu_cull | 261 | 14 061 | 0.108 ms | 0.334 ms (0.383) |
+| 212k triangles | direct | 1 | 211 600 | 1.943 ms | 3.199 ms (5.980) |
+| | cpu_cull | 511 | 24 864 | 0.355 ms | 0.935 ms (3.694) |
+| | gpu_cull | 511 | 24 864 | 0.306 ms | 0.661 ms (1.819) |
+
+Reading, honestly:
+
+- **At 68k the GPU path loses on frame time** (0.334 ms against 0.273 ms direct): the GPU spends less on the draw itself (0.108 against 0.175 ms) but the compute submission, the cross-queue wait and the
+  cull cost about 0.2 ms more than that saves. Direct was already cheap.
+- **At 212k it wins**: 0.661 ms against 3.199 ms direct (4.8x) and against 0.935 ms for the CPU cull (1.4x). Culling cut the triangles drawn from 211 600 to 24 864; the GPU time of the draw fell 6.3x.
+  The CPU path's p95 (3.7 ms) shows its jitter. The 212k cull cost is also the one the earlier cull benchmark found disproportionate (see above), so there may be more to gain.
+- **What this does not show.** One mesh, one instance, one camera; the sphere's triangles are sub-pixel on screen, which is the case cluster LOD is for, and a scene of larger triangles would favour
+  `direct` more. `direct` also draws the back-facing half (nothing in this pipeline culls it), which the cluster paths drop, so part of the win is back-face culling, not LOD. No instancing, no
+  occlusion, no shading cost, a laptop GPU, one run of 15 samples. Treat it as evidence that the machinery works and pays off on dense geometry, not as a general speedup claim; the same run on a 3060
+  and on a real scene is still needed.
+
 ### Known limits
 
+- **Fixed 16 November 2026: compute results did not reach the CPU on a real GPU.** The Vulkan backend bound each compute descriptor set before writing the buffers into it; lavapipe tolerated that, NVIDIA read empty descriptors, so every compute shader wrote nothing. Sets are now bound in `Dispatch`. `ComputeReadback_AShaderWriteReachesTheCpu_Vulkan` guards it and `ClusterCullGpu_*` now agree with the CPU on the RTX 3050.
 - **It stops at 54 root clusters (1.6% of the triangles), not at one.** Locked group borders keep the top levels from shrinking further, and a group that
   cannot shrink waits to be merged at a later level. A later stage can regroup across levels or lift the locks near the root.
 - The simplifier works on positions only: UV seams and normals are not protected, so a textured mesh may show seams at coarse levels until attribute-aware
   simplification is added.
-- Nothing is cooked or drawn yet. Stage 3 changes the cooked format and so the format-versions table, and adds an indirect draw to the RHI (it has none).
+- Stage 3 draws clusters on Vulkan (below) but is not wired into the player or the scene renderer, has no Hi-Z occlusion, no streaming, and **its speed against the existing draw path is unmeasured** (the benchmark gate in `CLUSTER_GEOMETRY_LOD.md`). D3D12 has no indirect draw yet.
 - No occlusion (Hi-Z) culling yet: it needs a depth pyramid, which is a graphics-side pass.
 - Whether clusters beat the current draw path is **still unmeasured**. This container has only a software Vulkan device (lavapipe), so the GPU pass is verified
   for correctness, not speed. Measuring it on a real GPU against the existing draw path is the first thing to do before stage 3, and the design doc's benchmark gate

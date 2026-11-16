@@ -7,10 +7,14 @@
 // of every level (see meshlet_cook.h). The container is "AMSC" v1, little-endian, with a CRC-32 trailer; the
 // reader checks every count against the bytes that remain, so hostile input fails cleanly.
 //
+// v3 adds, after the HLOD table, an optional cluster hierarchy per primitive (cluster_hierarchy.h: the virtual-geometry DAG whose leaves are the level-0
+// mesh exactly), written only for primitives that have one. A v1 or v2 file loads with none.
+//
 // Skinned primitives keep their source indices only (no LODs or meshlets) and add a warning: v1 does not carry
 // joints and weights. Consuming this on the GPU (virtual geometry) is the rest of step 39.6.
 
 #include "aether/assets/model_importer.h"
+#include "aether/cook/cluster_hierarchy.h"
 #include "aether/cook/meshlet_cook.h"
 #include "aether/core/base.h"
 
@@ -25,6 +29,9 @@ struct MeshCookSettings {
     LodParams lods;
     bool build_lods = true;
     bool build_meshlets = true;
+    // Virtual geometry (opt-in, skinned primitives skipped): bake the cluster hierarchy of each primitive's level-0 mesh.
+    bool build_clusters = false;
+    ClusterParams clusters;
     // Phase 42.4: bake HLOD proxies for groups of primitives (opt-in).
     bool build_hlod = false;
     f32 hlod_cluster_radius = 20.0f;
@@ -42,6 +49,7 @@ struct CookedMeshPrimitive {
     Vec3 bounds_min;
     Vec3 bounds_max;
     std::vector<CookedMeshLod> lods; // lods[0] is the source mesh
+    ClusterHierarchy clusters;       // empty unless MeshCookSettings::build_clusters; its indices are into `vertices`
 };
 
 struct CookedMesh {

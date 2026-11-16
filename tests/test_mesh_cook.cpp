@@ -4,6 +4,7 @@
 #include "aether/pak/pak.h"
 
 #include <cmath>
+#include <cstdio>
 
 // Cooked meshes (Phase 39 step 6a): round trip, determinism, LOD shape, and a reader that survives bad bytes.
 
@@ -172,4 +173,100 @@ AETHER_TEST(MeshCook_LoadsVersionOneBytes) {
     AETHER_CHECK(LoadAmesh(bytes, out));
     AETHER_CHECK(out.primitives.empty());
     AETHER_CHECK(out.hlod.empty());
+}
+
+// ---- virtual geometry stage 3: the cluster hierarchy in the cooked mesh (v3) ----
+
+namespace {
+
+CookedMesh CookWithClusters() {
+    MeshCookSettings settings;
+    settings.build_clusters = true;
+    CookedMesh cooked;
+    std::string error;
+    AETHER_CHECK(CookMesh(MakeGridMesh(24), settings, cooked, &error));
+    return cooked;
+}
+
+// Rewrites the bytes' version word and CRC, after the caller changed what precedes the CRC.
+void Reseal(std::vector<u8>& bytes, u32 version) {
+    for (int i = 0; i < 4; ++i) bytes[4 + i] = static_cast<u8>(version >> (8 * i));
+    const std::vector<u8> body(bytes.begin(), bytes.end() - 4);
+    const u32 crc = pak::Crc32(body);
+    for (int i = 0; i < 4; ++i) bytes[bytes.size() - 4 + i] = static_cast<u8>(crc >> (8 * i));
+}
+
+} // namespace
+
+AETHER_TEST(MeshCook_ClustersRoundTripAndAreDeterministic) {
+    const CookedMesh cooked = CookWithClusters();
+    AETHER_CHECK(cooked.primitives.size() == 1 && !cooked.primitives[0].clusters.clusters.empty());
+    if (cooked.primitives.empty() || cooked.primitives[0].clusters.clusters.empty()) return;
+    const ClusterHierarchy& h = cooked.primitives[0].clusters;
+    AETHER_CHECK(h.leaf_triangles() == cooked.primitives[0].lods[0].indices.size() / 3); // the leaves are the mesh, exactly
+    const std::vector<u8> bytes = SaveAmesh(cooked);
+    CookedMesh loaded;
+    std::string error;
+    AETHER_CHECK(LoadAmesh(bytes, loaded, &error));
+    AETHER_CHECK(loaded.primitives.size() == 1);
+    if (loaded.primitives.size() != 1) return;
+    const ClusterHierarchy& l = loaded.primitives[0].clusters;
+    AETHER_CHECK(l.clusters.size() == h.clusters.size() && l.groups.size() == h.groups.size() && l.indices == h.indices);
+    AETHER_CHECK(l.level_count == h.level_count && l.leaf_count == h.leaf_count && l.root_count() == h.root_count());
+    AETHER_CHECK(SaveAmesh(loaded) == bytes);
+    // The loaded hierarchy selects the same clusters as the one that was cooked.
+    ClusterView view;
+    view.position = Vec3(12.0f, 6.0f, 40.0f);
+    ClusterSelection a, b;
+    AETHER_CHECK(SelectClusters(h, view, 2.0f, a) && SelectClusters(l, view, 2.0f, b));
+    AETHER_CHECK(a.clusters == b.clusters && a.triangles == b.triangles && !a.clusters.empty());
+}
+
+AETHER_TEST(MeshCook_ClustersAreOptInAndOlderVersionsStillLoad) {
+    CookedMesh plain;
+    std::string error;
+    AETHER_CHECK(CookMesh(MakeGridMesh(8), MeshCookSettings{}, plain, &error));
+    AETHER_CHECK(plain.primitives.size() == 1 && plain.primitives[0].clusters.clusters.empty());
+    // A version-2 file is the v3 bytes without the trailing cluster count.
+    std::vector<u8> bytes = SaveAmesh(plain);
+    bytes.erase(bytes.end() - 8, bytes.end() - 4);
+    Reseal(bytes, 2);
+    CookedMesh loaded;
+    AETHER_CHECK(LoadAmesh(bytes, loaded, &error));
+    AETHER_CHECK(loaded.primitives.size() == 1 && loaded.primitives[0].clusters.clusters.empty());
+    // A v3 file whose table claims a cluster the file does not hold is refused, not misread.
+    std::vector<u8> short_file = SaveAmesh(plain);
+    short_file[short_file.size() - 8] = 1;
+    Reseal(short_file, 3);
+    AETHER_CHECK(!LoadAmesh(short_file, loaded, &error));
+}
+
+AETHER_TEST(MeshCook_RefusesClusterHierarchiesThatPointOutsideThemselves) {
+    const CookedMesh good = CookWithClusters();
+    if (good.primitives.empty() || good.primitives[0].clusters.groups.empty()) return;
+    const auto refused = [&](const char* what, auto&& tamper) {
+        CookedMesh bad = good;
+        tamper(bad.primitives[0].clusters);
+        const std::vector<u8> bytes = SaveAmesh(bad); // valid CRC: only the content is wrong
+        CookedMesh out;
+        std::string error;
+        const bool loaded = LoadAmesh(bytes, out, &error);
+        if (loaded) std::printf("    cluster tamper \"%s\" was accepted\n", what);
+        AETHER_CHECK(!loaded);
+    };
+    const u32 vertex_count = static_cast<u32>(good.primitives[0].vertices.size());
+    refused("index past the vertices", [&](ClusterHierarchy& h) { h.indices[0] = vertex_count; });
+    refused("index count not a multiple of 3", [](ClusterHierarchy& h) { h.indices.pop_back(); });
+    refused("triangles past the indices", [](ClusterHierarchy& h) { h.clusters.back().triangle_count += 1000; });
+    refused("unaligned triangle offset", [](ClusterHierarchy& h) { h.clusters[0].index_offset = 1; });
+    refused("level past level_count", [](ClusterHierarchy& h) { h.clusters[0].level = h.level_count; });
+    refused("leaf_count past the clusters", [](ClusterHierarchy& h) { h.leaf_count = static_cast<u32>(h.clusters.size()) + 1; });
+    refused("group reference past the groups", [](ClusterHierarchy& h) { h.clusters[0].group = static_cast<i32>(h.groups.size()); });
+    refused("group reference below -1", [](ClusterHierarchy& h) { h.clusters[0].source_group = -2; });
+    refused("group member past the clusters", [](ClusterHierarchy& h) { h.groups[0].inputs.push_back(static_cast<u32>(h.clusters.size())); });
+    refused("NaN radius", [](ClusterHierarchy& h) { h.clusters[0].radius = std::nanf(""); });
+    refused("negative error", [](ClusterHierarchy& h) { h.clusters[0].error = -1.0f; });
+    refused("infinite parent sphere", [](ClusterHierarchy& h) { h.clusters[0].parent_radius = INFINITY; });
+    refused("negative extent", [](ClusterHierarchy& h) { h.mesh_extent = -1.0f; });
+    refused("absurd level count", [](ClusterHierarchy& h) { h.level_count = 100000; });
 }
