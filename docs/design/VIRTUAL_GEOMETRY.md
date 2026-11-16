@@ -137,6 +137,33 @@ is read back: the CPU never learns how many clusters were drawn. Compute and gra
 the mesh's own indices **pixel for pixel**; a coarser cut draws fewer than half the triangles and covers about the same silhouette; a frustum that sees nothing draws nothing; and the
 call refuses a zero draw count, a non-storage buffer, more draws than the arguments hold, a misaligned offset and a dead handle.
 
+### Benchmark: the draw path, one frame end to end
+
+`bench/src/bench_cluster_draw.cpp` (`aether_bench --filter draw/ --repeat 15`) draws one lumpy sphere at 1920x1080 from 8 m three ways and times a whole frame (record, submit, wait for the GPU):
+**direct** (the existing path: the whole mesh in one `DrawIndexed`, no LOD), **cpu_cull** (`SelectClusters` on the CPU, its draw records written by the CPU, one `DrawIndexedIndirectCount`) and
+**gpu_cull** (the cull on the compute queue, the graphics queue waits on its fence, one `DrawIndexedIndirectCount`, no CPU work). The cluster paths use a 1-pixel error budget and back-face
+culling. Measured on the **NVIDIA GeForce RTX 3050 Laptop (not a 3060)**, Vulkan, RelWithDebInfo, 17 November 2026, calibration 1.67 ms:
+
+| scene | path | draws | triangles submitted | graphics GPU time | frame, median (p95) |
+| --- | --- | --- | --- | --- | --- |
+| 68k triangles | direct | 1 | 67 600 | 0.175 ms | 0.273 ms (0.310) |
+| | cpu_cull | 261 | 14 061 | 0.100 ms | 0.251 ms (0.288) |
+| | gpu_cull | 261 | 14 061 | 0.108 ms | 0.334 ms (0.383) |
+| 212k triangles | direct | 1 | 211 600 | 1.943 ms | 3.199 ms (5.980) |
+| | cpu_cull | 511 | 24 864 | 0.355 ms | 0.935 ms (3.694) |
+| | gpu_cull | 511 | 24 864 | 0.306 ms | 0.661 ms (1.819) |
+
+Reading, honestly:
+
+- **At 68k the GPU path loses on frame time** (0.334 ms against 0.273 ms direct): the GPU spends less on the draw itself (0.108 against 0.175 ms) but the compute submission, the cross-queue wait and the
+  cull cost about 0.2 ms more than that saves. Direct was already cheap.
+- **At 212k it wins**: 0.661 ms against 3.199 ms direct (4.8x) and against 0.935 ms for the CPU cull (1.4x). Culling cut the triangles drawn from 211 600 to 24 864; the GPU time of the draw fell 6.3x.
+  The CPU path's p95 (3.7 ms) shows its jitter. The 212k cull cost is also the one the earlier cull benchmark found disproportionate (see above), so there may be more to gain.
+- **What this does not show.** One mesh, one instance, one camera; the sphere's triangles are sub-pixel on screen, which is the case cluster LOD is for, and a scene of larger triangles would favour
+  `direct` more. `direct` also draws the back-facing half (nothing in this pipeline culls it), which the cluster paths drop, so part of the win is back-face culling, not LOD. No instancing, no
+  occlusion, no shading cost, a laptop GPU, one run of 15 samples. Treat it as evidence that the machinery works and pays off on dense geometry, not as a general speedup claim; the same run on a 3060
+  and on a real scene is still needed.
+
 ### Known limits
 
 - **Fixed 16 November 2026: compute results did not reach the CPU on a real GPU.** The Vulkan backend bound each compute descriptor set before writing the buffers into it; lavapipe tolerated that, NVIDIA read empty descriptors, so every compute shader wrote nothing. Sets are now bound in `Dispatch`. `ComputeReadback_AShaderWriteReachesTheCpu_Vulkan` guards it and `ClusterCullGpu_*` now agree with the CPU on the RTX 3050.
