@@ -19,6 +19,7 @@ add_library(aether_scripting STATIC
     src/loot_api.cpp
     src/dialogue_api.cpp
     src/timeofday_api.cpp
+    src/weather_api.cpp
     src/achievements_api.cpp
     src/spawner_api.cpp
     src/checkpoints_api.cpp
@@ -99,6 +100,12 @@ if(TARGET Aether::Achievements)
     target_compile_definitions(aether_scripting PRIVATE AETHER_KIT_ACHIEVEMENTS=1)
 else()
     target_compile_definitions(aether_scripting PRIVATE AETHER_KIT_ACHIEVEMENTS=0)
+endif()
+if(TARGET Aether::Weather)
+    target_link_libraries(aether_scripting PRIVATE Aether::Weather)
+    target_compile_definitions(aether_scripting PRIVATE AETHER_KIT_WEATHER=1)
+else()
+    target_compile_definitions(aether_scripting PRIVATE AETHER_KIT_WEATHER=0)
 endif()
 if(TARGET Aether::TimeOfDay)
     target_link_libraries(aether_scripting PRIVATE Aether::TimeOfDay)

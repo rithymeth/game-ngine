@@ -24,6 +24,7 @@ forcefields experimental
 destruction experimental
 vehicles experimental
 ropes experimental
+weather experimental
 loot experimental
 checkpoints experimental
 spawner experimental

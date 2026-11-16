@@ -2089,16 +2089,16 @@ AETHER_TEST(Player_StageOrderSnapshot) {
     CHECK(game.LoadStartupScene(&error));
     game.Tick(1.0f / 60.0f); // builds the frame's systems
     const std::string order = DescribeStages(game);
-#if defined(AETHER_KIT_INVENTORY) && defined(AETHER_KIT_INTERACTION) && defined(AETHER_KIT_QUESTS) && defined(AETHER_KIT_TIMEOFDAY) && defined(AETHER_KIT_SPAWNER) && defined(AETHER_KIT_CHECKPOINTS) && AETHER_KIT_INVENTORY && AETHER_KIT_INTERACTION && AETHER_KIT_QUESTS && AETHER_KIT_TIMEOFDAY && AETHER_KIT_SPAWNER && AETHER_KIT_CHECKPOINTS
+#if defined(AETHER_KIT_INVENTORY) && defined(AETHER_KIT_INTERACTION) && defined(AETHER_KIT_QUESTS) && defined(AETHER_KIT_TIMEOFDAY) && defined(AETHER_KIT_WEATHER) && defined(AETHER_KIT_SPAWNER) && defined(AETHER_KIT_CHECKPOINTS) && AETHER_KIT_INVENTORY && AETHER_KIT_INTERACTION && AETHER_KIT_QUESTS && AETHER_KIT_TIMEOFDAY && AETHER_KIT_WEATHER && AETHER_KIT_SPAWNER && AETHER_KIT_CHECKPOINTS
     const std::string golden =
         "PreUpdate:\n"
         "FixedUpdate: Player.Physics Player.Physics2D Player.FixedUpdate\n"
         "  | Player.Physics\n"
         "  | Player.Physics2D\n"
         "  | Player.FixedUpdate\n"
-        "Update: Player.Update Player.Sequencer Player.TimeOfDay Player.Spawner Player.Checkpoints Player.Animation Player.Audio Player.Save Player.Effects Player.Particles Player.Abilities Player.Inventory Player.Interaction Player.Attributes Player.Quests Player.Scripting Player.SpriteAnimation\n"
+        "Update: Player.Update Player.Sequencer Player.TimeOfDay Player.Weather Player.Spawner Player.Checkpoints Player.Animation Player.Audio Player.Save Player.Effects Player.Particles Player.Abilities Player.Inventory Player.Interaction Player.Attributes Player.Quests Player.Scripting Player.SpriteAnimation\n"
         "  | Player.Update\n"
-        "  | Player.Sequencer Player.TimeOfDay Player.Spawner Player.Checkpoints\n"
+        "  | Player.Sequencer Player.TimeOfDay Player.Weather Player.Spawner Player.Checkpoints\n"
         "  | Player.Animation Player.Audio Player.Save Player.Effects\n"
         "  | Player.Particles Player.Abilities Player.Inventory Player.Interaction Player.Attributes\n"
         "  | Player.Quests\n"

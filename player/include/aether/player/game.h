@@ -25,6 +25,9 @@
 #if AETHER_KIT_TIMEOFDAY
 #include "aether/timeofday/world_clock.h"
 #endif
+#if AETHER_KIT_WEATHER
+#include "aether/weather/weather_system.h"
+#endif
 #if AETHER_KIT_DIALOGUE
 #include "aether/dialogue/dialogue_def.h"
 #endif
@@ -410,6 +413,7 @@ private:
     void AddInteractionStage();
     void AddQuestsStage();
     void AddTimeOfDayStage();
+    void AddWeatherStage();
     void AddSpawnerStage();
     void AddCheckpointsStage();
     // A kit stage as the registry describes it: its name and `after` list, for the system that runs it.
@@ -478,6 +482,9 @@ private:
 #endif
 #if AETHER_KIT_TIMEOFDAY
     tod::WorldClock clock_; // the game's, not the scene's: it runs on through a scene change
+#endif
+#if AETHER_KIT_WEATHER
+    weather::WeatherSystem weather_; // likewise the game's
 #endif
 #if AETHER_KIT_DIALOGUE
     dlg::DialogueLibrary dialogues_;

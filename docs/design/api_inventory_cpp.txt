@@ -5340,6 +5340,7 @@
   void AddQuestsStage()
   void AddSpawnerStage()
   void AddTimeOfDayStage()
+  void AddWeatherStage()
   void ApplyAudioSettings()
   void ApplyKitStage(SystemDesc&system,const std::string&name)const
   void ApplyPendingScene()
@@ -6231,6 +6232,8 @@
   void InstallUiApi(LuauHost&host)
 [scripting/include/aether/script/vehicles_api.h] experimental
   void InstallVehiclesApi(LuauHost&host)
+[scripting/include/aether/script/weather_api.h] experimental
+  void InstallWeatherApi(LuauHost&host)
 [sequencer/include/aether/sequencer/movie.h] experimental
   type struct MovieOptions
   type struct MovieResult
@@ -7784,6 +7787,57 @@
   void Stop()
   void Teleport(const EmitterPose&pose)
   void Update(f32 dt)
+[weather/include/aether/weather/weather_kit.h] experimental
+  SystemDesc MakeWeatherSystem(WeatherSystem*weather)
+  std::unique_ptr<kit::IKit>MakeWeatherKit()
+[weather/include/aether/weather/weather_system.h] experimental
+  type class WeatherSystem
+  type enum class WeatherKind
+  type struct WeatherParams
+  Vec3 WindVector()const
+  WeatherKind Current()const
+  WeatherKind Target()const
+  WeatherParams Params()const
+  WeatherParams ProfileOf(WeatherKind kind)
+  WeatherSystem&operator=(const WeatherSystem&)=delete
+  WeatherSystem()
+  WeatherSystem(const WeatherSystem&)=delete
+  bool IsAuto()const
+  bool IsCold()const
+  bool ParseWeather(std::string_view name,WeatherKind&out)
+  bool Set(WeatherKind kind,f64 seconds=30.0)
+  bool SetMeanDuration(f64 seconds)
+  bool SetWindDirection(f64 yaw_degrees)
+  const char*WeatherName(WeatherKind kind)
+  f32 Clouds()const
+  f32 Fog()const
+  f32 LightScale()const
+  f32 Lightning()const
+  f32 Rain()const
+  f32 Snow()const
+  f32 Wetness()const
+  f32 WindSpeed()const
+  f64 Blend()const
+  f64 MeanDuration()const
+  f64 NextUnit()
+  f64 SecondsSinceStrike()const
+  f64 ThunderDelay()const
+  f64 Time()const
+  f64 WindDirection()const
+  private:void Step(f64 dt)
+  static WeatherSystem*Active()
+  u32 StrikeCount()const
+  u64 NextRandom()
+  u64 Seed()const
+  void Advance(f64 dt)
+  void BeginTransition(WeatherKind kind,f64 seconds)
+  void MakeActive()
+  void PickNextKind()
+  void ScheduleChange()
+  void SetAuto(bool on)
+  void SetCold(bool cold)
+  void SetSeed(u64 seed)
+  ~WeatherSystem()
 [editor/src/ai/ai_debugger.h] internal-tooling
 [editor/src/ai/bt_document.h] internal-tooling
 [editor/src/ai/bt_editor.h] internal-tooling

@@ -1,7 +1,7 @@
 # The engine's own plugins (Phase 26 step 1
 # §26.1): each optional module as a plugin with an .aplugin descriptor and a
 # runtime module, built when the module itself is.
-set(AETHER_ENGINE_PLUGINS Physics Audio Navigation AI Networking Animation UI VFX Sprite2D Sequencer Streaming Gameplay Inventory Interaction Blueprint Renderer Crafting Loot Dialogue TimeOfDay Achievements Spawner Checkpoints ForceFields Quests Destruction Vehicles Ropes)
+set(AETHER_ENGINE_PLUGINS Physics Audio Navigation AI Networking Animation UI VFX Sprite2D Sequencer Streaming Gameplay Inventory Interaction Blueprint Renderer Crafting Loot Dialogue TimeOfDay Achievements Spawner Checkpoints ForceFields Quests Destruction Vehicles Ropes Weather)
 set(_target_Physics Aether::Physics)
 set(_target_Audio Aether::Audio)
 set(_target_Navigation Aether::Nav)
@@ -22,6 +22,7 @@ set(_target_Crafting Aether::Crafting)
 set(_target_Loot Aether::Loot)
 set(_target_Dialogue Aether::Dialogue)
 set(_target_TimeOfDay Aether::TimeOfDay)
+set(_target_Weather Aether::Weather)
 set(_target_Achievements Aether::Achievements)
 set(_target_Spawner Aether::Spawner)
 set(_target_Checkpoints Aether::Checkpoints)
