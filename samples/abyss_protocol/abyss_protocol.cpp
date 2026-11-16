@@ -177,6 +177,7 @@ void Game::UpdateCreature(CreatureAI& creature, float dt) {
             dir.x /= len;
             dir.y /= len;
             dir.z /= len;
+            creature.heading = std::atan2(dir.x, dir.z);
             creature.position.x += dir.x * 3.0f * dt;
             creature.position.y += dir.y * 3.0f * dt;
             creature.position.z += dir.z * 3.0f * dt;
@@ -189,6 +190,7 @@ void Game::UpdateCreature(CreatureAI& creature, float dt) {
         aether::Vec3 home_dir{goal.x - creature.position.x, goal.y - creature.position.y, goal.z - creature.position.z};
         float hlen = std::sqrt(home_dir.x * home_dir.x + home_dir.y * home_dir.y + home_dir.z * home_dir.z);
         if (hlen > 0.4f) {
+            creature.heading = std::atan2(home_dir.x, home_dir.z);
             creature.position.x += home_dir.x / hlen * 1.6f * dt;
             creature.position.y += home_dir.y / hlen * 1.6f * dt;
             creature.position.z += home_dir.z / hlen * 1.6f * dt;
@@ -225,6 +227,8 @@ void Game::Step(float dt) {
     sub_.velocity.x *= 0.95f;
     sub_.velocity.y *= 0.95f;
     sub_.velocity.z *= 0.95f;
+    float horiz = std::sqrt(sub_.velocity.x * sub_.velocity.x + sub_.velocity.z * sub_.velocity.z);
+    if (horiz > 0.35f) sub_.heading = std::atan2(sub_.velocity.x, sub_.velocity.z);
     ApplyCurrent(dt);
     ResolveRocks();
 

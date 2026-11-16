@@ -34,6 +34,7 @@ struct CreatureAI {
     float investigation_timer = 0.0f;
     float patrol_radius = 6.0f;
     float phase = 0.0f;
+    float heading = 0.0f;
     bool is_alerted = false;
 };
 
@@ -66,6 +67,7 @@ struct Submarine {
     float battery = 1.0f;
     float oxygen = 1.0f;
     float hull = 1.0f;
+    float heading = 0.0f;
 };
 
 // Simple summary of a loaded glTF model for the prototype.

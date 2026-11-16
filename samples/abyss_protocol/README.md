@@ -31,7 +31,7 @@ Underwater exploration / survival mystery for Aether Engine. Stylized 3D, single
 | R | Restart |
 | Esc | Quit |
 
-The window title shows depth, battery, lights, sonar contact time, creature awareness, and the objective. HUD bars are battery (gold), oxygen (blue), and awareness. A cyan mark means a ping is still showing you the water.
+The window title shows depth, battery, lights, sonar contact time, creature awareness, and the objective. HUD bars are battery (gold), oxygen (blue), and awareness. The short cyan bar on the right is how loud the boat is. The boat and the creatures turn to face the way they are moving. A cyan mark means a ping is still showing you the water.
 
 ## Build
 

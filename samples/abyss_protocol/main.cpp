@@ -293,10 +293,11 @@ bool Visible(const abyss::Game& game, const Vec3& p, f32 light_range, f32 sonar_
     return false;
 }
 
-void DrawPlaced(Renderer& r, const std::vector<DrawTri>& tris, Vec3 at, f32 scale, Color tint) {
+void DrawPlaced(Renderer& r, const std::vector<DrawTri>& tris, Vec3 at, f32 scale, Color tint, f32 yaw) {
+    f32 s = std::sin(yaw), c = std::cos(yaw);
+    auto spin = [&](Vec3 p) { return Vec3{p.x * c + p.z * s, p.y, -p.x * s + p.z * c} * scale + at; };
     for (const DrawTri& t : tris) {
-        r.Tri(t.a * scale + at, t.b * scale + at, t.c * scale + at,
-              {t.col.r * tint.r, t.col.g * tint.g, t.col.b * tint.b});
+        r.Tri(spin(t.a), spin(t.b), spin(t.c), {t.col.r * tint.r, t.col.g * tint.g, t.col.b * tint.b});
     }
 }
 
@@ -336,9 +337,9 @@ void DrawWorld(const abyss::Game& game, const std::vector<DrawTri>& mesh, const 
     }
 
     if (!mesh.empty()) {
-        for (const DrawTri& t : mesh) {
-            r.Tri(t.a + sub.position, t.b + sub.position, t.c + sub.position, t.col);
-        }
+        f32 s = std::sin(sub.heading), c = std::cos(sub.heading);
+        auto spin = [&](Vec3 p) { return Vec3{p.x * c + p.z * s, p.y, -p.x * s + p.z * c} + sub.position; };
+        for (const DrawTri& t : mesh) r.Tri(spin(t.a), spin(t.b), spin(t.c), t.col);
     } else {
         Vec3 p = sub.position;
         r.Box({p.x - 1.1f, p.y - 0.55f, p.z - 2.2f}, {p.x + 1.1f, p.y + 0.55f, p.z + 2.2f}, {0.85f, 0.32f, 0.12f});
@@ -365,7 +366,7 @@ void DrawWorld(const abyss::Game& game, const std::vector<DrawTri>& mesh, const 
     for (const abyss::Rock& rock : game.GetRocks()) {
         if (!Visible(game, rock.position, 22.0f, 36.0f, 5.0f)) continue;
         if (!rock_mesh.empty()) {
-            DrawPlaced(r, rock_mesh, rock.position, rock.radius, {1, 1, 1});
+            DrawPlaced(r, rock_mesh, rock.position, rock.radius, {1, 1, 1}, 0.0f);
         } else {
             r.Box({rock.position.x - rock.radius, rock.position.y - rock.radius * 0.6f, rock.position.z - rock.radius},
                   {rock.position.x + rock.radius, rock.position.y + rock.radius * 0.45f, rock.position.z + rock.radius},
@@ -385,7 +386,7 @@ void DrawWorld(const abyss::Game& game, const std::vector<DrawTri>& mesh, const 
     if (Visible(game, cache.position, 24.0f, 40.0f, 8.0f)) {
         if (!cache_mesh.empty()) {
             DrawPlaced(r, cache_mesh, cache.position, cache.taken ? 0.85f : 1.0f,
-                       cache.taken ? Color{0.35f, 0.35f, 0.38f} : Color{1, 1, 1});
+                       cache.taken ? Color{0.35f, 0.35f, 0.38f} : Color{1, 1, 1}, 0.0f);
         } else {
             Color col = cache.taken ? Color{0.2f, 0.22f, 0.24f} : Color{0.95f, 0.78f, 0.25f};
             r.Box({cache.position.x - 0.6f, cache.position.y, cache.position.z - 0.6f},
@@ -397,7 +398,7 @@ void DrawWorld(const abyss::Game& game, const std::vector<DrawTri>& mesh, const 
         if (!Visible(game, creature.position, 26.0f, 40.0f, 7.0f)) continue;
         if (!creature_mesh.empty()) {
             Color tint = creature.is_alerted ? Color{1.6f, 0.35f, 0.3f} : Color{1, 1, 1};
-            DrawPlaced(r, creature_mesh, creature.position, creature.is_alerted ? 1.15f : 1.0f, tint);
+            DrawPlaced(r, creature_mesh, creature.position, creature.is_alerted ? 1.15f : 1.0f, tint, creature.heading);
         } else {
             Color creature_col = creature.is_alerted ? Color{1.0f, 0.25f, 0.2f} : Color{0.25f, 0.85f, 1.0f};
             r.Gem(creature.position, creature.is_alerted ? 1.1f : 0.8f, anim * 1.5f, creature_col);
@@ -408,7 +409,7 @@ void DrawWorld(const abyss::Game& game, const std::vector<DrawTri>& mesh, const 
     bool heading_home = game.GetMission() == abyss::Mission::Return;
     if (Visible(game, haven.position, 30.0f, 50.0f, 12.0f)) {
         if (!haven_mesh.empty()) {
-            DrawPlaced(r, haven_mesh, haven.position, 1.0f, heading_home ? Color{2.0f, 1.5f, 0.45f} : Color{1, 1, 1});
+            DrawPlaced(r, haven_mesh, haven.position, 1.0f, heading_home ? Color{2.0f, 1.5f, 0.45f} : Color{1, 1, 1}, 0.0f);
         } else {
             Color pad = heading_home ? Color{0.85f, 0.7f, 0.2f} : Color{0.12f, 0.28f, 0.36f};
             r.Box({haven.position.x - 6.0f, haven.position.y - 0.5f, haven.position.z - 6.0f},
@@ -440,7 +441,7 @@ void DrawWorld(const abyss::Game& game, const std::vector<DrawTri>& mesh, const 
         f32 pulse = relay.restored ? (0.6f + 0.4f * std::sin(anim * 3.0f)) : 1.0f;
         Vec3 rp = relay.position;
         if (!relay_mesh.empty()) {
-            DrawPlaced(r, relay_mesh, rp, 1.0f, {relay_col.r * pulse * 1.6f, relay_col.g * pulse, relay_col.b * pulse});
+            DrawPlaced(r, relay_mesh, rp, 1.0f, {relay_col.r * pulse * 1.6f, relay_col.g * pulse, relay_col.b * pulse}, 0.0f);
         } else {
             r.Box({rp.x - 0.4f, rp.y, rp.z - 0.4f}, {rp.x + 0.4f, rp.y + 3.2f, rp.z + 0.4f},
                   {relay_col.r * pulse, relay_col.g * pulse, relay_col.b * pulse});
@@ -464,6 +465,8 @@ void DrawHud(const abyss::Game& game, std::vector<u32>& px, bool has_mesh) {
     if (game.HasContact()) FillRect(px, 200, 8, 14, 32, Rgb(0.3f, 0.95f, 0.85f));
     if (sub.lights_on) FillRect(px, 220, 8, 14, 32, Rgb(1.0f, 0.9f, 0.4f));
     if (has_mesh) FillRect(px, 240, 8, 14, 32, Rgb(0.9f, 0.45f, 0.15f));
+    FillRect(px, 270, 18, 90, 10, Rgb(0.08f, 0.1f, 0.12f));
+    FillRect(px, 270, 18, static_cast<i32>(90 * std::clamp(game.Noise(), 0.0f, 1.0f)), 10, Rgb(0.3f, 0.95f, 0.85f));
     if (game.GetMission() == abyss::Mission::Won) FillRect(px, 0, kH / 2 - 18, kW, 36, Rgb(0.08f, 0.28f, 0.16f));
     if (game.GetMission() == abyss::Mission::Lost) FillRect(px, 0, kH / 2 - 18, kW, 36, Rgb(0.32f, 0.06f, 0.06f));
 }
