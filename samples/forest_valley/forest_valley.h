@@ -9,6 +9,7 @@
 
 #include "aether/core/base.h"
 #include "aether/math/math.h"
+#include "aether/renderer/components.h"
 #include "aether/terrain/generator.h"
 #include "aether/terrain/scatter.h"
 
@@ -44,6 +45,10 @@ struct World {
     bool Walkable(f32 x, f32 z) const;
     const Area& GetArea(AreaId id) const { return areas[static_cast<usize>(id)]; }
 };
+
+// The ProceduralTerrain a scene carries to show this valley: the one set of generator settings BuildWorld uses, so what the player draws is the
+// ground the areas, route and walker were built on (a test regenerates it from the component and compares heights).
+ProceduralTerrain ValleyTerrainComponent(u32 seed = kShowcaseSeed);
 
 // Deterministic: the same seed gives the same world on every machine.
 World BuildWorld(u32 seed = kShowcaseSeed);

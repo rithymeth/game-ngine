@@ -6,6 +6,7 @@
 #include <limits>
 #include <cmath>
 #include <cstring>
+#include <string>
 
 namespace aether::terrain {
 namespace {
@@ -130,8 +131,12 @@ float4 PSMain(PSInput input) : SV_TARGET {
     float3 fresnel = f0 + (1.0 - f0) * pow(1.0 - v_dot_h, 5.0);
     float3 specular = distribution * geometry * fresnel / (4.0 * n_dot_v);
     float3 color = base_color * (1.0 - metallic) * (sky_fill * sky_intensity + sun_intensity * n_dot_l / 3.14159265) + sun_intensity * specular;
+#ifdef AETHER_HDR_TARGET
+    return float4(max(color, 0.0), 1.0); // linear light: the post pass tone maps the scene, the terrain with it
+#else
     color = color / (color + 1.0);
     return float4(LinearToSRGB(color), 1.0);
+#endif
 }
 )";
 
@@ -250,9 +255,10 @@ TerrainPass::~TerrainPass() {
     if (pipeline_.IsValid()) device_.DestroyPipeline(pipeline_);
 }
 
-TerrainPass::TerrainPass(gfx::rhi::IDevice& device, gfx::rhi::ISwapChain& swap_chain) : device_(device) {
+TerrainPass::TerrainPass(gfx::rhi::IDevice& device, gfx::rhi::ISwapChain& swap_chain, bool hdr_target) : device_(device) {
     gfx::rhi::PipelineDesc desc;
-    desc.hlsl_source = TerrainShaderSource();
+    desc.hlsl_source = std::string(hdr_target ? "#define AETHER_HDR_TARGET 1\n" : "") + TerrainShaderSource();
+    desc.scene_color_target = hdr_target;
     desc.push_constant_size_bytes = sizeof(TerrainConstants);
     desc.use_vertex_buffer = true;
     desc.vertex_layout = gfx::rhi::VertexLayout::PositionNormalUv;

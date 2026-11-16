@@ -3,4 +3,4 @@
 # covered by tests/test_forest_valley.cpp. Drawing it is the player's job and is not in this target.
 add_library(forest_valley_core STATIC forest_valley.cpp valley_terrain.cpp)
 target_include_directories(forest_valley_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(forest_valley_core PUBLIC Aether::Engine Aether::Terrain)
+target_link_libraries(forest_valley_core PUBLIC Aether::Engine Aether::Renderer Aether::Terrain)

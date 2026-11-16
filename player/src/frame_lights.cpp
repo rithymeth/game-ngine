@@ -170,6 +170,13 @@ const SkyLight* FindSkyLight(const World& world) {
     return nullptr;
 }
 
+const ProceduralTerrain* FindProceduralTerrain(const World& world) {
+    for (const Entity e : EntitiesWith<ProceduralTerrain>(world)) {
+        if (const ProceduralTerrain* terrain = world.GetComponent<ProceduralTerrain>(e)) return terrain;
+    }
+    return nullptr;
+}
+
 const Wind* FindWind(const World& world) {
     for (const Entity e : EntitiesWith<Wind>(world)) {
         if (const Wind* wind = world.GetComponent<Wind>(e)) return wind;

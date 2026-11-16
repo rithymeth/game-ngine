@@ -81,7 +81,9 @@ const char* TerrainBlendHlsl();
 
 class TerrainPass {
 public:
-    TerrainPass(gfx::rhi::IDevice& device, gfx::rhi::ISwapChain& swap_chain);
+    // With `hdr_target` the pass draws into the scene colour target and writes linear light (the post pass tone maps it); without, it tone maps
+    // and sRGB-encodes for the back buffer itself.
+    TerrainPass(gfx::rhi::IDevice& device, gfx::rhi::ISwapChain& swap_chain, bool hdr_target = false);
     ~TerrainPass();
     TerrainPass(const TerrainPass&) = delete;
     TerrainPass& operator=(const TerrainPass&) = delete;

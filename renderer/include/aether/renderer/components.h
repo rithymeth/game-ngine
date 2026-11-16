@@ -65,6 +65,24 @@ struct WindZone {
     f32 falloff = 0.5f;            // 0 to 1: the share of the radius, from the edge in, over which the zone fades
 };
 
+// A generated landscape: the terrain module's procedural generator (noise, erosion, rivers, biomes) run from these settings, so the scene
+// stores a few numbers and no heightmap. The same settings give the same ground on every machine. The first ProceduralTerrain in the world is
+// drawn by the player (`samples` x `samples` heights, `cell_size` metres apart, its corner at the world origin: the entity's Transform is not
+// applied). It is lit by the sun and sky but neither casts nor receives sun shadows yet, and generating it takes seconds at 513 samples, on
+// the frame the scene first shows it.
+struct ProceduralTerrain {
+    bool visible = true;
+    u32 seed = 1;
+    u32 samples = 257;                 // heights along each side (9 to 1025)
+    f32 cell_size = 1.0f;              // metres between heights
+    f32 height_scale = 60.0f;          // metres from the lowest point to the highest
+    f32 frequency = 2.5f;              // features across the map
+    f32 ridge_amount = 0.55f;          // 0 rolling hills, 1 all mountain chains
+    f32 sea_level = 0.18f;             // 0 to 1 of the height range: below it is water
+    u32 river_min_catchment = 400;     // cells upstream before a cell is a river (larger: fewer, larger rivers)
+    u32 hydraulic_droplets = 60000;    // erosion droplets (0 skips erosion)
+};
+
 enum class Tonemapper : u8 { ACES, AgX, None };
 
 // Post-processing settings. A global volume applies everywhere; a bounded one
@@ -157,6 +175,18 @@ AETHER_REFLECT(aether::WindZone, 1,
     AETHER_FIELD(strength, Field_EditAnywhere, {.tooltip = "Replaces the world's strength inside: 0 calm, 4 a gale", .range_min = 0.0, .range_max = 4.0}),
     AETHER_FIELD(gust_speed, Field_EditAnywhere, {.tooltip = "How fast the swells come and go inside", .range_min = 0.1, .range_max = 4.0}),
     AETHER_FIELD(falloff, Field_EditAnywhere, {.tooltip = "The share of the radius, from the edge in, over which the zone fades out", .range_min = 0.0, .range_max = 1.0})
+)
+AETHER_REFLECT(aether::ProceduralTerrain, 1,
+    AETHER_FIELD(visible, Field_EditAnywhere),
+    AETHER_FIELD(seed, Field_EditAnywhere, {.tooltip = "The same seed and settings give the same ground on every machine"}),
+    AETHER_FIELD(samples, Field_EditAnywhere, {.tooltip = "Heights along each side: the map is (samples - 1) x cell_size metres across", .range_min = 9.0, .range_max = 1025.0}),
+    AETHER_FIELD(cell_size, Field_EditAnywhere, {.tooltip = "Metres between heights", .range_min = 0.1, .range_max = 16.0, .units = "m"}),
+    AETHER_FIELD(height_scale, Field_EditAnywhere, {.tooltip = "Metres from the lowest point to the highest", .range_min = 1.0, .range_max = 2000.0, .units = "m"}),
+    AETHER_FIELD(frequency, Field_EditAnywhere, {.tooltip = "Features across the map", .range_min = 0.5, .range_max = 16.0}),
+    AETHER_FIELD(ridge_amount, Field_EditAnywhere, {.tooltip = "0 rolling hills, 1 all mountain chains", .range_min = 0.0, .range_max = 1.0}),
+    AETHER_FIELD(sea_level, Field_EditAnywhere, {.tooltip = "Below this share of the height range is water", .range_min = 0.0, .range_max = 0.9}),
+    AETHER_FIELD(river_min_catchment, Field_EditAnywhere, {.tooltip = "Cells upstream before a cell is a river: larger gives fewer, larger rivers", .range_min = 10.0, .range_max = 100000.0}),
+    AETHER_FIELD(hydraulic_droplets, Field_EditAnywhere, {.tooltip = "Erosion droplets: more carve deeper gullies and cost load time (0 skips erosion)", .range_min = 0.0, .range_max = 1000000.0})
 )
 AETHER_ENUM(aether::Tonemapper, 1, AETHER_ENUM_VALUE(ACES), AETHER_ENUM_VALUE(AgX), AETHER_ENUM_VALUE(None))
 AETHER_REFLECT(aether::PostProcessVolume, 1,
