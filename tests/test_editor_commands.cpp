@@ -150,7 +150,7 @@ AETHER_TEST(EditorWorkspace_CommandsAreUniqueAndUnconflicted) {
     CHECK(ws.Commands().Conflicts().empty());
     for (const char* id : {"scene.new", "scene.open", "scene.save", "scene.save_as", "file.quit", "edit.undo", "edit.redo",
                            "edit.duplicate", "edit.delete", "edit.copy", "edit.paste", "scene.rename", "view.command_palette",
-                           "view.preferences"}) {
+                           "view.command_search", "view.preferences"}) {
         CHECK(ws.Commands().Find(id) != nullptr);
     }
     // What the host draws in a menu has a menu to be drawn in; a palette-only command has none.
@@ -221,6 +221,17 @@ AETHER_TEST(EditorWorkspace_GlobalChordsComeFromTheTable) {
     imgui.Frame(draw);
     io.AddKeyEvent(ImGuiKey_P, false);
     io.AddKeyEvent(ImGuiMod_Shift, false);
+    io.AddKeyEvent(ImGuiMod_Ctrl, false);
+    imgui.Frame(draw);
+    CHECK(ws.command_palette_open);
+
+    // Ctrl+K is the concept's menu bar search: same palette, and the box takes the keyboard.
+    ws.command_palette_open = false;
+    imgui.Frame(draw);
+    io.AddKeyEvent(ImGuiMod_Ctrl, true);
+    io.AddKeyEvent(ImGuiKey_K, true);
+    imgui.Frame(draw);
+    io.AddKeyEvent(ImGuiKey_K, false);
     io.AddKeyEvent(ImGuiMod_Ctrl, false);
     imgui.Frame(draw);
     CHECK(ws.command_palette_open);

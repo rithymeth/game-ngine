@@ -213,6 +213,23 @@ shows:
 | Editor | The selected tool's name, category and description, a **Pop out** button, and the tool itself. |
 | Debug | Console and Profiler as tabs. |
 
+The menu bar is the concept's first row. The shell draws the **AETHER** mark at
+its left, then File, Edit, Asset, Actor, Tools, View, Window and Help (the
+workspace fills each from its command table), and the search box at its right
+end: `EditorWorkspace::DrawCommandSearch`, the concept's "Search commands,
+assets... Ctrl K". That box and the command palette's own field edit one
+string, so what is typed in one shows in the other: a click in the box opens
+the palette, Ctrl+K or Ctrl+Shift+P opens it with the keyboard in the
+palette's field, and closing the palette clears the text. The palette window
+does not take focus as it appears (`ImGuiWindowFlags_NoFocusOnAppearing`),
+because a window grabbing the keyboard on the frame it appears takes it from
+the box that just opened it. A field inside the menu bar's menu layer cannot
+take the keyboard from `SetKeyboardFocusHere`, which is why Ctrl+K focuses
+the palette's field rather than the box. `LastCommandSearch()` reports the
+box's rectangle; `EditorWorkspace_TheMenuBarSearchOpensThePalette` clicks it
+and types, and `EditorWorkspace_OpeningThePalettePutsTheKeyboardInTheSearchBox`
+checks the Ctrl+K path.
+
 The workspace strip is the concept's second row: a full-width bar between the
 menu bar and the main toolbar (the window is `Workspaces`, drawn by
 `EditorWorkspace::DrawWorkspaceStrip`). Its icons are drawn, not loaded (`DrawWorkspaceGlyph`:

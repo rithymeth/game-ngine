@@ -345,6 +345,8 @@ struct EditorWorkspace::Impl {
     std::array<char, 128> tool_filter{};
     std::vector<WorkspaceTab> workspace_tabs; // what DrawWorkspaceStrip last laid out
     StripPlay strip_play;                     // the strip's Play chip and its neighbours, as last drawn
+    CommandSearchBox command_search;          // the menu bar's search box, as last drawn
+    bool palette_focus = false;               // the palette's own box has not taken the keyboard yet this open
 
     // Scripting.
     std::unique_ptr<BlueprintDocument> blueprint_doc;
@@ -1849,7 +1851,9 @@ void EditorWorkspace::RegisterCommands() {
          }});
 
     add({"view.command_palette", "Command Palette", "View", false, {ImGuiKey_P, true, true, false},
-         CommandScope::Global, {}, {}, [this] { command_palette_open = true; }});
+         CommandScope::Global, {}, {}, [this] { OpenCommandPalette(); }});
+    add({"view.command_search", "Search Commands and Assets", "View", false, {ImGuiKey_K, true, false, false},
+         CommandScope::Global, {}, {}, [this] { OpenCommandPalette(); }});
     add({"view.preferences", "Preferences", "View", false, {}, CommandScope::Global, {}, {},
          [this] { preferences_open = true; }});
     add({"help.shortcuts", "Keyboard Shortcuts", "Help", false, {ImGuiKey_F1, false, false, false},
@@ -2341,8 +2345,41 @@ void EditorWorkspace::SetSourceControlBranch(std::string branch) {
     impl_->branch = std::move(branch);
 }
 
+void EditorWorkspace::OpenCommandPalette() {
+    command_palette_open = true;
+    impl_->palette_focus = true;
+}
+
+const std::string& EditorWorkspace::PaletteQuery() const { return impl_->palette_query; }
+
+const EditorWorkspace::CommandSearchBox& EditorWorkspace::LastCommandSearch() const { return impl_->command_search; }
+
+// The concept's "Search commands, assets... Ctrl K" at the menu bar's right end: the box is the palette's query, so
+// typing here and typing in the palette are one text, and the palette opens on the first click or character. Ctrl+K
+// focuses the palette's own box instead: the menu bar's is in the menu nav layer, which SetKeyboardFocusHere does not
+// reach, and the two boxes edit the same string either way.
+void EditorWorkspace::DrawCommandSearch(f32 width) {
+    impl_->command_search = CommandSearchBox{};
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f);
+    ImGui::SetNextItemWidth(width);
+    const bool edited =
+        ImGui::InputTextWithHint("##command_search", "Search commands, assets...  Ctrl K", &impl_->palette_query);
+    if (ImGui::IsItemActivated() || edited) command_palette_open = true;
+    if (ImGui::IsItemHovered() && !ImGui::IsItemActive()) ImGui::SetTooltip("Search the tools, commands and assets (Ctrl+K)");
+    impl_->command_search.visible = true;
+    impl_->command_search.min_x = ImGui::GetItemRectMin().x;
+    impl_->command_search.min_y = ImGui::GetItemRectMin().y;
+    impl_->command_search.max_x = ImGui::GetItemRectMax().x;
+    impl_->command_search.max_y = ImGui::GetItemRectMax().y;
+    ImGui::PopStyleVar();
+}
+
 void EditorWorkspace::DrawCommandPalette() {
-    if (!command_palette_open) return;
+    if (!command_palette_open) {
+        impl_->palette_query.clear(); // the menu bar's box shows nothing while the palette is closed
+        impl_->palette_focus = false;
+        return;
+    }
     // Built per frame: it is a filter over the tool list, which is a few dozen entries, and
     // keeping it out of Impl means the palette itself stays free of editor state.
     // Phase 43.5: the palette searches the same assets the content browser shows, and choosing
@@ -2363,8 +2400,15 @@ void EditorWorkspace::DrawCommandPalette() {
     palette.SetQuery(impl_->palette_query);
     bool open = command_palette_open;
     ImGui::SetNextWindowSize(ImVec2(520, 360), ImGuiCond_FirstUseEver);
-    if (ImGui::Begin("Command Palette", &open)) {
+    // NoFocusOnAppearing: the palette usually appears because the menu bar's search box was clicked or Ctrl+K was
+    // pressed, and a window taking focus as it appears would take the keyboard away from that box (ImGui clears the
+    // active input when another window is focused), so the first characters typed would go nowhere.
+    if (ImGui::Begin("Command Palette", &open, ImGuiWindowFlags_NoFocusOnAppearing)) {
         ImGui::SetNextItemWidth(-1.0f);
+        if (impl_->palette_focus) {
+            ImGui::SetKeyboardFocusHere();
+            impl_->palette_focus = false;
+        }
         if (ImGui::InputTextWithHint("##palette_query", "Search tools", &impl_->palette_query)) {
             palette.SetQuery(impl_->palette_query);
         }

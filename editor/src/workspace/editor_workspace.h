@@ -284,6 +284,20 @@ public:
     // or a headless test -- can open it without a keybinding. DrawWindows() draws it.
     bool command_palette_open = false;
     void DrawCommandPalette();
+    // Opens the palette with the keyboard in its search field (Ctrl+K and Ctrl+Shift+P both land here). That field and
+    // the menu bar's search box edit the same text, so the first character typed is a search either way.
+    void OpenCommandPalette();
+    // The palette's query as the menu bar's box holds it; empty while the palette is closed.
+    const std::string& PaletteQuery() const;
+    // The menu bar's search box, where the concept draws "Search commands, assets... Ctrl K": typing (or clicking)
+    // opens the palette with that query. A host draws it at the right end of its menu bar; the box's rectangle is
+    // reported so a test clicks it as a person does.
+    struct CommandSearchBox {
+        bool visible = false;
+        f32 min_x = 0.0f, min_y = 0.0f, max_x = 0.0f, max_y = 0.0f;
+    };
+    void DrawCommandSearch(f32 width = 280.0f);
+    const CommandSearchBox& LastCommandSearch() const;
     // What the palette searches and what it does with a chosen asset. The host supplies both:
     // the workspace does not own the asset database, and "opening" an asset is a host decision.
     // With no database the palette lists tools only; with no opener, choosing an asset does

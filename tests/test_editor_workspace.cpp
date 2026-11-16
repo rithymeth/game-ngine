@@ -347,6 +347,71 @@ AETHER_TEST(EditorWorkspace_BreadcrumbNamesTheProjectAndTheOpenScene) {
         CHECK(crumb.find(" / " + ws.ProjectFile().stem().string() + " / ") != std::string::npos);
 }
 
+// The concept's menu bar search ("Search commands, assets... Ctrl K"): the box is the palette's query, a click opens
+// the palette, and the same text filters it. Closing the palette empties the box.
+AETHER_TEST(EditorWorkspace_TheMenuBarSearchOpensThePalette) {
+    HeadlessImGui imgui;
+    EditorWorkspace ws;
+    ImGuiIO& io = ImGui::GetIO();
+    auto frame = [&] {
+        imgui.Frame([&] {
+            if (ImGui::BeginMainMenuBar()) {
+                ws.DrawCommandSearch(280.0f);
+                ImGui::EndMainMenuBar();
+            }
+            ws.DrawWindows();
+        });
+    };
+    frame();
+    const EditorWorkspace::CommandSearchBox box = ws.LastCommandSearch();
+    CHECK(box.visible);
+    CHECK(box.max_x > box.min_x && box.max_y > box.min_y);
+    CHECK(!ws.command_palette_open && ws.PaletteQuery().empty());
+
+    auto step = [&](const ImVec2& mouse, bool down) {
+        io.AddMousePosEvent(mouse.x, mouse.y);
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, down);
+        frame();
+    };
+    const ImVec2 at((box.min_x + box.max_x) * 0.5f, (box.min_y + box.max_y) * 0.5f);
+    step(ImVec2(2.0f, 2.0f), false);
+    step(at, false);
+    step(at, true);
+    step(at, false);
+    CHECK(ws.command_palette_open); // a click on the box is a door to the palette
+
+    io.AddInputCharactersUTF8("anim"); // the focused box feeds the palette's query
+    frame();
+    CHECK(ws.PaletteQuery() == "anim");
+
+    ws.command_palette_open = false;
+    frame();
+    CHECK(ws.PaletteQuery().empty()); // one text: closing the palette leaves nothing behind in the box
+}
+
+// Ctrl+K opens the palette with the keyboard already in its search field, so the first character typed is a search.
+AETHER_TEST(EditorWorkspace_OpeningThePalettePutsTheKeyboardInTheSearchBox) {
+    HeadlessImGui imgui;
+    EditorWorkspace ws;
+    ImGuiIO& io = ImGui::GetIO();
+    auto frame = [&] {
+        imgui.Frame([&] {
+            if (ImGui::BeginMainMenuBar()) {
+                ws.DrawCommandSearch(280.0f);
+                ImGui::EndMainMenuBar();
+            }
+            ws.DrawWindows();
+        });
+    };
+    frame();
+    ws.OpenCommandPalette();
+    frame();
+    frame(); // the box takes the keyboard on the frame after the request
+    io.AddInputCharactersUTF8("save");
+    frame();
+    CHECK(ws.command_palette_open && ws.PaletteQuery() == "save");
+}
+
 AETHER_TEST(EditorWorkspace_DrawsEveryToolHeadless) {
     HeadlessImGui imgui;
     EditorWorkspace ws;

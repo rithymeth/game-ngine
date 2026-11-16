@@ -76,7 +76,7 @@ as well. The verdicts are a judgement from the source audit; the evidence column
 | Preferences | Editor Preferences, project settings, plugins | Preferences, Project Settings, Package Manager | Editor Settings, Project Settings, Input Map, plugins | None | — | Missing |
 | Theme and UI scale | Theme, UI scale, DPI awareness | Skin, UI scaling | Editor themes, editor scale | One dark theme; `ApplyEditorTheme(font_size)` has no caller-supplied setting | `editor/src/ui/editor_theme.cpp:33`, `main.cpp:189` | Missing |
 | Shortcut mapping | Remappable, conflict reporting | Shortcuts manager | Remappable input map/editor shortcuts | One table of default chords with scopes, conflict detection at startup and a cheat sheet generated from it; no remapping UI | `editor/src/workspace/command_registry.cpp`, `editor_workspace.cpp` (`DrawShortcutCheatSheet`) | Partial |
-| Command palette | Command palette in recent versions | Search (Ctrl+K) | Quick Open | Implemented and bound to Ctrl+Shift+P and View > Command Palette | `editor/src/workspace/command_registry.cpp` (`view.command_palette`), `editor_workspace.cpp` (`DrawCommandPalette`) | Partial |
+| Command palette | Command palette in recent versions | Search (Ctrl+K) | Quick Open | Bound to Ctrl+Shift+P, Ctrl+K and View; the menu bar's "Search commands, assets... Ctrl K" box edits the same text and opens it on a click | `editor/src/workspace/command_registry.cpp` (`view.command_palette`, `view.command_search`), `editor_workspace.cpp` (`DrawCommandPalette`, `DrawCommandSearch`) | Partial |
 | Native file dialogs | Native open/save/import | Native | Native | Open Scene, Save Scene As and the toolbar's "..." use the system picker (`IFileDialog`; zenity/kdialog on Linux); the typed path remains the fallback | `editor/src/core/file_dialog.cpp`, `editor/src/world/scene_panel.cpp:74-100` | Partial |
 | Unsaved work on exit | Prompt per document | Prompt; play-mode changes discarded with warning | Prompt | Quit immediate; only New/Open prompt | `editor/shell/main.cpp:78`, `scene_panel.cpp:70-96` | Missing |
 | Autosave/recovery | Autosave and recovery | Autosave and recovery | Autosave backups | `SaveAutosave`/`LoadAutosave` exist and are unused | `editor/src/core/scene_document.cpp:202-226` | Missing |
@@ -586,6 +586,19 @@ tag after a middle dot. Several entities read "N entities" over "Multiple select
 `ScenePanel::LastInspectorHeader` reports the wording and the two rectangles;
 `ScenePanel_TheInspectorLeadsWithTheEntitysNameAndKind` checks the stack, the kind word, the tag and the multi-selection
 form. The header's tag and layer dropdowns from the concept's list are not implemented.
+
+Done so far (2026-11-17): the menu bar from the concept's first row. The shell draws the **AETHER** mark at the left
+where it used to print "Aether Editor - backend - N tools", and the right end is the "Search commands, assets... Ctrl K"
+box (`EditorWorkspace::DrawCommandSearch`, its rectangle in `LastCommandSearch`). The box and the palette's own field
+edit one string: a click opens the palette and leaves the keyboard in the box, `OpenCommandPalette` -- Ctrl+K
+(`view.command_search`) or Ctrl+Shift+P -- puts it in the palette's field, and closing the palette clears the text. The
+palette window now carries `ImGuiWindowFlags_NoFocusOnAppearing`: without it the appearing window took focus on the
+clicked box's frame, ImGui cleared the box's active input, and the first characters typed went nowhere -- the new test
+caught it by typing into the box. Ctrl+K focuses the palette's field rather than the box because a widget inside the
+menu bar's menu layer does not take keyboard focus from `SetKeyboardFocusHere`. Tests in
+`tests/test_editor_workspace.cpp`: `EditorWorkspace_TheMenuBarSearchOpensThePalette` (click, type, close) and
+`EditorWorkspace_OpeningThePalettePutsTheKeyboardInTheSearchBox` (open, type); `EditorWorkspace_GlobalChordsComeFromTheTable`
+now presses Ctrl+K too.
 
 ### Stage 3 — Content browser and importer parity (L)
 
