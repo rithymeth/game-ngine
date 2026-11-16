@@ -150,6 +150,7 @@ def salvage(work):
     check(result.returncode == 0, f"the player runs the salvage test and exits cleanly (exit {result.returncode})")
     check("Salvaged Test_Crate: +2 components (pack: 0 scrap, 2 components)" in text, "pressing Interact beside a crate takes it (+2 components)")
     check("Achievement unlocked: FirstHaul" in text, "the first piece of salvage unlocks the First Haul achievement")
+    check("Crate shattered: 8 pieces on the ground" in text, "the crate breaks into 8 pieces (2 x 2 x 2) instead of vanishing")
     check(not re.search(r"\[ERROR\]", text), "no errors while salvaging")
     result, text = run(60)
     check("Pack at start: 0 scrap, 2 components" in text, "the pack was saved: the next run starts with the 2 components of the first")

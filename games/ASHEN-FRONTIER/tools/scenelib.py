@@ -50,9 +50,10 @@ class Scene:
         self.entities.append({"components": comps, "guid": g})
         return g
 
-    def model(self, name, asset, position=(0, 0, 0), rotation=(0, 0, 0), scale=(1, 1, 1), color=None, emissive=None, collider=None, tags=(), texture=None, snap=True):
+    def model(self, name, asset, position=(0, 0, 0), rotation=(0, 0, 0), scale=(1, 1, 1), color=None, emissive=None, collider=None, tags=(), texture=None, snap=True, breakable=False):
         """A model, optionally recoloured (a MaterialParameters over every material of it) and given a box collider
-        (`collider` = (centre, half extents) in the model's own space)."""
+        (`collider` = (centre, half extents) in the model's own space). `breakable` (needs a collider) adds the Destructible component, set up for a crate:
+        nothing breaks it on its own (no hit speed, no health), the Interactor shatters it when Kael takes it, into 2 x 2 x 2 pieces that lie about for 8 s."""
         comps = {"ModelRenderer": {"$v": 1, "asset_path": "Models/" + asset + ".glb"}}
         values = []
         if color is not None:
@@ -66,6 +67,9 @@ class Scene:
         if collider is not None:
             centre, half = collider
             comps["BoxCollider"] = {"$v": 1, "center": list(centre), "friction": 0.6, "half_extents": list(half), "is_trigger": False, "report_stay": False, "restitution": 0.0}
+            if breakable:
+                comps["Destructible"] = {"$v": 1, "enabled": True, "health": 0.0, "break_speed": 0.0, "pieces_x": 2, "pieces_y": 2, "pieces_z": 2, "mass": 20.0,
+                                         "burst_speed": 2.5, "inherit_velocity": 0.0, "piece_lifetime": 8.0}
         return self.add(name, comps, position, rotation, scale, tags=tags, snap=snap)
 
     def sun(self, yaw=-35, pitch=-42, intensity=3.2, color=(1.0, 0.92, 0.80)):
