@@ -334,6 +334,10 @@ void DrawWorld(const abyss::Game& game, const std::vector<DrawTri>& mesh, Render
         r.Box({p.x - 1.1f, p.y - 0.55f, p.z - 2.2f}, {p.x + 1.1f, p.y + 0.55f, p.z + 2.2f}, {0.85f, 0.32f, 0.12f});
         r.Box({p.x - 0.5f, p.y + 0.2f, p.z + 0.3f}, {p.x + 0.5f, p.y + 1.0f, p.z + 1.6f}, {0.55f, 0.85f, 0.95f});
     }
+    if (game.Leak() > 0.0f) {
+        f32 rise = std::fmod(anim * 1.4f, 1.6f);
+        r.Gem({sub.position.x, sub.position.y + 0.6f + rise, sub.position.z - 1.4f}, 0.18f, 0.0f, {0.65f, 0.9f, 1.0f});
+    }
 
     if (game.HasContact()) {
         f32 age = 1.0f - std::clamp(game.Contact() / 3.2f, 0.0f, 1.0f);
@@ -355,7 +359,7 @@ void DrawWorld(const abyss::Game& game, const std::vector<DrawTri>& mesh, Render
               {0.22f, 0.24f, 0.28f});
     }
 
-    if (game.InCurrent()) {
+    if (game.InCurrent() || Visible(game, {32.0f, -26.0f, -5.0f}, 24.0f, 40.0f, 0.0f)) {
         for (int i = 0; i < 5; ++i) {
             f32 slide = std::fmod(anim * 3.0f + i * 1.3f, 8.0f);
             Vec3 p{20.0f + slide * 3.0f, sub.position.y - 0.2f, -12.0f + i * 3.0f};

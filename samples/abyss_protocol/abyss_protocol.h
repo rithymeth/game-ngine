@@ -32,6 +32,8 @@ struct CreatureAI {
     aether::Vec3 home;
     float awareness = 0.0f;     // 0..1, rises with noise/light
     float investigation_timer = 0.0f;
+    float patrol_radius = 6.0f;
+    float phase = 0.0f;
     bool is_alerted = false;
 };
 
@@ -104,6 +106,7 @@ public:
     bool HasBearing() const { return bearing_valid_; }
     aether::Vec3 BearingDir() const { return bearing_; }
     float Noise() const { return noise_; }
+    float Leak() const { return leak_; }
     Mission GetMission() const { return mission_; }
     aether::Vec3 Objective() const;
     float Time() const { return time_; }
@@ -135,6 +138,7 @@ private:
     float ping_cooldown_ = 0.0f;
     float impact_cooldown_ = 0.0f;
     float noise_ = 0.0f;
+    float leak_ = 0.0f;
     std::string fail_;
     std::vector<AcousticEvent> events_;
     std::optional<aether::assets::GltfScene> loaded_scene_;

@@ -31,12 +31,17 @@ void Game::Restart() {
     ping_cooldown_ = 0.0f;
     impact_cooldown_ = 0.0f;
     noise_ = 0.0f;
+    leak_ = 0.0f;
     CreatureAI outbound;
     outbound.position = {25.0f, -20.0f, 10.0f};
     outbound.home = outbound.position;
+    outbound.patrol_radius = 8.0f;
+    outbound.phase = 0.4f;
     CreatureAI inbound;
     inbound.position = {22.0f, -26.0f, -14.0f};
     inbound.home = inbound.position;
+    inbound.patrol_radius = 6.0f;
+    inbound.phase = 2.2f;
     creatures_.push_back(outbound);
     creatures_.push_back(inbound);
     rocks_ = {
@@ -178,17 +183,15 @@ void Game::UpdateCreature(CreatureAI& creature, float dt) {
         }
     } else {
         creature.is_alerted = false;
-        aether::Vec3 home_dir = {creature.home.x - creature.position.x,
-                                 creature.home.y - creature.position.y,
-                                 creature.home.z - creature.position.z};
-        float hlen = Distance(creature.position, creature.home);
-        if (hlen > 0.5f) {
-            home_dir.x /= hlen;
-            home_dir.y /= hlen;
-            home_dir.z /= hlen;
-            creature.position.x += home_dir.x * 1.0f * dt;
-            creature.position.y += home_dir.y * 1.0f * dt;
-            creature.position.z += home_dir.z * 1.0f * dt;
+        creature.phase += dt * 0.45f;
+        aether::Vec3 goal{creature.home.x + std::cos(creature.phase) * creature.patrol_radius, creature.home.y,
+                          creature.home.z + std::sin(creature.phase) * creature.patrol_radius};
+        aether::Vec3 home_dir{goal.x - creature.position.x, goal.y - creature.position.y, goal.z - creature.position.z};
+        float hlen = std::sqrt(home_dir.x * home_dir.x + home_dir.y * home_dir.y + home_dir.z * home_dir.z);
+        if (hlen > 0.4f) {
+            creature.position.x += home_dir.x / hlen * 1.6f * dt;
+            creature.position.y += home_dir.y / hlen * 1.6f * dt;
+            creature.position.z += home_dir.z / hlen * 1.6f * dt;
         }
     }
 
@@ -206,7 +209,7 @@ void Game::UpdatePressure(float dt) {
     if (sub_.lights_on) sub_.battery -= 0.03f * dt;
     sub_.battery = std::max(0.0f, sub_.battery);
     if (sub_.battery <= 0.0f) sub_.lights_on = false;
-    sub_.oxygen = std::max(0.0f, sub_.oxygen - 0.01f * dt);
+    sub_.oxygen = std::max(0.0f, sub_.oxygen - (0.01f + leak_) * dt);
 }
 
 void Game::Step(float dt) {
@@ -253,6 +256,8 @@ void Game::UpdateCache() {
     if (Distance(sub_.position, cache_.position) > 4.0f) return;
     cache_.taken = true;
     sub_.battery = std::min(1.0f, sub_.battery + 0.5f);
+    sub_.hull = std::min(1.0f, sub_.hull + 0.25f);
+    leak_ = 0.0f;
     events_.push_back({cache_.position, 0.45f, 12.0f, 1.2f});
 }
 
@@ -279,6 +284,7 @@ void Game::ResolveRocks() {
             if (impact_cooldown_ <= 0.0f) {
                 impact_cooldown_ = 0.7f;
                 sub_.hull = std::max(0.0f, sub_.hull - 0.18f);
+                leak_ = std::min(0.05f, leak_ + 0.012f);
                 events_.push_back({sub_.position, 0.95f, 18.0f, 1.4f});
             }
         }
@@ -344,6 +350,7 @@ std::string Game::StatusText() const {
         << "  Creature awareness: " << int(awareness * 100) << "%"
         << (alert ? "  [ALERT]" : "")
         << (InCurrent() ? "  CURRENT" : "")
+        << (leak_ > 0.0f ? "  LEAK" : "")
         << (!cache_.taken ? "  Cache: live" : "");
     if (mission_ == Mission::Won) oss << "  MISSION COMPLETE  " << int(time_) << "s";
     else if (mission_ == Mission::Lost) oss << "  FAILED: " << fail_ << "  (R retry)";
