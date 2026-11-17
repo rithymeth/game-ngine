@@ -231,22 +231,42 @@ public:
     // A host draws it along the top; the toolbar adds no state of its own, so a headless test can draw it too.
     void DrawMainToolbar();
 
-    // The bottom status bar (Stage 1 of docs/design/EDITOR_PARITY_AUDIT.md), into the current window: the open
-    // project, the active document with a dirty mark, the play state, an active cook/package or launched game, and
-    // the unread message count as a button that opens Messages. A host draws it along the bottom and may SameLine its
-    // own segments (backend, frame rate). StatusBar() is what the bar would show, so a test can read it.
+    // The bottom status bar (Stage 1 of docs/design/EDITOR_PARITY_AUDIT.md), into the current window, in the concept's
+    // order: a status dot with "Build succeeded"/"Ready"/the cook's stage, the platform ("Windows · Vulkan"), the open
+    // project, the active document with a dirty mark, the branch and whether its working tree is clean, the scene's
+    // entity count, the selection, the play state, the CPU frame time, and the unread message count as a button that
+    // opens Messages -- with a green-dot "Local session ready" at the right end. A host draws it along the bottom.
+    // StatusBar() is what the bar would show, so a test can read it.
     struct StatusBarInfo {
+        std::string status;   // the leading dot's label: "Ready", "Build succeeded", "Build failed", "Cooking 42%", "Game running"
+        bool status_ok = true; // the dot is green (idle, nothing failed); amber while a build or the game runs, or after a failure
+        std::string platform; // "Windows · Vulkan"; empty when the host set no backend
         std::string project;  // the project's file stem; "No project" when there is none
         std::string document; // the active document's display name
         bool dirty = false;
         const char* play = "Editing"; // "Editing", "Playing" or "Paused"
         std::string job;              // an active cook/package or a launched game; empty when idle
         std::size_t selected = 0;     // entities selected in the scene
+        std::size_t entities = 0;     // entities in the active scene
         std::string branch;           // the source-control branch; empty outside a repository
+        bool synced = true;           // the branch's working tree has no uncommitted changes
         std::size_t unread = 0;
     };
     StatusBarInfo StatusBar();
+    // The bar's own rectangles last frame, in screen coordinates, so a host can align its chrome to the right end and a
+    // test can check "Local session ready" sits at the right edge.
+    struct StatusBarRects {
+        bool local_visible = false;
+        f32 local_min_x = 0.0f, local_min_y = 0.0f, local_max_x = 0.0f, local_max_y = 0.0f;
+    };
+    const StatusBarRects& LastStatusBarRects() const;
     void DrawStatusBar();
+    // The platform segment's backend ("Vulkan"), which the host knows; the OS comes from the build. Empty leaves the
+    // segment out.
+    void SetBackendLabel(std::string label);
+    // Whether the branch's working tree is clean ("main · synced" against "main · unsaved changes"): from git when it
+    // is refreshed, or set by a host using another VCS and by tests.
+    void SetSourceControlSynced(bool synced);
     // Reads the branch from the open project's repository and caches it for the status bar (a detached HEAD shows
     // the commit id). Run when a project opens and periodically by the host -- not per frame, since it asks git.
     void RefreshSourceControl();

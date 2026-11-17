@@ -778,16 +778,20 @@ one click from the asset.
 
 ### 6.7 Status bar
 
-Left to right: the open project (tooltip: its full path), the active
-document's name with `*` while it has unsaved changes, how many entities are
-selected (left out at zero), the play state ("Editing", or "Playing"/"Paused" in
-amber), an active cook/package ("Cooking 42%") or "Game running", the
-source-control branch (left out outside a repository; a detached HEAD shows the
-commit id), and the unread message count as a button — clicking "Messages (2)"
-opens the Messages tool and marks them read. The host appends the backend and
-frame time on the same line. The branch is read from the project's repository
-when it opens and by the shell every few seconds, not every frame, because it
-asks git.
+The concept's row, left to right: a status dot with its label — green "Build succeeded"
+after a cook or package, "Ready" before one, amber with the cook's stage ("Cooking 42%")
+or "Game running" while work is under way, amber "Build failed" after one — then the
+platform ("Windows · Vulkan"; the OS is the build's, the backend's name is the host's and
+the segment is left out when no host names one), the open project (tooltip: its full
+path), the active document's name with `*` while it has unsaved changes, the
+source-control branch with "· synced" or "· unsaved changes" (left out outside a
+repository; a detached HEAD shows the commit id), the scene's entity count, how many
+entities are selected (left out at zero), the play state ("Editing", or
+"Playing"/"Paused" in amber), the CPU frame time ("CPU 3.1 ms"), and the unread message
+count as a button — clicking "Messages (2)" opens the Messages tool and marks them read.
+A green dot with "Local session ready" sits at the right end. The branch and its sync
+state are read from the project's repository when it opens and by the shell every few
+seconds, not every frame, because they ask git.
 
 ### 6.8 Project Hub
 

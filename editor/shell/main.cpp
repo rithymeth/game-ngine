@@ -224,8 +224,9 @@ void DrawWindowMenu(LayoutState& state) {
 }
 
 void DrawEditor(EditorWorkspace& workspace, LayoutState& layouts, const char* backend_label) {
-    const ImGuiIO& io = ImGui::GetIO();
     SyncPresetFolder(layouts, workspace); // a project opened this frame switches Saved/Layouts before the menu lists it
+    // The status bar's platform segment is the host's to name ("Windows · Vulkan").
+    if (backend_label != nullptr) workspace.SetBackendLabel(backend_label);
     if (ImGui::BeginMainMenuBar()) {
         ImGui::TextColored(ImVec4(0.36f, 0.62f, 1.0f, 1.0f), "AETHER"); // the concept's mark at the bar's left
         ImGui::SameLine(0.0f, 12.0f);
@@ -283,10 +284,6 @@ void DrawEditor(EditorWorkspace& workspace, LayoutState& layouts, const char* ba
     ImGui::End();
     if (ImGui::BeginViewportSideBar("##status", viewport, ImGuiDir_Down, ImGui::GetFrameHeight(), ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings)) {
         workspace.DrawStatusBar();
-        ImGui::SameLine(0.0f, 10.0f);
-        ImGui::TextDisabled("|");
-        ImGui::SameLine(0.0f, 10.0f);
-        ImGui::TextDisabled("%s  |  %.1f ms  (%.0f fps)", backend_label, 1000.0f / std::max(io.Framerate, 1.0f), io.Framerate);
     }
     ImGui::End();
 

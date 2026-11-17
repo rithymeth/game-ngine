@@ -80,7 +80,7 @@ as well. The verdicts are a judgement from the source audit; the evidence column
 | Native file dialogs | Native open/save/import | Native | Native | Open Scene, Save Scene As and the toolbar's "..." use the system picker (`IFileDialog`; zenity/kdialog on Linux); the typed path remains the fallback | `editor/src/core/file_dialog.cpp`, `editor/src/world/scene_panel.cpp:74-100` | Partial |
 | Unsaved work on exit | Prompt per document | Prompt; play-mode changes discarded with warning | Prompt | Quit immediate; only New/Open prompt | `editor/shell/main.cpp:78`, `scene_panel.cpp:70-96` | Missing |
 | Autosave/recovery | Autosave and recovery | Autosave and recovery | Autosave backups | `SaveAutosave`/`LoadAutosave` exist and are unused | `editor/src/core/scene_document.cpp:202-226` | Missing |
-| Status bar | Project, source control, progress, PIE state | Scene, play state, console counts | Debug state, network, version | Project, document name with a dirty mark, play state, an active cook/package or launched game, and unread messages as a button; the host adds backend and frame time; no source-control branch yet | `editor/src/workspace/editor_workspace.cpp` (`StatusBar`, `DrawStatusBar`), `editor/shell/main.cpp` | Partial |
+| Status bar | Project, source control, progress, PIE state | Scene, play state, console counts | Debug state, network, version | The concept's row: a status dot and label (build/cook/game), "OS · backend", project, document with a dirty mark, branch "· synced/unsaved changes", entity count, selection, play state, CPU ms, Messages button, and "Local session ready" at the right end | `editor/src/workspace/editor_workspace.cpp` (`StatusBar`, `DrawStatusBar`), `editor/shell/main.cpp` | Done |
 
 ## World editing, viewport and transforms
 
@@ -645,6 +645,20 @@ toolbar row when it stands alone, so the two rows cannot drift. The old inline P
 the mode/show combos in the view are gone; the in-picture chips remain and read the same state. Tests in
 `tests/test_main_toolbar.cpp`: `MainToolbar_DrawsTheConceptsRowThree` clicks the icons and each dropdown by its recorded
 rectangle and checks the view's camera, mode and overlays changed.
+
+Done so far (2026-11-17): the status bar in the concept's row. The bar now opens with a status dot and label -- green
+"Build succeeded" after a package, "Ready" before one, amber with the cook's stage ("Cooking 42%") or "Game running"
+while work runs, amber "Build failed" after a failure -- then the platform ("Windows · Vulkan": the OS from the build,
+the backend from the host via `SetBackendLabel`, left out when no host named one), the project, the document with its
+dirty mark, the branch with "· synced" or "· unsaved changes", the scene's entity count, the selection, the play state,
+"CPU 3.1 ms" from the frame just drawn, and the Messages button. `RefreshSourceControl` (and opening a project) now asks
+git for both the branch and `QueryGitStatus`, so "synced" means the working tree under the project is clean;
+`SetSourceControlSynced` lets a host or a test say the same. A green dot with "Local session ready" is drawn at the
+bar's right edge (its rectangle reported in `LastStatusBarRects`) instead of the shell appending backend and frame time
+with `SameLine` -- moving into the bar is what lets the row end with the concept's session segment. Tests in
+`tests/test_status_bar.cpp`: `StatusBar_FollowsTheConceptsRow` (the platform, the injected branch's sync flag, the
+entity count, and "Local session ready" within the right end of a 1400 px bar) plus "Ready" and an empty platform in the
+default workspace.
 
 ### Stage 3 — Content browser and importer parity (L)
 

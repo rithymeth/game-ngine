@@ -13,7 +13,8 @@
 
 // Stage 1 of docs/design/EDITOR_PARITY_AUDIT.md: the status bar. Its content is a snapshot (`StatusBar()`) so the
 // questions it answers -- what project, which document and is it dirty, is the game running, is there a build, are
-// there unread messages -- are testable without reading pixels.
+// there unread messages -- are testable without reading pixels. The concept's row (a status dot, the platform, the
+// branch's sync state, the entity count and "Local session ready" at the right end) is tested the same way.
 
 using namespace aether;
 using namespace aether::editor;
@@ -52,6 +53,9 @@ AETHER_TEST(StatusBar_NamesTheProjectAndDocument) {
     CHECK(!info.dirty);
     CHECK(std::string(info.play) == "Editing");
     CHECK(info.job.empty());
+    CHECK(info.status == "Ready"); // idle, nothing built yet
+    CHECK(info.status_ok);
+    CHECK(info.platform.empty()); // no host set a backend
 
     const Entity crate = workspace.Scene().Document().CreateEntity("crate");
     workspace.Scene().Document().CreateEntity("barrel");
@@ -117,6 +121,43 @@ AETHER_TEST(StatusBar_CountsUnreadMessages) {
 
     workspace.Notifications().MarkAllRead();
     CHECK(workspace.StatusBar().unread == 0);
+}
+
+// The concept's row, left to right: the status dot's label, "OS · backend" from the host, the branch with whether
+// its working tree is clean, the entity count -- and "Local session ready" at the right edge of the bar.
+AETHER_TEST(StatusBar_FollowsTheConceptsRow) {
+    HeadlessImGui imgui;
+    EditorWorkspace workspace;
+
+    workspace.SetBackendLabel("Vulkan");
+    CHECK(workspace.StatusBar().platform.find("Vulkan") != std::string::npos);
+    CHECK(workspace.StatusBar().platform != "Vulkan"); // the OS leads it
+
+    workspace.SetSourceControlBranch("main");
+    workspace.SetSourceControlSynced(true);
+    CHECK(workspace.StatusBar().synced);
+    workspace.SetSourceControlSynced(false);
+    CHECK(!workspace.StatusBar().synced);
+
+    SceneDocument& document = workspace.Scene().Document();
+    const std::size_t before = workspace.StatusBar().entities;
+    document.CreateEntity("crate");
+    CHECK(workspace.StatusBar().entities == before + 1);
+
+    ImGui::NewFrame();
+    ImGui::SetNextWindowPos(ImVec2(0.0f, 900.0f));
+    ImGui::SetNextWindowSize(ImVec2(1400.0f, 32.0f));
+    if (ImGui::Begin("##status_row", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings)) {
+        workspace.DrawStatusBar();
+    }
+    ImGui::End();
+    ImGui::Render();
+
+    const EditorWorkspace::StatusBarRects& rects = workspace.LastStatusBarRects();
+    CHECK(rects.local_visible); // it fits beside the left segments
+    CHECK(rects.local_min_x > 1200.0f); // at the right end of the 1400 px bar
+    CHECK(rects.local_max_x <= 1400.0f);
+    CHECK(rects.local_min_y >= 900.0f && rects.local_max_y <= 932.0f);
 }
 
 // The bar draws in every play state without a host of its own.

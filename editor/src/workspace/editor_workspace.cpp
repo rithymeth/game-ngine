@@ -447,7 +447,10 @@ struct EditorWorkspace::Impl {
     // Project.
     std::filesystem::path project_file;
     std::string branch;               // the status bar's source-control branch; asked of git, not recomputed per frame
+    bool branch_synced = true;        // no uncommitted changes under the project, from the same query
     bool branch_injected = false;     // a host set it, so RefreshSourceControl leaves it alone
+    std::string backend_label;        // the host's renderer name for the status bar's platform segment
+    StatusBarRects status_rects;      // the bar's right-end rectangle, as last drawn
     // Stage 1: the open documents as tabs, and the close prompt for one with unsaved changes.
     DocumentTabs document_tabs;
     EditorDocument* closing_document = nullptr;
@@ -1127,7 +1130,12 @@ struct EditorWorkspace::Impl {
 
     void LoadProjectTools() {
         CrashHandler::SetContext("project", project_file.stem().string());
-        if (!branch_injected) branch = assets::QueryGitBranch(ProjectPaths::ForFile(project_file).root);
+        const std::filesystem::path root = ProjectPaths::ForFile(project_file).root;
+        if (!branch_injected) {
+            branch = assets::QueryGitBranch(root);
+            const assets::VcsStatus status = assets::QueryGitStatus(root);
+            branch_synced = !status.available || status.files.empty();
+        }
         std::string error;
         project_settings = std::make_unique<ProjectSettingsPanel>(project_file);
         build_window = std::make_unique<BuildPackageWindow>(project_file);
@@ -2269,45 +2277,111 @@ const char* PlayStateName(PlaySession::State state) {
     }
 }
 
+// The OS half of the platform segment ("Windows · Vulkan"); the backend half is the host's.
+const char* HostOSName() {
+#if defined(_WIN32)
+    return "Windows";
+#elif defined(__APPLE__)
+    return "macOS";
+#else
+    return "Linux";
+#endif
+}
+
 } // namespace
 
 EditorWorkspace::StatusBarInfo EditorWorkspace::StatusBar() {
     StatusBarInfo info;
+    info.status = "Ready";
+    if (!impl_->backend_label.empty()) info.platform = std::string(HostOSName()) + " \xC2\xB7 " + impl_->backend_label;
     info.project = impl_->project_file.empty() ? "No project" : impl_->project_file.stem().string();
     const EditorDocument& document = ActiveDocument();
     info.document = document.DisplayName();
     info.dirty = document.IsDirty();
     info.play = PlayStateName(Scene().Document().PlayState());
     info.selected = Scene().Document().Selection().size();
+    info.entities = Scene().Document().Entities().size();
     info.branch = impl_->branch;
+    info.synced = impl_->branch_synced;
     if (impl_->build_window != nullptr) {
         PackageRunner& runner = *impl_->build_window;
         if (runner.Busy()) {
             const std::string stage = runner.Stage();
             const int percent = static_cast<int>(runner.Progress() * 100.0f + 0.5f);
             info.job = (stage.empty() ? std::string("Building") : stage) + " " + std::to_string(percent) + "%";
+            info.status = info.job;
+            info.status_ok = false;
         } else if (runner.Game().Running()) {
             info.job = "Game running";
+            info.status = info.job;
+            info.status_ok = false;
+        } else if (runner.LastResult() == PackageRunner::Result::Succeeded) {
+            info.status = "Build succeeded";
+        } else if (runner.LastResult() == PackageRunner::Result::Failed) {
+            info.status = "Build failed";
+            info.status_ok = false;
         }
     }
     info.unread = impl_->notifications.UnreadCount();
     return info;
 }
 
+const EditorWorkspace::StatusBarRects& EditorWorkspace::LastStatusBarRects() const { return impl_->status_rects; }
+
+void EditorWorkspace::SetBackendLabel(std::string label) {
+    if (impl_->backend_label == label) return;
+    impl_->backend_label = std::move(label);
+}
+
+void EditorWorkspace::SetSourceControlSynced(bool synced) { impl_->branch_synced = synced; }
+
 void EditorWorkspace::DrawStatusBar() {
     const StatusBarInfo info = StatusBar();
+    impl_->status_rects = StatusBarRects{};
     const auto separator = [] {
         ImGui::SameLine(0.0f, 10.0f);
         ImGui::TextDisabled("|");
         ImGui::SameLine(0.0f, 10.0f);
     };
+    // A small filled dot before a label, as the concept leads its build state and trails its session state.
+    const auto dot = [](const ImVec4& color) {
+        const ImVec2 cursor = ImGui::GetCursorScreenPos();
+        const f32 height = ImGui::GetTextLineHeight();
+        ImGui::Dummy(ImVec2(8.0f, height));
+        ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(cursor.x + 4.0f, cursor.y + height * 0.5f), 3.0f,
+                                                    ImGui::GetColorU32(color));
+        ImGui::SameLine(0.0f, 4.0f);
+    };
+    const ImVec4 green(0.35f, 0.77f, 0.46f, 1.0f);
+    const ImVec4 amber(1.0f, 0.72f, 0.2f, 1.0f);
 
+    dot(info.status_ok ? green : amber);
+    ImGui::TextUnformatted(info.status.c_str());
+    if (!info.status_ok) ImGui::SetItemTooltip("%s", info.job.empty() ? "The last build failed" : info.job.c_str());
+
+    if (!info.platform.empty()) {
+        separator();
+        ImGui::TextDisabled("%s", info.platform.c_str());
+        ImGui::SetItemTooltip("The OS and renderer the editor is running on");
+    }
+
+    separator();
     ImGui::TextUnformatted(info.project.c_str());
     if (!impl_->project_file.empty()) ImGui::SetItemTooltip("%s", impl_->project_file.string().c_str());
 
     separator();
     ImGui::Text("%s%s", info.document.c_str(), info.dirty ? " *" : "");
     if (info.dirty) ImGui::SetItemTooltip("Unsaved changes");
+
+    if (!info.branch.empty()) {
+        separator();
+        ImGui::Text("%s \xC2\xB7 %s", info.branch.c_str(), info.synced ? "synced" : "unsaved changes");
+        ImGui::SetItemTooltip(info.synced ? "The working tree has no uncommitted changes" : "The working tree has uncommitted changes");
+    }
+
+    separator();
+    ImGui::Text(info.entities == 1 ? "%zu entity" : "%zu entities", info.entities);
+    ImGui::SetItemTooltip("Entities in the open scene");
 
     if (info.selected > 0) {
         separator();
@@ -2319,18 +2393,14 @@ void EditorWorkspace::DrawStatusBar() {
     if (std::string(info.play) == "Editing") {
         ImGui::TextDisabled("%s", info.play);
     } else {
-        ImGui::TextColored(ImVec4(1.0f, 0.72f, 0.2f, 1.0f), "%s", info.play);
+        ImGui::TextColored(amber, "%s", info.play);
     }
 
-    if (!info.job.empty()) {
+    const f32 framerate = ImGui::GetIO().Framerate;
+    if (framerate > 0.5f) {
         separator();
-        ImGui::TextUnformatted(info.job.c_str());
-    }
-
-    if (!info.branch.empty()) {
-        separator();
-        ImGui::TextUnformatted(info.branch.c_str());
-        ImGui::SetItemTooltip("Source control branch (a commit id when HEAD is detached)");
+        ImGui::TextDisabled("CPU %.1f ms", 1000.0f / framerate);
+        ImGui::SetItemTooltip("The frame the editor just drew (%.0f fps)", framerate);
     }
 
     separator();
@@ -2344,11 +2414,32 @@ void EditorWorkspace::DrawStatusBar() {
         }
     }
     ImGui::SetItemTooltip("%s", info.unread > 0 ? "Unread messages: click to open the list" : "Open the message list");
+
+    // The concept's far end: a green dot and "Local session ready". Drawn, not laid out, so the host's cursor stays
+    // where the left segments ended.
+    const char* session = "Local session ready";
+    const f32 text_width = ImGui::CalcTextSize(session).x;
+    const f32 right = ImGui::GetWindowPos().x + ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x - 4.0f;
+    const f32 left = right - text_width - 14.0f;
+    if (left > ImGui::GetItemRectMax().x + 24.0f) {
+        const f32 y = ImGui::GetWindowPos().y + (ImGui::GetWindowHeight() - ImGui::GetTextLineHeight()) * 0.5f;
+        ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(left + 4.0f, y + ImGui::GetTextLineHeight() * 0.5f), 3.0f,
+                                                    ImGui::GetColorU32(green));
+        ImGui::GetWindowDrawList()->AddText(ImVec2(left + 14.0f, y), ImGui::GetColorU32(ImGuiCol_TextDisabled), session);
+        impl_->status_rects.local_visible = true;
+        impl_->status_rects.local_min_x = left;
+        impl_->status_rects.local_min_y = y;
+        impl_->status_rects.local_max_x = right;
+        impl_->status_rects.local_max_y = y + ImGui::GetTextLineHeight();
+    }
 }
 
 void EditorWorkspace::RefreshSourceControl() {
     if (impl_->branch_injected || impl_->project_file.empty()) return;
-    impl_->branch = assets::QueryGitBranch(ProjectPaths::ForFile(impl_->project_file).root);
+    const std::filesystem::path root = ProjectPaths::ForFile(impl_->project_file).root;
+    impl_->branch = assets::QueryGitBranch(root);
+    const assets::VcsStatus status = assets::QueryGitStatus(root);
+    impl_->branch_synced = !status.available || status.files.empty();
 }
 
 void EditorWorkspace::SetSourceControlBranch(std::string branch) {
