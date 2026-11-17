@@ -49,6 +49,7 @@ add_library(aether_editor_ui STATIC
     ../world/model_bounds.cpp
     ../world/viewport_tools.cpp
     ../world/scene_view_panel.cpp
+    ../world/game_view_panel.cpp
     ../world/content_drop.cpp
     ../world/scene_preview_panel.cpp
     ../world/data_layer_panel.cpp
@@ -115,6 +116,7 @@ if(AETHER_BUILD_VULKAN)
         ../host/imgui_vulkan_host.cpp
         ../host/live_viewport.cpp
         ../host/live_viewport_panel.cpp
+        ../host/live_game_view.cpp
         ../host/scene_shading.cpp
         ${imgui_SOURCE_DIR}/backends/imgui_impl_vulkan.cpp
     )

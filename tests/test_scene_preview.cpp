@@ -2,6 +2,7 @@
 #include "ui/image_texture.h"
 #include "workspace/editor_workspace.h"
 #if defined(AETHER_HAS_EDITOR_VULKAN)
+#include "host/live_game_view.h"
 #include "host/live_viewport_panel.h"
 #include "host/scene_shading.h"
 #endif
@@ -76,6 +77,17 @@ stdfs::path MakeProject(const std::string& name, const std::string& template_id 
     std::string error;
     AETHER_CHECK(templates::CreateProjectFromTemplate(dir, "Demo", template_id, &paths, &error));
     return paths.file;
+}
+
+// The templates' controller scripts steer the MainCamera around the player while the game runs; a check that reads the camera's pose wants
+// the camera as the document left it. Destroying the scripted entities leaves the rest of the scene standing.
+usize StripScripts(SceneDocument& document) {
+    std::vector<Entity> scripted;
+    for (const Entity entity : document.Entities()) {
+        if (document.GetWorld().HasComponent<ScriptComponent>(entity)) scripted.push_back(entity);
+    }
+    for (const Entity entity : scripted) AETHER_CHECK(document.DestroyEntity(entity));
+    return scripted.size();
 }
 
 } // namespace
@@ -475,6 +487,120 @@ AETHER_TEST(LiveViewport_FreeCameraPutsTheGamesCameraBack) {
     AETHER_CHECK(view.PositionOf(camera_guid, game_camera) && (game_camera - authored).Length() < 1e-3f); // the borrowed pose did not stick
     AETHER_CHECK(view.Frame(0.0f, eye, editor.Rotation(), editor.fov_degrees, Projection::Perspective, 0.0f, true));
     AETHER_CHECK(view.PositionOf(camera_guid, game_camera) && (game_camera - authored).Length() < 1e-3f); // nor the second time
+}
+
+// The Game view's frame, below the editor: the scene is drawn from its own camera, exactly as the game has it, and nothing moves that
+// camera -- there is no editor pose in the call at all. A normal frame at an editor eye is a different picture.
+AETHER_TEST(LiveViewport_FrameGameCameraDrawsFromTheScenesOwnCamera) {
+    std::unique_ptr<gfx::rhi::IDevice> device = TryDevice();
+    if (!device) {
+        std::printf("    (no Vulkan device: install a driver, or Mesa's lavapipe, to run this)\n");
+        return;
+    }
+    const stdfs::path project = MakeProject("GameCamera");
+    ScenePanel scene(project.parent_path() / "Content");
+    AETHER_CHECK(scene.OpenScene("Scenes/Main.ascene", true));
+    SceneDocument& document = scene.Document();
+    AETHER_CHECK(StripScripts(document) > 0); // the template's controller follows the player with the camera; these checks want it still
+    const Entity camera_entity = FindActiveCamera(document.GetWorld(), document.Guids());
+    AETHER_CHECK(!camera_entity.IsNull());
+    if (camera_entity.IsNull()) return;
+    const EntityGuid camera_guid = document.GetWorld().GetComponent<IdComponent>(camera_entity)->guid;
+    const Vec3 authored = document.GetWorld().GetComponent<Transform>(camera_entity)->position;
+    stdfs::path cooked;
+    std::string error;
+    AETHER_CHECK(CookForPreview(project, "Scenes/Main.ascene", project.parent_path() / "Saved" / "GameCameraTest", &cooked, &error));
+    const std::vector<u8> bytes = SaveSceneToMemory(document.GetWorld());
+    LiveViewport view(*device);
+    AETHER_CHECK(view.Load(cooked, "Scenes/Main.ascene", 96, 54, &error, &bytes));
+
+    AETHER_CHECK(view.FrameGameCamera(0.0f));
+    std::set<u32> colours;
+    for (usize i = 0; i + 3 < view.Pixels().size(); i += 4 * 7) colours.insert(u32(view.Pixels()[i]) << 16 | u32(view.Pixels()[i + 1]) << 8 | u32(view.Pixels()[i + 2]));
+    AETHER_CHECK(colours.size() > 5); // a scene, not a flat fill
+    const std::vector<u8> game_picture = view.Pixels();
+    Vec3 game_camera;
+    AETHER_CHECK(view.PositionOf(camera_guid, game_camera) && (game_camera - authored).Length() < 1e-3f); // the game's own camera, untouched
+
+    SceneViewCamera editor;
+    editor.target = Vec3(3.0f, 1.0f, -2.0f);
+    editor.distance = 9.0f;
+    AETHER_CHECK(view.Frame(0.0f, editor.Eye(), editor.Rotation(), editor.fov_degrees));
+    AETHER_CHECK(DifferingPixels(game_picture, view.Pixels()) > 96u * 54u / 10); // the editor's view is not the game's
+}
+
+// The Game View tool end to end: Play starts the game's own camera picture, Pause holds it, Step advances exactly one frame, Stop lets
+// the game go, and the next session shows the document as it is then.
+AETHER_TEST(GameView_PlaysTheSessionFromItsOwnCamera) {
+    std::unique_ptr<gfx::rhi::IDevice> device = TryDevice();
+    if (!device) {
+        std::printf("    (no Vulkan device: install a driver, or Mesa's lavapipe, to run this)\n");
+        return;
+    }
+    Context imgui;
+    const stdfs::path project = MakeProject("GameViewPlay");
+    ScenePanel scene(project.parent_path() / "Content");
+    AETHER_CHECK(scene.OpenScene("Scenes/Main.ascene", true));
+    SceneDocument& document = scene.Document();
+    AETHER_CHECK(StripScripts(document) > 0); // the controller would move the camera; this check poses it
+    const Entity camera_entity = FindActiveCamera(document.GetWorld(), document.Guids());
+    AETHER_CHECK(!camera_entity.IsNull());
+    if (camera_entity.IsNull()) return;
+    // High above the floor, looking down: a picture no editor orbit view would give.
+    AETHER_CHECK(document.SetPosition(camera_entity, Vec3(0.0f, 12.0f, 0.001f), true));
+    AETHER_CHECK(document.SetRotation(camera_entity, Quaternion::FromAxisAngle(Vec3(1.0f, 0.0f, 0.0f), -1.5707963f), true));
+    const EntityGuid camera_guid = document.GetWorld().GetComponent<IdComponent>(camera_entity)->guid;
+
+    LiveGameView live(*device, scene, [&] { return project; });
+    GameViewPanel panel;
+    panel.surface = &live;
+    panel.width = 160;
+    panel.height = 90;
+    auto draw = [&] {
+        imgui.Frame();
+        ImGui::Begin("game");
+        panel.Draw(document, 1.0f / 60.0f);
+        ImGui::End();
+    };
+    AETHER_CHECK(!live.Viewport().Loaded());
+    draw(); // editing: nothing is cooked or run
+    AETHER_CHECK(!live.Viewport().Loaded() && !panel.LastState().playing);
+
+    document.Play();
+    draw();
+    AETHER_CHECK(panel.LastState().playing && panel.LastState().has_picture && panel.Running());
+    AETHER_CHECK(live.Viewport().Loaded() && live.Picture().Width() == 160 && live.Picture().Height() == 90);
+    Vec3 game_camera;
+    AETHER_CHECK(live.Viewport().PositionOf(camera_guid, game_camera) && (game_camera - Vec3(0.0f, 12.0f, 0.0f)).Length() < 0.5f);
+    const std::vector<u8> top_down = live.Viewport().Pixels();
+
+    document.Pause();
+    draw();
+    AETHER_CHECK(panel.LastState().paused && !panel.LastState().simulating);
+    AETHER_CHECK(DifferingPixels(top_down, live.Viewport().Pixels()) == 0); // paused: the picture stands
+    const u64 frames = live.Viewport().FrameCount();
+    document.Step();
+    draw();
+    AETHER_CHECK(live.Viewport().FrameCount() == frames + 1); // Step: exactly one frame of the game
+    document.Play(); // Paused -> Playing again, for Stop
+    document.Stop();
+    draw();
+    AETHER_CHECK(!panel.Running() && !live.Viewport().Loaded() && panel.LastState().note.find("not running") != std::string::npos);
+
+    // The next session shows the document as it is now: the camera moved down to an eye-level look at the floor.
+    const Entity camera_now = document.Guids().Find(document.GetWorld(), camera_guid); // handles do not survive Stop
+    AETHER_CHECK(!camera_now.IsNull());
+    if (camera_now.IsNull()) return;
+    AETHER_CHECK(document.SetPosition(camera_now, Vec3(0.0f, 2.0f, 7.0f), true));
+    AETHER_CHECK(document.SetRotation(camera_now, Quaternion::FromAxisAngle(Vec3(1.0f, 0.0f, 0.0f), -0.25f), true));
+    document.Play();
+    draw();
+    AETHER_CHECK(panel.Running() && panel.LastState().has_picture);
+    Vec3 game_camera2;
+    const bool found2 = live.Viewport().PositionOf(camera_guid, game_camera2);
+    const usize differing = DifferingPixels(top_down, live.Viewport().Pixels());
+    AETHER_CHECK(found2 && (game_camera2 - Vec3(0.0f, 2.0f, 7.0f)).Length() < 0.5f); // the session runs the document's camera
+    AETHER_CHECK(differing > 160u * 90u / 20); // a different game camera, a different picture
 }
 
 #if defined(AETHER_HAS_EDITOR_VULKAN)

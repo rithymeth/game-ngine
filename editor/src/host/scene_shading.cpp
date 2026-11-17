@@ -5,33 +5,13 @@
 #include "aether/scene/gameplay.h"
 #include "aether/scene/serialization.h"
 #include "core/scene_preview.h"
+#include "host/preview_assets.h"
 
 #include <algorithm>
-#include <system_error>
 
 namespace aether::editor {
 
 namespace {
-
-// The assets a scene needs in the cook, once each, sorted: the glTF models its ModelRenderers name, and the images its MaterialParameters name as
-// texture parameters (a path that is not a file under `content` is left out, so a typo does not stop the cook). As the Live Viewport cooks.
-std::vector<std::string> ModelPaths(const SceneDocument& document, const std::filesystem::path& content) {
-    std::vector<std::string> paths;
-    document.GetWorld().ForEach<ModelRenderer>([&](const ModelRenderer& renderer) {
-        if (renderer.asset_path[0] != '\0') paths.emplace_back(renderer.asset_path);
-    });
-    document.GetWorld().ForEach<MaterialParameters>([&](const MaterialParameters& overrides) {
-        for (const MaterialParameterValue& value : overrides.values) {
-            std::error_code ignored;
-            if (value.is_texture && !value.texture.empty() && std::filesystem::is_regular_file(content / value.texture, ignored)) paths.push_back(value.texture);
-        }
-        std::error_code ignored;
-        if (!overrides.material.empty() && std::filesystem::is_regular_file(content / overrides.material, ignored)) paths.push_back(overrides.material);
-    });
-    std::sort(paths.begin(), paths.end());
-    paths.erase(std::unique(paths.begin(), paths.end()), paths.end());
-    return paths;
-}
 
 // The picture fills the view's rectangle, so it has the view's aspect; at most 1920 pixels along its long side, though (a 4K dock is not worth the GPU).
 void FitResolution(u32& width, u32& height) {
@@ -60,7 +40,7 @@ bool LiveSceneShading::Start(const SceneDocument& document, u32 width, u32 heigh
     u32 draw_width = width, draw_height = height;
     FitResolution(draw_width, draw_height);
     scene_.ModelBounds().Clear(); // a model may have changed on disk since it was measured
-    const std::vector<std::string> models = ModelPaths(document, scene_.ContentRoot());
+    const std::vector<std::string> models = PreviewAssets(document, scene_.ContentRoot());
     const std::vector<u8> bytes = SaveSceneToMemory(document.GetWorld());
     const u64 revision = document.Revision();
     const u64 structure = document.StructureRevision();

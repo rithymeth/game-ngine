@@ -547,6 +547,19 @@ asset editor is focused once those documents adopt the contract in Stage 6.
   row that came from an entity is a link: a click selects it. The same errors
   are posted once each to Messages with the entity target, so they outlive
   the session and a click there goes to the entity too.
+- **The Game View tool:** the other half of Unreal's Scene/Game pair, an
+  extension panel ("Game View", Scene category) beside the Live Viewport. It
+  starts with a play session and stops with it, and draws the running game
+  from its own camera -- the active Camera entity wherever the game's
+  scripts, physics or animation have taken it, with its own field of view and
+  projection -- with no editor chrome and no editor camera over it. The
+  picture keeps its aspect, letterboxed in black, at a fixed session
+  resolution (1280x720 by default) fitted to the window. Outside a session it
+  is black with "The game is not running. Press Play (or Simulate) to see it
+  from its own camera here."; a failed start says why once, and the next
+  session tries again. Pause freezes it, Step advances exactly one frame
+  (`GameViewPanel::LastState` reports playing/paused/simulating, whether the
+  picture is there and its rectangle, for a host or a test).
 - **Camera speed:** shows briefly in the middle ("Speed 4") when changed
   with the mouse wheel during fly mode.
 - **Fly camera:** with the right mouse button held the view looks and

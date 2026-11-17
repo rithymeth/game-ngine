@@ -4,6 +4,7 @@
 #include "aether/renderer/material_instance.h"
 #include "aether/scene/serialization.h"
 #include "core/scene_preview.h"
+#include "host/preview_assets.h"
 
 #include <nlohmann/json.hpp>
 #include <imgui.h>
@@ -14,29 +15,6 @@
 
 namespace aether::editor {
 
-namespace {
-
-// The assets a scene needs in the cook, once each, sorted: the glTF models its ModelRenderers name, and the images its MaterialParameters name as
-// texture parameters (a path that is not a file under `content` is left out, so a typo does not stop the cook).
-std::vector<std::string> ModelPaths(const SceneDocument& document, const std::filesystem::path& content) {
-    std::vector<std::string> paths;
-    document.GetWorld().ForEach<ModelRenderer>([&](const ModelRenderer& renderer) {
-        if (renderer.asset_path[0] != '\0') paths.emplace_back(renderer.asset_path);
-    });
-    document.GetWorld().ForEach<MaterialParameters>([&](const MaterialParameters& overrides) {
-        for (const MaterialParameterValue& value : overrides.values) {
-            std::error_code ignored;
-            if (value.is_texture && !value.texture.empty() && std::filesystem::is_regular_file(content / value.texture, ignored)) paths.push_back(value.texture);
-        }
-        std::error_code ignored;
-        if (!overrides.material.empty() && std::filesystem::is_regular_file(content / overrides.material, ignored)) paths.push_back(overrides.material); // a graph the cook should carry
-    });
-    std::sort(paths.begin(), paths.end());
-    paths.erase(std::unique(paths.begin(), paths.end()), paths.end());
-    return paths;
-}
-
-} // namespace
 
 std::vector<std::string> LiveViewportPanel::GraphPaths() const {
     std::vector<std::string> paths;
@@ -123,7 +101,7 @@ std::vector<player::GraphMaterialReport> LiveViewportPanel::GraphMaterials() {
 
 usize LiveViewportPanel::UncookedModels() const {
     usize missing = 0;
-    for (const std::string& path : ModelPaths(scene_.Document(), scene_.ContentRoot())) {
+    for (const std::string& path : PreviewAssets(scene_.Document(), scene_.ContentRoot())) {
         if (!std::binary_search(cooked_models_.begin(), cooked_models_.end(), path)) ++missing;
     }
     return missing;
@@ -139,7 +117,7 @@ bool LiveViewportPanel::Start() {
     // models the scene uses (whose assets are in the project), and the scene itself goes to the game from memory.
     const SceneDocument& document = scene_.Document();
     scene_.ModelBounds().Clear(); // a model may have changed on disk since it was measured
-    const std::vector<std::string> models = ModelPaths(document, scene_.ContentRoot());
+    const std::vector<std::string> models = PreviewAssets(document, scene_.ContentRoot());
     const std::vector<u8> bytes = SaveSceneToMemory(document.GetWorld());
     const u64 revision = document.Revision();
     const u64 structure = document.StructureRevision();

@@ -8023,8 +8023,10 @@
 [editor/src/graph/material_graph.h] internal-tooling
 [editor/src/host/imgui_vulkan_host.h] internal-tooling
 [editor/src/host/imgui_window_input.h] internal-tooling
+[editor/src/host/live_game_view.h] internal-tooling
 [editor/src/host/live_viewport.h] internal-tooling
 [editor/src/host/live_viewport_panel.h] internal-tooling
+[editor/src/host/preview_assets.h] internal-tooling
 [editor/src/host/scene_shading.h] internal-tooling
 [editor/src/loc/localization_document.h] internal-tooling
 [editor/src/loc/localization_panel.h] internal-tooling
@@ -8063,6 +8065,7 @@
 [editor/src/world/content_drop.h] internal-tooling
 [editor/src/world/data_layer_panel.h] internal-tooling
 [editor/src/world/foliage_document.h] internal-tooling
+[editor/src/world/game_view_panel.h] internal-tooling
 [editor/src/world/model_bounds.h] internal-tooling
 [editor/src/world/procedural_document.h] internal-tooling
 [editor/src/world/procedural_panel.h] internal-tooling

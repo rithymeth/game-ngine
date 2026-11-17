@@ -340,6 +340,13 @@ bool LiveViewport::Load(const std::filesystem::path& cooked_dir, const std::stri
 
 bool LiveViewport::Frame(f32 dt, const Vec3& position, const Quaternion& rotation, f32 fov_degrees, Projection projection, f32 ortho_height,
                          bool free_camera) {
+    return RenderFrame(dt, &position, &rotation, fov_degrees, projection, ortho_height, free_camera);
+}
+
+bool LiveViewport::FrameGameCamera(f32 dt) { return RenderFrame(dt, nullptr, nullptr, 0.0f, Projection::Perspective, 0.0f, false); }
+
+bool LiveViewport::RenderFrame(f32 dt, const Vec3* position, const Quaternion* rotation, f32 fov_degrees, Projection projection,
+                               f32 ortho_height, bool free_camera) {
     if (!impl_) return false;
     Impl& live = *impl_;
     live.game->Tick(std::clamp(dt, 0.0f, 0.1f));
@@ -355,13 +362,14 @@ bool LiveViewport::Frame(f32 dt, const Vec3& position, const Quaternion& rotatio
     Camera* camera = world.GetComponent<Camera>(camera_entity);
     Transform saved_transform{};
     Camera saved_camera{};
-    if (transform != nullptr && camera != nullptr) {
-        if (free_camera) {
+    const bool borrowed = free_camera && position != nullptr && rotation != nullptr && transform != nullptr && camera != nullptr;
+    if (transform != nullptr && camera != nullptr && position != nullptr && rotation != nullptr) {
+        if (borrowed) {
             saved_transform = *transform; // Simulate: the game simulates from its own camera; this one is only borrowed for the picture
             saved_camera = *camera;
         }
-        transform->position = position;
-        transform->rotation = rotation;
+        transform->position = *position;
+        transform->rotation = *rotation;
         camera->projection = projection;
         if (projection == Projection::Orthographic) {
             if (ortho_height > 0.0f) camera->ortho_height = ortho_height;
@@ -374,7 +382,7 @@ bool LiveViewport::Frame(f32 dt, const Vec3& position, const Quaternion& rotatio
             });
             if (count > 0) centre = centre * (1.0f / static_cast<f32>(count));
             camera->near_plane = 0.1f;
-            camera->far_plane = std::max(camera->far_plane, (position - centre).Length() * 2.0f + 100.0f);
+            camera->far_plane = std::max(camera->far_plane, (*position - centre).Length() * 2.0f + 100.0f);
         } else if (fov_degrees > 0.0f) {
             camera->fov_degrees = fov_degrees;
         }
@@ -389,7 +397,7 @@ bool LiveViewport::Frame(f32 dt, const Vec3& position, const Quaternion& rotatio
     live.renderer->Draw(*live.game, cmd, static_cast<u32>(slot));
     live.draw_calls = rhi::ICommandList::DrawCallCount();
     live.triangles = rhi::ICommandList::TriangleCount();
-    if (free_camera && transform != nullptr && camera != nullptr) { // the draws hold the borrowed pose; the game gets its camera back
+    if (borrowed) { // the draws hold the borrowed pose; the game gets its camera back
         *transform = saved_transform;
         *camera = saved_camera;
     }

@@ -76,6 +76,10 @@ public:
     // nothing is loaded or the picture could not be read.
     bool Frame(f32 dt, const Vec3& position, const Quaternion& rotation, f32 fov_degrees = 0.0f, Projection projection = Projection::Perspective,
                f32 ortho_height = 0.0f, bool free_camera = false);
+    // Advances the game by `dt` seconds and draws from its own camera: the active Camera entity at the pose, field of view and projection
+    // the game has left it in (one is made here when the scene has none), with nothing borrowed from the editor. This is the Game View's
+    // frame: what a player would see. False if nothing is loaded or the picture could not be read.
+    bool FrameGameCamera(f32 dt);
     // The look of the next frames: the scene pass's lit shading, or the editor's unlit and normals debug views.
     void SetViewMode(player::SceneRenderer::ViewMode mode);
     // The last picture: Width() * Height() * 4 bytes, top row first.
@@ -114,6 +118,10 @@ public:
     bool PositionOf(const EntityGuid& entity, Vec3& position) const;
 
 private:
+    // Frame's body: with a pose, the scene's camera is set to it for the draws (and put back when `free_camera`); without one, the camera
+    // is left exactly as the game has it.
+    bool RenderFrame(f32 dt, const Vec3* position, const Quaternion* rotation, f32 fov_degrees, Projection projection, f32 ortho_height,
+                     bool free_camera);
     void RememberKnown(); // the identified entities of the running scene are what the document has
     struct Impl;
     rhi::IDevice& device_;

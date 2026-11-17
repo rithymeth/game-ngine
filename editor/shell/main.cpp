@@ -18,6 +18,7 @@
 //                                wins); without either the Project Hub is shown
 
 #include "host/imgui_vulkan_host.h"
+#include "host/live_game_view.h"
 #include "host/live_viewport_panel.h"
 #include "host/scene_shading.h"
 #include "host/imgui_window_input.h"
@@ -425,6 +426,14 @@ int main(int argc, char** argv) {
         LiveViewportPanel live(*device, workspace.Scene(), [&workspace] { return workspace.ProjectFile(); });
         f32 frame_dt = 0.0f;
         workspace.Extensions().AddPanel({"Live Viewport", "Scene", [&live, &frame_dt] { live.Draw(frame_dt); }, "shell"});
+        // The Game View tool: during a play session, the running game from its own camera, the way a player sees it (the Scene View
+        // stays the editor's view). It starts and stops with the session, so it runs its own copy of the scene only while playing.
+        GameViewPanel game_view_panel;
+        LiveGameView game_view(*device, workspace.Scene(), [&workspace] { return workspace.ProjectFile(); });
+        game_view_panel.surface = &game_view;
+        workspace.Extensions().AddPanel({"Game View", "Scene",
+                                         [&game_view_panel, &workspace, &frame_dt] { game_view_panel.Draw(workspace.Scene().Document(), frame_dt); },
+                                         "shell"});
         // The Scene View's rendered looks (Lit, Unlit, Normals) are the same renderer, driven by the Scene View's own camera; the panel asks this for
         // a picture when one of those modes is chosen and keeps its own overlays on top.
         LiveSceneShading scene_shading(*device, workspace.Scene(), [&workspace] { return workspace.ProjectFile(); });
