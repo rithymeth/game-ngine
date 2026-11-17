@@ -502,8 +502,9 @@ void SceneViewPanel::Draw(SceneDocument& document, const ModelBoundsCache* bound
                                       : selection.size() == 1 ? document.Name(selection.front()) + " · Selected"
                                                               : std::to_string(selection.size()) + " · Selected";
     // The concept's stats row: the scene's counts, the picture's draws and GPU time where the renderer reports them, and the frame rate.
+    // In PIE it is the game's overlay: CPU frame time, physics bodies and script instances join them.
     const SceneViewShading::FrameStats frame_stats = shading != nullptr ? shading->Stats() : SceneViewShading::FrameStats{};
-    char stats_text[192];
+    char stats_text[256];
     int written = std::snprintf(stats_text, sizeof stats_text, "%zu entities", document.Entities().size());
     auto append = [&](const char* format, auto... value) {
         if (written >= static_cast<int>(sizeof stats_text) - 1) return;
@@ -512,6 +513,11 @@ void SceneViewPanel::Draw(SceneDocument& document, const ModelBoundsCache* bound
     };
     if (frame_stats.draw_calls > 0) append(" · %llu draw calls", static_cast<unsigned long long>(frame_stats.draw_calls));
     if (frame_stats.valid) append(" · GPU %.1f ms", static_cast<f64>(frame_stats.gpu_ms));
+    if (pie) {
+        if (io.Framerate > 0.5f) append(" · CPU %.1f ms", static_cast<f64>(1000.0 / io.Framerate));
+        if (frame_stats.physics_bodies > 0) append(" · %llu bodies", static_cast<unsigned long long>(frame_stats.physics_bodies));
+        if (frame_stats.scripts > 0) append(" · %llu scripts", static_cast<unsigned long long>(frame_stats.scripts));
+    }
     append(" · %d FPS", static_cast<int>(std::lround(io.Framerate)));
     stats_text_ = stats_text;
     f32 bottom_left = origin.x + 10.0f;

@@ -67,7 +67,7 @@ Console::~Console() { CaptureLog(false); }
 
 void Console::Print(std::string text, LogLevel level) {
     Pump();
-    output_.push_back({level, std::move(text)});
+    output_.push_back({level, std::move(text), {}});
     while (output_.size() > max_output) output_.pop_front();
 }
 
@@ -90,7 +90,7 @@ void Console::CaptureLog(bool capture) {
         log_queue_ = queue;
         sink_ = Logger::Instance().AddSink([queue](const LogLine& line) {
             std::lock_guard<std::mutex> lock(queue->mutex);
-            queue->lines.push_back({line.level, line.category + ": " + line.message});
+            queue->lines.push_back({line.level, line.category + ": " + line.message, line.category});
         });
     } else {
         Logger::Instance().RemoveSink(sink_);

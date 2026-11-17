@@ -100,3 +100,66 @@ AETHER_TEST(ConsolePanel_DrawsHeadless) {
     imgui.Frame([&] { panel.Overlay(true, 1200); });
     CHECK(!panel.open && console.Output().size() >= 4);
 }
+
+// The PIE console: severity and category filters, repeated lines collapsed to one row with a count, and an output cleared
+// at the start of every play session.
+AETHER_TEST(ConsolePanel_FiltersCollapsesAndStartsEachPlayClean) {
+    CVarRegistry reg;
+    Console console(reg);
+    ConsolePanel panel(console);
+    console.CaptureLog(true);
+    Logger::Instance().Log(LogLevel::Info, "Editor", "ready");
+    Logger::Instance().Log(LogLevel::Warn, "Physics", "slow");
+    Logger::Instance().Log(LogLevel::Warn, "Physics", "slow");
+    Logger::Instance().Log(LogLevel::Error, "Renderer", "gone");
+    console.Pump();
+    console.CaptureLog(false); // flushes what is left
+
+    auto visible = panel.VisibleLines();
+    CHECK(visible.size() == 3);
+    CHECK(visible[1].count == 2 && visible[1].line->category == "Physics");
+    panel.collapse_repeats = false;
+    CHECK(panel.VisibleLines().size() == 4);
+    panel.collapse_repeats = true;
+
+    panel.show_warn = false;
+    visible = panel.VisibleLines();
+    CHECK(visible.size() == 2 && visible[0].line->text == "Editor: ready" && visible[1].line->text == "Renderer: gone");
+    panel.show_warn = true;
+
+    panel.category = "Physics";
+    visible = panel.VisibleLines();
+    CHECK(visible.size() == 1 && visible[0].count == 2);
+    CHECK(panel.Categories() == (std::vector<std::string>{"Editor", "Physics", "Renderer"}));
+    panel.category.clear();
+
+    panel.filter = "go";
+    CHECK(panel.VisibleLines().size() == 1);
+    panel.filter.clear();
+
+    HeadlessImGui imgui;
+    auto frame = [&](bool playing) {
+        imgui.Frame([&] {
+            ImGui::SetNextWindowPos(ImVec2(0, 0));
+            ImGui::SetNextWindowSize(ImVec2(800, 400));
+            ImGui::Begin("Console");
+            panel.Draw(playing);
+            ImGui::End();
+        });
+    };
+    frame(false);
+    CHECK(console.Output().size() == 4);
+    frame(true); // the first frame of the play session
+    CHECK(console.Output().empty());
+    console.Print("during play");
+    frame(true);
+    CHECK(console.Output().size() == 1); // not cleared again while it plays
+    frame(false);
+    frame(true); // a new play session
+    CHECK(console.Output().empty());
+    panel.clear_on_play = false;
+    console.Print("keep me");
+    frame(false);
+    frame(true);
+    CHECK(console.Output().size() == 1);
+}

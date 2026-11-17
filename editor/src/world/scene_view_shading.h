@@ -43,6 +43,8 @@ public:
         bool valid = false;
         f32 gpu_ms = 0.0f;
         u64 draw_calls = 0;
+        u64 physics_bodies = 0; // the running game's bodies; zero means unknown
+        u64 scripts = 0;        // its live script instances; zero means unknown
     };
     virtual FrameStats Stats() const { return {}; }
     // Stops the running scene and frees its picture (the view went back to the wireframe).

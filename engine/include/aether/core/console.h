@@ -16,6 +16,7 @@ struct ConsoleLogQueue;
 struct ConsoleLine {
     LogLevel level = LogLevel::Info;
     std::string text;
+    std::string category; // where a copied log line came from; empty for command output
 };
 
 // The developer console (Phase 23 step 1):

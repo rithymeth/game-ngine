@@ -74,13 +74,77 @@ void ConsolePanel::TabComplete() {
     last_tab_ = input;
 }
 
-void ConsolePanel::Draw() {
+bool ConsolePanel::Passes(const ConsoleLine& line) const {
+    switch (line.level) {
+    case LogLevel::Trace:
+        if (!show_trace) return false;
+        break;
+    case LogLevel::Info:
+        if (!show_info) return false;
+        break;
+    case LogLevel::Warn:
+        if (!show_warn) return false;
+        break;
+    case LogLevel::Error:
+    case LogLevel::Fatal:
+        if (!show_error) return false;
+        break;
+    }
+    if (!category.empty() && line.category != category) return false;
+    return ContainsNoCase(line.text, filter);
+}
+
+std::vector<ConsolePanel::Entry> ConsolePanel::VisibleLines() {
+    console_.Pump();
+    std::vector<Entry> entries;
+    for (const ConsoleLine& line : console_.Output()) {
+        if (!Passes(line)) continue;
+        if (collapse_repeats && !entries.empty()) {
+            const ConsoleLine& previous = *entries.back().line;
+            if (previous.level == line.level && previous.category == line.category && previous.text == line.text) {
+                ++entries.back().count;
+                continue;
+            }
+        }
+        entries.push_back({&line, 1});
+    }
+    return entries;
+}
+
+std::vector<std::string> ConsolePanel::Categories() {
+    console_.Pump();
+    std::vector<std::string> names;
+    for (const ConsoleLine& line : console_.Output()) {
+        if (line.category.empty()) continue;
+        if (std::find(names.begin(), names.end(), line.category) == names.end()) names.push_back(line.category);
+    }
+    return names;
+}
+
+void ConsolePanel::Draw(bool playing) {
     ImGui::PushID(this);
     console_.Pump();
+    if (playing && !last_playing_ && clear_on_play) { // each play session starts with a clean console
+        console_.Clear();
+        scroll_to_bottom_ = true;
+    }
+    last_playing_ = playing;
     char filter_buf[128];
     std::snprintf(filter_buf, sizeof(filter_buf), "%s", filter.c_str());
-    ImGui::SetNextItemWidth(220);
+    ImGui::SetNextItemWidth(180);
     if (ImGui::InputTextWithHint("##filter", "Filter", filter_buf, sizeof(filter_buf))) filter = filter_buf;
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(150);
+    const std::vector<std::string> categories = Categories();
+    if (ImGui::BeginCombo("##category", category.empty() ? "All categories" : category.c_str())) {
+        if (ImGui::Selectable("All categories", category.empty())) category.clear();
+        for (const std::string& name : categories) {
+            ImGui::PushID(name.c_str());
+            if (ImGui::Selectable(name.c_str(), category == name)) category = name;
+            ImGui::PopID();
+        }
+        ImGui::EndCombo();
+    }
     ImGui::SameLine();
     if (ImGui::Button("Clear")) console_.Clear();
     ImGui::SameLine();
@@ -88,14 +152,28 @@ void ConsolePanel::Draw() {
     if (ImGui::Checkbox("Show log", &capture)) console_.CaptureLog(capture);
     ImGui::SameLine();
     ImGui::Checkbox("Cheats", &console_.allow_cheats);
+    ImGui::SameLine();
+    ImGui::Checkbox("Collapse", &collapse_repeats);
+    ImGui::SameLine();
+    ImGui::Checkbox("Clear on Play", &clear_on_play);
+    ImGui::Checkbox("Trace", &show_trace);
+    ImGui::SameLine();
+    ImGui::Checkbox("Info", &show_info);
+    ImGui::SameLine();
+    ImGui::Checkbox("Warn", &show_warn);
+    ImGui::SameLine();
+    ImGui::Checkbox("Error", &show_error);
 
     const float footer = ImGui::GetFrameHeightWithSpacing() * (suggestions_.empty() ? 1.0f : 2.0f);
     ImGui::BeginChild("output", ImVec2(0, -footer), ImGuiChildFlags_Borders);
-    for (const ConsoleLine& line : console_.Output()) {
-        if (!ContainsNoCase(line.text, filter)) continue;
-        ImGui::PushStyleColor(ImGuiCol_Text, LevelColor(line.level));
-        ImGui::TextUnformatted(line.text.c_str());
+    for (const Entry& entry : VisibleLines()) {
+        ImGui::PushStyleColor(ImGuiCol_Text, LevelColor(entry.line->level));
+        ImGui::TextUnformatted(entry.line->text.c_str());
         ImGui::PopStyleColor();
+        if (entry.count > 1) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("(%zu)", entry.count);
+        }
     }
     if (scroll_to_bottom_ || ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) ImGui::SetScrollHereY(1.0f);
     scroll_to_bottom_ = false;

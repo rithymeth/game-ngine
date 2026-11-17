@@ -128,7 +128,7 @@ as well. The verdicts are a judgement from the source audit; the evidence column
 | Eject/possess camera | Eject and possess | Scene/Game view switching | Remote scene tree while running | The Scene View's camera is possessed while playing and Stop ejects to the pre-play camera; no separate pawn possession | `editor/src/world/scene_view_panel.cpp` (`PieOverlay`) | Partial |
 | Play in the rendered viewport | Yes, inside the level viewport | Yes, Game view | Yes, embedded game | Yes: the shaded Scene View runs the game (physics, scripts, animation) while the document plays | `editor/src/host/scene_shading.cpp` (`PlayDelta`) | Done |
 | Stop behavior | Restores editor state | Restores editor state | Restores editor state | Stop restores the document and selection from the play snapshot and ejects the camera; the separate Live Viewport still keeps running until stopped/reloaded | `editor/src/core/play_session.cpp`, `editor/src/world/scene_view_panel.cpp` | Done |
-| Console filters | Categories, verbosity, search, source links | Log/error/warning filters, collapse, clear on play | Output, errors/warnings, search | One substring filter; no severity/category/collapse | `editor/src/devtools/console_panel.cpp:83` | Partial |
+| Console filters | Categories, verbosity, search, source links | Log/error/warning filters, collapse, clear on play | Output, errors/warnings, search | Severity toggles, a category picker, a text filter, consecutive-repeat collapse with counts and Clear on Play (on by default); no source links or timestamps | `editor/src/devtools/console_panel.cpp` (`VisibleLines`, `Categories`), `engine/include/aether/core/console.h` (`ConsoleLine::category`) | Partial |
 | Messages linked to objects | Message Log links to actor/asset | Console double-click opens source/asset | Errors link to script line/node | Notification service keeps the history with an entity, asset or file target; the Messages tool links back (entity selects it, asset opens its folder) | `editor/src/core/notifications.cpp`, `editor/src/ui/notification_overlay.cpp` | Partial |
 | Profiler/debugger | Insights, GPU Visualizer, stat commands | Profiler, Frame Debugger, Memory Profiler | Profiler, Monitors, debugger with breakpoints | Profiler tool, net profiler, crash reports | `editor/src/devtools/`, `editor/src/net/` | Partial |
 
@@ -958,8 +958,17 @@ camera; Stop ejects back to the camera the play started from. The camera pose an
 `SceneViewPanel::PieOverlay` (`LastPie`). "Edits are discarded on Stop" is also the tooltip on both Play entry points
 (the workspace strip's chip and the Scene panel's button) and on Stop. Tests:
 `SceneView_PieBordersBannersAndEjectsThePossessedCamera`, `SceneDocument_PlayDeltaIsTheFramesTimeOnlyWhileSimulating`.
-Still open in this stage: Simulate, a separate Game view or window, the PIE console tab, the runtime stats overlay
-(physics bodies, script time, triangles) and the error-to-entity links and screenshot gate.
+
+Done so far (2026-11-17, second): the PIE console and the runtime stats. `ConsoleLine` now carries the `category` a
+copied log line came from, so the Console filters on data rather than on text. `ConsolePanel` gained severity toggles
+(Trace/Info/Warn/Error), a category picker built from what has been logged, consecutive-repeat collapse with counts,
+and Clear on Play (on by default) which empties the output as a play session first appears; its filters are a pure
+`VisibleLines()` and `Categories()` so they can be tested without a frame. The Console tool passes whether the document
+is playing. The stats chip in the Scene View is the runtime stats overlay in PIE: CPU frame time (`io.Framerate`),
+physics bodies and script instances join entities, draw calls and FPS, fed by `LiveViewport::PhysicsBodyCount()` and
+`ScriptInstanceCount()` through `FrameStats`. Tests:
+`ConsolePanel_FiltersCollapsesAndStartsEachPlayClean`. Still open in this stage: Simulate, a separate Game view or
+window, triangle and script-time counters, the error-to-entity links and the screenshot gate.
 
 Dependency: Stage 2's view modes and Stage 0's notification/error service. A frame debugger and GPU capture are engine
 work and are explicitly not part of this stage.

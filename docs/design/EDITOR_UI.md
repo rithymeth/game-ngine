@@ -806,6 +806,15 @@ one click from the asset.
 - **Console:** engine log with severity filters, search, timestamps
   toggle, "Clear on Play" toggle, and a command input line at the bottom
   (CVars and commands, with auto-complete).
+  Implemented: the severity row toggles Trace/Info/Warn/Error (trace off by
+  default), a category picker lists the categories the output holds (copied
+  log lines carry theirs; command output has none and shows under "All
+  categories"), a text filter, and "Collapse", which folds consecutive
+  identical lines into one row with an `(xN)` count. "Clear on Play" is on by
+  default: the first frame of each play session starts the output empty.
+  `ConsolePanel::VisibleLines()` returns exactly what the filters let through,
+  with the collapse counts, for tests and hosts. No timestamps or source
+  links yet.
 - **Output:** build and compile output (C++ builds, shader compiles, cooks)
   with clickable file:line links.
 - **Messages:** the editor's own warnings and errors that are not a log line, newest

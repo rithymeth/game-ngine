@@ -3017,6 +3017,8 @@ AETHER_TEST(SceneView_TheStatsChipNamesTheEntitiesTheDrawsAndTheFrameRate) {
             stats.valid = true;
             stats.gpu_ms = 3.1f;
             stats.draw_calls = 88;
+            stats.physics_bodies = 12;
+            stats.scripts = 3;
             return stats;
         }
         void Stop() override {}
@@ -3054,6 +3056,18 @@ AETHER_TEST(SceneView_TheStatsChipNamesTheEntitiesTheDrawsAndTheFrameRate) {
     AETHER_CHECK(chrome.stats_min.x > chrome.selection_max.x);
     AETHER_CHECK(chrome.stats_max.x - chrome.stats_min.x > 40.0f);
     AETHER_CHECK(chrome.selection_min.y > chrome.viewport_label_min.y);
+
+    // In PIE the chip is the game's runtime stats overlay: CPU frame time, physics bodies and script instances join the counts.
+    AETHER_CHECK(shaded.find("bodies") == std::string::npos); // nothing runs while editing
+    document.Play();
+    for (int i = 0; i < 2; ++i) frame();
+    const std::string playing = panel.LastStatsText();
+    AETHER_CHECK(playing.find("2 entities") != std::string::npos);
+    AETHER_CHECK(playing.find("88 draw calls") != std::string::npos);
+    AETHER_CHECK(playing.find("12 bodies") != std::string::npos);
+    AETHER_CHECK(playing.find("3 scripts") != std::string::npos);
+    AETHER_CHECK(playing.find("CPU") != std::string::npos && playing.find(" ms") != std::string::npos);
+    AETHER_CHECK(playing.find("FPS") != std::string::npos);
 }
 
 // Play in the editor: the picture is the game's, behind a 2 px border -- green while playing, amber with a tint while paused -- with a
