@@ -417,10 +417,16 @@ right:
 - Save, Undo, Redo. Each is the command table's entry: the enabled state and
   the chord in the tooltip come from the registry, and Undo's tooltip names
   what it would undo.
-- The Scene View's transform tools: Move, Rotate, Scale, World/Local,
-  Pivot/Centre, Snap with the step for the current mode. These are the same
-  `ViewportTools` the Scene View drives, so W/E/R/Q/P and the buttons cannot
-  disagree.
+- The Scene View's transform tools, in the concept's row-3 order: Move,
+  Rotate and Scale as drawn icons at the left (arrow cross, arc, box), then
+  the view's own dropdowns -- "Perspective" (Projection and the Top/Front/Side
+  presets), "Lit" (the view mode) and "Show" (Grid/Gizmos/Bounds/Helpers/
+  Collision) -- then World/Local, Pivot/Centre and Snap with the step for the
+  current mode. These are the same `ViewportTools` and `SceneViewPanel` the
+  Scene View drives, so W/E/R/Q/P, the icons and the picture's chips cannot
+  disagree; a click in either place is the same change. The icons and the
+  dropdown chips record their rectangles (`LastModeIcons`, `LastLookControls`)
+  so a test clicks one by position instead of by guessed pixel.
 - Play controls live on the workspace strip above, where the concept puts them
   (a green chip, Pause/Resume, Step and Stop); the toolbar has none, so the
   two rows cannot disagree and neither is a second copy of the other.
@@ -430,6 +436,10 @@ right:
   that is green once the scene is saved and amber while it has changes, then
   "World saved" or "Unsaved changes". Text, not a button -- Save is the
   action.
+
+When the Scene View stands on its own, its toolbar row draws the same parts
+in the same order (`DrawModeIcons`, `DrawLookToolbar`, `DrawSpaceAndSnap`),
+so the shell's row 3 and the view's row cannot drift apart.
 
 The current scene is not chosen here: the toolbar acts on the focused
 document -- the active tab's -- which is the scene today and becomes whichever

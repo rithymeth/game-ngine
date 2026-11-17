@@ -2223,7 +2223,13 @@ void EditorWorkspace::DrawMainToolbar() {
     ImGui::SameLine();
     ImGui::TextDisabled("|");
     ImGui::SameLine();
-    impl.scene_view.Tools().DrawToolbar();
+    // The concept's row 3: the gizmo's icons first, then the view's "Perspective", "Lit" and "Show" dropdowns, then the
+    // space, pivot and snap controls. The view's own toolbar row draws the same parts in the same order.
+    impl.scene_view.Tools().DrawModeIcons();
+    ImGui::SameLine();
+    impl.scene_view.DrawLookToolbar();
+    ImGui::SameLine();
+    impl.scene_view.Tools().DrawSpaceAndSnap();
     ImGui::SameLine();
     ImGui::TextDisabled("|");
     ImGui::SameLine();

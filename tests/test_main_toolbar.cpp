@@ -3,10 +3,16 @@
 
 #include "core/scene_document.h"
 #include "world/scene_panel.h"
+#include "world/scene_view_panel.h"
+#include "world/viewport_tools.h"
 
 #include "test_framework.h"
 
 #include <imgui.h>
+
+#include <algorithm>
+#include <string>
+#include <vector>
 
 // Stage 1 of docs/design/EDITOR_PARITY_AUDIT.md: the main toolbar. Its buttons are the command table and the open
 // document, so what a click does is testable without the pixels: Step advances exactly one frame, and the tool
@@ -130,4 +136,84 @@ AETHER_TEST(MainToolbar_DrawsInEveryPlayState) {
     draw_once(); // paused
     document.Stop();
     CHECK(document.PlayState() == PlaySession::State::Editing);
+}
+
+// The concept's row 3: Move/Rotate/Scale as icons at the left, then the "Perspective", "Lit" and "Show" dropdowns, then the
+// space, pivot and snap controls. The rectangles are what a host aligns to and a test clicks; the choices are the view's
+// own state, so a click here is the same change the picture's chips make.
+AETHER_TEST(MainToolbar_DrawsTheConceptsRowThree) {
+    HeadlessImGui imgui;
+    EditorWorkspace workspace;
+    SceneViewPanel& view = workspace.SceneView();
+    auto frame = [&] {
+        ImGui::NewFrame();
+        ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f));
+        ImGui::SetNextWindowSize(ImVec2(1500.0f, 220.0f));
+        if (ImGui::Begin("##toolbar_row3", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize)) workspace.DrawMainToolbar();
+        ImGui::End();
+        ImGui::Render();
+    };
+    auto step = [&](const ImVec2& at, bool down) {
+        ImGuiIO& io = ImGui::GetIO();
+        io.AddMousePosEvent(at.x, at.y);
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, down);
+        frame();
+    };
+    auto click = [&](const ImVec2& at) {
+        step(ImVec2(2.0f, 2.0f), false);
+        step(at, false);
+        step(at, true);
+        step(at, false);
+        frame();
+    };
+    auto centre = [](const ImVec2& low, const ImVec2& high) { return ImVec2((low.x + high.x) * 0.5f, (low.y + high.y) * 0.5f); };
+    auto item_at = [](const std::vector<std::string>& items, const char* label) {
+        const auto it = std::find(items.begin(), items.end(), label);
+        return it == items.end() ? std::ptrdiff_t(-1) : static_cast<std::ptrdiff_t>(it - items.begin());
+    };
+
+    step(ImVec2(2.0f, 2.0f), false);
+    const ViewportTools::ModeIcons icons = view.Tools().LastModeIcons();
+    CHECK(icons.move_max.x > icons.move_min.x && icons.rotate_max.x > icons.rotate_min.x && icons.scale_max.x > icons.scale_min.x);
+    CHECK(icons.rotate_min.x >= icons.move_max.x && icons.scale_min.x >= icons.rotate_max.x); // the icons sit in a row
+
+    click(centre(icons.scale_min, icons.scale_max));
+    CHECK(view.Tools().Mode() == GizmoMode::Scale);
+    click(centre(icons.move_min, icons.move_max));
+    CHECK(view.Tools().Mode() == GizmoMode::Move);
+
+    const SceneViewPanel::LookControls row = view.LastLookControls();
+    CHECK(row.projection_max.x > row.projection_min.x && row.mode_max.x > row.mode_min.x && row.show_max.x > row.show_min.x);
+    CHECK(row.mode_min.x >= row.projection_max.x && row.show_min.x >= row.mode_max.x); // and the dropdowns after them
+
+    // Perspective dropdown: the five choices; Top is the top orthographic view.
+    click(centre(row.projection_min, row.projection_max));
+    SceneViewPanel::LookControls open = view.LastLookControls();
+    CHECK(open.items.size() == 5);
+    const std::ptrdiff_t top = item_at(open.items, "Top");
+    CHECK(top >= 0);
+    if (top >= 0) click(centre(open.item_min[static_cast<usize>(top)], open.item_max[static_cast<usize>(top)]));
+    CHECK(view.Camera().projection == SceneViewProjection::Orthographic);
+    CHECK(view.Camera().Orientation() == SceneViewOrientation::Top);
+
+    // Lit dropdown: the four view modes; Lit is what the shell's renderer draws.
+    open = view.LastLookControls();
+    click(centre(open.mode_min, open.mode_max));
+    open = view.LastLookControls();
+    CHECK(open.items.size() == 4);
+    const std::ptrdiff_t lit = item_at(open.items, "Lit");
+    CHECK(lit >= 0);
+    if (lit >= 0) click(centre(open.item_min[static_cast<usize>(lit)], open.item_max[static_cast<usize>(lit)]));
+    CHECK(view.mode == SceneViewMode::Lit);
+
+    // Show dropdown: the five overlays; a click on one flips it.
+    open = view.LastLookControls();
+    click(centre(open.show_min, open.show_max));
+    open = view.LastLookControls();
+    CHECK(open.items.size() == 5);
+    const std::ptrdiff_t grid = item_at(open.items, "Grid");
+    CHECK(grid >= 0);
+    const bool grid_before = view.show.grid;
+    if (grid >= 0) click(centre(open.item_min[static_cast<usize>(grid)], open.item_max[static_cast<usize>(grid)]));
+    CHECK(view.show.grid != grid_before);
 }

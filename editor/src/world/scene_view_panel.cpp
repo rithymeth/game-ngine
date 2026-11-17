@@ -338,6 +338,104 @@ void SceneViewPanel::FocusSelection(const SceneDocument& document, const ModelBo
     camera_.ortho_height = std::clamp(span * 1.6f + 5.0f, 3.0f, 100000.0f); // the orthographic zoom is its own, so focus sets both
 }
 
+// The concept's row 3: the projection, the view mode and the overlays as dropdowns ("Perspective v", "Lit v", "Show v")
+// rather than a row of buttons. Each is a drawn chip with a caret, like the picture's own chips; its popup lists the
+// choices and records their rectangles, so a test clicks one where a person would.
+void SceneViewPanel::DrawLookToolbar() {
+    look_ = LookControls{};
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    const f32 height = ImGui::GetFrameHeight();
+    const ImU32 text_color = ImGui::GetColorU32(ImGuiCol_Text);
+    const ImU32 muted = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+    const auto drop = [&](const char* id, const char* label, ImVec2& min, ImVec2& max) {
+        ImGui::InvisibleButton(id, ImVec2(ImGui::CalcTextSize(label).x + 34.0f, height));
+        min = ImGui::GetItemRectMin();
+        max = ImGui::GetItemRectMax();
+        if (ImGui::IsItemHovered()) draw->AddRectFilled(min, max, ImGui::GetColorU32(ImGuiCol_HeaderHovered), 4.0f);
+        const ImVec2 text = ImGui::CalcTextSize(label);
+        draw->AddText(ImVec2(min.x + 8.0f, std::floor((min.y + max.y - text.y) * 0.5f)), text_color, label);
+        const f32 caret_x = max.x - 14.0f;
+        const f32 caret_y = (min.y + max.y) * 0.5f;
+        draw->AddTriangleFilled(ImVec2(caret_x - 4.0f, caret_y - 2.0f), ImVec2(caret_x + 4.0f, caret_y - 2.0f), ImVec2(caret_x, caret_y + 3.0f), muted);
+        if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        return ImGui::IsItemClicked();
+    };
+    const auto item = [&](const char* label, bool selected) {
+        const bool chosen = ImGui::Selectable(label, selected);
+        look_.items.emplace_back(label);
+        look_.item_min.push_back(ImGui::GetItemRectMin());
+        look_.item_max.push_back(ImGui::GetItemRectMax());
+        if (chosen) ImGui::CloseCurrentPopup();
+        return chosen;
+    };
+
+    // Perspective or an orthographic view, with the three axis presets; a preset switches to orthographic and keeps that
+    // projection's own zoom.
+    const SceneViewOrientation orientation = camera_.Orientation();
+    const bool ortho = camera_.projection == SceneViewProjection::Orthographic;
+    const char* projection = orientation == SceneViewOrientation::Top     ? "Top"
+                             : orientation == SceneViewOrientation::Front ? "Front"
+                             : orientation == SceneViewOrientation::Side  ? "Side"
+                             : ortho                                      ? "Orthographic"
+                                                                          : "Perspective";
+    if (drop("##look_projection", projection, look_.projection_min, look_.projection_max)) ImGui::OpenPopup("##look_projection_menu");
+    if (ImGui::BeginPopup("##look_projection_menu")) {
+        struct Choice {
+            const char* label;
+            SceneViewProjection projection;
+            SceneViewOrientation orientation; // Free: a projection, not a preset
+        };
+        const Choice choices[] = {{"Perspective", SceneViewProjection::Perspective, SceneViewOrientation::Free},
+                                  {"Orthographic", SceneViewProjection::Orthographic, SceneViewOrientation::Free},
+                                  {"Top", SceneViewProjection::Orthographic, SceneViewOrientation::Top},
+                                  {"Front", SceneViewProjection::Orthographic, SceneViewOrientation::Front},
+                                  {"Side", SceneViewProjection::Orthographic, SceneViewOrientation::Side}};
+        for (const Choice& choice : choices) {
+            const bool selected = choice.orientation != SceneViewOrientation::Free
+                                      ? orientation == choice.orientation
+                                      : choice.projection == SceneViewProjection::Perspective ? camera_.projection == choice.projection
+                                                                                              : ortho && orientation == SceneViewOrientation::Free;
+            if (item(choice.label, selected)) {
+                if (choice.orientation != SceneViewOrientation::Free) camera_.Look(choice.orientation);
+                else camera_.projection = choice.projection;
+            }
+        }
+        ImGui::EndPopup();
+    }
+    ImGui::SameLine();
+    // Wireframe is the boxes above the grid; Lit, Unlit and Normals are the shell's renderer.
+    if (drop("##look_mode", kViewModes[static_cast<int>(mode)].name, look_.mode_min, look_.mode_max)) ImGui::OpenPopup("##look_mode_menu");
+    if (ImGui::BeginPopup("##look_mode_menu")) {
+        for (const ViewModeEntry& entry : kViewModes) {
+            if (item(entry.name, mode == entry.mode)) mode = entry.mode;
+        }
+        ImGui::EndPopup();
+    }
+    ImGui::SameLine();
+    // Show: the overlays, as checkboxes because several can be on at once.
+    if (drop("##look_show", "Show", look_.show_min, look_.show_max)) ImGui::OpenPopup("##look_show_menu");
+    if (ImGui::BeginPopup("##look_show_menu")) {
+        struct Flag {
+            const char* label;
+            bool* value;
+            const char* tip;
+        };
+        const Flag flags[] = {{"Grid", &show.grid, "The ground grid"},
+                              {"Gizmos", &show.gizmos, "Cursors, cameras and lights"},
+                              {"Bounds", &show.bounds, "Each entity's box"},
+                              {"Helpers", &show.helpers, "Axes and other helpers"},
+                              {"Collision", &show.collision, "Collider wireframes"}};
+        for (const Flag& flag : flags) {
+            look_.items.emplace_back(flag.label);
+            ImGui::Checkbox(flag.label, flag.value);
+            look_.item_min.push_back(ImGui::GetItemRectMin());
+            look_.item_max.push_back(ImGui::GetItemRectMax());
+            ImGui::SetItemTooltip("%s", flag.tip);
+        }
+        ImGui::EndPopup();
+    }
+}
+
 void SceneViewPanel::Draw(SceneDocument& document, const ModelBoundsCache* bounds, const std::filesystem::path& content_root, bool with_toolbar) {
     tools_.SetBounds(bounds);
     if (with_toolbar) {
@@ -345,49 +443,7 @@ void SceneViewPanel::Draw(SceneDocument& document, const ModelBoundsCache* bound
         ImGui::SameLine();
         ImGui::TextDisabled("|");
         ImGui::SameLine();
-        // Perspective or an orthographic top/front/side view; choosing a preset switches to orthographic, and each projection keeps its own zoom.
-        const bool ortho = camera_.projection == SceneViewProjection::Orthographic;
-        const SceneViewOrientation orientation = camera_.Orientation();
-        auto view_button = [](const char* label, bool active) {
-            if (active) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
-            const bool pressed = ImGui::Button(label);
-            if (active) ImGui::PopStyleColor();
-            return pressed;
-        };
-        if (view_button("Persp", !ortho)) camera_.projection = SceneViewProjection::Perspective;
-        ImGui::SetItemTooltip("Perspective orbit camera");
-        ImGui::SameLine();
-        if (view_button("Ortho", ortho)) camera_.projection = SceneViewProjection::Orthographic;
-        ImGui::SetItemTooltip("Orthographic projection, keeping the current angle");
-        ImGui::SameLine();
-        if (view_button("Top", orientation == SceneViewOrientation::Top)) camera_.Look(SceneViewOrientation::Top);
-        ImGui::SetItemTooltip("Top view: orthographic, looking down -Y");
-        ImGui::SameLine();
-        if (view_button("Front", orientation == SceneViewOrientation::Front)) camera_.Look(SceneViewOrientation::Front);
-        ImGui::SetItemTooltip("Front view: orthographic, looking along -Z");
-        ImGui::SameLine();
-        if (view_button("Side", orientation == SceneViewOrientation::Side)) camera_.Look(SceneViewOrientation::Side);
-        ImGui::SetItemTooltip("Side view: orthographic, looking along -X");
-        ImGui::SameLine();
-        ImGui::TextDisabled("|");
-        ImGui::SameLine();
-        // Wireframe is the boxes below; the rest are the real renderer (the shell's shading), Lit being its ordinary look.
-        ImGui::SetNextItemWidth(112.0f);
-        int mode_index = static_cast<int>(mode);
-        constexpr const char* kModes[] = {"Wireframe", "Lit", "Unlit", "Normals"};
-        if (ImGui::Combo("##view_mode", &mode_index, kModes, IM_ARRAYSIZE(kModes))) mode = static_cast<SceneViewMode>(mode_index);
-        ImGui::SetItemTooltip("Wireframe: boxes over the grid. Lit, Unlit and Normals: the scene drawn by the renderer (needs the Vulkan editor)");
-        ImGui::SameLine();
-        if (ImGui::Button("Show")) ImGui::OpenPopup("##show_flags");
-        ImGui::SetItemTooltip("Which overlays are drawn");
-        if (ImGui::BeginPopup("##show_flags")) {
-            ImGui::Checkbox("Grid", &show.grid);
-            ImGui::Checkbox("Gizmos", &show.gizmos);
-            ImGui::Checkbox("Bounds", &show.bounds);
-            ImGui::Checkbox("Helpers", &show.helpers);
-            ImGui::Checkbox("Collision", &show.collision);
-            ImGui::EndPopup();
-        }
+        DrawLookToolbar();
         ImGui::SameLine();
         ImGui::TextDisabled("%s", drop_.note.empty() ? "drop a model or a prefab from the Content Browser to place it" : drop_.note.c_str());
     }

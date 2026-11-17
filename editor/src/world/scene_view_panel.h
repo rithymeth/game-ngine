@@ -6,6 +6,7 @@
 #include "world/viewport_tools.h"
 
 #include <string>
+#include <vector>
 
 namespace aether::editor {
 
@@ -49,8 +50,22 @@ public:
     };
     const Chrome& LastChrome() const { return chrome_; }
 
+    // The concept's row 3 look controls, drawn after the gizmo icons: "Perspective", "Lit" and "Show" dropdowns. A
+    // projection preset (Top, Front, Side) also switches to orthographic. The buttons' rectangles and, while a popup is
+    // open, its items' labels and rectangles are reported, so a host aligns its chrome and a test clicks an item.
+    struct LookControls {
+        ImVec2 projection_min{}, projection_max{};
+        ImVec2 mode_min{}, mode_max{};
+        ImVec2 show_min{}, show_max{};
+        std::vector<std::string> items;        // the open popup's labels, top to bottom
+        std::vector<ImVec2> item_min, item_max; // and their rectangles
+    };
+    void DrawLookToolbar();
+    const LookControls& LastLookControls() const { return look_; }
+
 private:
     Chrome chrome_;
+    LookControls look_;
     SceneViewCamera camera_;
     ViewportTools tools_;
     ContentDrop drop_;          // an asset dragged in from the Content Browser: where it would land, and the last thing to say about a drop

@@ -32,13 +32,59 @@ void ApplyMarquee(SceneDocument& document, const std::vector<Entity>& hits, bool
 
 } // namespace
 
-void ViewportTools::DrawToolbar() {
-    for (const GizmoMode mode : {GizmoMode::Move, GizmoMode::Rotate, GizmoMode::Scale}) {
-        const char* label = mode == GizmoMode::Move ? "Move" : (mode == GizmoMode::Rotate ? "Rotate" : "Scale");
-        if (ImGui::RadioButton(label, mode_ == mode)) mode_ = mode;
-        ImGui::SetItemTooltip("%s (%c)", label, mode == GizmoMode::Move ? 'W' : (mode == GizmoMode::Rotate ? 'E' : 'R'));
-        ImGui::SameLine();
-    }
+// The gizmo choice as three drawn icons rather than labelled radio buttons: crossing arrows for Move, an arc with an
+// arrowhead for Rotate, and a corner-to-corner arrow for Scale. Drawn shapes need no glyph the default font may lack.
+void ViewportTools::DrawModeIcons() {
+    mode_icons_ = ModeIcons{};
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    const f32 size = ImGui::GetFrameHeight();
+    const auto icon = [&](const char* id, GizmoMode mode, char shortcut, const char* tip, ImVec2& min, ImVec2& max, const auto& glyph) {
+        ImGui::InvisibleButton(id, ImVec2(size, size));
+        min = ImGui::GetItemRectMin();
+        max = ImGui::GetItemRectMax();
+        const bool active = mode_ == mode;
+        if (active) draw->AddRectFilled(min, max, ImGui::GetColorU32(ImGuiCol_ButtonActive), 4.0f);
+        else if (ImGui::IsItemHovered()) draw->AddRectFilled(min, max, ImGui::GetColorU32(ImGuiCol_HeaderHovered), 4.0f);
+        glyph(ImGui::GetColorU32(active ? ImGuiCol_Text : ImGuiCol_TextDisabled));
+        if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        ImGui::SetItemTooltip("%s (%c)", tip, shortcut);
+        if (ImGui::IsItemClicked()) mode_ = mode;
+    };
+    icon("##gizmo_move", GizmoMode::Move, 'W', "Move", mode_icons_.move_min, mode_icons_.move_max, [&](ImU32 color) {
+        const ImVec2 c((mode_icons_.move_min.x + mode_icons_.move_max.x) * 0.5f, (mode_icons_.move_min.y + mode_icons_.move_max.y) * 0.5f);
+        const f32 arm = size * 0.24f;
+        draw->AddLine(ImVec2(c.x - arm, c.y), ImVec2(c.x + arm, c.y), color, 1.5f);
+        draw->AddLine(ImVec2(c.x, c.y - arm), ImVec2(c.x, c.y + arm), color, 1.5f);
+        const f32 head = 3.0f;
+        draw->AddTriangleFilled(ImVec2(c.x + arm + 3.0f, c.y), ImVec2(c.x + arm - head, c.y - head), ImVec2(c.x + arm - head, c.y + head), color);
+        draw->AddTriangleFilled(ImVec2(c.x - arm - 3.0f, c.y), ImVec2(c.x - arm + head, c.y - head), ImVec2(c.x - arm + head, c.y + head), color);
+        draw->AddTriangleFilled(ImVec2(c.x, c.y - arm - 3.0f), ImVec2(c.x - head, c.y - arm + head), ImVec2(c.x + head, c.y - arm + head), color);
+        draw->AddTriangleFilled(ImVec2(c.x, c.y + arm + 3.0f), ImVec2(c.x - head, c.y + arm - head), ImVec2(c.x + head, c.y + arm - head), color);
+    });
+    ImGui::SameLine(0.0f, 2.0f);
+    icon("##gizmo_rotate", GizmoMode::Rotate, 'E', "Rotate", mode_icons_.rotate_min, mode_icons_.rotate_max, [&](ImU32 color) {
+        const ImVec2 c((mode_icons_.rotate_min.x + mode_icons_.rotate_max.x) * 0.5f, (mode_icons_.rotate_min.y + mode_icons_.rotate_max.y) * 0.5f);
+        const f32 radius = size * 0.26f;
+        ImVec2 points[14];
+        for (int i = 0; i < 14; ++i) {
+            const f32 angle = 0.6f + static_cast<f32>(i) / 13.0f * 4.8f; // most of a circle, open at the right for the head
+            points[i] = ImVec2(c.x + std::cos(angle) * radius, c.y + std::sin(angle) * radius);
+        }
+        draw->AddPolyline(points, 14, color, ImDrawFlags_None, 1.5f);
+        const ImVec2 tip(points[13].x + 3.0f, points[13].y - 2.0f);
+        draw->AddTriangleFilled(tip, ImVec2(points[13].x - 1.0f, points[13].y - 4.0f), ImVec2(points[13].x - 1.0f, points[13].y + 2.0f), color);
+    });
+    ImGui::SameLine(0.0f, 2.0f);
+    icon("##gizmo_scale", GizmoMode::Scale, 'R', "Scale", mode_icons_.scale_min, mode_icons_.scale_max, [&](ImU32 color) {
+        const ImVec2 low(mode_icons_.scale_min.x + 6.0f, mode_icons_.scale_max.y - 6.0f);
+        const ImVec2 high(mode_icons_.scale_max.x - 6.0f, mode_icons_.scale_min.y + 6.0f);
+        draw->AddLine(low, high, color, 1.5f);
+        draw->AddRect(ImVec2(low.x - 2.0f, low.y - 2.0f), ImVec2(low.x + 2.0f, low.y + 2.0f), color, 0.0f, 0, 1.2f);
+        draw->AddRect(ImVec2(high.x - 2.0f, high.y - 2.0f), ImVec2(high.x + 2.0f, high.y + 2.0f), color, 0.0f, 0, 1.2f);
+    });
+}
+
+void ViewportTools::DrawSpaceAndSnap() {
     const bool local = space_ == GizmoSpace::Local;
     if (ImGui::Button(local ? "Local" : "World")) space_ = local ? GizmoSpace::World : GizmoSpace::Local;
     ImGui::SetItemTooltip("Move and Rotate handles follow the %s axes (Q)", local ? "object's own" : "world's");
@@ -56,6 +102,12 @@ void ViewportTools::DrawToolbar() {
     else if (mode_ == GizmoMode::Rotate) ImGui::DragFloat("##snap_rotate", &snap_rotate_, 0.5f, 1.0f, 90.0f, "%.0f deg");
     else ImGui::DragFloat("##snap_scale", &snap_scale_, 0.01f, 0.01f, 10.0f, "%.2f");
     ImGui::EndDisabled();
+}
+
+void ViewportTools::DrawToolbar() {
+    DrawModeIcons();
+    ImGui::SameLine();
+    DrawSpaceAndSnap();
 }
 
 void ViewportTools::HandleInput(SceneDocument& document, const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, bool hovered, bool active) {

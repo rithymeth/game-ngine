@@ -621,6 +621,18 @@ letters of the OS user name unless a host or test calls `SetUserInitials`. Tests
 `EditorWorkspace_TheMenuBarNamesTheProjectAndItsSaveState` checks the project's stem and "All changes saved", the change
 to "Unsaved changes" after an edit, and the avatar's rectangle to the chip's right.
 
+Done so far (2026-11-17): the main toolbar's row 3. The transform tools are drawn icons now, not radio buttons: a
+crossing-arrow Move, an arc Rotate and a box Scale at the row's left, each a real button with the active tool filled and
+a "Move (W)" tooltip, so the mouse and the chords still set one `ViewportTools::Mode`. After them come the view's
+dropdowns as drawn chips with carets: "Perspective" (Projection plus the Top/Front/Side presets -- the chip's label
+follows the camera), "Lit" (the four view modes) and "Show" (Grid/Gizmos/Bounds/Helpers/Collision as checkboxes), all
+drawn by `SceneViewPanel::DrawLookToolbar` and recorded in `LastLookControls`; World/Local, Pivot/Centre and the snap
+follow as before (`ViewportTools::DrawSpaceAndSnap`). The same three calls, in the same order, are the Scene View's own
+toolbar row when it stands alone, so the two rows cannot drift. The old inline Persp/Ortho/Top/Front/Side buttons and
+the mode/show combos in the view are gone; the in-picture chips remain and read the same state. Tests in
+`tests/test_main_toolbar.cpp`: `MainToolbar_DrawsTheConceptsRowThree` clicks the icons and each dropdown by its recorded
+rectangle and checks the view's camera, mode and overlays changed.
+
 ### Stage 3 — Content browser and importer parity (L)
 
 Outcome: assets can be found, judged, imported, fixed and opened without leaving the editor.

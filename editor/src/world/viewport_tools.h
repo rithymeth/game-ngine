@@ -30,7 +30,19 @@ public:
     void SetBounds(const ModelBoundsCache* bounds) { bounds_ = bounds; }
     const ModelBoundsCache* Bounds() const { return bounds_; }
 
-    // The mode buttons, the world/local and pivot choices and the snap controls on the current line (the caller may SameLine and add to it).
+    // The concept's row 3 draws the gizmo choice as icons at the row's left: Move, Rotate and Scale, the chosen one lit.
+    // Their rectangles are reported so a host aligns its chrome and a test clicks them; DrawToolbar draws these and the
+    // space/pivot/snap controls together, as the full-width view's row does.
+    struct ModeIcons {
+        ImVec2 move_min{}, move_max{};
+        ImVec2 rotate_min{}, rotate_max{};
+        ImVec2 scale_min{}, scale_max{};
+    };
+    void DrawModeIcons();
+    const ModeIcons& LastModeIcons() const { return mode_icons_; }
+    // The World/Local and Pivot/Centre choices and the snap checkbox with its step, after the look dropdowns.
+    void DrawSpaceAndSnap();
+    // The mode icons and the world/local, pivot and snap controls on the current line (the caller may SameLine and add to it).
     void DrawToolbar();
     // For the ImGui item just submitted over the view (an invisible button covering `origin`, `size`): W, E and R choose the mode, a press on a
     // gizmo handle starts a drag that follows the mouse and records one undo step on release, and a click elsewhere selects (ctrl toggles, alt steps
@@ -57,6 +69,7 @@ public:
 private:
     enum class MarqueeOperation { Replace, Add, Subtract };
     TransformGizmo gizmo_;
+    ModeIcons mode_icons_;
     const ModelBoundsCache* bounds_ = nullptr;
     GizmoMode mode_ = GizmoMode::Move;
     GizmoSpace space_ = GizmoSpace::World;
