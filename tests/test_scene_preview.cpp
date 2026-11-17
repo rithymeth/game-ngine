@@ -6,6 +6,7 @@
 #include "host/live_viewport_panel.h"
 #include "host/scene_shading.h"
 #endif
+#include "world/scene_view_panel.h"
 #include "content/content_drag.h"
 #include "world/content_drop.h"
 #include "world/scene_preview_panel.h"
@@ -89,6 +90,36 @@ usize StripScripts(SceneDocument& document) {
     for (const Entity entity : scripted) AETHER_CHECK(document.DestroyEntity(entity));
     return scripted.size();
 }
+
+// TAA jitters the projection differently every frame, so two renders of an identical scene still differ by a fraction of a percent of their
+// pixels. A check that compares frames for a standstill sets AETHER_RENDER_TAA=0; the previous value goes back when this leaves scope.
+class ScopedTaaOff {
+public:
+    ScopedTaaOff() {
+        if (const char* prior = std::getenv("AETHER_RENDER_TAA")) {
+            had_prior_ = true;
+            prior_ = prior;
+        }
+#ifdef _WIN32
+        _putenv_s("AETHER_RENDER_TAA", "0");
+#else
+        setenv("AETHER_RENDER_TAA", "0", 1);
+#endif
+    }
+    ~ScopedTaaOff() {
+#ifdef _WIN32
+        _putenv_s("AETHER_RENDER_TAA", had_prior_ ? prior_.c_str() : "");
+#else
+        if (had_prior_) setenv("AETHER_RENDER_TAA", prior_.c_str(), 1);
+        else unsetenv("AETHER_RENDER_TAA");
+#endif
+    }
+    ScopedTaaOff(const ScopedTaaOff&) = delete;
+    ScopedTaaOff& operator=(const ScopedTaaOff&) = delete;
+private:
+    bool had_prior_ = false;
+    std::string prior_;
+};
 
 } // namespace
 
@@ -639,6 +670,136 @@ AETHER_TEST(LiveSceneShading_CooksOnFirstUseAndFollowsTheDocument) {
     AETHER_CHECK(DifferingPixels(lit, shading.Viewport().Pixels()) > 160u * 90u / 10);
     shading.Stop();
     AETHER_CHECK(!shading.Ready());
+}
+
+// The Stage 5 gate's screenshots: the Scene View over a real play session -- idle (editing), playing and paused -- rendered with no
+// window through the same SceneViewPanel the shell hosts, each written as a PNG a person can open. Playing is checked to be a
+// different picture from idle (the game runs: the template's pickups spin) and paused to be the same picture as the frame it paused on.
+// The files go under the test project's Saved/Screenshots; set AETHER_PARITY_OUT to keep them, as the other capture tests do.
+AETHER_TEST(SceneView_PieScreenshotsOfIdlePlayingAndPaused) {
+    std::unique_ptr<gfx::rhi::IDevice> device = TryDevice();
+    if (!device) {
+        std::printf("    (no Vulkan device: install a driver, or Mesa's lavapipe, to run this)\n");
+        return;
+    }
+    Context imgui;
+    const stdfs::path project = MakeProject("PieScreenshots");
+    ScopedTaaOff taa_off; // the paused captures are compared for a standstill; the jitter would be noise
+    ScenePanel scene(project.parent_path() / "Content");
+    AETHER_CHECK(scene.OpenScene("Scenes/Main.ascene", true));
+    SceneDocument& document = scene.Document();
+    LiveSceneShading shading(*device, scene, [&] { return project; });
+    SceneViewPanel panel;
+    panel.shading = &shading;
+    panel.mode = SceneViewMode::Lit;
+    auto draw = [&] {
+        imgui.Frame();
+        ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f));
+        ImGui::SetNextWindowSize(ImVec2(480.0f, 320.0f));
+        ImGui::Begin("pie", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar);
+        panel.Draw(document);
+        ImGui::End();
+    };
+    const char* keep = std::getenv("AETHER_PARITY_OUT");
+    const stdfs::path out = (keep && *keep) ? stdfs::path(keep) : project.parent_path() / "Saved" / "Screenshots";
+    stdfs::create_directories(out);
+    // The shading throttles its draws, so the pixels right after an arbitrary draw can be the previous frame's. A shot follows one the
+    // renderer really took: the game is ticked once more at most, and each picture is the state at the moment it is captured.
+    auto fresh = [&] {
+        const u64 frames = shading.Viewport().FrameCount();
+        for (int attempt = 0; attempt < 8 && shading.Viewport().FrameCount() == frames; ++attempt) draw();
+    };
+    auto shot = [&](const char* name) {
+        const ImageTexture& picture = shading.Picture();
+        AETHER_CHECK(picture.Valid() && picture.Width() > 0 && picture.Height() > 0);
+        if (!picture.Valid()) return std::vector<u8>{};
+        const std::vector<u8>& rgba = shading.Viewport().Pixels();
+        std::vector<u8> rgb;
+        rgb.reserve(static_cast<std::size_t>(picture.Width()) * picture.Height() * 3);
+        for (usize i = 0; i + 3 < rgba.size(); i += 4) {
+            rgb.push_back(rgba[i]);
+            rgb.push_back(rgba[i + 1]);
+            rgb.push_back(rgba[i + 2]);
+        }
+        const std::vector<u8> png = assets::EncodePngRgb8(picture.Width(), picture.Height(), rgb);
+        std::ofstream(out / name, std::ios::binary).write(reinterpret_cast<const char*>(png.data()), static_cast<std::streamsize>(png.size()));
+        std::set<u32> colours;
+        for (usize i = 0; i + 3 < rgba.size(); i += 4 * 31) colours.insert(u32(rgba[i]) << 16 | u32(rgba[i + 1]) << 8 | rgba[i + 2]);
+        AETHER_CHECK(png.size() > 2000 && png[0] == 0x89 && png[1] == 'P'); // a real PNG of the scene, not a flat fill
+        AETHER_CHECK(colours.size() > 20);
+        return shading.Viewport().Pixels();
+    };
+
+    draw();
+    draw();
+    AETHER_CHECK(!panel.LastPie().active);
+    fresh();
+    const std::vector<u8> idle = shot("pie_idle.png");
+
+    document.Play();
+    for (int frame = 0; frame < 45; ++frame) draw(); // three quarters of a second: the pickups spin 67 degrees
+    AETHER_CHECK(panel.LastPie().active && !panel.LastPie().paused);
+    AETHER_CHECK(panel.LastPie().banner_text.find("Playing") == 0);
+    fresh();
+    const std::vector<u8> playing = shot("pie_playing.png");
+    const usize motion = DifferingPixels(idle, playing);
+    AETHER_CHECK(motion > 200); // the game runs in the picture: the pickups turned
+
+    document.Pause();
+    draw();
+    fresh();
+    AETHER_CHECK(panel.LastPie().paused);
+    AETHER_CHECK(panel.LastPie().banner_text.find("Paused") == 0);
+    const std::vector<u8> paused = shot("pie_paused.png");
+    AETHER_CHECK(DifferingPixels(playing, paused) == 0); // the frozen picture is the one it paused on, not a restarted scene
+    fresh();
+    AETHER_CHECK(DifferingPixels(paused, shading.Viewport().Pixels()) == 0); // and it stands: nothing moves while paused
+
+    document.Stop();
+    draw();
+    AETHER_CHECK(!panel.LastPie().active);
+    AETHER_CHECK(shading.Picture().Valid()); // the editor's own view comes back
+    std::printf("    screenshots: %s\n", out.string().c_str());
+}
+
+// The Stage 5 gate's determinism check: the same scene, started twice from the same cooked bytes and advanced the same N steps, is in the
+// same state. The state is the world as a scene file (SnapshotScene), not the picture: the renderer's lighting settles on its own schedule,
+// so early frames are legitimately darker, while the simulation must not depend on how long a frame took. A shorter run is checked to
+// differ, so the equal comparison means the game really moved and landed in the same place both times.
+AETHER_TEST(LiveViewport_TheSameStepsReachTheSameState) {
+    std::unique_ptr<gfx::rhi::IDevice> device = TryDevice();
+    if (!device) {
+        std::printf("    (no Vulkan device: install a driver, or Mesa's lavapipe, to run this)\n");
+        return;
+    }
+    const stdfs::path project = MakeProject("StepDeterminism");
+    stdfs::path cooked;
+    std::string error;
+    AETHER_CHECK(CookForPreview(project, "Scenes/Main.ascene", project.parent_path() / "Saved" / "StepDeterminism", &cooked, &error));
+    constexpr u32 kWidth = 320, kHeight = 180;
+    SceneViewCamera camera;
+    camera.target = Vec3(0.0f, 1.0f, 0.0f);
+    camera.distance = 9.0f;
+    LiveViewport view(*device);
+    auto run = [&](int steps) {
+        AETHER_CHECK(view.Load(cooked, "Scenes/Main.ascene", kWidth, kHeight, &error)); // a fresh game from the same state
+        for (int step = 0; step < steps; ++step) {
+            AETHER_CHECK(view.Frame(1.0f / 60.0f, camera.Eye(), camera.Rotation(), camera.fov_degrees));
+        }
+        return view.SnapshotScene();
+    };
+    const std::vector<u8> ninety = run(90);
+    const std::vector<u8> thirty = run(30);
+    const std::vector<u8> ninety_again = run(90);
+    AETHER_CHECK(!ninety.empty());
+    auto differing = [](const std::vector<u8>& a, const std::vector<u8>& b) {
+        usize count = a.size() > b.size() ? a.size() - b.size() : b.size() - a.size();
+        for (usize i = 0; i < std::min(a.size(), b.size()); ++i) count += a[i] != b[i];
+        return count;
+    };
+    std::printf("    the 30-step state differs in %zu bytes; the second 90-step run in %zu\n", differing(ninety, thirty), differing(ninety, ninety_again));
+    AETHER_CHECK(differing(ninety, thirty) > 0);        // the steps moved the game
+    AETHER_CHECK(differing(ninety, ninety_again) == 0); // the same steps reach the same state
 }
 #endif
 

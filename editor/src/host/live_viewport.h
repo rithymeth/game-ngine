@@ -116,6 +116,9 @@ public:
     std::vector<RuntimeError> RuntimeErrors() const;
     // Where an entity is in the running game (its Transform's position, which a simulated body moves), false if the game has no such entity.
     bool PositionOf(const EntityGuid& entity, Vec3& position) const;
+    // The running game's world as a scene file (SaveSceneToMemory): the state the simulation is in after its last Frame. The same scene stepped
+    // the same way writes the same bytes; the picture cannot be compared that way, because the renderer's lighting converges on its own schedule.
+    std::vector<u8> SnapshotScene() const;
 
 private:
     // Frame's body: with a pose, the scene's camera is set to it for the draws (and put back when `free_camera`); without one, the camera

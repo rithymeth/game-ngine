@@ -6,6 +6,7 @@
 #include "aether/scene/components.h"
 #include "aether/reflection/serialize.h"
 #include "aether/scene/hierarchy.h"
+#include "aether/scene/serialization.h"
 #include "aether/scene/script_component.h"
 #include "aether/scene/prefab.h"
 #include "core/commands.h"
@@ -153,6 +154,11 @@ bool LiveViewport::PositionOf(const EntityGuid& entity, Vec3& position) const {
     if (transform == nullptr) return false;
     position = transform->position;
     return true;
+}
+
+std::vector<u8> LiveViewport::SnapshotScene() const {
+    if (!impl_ || !impl_->game) return {};
+    return SaveSceneToMemory(impl_->game->GetWorld());
 }
 
 namespace {

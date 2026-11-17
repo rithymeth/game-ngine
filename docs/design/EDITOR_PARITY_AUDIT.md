@@ -1026,6 +1026,26 @@ the Live Viewport. The cook's asset list (models and the textures and graphs `Ma
 `LiveViewport_FrameGameCameraDrawsFromTheScenesOwnCamera` and `GameView_PlaysTheSessionFromItsOwnCamera` (the last two on
 a Vulkan device). Still open in this stage: the screenshot gate.
 
+Done so far (2026-11-18, seventh): the Stage 5 gate's last check, PIE's headless screenshots.
+`SceneView_PieScreenshotsOfIdlePlayingAndPaused` drives the real `SceneViewPanel` over `LiveSceneShading` with no window, on the
+third-person template: it captures the editing picture, plays for three quarters of a second (the template's pickups spin at 90
+degrees a second), pauses and stops, and writes `pie_idle.png`, `pie_playing.png` and `pie_paused.png` (to `AETHER_PARITY_OUT` when
+set, else the test project's `Saved/Screenshots`). Each file is checked to be a real, non-flat PNG; the playing picture must differ
+from idle and the paused picture is compared for a standstill. Two properties of the renderer had to be handled to make that check
+mean something: `LiveSceneShading` throttles its draws, so a capture follows a frame the renderer really took (`Viewport().FrameCount()`
+moved) instead of whatever was in the buffer; and TAA jitters the projection every frame, so the test sets `AETHER_RENDER_TAA=0` for
+its duration (restoring the previous value) and then playing and paused come out byte-identical while idle is visibly the pickups'
+turn. The PIE chrome itself -- the green border and Playing banner, the amber Paused one -- is drawn by ImGui over the picture and is
+not in these files; it is asserted where it can be measured (`LastPie`, `SceneView_PieBordersBannersAndEjectsThePossessedCamera`),
+and the gate also asserts the panel's state at each capture. The gate's determinism check is
+`LiveViewport_TheSameStepsReachTheSameState`: three fresh loads of the same cooked scene stepped 90, 30 and 90 frames, where the two
+90-step runs must write byte-identical worlds (`LiveViewport::SnapshotScene`, the running game's world through `SaveSceneToMemory`)
+and the 30-step one must differ, so the equality is not vacuous. World state, not pixels: the renderer's environment lighting
+converges on its own schedule, so a picture of a 0.5 s run can legitimately differ from a 1.5 s one by the lighting alone, while the
+simulation must not depend on how long a frame took. With that, every Stage 5 gate item runs in ctest: the N-step
+determinism test, stop-restores-the-document, the error-to-entity links, the console filter tests and these screenshots. Nothing is
+open in this stage.
+
 Dependency: Stage 2's view modes and Stage 0's notification/error service. A frame debugger and GPU capture are engine
 work and are explicitly not part of this stage.
 
