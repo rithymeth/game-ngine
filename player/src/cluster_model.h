@@ -3,6 +3,7 @@
 #include "cluster_cull_pass.h"
 #include "view_cull.h"
 
+#include "aether/assets/model_importer.h"
 #include "aether/cook/cluster_hierarchy.h"
 #include "aether/gfx/rhi/device.h"
 #include "aether/math/math.h"
@@ -22,15 +23,18 @@ namespace aether::player {
 // in one frame (entities sharing the model): Pass(device, slot, use) makes them when first asked for.
 class ClusterModel {
 public:
-    // False (with a reason) for a mesh the hierarchy cannot be built on, or a device that makes no index buffer. The hierarchy is built on `positions` and `indices`
-    // (which must hold no vertex that no triangle uses: the simplifier takes the unused ones at the same position for seams and locks the mesh); when `vertex_ids` is
-    // given, vertex i of that mesh is vertex vertex_ids[i] of the buffer the draw will use, and the draw's indices are written in the buffer's numbering.
-    bool Build(gfx::rhi::IDevice& device, std::span<const Vec3> positions, std::span<const u32> indices, std::span<const u32> vertex_ids = {}, std::string* error = nullptr);
+    // Builds the hierarchy of a primitive (cook::BuildPrimitiveClusters, which welds alike vertices first) and its index buffer. False (with a reason) for a mesh the
+    // hierarchy cannot be built on, or a device that makes no index buffer.
+    bool Build(gfx::rhi::IDevice& device, std::span<const assets::MeshVertex> vertices, std::span<const u32> indices, std::string* error = nullptr);
     ~ClusterModel();
     ClusterModel() = default;
     ClusterModel(const ClusterModel&) = delete;
     ClusterModel& operator=(const ClusterModel&) = delete;
 
+    // The same from a hierarchy that is already built (one cooked into the pak): its indices must be in the numbering of the vertex buffer the draw will use, which
+    // has `vertex_count` vertices and `index_count` indices. False (with a reason) when it does not fit that mesh: no clusters, an index past the vertices, or
+    // leaves that hold other than the mesh's triangles.
+    bool Adopt(gfx::rhi::IDevice& device, cook::ClusterHierarchy hierarchy, usize vertex_count, usize index_count, std::string* error = nullptr);
     const cook::ClusterHierarchy& Hierarchy() const { return hierarchy_; }
     gfx::rhi::BufferHandle IndexBuffer() const { return index_buffer_; }
     u64 FullTriangles() const { return full_triangles_; }

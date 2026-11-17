@@ -67,6 +67,14 @@ struct CookedMesh {
     bool has_hlod() const { return !hlod.empty(); }
 };
 
+// The cluster hierarchy of one primitive, built the way the cooker and the player both need it. Models are often stored with a vertex for every corner of every
+// triangle, and the hierarchy builder finds neighbours by shared vertex numbers, so such a mesh is a heap of loose triangles to it (one level, nothing merged). So
+// vertices alike in position, normal and UV (their tangents may differ: they are made a triangle at a time) stand for each other, the hierarchy is built on the first of
+// each group alone (unused vertices left in would be taken for seams by the simplifier and lock the mesh), and the result's indices are put back into the primitive's
+// own numbering, so a draw with the primitive's own vertex buffer works. Deterministic. False (with a reason) as BuildClusterHierarchy.
+bool BuildPrimitiveClusters(std::span<const assets::MeshVertex> vertices, std::span<const u32> indices, const ClusterParams& params, ClusterHierarchy& out,
+                            std::string* error = nullptr);
+
 // False (with a reason) when a primitive's indices are out of range or the settings are invalid.
 bool CookMesh(const assets::MeshData& mesh, const MeshCookSettings& settings, CookedMesh& out,
               std::string* error = nullptr);

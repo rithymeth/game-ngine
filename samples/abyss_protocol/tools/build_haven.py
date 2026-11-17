@@ -295,7 +295,7 @@ def check_layout(layout, rows):
     assert not missing, f"models not placed: {missing}"
 
 
-def cook(project_dir, name, scene_rel, paks, build):
+def cook(project_dir, name, scene_rel, paks, build, clusters=False):
     proj = json.loads((REPO / "samples" / "forest_valley" / "ForestValley.aproject").read_text())
     proj["name"] = name
     proj["startup_scene"] = scene_rel
@@ -303,7 +303,7 @@ def cook(project_dir, name, scene_rel, paks, build):
     (project_dir / f"{name}.aproject").write_text(json.dumps(proj, indent=2))
     if paks.exists():
         shutil.rmtree(paks)
-    run([str(build / "tools" / "cook" / "aether_cook"), str(project_dir / f"{name}.aproject"), "--out", str(paks), "--config", "development"], cwd=project_dir)
+    run([str(build / "tools" / "cook" / "aether_cook"), str(project_dir / f"{name}.aproject"), "--out", str(paks), "--config", "development"] + (["--clusters"] if clusters else []), cwd=project_dir)
 
 
 def player_command(build, paks, scene_rel, width, height, extra):
@@ -435,7 +435,7 @@ def haven(args, rows, work, build):
     kinds = len({i["n"] for i in layout.items})
     print(f"{len(layout.items)} things placed ({kinds} different models: all 128 are in); zones: " + ", ".join(f"{z} {sum(1 for i in layout.items if i['zone'] == z)}" for z in sorted({i['zone'] for i in layout.items})), flush=True)
     paks = work / "haven_paks"
-    cook(project, "AbyssHaven", "Scenes/Haven.ascene", paks, build)
+    cook(project, "AbyssHaven", "Scenes/Haven.ascene", paks, build, clusters=args.clusters)
     (work / "camera_path.json").write_text(json.dumps(camera, indent=1))
     if args.no_render:
         return
@@ -528,6 +528,7 @@ def main():
     parser.add_argument("--out", default=None, help="the mp4 (default: WORK/abyss_haven.mp4)")
     parser.add_argument("--no-render", action="store_true", help="build and cook the scene, film nothing")
     parser.add_argument("--no-titles", action="store_true")
+    parser.add_argument("--clusters", action="store_true", help="cook the models' cluster hierarchies into the pak (aether_cook --clusters), for AETHER_VIRTUAL_GEOMETRY=1 to read instead of build")
     parser.add_argument("--stills", action="store_true", help="one frame from each camera stop instead of the film")
     args = parser.parse_args()
     work = pathlib.Path(args.work)
