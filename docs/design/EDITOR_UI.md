@@ -517,9 +517,16 @@ asset editor is focused once those documents adopt the contract in Stage 6.
   Pivot/Centre choice (P) sits them on the first selected entity's origin or
   at the middle of the selection; with Centre a turn and a group scale work
   round that middle.
-- **In PIE:** 2 px `pie.border` around the viewport (amber when paused);
-  a small banner at the top: "Playing — Shift+F1 to release the mouse,
-  Esc to stop".
+- **In PIE:** 2 px `pie.border` around the viewport (amber `pie.paused`
+  while paused, with a light tint over the picture) and a banner along the
+  top: "Playing — edits are discarded on Stop" or "Paused — Step or
+  Resume". The editor's own overlays are off while playing -- no grid,
+  boxes, kind names or legend, gizmo, colliders or key hints -- and
+  picking, gizmo dragging and asset drops are off; the picture is the
+  game's. The camera is the game's while playing and Stop ejects back to
+  the camera the play started from. The shaded picture gets each frame's
+  time while playing (one frame after Step while paused, nothing while
+  editing), so physics, scripts and animation run.
 - **Camera speed:** shows briefly in the middle ("Speed 4") when changed
   with the mouse wheel during fly mode.
 - **Fly camera:** with the right mouse button held the view looks and

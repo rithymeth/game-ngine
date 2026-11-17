@@ -53,6 +53,20 @@ public:
     // draws and GPU time, else just the entities and the frame rate. A host or a test reads it without the pixels.
     const std::string& LastStatsText() const { return stats_text_; }
 
+    // Play in the editor: while the document is playing or paused the view draws the running game behind a 2 px border (green
+    // pie.border; amber while paused with a tint over the picture) and a state banner, and leaves the editor's own overlays off.
+    // The camera is the game's while playing; Stop ejects back to the camera the play started from. A host and a test read this
+    // without the pixels.
+    struct PieOverlay {
+        bool active = false;
+        bool paused = false;
+        f32 border_thickness = 0.0f;
+        ImU32 border_color = 0;
+        ImVec2 banner_min{}, banner_max{};
+        std::string banner_text;
+    };
+    const PieOverlay& LastPie() const { return pie_; }
+
     // The concept's row 3 look controls, drawn after the gizmo icons: "Perspective", "Lit" and "Show" dropdowns. A
     // projection preset (Top, Front, Side) also switches to orthographic. The buttons' rectangles and, while a popup is
     // open, its items' labels and rectangles are reported, so a host aligns its chrome and a test clicks an item.
@@ -69,8 +83,11 @@ public:
 private:
     Chrome chrome_;
     LookControls look_;
+    PieOverlay pie_;
     std::string stats_text_; // the stats chip's last text
     SceneViewCamera camera_;
+    SceneViewCamera::State camera_before_play_{};
+    bool play_active_ = false; // the document was playing or paused at the previous draw
     ViewportTools tools_;
     ContentDrop drop_;          // an asset dragged in from the Content Browser: where it would land, and the last thing to say about a drop
     std::string notice_;        // a short message in the middle of the view (a saved or recalled bookmark), for `notice_left_` seconds

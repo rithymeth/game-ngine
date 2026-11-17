@@ -697,6 +697,24 @@ AETHER_TEST(SceneDocument_PlayRestorationNewSceneDiscardsTheOldSelectionSnapshot
     AETHER_CHECK(document.Selection() == std::vector<Entity>{document.Guids().Find(document.GetWorld(), guid)});
 }
 
+// What a host simulates each frame: the frame's time while playing, one frame after Step while paused, nothing while editing -- and a
+// long stall is capped, so a game does not leap across the scene after a breakpoint.
+AETHER_TEST(SceneDocument_PlayDeltaIsTheFramesTimeOnlyWhileSimulating) {
+    SceneDocument document;
+    document.CreateEntity("Crate");
+    AETHER_CHECK(document.PlayDelta(0.016f) == 0.0f); // editing: nothing runs
+    document.Play();
+    AETHER_CHECK(std::fabs(document.PlayDelta(0.016f) - 0.016f) < 1e-6f);
+    AETHER_CHECK(document.PlayDelta(2.0f) == 0.1f); // a stalled frame is capped
+    document.Pause();
+    AETHER_CHECK(document.PlayDelta(0.016f) == 0.0f);
+    document.Step();
+    AETHER_CHECK(document.PlayDelta(0.016f) > 0.0f); // exactly one frame
+    AETHER_CHECK(document.PlayDelta(0.016f) == 0.0f);
+    document.Stop();
+    AETHER_CHECK(document.PlayDelta(0.016f) == 0.0f);
+}
+
 // Entity handles are local to a world: loading another scene can reuse a selected handle for an unrelated object.
 AETHER_TEST(SceneDocument_LoadDropsOldSelectionButKeepsTheClipboard) {
     const auto dir = FreshSceneDir("aether_test_load_selection");

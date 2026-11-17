@@ -3055,3 +3055,72 @@ AETHER_TEST(SceneView_TheStatsChipNamesTheEntitiesTheDrawsAndTheFrameRate) {
     AETHER_CHECK(chrome.stats_max.x - chrome.stats_min.x > 40.0f);
     AETHER_CHECK(chrome.selection_min.y > chrome.viewport_label_min.y);
 }
+
+// Play in the editor: the picture is the game's, behind a 2 px border -- green while playing, amber with a tint while paused -- with a
+// banner that says what Stop will do, and Stop ejects the camera back to where the play started.
+AETHER_TEST(SceneView_PieBordersBannersAndEjectsThePossessedCamera) {
+    HeadlessImGui imgui;
+    SceneViewPanel panel;
+    SceneDocument document;
+    document.CreateEntity("Crate");
+    struct StubShading final : SceneViewShading {
+        bool Ready() const override { return false; }
+        const std::string& Note() const override { return note; }
+        bool Advance(SceneDocument&, const SceneViewCamera&, u32, u32, SceneViewMode, f32) override { return false; }
+        const ImageTexture& Picture() const override { return texture; }
+        void Stop() override {}
+        ImageTexture texture;
+        std::string note;
+    };
+    StubShading shading;
+    panel.shading = &shading;
+    panel.mode = SceneViewMode::Unlit;
+    auto frame = [&] {
+        imgui.Frame([&] {
+            ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f));
+            ImGui::SetNextWindowSize(ImVec2(1200.0f, 800.0f));
+            ImGui::Begin("view", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize);
+            panel.Draw(document);
+            ImGui::End();
+        });
+    };
+    for (int i = 0; i < 2; ++i) frame();
+    AETHER_CHECK(!panel.LastPie().active);
+
+    const SceneViewCamera::State authored = panel.Camera().GetState();
+    document.Play();
+    frame();
+    SceneViewPanel::PieOverlay pie = panel.LastPie();
+    AETHER_CHECK(pie.active && !pie.paused);
+    AETHER_CHECK(pie.border_thickness == 2.0f);
+    AETHER_CHECK(pie.border_color == IM_COL32(63, 185, 80, 255)); // pie.border
+    AETHER_CHECK(pie.banner_text.find("Playing") == 0);
+    AETHER_CHECK(pie.banner_text.find("discarded") != std::string::npos); // said before the edits are lost, not after
+    AETHER_CHECK(pie.banner_min.y > 0.0f && pie.banner_max.y < 800.0f);
+    AETHER_CHECK(pie.banner_max.x > pie.banner_min.x);
+    AETHER_CHECK(pie.banner_min.x >= 0.0f && pie.banner_max.x <= 1200.0f);
+
+    // While playing the view's camera is the game's: move it, and Stop puts the authored one back.
+    panel.Camera().target = Vec3(6.0f, 3.0f, -4.0f);
+    panel.Camera().distance = 30.0f;
+    document.Pause();
+    frame();
+    pie = panel.LastPie();
+    AETHER_CHECK(pie.active && pie.paused);
+    AETHER_CHECK(pie.border_color == IM_COL32(210, 153, 34, 255)); // pie.paused
+    AETHER_CHECK(pie.banner_text.find("Paused") == 0);
+    AETHER_CHECK(pie.banner_text.find("Step") != std::string::npos);
+
+    document.Step();
+    frame();
+    AETHER_CHECK(panel.LastPie().paused); // one frame ran; the game is still paused
+
+    document.Stop();
+    frame();
+    AETHER_CHECK(!panel.LastPie().active);
+    AETHER_CHECK(panel.LastPie().banner_text.empty());
+    const SceneViewCamera::State restored = panel.Camera().GetState();
+    AETHER_CHECK(restored.distance == authored.distance);
+    AETHER_CHECK(restored.yaw == authored.yaw && restored.pitch == authored.pitch);
+    AETHER_CHECK(restored.target.x == authored.target.x && restored.target.y == authored.target.y && restored.target.z == authored.target.z);
+}

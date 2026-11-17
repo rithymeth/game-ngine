@@ -791,6 +791,7 @@ void ScenePanel::DrawToolbar() {
     const PlaySession::State state = document_.PlayState();
     if (state == PlaySession::State::Editing) {
         if (ImGui::Button("Play")) document_.Play();
+        ImGui::SetItemTooltip("Play in the editor; edits made while playing are discarded on Stop");
     } else {
         if (ImGui::Button(state == PlaySession::State::Playing ? "Pause" : "Resume")) {
             if (state == PlaySession::State::Playing) document_.Pause();
@@ -798,6 +799,7 @@ void ScenePanel::DrawToolbar() {
         }
         ImGui::SameLine();
         if (ImGui::Button("Stop")) document_.Stop();
+        ImGui::SetItemTooltip("Stop and discard the edits made while playing");
     }
     const std::string title = document_.FilePath().empty() ? std::string("(unsaved scene)") : document_.FilePath().filename().string();
     ImGui::TextDisabled("%s%s%s", title.c_str(), document_.IsDirty() ? " *" : "", state == PlaySession::State::Editing ? "" : "   [playing: edits are discarded on Stop]");

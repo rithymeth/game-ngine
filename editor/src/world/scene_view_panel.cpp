@@ -438,6 +438,18 @@ void SceneViewPanel::DrawLookToolbar() {
 
 void SceneViewPanel::Draw(SceneDocument& document, const ModelBoundsCache* bounds, const std::filesystem::path& content_root, bool with_toolbar) {
     tools_.SetBounds(bounds);
+    // Play in the editor: the camera is the game's while playing, and Stop ejects back to the camera the play started from.
+    const PlaySession::State play_state = document.PlayState();
+    if (play_state != PlaySession::State::Editing && !play_active_) {
+        camera_before_play_ = camera_.GetState();
+        play_active_ = true;
+    } else if (play_state == PlaySession::State::Editing && play_active_) {
+        camera_.SetState(camera_before_play_);
+        play_active_ = false;
+    }
+    const bool pie = play_state != PlaySession::State::Editing;
+    const bool pie_paused = play_state == PlaySession::State::Paused;
+    pie_ = PieOverlay{};
     if (with_toolbar) {
         tools_.DrawToolbar();
         ImGui::SameLine();
@@ -455,7 +467,7 @@ void SceneViewPanel::Draw(SceneDocument& document, const ModelBoundsCache* bound
     const bool hovered = ImGui::IsItemHovered();
     const bool active = ImGui::IsItemActive();
     // An asset dragged in from the Content Browser: a model or a prefab is placed on the ground under the mouse (rounded to the move step if Snap is on).
-    drop_.Accept(document, content_root, camera_, origin, size, tools_.MoveSnapStep());
+    if (!pie) drop_.Accept(document, content_root, camera_, origin, size, tools_.MoveSnapStep());
     const ImGuiIO& io = ImGui::GetIO();
 
     // The picture's own controls, where the editor concept puts them: the viewport's name and look along the top left, the
@@ -508,7 +520,7 @@ void SceneViewPanel::Draw(SceneDocument& document, const ModelBoundsCache* bound
     f32 bottom_right = end.x - 10.0f;
     const PictureChip stats_chip = PlaceChipRight(bottom_right, bottom_y, stats_text, io.MousePos, false);
 
-    if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+    if (hovered && !pie && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
         if (projection_chip.hovered) camera_.projection = ortho_now ? SceneViewProjection::Perspective : SceneViewProjection::Orthographic;
         if (view_mode_chip.hovered) mode = kViewModes[(static_cast<int>(mode) + 1) % IM_ARRAYSIZE(kViewModes)].mode;
         if (gizmo_chip.hovered) {
@@ -570,7 +582,7 @@ void SceneViewPanel::Draw(SceneDocument& document, const ModelBoundsCache* bound
     }
     notice_left_ = std::max(0.0f, notice_left_ - io.DeltaTime);
     speed_notice_ = std::max(0.0f, speed_notice_ - io.DeltaTime);
-    tools_.HandleInput(document, camera_, origin, size, hovered && !over_chrome, active && !over_chrome);
+    tools_.HandleInput(document, camera_, origin, size, hovered && !over_chrome && !pie, active && !over_chrome && !pie);
 
     ImDrawList* draw = ImGui::GetWindowDrawList();
     draw->PushClipRect(origin, end, true);
@@ -593,6 +605,16 @@ void SceneViewPanel::Draw(SceneDocument& document, const ModelBoundsCache* bound
         const ImVec2 extent = ImGui::CalcTextSize(text);
         draw->AddText(ImVec2(origin.x + (size.x - extent.x) * 0.5f, origin.y + (size.y - extent.y) * 0.5f), Color(235, 238, 245, 220), text);
     }
+    // Play in the editor: the picture is the game's, so it gets PIE's border -- green while playing, amber with a tint while
+    // paused -- and none of the editor's scene overlays (drawn below only when not playing).
+    if (pie) {
+        pie_.active = true;
+        pie_.paused = pie_paused;
+        pie_.border_color = pie_paused ? Color(210, 153, 34) : Color(63, 185, 80);
+        pie_.border_thickness = 2.0f;
+        if (pie_paused) draw->AddRectFilled(origin, end, Color(210, 153, 34, 22));
+        draw->AddRect(ImVec2(origin.x + 1.0f, origin.y + 1.0f), ImVec2(end.x - 1.0f, end.y - 1.0f), pie_.border_color, 0.0f, 0, 2.0f);
+    }
     const Mat4 vp = camera_.ViewProjection(size.x / size.y);
     auto line = [&](const Vec3& a, const Vec3& b, ImU32 color, f32 thickness = 1.0f) {
         ImVec2 pa, pb;
@@ -602,7 +624,7 @@ void SceneViewPanel::Draw(SceneDocument& document, const ModelBoundsCache* bound
     // The ground: an endless grid on y = 0, fading out towards its edge so there is no edge to see. Its spacing is a power of ten picked to
     // keep the minor lines apart on screen (metres and decametres, then tens and hundreds further out), every tenth line stronger; drawn in
     // pieces so each line fades along its length as well. The world axes through the origin are coloured, with X and Z marked near it.
-    if (show.grid) {
+    if (show.grid && !pie) {
         const f32 world_per_pixel = camera_.ViewHeight() / size.y;
         const f32 step = GridSpacing(world_per_pixel);
         const f32 radius = std::max(camera_.ViewHeight() * 3.0f, step * 20.0f);
@@ -643,9 +665,10 @@ void SceneViewPanel::Draw(SceneDocument& document, const ModelBoundsCache* bound
     // and a player are not three identical grey boxes.
     const World& world = document.GetWorld();
     Entity hovered_entity = kNullEntity;
-    if (hovered && !over_chrome) hovered_entity = PickEntity(document, camera_, origin, size, io.MousePos, 14.0f, bounds);
+    if (hovered && !over_chrome && !pie) hovered_entity = PickEntity(document, camera_, origin, size, io.MousePos, 14.0f, bounds);
     bool kind_present[11] = {};
     for (const Entity entity : document.Entities()) {
+        if (pie) break; // the game's picture, not the editor's boxes: nothing is picked, boxed, named or gizmoed while playing
         if (!world.HasComponent<Transform>(entity) || document.IsHidden(entity)) continue;
         const Mat4 m = ComputeWorldTransform(world, document.Guids(), entity);
         const bool selected = document.IsSelected(entity);
@@ -679,7 +702,7 @@ void SceneViewPanel::Draw(SceneDocument& document, const ModelBoundsCache* bound
         }
     }
     // What the colours mean, so a box's colour says what it is without selecting it. Only the kinds in the scene.
-    if (show.helpers) {
+    if (show.helpers && !pie) {
         usize rows = 0;
         for (const KindLegendEntry& entry : kLegend)
             if (kind_present[static_cast<int>(entry.kind)]) ++rows;
@@ -698,10 +721,10 @@ void SceneViewPanel::Draw(SceneDocument& document, const ModelBoundsCache* bound
             }
         }
     }
-    if (show.collision) DrawColliders(document, camera_, origin, size, line);
-    drop_.DrawPreview(draw, camera_, origin, size);
-    if (show.gizmos) tools_.DrawGizmo(draw, document, camera_, origin, size, hovered);
-    tools_.DrawMarquee(draw, origin, size);
+    if (show.collision && !pie) DrawColliders(document, camera_, origin, size, line);
+    if (!pie) drop_.DrawPreview(draw, camera_, origin, size);
+    if (show.gizmos && !pie) tools_.DrawGizmo(draw, document, camera_, origin, size, hovered);
+    if (!pie) tools_.DrawMarquee(draw, origin, size);
     // A short message in the middle: the fly speed while the wheel is changing it, otherwise a bookmark that was saved or recalled.
     const std::string message = speed_notice_ > 0.0f ? "Speed " + std::to_string(static_cast<int>(std::lround(camera_.fly_speed))) + " m/s"
                                                      : (notice_left_ > 0.0f ? notice_ : std::string());
@@ -714,14 +737,26 @@ void SceneViewPanel::Draw(SceneDocument& document, const ModelBoundsCache* bound
     DrawChip(draw, viewport_label, "Viewport 1", false);
     DrawChip(draw, projection_chip, drawn_projection, true, true);
     DrawChip(draw, view_mode_chip, drawn_mode, true, true);
-    DrawChip(draw, gizmo_chip, gizmo_text, true, true);
-    DrawChip(draw, show_chip, "Show", true, true);
-    DrawChip(draw, space_chip, tools_.Space() == GizmoSpace::Local ? "Local" : "World", true);
-    DrawChip(draw, snap_chip, snap_label().c_str(), true);
-    DrawChip(draw, grid_chip, show.grid ? "Grid on" : "Grid off", true);
-    DrawChip(draw, selection_chip, selection_text.c_str(), false);
+    if (!pie) { // the look controls and the scene's summary are the editor's, not the game's
+        DrawChip(draw, gizmo_chip, gizmo_text, true, true);
+        DrawChip(draw, show_chip, "Show", true, true);
+        DrawChip(draw, space_chip, tools_.Space() == GizmoSpace::Local ? "Local" : "World", true);
+        DrawChip(draw, snap_chip, snap_label().c_str(), true);
+        DrawChip(draw, grid_chip, show.grid ? "Grid on" : "Grid off", true);
+        DrawChip(draw, selection_chip, selection_text.c_str(), false);
+    }
     DrawChip(draw, stats_chip, stats_text, false);
-    if (!with_toolbar && !drop_.note.empty()) { // no toolbar row to say it in: the last drop's word goes under the chips
+    // The PIE banner, centered along the top: what the viewport is showing, and that Stop will discard the play session's edits.
+    if (pie) {
+        pie_.banner_text = pie_paused ? "Paused — Step or Resume" : "Playing — edits are discarded on Stop";
+        const ImVec2 extent = ImGui::CalcTextSize(pie_.banner_text.c_str());
+        pie_.banner_min = ImVec2(origin.x + (size.x - extent.x) * 0.5f - 10.0f, origin.y + 10.0f);
+        pie_.banner_max = ImVec2(pie_.banner_min.x + extent.x + 20.0f, pie_.banner_min.y + extent.y + 8.0f);
+        draw->AddRectFilled(pie_.banner_min, pie_.banner_max, Color(16, 17, 21, 225), 4.0f);
+        draw->AddRect(pie_.banner_min, pie_.banner_max, pie_.border_color, 4.0f);
+        draw->AddText(ImVec2(pie_.banner_min.x + 10.0f, pie_.banner_min.y + 4.0f), Color(235, 238, 245), pie_.banner_text.c_str());
+    }
+    if (!with_toolbar && !pie && !drop_.note.empty()) { // no toolbar row to say it in: the last drop's word goes under the chips
         draw->AddText(ImVec2(origin.x + 10.0f, chip_y + kChipHeight + 6.0f), Color(200, 205, 214), drop_.note.c_str());
     }
     if (ImGui::BeginPopup("##scene_view_show_flags")) {
@@ -732,7 +767,7 @@ void SceneViewPanel::Draw(SceneDocument& document, const ModelBoundsCache* bound
         ImGui::Checkbox("Collision", &show.collision);
         ImGui::EndPopup();
     }
-    if (show.helpers) {
+    if (show.helpers && !pie) {
         draw->AddText(ImVec2(origin.x + 10.0f, bottom_y - ImGui::GetTextLineHeight() - 4.0f), Color(128, 135, 148),
                       "right-drag: look + WASD/QE: fly   middle-drag / shift+drag: pan   wheel: zoom (speed flying)   click: select   F: focus   1-9 / Ctrl+1-9: bookmarks");
     }

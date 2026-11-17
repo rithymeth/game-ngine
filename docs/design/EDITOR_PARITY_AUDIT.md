@@ -56,7 +56,7 @@ as well. The verdicts are a judgement from the source audit; the evidence column
 | Transform | Move/rotate/scale, world/local, per-mode snap, pivot/centre, plane squares for Move and Scale, uniform scale, Euler rotation fields | Pivot/center modes, plane and uniform scale handles, Euler entry, numeric transform | Partial |
 | Content browser | Flat folder list, name search, rename/move, references, VCS badges, drag sources; no thumbnails, filters, multi-select or import UI | Thumbnails, type filters, multi-select, import/reimport, create/duplicate/delete | Partial |
 | Inspector | Every reflected component, add/remove with search, prefab revert, asset drop targets; single-object only | Multi-object editing, property search, reset/copy/paste, mixed values | Partial |
-| Play in editor | Play/Pause/Resume/Stop in the Scene panel; a separate Live Viewport with **Run game**; `Step()` exists and is unreachable | Play/Simulate, Pause, Step, Eject/Possess in the viewport | Partial |
+| Play in editor | Play/Pause/Resume/Step/Stop on the workspace strip and the Scene panel; the shaded Scene View runs the game while playing; no Simulate or separate Game view | Play/Simulate, Pause, Step, Eject/Possess in the viewport | Partial |
 | Asset editors | 33 tools with uneven document models: some save and undo, terrain/foliage have neither, localization has no undo | One tab/document model, save and undo everywhere | Partial |
 | Build and package | Build and Package tool, `aether_package` CLI, verified installers | Build/package from the main toolbar with progress | At parity for Windows desktop |
 | Diagnostics | Console filter/history/completion, profiler, crash reports; error overlay widget exists but is wired nowhere | Message log linked to objects, console severity filters, frame debugger, profiler | Partial |
@@ -97,7 +97,7 @@ as well. The verdicts are a judgement from the source audit; the evidence column
 | Pivot | Center of selection or each actor's pivot | Center/Pivot toggle | Local/global transform pivot | Pivot (first selected origin) / Centre (middle of the selection) toggle in the toolbar and on P; turns and group scaling go round it | `viewport_tools.cpp:35-70`, `scene_view.cpp` (`TransformGizmo::Pivot`) | Done |
 | Numeric transform | Location/rotation/scale fields, relative/absolute | Vector fields, Euler rotation | Transform fields, Euler | Reflected Transform position/scale rows; rotation is three Euler drags in degrees (X pitch, Y yaw, Z roll), written back as the quaternion | `editor/src/ui/reflected_inspector.cpp` | Partial |
 | Multi-edit undo | One transaction per user action | One undo entry per action | One action per undo | Delete, duplicate and paste of several entities are one entry each; gizmo drags group the whole subject set | `editor/src/world/scene_panel.cpp:232-268` | Done |
-| Play state in the viewport | PIE border, pause tint, banner, eject | Play-mode tint, Game view, pause | Embedded game, pause overlay | No viewport PIE; `Run game` checkbox in Live Viewport | `live_viewport_panel.cpp:216` | Partial |
+| Play state in the viewport | PIE border, pause tint, banner, eject | Play-mode tint, Game view, pause | Embedded game, pause overlay | The Scene View's PIE: a 2 px green border (amber with a tint while paused), a state banner, the editor's overlays and direct editing off, and Stop ejects the camera back to the pre-play view; the game runs in the shaded picture | `editor/src/world/scene_view_panel.cpp` (`PieOverlay`), `editor/src/core/scene_document.h` (`PlayDelta`) | Done |
 
 ## Content browser, inspector and hierarchy
 
@@ -122,12 +122,12 @@ as well. The verdicts are a judgement from the source audit; the evidence column
 
 | Capability | Unreal Editor | Unity Editor | Godot Editor | Aether today | Evidence | Gap |
 |---|---|---|---|---|---|---|
-| Enter play | Play, Simulate, selected viewport or new window | Play, pause, step in the main toolbar | Play scene/main, pause, step | Play/Pause/Resume/Stop in the Scene tool only | `editor/src/world/scene_panel.cpp:248-260` | Partial |
-| Pause and step | Pause and single-frame step | Pause and step | Pause and step | Pause works; `Step()` exists with no caller | `editor/src/core/play_session.cpp:44`, no UI caller | Partial |
+| Enter play | Play, Simulate, selected viewport or new window | Play, pause, step in the main toolbar | Play scene/main, pause, step | Play/Pause/Resume/Step/Stop on the workspace strip and the Scene panel's toolbar; no Simulate and no new window | `editor/src/workspace/editor_workspace.cpp` (`DrawWorkspaceStrip`), `editor/src/world/scene_panel.cpp` | Partial |
+| Pause and step | Pause and single-frame step | Pause and step | Pause and step | Pause works and Step advances exactly one simulated frame of the running picture | `editor/src/core/scene_document.cpp` (`PlayDelta`), `editor/src/workspace/editor_workspace.cpp` | Done |
 | Simulate vs play | Simulate runs without possessing a pawn | Play is the only mode | Play scene/main | `Run game` in Live Viewport is closest | `live_viewport_panel.cpp:216` | Partial |
-| Eject/possess camera | Eject and possess | Scene/Game view switching | Remote scene tree while running | None | — | Missing |
-| Play in the rendered viewport | Yes, inside the level viewport | Yes, Game view | Yes, embedded game | Separate Live Viewport tool; Scene View stays wireframe | `editor/shell/main.cpp:197`, `scene_view_panel.cpp:70` | Partial |
-| Stop behavior | Restores editor state | Restores editor state | Restores editor state | Live Viewport keeps running until stopped/reloaded; scene PIE discards edits | `scene_panel.cpp:260` | Partial |
+| Eject/possess camera | Eject and possess | Scene/Game view switching | Remote scene tree while running | The Scene View's camera is possessed while playing and Stop ejects to the pre-play camera; no separate pawn possession | `editor/src/world/scene_view_panel.cpp` (`PieOverlay`) | Partial |
+| Play in the rendered viewport | Yes, inside the level viewport | Yes, Game view | Yes, embedded game | Yes: the shaded Scene View runs the game (physics, scripts, animation) while the document plays | `editor/src/host/scene_shading.cpp` (`PlayDelta`) | Done |
+| Stop behavior | Restores editor state | Restores editor state | Restores editor state | Stop restores the document and selection from the play snapshot and ejects the camera; the separate Live Viewport still keeps running until stopped/reloaded | `editor/src/core/play_session.cpp`, `editor/src/world/scene_view_panel.cpp` | Done |
 | Console filters | Categories, verbosity, search, source links | Log/error/warning filters, collapse, clear on play | Output, errors/warnings, search | One substring filter; no severity/category/collapse | `editor/src/devtools/console_panel.cpp:83` | Partial |
 | Messages linked to objects | Message Log links to actor/asset | Console double-click opens source/asset | Errors link to script line/node | Notification service keeps the history with an entity, asset or file target; the Messages tool links back (entity selects it, asset opens its folder) | `editor/src/core/notifications.cpp`, `editor/src/ui/notification_overlay.cpp` | Partial |
 | Profiler/debugger | Insights, GPU Visualizer, stat commands | Profiler, Frame Debugger, Memory Profiler | Profiler, Monitors, debugger with breakpoints | Profiler tool, net profiler, crash reports | `editor/src/devtools/`, `editor/src/net/` | Partial |
@@ -945,6 +945,21 @@ Outcome: testing the game and finding the cause of a failure both happen in the 
 
 Gate: N-step determinism test (the same state after N steps); stop-restores-document test; error-to-entity link test;
 console filter tests; headless screenshot of PIE idle/paused/playing.
+
+Done so far (2026-11-17): the playing viewport and the time the game gets. `SceneDocument::PlayDelta(frame_dt)` is the
+step a host should simulate: the frame's own time while playing, one frame after Step while paused, zero while editing,
+capped at 0.1 s so a stalled frame does not teleport the game. The shaded Scene View hands it to the running game
+(`LiveSceneShading::Advance` calls `LiveViewport::Frame` with it instead of 0), so physics, scripts and animation run
+inside the level viewport and freeze on Pause. `SceneViewPanel` draws PIE around that picture: a 2 px border in
+`pie.border`, amber with a light tint while paused, and a banner along the top -- "Playing — edits are discarded on
+Stop" or "Paused — Step or Resume". While playing it draws none of the editor's scene overlays (grid, entity boxes,
+kind names and legend, gizmo, colliders, key hints), takes no picking, gizmo drag or asset drop, and possesses the view's
+camera; Stop ejects back to the camera the play started from. The camera pose and the banner are reported in
+`SceneViewPanel::PieOverlay` (`LastPie`). "Edits are discarded on Stop" is also the tooltip on both Play entry points
+(the workspace strip's chip and the Scene panel's button) and on Stop. Tests:
+`SceneView_PieBordersBannersAndEjectsThePossessedCamera`, `SceneDocument_PlayDeltaIsTheFramesTimeOnlyWhileSimulating`.
+Still open in this stage: Simulate, a separate Game view or window, the PIE console tab, the runtime stats overlay
+(physics bodies, script time, triangles) and the error-to-entity links and screenshot gate.
 
 Dependency: Stage 2's view modes and Stage 0's notification/error service. A frame debugger and GPU capture are engine
 work and are explicitly not part of this stage.

@@ -159,8 +159,10 @@ bool LiveSceneShading::Advance(SceneDocument& document, const SceneViewCamera& c
     if (since_frame_ < 1.0f / std::max(max_fps, 1.0f)) return texture_.Valid();
     since_frame_ = 0.0f;
     const bool ortho = camera.projection == SceneViewProjection::Orthographic;
-    if (!viewport_.Frame(0.0f, camera.Eye(), camera.Rotation(), camera.fov_degrees, ortho ? Projection::Orthographic : Projection::Perspective,
-                         ortho ? camera.ortho_height : 0.0f)) {
+    // While the document plays, the game runs: the frame's own time (or one frame after Step) goes to the running scene, so physics,
+    // scripts and animation advance. Paused -- and while editing -- nothing moves in the picture.
+    if (!viewport_.Frame(document.PlayDelta(dt), camera.Eye(), camera.Rotation(), camera.fov_degrees,
+                         ortho ? Projection::Orthographic : Projection::Perspective, ortho ? camera.ortho_height : 0.0f)) {
         return texture_.Valid();
     }
     return texture_.Set(viewport_.Width(), viewport_.Height(), viewport_.Pixels());

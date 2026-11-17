@@ -130,6 +130,9 @@ public:
     void Stop();
     // Whether the host should advance the game this frame: every frame while playing, once after Step() while paused.
     bool ShouldSimulate() { return play_session_.ShouldSimulate(); }
+    // The step the host should simulate this frame: `frame_dt` while playing, one frame after Step() while paused, zero
+    // otherwise -- never more than 0.1 s, so a stalled frame does not teleport the game.
+    f32 PlayDelta(f32 frame_dt);
 
 private:
     void Reset();

@@ -2052,6 +2052,11 @@ void EditorWorkspace::DrawWorkspaceStrip(const char* backend) {
             if (state == PlaySession::State::Playing) document.Pause();
             else document.Play();
         }
+        if (ImGui::IsItemHovered()) {
+            if (state == PlaySession::State::Editing) ImGui::SetTooltip("Play in the editor; edits made while playing are discarded on Stop");
+            else if (state == PlaySession::State::Playing) ImGui::SetTooltip("Pause the game");
+            else ImGui::SetTooltip("Resume the game");
+        }
         if (state != PlaySession::State::Editing) {
             ImGui::SameLine(0.0f, gap);
             const bool can_step = state == PlaySession::State::Paused;
@@ -2063,6 +2068,7 @@ void EditorWorkspace::DrawWorkspaceStrip(const char* backend) {
             if (chip("Stop", IM_COL32(41, 47, 60, 255), IM_COL32(52, 58, 72, 255), IM_COL32(212, 217, 226, 255),
                      true, laid.stop_min_x, laid.stop_min_y, laid.stop_max_x, laid.stop_max_y))
                 document.Stop();
+            ImGui::SetItemTooltip("Stop and discard the edits made while playing");
         }
         if (backend != nullptr) {
             ImGui::SameLine(0.0f, gap * 2.0f);
