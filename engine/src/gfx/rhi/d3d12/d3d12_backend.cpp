@@ -2177,7 +2177,7 @@ void D3D12CommandList::Draw(u32 vertex_count, u32 first_vertex) {
         return;
     }
     cmd_.Get()->DrawInstanced(vertex_count, 1, first_vertex, 0);
-    NoteDraw();
+    NoteDraw(vertex_count / 3u);
 }
 
 void D3D12CommandList::BindVertexBuffer(BufferHandle buffer, u32 stride_bytes) {
@@ -2241,7 +2241,7 @@ void D3D12CommandList::DrawIndexed(u32 index_count) {
         return;
     }
     cmd_.Get()->DrawIndexedInstanced(index_count, 1, 0, 0, 0);
-    NoteDraw();
+    NoteDraw(index_count / 3u);
 }
 
 void D3D12CommandList::BindFrameConstants(BufferHandle buffer) {

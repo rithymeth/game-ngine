@@ -252,3 +252,23 @@ AETHER_TEST(ScriptSystem_AnEndlessLoopSaysWhereItWasStuck) {
     const ScriptError parsed = ScriptError::Parse(error); // so the editor and the MCP tools can point at it
     AETHER_CHECK(parsed.chunk == "Spinner.luau" && parsed.line == 4);
 }
+
+// The PIE stats row says how long the game's scripts took: the wall time of the callbacks that ran, reset per frame.
+AETHER_TEST(ScriptSystem_TimesScriptCallbacks) {
+    Fixture f;
+    f.host.Run("events = {}");
+    f.scripts[f.spin] = {"local Spin = {}\nfunction Spin:OnCreate() end\nfunction Spin:Work()\n  local n = 0\n  for i = 1, 2000000 do n += i end\n  return n\nend\nreturn Spin\n",
+                        "Work.luau"};
+    const Entity worker = f.Make(f.spin);
+    Lifecycle life(f.world, f.guids);
+    ScriptSystem scripts(f.host, f.world, f.guids, f.Loader());
+    scripts.Register(life);
+    life.BeginPlay();
+    scripts.ResetScriptTime();
+    AETHER_CHECK(scripts.ScriptTimeMs() == 0.0f);
+    AETHER_CHECK(scripts.CallMethod(worker, "Work").ok);
+    AETHER_CHECK(scripts.ScriptTimeMs() > 0.0f); // the loop is long enough to be measured
+    scripts.ResetScriptTime();
+    AETHER_CHECK(scripts.ScriptTimeMs() == 0.0f); // a frame starts from zero
+    life.EndPlay();
+}

@@ -842,6 +842,7 @@ AETHER_TEST(Templates_ThePlayerRunsThemCooked) {
         CHECK(Near(game.GetWorld().GetComponent<Transform>(pickup)->rotation.y, std::sin(3.14159265f / 4.0f), 0.03f));
         stats = game.Stats();
         CHECK(stats.script_errors == 0 && stats.blueprint_errors == 0 && stats.fixed_steps == 60);
+        CHECK(stats.script_ms >= 0.0f && stats.script_ms < 1000.0f); // the script's callback time is measured per frame
         game.Input().SetButton(input::Key::W, false);
         game.EndPlay();
     }

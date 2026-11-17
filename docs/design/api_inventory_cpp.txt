@@ -2203,10 +2203,12 @@
   ~RenderThread()
 [engine/include/aether/gfx/rhi/command_list.h] experimental
   type class ICommandList
-  protected:static void NoteDraw()
+  protected:static void NoteDraw(u64 triangles=0)
   public:virtual ~ICommandList()=default
   static u64 DrawCallCount()
+  static u64 TriangleCount()
   static void ResetDrawCallCount()
+  static void ResetTriangleCount()
   virtual bool BeginDepthPass(SampledTextureHandle,bool)
   virtual bool BeginSceneColorPass(ISwapChain&,const ClearColor&)
   virtual bool BeginTexturePass(SampledTextureHandle,const ClearColor*)
@@ -6262,6 +6264,7 @@
   ScriptSystem(LuauHost&host,World&world,GuidIndex&guids,SourceLoader loader,bool install_kit_apis)
   ScriptSystem(const ScriptSystem&)=delete
   ScriptValue GetField(Entity entity,const std::string&field)
+  bool CallTimed(int args,int results,std::string*error)
   bool CancelTimer(u32 timer)
   bool Disconnect(u32 event,u32 connection)
   bool IsConnected(u32 event,u32 connection)const
@@ -6271,6 +6274,7 @@
   const std::unordered_map<assets::AssetGuid,ScriptError>&ReloadErrors()const
   const std::vector<ErrorOrigin>&ErrorOrigins()const
   const std::vector<std::string>&Errors()const
+  f32 ScriptTimeMs()const
   input::InputSystem*BoundInput()
   private:void InstallApi(bool install_kit_apis)
   public:u32 NewEvent()
@@ -6304,6 +6308,7 @@
   void RecordError(std::string error,Entity entity=Entity
   void Register(Lifecycle&lifecycle)
   void ReleaseOwner(u64 owner)
+  void ResetScriptTime()
   void Tick(f32 dt)
   ~ScriptSystem()
 [scripting/include/aether/script/spawner_api.h] experimental

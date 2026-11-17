@@ -8,6 +8,7 @@
 #include <lualib.h>
 
 #include <algorithm>
+#include <chrono>
 #include <regex>
 #include <sstream>
 
@@ -266,6 +267,13 @@ void ScriptSystem::Create(Entity entity) {
     lua_pop(L, 1);
 }
 
+bool ScriptSystem::CallTimed(int args, int results, std::string* error) {
+    const auto start = std::chrono::steady_clock::now();
+    const bool ok = host_.ProtectedCall(args, results, error);
+    script_time_ms_ += static_cast<f32>(std::chrono::duration<f64, std::milli>(std::chrono::steady_clock::now() - start).count());
+    return ok;
+}
+
 void ScriptSystem::Invoke(Entity entity, const char* method, const f32* dt) {
     Instance* instance = Find(entity);
     if (instance == nullptr) {
@@ -288,7 +296,7 @@ void ScriptSystem::Invoke(Entity entity, const char* method, const f32* dt) {
     std::string error;
     const u64 previous_owner = current_owner_;
     current_owner_ = instance->owner; // what it connects is its own
-    if (!host_.ProtectedCall(args, 0, &error)) {
+    if (!CallTimed(args, 0, &error)) {
         RecordError(error + " (in " + std::string(method) + ", on " + DescribeEntity(entity) + ")", entity, method);
     }
     current_owner_ = previous_owner;
@@ -331,7 +339,7 @@ ScriptResult ScriptSystem::CallMethod(Entity entity, const std::string& method, 
     }
     const u64 previous_owner = current_owner_;
     current_owner_ = instance->owner;
-    const bool ok = host_.ProtectedCall(static_cast<int>(args.size()) + 1, LUA_MULTRET, &result.error);
+    const bool ok = CallTimed(static_cast<int>(args.size()) + 1, LUA_MULTRET, &result.error);
     current_owner_ = previous_owner;
     if (!ok) {
         lua_settop(L, top);

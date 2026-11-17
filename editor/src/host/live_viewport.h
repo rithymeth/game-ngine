@@ -84,6 +84,10 @@ public:
     usize EntityCount() const;
     // How many draws the last Frame recorded (scene, shadows and post passes together), for a stats row.
     u64 DrawCalls() const;
+    // How many triangles those draws covered (a triangle list is assumed; indirect draws report none).
+    u64 Triangles() const;
+    // How long the running game's script callbacks took in its last frame, in milliseconds.
+    f32 ScriptTimeMs() const;
     // The renderer's timing of the newest frame whose submission has finished; `valid` is false where the device has no GPU timing.
     player::SceneRenderer::GpuTimings GpuFrameTimings() const;
     // How many physics bodies the running game has (as of its last physics step: bodies follow the world's colliders and rigid bodies when the game steps).

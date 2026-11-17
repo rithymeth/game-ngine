@@ -174,8 +174,10 @@ SceneViewShading::FrameStats LiveSceneShading::Stats() const {
     stats.valid = timings.valid;
     stats.gpu_ms = timings.frame_ms;
     stats.draw_calls = viewport_.DrawCalls();
+    stats.triangles = viewport_.Triangles();
     stats.physics_bodies = viewport_.PhysicsBodyCount();
     stats.scripts = viewport_.ScriptInstanceCount();
+    stats.script_ms = viewport_.ScriptTimeMs();
     return stats;
 }
 

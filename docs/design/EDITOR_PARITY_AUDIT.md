@@ -981,6 +981,20 @@ so Messages keeps the list after Stop and its rows link back to the entity. Test
 in `ScriptSystem_ErrorsSayWhichEntityAndWhereAndDoNotFloodTheList`. Still open in this stage: Simulate, a separate Game
 view or window, triangle and script-time counters, and the screenshot gate.
 
+Done so far (2026-11-18, fourth): the two counters the last slice left. `ICommandList` gained a `TriangleCount` beside
+`DrawCallCount`, fed by the same `NoteDraw` the backends already call: `Draw` adds `vertex_count / 3` and `DrawIndexed`
+`index_count / 3` (both record triangle lists), indirect draws add nothing because their counts live on the GPU.
+`LiveViewport::Frame` resets and reads both around the renderer's draw, and `FrameStats::triangles` carries the number
+to the chip after the draw calls. Script time is measured where callbacks run: `ScriptSystem::CallTimed` wraps every
+`ProtectedCall` for a class callback, an event handler and a timer, accumulating wall time since `ResetScriptTime`;
+`Game::Tick` resets it before the frame's systems run and stores the total in `GameStats::script_ms`, which
+`SceneViewShading::FrameStats::script_ms` carries to the view (negative means unknown, so the chip only shows it in
+PIE). The chip now reads (PIE): entities · draw calls · triangles · GPU ms · CPU ms · script ms · bodies · scripts ·
+FPS. Tests: `SceneView_TheStatsChipNamesTheEntitiesTheDrawsAndTheFrameRate` (triangles and the script time, and neither
+outside PIE), `ScriptSystem_TimesScriptCallbacks` (a busy method is measured, a reset zeroes it), and
+`Templates_ThePlayerRunsThemCooked` checks the game reports a per-frame script time. Still open in this stage: Simulate,
+a separate Game view or window, and the screenshot gate.
+
 Dependency: Stage 2's view modes and Stage 0's notification/error service. A frame debugger and GPU capture are engine
 work and are explicitly not part of this stage.
 

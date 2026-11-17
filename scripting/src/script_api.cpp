@@ -646,7 +646,7 @@ void ScriptSystem::Fire(u32 event, int args) {
             const u64 previous_owner = current_owner_;
             current_owner_ = connection.owner; // what a handler connects belongs to the same script
             std::string error;
-            if (!host_.ProtectedCall(args, 0, &error)) {
+            if (!CallTimed(args, 0, &error)) {
                 RecordError(error + " (in an event handler)");
             }
             current_owner_ = previous_owner;
@@ -702,7 +702,7 @@ void ScriptSystem::Tick(f32 dt) {
             const u64 previous_owner = current_owner_;
             current_owner_ = timer.owner;
             std::string error;
-            if (!host_.ProtectedCall(0, 0, &error)) {
+            if (!CallTimed(0, 0, &error)) {
                 RecordError(error + " (in a timer)");
             }
             current_owner_ = previous_owner;

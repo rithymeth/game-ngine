@@ -39,6 +39,11 @@ public:
     // is atomic only so a reset cannot race a stray recording elsewhere.
     static u64 DrawCallCount() { return s_draw_calls_.load(std::memory_order_relaxed); }
     static void ResetDrawCallCount() { s_draw_calls_.store(0, std::memory_order_relaxed); }
+    // Triangles in the draws recorded since ResetTriangleCount: vertex_count / 3 for Draw and index_count / 3 for DrawIndexed
+    // (both record triangle lists). Indirect draws count as zero -- their counts live on the GPU -- so a scene drawn through
+    // an indirect path shows fewer triangles than it drew, and a triangle list is assumed for the others.
+    static u64 TriangleCount() { return s_triangles_.load(std::memory_order_relaxed); }
+    static void ResetTriangleCount() { s_triangles_.store(0, std::memory_order_relaxed); }
 
     virtual void Reset() = 0;
     virtual void Close() = 0;
@@ -171,11 +176,15 @@ public:
     virtual void* NativeHandle() const = 0;
 
 protected:
-    // What the backends call when they record a draw, so DrawCallCount counts it.
-    static void NoteDraw() { s_draw_calls_.fetch_add(1, std::memory_order_relaxed); }
+    // What the backends call when they record a draw, so DrawCallCount and TriangleCount count it.
+    static void NoteDraw(u64 triangles = 0) {
+        s_draw_calls_.fetch_add(1, std::memory_order_relaxed);
+        if (triangles != 0) s_triangles_.fetch_add(triangles, std::memory_order_relaxed);
+    }
 
 private:
     inline static std::atomic<u64> s_draw_calls_{0};
+    inline static std::atomic<u64> s_triangles_{0};
 };
 
 } // namespace aether::gfx::rhi

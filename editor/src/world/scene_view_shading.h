@@ -38,14 +38,17 @@ public:
     // current (or was refreshed this call).
     virtual bool Advance(SceneDocument& document, const SceneViewCamera& camera, u32 width, u32 height, SceneViewMode mode, f32 dt) = 0;
     virtual const ImageTexture& Picture() const = 0;
-    // What the newest picture's own frame says, for the view's stats row (the concept's "GPU 2.4 ms"): the GPU's time on the frame and how
-    // many draws it recorded. `valid` is false where the picture has no timing (a device without GPU timers); zero draws means unknown.
+    // What the newest picture's own frame says, for the view's stats row (the concept's "GPU 2.4 ms"): the GPU's time on the frame, how
+    // many draws it recorded and how many triangles they cover. `valid` is false where the picture has no timing (a device without GPU
+    // timers); zero draws or triangles means unknown (indirect and compute-driven draws report no triangles).
     struct FrameStats {
         bool valid = false;
         f32 gpu_ms = 0.0f;
         u64 draw_calls = 0;
+        u64 triangles = 0;
         u64 physics_bodies = 0; // the running game's bodies; zero means unknown
         u64 scripts = 0;        // its live script instances; zero means unknown
+        f32 script_ms = -1.0f;  // time its script callbacks took in the last frame; negative means unknown
     };
     virtual FrameStats Stats() const { return {}; }
     // The running game's runtime errors (script callbacks and Blueprints). `entity_guid` is the target's EntityGuid text

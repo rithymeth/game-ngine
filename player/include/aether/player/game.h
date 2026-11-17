@@ -203,6 +203,8 @@ struct GameStats {
     usize script_errors = 0;
     usize blueprint_instances = 0;
     usize blueprint_errors = 0;
+    // How long the script callbacks that ran in the last frame took, in milliseconds (the editor's PIE stats row).
+    f32 script_ms = 0.0f;
 };
 
 // A runtime error with what it points at, so a host can turn it into a link: the entity a script callback failed on (its

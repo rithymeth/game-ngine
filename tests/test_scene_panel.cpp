@@ -3095,8 +3095,10 @@ AETHER_TEST(SceneView_TheStatsChipNamesTheEntitiesTheDrawsAndTheFrameRate) {
             stats.valid = true;
             stats.gpu_ms = 3.1f;
             stats.draw_calls = 88;
+            stats.triangles = 123456;
             stats.physics_bodies = 12;
             stats.scripts = 3;
+            stats.script_ms = 0.4f;
             return stats;
         }
         void Stop() override {}
@@ -3126,6 +3128,7 @@ AETHER_TEST(SceneView_TheStatsChipNamesTheEntitiesTheDrawsAndTheFrameRate) {
     const std::string shaded = panel.LastStatsText();
     AETHER_CHECK(shaded.find("2 entities") != std::string::npos);
     AETHER_CHECK(shaded.find("88 draw calls") != std::string::npos);
+    AETHER_CHECK(shaded.find("123456 triangles") != std::string::npos);
     AETHER_CHECK(shaded.find("GPU 3.1 ms") != std::string::npos);
     AETHER_CHECK(shaded.find("FPS") != std::string::npos);
 
@@ -3137,6 +3140,7 @@ AETHER_TEST(SceneView_TheStatsChipNamesTheEntitiesTheDrawsAndTheFrameRate) {
 
     // In PIE the chip is the game's runtime stats overlay: CPU frame time, physics bodies and script instances join the counts.
     AETHER_CHECK(shaded.find("bodies") == std::string::npos); // nothing runs while editing
+    AETHER_CHECK(shaded.find("script ") == std::string::npos);
     document.Play();
     for (int i = 0; i < 2; ++i) frame();
     const std::string playing = panel.LastStatsText();
@@ -3144,6 +3148,7 @@ AETHER_TEST(SceneView_TheStatsChipNamesTheEntitiesTheDrawsAndTheFrameRate) {
     AETHER_CHECK(playing.find("88 draw calls") != std::string::npos);
     AETHER_CHECK(playing.find("12 bodies") != std::string::npos);
     AETHER_CHECK(playing.find("3 scripts") != std::string::npos);
+    AETHER_CHECK(playing.find("script 0.4 ms") != std::string::npos); // the callbacks' own time, next to the frame's CPU time
     AETHER_CHECK(playing.find("CPU") != std::string::npos && playing.find(" ms") != std::string::npos);
     AETHER_CHECK(playing.find("FPS") != std::string::npos);
 }

@@ -456,9 +456,15 @@ asset editor is focused once those documents adopt the contract in Stage 6.
   the current tool ("Snap 1 m", "Snap 15 deg", "Snap 0.1", "Snap off") and
   the grid ("Grid on"/"Grid off"). Along the bottom left, the selection
   ("BP_Player · Selected", or "Nothing selected"); along the bottom right,
-  the scene's counts ("24 entities · 88 draw calls · GPU 2.4 ms · 120 FPS"),
-  where the draw count and the GPU time appear only when the shaded picture
-  reports them and a wireframe picture reads "24 entities · 120 FPS". The
+  the scene's counts ("24 entities · 88 draw calls · 123456 triangles ·
+  GPU 2.4 ms · 120 FPS"),
+  where the draw count, the triangle count and the GPU time appear only
+  when the shaded picture reports them and a wireframe picture reads "24
+  entities · 120 FPS". In PIE the row is the game's: after the frame's CPU
+  time come the script callbacks' own time ("script 0.4 ms"), the physics
+  bodies and the live script instances ("24 entities · 88 draw calls ·
+  123456 triangles · GPU 2.4 ms · CPU 3.1 ms · script 0.4 ms · 12 bodies ·
+  3 scripts · 120 FPS"). The
   text is kept in `SceneViewPanel::LastStatsText` for a test or a host.
   An interactive
   chip acts on the click and never passes it to the picture, so clicking the
@@ -526,7 +532,9 @@ asset editor is focused once those documents adopt the contract in Stage 6.
   game's. The camera is the game's while playing and Stop ejects back to
   the camera the play started from. The shaded picture gets each frame's
   time while playing (one frame after Step while paused, nothing while
-  editing), so physics, scripts and animation run. The game's runtime
+  editing), so physics, scripts and animation run. The stats row becomes
+  the game's runtime overlay: CPU frame time, the script callbacks' time
+  and the physics bodies and script instances join the counts. The game's runtime
   errors are listed under the banner -- up to three, the rest counted with
   "the Messages tool lists them all" -- and a row that came from an entity
   is a link: a click selects it. The same errors are posted once each to

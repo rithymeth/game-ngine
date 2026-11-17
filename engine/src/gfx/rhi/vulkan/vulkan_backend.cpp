@@ -4378,7 +4378,7 @@ void VulkanCommandList::Draw(u32 vertex_count, u32 first_vertex) {
         return;
     }
     vkCmdDraw(command_buffer_, vertex_count, 1, first_vertex, 0);
-    NoteDraw();
+    NoteDraw(vertex_count / 3u);
 }
 
 void VulkanCommandList::BindVertexBuffer(BufferHandle buffer, u32 stride_bytes) {
@@ -4433,7 +4433,7 @@ void VulkanCommandList::DrawIndexed(u32 index_count) {
         return;
     }
     vkCmdDrawIndexed(command_buffer_, index_count, 1, 0, 0, 0);
-    NoteDraw();
+    NoteDraw(index_count / 3u);
 }
 
 bool VulkanCommandList::DrawIndexedIndirectCount(BufferHandle args, BufferHandle count, u32 max_draws, u64 args_offset, u64 count_offset) {

@@ -512,9 +512,11 @@ void SceneViewPanel::Draw(SceneDocument& document, const ModelBoundsCache* bound
         written = std::min(written, static_cast<int>(sizeof stats_text) - 1);
     };
     if (frame_stats.draw_calls > 0) append(" · %llu draw calls", static_cast<unsigned long long>(frame_stats.draw_calls));
+    if (frame_stats.triangles > 0) append(" · %llu triangles", static_cast<unsigned long long>(frame_stats.triangles));
     if (frame_stats.valid) append(" · GPU %.1f ms", static_cast<f64>(frame_stats.gpu_ms));
     if (pie) {
         if (io.Framerate > 0.5f) append(" · CPU %.1f ms", static_cast<f64>(1000.0 / io.Framerate));
+        if (frame_stats.script_ms >= 0.0f) append(" · script %.1f ms", static_cast<f64>(frame_stats.script_ms));
         if (frame_stats.physics_bodies > 0) append(" · %llu bodies", static_cast<unsigned long long>(frame_stats.physics_bodies));
         if (frame_stats.scripts > 0) append(" · %llu scripts", static_cast<unsigned long long>(frame_stats.scripts));
     }

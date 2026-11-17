@@ -171,6 +171,11 @@ public:
     usize DroppedErrors() const { return errors_dropped_; }
     void ClearErrors() { errors_.clear(); error_origins_.clear(); error_seen_.clear(); errors_dropped_ = 0; }
 
+    // How long script callbacks (OnUpdate and its siblings, events and timers) took since ResetScriptTime, for the game's
+    // performance stats. Wall time, measured around each callback.
+    void ResetScriptTime() { script_time_ms_ = 0.0f; }
+    f32 ScriptTimeMs() const { return script_time_ms_; }
+
     // Loads a class from source into `host` and describes it, without
     // creating any instances. `ref` receives the class table's registry
     // reference (or LUA_NOREF on failure) when given.
@@ -225,6 +230,8 @@ private:
     void InstallApi(bool install_kit_apis);
     void ReleaseOwner(u64 owner);
     void RecordError(std::string error, Entity entity = Entity{}, const char* callback = nullptr);
+    // `host_.ProtectedCall`, timed into script_time_ms_ (a callback the script class defines, an event handler, a timer).
+    bool CallTimed(int args, int results, std::string* error);
     // `entity` as an ErrorOrigin: its GUID and name when it is alive, empty otherwise.
     ErrorOrigin OriginOf(Entity entity) const;
     // `entity` as a person would name it: "entity \"Door\" a0b1c2d3" (the name when it has one, and the start of its id).
@@ -247,6 +254,7 @@ private:
     struct SeenError { usize index = 0; u32 count = 0; std::string text; };
     std::unordered_map<std::string, SeenError> error_seen_; // by the error as first recorded: where it is in errors_ and how often it happened
     usize errors_dropped_ = 0;
+    f32 script_time_ms_ = 0.0f; // script callback wall time since ResetScriptTime
 
     std::unordered_map<u32, EventData> events_;
     std::vector<Timer> timers_;

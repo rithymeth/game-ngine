@@ -1717,7 +1717,13 @@ FrameContext Game::Tick(f32 dt) {
         return frame;
     }
     shake_.Restore(*world_); // the scripts start from the camera they last set, not the shaken one
+#if AETHER_GAME_SCRIPTING
+    if (runtime_ && runtime_->scripts) runtime_->scripts->ResetScriptTime();
+#endif
     const FrameContext frame = loop_->Tick(*world_, dt);
+#if AETHER_GAME_SCRIPTING
+    if (runtime_ && runtime_->scripts) stats_.script_ms = runtime_->scripts->ScriptTimeMs();
+#endif
     shake_.Apply(*world_, FindActiveCamera(*world_, guids_), frame.dt);
     input_state_.EndFrame();         // movement deltas are per frame; held keys stay
     if (proof_load_input_) { input_state_.SetButton(input::Key::F5, false); proof_load_input_ = false; }

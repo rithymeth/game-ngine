@@ -53,6 +53,7 @@ struct LiveViewport::Impl {
     std::unique_ptr<player::SceneRenderer> renderer;
     u64 frames = 0;
     u64 draw_calls = 0; // what the last Frame recorded, from ICommandList::DrawCallCount
+    u64 triangles = 0;  // and its triangles, from ICommandList::TriangleCount
     u64 reloads = 0;
     u64 patches = 0;
     u64 script_restarts = 0;
@@ -80,6 +81,8 @@ u64 LiveViewport::PatchCount() const { return impl_ ? impl_->patches : 0; }
 u64 LiveViewport::ScriptRestarts() const { return impl_ ? impl_->script_restarts : 0; }
 usize LiveViewport::EntityCount() const { return impl_ && impl_->game ? impl_->game->GetWorld().EntityCount() : 0; }
 u64 LiveViewport::DrawCalls() const { return impl_ ? impl_->draw_calls : 0; }
+u64 LiveViewport::Triangles() const { return impl_ ? impl_->triangles : 0; }
+f32 LiveViewport::ScriptTimeMs() const { return impl_ && impl_->game ? impl_->game->Stats().script_ms : 0.0f; }
 player::SceneRenderer::GpuTimings LiveViewport::GpuFrameTimings() const {
     return impl_ && impl_->renderer ? impl_->renderer->GpuFrameTimings() : player::SceneRenderer::GpuTimings{};
 }
@@ -375,8 +378,10 @@ bool LiveViewport::Frame(f32 dt, const Vec3& position, const Quaternion& rotatio
     rhi::ICommandList& cmd = *live.commands[slot];
     cmd.Reset();
     rhi::ICommandList::ResetDrawCallCount();
+    rhi::ICommandList::ResetTriangleCount();
     live.renderer->Draw(*live.game, cmd, static_cast<u32>(slot));
     live.draw_calls = rhi::ICommandList::DrawCallCount();
+    live.triangles = rhi::ICommandList::TriangleCount();
     cmd.Close();
     live.fences[slot] = device_.Submit(cmd, live.swap_chain.get());
     device_.WaitForFence(live.fences[slot]); // the picture is wanted now
