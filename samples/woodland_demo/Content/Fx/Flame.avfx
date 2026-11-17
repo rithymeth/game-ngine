@@ -1,0 +1,330 @@
+{
+ "name": "Flame",
+ "version": 1,
+ "emitters": [
+  {
+   "name": "Flame",
+   "duration": 1.0,
+   "looping": true,
+   "max_particles": 400,
+   "space": "World",
+   "spawn": [
+    {
+     "module": "SpawnRate",
+     "rate": 90.0
+    }
+   ],
+   "init": [
+    {
+     "module": "InitLifetime",
+     "seconds": [
+      0.55,
+      0.95
+     ]
+    },
+    {
+     "module": "InitShape",
+     "shape": "Sphere",
+     "half_extents": [
+      0.5,
+      0.5,
+      0.5
+     ],
+     "radius": 0.4,
+     "thickness": 1.0
+    },
+    {
+     "module": "InitVelocity",
+     "mode": "Cone",
+     "direction": [
+      0.0,
+      1.0,
+      0.0
+     ],
+     "cone_angle": 0.28,
+     "speed": [
+      1.6,
+      3.0
+     ]
+    },
+    {
+     "module": "InitSize",
+     "size": [
+      0.7,
+      1.2
+     ]
+    },
+    {
+     "module": "InitColor",
+     "color": {
+      "alphas": [
+       [
+        0.0,
+        0.9
+       ]
+      ],
+      "colors": [
+       [
+        0.0,
+        1.0,
+        0.78,
+        0.35
+       ]
+      ]
+     }
+    }
+   ],
+   "update": [
+    {
+     "module": "Drag",
+     "coefficient": 0.7
+    },
+    {
+     "module": "CurlNoiseForce",
+     "strength": 2.2,
+     "frequency": 1.3,
+     "scroll": 0.4
+    },
+    {
+     "module": "SizeOverLife",
+     "curve": {
+      "keys": [
+       [
+        0.0,
+        0.55
+       ],
+       [
+        0.25,
+        1.0
+       ],
+       [
+        1.0,
+        0.05
+       ]
+      ]
+     }
+    },
+    {
+     "module": "ColorOverLife",
+     "gradient": {
+      "alphas": [
+       [
+        0.0,
+        0.0
+       ],
+       [
+        0.12,
+        1.0
+       ],
+       [
+        0.7,
+        0.6
+       ],
+       [
+        1.0,
+        0.0
+       ]
+      ],
+      "colors": [
+       [
+        0.0,
+        1.0,
+        0.95,
+        0.7
+       ],
+       [
+        0.35,
+        1.0,
+        0.55,
+        0.15
+       ],
+       [
+        1.0,
+        0.55,
+        0.12,
+        0.04
+       ]
+      ]
+     }
+    }
+   ],
+   "render": [
+    {
+     "module": "SpriteRenderer",
+     "material": "",
+     "blend": "Additive",
+     "sort": "None",
+     "facing": "Camera",
+     "axis": [
+      0.0,
+      1.0,
+      0.0
+     ],
+     "aspect": 1.0,
+     "stretch": 0.0,
+     "columns": 1,
+     "rows": 1,
+     "frames": 0,
+     "flipbook": "OverLife",
+     "cycles": 1.0,
+     "fps": 10.0,
+     "blend_frames": false,
+     "soft_fade": 0.0,
+     "camera_offset": 0.0
+    }
+   ]
+  },
+  {
+   "name": "Smoke",
+   "duration": 1.0,
+   "looping": true,
+   "max_particles": 160,
+   "space": "World",
+   "spawn": [
+    {
+     "module": "SpawnRate",
+     "rate": 14.0
+    }
+   ],
+   "init": [
+    {
+     "module": "InitLifetime",
+     "seconds": [
+      1.6,
+      2.6
+     ]
+    },
+    {
+     "module": "InitShape",
+     "shape": "Sphere",
+     "half_extents": [
+      0.5,
+      0.5,
+      0.5
+     ],
+     "radius": 0.3,
+     "thickness": 1.0
+    },
+    {
+     "module": "InitVelocity",
+     "mode": "Cone",
+     "direction": [
+      0.0,
+      1.0,
+      0.0
+     ],
+     "cone_angle": 0.4,
+     "speed": [
+      1.2,
+      2.2
+     ]
+    },
+    {
+     "module": "InitSize",
+     "size": [
+      0.9,
+      1.5
+     ]
+    },
+    {
+     "module": "InitColor",
+     "color": {
+      "alphas": [
+       [
+        0.0,
+        0.4
+       ]
+      ],
+      "colors": [
+       [
+        0.0,
+        0.16,
+        0.15,
+        0.15
+       ]
+      ]
+     }
+    }
+   ],
+   "update": [
+    {
+     "module": "Drag",
+     "coefficient": 0.5
+    },
+    {
+     "module": "CurlNoiseForce",
+     "strength": 1.4,
+     "frequency": 0.8,
+     "scroll": 0.3
+    },
+    {
+     "module": "SizeOverLife",
+     "curve": {
+      "keys": [
+       [
+        0.0,
+        0.5
+       ],
+       [
+        1.0,
+        2.6
+       ]
+      ]
+     }
+    },
+    {
+     "module": "ColorOverLife",
+     "gradient": {
+      "alphas": [
+       [
+        0.0,
+        0.0
+       ],
+       [
+        0.2,
+        1.0
+       ],
+       [
+        1.0,
+        0.0
+       ]
+      ],
+      "colors": [
+       [
+        0.0,
+        1.0,
+        1.0,
+        1.0
+       ]
+      ]
+     }
+    }
+   ],
+   "render": [
+    {
+     "module": "SpriteRenderer",
+     "material": "",
+     "blend": "Alpha",
+     "sort": "BackToFront",
+     "facing": "Camera",
+     "axis": [
+      0.0,
+      1.0,
+      0.0
+     ],
+     "aspect": 1.0,
+     "stretch": 0.0,
+     "columns": 1,
+     "rows": 1,
+     "frames": 0,
+     "flipbook": "OverLife",
+     "cycles": 1.0,
+     "fps": 10.0,
+     "blend_frames": false,
+     "soft_fade": 0.0,
+     "camera_offset": 0.0
+    }
+   ]
+  }
+ ]
+}

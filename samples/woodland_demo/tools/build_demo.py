@@ -56,6 +56,8 @@ mm.PALETTE.update({
     "rim": ((0.60, 0.60, 0.63), 0.85, 0.35, None),
     "glass": ((0.05, 0.08, 0.10), 0.6, 0.15, None),
     "lamp": ((0.9, 0.9, 0.8), 0.0, 0.3, (1.0, 0.95, 0.80)),
+    "boat_paint": ((0.16, 0.34, 0.50), 0.0, 0.55, None),
+    "boat_white": ((0.82, 0.82, 0.78), 0.0, 0.6, None),
 })
 
 
@@ -118,7 +120,27 @@ def model_wheel():
     return m
 
 
+def model_boat():
+    """A small open motorboat about the origin, bow towards +Z, 2.0 m across and 4.4 m long (the Floater's hull is 1.0 x 0.3 x 2.2 m half-extents)."""
+    m = mm.Model()
+    m.box("boat_paint", (0, -0.24, 0), (1.7, 0.10, 4.2))            # the bottom
+    for sx in (-1, 1):
+        m.box("boat_paint", (sx * 0.92, 0.0, -0.1), (0.16, 0.56, 3.9))  # the sides
+        m.box("boat_white", (sx * 0.92, 0.30, -0.1), (0.20, 0.06, 3.95))  # their rails
+    m.box("boat_paint", (0, 0.0, 2.05), (1.4, 0.56, 0.5))          # the bow narrows
+    m.box("boat_paint", (0, 0.0, 2.35), (0.8, 0.56, 0.4))
+    m.box("boat_white", (0, 0.30, 2.30), (0.9, 0.06, 0.5))
+    m.box("boat_paint", (0, 0.02, -2.05), (1.8, 0.60, 0.16))       # the transom
+    m.box("wood", (0, -0.02, 0.15), (1.75, 0.10, 0.45))            # a bench
+    m.box("wood", (0, -0.02, -1.0), (1.75, 0.10, 0.45))
+    m.box("iron", (0, 0.10, -2.28), (0.30, 0.75, 0.34))            # the outboard motor
+    m.box("iron", (0, -0.32, -2.34), (0.12, 0.42, 0.28))
+    m.cylinder("rim", (0, -0.5, -2.42), 0.12, 0.05, sides=8, rot=(90, 0, 0))
+    return m
+
+
 MODELS = {
+    "boat": model_boat,
     "crate": model_crate, "lantern": model_lantern, "plank": model_unit_box("wood"), "pallet": model_unit_box("wood_dark"),
     "rope_segment": model_rope_segment, "jeep": model_jeep, "wheel": model_wheel,
 }
@@ -210,6 +232,24 @@ def read_water(terrain_glb):
     return sea[4], lakes
 
 
+def choose_pond(ground, lakes, site, reach=130.0):
+    """The lake near the clearing that a boat has the most room on: at least 1.5 m deep somewhere and 12 m across, the largest such within `reach` metres.
+    Returns its rectangle and level, its middle, and which way is long (+Z or +X as a unit vector in the plane)."""
+    best = None
+    for (x0, z0, x1, z1, y) in lakes:
+        cx, cz = (x0 + x1) / 2, (z0 + z1) / 2
+        if math.hypot(cx - site[0], cz - site[1]) > reach or min(x1 - x0, z1 - z0) < 12.0:
+            continue
+        depth = max(y - ground.height(x, z) for x in range(int(x0) + 2, int(x1) - 1, 3) for z in range(int(z0) + 2, int(z1) - 1, 3))
+        if depth < 1.5:
+            continue
+        area = (x1 - x0) * (z1 - z0)
+        if best is None or area > best["area"]:
+            best = {"x0": x0, "z0": z0, "x1": x1, "z1": z1, "y": y, "cx": cx, "cz": cz, "area": area, "depth": depth,
+                    "dir": (0.0, 1.0) if (z1 - z0) >= (x1 - x0) else (1.0, 0.0), "length": max(x1 - x0, z1 - z0)}
+    return best
+
+
 class Ground:
     """The baked ground's heights, read from the scene's own terrain collider (a regular grid of vertices)."""
 
@@ -291,6 +331,12 @@ def quat_y(theta):
     return [0.0, math.sin(theta / 2), 0.0, math.cos(theta / 2)]
 
 
+def pond_point(pond, along, side, height):
+    """A point `along` metres from the pond's middle along its long way, `side` metres to one side (left of that way), and `height` above the water."""
+    dx, dz = pond["dir"]
+    return [pond["cx"] + dx * along - dz * side, pond["y"] + height, pond["cz"] + dz * along + dx * side]
+
+
 def look(from_pos, to_pos):
     """Yaw and pitch in degrees for the player's camera path: yaw 0 faces -Z and turns left, pitch negative looks down."""
     dx, dy, dz = (to_pos[i] - from_pos[i] for i in range(3))
@@ -325,7 +371,14 @@ def box_collider(half, center=(0, 0, 0), friction=0.6):
     return {"$v": 1, "center": list(center), "half_extents": list(half), "friction": friction, "is_trigger": False, "report_stay": False, "restitution": 0.0}
 
 
-def build_scene(src, ground, site, down, sea, props=()):
+def flammable(flame_height, fuel=40.0):
+    """A Flammable that burns in the rain (it takes a very wet thing to put it out) with flames and a light `flame_height` above its middle."""
+    return {"$v": 1, "enabled": True, "fuel": fuel, "ignition_heat": 1.0, "spread_radius": 3.5, "heat_rate": 0.8, "cool_rate": 0.25, "wetness": 0.0, "douse_wetness": 0.92,
+            "consume": False, "flame_effect": "Fx/Flame.avfx", "flame_offset": [0.0, flame_height, 0.0], "light_color": [1.0, 0.55, 0.2], "light_intensity": 110.0,
+            "light_range": 15.0}
+
+
+def build_scene(src, ground, site, down, sea, props=(), pond=None, start=0.0):
     scene = json.loads(src.read_text())
     ents = scene["entities"]
     frame = Frame(ground, site[0], site[1], down)
@@ -333,8 +386,15 @@ def build_scene(src, ground, site, down, sea, props=()):
 
     # The clearing: the plants within 32 m of the middle come out (entity 16 onwards are the plants; before them the ground, the player, camera and lights).
     cx, cz = site
-    kept = ents[:16] + [e for e in ents[16:] if not ("ModelRenderer" in e["components"] and len(e["components"]) == 2 and
-                                                       (e["components"]["Transform"]["position"][0] - cx) ** 2 + (e["components"]["Transform"]["position"][2] - cz) ** 2 < 32.0 ** 2)]
+    def in_the_way(e):
+        """A plant (an entity with nothing but a model) in the clearing, or on the pond and 14 m round it (so the boat can be filmed)."""
+        if not ("ModelRenderer" in e["components"] and len(e["components"]) == 2):
+            return False
+        x, _, z = e["components"]["Transform"]["position"]
+        if (x - cx) ** 2 + (z - cz) ** 2 < 32.0 ** 2:
+            return True
+        return pond is not None and pond["x0"] - 14 <= x <= pond["x1"] + 14 and pond["z0"] - 14 <= z <= pond["z1"] + 14
+    kept = ents[:16] + [e for e in ents[16:] if not in_the_way(e)]
     removed = len(ents) - len(kept)
     scene["entities"] = kept
     ents = kept
@@ -355,7 +415,7 @@ def build_scene(src, ground, site, down, sea, props=()):
     script = lambda path, props=None: {"$v": 1, "properties": [{"$v": 1, "name": k, "value": str(v)} for k, v in (props or {}).items()],  # noqa: E731
                                        "script": guid_for("asset/" + path)}
     sb.add("Sky", {"ScriptComponent": script("Scripts/WeatherDriver.luau", {"sea_level": round(sea, 2)})})
-    sb.add("Director", {"ScriptComponent": script("Scripts/DemoDirector.luau")})
+    sb.add("Director", {"ScriptComponent": script("Scripts/DemoDirector.luau", {"start_time": start} if start else None)})
     for asset in ("RainLight", "RainHeavy"):
         sb.add(asset, {"ParticleSystem": {"$v": 1, "asset": f"Fx/{asset}.avfx", "auto_activate": False}})
     sb.add("BlastLight", {"PointLight": {"$v": 1, "color": [1.0, 0.65, 0.3], "intensity": 0.0, "range": 28.0, "cast_shadows": False}}, tags=("BlastLight",))
@@ -394,12 +454,12 @@ def build_scene(src, ground, site, down, sea, props=()):
     beam_h = 3.4
     for r in (-1.7, 1.7):
         p = frame.at(-2, -11 + r)
-        sb.add(f"GallowsPost{int(r > 0)}", {"ModelRenderer": model("Models/plank.glb"), "BoxCollider": box_collider((0.5, 0.5, 0.5))},
+        sb.add(f"GallowsPost{int(r > 0)}", {"ModelRenderer": model("Models/plank.glb"), "BoxCollider": box_collider((0.5, 0.5, 0.5)), "Flammable": flammable(0.5)},
                pos=(p[0], p[1] + beam_h / 2 - 0.5, p[2]), rot=quat_y(frame.yaw()), scale=(0.26, beam_h + 1.0, 0.26))
     top = max(ground_y(-2, -11 - 1.7), ground_y(-2, -11 + 1.7)) + beam_h
     bp = frame.at(-2, -11)
-    sb.add("GallowsBeam", {"ModelRenderer": model("Models/plank.glb"), "BoxCollider": box_collider((0.5, 0.5, 0.5))},
-           pos=(bp[0], top, bp[2]), rot=quat_y(frame.yaw()), scale=(0.30, 0.30, 4.0))
+    sb.add("GallowsBeam", {"ModelRenderer": model("Models/plank.glb"), "BoxCollider": box_collider((0.5, 0.5, 0.5)), "Flammable": flammable(0.3)},
+           pos=(bp[0], top, bp[2]), rot=quat_y(frame.yaw()), scale=(0.30, 0.30, 4.0), tags=("Gallows",))
     rope_len = 1.7
     lantern_guid = guid_for("entity/Lantern")
     lantern_y = top - 0.15 - rope_len - 0.42
@@ -412,6 +472,22 @@ def build_scene(src, ground, site, down, sea, props=()):
            pos=(bp[0], lantern_y, bp[2]), tags=("Lantern",), guid=lantern_guid)
     sb.add("WindField", {"ForceField": {"$v": 1, "enabled": True, "shape": "Box", "half_extents": [7.0, 6.0, 7.0], "mode": "Directional", "strength": 0.0,
                                          "direction": [0.4, 0.0, 0.9], "mass_independent": True}}, pos=(bp[0], top - 1.5, bp[2]))
+
+    # A pond with a boat on it (the Water kit): the surface is the rendered water's own level and rectangle, the boat a Floater with a propeller and a rudder.
+    if pond is not None:
+        dx, dz = pond["dir"]
+        hx, hz = (pond["x1"] - pond["x0"]) / 2 - 0.5, (pond["z1"] - pond["z0"]) / 2 - 0.5
+        sb.add("Pond", {"WaterSurface": {"$v": 1, "enabled": True, "infinite": False, "half_extents": [hx, 0.0, hz], "density": 1000.0, "wave_height": 0.10,
+                                         "wave_length": 7.0, "wave_speed": 1.6, "wave_direction": 35.0, "current_speed": 0.0, "current_direction": 0.0}},
+               pos=(pond["cx"], pond["y"], pond["cz"]), tags=("Pond",))
+        start = pond_point(pond, -pond["length"] / 2 + 9.0, 0.0, 0.0)
+        sb.add("Boat", {"ModelRenderer": model("Models/boat.glb"), "BoxCollider": box_collider((0.95, 0.3, 2.2)),
+                        "RigidBody": {"$v": 1, "motion": "Dynamic", "mass": 700.0, "linear_damping": 0.0, "angular_damping": 0.05},
+                        "Floater": {"$v": 1, "enabled": True, "half_extents": [0.95, 0.3, 2.2], "offset": [0.0, 0.0, 0.0], "columns_x": 3, "columns_z": 5,
+                                    "buoyancy_scale": 1.0, "linear_drag": 3.0, "angular_drag": 1.5},
+                        "Boat": {"$v": 1, "enabled": True, "thrust": 14000.0, "reverse_ratio": 0.4, "turn_torque": 2500.0, "turn_speed": 3.0, "keel_drag": 6.0,
+                                 "max_speed": 7.0, "propeller_offset": [0.0, -0.7, -2.2]}},   # the outboard's propeller hangs below the hull, so a wave does not lift it clear
+               pos=(start[0], pond["y"] + 0.35, start[2]), rot=quat_y(math.atan2(dx, dz)), tags=("Boat",))
 
     # The crates on a pallet, a pyramid of 4-3-2-1 two deep, each one breakable.
     px, pz = frame.xz(2, 13)
@@ -451,7 +527,7 @@ CAR_TRACK = [(26, (401.1, 384.5)), (27, (399.5, 384.6)), (28, (394.8, 383.9)), (
              (32, (351.4, 394.4)), (33, (340.2, 403.9))]
 
 
-def camera_path(frame):
+def camera_path(frame, pond=None):
     """Shots as (time, camera position, look-at target); the path is resampled twice a second, the position kept above the ground, and each sample aimed at its target."""
     G = frame.at(-2, -11, 2.0)       # the lantern on its gallows
     P = frame.at(2, 13, 0.9)         # the pile
@@ -466,8 +542,19 @@ def camera_path(frame):
     for t, (x, z) in CAR_TRACK:
         cx_, cz_ = spots[0] if t < 31 else spots[1]
         shots.append((float(t), [cx_, frame.g.height(cx_, cz_) + 1.7, cz_], [x, frame.g.height(x, z) + 0.8, z], t in (CAR_TRACK[0][0], 31)))
-    shots += [(34.0, frame.at(-9.5, 13.0, 1.0), P, True), (37.0, frame.at(-8.2, 13.0, 1.1), P), (40.0, frame.at(-14.0, 10.0, 2.2), frame.at(0, 6, 1.5)),
-              (44.0, frame.at(-34.0, 18.0, 10.0), frame.at(40, 0, 8)), (48.0, frame.at(-65.0, 32.0, 24.0), frame.at(90, 0, 12))]
+    G2 = frame.at(-2, -11, 2.8)      # the gallows' beam, where the lightning strikes
+    shots += [(34.0, frame.at(-9.5, 13.0, 1.0), P, True), (36.9, frame.at(-8.2, 13.0, 1.1), P),
+              (37.0, frame.at(-13.0, -4.0, 2.2), G2, True), (40.9, frame.at(-10.0, -5.5, 2.4), G2)]
+    if pond is not None:
+        # The boat starts nine metres in from the pond's near end and drives the long way, 6 m/s at its fastest (from the director's log: it is 23, 13, 1 and 10 m
+        # from the middle at 41, 44, 46 and 48 s). The camera trails it down the pond, off to one side, and at the end lifts away over it.
+        half = pond["length"] / 2
+        shots += [(41.0, pond_point(pond, -half + 5.0, 4.0, 2.4), pond_point(pond, -half + 14.0, 0.0, 0.4), True),
+                  (44.0, pond_point(pond, -half + 7.0, 6.0, 2.4), pond_point(pond, -half + 23.0, 0.0, 0.4)),
+                  (46.5, pond_point(pond, -half + 22.0, 7.0, 2.8), pond_point(pond, -half + 40.0, 0.0, 0.4)),
+                  (48.0, pond_point(pond, -half + 12.0, 14.0, 12.0), pond_point(pond, 6.0, 0.0, 0.0))]
+    else:
+        shots += [(41.0, frame.at(-34.0, 18.0, 10.0), frame.at(40, 0, 8), True), (48.0, frame.at(-65.0, 32.0, 24.0), frame.at(90, 0, 12))]
     keys = []
     times = sorted({round(0.5 * i, 3) for i in range(int(shots[-1][0] * 2) + 1)} | {round(sh[0] - 0.04, 3) for sh in shots if len(sh) > 3 and sh[3]})
     for t in times:
@@ -522,6 +609,8 @@ def main():
     parser.add_argument("--jeep-yaw", type=float, default=0.0, help="turns the Meshy jeep about Y (180 if it came out facing backwards)")
     parser.add_argument("--no-render", action="store_true", help="stop after cooking (and writing the camera path)")
     parser.add_argument("--no-titles", action="store_true")
+    parser.add_argument("--start", type=float, default=0.0, help="film only from this second on (a preview of the end: the weather cues catch up at once)")
+    parser.add_argument("--virtual-geometry", action="store_true", help="film with the player's virtual geometry (clusters on the terrain tiles and larger models)")
     args = parser.parse_args()
     build = pathlib.Path(args.build)
     work = pathlib.Path(args.work)
@@ -573,7 +662,9 @@ def main():
     sea, lakes = read_water(bake / "Generated" / "Woodland" / "Woodland_terrain.glb")
     site = ground.find_site(sea, lakes)
     down = ground.direction_to_water(site[0], site[1], sea)
-    scene, frame, removed, crates = build_scene(src, ground, site, down, sea, props)
+    pond = choose_pond(ground, lakes, site)
+    print("pond:", "none" if pond is None else f"{pond['x1'] - pond['x0']:.0f} x {pond['z1'] - pond['z0']:.0f} m at level {pond['y']:.1f}, {pond['depth']:.1f} m deep, middle ({pond['cx']:.0f}, {pond['cz']:.0f})", flush=True)
+    scene, frame, removed, crates = build_scene(src, ground, site, down, sea, props, pond, args.start)
     (content / "Scenes").mkdir(exist_ok=True)
     (content / "Scenes" / "WoodlandDemo.ascene").write_text(json.dumps(scene, separators=(",", ":")))
     asset_meta(content, "Scenes/WoodlandDemo.ascene", "Scene")
@@ -590,7 +681,10 @@ def main():
         shutil.rmtree(paks)
     run([str(build / "tools" / "cook" / "aether_cook"), str(project / "WoodlandDemo.aproject"), "--out", str(paks), "--config", "development"], cwd=project)
 
-    path = camera_path(frame)
+    path = camera_path(frame, pond)
+    if args.start:   # a preview of the end of the film: the director's clock starts there (the weather's cues catch up at once) and the camera path is cut to match
+        path["keys"] = [dict(k, t=round(k["t"] - args.start, 3)) for k in path["keys"] if k["t"] >= args.start]
+        path["keys"][0]["t"] = 0.0
     (work / "camera_path.json").write_text(json.dumps(path, indent=1))
     if args.no_render:
         return
@@ -620,6 +714,8 @@ def main():
         thread = threading.Thread(target=converter, daemon=True)
         thread.start()
         env = dict(os.environ, VK_ICD_FILENAMES="/usr/share/vulkan/icd.d/lvp_icd.json")
+        if args.virtual_geometry:
+            env.update(AETHER_VIRTUAL_GEOMETRY="1", AETHER_VIRTUAL_GEOMETRY_MIN_TRIANGLES="4000", AETHER_VIRTUAL_GEOMETRY_PIXELS="1")
         cmd = [str(build / "player" / "aether_player"), "--pak", str(paks), "--scene", "Scenes/WoodlandDemo.ascene", "--backend", "vulkan", "--size", f"{width}x{height}",
                "--camera-path", str(work / "camera_path.json"), "--record-dir", str(frames)]
         if shutil.which("xvfb-run"):
@@ -640,7 +736,7 @@ def main():
     out = pathlib.Path(args.out) if args.out else work / "woodland_demo.mp4"
     font = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
     cards = [(0.5, 4.0, "AETHER ENGINE", 54), (6.5, 11.0, "Weather + Time of Day", 40), (12.5, 19.5, "Ropes + Force Fields", 40), (26.0, 32.5, "Vehicles", 40),
-             (34.2, 39.0, "Destruction", 40), (42.0, 47.5, "The Woodland, running on the engine", 40)]
+             (34.2, 36.8, "Destruction", 40), (37.4, 40.8, "Fire", 40), (41.4, 44.6, "Water + Boats", 40), (45.0, 47.6, "The Woodland, running on the engine", 38)]
     vf = []
     if not args.no_titles and pathlib.Path(font).exists():
         for t0, t1, text, size in cards:

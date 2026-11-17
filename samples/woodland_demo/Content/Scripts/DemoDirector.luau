@@ -1,7 +1,8 @@
 -- The demo's director: one script that runs the film's clock (the player advances game time by one film frame per frame) and cues what the engine's kits do, so the
 -- video is the engine at work and not an animation: the Weather kit rolls the sky from clear to a storm, Time of Day sinks the sun, the Vehicles kit drives the jeep
 -- (the script only steers and presses the pedal; the wheels' turning is read back from the physics), the Ropes kit swings a lantern from a gallows in the wind, the
--- Force Fields kit blasts a pile of crates and the Destruction kit breaks them into pieces. It also sets the lens and focus for each shot of the camera path
+-- Force Fields kit blasts a pile of crates and the Destruction kit breaks them into pieces, the Fire kit lets a lightning strike set the gallows alight (the storm's
+-- rain feeds the fires' wetness and they burn on anyway), and the Water kit floats a boat on a pond that the script steers. It also sets the lens and focus for each shot of the camera path
 -- (the path itself is the player's --camera-path). Put it on one entity.
 local Director = {}
 
@@ -9,6 +10,8 @@ local Director = {}
 Director.car_start = 26
 --@tooltip Seconds of film when the pile of crates is blown up
 Director.blast_time = 35
+--@tooltip Seconds of film the clock starts at (a preview of the end of the film)
+Director.start_time = 0
 
 local function Clamp(v, lo, hi) return math.max(lo, math.min(hi, v)) end
 
@@ -25,7 +28,7 @@ local WEATHER = {
 -- The lens for each shot: from this second on, this focal length (mm), this aperture, and what is in focus ("far" leaves the whole picture sharp).
 local SHOTS = {
     { 0, 16, 11, "far" }, { 6, 18, 8, "far" }, { 12, 35, 1.8, "lantern" }, { 20, 35, 2.0, "pile" }, { 26, 28, 2.2, "car" },
-    { 33, 24, 2.8, "pile" }, { 39, 16, 11, "far" },
+    { 33, 24, 2.8, "pile" }, { 37, 28, 2.8, "gallows" }, { 41, 24, 3.5, "boat" }, { 45, 20, 8, "far" },
 }
 
 local function Find(tag)
@@ -38,7 +41,7 @@ local function Find(tag)
 end
 
 function Director:OnCreate()
-    self.t = 0
+    self.t = self.start_time
     self.weather_next = 1
     self.shot = 1
     self.blasted = false
@@ -47,6 +50,10 @@ function Director:OnCreate()
     self.cine = self.camera ~= nil and self.camera:Get("CineCamera") or nil
     self.car = world:EntitiesWith("Vehicle")[1]
     self.lantern = Find("Lantern")
+    self.gallows = Find("Gallows")
+    self.boat = Find("Boat")
+    self.strikes_seen = 0
+    self.lit = false
     self.blast = Find("BlastLight")
     self.wheels = { Find("Wheel0"), Find("Wheel1"), Find("Wheel2"), Find("Wheel3") }
     self.crates = world:EntitiesWith("Destructible")
@@ -78,6 +85,8 @@ local function Subject(self, name)
     if name == "lantern" and self.lantern ~= nil then return self.lantern:Get("Transform").position end
     if name == "car" and self.car ~= nil then return self.car:Get("Transform").position end
     if name == "pile" then return self.pile end
+    if name == "gallows" and self.gallows ~= nil then return self.gallows:Get("Transform").position end
+    if name == "boat" and self.boat ~= nil then return self.boat:Get("Transform").position end
     return nil
 end
 
@@ -105,6 +114,32 @@ function Director:OnUpdate(dt)
                 wheel:Get("Transform").rotation = Quat(turn, Vehicles.WheelSpin(self.car, i - 1))
             end
         end
+    end
+
+    -- The boat: throttle and rudder only; the propeller's push, the waves under the hull and the keel are the Water kit's.
+    if self.boat ~= nil then
+        local u = t - 40.5
+        if u > 0 then Water.Drive(self.boat, math.min(1, u / 1.5), 0) end
+        if t >= 40 and t <= 48 and math.floor(t) ~= self.boat_logged then
+            self.boat_logged = math.floor(t)
+            local p = self.boat:Get("Transform").position
+            print(string.format("[demo] t=%.0f boat at %.1f, %.1f, %.1f submerged %.2f", t, p.x, p.y, p.z, Water.Submersion(self.boat)))
+        end
+    end
+
+    -- The storm's rain wets everything that can burn; a lightning strike after the blast sets the gallows alight (and so does the script a moment later if the
+    -- weather has not struck by then, so the film always has its fire).
+    Fire.WetAll(Weather.Wetness())
+    local strikes = Weather.Strikes()
+    local struck = strikes > self.strikes_seen
+    self.strikes_seen = strikes
+    if self.gallows ~= nil and not self.lit and t >= 36.5 and (struck or t >= 38.0) then
+        self.lit = true
+        local at = self.gallows:Get("Transform").position
+        local caught = Fire.IgniteNear(at.x, at.y - 1.0, at.z, 4.5)
+        Camera.Shake(0.5)
+        self.blast_light = 0.6
+        print(string.format("[demo] t=%.1f %s: %d things caught fire at the gallows", t, struck and "lightning" or "a spark", caught))
     end
 
     -- The lantern's flame flickers.
@@ -157,8 +192,8 @@ function Director:OnUpdate(dt)
     -- A line every few seconds, so a log shows what the engine was doing.
     if math.floor(t) ~= self.logged and math.floor(t) % 4 == 0 then
         self.logged = math.floor(t)
-        print(string.format("[demo] t=%.0f hour %.2f %s rain %.2f wind %.1f m/s strikes %d wetness %.2f debris %d speed %.1f",
-            t, TimeOfDay.GetHour(), Weather.Current(), Weather.Rain(), Weather.WindSpeed(), Weather.Strikes(), Weather.Wetness(), Destruction.Debris(),
+        print(string.format("[demo] t=%.0f hour %.2f %s rain %.2f wind %.1f m/s strikes %d wetness %.2f debris %d burning %d speed %.1f",
+            t, TimeOfDay.GetHour(), Weather.Current(), Weather.Rain(), Weather.WindSpeed(), Weather.Strikes(), Weather.Wetness(), Destruction.Debris(), Fire.Burning(),
             self.car ~= nil and Vehicles.Speed(self.car) or 0))
     end
 end
