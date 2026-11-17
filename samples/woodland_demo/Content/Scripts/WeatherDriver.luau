@@ -28,6 +28,7 @@ function Driver:OnCreate()
     self.wind = world:EntitiesWith("Wind")[1]
     self.camera = world:EntitiesWith("Camera")[1]
     self.field = world:EntitiesWith("ForceField")[1]
+    self.pond = world:EntitiesWith("WaterSurface")[1]
     self.rain_light, self.rain_heavy = nil, nil
     for _, e in ipairs(world:EntitiesWith("ParticleSystem")) do
         local asset = e:Get("ParticleSystem").asset
@@ -86,6 +87,13 @@ function Driver:OnUpdate(dt)
         local wind = self.wind:Get("Wind")
         wind.strength = 0.5 + Weather.WindSpeed() * 0.07
         wind.direction_degrees = Weather.WindDirection()
+    end
+
+    -- The pond's waves (the Water kit's surface, which a boat floats on) rise with the wind, on the wind's heading.
+    if self.pond ~= nil then
+        local waves = self.pond:Get("WaterSurface")
+        waves.wave_height = math.min(0.45, 0.06 + Weather.WindSpeed() * 0.018)
+        waves.wave_direction = 90 - Weather.WindDirection()
     end
 
     -- The wind field round the lantern pushes it (and its rope) along the same wind.
