@@ -2031,9 +2031,9 @@ void EditorWorkspace::DrawWorkspaceStrip(const char* backend) {
     }
     ImGui::PopStyleVar();
 
-    // The right end: the concept's green Play chip, Pause (or Resume), Step and Stop while the game runs, then the
-    // backend. All of them are the open document's own calls, so this row cannot disagree with the toolbar or the
-    // status bar about what the game is doing.
+    // The right end: the concept's green Play chip (with Simulate beside it while editing), Pause (or Resume), Step
+    // and Stop while the game runs, then the backend. All of them are the open document's own calls, so this row cannot
+    // disagree with the toolbar or the status bar about what the game is doing.
     const ImGuiStyle& style = ImGui::GetStyle();
     const f32 gap = style.ItemSpacing.x;
     const f32 content_start = ImGui::GetWindowPos().x + style.WindowPadding.x;
@@ -2043,10 +2043,10 @@ void EditorWorkspace::DrawWorkspaceStrip(const char* backend) {
     };
     SceneDocument& document = impl_->scene_panel->Document();
     const PlaySession::State state = document.PlayState();
-    const char* main_label = state == PlaySession::State::Editing ? "Play"
-                             : (state == PlaySession::State::Playing ? "Pause" : "Resume");
+    const bool editing = state == PlaySession::State::Editing;
+    const char* main_label = editing ? "Play" : (state == PlaySession::State::Playing ? "Pause" : "Resume");
     f32 group = chip_width(main_label);
-    if (state != PlaySession::State::Editing) group += gap + chip_width("Step") + gap + chip_width("Stop");
+    group += editing ? gap + chip_width("Simulate") : gap + chip_width("Step") + gap + chip_width("Stop");
     const f32 backend_width = backend != nullptr ? gap * 2.0f + 1.0f + gap + ImGui::CalcTextSize(backend).x : 0.0f;
     const f32 tabs_end = impl_->workspace_tabs.empty() ? content_start : impl_->workspace_tabs.back().max_x;
     const f32 start = content_right - group - backend_width;
@@ -2081,11 +2081,17 @@ void EditorWorkspace::DrawWorkspaceStrip(const char* backend) {
             else document.Play();
         }
         if (ImGui::IsItemHovered()) {
-            if (state == PlaySession::State::Editing) ImGui::SetTooltip("Play in the editor; edits made while playing are discarded on Stop");
+            if (editing) ImGui::SetTooltip("Play in the editor; edits made while playing are discarded on Stop");
             else if (state == PlaySession::State::Playing) ImGui::SetTooltip("Pause the game");
             else ImGui::SetTooltip("Resume the game");
         }
-        if (state != PlaySession::State::Editing) {
+        if (editing) {
+            ImGui::SameLine(0.0f, gap);
+            if (chip("Simulate", IM_COL32(41, 47, 60, 255), IM_COL32(52, 58, 72, 255), IM_COL32(212, 217, 226, 255), true,
+                     laid.simulate_min_x, laid.simulate_min_y, laid.simulate_max_x, laid.simulate_max_y))
+                document.Simulate();
+            ImGui::SetItemTooltip("Simulate: run the game while the viewport camera stays yours; edits are discarded on Stop");
+        } else {
             ImGui::SameLine(0.0f, gap);
             const bool can_step = state == PlaySession::State::Paused;
             if (chip("Step", IM_COL32(41, 47, 60, 255), IM_COL32(52, 58, 72, 255), IM_COL32(212, 217, 226, 255),
@@ -2303,10 +2309,10 @@ void EditorWorkspace::DrawMainToolbar() {
 
 namespace {
 
-const char* PlayStateName(PlaySession::State state) {
+const char* PlayStateName(PlaySession::State state, bool simulating) {
     switch (state) {
-    case PlaySession::State::Playing: return "Playing";
-    case PlaySession::State::Paused: return "Paused";
+    case PlaySession::State::Playing: return simulating ? "Simulating" : "Playing";
+    case PlaySession::State::Paused: return simulating ? "Simulating (paused)" : "Paused";
     default: return "Editing";
     }
 }
@@ -2332,7 +2338,7 @@ EditorWorkspace::StatusBarInfo EditorWorkspace::StatusBar() {
     const EditorDocument& document = ActiveDocument();
     info.document = document.DisplayName();
     info.dirty = document.IsDirty();
-    info.play = PlayStateName(Scene().Document().PlayState());
+    info.play = PlayStateName(Scene().Document().PlayState(), Scene().Document().IsSimulating());
     info.selected = Scene().Document().Selection().size();
     info.entities = Scene().Document().Entities().size();
     info.branch = impl_->branch;

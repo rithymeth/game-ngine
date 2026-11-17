@@ -310,32 +310,48 @@ AETHER_TEST(EditorWorkspace_WorkspaceStripPlaysAndStopsTheScene) {
         io.AddMouseButtonEvent(ImGuiMouseButton_Left, down);
         frame();
     };
-    auto click = [&](const EditorWorkspace::StripPlay& rect, bool main) {
-        const f32 x = main ? (rect.main_min_x + rect.main_max_x) * 0.5f : (rect.stop_min_x + rect.stop_max_x) * 0.5f;
-        const f32 y = main ? (rect.main_min_y + rect.main_max_y) * 0.5f : (rect.stop_min_y + rect.stop_max_y) * 0.5f;
+    enum Chip { kMain, kStop, kSimulate };
+    auto click = [&](const EditorWorkspace::StripPlay& rect, Chip chip) {
+        const f32 min_x = chip == kMain ? rect.main_min_x : (chip == kStop ? rect.stop_min_x : rect.simulate_min_x);
+        const f32 max_x = chip == kMain ? rect.main_max_x : (chip == kStop ? rect.stop_max_x : rect.simulate_max_x);
+        const f32 min_y = chip == kMain ? rect.main_min_y : (chip == kStop ? rect.stop_min_y : rect.simulate_min_y);
+        const f32 max_y = chip == kMain ? rect.main_max_y : (chip == kStop ? rect.stop_max_y : rect.simulate_max_y);
+        const ImVec2 at((min_x + max_x) * 0.5f, (min_y + max_y) * 0.5f);
         move(ImVec2(2.0f, 2.0f), false);
-        move(ImVec2(x, y), false);
-        move(ImVec2(x, y), true);
-        move(ImVec2(x, y), false);
+        move(at, false);
+        move(at, true);
+        move(at, false);
     };
     frame();
     const EditorWorkspace::StripPlay editing = ws.WorkspaceStripPlays();
     CHECK(editing.visible);
     CHECK(editing.main_max_x > editing.main_min_x); // the concept's green Play chip
     CHECK(editing.main_min_x > ws.WorkspaceTabs().back().max_x); // at the strip's right end, not among the tabs
+    CHECK(editing.simulate_max_x > editing.main_max_x); // Simulate sits beside Play while editing
     CHECK(editing.step_max_x == 0.0f && editing.stop_max_x == 0.0f); // nothing to step or stop while editing
 
-    click(editing, true);
+    click(editing, kSimulate);
     CHECK(ws.Scene().Document().PlayState() == PlaySession::State::Playing);
+    CHECK(ws.Scene().Document().IsSimulating()); // the game runs, the view's camera stays the person's
     frame();
-    const EditorWorkspace::StripPlay playing = ws.WorkspaceStripPlays();
-    CHECK(playing.visible);
-    CHECK(playing.step_max_x > playing.main_max_x); // Pause, Step, Stop, left to right
-    CHECK(playing.stop_min_x > playing.step_max_x);
+    const EditorWorkspace::StripPlay simulating = ws.WorkspaceStripPlays();
+    CHECK(simulating.visible);
+    CHECK(simulating.simulate_max_x == 0.0f); // Simulate shows only while editing
+    CHECK(simulating.step_max_x > simulating.main_max_x); // Pause, Step, Stop, left to right
+    CHECK(simulating.stop_min_x > simulating.step_max_x);
 
-    click(playing, true); // Pause
+    click(simulating, kMain); // Pause
     CHECK(ws.Scene().Document().PlayState() == PlaySession::State::Paused);
-    click(ws.WorkspaceStripPlays(), false); // Stop
+    CHECK(ws.Scene().Document().IsSimulating());
+    click(ws.WorkspaceStripPlays(), kStop); // Stop
+    CHECK(ws.Scene().Document().PlayState() == PlaySession::State::Editing && !ws.Scene().Document().IsSimulating());
+
+    frame();
+    const EditorWorkspace::StripPlay again = ws.WorkspaceStripPlays();
+    CHECK(again.simulate_max_x > again.main_max_x);
+    click(again, kMain); // an ordinary Play afterwards
+    CHECK(ws.Scene().Document().PlayState() == PlaySession::State::Playing && !ws.Scene().Document().IsSimulating());
+    click(ws.WorkspaceStripPlays(), kStop);
     CHECK(ws.Scene().Document().PlayState() == PlaySession::State::Editing);
 }
 

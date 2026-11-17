@@ -124,6 +124,10 @@ public:
     CommandStack& Commands() { return commands_; }
     PlaySession::State PlayState() const { return play_session_.GetState(); }
     void Play();
+    // As Play, but the session simulates with the editor's camera left alone: the running game keeps its own
+    // camera and the host's view is free (the Scene View does not possess or restore it on Stop).
+    void Simulate();
+    bool IsSimulating() const { return play_session_.IsSimulating(); }
     void Pause();
     // While paused, lets exactly one simulation frame run (ShouldSimulate() is true for the next call only).
     void Step();
@@ -136,6 +140,8 @@ public:
 
 private:
     void Reset();
+    // Play and Simulate share the authored-selection capture; `simulate` tells the session which kind this is.
+    void BeginPlay(bool simulate);
 
     World world_;
     GuidIndex guids_;

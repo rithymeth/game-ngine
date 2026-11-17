@@ -438,17 +438,21 @@ void SceneViewPanel::DrawLookToolbar() {
 
 void SceneViewPanel::Draw(SceneDocument& document, const ModelBoundsCache* bounds, const std::filesystem::path& content_root, bool with_toolbar) {
     tools_.SetBounds(bounds);
-    // Play in the editor: the camera is the game's while playing, and Stop ejects back to the camera the play started from.
+    // Play in the editor: in a Play session the view's camera is the game's, and Stop ejects back to the camera the play
+    // started from. In a Simulate session the game keeps its own camera and this view's stays where the person puts it.
     const PlaySession::State play_state = document.PlayState();
     if (play_state != PlaySession::State::Editing && !play_active_) {
         camera_before_play_ = camera_.GetState();
         play_active_ = true;
+        play_possessed_ = !document.IsSimulating();
     } else if (play_state == PlaySession::State::Editing && play_active_) {
-        camera_.SetState(camera_before_play_);
+        if (play_possessed_) camera_.SetState(camera_before_play_);
         play_active_ = false;
+        play_possessed_ = false;
     }
     const bool pie = play_state != PlaySession::State::Editing;
     const bool pie_paused = play_state == PlaySession::State::Paused;
+    const bool pie_simulating = document.IsSimulating();
     pie_ = PieOverlay{};
     if (with_toolbar) {
         tools_.DrawToolbar();
@@ -618,6 +622,7 @@ void SceneViewPanel::Draw(SceneDocument& document, const ModelBoundsCache* bound
     if (pie) {
         pie_.active = true;
         pie_.paused = pie_paused;
+        pie_.simulating = pie_simulating;
         pie_.border_color = pie_paused ? Color(210, 153, 34) : Color(63, 185, 80);
         pie_.border_thickness = 2.0f;
         if (pie_paused) draw->AddRectFilled(origin, end, Color(210, 153, 34, 22));
@@ -756,7 +761,9 @@ void SceneViewPanel::Draw(SceneDocument& document, const ModelBoundsCache* bound
     DrawChip(draw, stats_chip, stats_text, false);
     // The PIE banner, centered along the top: what the viewport is showing, and that Stop will discard the play session's edits.
     if (pie) {
-        pie_.banner_text = pie_paused ? "Paused — Step or Resume" : "Playing — edits are discarded on Stop";
+        pie_.banner_text = pie_paused ? (pie_simulating ? "Simulating (paused) — Step or Resume" : "Paused — Step or Resume")
+                          : pie_simulating ? "Simulating — the camera is yours; edits are discarded on Stop"
+                                           : "Playing — edits are discarded on Stop";
         const ImVec2 extent = ImGui::CalcTextSize(pie_.banner_text.c_str());
         pie_.banner_min = ImVec2(origin.x + (size.x - extent.x) * 0.5f - 10.0f, origin.y + 10.0f);
         pie_.banner_max = ImVec2(pie_.banner_min.x + extent.x + 20.0f, pie_.banner_min.y + extent.y + 8.0f);

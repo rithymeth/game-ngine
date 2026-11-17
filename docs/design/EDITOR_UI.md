@@ -256,11 +256,13 @@ drift. The strip's tabs report their rectangles (`WorkspaceTabs`), the active
 one is read back from the open tool (`ActiveWorkspace`), and clicking uses
 `SelectWorkspace`; a headless test clicks a tab at its rectangle.
 
-The strip's right end is the concept's **Play**: a green chip while editing,
-Pause (amber) while playing, Resume when paused, with Step and Stop beside it
-while the game runs, and the backend's name after a divider. The chips are the
-open document's own calls (`PlaySession`), and their rectangles are reported by
-`WorkspaceStripPlays`, so a headless test clicks them the way a person does.
+The strip's right end is the concept's **Play**: a green chip while editing
+with a grey **Simulate** beside it, Pause (amber) while playing, Resume when
+paused, with Step and Stop beside it while the game runs, and the backend's
+name after a divider. The chips are the open document's own calls
+(`PlaySession`), and their rectangles are reported by `WorkspaceStripPlays`,
+so a headless test clicks them the way a person does. Simulate runs the game
+but leaves the viewport's camera under the editor's control (see 6.2).
 A narrow window drops the right end rather than drawing it over the tabs.
 
 The strip's **World** tab is the level editor, so it opens the Scene tool,
@@ -428,8 +430,9 @@ right:
   dropdown chips record their rectangles (`LastModeIcons`, `LastLookControls`)
   so a test clicks one by position instead of by guessed pixel.
 - Play controls live on the workspace strip above, where the concept puts them
-  (a green chip, Pause/Resume, Step and Stop); the toolbar has none, so the
-  two rows cannot disagree and neither is a second copy of the other.
+  (a green chip, Simulate beside it while editing, Pause/Resume, Step and
+  Stop); the toolbar has none, so the two rows cannot disagree and neither is
+  a second copy of the other.
 - Build and Package, and Settings (Preferences).
 - The breadcrumb at the right end, the concept's "Game / Ironvale / Main
   World": `Game / <project> / <open document>` from `Breadcrumb()`, with a dot
@@ -526,20 +529,24 @@ asset editor is focused once those documents adopt the contract in Stage 6.
 - **In PIE:** 2 px `pie.border` around the viewport (amber `pie.paused`
   while paused, with a light tint over the picture) and a banner along the
   top: "Playing — edits are discarded on Stop" or "Paused — Step or
-  Resume". The editor's own overlays are off while playing -- no grid,
-  boxes, kind names or legend, gizmo, colliders or key hints -- and
+  Resume"; after Simulate it reads "Simulating — the camera is yours; edits
+  are discarded on Stop" ("Simulating (paused) — Step or Resume" while
+  paused). The editor's own overlays are off while playing --
+  no grid, boxes, kind names or legend, gizmo, colliders or key hints -- and
   picking, gizmo dragging and asset drops are off; the picture is the
-  game's. The camera is the game's while playing and Stop ejects back to
-  the camera the play started from. The shaded picture gets each frame's
-  time while playing (one frame after Step while paused, nothing while
-  editing), so physics, scripts and animation run. The stats row becomes
-  the game's runtime overlay: CPU frame time, the script callbacks' time
-  and the physics bodies and script instances join the counts. The game's runtime
-  errors are listed under the banner -- up to three, the rest counted with
-  "the Messages tool lists them all" -- and a row that came from an entity
-  is a link: a click selects it. The same errors are posted once each to
-  Messages with the entity target, so they outlive the session and a click
-  there goes to the entity too.
+  game's. In a Play session the camera is the game's and Stop ejects back to
+  the camera the play started from; in a Simulate session the game keeps its
+  own camera, the view's is only borrowed for the picture, and Stop leaves it
+  where the person moved it (`PieOverlay::simulating` says which). The shaded
+  picture gets each frame's time while playing (one frame after Step while
+  paused, nothing while editing), so physics, scripts and animation run. The
+  stats row becomes the game's runtime overlay: CPU frame time, the script
+  callbacks' time and the physics bodies and script instances join the
+  counts. The game's runtime errors are listed under the banner -- up to
+  three, the rest counted with "the Messages tool lists them all" -- and a
+  row that came from an entity is a link: a click selects it. The same errors
+  are posted once each to Messages with the entity target, so they outlive
+  the session and a click there goes to the entity too.
 - **Camera speed:** shows briefly in the middle ("Speed 4") when changed
   with the mouse wheel during fly mode.
 - **Fly camera:** with the right mouse button held the view looks and
@@ -847,7 +854,8 @@ path), the active document's name with `*` while it has unsaved changes, the
 source-control branch with "· synced" or "· unsaved changes" (left out outside a
 repository; a detached HEAD shows the commit id), the scene's entity count, how many
 entities are selected (left out at zero), the play state ("Editing", or
-"Playing"/"Paused" in amber), the CPU frame time ("CPU 3.1 ms"), and the unread message
+"Playing"/"Paused" in amber; a Simulate session reads "Simulating"/"Simulating
+(paused)"), the CPU frame time ("CPU 3.1 ms"), and the unread message
 count as a button — clicking "Messages (2)" opens the Messages tool and marks them read.
 A green dot with "Local session ready" sits at the right end. The branch and its sync
 state are read from the project's repository when it opens and by the shell every few

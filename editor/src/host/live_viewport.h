@@ -71,9 +71,11 @@ public:
 
     // Advances the game by `dt` seconds, puts the scene's camera at `position` looking as `rotation` (with `fov_degrees` if above zero),
     // draws, and reads the picture back. The scene keeps its own camera (the active one, or one made here when it has none); `projection`
-    // and `ortho_height` select the parallel view. False if nothing is loaded or the picture could not be read.
+    // and `ortho_height` select the parallel view. With `free_camera` the game's camera is only borrowed for the picture and put back
+    // afterwards, which is what Simulate does: the game simulates from its own camera, the picture from the editor's view. False if
+    // nothing is loaded or the picture could not be read.
     bool Frame(f32 dt, const Vec3& position, const Quaternion& rotation, f32 fov_degrees = 0.0f, Projection projection = Projection::Perspective,
-               f32 ortho_height = 0.0f);
+               f32 ortho_height = 0.0f, bool free_camera = false);
     // The look of the next frames: the scene pass's lit shading, or the editor's unlit and normals debug views.
     void SetViewMode(player::SceneRenderer::ViewMode mode);
     // The last picture: Width() * Height() * 4 bytes, top row first.

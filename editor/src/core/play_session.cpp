@@ -20,7 +20,7 @@ std::vector<Entity> AllEntities(const World& world) {
 
 } // namespace
 
-void PlaySession::Play(CommandContext& ctx, CommandStack& stack) {
+void PlaySession::Play(CommandContext& ctx, CommandStack& stack, bool simulate) {
     if (state_ == State::Paused) {
         state_ = State::Playing;
         return;
@@ -33,6 +33,7 @@ void PlaySession::Play(CommandContext& ctx, CommandStack& stack) {
     stack.SetFrozen(true);
     state_ = State::Playing;
     step_pending_ = false;
+    simulate_ = simulate;
 }
 
 void PlaySession::Pause() {
@@ -82,6 +83,7 @@ void PlaySession::Stop(CommandContext& ctx, CommandStack& stack) {
     stack.SetFrozen(false);
     state_ = State::Editing;
     step_pending_ = false;
+    simulate_ = false;
 }
 
 } // namespace aether::editor

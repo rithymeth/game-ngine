@@ -31,14 +31,19 @@ public:
     State GetState() const { return state_; }
     bool IsEditing() const { return state_ == State::Editing; }
 
-    // Editing -> Playing (takes the snapshot), or Paused -> Playing.
-    void Play(CommandContext& ctx, CommandStack& stack);
+    // Editing -> Playing (takes the snapshot), or Paused -> Playing. `simulate` only matters on the
+    // editing-to-playing edge: Simulate runs the game with the editor's camera left alone (see
+    // IsSimulating), Play lets the view's camera drive the game's.
+    void Play(CommandContext& ctx, CommandStack& stack, bool simulate = false);
     // Playing -> Paused. No-op otherwise.
     void Pause();
     // While paused, lets exactly one simulation step run (see ShouldSimulate).
     void Step();
     // Playing/Paused -> Editing, restoring the snapshot. No-op when editing.
     void Stop(CommandContext& ctx, CommandStack& stack);
+    // Whether the session was started by Simulate: the game runs, but the editor's view is not its camera --
+    // the host leaves its own camera under the person's control and does not eject it on Stop.
+    bool IsSimulating() const { return state_ != State::Editing && simulate_; }
 
     // Call once per frame: whether the game/physics should advance this frame.
     bool ShouldSimulate();
@@ -48,6 +53,7 @@ public:
 private:
     State state_ = State::Editing;
     bool step_pending_ = false;
+    bool simulate_ = false; // this session was started by Simulate
     std::vector<u8> snapshot_;
 };
 

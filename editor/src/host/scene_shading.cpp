@@ -160,9 +160,11 @@ bool LiveSceneShading::Advance(SceneDocument& document, const SceneViewCamera& c
     since_frame_ = 0.0f;
     const bool ortho = camera.projection == SceneViewProjection::Orthographic;
     // While the document plays, the game runs: the frame's own time (or one frame after Step) goes to the running scene, so physics,
-    // scripts and animation advance. Paused -- and while editing -- nothing moves in the picture.
+    // scripts and animation advance. Paused -- and while editing -- nothing moves in the picture. Simulate borrows the camera for the
+    // picture only, so the running game keeps its own.
     if (!viewport_.Frame(document.PlayDelta(dt), camera.Eye(), camera.Rotation(), camera.fov_degrees,
-                         ortho ? Projection::Orthographic : Projection::Perspective, ortho ? camera.ortho_height : 0.0f)) {
+                         ortho ? Projection::Orthographic : Projection::Perspective, ortho ? camera.ortho_height : 0.0f,
+                         document.IsSimulating())) {
         return texture_.Valid();
     }
     return texture_.Set(viewport_.Width(), viewport_.Height(), viewport_.Pixels());

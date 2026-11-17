@@ -3221,3 +3221,63 @@ AETHER_TEST(SceneView_PieBordersBannersAndEjectsThePossessedCamera) {
     AETHER_CHECK(restored.yaw == authored.yaw && restored.pitch == authored.pitch);
     AETHER_CHECK(restored.target.x == authored.target.x && restored.target.y == authored.target.y && restored.target.z == authored.target.z);
 }
+
+// Simulate: the game runs as it does for Play, but the view's camera is never the game's -- Stop leaves it where the person left it,
+// and the banner says the camera is theirs.
+AETHER_TEST(SceneView_SimulateLeavesTheViewCameraWhereThePersonPutIt) {
+    HeadlessImGui imgui;
+    SceneViewPanel panel;
+    SceneDocument document;
+    document.CreateEntity("Crate");
+    struct StubShading final : SceneViewShading {
+        bool Ready() const override { return false; }
+        const std::string& Note() const override { return note; }
+        bool Advance(SceneDocument&, const SceneViewCamera&, u32, u32, SceneViewMode, f32) override { return false; }
+        const ImageTexture& Picture() const override { return texture; }
+        void Stop() override {}
+        ImageTexture texture;
+        std::string note;
+    };
+    StubShading shading;
+    panel.shading = &shading;
+    panel.mode = SceneViewMode::Unlit;
+    auto frame = [&] {
+        imgui.Frame([&] {
+            ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f));
+            ImGui::SetNextWindowSize(ImVec2(1200.0f, 800.0f));
+            ImGui::Begin("view", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize);
+            panel.Draw(document);
+            ImGui::End();
+        });
+    };
+    for (int i = 0; i < 2; ++i) frame();
+    AETHER_CHECK(!panel.LastPie().active);
+
+    document.Simulate();
+    frame();
+    SceneViewPanel::PieOverlay pie = panel.LastPie();
+    AETHER_CHECK(pie.active && pie.simulating && !pie.paused);
+    AETHER_CHECK(pie.border_thickness == 2.0f && pie.border_color == IM_COL32(63, 185, 80, 255));
+    AETHER_CHECK(pie.banner_text.find("Simulating") == 0);
+    AETHER_CHECK(pie.banner_text.find("camera is yours") != std::string::npos); // the difference from Play, said up front
+
+    // The view's camera stays under the person's control: move it and Stop leaves it where it was left.
+    panel.Camera().target = Vec3(-2.0f, 1.5f, 8.0f);
+    panel.Camera().distance = 22.0f;
+    document.Pause();
+    frame();
+    pie = panel.LastPie();
+    AETHER_CHECK(pie.active && pie.paused && pie.simulating);
+    AETHER_CHECK(pie.border_color == IM_COL32(210, 153, 34, 255));
+    AETHER_CHECK(pie.banner_text.find("Simulating (paused)") == 0);
+    document.Play(); // Resume: still the Simulate session
+    frame();
+    AETHER_CHECK(panel.LastPie().active && panel.LastPie().simulating);
+
+    document.Stop();
+    frame();
+    AETHER_CHECK(!panel.LastPie().active && !panel.LastPie().simulating);
+    const SceneViewCamera::State kept = panel.Camera().GetState();
+    AETHER_CHECK(kept.target.x == -2.0f && kept.target.y == 1.5f && kept.target.z == 8.0f);
+    AETHER_CHECK(kept.distance == 22.0f);
+}

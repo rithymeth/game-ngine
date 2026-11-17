@@ -715,6 +715,33 @@ AETHER_TEST(SceneDocument_PlayDeltaIsTheFramesTimeOnlyWhileSimulating) {
     AETHER_CHECK(document.PlayDelta(0.016f) == 0.0f);
 }
 
+// Simulate is Play with a different camera contract: the same session states and discarded edits, but the host is told the
+// session does not own the view's camera, and Stop ends that as it ends the play session.
+AETHER_TEST(SceneDocument_SimulatePlaysWithoutOwningTheViewsCamera) {
+    SceneDocument document;
+    const Entity crate = document.CreateEntity("Crate");
+    AETHER_CHECK(!document.IsSimulating() && document.PlayState() == PlaySession::State::Editing);
+    document.Play();
+    AETHER_CHECK(document.PlayState() == PlaySession::State::Playing && !document.IsSimulating());
+    document.Stop();
+    AETHER_CHECK(document.PlayState() == PlaySession::State::Editing && !document.IsSimulating());
+
+    document.Simulate();
+    AETHER_CHECK(document.PlayState() == PlaySession::State::Playing && document.IsSimulating());
+    AETHER_CHECK(document.PlayDelta(0.016f) > 0.0f); // the game runs, as it does for Play
+    document.Pause();
+    AETHER_CHECK(document.PlayState() == PlaySession::State::Paused && document.IsSimulating());
+    document.Play(); // Resume: the same Simulate session continues
+    AETHER_CHECK(document.PlayState() == PlaySession::State::Playing && document.IsSimulating());
+    document.GetWorld().GetComponent<Transform>(crate)->position = Vec3{7.0f, 0.0f, 0.0f};
+    document.Stop();
+    AETHER_CHECK(document.PlayState() == PlaySession::State::Editing && !document.IsSimulating());
+    AETHER_CHECK(document.GetWorld().GetComponent<Transform>(crate)->position.x == 0.0f); // edits are discarded, as Play's are
+    document.Play(); // a later Play is not a Simulate
+    AETHER_CHECK(document.IsSimulating() == false);
+    document.Stop();
+}
+
 // Entity handles are local to a world: loading another scene can reuse a selected handle for an unrelated object.
 AETHER_TEST(SceneDocument_LoadDropsOldSelectionButKeepsTheClipboard) {
     const auto dir = FreshSceneDir("aether_test_load_selection");

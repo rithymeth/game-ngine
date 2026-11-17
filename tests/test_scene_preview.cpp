@@ -435,6 +435,48 @@ AETHER_TEST(LiveViewport_ASceneWithNoCameraGetsTheEditorCamera) {
     AETHER_CHECK(colours.size() > 5);
 }
 
+// Simulate's camera contract, below the editor: a free-camera frame borrows the game's camera for the picture and puts it back, so the
+// game keeps simulating from its own camera; an ordinary frame does take it, as Play does.
+AETHER_TEST(LiveViewport_FreeCameraPutsTheGamesCameraBack) {
+    std::unique_ptr<gfx::rhi::IDevice> device = TryDevice();
+    if (!device) {
+        std::printf("    (no Vulkan device: install a driver, or Mesa's lavapipe, to run this)\n");
+        return;
+    }
+    const stdfs::path project = MakeProject("FreeCamera", "blank");
+    ScenePanel scene(project.parent_path() / "Content");
+    AETHER_CHECK(scene.OpenScene("Scenes/Main.ascene", true));
+    SceneDocument& document = scene.Document();
+    const Entity camera_entity = FindActiveCamera(document.GetWorld(), document.Guids());
+    AETHER_CHECK(!camera_entity.IsNull());
+    if (camera_entity.IsNull()) return;
+    const EntityGuid camera_guid = document.GetWorld().GetComponent<IdComponent>(camera_entity)->guid;
+    const Vec3 authored = document.GetWorld().GetComponent<Transform>(camera_entity)->position;
+    stdfs::path cooked;
+    std::string error;
+    AETHER_CHECK(CookForPreview(project, "Scenes/Main.ascene", project.parent_path() / "Saved" / "FreeCameraTest", &cooked, &error));
+    const std::vector<u8> bytes = SaveSceneToMemory(document.GetWorld());
+
+    LiveViewport view(*device);
+    AETHER_CHECK(view.Load(cooked, "Scenes/Main.ascene", 96, 54, &error, &bytes));
+    SceneViewCamera editor;
+    editor.target = Vec3(3.0f, 1.0f, -2.0f);
+    editor.distance = 9.0f;
+    const Vec3 eye = editor.Eye();
+    AETHER_CHECK((eye - authored).Length() > 1.0f); // the two cameras differ, or the checks below prove nothing
+
+    AETHER_CHECK(view.Frame(0.0f, eye, editor.Rotation(), editor.fov_degrees)); // Play: the game's camera becomes the view's
+    Vec3 game_camera;
+    AETHER_CHECK(view.PositionOf(camera_guid, game_camera) && (game_camera - eye).Length() < 1e-3f);
+
+    AETHER_CHECK(view.SetScene(bytes, &error)); // a fresh game: the camera is back where the scene puts it
+    AETHER_CHECK(view.PositionOf(camera_guid, game_camera) && (game_camera - authored).Length() < 1e-3f);
+    AETHER_CHECK(view.Frame(0.0f, eye, editor.Rotation(), editor.fov_degrees, Projection::Perspective, 0.0f, true)); // Simulate
+    AETHER_CHECK(view.PositionOf(camera_guid, game_camera) && (game_camera - authored).Length() < 1e-3f); // the borrowed pose did not stick
+    AETHER_CHECK(view.Frame(0.0f, eye, editor.Rotation(), editor.fov_degrees, Projection::Perspective, 0.0f, true));
+    AETHER_CHECK(view.PositionOf(camera_guid, game_camera) && (game_camera - authored).Length() < 1e-3f); // nor the second time
+}
+
 #if defined(AETHER_HAS_EDITOR_VULKAN)
 // The Scene View's shaded look: the bridge cooks and runs the open scene the first time it is asked, draws at the Scene View's camera, and keeps what
 // the document has with patches, as the Live Viewport does.

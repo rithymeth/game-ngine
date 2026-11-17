@@ -55,11 +55,13 @@ public:
 
     // Play in the editor: while the document is playing or paused the view draws the running game behind a 2 px border (green
     // pie.border; amber while paused with a tint over the picture) and a state banner, and leaves the editor's own overlays off.
-    // The camera is the game's while playing; Stop ejects back to the camera the play started from. A host and a test read this
-    // without the pixels.
+    // In a Play session the camera is the game's; Stop ejects back to the camera the play started from. In a Simulate session
+    // the game keeps its own camera and this view's camera stays under the editor's control, so Stop leaves it where it is. A
+    // host and a test read this without the pixels.
     struct PieOverlay {
         bool active = false;
         bool paused = false;
+        bool simulating = false; // started by Simulate: the view's camera is not the game's
         f32 border_thickness = 0.0f;
         ImU32 border_color = 0;
         ImVec2 banner_min{}, banner_max{};
@@ -97,6 +99,7 @@ private:
     SceneViewCamera camera_;
     SceneViewCamera::State camera_before_play_{};
     bool play_active_ = false; // the document was playing or paused at the previous draw
+    bool play_possessed_ = false; // this session started as Play: the view's camera goes back on Stop (Simulate leaves it)
     ViewportTools tools_;
     ContentDrop drop_;          // an asset dragged in from the Content Browser: where it would land, and the last thing to say about a drop
     std::string notice_;        // a short message in the middle of the view (a saved or recalled bookmark), for `notice_left_` seconds

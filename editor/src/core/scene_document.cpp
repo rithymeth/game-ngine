@@ -621,7 +621,9 @@ bool SceneDocument::SetCineCameraField(Entity entity, const std::string& field_n
 
 bool SceneDocument::Undo() { return commands_.Undo(context_); }
 bool SceneDocument::Redo() { return commands_.Redo(context_); }
-void SceneDocument::Play() {
+void SceneDocument::Play() { BeginPlay(false); }
+void SceneDocument::Simulate() { BeginPlay(true); }
+void SceneDocument::BeginPlay(bool simulate) {
     if (play_session_.IsEditing()) {
         play_selection_.clear();
         play_selection_.reserve(selection_.size());
@@ -631,7 +633,7 @@ void SceneDocument::Play() {
             if (id && !id->guid.IsNull()) play_selection_.push_back(id->guid);
         }
     }
-    play_session_.Play(context_, commands_);
+    play_session_.Play(context_, commands_, simulate);
 }
 void SceneDocument::Pause() { play_session_.Pause(); }
 void SceneDocument::Step() { play_session_.Step(); }

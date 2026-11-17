@@ -995,6 +995,20 @@ outside PIE), `ScriptSystem_TimesScriptCallbacks` (a busy method is measured, a 
 `Templates_ThePlayerRunsThemCooked` checks the game reports a per-frame script time. Still open in this stage: Simulate,
 a separate Game view or window, and the screenshot gate.
 
+Done so far (2026-11-18, fifth): Simulate. The play session gained a `simulate` flag set on the editing-to-playing edge
+(`PlaySession::Play`) and cleared by Stop, so a Simulate session has Play's states, snapshot, discarded edits, console
+clear-on-play and stats/error wiring -- `SceneDocument::Simulate()` is `Play()` that says so, and Pause/Resume keep the
+flag. The difference is the camera contract. `SceneDocument::IsSimulating()` tells the Scene View not to possess its
+camera, so Stop restores nothing and the view stays where the person moved it; `SceneViewPanel::PieOverlay::simulating`
+reports it and the banner reads "Simulating — the camera is yours; edits are discarded on Stop". `LiveViewport::Frame`
+gained `free_camera`: it saves the running game's camera transform and component, borrows them for the draw at the
+editor's eye, and puts them back before the frame is submitted, so the game simulates from its own camera while the
+picture comes from the editor's view. The workspace strip draws a grey **Simulate** chip beside Play while editing (its
+rectangle in `StripPlay`), and the status bar reads "Simulating"/"Simulating (paused)". Tests:
+`SceneDocument_SimulatePlaysWithoutOwningTheViewsCamera`, `SceneView_SimulateLeavesTheViewCameraWhereThePersonPutIt`,
+`LiveViewport_FreeCameraPutsTheGamesCameraBack`, and the strip test now clicks Simulate. Still open in this stage: a
+separate Game view or window, and the screenshot gate.
+
 Dependency: Stage 2's view modes and Stage 0's notification/error service. A frame debugger and GPU capture are engine
 work and are explicitly not part of this stage.
 

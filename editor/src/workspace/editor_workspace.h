@@ -192,6 +192,7 @@ public:
     struct StripPlay {
         bool visible = false;
         f32 main_min_x = 0.0f, main_min_y = 0.0f, main_max_x = 0.0f, main_max_y = 0.0f; // Play / Pause / Resume
+        f32 simulate_min_x = 0.0f, simulate_min_y = 0.0f, simulate_max_x = 0.0f, simulate_max_y = 0.0f; // Simulate, while editing
         f32 step_min_x = 0.0f, step_min_y = 0.0f, step_max_x = 0.0f, step_max_y = 0.0f;
         f32 stop_min_x = 0.0f, stop_min_y = 0.0f, stop_max_x = 0.0f, stop_max_y = 0.0f;
     };

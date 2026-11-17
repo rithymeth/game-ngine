@@ -89,7 +89,7 @@ AETHER_TEST(StatusBar_ShowsTheSourceControlBranch) {
     CHECK(workspace.StatusBar().branch.empty());
 }
 
-// The play segment follows the document's PlaySession through its three states.
+// The play segment follows the document's PlaySession through its three states, and says when the session is a Simulate.
 AETHER_TEST(StatusBar_FollowsThePlayState) {
     EditorWorkspace workspace;
     SceneDocument& document = workspace.Scene().Document();
@@ -99,6 +99,13 @@ AETHER_TEST(StatusBar_FollowsThePlayState) {
     CHECK(std::string(workspace.StatusBar().play) == "Playing");
     document.Pause();
     CHECK(std::string(workspace.StatusBar().play) == "Paused");
+    document.Stop();
+    CHECK(std::string(workspace.StatusBar().play) == "Editing");
+
+    document.Simulate();
+    CHECK(std::string(workspace.StatusBar().play) == "Simulating");
+    document.Pause();
+    CHECK(std::string(workspace.StatusBar().play) == "Simulating (paused)");
     document.Stop();
     CHECK(std::string(workspace.StatusBar().play) == "Editing");
 }
