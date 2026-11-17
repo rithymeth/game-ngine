@@ -658,6 +658,13 @@ int main(int argc, char** argv) {
                         const SceneRenderer::GpuTimings t = scene_renderer->GpuFrameTimings();
                         if (t.valid) AETHER_LOG_INFO("Player", "GpuTiming frame %.2f ms: shadows %.2f, scene %.2f, post %.2f", t.frame_ms, t.shadows_ms, t.scene_ms, t.post_ms);
                     }
+                    // AETHER_PLAYER_VIRTUAL_GEOMETRY_STATS=1 (with AETHER_VIRTUAL_GEOMETRY=1): what the cluster path chose, twice a second at 60 frames a second.
+                    static const bool log_virtual_geometry = std::getenv("AETHER_PLAYER_VIRTUAL_GEOMETRY_STATS") != nullptr;
+                    if (log_virtual_geometry && frame % 30 == 0) {
+                        const SceneRenderer::VirtualGeometryStats v = scene_renderer->VirtualGeometry();
+                        if (v.enabled) AETHER_LOG_INFO("Player", "VirtualGeometry: %u primitive(s) with clusters, %u draw(s) this frame sending %llu of %llu triangles", v.primitives, v.draws,
+                                                       static_cast<unsigned long long>(v.triangles_drawn), static_cast<unsigned long long>(v.triangles_full));
+                    }
                     if (options.report) {
                         // One sample per finished frame: the newest timing is repeated until the next frame finishes, so only a changed one counts.
                         const SceneRenderer::GpuTimings t = scene_renderer->GpuFrameTimings();
