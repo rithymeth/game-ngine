@@ -96,6 +96,39 @@ bool RowToggle(const ImVec2& at, f32 size, RowGlyph glyph, bool on, const char* 
     return pressed;
 }
 
+// A small drawn dropdown chip for the Inspector's header ("Gameplay v"), like the toolbar's look chips: an invisible
+// button, its label, a caret and a hover fill. `muted` reads as a placeholder. Returns a click on it.
+bool DrawHeaderChip(const char* id, const std::string& label, bool muted, ImVec2& min, ImVec2& max) {
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    ImGui::InvisibleButton(id, ImVec2(ImGui::CalcTextSize(label.c_str()).x + 30.0f, ImGui::GetFrameHeight()));
+    min = ImGui::GetItemRectMin();
+    max = ImGui::GetItemRectMax();
+    if (ImGui::IsItemHovered()) draw->AddRectFilled(min, max, ImGui::GetColorU32(ImGuiCol_HeaderHovered), 4.0f);
+    const ImVec2 text = ImGui::CalcTextSize(label.c_str());
+    const ImU32 color = ImGui::GetColorU32(muted ? ImGuiCol_TextDisabled : ImGuiCol_Text);
+    draw->AddText(ImVec2(min.x + 8.0f, (min.y + max.y - text.y) * 0.5f), color, label.c_str());
+    const f32 caret_x = max.x - 12.0f;
+    const f32 caret_y = (min.y + max.y) * 0.5f;
+    draw->AddTriangleFilled(ImVec2(caret_x - 4.0f, caret_y - 2.0f), ImVec2(caret_x + 4.0f, caret_y - 2.0f), ImVec2(caret_x, caret_y + 3.0f),
+                            ImGui::GetColorU32(ImGuiCol_TextDisabled));
+    if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    return ImGui::IsItemClicked();
+}
+
+// Every distinct tag the scene's entities carry, in first-seen order: what the header's tag dropdown offers.
+std::vector<std::string> SceneTags(const SceneDocument& document) {
+    std::vector<std::string> tags;
+    const World& world = document.GetWorld();
+    for (const Entity entity : document.Entities()) {
+        const Tags* component = world.GetComponent<Tags>(entity);
+        if (component == nullptr) continue;
+        for (const std::string& name : component->names) {
+            if (std::find(tags.begin(), tags.end(), name) == tags.end()) tags.push_back(name);
+        }
+    }
+    return tags;
+}
+
 } // namespace
 
 // One colour per kind, shared by the hierarchy badges and the viewport's icons and legend, so an entity reads as the
@@ -1142,7 +1175,97 @@ void ScenePanel::DrawInspectorHeader(std::span<const Entity> shown) {
     ImGui::TextDisabled("%s", inspector_header_.subtitle.c_str());
     inspector_header_.subtitle_min = ImGui::GetItemRectMin();
     inspector_header_.subtitle_max = ImGui::GetItemRectMax();
+    if (shown.size() == 1) {
+        // The header's controls, where the concept puts them: the enabled box (the Active component), the tag
+        // dropdown and the layer dropdown.
+        const Entity entity = shown.front();
+        bool active = document_.IsActive(entity);
+        if (ImGui::Checkbox("Enabled", &active)) document_.SetActive(entity, active);
+        inspector_header_.enabled_min = ImGui::GetItemRectMin();
+        inspector_header_.enabled_max = ImGui::GetItemRectMax();
+        inspector_header_.controls = true;
+        ImGui::SetItemTooltip("An inactive entity and everything under it is not drawn, picked or updated");
+        ImGui::SameLine();
+        DrawInspectorTags(entity);
+        ImGui::SameLine();
+        DrawInspectorLayer(entity);
+    }
     ImGui::Separator();
+}
+
+// The tag dropdown: the tags the scene uses, each a checkbox on this entity's Tags component. With the menu closed it
+// reads the entity's first tag (or "Tags" while it has none). Toggling adds or removes one name and is one undo step,
+// adding the Tags component when the entity had none.
+void ScenePanel::DrawInspectorTags(Entity entity) {
+    const Tags* tags = document_.GetWorld().GetComponent<Tags>(entity);
+    inspector_header_.tag_label = tags != nullptr && !tags->names.empty() ? tags->names.front() : "Tags";
+    if (DrawHeaderChip("##inspector_tags", inspector_header_.tag_label, tags == nullptr || tags->names.empty(), inspector_header_.tag_min,
+                       inspector_header_.tag_max))
+        ImGui::OpenPopup("##inspector_tags_menu");
+    ImGui::SetItemTooltip("The entity's gameplay tags");
+    if (!ImGui::BeginPopup("##inspector_tags_menu")) return;
+    const std::vector<std::string> used = SceneTags(document_);
+    for (const std::string& name : used) {
+        const Tags* current = document_.GetWorld().GetComponent<Tags>(entity); // re-read: a toggle may have added the component
+        bool member = current != nullptr && std::find(current->names.begin(), current->names.end(), name) != current->names.end();
+        if (ImGui::Checkbox(name.c_str(), &member)) {
+            std::vector<std::string> names = current != nullptr ? current->names : std::vector<std::string>{};
+            if (member) names.push_back(name);
+            else names.erase(std::remove(names.begin(), names.end(), name), names.end());
+            SetEntityTags(entity, std::move(names));
+        }
+        inspector_header_.tag_items.push_back(name);
+        inspector_header_.tag_item_min.push_back(ImGui::GetItemRectMin());
+        inspector_header_.tag_item_max.push_back(ImGui::GetItemRectMax());
+    }
+    if (used.empty()) ImGui::TextDisabled("No entity in this scene has a tag yet.");
+    ImGui::EndPopup();
+}
+
+// The layer dropdown: the project's layer names (ProjectSettings::layers), the current one ticked, or "Layer N" for an
+// index the project has no name for. Choosing one sets the Layer component, adding it when the entity had none; one
+// undo step.
+void ScenePanel::DrawInspectorLayer(Entity entity) {
+    const Layer* layer = document_.GetWorld().GetComponent<Layer>(entity);
+    const u8 index = layer != nullptr ? layer->index : 0;
+    const std::vector<std::string> fallback{"Default"};
+    const std::vector<std::string>& names = layer_names_ != nullptr && !layer_names_->empty() ? *layer_names_ : fallback;
+    inspector_header_.layer_label = index < names.size() ? names[index] : "Layer " + std::to_string(index);
+    if (DrawHeaderChip("##inspector_layer", inspector_header_.layer_label, false, inspector_header_.layer_min, inspector_header_.layer_max))
+        ImGui::OpenPopup("##inspector_layer_menu");
+    ImGui::SetItemTooltip("The entity's collision layer");
+    if (!ImGui::BeginPopup("##inspector_layer_menu")) return;
+    const auto row = [&](const std::string& label, u8 value) {
+        const bool chosen = ImGui::Selectable(label.c_str(), index == value);
+        inspector_header_.layer_items.push_back(label);
+        inspector_header_.layer_item_min.push_back(ImGui::GetItemRectMin());
+        inspector_header_.layer_item_max.push_back(ImGui::GetItemRectMax());
+        if (chosen) {
+            SetEntityLayer(entity, value);
+            ImGui::CloseCurrentPopup();
+        }
+    };
+    for (usize i = 0; i < names.size(); ++i) row(names[i], static_cast<u8>(i));
+    for (usize i = names.size(); i <= index && i < kMaxLayers; ++i) row("Layer " + std::to_string(i), static_cast<u8>(i)); // the scene's own index, even unnamed
+    ImGui::EndPopup();
+}
+
+void ScenePanel::SetEntityTags(Entity entity, std::vector<std::string> names) {
+    const ComponentId id = GetComponentId<Tags>();
+    CommandStack& commands = document_.Commands();
+    commands.BeginTransaction("Set Tags");
+    if (!document_.GetWorld().HasComponent<Tags>(entity)) document_.AddComponent(entity, id);
+    document_.SetComponentField(entity, id, "names", reflect::Any(names), true);
+    commands.EndTransaction();
+}
+
+void ScenePanel::SetEntityLayer(Entity entity, u8 index) {
+    const ComponentId id = GetComponentId<Layer>();
+    CommandStack& commands = document_.Commands();
+    commands.BeginTransaction("Set Layer");
+    if (!document_.GetWorld().HasComponent<Layer>(entity)) document_.AddComponent(entity, id);
+    document_.SetComponentField(entity, id, "index", reflect::Any(index), true);
+    commands.EndTransaction();
 }
 
 void ScenePanel::DrawInspector() {

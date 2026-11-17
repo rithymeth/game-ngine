@@ -585,7 +585,20 @@ Done so far (2026-11-17): the Inspector's heading from the concept -- "BP_Player
 tag after a middle dot. Several entities read "N entities" over "Multiple selection" and keep the shared Name box.
 `ScenePanel::LastInspectorHeader` reports the wording and the two rectangles;
 `ScenePanel_TheInspectorLeadsWithTheEntitysNameAndKind` checks the stack, the kind word, the tag and the multi-selection
-form. The header's tag and layer dropdowns from the concept's list are not implemented.
+form.
+
+Done so far (2026-11-17): the Inspector header's controls. Under a single entity's identity sit an **Enabled** box, a
+**tag** dropdown and a **layer** dropdown. Enabled is the engine's `Active` component (`SceneDocument::SetActive`), so
+unchecking hides the entity and its subtree and undoes in one step. The tag chip reads the first tag (muted "Tags" when
+there is none) and opens every tag the scene uses, one checkbox per tag; toggling one writes the entity's `Tags.names` --
+one undo step, adding the `Tags` component when the entity had none. The layer chip reads the current layer name (or
+"Layer N" for an index the project has no name for) and opens `ProjectSettings::layers` (the workspace points the panel
+at the open project's settings through `ScenePanel::SetLayerNames`); choosing one sets `Layer::index`, adding the
+component if needed, one undo step. `LastInspectorHeader` reports the three rectangles, both chip labels and, while a
+popup is open, its rows. Tests in `tests/test_scene_panel.cpp`:
+`ScenePanel_TheHeaderTogglesEnabledTagsAndLayers` turns Enabled off and back, adds a tag to an entity with and without a
+Tags component, and moves an entity to another layer, checking the components and the undo. Not yet: the header's entity
+icon.
 
 Done so far (2026-11-17): the menu bar from the concept's first row. The shell draws the **AETHER** mark at the left
 where it used to print "Aether Editor - backend - N tools", and the right end is the "Search commands, assets... Ctrl K"

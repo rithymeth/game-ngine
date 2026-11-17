@@ -669,7 +669,20 @@ components (`EntityKindName(ClassifyEntity)` — the word the hierarchy badge us
 a prefab instance, and its first tag after a middle dot, as in "Blueprint instance · Gameplay". With several entities
 the title is "N entities" over "Multiple selection", and the shared Name box stays below the search. The title and
 subtitle rectangles are reported (`ScenePanel::LastInspectorHeader`) so a test checks the stack and the wording
-(`ScenePanel_TheInspectorLeadsWithTheEntitysNameAndKind`). Not yet: the header's tag and layer dropdowns.
+(`ScenePanel_TheInspectorLeadsWithTheEntitysNameAndKind`).
+
+Implemented: the header's **controls**, the rest of the concept's list. Under a single entity's identity sit an
+"Enabled" checkbox, a tag dropdown and a layer dropdown. Enabled is the engine's `Active` component: unchecking hides
+the entity and everything under it, and checks again in one undo step (`SceneDocument::SetActive`). The tag chip reads
+the entity's first tag (or a muted "Tags") and opens the tags the scene uses, one checkbox per tag; toggling one adds or
+removes that name on this entity — one undo step, and the `Tags` component itself is added when the entity had none. The
+layer chip reads the current layer's name (or "Layer N" for an index the project has no name for) and opens the
+project's layers (`ProjectSettings::layers`, supplied by the workspace through `ScenePanel::SetLayerNames`); choosing one
+sets `Layer::index`, adding the component when the entity had none, again one undo step. `LastInspectorHeader` reports
+the three rectangles, both chip labels and, while a popup is open, its rows and their rectangles, so a test clicks them
+where a person would. `ScenePanel_TheHeaderTogglesEnabledTagsAndLayers` turns Enabled off and back, adds a tag to an
+entity with and without a Tags component, and moves an entity to another layer, checking the component after each and
+the undo. Not yet: the header's entity icon.
 
 Implemented: a **Search properties** box at the top of the Inspector (`ScenePanel::SetPropertySearch`,
 `property_search_`). It matches a top-level field when the field's name or its component's name contains the text

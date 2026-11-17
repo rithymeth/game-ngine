@@ -210,15 +210,31 @@ public:
     // The Inspector's header, as the concept draws it ("BP_Player" over "Blueprint instance · Gameplay"): the
     // selection's name as the title -- the rename field itself, for a single entity -- and what it is under it: the
     // entity's kind from its components (the hierarchy badge's name), a prefab instance as "Blueprint instance", and
-    // its first tag after a middle dot. With several entities: "N entities" over "Multiple selection".
+    // its first tag after a middle dot. Under one entity's identity sit its controls: the enabled box (the Active
+    // component), a tag dropdown over the tags the scene uses, and a layer dropdown over the project's layers. Several
+    // entities get their count instead of a name, and no controls.
     struct InspectorHeader {
         std::string title;
         std::string subtitle;
         ImVec2 title_min{}, title_max{};
         ImVec2 subtitle_min{}, subtitle_max{};
         bool editable = false; // the title is the name field, for a single selection
+        bool controls = false; // the enabled, tag and layer controls were drawn (one entity)
+        ImVec2 enabled_min{}, enabled_max{};
+        ImVec2 tag_min{}, tag_max{};
+        ImVec2 layer_min{}, layer_max{};
+        std::string tag_label;   // what the tag chip reads: the first tag, or "Tags" when there is none
+        std::string layer_label; // the layer's name, or "Layer N" for an index the project has no name for
+        std::vector<std::string> tag_items; // the open tag popup's tags, top to bottom
+        std::vector<ImVec2> tag_item_min, tag_item_max;
+        std::vector<std::string> layer_items; // the open layer popup's names
+        std::vector<ImVec2> layer_item_min, layer_item_max;
     };
     const InspectorHeader& LastInspectorHeader() const { return inspector_header_; }
+
+    // The project's layer names, for the header's layer dropdown (ProjectSettings::layers). Not owned; null or empty
+    // leaves the dropdown with "Default" only. The workspace points it at its open project's settings.
+    void SetLayerNames(const std::vector<std::string>* names) { layer_names_ = names; }
 
 private:
     enum class Pending : u8 { None, New, Open };
@@ -237,6 +253,10 @@ private:
     void DrawCreateItems(Entity parent);
     void DrawInspector();
     void DrawInspectorHeader(std::span<const Entity> shown);
+    void DrawInspectorTags(Entity entity);
+    void DrawInspectorLayer(Entity entity);
+    void SetEntityTags(Entity entity, std::vector<std::string> names);
+    void SetEntityLayer(Entity entity, u8 index);
     void DrawDiscardPrompt();
     void Select(Entity entity, bool additive);
 
@@ -246,6 +266,7 @@ private:
     SceneViewPanel* view_ = nullptr;
     Layout layout_;
     InspectorHeader inspector_header_;
+    const std::vector<std::string>* layer_names_ = nullptr;
     std::filesystem::path content_root_;
     ModelBoundsCache bounds_;
     RecentScenes recent_scenes_;

@@ -1020,6 +1020,105 @@ AETHER_TEST(ScenePanel_TheInspectorLeadsWithTheEntitysNameAndKind) {
     AETHER_CHECK(!many.editable);
 }
 
+// The rest of the concept's Inspector header: the enabled box, the tag dropdown and the layer dropdown. Each writes the
+// engine's own component through the editor's commands, so the change is saved with the scene and is one undo step.
+AETHER_TEST(ScenePanel_TheHeaderTogglesEnabledTagsAndLayers) {
+    HeadlessImGui imgui;
+    ScenePanel panel;
+    SceneDocument& document = panel.Document();
+    const Entity player = document.CreateEntity("Player");
+    document.GetWorld().AddComponent<Tags>(player, Tags{{"Gameplay"}});
+    const Entity crate = document.CreateEntity("Crate");
+    document.GetWorld().AddComponent<Tags>(crate, Tags{{"Loot"}});
+    document.SetSelection({player});
+    const std::vector<std::string> layers = {"Default", "Pawns", "World"};
+    panel.SetLayerNames(&layers);
+    auto step = [&](const ImVec2& at, bool down) {
+        ImGuiIO& io = ImGui::GetIO();
+        io.AddMousePosEvent(at.x, at.y);
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, down);
+        imgui.Frame([&] { panel.Draw(); });
+    };
+    auto click = [&](const ImVec2& at) {
+        step(ImVec2(4.0f, 4.0f), false);
+        step(at, false);
+        step(at, true);
+        step(at, false);
+        imgui.Frame([&] { panel.Draw(); });
+    };
+    const auto center = [](const ImVec2& min, const ImVec2& max) { return ImVec2((min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f); };
+    for (int frame = 0; frame < 2; ++frame) imgui.Frame([&] { panel.Draw(); });
+
+    ScenePanel::InspectorHeader header = panel.LastInspectorHeader();
+    AETHER_CHECK(header.controls);
+    AETHER_CHECK(header.tag_label == "Gameplay"); // the entity's first tag
+    AETHER_CHECK(header.layer_label == "Default"); // no Layer component: layer 0
+    AETHER_CHECK(header.tag_min.x >= header.enabled_max.x && header.layer_min.x >= header.tag_max.x); // one row, in concept order
+    const ScenePanel::Layout layout = panel.LastLayout();
+    AETHER_CHECK(header.layer_max.x <= layout.inspector_max.x); // they fit the Inspector's column
+    const ImVec2 neutral(layout.inspector_min.x + 4.0f, layout.inspector_max.y - 4.0f); // a click here closes a popup and hits nothing
+
+    // Enabled is the Active component: unchecking is one undoable step, and so is checking again.
+    click(center(header.enabled_min, header.enabled_max));
+    AETHER_CHECK(!document.IsActive(player));
+    AETHER_CHECK(document.Undo());
+    AETHER_CHECK(document.IsActive(player));
+
+    // The tag dropdown lists the tags the scene uses; checking one adds it to this entity.
+    header = panel.LastInspectorHeader();
+    click(center(header.tag_min, header.tag_max));
+    header = panel.LastInspectorHeader();
+    AETHER_CHECK(header.tag_items.size() == 2); // Gameplay and Loot, first seen first
+    const auto loot = std::find(header.tag_items.begin(), header.tag_items.end(), "Loot");
+    AETHER_CHECK(loot != header.tag_items.end());
+    if (loot != header.tag_items.end()) {
+        const usize at = static_cast<usize>(loot - header.tag_items.begin());
+        click(center(header.tag_item_min[at], header.tag_item_max[at]));
+        const Tags* tags = document.GetWorld().GetComponent<Tags>(player);
+        AETHER_CHECK(tags != nullptr && tags->names.size() == 2);
+        if (tags != nullptr && tags->names.size() == 2) AETHER_CHECK(tags->names[1] == "Loot");
+        AETHER_CHECK(document.Undo()); // one step for the whole change
+        tags = document.GetWorld().GetComponent<Tags>(player);
+        AETHER_CHECK(tags != nullptr && tags->names == std::vector<std::string>{"Gameplay"});
+        click(neutral); // outside the still-open popup: it closes on the press
+    }
+
+    // An entity without a Tags component gets one, and the undo removes it again.
+    const Entity bare = document.CreateEntity("Bare");
+    document.SetSelection({bare});
+    for (int frame = 0; frame < 2; ++frame) imgui.Frame([&] { panel.Draw(); });
+    header = panel.LastInspectorHeader();
+    AETHER_CHECK(header.tag_label == "Tags"); // the muted placeholder
+    click(center(header.tag_min, header.tag_max));
+    header = panel.LastInspectorHeader();
+    AETHER_CHECK(!header.tag_items.empty());
+    if (!header.tag_items.empty()) {
+        click(center(header.tag_item_min[0], header.tag_item_max[0]));
+        AETHER_CHECK(document.GetWorld().HasComponent<Tags>(bare));
+        AETHER_CHECK(document.Undo());
+        AETHER_CHECK(!document.GetWorld().HasComponent<Tags>(bare)); // the component was added by the step, so its undo removes it
+        click(neutral);
+    }
+
+    // The layer dropdown offers the project's layers; choosing one sets the Layer component, one undo step.
+    header = panel.LastInspectorHeader();
+    click(center(header.layer_min, header.layer_max));
+    header = panel.LastInspectorHeader();
+    AETHER_CHECK(header.layer_items == layers);
+    const auto pawns = std::find(header.layer_items.begin(), header.layer_items.end(), "Pawns");
+    AETHER_CHECK(pawns != header.layer_items.end());
+    if (pawns != header.layer_items.end()) {
+        const usize at = static_cast<usize>(pawns - header.layer_items.begin());
+        click(center(header.layer_item_min[at], header.layer_item_max[at]));
+        const Layer* layer = document.GetWorld().GetComponent<Layer>(bare);
+        AETHER_CHECK(layer != nullptr && layer->index == 1);
+        imgui.Frame([&] { panel.Draw(); });
+        AETHER_CHECK(panel.LastInspectorHeader().layer_label == "Pawns");
+        AETHER_CHECK(document.Undo());
+        AETHER_CHECK(!document.GetWorld().HasComponent<Layer>(bare));
+    }
+}
+
 // The level editor the concept draws: the hierarchy, the viewport and the Inspector side by side, the picture between the
 // two side columns and taking most of the width. Without a view (the panel on its own) the two-pane layout stays.
 AETHER_TEST(ScenePanel_TheViewportSitsBetweenHierarchyAndInspector) {
