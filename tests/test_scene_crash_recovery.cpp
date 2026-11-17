@@ -1,4 +1,6 @@
 #include "core/scene_document.h"
+#include "aether/renderer/components.h"
+#include "aether/scene/script_component.h"
 #include "aether/scene/serialization.h"
 #include "test_framework.h"
 
@@ -35,6 +37,14 @@ namespace {
 constexpr usize kOldNamed = 40, kUnsaved = 1500; // entities made by the test; a new scene also has a few of its own, so the counts the test compares are measured, not assumed
 
 // The scene as it was last saved (kOldEntities) and, with unsaved work on top, as the child keeps writing it (kOldEntities + 1, with a lot of text so a write takes a few ms).
+// A new scene carries whatever components this process has registered (a light if the renderer's are, a script slot on its player), and the child the kill test
+// starts is a fresh process that runs only one test: it must register exactly what the parent does, or it refuses the scene it is given by name, exits at once, and
+// the parent waits out 60 s for its `ready` file, a round at a time. Both call this first, so the answer no longer depends on which tests ran before.
+void RegisterWhatANewSceneCarries() {
+    RegisterRenderComponents();
+    (void)GetComponentId<ScriptComponent>();
+}
+
 void BuildOld(SceneDocument& document) {
     document.NewScene();
     for (usize i = 0; i < kOldNamed; ++i) document.CreateEntity("Old " + std::to_string(i));
@@ -52,6 +62,7 @@ void AddUnsavedWork(SceneDocument& document) {
 AETHER_TEST(SceneCrash_ChildWriterForTheKillTest) {
     const char* dir = std::getenv("AETHER_CRASH_CHILD_DIR");
     if (dir == nullptr) return;
+    RegisterWhatANewSceneCarries();
     const stdfs::path root(dir);
     SceneDocument document;
     std::string error;
@@ -82,6 +93,7 @@ struct KillStats {
 
 // Starts a child that writes the scene over and over, kills it `rounds` times at random moments (stopping early at the first broken file when `stop_at_first_broken`), and checks what it left behind.
 KillStats KillTheWriter(const stdfs::path& root, bool naive, int rounds, bool stop_at_first_broken) {
+    RegisterWhatANewSceneCarries();
     KillStats stats;
     std::error_code ignored;
     stdfs::remove_all(root, ignored);

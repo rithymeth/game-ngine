@@ -145,8 +145,10 @@ AETHER_TEST(Octahedral_BestFitBeatsDirectAt8Bit) {
         const f32 r = std::sqrt(std::max(0.0f, 1.0f - y * y));
         const f32 t = static_cast<f32>(i) * gold;
         const Vec3 n{std::cos(t) * r, y, std::sin(t) * r};
+        // The angle between two unit vectors from the length of their cross product: acos of the dot product cannot see anything under 0.0198 degrees in float (one
+        // step below 1 is already that), which is more than the 16-bit error being checked against 0.01.
         const auto degrees = [](Vec3 a, Vec3 b) {
-            return std::acos(std::clamp(a.Dot(b), -1.0f, 1.0f)) * (180.0f / 3.14159265f);
+            return std::atan2(a.Cross(b).Length(), a.Dot(b)) * (180.0f / 3.14159265f);
         };
         const f32 direct = degrees(n, OctDecode(OctEncodeDirect(n, 8), 8));
         const f32 fit = degrees(n, OctDecode(OctEncodeBestFit(n, 8), 8));
