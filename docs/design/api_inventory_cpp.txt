@@ -5332,6 +5332,7 @@
   type struct HeldControl
   type struct RebindableInput
   type struct RenderSize
+  type struct RuntimeError
   type struct SequenceCue
   #endif #if AETHER_KIT_CHECKPOINTS std::function<std::string()>scene_name_function_
   Entity SpawnPrefab(const std::string&path,const Transform&place)
@@ -5394,6 +5395,7 @@
   std::string UiImagePath(u32 id)const
   std::vector<AiDebugInfo>AiDebug()const
   std::vector<RebindableInput>RebindableInputs()const
+  std::vector<RuntimeError>RuntimeErrors()const
   std::vector<SequenceCue>SequenceCues()const
   std::vector<std::string>BlueprintErrors()const
   std::vector<std::string>LoadSettings(const SettingsTargets&targets)
@@ -6240,6 +6242,7 @@
   type class ScriptSystem
   type struct Class
   type struct Connection
+  type struct ErrorOrigin
   type struct EventData
   type struct Instance
   type struct ReloadResult
@@ -6249,6 +6252,7 @@
   type struct Timer
   ::aether::PhysicsScene*BoundPhysicsScene()const
   Class*LoadClass(const assets::AssetGuid&script)
+  ErrorOrigin OriginOf(Entity entity)const
   Instance*Find(Entity entity)
   ReloadResult Reload(const assets::AssetGuid&script)
   ScriptClassInfo ClassInfo(const assets::AssetGuid&script)
@@ -6265,6 +6269,7 @@
   const AiDebugStore&AiDebug()const
   const input::InputState*BoundInputState()const
   const std::unordered_map<assets::AssetGuid,ScriptError>&ReloadErrors()const
+  const std::vector<ErrorOrigin>&ErrorOrigins()const
   const std::vector<std::string>&Errors()const
   input::InputSystem*BoundInput()
   private:void InstallApi(bool install_kit_apis)
@@ -6296,7 +6301,7 @@
   void Fire(u32 event,int args)
   void InstallKitApi(const std::string&kit_name)
   void Invoke(Entity entity,const char*method,const f32*dt=nullptr)
-  void RecordError(const std::string&error)
+  void RecordError(std::string error,Entity entity=Entity
   void Register(Lifecycle&lifecycle)
   void ReleaseOwner(u64 owner)
   void Tick(f32 dt)

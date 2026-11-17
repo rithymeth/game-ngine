@@ -105,6 +105,14 @@ player::GraphMaterialReport LiveViewport::CompileGraphMaterial(const std::string
 }
 usize LiveViewport::ScriptInstanceCount() const { return impl_ && impl_->game ? impl_->game->Stats().script_instances : 0; }
 usize LiveViewport::PhysicsBodyCount() const { return impl_ && impl_->game ? impl_->game->Stats().physics_bodies : 0; }
+std::vector<LiveViewport::RuntimeError> LiveViewport::RuntimeErrors() const {
+    std::vector<RuntimeError> errors;
+    if (!impl_ || !impl_->game) return errors;
+    const std::vector<player::RuntimeError> reported = impl_->game->RuntimeErrors();
+    errors.reserve(reported.size());
+    for (const player::RuntimeError& error : reported) errors.push_back({error.text, error.callback, error.entity_guid, error.entity_name});
+    return errors;
+}
 
 bool LiveViewport::SetScene(const std::vector<u8>& scene_bytes, std::string* error) {
     if (!impl_) {

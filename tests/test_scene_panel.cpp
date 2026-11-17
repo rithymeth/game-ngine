@@ -2998,6 +2998,84 @@ AETHER_TEST(ScenePanel_TheInspectorSwitchesToTheScenesWorldPage) {
     AETHER_CHECK(panel.LastInspectorHeader().title == document.Name(document.Selection().front()));
 }
 
+// A runtime error in PIE has to be visible where it happened and link to the thing that failed: the errors are listed under the
+// banner, and a click on one that names an entity selects it. That is the whole "find the cause of a failure" loop.
+AETHER_TEST(SceneView_PieRuntimeErrorsLinkToTheirEntity) {
+    HeadlessImGui imgui;
+    SceneViewPanel panel;
+    SceneDocument document;
+    document.CreateEntity("Ground");
+    const Entity door = document.CreateEntity("Front Door");
+    const EntityGuid door_guid = document.GetWorld().GetComponent<IdComponent>(door)->guid;
+    struct StubShading final : SceneViewShading {
+        bool Ready() const override { return false; }
+        const std::string& Note() const override { return note; }
+        bool Advance(SceneDocument&, const SceneViewCamera&, u32, u32, SceneViewMode, f32) override { return false; }
+        const ImageTexture& Picture() const override { return texture; }
+        std::vector<RuntimeError> Errors() const override { return errors; }
+        void Stop() override {}
+        ImageTexture texture;
+        std::string note;
+        std::vector<RuntimeError> errors;
+    };
+    StubShading shading;
+    panel.shading = &shading;
+    panel.mode = SceneViewMode::Unlit;
+    auto frame = [&] {
+        imgui.Frame([&] {
+            ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f));
+            ImGui::SetNextWindowSize(ImVec2(1200.0f, 800.0f));
+            ImGui::Begin("view", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize);
+            panel.Draw(document);
+            ImGui::End();
+        });
+    };
+    ImGuiIO& io = ImGui::GetIO();
+    auto step = [&](const ImVec2& at, bool down) {
+        io.AddMousePosEvent(at.x, at.y);
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, down);
+        frame();
+    };
+    auto click = [&](const ImVec2& at) {
+        step(ImVec2(2.0f, 2.0f), false);
+        step(at, false);
+        step(at, true);
+        step(at, false);
+    };
+    const auto center = [](const ImVec2& min, const ImVec2& max) { return ImVec2((min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f); };
+    for (int i = 0; i < 2; ++i) frame();
+    AETHER_CHECK(panel.LastPie().errors.empty()); // editing: no PIE panel
+
+    document.Play();
+    shading.errors = {{"Broken.luau:3: attempt to index nil with 'boom' (in OnUpdate, on entity \"Front Door\" " + ToString(door_guid) + ")",
+                       "OnUpdate", ToString(door_guid), "Front Door"},
+                      {"Door.luau:9: no such method (in an event handler)", "", "", ""}};
+    frame();
+    const SceneViewPanel::PieOverlay pie = panel.LastPie();
+    AETHER_CHECK(pie.errors.size() == 2);
+    AETHER_CHECK(pie.errors[0].text.find("Broken.luau:3") != std::string::npos);
+    AETHER_CHECK(pie.errors[0].entity_guid == ToString(door_guid));
+    AETHER_CHECK(pie.errors[1].entity_guid.empty());
+    AETHER_CHECK(pie.errors_min.y > pie.banner_max.y); // under the banner, not over it
+    AETHER_CHECK(pie.errors_min.x >= 0.0f && pie.errors_max.x <= 1200.0f && pie.errors_max.y < 800.0f);
+    AETHER_CHECK(pie.errors[0].max.y <= pie.errors[1].min.y + 0.01f);
+
+    // The row that names an entity is a link: a click selects it.
+    document.SetSelection({});
+    AETHER_CHECK(document.Selection().empty());
+    click(center(pie.errors[0].min, pie.errors[0].max));
+    AETHER_CHECK(document.Selection().size() == 1 && document.Selection().front() == door);
+    // One with no entity has nothing to select, and says so by doing nothing.
+    document.SetSelection({});
+    click(center(panel.LastPie().errors[1].min, panel.LastPie().errors[1].max));
+    AETHER_CHECK(document.Selection().empty());
+
+    // Stop ends the session and its errors with it.
+    document.Stop();
+    frame();
+    AETHER_CHECK(!panel.LastPie().active && panel.LastPie().errors.empty());
+}
+
 // The concept's stats chip at the picture's bottom right: the scene's counts, and -- when the shaded picture reports them -- its draws and
 // GPU time, then the frame rate.
 AETHER_TEST(SceneView_TheStatsChipNamesTheEntitiesTheDrawsAndTheFrameRate) {

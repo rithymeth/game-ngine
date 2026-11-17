@@ -179,6 +179,14 @@ SceneViewShading::FrameStats LiveSceneShading::Stats() const {
     return stats;
 }
 
+std::vector<SceneViewShading::RuntimeError> LiveSceneShading::Errors() const {
+    std::vector<RuntimeError> errors;
+    for (const LiveViewport::RuntimeError& error : viewport_.RuntimeErrors()) {
+        errors.push_back({error.text, error.callback, error.entity_guid, error.entity_name});
+    }
+    return errors;
+}
+
 void LiveSceneShading::Stop() {
     if (!running_) return;
     running_ = false;

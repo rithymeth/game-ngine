@@ -555,7 +555,7 @@ std::string ScriptSystem::DescribeEntity(Entity entity) const {
     return described;
 }
 
-void ScriptSystem::RecordError(const std::string& error) {
+void ScriptSystem::RecordError(std::string error, Entity entity, const char* callback) {
     // The same error again (the one a broken OnUpdate raises every frame): counted, not stored again, and logged only at 1, 10, 100... so neither the list nor the log fills up.
     if (auto seen = error_seen_.find(error); seen != error_seen_.end()) {
         SeenError& entry = seen->second;
@@ -570,9 +570,21 @@ void ScriptSystem::RecordError(const std::string& error) {
         AETHER_LOG_ERROR("Script", "%s (not listed: %zu distinct errors are already recorded)", error.c_str(), kMaxDistinctErrors);
         return;
     }
+    ErrorOrigin origin = OriginOf(entity);
+    if (callback != nullptr) origin.callback = callback;
     error_seen_[error] = {errors_.size(), 1, error};
-    errors_.push_back(error);
-    AETHER_LOG_ERROR("Script", "%s", error.c_str());
+    errors_.push_back(std::move(error));
+    error_origins_.push_back(std::move(origin));
+    AETHER_LOG_ERROR("Script", "%s", errors_.back().c_str());
+}
+
+ScriptSystem::ErrorOrigin ScriptSystem::OriginOf(Entity entity) const {
+    ErrorOrigin origin;
+    if (!entity.IsNull() && world_.IsAlive(entity)) {
+        if (const IdComponent* id = world_.GetComponent<IdComponent>(entity); id != nullptr) origin.entity = id->guid;
+        if (const EntityName* name = world_.GetComponent<EntityName>(entity); name != nullptr) origin.name = name->value;
+    }
+    return origin;
 }
 
 u32 ScriptSystem::NewEvent() {
@@ -776,7 +788,7 @@ bool ScriptSystem::SendEvent(Entity entity, const std::string& method, const std
     }
     ScriptResult result = CallMethod(entity, method, args);
     if (!result.ok) {
-        RecordError(result.error + " (in " + method + ", on " + DescribeEntity(entity) + ")");
+        RecordError(result.error + " (in " + method + ", on " + DescribeEntity(entity) + ")", entity, method.c_str());
     }
     return true;
 }

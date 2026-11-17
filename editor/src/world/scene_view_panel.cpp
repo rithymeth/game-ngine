@@ -761,6 +761,49 @@ void SceneViewPanel::Draw(SceneDocument& document, const ModelBoundsCache* bound
         draw->AddRectFilled(pie_.banner_min, pie_.banner_max, Color(16, 17, 21, 225), 4.0f);
         draw->AddRect(pie_.banner_min, pie_.banner_max, pie_.border_color, 4.0f);
         draw->AddText(ImVec2(pie_.banner_min.x + 10.0f, pie_.banner_min.y + 4.0f), Color(235, 238, 245), pie_.banner_text.c_str());
+        // The game's runtime errors under it: where a failure happened and on what. A row with an entity is a link -- a click selects
+        // it -- which is how "find the cause of a failure" stays in the editor. Only the first few are listed; Messages has them all.
+        const std::vector<SceneViewShading::RuntimeError> runtime_errors = shading != nullptr ? shading->Errors() : std::vector<SceneViewShading::RuntimeError>{};
+        if (!runtime_errors.empty()) {
+            constexpr usize kMaxRows = 3;
+            const usize shown = std::min(runtime_errors.size(), kMaxRows);
+            const f32 pad = 8.0f;
+            const f32 line = ImGui::GetTextLineHeight() + 2.0f;
+            const f32 width = std::min(560.0f, std::max(size.x - 20.0f, 120.0f));
+            const f32 footer = runtime_errors.size() > shown ? line : 0.0f;
+            pie_.errors_min = ImVec2(origin.x + (size.x - width) * 0.5f, pie_.banner_max.y + 8.0f);
+            pie_.errors_max = ImVec2(pie_.errors_min.x + width, pie_.errors_min.y + pad * 2.0f + line * static_cast<f32>(shown + 1) + footer);
+            draw->AddRectFilled(pie_.errors_min, pie_.errors_max, Color(44, 16, 18, 235), 4.0f);
+            draw->AddRect(pie_.errors_min, pie_.errors_max, Color(214, 92, 92), 4.0f);
+            char header[64];
+            std::snprintf(header, sizeof header, "%zu runtime error%s", runtime_errors.size(), runtime_errors.size() == 1 ? "" : "s");
+            draw->AddText(ImVec2(pie_.errors_min.x + pad, pie_.errors_min.y + pad - 1.0f), Color(255, 194, 194), header);
+            for (usize i = 0; i < shown; ++i) {
+                const SceneViewShading::RuntimeError& error = runtime_errors[i];
+                const ImVec2 row_min(pie_.errors_min.x + pad, pie_.errors_min.y + pad + line * static_cast<f32>(i + 1));
+                const ImVec2 row_max(pie_.errors_max.x - pad, row_min.y + line);
+                const bool linked = !error.entity_guid.empty();
+                const bool row_hovered = linked && io.MousePos.x >= row_min.x && io.MousePos.x <= row_max.x && io.MousePos.y >= row_min.y &&
+                                         io.MousePos.y <= row_max.y;
+                if (row_hovered) draw->AddRectFilled(row_min, row_max, Color(74, 26, 28, 235), 2.0f);
+                draw->PushClipRect(row_min, row_max, true);
+                draw->AddText(row_min, row_hovered ? Color(255, 233, 233) : Color(238, 214, 214), error.text.c_str());
+                draw->PopClipRect();
+                pie_.errors.push_back({error.text, error.entity_guid, row_min, row_max});
+                if (row_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                    EntityGuid guid;
+                    if (ParseEntityGuid(error.entity_guid, guid)) {
+                        const Entity entity = document.Guids().Find(document.GetWorld(), guid);
+                        if (!entity.IsNull()) document.SetSelection({entity});
+                    }
+                }
+            }
+            if (footer > 0.0f) {
+                char more[64];
+                std::snprintf(more, sizeof more, "+%zu more — the Messages tool lists them all", runtime_errors.size() - shown);
+                draw->AddText(ImVec2(pie_.errors_min.x + pad, pie_.errors_max.y - pad - line + 2.0f), Color(214, 160, 160), more);
+            }
+        }
     }
     if (!with_toolbar && !pie && !drop_.note.empty()) { // no toolbar row to say it in: the last drop's word goes under the chips
         draw->AddText(ImVec2(origin.x + 10.0f, chip_y + kChipHeight + 6.0f), Color(200, 205, 214), drop_.note.c_str());

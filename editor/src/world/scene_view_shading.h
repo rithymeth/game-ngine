@@ -4,6 +4,7 @@
 #include "world/scene_view.h"
 
 #include <string>
+#include <vector>
 
 namespace aether::editor {
 
@@ -47,6 +48,15 @@ public:
         u64 scripts = 0;        // its live script instances; zero means unknown
     };
     virtual FrameStats Stats() const { return {}; }
+    // The running game's runtime errors (script callbacks and Blueprints). `entity_guid` is the target's EntityGuid text
+    // -- empty when the error is not about one entity -- so the view can select it and a host can post a Messages link.
+    struct RuntimeError {
+        std::string text;
+        std::string callback;
+        std::string entity_guid;
+        std::string entity_name;
+    };
+    virtual std::vector<RuntimeError> Errors() const { return {}; }
     // Stops the running scene and frees its picture (the view went back to the wireframe).
     virtual void Stop() = 0;
 };

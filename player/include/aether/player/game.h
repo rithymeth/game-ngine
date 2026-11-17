@@ -205,6 +205,15 @@ struct GameStats {
     usize blueprint_errors = 0;
 };
 
+// A runtime error with what it points at, so a host can turn it into a link: the entity a script callback failed on (its
+// GUID as text; empty when the error is not about one entity) and the callback's name. Blueprint errors carry no entity.
+struct RuntimeError {
+    std::string text;
+    std::string callback;
+    std::string entity_guid;
+    std::string entity_name;
+};
+
 class Game {
 public:
     struct RebindableInput {
@@ -303,6 +312,8 @@ public:
     // Script and Blueprint problems, as text.
     std::vector<std::string> ScriptErrors() const;
     std::vector<std::string> BlueprintErrors() const;
+    // Script errors with their origins (see RuntimeError), then Blueprint errors; what an editor's error overlay links from.
+    std::vector<RuntimeError> RuntimeErrors() const;
     // The manifest's runtime modules, started before the first scene loads
     // (and shut down with the game). Missing ones are warnings.
     std::vector<std::string> StartModules();

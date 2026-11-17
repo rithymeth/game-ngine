@@ -129,7 +129,7 @@ as well. The verdicts are a judgement from the source audit; the evidence column
 | Play in the rendered viewport | Yes, inside the level viewport | Yes, Game view | Yes, embedded game | Yes: the shaded Scene View runs the game (physics, scripts, animation) while the document plays | `editor/src/host/scene_shading.cpp` (`PlayDelta`) | Done |
 | Stop behavior | Restores editor state | Restores editor state | Restores editor state | Stop restores the document and selection from the play snapshot and ejects the camera; the separate Live Viewport still keeps running until stopped/reloaded | `editor/src/core/play_session.cpp`, `editor/src/world/scene_view_panel.cpp` | Done |
 | Console filters | Categories, verbosity, search, source links | Log/error/warning filters, collapse, clear on play | Output, errors/warnings, search | Severity toggles, a category picker, a text filter, consecutive-repeat collapse with counts and Clear on Play (on by default); no source links or timestamps | `editor/src/devtools/console_panel.cpp` (`VisibleLines`, `Categories`), `engine/include/aether/core/console.h` (`ConsoleLine::category`) | Partial |
-| Messages linked to objects | Message Log links to actor/asset | Console double-click opens source/asset | Errors link to script line/node | Notification service keeps the history with an entity, asset or file target; the Messages tool links back (entity selects it, asset opens its folder) | `editor/src/core/notifications.cpp`, `editor/src/ui/notification_overlay.cpp` | Partial |
+| Messages linked to objects | Message Log links to actor/asset | Console double-click opens source/asset | Errors link to script line/node | Notification service keeps the history with an entity, asset or file target; the Messages tool links back (entity selects it, asset opens its folder), and a play session's script errors are posted once each with the entity their callback failed on | `editor/src/core/notifications.cpp`, `editor/src/ui/notification_overlay.cpp`, `editor/src/workspace/editor_workspace.cpp` (`PollRuntimeErrors`), `scripting/include/aether/script/script_system.h` (`ErrorOrigin`) | Partial |
 | Profiler/debugger | Insights, GPU Visualizer, stat commands | Profiler, Frame Debugger, Memory Profiler | Profiler, Monitors, debugger with breakpoints | Profiler tool, net profiler, crash reports | `editor/src/devtools/`, `editor/src/net/` | Partial |
 
 ## Asset editors, build and platform
@@ -967,8 +967,19 @@ and Clear on Play (on by default) which empties the output as a play session fir
 is playing. The stats chip in the Scene View is the runtime stats overlay in PIE: CPU frame time (`io.Framerate`),
 physics bodies and script instances join entities, draw calls and FPS, fed by `LiveViewport::PhysicsBodyCount()` and
 `ScriptInstanceCount()` through `FrameStats`. Tests:
-`ConsolePanel_FiltersCollapsesAndStartsEachPlayClean`. Still open in this stage: Simulate, a separate Game view or
-window, triangle and script-time counters, the error-to-entity links and the screenshot gate.
+`ConsolePanel_FiltersCollapsesAndStartsEachPlayClean`. Still open in this stage at that point: Simulate, a separate Game
+view or window, triangle and script-time counters, the error-to-entity links and the screenshot gate.
+
+Done so far (2026-11-18, third): runtime errors that link to their cause. `ScriptSystem` records each error's origin as data
+beside its text (`ErrorOrigin`: the entity's GUID and name when the failing callback had one, and the callback); `Game`
+exposes them as `RuntimeErrors()` (Blueprints included, text-only), `LiveViewport` and the `SceneViewShading` interface
+carry them to the view. In PIE the Scene View lists up to three under the banner; a row that names an entity selects it
+when clicked, and the rest are counted with a pointer to Messages. `EditorWorkspace::Update` posts each distinct error once
+per play session to the notification service with an `Entity` target -- the repeated-count suffix is folded out of the key --
+so Messages keeps the list after Stop and its rows link back to the entity. Tests:
+`SceneView_PieRuntimeErrorsLinkToTheirEntity`, `EditorWorkspace_RuntimeErrorsReachMessagesWithTheEntity`, the origin checks
+in `ScriptSystem_ErrorsSayWhichEntityAndWhereAndDoNotFloodTheList`. Still open in this stage: Simulate, a separate Game
+view or window, triangle and script-time counters, and the screenshot gate.
 
 Dependency: Stage 2's view modes and Stage 0's notification/error service. A frame debugger and GPU capture are engine
 work and are explicitly not part of this stage.

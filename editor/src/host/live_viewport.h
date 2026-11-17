@@ -95,6 +95,15 @@ public:
     bool SetGraphFile(const std::string& path, std::vector<u8> bytes);
     // How many script instances the running game has (one per entity with a working script).
     usize ScriptInstanceCount() const;
+    // The running game's runtime errors (script callbacks and Blueprints): the text, the callback, and the entity to link
+    // to (its GUID as text; empty when the error is not about one entity).
+    struct RuntimeError {
+        std::string text;
+        std::string callback;
+        std::string entity_guid;
+        std::string entity_name;
+    };
+    std::vector<RuntimeError> RuntimeErrors() const;
     // Where an entity is in the running game (its Transform's position, which a simulated body moves), false if the game has no such entity.
     bool PositionOf(const EntityGuid& entity, Vec3& position) const;
 

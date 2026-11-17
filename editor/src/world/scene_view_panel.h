@@ -64,6 +64,15 @@ public:
         ImU32 border_color = 0;
         ImVec2 banner_min{}, banner_max{};
         std::string banner_text;
+        // The running game's runtime errors, as the shaded picture reports them. Up to three are listed under the banner;
+        // a row's rectangle is where the error is drawn, and a click on one selects the entity it came from (when it has one).
+        struct Error {
+            std::string text;
+            std::string entity_guid;
+            ImVec2 min{}, max{};
+        };
+        std::vector<Error> errors;
+        ImVec2 errors_min{}, errors_max{};
     };
     const PieOverlay& LastPie() const { return pie_; }
 

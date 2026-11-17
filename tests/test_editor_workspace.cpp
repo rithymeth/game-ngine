@@ -7,6 +7,9 @@
 #include "workspace/command_registry.h"
 #include "workspace/editor_workspace.h"
 #include "world/scene_panel.h"
+#include "world/scene_view_panel.h"
+#include "world/scene_view_shading.h"
+#include "aether/scene/entity_guid.h"
 
 #include <imgui.h>
 
@@ -334,6 +337,58 @@ AETHER_TEST(EditorWorkspace_WorkspaceStripPlaysAndStopsTheScene) {
     CHECK(ws.Scene().Document().PlayState() == PlaySession::State::Paused);
     click(ws.WorkspaceStripPlays(), false); // Stop
     CHECK(ws.Scene().Document().PlayState() == PlaySession::State::Editing);
+}
+
+AETHER_TEST(EditorWorkspace_RuntimeErrorsReachMessagesWithTheEntity) {
+    EditorWorkspace ws;
+    SceneDocument& document = ws.Scene().Document();
+    const Entity door = document.CreateEntity("Front Door");
+    const EntityGuid guid = document.GetWorld().GetComponent<IdComponent>(door)->guid;
+    struct StubShading final : SceneViewShading {
+        bool Ready() const override { return true; }
+        const std::string& Note() const override { return note; }
+        bool Advance(SceneDocument&, const SceneViewCamera&, u32, u32, SceneViewMode, f32) override { return true; }
+        const ImageTexture& Picture() const override { return texture; }
+        std::vector<RuntimeError> Errors() const override { return errors; }
+        void Stop() override {}
+        ImageTexture texture;
+        std::string note;
+        std::vector<RuntimeError> errors;
+    };
+    StubShading shading;
+    ws.SceneView().shading = &shading;
+    const Notification* row = nullptr;
+    const auto error_rows = [&] {        std::vector<const Notification*> rows;
+        for (const Notification& n : ws.Notifications().All()) {
+            if (n.severity == NotificationSeverity::Error) rows.push_back(&n);
+        }
+        return rows;
+    };
+
+    document.Play();
+    shading.errors = {{"Broken.luau:3: attempt to index nil with 'boom' (in OnUpdate, on entity \"Front Door\" " + ToString(guid) + ")",
+                       "OnUpdate", ToString(guid), "Front Door"}};
+    ws.Update(1.0f / 60.0f);
+    CHECK(error_rows().size() == 1);
+    if (error_rows().size() == 1) {
+        row = error_rows().front();
+        CHECK(row->title == "Error in OnUpdate");
+        CHECK(row->message.find("Broken.luau:3") != std::string::npos);
+        CHECK(row->target.kind == NotificationTarget::Kind::Entity);
+        CHECK(row->target.value == ToString(guid)); // clicking the row in Messages selects the door
+    }
+
+    // The game keeps counting the same error up; Messages keeps the one row.
+    shading.errors[0].text += " (repeated 10 times)";
+    ws.Update(1.0f / 60.0f);
+    CHECK(error_rows().size() == 1);
+
+    // Stop ends the session's list; a new play session starts it again.
+    document.Stop();
+    ws.Update(1.0f / 60.0f);
+    document.Play();
+    ws.Update(1.0f / 60.0f);
+    CHECK(error_rows().size() == 2);
 }
 
 AETHER_TEST(EditorWorkspace_BreadcrumbNamesTheProjectAndTheOpenScene) {

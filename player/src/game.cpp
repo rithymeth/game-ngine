@@ -1061,6 +1061,28 @@ std::vector<std::string> Game::BlueprintErrors() const {
     return errors;
 }
 
+std::vector<RuntimeError> Game::RuntimeErrors() const {
+    std::vector<RuntimeError> errors;
+#if AETHER_GAME_SCRIPTING
+    if (runtime_ && runtime_->scripts) {
+        const auto& texts = runtime_->scripts->Errors();
+        const auto& origins = runtime_->scripts->ErrorOrigins();
+        for (usize i = 0; i < texts.size(); ++i) {
+            RuntimeError error;
+            error.text = texts[i];
+            if (i < origins.size()) {
+                error.callback = origins[i].callback;
+                error.entity_name = origins[i].name;
+                if (!origins[i].entity.IsNull()) error.entity_guid = ToString(origins[i].entity);
+            }
+            errors.push_back(std::move(error));
+        }
+    }
+#endif
+    for (const std::string& text : BlueprintErrors()) errors.push_back({text, "Blueprint", {}, {}});
+    return errors;
+}
+
 void Game::BeginPlay() {
     if (IsPlaying()) return;
 #if AETHER_GAME_PHYSICS

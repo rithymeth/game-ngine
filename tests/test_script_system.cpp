@@ -197,14 +197,25 @@ AETHER_TEST(ScriptSystem_ErrorsSayWhichEntityAndWhereAndDoNotFloodTheList) {
     for (const std::string& e : scripts.Errors()) all += e + "\n";
     AETHER_CHECK(all.find("\"Front Door\"") != std::string::npos && all.find("\"Back Door\"") != std::string::npos);
     AETHER_CHECK(all.find("attempt to index nil with 'boom'") != std::string::npos && all.find("Broken.luau:3") != std::string::npos);
+    // Each entry says where it came from as data too: the entity's GUID, its name, and the callback -- what an editor turns into a link.
+    AETHER_CHECK(scripts.ErrorOrigins().size() == 2);
+    std::string origins;
+    for (const ScriptSystem::ErrorOrigin& origin : scripts.ErrorOrigins()) {
+        origins += ToString(origin.entity) + "|" + origin.name + "|" + origin.callback + "\n";
+        AETHER_CHECK(origin.callback == "OnUpdate" && !origin.entity.IsNull());
+    }
+    AETHER_CHECK(origins.find("Front Door") != std::string::npos && origins.find(ToString(f.world.GetComponent<IdComponent>(door)->guid)) != std::string::npos);
+    AETHER_CHECK(origins.find(ToString(f.world.GetComponent<IdComponent>(other)->guid)) != std::string::npos);
     // A thousand more frames add no entries; the counts go up.
     for (int i = 0; i < 1000; ++i) life.Update(0.016f);
     AETHER_CHECK(scripts.Errors().size() == 2 && scripts.DroppedErrors() == 0);
     AETHER_CHECK(scripts.Errors()[0].find("(repeated 1001 times)") != std::string::npos);
-    // Clearing starts the count again.
+    // Clearing starts the count again, and the origins stay parallel to the list.
     scripts.ClearErrors();
+    AETHER_CHECK(scripts.ErrorOrigins().empty());
     life.Update(0.016f);
     AETHER_CHECK(scripts.Errors().size() == 2 && scripts.Errors()[0].find("(repeated") == std::string::npos);
+    AETHER_CHECK(scripts.ErrorOrigins().size() == 2);
 }
 
 AETHER_TEST(ScriptSystem_TheNumberOfDistinctErrorsIsBounded) {

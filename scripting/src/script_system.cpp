@@ -198,11 +198,13 @@ ScriptSystem::Class* ScriptSystem::LoadClass(const assets::AssetGuid& script) {
     if (!loader_ || !loader_(script, source, cls.name)) {
         cls.info.error = "Script " + assets::ToString(script) + " isn't available";
         errors_.push_back(cls.info.error);
+        error_origins_.push_back({});
         return nullptr;
     }
     cls.info = DescribeSource(host_, source, cls.name, &cls.ref);
     if (!cls.info.ok) {
         errors_.push_back(cls.info.error);
+        error_origins_.push_back({});
         return nullptr;
     }
     lua_State* L = host_.State();
@@ -253,6 +255,7 @@ void ScriptSystem::Create(Entity entity) {
         if (variable == nullptr || value.is_discarded() || !MatchesKind(variable->kind, value)) {
             errors_.push_back(cls->name + ": ignoring the value of '" + property.name +
                               "' (the script has no such variable, or it's a different type)");
+            error_origins_.push_back(OriginOf(entity));
             continue;
         }
         PushJsonValue(L, value);
@@ -286,7 +289,7 @@ void ScriptSystem::Invoke(Entity entity, const char* method, const f32* dt) {
     const u64 previous_owner = current_owner_;
     current_owner_ = instance->owner; // what it connects is its own
     if (!host_.ProtectedCall(args, 0, &error)) {
-        RecordError(error + " (in " + std::string(method) + ", on " + DescribeEntity(entity) + ")");
+        RecordError(error + " (in " + std::string(method) + ", on " + DescribeEntity(entity) + ")", entity, method);
     }
     current_owner_ = previous_owner;
     lua_settop(L, top);

@@ -526,7 +526,12 @@ asset editor is focused once those documents adopt the contract in Stage 6.
   game's. The camera is the game's while playing and Stop ejects back to
   the camera the play started from. The shaded picture gets each frame's
   time while playing (one frame after Step while paused, nothing while
-  editing), so physics, scripts and animation run.
+  editing), so physics, scripts and animation run. The game's runtime
+  errors are listed under the banner -- up to three, the rest counted with
+  "the Messages tool lists them all" -- and a row that came from an entity
+  is a link: a click selects it. The same errors are posted once each to
+  Messages with the entity target, so they outlive the session and a click
+  there goes to the entity too.
 - **Camera speed:** shows briefly in the middle ("Speed 4") when changed
   with the mouse wheel during fly mode.
 - **Fly camera:** with the right mouse button held the view looks and

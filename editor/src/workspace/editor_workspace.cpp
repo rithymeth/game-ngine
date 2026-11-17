@@ -76,6 +76,7 @@
 #include <fstream>
 #include <functional>
 #include <optional>
+#include <unordered_set>
 #include <vector>
 
 #if defined(_WIN32)
@@ -459,6 +460,7 @@ struct EditorWorkspace::Impl {
     std::string close_error;
     CommandRegistry commands;
     NotificationService notifications;
+    std::unordered_set<std::string> reported_runtime_errors; // the play session's errors Messages already lists, by text and target
     double clock = 0.0; // seconds since the workspace was made; Update() advances it and expires toasts
     EditorSettings editor_settings = EditorSettings::Load(EditorSettings::DefaultFile());
     SceneAutosaves autosaves;
@@ -1366,6 +1368,31 @@ struct EditorWorkspace::Impl {
         WriteAutosave();
     }
 
+    // A play session's runtime errors already exist as a list in the running game; this turns the first sight of each one into a
+    // Messages entry carrying the entity it points at, so the list outlives the session and a click goes to the thing that failed.
+    // The same error keeps counting up in the game ("repeated N times"), so the key ignores that suffix.
+    void PollRuntimeErrors() {
+        const bool playing = scene_panel != nullptr && scene_panel->Document().PlayState() != PlaySession::State::Editing;
+        if (!playing || scene_view.shading == nullptr) {
+            reported_runtime_errors.clear();
+            return;
+        }
+        for (const SceneViewShading::RuntimeError& error : scene_view.shading->Errors()) {
+            std::string key = error.text;
+            if (const usize repeated = key.find(" (repeated "); repeated != std::string::npos) key.erase(repeated);
+            key += '\n';
+            key += error.entity_guid;
+            if (!reported_runtime_errors.insert(std::move(key)).second) continue;
+            NotificationTarget target;
+            if (!error.entity_guid.empty()) {
+                target.kind = NotificationTarget::Kind::Entity;
+                target.value = error.entity_guid;
+            }
+            const std::string title = error.callback.empty() ? std::string("Runtime error") : "Error in " + error.callback;
+            notifications.Post(NotificationSeverity::Error, title, error.text, target);
+        }
+    }
+
     // The registry's panels become tools at the end of the list (so the
     // built-in tools keep their numbers), under their own category.
     void SyncExtensions() {
@@ -1538,6 +1565,7 @@ void EditorWorkspace::Update(f32 dt) {
     impl_->TickAutosave(dt);
     if (impl_->net_session->Running()) impl_->net_session->Tick(static_cast<f64>(dt));
     impl_->console.Pump();
+    impl_->PollRuntimeErrors();
 }
 
 ExtensionRegistry& EditorWorkspace::Extensions() { return impl_->extensions; }

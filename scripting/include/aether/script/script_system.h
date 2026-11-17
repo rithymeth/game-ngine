@@ -159,8 +159,17 @@ public:
     // further distinct errors are counted in DroppedErrors() (they are still logged).
     static constexpr usize kMaxDistinctErrors = 200;
     const std::vector<std::string>& Errors() const { return errors_; }
+    // Where each entry of Errors() came from, parallel to it: the entity whose callback failed (null when the error was not
+    // about one entity, or it was destroyed before it could be named) and the callback's name. This is what turns an error
+    // into a link to the thing that caused it.
+    struct ErrorOrigin {
+        EntityGuid entity;     // null: no single entity (a class that would not load, an event handler)
+        std::string name;      // the entity's name at the time, when it had one
+        std::string callback;  // "OnUpdate", ...; empty when the error was not in a callback
+    };
+    const std::vector<ErrorOrigin>& ErrorOrigins() const { return error_origins_; }
     usize DroppedErrors() const { return errors_dropped_; }
-    void ClearErrors() { errors_.clear(); error_seen_.clear(); errors_dropped_ = 0; }
+    void ClearErrors() { errors_.clear(); error_origins_.clear(); error_seen_.clear(); errors_dropped_ = 0; }
 
     // Loads a class from source into `host` and describes it, without
     // creating any instances. `ref` receives the class table's registry
@@ -215,7 +224,9 @@ public:
 private:
     void InstallApi(bool install_kit_apis);
     void ReleaseOwner(u64 owner);
-    void RecordError(const std::string& error);
+    void RecordError(std::string error, Entity entity = Entity{}, const char* callback = nullptr);
+    // `entity` as an ErrorOrigin: its GUID and name when it is alive, empty otherwise.
+    ErrorOrigin OriginOf(Entity entity) const;
     // `entity` as a person would name it: "entity \"Door\" a0b1c2d3" (the name when it has one, and the start of its id).
     std::string DescribeEntity(Entity entity) const;
 
@@ -232,6 +243,7 @@ private:
     std::unordered_map<assets::AssetGuid, Class> classes_;
     std::unordered_map<EntityGuid, Instance> instances_;
     std::vector<std::string> errors_;
+    std::vector<ErrorOrigin> error_origins_; // parallel to errors_
     struct SeenError { usize index = 0; u32 count = 0; std::string text; };
     std::unordered_map<std::string, SeenError> error_seen_; // by the error as first recorded: where it is in errors_ and how often it happened
     usize errors_dropped_ = 0;
