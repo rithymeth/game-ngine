@@ -27,6 +27,7 @@
 #include "terrain_view.h"
 #include "taa_pass.h"
 #include "view_cull.h"
+#include "cluster_model.h"
 #include "mesh_lod.h"
 #include "virtual_shadow.h"
 #include "vsm_pass.h"
@@ -980,6 +981,7 @@ Mat4 EntityTransform(const Transform& transform) {
 
 struct SceneRenderer::Impl {
     struct Primitive {
+        std::shared_ptr<ClusterModel> cluster; // virtual geometry (AETHER_VIRTUAL_GEOMETRY=1): this still, opaque, big primitive can be drawn as the clusters that look right from here
         BufferHandle vertices;
         BufferHandle indices;
         u32 index_count = 0;
@@ -1278,6 +1280,34 @@ struct SceneRenderer::Impl {
     u32 sampled_texture_count = 0;
     u32 seen_critical_pressure = 0;
     f32 view_distance = 0.0f;
+    // Virtual geometry, stage 4 (docs/design/VIRTUAL_GEOMETRY.md). Opt-in: AETHER_VIRTUAL_GEOMETRY=1 builds a cluster hierarchy for each still, opaque primitive of at least
+    // AETHER_VIRTUAL_GEOMETRY_MIN_TRIANGLES (default 20000) when its model loads, and each frame the GPU picks the clusters whose error projects to at most
+    // AETHER_VIRTUAL_GEOMETRY_PIXELS (default 1) for each such draw seen by the main camera; the main colour pass draws them with one indirect draw. Shadows, the water's
+    // mirror, TAA's velocity and ray tracing keep the whole mesh.
+    struct VirtualGeometryState {
+        bool enabled = false;
+        f32 pixels = 1.0f;
+        u32 min_triangles = 20000;
+        u32 primitives = 0;                                       // built so far
+        std::vector<std::unique_ptr<ICommandList>> compute_lists; // per frame slot
+        std::vector<u64> compute_fences;                          // the fence of each slot's last submission (0: none)
+        std::vector<std::vector<std::pair<ClusterModel*, ClusterCullPass*>>> last_draws; // per slot: what its last frame drew through the cluster path
+        u32 last_slot = 0;
+        u64 frames_with_draws = 0;
+    };
+    VirtualGeometryState vg = ReadVirtualGeometryEnvironment();
+    static VirtualGeometryState ReadVirtualGeometryEnvironment() {
+        VirtualGeometryState state;
+        const auto number = [](const char* name, double fallback) {
+            const char* v = std::getenv(name);
+            return v != nullptr && v[0] != '\0' ? std::atof(v) : fallback;
+        };
+        const char* on = std::getenv("AETHER_VIRTUAL_GEOMETRY");
+        state.enabled = on != nullptr && on[0] != '\0' && on[0] != '0';
+        state.pixels = static_cast<f32>(std::max(0.0, number("AETHER_VIRTUAL_GEOMETRY_PIXELS", 1.0)));
+        state.min_triangles = static_cast<u32>(std::max(1.0, number("AETHER_VIRTUAL_GEOMETRY_MIN_TRIANGLES", 20000.0)));
+        return state;
+    }
     std::function<bool(Entity, Transform&)> render_pose_sampler;
     // Each entity's local matrix and parent, read once a frame instead of once for every drawn entity under it.
     HierarchySnapshot hierarchy;
@@ -2427,6 +2457,53 @@ struct SceneRenderer::Impl {
                 } else {
                     draw.base_color_texture = white_texture;
                 }
+                if (vg.enabled && !has_skinning && draw.wind_level == 0 && !draw.water && draw.alpha_mode == assets::MaterialAlphaMode::Opaque &&
+                    primitive.indices.size() / 3 >= vg.min_triangles && device.SupportsIndirectCount() && device.SupportsIndirectDraw()) {
+                    std::vector<Vec3> positions;
+                    positions.reserve(vertices.size());
+                    for (const SceneVertex& v : vertices) positions.push_back(Vec3(v.position[0], v.position[1], v.position[2]));
+                    // A model is often stored with a vertex for every corner of every triangle, which leaves the cluster builder no neighbours to merge. Vertices with the same
+                    // position, normal and UV stand for each other, and the hierarchy is built on the first of each. Their tangents may differ a little (they are made a
+                    // triangle at a time): the first one's is used, which only matters to a normal-mapped surface. A hard edge or a UV seam keeps its separate vertices.
+                    constexpr usize kWeldBytes = offsetof(SceneVertex, tangent);
+                    std::vector<u32> order(vertices.size());
+                    for (usize i = 0; i < order.size(); ++i) order[i] = static_cast<u32>(i);
+                    std::sort(order.begin(), order.end(), [&](u32 a, u32 b) {
+                        const int c = std::memcmp(&vertices[a], &vertices[b], kWeldBytes);
+                        return c != 0 ? c < 0 : a < b;
+                    });
+                    std::vector<u32> canonical(vertices.size());
+                    for (usize i = 0; i < order.size();) {
+                        usize j = i + 1;
+                        while (j < order.size() && std::memcmp(&vertices[order[i]], &vertices[order[j]], kWeldBytes) == 0) ++j;
+                        for (usize k = i; k < j; ++k) canonical[order[k]] = order[i];
+                        i = j;
+                    }
+                    // The hierarchy is built on the welded vertices alone (the simplifier must not see the others), then its indices go back to the draw's numbering.
+                    std::vector<u32> compact(vertices.size(), 0xFFFFFFFFu);
+                    std::vector<Vec3> welded_positions;
+                    std::vector<u32> welded_ids;
+                    for (usize i = 0; i < canonical.size(); ++i) {
+                        if (canonical[i] != i) continue;
+                        compact[i] = static_cast<u32>(welded_positions.size());
+                        welded_positions.push_back(positions[i]);
+                        welded_ids.push_back(static_cast<u32>(i));
+                    }
+                    std::vector<u32> welded(primitive.indices.size());
+                    for (usize i = 0; i < welded.size(); ++i) welded[i] = compact[canonical[primitive.indices[i]]];
+                    auto model = std::make_shared<ClusterModel>();
+                    std::string cluster_error;
+                    const auto started = std::chrono::steady_clock::now();
+                    if (model->Build(device, welded_positions, welded, welded_ids, &cluster_error)) {
+                        AETHER_LOG_INFO("PlayerRenderer", "Virtual geometry: %zu triangles -> %zu clusters in %zu levels (%.0f ms)", primitive.indices.size() / 3,
+                                        model->Hierarchy().clusters.size(), static_cast<usize>(model->Hierarchy().level_count),
+                                        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count());
+                        draw.cluster = std::move(model);
+                        ++vg.primitives;
+                    } else {
+                        AETHER_LOG_WARN("PlayerRenderer", "Virtual geometry: a primitive of %zu triangles is drawn whole: %s", primitive.indices.size() / 3, cluster_error.c_str());
+                    }
+                }
                 destination_mesh.push_back(draw);
             }
         }
@@ -2514,6 +2591,23 @@ SceneRenderer::SceneRenderer(IDevice& device, ISwapChain& swap_chain, const Game
     : impl_(std::make_unique<Impl>(device, swap_chain, package)) {}
 SceneRenderer::~SceneRenderer() = default;
 
+SceneRenderer::VirtualGeometryStats SceneRenderer::VirtualGeometry() {
+    VirtualGeometryStats stats;
+    Impl::VirtualGeometryState& vg = impl_->vg;
+    stats.enabled = vg.enabled;
+    stats.primitives = vg.primitives;
+    stats.frames = vg.frames_with_draws;
+    if (vg.last_slot >= vg.last_draws.size() || vg.last_slot >= vg.compute_fences.size() || vg.compute_fences[vg.last_slot] == 0) return stats;
+    impl_->device.WaitForComputeFence(vg.compute_fences[vg.last_slot]);
+    for (const auto& [model, pass] : vg.last_draws[vg.last_slot]) {
+        GpuClusterSelection selection;
+        if (!pass->Read(selection)) continue;
+        ++stats.draws;
+        stats.triangles_drawn += selection.triangles;
+        stats.triangles_full += model->FullTriangles();
+    }
+    return stats;
+}
 void SceneRenderer::SetViewDistance(f32 metres) { impl_->view_distance = metres; }
 void SceneRenderer::ReloadGraphMaterials() { impl_->ReleaseGraphPipelines(); }
 void SceneRenderer::SetDrawParticles(bool draw) { impl_->draw_particles = draw; }
@@ -2559,9 +2653,20 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
         bool reflect = false; // drawn into the water's reflection: still, single-sided, opaque surfaces (not plants, skinned meshes or water); double-sided ones too, with the mirror pass's own frame constants flagging it
         bool in_view = true;  // the main camera can see it; a draw it cannot is kept only for the mirror pass, which sees what the camera does not
         const Impl::GraphPipelines* graph = nullptr; // drawn with a material graph's shader (null: the scene's own)
+        ClusterModel* cluster = nullptr;             // virtual geometry: the primitive has a cluster hierarchy
+        ClusterCullPass* cluster_pass = nullptr;     // set when this frame's cull for this draw was recorded: the main pass then draws what it chose
     };
 
     Impl& renderer = *impl_;
+    // The cluster culls of this frame (virtual geometry) run on the compute queue; the graphics submission that follows this call must wait for them. The wait attaches
+    // to the next graphics submission, so it is made when Draw is done, whatever way it returns.
+    struct ComputeWait {
+        IDevice& device;
+        u64 fence = 0;
+        ~ComputeWait() {
+            if (fence != 0) device.GraphicsQueueWaitOnCompute(fence);
+        }
+    } compute_wait{renderer.device};
     renderer.GpuTimingBegin(commands, renderer.transform_frame + 1);
     if (game.CriticalMemoryPressureEvents() != renderer.seen_critical_pressure) {
         renderer.seen_critical_pressure = game.CriticalMemoryPressureEvents();
@@ -3141,6 +3246,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                                 if (in_view || reflect) {
                                     opaque_draws.push_back({frame_vertex_buffer, far_level ? primitive.lod_indices : primitive.indices, far_level ? primitive.lod_index_count : primitive.index_count,
                                                             constants, cull, model_transform, reflect, in_view, graph});
+                                    if (primitive.cluster && in_view && !uploaded_animation && graph == nullptr) opaque_draws.back().cluster = primitive.cluster.get();
                                 }
                                 if (transform_moved || previous_positions != kTaaNoPreviousPositions) {
                                     taa_movers.push_back({frame_vertex_buffer, primitive.indices, primitive.index_count,
@@ -3485,6 +3591,48 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
             commands.EndRenderPass();
         }
     }
+    if (renderer.vg.enabled && view_frustum.pixels_per_unit_at_one > 0.0f && renderer.device.SupportsIndirectCount() &&
+        std::any_of(opaque_draws.begin(), opaque_draws.end(), [](const PendingOpaqueDraw& draw) { return draw.cluster != nullptr; })) {
+        // Each draw of a primitive with clusters gets a cull on the GPU: the clusters whose error projects to at most the threshold from this camera, in the primitive's
+        // own space. One compute list for the frame slot; a slot's resources are free again when the graphics fence of its last frame has passed, and so is its last cull.
+        Impl::VirtualGeometryState& vg = renderer.vg;
+        const u32 slot = frame_index;
+        if (vg.compute_lists.size() <= slot) {
+            vg.compute_lists.resize(slot + 1);
+            vg.compute_fences.resize(slot + 1, 0);
+            vg.last_draws.resize(slot + 1);
+        }
+        if (!vg.compute_lists[slot]) vg.compute_lists[slot] = renderer.device.CreateComputeCommandList();
+        if (vg.compute_lists[slot]) {
+            if (vg.compute_fences[slot] != 0) renderer.device.WaitForComputeFence(vg.compute_fences[slot]);
+            ICommandList& compute = *vg.compute_lists[slot];
+            compute.Reset();
+            std::vector<std::pair<ClusterModel*, ClusterCullPass*>>& used = vg.last_draws[slot];
+            used.clear();
+            std::unordered_map<ClusterModel*, u32> uses;
+            const f32 viewport_height = static_cast<f32>(std::max(renderer.swap_chain.Height(), 1u));
+            for (PendingOpaqueDraw& draw : opaque_draws) {
+                if (draw.cluster == nullptr || !draw.in_view) continue;
+                const u32 use = uses[draw.cluster]++;
+                ClusterCullPass* pass = draw.cluster->Pass(renderer.device, slot, use);
+                cook::ClusterView view;
+                if (pass == nullptr || !LocalClusterView(draw.model, decal_camera_position, view_frustum, viewport_height, draw.cull, view)) continue;
+                if (pass->Record(compute, view, vg.pixels)) {
+                    draw.cluster_pass = pass;
+                    used.push_back({draw.cluster, pass});
+                }
+            }
+            compute.Close();
+            if (!used.empty()) {
+                vg.compute_fences[slot] = renderer.device.SubmitCompute(compute);
+                compute_wait.fence = vg.compute_fences[slot];
+                vg.last_slot = slot;
+                ++vg.frames_with_draws;
+            } else {
+                vg.compute_fences[slot] = 0;
+            }
+        }
+    }
     renderer.GpuStamp(commands, 1);
     if (renderer.hdr) {
         if (!commands.BeginSceneColorPass(renderer.swap_chain, kBackgroundLinear)) return;
@@ -3519,6 +3667,12 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                 bound_cull = cull;
             }
             commands.BindVertexBuffer(draw.vertices, sizeof(SceneVertex));
+            if (draw.cluster_pass != nullptr) {
+                // The clusters the GPU chose (virtual geometry): one indirect draw over the cluster index buffer, the same vertices.
+                commands.BindIndexBuffer(draw.cluster->IndexBuffer(), IndexFormat::UInt32);
+                commands.SetPushConstants(&draw.constants, sizeof(draw.constants));
+                if (commands.DrawIndexedIndirectCount(draw.cluster_pass->DrawArguments(), draw.cluster_pass->DrawCount(), draw.cluster_pass->Capacity())) continue;
+            }
             commands.BindIndexBuffer(draw.indices, IndexFormat::UInt32);
             commands.SetPushConstants(&draw.constants, sizeof(draw.constants));
             commands.DrawIndexed(draw.index_count);

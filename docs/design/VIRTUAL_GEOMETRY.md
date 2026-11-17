@@ -12,10 +12,10 @@ This is built in stages, each tested before the next starts. This document recor
    change.
 2. **GPU culling** (done, below). A compute pass runs the same test as `SelectClusters` on every cluster, plus frustum and normal-cone culling, and writes a list
    of the clusters to draw. The CPU selector is its reference. Occlusion (Hi-Z) culling and the indirect draw list are not in this stage.
-3. **Indirect rendering.** One multi-draw of the surviving clusters into the existing depth and G-buffer passes and the existing materials. This is where the
-   cooked mesh format gains the hierarchy and the plugin shell appears.
-4. **Streaming** of cluster pages by what is visible.
-5. Software rasterization of triangles smaller than a pixel is **not planned**: it is the hardest part and the other stages deliver most of the benefit.
+3. **Indirect rendering** (done, below). One multi-draw of the surviving clusters; the cooked mesh format gains the hierarchy.
+4. **The player draws through clusters** (done, opt-in, below), measured on a real scene.
+5. **Streaming** of cluster pages by what is visible.
+6. Software rasterization of triangles smaller than a pixel is **not planned**: it is the hardest part and the other stages deliver most of the benefit.
 
 ## Stage 1: how the hierarchy works
 
@@ -164,6 +164,64 @@ Reading, honestly:
   occlusion, no shading cost, a laptop GPU, one run of 15 samples. Treat it as evidence that the machinery works and pays off on dense geometry, not as a general speedup claim; the same run on a 3060
   and on a real scene is still needed.
 
+## Stage 4: the player draws through clusters (opt-in)
+
+The scene renderer can draw a still, opaque, large primitive as the clusters that look right from where the camera is. It is **off unless asked for**:
+
+| Environment variable | Meaning |
+| --- | --- |
+| `AETHER_VIRTUAL_GEOMETRY=1` | build a cluster hierarchy for each qualifying primitive when its model loads, and draw those primitives through it |
+| `AETHER_VIRTUAL_GEOMETRY_MIN_TRIANGLES` | the smallest primitive that gets one (default 20,000) |
+| `AETHER_VIRTUAL_GEOMETRY_PIXELS` | the error, in pixels, the cut may leave (default 1; 0 draws the finest clusters, which is the mesh) |
+| `AETHER_PLAYER_VIRTUAL_GEOMETRY_STATS=1` | `aether_player` logs the triangles chosen against the triangles of the same draws' meshes, twice a second |
+
+Each frame, for every such draw the camera sees, the GPU cull of stage 2 runs in the primitive's own space (the camera and the frustum are brought through the
+inverse model matrix) on the compute queue; one indirect draw (stage 3's `DrawIndexedIndirectCount`) in the main colour pass then draws what it chose with the
+primitive's own vertex buffer and the hierarchy's index buffer. The graphics submission waits for the compute one on the GPU. Shadows, the water's mirror, TAA's
+velocity pass and ray-traced shadows keep drawing the whole mesh.
+
+A primitive is left to the plain draw when it is skinned, wind-swayed, water, not opaque, drawn with a material graph, on a device without indirect-count draws or
+storage-buffer reads, or when this draw's model matrix scales its axes unequally (more than 1% apart) or mirrors. The first two limits are because the cull needs one
+pixel-error number per draw and the cones one winding. A model drawn by several entities gets a cull for each (up to 8 a frame); a slot's passes are per frame in
+flight, so a cull never overwrites what an earlier frame's draw is still reading.
+
+### Welding, and why
+
+glTF models are very often stored with a vertex for every corner of every triangle (the test sphere has 245,760 vertices for 40,962 positions). The hierarchy builder
+finds neighbours by shared vertex numbers, so such a mesh is a pile of unconnected triangles to it: nothing merges, there is one level, and building it took 19 s for
+82,000 triangles. The renderer therefore welds vertices that have the same position, normal and UV before building (the 82k sphere then builds in 1.2 s into 15
+levels), builds on the welded vertices **alone**, and maps the hierarchy's indices back into the draw's own vertex numbering. Two details cost time to find:
+
+- Leaving the unused duplicates in the position array makes meshoptimizer treat them as seam partners and lock the mesh: the simplifier then removes nothing.
+- Tangents differ between the copies (they are made a triangle at a time), so they cannot be part of the weld; the first copy's tangent is used. That only matters to
+  a normal-mapped surface, and only by the difference between neighbouring triangles' tangents. A hard edge or a UV seam has different normals or UVs and stays split.
+
+### What the tests prove (Vulkan, lavapipe)
+
+`VirtualGeometryPlayer_*` render an 82k-triangle sphere through the whole renderer: off by default; at 0 pixels the picture is **pixel for pixel the plain one**; at 1
+pixel the draw sends under a quarter of the triangles and the picture differs by under 0.5 of 255 on average; a model a quarter the size is cut harder; a model with
+an unequal scale, or behind the camera, is not drawn through clusters (the first is drawn as before, byte for byte); clusters outside the picture are left out. Controls:
+reading the whole mesh's indices, a camera that is not brought into the model's space, and a frustum that is not used each fail a test.
+
+### Measured on the Woodland scene (lavapipe, a software renderer: not evidence about a GPU)
+
+The baked Woodland has no mesh near 20,000 triangles: its ground is cut into 4,608-triangle tiles, and its 67k-triangle water is excluded. With the minimum lowered to
+4,000, 74 primitives (ground tiles and the larger trees) get clusters in 1.3 s in all at load, and the aerial opening shot at 1280x720 draws 102 of them. At 1 pixel they
+send **164,818 of 501,220 triangles (33%)**; at 0 pixels 465,494 (back faces and what is outside the view). Against the plain draw the picture differs in 0.01% of its
+pixels at 0 pixels (nothing visible), and at 1 pixel in 42% of them by 0.66 of 255 on average, 0.5% by more than 8: coarser clusters shade a little differently.
+Two plain runs are identical, so none of that is noise. The renderer's scene time on lavapipe was 714 ms against 767 ms, which says only that fewer triangles cost a
+CPU rasterizer less. **Whether it is faster on a GPU is still unmeasured**; the stage 3 benchmark found the GPU path slower at 68k triangles and faster at 212k, and this
+scene's primitives are all small. It will pay off on heavy meshes (scans, sculpts, generated models), not on content already cut into small tiles.
+
+### Known limits of stage 4
+
+- The hierarchy is built when the model loads, on the CPU (17 ms on average here, 1.2 s for 82k triangles). The cooked one (AMSC v3, opt-in at cook time) is not read by
+  the player yet: the pak carries the cooked mesh, the player loads the glTF.
+- One cull and one indirect draw per draw of a primitive: for many instances of one mesh that is the wrong shape (instancing is the answer there), which is why it
+  is opt-in and bounded to 8 draws a primitive a frame.
+- No Hi-Z occlusion, no streaming, no D3D12 (no indirect-count draw there yet), no skinned meshes.
+- It was run on lavapipe only. The synchronisation (a cull per frame slot, the graphics queue waiting on the compute fence) has not been checked on a real GPU.
+
 ### Known limits
 
 - **Fixed 16 November 2026: compute results did not reach the CPU on a real GPU.** The Vulkan backend bound each compute descriptor set before writing the buffers into it; lavapipe tolerated that, NVIDIA read empty descriptors, so every compute shader wrote nothing. Sets are now bound in `Dispatch`. `ComputeReadback_AShaderWriteReachesTheCpu_Vulkan` guards it and `ClusterCullGpu_*` now agree with the CPU on the RTX 3050.
@@ -171,7 +229,7 @@ Reading, honestly:
   cannot shrink waits to be merged at a later level. A later stage can regroup across levels or lift the locks near the root.
 - The simplifier works on positions only: UV seams and normals are not protected, so a textured mesh may show seams at coarse levels until attribute-aware
   simplification is added.
-- Stage 3 draws clusters on Vulkan (below) but is not wired into the player or the scene renderer, has no Hi-Z occlusion, no streaming, and **its speed against the existing draw path is unmeasured** (the benchmark gate in `CLUSTER_GEOMETRY_LOD.md`). D3D12 has no indirect draw yet.
+- Stage 3 draws clusters on Vulkan (below); stage 4 wires it into the player behind an opt-in switch. It has no Hi-Z occlusion, no streaming, and **its speed against the existing draw path is unmeasured** (the benchmark gate in `CLUSTER_GEOMETRY_LOD.md`). D3D12 has no indirect draw yet.
 - No occlusion (Hi-Z) culling yet: it needs a depth pyramid, which is a graphics-side pass.
 - Whether clusters beat the current draw path is **still unmeasured**. This container has only a software Vulkan device (lavapipe), so the GPU pass is verified
   for correctness, not speed. Measuring it on a real GPU against the existing draw path is the first thing to do before stage 3, and the design doc's benchmark gate

@@ -92,6 +92,18 @@ public:
         u32 rebuilds = 0;
     };
     RayTracedShadowStats RayTracedShadows() const;
+    // Virtual geometry (AETHER_VIRTUAL_GEOMETRY=1; docs/design/VIRTUAL_GEOMETRY.md stage 4): whether it is on, how many primitives have a cluster hierarchy, and what the
+    // newest frame that drew through it chose: how many draws, the triangles those draws send and the triangles the same draws' whole meshes hold. This waits for that
+    // frame's cull to finish, so call it between frames; zeros where the device cannot read storage buffers.
+    struct VirtualGeometryStats {
+        bool enabled = false;
+        u32 primitives = 0;
+        u32 draws = 0;
+        u64 triangles_drawn = 0;
+        u64 triangles_full = 0;
+        u64 frames = 0; // frames that had at least one such draw
+    };
+    VirtualGeometryStats VirtualGeometry();
 
 private:
     ViewMode view_mode_ = ViewMode::Lit;
