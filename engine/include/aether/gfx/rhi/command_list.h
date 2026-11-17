@@ -2,6 +2,8 @@
 
 #include "aether/gfx/rhi/types.h"
 
+#include <atomic>
+
 namespace aether::gfx::rhi {
 
 class ISwapChain;
@@ -31,6 +33,12 @@ class ISwapChain;
 class ICommandList {
 public:
     virtual ~ICommandList() = default;
+
+    // Draws recorded through Draw, DrawIndexed and the indirect forms on any list since ResetDrawCallCount, for a performance HUD
+    // (the editor's viewport stats). Recording is single-threaded where a caller resets and reads around its own frame; the counter
+    // is atomic only so a reset cannot race a stray recording elsewhere.
+    static u64 DrawCallCount() { return s_draw_calls_.load(std::memory_order_relaxed); }
+    static void ResetDrawCallCount() { s_draw_calls_.store(0, std::memory_order_relaxed); }
 
     virtual void Reset() = 0;
     virtual void Close() = 0;
@@ -161,6 +169,13 @@ public:
     // is itself just a pointer typedef) for recording anything this
     // interface doesn't cover yet.
     virtual void* NativeHandle() const = 0;
+
+protected:
+    // What the backends call when they record a draw, so DrawCallCount counts it.
+    static void NoteDraw() { s_draw_calls_.fetch_add(1, std::memory_order_relaxed); }
+
+private:
+    inline static std::atomic<u64> s_draw_calls_{0};
 };
 
 } // namespace aether::gfx::rhi

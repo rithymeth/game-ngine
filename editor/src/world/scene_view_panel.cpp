@@ -487,11 +487,21 @@ void SceneViewPanel::Draw(SceneDocument& document, const ModelBoundsCache* bound
     const PictureChip space_chip = PlaceChipRight(chip_right, chip_y, tools_.Space() == GizmoSpace::Local ? "Local" : "World", io.MousePos, hovered);
     const std::vector<Entity> selection = document.Selection();
     const std::string selection_text = selection.empty() ? "Nothing selected"
-                                      : selection.size() == 1 ? document.Name(selection.front()) + "  |  Selected"
-                                                              : std::to_string(selection.size()) + " selected";
-    char stats_text[96];
-    std::snprintf(stats_text, sizeof stats_text, "%zu entities  |  %zu selected  |  %d fps", document.Entities().size(), selection.size(),
-                  static_cast<int>(std::lround(io.Framerate)));
+                                      : selection.size() == 1 ? document.Name(selection.front()) + " · Selected"
+                                                              : std::to_string(selection.size()) + " · Selected";
+    // The concept's stats row: the scene's counts, the picture's draws and GPU time where the renderer reports them, and the frame rate.
+    const SceneViewShading::FrameStats frame_stats = shading != nullptr ? shading->Stats() : SceneViewShading::FrameStats{};
+    char stats_text[192];
+    int written = std::snprintf(stats_text, sizeof stats_text, "%zu entities", document.Entities().size());
+    auto append = [&](const char* format, auto... value) {
+        if (written >= static_cast<int>(sizeof stats_text) - 1) return;
+        written += std::snprintf(stats_text + written, sizeof stats_text - static_cast<usize>(written), format, value...);
+        written = std::min(written, static_cast<int>(sizeof stats_text) - 1);
+    };
+    if (frame_stats.draw_calls > 0) append(" · %llu draw calls", static_cast<unsigned long long>(frame_stats.draw_calls));
+    if (frame_stats.valid) append(" · GPU %.1f ms", static_cast<f64>(frame_stats.gpu_ms));
+    append(" · %d FPS", static_cast<int>(std::lround(io.Framerate)));
+    stats_text_ = stats_text;
     f32 bottom_left = origin.x + 10.0f;
     const f32 bottom_y = end.y - kChipHeight - 10.0f;
     const PictureChip selection_chip = PlaceChip(bottom_left, bottom_y, selection_text.c_str(), io.MousePos, false);

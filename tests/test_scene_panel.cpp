@@ -2521,6 +2521,14 @@ struct HierarchyDropRig {
         }
         return found;
     }
+    // Starts the drag at the source and carries it to `at`, then lets go there.
+    void DragTo(const ImVec2& at) {
+        Step(source_at, false);
+        Step(source_at, true);
+        Step(ImVec2(source_at.x + 30.0f, source_at.y), true);
+        Step(at, true);
+        Step(at, false);
+    }
 };
 
 } // namespace
@@ -2537,14 +2545,14 @@ AETHER_TEST(ContentDrop_ARealDragOntoTheHierarchyPlacesUnderTheRowOrAtTheRoot) {
     const EntityGuid first_guid = document.GetWorld().GetComponent<IdComponent>(first_row)->guid;
     const Vec3 first_at = WorldPositionOf(document, first_row);
 
-    // Carrying the mouse down the list finds the places that take a drop: the heading, then each row, a distinct one each.
+    // Carrying the mouse down the list finds the places that take a drop: each row, a distinct one each.
     const std::vector<f32> targets = rig.Targets();
-    AETHER_CHECK(targets.size() >= 2);
-    if (targets.size() < 2) return;
+    AETHER_CHECK(targets.size() >= 1);
+    if (targets.empty()) return;
 
     // Let go over the first row: the model is placed under that entity, at its origin, in one step.
-    rig.Step(ImVec2(80.0f, targets[1]), true);  // over the row, still holding
-    rig.Step(ImVec2(80.0f, targets[1]), false);
+    rig.Step(ImVec2(80.0f, targets[0]), true);  // over the row, still holding
+    rig.Step(ImVec2(80.0f, targets[0]), false);
     AETHER_CHECK(document.Entities().size() == before + 1 && rig.panel.Status() == "Placed Models/crate.glb");
     const Entity placed = document.Selection().empty() ? kNullEntity : document.Selection()[0];
     AETHER_CHECK(placed != kNullEntity);
@@ -2554,19 +2562,19 @@ AETHER_TEST(ContentDrop_ARealDragOntoTheHierarchyPlacesUnderTheRowOrAtTheRoot) {
     AETHER_CHECK(NearVec(WorldPositionOf(document, placed), first_at, 0.05f));
     AETHER_CHECK(document.Undo() && !document.CanUndo() && document.Entities().size() == before);
 
-    // Let go over the heading instead: placed at the root, at the origin.
-    const std::vector<f32> again = rig.Targets();
-    AETHER_CHECK(!again.empty());
-    if (again.empty()) return;
-    rig.Step(ImVec2(80.0f, again[0]), true);  // over the heading, still holding
-    rig.Step(ImVec2(80.0f, again[0]), false);
+    // Let go over the footer's entity count instead: placed at the root, at the origin.
+    const ScenePanel::HierarchyHeader header = rig.panel.LastHierarchyHeader();
+    AETHER_CHECK(header.count_max.x > header.count_min.x);
+    if (!(header.count_max.x > header.count_min.x)) return;
+    const ImVec2 root_at((header.count_min.x + header.count_max.x) * 0.5f, (header.count_min.y + header.count_max.y) * 0.5f);
+    rig.DragTo(root_at);
     AETHER_CHECK(document.Entities().size() == before + 1);
     const Entity at_root = document.Selection().empty() ? kNullEntity : document.Selection()[0];
     AETHER_CHECK(at_root != kNullEntity && document.GetWorld().GetComponent<Parent>(at_root) == nullptr);
     AETHER_CHECK(at_root != kNullEntity && NearVec(WorldPositionOf(document, at_root), Vec3(0, 0, 0), 0.05f));
 }
 
-AETHER_TEST(ScenePanel_ADragOfAnEntityOntoTheHeadingMakesItARootAgain) {
+AETHER_TEST(ScenePanel_ADragOfAnEntityOntoTheFooterCountMakesItARootAgain) {
     const stdfs::path content = Scratch("aether_hierarchy_heading");
     HierarchyDropRig rig(content);
     SceneDocument& document = rig.panel.Document();
@@ -2575,11 +2583,11 @@ AETHER_TEST(ScenePanel_ADragOfAnEntityOntoTheHeadingMakesItARootAgain) {
     document.Commands().Clear();
     AETHER_CHECK(document.ParentOf(child) == parent);
     rig.drag_entity = child;
-    const std::vector<f32> targets = rig.Targets();
-    AETHER_CHECK(!targets.empty());
-    if (targets.empty()) return;
-    rig.Step(ImVec2(80.0f, targets[0]), true);  // over the heading, still holding
-    rig.Step(ImVec2(80.0f, targets[0]), false);
+    const ScenePanel::HierarchyHeader header = rig.panel.LastHierarchyHeader();
+    AETHER_CHECK(header.count_max.x > header.count_min.x);
+    if (!(header.count_max.x > header.count_min.x)) return;
+    const ImVec2 root_at((header.count_min.x + header.count_max.x) * 0.5f, (header.count_min.y + header.count_max.y) * 0.5f);
+    rig.DragTo(root_at);
     AETHER_CHECK(document.ParentOf(child).IsNull());
     AETHER_CHECK(document.Undo() && document.ParentOf(child) == parent);
 }
@@ -2849,4 +2857,201 @@ AETHER_TEST(ViewportTools_AnOutlineFollowsTheLivePositionOfARunningBody) {
     AETHER_CHECK(std::fabs(mean_x([](Entity, Vec3&) { return false; }) - at_document) < 0.01f); // no such entity in the game: where the document has it
     const f32 moved = mean_x([](Entity, Vec3& position) { position = Vec3(4.0f, 0.0f, 0.0f); return true; });
     AETHER_CHECK(moved > at_document + 40.0f);                                                   // drawn 4 m to the right
+}
+
+// The concept pins the hierarchy's footer to the column's foot: "+ Add entity" at the left opens the create menu the header's + opens,
+// and the scene's entity count at the right sits on the same row, where a drop makes the scene root.
+AETHER_TEST(ScenePanel_TheHierarchyFooterAddsAndCountsTheWholeScene) {
+    HeadlessImGui imgui;
+    ScenePanel panel;
+    SceneDocument& document = panel.Document();
+    const usize start = document.Entities().size(); // the panel opens on a new scene: its camera, sun, environment, player and ground
+    for (int i = 0; i < 3; ++i) document.CreateEntity("Crate " + std::to_string(i));
+    auto step = [&](const ImVec2& at, bool down) {
+        ImGuiIO& io = ImGui::GetIO();
+        io.AddMousePosEvent(at.x, at.y);
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, down);
+        imgui.Frame([&] { panel.Draw(); });
+    };
+    auto click = [&](const ImVec2& at) {
+        step(ImVec2(4.0f, 4.0f), false);
+        step(at, false);
+        step(at, true);
+        step(at, false);
+        imgui.Frame([&] { panel.Draw(); });
+    };
+    const auto center = [](const ImVec2& min, const ImVec2& max) { return ImVec2((min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f); };
+    for (int frame = 0; frame < 2; ++frame) imgui.Frame([&] { panel.Draw(); });
+    const ScenePanel::HierarchyHeader header = panel.LastHierarchyHeader();
+    const ScenePanel::Layout layout = panel.LastLayout();
+
+    AETHER_CHECK(header.count_label == std::to_string(start + 3) + " entities");
+    AETHER_CHECK(header.drop_hint.empty()); // nothing is dragged: an empty line keeps the footer's height steady
+    AETHER_CHECK(header.footer_min.y > header.hierarchy_max.y);            // under the tabs, not in their row
+    AETHER_CHECK(header.footer_max.y <= layout.hierarchy_max.y);           // and at the column's foot
+    AETHER_CHECK(layout.hierarchy_max.y - header.footer_max.y < 24.0f);    // pinned there, rather than after the last row
+    AETHER_CHECK(header.add_entity_min.x >= header.footer_min.x);          // + Add entity at the left
+    AETHER_CHECK(header.add_entity_max.x < header.count_min.x);
+    AETHER_CHECK(header.count_max.x <= layout.hierarchy_max.x && header.count_max.x > layout.hierarchy_max.x - 32.0f); // the count at the right
+    AETHER_CHECK(std::fabs(header.count_min.y - header.add_entity_min.y) < 12.0f); // one row
+
+    // The count follows the scene, both ways.
+    const Entity only = document.CreateEntity("Lamp");
+    imgui.Frame([&] { panel.Draw(); });
+    AETHER_CHECK(panel.LastHierarchyHeader().count_label == std::to_string(start + 4) + " entities");
+    document.DestroyEntity(only);
+    imgui.Frame([&] { panel.Draw(); });
+    AETHER_CHECK(panel.LastHierarchyHeader().count_label == std::to_string(start + 3) + " entities");
+
+    // + Add entity opens the same create menu the header's + opens (one popup, two buttons). A click outside closes it and adds nothing.
+    click(center(header.add_entity_min, header.add_entity_max));
+    AETHER_CHECK(ImGui::GetCurrentContext()->OpenPopupStack.Size > 0);
+    click(ImVec2(layout.inspector_min.x + 30.0f, layout.inspector_min.y + 220.0f));
+    AETHER_CHECK(ImGui::GetCurrentContext()->OpenPopupStack.Size == 0);
+    AETHER_CHECK(document.Entities().size() == start + 3); // opening the menu added nothing
+}
+
+// The Inspector's own header: "Inspector | World" at the column's top with ... at the right, as the hierarchy's header draws its tabs.
+// World is the scene's page -- no entity's header, the sun under "Sun", and an Add button where the scene has none.
+AETHER_TEST(ScenePanel_TheInspectorSwitchesToTheScenesWorldPage) {
+    HeadlessImGui imgui;
+    ScenePanel panel;
+    SceneDocument& document = panel.Document();
+    // Empty, so the page starts without a sun whether or not an earlier test registered the renderer's components (the registry is
+    // per process, and a registered DirectionalLight makes the new scene's "Directional Light" a sun).
+    const std::vector<Entity> defaults = document.Entities();
+    for (const Entity entity : defaults) document.DestroyEntity(entity);
+    AETHER_CHECK(document.Entities().empty());
+    const Entity crate = document.CreateEntity("Crate");
+    document.SetSelection({crate});
+    auto step = [&](const ImVec2& at, bool down) {
+        ImGuiIO& io = ImGui::GetIO();
+        io.AddMousePosEvent(at.x, at.y);
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, down);
+        imgui.Frame([&] { panel.Draw(); });
+    };
+    auto click = [&](const ImVec2& at) {
+        step(ImVec2(4.0f, 4.0f), false);
+        step(at, false);
+        step(at, true);
+        step(at, false);
+        imgui.Frame([&] { panel.Draw(); });
+    };
+    const auto center = [](const ImVec2& min, const ImVec2& max) { return ImVec2((min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f); };
+    for (int frame = 0; frame < 2; ++frame) imgui.Frame([&] { panel.Draw(); });
+
+    AETHER_CHECK(panel.ActiveInspectorTab() == InspectorTab::Inspector);
+    const ScenePanel::InspectorTabs tabs = panel.LastInspectorTabs();
+    const ScenePanel::Layout layout = panel.LastLayout();
+    AETHER_CHECK(tabs.active == InspectorTab::Inspector);
+    AETHER_CHECK(tabs.inspector_min.y >= layout.inspector_min.y && tabs.inspector_max.y <= layout.inspector_min.y + 40.0f); // the column's top row
+    AETHER_CHECK(tabs.world_min.x >= tabs.inspector_max.x);                       // Inspector first, World after it
+    AETHER_CHECK(tabs.more_min.x > tabs.world_max.x);                             // ... at the right end
+    AETHER_CHECK(tabs.more_max.x <= layout.inspector_max.x);
+    AETHER_CHECK(panel.LastInspectorHeader().title == "Crate");
+
+    click(center(tabs.world_min, tabs.world_max));
+    AETHER_CHECK(panel.ActiveInspectorTab() == InspectorTab::World);
+    AETHER_CHECK(panel.LastInspectorTabs().active == InspectorTab::World);
+    AETHER_CHECK(panel.LastInspectorHeader().title.empty()); // the scene's page draws no entity header
+    AETHER_CHECK(document.IsSelected(crate));                // switching pages does not change the selection
+
+    // A young scene has no sun, sky or wind: each section says so and offers to add one. Add is the same call the button makes.
+    AETHER_CHECK(panel.WorldPartCount(WorldPart::Sun) == 0);
+    const usize before = document.Commands().UndoCount();
+    const Entity sun = panel.AddWorldPart(WorldPart::Sun);
+    AETHER_CHECK(!sun.IsNull());
+    AETHER_CHECK(document.GetWorld().HasComponent<DirectionalLight>(sun));
+    AETHER_CHECK(panel.WorldPartEntity(WorldPart::Sun) == sun && panel.WorldPartCount(WorldPart::Sun) == 1);
+    AETHER_CHECK(document.Selection().size() == 1 && document.IsSelected(sun)); // the new sun is selected, so the Inspector can follow it
+    AETHER_CHECK(panel.Status() == "Added Sun");
+    AETHER_CHECK(document.Commands().UndoCount() == before + 2); // the entity and its component, each a step
+    AETHER_CHECK(document.Undo() && !document.GetWorld().HasComponent<DirectionalLight>(sun));
+    AETHER_CHECK(document.Undo() && panel.WorldPartEntity(WorldPart::Sun).IsNull());
+
+    // The sky and the wind are added the same way.
+    const Entity sky = panel.AddWorldPart(WorldPart::Sky);
+    const Entity wind = panel.AddWorldPart(WorldPart::Wind);
+    AETHER_CHECK(document.GetWorld().HasComponent<SkyLight>(sky));
+    AETHER_CHECK(document.GetWorld().HasComponent<Wind>(wind));
+    AETHER_CHECK(panel.WorldPartCount(WorldPart::Sky) == 1 && panel.WorldPartCount(WorldPart::Wind) == 1);
+
+    // Several suns: the page edits the first in the scene's own order -- what the renderer reads -- and its count says there are more.
+    const Entity second = document.CreateEntity("Sun 2");
+    document.GetWorld().AddComponent(second, DirectionalLight{});
+    AETHER_CHECK(panel.WorldPartCount(WorldPart::Sun) == 1); // the sun the undo removed went with its entity
+    AETHER_CHECK(panel.WorldPartEntity(WorldPart::Sun) == second);
+    const Entity third = document.CreateEntity("Sun 3");
+    document.GetWorld().AddComponent(third, DirectionalLight{});
+    AETHER_CHECK(panel.WorldPartCount(WorldPart::Sun) == 2);
+    const Entity edited = panel.WorldPartEntity(WorldPart::Sun);
+    AETHER_CHECK(edited == second || edited == third); // one of them, not none
+    imgui.Frame([&] { panel.Draw(); });
+    AETHER_CHECK(panel.WorldPartEntity(WorldPart::Sun) == edited); // and the page keeps editing that same one
+
+    // The Inspector page is one click back, with the entity's header again. The status line the Add left in the toolbar moved the two
+    // columns down a row, so the tab's rectangle is read from a frame drawn since.
+    for (int frame = 0; frame < 2; ++frame) imgui.Frame([&] { panel.Draw(); });
+    const ScenePanel::InspectorTabs back = panel.LastInspectorTabs();
+    click(center(back.inspector_min, back.inspector_max));
+    AETHER_CHECK(panel.ActiveInspectorTab() == InspectorTab::Inspector);
+    AETHER_CHECK(panel.LastInspectorHeader().title == document.Name(document.Selection().front()));
+}
+
+// The concept's stats chip at the picture's bottom right: the scene's counts, and -- when the shaded picture reports them -- its draws and
+// GPU time, then the frame rate.
+AETHER_TEST(SceneView_TheStatsChipNamesTheEntitiesTheDrawsAndTheFrameRate) {
+    HeadlessImGui imgui;
+    SceneViewPanel panel;
+    SceneDocument document;
+    document.CreateEntity("A");
+    const Entity crate = document.CreateEntity("Crate");
+    document.SetSelection({crate});
+    struct StubShading final : SceneViewShading {
+        bool Ready() const override { return false; }
+        const std::string& Note() const override { return note; }
+        bool Advance(SceneDocument&, const SceneViewCamera&, u32, u32, SceneViewMode, f32) override { return false; }
+        const ImageTexture& Picture() const override { return texture; }
+        FrameStats Stats() const override {
+            FrameStats stats;
+            stats.valid = true;
+            stats.gpu_ms = 3.1f;
+            stats.draw_calls = 88;
+            return stats;
+        }
+        void Stop() override {}
+        ImageTexture texture;
+        std::string note;
+    };
+    auto frame = [&] {
+        imgui.Frame([&] {
+            ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f));
+            ImGui::SetNextWindowSize(ImVec2(1200.0f, 800.0f));
+            ImGui::Begin("view", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize);
+            panel.Draw(document);
+            ImGui::End();
+        });
+    };
+    for (int i = 0; i < 2; ++i) frame();
+    const std::string wireframe = panel.LastStatsText();
+    AETHER_CHECK(wireframe.find("2 entities") != std::string::npos);
+    AETHER_CHECK(wireframe.find("draw calls") == std::string::npos); // nothing rendered: no draws to name
+    AETHER_CHECK(wireframe.find("GPU") == std::string::npos);
+    AETHER_CHECK(wireframe.find("FPS") != std::string::npos);
+
+    StubShading stub;
+    panel.shading = &stub;
+    panel.mode = SceneViewMode::Unlit;
+    for (int i = 0; i < 2; ++i) frame();
+    const std::string shaded = panel.LastStatsText();
+    AETHER_CHECK(shaded.find("2 entities") != std::string::npos);
+    AETHER_CHECK(shaded.find("88 draw calls") != std::string::npos);
+    AETHER_CHECK(shaded.find("GPU 3.1 ms") != std::string::npos);
+    AETHER_CHECK(shaded.find("FPS") != std::string::npos);
+
+    // The chip is the picture's bottom right; the selection stays at its bottom left.
+    const SceneViewPanel::Chrome chrome = panel.LastChrome();
+    AETHER_CHECK(chrome.stats_min.x > chrome.selection_max.x);
+    AETHER_CHECK(chrome.stats_max.x - chrome.stats_min.x > 40.0f);
+    AETHER_CHECK(chrome.selection_min.y > chrome.viewport_label_min.y);
 }

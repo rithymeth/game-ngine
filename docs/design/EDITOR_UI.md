@@ -455,8 +455,12 @@ asset editor is focused once those documents adopt the contract in Stage 6.
   Along the top right: the gizmo's space (Local/World), the snap step for
   the current tool ("Snap 1 m", "Snap 15 deg", "Snap 0.1", "Snap off") and
   the grid ("Grid on"/"Grid off"). Along the bottom left, the selection
-  ("BP_Player | Selected", or "Nothing selected"); along the bottom right,
-  the scene's counts ("24 entities | 2 selected | 120 fps"). An interactive
+  ("BP_Player · Selected", or "Nothing selected"); along the bottom right,
+  the scene's counts ("24 entities · 88 draw calls · GPU 2.4 ms · 120 FPS"),
+  where the draw count and the GPU time appear only when the shaded picture
+  reports them and a wireframe picture reads "24 entities · 120 FPS". The
+  text is kept in `SceneViewPanel::LastStatsText` for a test or a host.
+  An interactive
   chip acts on the click and never passes it to the picture, so clicking the
   projection chip cannot also select or move what is behind it; hover
   highlighting and the hover pick are suppressed over chips the same way.
@@ -539,7 +543,8 @@ asset editor is focused once those documents adopt the contract in Stage 6.
 ### 6.3 Hierarchy
 
 - Columns: name (with icon), and eye/lock toggles on the right.
-- Label the tree with the active scene name and entity count. Search entity
+- Label the tree with the active scene name and entity count (the count is
+  in the column's footer, see below). Search entity
   names in place with Ctrl+F (keeps matching parents visible and expanded,
   shows the match count, and preserves selection when it still matches;
   filtering out the selected entity clears Inspector selection rather than
@@ -578,8 +583,9 @@ Hide/Show and Lock/Unlock for the same set.
 Implemented: dragging several rows. A drag that starts on a selected row carries the whole selection
 (`ScenePanel::DragSet`); one that starts on an unselected row carries just that row. Pressing a selected row of a
 multi-selection keeps the selection until release, so the press can become a drag; a release without a drag selects
-just that row, as a click always did. Dropping on a row or the heading reparents everything carried as one undo step
-(`ScenePanel::ReparentEntities`). An entity whose ancestor is carried too stays under that ancestor, so a subtree moves
+just that row, as a click always did. Dropping on a row, or on the entity count in the footer, reparents everything
+carried as one undo step (`ScenePanel::ReparentEntities`; the count drops at the scene root). An entity whose ancestor
+is carried too stays under that ancestor, so a subtree moves
 intact; one that would go under its own descendant is skipped and counted in the status line while the rest land. The row
 menu's "Move to the scene root" acts on the selection the same way. There is no above/below line indicator yet: a drop
 always goes "into", because sibling order is by name.
@@ -609,6 +615,17 @@ ignoring case. The **+** opens the same three items as a popup, and **...** offe
 that need no page switch stay one click away. `ScenePanel_TheHierarchyHeaderSwitchesToThePlaceCatalog` checks the
 rectangles' order, that a Place click lists the three kinds, that adding a Camera makes the same entity the menu makes,
 that one undo removes it, and that the Hierarchy tab goes back and clears the catalog.
+
+Implemented: the column's **footer**, pinned to the column's foot as the concept draws it. "+ Add entity" at the left
+opens the same create popup the header's + opens, and the scene's entity count ("24 entities") sits at the right in the
+muted colour. The count is a drag target too: an entity dropped on it goes back to the scene root (one undo step, like
+the row menu's "Move to the scene root") and an asset from the Content Browser dropped on it is placed at the origin.
+One line under the row says where a carried entity would land -- "Drop to parent: Rack" while a row is under the
+pointer, "Drop to the scene root" otherwise -- and is empty when nothing is carried, so the footer's height never
+jumps. The list (or the Place catalog) is a child above the footer, so a long scene scrolls under it rather than
+pushing it off the column. `ScenePanel::LastHierarchyHeader` reports the footer's rectangles, the count's label and
+the hint. `ScenePanel_TheHierarchyFooterAddsAndCountsTheWholeScene` checks the pinned position, the count following
+the scene both ways, the one-row layout, and that + Add entity opens the create popup without adding anything.
 
 ### 6.4 Inspector
 
@@ -683,6 +700,20 @@ the three rectangles, both chip labels and, while a popup is open, its rows and 
 where a person would. `ScenePanel_TheHeaderTogglesEnabledTagsAndLayers` turns Enabled off and back, adds a tag to an
 entity with and without a Tags component, and moves an entity to another layer, checking the component after each and
 the undo. Not yet: the header's entity icon.
+
+Implemented: the column's own **Inspector | World** tabs at its top, with ... at the right, as the concept draws them
+(`DrawInspectorTabs`, reported by `ScenePanel::LastInspectorTabs`; drawn over invisible buttons rather than as an ImGui
+TabBar, for the same reason as the hierarchy's). **World** is the scene's page rather than an entity's: no entity
+header, and a "Sun", "Sky" and "Wind" section, each the first entity that has the `DirectionalLight`, `SkyLight` or
+`Wind` component the renderer reads. The fields come from the same reflected widgets as the Inspector's cards
+(`InspectObject` + `CommitFieldEdit` on that entity's GUID), so a World edit is saved with the scene and is one undo
+step. A scene without one says so and offers "Add a Sun", "Add a Sky" or "Add Wind", which create the named entity at
+the root with its component and select it (`ScenePanel::AddWorldPart`; `WorldPartEntity`/`WorldPartCount` read it back).
+When the scene has several of a part, the page says "editing the first of N" and the first entity in the scene stays
+the one edited. The Inspector's ... offers Clear selection and Clear property search.
+`ScenePanel_TheInspectorSwitchesToTheScenesWorldPage` clicks both tabs at their rectangles, adds a sun (the entity and
+its component, two undo steps), undoes it, adds the sky and the wind, and checks that a second sun leaves the first one
+the edited one.
 
 Implemented: a **Search properties** box at the top of the Inspector (`ScenePanel::SetPropertySearch`,
 `property_search_`). It matches a top-level field when the field's name or its component's name contains the text

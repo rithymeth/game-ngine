@@ -82,6 +82,10 @@ public:
     u64 FrameCount() const;
     // How many entities the loaded scene has.
     usize EntityCount() const;
+    // How many draws the last Frame recorded (scene, shadows and post passes together), for a stats row.
+    u64 DrawCalls() const;
+    // The renderer's timing of the newest frame whose submission has finished; `valid` is false where the device has no GPU timing.
+    player::SceneRenderer::GpuTimings GpuFrameTimings() const;
     // How many physics bodies the running game has (as of its last physics step: bodies follow the world's colliders and rigid bodies when the game steps).
     usize PhysicsBodyCount() const;
     // Reads a material graph (.amat) from the running game's package and checks it (player/graph_material.h): whether the game could draw with it.

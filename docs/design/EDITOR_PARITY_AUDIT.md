@@ -50,7 +50,7 @@ as well. The verdicts are a judgement from the source audit; the evidence column
 | Shortcut handling | One command table with default chords and scopes, conflict detection (a startup test requires none) and a cheat sheet generated from it; no remapping yet | Remappable shortcuts and conflict reporting in all three | Partial |
 | Documents and layout | One scene document; one tool shown at a time (popped-out tools are separate windows); only the open tool and ImGui docking are remembered | Multi-document tabs, per-asset tabs, layout presets | Partial |
 | Data safety on exit | Quit is immediate; autosave exists but is unwired; unsaved-scene prompts exist for New/Open only | Close/quit prompts and recoverable autosave in all three | Missing |
-| Hierarchy | Tree with name filter, drag reparent, Ctrl multi-select, create/duplicate/delete/copy/paste | Outliner/Scene dock with visibility, lock, icons, multi-edit | Partial |
+| Hierarchy | Tree with name filter, drag reparent, Ctrl multi-select, create/duplicate/delete/copy/paste, footer with "+ Add entity" and an entity count that takes a root drop | Outliner/Scene dock with visibility, lock, icons, multi-edit | Partial |
 | Viewport | Wireframe overlay, orbit camera, ±20 m grid; Live Viewport is a separate rendered tool | Lit/wireframe modes, fly camera, orthographic views, bookmarks, show flags | Partial |
 | Selection | Click, Ctrl toggle, marquee (replace/add/subtract), Alt click-through, Ctrl+A and invert in the Scene View and Live Viewport | Marquee, click-through, select-all/invert in all three | Partial |
 | Transform | Move/rotate/scale, world/local, per-mode snap, pivot/centre, plane squares for Move and Scale, uniform scale, Euler rotation fields | Pivot/center modes, plane and uniform scale handles, Euler entry, numeric transform | Partial |
@@ -90,7 +90,7 @@ as well. The verdicts are a judgement from the source audit; the evidence column
 | Projection | Perspective and orthographic (top/front/side) | Perspective and orthographic, 2D/3D toggle | Perspective and orthogonal, 3D/2D screens | Perspective only | `editor/src/world/scene_view.cpp:41` | Missing |
 | Camera navigation | Fly (WASD), orbit, pan, focus, speed control, bookmarks | Fly/orbit/pan, focus, speed, bookmarks | Fly/orbit/pan, focus, view menu | Right-drag orbit, middle/shift pan, wheel zoom, F focus | `scene_view.cpp:64-79`, `scene_view_panel.cpp:26-45` | Partial |
 | World extent | Large-world grid, snap to grid, world partition | Grid with configurable size | Grid with configurable size | Endless fading grid; zoom 0.5–20 000 m | `scene_view_panel.cpp:78-86`, `scene_view.cpp:54` | Partial |
-| Viewport stats | FPS, draw calls, triangles, memory | Stats overlay | Monitor/debug overlays | FPS and entity count only in Live Viewport | `editor/src/host/live_viewport_panel.cpp:224` | Partial |
+| Viewport stats | FPS, draw calls, triangles, memory | Stats overlay | Monitor/debug overlays | The Scene View's stats chip: entities and FPS always, the frame's draw calls and GPU time when the shaded picture reports them; Live Viewport's own overlay; no triangles or memory | `editor/src/world/scene_view_panel.cpp:492`, `engine/include/aether/gfx/rhi/command_list.h` | Partial |
 | Selection | Click, Ctrl, marquee, select-all, click-through | Click, Ctrl, marquee, select-all, scene picking | Click, Ctrl, box select, select-all | Click, Ctrl toggle, marquee, select-all/invert, Alt click-through | `editor/src/world/viewport_tools.cpp:51-110` | Partial |
 | Picking accuracy | Rendered object ID / physics | Rendered object ID | Rendered object ID | Bind-pose triangles (≤300k), else box; no animated/alpha-accurate pick | `editor/src/world/model_bounds.h:43`, `scene_view.cpp:126-206` | Partial |
 | Transform gizmo | Translate/rotate/scale, screen/plane handles, pivot modes | Translate/rotate/scale/rect, pivot/center, plane and uniform handles | Translate/rotate/scale, local/global, snap | Move/rotate/scale, world/local, pivot/centre, plane squares for Move and Scale, uniform scale box, snap per mode, handles a fixed number of pixels long | `editor/src/world/viewport_tools.h:16-56`, `scene_view.cpp:427` | Done |
@@ -621,8 +621,21 @@ rectangles and `ActiveHierarchyTab`/`SetHierarchyTab` switch pages. **Place** li
 the same `CreateEntity` call as the menu (same components, one undo step), selects it and names it in the status line.
 The **+** popup offers the same items and **...** offers Paste and Deselect All.
 `ScenePanel_TheHierarchyHeaderSwitchesToThePlaceCatalog` clicks the tabs and a row at their recorded rectangles and
-checks the order, the add with its one undo and that switching back clears the catalog. Still open from the concept's
-column: the world/outliner labels it puts beside the tabs.
+checks the order, the add with its one undo and that switching back clears the catalog.
+
+Done so far (2026-11-17): the hierarchy column's footer, the Inspector's "Inspector | World" page and the viewport's
+stats chip -- the rest of the concept's columns beside the headers. The footer pins "+ Add entity" at the left (the same
+create popup as the header's +) and the scene's entity count at the right; both are reported by
+`LastHierarchyHeader`, the count also takes a dropped entity (back to the scene root, one undo step) and a dropped
+asset (placed at the origin), and the line under them says where a carried entity would land without changing the
+footer's height. **World** is the Inspector's second page: the scene's sun, sky and wind (the first entity with each
+component), editable through the same reflected widgets as the Inspector's cards and undoable the same way, with an Add
+button where the scene has none (`ScenePanel::AddWorldPart`) and "editing the first of N" when it has several. The
+viewport's bottom-right chip names the entity count, the frame's draw calls and GPU time when the shaded picture
+reports them, and the frame rate; the draw count comes from a static `ICommandList::DrawCallCount` the viewport resets
+and reads around one frame's `Draw`, so a backend without GPU timings still names its entities and frame rate. Tests:
+`ScenePanel_TheHierarchyFooterAddsAndCountsTheWholeScene`,
+`ScenePanel_TheInspectorSwitchesToTheScenesWorldPage` and `SceneView_TheStatsChipNamesTheEntitiesTheDrawsAndTheFrameRate`.
 
 Done so far (2026-11-17): the menu bar's project chip and avatar, the rest of the concept's first row. Beside the
 **AETHER** mark the bar now reads "Ironvale · All changes saved": the project's file stem in the bar's text colour, a

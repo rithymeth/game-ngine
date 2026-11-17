@@ -49,6 +49,9 @@ public:
         ImVec2 stats_min{}, stats_max{};
     };
     const Chrome& LastChrome() const { return chrome_; }
+    // The bottom-right chip's text as last drawn: "24 entities · 88 draw calls · GPU 2.4 ms · 120 FPS" when the shaded picture reports its
+    // draws and GPU time, else just the entities and the frame rate. A host or a test reads it without the pixels.
+    const std::string& LastStatsText() const { return stats_text_; }
 
     // The concept's row 3 look controls, drawn after the gizmo icons: "Perspective", "Lit" and "Show" dropdowns. A
     // projection preset (Top, Front, Side) also switches to orthographic. The buttons' rectangles and, while a popup is
@@ -66,6 +69,7 @@ public:
 private:
     Chrome chrome_;
     LookControls look_;
+    std::string stats_text_; // the stats chip's last text
     SceneViewCamera camera_;
     ViewportTools tools_;
     ContentDrop drop_;          // an asset dragged in from the Content Browser: where it would land, and the last thing to say about a drop

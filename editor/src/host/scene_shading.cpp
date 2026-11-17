@@ -166,6 +166,15 @@ bool LiveSceneShading::Advance(SceneDocument& document, const SceneViewCamera& c
     return texture_.Set(viewport_.Width(), viewport_.Height(), viewport_.Pixels());
 }
 
+SceneViewShading::FrameStats LiveSceneShading::Stats() const {
+    FrameStats stats;
+    const player::SceneRenderer::GpuTimings timings = viewport_.GpuFrameTimings();
+    stats.valid = timings.valid;
+    stats.gpu_ms = timings.frame_ms;
+    stats.draw_calls = viewport_.DrawCalls();
+    return stats;
+}
+
 void LiveSceneShading::Stop() {
     if (!running_) return;
     running_ = false;

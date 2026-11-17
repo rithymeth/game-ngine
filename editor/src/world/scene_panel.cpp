@@ -4,10 +4,12 @@
 #include "core/file_dialog.h"
 #include "workspace/command_registry.h"
 #include "ui/entity_inspector.h"
+#include "ui/reflected_inspector.h"
 #include "world/content_drop.h"
 #include "world/scene_view_panel.h"
 
 #include "aether/core/log.h"
+#include "aether/renderer/components.h"
 #include "aether/scene/gameplay.h"
 
 #include <imgui.h>
@@ -127,6 +129,44 @@ std::vector<std::string> SceneTags(const SceneDocument& document) {
         }
     }
     return tags;
+}
+
+// The World page's fields for one component: InspectObject edits the live component, and the change is turned back into the document's
+// undoable field edit, as the entity Inspector does for its cards.
+template <typename T>
+void DrawWorldFields(SceneDocument& document, Entity entity, const char* id) {
+    const ComponentId component = GetComponentId<T>();
+    World& world = document.GetWorld();
+    void* data = world.GetComponentRaw(entity, component);
+    const reflect::TypeInfo& type = reflect::Reflect<T>();
+    if (data == nullptr) return;
+    reflect::Any before = reflect::Any::CopyOf(type, data);
+    const InspectResult edit = InspectObject(type, data, id);
+    if (!edit.Changed()) return;
+    const reflect::FieldInfo& field = *edit.changed_field;
+    const EntityGuid guid = EnsureGuid(world, entity, &document.Guids());
+    CommitFieldEdit(document.Context(), document.Commands(), guid, component, field, data,
+                    reflect::Any::CopyOf(*field.type, field.Ptr(before.Data())), edit.committed);
+}
+
+// The small ... glyph the concept puts at a column header's right end, drawn rather than typed. Returns a click on it.
+bool DrawMoreGlyph(const char* id, ImVec2& min, ImVec2& max, const char* tooltip) {
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    constexpr f32 kSize = 18.0f;
+    ImGui::InvisibleButton(id, ImVec2(kSize, kSize));
+    min = ImGui::GetItemRectMin();
+    max = ImGui::GetItemRectMax();
+    const bool hovered = ImGui::IsItemHovered();
+    if (hovered) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        draw->AddRectFilled(min, max, ImGui::GetColorU32(ImGuiCol_HeaderHovered), 3.0f);
+    }
+    const ImU32 color = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+    for (int dot = -1; dot <= 1; ++dot) {
+        draw->AddCircleFilled(ImVec2((min.x + max.x) * 0.5f + static_cast<f32>(dot) * 4.0f, (min.y + max.y) * 0.5f), 1.4f, color);
+    }
+    ImGui::SetItemTooltip("%s", tooltip);
+    return ImGui::IsItemClicked();
 }
 
 } // namespace
@@ -1020,6 +1060,9 @@ void ScenePanel::DrawNode(Entity entity, const HierarchyIndex& index, const std:
             ImGui::EndDragDropSource();
         }
         if (ImGui::BeginDragDropTarget()) {
+            const ImGuiPayload* dragged = ImGui::GetDragDropPayload();
+            if (dragged != nullptr && dragged->IsDataType(kEntityPayload))
+                hierarchy_header_.drop_hint = "Drop to parent: " + document_.Name(entity); // the footer under the list repeats where it would land
             if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kEntityPayload); payload != nullptr) {
                 const std::vector<Entity> dragged = PayloadEntities(*payload);
                 ReparentEntities(dragged, entity);
@@ -1072,61 +1115,84 @@ void ScenePanel::DrawNode(Entity entity, const HierarchyIndex& index, const std:
 void ScenePanel::DrawHierarchy() {
     placeables_.clear();
     DrawHierarchyHeader();
-    if (hierarchy_tab_ == HierarchyTab::Place) {
-        DrawPlacePanel();
-        return;
+    // The concept pins the footer ("+ Add entity ... 24 entities") to the column's foot: reserve its height -- the count row and the
+    // line that names where a dragged entity would land -- and keep the list (or the Place catalog) above it.
+    const f32 footer_height = ImGui::GetFrameHeightWithSpacing() + ImGui::GetTextLineHeightWithSpacing() + ImGui::GetStyle().ItemSpacing.y;
+    if (ImGui::BeginChild("##hierarchy_list", ImVec2(0.0f, -footer_height), false)) {
+        if (hierarchy_tab_ == HierarchyTab::Place) {
+            DrawPlacePanel();
+        } else {
+            ImGui::SetNextItemWidth(-1.0f);
+            ImGui::InputTextWithHint("##scene_filter", "Filter: name, name:term, type:Transform", &filter_);
+            const std::string filter = filter_;
+            const HierarchyQuery query = ParseHierarchyQuery(filter);
+            if (query.Empty()) {
+                const HierarchyIndex index(document_);
+                for (const Entity root : index.Children(kNullEntity)) DrawNode(root, index);
+            } else {
+                // Matches stay in the tree with their ancestors rather than flattening into a list, so a match still reads as
+                // where it lives ("Leaf B under Zebra"), and the chain is opened so it is on screen.
+                const std::vector<Entity> matches = MatchingEntities(document_, filter);
+                if (matches.empty()) {
+                    ImGui::TextDisabled("No entities match.");
+                } else {
+                    const std::unordered_set<Entity> shown = VisibleEntities(document_, matches);
+                    const HierarchyIndex index(document_);
+                    for (const Entity root : index.Children(kNullEntity)) {
+                        if (shown.count(root) != 0) DrawNode(root, index, &shown);
+                    }
+                }
+            }
+            if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) press_target_ = kNullEntity; // its row may not have been drawn on the release frame
+            // A right click on the empty part makes something at the root.
+            if (ImGui::BeginPopupContextWindow("##hierarchy_menu", ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
+                DrawCreateMenu(kNullEntity);
+                if (ImGui::MenuItem("Paste", "Ctrl+V", false, document_.HasClipboard())) document_.PasteClipboard();
+                ImGui::EndPopup();
+            }
+            // Keyboard, when this list has the focus and no text box has the keys. Same command table as the Edit menu.
+            const ImGuiIO& io = ImGui::GetIO();
+            if (commands_ != nullptr && ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows) && !io.WantTextInput && !Renaming())
+                commands_->RunPressedChord(CommandScope::SceneTree);
+        }
     }
-    ImGui::SetNextItemWidth(-1.0f);
-    ImGui::InputTextWithHint("##scene_filter", "Filter: name, name:term, type:Transform", &filter_);
-    const std::string filter = filter_;
-    const HierarchyQuery query = ParseHierarchyQuery(filter);
-    // Dropping on the heading makes an entity a root again.
-    // An item with an ID of its own and the full width: a drop is delivered only when the same target took it the frame before, and plain text has no ID (its
-    // target flickered between two, so a drop on the heading was never delivered), and a heading as wide as the list is also easier to hit.
+    ImGui::EndChild();
+    DrawHierarchyFooter();
+}
+
+// The concept's footer under the tree: "+ Add entity" at the left (the same menu the header's + opens) and the entity count at the
+// right, which also takes a drop for the scene root. While an entity is dragged, the line under them says where it would land.
+void ScenePanel::DrawHierarchyFooter() {
+    ImGui::Separator();
+    hierarchy_header_.footer_min = ImGui::GetCursorScreenPos();
+    if (ImGui::Button("+ Add entity")) ImGui::OpenPopup("##hierarchy_add");
+    ImGui::SetItemTooltip("Add an actor to the scene");
+    hierarchy_header_.add_entity_min = ImGui::GetItemRectMin();
+    hierarchy_header_.add_entity_max = ImGui::GetItemRectMax();
+    const usize entities = document_.Entities().size();
+    hierarchy_header_.count_label = std::to_string(entities) + (entities == 1 ? " entity" : " entities");
+    const f32 count_width = ImGui::CalcTextSize(hierarchy_header_.count_label.c_str()).x;
+    ImGui::SameLine(std::max(ImGui::GetCursorPosX(), ImGui::GetWindowContentRegionMax().x - count_width));
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-    const std::string heading = std::to_string(document_.Entities().size()) + " entities";
-    ImGui::Selectable((heading + "##hierarchy_heading").c_str(), false, ImGuiSelectableFlags_DontClosePopups);
+    ImGui::Selectable((hierarchy_header_.count_label + "##hierarchy_count").c_str(), false, ImGuiSelectableFlags_DontClosePopups);
     ImGui::PopStyleColor();
+    hierarchy_header_.count_min = ImGui::GetItemRectMin();
+    hierarchy_header_.count_max = ImGui::GetItemRectMax();
     if (ImGui::BeginDragDropTarget()) {
         if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kEntityPayload); payload != nullptr) {
-            const std::vector<Entity> dragged = PayloadEntities(*payload);
-            ReparentEntities(dragged, kNullEntity);
+            ReparentEntities(PayloadEntities(*payload), kNullEntity);
         }
-        // An asset dropped on the heading is placed at the root, at the scene's origin.
+        // An asset dropped on the count is placed at the root, at the scene's origin.
         if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kContentPathPayload); payload != nullptr && payload->Data != nullptr) {
             status_ = PlaceContentAsset(document_, content_root_, static_cast<const char*>(payload->Data), Vec3(0.0f, 0.0f, 0.0f));
         }
         ImGui::EndDragDropTarget();
     }
-    ImGui::Separator();
-    if (query.Empty()) {
-        const HierarchyIndex index(document_);
-        for (const Entity root : index.Children(kNullEntity)) DrawNode(root, index);
-    } else {
-        // Matches stay in the tree with their ancestors rather than flattening into a list, so a match still reads as
-        // where it lives ("Leaf B under Zebra"), and the chain is opened so it is on screen.
-        const std::vector<Entity> matches = MatchingEntities(document_, filter);
-        if (matches.empty()) {
-            ImGui::TextDisabled("No entities match.");
-        } else {
-            const std::unordered_set<Entity> shown = VisibleEntities(document_, matches);
-            const HierarchyIndex index(document_);
-            for (const Entity root : index.Children(kNullEntity)) {
-                if (shown.count(root) != 0) DrawNode(root, index, &shown);
-            }
-        }
-    }
-    if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) press_target_ = kNullEntity; // its row may not have been drawn on the release frame
-    // A right click on the empty part makes something at the root.
-    if (ImGui::BeginPopupContextWindow("##hierarchy_menu", ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
-        DrawCreateMenu(kNullEntity);
-        if (ImGui::MenuItem("Paste", "Ctrl+V", false, document_.HasClipboard())) document_.PasteClipboard();
-        ImGui::EndPopup();
-    }
-    // Keyboard, when this list has the focus and no text box has the keys. Same command table as the Edit menu.
-    const ImGuiIO& io = ImGui::GetIO();
-    if (commands_ != nullptr && ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows) && !io.WantTextInput && !Renaming())
-        commands_->RunPressedChord(CommandScope::SceneTree);
+    const ImGuiPayload* drag = ImGui::GetDragDropPayload();
+    if (drag != nullptr && drag->IsDataType(kEntityPayload) && hierarchy_header_.drop_hint.empty())
+        hierarchy_header_.drop_hint = "Drop to the scene root";
+    ImGui::TextDisabled("%s", hierarchy_header_.drop_hint.c_str()); // an empty line keeps the footer's height steady
+    hierarchy_header_.footer_max = ImGui::GetItemRectMax();
 }
 
 // The Inspector's heading, where the concept puts the entity's identity: the name as the title (the rename field, so
@@ -1269,6 +1335,12 @@ void ScenePanel::SetEntityLayer(Entity entity, u8 index) {
 }
 
 void ScenePanel::DrawInspector() {
+    DrawInspectorTabs();
+    if (inspector_tab_ == InspectorTab::World) {
+        inspector_header_ = InspectorHeader{}; // the entity's header is the Inspector page's: nothing of it (or its title) is on screen
+        DrawWorldPage();
+        return;
+    }
     std::vector<Entity> shown;
     for (const Entity entity : document_.Selection())
         if (document_.GetWorld().IsAlive(entity)) shown.push_back(entity);
@@ -1311,6 +1383,110 @@ void ScenePanel::DrawInspector() {
     ImGui::Separator();
     if (shown.size() == 1) InspectEntity(document_.Context(), document_.Commands(), shown[0], property_search_);
     else InspectEntities(document_.Context(), document_.Commands(), shown, property_search_);
+}
+
+// The Inspector column's header: "Inspector | World" at the left, ... at the right, as the concept draws it and as the hierarchy's own
+// header draws its tabs. Drawn rather than ImGui's TabBar so a test gets a rectangle per tab.
+void ScenePanel::DrawInspectorTabs() {
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    inspector_tabs_ = InspectorTabs{};
+    const auto tab = [&](const char* label, InspectorTab page, ImVec2& min, ImVec2& max) {
+        const ImVec2 text = ImGui::CalcTextSize(label);
+        ImGui::InvisibleButton(label, ImVec2(text.x + 16.0f, ImGui::GetFrameHeight()));
+        min = ImGui::GetItemRectMin();
+        max = ImGui::GetItemRectMax();
+        if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        const bool active = inspector_tab_ == page;
+        if (ImGui::IsItemClicked()) inspector_tab_ = page;
+        draw->AddText(ImVec2(std::floor((min.x + max.x - text.x) * 0.5f), std::floor((min.y + max.y - text.y) * 0.5f)),
+                      ImGui::GetColorU32(active ? ImGuiCol_Text : ImGuiCol_TextDisabled), label);
+        if (active) {
+            draw->AddRectFilled(ImVec2(min.x + 4.0f, max.y - 2.0f), ImVec2(max.x - 4.0f, max.y),
+                                ImGui::GetColorU32(ImGuiCol_HeaderActive), 1.0f);
+        }
+    };
+    tab("Inspector", InspectorTab::Inspector, inspector_tabs_.inspector_min, inspector_tabs_.inspector_max);
+    ImGui::SameLine();
+    tab("World", InspectorTab::World, inspector_tabs_.world_min, inspector_tabs_.world_max);
+    ImGui::SameLine(std::max(ImGui::GetWindowContentRegionMax().x - 18.0f, ImGui::GetCursorPosX() + 8.0f));
+    if (DrawMoreGlyph("##inspector_more", inspector_tabs_.more_min, inspector_tabs_.more_max, "Clear the selection, or the property search"))
+        ImGui::OpenPopup("##inspector_more_menu");
+    if (ImGui::BeginPopup("##inspector_more_menu")) {
+        if (ImGui::MenuItem("Clear selection", nullptr, false, !document_.Selection().empty())) document_.ClearSelection();
+        if (ImGui::MenuItem("Clear property search", nullptr, false, !property_search_.empty())) property_search_.clear();
+        ImGui::EndPopup();
+    }
+    inspector_tabs_.active = inspector_tab_;
+    ImGui::Separator();
+}
+
+// The World page: the scene's own settings rather than an entity's. Each part is the first entity that has its component, editable
+// through the same reflected widgets as the Inspector's cards and undoable the same way, with an Add button when the scene has none
+// and a note when it has more than one (the renderer reads the first).
+void ScenePanel::DrawWorldPage() {
+    ImGui::TextDisabled("The scene itself: the sun, sky and wind the renderer reads.");
+    ImGui::Spacing();
+    const auto section = [&](WorldPart part, const char* title, const char* add_label, const char* what) {
+        ImGui::SeparatorText(title);
+        const Entity entity = WorldPartEntity(part);
+        if (entity.IsNull()) {
+            ImGui::TextDisabled("This scene has no %s.", what);
+            if (ImGui::Button(add_label)) AddWorldPart(part);
+            return;
+        }
+        ImGui::PushID(title);
+        ImGui::TextUnformatted(document_.Name(entity).c_str());
+        ImGui::SameLine(0.0f, 8.0f);
+        if (ImGui::SmallButton("Select")) Select(entity, false);
+        const usize holders = WorldPartCount(part);
+        if (holders > 1) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("editing the first of %zu", holders);
+        }
+        if (part == WorldPart::Sun) DrawWorldFields<DirectionalLight>(document_, entity, title);
+        else if (part == WorldPart::Sky) DrawWorldFields<SkyLight>(document_, entity, title);
+        else DrawWorldFields<Wind>(document_, entity, title);
+        ImGui::PopID();
+    };
+    section(WorldPart::Sun, "Sun", "Add a Sun", "sun (a DirectionalLight)");
+    section(WorldPart::Sky, "Sky", "Add a Sky", "sky light");
+    section(WorldPart::Wind, "Wind", "Add Wind", "wind");
+}
+
+usize ScenePanel::WorldPartCount(WorldPart part) const {
+    const World& world = document_.GetWorld();
+    usize count = 0;
+    for (const Entity entity : document_.Entities()) {
+        const bool holds = part == WorldPart::Sun   ? world.HasComponent<DirectionalLight>(entity)
+                           : part == WorldPart::Sky ? world.HasComponent<SkyLight>(entity)
+                                                    : world.HasComponent<Wind>(entity);
+        if (holds) ++count;
+    }
+    return count;
+}
+
+Entity ScenePanel::WorldPartEntity(WorldPart part) const {
+    const World& world = document_.GetWorld();
+    for (const Entity entity : document_.Entities()) {
+        const bool holds = part == WorldPart::Sun   ? world.HasComponent<DirectionalLight>(entity)
+                           : part == WorldPart::Sky ? world.HasComponent<SkyLight>(entity)
+                                                    : world.HasComponent<Wind>(entity);
+        if (holds) return entity;
+    }
+    return kNullEntity;
+}
+
+Entity ScenePanel::AddWorldPart(WorldPart part) {
+    const char* name = part == WorldPart::Sun ? "Sun" : part == WorldPart::Sky ? "Sky Light" : "Wind";
+    const Entity made = document_.CreateEntity(name);
+    if (made.IsNull()) return made;
+    const ComponentId component = part == WorldPart::Sun   ? GetComponentId<DirectionalLight>()
+                                  : part == WorldPart::Sky ? GetComponentId<SkyLight>()
+                                                           : GetComponentId<Wind>();
+    document_.AddComponent(made, component);
+    document_.SetSelection({made});
+    status_ = std::string("Added ") + name;
+    return made;
 }
 
 } // namespace aether::editor

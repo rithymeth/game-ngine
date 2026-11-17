@@ -37,6 +37,14 @@ public:
     // current (or was refreshed this call).
     virtual bool Advance(SceneDocument& document, const SceneViewCamera& camera, u32 width, u32 height, SceneViewMode mode, f32 dt) = 0;
     virtual const ImageTexture& Picture() const = 0;
+    // What the newest picture's own frame says, for the view's stats row (the concept's "GPU 2.4 ms"): the GPU's time on the frame and how
+    // many draws it recorded. `valid` is false where the picture has no timing (a device without GPU timers); zero draws means unknown.
+    struct FrameStats {
+        bool valid = false;
+        f32 gpu_ms = 0.0f;
+        u64 draw_calls = 0;
+    };
+    virtual FrameStats Stats() const { return {}; }
     // Stops the running scene and frees its picture (the view went back to the wireframe).
     virtual void Stop() = 0;
 };

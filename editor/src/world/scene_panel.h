@@ -61,6 +61,13 @@ std::unordered_set<Entity> VisibleEntities(const SceneDocument& document, const 
 // the actor kinds that can be added to it.
 enum class HierarchyTab : u8 { Hierarchy, Place };
 
+// The Inspector column's two pages, as the concept's "Inspector | World" header switches them: the selected entity's properties, or the
+// scene's own (its sun, sky and wind, under "World").
+enum class InspectorTab : u8 { Inspector, World };
+
+// The World page's parts: the scene's first DirectionalLight (the sun), SkyLight (the sky) and Wind (the wind).
+enum class WorldPart : u8 { Sun, Sky, Wind };
+
 // What a hierarchy row's badge says the entity is, judged by its component type names. When several apply, the earliest
 // in this order wins (a camera with a light on it reads as a camera). Empty: nothing but name, transform, parenting,
 // tags and prefab bookkeeping; Other: components none of the kinds claim.
@@ -176,6 +183,12 @@ public:
         HierarchyTab active = HierarchyTab::Hierarchy;
         ImVec2 hierarchy_min{}, hierarchy_max{}, place_min{}, place_max{};
         ImVec2 add_min{}, add_max{}, more_min{}, more_max{};
+        // The footer's row: "+ Add entity" at the left, the entity count at the right (which also takes a drop for the scene root),
+        // and the line under them that names where a dragged entity would land.
+        ImVec2 footer_min{}, footer_max{};
+        ImVec2 add_entity_min{}, add_entity_max{}, count_min{}, count_max{};
+        std::string count_label; // "24 entities"
+        std::string drop_hint;   // while an entity is dragged: "Drop to parent: <name>", or "Drop to the scene root"
     };
     const HierarchyHeader& LastHierarchyHeader() const { return hierarchy_header_; }
     struct Placeable {
@@ -232,6 +245,23 @@ public:
     };
     const InspectorHeader& LastInspectorHeader() const { return inspector_header_; }
 
+    // The Inspector column's "Inspector | World" tabs, where the concept puts them: at the column's top, with ... at the right. World
+    // edits the scene itself (the first DirectionalLight, SkyLight and Wind, each with an Add button when the scene has none), one undo
+    // step per edit, and says so when the scene has several of one. The rectangles are what a test clicks.
+    InspectorTab ActiveInspectorTab() const { return inspector_tab_; }
+    void SetInspectorTab(InspectorTab tab) { inspector_tab_ = tab; }
+    struct InspectorTabs {
+        InspectorTab active = InspectorTab::Inspector;
+        ImVec2 inspector_min{}, inspector_max{}, world_min{}, world_max{}, more_min{}, more_max{};
+    };
+    const InspectorTabs& LastInspectorTabs() const { return inspector_tabs_; }
+    // The World page's entity of `part` (the first one that has the component), kNullEntity when the scene has none.
+    Entity WorldPartEntity(WorldPart part) const;
+    usize WorldPartCount(WorldPart part) const;
+    // Creates "Sun", "Sky Light" or "Wind" with that component at the scene root and selects it; the World page's Add buttons, also
+    // callable without a mouse. Each is a new entity and its component, as the Actor menu's items are.
+    Entity AddWorldPart(WorldPart part);
+
     // The project's layer names, for the header's layer dropdown (ProjectSettings::layers). Not owned; null or empty
     // leaves the dropdown with "Default" only. The workspace points it at its open project's settings.
     void SetLayerNames(const std::vector<std::string>* names) { layer_names_ = names; }
@@ -246,12 +276,15 @@ private:
     void DrawToolbar();
     void DrawHierarchy();
     void DrawHierarchyHeader();
+    void DrawHierarchyFooter();
     void DrawPlacePanel();
     void DrawNode(Entity entity, const HierarchyIndex& index, const std::unordered_set<Entity>* shown = nullptr);
     void DrawEntityMenu(Entity entity);
     void DrawCreateMenu(Entity parent);
     void DrawCreateItems(Entity parent);
     void DrawInspector();
+    void DrawInspectorTabs();
+    void DrawWorldPage();
     void DrawInspectorHeader(std::span<const Entity> shown);
     void DrawInspectorTags(Entity entity);
     void DrawInspectorLayer(Entity entity);
@@ -277,6 +310,8 @@ private:
     std::string filter_; // the hierarchy filter box
     HierarchyTab hierarchy_tab_ = HierarchyTab::Hierarchy;
     HierarchyHeader hierarchy_header_;
+    InspectorTab inspector_tab_ = InspectorTab::Inspector;
+    InspectorTabs inspector_tabs_;
     std::vector<Placeable> placeables_; // the Place tab's rows, as last drawn
     std::string place_filter_;          // the Place tab's search box
     Entity rename_target_ = kNullEntity;

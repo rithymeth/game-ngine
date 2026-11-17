@@ -65,7 +65,7 @@ struct DragRig {
             panel.Draw();
         });
     }
-    // The y of the middle of each drop target, top to bottom: the heading, then each row in the order drawn.
+    // The y of the middle of each drop target, top to bottom: each row in the order drawn.
     std::vector<f32> Targets() {
         Step(ImVec2(20, 20), false);
         Step(ImVec2(20, 20), true);
@@ -170,9 +170,9 @@ AETHER_TEST(HierarchyDrag_ARealDragOfASelectedRowCarriesTheSelection) {
     const Entity target = document.CreateEntity("0 Target");
     document.Commands().Clear();
     const std::vector<f32> rows = rig.Targets();
-    AETHER_CHECK(rows.size() >= 4); // the heading, then the three
-    if (rows.size() < 4) return;
-    const f32 row_a = rows[1], row_target = rows[3];
+    AETHER_CHECK(rows.size() >= 3); // the three rows
+    if (rows.size() < 3) return;
+    const f32 row_a = rows[0], row_target = rows[2];
 
     document.SetSelection({a, b});
     rig.Step(ImVec2(80.0f, row_a), false);
@@ -182,12 +182,14 @@ AETHER_TEST(HierarchyDrag_ARealDragOfASelectedRowCarriesTheSelection) {
     const ImGuiPayload* payload = ImGui::GetDragDropPayload();
     AETHER_CHECK(payload != nullptr && payload->DataSize == static_cast<int>(2 * sizeof(Entity)));
     rig.Step(ImVec2(80.0f, row_target), true);
+    AETHER_CHECK(rig.panel.LastHierarchyHeader().drop_hint == "Drop to parent: 0 Target"); // the footer under the list says where it lands
     rig.Step(ImVec2(80.0f, row_target), true);
     rig.Step(ImVec2(80.0f, row_target), false);
     AETHER_CHECK(document.ParentOf(a) == target && document.ParentOf(b) == target);
     AETHER_CHECK(document.Commands().UndoCount() == 1);
     AETHER_CHECK(document.Selection().size() == 2); // a drag is not a click: the selection stays
     rig.Step(ImVec2(80.0f, 400.0f), false);
+    AETHER_CHECK(rig.panel.LastHierarchyHeader().drop_hint.empty()); // nothing carried any more: an empty line
     AETHER_CHECK(document.Undo() && document.ParentOf(a).IsNull() && document.ParentOf(b).IsNull());
 }
 
@@ -197,14 +199,14 @@ AETHER_TEST(HierarchyDrag_AClickOnASelectedRowSelectsJustIt) {
     const Entity a = document.CreateEntity("0 Crate A");
     const Entity b = document.CreateEntity("0 Crate B");
     const std::vector<f32> rows = rig.Targets();
-    AETHER_CHECK(rows.size() >= 3);
-    if (rows.size() < 3) return;
+    AETHER_CHECK(rows.size() >= 2);
+    if (rows.size() < 2) return;
 
     document.SetSelection({a, b});
-    rig.Step(ImVec2(80.0f, rows[2]), false);
-    rig.Step(ImVec2(80.0f, rows[2]), true);
+    rig.Step(ImVec2(80.0f, rows[1]), false);
+    rig.Step(ImVec2(80.0f, rows[1]), true);
     AETHER_CHECK(document.Selection().size() == 2);
-    rig.Step(ImVec2(80.0f, rows[2]), false); // let go without moving: a click
+    rig.Step(ImVec2(80.0f, rows[1]), false); // let go without moving: a click
     AETHER_CHECK(document.Selection().size() == 1 && document.IsSelected(b) && !document.IsSelected(a));
     AETHER_CHECK(document.ParentOf(b).IsNull());
 }

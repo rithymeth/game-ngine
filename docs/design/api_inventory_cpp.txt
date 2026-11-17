@@ -2203,7 +2203,10 @@
   ~RenderThread()
 [engine/include/aether/gfx/rhi/command_list.h] experimental
   type class ICommandList
+  protected:static void NoteDraw()
   public:virtual ~ICommandList()=default
+  static u64 DrawCallCount()
+  static void ResetDrawCallCount()
   virtual bool BeginDepthPass(SampledTextureHandle,bool)
   virtual bool BeginSceneColorPass(ISwapChain&,const ClearColor&)
   virtual bool BeginTexturePass(SampledTextureHandle,const ClearColor*)

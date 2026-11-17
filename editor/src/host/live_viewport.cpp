@@ -52,6 +52,7 @@ struct LiveViewport::Impl {
     std::vector<u64> fences;
     std::unique_ptr<player::SceneRenderer> renderer;
     u64 frames = 0;
+    u64 draw_calls = 0; // what the last Frame recorded, from ICommandList::DrawCallCount
     u64 reloads = 0;
     u64 patches = 0;
     u64 script_restarts = 0;
@@ -78,6 +79,10 @@ u64 LiveViewport::SceneReloads() const { return impl_ ? impl_->reloads : 0; }
 u64 LiveViewport::PatchCount() const { return impl_ ? impl_->patches : 0; }
 u64 LiveViewport::ScriptRestarts() const { return impl_ ? impl_->script_restarts : 0; }
 usize LiveViewport::EntityCount() const { return impl_ && impl_->game ? impl_->game->GetWorld().EntityCount() : 0; }
+u64 LiveViewport::DrawCalls() const { return impl_ ? impl_->draw_calls : 0; }
+player::SceneRenderer::GpuTimings LiveViewport::GpuFrameTimings() const {
+    return impl_ && impl_->renderer ? impl_->renderer->GpuFrameTimings() : player::SceneRenderer::GpuTimings{};
+}
 bool LiveViewport::SetGraphFile(const std::string& path, std::vector<u8> bytes) {
     if (!impl_ || !impl_->renderer) return false;
     impl_->package.SetContentOverride(path, std::move(bytes)); // Frame waits for its fence before it returns, so the old pipelines are idle now
@@ -361,7 +366,9 @@ bool LiveViewport::Frame(f32 dt, const Vec3& position, const Quaternion& rotatio
     live.swap_chain->AcquireNextImage();
     rhi::ICommandList& cmd = *live.commands[slot];
     cmd.Reset();
+    rhi::ICommandList::ResetDrawCallCount();
     live.renderer->Draw(*live.game, cmd, static_cast<u32>(slot));
+    live.draw_calls = rhi::ICommandList::DrawCallCount();
     cmd.Close();
     live.fences[slot] = device_.Submit(cmd, live.swap_chain.get());
     device_.WaitForFence(live.fences[slot]); // the picture is wanted now

@@ -23,6 +23,7 @@ public:
     const std::string& Note() const override { return note_; }
     bool Advance(SceneDocument& document, const SceneViewCamera& camera, u32 width, u32 height, SceneViewMode mode, f32 dt) override;
     const ImageTexture& Picture() const override { return texture_; }
+    FrameStats Stats() const override;
     void Stop() override;
 
     // The running scene, for a host or a test that wants the pixels or the counters.
