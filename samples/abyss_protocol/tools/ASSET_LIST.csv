@@ -1,0 +1,129 @@
+﻿asset_id,name,category,filename,task_id
+AP-001,Minnow Submarine,Vehicles,AP-001_Minnow_Submarine.glb,01a1e3d1-3b81-742b-930c-9ba79460e3bf
+AP-002,Habitat Dome,Exterior_Buildings_Props,AP-002_Habitat_Dome.glb,01a1e3d1-92aa-72f7-8fd9-3a99d3c8aebe
+AP-003,Defense Turret,Exterior_Buildings_Props,AP-003_Defense_Turret.glb,01a1e3d1-a470-77e9-b4ab-2991d4d4a3e8
+AP-004,Rift Stalker,Characters_Enemies,AP-004_Rift_Stalker.glb,01a1e3d1-b4e1-747d-9240-7252e8a86fae
+AP-005,Walkable Habitat Room,Walkable_Interiors,AP-005_Walkable_Habitat_Room.glb,01a1e3e1-0659-70d3-89cf-738e01e21517
+AP-006,Connecting Corridor,Walkable_Interiors,AP-006_Connecting_Corridor.glb,01a1e3e1-1672-73b5-8dd9-83103bc4eff4
+AP-007,Habitat Airlock Chamber,Doors_Airlocks_Access,AP-007_Habitat_Airlock_Chamber.glb,01a1e3e1-248d-769e-9d1d-b8f07e49cd20
+AP-008,Submarine Cockpit Interior,Walkable_Interiors,AP-008_Submarine_Cockpit_Interior.glb,01a1e3e1-32c8-7106-a83c-256137f3982b
+AP-009,Submarine Crew Cabin Interior,Walkable_Interiors,AP-009_Submarine_Crew_Cabin_Interior.glb,01a1e3e1-4381-7246-bdd1-930e1e54ac37
+AP-010,Submarine Engineering Interior,Walkable_Interiors,AP-010_Submarine_Engineering_Interior.glb,01a1e3e1-6c0d-7403-aa3d-83b7e6730560
+AP-011,Manta Bow Hull,Vehicles,AP-011_Manta_Bow_Hull.glb,01a1e3e5-5077-7104-9014-a2a5d1af4871
+AP-012,Manta Mid Hull,Vehicles,AP-012_Manta_Mid_Hull.glb,01a1e3e5-618f-71e6-b138-c2f3a150fcb8
+AP-013,Manta Stern Hull,Vehicles,AP-013_Manta_Stern_Hull.glb,01a1e3e5-7340-729c-8020-b887f090cabb
+AP-014,Manta Bridge Interior,Walkable_Interiors,AP-014_Manta_Bridge_Interior.glb,01a1e3e5-81f1-749d-a667-08cf51440fb4
+AP-015,Manta Cargo Room,Walkable_Interiors,AP-015_Manta_Cargo_Room.glb,01a1e3e5-90a1-702f-a7fe-1cc3f095afda
+AP-016,Bulkhead Sliding Door,Doors_Airlocks_Access,AP-016_Bulkhead_Sliding_Door.glb,01a1e3e5-a1e4-7193-9fa9-f69831afbd53
+AP-017,Submarine Docking Airlock,Doors_Airlocks_Access,AP-017_Submarine_Docking_Airlock.glb,01a1e3e5-b4e6-75f1-8194-36945cbb560a
+AP-018,Underwater Submarine Hangar,Walkable_Interiors,AP-018_Underwater_Submarine_Hangar.glb,01a1e3e5-c4dd-7360-8070-4e77f859c71e
+AP-019,Colony Command Center,Walkable_Interiors,AP-019_Colony_Command_Center.glb,01a1e3e5-d56c-76b0-8bf0-263b1d47230f
+AP-020,Exterior Docking Collar,Exterior_Buildings_Props,AP-020_Exterior_Docking_Collar.glb,01a1e3e5-e958-7640-b2ee-4e761b780355
+AP-021,Marine Research Laboratory,Walkable_Interiors,AP-021_Marine_Research_Laboratory.glb,01a1e3eb-4deb-77c9-8246-57568ba4a9bc
+AP-022,Research Dome Exterior,Exterior_Buildings_Props,AP-022_Research_Dome_Exterior.glb,01a1e3eb-6ae0-7366-a828-376bc0834b06
+AP-023,T Junction Corridor,Walkable_Interiors,AP-023_T_Junction_Corridor.glb,01a1e3eb-7af0-7139-8594-1401c48e3930
+AP-024,Four Way Corridor Junction,Walkable_Interiors,AP-024_Four_Way_Corridor_Junction.glb,01a1e3eb-89ed-7423-bb36-561232cb1ec2
+AP-025,Geothermal Power Plant,Exterior_Buildings_Props,AP-025_Geothermal_Power_Plant.glb,01a1e3eb-996b-712a-ae80-ed0183c34670
+AP-026,Geothermal Control Room,Walkable_Interiors,AP-026_Geothermal_Control_Room.glb,01a1e3eb-a73a-7038-bba1-96ea41de8070
+AP-027,Fabrication Workshop,Walkable_Interiors,AP-027_Fabrication_Workshop.glb,01a1e3eb-b4e0-7189-9285-979a76b77617
+AP-028,Materials Refinery Building,Exterior_Buildings_Props,AP-028_Materials_Refinery_Building.glb,01a1e3eb-c4b0-7637-9ceb-7a48c3e5376b
+AP-029,Cargo Storage Room,Walkable_Interiors,AP-029_Cargo_Storage_Room.glb,01a1e3eb-d2cf-7642-a12f-ef08d50829e3
+AP-030,Sonar Sensor Tower,Exterior_Buildings_Props,AP-030_Sonar_Sensor_Tower.glb,01a1e3eb-e0f2-7367-8933-a88511a2eb6c
+AP-031,Submarine Dock Service Crane,Exterior_Buildings_Props,AP-031_Submarine_Dock_Service_Crane.glb,01a1e3ec-721f-7442-b3e2-90d440c1e87a
+AP-032,Ancient Shard Drone,Characters_Enemies,AP-032_Ancient_Shard_Drone.glb,01a1e3ec-b38b-77f2-b73f-fc77c0670dde
+AP-033,Abyss EVA Diver Character,Characters_Enemies,AP-033_Abyss_EVA_Diver_Character.glb,01a1e4bd-0fd4-7090-8409-7d7f7636cfa3
+AP-034,EVA Life Support Backpack,Equipment_Weapons,AP-034_EVA_Life_Support_Backpack.glb,01a1e4bd-22a9-777b-98dc-2b617b325e82
+AP-035,Harpoon Rifle,Equipment_Weapons,AP-035_Harpoon_Rifle.glb,01a1e4bd-30f2-7116-b9ec-71ad867bb61b
+AP-036,Pilot Control Console,Interactive_Equipment,AP-036_Pilot_Control_Console.glb,01a1e4bd-43a3-7620-89cb-8ce609d50795
+AP-037,Pilot Chair,Interactive_Equipment,AP-037_Pilot_Chair.glb,01a1e4bd-5498-71d8-b1f3-c0deae7a9948
+AP-038,Exterior Pressure Hatch,Doors_Airlocks_Access,AP-038_Exterior_Pressure_Hatch.glb,01a1e4bd-65d2-700a-943c-1e3f9f84eafc
+AP-039,L Bend Station Corridor,Walkable_Interiors,AP-039_L_Bend_Station_Corridor.glb,01a1e4bd-7929-747f-952d-3ac087a89ddb
+AP-040,Modular Seabed Foundation,Exterior_Buildings_Props,AP-040_Modular_Seabed_Foundation.glb,01a1e4bd-8a81-703e-b548-c7e0832a1a96
+AP-041,Two Floor Elevator Module,Doors_Airlocks_Access,AP-041_Two_Floor_Elevator_Module.glb,01a1e4bd-9c17-762d-9750-cbee8bb9d013
+AP-042,Maintenance Ladder Module,Doors_Airlocks_Access,AP-042_Maintenance_Ladder_Module.glb,01a1e4bd-ab15-71bc-a944-c42af6508225
+AP-043,Submarine Repair Workbench,Interactive_Equipment,AP-043_Submarine_Repair_Workbench.glb,01a1e4bd-fcb9-7224-a59f-6d9c1e9660ff
+AP-044,Maintenance ROV Drone,Interactive_Equipment,AP-044_Maintenance_ROV_Drone.glb,01a1e4be-0ceb-7533-843c-9501a07eb800
+AP-045,Bioluminescent Coral Cluster,Environment_Flora,AP-045_Bioluminescent_Coral_Cluster.glb,01a1e7b5-948e-7142-87b0-db1287469a46
+AP-046,Abyss Kelp Grove,Environment_Flora,AP-046_Abyss_Kelp_Grove.glb,01a1e7b5-a6b8-7517-ac2e-72bd51bb55da
+AP-047,Glass Forest Crystal Organism,Environment_Flora,AP-047_Glass_Forest_Crystal_Organism.glb,01a1e7b5-b5dc-7160-beeb-233d8cbf157e
+AP-048,Hydrothermal Vent Chimney,Environment_Geology,AP-048_Hydrothermal_Vent_Chimney.glb,01a1e7b5-c5cb-709c-a3e9-6cfc6dd33526
+AP-049,Alien Seabed Rock Formation,Environment_Geology,AP-049_Alien_Seabed_Rock_Formation.glb,01a1e7b5-d5c4-753a-8e8b-10406a516a38
+AP-050,Wrecked Research Submarine Section,Environment_Wrecks,AP-050_Wrecked_Research_Submarine_Section.glb,01a1e7b5-e6b3-730f-89d9-5780f263ecd6
+AP-051,Silent Relay Communications Tower,Mission_Landmarks,AP-051_Silent_Relay_Communications_Tower.glb,01a1e7b5-f614-72de-b255-5f932cf5797c
+AP-052,Sealed Salvage Cargo Crate,Resources_Props,AP-052_Sealed_Salvage_Cargo_Crate.glb,01a1e7b6-0a20-755c-9c64-7c24c07539a8
+AP-053,Ancient Chorus Obelisk,Alien_Ruins,AP-053_Ancient_Chorus_Obelisk.glb,01a1e7b6-5bd1-774c-94e1-8df60b3e82dc
+AP-054,Chorus Ruin Archway,Alien_Ruins,AP-054_Chorus_Ruin_Archway.glb,01a1e7b6-6e1d-77b3-adea-16f0bc863859
+AP-055,Rift Stalker Nest,Environment_Fauna,AP-055_Rift_Stalker_Nest.glb,01a1e7b6-b2af-70f4-82af-5dd57ce5602f
+AP-056,Crystal Silicate Deposit,Resources_Props,AP-056_Crystal_Silicate_Deposit.glb,01a1e7b6-c40e-77e4-a781-6c5cb9a99315
+AP-057,Abyss Warden,Characters_Enemies,AP-057_Abyss_Warden.glb,01a1e7cc-9cf0-722a-ba3f-2702ff7409af
+AP-058,Glowfin Jellyfish,Characters_Wildlife,AP-058_Glowfin_Jellyfish.glb,01a1e7cc-332b-750c-a255-985521fc68f5
+AP-059,Submarine Guided Torpedo,Weapons_Equipment,AP-059_Submarine_Guided_Torpedo.glb,01a1e7cc-479a-7001-b332-6d1f11746840
+AP-060,Deployable Sonar Buoy,Weapons_Equipment,AP-060_Deployable_Sonar_Buoy.glb,01a1e7cc-57ee-7265-92c2-43bc2f5e277b
+AP-061,Oxygen Processing Station,Exterior_Buildings_Props,AP-061_Oxygen_Processing_Station.glb,01a1e7cc-68e0-7136-9aaa-c228121518f4
+AP-062,Seafloor Mineral Extractor,Exterior_Buildings_Props,AP-062_Seafloor_Mineral_Extractor.glb,01a1e7cc-abc5-75e3-9a4e-d20265092ce9
+AP-063,Manta Armory Room,Walkable_Interiors,AP-063_Manta_Armory_Room.glb,01a1e855-0dd3-76be-be67-64f0ac4a9db8
+AP-064,Manta Torpedo Magazine,Walkable_Interiors,AP-064_Manta_Torpedo_Magazine.glb,01a1e855-1dd3-774e-8ea1-767cd0c305cf
+AP-065,Manta Observation Lounge,Walkable_Interiors,AP-065_Manta_Observation_Lounge.glb,01a1e855-2e4b-7077-9a9d-4044cea52333
+AP-066,Colony Hydroponic Greenhouse,Walkable_Interiors,AP-066_Colony_Hydroponic_Greenhouse.glb,01a1e855-3ce9-769f-b8e4-d8852673f083
+AP-067,Colony Medical Bay,Walkable_Interiors,AP-067_Colony_Medical_Bay.glb,01a1e855-4cc3-76ec-b502-a223372f04f5
+AP-068,Colony Crew Habitat,Walkable_Interiors,AP-068_Colony_Crew_Habitat.glb,01a1e855-5b88-77b9-b346-19ef58254834
+AP-069,Diver Preparation Room,Walkable_Interiors,AP-069_Diver_Preparation_Room.glb,01a1e855-6b15-7413-b42c-f2b1814d2d63
+AP-070,Pressure Gangway Corridor,Walkable_Interiors,AP-070_Pressure_Gangway_Corridor.glb,01a1e855-7b5b-70ee-92a6-20b6edce2a02
+AP-071,External Torpedo Launcher,Vehicles_Equipment,AP-071_External_Torpedo_Launcher.glb,01a1e855-df0d-71b8-9add-503c4e6cb9e8
+AP-072,Expedition Mapping Drone,Vehicles_Equipment,AP-072_Expedition_Mapping_Drone.glb,01a1e855-f0ec-76d5-8d7e-fc73165c2406
+AP-073,Autonomous Cargo Crawler,Vehicles_Equipment,AP-073_Autonomous_Cargo_Crawler.glb,01a1e855-ff4b-7379-8c6b-09c1d3299805
+AP-074,Glass Reef Eel,Wildlife_Enemies,AP-074_Glass_Reef_Eel.glb,01a1e856-0e06-72c5-8553-3488ef4c3e43
+AP-075,Sapphire Glider Ray,Wildlife_Enemies,AP-075_Sapphire_Glider_Ray.glb,01a1e856-1da8-7553-af8c-9f3b230b46ae
+AP-076,Coral Sentinel Crab Drone,Wildlife_Enemies,AP-076_Coral_Sentinel_Crab_Drone.glb,01a1e856-2d57-72c7-8895-d8611c6d792b
+AP-077,Volcanic Crystal Vent Cluster,Environment_Resources,AP-077_Volcanic_Crystal_Vent_Cluster.glb,01a1e856-4e67-744a-b1bc-8474aa4acc31
+AP-078,Lost Expedition Data Terminal,Equipment_Props,AP-078_Lost_Expedition_Data_Terminal.glb,01a1e856-957f-73ba-8429-4a5416450d35
+AP-079,Barracuda Attack Submarine,Vehicles_Equipment,AP-079_Barracuda_Attack_Submarine.glb,01a1e85b-692f-7769-a0db-e471e6d4c417
+AP-080,Atlas Cargo Submarine,Vehicles_Equipment,AP-080_Atlas_Cargo_Submarine.glb,01a1e85b-78e8-77cd-a893-93253cdeb569
+AP-081,Manta Captain Ready Room,Walkable_Interiors,AP-081_Manta_Captain_Ready_Room.glb,01a1e85b-8a70-776b-a5cd-2633668497b2
+AP-082,Manta Ballast Control Chamber,Walkable_Interiors,AP-082_Manta_Ballast_Control_Chamber.glb,01a1e85b-9975-74fa-9322-79b79e980e4f
+AP-083,Haven Security Checkpoint,Walkable_Interiors,AP-083_Haven_Security_Checkpoint.glb,01a1e85b-a7f7-70cc-9581-238aa9a648d3
+AP-084,Colony Defense Control Room,Walkable_Interiors,AP-084_Colony_Defense_Control_Room.glb,01a1e85b-b99a-7449-89bb-d21187cf56af
+AP-085,Colony Battery Bank,Industrial_Equipment,AP-085_Colony_Battery_Bank.glb,01a1e85b-c8cd-7406-8d9d-918a5757db7c
+AP-086,Colony Stairwell Module,Walkable_Interiors,AP-086_Colony_Stairwell_Module.glb,01a1e85b-d62f-7227-abc3-a51570d05424
+AP-087,Submarine Dock Service Walkway,Modular_Structures,AP-087_Submarine_Dock_Service_Walkway.glb,01a1e85c-58df-7197-be76-948525cc5b72
+AP-088,Trench Spined Leviathan,Wildlife_Enemies,AP-088_Trench_Spined_Leviathan.glb,01a1e85c-69a7-75a0-9ef9-666f3695305a
+AP-089,Abyss Vent Snail,Wildlife_Enemies,AP-089_Abyss_Vent_Snail.glb,01a1e85c-7820-7694-b5ea-4291822f5b60
+AP-090,Ancient Alien Vault Door,Modular_Structures,AP-090_Ancient_Alien_Vault_Door.glb,01a1e85c-876f-73a7-9eb2-0a0bfe2c336b
+AP-091,Rare Isotope Crystal Deposit,Environment_Resources,AP-091_Rare_Isotope_Crystal_Deposit.glb,01a1e85c-9874-7490-b199-8ff8b52d07ed
+AP-092,Underwater Salvage Cutter,Equipment_Props,AP-092_Underwater_Salvage_Cutter.glb,01a1e85c-aa25-766a-a962-943ce32690ae
+AP-093,Submarine Acoustic Decoy,Equipment_Props,AP-093_Submarine_Acoustic_Decoy.glb,01a1e85c-b8e8-71e0-8c9b-ca2256c75651
+AP-094,Emergency Repair Beacon,Equipment_Props,AP-094_Emergency_Repair_Beacon.glb,01a1e85c-c812-75c5-b010-8da206e7e54d
+AP-095,Barracuda Combat Bridge Interior,Walkable_Interiors,AP-095_Barracuda_Combat_Bridge_Interior.glb,01a1e861-3645-778d-9ff0-8d32efdfa171
+AP-096,Barracuda Weapons Service Bay,Walkable_Interiors,AP-096_Barracuda_Weapons_Service_Bay.glb,01a1e861-462d-718e-81e5-e3c58db6a2ca
+AP-097,Atlas Cargo Hold Interior,Walkable_Interiors,AP-097_Atlas_Cargo_Hold_Interior.glb,01a1e861-55b2-7397-8968-18e37f58c035
+AP-098,Atlas Mining Operations Cabin,Walkable_Interiors,AP-098_Atlas_Mining_Operations_Cabin.glb,01a1e861-66aa-7690-9444-9a82d09ec59a
+AP-099,Colony Water Purifier Facility,Industrial_Equipment,AP-099_Colony_Water_Purifier_Facility.glb,01a1e861-761c-75aa-b4dd-094963018c73
+AP-100,Water Purifier Control Interior,Walkable_Interiors,AP-100_Water_Purifier_Control_Interior.glb,01a1e861-8da1-7584-8cf3-71cbeb4cad9f
+AP-101,Haven-01 Emergency Shelter,Walkable_Interiors,AP-101_Haven_01_Emergency_Shelter.glb,01a1e861-9c05-7392-acf0-2eba64d37000
+AP-102,Colony Maintenance Access Tunnel,Walkable_Interiors,AP-102_Colony_Maintenance_Access_Tunnel.glb,01a1e861-ab90-74b6-9903-f0d0496de598
+AP-103,Deep-Sea Survey Beacon,Equipment_Props,AP-103_Deep_Sea_Survey_Beacon.glb,01a1e862-089e-76c8-9432-084598b17918
+AP-104,Seafloor Excavation Rover,Vehicles_Equipment,AP-104_Seafloor_Excavation_Rover.glb,01a1e862-177d-77db-940b-d22efd125717
+AP-105,Hostile Hunter Drone,Wildlife_Enemies,AP-105_Hostile_Hunter_Drone.glb,01a1e862-243d-771a-966a-3cc78e7983b5
+AP-106,Luminous Reef Grazer,Wildlife_Enemies,AP-106_Luminous_Reef_Grazer.glb,01a1e862-3245-72fe-a7fa-6d29d7820892
+AP-107,Abyss Lantern Tree,Environment_Resources,AP-107_Abyss_Lantern_Tree.glb,01a1e862-4318-749b-b102-0bc55b14f86f
+AP-108,Sunken Expedition Cargo Cluster,Environment_Resources,AP-108_Sunken_Expedition_Cargo_Cluster.glb,01a1e862-533d-7636-9671-c66b0e8727bb
+AP-109,Abyss Mining Exosuit,Characters_Enemies,AP-109_Abyss_Mining_Exosuit.glb,01a1e862-6058-76e3-a35f-9a1926eaf32b
+AP-110,Ancient Chorus Data Pedestal,Equipment_Props,AP-110_Ancient_Chorus_Data_Pedestal.glb,01a1e862-6fb8-768d-b80c-86684cfbe29d
+AP-111,Manta Crew Mess Hall,Walkable_Interiors,AP-111_Manta_Crew_Mess_Hall.glb,01a1e86c-4cb6-7464-906f-b4550f316c53
+AP-112,Barracuda Crew Bunks,Walkable_Interiors,AP-112_Barracuda_Crew_Bunks.glb,01a1e86c-5c32-76d6-ac31-aad5862dabb3
+AP-113,Barracuda Reactor Room,Walkable_Interiors,AP-113_Barracuda_Reactor_Room.glb,01a1e86c-6d16-748a-960c-1174ad9675bf
+AP-114,Atlas Heavy Machinery Workshop,Walkable_Interiors,AP-114_Atlas_Heavy_Machinery_Workshop.glb,01a1e86c-7e81-764d-89ba-6c62d281b11d
+AP-115,Atlas Freight Lift Platform,Industrial_Equipment,AP-115_Atlas_Freight_Lift_Platform.glb,01a1e86c-95bc-77f4-9713-4d77414286fd
+AP-116,Haven Central Transit Hub,Walkable_Interiors,AP-116_Haven_Central_Transit_Hub.glb,01a1e86c-a461-768d-bbc6-aa410d503f85
+AP-117,Haven Greenhouse Exterior,Modular_Structures,AP-117_Haven_Greenhouse_Exterior.glb,01a1e86c-b33d-723a-ac09-a30de78b75e4
+AP-118,Haven Medical Dome Exterior,Modular_Structures,AP-118_Haven_Medical_Dome_Exterior.glb,01a1e86c-c663-76d7-a597-8d198a2f95e9
+AP-119,Haven Quarantine Isolation Room,Walkable_Interiors,AP-119_Haven_Quarantine_Isolation_Room.glb,01a1e86d-1152-7540-83db-e8ef77e8dc9d
+AP-120,Haven Air Recycling Processor,Industrial_Equipment,AP-120_Haven_Air_Recycling_Processor.glb,01a1e86d-220e-724e-843d-a6b6dd8abf40
+AP-121,Leviathan Carrier Submarine Hull,Vehicles_Equipment,AP-121_Leviathan_Carrier_Submarine_Hull.glb,01a1e86d-35d3-723f-857a-c8d6cb54c111
+AP-122,Leviathan Carrier Command Deck,Walkable_Interiors,AP-122_Leviathan_Carrier_Command_Deck.glb,01a1e86d-4483-72fb-9f04-707d47c167ab
+AP-123,Emergency Escape Submersible Pod,Vehicles_Equipment,AP-123_Emergency_Escape_Submersible_Pod.glb,01a1e86d-5593-72c1-8e58-7f131ca4f96a
+AP-124,Trench Fang Predator,Wildlife_Enemies,AP-124_Trench_Fang_Predator.glb,01a1e86d-6590-748e-92c3-d21824ad21d6
+AP-125,Glowcap Reef Sponge Grove,Environment_Resources,AP-125_Glowcap_Reef_Sponge_Grove.glb,01a1e86d-7433-744d-b17a-d7337c268634
+AP-126,Ancient Chorus Navigation Spire,Modular_Structures,AP-126_Ancient_Chorus_Navigation_Spire.glb,01a1e86d-8386-766e-b259-aaf365059ffe
+AP-127,Haven Submarine Drydock Pressure Gate,Modular_Structures,AP-127_Haven_Submarine_Drydock_Pressure_Gate.glb,01a1e871-014a-77ae-94b7-820f17aaef68
+AP-128,Colony Thermal Exchange Manifold,Industrial_Equipment,AP-128_Colony_Thermal_Exchange_Manifold.glb,01a1e871-16f2-737f-97ef-8865f00be3e0

@@ -61,3 +61,30 @@ Check the license before shipping. Prefer CC0.
 1. Play the run: quiet approach, then home.
 2. Move mesh drawing onto the D3D12 path (`gltf_demo`) so textures and skinning show up.
 3. Turn acoustics into a job-friendly ECS system.
+
+## The Haven scene: all 128 models in one Aether scene
+
+The 128 Abyss Protocol models (Meshy exports, AP-001 to AP-128: submarines, the colony's buildings, 43 walkable interiors, creatures, flora, ruins, equipment) are too
+heavy and too textured for the software view above, so they are assembled in a scene for the engine's own player:
+
+```
+python samples/abyss_protocol/tools/build_haven.py --models <folder with the GLBs> --work <scratch folder> --size 1280x720    # the scene and a 48 s flythrough
+python samples/abyss_protocol/tools/build_haven.py --models <folder> --work <scratch> --catalog --size 2560x1440            # one picture of all 128
+```
+
+`--stills` renders one frame from each camera stop, `--no-render` only builds and cooks the scene. The models are not in the repository (about 840 MB, and the download
+links expire); the builder needs a Vulkan player build, `ffmpeg`, Pillow and, on Linux, lavapipe and `xvfb`.
+
+- **Sizes.** Every model arrives about 1 unit across. `tools/build_haven.py` gives each a real size (`SIZE`, the longest side in metres; the Manta's three hull sections are
+  fitted by their cross-section so they meet end to end) and stands it on y = 0.
+- **Textures.** The renderer has one table of 128 texture slots for everything it samples, and the models carry 384 images (three 2048 x 2048 maps each), so most would draw
+  plain. `tools/haven_models.py` gives the 14 `HEROES` their own textures (cut to 1024) and puts every other model's base colour in two shared 4096 x 4096 atlases of
+  512-pixel tiles (the model's UVs move into its tile; the normal and metallic-roughness maps are given up). That is about 50 slots in all, and a run logs no
+  "table is full" error. The models shrink from 6.5 MB to about 0.4 MB each.
+- **Layout.** The colony (a hub, a ring of buildings, an outer ring of plant), a dock (the drydock gate, the submarines moored in a row, the Manta in three pieces, the
+  carrier), a gallery of the 43 walkable rooms, an equipment yard, the Chorus ruins, a wilderness of flora and geology and the creatures (on the seabed and swimming above
+  it). Doorways between rooms are **not** connected: nobody has checked that these rooms join up (the kit that made them says so), so each stands alone.
+- **Water.** A cold sun, a dark blue-green sky (the fog takes the sky's colour), distance haze and a field of drifting marine snow (`Content/Fx/MarineSnow.avfx`).
+
+Nothing here makes the models game-ready: collision, rigging, animation and walkability are untested.
+
