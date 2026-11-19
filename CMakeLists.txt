@@ -864,7 +864,7 @@ aether_generate_package_config()
 # against the engine. Each is guarded by its target so a lean configuration that leaves one out still installs.
 set(_aether_install_apps
     aether_editor_shell aether_player aether_package aether_cook aether_pak aether_new
-    aether_plugin aether_loc aether_symbolicate aether_server)
+    aether_plugin aether_loc_tool aether_symbolicate aether_server)
 foreach(_aether_app IN LISTS _aether_install_apps)
     if(TARGET ${_aether_app})
         install(TARGETS ${_aether_app} RUNTIME DESTINATION bin BUNDLE DESTINATION bin COMPONENT Applications)
