@@ -1064,6 +1064,31 @@ Outcome: every asset editor behaves the same, and shipping is a toolbar action.
 Gate: open/save/undo tests for every asset document; package-from-toolbar test that verifies the manifest; plugin
 enable/disable startup test.
 
+Done so far (2026-11-18, eighth): the world editors' assets. Terrain and foliage are versioned JSON files now, written
+and read by `terrain/src/asset_io.{h,cpp}` (`aether.terrain` and `aether.foliage`, version 1, both rows in the format
+table): a terrain file holds the settings, the heightmap, the material layers and the whole splatmap, and its chunk
+layout and bounds are derived on load rather than trusted, so an edited file cannot carry a stale grid; a foliage file
+holds the layer (types, density, seed, every instance with its transform and type index) and the density map. The
+header refuses another format and any other version by name. `TerrainEditDocument` and `FoliagePaintDocument` gained
+`Load`, `Save`, `SaveAs`, `MarkSaved`, `Path`/`SetPath`, `Name` and `Dirty` beside their strokes: the panels show the
+file's name and an unsaved-changes dot, and a Save button that reports what happened (a document seeded in memory says
+it has no file yet). A load clears the undo history and marks every chunk for rebuild, and a failed load leaves the
+document, its path and its dirty state untouched. The Content Browser opens `.aterrain` and `.afoliage` through the
+same dirty guard as the other asset editors ("The terrain has unsaved changes; save it before opening …"), and the
+database's importer map claims both extensions so the cook carries them. The samples start clean, as the other sample
+documents do, so opening a real world file on launch is not refused. Tests: `WorldEditor_TerrainSavesAndLoads` (a
+stroke, a save, and a fresh document loading back the same heights, splatmap, chunk counts, settings and layers; Save
+ends a stroke in progress; Save with no file refuses; a second edit and Save go to the same file),
+`WorldEditor_TerrainRefusesAForeignFile` (a newer version, an older one, a file of the other format and invalid JSON
+each fail with a reason and leave the document, its path and its dirty state untouched),
+`WorldEditor_FoliageSavesAndLoads` (types, density map and every instance's position, normal, scale, rotation and type
+come back identical, and a file whose instance names a missing type is refused), the two kinds added to
+`Openers_EveryOpenableKindLoadsItsFileAndShowsItsTool` and a broken terrain to `Openers_SayWhyAnAssetCannotOpen`, and
+the importer names in `AssetGuid_StringAndReflection`. Still open in this stage: Save As from those two panels and
+their move onto the `EditorDocument` contract, localization undo, the Save Inspector's read-only statement, the
+material graph preview, Build/Package in the main toolbar, the plugin manager, and importer/project settings that
+persist.
+
 ### Stage 7 — Accessibility, localization and collaboration (M)
 
 Outcome: the editor is usable beyond the default theme and keyboard layout, and changes are reviewable.

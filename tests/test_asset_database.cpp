@@ -64,6 +64,7 @@ AETHER_TEST(AssetGuid_StringAndReflection) {
     AETHER_CHECK(ImporterForExtension("UI/Hud.aui") == "UILayout" && ImporterForExtension("UI/Dark.ATHEME") == "UITheme");
     AETHER_CHECK(ImporterForExtension("Fx/Sparks.avfx") == "ParticleSystem");
     AETHER_CHECK(ImporterForExtension("Graphs/M_Lit.amat") == "Material" && ImporterForExtension("AI/BT_Guard.abt") == "BehaviorTree");
+    AETHER_CHECK(ImporterForExtension("World/Hills.aterrain") == "Terrain" && ImporterForExtension("World/Forest.afoliage") == "Foliage");
     AETHER_CHECK(ImporterForExtension("notes.txt").empty());
 }
 

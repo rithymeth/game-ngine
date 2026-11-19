@@ -6,7 +6,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
+#include <fstream>
 #include <functional>
+#include <vector>
 
 // Phase 21 step 7: the world-building editors - terrain sculpting and
 // painting (strokes, region undo, dirty chunks, the brush cursor), foliage
@@ -301,4 +304,173 @@ AETHER_TEST(WorldEditor_PanelsHeadless) {
     streamer.Update();
     CHECK(streamer.State({2, 1}) == CellState::Unloaded);
     ui.Frame([&] { map.Draw(); });
+}
+
+// Stage 6: terrain and foliage are assets. Save writes one, Load reads it back, and Dirty says whether what is on
+// screen is on disk.
+
+AETHER_TEST(WorldEditor_TerrainSavesAndLoads) {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "aether_world_editor_terrain_io";
+    std::filesystem::remove_all(dir);
+    const std::filesystem::path file = dir / "Hills.aterrain";
+
+    TerrainEditDocument doc = FlatTerrain();
+    CHECK(doc.Name() == "Terrain");
+    CHECK(!doc.Dirty());
+    std::string error;
+    CHECK(!doc.Save(&error)); // no file yet
+    CHECK(!error.empty());
+
+    doc.tool = TerrainTool::Raise;
+    doc.brush.radius = 3.0f;
+    doc.brush.strength = 1.0f;
+    doc.brush.falloff = 0.5f;
+    doc.raise_height = 0.5f;
+    doc.BeginStroke();
+    doc.Dab(10.0f, 10.0f);
+    CHECK(doc.InStroke());
+    error.clear();
+    CHECK(doc.SaveAs(file, &error)); // ends the stroke first
+    CHECK(!doc.InStroke());
+
+    TerrainEditDocument loaded = FlatTerrain();
+    error.clear();
+    CHECK(loaded.Load(file, &error));
+    CHECK(error.empty());
+    CHECK(!loaded.Dirty());
+    CHECK(!doc.Dirty());
+    CHECK(doc.Name() == "Hills");
+    CHECK(loaded.Path() == file);
+    CHECK(!loaded.CanUndo()); // a load isn't an edit
+    CHECK(loaded.Data().heightmap.width == doc.Data().heightmap.width);
+    CHECK(loaded.Data().heightmap.heights == doc.Data().heightmap.heights);
+    CHECK(loaded.Data().chunk_count_x == doc.Data().chunk_count_x);
+    CHECK(loaded.Data().chunk_count_z == doc.Data().chunk_count_z);
+    CHECK(loaded.Splatmap().width == doc.Splatmap().width);
+    CHECK(loaded.Splatmap().height == doc.Splatmap().height);
+    CHECK(loaded.Splatmap().pixels == doc.Splatmap().pixels);
+    CHECK(loaded.Settings().chunk_world_size == doc.Settings().chunk_world_size);
+    CHECK(loaded.Settings().verts_per_chunk == doc.Settings().verts_per_chunk);
+    CHECK(loaded.Settings().lod_distance == doc.Settings().lod_distance);
+    CHECK(loaded.Data().layers.size() == doc.Data().layers.size());
+    CHECK(loaded.Data().layers.back().name == "Rock"); // the default layer plus the one FlatTerrain adds
+    CHECK(loaded.Data().layers.back().roughness == 0.9f);
+    CHECK(H(loaded, 10, 10) > 0.0f); // the stroke is in the file
+    CHECK(H(loaded, 10, 10) == H(doc, 10, 10));
+
+    // A dab after saving dirties it again, and Save goes to the same file.
+    doc.DabOnce(40.0f, 40.0f);
+    CHECK(doc.Dirty());
+    CHECK(doc.Save(&error));
+    CHECK(!doc.Dirty());
+    CHECK(H(doc, 40, 40) > 0.0f);
+}
+
+AETHER_TEST(WorldEditor_TerrainRefusesAForeignFile) {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "aether_world_editor_terrain_refuse";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+
+    TerrainEditDocument doc = FlatTerrain();
+    doc.DabOnce(10.0f, 10.0f);
+    const std::vector<f32> heights = doc.Data().heightmap.heights;
+    const std::vector<u8> pixels = doc.Splatmap().pixels;
+
+    auto write = [&](const char* name, const char* text) {
+        std::ofstream out(dir / name, std::ios::binary);
+        out << text;
+    };
+    // A newer format version, an older one, a file that names another format, and a file that isn't JSON at all.
+    write("Newer.aterrain", R"({"format": "aether.terrain", "version": 99})");
+    write("Ancient.aterrain", R"({"format": "aether.terrain", "version": 0})");
+    write("Foliage.aterrain", R"({"format": "aether.foliage", "version": 1})");
+    write("Broken.aterrain", "{ not json");
+
+    for (const char* name : {"Newer.aterrain", "Ancient.aterrain", "Foliage.aterrain", "Broken.aterrain"}) {
+        std::string error;
+        CHECK(!doc.Load(dir / name, &error));
+        CHECK(!error.empty());
+        CHECK(doc.Data().heightmap.heights == heights); // the document is unchanged
+        CHECK(doc.Splatmap().pixels == pixels);
+        CHECK(doc.Path().empty()); // and the failed file isn't the open one
+        CHECK(doc.Dirty()); // nor was anything marked saved
+    }
+}
+
+AETHER_TEST(WorldEditor_FoliageSavesAndLoads) {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "aether_world_editor_foliage_io";
+    std::filesystem::remove_all(dir);
+    const std::filesystem::path file = dir / "Forest.afoliage";
+
+    FoliageLayer layer;
+    layer.name = "Forest";
+    layer.types.push_back(FoliageType{});
+    FoliageType& type = layer.types[0];
+    type.scale_min = 0.5f;
+    type.scale_max = 1.5f;
+    type.rotation_range = 3.0f;
+    type.align_to_normal = false;
+    type.anchor_offset = 0.25f;
+    layer.density = 0.5f;
+    layer.max_instances = 1000;
+    DensityMap density;
+    density.width = density.height = 32;
+    density.cells.assign(32u * 32u, 255);
+    FoliagePaintDocument doc(std::move(layer), std::move(density), [](f32, f32) { return 2.0f; }, 7);
+    CHECK(!doc.Dirty());
+    std::string error;
+    CHECK(!doc.Save(&error)); // no file yet
+    CHECK(!error.empty());
+
+    doc.DabOnce({16.0f, 0.0f, 16.0f});
+    CHECK(doc.Dirty());
+    CHECK(!doc.Layer().instances.empty());
+    CHECK(doc.SaveAs(file, &error));
+    CHECK(!doc.Dirty());
+    CHECK(doc.Name() == "Forest");
+    CHECK(doc.Layer().seed == 7); // the file records the seed painting uses
+
+    FoliagePaintDocument loaded(FoliageLayer{}, DensityMap{}, {}, 7);
+    error.clear();
+    CHECK(loaded.Load(file, &error));
+    CHECK(error.empty());
+    CHECK(!loaded.Dirty());
+    CHECK(!loaded.CanUndo());
+    CHECK(loaded.Path() == file);
+    CHECK(loaded.Layer().name == "Forest");
+    CHECK(loaded.Layer().seed == 7);
+    CHECK(loaded.Layer().types.size() == 1);
+    CHECK(loaded.Layer().types[0].scale_min == 0.5f);
+    CHECK(loaded.Layer().types[0].scale_max == 1.5f);
+    CHECK(loaded.Layer().types[0].rotation_range == 3.0f);
+    CHECK(!loaded.Layer().types[0].align_to_normal);
+    CHECK(loaded.Layer().types[0].anchor_offset == 0.25f);
+    CHECK(loaded.Density().width == 32);
+    CHECK(loaded.Density().cells == doc.Density().cells);
+    CHECK(loaded.Layer().instances.size() == doc.Layer().instances.size());
+    bool same = true;
+    for (usize i = 0; i < doc.Layer().instances.size() && same; ++i) {
+        const FoliageInstance& a = doc.Layer().instances[i];
+        const FoliageInstance& b = loaded.Layer().instances[i];
+        same = a.position.x == b.position.x && a.position.y == b.position.y && a.position.z == b.position.z &&
+               a.normal.x == b.normal.x && a.normal.y == b.normal.y && a.normal.z == b.normal.z &&
+               a.scale.x == b.scale.x && a.scale.y == b.scale.y && a.scale.z == b.scale.z &&
+               a.rotation.x == b.rotation.x && a.rotation.y == b.rotation.y && a.rotation.z == b.rotation.z &&
+               a.rotation.w == b.rotation.w && a.type_index == b.type_index;
+    }
+    CHECK(same);
+    CHECK(doc.Layer().instances[0].position.y == 2.25f); // the ground plus the anchor
+
+    // A refused file leaves the document alone: an instance naming a type that isn't there.
+    {
+        std::ofstream out(dir / "Bad.afoliage", std::ios::binary);
+        out << R"({"format":"aether.foliage","version":1,"layer":{"name":"Bad","types":[],)"
+               R"("instances":[{"position":[0,0,0],"normal":[0,1,0],"scale":[1,1,1],"rotation":[0,0,0,1],"type_index":3}]}})";
+    }
+    const usize before = loaded.Layer().instances.size();
+    CHECK(!loaded.Load(dir / "Bad.afoliage", &error));
+    CHECK(!error.empty());
+    CHECK(loaded.Layer().instances.size() == before);
+    CHECK(loaded.Layer().name == "Forest");
+    CHECK(loaded.Path() == file);
 }

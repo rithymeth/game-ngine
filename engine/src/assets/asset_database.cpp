@@ -255,6 +255,7 @@ std::string ImporterForExtension(const stdfs::path& file) {
         {".aanim", "AnimGraph"}, {".amontage", "AnimMontage"}, {".ablend", "BlendSpace"}, // animation data, read by path (M8.6)
         {".avfx", "ParticleSystem"}, // particle systems, read by path by the player's particle world (M8.7)
         {".amat", "Material"}, {".abt", "BehaviorTree"}, // graphs the editor's own tools write (Stage 3 openers)
+        {".aterrain", "Terrain"}, {".afoliage", "Foliage"}, // the world tools' assets (Stage 6)
     };
     auto it = kImporters.find(ToLower(file.extension().string()));
     return it != kImporters.end() ? it->second : std::string();

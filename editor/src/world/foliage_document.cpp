@@ -1,6 +1,9 @@
 #include "world/foliage_document.h"
 
+#include "aether/terrain/asset_io.h"
+
 #include <algorithm>
+#include <fstream>
 
 namespace aether::editor {
 
@@ -11,12 +14,77 @@ constexpr usize kMaxUndo = 64;
 }
 
 FoliagePaintDocument::FoliagePaintDocument(FoliageLayer layer, DensityMap density, HeightSampler ground, u32 seed)
-    : layer_(std::move(layer)), density_(std::move(density)), ground_(std::move(ground)), rng_(seed) {}
+    : layer_(std::move(layer)), density_(std::move(density)), ground_(std::move(ground)), rng_(seed) {
+    // The file records the seed painting uses, so a reload continues the same sequence.
+    if (layer_.seed == 0) layer_.seed = seed;
+}
+
+bool FoliagePaintDocument::Load(const std::filesystem::path& file, std::string* error) {
+    std::ifstream in(file, std::ios::binary);
+    if (!in) {
+        if (error != nullptr) *error = "can't read " + file.string();
+        return false;
+    }
+    const nlohmann::json json = nlohmann::json::parse(in, nullptr, false);
+    if (json.is_discarded()) {
+        if (error != nullptr) *error = file.string() + " isn't valid JSON";
+        return false;
+    }
+    FoliageLayer layer;
+    DensityMap density;
+    if (!FoliageFromJson(json, layer, density, error)) return false;
+    if (in_stroke_) EndStroke();
+    layer_ = std::move(layer);
+    density_ = std::move(density);
+    path_ = file;
+    dirty_ = false;
+    undo_.clear();
+    redo_.clear();
+    rng_.seed(layer_.seed);
+    Changed();
+    return true;
+}
+
+bool FoliagePaintDocument::Save(std::string* error) {
+    if (path_.empty()) {
+        if (error != nullptr) *error = "the foliage has no file yet; use Save As";
+        return false;
+    }
+    return SaveAs(path_, error);
+}
+
+bool FoliagePaintDocument::SaveAs(const std::filesystem::path& file, std::string* error) {
+    if (in_stroke_) EndStroke();
+    std::error_code ec;
+    if (!file.parent_path().empty()) std::filesystem::create_directories(file.parent_path(), ec);
+    std::ofstream out(file, std::ios::binary | std::ios::trunc);
+    if (!out) {
+        if (error != nullptr) *error = "can't write " + file.string();
+        return false;
+    }
+    out << FoliageToJson(layer_, density_).dump(2) << "\n";
+    if (!out) {
+        if (error != nullptr) *error = "can't write " + file.string();
+        return false;
+    }
+    path_ = file;
+    dirty_ = false;
+    return true;
+}
+
+void FoliagePaintDocument::MarkSaved() {
+    dirty_ = false;
+    undo_.clear();
+    redo_.clear();
+}
+
+std::string FoliagePaintDocument::Name() const { return path_.empty() ? "Foliage" : path_.stem().string(); }
 
 void FoliagePaintDocument::Record() {
     undo_.push_back(layer_);
     if (undo_.size() > kMaxUndo) undo_.erase(undo_.begin());
     redo_.clear();
+    dirty_ = true;
 }
 
 void FoliagePaintDocument::ReplaceLayer(FoliageLayer layer) {
@@ -63,6 +131,7 @@ void FoliagePaintDocument::EndStroke() {
     undo_.push_back(std::move(stroke_start_));
     if (undo_.size() > kMaxUndo) undo_.erase(undo_.begin());
     redo_.clear();
+    dirty_ = true;
 }
 
 void FoliagePaintDocument::DabOnce(const Vec3& center) {
@@ -77,6 +146,7 @@ bool FoliagePaintDocument::Undo() {
     redo_.push_back(std::move(layer_));
     layer_ = std::move(undo_.back());
     undo_.pop_back();
+    dirty_ = true;
     Changed();
     return true;
 }
@@ -86,6 +156,7 @@ bool FoliagePaintDocument::Redo() {
     undo_.push_back(std::move(layer_));
     layer_ = std::move(redo_.back());
     redo_.pop_back();
+    dirty_ = true;
     Changed();
     return true;
 }

@@ -17,6 +17,8 @@
 #include "aether/scene/serialization.h"
 #include "aether/sequencer/sequence.h"
 #include "aether/sprite2d/tilemap.h"
+#include "aether/terrain/asset_io.h"
+#include "aether/terrain/terrain.h"
 #include "aether/vfx/emitter.h"
 #include "content/content_browser_panel.h"
 #include "core/notifications.h"
@@ -135,6 +137,16 @@ void WriteEveryKind(const ProjectPaths& paths) {
     World world;
     world.CreateEntity(Transform{Vec3(0, 1, 0), Quaternion::Identity()});
     CHECK(SaveSceneJson(world, (paths.content / "Maps/Empty.ascene").string()));
+    terrain::TerrainData terrain;
+    terrain::Heightmap heightmap;
+    heightmap.width = heightmap.height = 3;
+    heightmap.heights.assign(9, 0.0f);
+    const terrain::TerrainSettings terrain_settings;
+    terrain::InitTerrainData(terrain, heightmap, terrain_settings);
+    Write(paths.content / "World/Hills.aterrain", terrain::TerrainToJson(terrain, terrain_settings, {}).dump(2));
+    terrain::FoliageLayer foliage;
+    foliage.types.resize(1);
+    Write(paths.content / "World/Forest.afoliage", terrain::FoliageToJson(foliage, {}).dump(2));
     Write(paths.content / "Scripts/door.luau", "print(\"door\")\n");
 }
 
@@ -174,6 +186,8 @@ AETHER_TEST(Openers_EveryOpenableKindLoadsItsFileAndShowsItsTool) {
         {"VFX/PS_Sparks.avfx", "Particle System"},
         {"Sequences/Intro.asequence", "Sequencer"},
         {"Maps/Empty.ascene", "Scene"},
+        {"World/Hills.aterrain", "Terrain"},
+        {"World/Forest.afoliage", "Foliage"},
         {"Scripts/door.luau", "Luau Script"},
     };
     for (const Case& c : cases) {
@@ -209,6 +223,9 @@ AETHER_TEST(Openers_SayWhyAnAssetCannotOpen) {
 
     // A file of a kind that has an editor, but that doesn't load: the loader's reason comes back.
     CHECK(!ws.OpenAsset("Graphs/broken.amat", &error));
+    CHECK(error.find("JSON") != std::string::npos);
+    Write(paths.content / "World/broken.aterrain", "{ not json");
+    CHECK(!ws.OpenAsset("World/broken.aterrain", &error));
     CHECK(error.find("JSON") != std::string::npos);
 
     // A registered asset type with no opener says so, rather than pretending nothing knows the extension.

@@ -6748,6 +6748,11 @@
   bool InstallThirdPersonKit(const std::filesystem::path&content,std::string*error=nullptr,std::string*script_path=nullptr)
   const ProjectTemplate*FindProjectTemplate(const std::string&id)
   const std::vector<ProjectTemplate>&ProjectTemplates()
+[terrain/include/aether/terrain/asset_io.h] experimental
+  bool FoliageFromJson(const nlohmann::json&json,FoliageLayer&layer,DensityMap&density,std::string*error=nullptr)
+  bool TerrainFromJson(const nlohmann::json&json,TerrainData&data,TerrainSettings&settings,SplatmapData&splatmap,std::string*error=nullptr)
+  nlohmann::json FoliageToJson(const FoliageLayer&layer,const DensityMap&density)
+  nlohmann::json TerrainToJson(const TerrainData&data,const TerrainSettings&settings,const SplatmapData&splatmap)
 [terrain/include/aether/terrain/foliage.h] experimental
   type struct DensityMap
   type struct FoliageInstance

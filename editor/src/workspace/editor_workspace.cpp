@@ -518,6 +518,8 @@ struct EditorWorkspace::Impl {
         cue_doc->MarkSaved();
         ui_doc->MarkSaved();
         bt_doc->MarkSaved();
+        terrain_doc->MarkSaved();
+        foliage_doc->MarkSaved();
 
         tools = {
             {"Blueprint - BP_Door", "Scripting", "Graph the door's events, variables and functions; play and debug it.",
@@ -1252,6 +1254,8 @@ struct EditorWorkspace::Impl {
         if (ext == ".aui") return load(ui_doc, "UI Designer", "UI layout");
         if (ext == ".abt") return load(bt_doc, "Behavior Tree", "behavior tree");
         if (ext == ".avfx") return load(particle_doc, "Particle System", "particle system");
+        if (ext == ".aterrain") return load(terrain_doc, "Terrain", "terrain");
+        if (ext == ".afoliage") return load(foliage_doc, "Foliage", "foliage");
         if (ext == ".atilemap" || ext == ".atileset") {
             const assets::AssetDatabase* database = content_browser->Database();
             if (database == nullptr) return fail("The asset database is not available.");

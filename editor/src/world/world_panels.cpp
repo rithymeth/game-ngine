@@ -58,6 +58,16 @@ void TerrainToolPanel::Draw() {
     ImGui::BeginDisabled(!doc_.CanRedo());
     if (ImGui::Button("Redo")) doc_.Redo();
     ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (ImGui::Button("Save")) {
+        std::string error;
+        save_note_ = doc_.Save(&error) ? "Saved " + doc_.Path().filename().string() : "Not saved: " + error;
+    }
+    if (!save_note_.empty()) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", save_note_.c_str());
+    }
+    ImGui::TextDisabled("%s%s", doc_.Name().c_str(), doc_.Dirty() ? " · unsaved changes" : "");
     ImGui::Text("%.0f x %.0f m, %u x %u chunks, %zu waiting to rebuild", doc_.WorldWidth(), doc_.WorldDepth(), doc_.Data().chunk_count_x,
                 doc_.Data().chunk_count_z, doc_.DirtyCount());
 }
@@ -119,6 +129,16 @@ void FoliagePanel::Draw() {
     ImGui::BeginDisabled(!doc_.CanUndo());
     if (ImGui::Button("Undo")) doc_.Undo();
     ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (ImGui::Button("Save")) {
+        std::string error;
+        save_note_ = doc_.Save(&error) ? "Saved " + doc_.Path().filename().string() : "Not saved: " + error;
+    }
+    if (!save_note_.empty()) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", save_note_.c_str());
+    }
+    ImGui::TextDisabled("%s%s", doc_.Name().c_str(), doc_.Dirty() ? " · unsaved changes" : "");
 }
 
 // --- Splines ------------------------------------------------------------------------------------------

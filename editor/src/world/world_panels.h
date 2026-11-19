@@ -6,6 +6,7 @@
 #include "world/terrain_document.h"
 
 #include <optional>
+#include <string>
 
 namespace aether::editor {
 
@@ -29,6 +30,7 @@ private:
     bool has_last_ = false;
     f32 last_x_ = 0.0f, last_z_ = 0.0f;
     usize dabs_ = 0;
+    std::string save_note_;
 };
 
 // Foliage: the types (scale, rotation, alignment, anchor), density and the
@@ -43,6 +45,7 @@ private:
     FoliagePaintDocument& doc_;
     bool has_last_ = false;
     Vec3 last_;
+    std::string save_note_;
 };
 
 // Splines: the points (position, width, roll), add, insert and remove;

@@ -1,7 +1,10 @@
 #include "world/terrain_document.h"
 
+#include "aether/terrain/asset_io.h"
+
 #include <algorithm>
 #include <cmath>
+#include <fstream>
 
 namespace aether::editor {
 
@@ -25,6 +28,62 @@ const char* TerrainToolName(TerrainTool tool) {
 TerrainEditDocument::TerrainEditDocument(TerrainData data, TerrainSettings settings, SplatmapData splatmap)
     : data_(std::move(data)), settings_(settings), splat_(std::move(splatmap)) {}
 
+bool TerrainEditDocument::Load(const std::filesystem::path& file, std::string* error) {
+    std::ifstream in(file, std::ios::binary);
+    if (!in) {
+        if (error != nullptr) *error = "can't read " + file.string();
+        return false;
+    }
+    const nlohmann::json json = nlohmann::json::parse(in, nullptr, false);
+    if (json.is_discarded()) {
+        if (error != nullptr) *error = file.string() + " isn't valid JSON";
+        return false;
+    }
+    TerrainData data;
+    TerrainSettings settings;
+    SplatmapData splatmap;
+    if (!terrain::TerrainFromJson(json, data, settings, splatmap, error)) return false;
+    Replace(std::move(data), settings, std::move(splatmap));
+    path_ = file;
+    unsaved_ = false;
+    return true;
+}
+
+bool TerrainEditDocument::Save(std::string* error) {
+    if (path_.empty()) {
+        if (error != nullptr) *error = "the terrain has no file yet; use Save As";
+        return false;
+    }
+    return SaveAs(path_, error);
+}
+
+bool TerrainEditDocument::SaveAs(const std::filesystem::path& file, std::string* error) {
+    if (in_stroke_) EndStroke();
+    std::error_code ec;
+    if (!file.parent_path().empty()) std::filesystem::create_directories(file.parent_path(), ec);
+    std::ofstream out(file, std::ios::binary | std::ios::trunc);
+    if (!out) {
+        if (error != nullptr) *error = "can't write " + file.string();
+        return false;
+    }
+    out << terrain::TerrainToJson(data_, settings_, splat_).dump(2) << "\n";
+    if (!out) {
+        if (error != nullptr) *error = "can't write " + file.string();
+        return false;
+    }
+    path_ = file;
+    unsaved_ = false;
+    return true;
+}
+
+void TerrainEditDocument::MarkSaved() {
+    unsaved_ = false;
+    undo_.clear();
+    redo_.clear();
+}
+
+std::string TerrainEditDocument::Name() const { return path_.empty() ? "Terrain" : path_.stem().string(); }
+
 void TerrainEditDocument::Replace(TerrainData data, TerrainSettings settings, SplatmapData splatmap) {
     data_ = std::move(data);
     settings_ = settings;
@@ -36,6 +95,7 @@ void TerrainEditDocument::Replace(TerrainData data, TerrainSettings settings, Sp
     for (u32 z = 0; z < data_.chunk_count_z; ++z)
         for (u32 x = 0; x < data_.chunk_count_x; ++x) dirty_.insert({static_cast<i32>(x), static_cast<i32>(z)});
     ++revision_;
+    unsaved_ = true;
 }
 
 f32 TerrainEditDocument::WorldWidth() const {
@@ -119,6 +179,7 @@ void TerrainEditDocument::EndStroke() {
     undo_.push_back(std::move(step));
     if (undo_.size() > kMaxUndo) undo_.erase(undo_.begin());
     redo_.clear();
+    unsaved_ = true;
     stroke_heights_.clear();
     stroke_splat_.clear();
 }
@@ -146,6 +207,7 @@ bool TerrainEditDocument::Undo() {
     Apply(undo_.back(), false);
     redo_.push_back(std::move(undo_.back()));
     undo_.pop_back();
+    unsaved_ = true;
     return true;
 }
 
@@ -154,6 +216,7 @@ bool TerrainEditDocument::Redo() {
     Apply(redo_.back(), true);
     undo_.push_back(std::move(redo_.back()));
     redo_.pop_back();
+    unsaved_ = true;
     return true;
 }
 
