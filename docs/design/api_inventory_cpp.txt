@@ -1668,6 +1668,7 @@
   type struct HlodProxy
   type struct MeshCookSettings
   [[nodiscard]]bool LoadAmesh(std::span<const u8>bytes,CookedMesh&out,std::string*error=nullptr)
+  bool BuildPrimitiveClusters(std::span<const assets::MeshVertex>vertices,std::span<const u32>indices,const ClusterParams&params,ClusterHierarchy&out,std::string*error=nullptr)
   bool CookMesh(const assets::MeshData&mesh,const MeshCookSettings&settings,CookedMesh&out,std::string*error=nullptr)
   bool has_hlod()const
   std::vector<u8>SaveAmesh(const CookedMesh&mesh)
@@ -5336,6 +5337,7 @@
   type struct RenderSize
   type struct RuntimeError
   type struct SequenceCue
+  type struct SubAsset
   #endif #if AETHER_KIT_CHECKPOINTS std::function<std::string()>scene_name_function_
   Entity SpawnPrefab(const std::string&path,const Transform&place)
   FrameContext Tick(f32 dt)

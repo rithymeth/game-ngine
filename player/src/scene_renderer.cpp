@@ -28,6 +28,7 @@
 #include "taa_pass.h"
 #include "view_cull.h"
 #include "cluster_model.h"
+#include "aether/cook/mesh_cook.h"
 #include "mesh_lod.h"
 #include "virtual_shadow.h"
 #include "vsm_pass.h"
@@ -1288,7 +1289,8 @@ struct SceneRenderer::Impl {
         bool enabled = false;
         f32 pixels = 1.0f;
         u32 min_triangles = 20000;
-        u32 primitives = 0;                                       // built so far
+        u32 primitives = 0;                                       // with clusters so far
+        u32 primitives_cooked = 0;                                // of those, read from the pak
         std::vector<std::unique_ptr<ICommandList>> compute_lists; // per frame slot
         std::vector<u64> compute_fences;                          // the fence of each slot's last submission (0: none)
         std::vector<std::vector<std::pair<ClusterModel*, ClusterCullPass*>>> last_draws; // per slot: what its last frame drew through the cluster path
@@ -2332,13 +2334,38 @@ struct SceneRenderer::Impl {
             }
         }
 
+        // The cooked mesh of this model's mesh `index` (Cooked/<guid>.amesh, made by aether_cook --clusters), read once: null when virtual geometry is off, the model was
+        // not cooked with clusters, or the file is damaged.
+        std::map<usize, std::unique_ptr<cook::CookedMesh>> cooked_meshes;
+        const auto cooked_mesh_of = [&](usize index) -> const cook::CookedMesh* {
+            if (!vg.enabled) return nullptr;
+            if (const auto found = cooked_meshes.find(index); found != cooked_meshes.end()) return found->second.get();
+            std::unique_ptr<cook::CookedMesh> loaded;
+            if (const GameManifest::Asset* asset = package.FindAsset(path)) {
+                const std::string key = "mesh:" + std::to_string(index);
+                for (const GameManifest::Asset::SubAsset& sub : asset->sub_assets) {
+                    if (sub.importer != "Mesh" || sub.key != key) continue;
+                    std::vector<u8> bytes;
+                    std::string why;
+                    if (!package.Files().Read("Cooked/" + sub.guid + ".amesh", bytes, &why)) break; // not cooked
+                    auto mesh = std::make_unique<cook::CookedMesh>();
+                    if (cook::LoadAmesh(bytes, *mesh, &why)) loaded = std::move(mesh);
+                    else AETHER_LOG_WARN("PlayerRenderer", "Cooked/%s.amesh of '%s': %s; building its clusters here", sub.guid.c_str(), path.c_str(), why.c_str());
+                    break;
+                }
+            }
+            return (cooked_meshes[index] = std::move(loaded)).get();
+        };
+
         std::vector<SampledTextureHandle> extension_textures;
         out.meshes.resize(out.scene.meshes.size());
         for (usize mesh_index = 0; mesh_index < out.scene.meshes.size(); ++mesh_index) {
             const auto& source_mesh = out.scene.meshes[mesh_index];
             auto& destination_mesh = out.meshes[mesh_index];
             destination_mesh.reserve(source_mesh.primitives.size());
+            usize primitive_number = 0; // the importer numbers every primitive, the empty ones too, and so do the cooked meshes
             for (const assets::GltfPrimitive& primitive : source_mesh.primitives) {
+                const usize this_primitive = primitive_number++;
                 if (primitive.vertices.empty() || primitive.indices.empty()) continue;
                 std::vector<SceneVertex> vertices;
                 vertices.reserve(primitive.vertices.size());
@@ -2459,47 +2486,30 @@ struct SceneRenderer::Impl {
                 }
                 if (vg.enabled && !has_skinning && draw.wind_level == 0 && !draw.water && draw.alpha_mode == assets::MaterialAlphaMode::Opaque &&
                     primitive.indices.size() / 3 >= vg.min_triangles && device.SupportsIndirectCount() && device.SupportsIndirectDraw()) {
-                    std::vector<Vec3> positions;
-                    positions.reserve(vertices.size());
-                    for (const SceneVertex& v : vertices) positions.push_back(Vec3(v.position[0], v.position[1], v.position[2]));
-                    // A model is often stored with a vertex for every corner of every triangle, which leaves the cluster builder no neighbours to merge. Vertices with the same
-                    // position, normal and UV stand for each other, and the hierarchy is built on the first of each. Their tangents may differ a little (they are made a
-                    // triangle at a time): the first one's is used, which only matters to a normal-mapped surface. A hard edge or a UV seam keeps its separate vertices.
-                    constexpr usize kWeldBytes = offsetof(SceneVertex, tangent);
-                    std::vector<u32> order(vertices.size());
-                    for (usize i = 0; i < order.size(); ++i) order[i] = static_cast<u32>(i);
-                    std::sort(order.begin(), order.end(), [&](u32 a, u32 b) {
-                        const int c = std::memcmp(&vertices[a], &vertices[b], kWeldBytes);
-                        return c != 0 ? c < 0 : a < b;
-                    });
-                    std::vector<u32> canonical(vertices.size());
-                    for (usize i = 0; i < order.size();) {
-                        usize j = i + 1;
-                        while (j < order.size() && std::memcmp(&vertices[order[i]], &vertices[order[j]], kWeldBytes) == 0) ++j;
-                        for (usize k = i; k < j; ++k) canonical[order[k]] = order[i];
-                        i = j;
-                    }
-                    // The hierarchy is built on the welded vertices alone (the simplifier must not see the others), then its indices go back to the draw's numbering.
-                    std::vector<u32> compact(vertices.size(), 0xFFFFFFFFu);
-                    std::vector<Vec3> welded_positions;
-                    std::vector<u32> welded_ids;
-                    for (usize i = 0; i < canonical.size(); ++i) {
-                        if (canonical[i] != i) continue;
-                        compact[i] = static_cast<u32>(welded_positions.size());
-                        welded_positions.push_back(positions[i]);
-                        welded_ids.push_back(static_cast<u32>(i));
-                    }
-                    std::vector<u32> welded(primitive.indices.size());
-                    for (usize i = 0; i < welded.size(); ++i) welded[i] = compact[canonical[primitive.indices[i]]];
                     auto model = std::make_shared<ClusterModel>();
                     std::string cluster_error;
                     const auto started = std::chrono::steady_clock::now();
-                    if (model->Build(device, welded_positions, welded, welded_ids, &cluster_error)) {
-                        AETHER_LOG_INFO("PlayerRenderer", "Virtual geometry: %zu triangles -> %zu clusters in %zu levels (%.0f ms)", primitive.indices.size() / 3,
-                                        model->Hierarchy().clusters.size(), static_cast<usize>(model->Hierarchy().level_count),
+                    static_assert(sizeof(assets::GltfVertex) == sizeof(assets::MeshVertex), "a glTF vertex and a mesh vertex are the same bytes");
+                    const std::span<const assets::MeshVertex> mesh_vertices(reinterpret_cast<const assets::MeshVertex*>(primitive.vertices.data()), primitive.vertices.size());
+                    bool cooked = false;
+                    // The pak's cooked mesh (aether_cook --clusters) holds this primitive's hierarchy, built in the same vertex numbering: use it when it fits.
+                    if (const cook::CookedMesh* cooked_mesh = cooked_mesh_of(mesh_index)) {
+                        if (this_primitive < cooked_mesh->primitives.size()) {
+                            const cook::CookedMeshPrimitive& source = cooked_mesh->primitives[this_primitive];
+                            if (source.vertices.size() == primitive.vertices.size() && !source.clusters.clusters.empty()) {
+                                std::string why;
+                                cooked = model->Adopt(device, source.clusters, primitive.vertices.size(), primitive.indices.size(), &why);
+                                if (!cooked) AETHER_LOG_WARN("PlayerRenderer", "Virtual geometry: the cooked clusters of '%s' do not fit its mesh (%s); building them here", path.c_str(), why.c_str());
+                            }
+                        }
+                    }
+                    if (cooked || model->Build(device, mesh_vertices, primitive.indices, &cluster_error)) {
+                        AETHER_LOG_INFO("PlayerRenderer", "Virtual geometry: %zu triangles -> %zu clusters in %zu levels (%s, %.0f ms)", primitive.indices.size() / 3,
+                                        model->Hierarchy().clusters.size(), static_cast<usize>(model->Hierarchy().level_count), cooked ? "from the pak" : "built here",
                                         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count());
                         draw.cluster = std::move(model);
                         ++vg.primitives;
+                        if (cooked) ++vg.primitives_cooked;
                     } else {
                         AETHER_LOG_WARN("PlayerRenderer", "Virtual geometry: a primitive of %zu triangles is drawn whole: %s", primitive.indices.size() / 3, cluster_error.c_str());
                     }
@@ -2596,6 +2606,7 @@ SceneRenderer::VirtualGeometryStats SceneRenderer::VirtualGeometry() {
     Impl::VirtualGeometryState& vg = impl_->vg;
     stats.enabled = vg.enabled;
     stats.primitives = vg.primitives;
+    stats.primitives_cooked = vg.primitives_cooked;
     stats.frames = vg.frames_with_draws;
     if (vg.last_slot >= vg.last_draws.size() || vg.last_slot >= vg.compute_fences.size() || vg.compute_fences[vg.last_slot] == 0) return stats;
     impl_->device.WaitForComputeFence(vg.compute_fences[vg.last_slot]);

@@ -262,7 +262,7 @@ std::vector<AssetGuid> CollectCookSet(const AssetDatabase& database,
 namespace {
 
 // Bump when CookMesh or SaveAmesh gives different bytes for the same mesh and settings, so cached meshes from before are not reused.
-constexpr u32 kMeshCookCacheVersion = 1;
+constexpr u32 kMeshCookCacheVersion = 2; // 2: the cluster hierarchy is built on welded vertices (BuildPrimitiveClusters)
 
 // Everything in MeshCookSettings that decides the cooked bytes, for the derived data cache key.
 std::string MeshCookSettingsKey(const MeshCookSettings& s) {
@@ -274,6 +274,7 @@ std::string MeshCookSettingsKey(const MeshCookSettings& s) {
                 {"lock_border", s.lods.lock_border},
                 {"build_lods", s.build_lods},
                 {"build_meshlets", s.build_meshlets},
+                {"build_clusters", s.build_clusters},
                 {"build_hlod", s.build_hlod},
                 {"hlod_cluster_radius", s.hlod_cluster_radius}}
         .dump();
@@ -449,6 +450,7 @@ CookReport Cook(const CookOptions& options) {
                         // cook's time when they are redone (docs/design/PERFORMANCE.md), so they go through the derived data cache.
                         MeshCookSettings mesh_settings;
                         mesh_settings.build_hlod = options.cook_hlod;
+                        mesh_settings.build_clusters = options.cook_clusters;
                         const std::string key = assets::DerivedDataCache::MakeKey(
                             "CookedMesh", kMeshCookCacheVersion,
                             std::string_view(reinterpret_cast<const char*>(sub.data.data()), sub.data.size()),

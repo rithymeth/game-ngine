@@ -2,7 +2,9 @@
 
 #include "aether/pak/pak.h"
 
+#include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstring>
 
 namespace aether::cook {
@@ -219,6 +221,44 @@ bool ReadMeshlets(Reader& r, MeshletMesh& m, u32 vertex_count, std::string* erro
 
 } // namespace
 
+bool BuildPrimitiveClusters(std::span<const assets::MeshVertex> vertices, std::span<const u32> indices, const ClusterParams& params, ClusterHierarchy& out, std::string* error) {
+    out = ClusterHierarchy();
+    for (const u32 index : indices) {
+        if (index >= vertices.size()) {
+            if (error) *error = "an index is past the vertices";
+            return false;
+        }
+    }
+    constexpr usize kWeldBytes = offsetof(assets::MeshVertex, tangent); // position, normal and UV
+    std::vector<u32> order(vertices.size());
+    for (usize i = 0; i < order.size(); ++i) order[i] = static_cast<u32>(i);
+    std::sort(order.begin(), order.end(), [&](u32 a, u32 b) {
+        const int c = std::memcmp(&vertices[a], &vertices[b], kWeldBytes);
+        return c != 0 ? c < 0 : a < b;
+    });
+    std::vector<u32> canonical(vertices.size());
+    for (usize i = 0; i < order.size();) {
+        usize j = i + 1;
+        while (j < order.size() && std::memcmp(&vertices[order[i]], &vertices[order[j]], kWeldBytes) == 0) ++j;
+        for (usize k = i; k < j; ++k) canonical[order[k]] = order[i];
+        i = j;
+    }
+    std::vector<u32> compact(vertices.size(), 0xFFFFFFFFu);
+    std::vector<Vec3> positions;
+    std::vector<u32> original;
+    for (usize i = 0; i < canonical.size(); ++i) {
+        if (canonical[i] != i) continue;
+        compact[i] = static_cast<u32>(positions.size());
+        positions.push_back(Vec3(vertices[i].position[0], vertices[i].position[1], vertices[i].position[2]));
+        original.push_back(static_cast<u32>(i));
+    }
+    std::vector<u32> welded(indices.size());
+    for (usize i = 0; i < welded.size(); ++i) welded[i] = compact[canonical[indices[i]]];
+    if (!BuildClusterHierarchy(positions, welded, params, out, error)) return false;
+    for (u32& index : out.indices) index = original[index];
+    return true;
+}
+
 bool CookMesh(const assets::MeshData& mesh, const MeshCookSettings& settings, CookedMesh& out, std::string* error) {
     out = CookedMesh{};
     for (usize p = 0; p < mesh.primitives.size(); ++p) {
@@ -262,7 +302,7 @@ bool CookMesh(const assets::MeshData& mesh, const MeshCookSettings& settings, Co
             prim.lods.push_back(std::move(cl));
         }
         if (settings.build_clusters && !skinned && !src.indices.empty()) {
-            if (!BuildClusterHierarchy(positions, src.indices, settings.clusters, prim.clusters, &reason)) return Fail(error, label + reason);
+            if (!BuildPrimitiveClusters(src.vertices, src.indices, settings.clusters, prim.clusters, &reason)) return Fail(error, label + reason);
         }
         out.primitives.push_back(std::move(prim));
     }

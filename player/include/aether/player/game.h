@@ -110,6 +110,13 @@ struct GameManifest {
         bool imported = false;
         std::string cooked; // its cooked form in the archive (Cooked/<guid>.atex), or empty
         std::string cooked_format;
+        // What importing it made (a model's meshes and materials): the key ("mesh:0"), the importer ("Mesh") and the GUID, whose cooked form is Cooked/<guid>.amesh for a mesh.
+        struct SubAsset {
+            std::string guid;
+            std::string key;
+            std::string importer;
+        };
+        std::vector<SubAsset> sub_assets;
     };
     std::string project;
     cook::BuildConfiguration configuration = cook::BuildConfiguration::Development;

@@ -48,6 +48,9 @@ struct CookOptions {
     bool cook_environments = true;
     // Meshes: LODs and meshlets (Cooked/<guid>.amesh), see mesh_cook.h.
     bool cook_meshes = true;
+    // Virtual geometry (docs/design/VIRTUAL_GEOMETRY.md): also bake each still primitive's cluster hierarchy into its cooked mesh, which the player then reads instead of
+    // building it when the model loads (AETHER_VIRTUAL_GEOMETRY=1). Off by default; it adds to the cooked mesh and to the cook's time.
+    bool cook_clusters = false;
     // Phase 42.4: also bake HLOD proxies for meshes with several primitives.
     // Off by default; proxies add geometry to the cooked mesh.
     bool cook_hlod = false;
