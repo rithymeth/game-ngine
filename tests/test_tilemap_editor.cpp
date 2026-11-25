@@ -750,3 +750,32 @@ AETHER_TEST(TilemapEditor_LargeMapOnlyDrawsVisibleGridLines) {
     CHECK(grid_vertices > 0 && grid_vertices < 600);
     CHECK(doc.Revision() == revision && doc.Map().Get(0, 0, 0) == 2 && doc.Map().Get(0, 511, 255) == 5);
 }
+
+AETHER_TEST(TilemapEditor_LargePaletteSubmitsOnlyVisibleRows) {
+    HeadlessImGui ui;
+    TilemapData map;
+    map.Resize(4, 4);
+    map.AddLayer("Ground");
+    Tileset tiles;
+    tiles.texture_width = tiles.texture_height = 512;
+    tiles.tile_width = tiles.tile_height = 8;
+    TilemapEditDocument doc(std::move(map), std::move(tiles));
+    TilemapPanel panel(doc);
+    const auto draw = [&] { ui.Frame([&] { panel.Draw(); }); };
+    const auto swatch_vertices = [] {
+        usize count = 0;
+        for (const auto* list : ImGui::GetDrawData()->CmdLists)
+            for (const auto& v : list->VtxBuffer)
+                if (v.col == IM_COL32(30, 30, 36, 255)) ++count;
+        return count;
+    };
+    draw();
+    CHECK(swatch_vertices() > 40 && swatch_vertices() < 1300);
+    ui.Frame([&] {
+        ImGui::SetNextWindowScroll(ImVec2(-1.0f, 4000.0f));
+        panel.Draw();
+    });
+    draw();
+    CHECK(swatch_vertices() > 40 && swatch_vertices() < 1300);
+    CHECK(doc.GetTileset().TileCount() == 4096 && !doc.dirty() && !doc.CanUndo());
+}

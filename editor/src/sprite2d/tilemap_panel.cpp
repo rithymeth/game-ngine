@@ -308,26 +308,36 @@ void TilemapPanel::DrawPalette() {
     const u32 columns = std::clamp(ts.Columns(), 1u, available);
     const u32 count = ts.TileCount();
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    for (u32 i = 0; i < count; ++i) {
-        if (i % columns != 0) ImGui::SameLine(0.0f, 2.0f);
-        ImGui::PushID(static_cast<int>(i));
-        const ImVec2 p = ImGui::GetCursorScreenPos();
-        if (ImGui::InvisibleButton("##tile", ImVec2(cell, cell))) {
-            doc_.brush = static_cast<i32>(i);
-            if (doc_.tool == TileTool::Erase) doc_.tool = TileTool::Paint;
+    const u64 row_count = (static_cast<u64>(count) + columns - 1) / columns;
+    const int rows = static_cast<int>(std::min<u64>(row_count, std::numeric_limits<int>::max() - 1));
+    ImGuiListClipper clipper;
+    clipper.Begin(rows, cell + ImGui::GetStyle().ItemSpacing.y);
+    while (clipper.Step()) {
+        for (int row = clipper.DisplayStart; row < clipper.DisplayEnd; ++row) {
+            const u32 first = static_cast<u32>(row) * columns;
+            const u32 last = std::min(first + columns, count);
+            for (u32 i = first; i < last; ++i) {
+                if (i != first) ImGui::SameLine(0.0f, 2.0f);
+                ImGui::PushID(static_cast<int>(i));
+                const ImVec2 p = ImGui::GetCursorScreenPos();
+                if (ImGui::InvisibleButton("##tile", ImVec2(cell, cell))) {
+                    doc_.brush = static_cast<i32>(i);
+                    if (doc_.tool == TileTool::Erase) doc_.tool = TileTool::Paint;
+                }
+                const ImVec2 end(p.x + cell, p.y + cell);
+                dl->AddRectFilled(p, end, IM_COL32(30, 30, 36, 255));
+                if (!DrawTileArt(dl, p, end, static_cast<i32>(i))) {
+                    dl->AddRectFilled(p, end, TileColor(static_cast<i32>(i)));
+                    char label[16];
+                    std::snprintf(label, sizeof(label), "%u", i);
+                    dl->AddText(ImVec2(p.x + 3, p.y + 2), IM_COL32(0, 0, 0, 255), label);
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Tile %u", i);
+                if (ts.IsSolid(static_cast<i32>(i))) dl->AddRect(p, ImVec2(p.x + cell, p.y + cell), IM_COL32(220, 40, 40, 255), 0, 0, 2.0f);
+                if (doc_.brush == static_cast<i32>(i)) dl->AddRect(p, ImVec2(p.x + cell, p.y + cell), IM_COL32(255, 255, 255, 255), 0, 0, 2.0f);
+                ImGui::PopID();
+            }
         }
-        const ImVec2 end(p.x + cell, p.y + cell);
-        dl->AddRectFilled(p, end, IM_COL32(30, 30, 36, 255));
-        if (!DrawTileArt(dl, p, end, static_cast<i32>(i))) {
-            dl->AddRectFilled(p, end, TileColor(static_cast<i32>(i)));
-            char label[16];
-            std::snprintf(label, sizeof(label), "%u", i);
-            dl->AddText(ImVec2(p.x + 3, p.y + 2), IM_COL32(0, 0, 0, 255), label);
-        }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Tile %u", i);
-        if (ts.IsSolid(static_cast<i32>(i))) dl->AddRect(p, ImVec2(p.x + cell, p.y + cell), IM_COL32(220, 40, 40, 255), 0, 0, 2.0f);
-        if (doc_.brush == static_cast<i32>(i)) dl->AddRect(p, ImVec2(p.x + cell, p.y + cell), IM_COL32(255, 255, 255, 255), 0, 0, 2.0f);
-        ImGui::PopID();
     }
     if (doc_.brush >= 0) {
         bool solid = ts.IsSolid(doc_.brush);
