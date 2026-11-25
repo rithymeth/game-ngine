@@ -1,4 +1,6 @@
 #include "aether/assets/asset_guid.h"
+#include "aether/core/log.h"
+#include "aether/sprite2d/components.h"
 #include "aether/audio/sound.h"
 #include "aether/audio/audio_system.h"
 #include "aether/cook/cooker.h"
@@ -177,6 +179,44 @@ stdfs::path MakeAudioPak(const stdfs::path& dir, bool sequence = false, bool bou
     CHECK(writer.Write(path.string()));
     return path;
 }
+}
+
+AETHER_TEST(Player_BadSpriteAnimationAtlasExplainsTheProblemOnlyOnce) {
+    const auto dir = TestDir("InvalidSpriteAtlas");
+    const auto atlas_guid = assets::NewAssetGuid();
+    const std::string path = "Sprites/DiagnosticDuplicate.aatlas";
+    json manifest = Manifest("Scenes/start.ascene", "unused");
+    manifest["assets"].push_back({{"guid", assets::ToString(atlas_guid)}, {"path", path}, {"importer", "SpriteAtlas"}});
+    const json scene = {{"$type", "Scene"}, {"$version", 1}, {"entities", json::array()}};
+    auto atlas = sprite2d::AtlasFromGrid({}, 8, 8, 8, 8);
+    atlas.clips = {{"run", {"frame_0"}, 8.0f, true}, {"run", {"frame_0"}, 10.0f, true}};
+    pak::PakWriter writer;
+    CHECK(writer.Add("Manifest.json", manifest.dump()));
+    CHECK(writer.Add("Content/Scenes/start.ascene", scene.dump()));
+    CHECK(writer.Add("Content/" + path, sprite2d::AtlasToJson(atlas).dump()));
+    const auto pak_file = dir / "Game.apak";
+    if (!writer.Write(pak_file.string())) { CHECK(false); return; }
+
+    GamePackage package;
+    if (!package.Mount(pak_file.string())) { CHECK(false); return; }
+    Game game(package);
+    if (!game.LoadStartupScene()) { CHECK(false); return; }
+    sprite2d::Sprite sprite;
+    sprite.atlas.guid = atlas_guid;
+    sprite2d::SpriteAnimator animator;
+    sprite2d::PlayClip(animator, "run");
+    game.GetWorld().CreateEntity(sprite, animator);
+    game.GetWorld().CreateEntity(sprite, animator);
+    game.GetWorld().CreateEntity(sprite2d::Sprite{}, animator); // unassigned atlas is not a package error
+    game.BeginPlay();
+    for (int i = 0; i < 4; ++i) game.Tick(1.0f / 60);
+    const std::string message = "Sprite atlas " + path + ": two clips named 'run'";
+    CHECK(std::count(game.Warnings().begin(), game.Warnings().end(), message) == 1);
+    CHECK(game.Warnings().size() == 1);
+    const auto logs = Logger::Instance().Recent();
+    CHECK(std::count_if(logs.begin(), logs.end(), [&](const LogLine& line) {
+        return line.level == LogLevel::Warn && line.category == "Player" && line.message == message;
+    }) == 1);
 }
 
 AETHER_TEST(Player_CookedAudioSourceListenerSettingsAndSceneReload) {
