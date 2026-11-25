@@ -67,6 +67,7 @@ public:
 
 protected:
     bool Start(bool package);
+    bool PollLaunchedGame(); // UI thread; reports a completed launch once
     void AddLog(bool warning, std::string text);
 
     std::filesystem::path project_file_;
@@ -84,6 +85,7 @@ protected:
         std::optional<pak::PakKey> key;
     } staged_;
     platform::ChildProcess game_;
+    bool launch_pending_exit_ = false;
     std::string launch_error_;
 };
 

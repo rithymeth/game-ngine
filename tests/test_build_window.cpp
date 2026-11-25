@@ -223,6 +223,42 @@ AETHER_TEST(BuildWindow_VerifiesAnExistingPackageAfterEditorReopens) {
     CHECK(reopened.Stage().find("PackageManifest.json") != std::string::npos);
 }
 
+AETHER_TEST(BuildWindow_ReportsThePackagedPlayersExitOnlyOnce) {
+    HeadlessImGui imgui;
+    BuildPackageWindow window(FreshProject("PlayerExit"));
+    window.player_path = AETHER_TEST_PLAYER_PATH;
+    if (!window.StartPackage()) {
+        CHECK(false);
+        return;
+    }
+    window.WaitForBuild();
+    window.launch_args = "--not-an-aether-option";
+    if (!window.Launch()) {
+        CHECK(false);
+        return;
+    }
+    int code = -1;
+    CHECK(window.Game().Wait(&code) && code != 0);
+    imgui.Frame([&] { window.Draw(); });
+    imgui.Frame([&] { window.Draw(); });
+    int failures = 0;
+    for (const auto& line : window.Log()) {
+        if (line.warning && line.text.find("exited with code " + std::to_string(code)) != std::string::npos) ++failures;
+    }
+    CHECK(failures == 1);
+
+    window.launch_args = "--headless --frames 2";
+    if (!window.Launch()) {
+        CHECK(false);
+        return;
+    }
+    CHECK(window.Game().Wait(&code) && code == 0);
+    imgui.Frame([&] { window.Draw(); });
+    bool clean_exit = false;
+    for (const auto& line : window.Log()) clean_exit |= !line.warning && line.text.find("exited normally") != std::string::npos;
+    CHECK(clean_exit);
+}
+
 AETHER_TEST(BuildWindow_CooksAndReportsFailures) {
     HeadlessImGui imgui;
     const stdfs::path project = FreshProject("Cook");

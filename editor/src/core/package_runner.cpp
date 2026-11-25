@@ -219,7 +219,23 @@ stdfs::path PackageRunner::StagedGame() const {
     return staged_.game;
 }
 
+bool PackageRunner::PollLaunchedGame() {
+    const bool running = game_.Running();
+    if (!running && launch_pending_exit_) {
+        launch_pending_exit_ = false;
+        const int code = game_.ExitCode();
+        if (code == 0) {
+            AddLog(false, "Packaged game exited normally.");
+        } else {
+            launch_error_ = "Packaged game exited with code " + std::to_string(code) + ".";
+            AddLog(true, launch_error_);
+        }
+    }
+    return running;
+}
+
 bool PackageRunner::Launch(std::string* error) {
+    const bool running = PollLaunchedGame();
     StagedPackage staged;
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -233,7 +249,7 @@ bool PackageRunner::Launch(std::string* error) {
         why = "Wait for the current package operation to finish";
     } else if (game.empty()) {
         why = "Package the game first";
-    } else if (game_.Running()) {
+    } else if (running) {
         why = "The game is already running";
     } else if (!stdfs::is_regular_file(staged.archive, archive_error)) {
         why = "Cannot find the packaged archive " + staged.archive.filename().string() +
@@ -252,7 +268,10 @@ bool PackageRunner::Launch(std::string* error) {
     }
     launch_error_ = ok ? std::string() : why;
     if (!ok && error) *error = why;
-    if (ok) AddLog(false, "Launched " + game.filename().string());
+    if (ok) {
+        launch_pending_exit_ = true;
+        AddLog(false, "Launched " + game.filename().string());
+    }
     return ok;
 }
 
