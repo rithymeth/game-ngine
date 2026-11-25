@@ -213,6 +213,32 @@ AETHER_TEST(TilemapEditor_SaveStagesEachAssetBeforeReplacingOldBytes) {
     CHECK(SaveTileset(set_path, tiles, &error) && LoadTileset(set_path, original_set, &error) && original_set.IsSolid(6));
 }
 
+AETHER_TEST(TilemapEditor_SecondAssetStageFailureDoesNotCommitMap) {
+    TilemapEditDocument doc = Doc();
+    doc.brush = 5;
+    doc.Apply(2, 2);
+    const auto dir = std::filesystem::temp_directory_path() / "aether_tilemap_pair_stage";
+    const auto map_path = dir / "a.atilemap", set_path = dir / "a.atileset";
+    std::string error;
+    if (!doc.Save(map_path, set_path, &error)) { CHECK(false); return; }
+    doc.brush = 6;
+    doc.Apply(2, 2);
+    doc.SetSolid(6, true);
+    std::ofstream(dir / "occupied") << "not a directory";
+    CHECK(!doc.Save(map_path, dir / "occupied" / "new.atileset", &error) && error.find("new.atileset") != std::string::npos);
+    CHECK(doc.dirty() && doc.Map().Get(0, 2, 2) == 6 && doc.GetTileset().IsSolid(6));
+    CHECK(doc.TilemapFile() == map_path && doc.TilesetFile() == set_path);
+    TilemapData map;
+    Tileset tiles;
+    CHECK(LoadTilemap(map_path, map, &error) && map.Get(0, 2, 2) == 5);
+    CHECK(LoadTileset(set_path, tiles, &error) && !tiles.IsSolid(6));
+    for (const auto& entry : std::filesystem::directory_iterator(dir))
+        CHECK(entry.path().filename().string().find(".aether-save-") == std::string::npos);
+    CHECK(doc.Save(&error) && !doc.dirty());
+    CHECK(LoadTilemap(map_path, map, &error) && map.Get(0, 2, 2) == 6);
+    CHECK(LoadTileset(set_path, tiles, &error) && tiles.IsSolid(6));
+}
+
 AETHER_TEST(TilemapEditor_PanelDrawsHeadless) {
     HeadlessImGui ui;
     TilemapEditDocument doc = Doc();
