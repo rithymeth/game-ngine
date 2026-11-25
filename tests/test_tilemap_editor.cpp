@@ -781,9 +781,12 @@ AETHER_TEST(TilemapEditor_WorkspaceDrawsTheAuthoredSheetInPaletteAndCanvas) {
     ProjectPaths paths;
     std::string error;
     if (!CreateProject(dir, "Tiles", &paths, &error)) { CHECK(false); return; }
-    const auto png = assets::EncodePngRgba8(18, 8, std::vector<u8>(18 * 8 * 4, 255));
-    std::ofstream(paths.content / "Tiles.png", std::ios::binary)
-        .write(reinterpret_cast<const char*>(png.data()), static_cast<std::streamsize>(png.size()));
+    const auto write_sheet = [&](u32 width, u8 value) {
+        const auto png = assets::EncodePngRgba8(width, 8, std::vector<u8>(width * 8 * 4, value));
+        return static_cast<bool>(std::ofstream(paths.content / "Tiles.png", std::ios::binary)
+            .write(reinterpret_cast<const char*>(png.data()), static_cast<std::streamsize>(png.size())));
+    };
+    if (!write_sheet(18, 255)) { CHECK(false); return; }
     assets::AssetDatabase db(paths.content);
     db.Scan();
     const auto* texture = db.FindByPath("Tiles.png");
@@ -807,14 +810,24 @@ AETHER_TEST(TilemapEditor_WorkspaceDrawsTheAuthoredSheetInPaletteAndCanvas) {
 
     HeadlessImGui ui;
     EditorWorkspace ws(paths.file);
-    const auto draw = [&] { ui.Frame([&] { ws.DrawTool(ws.Selected()); }); };
+    ImVec2 reload;
+    const auto draw = [&] {
+        ui.Frame([&] {
+            const auto top = ImGui::GetCursorScreenPos();
+            reload = ImVec2(top.x + 20, top.y + 7);
+            ws.DrawTool(ws.Selected());
+        });
+    };
+    int first_red = -1;
     const auto image_quads_for_second_tile = [&] {
+        first_red = -1;
         int quads = 0;
         constexpr float low = 10.0f / 18.0f;
         for (const auto* list : ImGui::GetDrawData()->CmdLists) {
             for (const auto& cmd : list->CmdBuffer) {
                 const auto* tex = cmd.TexRef._TexData;
                 if (!tex || tex->Width != 18 || tex->Height != 8) continue;
+                if (tex->Pixels) first_red = tex->Pixels[0];
                 for (unsigned int index = 0; index + 5 < cmd.ElemCount; index += 6) {
                     float u0 = 1.0f, u1 = 0.0f;
                     for (unsigned int i = 0; i < 6; ++i) {
@@ -832,6 +845,32 @@ AETHER_TEST(TilemapEditor_WorkspaceDrawsTheAuthoredSheetInPaletteAndCanvas) {
     draw();
     CHECK(image_quads_for_second_tile() == 2); // palette and painted cell; both skip the gutter
     CHECK(!ws.Tilemap().dirty() && ws.Tilemap().Map().Get(0, 0, 0) == 1);
+
+    auto& doc = ws.Tilemap();
+    doc.brush = 0;
+    doc.Apply(1, 0);
+    const auto revision = doc.Revision();
+    const auto press_reload = [&] {
+        auto& io = ImGui::GetIO();
+        io.AddMousePosEvent(reload.x, reload.y);
+        draw();
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+        draw();
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+        draw();
+        draw();
+    };
+    if (!write_sheet(18, 135)) { CHECK(false); return; }
+    press_reload();
+    CHECK(image_quads_for_second_tile() == 2 && first_red == 135);
+    if (!write_sheet(16, 90)) { CHECK(false); return; }
+    press_reload();
+    CHECK(image_quads_for_second_tile() == 0);
+    if (!write_sheet(18, 180)) { CHECK(false); return; }
+    press_reload();
+    CHECK(image_quads_for_second_tile() == 2 && first_red == 180);
+    CHECK(doc.dirty() && doc.Revision() == revision && doc.CanUndo() && doc.Map().Get(0, 1, 0) == 0);
+    if (!doc.Save(&error)) { CHECK(false); return; }
 
     // A sheet with mismatched dimensions must not leave old art visible or block editing.
     tiles.texture_width = 16;
