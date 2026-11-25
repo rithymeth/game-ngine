@@ -5,6 +5,7 @@
 #include "aether/platform/filesystem.h"
 #include "aether/platform/process.h"
 #include "aether/project/project.h"
+#include "aether/scene/serialization.h"
 
 #include <nlohmann/json.hpp>
 
@@ -461,10 +462,28 @@ PackageReport Package(const PackageOptions& options) {
         pak::PakReader archive;
         const auto keys = cook.encryption_key ? std::span<const pak::PakKey>(&*cook.encryption_key, 1)
                                               : std::span<const pak::PakKey>{};
+        const std::string scene_entry = "Content/" + settings.startup_scene;
         if (!archive.Open(report.cook.pak_file.string(), &archive_error, keys)) {
             archive_error = "Can't verify the staged game archive: " + archive_error;
-        } else if (!archive.Contains("Content/" + settings.startup_scene)) {
+        } else if (!archive.Contains(scene_entry)) {
             archive_error = "The startup scene was not cooked: " + settings.startup_scene;
+        } else {
+            std::vector<u8> bytes;
+            if (!archive.Read(scene_entry, bytes, &archive_error)) {
+                archive_error = "The startup scene cannot be loaded: " + settings.startup_scene + ": " + archive_error;
+            } else {
+                // Match the player's binary/JSON detection. Use a temporary
+                // world and allow components owned by runtime-only modules.
+                const auto first = std::find_if(bytes.begin(), bytes.end(), [](u8 c) {
+                    return c != ' ' && c != '\n' && c != '\r' && c != '\t';
+                });
+                World scratch;
+                const bool is_json = first != bytes.end() && *first == '{';
+                if (!(is_json ? LoadSceneJsonFromMemory(scratch, bytes, settings.startup_scene)
+                              : LoadSceneFromMemory(scratch, bytes, settings.startup_scene))) {
+                    archive_error = "The startup scene cannot be loaded: " + settings.startup_scene;
+                }
+            }
         }
     } // Close the archive before removing or publishing staging files.
     if (!archive_error.empty()) {

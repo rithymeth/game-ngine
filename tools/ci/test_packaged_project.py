@@ -113,6 +113,24 @@ def main():
                         raise RuntimeError("a failed package replaced the prior build or left staging files")
             finally:
                 project.write_bytes(original_project)
+            startup_file = source / "Content" / json.loads(original_project)["startup_scene"]
+            original_scene = startup_file.read_bytes()
+            try:
+                for bad_scene in (b'{"$type":"Scene",', b'{"$type":"Scene","$version":1}',
+                                  b'AESC\x02\x00\x00\x00'):
+                    startup_file.write_bytes(bad_scene)
+                    failed = subprocess.run(
+                        [tools["aether_package"], str(project), "--out", str(packaged)],
+                        cwd=root, capture_output=True, text=True, timeout=12)
+                    if failed.returncode != 1 or "startup scene cannot be loaded" not in failed.stderr.lower():
+                        raise RuntimeError("a malformed startup scene was not rejected\n"
+                                           f"{failed.stdout}{failed.stderr}")
+                    if ((packaged / "PackageManifest.json").read_bytes() != previous_manifest
+                            or (packaged / "Paks" / "Game.apak").read_bytes() != previous_pak
+                            or any(p.name.startswith(".aether-package-") for p in packaged.iterdir())):
+                        raise RuntimeError("a malformed startup scene replaced the prior build or left staging files")
+            finally:
+                startup_file.write_bytes(original_scene)
             encrypted = root / "Encrypted Package"
             fixture_key = "12" * 32
             run(tools["aether_package"], project, "--out", encrypted, "--config", "development",
