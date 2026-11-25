@@ -215,9 +215,9 @@ AETHER_TEST(Openers_ContentBrowserCreatesAndSelectsAtlasWithoutReplacingOne) {
     std::string opened;
     browser.SetAssetOpener([&](const std::string& path, std::string*) { opened = path; return true; });
     std::string error;
-    CHECK(!browser.CreateSpriteAtlas("Characters/Hero.png", 5, 4, &error) && error.find("divide") != std::string::npos);
+    CHECK(!browser.CreateSpriteAtlas("Characters/Hero.png", {5, 4}, &error) && error.find("divide") != std::string::npos);
     CHECK(!stdfs::exists(sheet.parent_path() / "Hero.aatlas") && opened.empty());
-    CHECK(browser.CreateSpriteAtlas("Characters/Hero.png", 4, 4, &error));
+    CHECK(browser.CreateSpriteAtlas("Characters/Hero.png", {4, 4}, &error));
     CHECK(browser.Selection() == std::vector<std::string>{"Characters/Hero.aatlas"});
     CHECK(opened == "Characters/Hero.aatlas");
     const auto file = sheet.parent_path() / "Hero.aatlas";
@@ -225,9 +225,27 @@ AETHER_TEST(Openers_ContentBrowserCreatesAndSelectsAtlasWithoutReplacingOne) {
     CHECK(sprite2d::LoadAtlas(file, result, &error));
     const auto* tex = browser.Database()->FindByPath("Characters/Hero.png");
     CHECK(tex && tex->guid == result.texture && result.frames.size() == 8 && result.FindClip("grid"));
-    CHECK(!browser.CreateSpriteAtlas("Characters/Hero.png", 8, 8, &error) && error.find("already exists") != std::string::npos);
+    CHECK(!browser.CreateSpriteAtlas("Characters/Hero.png", {8, 8}, &error) && error.find("already exists") != std::string::npos);
     sprite2d::SpriteAtlas unchanged;
     CHECK(sprite2d::LoadAtlas(file, unchanged, &error) && unchanged.frames.size() == 8);
+
+    const auto padded = assets::EncodePngRgba8(13, 18, std::vector<u8>(13*18*4, 255));
+    std::ofstream(sheet.parent_path() / "Padded.png", std::ios::binary)
+        .write(reinterpret_cast<const char*>(padded.data()), padded.size());
+    CHECK(!browser.CreateSpriteAtlas("Characters/Padded.png", {4, 5, -1, 2, 3, 4}, &error));
+    CHECK(error.find("non-negative") != std::string::npos);
+    CHECK(!browser.CreateSpriteAtlas("Characters/Padded.png", {4, 5, 1, 2, 0, 4}, &error));
+    const auto padded_atlas = sheet.parent_path() / "Padded.aatlas";
+    CHECK(!stdfs::exists(padded_atlas));
+    CHECK(browser.CreateSpriteAtlas("Characters/Padded.png", {4, 5, 1, 2, 3, 4}, &error));
+    CHECK(opened == "Characters/Padded.aatlas");
+    CHECK(sprite2d::LoadAtlas(padded_atlas, result, &error));
+    CHECK(result.frames.size() == 4);
+    for (usize index = 0; index < result.frames.size() && index < 4; ++index) {
+        const auto& frame = result.frames[index];
+        const auto i = static_cast<i32>(index);
+        CHECK(frame.x == 1 + (i % 2) * 7 && frame.y == 2 + (i / 2) * 9 && frame.w == 4 && frame.h == 5);
+    }
 }
 
 AETHER_TEST(Openers_SpriteAtlasDrawsTheSourceRectangleAndKeepsThePreviousAssetOnError) {
