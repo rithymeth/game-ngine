@@ -166,6 +166,9 @@ if(AETHER_BUILD_VULKAN)
         "$<INSTALL_INTERFACE:Vulkan::Vulkan>")
     target_link_libraries(aether_engine INTERFACE "$<INSTALL_INTERFACE:Vulkan::Vulkan>")
     target_compile_definitions(aether_engine PUBLIC AETHER_HAS_VULKAN)
+elseif(NOT WIN32)
+    # No glslang and no DXC in this build; capability queries still link.
+    target_sources(aether_engine PRIVATE src/gfx/shader_compiler_stub.cpp)
 endif()
 
 target_include_directories(aether_engine

@@ -19,7 +19,7 @@ namespace fs = std::filesystem;
 // `aether_player --record-dir` films a normal run: a scene's own sequence plays at the film's frame rate and every frame is written. A red box slides across
 // the picture over one second (a Transform track of a sequence the scene plays by itself); recorded at 8 frames a second the box is further along each frame,
 // and a camera path file that is bad is refused with a reason and a failing exit code.
-#if defined(AETHER_TEST_PLAYER_PATH) && !defined(_WIN32)
+#if defined(AETHER_TEST_PLAYER_PATH) && !defined(_WIN32) && defined(AETHER_HAS_WINDOW) && defined(AETHER_HAS_VULKAN)
 namespace {
 
 reflect::Json Entity(const std::string& guid, reflect::Json components) { return {{"guid", guid}, {"components", std::move(components)}}; }

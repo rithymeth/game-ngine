@@ -53,8 +53,11 @@ static void RayTracingProbe_AnswersConsistently(rhi::Backend backend, const char
 // A Vulkan device may say it supports ray tracing only where the shaders for it can be compiled. lavapipe has ray queries, and
 // off Windows the HLSL front end does not: such a device said yes and could build no pipeline that used an acceleration structure.
 AETHER_TEST(RayTracingProbe_VulkanSaysYesOnlyWhereRayQueryShadersCompile) {
-    if (!rhi::IsBackendAvailable(rhi::Backend::Vulkan)) return;
     const bool can_compile = gfx::CanCompileRayQueriesToSPIRV();
+#if !defined(AETHER_HAS_VULKAN) && !defined(AETHER_PLATFORM_WINDOWS)
+    AETHER_CHECK(!can_compile);
+#endif
+    if (!rhi::IsBackendAvailable(rhi::Backend::Vulkan)) return;
     AETHER_CHECK(gfx::CanCompileRayQueriesToSPIRV() == can_compile);
     std::unique_ptr<rhi::IDevice> device = MakeRayTracingDevice(rhi::Backend::Vulkan);
     if (!device) return;
