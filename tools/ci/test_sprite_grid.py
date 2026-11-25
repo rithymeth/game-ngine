@@ -19,13 +19,13 @@ def tool(exe, *args, cwd, expected=0, reason=""):
     return result.stdout
 
 
-def png(path):
+def png(path, width=12, height=8):
     def chunk(tag, data):
         return (struct.pack(">I", len(data)) + tag + data
                 + struct.pack(">I", binascii.crc32(tag + data)))
     path.write_bytes(b"\x89PNG\r\n\x1a\n"
-                     + chunk(b"IHDR", struct.pack(">IIBBBBB", 12, 8, 8, 6, 0, 0, 0))
-                     + chunk(b"IDAT", zlib.compress((b"\0" + b"\xff" * 48) * 8))
+                     + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0))
+                     + chunk(b"IDAT", zlib.compress((b"\0" + b"\xff" * width * 4) * height))
                      + chunk(b"IEND", b""))
 
 
@@ -108,6 +108,33 @@ def main():
         packed = json.loads((extract / "Content" / "Sprite Sheets" / "Motion.aatlas").read_bytes())
         if packed != named:
             raise RuntimeError("Shipping did not preserve the authored named clips")
+        padded_sheet = sprites / "Padded.png"
+        padded_atlas = padded_sheet.with_suffix(".aatlas")
+        png(padded_sheet, 16, 13)  # 3x2 cells, 1x2 border, 1x1 internal gaps
+        padded_args = (project, "Sprite Sheets/Padded.png", 4, 4)
+        for margin in ((1, 1), (4294967295, 2)):
+            tool(grid, *padded_args, "--margin", *margin, "--spacing", 1, 1, cwd=root, expected=1,
+                 reason="complete cells")
+        tool(grid, *padded_args, "--margin", 1, 2, "--margin", 1, 2, cwd=root, expected=2,
+             reason="only once")
+        if padded_atlas.exists():
+            raise RuntimeError("invalid padding wrote an atlas")
+        tool(grid, *padded_args, "--spacing", 1, 1, "--clip", "row2", 3, 3, 8, "--margin", 1, 2, cwd=root)
+        padded = json.loads(padded_atlas.read_bytes())
+        rects = [(1 + i%3*5, 2 + i//3*5, 4, 4) for i in range(6)]
+        if ((padded["width"],padded["height"]) != (16,13)
+                or [tuple(f[k] for k in ("x","y","w","h")) for f in padded["frames"]] != rects
+                or padded["clips"][0]["frames"] != frames[3:]):
+            raise RuntimeError("authored clip did not follow the padded grid")
+        padded_out = root / "Packaged Padded Atlas"
+        tool(package, project, "--out", padded_out, "--config", "shipping", "--strict", "--always",
+             "Sprite Sheets/Padded.aatlas", cwd=root)
+        padded_extract = root / "Extracted Padded Atlas"
+        tool(pak, "extract", padded_out / "Paks" / "Game.apak", padded_extract, cwd=root)
+        packed_dir = padded_extract / "Content" / "Sprite Sheets"
+        if json.loads((packed_dir / "Padded.aatlas").read_bytes()) != padded or not (packed_dir / "Padded.png").exists():
+            raise RuntimeError("Shipping did not preserve padded coordinates and sheet")
+
         missing_texture = "5a6d6c84-f7c2-4d70-ab39-6710ff83e948"
         broken = dict(named, texture=missing_texture)
         (sprites / "MissingArt.aatlas").write_text(json.dumps(broken), encoding="utf-8")

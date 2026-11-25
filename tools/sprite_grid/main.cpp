@@ -22,6 +22,7 @@ namespace {
 int Usage(int code) {
     std::fprintf(code ? stderr : stdout,
         "usage: aether_sprite_grid <project.aproject> <sheet relative to Content> <cell width> <cell height>\n"
+        "       [--margin X Y] [--spacing X Y]\n"
         "       [--clip NAME FIRST COUNT FPS | --clip-once NAME FIRST COUNT FPS]...\n"
         "FIRST is zero-based. --clip loops; --clip-once holds its final frame.\n"
         "Without clip options, the whole sheet loops at 12 fps.\n"
@@ -54,6 +55,14 @@ bool ClipName(std::string_view name) {
     });
 }
 
+u32 GridCells(u32 size, u32 cell, u32 margin, u32 spacing) {
+    const u64 border = 2ull * margin;
+    if (size < border + cell) return 0;
+    const u64 available = static_cast<u64>(size) - border + spacing;
+    const u64 stride = static_cast<u64>(cell) + spacing;
+    return available % stride == 0 ? static_cast<u32>(available / stride) : 0;
+}
+
 bool VisibleRelative(const fs::path& path) {
     if (path.has_root_path() || path.empty()) return false;
     for (const auto& part : path) {
@@ -78,8 +87,22 @@ int main(int argc, char** argv) {
         cell_w == 0 || cell_h == 0) return Usage(2);
 
     std::vector<ClipRange> ranges;
-    for (int i = 5; i < argc; i += 5) {
+    u32 margin_x = 0, margin_y = 0, spacing_x = 0, spacing_y = 0;
+    bool margin_set = false, spacing_set = false;
+    for (int i = 5; i < argc;) {
         const std::string_view option = argv[i];
+        if (option == "--margin" || option == "--spacing") {
+            const bool margin = option == "--margin";
+            bool& set = margin ? margin_set : spacing_set;
+            u32& x = margin ? margin_x : spacing_x;
+            u32& y = margin ? margin_y : spacing_y;
+            if (set) return Fail(std::string(option) + " may be given only once", 2);
+            if (argc - i < 3 || !UnsignedInt(argv[i + 1], x) || !UnsignedInt(argv[i + 2], y))
+                return Fail(std::string(option) + " needs non-negative X and Y pixel counts", 2);
+            set = true;
+            i += 3;
+            continue;
+        }
         if ((option != "--clip" && option != "--clip-once") || argc - i < 5) return Usage(2);
         if (ranges.size() >= 64) return Fail("use at most 64 named clips", 2);
         ClipRange range;
@@ -95,6 +118,7 @@ int main(int argc, char** argv) {
         if (!UnsignedInt(argv[i + 4], range.fps) || range.fps == 0 || range.fps > 240)
             return Fail("clip '" + range.name + "' FPS must be an integer from 1 to 240", 2);
         ranges.push_back(std::move(range));
+        i += 5;
     }
 
     const fs::path project_file(argv[1]);
@@ -127,10 +151,13 @@ int main(int argc, char** argv) {
     constexpr u64 kMaxPixels = 16 * 1024 * 1024;
     if (!assets::DecodeImageFile(sheet.string(), image, kMaxPixels))
         return Fail("cannot decode the sprite sheet as an image of up to 16 million pixels: " + requested.string());
-    if (image.width % cell_w || image.height % cell_h)
-        return Fail("cell dimensions must divide the sheet's " + std::to_string(image.width) + "x" +
-                    std::to_string(image.height) + " pixels exactly");
-    const u64 count = static_cast<u64>(image.width / cell_w) * (image.height / cell_h);
+    const u32 cols = GridCells(image.width, cell_w, margin_x, spacing_x);
+    const u32 rows = GridCells(image.height, cell_h, margin_y, spacing_y);
+    if (!cols || !rows)
+        return Fail(margin_set || spacing_set ? "margin, spacing and cell size must leave only complete cells"
+            : "cell dimensions must divide the sheet's " + std::to_string(image.width) + "x" +
+                  std::to_string(image.height) + " pixels exactly");
+    const u64 count = static_cast<u64>(cols) * rows;
     if (count == 0 || count > 4096) return Fail("the grid must contain between 1 and 4096 frames");
     for (const auto& range : ranges) {
         if (range.first >= count || range.count > count - range.first)
@@ -143,7 +170,13 @@ int main(int argc, char** argv) {
     const auto* source = database.FindByPath(relative.generic_string());
     if (!source || source->missing || source->importer != "Texture" || source->guid.IsNull())
         return Fail("the asset database could not import the texture; check its .ameta file: " + relative.generic_string());
-    auto atlas = sprite2d::AtlasFromGrid(source->guid, image.width, image.height, cell_w, cell_h);
+    auto atlas = sprite2d::AtlasFromGrid(source->guid, cols * cell_w, rows * cell_h, cell_w, cell_h);
+    atlas.width = image.width;
+    atlas.height = image.height;
+    for (auto& frame : atlas.frames) {
+        frame.x = static_cast<i32>(margin_x + static_cast<u64>(frame.x / cell_w) * (static_cast<u64>(cell_w) + spacing_x));
+        frame.y = static_cast<i32>(margin_y + static_cast<u64>(frame.y / cell_h) * (static_cast<u64>(cell_h) + spacing_y));
+    }
     for (const auto& range : ranges) {
         sprite2d::SpriteClip clip;
         clip.name = range.name;
