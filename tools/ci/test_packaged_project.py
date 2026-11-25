@@ -385,9 +385,16 @@ def main():
                     or receipt["asset"] != "Content/Tiles/Level1.atilemap"
                     or receipt["first_difference_frame"] != diff["first_difference_frame"]):
                 raise RuntimeError(f"wrong controlled attribution: {receipt}")
-            export = subprocess.run([*operator, "--overlay-data"], cwd=empty_cwd,
-                                    capture_output=True, text=True, timeout=40, check=True)
-            confirmed_overlay = json.loads(export.stdout)
+            overlay_file = root / "Jump Proof Overlay.json"
+            export_cmd = [*operator, "--overlay-data", "--output", overlay_file]
+            export = subprocess.run(export_cmd, cwd=empty_cwd, capture_output=True, text=True, timeout=40)
+            if export.returncode != 0 or export.stdout or not overlay_file.is_file():
+                raise RuntimeError("controlled overlay file export failed: " + export.stdout + export.stderr)
+            original_bytes = overlay_file.read_bytes()
+            confirmed_overlay = json.loads(original_bytes.decode("utf-8"))
+            existing = subprocess.run(export_cmd, cwd=empty_cwd, capture_output=True, text=True, timeout=40)
+            if existing.returncode != 2 or "already exists" not in existing.stderr or overlay_file.read_bytes() != original_bytes:
+                raise RuntimeError("existing overlay was not protected: " + existing.stdout + existing.stderr)
             if (confirmed_overlay["cell"] != receipt["cell"] or confirmed_overlay["asset"] != receipt["asset"]
                     or confirmed_overlay["before_path"] != overlay["before_path"]
                     or confirmed_overlay["after_path"] != overlay["after_path"]):

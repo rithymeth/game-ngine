@@ -139,11 +139,19 @@ def main():
     parser.add_argument("--player", required=True, help="shared executable filename, including .exe on Windows")
     parser.add_argument("--route", type=Path, required=True)
     parser.add_argument("--overlay-data", action="store_true", help="include both paths and the changed cell for Tilemap")
+    parser.add_argument("--output", type=Path, help="write UTF-8 JSON to a new file instead of stdout")
     parser.add_argument("before", type=Path)
     parser.add_argument("after", type=Path)
     args = parser.parse_args()
     try:
-        print(json.dumps(isolate(args), allow_nan=False))
+        if args.output is not None and args.output.exists():
+            raise FileExistsError(f"output file already exists: {args.output}")
+        receipt = json.dumps(isolate(args), allow_nan=False)
+        if args.output is None:
+            print(receipt)
+        else:
+            with args.output.open("x", encoding="utf-8", newline="\n") as out:
+                out.write(receipt + "\n")
     except (ValueError, OSError, OverflowError, subprocess.TimeoutExpired) as exc:
         parser.error(str(exc))
 
