@@ -536,8 +536,9 @@ void TilemapPanel::DrawCanvas() {
     const bool on_map = mouse_valid && hovered && map.InBounds(cx, cy);
     const bool left = ImGui::IsMouseDown(ImGuiMouseButton_Left) && ImGui::IsItemActive();
     const bool right = ImGui::IsMouseDown(ImGuiMouseButton_Right) && ImGui::IsItemActive();
-    if (doc_.tool == TileTool::Rectangle) {
-        if (left && on_map && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+    const TileTool selected = doc_.tool;
+    if (selected == TileTool::Rectangle) {
+        if (left && !right && !dragging_ && on_map && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
             rect_active_ = true;
             rect_x_ = cx;
             rect_y_ = cy;
@@ -567,9 +568,12 @@ void TilemapPanel::DrawCanvas() {
     }
     dl->PopClipRect();
 
-    const TileTool selected = doc_.tool;
-    const bool brush_drag = selected != TileTool::Rectangle && mouse_valid &&
-                            (right || (left && (selected == TileTool::Paint || selected == TileTool::Erase)));
+    // In Rectangle mode a fresh right press starts a freehand eraser, but
+    // never takes over a left drag or starts late after its release.
+    const bool rectangle_erase_drag = right && !rect_active_ &&
+        (dragging_ || (!left && ImGui::IsMouseClicked(ImGuiMouseButton_Right)));
+    const bool brush_drag = mouse_valid && (selected == TileTool::Rectangle ? rectangle_erase_drag :
+        right || (left && (selected == TileTool::Paint || selected == TileTool::Erase)));
     if (brush_drag) {
         if (right) doc_.tool = TileTool::Erase;
         if (!dragging_) {
