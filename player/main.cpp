@@ -238,6 +238,13 @@ int main(int argc, char** argv) {
     }
     if (std::getenv("AETHER_PLAYER_HEADLESS")) options.headless = true;
 
+#if !defined(AETHER_HAS_WINDOW) || (!defined(_WIN32) && !defined(AETHER_HAS_VULKAN))
+    if (!options.headless || !options.screenshot.empty() || !options.record_dir.empty()) {
+        std::fprintf(stderr, "aether_player: this build only supports --headless runs without screenshots or recording\n");
+        return 2;
+    }
+#endif
+
     GamePackage package;
     std::vector<std::string> keys = options.keys;
     if (const char* env = std::getenv("AETHER_PAK_KEY")) keys.push_back(env);

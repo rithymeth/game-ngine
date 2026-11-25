@@ -13,6 +13,7 @@ add_library(aether_engine STATIC
     src/memory/frame_allocator.cpp
     src/platform/filesystem.cpp
     src/platform/window_events.cpp
+    src/gfx/rhi/device_factory.cpp
     src/platform/platform_plugin.cpp
     src/platform/lifecycle.cpp
     src/cook/mesh_cook.cpp
@@ -101,7 +102,6 @@ if(WIN32)
         src/gfx/texture.cpp
         src/gfx/material.cpp
         src/gfx/render_graph.cpp
-        src/gfx/rhi/device_factory.cpp
         src/gfx/rhi/d3d12/d3d12_backend.cpp
         src/assets/asset_manager.cpp
     )
@@ -126,13 +126,15 @@ elseif(AETHER_BUILD_WINDOWING)
     if(AETHER_GLFW_WAYLAND)
         target_compile_definitions(aether_engine PRIVATE AETHER_GLFW_WAYLAND)
     endif()
+else()
+    target_sources(aether_engine PRIVATE src/platform/window_headless.cpp)
 endif()
 
 if(AETHER_BUILD_VULKAN)
     target_sources(aether_engine PRIVATE src/gfx/rhi/vulkan/vulkan_backend.cpp)
     if(ANDROID)
         # Android: the device factory, and glslang built from source by the root CMakeLists.txt.
-        target_sources(aether_engine PRIVATE src/gfx/rhi/device_factory.cpp src/gfx/shader_compiler_glslang.cpp)
+        target_sources(aether_engine PRIVATE src/gfx/shader_compiler_glslang.cpp)
         # glslang is built in-tree here and is not part of the installed package, so keep it out of the export set.
         foreach(_aether_glslang_lib IN LISTS AETHER_GLSLANG_LIBRARIES)
             target_link_libraries(aether_engine PRIVATE "$<BUILD_INTERFACE:${_aether_glslang_lib}>")
@@ -144,7 +146,7 @@ if(AETHER_BUILD_VULKAN)
     elseif(NOT WIN32)
         # Off Windows: the RHI's device factory, and glslang for HLSL to
         # SPIR-V (DXC's role on Windows).
-        target_sources(aether_engine PRIVATE src/gfx/rhi/device_factory.cpp src/gfx/shader_compiler_glslang.cpp)
+        target_sources(aether_engine PRIVATE src/gfx/shader_compiler_glslang.cpp)
         target_link_libraries(aether_engine PRIVATE ${AETHER_GLSLANG_LIBRARIES})
         # `VkFooInfo info{VK_STRUCTURE_TYPE_...}` leaves the rest zeroed on
         # purpose, which -Wextra reports member by member.

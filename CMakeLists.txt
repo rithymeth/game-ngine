@@ -733,6 +733,21 @@ add_subdirectory(tools/new)
 add_subdirectory(tools/server)
 add_subdirectory(tools/docgen)
 add_subdirectory(tools/loc)
+if(AETHER_BUILD_TESTS AND Python3_Interpreter_FOUND AND NOT WIN32 AND NOT ANDROID AND NOT IOS AND NOT AETHER_BUILD_WINDOWING)
+    set(headless_templates blank)
+    if(AETHER_BUILD_SCRIPTING)
+        list(APPEND headless_templates platformer_2d)
+    endif()
+    foreach(template IN LISTS headless_templates)
+        set(test_name "packaged_project_headless_${template}")
+        add_test(NAME ${test_name}
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/ci/test_packaged_project.py
+            --template ${template}
+            --headless-build-tools $<TARGET_FILE:aether_new> $<TARGET_FILE:aether_loc_tool>
+            $<TARGET_FILE:aether_package> $<TARGET_FILE:aether_cook> $<TARGET_FILE:aether_pak> $<TARGET_FILE:aether_player>)
+        set_tests_properties(${test_name} PROPERTIES TIMEOUT 180)
+    endforeach()
+endif()
 if(WIN32)
     add_subdirectory(tools/symbolicate)
 endif()
