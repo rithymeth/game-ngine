@@ -14,6 +14,7 @@
 #include <cstdio>
 #include <fstream>
 #include <set>
+#include <span>
 #include <system_error>
 #include <vector>
 
@@ -410,6 +411,7 @@ PackageReport Package(const PackageOptions& options) {
     if (!LoadProject(options.cook.project_file, settings, &error)) {
         return fail("Can't load " + options.cook.project_file.string() + ": " + error);
     }
+    if (settings.startup_scene.empty()) return fail("Set a startup scene before packaging the game");
 
     // Prepare every package artifact before replacing any published file.
     CookOptions cook = options.cook;
@@ -451,6 +453,23 @@ PackageReport Package(const PackageOptions& options) {
     if (!report.cook.ok) {
         cleanup_staging();
         return fail(report.cook.error);
+    }
+    // A content-only cook may succeed with missing roots. A runnable package
+    // must contain the startup scene at the same path the player reads.
+    std::string archive_error;
+    {
+        pak::PakReader archive;
+        const auto keys = cook.encryption_key ? std::span<const pak::PakKey>(&*cook.encryption_key, 1)
+                                              : std::span<const pak::PakKey>{};
+        if (!archive.Open(report.cook.pak_file.string(), &archive_error, keys)) {
+            archive_error = "Can't verify the staged game archive: " + archive_error;
+        } else if (!archive.Contains("Content/" + settings.startup_scene)) {
+            archive_error = "The startup scene was not cooked: " + settings.startup_scene;
+        }
+    } // Close the archive before removing or publishing staging files.
+    if (!archive_error.empty()) {
+        cleanup_staging();
+        return fail(archive_error);
     }
 
     progress(0.92f, "Staging the player");

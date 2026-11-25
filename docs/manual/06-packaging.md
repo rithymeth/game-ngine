@@ -19,6 +19,9 @@ named for the project, its DLLs and the cooked archive beside it, writes
 Run `dist/Game/Game.exe`. Check a package at any time with
 `aether_pak verify-package dist/Game`; it compares every listed file against its
 size and CRC-32 and prints what differs.
+Packaging requires a startup scene in the cooked archive. If the scene is
+unset or missing, packaging fails without replacing a previous build. A
+content-only cook with `aether_cook` can still omit the startup scene.
 
 Add `--smoke` to start the packaged game headless for a few frames before the
 command returns, so a package that cannot run is a failed command rather than

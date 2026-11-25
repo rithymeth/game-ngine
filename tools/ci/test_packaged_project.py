@@ -2,6 +2,7 @@
 """Smoke the distributed command-line tools, without using a source checkout."""
 
 import argparse
+import json
 import os
 from pathlib import Path
 import re
@@ -91,6 +92,33 @@ def main():
             if set(package_temp.iterdir()) != {existing_scratch, occupied_slot}:
                 raise RuntimeError("timed-out smoke left temporary files behind")
             run(tools["aether_pak"], "verify-package", root / "Timeout Package", cwd=root)
+            original_project = project.read_bytes()
+            previous_manifest = (packaged / "PackageManifest.json").read_bytes()
+            previous_pak = (packaged / "Paks" / "Game.apak").read_bytes()
+            try:
+                for startup in ("", "Scenes/DoesNotExist.ascene"):
+                    settings = json.loads(original_project)
+                    settings["startup_scene"] = startup
+                    settings["always_cook"] = ["Scenes/"]
+                    project.write_text(json.dumps(settings), encoding="utf-8")
+                    failed = subprocess.run(
+                        [tools["aether_package"], str(project), "--out", str(packaged)],
+                        cwd=root, capture_output=True, text=True, timeout=12)
+                    if failed.returncode != 1 or "startup scene" not in failed.stderr.lower():
+                        raise RuntimeError(f"unlaunchable startup scene was not rejected: {startup!r}\n"
+                                           f"{failed.stdout}{failed.stderr}")
+                    if ((packaged / "PackageManifest.json").read_bytes() != previous_manifest
+                            or (packaged / "Paks" / "Game.apak").read_bytes() != previous_pak
+                            or any(p.name.startswith(".aether-package-") for p in packaged.iterdir())):
+                        raise RuntimeError("a failed package replaced the prior build or left staging files")
+            finally:
+                project.write_bytes(original_project)
+            encrypted = root / "Encrypted Package"
+            fixture_key = "12" * 32
+            run(tools["aether_package"], project, "--out", encrypted, "--config", "development",
+                "--key", fixture_key, cwd=root)
+            run(encrypted / (name + exe), "--headless", "--frames", "1", "--user-dir",
+                root / "Encrypted Player Data", cwd=empty_cwd, env=dict(os.environ, AETHER_PAK_KEY=fixture_key))
 
         # The game must discover its own data, with no source tree or working-directory hint.
         source.rename(root / "Hidden Project")
