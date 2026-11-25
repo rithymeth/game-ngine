@@ -107,14 +107,59 @@ the integrity of the complete distribution.
 
 ### Before shipping a Windows editor build
 
-The headless check does not prove the editor or the renderer. On a Windows
-machine with Vulkan support, open `aether_editor_shell` and make a fresh 2D
-Platformer from **New Project**. Confirm it renders and responds to movement
-in Play mode, stop, save, and use **Build and Package**. Verify the package with
-`aether_pak verify-package`, then launch it from an empty working directory
-without access to the source project. Confirm the same scene renders and plays
-in the standalone executable. Record the commit, GPU and graphics backend
-alongside captures from both runs.
+The hosted Windows MSVC job builds with Vulkan disabled. Its test and package
+results are useful, but do not prove the graphical editor opened. Use a
+Windows machine with a working Vulkan driver for the release check.
+
+From an x64 Visual Studio Developer PowerShell, configure a separate build
+directory and request the graphical editor target explicitly:
+
+```powershell
+cmake -S . -B build-editor-win -G "Visual Studio 17 2022" -A x64 -DAETHER_BUILD_EDITOR_UI=ON -DAETHER_BUILD_VULKAN=ON
+cmake --build build-editor-win --config Release --target aether_editor_shell aether_player aether_pak
+```
+
+Check the configure output: it should report either an installed Vulkan SDK
+or a generated import library from the installed loader DLL. The latter uses
+MSVC's `dumpbin` and `lib`, so it can work without a full SDK. If configure
+reports that Vulkan was disabled, stop rather than counting a tools-only
+build as an editor pass.
+
+Before the interactive check, open the built editor on a disposable
+`.aproject` and capture a bounded screenshot:
+
+```powershell
+$editor = (Resolve-Path ./build-editor-win/editor/shell/Release/aether_editor_shell.exe).Path
+$project = (Resolve-Path '<path-to-disposable-project.aproject>').Path
+Remove-Item Env:AETHER_EDITOR_HEADLESS -ErrorAction SilentlyContinue
+$env:AETHER_EDITOR_MAX_FRAMES = '120'
+$env:AETHER_EDITOR_SCREENSHOT = Join-Path $PWD ('editor-preflight-{0}.png' -f [guid]::NewGuid())
+try {
+    & $editor $project
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path $env:AETHER_EDITOR_SCREENSHOT)) {
+        throw 'The editor preflight did not capture a fresh screenshot.'
+    }
+} finally {
+    Remove-Item Env:AETHER_EDITOR_MAX_FRAMES,Env:AETHER_EDITOR_SCREENSHOT -ErrorAction SilentlyContinue
+}
+```
+
+Confirm a real editor window appeared and the log reports `Vulkan, window`,
+not `offscreen`. Inspect the capture before treating the preflight as passed.
+Then reopen the editor without the capture settings:
+
+1. Create a fresh **2D Platformer** from **New Project**. Confirm the scene
+   renders and the character moves in Play mode, then stop.
+2. Make a visible scene edit. Open **Build and Package** and confirm **Cook**
+   and **Package** are unavailable until the scene is saved. Save, enable
+   **Fail on cook warnings**, select **Shipping** and package to a separate
+   folder outside the source project.
+3. Verify the distribution with `aether_pak verify-package <package-folder>`.
+   Move the source project aside and relocate the package. Start the
+   packaged executable from an empty working directory, then confirm the
+   edited scene renders and still responds to movement.
+4. Record the commit, GPU and graphics backend, verification result, and
+   captures from the editor and the relocated standalone player.
 
 ## Cook and pack separately
 
