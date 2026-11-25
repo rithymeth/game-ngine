@@ -33,7 +33,7 @@ public:
     // The buttons. Start* are false while a build is running.
     bool StartCook();    // into <project>/Saved/Cooked/<Configuration>
     bool StartPackage(); // into output_dir
-    bool StartVerify();  // the files from the last successful package
+    bool StartVerify();  // staged package, or the selected output folder if none is staged
     void Cancel();
     // Runs the last packaged game; false (and `error`) if there's none or it won't start.
     bool Launch(std::string* error = nullptr);

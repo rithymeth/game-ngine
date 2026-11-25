@@ -193,6 +193,36 @@ AETHER_TEST(BuildWindow_VerifiesTheStagedPackageNotTheCurrentOutputField) {
     CHECK(window.LastResult() == BuildPackageWindow::Result::Succeeded);
 }
 
+AETHER_TEST(BuildWindow_VerifiesAnExistingPackageAfterEditorReopens) {
+    const stdfs::path project = FreshProject("VerifyExistingOutput");
+    {
+        BuildPackageWindow previous(project);
+        previous.player_path = AETHER_TEST_PLAYER_PATH;
+        if (!previous.StartPackage()) {
+            CHECK(false);
+            return;
+        }
+        previous.WaitForBuild();
+        CHECK(previous.LastResult() == BuildPackageWindow::Result::Succeeded);
+    }
+    BuildPackageWindow reopened(project);
+    CHECK(reopened.StagedGame().empty());
+    if (!reopened.StartVerify()) {
+        CHECK(false);
+        return;
+    }
+    reopened.WaitForBuild();
+    CHECK(reopened.LastResult() == BuildPackageWindow::Result::Succeeded);
+    CHECK(reopened.StagedGame().empty()); // a file check is not a new build or permission to launch
+    std::string error;
+    CHECK(!reopened.Launch(&error) && error == "Package the game first");
+
+    reopened.output_dir = (project.parent_path() / "missing-output").string();
+    CHECK(!reopened.StartVerify());
+    CHECK(reopened.LastResult() == BuildPackageWindow::Result::Failed);
+    CHECK(reopened.Stage().find("PackageManifest.json") != std::string::npos);
+}
+
 AETHER_TEST(BuildWindow_CooksAndReportsFailures) {
     HeadlessImGui imgui;
     const stdfs::path project = FreshProject("Cook");

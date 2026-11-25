@@ -97,7 +97,10 @@ one function.
 After a successful package, **Verify package** checks the last staged
 distribution's file sizes and checksums without rebuilding or launching it.
 Changing the Output folder field does not change which package this verifies.
-Any differences appear in the build log.
+Any differences appear in the build log. After reopening the editor, use
+**Verify output folder** to check a saved package without rebuilding it.
+Set **Output folder** to the folder that contains `PackageManifest.json`.
+Verifying a saved package does not enable **Launch** in the editor.
 
 For the editor's **Launch** arguments, put double quotes around values that
 contain spaces, for example `--user-dir "Player Data"`. Backslashes in Windows
