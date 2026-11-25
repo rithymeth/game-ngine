@@ -1,4 +1,16 @@
 cmake_minimum_required(VERSION 3.20)
+
+# This game has its own repository. An explicit request to build it must not
+# report a successful engine-only configure when that checkout is absent.
+option(AETHER_BUILD_EVERVALE_REBOOT "Build the Evervale reboot game" OFF)
+set(_aether_evervale_entry "${CMAKE_CURRENT_SOURCE_DIR}/games/EVERVALE-REBOOT/CMakeLists.txt")
+if(AETHER_BUILD_EVERVALE_REBOOT AND (NOT EXISTS "${_aether_evervale_entry}" OR IS_DIRECTORY "${_aether_evervale_entry}"))
+    message(FATAL_ERROR "AETHER_BUILD_EVERVALE_REBOOT=ON requires the Evervale source checkout.
+"
+                        "Place it at games/EVERVALE-REBOOT/CMakeLists.txt, or set "
+                        "AETHER_BUILD_EVERVALE_REBOOT=OFF for an engine-only build.")
+endif()
+
 project(Aether VERSION 0.30.0 LANGUAGES CXX)
 
 # The engine version is written by hand in two places -- the project() line above and
@@ -65,8 +77,6 @@ if(AETHER_BUILD_IOS_APP)
     endif()
     enable_language(OBJCXX)
 endif()
-
-option(AETHER_BUILD_EVERVALE_REBOOT "Build the Evervale reboot game" OFF)
 
 # Phase 37 step 6: -Werror for the engine and the gameplay kits, off by default (the four gameplay libraries build clean with GCC under it; CI will turn it on once Clang and MSVC are checked).
 option(AETHER_WARNINGS_AS_ERRORS "Treat warnings as errors in the engine and the gameplay kits" OFF)
@@ -711,6 +721,13 @@ endfunction()
 if(AETHER_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
+    if(NOT EXISTS "${_aether_evervale_entry}")
+        add_test(NAME evervale_checkout_preflight COMMAND "${CMAKE_COMMAND}"
+            "-DAETHER_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
+            "-DAETHER_CHECK_DIR=${CMAKE_CURRENT_BINARY_DIR}/evervale-checkout-preflight"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/tools/ci/test_evervale_checkout_preflight.cmake")
+        set_tests_properties(evervale_checkout_preflight PROPERTIES SKIP_REGULAR_EXPRESSION "SKIP: this workspace now has the Evervale checkout")
+    endif()
 endif()
 
 # Phase 23: the functional test runner (headless, any platform).
@@ -927,6 +944,6 @@ add_custom_target(aether_pr_gate DEPENDS ${_aether_pr_gate_deps})
 
 # Kept opt-in so engine-only builds do not pick up game content. Evervale is
 # a standalone game module and owns its own targets, tests and content copy.
-if(AETHER_BUILD_EVERVALE_REBOOT AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/games/EVERVALE-REBOOT/CMakeLists.txt")
+if(AETHER_BUILD_EVERVALE_REBOOT)
     add_subdirectory(games/EVERVALE-REBOOT)
 endif()
