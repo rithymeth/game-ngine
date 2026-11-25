@@ -108,6 +108,15 @@ def main():
         packed = json.loads((extract / "Content" / "Sprite Sheets" / "Motion.aatlas").read_bytes())
         if packed != named:
             raise RuntimeError("Shipping did not preserve the authored named clips")
+        missing_texture = "5a6d6c84-f7c2-4d70-ab39-6710ff83e948"
+        broken = dict(named, texture=missing_texture)
+        (sprites / "MissingArt.aatlas").write_text(json.dumps(broken), encoding="utf-8")
+        broken_output = root / "Broken Atlas Distribution"
+        tool(package, project, "--out", broken_output, "--config", "shipping", "--strict",
+             "--always", "Sprite Sheets/MissingArt.aatlas", cwd=root, expected=1,
+             reason=f"Sprite Sheets/MissingArt.aatlas refers to a missing asset {missing_texture}")
+        if (broken_output / "Paks" / "Game.apak").exists():
+            raise RuntimeError("strict Shipping emitted a package for an unknown texture GUID")
 
 
 if __name__ == "__main__":

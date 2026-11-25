@@ -301,6 +301,27 @@ AETHER_TEST(AssetDatabase_ValidateReportsMissingSources) {
     stdfs::remove_all(root);
 }
 
+AETHER_TEST(AssetDatabase_ReportsUnknownTyped2DDependencies) {
+    const auto root = FreshContent("aether_test_unknown_2d");
+    const AssetGuid texture = NewAssetGuid(), tileset = NewAssetGuid(), decoy = NewAssetGuid();
+    using nlohmann::json;
+    Write(root / "Hero.aatlas", json({{"$type", "SpriteAtlas"}, {"texture", ToString(texture)},
+          {"description", ToString(decoy)}}).dump());
+    Write(root / "Terrain.atileset", json({{"$type", "Tileset"}, {"texture", ToString(texture)}}).dump());
+    Write(root / "World.atilemap", json({{"$type", "Tilemap"}, {"tileset", ToString(tileset)}}).dump());
+    Write(root / "Placeholder.aatlas", json({{"$type", "SpriteAtlas"}, {"texture", ToString(AssetGuid{})}}).dump());
+    Write(root / "WrongType.aatlas", json({{"$type", "Notes"}, {"texture", ToString(decoy)}}).dump());
+    AssetDatabase db(root);
+    db.Scan();
+    const auto issues = ValidateAssets(db);
+    AETHER_CHECK(issues.size() == 3);
+    if (issues.size() != 3) return;
+    AETHER_CHECK(issues[0].path == "Hero.aatlas" && issues[0].dependency == texture);
+    AETHER_CHECK(issues[1].path == "Terrain.atileset" && issues[1].dependency == texture);
+    AETHER_CHECK(issues[2].path == "World.atilemap" && issues[2].dependency == tileset);
+    for (const auto& issue : issues) AETHER_CHECK(issue.kind == AssetIssueKind::BrokenDependency);
+}
+
 // A material graph names its textures by asset GUID inside the file, so nothing else would follow them: the cook used to
 // carry them only because a .amat was not an asset and its roots were handled as plain files. Now that the Content
 // Browser lists graphs, the scan has to record the references a graph makes.

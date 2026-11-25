@@ -2,6 +2,7 @@
 #include "aether/assets/asset_ref.h"
 #include "aether/assets/gltf_references.h"
 
+#include "aether/core/json_util.h"
 #include "aether/core/log.h"
 #include "aether/platform/filesystem.h"
 #include "aether/reflection/serialize.h"
@@ -550,6 +551,19 @@ void AssetDatabase::RebuildDependencies() {
         // fails to parse here and keeps the old behaviour.
         const nlohmann::json document = nlohmann::json::parse(bytes.begin(), bytes.end(), nullptr, false);
         if (!document.is_discarded()) {
+            // These explicit 2D fields name assets even when their GUIDs are no
+            // longer indexed. Keep the missing edge so validation and strict
+            // cooking can flag it, without treating arbitrary UUIDs as assets.
+            const char* target = record.importer == "Tilemap" ? "tileset"
+                                 : (record.importer == "SpriteAtlas" || record.importer == "Tileset") ? "texture"
+                                 : nullptr;
+            if (target && JsonString(document, "$type") == record.importer) {
+                AssetGuid referenced;
+                if (ParseAssetGuid(JsonString(document, target), referenced) &&
+                    !referenced.IsNull() && referenced != guid) {
+                    record.dependencies.push_back(referenced);
+                }
+            }
             std::vector<const nlohmann::json*> stack{&document};
             while (!stack.empty()) {
                 const nlohmann::json& node = *stack.back();
