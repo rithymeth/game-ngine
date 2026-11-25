@@ -747,9 +747,18 @@ add_subdirectory(tools/cook)
 add_subdirectory(tools/package)
 # A project from a template without the editor (docs/manual/01-getting-started.md).
 add_subdirectory(tools/new)
+add_subdirectory(tools/sprite_grid)
 add_subdirectory(tools/server)
 add_subdirectory(tools/docgen)
 add_subdirectory(tools/loc)
+if(AETHER_BUILD_TESTS AND Python3_Interpreter_FOUND AND NOT ANDROID AND NOT IOS)
+    add_test(NAME sprite_grid_package
+        COMMAND ${CMAKE_COMMAND} -E env --unset=AETHER_PAK_KEY
+        ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/ci/test_sprite_grid.py
+        $<TARGET_FILE:aether_new> $<TARGET_FILE:aether_sprite_grid>
+        $<TARGET_FILE:aether_package> $<TARGET_FILE:aether_pak>)
+    set_tests_properties(sprite_grid_package PROPERTIES TIMEOUT 150)
+endif()
 if(AETHER_BUILD_TESTS AND Python3_Interpreter_FOUND AND NOT WIN32 AND NOT ANDROID AND NOT IOS AND NOT AETHER_BUILD_WINDOWING)
     set(headless_templates blank)
     if(AETHER_BUILD_SCRIPTING)
@@ -903,7 +912,7 @@ aether_generate_package_config()
 # against the engine. Each is guarded by its target so a lean configuration that leaves one out still installs.
 set(_aether_install_apps
     aether_editor_shell aether_player aether_package aether_cook aether_pak aether_new
-    aether_plugin aether_loc_tool aether_symbolicate aether_server)
+    aether_plugin aether_loc_tool aether_sprite_grid aether_symbolicate aether_server)
 foreach(_aether_app IN LISTS _aether_install_apps)
     if(TARGET ${_aether_app})
         install(TARGETS ${_aether_app} RUNTIME DESTINATION bin BUNDLE DESTINATION bin COMPONENT Applications)
