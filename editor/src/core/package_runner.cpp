@@ -58,19 +58,22 @@ bool PackageRunner::StartPackage() { return Start(true); }
 
 bool PackageRunner::Start(bool package) {
     if (busy_.load()) return false;
-    pak::PakKey key;
-    if (encrypt && !pak::PakKey::FromHex(encryption_key, key)) {
-        std::lock_guard<std::mutex> lock(mutex_);
-        log_ = {{true, "The encryption key must be 64 hex digits"}};
-        stage_ = "Failed: the encryption key must be 64 hex digits";
-        result_ = Result::Failed;
-        return false;
-    }
     WaitForBuild(); // the last one's thread
+    pak::PakKey key;
+    const bool valid_key = !encrypt || pak::PakKey::FromHex(encryption_key, key);
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        // Launch represents the current package attempt, not a fallback to a
+        // previous executable. Keep the previous files on disk for manual use.
+        if (package) staged_game_.clear();
         log_.clear();
         progress_ = 0.0f;
+        if (!valid_key) {
+            log_.push_back({true, "The encryption key must be 64 hex digits"});
+            stage_ = "Failed: the encryption key must be 64 hex digits";
+            result_ = Result::Failed;
+            return false;
+        }
         stage_ = package ? "Packaging" : "Cooking";
         result_ = Result::None;
     }

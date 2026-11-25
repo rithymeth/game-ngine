@@ -80,6 +80,8 @@ For the editor's **Launch** arguments, put double quotes around values that
 contain spaces, for example `--user-dir "Player Data"`. Backslashes in Windows
 paths are literal. This field passes arguments directly to the player, not to
 a shell.
+If a new packaging attempt fails or is cancelled, **Launch** stays disabled
+until a package succeeds. Earlier package files are not removed by this rule.
 
 ### Before shipping a Windows editor build
 
