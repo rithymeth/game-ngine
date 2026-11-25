@@ -5,6 +5,7 @@
 #include "aether/platform/filesystem.h"
 #include "aether/reflection/serialize.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <system_error>
 
@@ -171,6 +172,9 @@ bool LoadProject(const stdfs::path& project_file, ProjectSettings& out, std::str
         SetError(error, project_file.string() + " couldn't be read as project settings");
         return false;
     }
+    // Startup scenes are content-relative asset paths, not host filesystem
+    // paths. Preserve case but normalize Windows separators before lookup.
+    std::replace(settings.startup_scene.begin(), settings.startup_scene.end(), '\\', '/');
     int major = 0, minor = 0;
     if (ParseMajorMinor(settings.engine_version, major, minor) &&
         (major > kEngineVersionMajor || (major == kEngineVersionMajor && minor > kEngineVersionMinor))) {
