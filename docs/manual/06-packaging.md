@@ -100,6 +100,10 @@ paths are literal. This field passes arguments directly to the player, not to
 a shell.
 If a new packaging attempt fails or is cancelled, **Launch** stays disabled
 until a package succeeds. Earlier package files are not removed by this rule.
+If the staged data archive disappears after a successful build, **Launch**
+names the missing archive instead of starting a player that would exit.
+Restore the archive or package again; use `aether_pak verify-package` to check
+the integrity of the complete distribution.
 
 ### Before shipping a Windows editor build
 
