@@ -145,6 +145,22 @@ def main():
         if (broken_output / "Paks" / "Game.apak").exists():
             raise RuntimeError("strict Shipping emitted a package for an unknown texture GUID")
 
+        other_atlas = json.loads(atlas.with_suffix(".aatlas.ameta").read_bytes())["guid"]
+        for filename, source, reason in (
+            ("WrongTexture.aatlas", json.dumps(dict(named, texture=other_atlas)), "texture expects Texture"),
+            ("BadGuid.atileset", json.dumps({"$type": "Tileset", "texture": "not-a-guid"}), "texture is not a valid GUID"),
+            ("WrongTileset.atilemap", json.dumps({"$type": "Tilemap", "tileset": meta["guid"]}), "tileset expects Tileset"),
+            ("WrongHeader.atilemap", json.dumps({"$type": "Tileset"}), "expected a Tilemap JSON object"),
+            ("Incomplete.aatlas", '{"$type": "SpriteAtlas"', "isn't valid JSON"),
+        ):
+            (sprites / filename).write_text(source, encoding="utf-8")
+            rejected = root / (filename + " Distribution")
+            tool(package, project, "--out", rejected, "--config", "shipping", "--strict",
+                 "--always", f"Sprite Sheets/{filename}", cwd=root, expected=1,
+                 reason=f"Sprite Sheets/{filename}: {reason}")
+            if (rejected / "Paks" / "Game.apak").exists():
+                raise RuntimeError("strict Shipping emitted a package for an incompatible 2D asset")
+
 
 if __name__ == "__main__":
     main()

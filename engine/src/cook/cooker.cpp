@@ -53,6 +53,35 @@ bool ParseConfiguration(const std::string& name, BuildConfiguration& out) {
 
 namespace {
 
+// The runtime 2D loader handles frame geometry and tile data. The cooker
+// checks only the header and typed dependency, without linking Sprite2D.
+std::string Check2DReference(const AssetRecord& record, const std::vector<u8>& bytes,
+                             const AssetDatabase& database) {
+    const bool tilemap = record.importer == "Tilemap";
+    if (!tilemap && record.importer != "SpriteAtlas" && record.importer != "Tileset") return {};
+    const auto document = json::parse(bytes.begin(), bytes.end(), nullptr, false);
+    if (document.is_discarded()) return "isn't valid JSON";
+    const auto type = document.find("$type");
+    if (!document.is_object() || type == document.end() || *type != record.importer)
+        return "expected a " + record.importer + " JSON object";
+
+    const std::string field = tilemap ? "tileset" : "texture";
+    const std::string expected = tilemap ? "Tileset" : "Texture";
+    const auto value = document.find(field);
+    if (value == document.end()) return {}; // Optional in the runtime schema.
+    if (!value->is_string()) return field + " is not a valid GUID";
+    const auto& text = value->get_ref<const std::string&>();
+    if (text.empty()) return {};
+    AssetGuid guid;
+    if (!assets::ParseAssetGuid(text, guid)) return field + " is not a valid GUID";
+    if (guid.IsNull()) return {};
+    // Missing GUIDs are already reported by CollectCookSet.
+    const AssetRecord* dependency = database.Find(guid);
+    if (dependency && !dependency->missing && dependency->importer != expected)
+        return field + " expects " + expected + ", but " + dependency->path + " is " + dependency->importer;
+    return {};
+}
+
 // A sound is decoded by the audio module at run time, which the cooker does not link: check the container
 // here so a broken file is reported at cook time. Empty if the header looks right, else the reason.
 std::string CheckSoundHeader(const std::string& path, const std::vector<u8>& bytes) {
@@ -404,6 +433,8 @@ CookReport Cook(const CookOptions& options) {
         if (!fs::ReadFileBytes(database.SourcePath(guid).string(), bytes)) {
             return fail("Can't read " + record.path);
         }
+        if (const std::string problem = Check2DReference(record, bytes, database); !problem.empty())
+            report.warnings.push_back(record.path + ": " + problem);
         if (record.importer == "Sound") {
             const std::string problem = CheckSoundHeader(record.path, bytes);
             if (!problem.empty()) report.warnings.push_back(record.path + ": " + problem + "; the game can't play it");
