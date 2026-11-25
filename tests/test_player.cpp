@@ -230,6 +230,43 @@ AETHER_TEST(Player_BadSpriteAnimationAtlasExplainsTheProblemOnlyOnce) {
     }) == 1);
 }
 
+AETHER_TEST(Player_MissingSpriteClipReportsItsAtlasWithoutLogSpam) {
+    const auto guid = assets::NewAssetGuid();
+    const std::string asset_path = "Sprites/Actions.aatlas";
+    auto manifest = Manifest("Scenes/start.ascene", "unused");
+    manifest["assets"].push_back({{"guid", assets::ToString(guid)}, {"path", asset_path}, {"importer", "SpriteAtlas"}});
+    const json scene = {{"$type", "Scene"}, {"$version", 1}, {"entities", json::array()}};
+    auto atlas = sprite2d::AtlasFromGrid({}, 8, 8, 8, 8);
+    atlas.clips = {{"walk", {"frame_0"}, 8.0f, true}, {"empty", {}, 8.0f, true}};
+    pak::PakWriter writer;
+    CHECK(writer.Add("Manifest.json", manifest.dump()));
+    CHECK(writer.Add("Content/Scenes/start.ascene", scene.dump()));
+    CHECK(writer.Add("Content/" + asset_path, sprite2d::AtlasToJson(atlas).dump()));
+    const auto pak_file = TestDir("MissingSpriteClip") / "Game.apak";
+    if (!writer.Write(pak_file.string())) { CHECK(false); return; }
+
+    GamePackage package;
+    if (!package.Mount(pak_file.string())) { CHECK(false); return; }
+    Game game(package);
+    if (!game.LoadStartupScene()) { CHECK(false); return; }
+    sprite2d::Sprite sprite;
+    sprite.atlas.guid = guid;
+    sprite2d::SpriteAnimator animator;
+    for (const std::string_view name : {"obsolete", "obsolete", "empty", ""}) {
+        sprite2d::PlayClip(animator, std::string(name));
+        game.GetWorld().CreateEntity(sprite, animator);
+    }
+    sprite2d::PlayClip(animator, "walk");
+    const Entity good = game.GetWorld().CreateEntity(sprite, animator);
+    game.BeginPlay();
+    for (int i = 0; i < 4; ++i) game.Tick(1.0f / 60);
+    const auto* animated = game.GetWorld().GetComponent<sprite2d::Sprite>(good);
+    CHECK(animated && std::string_view(animated->frame) == "frame_0");
+    CHECK(std::count(game.Warnings().begin(), game.Warnings().end(), "Sprite atlas Sprites/Actions.aatlas: clip 'obsolete' was not found") == 1);
+    CHECK(std::count(game.Warnings().begin(), game.Warnings().end(), "Sprite atlas Sprites/Actions.aatlas: clip 'empty' has no frames") == 1);
+    CHECK(game.Warnings().size() == 2);
+}
+
 AETHER_TEST(Player_CookedAudioSourceListenerSettingsAndSceneReload) {
     const auto dir = TestDir("Audio");
     GamePackage package;

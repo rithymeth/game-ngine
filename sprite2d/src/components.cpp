@@ -3,13 +3,20 @@
 namespace aether::sprite2d {
 
 void UpdateSpriteAnimations(World& world, const AtlasResolver& atlases, f32 dt) {
+    UpdateSpriteAnimations(world, atlases, dt, {});
+}
+
+void UpdateSpriteAnimations(World& world, const AtlasResolver& atlases, f32 dt, const SpriteClipReporter& report) {
     world.ForEach<Sprite, SpriteAnimator>([&](Sprite& sprite_ref, SpriteAnimator& animator_ref) {
         Sprite* sprite = &sprite_ref;
         SpriteAnimator* animator = &animator_ref;
         if (!animator->playing) return;
         const SpriteAtlas* atlas = atlases ? atlases(sprite->atlas.guid) : nullptr;
         const SpriteClip* clip = atlas ? atlas->FindClip(animator->clip) : nullptr;
-        if (!clip || clip->frames.empty()) return;
+        if (!clip || clip->frames.empty()) {
+            if (report && atlas && animator->clip[0]) report(sprite->atlas.guid, animator->clip, clip != nullptr);
+            return;
+        }
         animator->time += dt * animator->speed;
         bool finished = false;
         const usize index = ClipFrameAt(*clip, animator->time, &finished);
