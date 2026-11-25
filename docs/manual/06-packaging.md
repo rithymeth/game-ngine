@@ -105,7 +105,9 @@ Verifying a saved package does not enable **Launch** in the editor.
 For the editor's **Launch** arguments, put double quotes around values that
 contain spaces, for example `--user-dir "Player Data"`. Backslashes in Windows
 paths are literal. This field passes arguments directly to the player, not to
-a shell.
+a shell. The window logs when the game exits and shows its exit code if it
+did not exit normally. A successful launch starts the process; it does not
+guarantee the game reached a playable scene.
 If a new packaging attempt fails or is cancelled, **Launch** stays disabled
 until a package succeeds. Earlier package files are not removed by this rule.
 If the staged data archive disappears after a successful build, **Launch**

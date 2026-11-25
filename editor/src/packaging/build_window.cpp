@@ -28,6 +28,7 @@ bool BuildPackageWindow::StartPackage() { return SourceBlocker().empty() && Pack
 
 void BuildPackageWindow::Draw() {
     const bool busy = Busy();
+    const bool running = PollLaunchedGame();
     ImGui::TextUnformatted(project_file_.filename().string().c_str());
     ImGui::SameLine();
     ImGui::TextDisabled("%s", project_file_.parent_path().string().c_str());
@@ -76,8 +77,8 @@ void BuildPackageWindow::Draw() {
     ImGui::SameLine();
     const bool has_staged = !StagedGame().empty();
     const bool can_launch = !busy && has_staged;
-    ImGui::BeginDisabled(!can_launch);
-    if (ImGui::Button(game_.Running() ? "Running..." : "Launch")) Launch();
+    ImGui::BeginDisabled(!can_launch || running);
+    if (ImGui::Button(running ? "Running..." : "Launch")) Launch();
     ImGui::EndDisabled();
     ImGui::SameLine();
     ImGui::SetNextItemWidth(160);
