@@ -932,6 +932,56 @@ AETHER_TEST(TilemapEditor_CollisionOutlineSitsAboveDecorativeLayers) {
     CHECK(!IsSolidAt(doc.Map(), doc.GetTileset(), 1, 1));
 }
 
+AETHER_TEST(TilemapEditor_HoverNamesTheLayerThatBlocksMovement) {
+    HeadlessImGui ui;
+    TilemapData map;
+    map.Resize(6, 5);
+    map.AddLayer("Basalt");
+    map.AddLayer("Roots");
+    map.AddLayer("Canopy");
+    map.layers[2].collides = false;
+    Tileset tiles = Doc().GetTileset();
+    tiles.SetSolid(2, true);
+    std::array<i32, 16> variants;
+    variants.fill(2);
+    const auto rule = tiles.AddAutotile("Stone edge", variants);
+    map.Set(0, 1, 1, AutotileCell(rule));
+    map.Set(1, 1, 1, 2);
+    map.Set(2, 1, 1, 2);
+    TilemapEditDocument doc(std::move(map), std::move(tiles));
+    doc.active_layer = 2;
+    TilemapPanel panel(doc);
+    ImVec2 bottom_left;
+    const auto draw = [&] {
+        panel.Draw();
+        const auto pad = ImGui::GetStyle().WindowPadding;
+        bottom_left = ImVec2(ImGui::GetItemRectMin().x + pad.x + 8, ImGui::GetItemRectMax().y - pad.y - 8);
+    };
+    ui.Frame(draw);
+    const auto log_hover = [&](i32 x, i32 y, const char* name) {
+        const auto log = std::filesystem::temp_directory_path() / name;
+        ImGui::GetIO().AddMousePosEvent(bottom_left.x + (static_cast<f32>(x) + .5f) * panel.zoom,
+                                       bottom_left.y - (static_cast<f32>(y) + .5f) * panel.zoom);
+        ui.Frame(draw); // let ImGui update its hovered window
+        ui.Frame([&] {
+            ImGui::LogToFile(0, log.string().c_str());
+            draw();
+            ImGui::LogFinish();
+        });
+        std::ifstream input(log);
+        return std::string(std::istreambuf_iterator<char>(input), {});
+    };
+    const auto revision = doc.Revision();
+    const auto occupied = log_hover(1, 1, "tilemap-hover-occupied.txt");
+    CHECK(occupied.find("Editing: Canopy") != std::string::npos);
+    CHECK(occupied.find("Blocks movement: Roots") != std::string::npos);
+    CHECK(occupied.find("1 more blocking layer") != std::string::npos);
+    CHECK(occupied.find("Blocks movement: Canopy") == std::string::npos);
+    const auto clear = log_hover(2, 1, "tilemap-hover-clear.txt");
+    CHECK(clear.find("No blocking tiles") != std::string::npos);
+    CHECK(doc.Revision() == revision && !doc.dirty() && !doc.CanUndo());
+}
+
 AETHER_TEST(TilemapEditor_LargeMapOnlyDrawsVisibleGridLines) {
     HeadlessImGui ui;
     auto doc = Doc();

@@ -564,7 +564,33 @@ void TilemapPanel::DrawCanvas() {
     if (on_map && !rect_active_) {
         const ImVec2 a(to_screen_x(cx), to_screen_y(cy));
         dl->AddRect(a, ImVec2(a.x + zoom, a.y + zoom), IM_COL32(255, 255, 255, 200), 0.0f, 0, 2.0f);
-        ImGui::SetTooltip("(%d, %d)  tile %d", cx, cy, map.Get(doc_.active_layer, cx, cy));
+        if (!left && !right && ImGui::BeginTooltip()) {
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 260.0f);
+            ImGui::Text("Cell (%d, %d)", cx, cy);
+            if (doc_.active_layer < map.layers.size()) {
+                ImGui::Text("Editing: %s", map.layers[doc_.active_layer].name.c_str());
+                const i32 tile = ResolveTile(map, ts, doc_.active_layer, cx, cy);
+                if (tile >= 0) ImGui::Text("Tile on this layer: %d", tile);
+                else ImGui::TextUnformatted("No visible tile on this layer");
+            }
+            const TileLayer* top_blocker = nullptr;
+            usize blockers = 0;
+            for (usize layer = map.layers.size(); layer-- > 0;) {
+                if (map.layers[layer].collides && ts.IsSolid(ResolveTile(map, ts, layer, cx, cy))) {
+                    if (!top_blocker) top_blocker = &map.layers[layer];
+                    ++blockers;
+                }
+            }
+            if (top_blocker) {
+                ImGui::Text("Blocks movement: %s", top_blocker->name.c_str());
+                if (blockers > 1)
+                    ImGui::Text("Plus %zu more blocking %s", blockers - 1, blockers == 2 ? "layer" : "layers");
+            } else {
+                ImGui::TextUnformatted("No blocking tiles");
+            }
+            ImGui::PopTextWrapPos();
+            ImGui::EndTooltip();
+        }
     }
     dl->PopClipRect();
 
