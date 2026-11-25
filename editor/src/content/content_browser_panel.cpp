@@ -1,3 +1,4 @@
+#include "grid_authoring.h"
 #include "content_browser_panel.h"
 
 #include "aether/project/project.h"
@@ -389,6 +390,7 @@ void ContentBrowserPanel::Draw() {
     if (ImGui::BeginChild("##listing", ImVec2(0, 0), ImGuiChildFlags_Borders)) DrawListing();
     ImGui::EndChild();
     DrawActionDialog();
+    DrawSpriteAtlasDialog();
     DrawReferenceViewer();
     DrawValidation();
     DrawImportSettings();
@@ -650,6 +652,20 @@ bool ContentBrowserPanel::OpenEntry(const std::string& path, std::string* error)
     return opened;
 }
 
+bool ContentBrowserPanel::CreateSpriteAtlas(const std::string& texture, u32 cell_w, u32 cell_h, std::string* error) {
+    if (!database_) {
+        if (error) *error = "No project is open.";
+        return false;
+    }
+    sprite2d::authoring::CreatedAtlas result;
+    if (!sprite2d::authoring::CreateGridAtlas(database_->ContentRoot(), texture, {cell_w, cell_h}, {}, result, error))
+        return false;
+    Refresh();
+    ShowEntry(result.relative_path);
+    if (opener_) OpenEntry(result.relative_path);
+    return true;
+}
+
 void ContentBrowserPanel::SetRevealer(std::function<bool(const std::string&)> reveal) { revealer_ = std::move(reveal); }
 
 void ContentBrowserPanel::ShowEntry(const std::string& path) {
@@ -705,6 +721,13 @@ void ContentBrowserPanel::DrawEntryMenu(const assets::ContentEntry& e) {
         if (ImGui::MenuItem("Show Dependencies")) ShowReferences(e.path, assets::ReferenceDirection::Dependencies);
         if (ImGui::MenuItem("Show Referencers")) ShowReferences(e.path, assets::ReferenceDirection::Referencers);
         ImGui::EndMenu();
+    }
+    if (!e.is_folder && e.asset && e.asset->importer == "Texture" && !e.asset->missing &&
+        ImGui::MenuItem("Create Sprite Atlas...", nullptr, false, !multiple)) {
+        sprite_atlas_source_ = e.path;
+        sprite_atlas_error_.clear();
+        sprite_atlas_cells_[0] = sprite_atlas_cells_[1] = 16;
+        sprite_atlas_popup_pending_ = true;
     }
     if (!e.is_folder && ImportEditable(e.path) != nullptr) {
         ImGui::Separator();
@@ -1238,6 +1261,26 @@ void ContentBrowserPanel::DrawActionDialog() {
         ImGui::EndPopup();
     }
     if (!open) action_ = Action::None;
+}
+
+void ContentBrowserPanel::DrawSpriteAtlasDialog() {
+    if (sprite_atlas_popup_pending_) {
+        ImGui::OpenPopup("Create Sprite Atlas");
+        sprite_atlas_popup_pending_ = false;
+    }
+    if (!ImGui::BeginPopupModal("Create Sprite Atlas", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+    ImGui::TextWrapped("Slice %s into whole cells. A new .aatlas will be saved next to the image.", sprite_atlas_source_.c_str());
+    ImGui::InputInt2("Cell width, height (px)", sprite_atlas_cells_);
+    if (!sprite_atlas_error_.empty()) ImGui::TextWrapped("%s", sprite_atlas_error_.c_str());
+    const int w = sprite_atlas_cells_[0], h = sprite_atlas_cells_[1];
+    ImGui::BeginDisabled(w <= 0 || h <= 0);
+    if (ImGui::Button("Create") && CreateSpriteAtlas(sprite_atlas_source_, static_cast<u32>(w), static_cast<u32>(h),
+                                                     &sprite_atlas_error_))
+        ImGui::CloseCurrentPopup();
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
 }
 
 void ContentBrowserPanel::DrawReferenceViewer() {
