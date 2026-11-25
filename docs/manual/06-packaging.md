@@ -43,8 +43,10 @@ requires `--headless` and cannot capture screenshots. For an end-to-end package
 check, build `aether_new aether_loc_tool aether_package aether_cook aether_pak
 aether_player`, then run `ctest --test-dir build -R '^packaged_project_headless_'
 --output-on-failure`. This checks startup and 60 simulation frames from outside
-the source project, plus movement from input in the 2D Platformer template. It
-does not check rendered output.
+the source project, plus movement from input in the 2D Platformer and 3D
+Third Person templates when their required modules are enabled. The Third
+Person check also verifies its three glTF models are packaged. These checks
+do not verify rendered output.
 If the editor command layer is enabled, also build `aether_package_runner_smoke`.
 The Blank check then exercises the editor's Build and Package and Launch
 commands with a relative output path; no editor window is needed.

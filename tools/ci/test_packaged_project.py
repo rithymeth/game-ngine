@@ -10,6 +10,13 @@ import shutil
 import subprocess
 import tempfile
 
+MOTION = {
+    "platformer_2d": ("Right", 0, 1),
+    "third_person": ("W", 2, -1),
+}
+COORD = r"(-?\d+\.\d+)"
+PLAYER_POSITION = re.compile(rf"^Player at \({COORD}, {COORD}, {COORD}\)", re.MULTILINE)
+
 
 def run(tool, *args, cwd, capture=False, env=None):
     print(f"{tool.name}: {' '.join(map(str, args))}", flush=True)
@@ -26,7 +33,7 @@ def main():
     parser.add_argument("tools_dir", nargs="?", type=Path, help="Directory containing the distributed tools and player")
     parser.add_argument("--headless-build-tools", nargs=6, type=Path, metavar="EXE",
                         help="Stage the six executables from a build with no window backend")
-    parser.add_argument("--template", choices=("blank", "platformer_2d"), default="blank")
+    parser.add_argument("--template", choices=("blank", *MOTION), default="blank")
     parser.add_argument("--editor-runner", type=Path, help="Also exercise the editor's packaging command layer")
     args = parser.parse_args()
     if bool(args.tools_dir) == bool(args.headless_build_tools):
@@ -80,6 +87,11 @@ def main():
             if not required.is_file():
                 raise RuntimeError(f"package is missing {required}")
         run(tools["aether_pak"], "verify-package", packaged, cwd=root)
+        if args.template == "third_person":
+            listing = run(tools["aether_pak"], "list", packaged / "Paks" / "Game.apak", cwd=root, capture=True)
+            for model in ("Floor", "Player", "Pickup"):
+                if f"Content/Models/{model}.gltf" not in listing:
+                    raise RuntimeError(f"the packaged 3D starter is missing {model}.gltf")
         if args.headless_build_tools and args.template == "blank":
             # Keep the real player busy well past the deadline, without a fake
             # executable or an actual hang. Capture output to check the cause.
@@ -152,15 +164,15 @@ def main():
                      "--user-dir", root / "Player Data", cwd=empty_cwd, capture=True)
         if "Ran 60 frames (" not in output:
             raise RuntimeError("the packaged player did not report 60 frames")
-        if args.template == "platformer_2d":
-            moved = run(game, "--headless", "--frames", "60", "--press", "Right", "--report",
+        if args.template in MOTION:
+            key, axis, direction = MOTION[args.template]
+            moved = run(game, "--headless", "--frames", "60", "--press", key, "--report",
                         "--user-dir", root / "Player Data With Input", cwd=empty_cwd, capture=True)
-            position = r"^Player at \((-?\d+\.\d+),"
-            idle_x = re.search(position, output, re.MULTILINE)
-            moved_x = re.search(position, moved, re.MULTILINE)
-            if ("Ran 60 frames (" not in moved or not idle_x or not moved_x
-                    or float(moved_x[1]) <= float(idle_x[1]) + 0.1):
-                raise RuntimeError("the packaged platformer did not respond to Right input")
+            idle_position = PLAYER_POSITION.search(output)
+            moved_position = PLAYER_POSITION.search(moved)
+            if ("Ran 60 frames (" not in moved or not idle_position or not moved_position
+                    or direction * (float(moved_position[axis + 1]) - float(idle_position[axis + 1])) <= .1):
+                raise RuntimeError(f"the packaged {args.template} did not respond to {key} input")
 
 
 if __name__ == "__main__":
