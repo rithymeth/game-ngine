@@ -33,11 +33,13 @@ public:
     // The buttons. Start* are false while a build is running.
     bool StartCook();    // into <project>/Saved/Cooked/<Configuration>
     bool StartPackage(); // into output_dir
+    bool StartVerify();  // the files from the last successful package
     void Cancel();
     // Runs the last packaged game; false (and `error`) if there's none or it won't start.
     bool Launch(std::string* error = nullptr);
 
     bool Busy() const { return busy_.load(); }
+    bool CanCancel() const { return Busy() && !verifying_; }
     // Blocks until the running build ends (tests, and closing the editor).
     void WaitForBuild();
     f32 Progress() const;
@@ -71,6 +73,7 @@ protected:
     std::thread worker_;
     std::atomic<bool> busy_{false};
     std::atomic<bool> cancel_{false};
+    bool verifying_ = false; // set by the UI thread before starting a worker
     mutable std::mutex mutex_;
     f32 progress_ = 0.0f;
     std::string stage_;

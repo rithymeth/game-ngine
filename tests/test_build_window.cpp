@@ -151,6 +151,48 @@ AETHER_TEST(BuildWindow_ReportsMissingPackageArchiveBeforeLaunching) {
     CHECK(window.Game().Wait(&code) && code == 0);
 }
 
+AETHER_TEST(BuildWindow_VerifiesTheStagedPackageNotTheCurrentOutputField) {
+    BuildPackageWindow window(FreshProject("VerifyPackage"));
+    CHECK(!window.StartVerify());
+    window.player_path = AETHER_TEST_PLAYER_PATH;
+    if (!window.StartPackage()) {
+        CHECK(false);
+        return;
+    }
+    window.WaitForBuild();
+    const stdfs::path game = window.StagedGame();
+    CHECK(stdfs::is_regular_file(game));
+    const stdfs::path archive = game.parent_path() / "Paks" / "Game.apak";
+    if (!stdfs::is_regular_file(archive)) {
+        CHECK(false);
+        return;
+    }
+    // Staged data still belongs to the actual package, not a typed folder
+    // intended for a later build.
+    window.output_dir = (game.parent_path() / "not-the-package").string();
+    if (!window.StartVerify()) {
+        CHECK(false);
+        return;
+    }
+    window.WaitForBuild();
+    CHECK(window.LastResult() == BuildPackageWindow::Result::Succeeded);
+    CHECK(window.Stage().find("Verified package") == 0 && window.StagedGame() == game);
+
+    const stdfs::path backup = archive.parent_path() / "Game.apak.bak";
+    stdfs::rename(archive, backup);
+    CHECK(window.StartVerify());
+    window.WaitForBuild();
+    CHECK(window.LastResult() == BuildPackageWindow::Result::Failed && window.StagedGame() == game);
+    bool named_archive = false;
+    for (const auto& line : window.Log()) named_archive |= line.warning && line.text.find("Game.apak") != std::string::npos;
+    CHECK(named_archive);
+
+    stdfs::rename(backup, archive);
+    CHECK(window.StartVerify());
+    window.WaitForBuild();
+    CHECK(window.LastResult() == BuildPackageWindow::Result::Succeeded);
+}
+
 AETHER_TEST(BuildWindow_CooksAndReportsFailures) {
     HeadlessImGui imgui;
     const stdfs::path project = FreshProject("Cook");

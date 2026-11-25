@@ -55,6 +55,37 @@ void PackageRunner::AddLog(bool warning, std::string text) {
 
 bool PackageRunner::StartCook() { return Start(false); }
 bool PackageRunner::StartPackage() { return Start(true); }
+bool PackageRunner::StartVerify() {
+    if (Busy()) return false;
+    const stdfs::path game = StagedGame();
+    if (game.empty()) return false;
+    WaitForBuild();
+    const stdfs::path directory = game.parent_path();
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        stage_ = "Verifying package";
+        progress_ = 0.0f;
+        result_ = Result::None;
+        log_.clear();
+        log_.push_back({false, "Checking " + directory.string()});
+    }
+    verifying_ = true;
+    busy_ = true;
+    worker_ = std::thread([this, directory] {
+        std::vector<std::string> problems;
+        const bool ok = cook::VerifyPackageManifest(directory, problems);
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            for (std::string& problem : problems) log_.push_back({true, std::move(problem)});
+            stage_ = ok ? "Verified package" : "Package verification failed";
+            log_.push_back({!ok, stage_});
+            progress_ = 1.0f;
+            result_ = ok ? Result::Succeeded : Result::Failed;
+        }
+        busy_ = false;
+    });
+    return true;
+}
 
 bool PackageRunner::Start(bool package) {
     if (busy_.load()) return false;
@@ -78,6 +109,7 @@ bool PackageRunner::Start(bool package) {
         result_ = Result::None;
     }
     cancel_ = false;
+    verifying_ = false;
     busy_ = true;
 
     cook::CookOptions cook_options;
@@ -188,7 +220,9 @@ bool PackageRunner::Launch(std::string* error) {
     std::string why;
     bool ok = false;
     std::error_code archive_error;
-    if (game.empty()) {
+    if (Busy()) {
+        why = "Wait for the current package operation to finish";
+    } else if (game.empty()) {
         why = "Package the game first";
     } else if (game_.Running()) {
         why = "The game is already running";

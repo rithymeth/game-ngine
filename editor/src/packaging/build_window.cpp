@@ -70,7 +70,7 @@ void BuildPackageWindow::Draw() {
     if (ImGui::Button("Package")) StartPackage();
     ImGui::EndDisabled();
     ImGui::SameLine();
-    ImGui::BeginDisabled(!busy);
+    ImGui::BeginDisabled(!CanCancel());
     if (ImGui::Button("Cancel")) Cancel();
     ImGui::EndDisabled();
     ImGui::SameLine();
@@ -82,6 +82,9 @@ void BuildPackageWindow::Draw() {
     ImGui::SetNextItemWidth(160);
     std::snprintf(buffer, sizeof(buffer), "%s", launch_args.c_str());
     if (ImGui::InputTextWithHint("##args", "player arguments", buffer, sizeof(buffer))) launch_args = buffer;
+    ImGui::BeginDisabled(!can_launch);
+    if (ImGui::Button("Verify package")) StartVerify();
+    ImGui::EndDisabled();
     if (!launch_error_.empty()) ImGui::TextColored(ImVec4(1, 0.4f, 0.3f, 1), "%s", launch_error_.c_str());
 
     const Result result = LastResult();
