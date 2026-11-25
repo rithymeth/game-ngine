@@ -78,12 +78,44 @@ AETHER_TEST(Sprite2D_AtlasRefusesBadData) {
     CHECK(!AtlasFromJson(nlohmann::json::parse(R"({"$type":"SpriteAtlas","frames":[{"name":"a","w":0,"h":4}]})"), out, &error));
     CHECK(error.find("no size") != std::string::npos);
     CHECK(!AtlasFromJson(nlohmann::json::parse(
-                             R"({"$type":"SpriteAtlas","frames":[{"name":"a","w":4,"h":4}],"clips":[{"name":"c","frames":["zzz"]}]})"),
+                             R"({"$type":"SpriteAtlas","width":8,"height":8,"frames":[{"name":"a","w":4,"h":4}],"clips":[{"name":"c","frames":["zzz"]}]})"),
                          out, &error));
     CHECK(error.find("zzz") != std::string::npos);
     CHECK(!AtlasFromJson(nlohmann::json::parse(
-                             R"({"$type":"SpriteAtlas","frames":[{"name":"a","w":4,"h":4},{"name":"a","w":4,"h":4}]})"),
+                             R"({"$type":"SpriteAtlas","width":8,"height":8,"frames":[{"name":"a","w":4,"h":4},{"name":"a","w":4,"h":4}]})"),
                          out, &error));
+}
+
+AETHER_TEST(Sprite2D_AtlasRejectsFramesThatWouldDisappear) {
+    const auto good = AtlasFromGrid({}, 16, 16, 8, 8);
+    const auto saved = AtlasToJson(good);
+    SpriteAtlas loaded = good;
+    std::string error;
+    for (const auto& [field, invalid] : std::vector<std::pair<const char*, nlohmann::json>>{
+             {"x", -1}, {"y", -1}, {"x", 9}, {"y", 9},
+             {"x", 4294967296ULL}, {"w", 4294967304ULL}, {"x", 0.5}, {"h", 8e200}}) {
+        auto authored = saved;
+        authored["frames"][0][field] = invalid;
+        CHECK(!AtlasFromJson(authored, loaded, &error));
+        CHECK(error.find("frame_0") != std::string::npos);
+        CHECK(AtlasToJson(loaded) == saved);
+    }
+    for (const auto& invalid : {nlohmann::json(-1), nlohmann::json(0), nlohmann::json(4294967312ULL)}) {
+        auto authored = saved;
+        authored["width"] = invalid;
+        CHECK(!AtlasFromJson(authored, loaded, &error));
+        CHECK(AtlasToJson(loaded) == saved);
+    }
+
+    // A frame may end on the exact edge. Textureless starter atlases and numeric
+    // values written as whole-valued JSON floats are valid.
+    auto edge = saved;
+    edge["frames"][0]["x"] = 8.0;
+    edge["frames"][0]["y"] = 8;
+    CHECK(AtlasFromJson(edge, loaded, &error));
+    CHECK(loaded.texture.IsNull() && loaded.frames[0].x == 8);
+    CHECK(AtlasFromJson(AtlasToJson(SpriteAtlas{}), loaded, &error));
+    CHECK(loaded.frames.empty());
 }
 
 AETHER_TEST(Sprite2D_AtlasRefusesAmbiguousClipNamesWithoutReplacingTheLoadedAtlas) {
