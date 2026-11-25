@@ -8046,6 +8046,7 @@
 [editor/src/save/save_inspector_panel.h] internal-tooling
 [editor/src/sequencer/sequence_document.h] internal-tooling
 [editor/src/sequencer/sequencer_panel.h] internal-tooling
+[editor/src/sprite2d/sprite_atlas_panel.h] internal-tooling
 [editor/src/sprite2d/tilemap_document.h] internal-tooling
 [editor/src/sprite2d/tilemap_panel.h] internal-tooling
 [editor/src/ui/builtin_components.h] internal-tooling

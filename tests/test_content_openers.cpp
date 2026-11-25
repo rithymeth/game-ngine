@@ -5,6 +5,7 @@
 #include "aether/animation/blend_space.h"
 #include "aether/assets/asset_database.h"
 #include "aether/assets/asset_ref.h"
+#include "aether/assets/png_writer.h"
 #include "aether/audio/cue.h"
 #include "aether/blueprint/graph.h"
 #include "aether/ecs/world.h"
@@ -16,6 +17,7 @@
 #include "aether/scene/model_assets.h"
 #include "aether/scene/serialization.h"
 #include "aether/sequencer/sequence.h"
+#include "aether/sprite2d/atlas.h"
 #include "aether/sprite2d/tilemap.h"
 #include "aether/terrain/asset_io.h"
 #include "aether/terrain/terrain.h"
@@ -200,6 +202,57 @@ AETHER_TEST(Openers_EveryOpenableKindLoadsItsFileAndShowsItsTool) {
     }
     std::error_code ec;
     stdfs::remove_all(project, ec);
+}
+
+AETHER_TEST(Openers_SpriteAtlasDrawsTheSourceRectangleAndKeepsThePreviousAssetOnError) {
+    ProjectPaths paths;
+    FreshProject("sprite_atlas", paths);
+    const auto sheet = paths.content / "Sheet.png";
+    const auto image = assets::EncodePngRgba8(16, 8, std::vector<u8>(16 * 8 * 4, 255));
+    std::ofstream(sheet, std::ios::binary).write(reinterpret_cast<const char*>(image.data()), image.size());
+    assets::AssetDatabase db(paths.content);
+    db.Scan();
+    const auto* texture = db.FindByPath("Sheet.png");
+    CHECK(texture != nullptr);
+    if (!texture) return;
+
+    auto atlas = sprite2d::AtlasFromGrid(texture->guid, 16, 8, 8, 8);
+    atlas.clips.push_back({"move", {"frame_1", "frame_0"}, 12.0f, true});
+    std::string error;
+    CHECK(sprite2d::SaveAtlas(paths.content / "Sheet.aatlas", atlas, &error));
+    Write(paths.content / "Broken.aatlas", "not JSON");
+    HeadlessImGui ui;
+    EditorWorkspace ws(paths.file);
+    if (!ws.OpenAsset("Sheet.aatlas", &error)) { CHECK(false); return; }
+    CHECK(ShowingTool(ws, "Sprite Atlas"));
+    const auto draws_first_half = [&] {
+        ui.Frame([&] { ws.DrawTool(ws.Selected()); });
+        const auto* draw = ImGui::GetDrawData();
+        for (const auto* list : draw->CmdLists) {
+            for (const auto& command : list->CmdBuffer) {
+                const auto* tex = command.TexRef._TexData;
+                if (!tex || tex->Width != 16 || tex->Height != 8 || command.ElemCount != 6) continue;
+                float minimum_u = 1.0f, maximum_u = 0.0f;
+                for (unsigned int i = 0; i < command.ElemCount; ++i) {
+                    const auto& uv = list->VtxBuffer[command.VtxOffset + list->IdxBuffer[command.IdxOffset + i]].uv;
+                    minimum_u = std::min(minimum_u, uv.x);
+                    maximum_u = std::max(maximum_u, uv.x);
+                }
+                if (minimum_u == 0.0f && maximum_u == 0.5f) return true;
+            }
+        }
+        return false;
+    };
+    CHECK(draws_first_half());
+    CHECK(!ws.OpenAsset("Broken.aatlas", &error) && error.find("JSON") != std::string::npos);
+    CHECK(draws_first_half());
+    ProjectPaths other;
+    FreshProject("sprite_atlas_other", other);
+    CHECK(ws.OpenProject(other.file));
+    const i64 atlas_tool = ws.FindTool("Sprite Atlas");
+    CHECK(atlas_tool >= 0);
+    if (atlas_tool >= 0) ws.Select(static_cast<usize>(atlas_tool));
+    CHECK(!draws_first_half()); // never show the previous project's atlas
 }
 
 AETHER_TEST(Openers_SayWhyAnAssetCannotOpen) {
