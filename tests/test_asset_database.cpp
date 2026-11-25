@@ -322,6 +322,35 @@ AETHER_TEST(AssetDatabase_ReportsUnknownTyped2DDependencies) {
     for (const auto& issue : issues) AETHER_CHECK(issue.kind == AssetIssueKind::BrokenDependency);
 }
 
+AETHER_TEST(AssetDatabase_Reports2DReferencesToMissingSourcesWithMetadata) {
+    const auto root = FreshContent("aether_test_missing_referenced_sheet");
+    using nlohmann::json;
+    Write(root / "Sheet.png", "texture source");
+    AssetDatabase db(root);
+    db.Scan();
+    const auto* sheet = db.FindByPath("Sheet.png");
+    AETHER_CHECK(sheet != nullptr);
+    if (!sheet) return;
+    const AssetGuid texture = sheet->guid;
+    Write(root / "Atlas.aatlas", json({{"$type", "SpriteAtlas"}, {"texture", ToString(texture)}}).dump());
+    db.Scan();
+    AETHER_CHECK(ValidateAssets(db).empty());
+    stdfs::remove(root / "Sheet.png");
+    db.Scan();
+    const auto* missing = db.Find(texture);
+    AETHER_CHECK(missing && missing->missing);
+    const auto issues = ValidateAssets(db);
+    AETHER_CHECK(issues.size() == 2);
+    if (issues.size() == 2) {
+        AETHER_CHECK(issues[0].path == "Atlas.aatlas" && issues[0].kind == AssetIssueKind::BrokenDependency &&
+                     issues[0].dependency == texture);
+        AETHER_CHECK(issues[1].path == "Sheet.png" && issues[1].kind == AssetIssueKind::MissingSource);
+    }
+    Write(root / "Sheet.png", "restored texture source");
+    db.Scan();
+    AETHER_CHECK(ValidateAssets(db).empty());
+}
+
 // A material graph names its textures by asset GUID inside the file, so nothing else would follow them: the cook used to
 // carry them only because a .amat was not an asset and its roots were handled as plain files. Now that the Content
 // Browser lists graphs, the scan has to record the references a graph makes.

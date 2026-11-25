@@ -903,7 +903,8 @@ std::vector<AssetIssue> ValidateAssets(const AssetDatabase& database) {
             issues.push_back(std::move(issue));
         }
         for (const AssetGuid& dependency : record->dependencies) {
-            if (database.Find(dependency) != nullptr) continue;
+            const AssetRecord* referenced = database.Find(dependency);
+            if (referenced && !referenced->missing) continue;
             AssetIssue issue;
             issue.kind = AssetIssueKind::BrokenDependency;
             issue.guid = record->guid;
