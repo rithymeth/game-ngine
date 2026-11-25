@@ -878,17 +878,23 @@ jobs:
         run: |
           $out = "dist/AetherEditor"
           New-Item -ItemType Directory -Force -Path $out | Out-Null
-          # The build tools and the player: package a project, cook it, play it.
+          # The build tools and the player: create, localize, package and run a project.
+          Copy-Item build/tools/new/Release/aether_new.exe $out/
+          Copy-Item build/tools/loc/Release/aether_loc.exe $out/
           Copy-Item build/tools/package/Release/aether_package.exe $out/
           Copy-Item build/tools/cook/Release/aether_cook.exe $out/
           Copy-Item build/tools/pak/Release/aether_pak.exe $out/
           Copy-Item build/player/Release/aether_player.exe $out/
+          foreach ($dll in 'dxcompiler.dll', 'dxil.dll') {
+            $runtime = Join-Path 'build/player/Release' $dll
+            if (Test-Path -LiteralPath $runtime -PathType Leaf) { Copy-Item -LiteralPath $runtime $out/ }
+          }
           # The manual, and the API reference generated from the engine's reflection.
           Copy-Item -Recurse docs/manual $out/manual
           & build/tools/docgen/Release/aether_docgen.exe --out $out/api
           if ($LASTEXITCODE -ne 0) { throw "aether_docgen failed" }
           Set-Content -Path (Join-Path $out "EDITOR_README.txt") -Value @(
-            "This package carries the build tools (aether_package, aether_cook, aether_pak), the player and the assets.",
+            "This package carries aether_new, aether_loc, aether_package, aether_cook, aether_pak, the player and the assets.",
             "The editor is aether_editor_shell (Dear ImGui over Vulkan); build it from source where Vulkan is available."
           ) -Encoding utf8
           Copy-Item -Recurse assets $out/assets
@@ -1086,30 +1092,33 @@ jobs:
           if-no-files-found: ignore
 
   windows-package-validation:
-    name: Windows packaged editor (clean runner)
+    name: Windows project tools (clean runner)
     needs: windows
     # Use a hosted runner explicitly: the repository self-hosted Windows runner is offline.
     runs-on: windows-2022
     if: ${{ true }} # Windows validates pull requests, pushes, nightlies and manual runs.
     timeout-minutes: 10
     steps:
-      - name: Download the packaged editor
+      - name: Check out only the smoke script
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: tools/ci/test_packaged_project.py
+          sparse-checkout-cone-mode: false
+      - name: Download the Windows tools
         uses: actions/download-artifact@v4
         with:
           name: AetherEditor-windows-x64
           path: artifact
-      - name: Extract and launch without the source checkout
+      - name: Create, package and launch a starter project with the distributed tools
         shell: pwsh
         run: |
           $packageRoot = Join-Path $env:RUNNER_TEMP 'AetherEditor-package'
-          $emptyWorkingDirectory = Join-Path $env:RUNNER_TEMP 'AetherEditor-empty-cwd'
-          New-Item -ItemType Directory -Force -Path $packageRoot, $emptyWorkingDirectory | Out-Null
+          New-Item -ItemType Directory -Force -Path $packageRoot | Out-Null
           Expand-Archive artifact/AetherEditor-windows-x64.zip -DestinationPath $packageRoot -Force
-          foreach ($tool in 'aether_package.exe', 'aether_cook.exe', 'aether_pak.exe', 'aether_player.exe') {
-            if (-not (Test-Path -LiteralPath (Join-Path $packageRoot $tool) -PathType Leaf)) { throw "The package is missing $tool" }
-          }
           if (-not (Test-Path -LiteralPath (Join-Path $packageRoot 'manual') -PathType Container)) { throw 'The package has no manual' }
           if (-not (Test-Path -LiteralPath (Join-Path $packageRoot 'assets') -PathType Container)) { throw 'The package has no assets' }
+          python tools/ci/test_packaged_project.py $packageRoot
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   windows-sign-release:
     name: Windows Authenticode release assets
