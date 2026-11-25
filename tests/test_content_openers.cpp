@@ -28,6 +28,8 @@
 #include "ui/extensions.h"
 #include "workspace/editor_workspace.h"
 #include "world/scene_panel.h"
+#include "world/content_drop.h"
+#include "aether/sprite2d/components.h"
 
 #include <imgui.h>
 
@@ -691,4 +693,46 @@ AETHER_TEST(Openers_CreatesAnEditableTilemapFromAPaddedSheet) {
     CHECK(doc.Save(&error));
     sprite2d::TilemapData map;
     CHECK(sprite2d::LoadTilemap(paths.content / "Sheet.atilemap", map) && map.Get(0, 2, 2) == 3);
+}
+
+AETHER_TEST(Openers_PlacesAnAuthoredTilemapInTheSceneAndKeepsItsReference) {
+    ProjectPaths paths;
+    FreshProject("place_authored_tilemap", paths);
+    const auto image = assets::EncodePngRgba8(16, 16, std::vector<u8>(16 * 16 * 4, 255));
+    std::ofstream(paths.content / "Ground.png", std::ios::binary)
+        .write(reinterpret_cast<const char*>(image.data()), static_cast<std::streamsize>(image.size()));
+    ContentBrowserPanel browser(paths.file);
+    std::string error;
+    if (!browser.CreateTileset("Ground.png", 16, 16, 0, 0, &error) ||
+        !browser.CreateTilemap("Ground.atileset", &error)) { CHECK(false); return; }
+    const auto* record = browser.Database()->FindByPath("Ground.atilemap");
+    if (!record) { CHECK(false); return; }
+    SceneDocument scene;
+    scene.Commands().Clear();
+    bool placed = true;
+    const auto before = scene.Entities().size();
+    PlaceContentAsset(scene, paths.content, "Missing.atilemap", Vec3{}, &placed);
+    CHECK(!placed && scene.Entities().size() == before && !scene.CanUndo());
+    const Vec3 at(2.0f, 3.0f, 0.0f);
+    const auto note = PlaceContentAsset(scene, paths.content, "Ground.atilemap", at, &placed);
+    if (!placed || scene.Selection().size() != 1) { CHECK(false); return; }
+    CHECK(note == "Placed Ground.atilemap" && scene.Entities().size() == before + 1);
+    const Entity e = scene.Selection().front();
+    const auto* renderer = scene.GetWorld().GetComponent<sprite2d::TilemapRenderer>(e);
+    const auto* transform = scene.GetWorld().GetComponent<Transform>(e);
+    CHECK(renderer && renderer->tilemap.guid == record->guid && renderer->pixels_per_unit == 16.0f);
+    CHECK(transform && transform->position.x == 2.0f && transform->position.y == 3.0f && transform->position.z == 0.0f);
+    CHECK(scene.Undo() && !scene.CanUndo() && scene.Entities().size() == before);
+    CHECK(scene.Redo() && scene.Entities().size() == before + 1);
+
+    const auto saved = paths.content / "Placed.ascene";
+    if (!scene.Save(saved, &error)) { CHECK(false); return; }
+    SceneDocument restored;
+    if (!restored.Load(saved, &error)) { CHECK(false); return; }
+    usize matches = 0;
+    for (const Entity entity : restored.Entities()) {
+        const auto* tilemap = restored.GetWorld().GetComponent<sprite2d::TilemapRenderer>(entity);
+        if (tilemap && tilemap->tilemap.guid == record->guid) ++matches;
+    }
+    CHECK(matches == 1);
 }
