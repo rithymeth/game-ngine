@@ -58,9 +58,18 @@ bool PackageRunner::StartPackage() { return Start(true); }
 bool PackageRunner::StartVerify() {
     if (Busy()) return false;
     const stdfs::path game = StagedGame();
-    if (game.empty()) return false;
     WaitForBuild();
-    const stdfs::path directory = game.parent_path();
+    std::error_code path_error;
+    const stdfs::path directory = game.empty() ? stdfs::absolute(OutputDir(), path_error) : game.parent_path();
+    if (game.empty() && (path_error || !stdfs::is_regular_file(directory / "PackageManifest.json", path_error))) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        stage_ = "PackageManifest.json not found. Select the folder that contains the saved package.";
+        progress_ = 0.0f;
+        result_ = Result::Failed;
+        log_ = {{true, stage_}};
+        if (!directory.empty()) log_.push_back({false, "Output folder: " + directory.string()});
+        return false;
+    }
     {
         std::lock_guard<std::mutex> lock(mutex_);
         stage_ = "Verifying package";

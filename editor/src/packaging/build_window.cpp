@@ -74,7 +74,8 @@ void BuildPackageWindow::Draw() {
     if (ImGui::Button("Cancel")) Cancel();
     ImGui::EndDisabled();
     ImGui::SameLine();
-    const bool can_launch = !busy && !StagedGame().empty();
+    const bool has_staged = !StagedGame().empty();
+    const bool can_launch = !busy && has_staged;
     ImGui::BeginDisabled(!can_launch);
     if (ImGui::Button(game_.Running() ? "Running..." : "Launch")) Launch();
     ImGui::EndDisabled();
@@ -82,8 +83,10 @@ void BuildPackageWindow::Draw() {
     ImGui::SetNextItemWidth(160);
     std::snprintf(buffer, sizeof(buffer), "%s", launch_args.c_str());
     if (ImGui::InputTextWithHint("##args", "player arguments", buffer, sizeof(buffer))) launch_args = buffer;
-    ImGui::BeginDisabled(!can_launch);
-    if (ImGui::Button("Verify package")) StartVerify();
+    ImGui::BeginDisabled(busy);
+    if (ImGui::Button(has_staged ? "Verify package" : "Verify output folder")) StartVerify();
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", has_staged ? "Check the last package from this window." :
+                                                                      "Check the saved package in the Output folder.");
     ImGui::EndDisabled();
     if (!launch_error_.empty()) ImGui::TextColored(ImVec4(1, 0.4f, 0.3f, 1), "%s", launch_error_.c_str());
 
