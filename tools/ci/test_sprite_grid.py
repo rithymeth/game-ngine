@@ -71,7 +71,13 @@ def main():
         second_atlas = second_sheet.with_suffix(".aatlas")
         png(second_sheet)
         args = (project, "Sprite Sheets/Motion.png", 4, 4)
-        clips = ("--clip", "idle", 0, 2, 6, "--clip", "run", 3, 3, 18)
+        long_but_valid = "land_" + "a" * 26
+        clips = ("--clip", "idle", 0, 2, 6, "--clip", "run", 3, 3, 18,
+                 "--clip-once", long_but_valid, 2, 2, 12)
+        tool(grid, *args, "--clip", long_but_valid + "a", 0, 1, 8, cwd=root, expected=2,
+             reason="1 to 31")
+        tool(grid, *args, "--clip-once", "jump", 0, 2, 10, "--clip", "jump", 5, 1, 12,
+             cwd=root, expected=2, reason="duplicate clip name")
         tool(grid, *args, *clips, "--clip", "idle", 1, 1, 8, cwd=root, expected=2,
              reason="duplicate clip name")
         for first, count in ((5, 2), (6, 1), (4294967295, 2)):
@@ -87,7 +93,8 @@ def main():
         tool(grid, *args, *clips, cwd=root)
         named = json.loads(second_atlas.read_bytes())
         expected_clips = [{"name": "idle", "frames": frames[:2], "fps": 6, "loop": True},
-                          {"name": "run", "frames": frames[3:], "fps": 18, "loop": True}]
+                          {"name": "run", "frames": frames[3:], "fps": 18, "loop": True},
+                          {"name": long_but_valid, "frames": frames[2:4], "fps": 12, "loop": False}]
         if named["frames"] != data["frames"] or named["clips"] != expected_clips:
             raise RuntimeError("named clips did not preserve sheet frames or selected ranges")
         out = root / "Packaged Atlas"

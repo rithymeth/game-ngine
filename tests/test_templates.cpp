@@ -936,7 +936,8 @@ AETHER_TEST(Templates_SpriteClipsPlayInThePackagedGame) {
     atlas.frames.push_back({"step_a", 0, 0, 13, 16, 0.5f, 0.5f});
     atlas.frames.push_back({"step_b", 0, 0, 13, 16, 0.5f, 0.5f});
     atlas.clips.push_back({"run", {"step_a", "step_b"}, 10.0f, true});
-    atlas.clips.push_back({"land", {"step_b", "idle"}, 10.0f, false});
+    const std::string landing = "land_" + std::string(sizeof(sprite2d::SpriteAnimator::clip) - 6, 'a');
+    atlas.clips.push_back({landing, {"step_b", "idle"}, 10.0f, false});
     AETHER_CHECK(sprite2d::SaveAtlas(paths.content / "Sprites/Player.aatlas", atlas, &error));
     // The hero plays "run" from the start.
     const std::filesystem::path scene_file = paths.content / "Scenes/Main.ascene";
@@ -985,7 +986,7 @@ AETHER_TEST(Templates_SpriteClipsPlayInThePackagedGame) {
     CHECK(animator()->playing && !animator()->finished);
 
     // A clip that does not loop ends on its last frame and says so; a game script starts it the same way.
-    sprite2d::PlayClip(*animator(), "land");
+    sprite2d::PlayClip(*animator(), landing);
     for (int tick = 0; tick < 30; ++tick) game.Tick(1.0f / 60.0f);
     CHECK(frame() == "idle" && animator()->finished && !animator()->playing);
 

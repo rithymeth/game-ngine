@@ -2,6 +2,7 @@
 #include "aether/assets/image.h"
 #include "aether/project/project.h"
 #include "aether/sprite2d/atlas.h"
+#include "aether/sprite2d/components.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -21,8 +22,9 @@ namespace {
 int Usage(int code) {
     std::fprintf(code ? stderr : stdout,
         "usage: aether_sprite_grid <project.aproject> <sheet relative to Content> <cell width> <cell height>\n"
-        "       [--clip NAME FIRST COUNT FPS]...\n"
-        "FIRST is a zero-based frame index. Without --clip, the whole sheet loops at 12 fps.\n"
+        "       [--clip NAME FIRST COUNT FPS | --clip-once NAME FIRST COUNT FPS]...\n"
+        "FIRST is zero-based. --clip loops; --clip-once holds its final frame.\n"
+        "Without clip options, the whole sheet loops at 12 fps.\n"
         "Creates a sibling .aatlas without overwriting an existing atlas.\n");
     return code;
 }
@@ -37,13 +39,16 @@ bool UnsignedInt(std::string_view text, u32& value) {
     return error == std::errc{} && end == text.data() + text.size();
 }
 
+constexpr usize kMaxClipName = sizeof(sprite2d::SpriteAnimator::clip) - 1;
+
 struct ClipRange {
     std::string name;
     u32 first = 0, count = 0, fps = 0;
+    bool loop = true;
 };
 
 bool ClipName(std::string_view name) {
-    return !name.empty() && name.size() <= 64 && std::all_of(name.begin(), name.end(), [](char c) {
+    return !name.empty() && name.size() <= kMaxClipName && std::all_of(name.begin(), name.end(), [](char c) {
         return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
                c == '_' || c == '-';
     });
@@ -74,12 +79,15 @@ int main(int argc, char** argv) {
 
     std::vector<ClipRange> ranges;
     for (int i = 5; i < argc; i += 5) {
-        if (std::string_view(argv[i]) != "--clip" || argc - i < 5) return Usage(2);
+        const std::string_view option = argv[i];
+        if ((option != "--clip" && option != "--clip-once") || argc - i < 5) return Usage(2);
         if (ranges.size() >= 64) return Fail("use at most 64 named clips", 2);
         ClipRange range;
         range.name = argv[i + 1];
+        range.loop = option == "--clip";
         if (!ClipName(range.name))
-            return Fail("clip names must be 1 to 64 ASCII letters, digits, underscores or hyphens", 2);
+            return Fail("clip names must be 1 to " + std::to_string(kMaxClipName) +
+                        " ASCII letters, digits, underscores or hyphens", 2);
         if (std::any_of(ranges.begin(), ranges.end(), [&](const ClipRange& old) { return old.name == range.name; }))
             return Fail("duplicate clip name '" + range.name + "'", 2);
         if (!UnsignedInt(argv[i + 2], range.first) || !UnsignedInt(argv[i + 3], range.count) || range.count == 0)
@@ -140,6 +148,7 @@ int main(int argc, char** argv) {
         sprite2d::SpriteClip clip;
         clip.name = range.name;
         clip.fps = static_cast<f32>(range.fps);
+        clip.loop = range.loop;
         clip.frames.reserve(range.count);
         for (u32 index = 0; index < range.count; ++index)
             clip.frames.push_back(atlas.frames[range.first + index].name);
@@ -156,7 +165,7 @@ int main(int argc, char** argv) {
         fs::remove(output, ec);
         return Fail("could not finish writing atlas: " + output.string());
     }
-    std::printf("Created %s with %zu frames and %zu looping clip(s).\n",
+    std::printf("Created %s with %zu frames and %zu clip(s).\n",
                 output.lexically_relative(content).generic_string().c_str(),
                 atlas.frames.size(), atlas.clips.size());
     return 0;
