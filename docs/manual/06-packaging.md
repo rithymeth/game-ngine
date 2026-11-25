@@ -36,6 +36,8 @@ still what is there. `--smoke-frames <n>` runs longer than the default three.
 If the packaged player does not exit within 60 seconds, the smoke check stops
 it and fails the command without deleting the package. Use
 `--smoke-timeout <seconds>` to change that limit.
+With `--key`, the smoke player receives the same key for that launch. You do
+not need to set `AETHER_PAK_KEY` yourself for the smoke test.
 
 On Linux or macOS build agents without graphics dependencies, configure with
 `-DAETHER_BUILD_WINDOWING=OFF -DAETHER_BUILD_VULKAN=OFF`. The resulting player

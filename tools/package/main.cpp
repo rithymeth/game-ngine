@@ -24,13 +24,21 @@
 #include <charconv>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
 #include <thread>
 #include <utility>
 #include <vector>
+
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
 
 using namespace aether;
 
@@ -63,9 +71,38 @@ struct SmokeDirectory {
     }
 };
 
+constexpr const char* kSmokeKeyVariable = "AETHER_PAK_KEY";
+
+bool SetSmokeKey(const char* value) {
+#if defined(_WIN32)
+    return SetEnvironmentVariableA(kSmokeKeyVariable, value) != 0;
+#else
+    return (value ? setenv(kSmokeKeyVariable, value, 1) : unsetenv(kSmokeKeyVariable)) == 0;
+#endif
+}
+
+// This CLI starts its smoke player after the cook completes. Pass the key
+// only in the child's inherited environment, not on its command line.
+class SmokeKeyEnvironment {
+public:
+    bool Install(const pak::PakKey& key) {
+        if (const char* old = std::getenv(kSmokeKeyVariable)) previous_ = old;
+        installed_ = SetSmokeKey(key.ToHex().c_str());
+        return installed_;
+    }
+    ~SmokeKeyEnvironment() {
+        if (installed_) SetSmokeKey(previous_ ? previous_->c_str() : nullptr);
+    }
+
+private:
+    std::optional<std::string> previous_;
+    bool installed_ = false;
+};
+
 // An absolute executable and empty working directory exercise the package's
 // own data discovery even when --out was relative.
-int RunSmokeTest(const std::filesystem::path& game, int frames, int timeout_seconds) {
+int RunSmokeTest(const std::filesystem::path& game, int frames, int timeout_seconds,
+                 const std::optional<pak::PakKey>& key) {
     namespace fs = std::filesystem;
     std::error_code ec;
     const fs::path program = fs::absolute(game, ec);
@@ -93,9 +130,16 @@ int RunSmokeTest(const std::filesystem::path& game, int frames, int timeout_seco
     std::string error;
     const std::vector<std::string> args = {"--headless", "--frames", std::to_string(frames),
                                           "--user-dir", (scratch.path / "user").string()};
-    if (!process.Start(program, args, scratch.path, &error)) {
-        std::fprintf(stderr, "aether_package: couldn't start the packaged game: %s\n", error.c_str());
-        return -1;
+    {
+        SmokeKeyEnvironment child_key;
+        if (key && !child_key.Install(*key)) {
+            std::fprintf(stderr, "aether_package: couldn't provide the package key to the smoke player\n");
+            return -1;
+        }
+        if (!process.Start(program, args, scratch.path, &error)) {
+            std::fprintf(stderr, "aether_package: couldn't start the packaged game: %s\n", error.c_str());
+            return -1;
+        }
     }
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(timeout_seconds);
     while (process.Running()) {
@@ -195,7 +239,7 @@ int main(int argc, char** argv) {
     std::printf("staged %zu file(s) beside the player; run %s to play\n", report.copied.size(),
                 report.game_executable.string().c_str());
     if (smoke) {
-        const int code = RunSmokeTest(report.game_executable, smoke_frames, smoke_timeout);
+        const int code = RunSmokeTest(report.game_executable, smoke_frames, smoke_timeout, options.cook.encryption_key);
         if (code != 0) {
             std::fprintf(stderr, "aether_package: the packaged game did not run (%d frames, exit code %d)\n", smoke_frames, code);
             return 1;
