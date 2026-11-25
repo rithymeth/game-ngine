@@ -1,4 +1,7 @@
 #include "test_framework.h"
+#include "aether/pak/pak.h"
+#include "packaging/build_window.h"
+#include "packaging/new_project_panel.h"
 #include "sprite2d/tilemap_document.h"
 #include "sprite2d/tilemap_panel.h"
 #include "workspace/editor_workspace.h"
@@ -200,4 +203,86 @@ AETHER_TEST(TilemapEditor_WorkspaceShowsTheSampleLevel) {
     ws.Select(static_cast<usize>(tool));
     for (int frame = 0; frame < 2; ++frame) ui.Frame([&] { ws.DrawHubContents(); });
     CHECK(ImGui::GetDrawData()->TotalVtxCount > 0);
+}
+
+AETHER_TEST(TilemapEditor_SavesPlatformerEditsBeforePackaging) {
+    HeadlessImGui ui;
+    NewProjectPanel starter;
+    starter.template_id = "platformer_2d";
+    starter.location = (std::filesystem::temp_directory_path() / "aether_platformer_tilemap").string();
+    starter.name = "TilemapPlatformer";
+    std::string error;
+    if (!starter.Create(&error)) {
+        CHECK(false);
+        return;
+    }
+    EditorWorkspace ws(starter.Created());
+    auto* build = ws.PackageWindow();
+    if (!build || !ws.OpenAsset("Tiles/Level1.atilemap", &error)) {
+        CHECK(false);
+        return;
+    }
+    build->player_path = AETHER_TEST_PLAYER_PATH;
+    TilemapEditDocument& doc = ws.Tilemap();
+    doc.brush = AutotileCell(0);
+    doc.Apply(20, 1); // extend the ground into the pit
+    doc.SetSolid(1, true);
+    CHECK(doc.Map().Get(0, 20, 1) == doc.brush && doc.dirty());
+    const bool started = build->StartPackage();
+    CHECK(!started);
+    CHECK(!build->StartCook());
+    if (started) {
+        build->WaitForBuild();
+        return;
+    }
+
+    // Use the actual Tilemap panel's Save button, not the document's save API.
+    TilemapPanel panel(doc);
+    ImVec2 save_position;
+    const auto draw = [&] {
+        const ImVec2 top = ImGui::GetCursorScreenPos();
+        save_position = ImVec2(top.x + 12.0f, top.y + 8.0f);
+        panel.Draw();
+    };
+    ui.Frame(draw);
+    ImGuiIO& io = ImGui::GetIO();
+    io.AddMousePosEvent(save_position.x, save_position.y);
+    ui.Frame(draw);
+    io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+    ui.Frame(draw);
+    io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+    ui.Frame(draw);
+    CHECK(!doc.dirty());
+    TilemapData saved;
+    CHECK(LoadTilemap(doc.TilemapFile(), saved, &error));
+    CHECK(saved.Get(0, 20, 1) == AutotileCell(0));
+    if (!build->StartPackage()) {
+        CHECK(false);
+        return;
+    }
+    build->WaitForBuild();
+    CHECK(build->LastResult() == BuildPackageWindow::Result::Succeeded);
+    {
+        pak::PakReader reader;
+        if (!reader.Open((build->StagedGame().parent_path() / "Paks/Game.apak").string(), &error)) {
+            CHECK(false);
+            return;
+        }
+        std::string contents;
+        TilemapData cooked_map;
+        Tileset cooked_tileset;
+        CHECK(reader.ReadText("Content/Tiles/Level1.atilemap", contents) &&
+              TilemapFromJson(nlohmann::json::parse(contents), cooked_map) &&
+              cooked_map.Get(0, 20, 1) == AutotileCell(0));
+        CHECK(reader.ReadText("Content/Tiles/Level.atileset", contents) &&
+              TilesetFromJson(nlohmann::json::parse(contents), cooked_tileset) &&
+              cooked_tileset.IsSolid(1));
+    }
+    build->launch_args = "--headless --frames 2";
+    if (!build->Launch(&error)) {
+        CHECK(false);
+        return;
+    }
+    int code = -1;
+    CHECK(build->Game().Wait(&code) && code == 0);
 }
