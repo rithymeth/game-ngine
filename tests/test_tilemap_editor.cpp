@@ -574,3 +574,36 @@ AETHER_TEST(TilemapEditor_ReordersLayersAndKeepsTheBrushOnTheSameLayer) {
     if (!LoadTilemap(dir/"map.atilemap", saved)) { CHECK(false); return; }
     CHECK(TilemapToJson(saved) == TilemapToJson(doc.Map()));
 }
+
+AETHER_TEST(TilemapEditor_DuplicatesLayerIndependentlyAboveSource) {
+    TilemapData map;
+    map.Resize(2, 2);
+    map.AddLayer("Grass");
+    map.AddLayer("Grass copy");
+    map.AddLayer("Sky");
+    map.layers[0].collides = false;
+    map.Set(0, 1, 0, 2);
+    map.Set(0, 0, 1, AutotileCell(0));
+    TilemapEditDocument doc(std::move(map), Doc().GetTileset());
+
+    CHECK(!doc.DuplicateLayer(3) && !doc.dirty() && !doc.CanUndo());
+    doc.BeginStroke();
+    CHECK(!doc.DuplicateLayer(0));
+    doc.EndStroke();
+    if (!doc.DuplicateLayer(0) || doc.Map().layers.size() != 4) { CHECK(false); return; }
+    CHECK(doc.active_layer == 1 && doc.Map().layers.size() == 4);
+    CHECK(doc.Map().layers[1].name == "Grass copy 2" && doc.Map().layers[2].name == "Grass copy");
+    CHECK(doc.Map().layers[1].cells == doc.Map().layers[0].cells && !doc.Map().layers[1].collides);
+    CHECK(doc.Undo() && doc.active_layer == 0 && doc.Map().layers.size() == 3 && !doc.CanUndo());
+    CHECK(!doc.DuplicateLayer(3) && doc.CanRedo());
+    CHECK(doc.Redo() && doc.active_layer == 1 && doc.Map().layers.size() == 4);
+
+    doc.brush = 5;
+    doc.Apply(1, 0);
+    CHECK(doc.Map().Get(0, 1, 0) == 2 && doc.Map().Get(1, 1, 0) == 5);
+    const auto dir = std::filesystem::temp_directory_path() / "tilemap_editor_duplicate";
+    if (!doc.Save(dir/"map.atilemap", dir/"set.atileset")) { CHECK(false); return; }
+    TilemapData saved;
+    if (!LoadTilemap(dir/"map.atilemap", saved)) { CHECK(false); return; }
+    CHECK(TilemapToJson(saved) == TilemapToJson(doc.Map()));
+}

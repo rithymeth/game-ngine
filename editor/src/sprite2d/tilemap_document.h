@@ -50,6 +50,8 @@ public:
     bool RemoveLayer(usize layer);
     // Higher indices draw in front of lower indices. Preserve the selected layer when it moves.
     bool MoveLayer(usize from, usize to);
+    // Insert an independent copy just above the source and select it.
+    bool DuplicateLayer(usize layer);
     bool RenameLayer(usize layer, const std::string& name);
     bool SetLayerCollides(usize layer, bool collides);
     bool Resize(u32 width, u32 height);

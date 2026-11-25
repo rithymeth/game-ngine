@@ -243,6 +243,9 @@ void TilemapPanel::DrawLayers() {
     if (ImGui::SmallButton("Add layer")) doc_.AddLayer("Layer " + std::to_string(map.layers.size() + 1));
     ImGui::SameLine();
     if (ImGui::SmallButton("Remove")) doc_.RemoveLayer(doc_.active_layer);
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Duplicate")) doc_.DuplicateLayer(doc_.active_layer);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Copy the selected layer and its collision setting");
     if (doc_.active_layer < map.layers.size()) {
         const auto active = doc_.active_layer;
         ImGui::BeginDisabled(active + 1 >= map.layers.size());
