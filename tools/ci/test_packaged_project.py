@@ -354,6 +354,23 @@ def main():
             if (len(overlay["before_path"]) != 400 or len(overlay["after_path"]) != 400
                     or overlay["before_path"][i] != diff["before"] or overlay["after_path"][i] != diff["after"]):
                 raise RuntimeError("editor overlay data did not match the full paths and divergence")
+            isolate = Path(__file__).resolve().parents[1] / "jump_proof_isolate_tile.py"
+            operator = [sys.executable, isolate, "--pak-tool", tools["aether_pak"],
+                        "--player", executable, "--route", route, relocated, changed]
+            result = subprocess.run(operator, cwd=empty_cwd, capture_output=True, text=True, timeout=40)
+            if result.returncode != 0:
+                raise RuntimeError("controlled tile attribution failed: " + result.stdout + result.stderr)
+            receipt = json.loads(result.stdout)
+            if (receipt["cell"] != {"layer": 0, "x": 23, "y": 4, "before": -1, "after": -2}
+                    or receipt["asset"] != "Content/Tiles/Level1.atilemap"
+                    or receipt["first_difference_frame"] != diff["first_difference_frame"]):
+                raise RuntimeError(f"wrong controlled attribution: {receipt}")
+            extra = changed / "uncontrolled.txt"
+            extra.write_text("not a tile edit", encoding="utf-8")
+            uncontrolled = subprocess.run(operator, cwd=empty_cwd, capture_output=True, text=True, timeout=40)
+            if uncontrolled.returncode != 2 or "outside" not in uncontrolled.stderr:
+                raise RuntimeError("the tool claimed attribution despite an uncontrolled change")
+            extra.unlink()
             truncated = root / "Truncated.txt"
             truncated.write_text("\n".join(original_trace.read_text(encoding="utf-8").splitlines()[:-1]), encoding="utf-8")
             compare_traces(original_trace, truncated, 2)
