@@ -145,7 +145,11 @@ public:
     void SetAssetOpener(AssetOpener opener);
     bool OpenEntry(const std::string& path, std::string* error = nullptr);
     // Slice a texture into a new sibling atlas; select and open it if supported.
-    bool CreateSpriteAtlas(const std::string& texture, u32 cell_w, u32 cell_h, std::string* error = nullptr);
+    struct SpriteAtlasGrid {
+        int cell_w = 16, cell_h = 16;
+        int margin_x = 0, margin_y = 0, spacing_x = 0, spacing_y = 0;
+    };
+    bool CreateSpriteAtlas(const std::string& texture, const SpriteAtlasGrid& grid, std::string* error = nullptr);
     const std::string& LastOpenError() const { return last_open_error_; }
     // What the context menu's Reveal in Explorer calls, with the asset's absolute path. Without one the item is
     // disabled (a headless host has no desktop to show anything on).
@@ -245,6 +249,7 @@ private:
     bool sprite_atlas_popup_pending_ = false;
     std::string sprite_atlas_source_, sprite_atlas_error_;
     int sprite_atlas_cells_[2] = {16, 16};
+    int sprite_atlas_margins_[2] = {}, sprite_atlas_spacing_[2] = {};
     std::string action_source_;
     std::string action_value_;
     std::string action_error_;

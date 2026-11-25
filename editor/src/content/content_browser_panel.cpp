@@ -652,13 +652,21 @@ bool ContentBrowserPanel::OpenEntry(const std::string& path, std::string* error)
     return opened;
 }
 
-bool ContentBrowserPanel::CreateSpriteAtlas(const std::string& texture, u32 cell_w, u32 cell_h, std::string* error) {
+bool ContentBrowserPanel::CreateSpriteAtlas(const std::string& texture, const SpriteAtlasGrid& grid, std::string* error) {
     if (!database_) {
         if (error) *error = "No project is open.";
         return false;
     }
+    const auto [cell_w, cell_h, margin_x, margin_y, spacing_x, spacing_y] = grid;
+    if (cell_w <= 0 || cell_h <= 0 || margin_x < 0 || margin_y < 0 || spacing_x < 0 || spacing_y < 0) {
+        if (error) *error = "Cell sizes must be positive; margins and gutters must be non-negative.";
+        return false;
+    }
+    const sprite2d::authoring::Grid geometry{
+        static_cast<u32>(cell_w), static_cast<u32>(cell_h), static_cast<u32>(margin_x),
+        static_cast<u32>(margin_y), static_cast<u32>(spacing_x), static_cast<u32>(spacing_y)};
     sprite2d::authoring::CreatedAtlas result;
-    if (!sprite2d::authoring::CreateGridAtlas(database_->ContentRoot(), texture, {cell_w, cell_h}, {}, result, error))
+    if (!sprite2d::authoring::CreateGridAtlas(database_->ContentRoot(), texture, geometry, {}, result, error))
         return false;
     Refresh();
     ShowEntry(result.relative_path);
@@ -727,6 +735,8 @@ void ContentBrowserPanel::DrawEntryMenu(const assets::ContentEntry& e) {
         sprite_atlas_source_ = e.path;
         sprite_atlas_error_.clear();
         sprite_atlas_cells_[0] = sprite_atlas_cells_[1] = 16;
+        sprite_atlas_margins_[0] = sprite_atlas_margins_[1] = 0;
+        sprite_atlas_spacing_[0] = sprite_atlas_spacing_[1] = 0;
         sprite_atlas_popup_pending_ = true;
     }
     if (!e.is_folder && ImportEditable(e.path) != nullptr) {
@@ -1270,14 +1280,17 @@ void ContentBrowserPanel::DrawSpriteAtlasDialog() {
     }
     if (!ImGui::BeginPopupModal("Create Sprite Atlas", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
     ImGui::TextWrapped("Slice %s into whole cells. A new .aatlas will be saved next to the image.", sprite_atlas_source_.c_str());
-    ImGui::InputInt2("Cell width, height (px)", sprite_atlas_cells_);
+    bool edited = ImGui::InputInt2("Cell width, height (px)", sprite_atlas_cells_);
+    edited |= ImGui::InputInt2("Outer margin X, Y (px)", sprite_atlas_margins_);
+    edited |= ImGui::InputInt2("Gutter X, Y (px)", sprite_atlas_spacing_);
+    ImGui::TextWrapped("The same margin is used on opposite edges. Gutters are gaps between cells.");
+    if (edited) sprite_atlas_error_.clear();
+    const SpriteAtlasGrid grid{sprite_atlas_cells_[0], sprite_atlas_cells_[1],
+                               sprite_atlas_margins_[0], sprite_atlas_margins_[1],
+                               sprite_atlas_spacing_[0], sprite_atlas_spacing_[1]};
     if (!sprite_atlas_error_.empty()) ImGui::TextWrapped("%s", sprite_atlas_error_.c_str());
-    const int w = sprite_atlas_cells_[0], h = sprite_atlas_cells_[1];
-    ImGui::BeginDisabled(w <= 0 || h <= 0);
-    if (ImGui::Button("Create") && CreateSpriteAtlas(sprite_atlas_source_, static_cast<u32>(w), static_cast<u32>(h),
-                                                     &sprite_atlas_error_))
+    if (ImGui::Button("Create") && CreateSpriteAtlas(sprite_atlas_source_, grid, &sprite_atlas_error_))
         ImGui::CloseCurrentPopup();
-    ImGui::EndDisabled();
     ImGui::SameLine();
     if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
     ImGui::EndPopup();
