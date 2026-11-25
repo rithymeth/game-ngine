@@ -89,6 +89,7 @@ struct Options {
     std::string record_dir;   // --record-dir: write every frame here as frame_00000.bmp, ... (of the camera path, or of --frames frames of a normal run)
     f32 record_fps = 24.0f;   // --record-fps: the film's frame rate when recording without a camera path (a camera path has its own)
     std::string replay_input;          // recorded input for deterministic package verification
+    std::string jump_proof;            // replay plus an expected terminal 2D region
     bool report = false;              // print where the Player-tagged entity ended up
     std::string server; // empty: offline single-player (the default)
     std::string player_name = "player", password, token;
@@ -134,6 +135,7 @@ void Usage() {
                  "                     [--key <64 hex digits>] [--press <Key>]... [--screenshot <file.bmp>]\n"
                  "                     [--camera-path <file.json>] [--record-dir <dir> [--record-fps <n>]]\n"
                  "                     [--report] [--user-dir <dir>] [--log-file <file>] [--replay-input <file.json>]\n"
+                 "                     [--jump-proof <route.json> --user-dir <test folder>]\n"
                  "                     [--server <ip:port>] [--name <text>] [--password <text>]\n"
                  "                     [--token <join token>] [--build-id <n>] (opt-in UDP + Jolt)\n");
 }
@@ -162,6 +164,9 @@ bool ParseArgs(int argc, char** argv, Options& o) {
             o.record_fps = std::clamp(static_cast<f32>(std::atof(argv[++i])), 1.0f, 240.0f);
         } else if (a == "--report") {
             o.report = true;
+        } else if (a == "--jump-proof" && has_value) {
+            o.jump_proof = argv[++i];
+            if (o.jump_proof.empty()) return false;
         } else if (a == "--replay-input" && has_value) {
             o.replay_input = argv[++i];
         } else if (a == "--key" && has_value) {
@@ -279,6 +284,15 @@ int main(int argc, char** argv) {
         AETHER_LOG_ERROR("Player", "Invalid launch arguments");
         Usage();
         return 2;
+    }
+    if (!options.jump_proof.empty()) {
+        if (options.user_dir.empty() || !options.replay_input.empty() || !options.server.empty() ||
+            !options.camera_path.empty() || !options.record_dir.empty() || !options.screenshot.empty()) {
+            AETHER_LOG_ERROR("Player", "Jump Proof requires --user-dir and cannot be combined with replay, network or capture modes");
+            return 2;
+        }
+        options.headless = true;
+        options.replay_input = options.jump_proof;
     }
     if (std::getenv("AETHER_PLAYER_HEADLESS")) options.headless = true;
 
@@ -462,10 +476,31 @@ int main(int argc, char** argv) {
 
     try {
         struct ReplayEvent { i64 frame; input::Key key; f32 value; };
+        struct JumpTarget { f64 min_x, max_x, min_y, max_y; };
+        JumpTarget target{};
+        reflect::Json jump_result;
         std::vector<ReplayEvent> replay;
         if (!options.replay_input.empty()) {
             std::ifstream stream(options.replay_input);
-            const auto json = reflect::Json::parse(stream);
+            const auto json = reflect::Json::parse(stream, nullptr, false);
+            if (!options.jump_proof.empty()) {
+                const auto bounds = json.is_object() ? json.find("target") : json.end();
+                const auto number = [&](const char* key, f64& value) {
+                    if (bounds == json.end() || !bounds->is_object()) return false;
+                    const auto it = bounds->find(key);
+                    if (it == bounds->end() || !it->is_number()) return false;
+                    value = it->get<f64>();
+                    return std::isfinite(value);
+                };
+                if (!number("min_x", target.min_x) || !number("max_x", target.max_x) ||
+                    !number("min_y", target.min_y) || !number("max_y", target.max_y) ||
+                    target.min_x > target.max_x || target.min_y > target.max_y) {
+                    AETHER_LOG_ERROR("Player", "Jump Proof needs finite and ordered target bounds: min_x, max_x, min_y, max_y");
+                    return 2;
+                }
+            } else if (json.is_discarded()) {
+                throw std::runtime_error("Invalid replay JSON");
+            }
             const i64 frames = json.at("frames").get<i64>();
             if (frames <= 0 || frames > 360000) throw std::runtime_error("Invalid replay frame count");
             if (options.frames >= 0 && options.frames != frames) throw std::runtime_error("Replay frame count differs from --frames");
@@ -785,6 +820,21 @@ int main(int argc, char** argv) {
                 }
             }
         }
+        if (!options.jump_proof.empty()) {
+            const auto players = FindEntitiesWithTag(game.GetWorld(), "Player");
+            const auto* transform = players.size() == 1 ? game.GetWorld().GetComponent<Transform>(players.front()) : nullptr;
+            if (game.Stats().frames != static_cast<u64>(options.frames) || !transform ||
+                !std::isfinite(transform->position.x) || !std::isfinite(transform->position.y) ||
+                !std::isfinite(transform->position.z)) {
+                AETHER_LOG_ERROR("Player", "Jump Proof needs the full replay and exactly one Player with a finite Transform");
+            } else {
+                const auto& pos = transform->position;
+                const bool passed = pos.x >= target.min_x && pos.x <= target.max_x &&
+                                    pos.y >= target.min_y && pos.y <= target.max_y;
+                jump_result = {{"status", passed ? "pass" : "missed"}, {"frames", game.Stats().frames},
+                               {"position", {pos.x, pos.y, pos.z}}};
+            }
+        }
         game.EndPlay();
         if (network_failed) return 1;
         if (!options.screenshot.empty() && (!screenshot_written || screenshot_failed)) return 4;
@@ -800,6 +850,11 @@ int main(int argc, char** argv) {
         for (const std::string& e : game.ScriptErrors()) AETHER_LOG_ERROR("Player", "script: %s", e.c_str());
         for (const std::string& e : game.BlueprintErrors()) AETHER_LOG_ERROR("Player", "blueprint: %s", e.c_str());
         if (s.script_errors + s.blueprint_errors > 0) return 3; // the game ran with errors
+        if (!options.jump_proof.empty()) {
+            if (jump_result.is_null()) return 1;
+            std::printf("Jump Proof: %s\n", jump_result.dump().c_str());
+            if (jump_result.at("status") == "missed") return 5;
+        }
     } catch (const std::exception& e) {
         AETHER_LOG_ERROR("Player", "%s", e.what());
         if (CrashHandler::Installed())

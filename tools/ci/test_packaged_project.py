@@ -295,5 +295,45 @@ def main():
                 raise RuntimeError(f"the packaged {args.template} did not respond to {key} input")
 
 
+        if args.template == "platformer_2d":
+            route = root / "Jump Proof route.json"
+            spec = {"frames": 400, "events": [
+                {"frame": 90, "key": "D", "value": 1}, {"frame": 225, "key": "Space", "value": 1},
+                {"frame": 285, "key": "Space", "value": 0}, {"frame": 350, "key": "D", "value": 0},
+            ], "target": {"min_x": 28.5, "max_x": 30, "min_y": 2, "max_y": 3}}
+            route.write_text(json.dumps(spec), encoding="utf-8")
+
+            def proof(player, expected_code, profile):
+                proc = subprocess.run([player, "--jump-proof", route, "--user-dir", root / profile],
+                                      cwd=empty_cwd, capture_output=True, text=True, timeout=30)
+                if proc.returncode != expected_code:
+                    raise RuntimeError(f"wrong Jump Proof exit code {proc.returncode}:\n{proc.stdout}{proc.stderr}")
+                return [json.loads(line.removeprefix("Jump Proof: ")) for line in proc.stdout.splitlines()
+                        if line.startswith("Jump Proof: ")]
+
+            before = proof(game, 0, "Baseline Route Data")
+            if len(before) != 1 or before[0]["status"] != "pass" or before[0]["frames"] != 400:
+                raise RuntimeError(f"baseline did not pass Jump Proof: {before}")
+            hidden = root / "Hidden Project"
+            tilemap = hidden / "Content/Tiles/Level1.atilemap"
+            tiles = json.loads(tilemap.read_text(encoding="utf-8"))
+            tile = 4 * tiles["size"][0] + 23
+            if tiles["layers"][0]["cells"][tile] != -1:
+                raise RuntimeError("Jump Proof regression tile is no longer empty")
+            tiles["layers"][0]["cells"][tile] = -2  # make one new solid ground cell
+            tilemap.write_text(json.dumps(tiles), encoding="utf-8")
+            changed = root / "Changed Distribution"
+            run(tools["aether_package"], hidden / project.name, "--out", changed, *release_config, cwd=root)
+            after = proof(changed / executable, 5, "Changed Route Data")
+            if (len(after) != 1 or after[0]["status"] != "missed" or after[0]["frames"] != 400
+                    or after[0]["position"][0] >= 28.5):
+                raise RuntimeError(f"single tile change did not fail Jump Proof: {after}")
+
+            spec["target"]["min_x"] = 31
+            route.write_text(json.dumps(spec), encoding="utf-8")
+            if proof(game, 2, "Invalid Route Data"):
+                raise RuntimeError("invalid target must not issue a route verdict")
+
+
 if __name__ == "__main__":
     main()
