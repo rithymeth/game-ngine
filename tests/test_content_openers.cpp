@@ -284,7 +284,7 @@ AETHER_TEST(Openers_SpriteAtlasDrawsTheSourceRectangleAndKeepsThePreviousAssetOn
     ProjectPaths paths;
     FreshProject("sprite_atlas", paths);
     const auto sheet = paths.content / "Sheet.png";
-    const auto image = assets::EncodePngRgba8(16, 8, std::vector<u8>(16 * 8 * 4, 255));
+    const auto image = assets::EncodePngRgba8(18, 8, std::vector<u8>(18 * 8 * 4, 255));
     std::ofstream(sheet, std::ios::binary).write(reinterpret_cast<const char*>(image.data()), image.size());
     assets::AssetDatabase db(paths.content);
     db.Scan();
@@ -293,6 +293,8 @@ AETHER_TEST(Openers_SpriteAtlasDrawsTheSourceRectangleAndKeepsThePreviousAssetOn
     if (!texture) return;
 
     auto atlas = sprite2d::AtlasFromGrid(texture->guid, 16, 8, 8, 8);
+    atlas.width = 18;
+    atlas.frames[1].x = 10; // two-pixel gutter
     atlas.clips.push_back({"move", {"frame_1", "frame_0"}, 12.0f, true});
     std::string error;
     CHECK(sprite2d::SaveAtlas(paths.content / "Sheet.aatlas", atlas, &error));
@@ -301,34 +303,59 @@ AETHER_TEST(Openers_SpriteAtlasDrawsTheSourceRectangleAndKeepsThePreviousAssetOn
     EditorWorkspace ws(paths.file);
     if (!ws.OpenAsset("Sheet.aatlas", &error)) { CHECK(false); return; }
     CHECK(ShowingTool(ws, "Sprite Atlas"));
-    const auto draws_first_half = [&] {
-        ui.Frame([&] { ws.DrawTool(ws.Selected()); });
-        const auto* draw = ImGui::GetDrawData();
-        for (const auto* list : draw->CmdLists) {
+    const auto draw = [&] { ui.Frame([&] { ws.DrawTool(ws.Selected()); }); };
+    struct Bounds { float x = 0, y = 0, w = 0, h = 0; };
+    const auto region = [](float low, float high) -> Bounds {
+        for (const auto* list : ImGui::GetDrawData()->CmdLists) {
             for (const auto& command : list->CmdBuffer) {
                 const auto* tex = command.TexRef._TexData;
-                if (!tex || tex->Width != 16 || tex->Height != 8 || command.ElemCount != 6) continue;
+                if (!tex || tex->Width != 18 || tex->Height != 8 || command.ElemCount != 6) continue;
                 float minimum_u = 1.0f, maximum_u = 0.0f;
+                float x0 = 2000, y0 = 2000, x1 = 0, y1 = 0;
                 for (unsigned int i = 0; i < command.ElemCount; ++i) {
-                    const auto& uv = list->VtxBuffer[command.VtxOffset + list->IdxBuffer[command.IdxOffset + i]].uv;
-                    minimum_u = std::min(minimum_u, uv.x);
-                    maximum_u = std::max(maximum_u, uv.x);
+                    const auto& v = list->VtxBuffer[command.VtxOffset + list->IdxBuffer[command.IdxOffset + i]];
+                    minimum_u = std::min(minimum_u, v.uv.x); maximum_u = std::max(maximum_u, v.uv.x);
+                    x0 = std::min(x0, v.pos.x); x1 = std::max(x1, v.pos.x);
+                    y0 = std::min(y0, v.pos.y); y1 = std::max(y1, v.pos.y);
                 }
-                if (minimum_u == 0.0f && maximum_u == 0.5f) return true;
+                if (minimum_u == low && maximum_u == high) return {x0, y0, x1-x0, y1-y0};
             }
         }
-        return false;
+        return {};
     };
-    CHECK(draws_first_half());
+    draw();
+    CHECK(region(0.0f, 8.0f/18).w > 0);
+    const auto full = region(0.0f, 1.0f);
+    CHECK(full.w > 0);
+    if (full.w > 0) {
+        const auto click_image = [&](float fraction) {
+            auto& io = ImGui::GetIO();
+            io.AddMousePosEvent(full.x + fraction * full.w, full.y + 0.5f * full.h);
+            draw();
+            io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+            draw();
+            io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+            draw();
+            draw();
+        };
+        click_image(0.8f);
+        CHECK(region(10.0f/18, 1.0f).w > 0);
+        click_image(0.5f);
+        CHECK(region(10.0f/18, 1.0f).w > 0); // the gutter did not change selection
+        click_image(0.2f);
+        CHECK(region(0.0f, 8.0f/18).w > 0);
+    }
     CHECK(!ws.OpenAsset("Broken.aatlas", &error) && error.find("JSON") != std::string::npos);
-    CHECK(draws_first_half());
+    draw();
+    CHECK(region(0.0f, 8.0f/18).w > 0);
     ProjectPaths other;
     FreshProject("sprite_atlas_other", other);
     CHECK(ws.OpenProject(other.file));
     const i64 atlas_tool = ws.FindTool("Sprite Atlas");
     CHECK(atlas_tool >= 0);
     if (atlas_tool >= 0) ws.Select(static_cast<usize>(atlas_tool));
-    CHECK(!draws_first_half()); // never show the previous project's atlas
+    draw();
+    CHECK(region(0.0f, 1.0f).w == 0 && region(0.0f, 8.0f/18).w == 0); // never show the previous project's atlas
 }
 
 AETHER_TEST(Openers_SayWhyAnAssetCannotOpen) {

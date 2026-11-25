@@ -104,15 +104,50 @@ void SpriteAtlasPanel::Draw() {
         ImGui::SliderInt("Frame index", &frame_, 0, last);
         frame = &atlas_.frames[frame_];
     }
-    if (!frame) return;
-    ImGui::TextUnformatted(frame->name.c_str());
-    ImGui::Text("Rect: (%d, %d) %d x %d px | Pivot: (%.2f, %.2f)", frame->x, frame->y,
-                frame->w, frame->h, frame->pivot_x, frame->pivot_y);
-    f32 uv[4];
-    if (show_texture_ && atlas_.Uv(*frame, uv)) {
-        const f32 max_width = std::clamp(ImGui::GetContentRegionAvail().x, 1.0f, 320.0f);
-        const f32 scale = std::min({max_width / frame->w, 240.0f / frame->h, 8.0f});
-        ImGui::Image(image_.Ref(), ImVec2(frame->w * scale, frame->h * scale), ImVec2(uv[0], uv[1]), ImVec2(uv[2], uv[3]));
+    if (frame) {
+        ImGui::TextUnformatted(frame->name.c_str());
+        ImGui::Text("Rect: (%d, %d) %d x %d px | Pivot: (%.2f, %.2f)", frame->x, frame->y,
+                    frame->w, frame->h, frame->pivot_x, frame->pivot_y);
+        f32 uv[4];
+        if (show_texture_ && atlas_.Uv(*frame, uv)) {
+            const f32 max_width = std::clamp(ImGui::GetContentRegionAvail().x, 1.0f, 320.0f);
+            const f32 scale = std::min({max_width / frame->w, 240.0f / frame->h, 8.0f});
+            ImGui::Image(image_.Ref(), ImVec2(frame->w * scale, frame->h * scale), ImVec2(uv[0], uv[1]), ImVec2(uv[2], uv[3]));
+        }
+    }
+
+    if (!show_texture_) return;
+    ImGui::Separator();
+    ImGui::TextUnformatted("Source sheet (click a frame)");
+    const f32 max_width = std::clamp(ImGui::GetContentRegionAvail().x, 1.0f, 420.0f);
+    const f32 scale = std::min({max_width / atlas_.width, 220.0f / atlas_.height, 8.0f});
+    ImGui::Image(image_.Ref(), ImVec2(atlas_.width * scale, atlas_.height * scale));
+    const ImVec2 top_left = ImGui::GetItemRectMin();
+    if (ImGui::IsItemHovered()) {
+        const ImVec2 mouse = ImGui::GetMousePos();
+        const f32 x = (mouse.x - top_left.x) / scale;
+        const f32 y = (mouse.y - top_left.y) / scale;
+        // Atlas order breaks ties for hand-authored overlapping frames.
+        const auto hit = std::find_if(atlas_.frames.begin(), atlas_.frames.end(), [&](const sprite2d::SpriteFrame& candidate) {
+            return x >= candidate.x && x - candidate.x < candidate.w &&
+                   y >= candidate.y && y - candidate.y < candidate.h;
+        });
+        if (hit != atlas_.frames.end()) {
+            if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
+                frame_ = static_cast<int>(hit - atlas_.frames.begin());
+                clip_ = -1;
+                playing_ = false;
+                frame = &*hit;
+            }
+            ImGui::SetTooltip("%s", hit->name.c_str());
+        }
+    }
+    if (frame) {
+        const ImVec2 lower(top_left.x + frame->x * scale, top_left.y + frame->y * scale);
+        const ImVec2 upper(lower.x + frame->w * scale, lower.y + frame->h * scale);
+        auto* draw = ImGui::GetWindowDrawList();
+        draw->AddRect(lower, upper, IM_COL32(0, 0, 0, 210), 0.0f);
+        draw->AddRect(lower, upper, IM_COL32(255, 202, 99, 255));
     }
 }
 
