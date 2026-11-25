@@ -25,6 +25,8 @@
 #include <cstdlib>
 #include <filesystem>
 #include <string>
+#include <system_error>
+#include <utility>
 #include <vector>
 
 using namespace aether;
@@ -41,24 +43,53 @@ int Usage() {
     return 2;
 }
 
-// The last thing anyone does by hand after packaging is start the game and see
-// whether it comes up; a package that cannot start is not a package. Runs in a
-// scratch folder outside the package, so what was verified stays what is there.
+// Claim a fresh directory atomically. Never delete a directory already owned
+// by another smoke run (or anything else under the system temp directory).
+struct SmokeDirectory {
+    std::filesystem::path path;
+    ~SmokeDirectory() {
+        if (path.empty()) return;
+        std::error_code ignored;
+        std::filesystem::remove_all(path, ignored);
+    }
+};
+
+// An absolute executable and empty working directory exercise the package's
+// own data discovery even when --out was relative.
 int RunSmokeTest(const std::filesystem::path& game, int frames) {
+    namespace fs = std::filesystem;
     std::error_code ec;
-    const std::filesystem::path scratch = std::filesystem::temp_directory_path(ec) / "aether-package-smoke";
-    std::filesystem::remove_all(scratch, ec);
+    const fs::path program = fs::absolute(game, ec);
+    if (ec) {
+        std::fprintf(stderr, "aether_package: couldn't resolve the packaged game path: %s\n", ec.message().c_str());
+        return -1;
+    }
+    fs::path base = fs::temp_directory_path(ec);
+    if (!ec) base = fs::absolute(base, ec);
+    SmokeDirectory scratch;
+    for (unsigned i = 0; !ec && i < 256; ++i) {
+        fs::path candidate = base / ("aether-package-smoke-" + std::to_string(i));
+        if (fs::create_directory(candidate, ec)) {
+            scratch.path = std::move(candidate);
+            break;
+        }
+        if (ec == std::errc::file_exists) ec.clear();
+    }
+    if (scratch.path.empty()) {
+        std::fprintf(stderr, "aether_package: couldn't create a smoke test directory: %s\n",
+                     ec ? ec.message().c_str() : "all scratch slots are occupied");
+        return -1;
+    }
     platform::ChildProcess process;
     std::string error;
     const std::vector<std::string> args = {"--headless", "--frames", std::to_string(frames),
-                                          "--user-dir", (scratch / "user").string()};
-    if (!process.Start(game, args, game.parent_path(), &error)) {
+                                          "--user-dir", (scratch.path / "user").string()};
+    if (!process.Start(program, args, scratch.path, &error)) {
         std::fprintf(stderr, "aether_package: couldn't start the packaged game: %s\n", error.c_str());
         return -1;
     }
     int code = -1;
     process.Wait(&code);
-    std::filesystem::remove_all(scratch, ec);
     return code;
 }
 

@@ -10,9 +10,9 @@ import subprocess
 import tempfile
 
 
-def run(tool, *args, cwd, capture=False):
+def run(tool, *args, cwd, capture=False, env=None):
     print(f"{tool.name}: {' '.join(map(str, args))}", flush=True)
-    result = subprocess.run([tool, *map(str, args)], cwd=cwd, capture_output=capture, text=capture, timeout=90)
+    result = subprocess.run([tool, *map(str, args)], cwd=cwd, env=env, capture_output=capture, text=capture, timeout=90)
     if capture:
         print(result.stdout, end="", flush=True)
         print(result.stderr, end="", flush=True)
@@ -54,7 +54,20 @@ def main():
 
         run(tools["aether_new"], name, "--template", args.template, "--dir", root, cwd=root)
         run(tools["aether_loc"], project, "--check", cwd=root)
-        run(tools["aether_package"], project, "--out", packaged, "--config", "development", cwd=root)
+        package_temp = root / "Package Temp"
+        existing_scratch = package_temp / "aether-package-smoke"
+        existing_scratch.mkdir(parents=True)
+        occupied_slot = package_temp / "aether-package-smoke-0"
+        occupied_slot.mkdir()
+        sentinel = existing_scratch / "untouched"
+        sentinel.write_text("owned by someone else", encoding="utf-8")
+        (occupied_slot / "untouched").write_text("another smoke run", encoding="utf-8")
+        package_env = dict(os.environ, TEMP=str(package_temp), TMP=str(package_temp), TMPDIR=str(package_temp))
+        run(tools["aether_package"], project.relative_to(root), "--out", packaged.relative_to(root),
+            "--config", "development", "--smoke", cwd=root, env=package_env)
+        if (not sentinel.is_file() or not (occupied_slot / "untouched").is_file()
+                or set(package_temp.iterdir()) != {existing_scratch, occupied_slot}):
+            raise RuntimeError("package smoke deleted existing files or left temporary files behind")
         for required in (packaged / "PackageManifest.json", packaged / "Paks" / "Game.apak"):
             if not required.is_file():
                 raise RuntimeError(f"package is missing {required}")
