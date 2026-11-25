@@ -3,6 +3,7 @@
 #include "aether/sprite2d/tilemap.h"
 
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -47,6 +48,8 @@ public:
     // Layers and size (undoable). The active layer stays valid.
     usize AddLayer(const std::string& name);
     bool RemoveLayer(usize layer);
+    // Higher indices draw in front of lower indices. Preserve the selected layer when it moves.
+    bool MoveLayer(usize from, usize to);
     bool RenameLayer(usize layer, const std::string& name);
     bool SetLayerCollides(usize layer, bool collides);
     bool Resize(u32 width, u32 height);
@@ -75,8 +78,9 @@ private:
     struct Snapshot {
         sprite2d::TilemapData map;
         sprite2d::Tileset tileset;
+        std::optional<usize> selection = std::nullopt;
     };
-    void Record();
+    void Record(bool track_selection = false);
     void Changed();
     void ClampActive();
     bool PaintCell(i32 x, i32 y, i32 value);

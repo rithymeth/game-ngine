@@ -545,3 +545,32 @@ AETHER_TEST(TilemapEditor_RenamesLayersWithoutErasingCellsOrAcceptingBlankNames)
     if (!LoadTilemap(dir/"level.atilemap",saved)) { CHECK(false); return; }
     CHECK(saved.layers.front().name == "Forest Floor ## A" && saved.Get(0, 2, 2) == 5);
 }
+
+AETHER_TEST(TilemapEditor_ReordersLayersAndKeepsTheBrushOnTheSameLayer) {
+    TilemapData map;
+    map.Resize(2, 2);
+    map.AddLayer("Floor");
+    map.AddLayer("Canopy");
+    map.layers[1].collides = false;
+    map.Set(0, 0, 0, 2);
+    map.Set(1, 0, 0, AutotileCell(0));
+    TilemapEditDocument doc(std::move(map), Doc().GetTileset());
+
+    CHECK(!doc.MoveLayer(0, 0) && !doc.MoveLayer(0, 2) && !doc.MoveLayer(2, 0));
+    CHECK(!doc.CanUndo() && !doc.dirty());
+    doc.BeginStroke();
+    CHECK(!doc.MoveLayer(0, 1));
+    doc.EndStroke();
+    CHECK(doc.MoveLayer(0, 1) && doc.active_layer == 1 && doc.dirty());
+    CHECK(doc.Map().layers[1].name == "Floor" && doc.Map().Get(1, 0, 0) == 2 && doc.Map().layers[1].collides);
+    CHECK(doc.Map().layers[0].name == "Canopy" && doc.Map().Get(0, 0, 0) == AutotileCell(0) && !doc.Map().layers[0].collides);
+    CHECK(doc.Undo() && doc.active_layer == 0 && doc.Map().layers[0].name == "Floor" && !doc.CanUndo());
+    CHECK(doc.Redo() && doc.active_layer == 1 && doc.Map().layers[1].name == "Floor");
+    CHECK(doc.MoveLayer(0, 1) && doc.active_layer == 0 && doc.Map().layers[0].name == "Floor");
+    CHECK(doc.MoveLayer(0, 1) && doc.active_layer == 1);
+    const auto dir = std::filesystem::temp_directory_path() / "tilemap_editor_reorder";
+    if (!doc.Save(dir/"map.atilemap", dir/"set.atileset")) { CHECK(false); return; }
+    TilemapData saved;
+    if (!LoadTilemap(dir/"map.atilemap", saved)) { CHECK(false); return; }
+    CHECK(TilemapToJson(saved) == TilemapToJson(doc.Map()));
+}
