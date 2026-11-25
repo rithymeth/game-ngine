@@ -2,6 +2,7 @@
 #include "content_browser_panel.h"
 
 #include "aether/project/project.h"
+#include "aether/sprite2d/tilemap.h"
 #include "content/content_drag.h"
 #include "ui/extensions.h"
 #include "ui/image_texture.h"
@@ -12,8 +13,10 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdio>
 #include <map>
 #include <unordered_set>
+#include <utility>
 
 namespace aether::editor {
 
@@ -684,6 +687,64 @@ bool ContentBrowserPanel::CreateSpriteAtlas(const std::string& texture, const Sp
     return true;
 }
 
+bool ContentBrowserPanel::CreateTilemap(const std::string& tileset, std::string* error) {
+    if (error) error->clear();
+    const auto fail = [&](const std::string& why) {
+        if (error) *error = why;
+        return false;
+    };
+    if (!database_) return fail("No project is open.");
+    const auto* record = database_->FindByPath(tileset);
+    if (!record || record->missing || record->importer != "Tileset" || record->guid.IsNull())
+        return fail("Select an existing tileset in the Content Browser.");
+    std::error_code ec;
+    const auto content = stdfs::canonical(database_->ContentRoot(), ec);
+    if (ec) return fail("Couldn't open the project's Content folder.");
+    const auto source = stdfs::canonical(database_->SourcePath(record->guid), ec);
+    if (ec) return fail("Couldn't find the selected tileset.");
+    const auto relative = source.lexically_relative(content);
+    if (relative.empty() || relative.has_root_path() || *relative.begin() == "..")
+        return fail("Choose a tileset inside the project's Content folder.");
+    sprite2d::Tileset set;
+    std::string why;
+    if (!sprite2d::LoadTileset(source, set, &why)) return fail(why);
+    if (!set.TileCount()) return fail("The selected tileset contains no tiles.");
+
+    const auto occupied = [&](const stdfs::path& file) {
+        return stdfs::symlink_status(file, ec).type() != stdfs::file_type::not_found;
+    };
+    const auto parent = source.parent_path();
+    const std::string stem = source.stem().string();
+    stdfs::path output;
+    for (int n = 1; n <= 100; ++n) {
+        const auto candidate = parent / (stem + (n == 1 ? "" : "_" + std::to_string(n)) + ".atilemap");
+        auto metadata = candidate;
+        metadata += assets::AssetMeta::kExtension;
+        if (!occupied(candidate) && !occupied(metadata)) { output = candidate; break; }
+    }
+    if (output.empty()) return fail("Couldn't find an unused tilemap name beside " + relative.generic_string() + ".");
+
+    sprite2d::TilemapData map;
+    map.tileset = record->guid;
+    map.Resize(16, 16);
+    map.AddLayer("Ground");
+    const std::string json = sprite2d::TilemapToJson(map).dump(2) + "\n";
+    std::FILE* file = std::fopen(output.string().c_str(), "wbx");
+    if (!file) return fail("Couldn't create " + output.filename().string() + " without overwriting an existing file.");
+    const bool wrote = std::fwrite(json.data(), 1, json.size(), file) == json.size();
+    const bool closed = std::fclose(file) == 0;
+    if (!wrote || !closed) {
+        stdfs::remove(output, ec);
+        return fail("Couldn't finish writing " + output.filename().string() + ".");
+    }
+    const std::string created = output.lexically_relative(content).generic_string();
+    Refresh();
+    ShowEntry(created);
+    if (opener_ && !OpenEntry(created))
+        operation_warning_ = "Created " + created + ". " + last_open_error_;
+    return true;
+}
+
 void ContentBrowserPanel::SetRevealer(std::function<bool(const std::string&)> reveal) { revealer_ = std::move(reveal); }
 
 void ContentBrowserPanel::ShowEntry(const std::string& path) {
@@ -739,6 +800,11 @@ void ContentBrowserPanel::DrawEntryMenu(const assets::ContentEntry& e) {
         if (ImGui::MenuItem("Show Dependencies")) ShowReferences(e.path, assets::ReferenceDirection::Dependencies);
         if (ImGui::MenuItem("Show Referencers")) ShowReferences(e.path, assets::ReferenceDirection::Referencers);
         ImGui::EndMenu();
+    }
+    if (!e.is_folder && e.asset && e.asset->importer == "Tileset" && !e.asset->missing &&
+        ImGui::MenuItem("Create Tilemap", nullptr, false, !multiple)) {
+        pending_tilemap_source_ = e.path;
+        pending_ = Pending::CreateTilemap;
     }
     if (!e.is_folder && e.asset && e.asset->importer == "Texture" && !e.asset->missing &&
         ImGui::MenuItem("Create Sprite Atlas...", nullptr, false, !multiple)) {
@@ -1185,6 +1251,11 @@ void ContentBrowserPanel::ApplyPending() {
         selection_.assign(1, path);
         selection_anchor_ = path;
         BeginRename(path); // a new asset starts with its name ready to type
+        break;
+    }
+    case Pending::CreateTilemap: {
+        const auto source = std::exchange(pending_tilemap_source_, {});
+        if (!CreateTilemap(source, &error)) operation_warning_ = error;
         break;
     }
     case Pending::Reimport: {

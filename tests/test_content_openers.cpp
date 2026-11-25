@@ -620,3 +620,41 @@ AETHER_TEST(Openers_EveryRegisteredTypeWithAnOpenerOpensHeadless) {
     std::error_code ec;
     stdfs::remove_all(project, ec);
 }
+
+AETHER_TEST(Openers_CreateTilemapFromExistingTilesetWithoutOverwriting) {
+    ProjectPaths paths;
+    FreshProject("create_tilemap", paths);
+    sprite2d::Tileset tiles;
+    tiles.texture_width = tiles.texture_height = 32;
+    tiles.tile_width = tiles.tile_height = 16;
+    std::string error;
+    if (!sprite2d::SaveTileset(paths.content / "Tiles/Ground.atileset", tiles, &error)) { CHECK(false); return; }
+    Write(paths.content / "Tiles/Ground.atilemap", "old map stays untouched");
+    Write(paths.content / "Tiles/Ground_2.atilemap.ameta", "reserved sidecar");
+    Write(paths.content / "Tiles/Broken.atileset", "not JSON");
+    ContentBrowserPanel browser(paths.file);
+    EditorWorkspace ws(paths.file);
+    browser.SetAssetOpener([&](const std::string& path, std::string* why) { return ws.OpenAsset(path, why); });
+
+    CHECK(!browser.CreateTilemap("Tiles/Broken.atileset", &error) && !stdfs::exists(paths.content / "Tiles/Broken.atilemap"));
+    if (!browser.CreateTilemap("Tiles/Ground.atileset", &error)) { CHECK(false); return; }
+    const auto result = paths.content / "Tiles/Ground_3.atilemap";
+    CHECK(error.empty() && ShowingTool(ws, "Tilemap") && ws.Tilemap().TilemapFile() == result);
+    sprite2d::TilemapData map;
+    if (!sprite2d::LoadTilemap(result, map, &error) || map.layers.size() != 1) { CHECK(false); return; }
+    CHECK(map.width == 16 && map.height == 16 && map.layers[0].name == "Ground");
+    CHECK(map.Get(0, 0, 0) == sprite2d::kEmpty && map.Get(0, 15, 15) == sprite2d::kEmpty);
+    const auto* source = browser.Database()->FindByPath("Tiles/Ground.atileset");
+    CHECK(source && map.tileset == source->guid);
+
+    std::ifstream old(paths.content / "Tiles/Ground.atilemap"), sidecar(paths.content / "Tiles/Ground_2.atilemap.ameta");
+    std::string a, b;
+    std::getline(old, a);
+    std::getline(sidecar, b);
+    CHECK(a == "old map stays untouched" && b == "reserved sidecar");
+    ws.Tilemap().brush = 2;
+    ws.Tilemap().Apply(1, 1);
+    CHECK(browser.CreateTilemap("Tiles/Ground.atileset", &error));
+    CHECK(stdfs::exists(paths.content / "Tiles/Ground_4.atilemap"));
+    CHECK(ws.Tilemap().TilemapFile() == result && ws.Tilemap().dirty() && ws.Tilemap().Map().Get(0, 1, 1) == 2);
+}
