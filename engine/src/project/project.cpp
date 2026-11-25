@@ -35,6 +35,17 @@ bool IsValidProjectName(const std::string& name) {
     return name.front() != ' ' && name.back() != ' ';
 }
 
+// A portable project needs both its folder and its packaged executable stem to be usable on Windows.
+bool HasReservedWindowsStem(const std::string& name) {
+    std::string stem;
+    for (char c : name) {
+        if (c != ' ') stem += c >= 'a' && c <= 'z' ? static_cast<char>(c - 'a' + 'A') : c;
+    }
+    if (stem == "CON" || stem == "PRN" || stem == "AUX" || stem == "NUL") return true;
+    return stem.size() == 4 && (stem.starts_with("COM") || stem.starts_with("LPT")) &&
+           stem[3] >= '0' && stem[3] <= '9';
+}
+
 // "0.7.2" -> {0, 7}; false if it doesn't start with two dot-separated numbers.
 bool ParseMajorMinor(const std::string& version, int& major, int& minor) {
     return std::sscanf(version.c_str(), "%d.%d", &major, &minor) == 2;
@@ -93,6 +104,10 @@ bool CreateProject(const stdfs::path& parent_dir, const std::string& name, Proje
     if (!IsValidProjectName(name)) {
         SetError(error, "\"" + name + "\" isn't a valid project name: use letters, digits, spaces, '-' and '_' "
                         "(1-64 characters, not starting or ending with a space)");
+        return false;
+    }
+    if (HasReservedWindowsStem(name)) {
+        SetError(error, "\"" + name + "\" becomes a reserved Windows name when packaged; choose a different project name");
         return false;
     }
     const stdfs::path root = parent_dir / name;
