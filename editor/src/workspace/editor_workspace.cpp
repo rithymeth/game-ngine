@@ -566,7 +566,12 @@ struct EditorWorkspace::Impl {
             {"World Partition", "World", "Stream the world in cells and inspect what is loaded.",
              [this] { partition_panel->Draw(); }},
             {"Tilemap - Level 1", "2D", "Paint tiles and collisions on Level 1's grid.",
-             [this] { tilemap_panel->Draw(); }},
+             [this] {
+                 const auto* database = content_browser ? content_browser->Database() : nullptr;
+                 if (database && !tilemap_doc->TilemapFile().empty() && ImGui::SmallButton("Reload tileset image"))
+                     tilemap_panel->LoadTexturePreview(*database);
+                 tilemap_panel->Draw();
+             }},
             {"Sprite Atlas", "2D", "Inspect atlas frames and preview a named sprite animation.",
              [this] { sprite_atlas_panel.Draw(); }},
             {"Sequencer - Intro", "Cinematics", "Animate the intro on a timeline of tracks and keys.",
