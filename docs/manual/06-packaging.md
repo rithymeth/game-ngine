@@ -30,6 +30,15 @@ The smoke run uses a scratch folder outside the package and deletes it, so what
 `verify-package` checked is still what is there. `--smoke-frames <n>` runs
 longer than the default three.
 
+On Linux or macOS build agents without graphics dependencies, configure with
+`-DAETHER_BUILD_WINDOWING=OFF -DAETHER_BUILD_VULKAN=OFF`. The resulting player
+requires `--headless` and cannot capture screenshots. For an end-to-end package
+check, build `aether_new aether_loc_tool aether_package aether_cook aether_pak
+aether_player`, then run `ctest --test-dir build -R '^packaged_project_headless_'
+--output-on-failure`. This checks startup and 60 simulation frames from outside
+the source project, plus movement from input in the 2D Platformer template. It
+does not check rendered output.
+
 `PackageManifest.json` records the project name, the game's own version, the
 configuration and the engine version, so a folder somebody ships you can be
 identified without running it -- and a bug report can start from the build that
@@ -59,6 +68,17 @@ The editor and the command line package with the same code. In the editor it is
 **Tools > Project > Build and Package**, which adds a progress bar, a log, a Cancel button and
 Launch. A scripted or CI build uses `aether_package`; the two cannot drift apart, because they are
 one function.
+
+### Before shipping a Windows editor build
+
+The headless check does not prove the editor or the renderer. On a Windows
+machine with Vulkan support, open `aether_editor_shell` and make a fresh 2D
+Platformer from **New Project**. Confirm it renders and responds to movement
+in Play mode, stop, save, and use **Build and Package**. Verify the package with
+`aether_pak verify-package`, then launch it from an empty working directory
+without access to the source project. Confirm the same scene renders and plays
+in the standalone executable. Record the commit, GPU and graphics backend
+alongside captures from both runs.
 
 ## Cook and pack separately
 

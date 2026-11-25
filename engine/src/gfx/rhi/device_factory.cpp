@@ -28,7 +28,7 @@ bool IsBackendAvailable(Backend backend) {
     return false;
 }
 
-std::unique_ptr<IDevice> CreateDevice(Backend backend, bool enable_debug_layer) {
+std::unique_ptr<IDevice> CreateDevice(Backend backend, [[maybe_unused]] bool enable_debug_layer) {
     switch (backend) {
         case Backend::D3D12:
 #if defined(_WIN32)
