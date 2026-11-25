@@ -1,6 +1,6 @@
 #include "core/package_runner.h"
 
-#include <sstream>
+#include <utility>
 
 namespace aether::editor {
 
@@ -8,11 +8,30 @@ namespace stdfs = std::filesystem;
 
 namespace {
 
-std::vector<std::string> SplitArgs(const std::string& text) {
-    std::vector<std::string> args;
-    std::istringstream in(text);
-    for (std::string a; in >> a;) args.push_back(a);
-    return args;
+// The field is an argument list, not a shell. Double quotes group text;
+// backslashes remain literal so Windows paths need no extra escaping.
+bool SplitArgs(const std::string& text, std::vector<std::string>& args) {
+    std::string argument;
+    bool quoted = false;
+    bool started = false;
+    for (char c : text) {
+        if (c == '"') {
+            quoted = !quoted;
+            started = true;
+        } else if (!quoted && (c == ' ' || c == '\t' || c == '\r' || c == '\n')) {
+            if (started) {
+                args.push_back(std::move(argument));
+                argument.clear();
+                started = false;
+            }
+        } else {
+            argument.push_back(c);
+            started = true;
+        }
+    }
+    if (quoted) return false;
+    if (started) args.push_back(std::move(argument));
+    return true;
 }
 
 } // namespace
@@ -165,12 +184,16 @@ bool PackageRunner::Launch(std::string* error) {
     } else if (game_.Running()) {
         why = "The game is already running";
     } else {
-        std::vector<std::string> args = SplitArgs(launch_args);
-        if (encrypt) {
-            args.push_back("--key");
-            args.push_back(encryption_key);
+        std::vector<std::string> args;
+        if (!SplitArgs(launch_args, args)) {
+            why = "Launch arguments contain an unclosed double quote";
+        } else {
+            if (encrypt) {
+                args.push_back("--key");
+                args.push_back(encryption_key);
+            }
+            ok = game_.Start(game, args, game.parent_path(), &why);
         }
-        ok = game_.Start(game, args, game.parent_path(), &why);
     }
     launch_error_ = ok ? std::string() : why;
     if (!ok && error) *error = why;
