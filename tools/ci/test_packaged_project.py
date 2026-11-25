@@ -145,6 +145,20 @@ def main():
                     or any(p.name.startswith(".aether-package-") for p in packaged.iterdir())
                     or (packaged / ("OtherTown" + exe)).exists()):
                 raise RuntimeError("rejecting the other project changed the original package")
+            other_project = root / other / (other + ".aproject")
+            other_config = json.loads(other_project.read_text(encoding="utf-8"))
+            other_main = other_project.parent / "Content" / other_config["startup_scene"]
+            alternate = other_main.with_name("Alternate.ascene")
+            other_main.rename(alternate)
+            other_config["startup_scene"] = r"Scenes\Alternate.ascene"
+            other_project.write_text(json.dumps(other_config), encoding="utf-8")
+            alternate_build = root / "Alternate Scene Build"
+            run(tools["aether_package"], other_project, "--out", alternate_build,
+                "--config", "shipping", "--strict", "--smoke", cwd=root, env=package_env)
+            alternate_listing = run(tools["aether_pak"], "list", alternate_build / "Paks/Game.apak",
+                                    cwd=root, capture=True)
+            if "Content/Scenes/Alternate.ascene" not in alternate_listing or "Content/Scenes/Main.ascene" in alternate_listing:
+                raise RuntimeError("the portable startup path did not select the renamed scene")
             # An extensionless executable cannot share a name with a package folder.
             for project_name, executable_name in (("P a k s", "Paks-game"), ("LICENSES", "LICENSES-game")):
                 created = run(tools["aether_new"], project_name, "--dir", root, cwd=root, capture=True)
