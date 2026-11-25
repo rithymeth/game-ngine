@@ -469,6 +469,10 @@ struct EditorWorkspace::Impl {
     SceneAutosaves autosaves;
     f32 autosave_elapsed = 0.0f;
     bool autosave_dirty_seen = false; // the document was unsaved at the last tick, so a clean tick has a slot to remove
+    bool HasUnsavedTilemap() const {
+        return tilemap_doc && !tilemap_doc->TilemapFile().empty() && tilemap_doc->dirty();
+    }
+    std::string quit_error;
     bool quit_prompt = false;
     bool quit_prompt_opened = false; // OpenPopup once, not every frame while the modal is up
     bool recovery_prompt = false;
@@ -2760,7 +2764,7 @@ EditorSettings& EditorWorkspace::Settings() { return impl_->editor_settings; }
 bool EditorWorkspace::SaveSettings() { return impl_->editor_settings.Save(EditorSettings::DefaultFile()); }
 
 bool EditorWorkspace::HasUnsavedChanges() const {
-    return impl_->scene_panel != nullptr && ActiveDocument().IsDirty();
+    return (impl_->scene_panel != nullptr && ActiveDocument().IsDirty()) || impl_->HasUnsavedTilemap();
 }
 
 bool EditorWorkspace::HasRecoverableAutosave() const {
@@ -2804,7 +2808,7 @@ void EditorWorkspace::OfferRecovery() {
     impl_->recovery_offered = true;
     const SceneAutosaveSlot slot = impl_->autosaves.Find(impl_->project_file);
     if (!slot.IsValid()) return;
-    if (HasUnsavedChanges()) return; // the open scene's own prompt comes first; nothing is thrown away without an answer
+    if (impl_->scene_panel != nullptr && ActiveDocument().IsDirty()) return; // the open scene's own prompt comes first; nothing is thrown away without an answer
     impl_->recovery_slot = slot;
     impl_->recovery_prompt = true;
 }
@@ -2814,13 +2818,16 @@ void EditorWorkspace::RequestQuit() {
         if (on_quit_confirmed) on_quit_confirmed();
         return;
     }
+    impl_->quit_error.clear();
     impl_->quit_prompt = true;
 }
 
 bool EditorWorkspace::QuitPromptOpen() const { return impl_->quit_prompt; }
 
 bool EditorWorkspace::SaveAndQuit() {
-    if (!impl_->scene_panel->SaveScene()) {
+    impl_->quit_error.clear();
+    if (impl_->HasUnsavedTilemap() && !impl_->tilemap_doc->Save(&impl_->quit_error)) return false;
+    if (impl_->scene_panel != nullptr && ActiveDocument().IsDirty() && !impl_->scene_panel->SaveScene()) {
         impl_->NotifySaveFailure();
         return false;
     }
@@ -2884,12 +2891,19 @@ void EditorWorkspace::DrawDataSafetyWindows() {
             impl.quit_prompt_opened = true;
         }
         if (ImGui::BeginPopupModal("Quit Aether Editor?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-            const EditorDocument& document = ActiveDocument();
-            ImGui::Text("The open %s has changes that are not saved.", document.Kind());
-            ImGui::TextDisabled("%s", document.FilePath().empty()
-                ? "an untitled document"
-                : document.DisplayName().c_str());
-            if (!impl.scene_panel->Status().empty()) ImGui::TextWrapped("%s", impl.scene_panel->Status().c_str());
+            if (impl.scene_panel != nullptr && ActiveDocument().IsDirty()) {
+                const EditorDocument& document = ActiveDocument();
+                ImGui::Text("The open %s has changes that are not saved.", document.Kind());
+                ImGui::TextDisabled("%s", document.FilePath().empty()
+                    ? "an untitled document"
+                    : document.DisplayName().c_str());
+                if (!impl.scene_panel->Status().empty()) ImGui::TextWrapped("%s", impl.scene_panel->Status().c_str());
+            }
+            if (impl.HasUnsavedTilemap()) {
+                const auto name = impl.tilemap_doc->TilemapFile().filename().string();
+                ImGui::TextWrapped("The tilemap %s has unsaved changes.", name.c_str());
+            }
+            if (!impl.quit_error.empty()) ImGui::TextWrapped("%s", impl.quit_error.c_str());
             ImGui::Separator();
             if (ImGui::Button("Save and quit")) {
                 if (SaveAndQuit()) ImGui::CloseCurrentPopup();
@@ -3086,7 +3100,7 @@ void EditorWorkspace::DrawPreferences() {
                            EditorSettings::kMaxAutosaveSeconds, "%.0f s");
         changed |= ImGui::IsItemDeactivatedAfterEdit(); // once, when the drag ends, not every frame of it
         ImGui::EndDisabled();
-        ImGui::BeginDisabled(!HasUnsavedChanges());
+        ImGui::BeginDisabled(impl_->scene_panel == nullptr || !ActiveDocument().IsDirty());
         if (ImGui::Button("Autosave now") && impl_->WriteAutosave()) ImGui::SetItemTooltip("Written to the recovery slot");
         ImGui::EndDisabled();
         ImGui::SameLine();
