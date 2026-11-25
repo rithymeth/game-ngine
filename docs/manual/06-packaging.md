@@ -44,9 +44,10 @@ On Linux or macOS build agents without graphics dependencies, configure with
 requires `--headless` and cannot capture screenshots. For an end-to-end package
 check, build `aether_new aether_loc_tool aether_package aether_cook aether_pak
 aether_player`, then run `ctest --test-dir build -R '^packaged_project_headless_'
---output-on-failure`. This checks startup and 60 simulation frames from outside
-the source project for all six starters when their required modules are
-enabled. It checks movement from input for every starter except Blank, and
+--output-on-failure`. This builds strict Shipping packages, moves them to a
+new folder, then checks startup and 60 simulation frames with the source
+project moved aside. It covers all six starters when their required modules
+are enabled. It checks movement from input for every starter except Blank, and
 checks that the 3D packages include the models their scenes use. These checks
 do not verify rendered output.
 If the editor command layer is enabled, also build `aether_package_runner_smoke`.

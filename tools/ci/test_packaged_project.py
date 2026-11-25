@@ -26,6 +26,7 @@ MODELS = {
 }
 COORD = r"(-?\d+\.\d+)"
 PLAYER_POSITION = re.compile(rf"^Player at \({COORD}, {COORD}, {COORD}\)", re.MULTILINE)
+SIXTY_FRAMES = re.compile(r"^Simulation frames: 60$", re.MULTILINE)
 
 
 def run(tool, *args, cwd, capture=False, env=None):
@@ -99,7 +100,7 @@ def main():
             editor_env = dict(os.environ, AETHER_USER_DIR=str(root / "Editor Player Data"))
             editor_output = run(args.editor_runner.resolve(), project.relative_to(root), tools["aether_player"],
                                 cwd=root, env=editor_env, capture=True)
-            if "Ran 60 frames (" not in editor_output:
+            if not SIXTY_FRAMES.search(editor_output):
                 raise RuntimeError("the editor's Launch command did not run 60 frames")
         package_temp = root / "Package Temp"
         existing_scratch = package_temp / "aether-package-smoke"
@@ -110,8 +111,9 @@ def main():
         sentinel.write_text("owned by someone else", encoding="utf-8")
         (occupied_slot / "untouched").write_text("another smoke run", encoding="utf-8")
         package_env = dict(os.environ, TEMP=str(package_temp), TMP=str(package_temp), TMPDIR=str(package_temp))
+        release_config = ["--config", "shipping", "--strict"] if args.headless_build_tools else ["--config", "development"]
         package_output = run(tools["aether_package"], project.relative_to(root), "--out", packaged.relative_to(root),
-                             "--config", "development", "--smoke", cwd=root, env=package_env, capture=True)
+                             *release_config, "--smoke", cwd=root, env=package_env, capture=True)
         if args.template in MODELS and "Skipping unknown" in package_output:
             raise RuntimeError("the valid 3D template generated misleading preflight component warnings")
         if (not sentinel.is_file() or not (occupied_slot / "untouched").is_file()
@@ -120,6 +122,9 @@ def main():
         for required in (packaged / "PackageManifest.json", packaged / "Paks" / "Game.apak"):
             if not required.is_file():
                 raise RuntimeError(f"package is missing {required}")
+        manifest = json.loads((packaged / "PackageManifest.json").read_text(encoding="utf-8"))
+        if manifest.get("configuration") != release_config[1].capitalize():
+            raise RuntimeError("package manifest recorded the wrong build configuration")
         run(tools["aether_pak"], "verify-package", packaged, cwd=root)
         if args.template in MODELS:
             listing = run(tools["aether_pak"], "list", packaged / "Paks" / "Game.apak", cwd=root, capture=True)
@@ -208,9 +213,13 @@ def main():
             run(encrypted / executable, "--headless", "--frames", "1", "--user-dir",
                 root / "Encrypted Player Data", cwd=empty_cwd, env=dict(os.environ, AETHER_PAK_KEY=fixture_key))
 
-        # The game must discover its own data, with no source tree or working-directory hint.
+        # Simulate moving the distribution after build, with neither the source
+        # tree nor the original package location available to the executable.
         source.rename(root / "Hidden Project")
-        game = packaged / executable
+        relocated = root / "Moved Distribution" / "Installed Game"
+        relocated.parent.mkdir()
+        packaged.rename(relocated)
+        game = relocated / executable
         if args.headless_build_tools:
             env = os.environ.copy()
             env.pop("AETHER_PLAYER_HEADLESS", None)
@@ -220,7 +229,7 @@ def main():
                 raise RuntimeError(f"headless-only player did not reject a windowed launch: {no_window.stderr}")
         output = run(game, "--headless", "--frames", "60", "--report",
                      "--user-dir", root / "Player Data", cwd=empty_cwd, capture=True)
-        if "Ran 60 frames (" not in output:
+        if not SIXTY_FRAMES.search(output):
             raise RuntimeError("the packaged player did not report 60 frames")
         if args.template in MOTION:
             key, axis, direction = MOTION[args.template]
@@ -228,7 +237,7 @@ def main():
                         "--user-dir", root / "Player Data With Input", cwd=empty_cwd, capture=True)
             idle_position = PLAYER_POSITION.search(output)
             moved_position = PLAYER_POSITION.search(moved)
-            if ("Ran 60 frames (" not in moved or not idle_position or not moved_position
+            if (not SIXTY_FRAMES.search(moved) or not idle_position or not moved_position
                     or direction * (float(moved_position[axis + 1]) - float(idle_position[axis + 1])) <= .1):
                 raise RuntimeError(f"the packaged {args.template} did not respond to {key} input")
 

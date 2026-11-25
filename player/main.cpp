@@ -724,6 +724,9 @@ int main(int argc, char** argv) {
             for (u64 pending_fence : frame_fences) device->WaitForFence(pending_fence);
         }
         if (options.report) {
+            // Shipping suppresses the info log and frame timings omit warm-up samples.
+            // Report the completed simulation count independently of both.
+            std::printf("Simulation frames: %llu\n", static_cast<unsigned long long>(game.Stats().frames));
             std::fputs(frame_report.Text().c_str(), stdout);
             for (const Entity e : FindEntitiesWithTag(game.GetWorld(), "Player")) {
                 if (const Transform* t = game.GetWorld().GetComponent<Transform>(e)) {
