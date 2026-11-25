@@ -5,7 +5,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <fstream>
 #include <limits>
 
 namespace aether::sprite2d {
@@ -85,14 +84,11 @@ bool ReadJsonFile(const std::filesystem::path& file, nlohmann::json& out, std::s
 }
 
 bool WriteJsonFile(const std::filesystem::path& file, const nlohmann::json& data, std::string* error) {
-    std::error_code ec;
-    std::filesystem::create_directories(file.parent_path(), ec);
-    std::ofstream out(file, std::ios::binary);
-    if (!out) {
+    const std::string text = data.dump(2);
+    if (!fs::WriteFileAtomic(file.string(), text.data(), text.size())) {
         if (error) *error = "Couldn't write " + file.string();
         return false;
     }
-    out << data.dump(2);
     return true;
 }
 
