@@ -394,6 +394,7 @@ void ContentBrowserPanel::Draw() {
     ImGui::EndChild();
     DrawActionDialog();
     DrawSpriteAtlasDialog();
+    DrawTilesetDialog();
     DrawReferenceViewer();
     DrawValidation();
     DrawImportSettings();
@@ -687,6 +688,21 @@ bool ContentBrowserPanel::CreateSpriteAtlas(const std::string& texture, const Sp
     return true;
 }
 
+bool ContentBrowserPanel::CreateTileset(const std::string& texture, int tile_width, int tile_height,
+                                        int margin, int spacing, std::string* error) {
+    if (!database_ || tile_width <= 0 || tile_height <= 0 || margin < 0 || spacing < 0) {
+        if (error) *error = !database_ ? "No project is open." : "Tile sizes must be positive, and margin and spacing cannot be negative.";
+        return false;
+    }
+    std::string result;
+    if (!sprite2d::authoring::CreateGridTileset(database_->ContentRoot(), texture,
+            static_cast<u32>(tile_width), static_cast<u32>(tile_height), static_cast<u32>(margin),
+            static_cast<u32>(spacing), result, error)) return false;
+    Refresh();
+    ShowEntry(result);
+    return true;
+}
+
 bool ContentBrowserPanel::CreateTilemap(const std::string& tileset, std::string* error) {
     if (error) error->clear();
     const auto fail = [&](const std::string& why) {
@@ -815,6 +831,14 @@ void ContentBrowserPanel::DrawEntryMenu(const assets::ContentEntry& e) {
         sprite_atlas_spacing_[0] = sprite_atlas_spacing_[1] = 0;
         sprite_atlas_clips_.clear();
         sprite_atlas_popup_pending_ = true;
+    }
+    if (!e.is_folder && e.asset && e.asset->importer == "Texture" && !e.asset->missing &&
+        ImGui::MenuItem("Create Tileset...", nullptr, false, !multiple)) {
+        tileset_source_ = e.path;
+        tileset_error_.clear();
+        tileset_cells_[0] = tileset_cells_[1] = 16;
+        tileset_margin_ = tileset_spacing_ = 0;
+        tileset_popup_pending_ = true;
     }
     if (!e.is_folder && ImportEditable(e.path) != nullptr) {
         ImGui::Separator();
@@ -1412,6 +1436,26 @@ void ContentBrowserPanel::DrawSpriteAtlasDialog() {
     }
     ImGui::SameLine();
     if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
+}
+
+void ContentBrowserPanel::DrawTilesetDialog() {
+    if (tileset_popup_pending_) {
+        ImGui::OpenPopup("Create Tileset");
+        tileset_popup_pending_ = false;
+    }
+    if (!ImGui::BeginPopupModal("Create Tileset", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+    ImGui::TextWrapped("Slice %s into whole tiles. The new .atileset is saved beside the image.", tileset_source_.c_str());
+    bool edited = ImGui::InputInt2("Tile width, height (px)", tileset_cells_);
+    edited |= ImGui::InputInt("Outer margin (px)", &tileset_margin_);
+    edited |= ImGui::InputInt("Tile spacing (px)", &tileset_spacing_);
+    if (edited) tileset_error_.clear();
+    if (!tileset_error_.empty()) ImGui::TextWrapped("%s", tileset_error_.c_str());
+    if (ImGui::Button("Create") && CreateTileset(tileset_source_, tileset_cells_[0], tileset_cells_[1],
+                                                tileset_margin_, tileset_spacing_, &tileset_error_))
+        ImGui::CloseCurrentPopup();
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
     ImGui::EndPopup();
 }
 
