@@ -16,6 +16,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <string_view>
 
 // The tilemap editor (Phase 26 step 5, §26.6): painting, flood fill, layers,
 // autotile rules and undo, and the panel drawing headless.
@@ -729,6 +730,58 @@ AETHER_TEST(TilemapEditor_WorkspaceDrawsTheAuthoredSheetInPaletteAndCanvas) {
     if (!ws.OpenAsset("Map.atilemap", &error)) { CHECK(false); return; }
     draw();
     CHECK(image_quads_for_second_tile() == 0 && !ws.Tilemap().dirty());
+}
+
+AETHER_TEST(TilemapEditor_CollisionOutlineSitsAboveDecorativeLayers) {
+    HeadlessImGui ui;
+    auto doc = Doc();
+    doc.brush = 1;
+    doc.Apply(1, 1);
+    doc.SetSolid(1, true);
+    doc.AddLayer("Decoration");
+    doc.SetLayerCollides(1, false);
+    doc.active_layer = 1;
+    doc.brush = 2;
+    doc.Apply(1, 1);
+    doc.SetSolid(2, true); // solid in the palette, but this layer does not block
+    TilemapPanel panel(doc);
+    panel.show_grid = false;
+
+    // Read actual canvas submission order. A swatch above the outline hides
+    // its inner edge; the outline must be drawn after both cell images.
+    constexpr ImU32 background = IM_COL32(30, 30, 36, 255);
+    constexpr ImU32 marker = IM_COL32(220, 40, 40, 255);
+    const auto draw = [&] {
+        ui.Frame([&] { panel.Draw(); });
+        std::vector<ImU32> colors;
+        for (const auto* list : ImGui::GetDrawData()->CmdLists) {
+            if (!list->_OwnerName || std::string_view(list->_OwnerName).find("##canvas") == std::string_view::npos)
+                continue;
+            bool inside = false;
+            for (const auto& v : list->VtxBuffer) {
+                if (v.col == background) inside = true;
+                if (inside) colors.push_back(v.col);
+            }
+        }
+        return colors;
+    };
+    panel.show_solid = false;
+    const auto plain = draw();
+    panel.show_solid = true;
+    const u64 revision = doc.Revision();
+    const auto tagged = draw();
+    const auto outline = std::find(tagged.begin(), tagged.end(), marker);
+    CHECK(plain.size() >= 12 && outline != tagged.end() &&
+          static_cast<usize>(outline - tagged.begin()) >= plain.size());
+    CHECK(doc.Revision() == revision && IsSolidAt(doc.Map(), doc.GetTileset(), 1, 1));
+    const auto markers = std::count(tagged.begin(), tagged.end(), marker);
+    CHECK(doc.SetLayerCollides(1, true));
+    const auto both_block = draw();
+    CHECK(std::count(both_block.begin(), both_block.end(), marker) == markers);
+    CHECK(doc.SetLayerCollides(1, false) && doc.SetLayerCollides(0, false));
+    const auto nonblocking = draw();
+    CHECK(std::find(nonblocking.begin(), nonblocking.end(), marker) == nonblocking.end());
+    CHECK(!IsSolidAt(doc.Map(), doc.GetTileset(), 1, 1));
 }
 
 AETHER_TEST(TilemapEditor_LargeMapOnlyDrawsVisibleGridLines) {
