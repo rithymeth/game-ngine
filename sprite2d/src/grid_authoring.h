@@ -14,6 +14,10 @@ struct ClipRange {
     bool loop = true;
 };
 
+inline constexpr usize kMaxGridClips = 64;
+// Empty means default whole-sheet loop. Frame bounds are checked once the sheet is known.
+std::string ClipRangesError(const std::vector<ClipRange>& ranges);
+
 struct Grid {
     u32 cell_w = 0, cell_h = 0;
     u32 margin_x = 0, margin_y = 0, spacing_x = 0, spacing_y = 0;
@@ -24,8 +28,7 @@ struct CreatedAtlas {
     usize frames = 0, clips = 0;
 };
 
-// Tool-internal: create a new sibling atlas. Clip ranges arrive from
-// validated tools; an empty vector generates the default 12 fps grid clip.
+// Tool-internal: create a new sibling atlas; reject invalid ranges before writing.
 bool CreateGridAtlas(const std::filesystem::path& content_root, const std::filesystem::path& requested,
                      const Grid& grid, std::vector<ClipRange> ranges, CreatedAtlas& result, std::string* error);
 

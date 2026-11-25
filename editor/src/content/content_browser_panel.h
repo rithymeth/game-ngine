@@ -145,9 +145,15 @@ public:
     void SetAssetOpener(AssetOpener opener);
     bool OpenEntry(const std::string& path, std::string* error = nullptr);
     // Slice a texture into a new sibling atlas; select and open it if supported.
+    struct SpriteAtlasClip {
+        std::string name;
+        int first = 0, count = 1, fps = 12;
+        bool loop = true;
+    };
     struct SpriteAtlasGrid {
         int cell_w = 16, cell_h = 16;
         int margin_x = 0, margin_y = 0, spacing_x = 0, spacing_y = 0;
+        std::vector<SpriteAtlasClip> clips{};
     };
     bool CreateSpriteAtlas(const std::string& texture, const SpriteAtlasGrid& grid, std::string* error = nullptr);
     const std::string& LastOpenError() const { return last_open_error_; }
@@ -250,6 +256,7 @@ private:
     std::string sprite_atlas_source_, sprite_atlas_error_;
     int sprite_atlas_cells_[2] = {16, 16};
     int sprite_atlas_margins_[2] = {}, sprite_atlas_spacing_[2] = {};
+    std::vector<SpriteAtlasClip> sprite_atlas_clips_;
     std::string action_source_;
     std::string action_value_;
     std::string action_error_;

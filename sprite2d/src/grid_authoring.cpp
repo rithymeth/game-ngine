@@ -3,6 +3,7 @@
 #include "aether/assets/asset_database.h"
 #include "aether/assets/image.h"
 #include "aether/sprite2d/atlas.h"
+#include "aether/sprite2d/components.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -37,6 +38,26 @@ bool Occupied(const fs::path& path) {
 
 } // namespace
 
+std::string ClipRangesError(const std::vector<ClipRange>& ranges) {
+    constexpr usize name_limit = sizeof(SpriteAnimator::clip) - 1;
+    if (ranges.size() > kMaxGridClips)
+        return "use at most " + std::to_string(kMaxGridClips) + " named clips";
+    for (auto it = ranges.begin(); it != ranges.end(); ++it) {
+        const auto& range = *it;
+        if (range.name.empty() || range.name.size() > name_limit ||
+            !std::all_of(range.name.begin(), range.name.end(), [](char c) {
+                return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                       (c >= '0' && c <= '9') || c == '_' || c == '-';
+            }))
+            return "clip names must be 1 to " + std::to_string(name_limit) + " ASCII letters, digits, underscores or hyphens";
+        if (std::any_of(ranges.begin(), it, [&](const ClipRange& prior) { return prior.name == range.name; }))
+            return "duplicate clip name '" + range.name + "'";
+        if (!range.count) return "clip '" + range.name + "' requires a zero-based FIRST and positive COUNT";
+        if (!range.fps || range.fps > 240) return "clip '" + range.name + "' FPS must be an integer from 1 to 240";
+    }
+    return {};
+}
+
 bool CreateGridAtlas(const fs::path& content_root, const fs::path& requested, const Grid& grid,
                      std::vector<ClipRange> ranges, CreatedAtlas& result, std::string* error) {
     if (error) error->clear();
@@ -46,6 +67,7 @@ bool CreateGridAtlas(const fs::path& content_root, const fs::path& requested, co
     };
     const auto [cell_w, cell_h, margin_x, margin_y, spacing_x, spacing_y] = grid;
     if (!cell_w || !cell_h) return Fail("cell width and height must be positive");
+    if (const std::string why = ClipRangesError(ranges); !why.empty()) return Fail(why);
     if (!VisibleRelative(requested)) return Fail("choose a visible sprite sheet inside Content");
     std::error_code ec;
     const auto content = fs::canonical(content_root, ec);
