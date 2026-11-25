@@ -90,6 +90,7 @@ struct Options {
     f32 record_fps = 24.0f;   // --record-fps: the film's frame rate when recording without a camera path (a camera path has its own)
     std::string replay_input;          // recorded input for deterministic package verification
     std::string jump_proof;            // replay plus an expected terminal 2D region
+    bool jump_trace = false;           // opt-in machine-readable position after each tick
     bool report = false;              // print where the Player-tagged entity ended up
     std::string server; // empty: offline single-player (the default)
     std::string player_name = "player", password, token;
@@ -135,7 +136,7 @@ void Usage() {
                  "                     [--key <64 hex digits>] [--press <Key>]... [--screenshot <file.bmp>]\n"
                  "                     [--camera-path <file.json>] [--record-dir <dir> [--record-fps <n>]]\n"
                  "                     [--report] [--user-dir <dir>] [--log-file <file>] [--replay-input <file.json>]\n"
-                 "                     [--jump-proof <route.json> --user-dir <test folder>]\n"
+                 "                     [--jump-proof <route.json> --user-dir <test folder> [--jump-trace]]\n"
                  "                     [--server <ip:port>] [--name <text>] [--password <text>]\n"
                  "                     [--token <join token>] [--build-id <n>] (opt-in UDP + Jolt)\n");
 }
@@ -164,6 +165,8 @@ bool ParseArgs(int argc, char** argv, Options& o) {
             o.record_fps = std::clamp(static_cast<f32>(std::atof(argv[++i])), 1.0f, 240.0f);
         } else if (a == "--report") {
             o.report = true;
+        } else if (a == "--jump-trace") {
+            o.jump_trace = true;
         } else if (a == "--jump-proof" && has_value) {
             o.jump_proof = argv[++i];
             if (o.jump_proof.empty()) return false;
@@ -270,6 +273,15 @@ std::vector<std::string> PaksToMount(const Options& o, const char* argv0) {
     return paks;
 }
 
+// Each sample follows the current Player through the same world the packaged game uses.
+const Transform* JumpProofPlayer(Game& game) {
+    const auto players = FindEntitiesWithTag(game.GetWorld(), "Player");
+    const auto* transform = players.size() == 1 ? game.GetWorld().GetComponent<Transform>(players.front()) : nullptr;
+    if (!transform || !std::isfinite(transform->position.x) || !std::isfinite(transform->position.y) ||
+        !std::isfinite(transform->position.z)) return nullptr;
+    return transform;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -283,6 +295,10 @@ int main(int argc, char** argv) {
     if (!valid_arguments) {
         AETHER_LOG_ERROR("Player", "Invalid launch arguments");
         Usage();
+        return 2;
+    }
+    if (options.jump_trace && options.jump_proof.empty()) {
+        AETHER_LOG_ERROR("Player", "--jump-trace requires --jump-proof");
         return 2;
     }
     if (!options.jump_proof.empty()) {
@@ -719,6 +735,14 @@ int main(int argc, char** argv) {
             }
             if (recording || !camera_path.keys.empty()) tick_dt = frame < kRecordWarmup ? 0.0f : 1.0f / film_fps; // the film's clock: water, wind and sequences move 1 / fps a frame
             game.Tick(tick_dt);
+            if (options.jump_trace) {
+                reflect::Json position;
+                if (const auto* player = JumpProofPlayer(game)) {
+                    const auto& p = player->position;
+                    position = {p.x, p.y, p.z};
+                }
+                std::printf("Jump Trace: %s\n", reflect::Json({{"frame", frame + 1}, {"position", position}}).dump().c_str());
+            }
             if (game.ExitRequested()) break;
 #if AETHER_PLAYER_NETCLIENT && AETHER_PLAYER_PHYSICS
             if (render_interpolation)
@@ -821,11 +845,8 @@ int main(int argc, char** argv) {
             }
         }
         if (!options.jump_proof.empty()) {
-            const auto players = FindEntitiesWithTag(game.GetWorld(), "Player");
-            const auto* transform = players.size() == 1 ? game.GetWorld().GetComponent<Transform>(players.front()) : nullptr;
-            if (game.Stats().frames != static_cast<u64>(options.frames) || !transform ||
-                !std::isfinite(transform->position.x) || !std::isfinite(transform->position.y) ||
-                !std::isfinite(transform->position.z)) {
+            const auto* transform = JumpProofPlayer(game);
+            if (game.Stats().frames != static_cast<u64>(options.frames) || !transform) {
                 AETHER_LOG_ERROR("Player", "Jump Proof needs the full replay and exactly one Player with a finite Transform");
             } else {
                 const auto& pos = transform->position;

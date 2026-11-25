@@ -9,6 +9,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 import tempfile
 
 MOTION = {
@@ -303,15 +304,19 @@ def main():
             ], "target": {"min_x": 28.5, "max_x": 30, "min_y": 2, "max_y": 3}}
             route.write_text(json.dumps(spec), encoding="utf-8")
 
-            def proof(player, expected_code, profile):
-                proc = subprocess.run([player, "--jump-proof", route, "--user-dir", root / profile],
+            def proof(player, expected_code, profile, trace=None):
+                extra = ["--jump-trace"] if trace is not None else []
+                proc = subprocess.run([player, "--jump-proof", route, "--user-dir", root / profile, *extra],
                                       cwd=empty_cwd, capture_output=True, text=True, timeout=30)
+                if trace is not None:
+                    trace.write_text(proc.stdout, encoding="utf-8")
                 if proc.returncode != expected_code:
                     raise RuntimeError(f"wrong Jump Proof exit code {proc.returncode}:\n{proc.stdout}{proc.stderr}")
                 return [json.loads(line.removeprefix("Jump Proof: ")) for line in proc.stdout.splitlines()
                         if line.startswith("Jump Proof: ")]
 
-            before = proof(game, 0, "Baseline Route Data")
+            original_trace, changed_trace = root / "Before.txt", root / "After.txt"
+            before = proof(game, 0, "Baseline Route Data", original_trace)
             if len(before) != 1 or before[0]["status"] != "pass" or before[0]["frames"] != 400:
                 raise RuntimeError(f"baseline did not pass Jump Proof: {before}")
             hidden = root / "Hidden Project"
@@ -324,10 +329,29 @@ def main():
             tilemap.write_text(json.dumps(tiles), encoding="utf-8")
             changed = root / "Changed Distribution"
             run(tools["aether_package"], hidden / project.name, "--out", changed, *release_config, cwd=root)
-            after = proof(changed / executable, 5, "Changed Route Data")
+            after = proof(changed / executable, 5, "Changed Route Data", changed_trace)
             if (len(after) != 1 or after[0]["status"] != "missed" or after[0]["frames"] != 400
                     or after[0]["position"][0] >= 28.5):
                 raise RuntimeError(f"single tile change did not fail Jump Proof: {after}")
+
+            compare = Path(__file__).resolve().parents[1] / "jump_proof_compare.py"
+
+            def compare_traces(left, right, code):
+                result = subprocess.run([sys.executable, compare, left, right], cwd=empty_cwd,
+                                        capture_output=True, text=True, timeout=10)
+                if result.returncode != code:
+                    raise RuntimeError(f"trace comparison exit={result.returncode}: {result.stdout}{result.stderr}")
+                return json.loads(result.stdout) if code != 2 else None
+
+            matching = compare_traces(original_trace, original_trace, 0)
+            if matching["first_difference_frame"] is not None or matching["frames"] != 400:
+                raise RuntimeError(f"equal traces were not reported equal: {matching}")
+            diff = compare_traces(original_trace, changed_trace, 5)
+            if not 280 <= diff["first_difference_frame"] <= 300 or diff["frames"] != 400:
+                raise RuntimeError(f"did not locate the first divergence after placing one tile: {diff}")
+            truncated = root / "Truncated.txt"
+            truncated.write_text("\n".join(original_trace.read_text(encoding="utf-8").splitlines()[:-1]), encoding="utf-8")
+            compare_traces(original_trace, truncated, 2)
 
             spec["target"]["min_x"] = 31
             route.write_text(json.dumps(spec), encoding="utf-8")
