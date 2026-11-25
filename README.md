@@ -26,11 +26,11 @@ fifteen cave floors, four festivals and Khmer localization. It is a **separate r
 ```
 cmake -S . -B build -DAETHER_BUILD_EVERVALE_REBOOT=ON
 cmake --build build --config RelWithDebInfo
-ctest --test-dir build -C RelWithDebInfo     # 54 checks: the engine's 44 plus the game's 10
+ctest --test-dir build -C RelWithDebInfo
 ```
 
-The flag is off by default so an engine-only build never pays for game content. When the game's checkout is
-not present the option is ignored rather than failing. `games/EVERVALE-REBOOT/Design/REBOOT_CHECKLIST.md`
+The flag is off by default so an engine-only build never pays for game content. Turning it on requires the separate game checkout; configure stops if it is missing rather than building the engine alone.
+`games/EVERVALE-REBOOT/Design/REBOOT_CHECKLIST.md`
 records what the game implements, what is verified, and what is still missing, against its own product plan.
 
 - [Aether manual](docs/manual/README.md) — projects, assets, scripting, input,
