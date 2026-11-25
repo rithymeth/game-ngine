@@ -2,6 +2,8 @@
 
 #include "sprite2d/tilemap_document.h"
 
+#include <optional>
+
 namespace aether::editor {
 
 // The Tilemap editor (Phase 26 step 5, §26.6): the tileset's tiles to pick
@@ -29,6 +31,11 @@ private:
     std::string save_error_;
     f32 pan_x_ = 8.0f, pan_y_ = 8.0f;
     bool dragging_ = false;
+    struct BrushSample {
+        i32 x, y;
+        TileTool tool;
+    };
+    std::optional<BrushSample> last_brush_sample_;
     bool rect_active_ = false;
     i32 rect_x_ = 0, rect_y_ = 0;
     i32 selected_autotile_ = 0;

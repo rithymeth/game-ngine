@@ -24,6 +24,21 @@ ImU32 TileColor(i32 tile) {
 
 const char* kToolNames[] = {"Paint", "Erase", "Rectangle", "Fill", "Pick"};
 
+// Both endpoints are valid map cells. Fill the gaps between pointer samples
+// with an integer line, so one fast drag remains one undoable stroke.
+void ApplyBrushLine(TilemapEditDocument& doc, i32 x, i32 y, i32 end_x, i32 end_y) {
+    const i32 dx = std::abs(end_x - x), dy = -std::abs(end_y - y);
+    const i32 step_x = x < end_x ? 1 : -1, step_y = y < end_y ? 1 : -1;
+    i32 error = dx + dy;
+    for (;;) {
+        doc.Apply(x, y);
+        if (x == end_x && y == end_y) return;
+        const i32 twice = 2 * error;
+        if (twice >= dy) { error += dy; x += step_x; }
+        if (twice <= dx) { error += dx; y += step_y; }
+    }
+}
+
 } // namespace
 
 void TilemapPanel::Draw() {
@@ -243,10 +258,26 @@ void TilemapPanel::DrawCanvas() {
             doc_.BeginStroke();
             dragging_ = true;
         }
-        doc_.Apply(cx, cy);
+        if (doc_.tool == TileTool::Paint || doc_.tool == TileTool::Erase) {
+            if (hovered && map.InBounds(cx, cy)) {
+                if (last_brush_sample_ && last_brush_sample_->tool == doc_.tool) {
+                    ApplyBrushLine(doc_, last_brush_sample_->x, last_brush_sample_->y, cx, cy);
+                } else {
+                    doc_.Apply(cx, cy);
+                }
+                last_brush_sample_ = BrushSample{cx, cy, doc_.tool};
+            } else {
+                // Do not connect across another panel or a trip outside the map.
+                last_brush_sample_.reset();
+            }
+        } else {
+            last_brush_sample_.reset();
+            doc_.Apply(cx, cy);
+        }
         doc_.tool = saved;
     } else if (dragging_) {
         doc_.EndStroke();
+        last_brush_sample_.reset();
         dragging_ = false;
     }
     ImGui::EndChild();
