@@ -82,13 +82,21 @@ bool PackageRunner::Start(bool package) {
         if (package) {
             cook::PackageOptions options;
             options.cook = std::move(cook_options);
-            options.output_dir = out;
-            options.player_executable = player;
-            cook::PackageReport packaged = cook::Package(options);
-            ok = packaged.ok;
-            error = packaged.error;
-            report = std::move(packaged.cook);
-            game = packaged.game_executable;
+            // Keep the staged executable anchored to the actual package. The
+            // child's working directory is changed at launch, and the editor's
+            // own working directory may also change between build and launch.
+            std::error_code path_error;
+            options.output_dir = stdfs::absolute(out, path_error);
+            if (path_error) {
+                error = "Couldn't resolve the package output directory: " + path_error.message();
+            } else {
+                options.player_executable = player;
+                cook::PackageReport packaged = cook::Package(options);
+                ok = packaged.ok;
+                error = packaged.error;
+                report = std::move(packaged.cook);
+                game = packaged.game_executable;
+            }
         } else {
             cook_options.output_dir =
                 ProjectPaths::ForFile(project_file_).saved / "Cooked" / cook::ConfigurationName(cook_options.configuration);

@@ -740,9 +740,13 @@ if(AETHER_BUILD_TESTS AND Python3_Interpreter_FOUND AND NOT WIN32 AND NOT ANDROI
     endif()
     foreach(template IN LISTS headless_templates)
         set(test_name "packaged_project_headless_${template}")
+        set(editor_smoke_args)
+        if(template STREQUAL "blank" AND TARGET aether_package_runner_smoke)
+            set(editor_smoke_args --editor-runner $<TARGET_FILE:aether_package_runner_smoke>)
+        endif()
         add_test(NAME ${test_name}
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/ci/test_packaged_project.py
-            --template ${template}
+            --template ${template} ${editor_smoke_args}
             --headless-build-tools $<TARGET_FILE:aether_new> $<TARGET_FILE:aether_loc_tool>
             $<TARGET_FILE:aether_package> $<TARGET_FILE:aether_cook> $<TARGET_FILE:aether_pak> $<TARGET_FILE:aether_player>)
         set_tests_properties(${test_name} PROPERTIES TIMEOUT 180)
