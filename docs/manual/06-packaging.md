@@ -39,6 +39,9 @@ aether_player`, then run `ctest --test-dir build -R '^packaged_project_headless_
 --output-on-failure`. This checks startup and 60 simulation frames from outside
 the source project, plus movement from input in the 2D Platformer template. It
 does not check rendered output.
+If the editor command layer is enabled, also build `aether_package_runner_smoke`.
+The Blank check then exercises the editor's Build and Package and Launch
+commands with a relative output path; no editor window is needed.
 
 `PackageManifest.json` records the project name, the game's own version, the
 configuration and the engine version, so a folder somebody ships you can be

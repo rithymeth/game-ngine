@@ -35,6 +35,10 @@ add_executable(aether_tests
 )
 
 target_link_libraries(aether_tests PRIVATE Aether::Engine)
+if(TARGET aether_editor_core AND TARGET aether_player AND NOT ANDROID AND NOT IOS)
+    add_executable(aether_package_runner_smoke package_runner_smoke.cpp)
+    target_link_libraries(aether_package_runner_smoke PRIVATE aether_editor_core)
+endif()
 if(meshoptimizer_SOURCE_DIR)
     target_include_directories(aether_tests PRIVATE "${meshoptimizer_SOURCE_DIR}/src")
     target_link_libraries(aether_tests PRIVATE aether_meshopt)

@@ -26,6 +26,7 @@ def main():
     parser.add_argument("--headless-build-tools", nargs=6, type=Path, metavar="EXE",
                         help="Stage the six executables from a build with no window backend")
     parser.add_argument("--template", choices=("blank", "platformer_2d"), default="blank")
+    parser.add_argument("--editor-runner", type=Path, help="Also exercise the editor's packaging command layer")
     args = parser.parse_args()
     if bool(args.tools_dir) == bool(args.headless_build_tools):
         parser.error("pass either tools_dir or --headless-build-tools")
@@ -54,6 +55,12 @@ def main():
 
         run(tools["aether_new"], name, "--template", args.template, "--dir", root, cwd=root)
         run(tools["aether_loc"], project, "--check", cwd=root)
+        if args.editor_runner:
+            editor_env = dict(os.environ, AETHER_USER_DIR=str(root / "Editor Player Data"))
+            editor_output = run(args.editor_runner.resolve(), project.relative_to(root), tools["aether_player"],
+                                cwd=root, env=editor_env, capture=True)
+            if "Ran 60 frames (" not in editor_output:
+                raise RuntimeError("the editor's Launch command did not run 60 frames")
         package_temp = root / "Package Temp"
         existing_scratch = package_temp / "aether-package-smoke"
         existing_scratch.mkdir(parents=True)
