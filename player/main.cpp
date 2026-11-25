@@ -309,8 +309,8 @@ int main(int argc, char** argv) {
     }
     if (!options.jump_proof.empty()) {
         if (options.user_dir.empty() || !options.replay_input.empty() || !options.server.empty() ||
-            !options.camera_path.empty() || !options.record_dir.empty() || !options.screenshot.empty()) {
-            AETHER_LOG_ERROR("Player", "Jump Proof requires --user-dir and cannot be combined with replay, network or capture modes");
+            !options.camera_path.empty() || !options.record_dir.empty() || !options.screenshot.empty() || !options.pressed.empty()) {
+            AETHER_LOG_ERROR("Player", "Jump Proof requires --user-dir and cannot be combined with other input, network or capture modes");
             return 2;
         }
         options.headless = true;
@@ -553,6 +553,16 @@ int main(int argc, char** argv) {
                 replay.push_back({frame, key, value});
                 previous = frame;
             }
+        }
+        if (options.jump_trace) {
+            auto events = reflect::Json::array();
+            for (const auto& event : replay)
+                events.push_back({{"frame", event.frame}, {"key", input::KeyName(event.key)}, {"value", event.value}});
+            const reflect::Json route = {{"frames", options.frames}, {"fixed_hz", manifest.fixed_timestep_hz},
+                {"scene", options.scene.empty() ? manifest.startup_scene : options.scene},
+                {"target", {{"min_x", target.min_x}, {"max_x", target.max_x}, {"min_y", target.min_y}, {"max_y", target.max_y}}},
+                {"events", std::move(events)}};
+            std::printf("Jump Route: %s\n", route.dump().c_str());
         }
         if (!options.record_jump_route.empty() && (options.frames <= 0 || options.frames > 20000)) {
             AETHER_LOG_ERROR("Player", "Route recording supports 1 to 20000 simulation frames");

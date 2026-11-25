@@ -6,6 +6,7 @@ import json
 import math
 from pathlib import Path
 
+ROUTE_PREFIX = "Jump Route: "
 FRAME_PREFIX = "Jump Trace: "
 VERDICT_PREFIX = "Jump Proof: "
 MAX_FRAMES = 360_000
@@ -19,11 +20,41 @@ def position(record):
     return point
 
 
-def read_trace(path):
-    points, verdict = [], None
+def finite_number(value):
+    return type(value) in (int, float) and math.isfinite(value)
+
+
+def validate_route(route, frames):
+    fields = ("min_x", "max_x", "min_y", "max_y")
+    target = route.get("target")
+    if (type(route.get("frames")) is not int or route["frames"] != frames
+            or not finite_number(route.get("fixed_hz")) or route["fixed_hz"] <= 0
+            or not isinstance(route.get("scene"), str) or not route["scene"]
+            or not isinstance(target, dict) or not all(finite_number(target.get(key)) for key in fields)
+            or target["min_x"] > target["max_x"] or target["min_y"] > target["max_y"]
+            or not isinstance(route.get("events"), list)):
+        raise ValueError("invalid route descriptor")
+    previous = 0
+    for event in route["events"]:
+        if (not isinstance(event, dict) or type(event.get("frame")) is not int
+                or not previous <= event["frame"] < frames
+                or not isinstance(event.get("key"), str) or not event["key"]
+                or not finite_number(event.get("value"))):
+            raise ValueError("invalid input event in route descriptor")
+        previous = event["frame"]
+
+
+def read_trace(path, *, include_route=False):
+    points, verdict, route = [], None, None
     with path.open(encoding="utf-8") as stream:
         for line in stream:
-            if line.startswith(FRAME_PREFIX):
+            if line.startswith(ROUTE_PREFIX):
+                if route is not None or points or verdict is not None:
+                    raise ValueError("route descriptor must appear once before trace frames")
+                route = json.loads(line[len(ROUTE_PREFIX):])
+                if not isinstance(route, dict):
+                    raise ValueError("invalid route descriptor")
+            elif line.startswith(FRAME_PREFIX):
                 sample = json.loads(line[len(FRAME_PREFIX):])
                 if (verdict is not None or len(points) == MAX_FRAMES or not isinstance(sample, dict)
                         or type(sample.get("frame")) is not int or sample["frame"] != len(points) + 1):
@@ -39,7 +70,9 @@ def read_trace(path):
             or verdict["frames"] != len(points) or verdict.get("status") not in ("pass", "missed")
             or position(verdict) != points[-1]):
         raise ValueError("trace does not end with its completed route verdict")
-    return points
+    if route is not None:
+        validate_route(route, len(points))
+    return (points, route) if include_route else points
 
 
 def main():
@@ -52,7 +85,10 @@ def main():
     if not math.isfinite(args.tolerance) or args.tolerance < 0:
         parser.error("tolerance must be finite and non-negative")
     try:
-        left, right = read_trace(args.before), read_trace(args.after)
+        left, left_route = read_trace(args.before, include_route=True)
+        right, right_route = read_trace(args.after, include_route=True)
+        if left_route != right_route:
+            raise ValueError("route descriptors differ (input, target, scene or fixed tick rate)")
         if args.overlay_data and len(left) > 20_000:
             raise ValueError("editor overlay supports up to 20000 frames")
         if len(left) != len(right):
@@ -60,7 +96,8 @@ def main():
     except (OSError, ValueError, OverflowError) as exc:
         parser.error(str(exc))
 
-    result = {"frames": len(left), "tolerance": args.tolerance, "first_difference_frame": None}
+    result = {"frames": len(left), "tolerance": args.tolerance, "first_difference_frame": None,
+              "route_verified": left_route is not None}
     for frame, (a, b) in enumerate(zip(left, right), 1):
         if any(abs(a[i] - b[i]) > args.tolerance for i in (0, 1)):
             result.update(first_difference_frame=frame, before=a, after=b)
