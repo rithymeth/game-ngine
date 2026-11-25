@@ -1,5 +1,6 @@
 #include "test_framework.h"
 #include "aether/pak/pak.h"
+#include "core/editor_document.h"
 #include "packaging/build_window.h"
 #include "packaging/new_project_panel.h"
 #include "sprite2d/tilemap_document.h"
@@ -464,4 +465,39 @@ AETHER_TEST(TilemapEditor_SavesPlatformerEditsBeforePackaging) {
     }
     int code = -1;
     CHECK(build->Game().Wait(&code) && code == 0);
+}
+
+AETHER_TEST(TilemapEditor_EditorQuitProtectsUnsavedProjectMap) {
+    NewProjectPanel starter;
+    starter.location = (std::filesystem::temp_directory_path() / "aether_tilemap_quit").string();
+    starter.name = "TilemapQuit";
+    starter.template_id = "platformer_2d";
+    std::string error;
+    if (!starter.Create(&error)) { CHECK(false); return; }
+    EditorWorkspace ws(starter.Created());
+    int quits = 0;
+    ws.on_quit_confirmed = [&] { ++quits; };
+    if (!ws.OpenAsset("Tiles/Level1.atilemap", &error)) { CHECK(false); return; }
+    auto& doc = ws.Tilemap();
+    doc.brush = AutotileCell(0);
+    doc.Apply(20, 1);
+    CHECK(doc.dirty() && !ws.ActiveDocument().IsDirty());
+    CHECK(ws.HasUnsavedChanges());
+    ws.RequestQuit();
+    if (!ws.QuitPromptOpen() || quits != 0) { CHECK(false); return; }
+    ws.CancelQuit();
+    CHECK(doc.dirty() && quits == 0);
+    ws.RequestQuit();
+
+    const auto tileset = doc.TilesetFile();
+    const auto held = std::filesystem::path(tileset.string() + ".fixture");
+    std::filesystem::rename(tileset, held);
+    std::filesystem::create_directory(tileset);
+    CHECK(!ws.SaveAndQuit() && ws.QuitPromptOpen() && quits == 0 && doc.dirty());
+    std::filesystem::remove(tileset);
+    std::filesystem::rename(held, tileset);
+
+    CHECK(ws.SaveAndQuit() && !ws.QuitPromptOpen() && quits == 1 && !doc.dirty());
+    TilemapData saved;
+    CHECK(LoadTilemap(doc.TilemapFile(), saved, &error) && saved.Get(0, 20, 1) == AutotileCell(0));
 }
