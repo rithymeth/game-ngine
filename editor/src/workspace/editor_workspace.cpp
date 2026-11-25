@@ -36,6 +36,7 @@
 #include "save/save_inspector_panel.h"
 #include "sequencer/sequencer_panel.h"
 #include "sprite2d/tilemap_panel.h"
+#include "sprite2d/sprite_atlas_panel.h"
 #include "ui/code_editor.h"
 #include "uidesign/ui_designer.h"
 #include "vfx/vfx_editor.h"
@@ -388,6 +389,7 @@ struct EditorWorkspace::Impl {
     // 2D.
     std::unique_ptr<TilemapEditDocument> tilemap_doc;
     std::unique_ptr<TilemapPanel> tilemap_panel;
+    SpriteAtlasPanel sprite_atlas_panel;
     std::filesystem::path tilemap_project; // project owning the asset opened in the Tilemap tool
     // Cinematics.
     World sequence_level;
@@ -561,6 +563,8 @@ struct EditorWorkspace::Impl {
              [this] { partition_panel->Draw(); }},
             {"Tilemap - Level 1", "2D", "Paint tiles and collisions on Level 1's grid.",
              [this] { tilemap_panel->Draw(); }},
+            {"Sprite Atlas", "2D", "Inspect atlas frames and preview a named sprite animation.",
+             [this] { sprite_atlas_panel.Draw(); }},
             {"Sequencer - Intro", "Cinematics", "Animate the intro on a timeline of tracks and keys.",
              [this] { sequencer_panel->Draw(); }},
             {"Save Inspector", "Data", "Inspect and edit the game's save data.",
@@ -1123,6 +1127,7 @@ struct EditorWorkspace::Impl {
     void OpenProject(const std::filesystem::path& file) {
         // The running build, if any, is cancelled and joined by its window's destructor.
         build_window.reset();
+        sprite_atlas_panel.Clear();
         project_file = file;
         LoadProjectTools();
         recents.Add(file);
@@ -1268,6 +1273,13 @@ struct EditorWorkspace::Impl {
         if (ext == ".avfx") return load(particle_doc, "Particle System", "particle system");
         if (ext == ".aterrain") return load(terrain_doc, "Terrain", "terrain");
         if (ext == ".afoliage") return load(foliage_doc, "Foliage", "foliage");
+        if (ext == ".aatlas") {
+            std::string why;
+            if (!sprite_atlas_panel.Open(file, content_browser->Database(), &why))
+                return fail(why.empty() ? "Couldn't open " + relative + "." : why);
+            ShowTool("Sprite Atlas");
+            return true;
+        }
         if (ext == ".atilemap" || ext == ".atileset") {
             const assets::AssetDatabase* database = content_browser->Database();
             if (database == nullptr) return fail("The asset database is not available.");
