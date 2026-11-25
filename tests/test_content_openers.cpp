@@ -9,6 +9,9 @@
 #include "aether/audio/cue.h"
 #include "aether/blueprint/graph.h"
 #include "aether/ecs/world.h"
+#include "aether/cook/package.h"
+#include "aether/platform/process.h"
+#include "aether/player/game.h"
 #include "aether/project/project.h"
 #include "aether/reflection/serialize.h"
 #include "aether/renderer/material.h"
@@ -30,10 +33,12 @@
 #include "world/scene_panel.h"
 #include "world/content_drop.h"
 #include "aether/sprite2d/components.h"
+#include "aether/sprite2d/physics2d.h"
 
 #include <imgui.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -695,18 +700,29 @@ AETHER_TEST(Openers_CreatesAnEditableTilemapFromAPaddedSheet) {
     CHECK(sprite2d::LoadTilemap(paths.content / "Sheet.atilemap", map) && map.Get(0, 2, 2) == 3);
 }
 
-AETHER_TEST(Openers_PlacesAnAuthoredTilemapInTheSceneAndKeepsItsReference) {
+AETHER_TEST(Openers_AuthoredTilemapWorksInAnIndependentStrictShippingPackage) {
     ProjectPaths paths;
     FreshProject("place_authored_tilemap", paths);
-    const auto image = assets::EncodePngRgba8(16, 16, std::vector<u8>(16 * 16 * 4, 255));
+    const auto image = assets::EncodePngRgba8(36, 36, std::vector<u8>(36 * 36 * 4, 255));
     std::ofstream(paths.content / "Ground.png", std::ios::binary)
+        .write(reinterpret_cast<const char*>(image.data()), static_cast<std::streamsize>(image.size()));
+    std::ofstream(paths.content / "Unused.png", std::ios::binary)
         .write(reinterpret_cast<const char*>(image.data()), static_cast<std::streamsize>(image.size()));
     ContentBrowserPanel browser(paths.file);
     std::string error;
-    if (!browser.CreateTileset("Ground.png", 16, 16, 0, 0, &error) ||
+    if (!browser.CreateTileset("Ground.png", 16, 16, 1, 2, &error) ||
         !browser.CreateTilemap("Ground.atileset", &error)) { CHECK(false); return; }
     const auto* record = browser.Database()->FindByPath("Ground.atilemap");
     if (!record) { CHECK(false); return; }
+    // Save one real solid cell through the tilemap editor, not the cook fixture.
+    EditorWorkspace ws(paths.file);
+    if (!ws.OpenAsset("Ground.atilemap", &error)) { CHECK(false); return; }
+    auto& painted = ws.Tilemap();
+    painted.brush = 3;
+    painted.Apply(2, 2);
+    painted.SetSolid(3, true);
+    if (!painted.Save(&error)) { CHECK(false); return; }
+
     SceneDocument scene;
     scene.Commands().Clear();
     bool placed = true;
@@ -735,4 +751,66 @@ AETHER_TEST(Openers_PlacesAnAuthoredTilemapInTheSceneAndKeepsItsReference) {
         if (tilemap && tilemap->tilemap.guid == record->guid) ++matches;
     }
     CHECK(matches == 1);
+
+    ProjectSettings settings;
+    if (!LoadProject(paths.file, settings, &error)) { CHECK(false); return; }
+    settings.startup_scene = "Placed.ascene";
+    if (!SaveProject(paths.file, settings, &error)) { CHECK(false); return; }
+    cook::PackageOptions options;
+    options.cook.project_file = paths.file;
+    options.cook.configuration = cook::BuildConfiguration::Shipping;
+    options.cook.strict_validation = true;
+    options.output_dir = paths.root.parent_path() / "Shipping";
+    options.player_executable = AETHER_TEST_PLAYER_PATH;
+    const auto staged = cook::Package(options);
+    if (!staged.ok) { std::fprintf(stderr, "strict authored tilemap package: %s\n", staged.error.c_str()); CHECK(false); return; }
+    std::vector<std::string> problems;
+    CHECK(cook::VerifyPackageManifest(options.output_dir, problems) && problems.empty());
+
+    // Exclude the source project before exercising both the runtime and staged exe.
+    std::error_code move_error;
+    stdfs::rename(paths.root, paths.root.parent_path() / "Unavailable Source", move_error);
+    if (move_error || stdfs::exists(paths.file)) { CHECK(false); return; }
+
+    player::GamePackage package;
+    const auto archives = player::GamePackage::FindPaks(staged.paks_dir);
+    if (archives.empty()) { CHECK(false); return; }
+    for (const auto& archive : archives)
+        if (!package.Mount(archive, 0, &error)) { CHECK(false); return; }
+    if (!package.LoadManifest(&error)) { CHECK(false); return; }
+    CHECK(package.Manifest().configuration == cook::BuildConfiguration::Shipping);
+    const auto* map_asset = package.FindAssetByGuid(assets::ToString(record->guid));
+    if (!map_asset || map_asset->path != "Ground.atilemap") { CHECK(false); return; }
+    const auto read = [&](const std::string& path) {
+        std::vector<u8> bytes;
+        if (!package.ReadContent(path, bytes)) return nlohmann::json{};
+        return nlohmann::json::parse(bytes.begin(), bytes.end(), nullptr, false);
+    };
+    sprite2d::TilemapData map_from_pak;
+    if (!sprite2d::TilemapFromJson(read(map_asset->path), map_from_pak) || map_from_pak.Get(0, 2, 2) != 3) { CHECK(false); return; }
+    const auto* set_asset = package.FindAssetByGuid(assets::ToString(map_from_pak.tileset));
+    if (!set_asset || set_asset->path != "Ground.atileset") { CHECK(false); return; }
+    sprite2d::Tileset set_from_pak;
+    if (!sprite2d::TilesetFromJson(read(set_asset->path), set_from_pak) || !set_from_pak.IsSolid(3)) { CHECK(false); return; }
+    f32 uv[4];
+    CHECK(set_from_pak.Uv(3, uv) && uv[0] == 19.0f/36 && uv[1] == 19.0f/36 && uv[2] == 35.0f/36 && uv[3] == 35.0f/36);
+    const auto* texture = package.FindAssetByGuid(assets::ToString(set_from_pak.texture));
+    CHECK(texture && texture->path == "Ground.png" && !package.FindAsset("Unused.png"));
+    std::vector<u8> cooked_pixels;
+    CHECK(texture && !texture->cooked.empty() && package.Files().Read(texture->cooked, cooked_pixels) && !cooked_pixels.empty());
+
+    player::Game game(package);
+    game.SetUserPaths(player::ResolveUserPaths("AuthoredMap", paths.root.parent_path() / "Runtime Profile"));
+    if (!game.LoadStartupScene(&error) || !game.Physics2D()) { CHECK(false); return; }
+    sprite2d::RayHit2D hit;
+    CHECK(game.Physics2D()->Raycast(sprite2d::Vec2{4.5f, 8.0f}, sprite2d::Vec2{0.0f, -1.0f}, 4.0f, hit) &&
+          hit.tile && hit.tile_x == 2 && hit.tile_y == 2 && hit.distance == 2.0f);
+    CHECK(!game.Physics2D()->Raycast(sprite2d::Vec2{5.5f, 8.0f}, sprite2d::Vec2{0.0f, -1.0f}, 4.0f, hit));
+
+    platform::ChildProcess player;
+    const auto user = paths.root.parent_path() / "Staged Profile";
+    if (!player.Start(staged.game_executable, {"--headless", "--frames", "3", "--user-dir", user.string()},
+                      options.output_dir, &error)) { CHECK(false); return; }
+    int code = -1;
+    CHECK(player.Wait(&code) && code == 0);
 }
