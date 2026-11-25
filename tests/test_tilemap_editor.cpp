@@ -1,5 +1,8 @@
 #include "test_framework.h"
 #include "aether/pak/pak.h"
+#include "aether/assets/asset_database.h"
+#include "aether/assets/png_writer.h"
+#include "aether/project/project.h"
 #include "core/editor_document.h"
 #include "packaging/build_window.h"
 #include "packaging/new_project_panel.h"
@@ -9,6 +12,7 @@
 
 #include <imgui.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -660,4 +664,69 @@ AETHER_TEST(TilemapEditor_RectangleDragCancelsAndClipsWithoutPartialHistory) {
     }
     CHECK(doc.Undo() && !doc.CanUndo());
     CHECK(doc.Map().Get(0, 5, 3) == kEmpty && doc.Redo() && doc.Map().Get(0, 5, 3) == 4);
+}
+
+AETHER_TEST(TilemapEditor_WorkspaceDrawsTheAuthoredSheetInPaletteAndCanvas) {
+    const auto dir = std::filesystem::temp_directory_path() / "aether_tilemap_texture_preview";
+    ProjectPaths paths;
+    std::string error;
+    if (!CreateProject(dir, "Tiles", &paths, &error)) { CHECK(false); return; }
+    const auto png = assets::EncodePngRgba8(18, 8, std::vector<u8>(18 * 8 * 4, 255));
+    std::ofstream(paths.content / "Tiles.png", std::ios::binary)
+        .write(reinterpret_cast<const char*>(png.data()), static_cast<std::streamsize>(png.size()));
+    assets::AssetDatabase db(paths.content);
+    db.Scan();
+    const auto* texture = db.FindByPath("Tiles.png");
+    if (!texture) { CHECK(false); return; }
+    Tileset tiles;
+    tiles.texture = texture->guid;
+    tiles.texture_width = 18;
+    tiles.texture_height = tiles.tile_width = tiles.tile_height = 8;
+    tiles.spacing = 2;
+    if (!SaveTileset(paths.content / "Tiles.atileset", tiles, &error)) { CHECK(false); return; }
+    // Copy the GUID before scanning, which replaces the database's records.
+    db.Scan();
+    const auto* set = db.FindByPath("Tiles.atileset");
+    if (!set) { CHECK(false); return; }
+    TilemapData map;
+    map.Resize(2, 1);
+    map.AddLayer("Ground");
+    map.Set(0, 0, 0, 1);
+    map.tileset = set->guid;
+    if (!SaveTilemap(paths.content / "Map.atilemap", map, &error)) { CHECK(false); return; }
+
+    HeadlessImGui ui;
+    EditorWorkspace ws(paths.file);
+    const auto draw = [&] { ui.Frame([&] { ws.DrawTool(ws.Selected()); }); };
+    const auto image_quads_for_second_tile = [&] {
+        int quads = 0;
+        constexpr float low = 10.0f / 18.0f;
+        for (const auto* list : ImGui::GetDrawData()->CmdLists) {
+            for (const auto& cmd : list->CmdBuffer) {
+                const auto* tex = cmd.TexRef._TexData;
+                if (!tex || tex->Width != 18 || tex->Height != 8) continue;
+                for (unsigned int index = 0; index + 5 < cmd.ElemCount; index += 6) {
+                    float u0 = 1.0f, u1 = 0.0f;
+                    for (unsigned int i = 0; i < 6; ++i) {
+                        const auto& v = list->VtxBuffer[cmd.VtxOffset + list->IdxBuffer[cmd.IdxOffset + index + i]];
+                        u0 = std::min(u0, v.uv.x);
+                        u1 = std::max(u1, v.uv.x);
+                    }
+                    if (u0 == low && u1 == 1.0f) ++quads;
+                }
+            }
+        }
+        return quads;
+    };
+    if (!ws.OpenAsset("Map.atilemap", &error)) { CHECK(false); return; }
+    draw();
+    CHECK(image_quads_for_second_tile() == 2); // palette and painted cell; both skip the gutter
+    CHECK(!ws.Tilemap().dirty() && ws.Tilemap().Map().Get(0, 0, 0) == 1);
+
+    // A sheet with mismatched dimensions must not leave old art visible or block editing.
+    tiles.texture_width = 16;
+    CHECK(SaveTileset(paths.content / "Tiles.atileset", tiles, &error));
+    if (!ws.OpenAsset("Map.atilemap", &error)) { CHECK(false); return; }
+    draw();
+    CHECK(image_quads_for_second_tile() == 0 && !ws.Tilemap().dirty());
 }

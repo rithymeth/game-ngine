@@ -1326,6 +1326,7 @@ struct EditorWorkspace::Impl {
             if (tileset == nullptr || tileset->missing) return fail(relative + " names a tileset that isn't in the project.");
             const std::filesystem::path tileset_file = ProjectPaths::ForFile(project_file).content / tileset->path;
             if (!tilemap_doc->Load(file, tileset_file, &why)) return fail(why.empty() ? "Couldn't open " + relative + "." : why);
+            if (tilemap_panel) tilemap_panel->LoadTexturePreview(*database);
             tilemap_project = project_file;
             ShowTool("Tilemap");
             return true;
