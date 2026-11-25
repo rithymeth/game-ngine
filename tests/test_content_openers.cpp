@@ -658,3 +658,37 @@ AETHER_TEST(Openers_CreateTilemapFromExistingTilesetWithoutOverwriting) {
     CHECK(stdfs::exists(paths.content / "Tiles/Ground_4.atilemap"));
     CHECK(ws.Tilemap().TilemapFile() == result && ws.Tilemap().dirty() && ws.Tilemap().Map().Get(0, 1, 1) == 2);
 }
+
+AETHER_TEST(Openers_CreatesAnEditableTilemapFromAPaddedSheet) {
+    ProjectPaths paths;
+    FreshProject("tileset_from_sheet", paths);
+    const auto image = assets::EncodePngRgba8(20, 20, std::vector<u8>(20 * 20 * 4, 255));
+    std::ofstream(paths.content / "Sheet.png", std::ios::binary)
+        .write(reinterpret_cast<const char*>(image.data()), static_cast<std::streamsize>(image.size()));
+    ContentBrowserPanel browser(paths.file);
+    std::string error;
+    const auto set_file = paths.content / "Sheet.atileset";
+    CHECK(!browser.CreateTileset("Sheet.png", 8, 8, 0, 2, &error) && !stdfs::exists(set_file));
+    if (!browser.CreateTileset("Sheet.png", 8, 8, 1, 2, &error)) { CHECK(false); return; }
+    sprite2d::Tileset tiles;
+    if (!sprite2d::LoadTileset(set_file, tiles, &error)) { CHECK(false); return; }
+    const auto* source = browser.Database()->FindByPath("Sheet.png");
+    CHECK(source && tiles.texture == source->guid);
+    CHECK(tiles.TileCount() == 4 && tiles.margin == 1 && tiles.spacing == 2);
+    f32 uv[4];
+    CHECK(tiles.Uv(3, uv) && uv[0] == 11.0f/20 && uv[1] == 11.0f/20 && uv[2] == 19.0f/20 && uv[3] == 19.0f/20);
+    CHECK(!browser.CreateTileset("Sheet.png", 20, 20, 0, 0, &error));
+    sprite2d::Tileset unchanged;
+    CHECK(sprite2d::LoadTileset(set_file, unchanged) && sprite2d::TilesetToJson(unchanged) == sprite2d::TilesetToJson(tiles));
+
+    EditorWorkspace ws(paths.file);
+    browser.SetAssetOpener([&](const std::string& path, std::string* why) { return ws.OpenAsset(path, why); });
+    if (!browser.CreateTilemap("Sheet.atileset", &error)) { CHECK(false); return; }
+    auto& doc = ws.Tilemap();
+    CHECK(doc.TilemapFile() == paths.content / "Sheet.atilemap" && doc.GetTileset().texture == tiles.texture);
+    doc.brush = 3;
+    doc.Apply(2, 2);
+    CHECK(doc.Save(&error));
+    sprite2d::TilemapData map;
+    CHECK(sprite2d::LoadTilemap(paths.content / "Sheet.atilemap", map) && map.Get(0, 2, 2) == 3);
+}

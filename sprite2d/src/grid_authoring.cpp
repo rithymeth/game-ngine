@@ -4,6 +4,7 @@
 #include "aether/assets/image.h"
 #include "aether/sprite2d/atlas.h"
 #include "aether/sprite2d/components.h"
+#include "aether/sprite2d/tilemap.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -140,6 +141,69 @@ bool CreateGridAtlas(const fs::path& content_root, const fs::path& requested, co
         return Fail("could not finish writing atlas: " + output.string());
     }
     result = {output.lexically_relative(content).generic_string(), atlas.frames.size(), atlas.clips.size()};
+    return true;
+}
+
+bool CreateGridTileset(const fs::path& content_root, const fs::path& requested,
+                       u32 cell_w, u32 cell_h, u32 margin, u32 spacing,
+                       std::string& relative_path, std::string* error) {
+    relative_path.clear();
+    if (error) error->clear();
+    const auto fail = [&](const std::string& message) {
+        if (error) *error = message;
+        return false;
+    };
+    if (!cell_w || !cell_h) return fail("Tile width and height must be positive.");
+    if (!VisibleRelative(requested)) return fail("Choose a visible tile sheet inside Content.");
+    std::error_code ec;
+    const auto content = fs::canonical(content_root, ec);
+    if (ec) return fail("Cannot open the project's Content folder.");
+    const auto sheet = fs::canonical(content / requested, ec);
+    if (ec || !fs::is_regular_file(sheet, ec)) return fail("Cannot find the selected tile sheet.");
+    const auto relative = sheet.lexically_relative(content);
+    if (!VisibleRelative(relative)) return fail("Choose a visible tile sheet inside Content.");
+    auto extension = sheet.extension().string();
+    std::transform(extension.begin(), extension.end(), extension.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    if (assets::ImporterForExtension(sheet) != "Texture" || extension == ".hdr")
+        return fail("Choose a supported tile sheet (PNG, JPEG, BMP or TGA).");
+    auto output = sheet;
+    output.replace_extension(".atileset");
+    auto metadata = output;
+    metadata += assets::AssetMeta::kExtension;
+    if (Occupied(output) || Occupied(metadata)) return fail("A tileset or its metadata already exists: " + output.filename().string());
+
+    assets::ImageData image;
+    constexpr u64 kMaxPixels = 16 * 1024 * 1024;
+    if (!assets::DecodeImageFile(sheet.string(), image, kMaxPixels))
+        return fail("Cannot decode the tile sheet as an image of up to 16 million pixels.");
+    if (!GridCells(image.width, cell_w, margin, spacing) || !GridCells(image.height, cell_h, margin, spacing))
+        return fail("Tile size, margin and spacing must leave only complete cells.");
+
+    assets::AssetDatabase database(content);
+    database.Scan();
+    const auto* source = database.FindByPath(relative.generic_string());
+    if (!source || source->missing || source->importer != "Texture" || source->guid.IsNull())
+        return fail("The asset database could not import the selected texture.");
+    Tileset set;
+    set.texture = source->guid;
+    set.texture_width = image.width;
+    set.texture_height = image.height;
+    set.tile_width = cell_w;
+    set.tile_height = cell_h;
+    set.margin = margin;
+    set.spacing = spacing;
+
+    const std::string json = TilesetToJson(set).dump(2) + "\n";
+    std::FILE* file = std::fopen(output.string().c_str(), "wbx");
+    if (!file) return fail("Cannot create " + output.filename().string() + " without overwriting an existing file.");
+    const bool wrote = std::fwrite(json.data(), 1, json.size(), file) == json.size();
+    const bool closed = std::fclose(file) == 0;
+    if (!wrote || !closed) {
+        fs::remove(output, ec);
+        return fail("Could not finish writing " + output.filename().string() + ".");
+    }
+    relative_path = output.lexically_relative(content).generic_string();
     return true;
 }
 

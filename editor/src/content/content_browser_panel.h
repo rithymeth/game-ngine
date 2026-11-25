@@ -156,6 +156,8 @@ public:
         std::vector<SpriteAtlasClip> clips{};
     };
     bool CreateSpriteAtlas(const std::string& texture, const SpriteAtlasGrid& grid, std::string* error = nullptr);
+    bool CreateTileset(const std::string& texture, int tile_width, int tile_height,
+                       int margin, int spacing, std::string* error = nullptr);
     // Create an empty map next to an existing tileset; never replace an asset.
     bool CreateTilemap(const std::string& tileset, std::string* error = nullptr);
     const std::string& LastOpenError() const { return last_open_error_; }
@@ -205,6 +207,7 @@ private:
     void ApplyAction();
     void DrawActionDialog();
     void DrawSpriteAtlasDialog();
+    void DrawTilesetDialog();
     void DrawReferenceViewer();
     void DrawValidation();
     void DrawImportSettings();
@@ -256,6 +259,10 @@ private:
     Action action_ = Action::None;
     bool action_popup_pending_ = false;
     bool sprite_atlas_popup_pending_ = false;
+    bool tileset_popup_pending_ = false;
+    std::string tileset_source_, tileset_error_;
+    int tileset_cells_[2] = {16, 16};
+    int tileset_margin_ = 0, tileset_spacing_ = 0;
     std::string sprite_atlas_source_, sprite_atlas_error_;
     int sprite_atlas_cells_[2] = {16, 16};
     int sprite_atlas_margins_[2] = {}, sprite_atlas_spacing_[2] = {};
