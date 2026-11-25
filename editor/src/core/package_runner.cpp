@@ -65,7 +65,7 @@ bool PackageRunner::Start(bool package) {
         std::lock_guard<std::mutex> lock(mutex_);
         // Launch represents the current package attempt, not a fallback to a
         // previous executable. Keep the previous files on disk for manual use.
-        if (package) staged_game_.clear();
+        if (package) staged_ = {};
         log_.clear();
         progress_ = 0.0f;
         if (!valid_key) {
@@ -96,7 +96,7 @@ bool PackageRunner::Start(bool package) {
     };
     const stdfs::path out = OutputDir();
     const std::string player = player_path;
-    worker_ = std::thread([this, package, cook_options, out, player]() mutable {
+    worker_ = std::thread([this, package, cook_options, out, player, package_key = cook_options.encryption_key]() mutable {
         bool ok = false;
         std::string error;
         cook::CookReport report;
@@ -135,7 +135,7 @@ bool PackageRunner::Start(bool package) {
                 stage_ = package ? "Packaged into " + out.string() : "Cooked into " + report.pak_file.string();
                 log_.push_back({false, stage_ + " (" + std::to_string(report.assets.size()) + " assets, " +
                                            std::to_string(report.pak_bytes / 1024) + " KB)"});
-                if (package) staged_game_ = game;
+                if (package) staged_ = {std::move(game), package_key};
             } else {
                 result_ = cancel_.load() && error == "Cancelled" ? Result::Cancelled : Result::Failed;
                 stage_ = result_ == Result::Cancelled ? "Cancelled" : "Failed: " + error;
@@ -175,11 +175,16 @@ PackageRunner::Result PackageRunner::LastResult() const {
 
 stdfs::path PackageRunner::StagedGame() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    return staged_game_;
+    return staged_.game;
 }
 
 bool PackageRunner::Launch(std::string* error) {
-    const stdfs::path game = StagedGame();
+    StagedPackage staged;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        staged = staged_;
+    }
+    const stdfs::path& game = staged.game;
     std::string why;
     bool ok = false;
     if (game.empty()) {
@@ -191,9 +196,9 @@ bool PackageRunner::Launch(std::string* error) {
         if (!SplitArgs(launch_args, args)) {
             why = "Launch arguments contain an unclosed double quote";
         } else {
-            if (encrypt) {
+            if (staged.key) {
                 args.push_back("--key");
-                args.push_back(encryption_key);
+                args.push_back(staged.key->ToHex());
             }
             ok = game_.Start(game, args, game.parent_path(), &why);
         }
