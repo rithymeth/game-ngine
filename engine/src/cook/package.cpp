@@ -353,6 +353,15 @@ std::string GameExecutableName(const std::string& project_name) {
         if (std::isalnum(static_cast<unsigned char>(c)) || c == '-' || c == '_') name.push_back(c);
     }
     if (name.empty()) name = "Game";
+    // An extensionless executable must not take the name of a package directory.
+    // Match case-insensitively so the result also works on case-insensitive volumes.
+    if (*kExeSuffix == '\0') {
+        std::string lower = name;
+        std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+        });
+        if (lower == "paks" || lower == "licenses") name += "-game";
+    }
     return name + kExeSuffix;
 }
 

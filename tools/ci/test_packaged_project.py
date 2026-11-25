@@ -132,6 +132,19 @@ def main():
                 if f"Content/Models/{model}.gltf" not in listing:
                     raise RuntimeError(f"the packaged 3D starter is missing {model}.gltf")
         if args.headless_build_tools and args.template == "blank":
+            # An extensionless executable cannot share a name with a package folder.
+            for project_name, executable_name in (("P a k s", "Paks-game"), ("LICENSES", "LICENSES-game")):
+                created = run(tools["aether_new"], project_name, "--dir", root, cwd=root, capture=True)
+                collision_source = root / project_name
+                launch_command = created.strip().splitlines()[-1]
+                if shlex.split(launch_command) != [str(collision_source / "Build" / executable_name)]:
+                    raise RuntimeError(f"Scaffold printed the wrong executable for {project_name!r}")
+                collision_output = root / (project_name + " Distribution")
+                run(tools["aether_package"], collision_source / (project_name + ".aproject"),
+                    "--out", collision_output, "--smoke", cwd=root, env=package_env)
+                if not (collision_output / executable_name).is_file() or not (collision_output / "Paks").is_dir():
+                    raise RuntimeError(f"Package file and data folder collide for {project_name!r}")
+                run(tools["aether_pak"], "verify-package", collision_output, cwd=root)
             # Keep the real player busy well past the deadline, without a fake
             # executable or an actual hang. Capture output to check the cause.
             timed_out = subprocess.run(

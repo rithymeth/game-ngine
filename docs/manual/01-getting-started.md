@@ -77,7 +77,9 @@ keeps the name you typed, but the packaged executable is `MyGame` (or
 `MyGame.exe` on Windows). The printed launch command uses PowerShell syntax
 on Windows and POSIX shell syntax elsewhere. The editor and CLI reject reserved Windows
 names such as `CON` and `COM1` during creation, even with spaces (for example, `C O M 1`),
-so the eventual executable can also use the project name on Windows.
+so the eventual executable can also use the project name on Windows. For
+extensionless executables, names such as `Paks` or `licenses` gain a `-game`
+suffix so the executable does not collide with the package's data folders.
 
 What each template shows when it runs:
 
