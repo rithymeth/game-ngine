@@ -3,6 +3,7 @@
 #include "core/package_runner.h"
 
 #include <filesystem>
+#include <functional>
 #include <string>
 
 // The Build and Package window and the Project Settings panel (Phase 25
@@ -21,7 +22,15 @@ class BuildPackageWindow : public PackageRunner {
 public:
     explicit BuildPackageWindow(std::filesystem::path project_file) : PackageRunner(std::move(project_file)) {}
 
+    // Checked on the UI thread, before reading any saved build inputs.
+    void SetSourceCheck(std::function<std::string()> check) { source_check_ = std::move(check); }
+    bool StartCook();
+    bool StartPackage();
     void Draw();
+
+private:
+    std::string SourceBlocker() const { return source_check_ ? source_check_() : std::string(); }
+    std::function<std::string()> source_check_;
 };
 
 // The project's settings in a reflected property table, with Save and Revert.

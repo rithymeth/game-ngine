@@ -23,6 +23,9 @@ constexpr const char* kCompressionNames[] = {"None", "LZ4", "Zstd", "Auto"};
 // The work is PackageRunner's; this draws its controls, its progress and its
 // log into the current ImGui window.
 
+bool BuildPackageWindow::StartCook() { return SourceBlocker().empty() && PackageRunner::StartCook(); }
+bool BuildPackageWindow::StartPackage() { return SourceBlocker().empty() && PackageRunner::StartPackage(); }
+
 void BuildPackageWindow::Draw() {
     const bool busy = Busy();
     ImGui::TextUnformatted(project_file_.filename().string().c_str());
@@ -59,9 +62,13 @@ void BuildPackageWindow::Draw() {
     }
     ImGui::EndDisabled();
 
+    const std::string source_blocker = SourceBlocker();
+    if (!source_blocker.empty()) ImGui::TextWrapped("%s", source_blocker.c_str());
+    ImGui::BeginDisabled(busy || !source_blocker.empty());
     if (ImGui::Button("Cook")) StartCook();
     ImGui::SameLine();
     if (ImGui::Button("Package")) StartPackage();
+    ImGui::EndDisabled();
     ImGui::SameLine();
     ImGui::BeginDisabled(!busy);
     if (ImGui::Button("Cancel")) Cancel();

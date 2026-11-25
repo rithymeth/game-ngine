@@ -37,6 +37,7 @@ class AssetDatabase;
 
 namespace aether::editor {
 
+class BuildPackageWindow;
 class ExtensionRegistry;
 class ScenePanel;
 class EditorScripts;
@@ -118,6 +119,8 @@ public:
     void DrawTool(usize tool);
     // The open scene (the Scene tool's document and actions), for a host's own menus and shortcuts.
     ScenePanel& Scene();
+    // The current project's guarded Build and Package tool; null without a project.
+    BuildPackageWindow* PackageWindow();
     // The Tilemap tool's document, for a host's file actions and for tests.
     TilemapEditDocument& Tilemap();
     // The Scene View's camera, tools and view mode, for a host that gives it a rendered picture (the shell's Vulkan shading).
