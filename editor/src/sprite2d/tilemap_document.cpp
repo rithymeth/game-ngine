@@ -62,8 +62,8 @@ void TilemapEditDocument::ClampActive() {
     if (active_layer >= map_.layers.size()) active_layer = map_.layers.empty() ? 0 : map_.layers.size() - 1;
 }
 
-void TilemapEditDocument::Record() {
-    undo_.push_back({map_, tileset_});
+void TilemapEditDocument::Record(bool track_selection) {
+    undo_.push_back({map_, tileset_, track_selection ? std::optional<usize>{active_layer} : std::nullopt});
     redo_.clear();
     Changed();
 }
@@ -137,10 +137,12 @@ void TilemapEditDocument::Rectangle(i32 x0, i32 y0, i32 x1, i32 y1) {
 
 bool TilemapEditDocument::Undo() {
     if (undo_.empty()) return false;
-    redo_.push_back({map_, tileset_});
+    const auto selection = undo_.back().selection;
+    redo_.push_back({map_, tileset_, selection ? std::optional<usize>{active_layer} : std::nullopt});
     map_ = std::move(undo_.back().map);
     tileset_ = std::move(undo_.back().tileset);
     undo_.pop_back();
+    if (selection) active_layer = *selection;
     ClampActive();
     Changed();
     return true;
@@ -148,10 +150,12 @@ bool TilemapEditDocument::Undo() {
 
 bool TilemapEditDocument::Redo() {
     if (redo_.empty()) return false;
-    undo_.push_back({map_, tileset_});
+    const auto selection = redo_.back().selection;
+    undo_.push_back({map_, tileset_, selection ? std::optional<usize>{active_layer} : std::nullopt});
     map_ = std::move(redo_.back().map);
     tileset_ = std::move(redo_.back().tileset);
     redo_.pop_back();
+    if (selection) active_layer = *selection;
     ClampActive();
     Changed();
     return true;
@@ -169,6 +173,20 @@ bool TilemapEditDocument::RemoveLayer(usize layer) {
     Record();
     map_.layers.erase(map_.layers.begin() + static_cast<std::ptrdiff_t>(layer));
     ClampActive();
+    return true;
+}
+
+bool TilemapEditDocument::MoveLayer(usize from, usize to) {
+    if (in_stroke_ || from == to || from >= map_.layers.size() || to >= map_.layers.size()) return false;
+    Record(true);
+    const auto begin = map_.layers.begin();
+    const auto src = begin + static_cast<std::ptrdiff_t>(from);
+    const auto dst = begin + static_cast<std::ptrdiff_t>(to);
+    if (from < to) std::rotate(src, src + 1, dst + 1);
+    else std::rotate(dst, src, src + 1);
+    if (active_layer == from) active_layer = to;
+    else if (from < active_layer && active_layer <= to) --active_layer;
+    else if (to <= active_layer && active_layer < from) ++active_layer;
     return true;
 }
 

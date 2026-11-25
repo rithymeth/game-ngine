@@ -244,6 +244,14 @@ void TilemapPanel::DrawLayers() {
     ImGui::SameLine();
     if (ImGui::SmallButton("Remove")) doc_.RemoveLayer(doc_.active_layer);
     if (doc_.active_layer < map.layers.size()) {
+        const auto active = doc_.active_layer;
+        ImGui::BeginDisabled(active + 1 >= map.layers.size());
+        if (ImGui::SmallButton("Move up")) doc_.MoveLayer(active, active + 1);
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::BeginDisabled(active == 0);
+        if (ImGui::SmallButton("Move down")) doc_.MoveLayer(active, active - 1);
+        ImGui::EndDisabled();
         ImGui::PushID(static_cast<int>(doc_.active_layer));
         std::string name = map.layers[doc_.active_layer].name;
         ImGui::SetNextItemWidth(138.0f);
