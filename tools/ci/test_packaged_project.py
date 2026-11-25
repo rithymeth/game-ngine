@@ -363,7 +363,8 @@ def main():
                 return json.loads(result.stdout) if code != 2 else None
 
             matching = compare_traces(original_trace, original_trace, 0)
-            if matching["first_difference_frame"] is not None or matching["frames"] != 400:
+            if (matching["first_difference_frame"] is not None or matching["frames"] != 400
+                    or matching.get("route_verified") is not True):
                 raise RuntimeError(f"equal traces were not reported equal: {matching}")
             diff = compare_traces(original_trace, changed_trace, 5)
             if not 280 <= diff["first_difference_frame"] <= 300 or diff["frames"] != 400:
@@ -397,6 +398,28 @@ def main():
             if uncontrolled.returncode != 2 or "outside" not in uncontrolled.stderr:
                 raise RuntimeError("the tool claimed attribution despite an uncontrolled change")
             extra.unlink()
+            mismatched_route = root / "Different route.txt"
+            original_lines = original_trace.read_text(encoding="utf-8").splitlines()
+            metadata = [line for line in original_lines if line.startswith("Jump Route: ")]
+            if len(metadata) != 1:
+                raise RuntimeError("trace did not include exactly one route descriptor")
+            for field in ("fixed_hz", "events", "target"):
+                different = json.loads(metadata[0].removeprefix("Jump Route: "))
+                if field == "fixed_hz":
+                    different["fixed_hz"] *= 2
+                elif field == "events":
+                    different["events"][0]["frame"] += 1
+                else:
+                    different["target"]["max_x"] += 0.1
+                mismatched_route.write_text("\n".join("Jump Route: " + json.dumps(different)
+                                                       if line == metadata[0] else line for line in original_lines),
+                                            encoding="utf-8")
+                compare_traces(original_trace, mismatched_route, 2)
+            legacy = root / "Legacy.txt"
+            legacy.write_text("\n".join(line for line in original_lines if line != metadata[0]), encoding="utf-8")
+            if compare_traces(legacy, legacy, 0).get("route_verified") is not False:
+                raise RuntimeError("old logs silently claimed route verification")
+            compare_traces(original_trace, legacy, 2)
             truncated = root / "Truncated.txt"
             truncated.write_text("\n".join(original_trace.read_text(encoding="utf-8").splitlines()[:-1]), encoding="utf-8")
             compare_traces(original_trace, truncated, 2)
