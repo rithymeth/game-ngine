@@ -501,3 +501,29 @@ AETHER_TEST(TilemapEditor_EditorQuitProtectsUnsavedProjectMap) {
     TilemapData saved;
     CHECK(LoadTilemap(doc.TilemapFile(), saved, &error) && saved.Get(0, 20, 1) == AutotileCell(0));
 }
+
+AETHER_TEST(TilemapEditor_ProjectSwitchProtectsAndClearsOldMap) {
+    NewProjectPanel starter;
+    starter.location = (std::filesystem::temp_directory_path() / "aether_tilemap_switch").string();
+    starter.template_id = "platformer_2d";
+    starter.name = "First Map";
+    std::string error;
+    if (!starter.Create(&error)) { CHECK(false); return; }
+    const auto first = starter.Created();
+    starter.name = "Second Map";
+    if (!starter.Create(&error)) { CHECK(false); return; }
+    const auto second = starter.Created();
+
+    EditorWorkspace ws(first);
+    if (!ws.OpenAsset("Tiles/Level1.atilemap", &error)) { CHECK(false); return; }
+    const auto old_map = ws.Tilemap().TilemapFile();
+    ws.Tilemap().brush = AutotileCell(0);
+    ws.Tilemap().Apply(20, 1);
+    if (ws.OpenProject(second)) { CHECK(false); return; }
+    CHECK(ws.ProjectFile() == first && ws.Tilemap().TilemapFile() == old_map && ws.Tilemap().dirty());
+    CHECK(ws.Tilemap().Map().Get(0, 20, 1) == AutotileCell(0));
+    CHECK(ws.Tilemap().Save(&error));
+    CHECK(ws.OpenProject(second) && ws.ProjectFile() == second);
+    CHECK(ws.Tilemap().TilemapFile().empty() && !ws.Tilemap().dirty());
+    CHECK(ws.OpenAsset("Tiles/Level1.atilemap", &error) && ws.Tilemap().TilemapFile() != old_map);
+}

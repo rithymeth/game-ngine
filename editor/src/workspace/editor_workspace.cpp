@@ -1118,8 +1118,7 @@ struct EditorWorkspace::Impl {
     // A project made from a template becomes the one the Project tools work on, and the hub closes over it.
     void BuildProject() {
         new_project.on_created = [this](const std::filesystem::path& file) {
-            OpenProject(file);
-            if (owner != nullptr) owner->project_hub_open = false;
+            if (OpenProject(file) && owner != nullptr) owner->project_hub_open = false;
         };
         std::string error;
         if (project_file.empty()) project_file = EditorWorkspace::SampleProject(&error);
@@ -1128,14 +1127,29 @@ struct EditorWorkspace::Impl {
     }
 
     // Points the Project tools (and the plugins' modules) at `file`, and puts it at the front of the hub's list.
-    void OpenProject(const std::filesystem::path& file) {
+    bool OpenProject(const std::filesystem::path& file) {
+        std::error_code ec;
+        const bool changed = file != project_file && !std::filesystem::equivalent(file, project_file, ec);
+        if (changed && HasUnsavedTilemap()) {
+            const auto name = tilemap_doc->TilemapFile().filename().string();
+            notifications.Post(NotificationSeverity::Warning, "Tilemap has unsaved changes",
+                               "Save " + name + " in the Tilemap tool before opening another project.",
+                               NotificationTarget{NotificationTarget::Kind::File, tilemap_doc->TilemapFile().string()});
+            return false;
+        }
         // The running build, if any, is cancelled and joined by its window's destructor.
         build_window.reset();
         sprite_atlas_panel.Clear();
-        project_file = file;
+        if (changed) {
+            tilemap_panel.reset();
+            BuildTilemap();
+            tilemap_project.clear();
+            project_file = file;
+        }
         LoadProjectTools();
-        recents.Add(file);
+        recents.Add(project_file);
         SaveRecents();
+        return true;
     }
 
     void SaveRecents() {
@@ -1504,8 +1518,7 @@ bool EditorWorkspace::OpenProject(const std::filesystem::path& project_file) {
                                   NotificationTarget{NotificationTarget::Kind::File, project_file.string()});
         return false;
     }
-    impl_->OpenProject(project_file);
-    return true;
+    return impl_->OpenProject(project_file);
 }
 
 void EditorWorkspace::OpenProjectHub() {
