@@ -61,6 +61,7 @@
 #include <fstream>
 #include <memory>
 #include <limits>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -79,6 +80,7 @@ struct Options {
     std::string backend;
     u32 width = 0, height = 0; // 0: the project's
     std::string quality;
+    std::string log_file; // optional, never inferred from an argument value
     std::string user_dir; // empty: AETHER_USER_DIR, then the OS's folder
     std::vector<std::string> keys;
     std::vector<std::string> pressed; // keys held for the whole run (headless runs, smoke tests)
@@ -93,13 +95,45 @@ struct Options {
     u32 build_id = 1;
 };
 
+// A sink can already be in flight when it is removed. Keep its file alive
+// until the last callback returns and serialize writes from worker threads.
+class PlayerLogFile {
+public:
+    bool Open(const std::string& path) {
+        auto output = std::make_shared<Output>();
+        output->file.open(stdfs::path(path), std::ios::out | std::ios::trunc);
+        if (!output->file) return false;
+        sink_ = Logger::Instance().AddSink([output](const LogLine& line) {
+            std::lock_guard<std::mutex> lock(output->mutex);
+            output->file << '[' << LogLevelName(line.level) << "] " << line.category << ": " << line.message << '\n';
+            output->file.flush();
+        });
+        return true;
+    }
+
+    ~PlayerLogFile() {
+        if (sink_) Logger::Instance().RemoveSink(sink_);
+    }
+
+    PlayerLogFile() = default;
+    PlayerLogFile(const PlayerLogFile&) = delete;
+    PlayerLogFile& operator=(const PlayerLogFile&) = delete;
+
+private:
+    struct Output {
+        std::mutex mutex;
+        std::ofstream file;
+    };
+    int sink_ = 0;
+};
+
 void Usage() {
     std::fprintf(stderr,
                  "usage: aether_player [--pak <file|dir>]... [--scene <path>] [--frames <n>] [--headless]\n"
                  "                     [--backend d3d12|vulkan] [--size <w>x<h>] [--quality <preset>]\n"
                  "                     [--key <64 hex digits>] [--press <Key>]... [--screenshot <file.bmp>]\n"
                  "                     [--camera-path <file.json>] [--record-dir <dir> [--record-fps <n>]]\n"
-                 "                     [--report] [--user-dir <dir>] [--replay-input <file.json>]\n"
+                 "                     [--report] [--user-dir <dir>] [--log-file <file>] [--replay-input <file.json>]\n"
                  "                     [--server <ip:port>] [--name <text>] [--password <text>]\n"
                  "                     [--token <join token>] [--build-id <n>] (opt-in UDP + Jolt)\n");
 }
@@ -132,6 +166,9 @@ bool ParseArgs(int argc, char** argv, Options& o) {
             o.replay_input = argv[++i];
         } else if (a == "--key" && has_value) {
             o.keys.push_back(argv[++i]);
+        } else if (a == "--log-file" && has_value) {
+            o.log_file = argv[++i];
+            if (o.log_file.empty()) return false;
         } else if (a == "--user-dir" && has_value) {
             o.user_dir = argv[++i];
         } else if (a == "--quality" && has_value) {
@@ -232,7 +269,14 @@ std::vector<std::string> PaksToMount(const Options& o, const char* argv0) {
 
 int main(int argc, char** argv) {
     Options options;
-    if (!ParseArgs(argc, argv, options)) {
+    const bool valid_arguments = ParseArgs(argc, argv, options);
+    PlayerLogFile log;
+    if (!options.log_file.empty() && !log.Open(options.log_file)) {
+        AETHER_LOG_ERROR("Player", "Couldn't open the requested diagnostic log");
+        return 2;
+    }
+    if (!valid_arguments) {
+        AETHER_LOG_ERROR("Player", "Invalid launch arguments");
         Usage();
         return 2;
     }
@@ -240,7 +284,7 @@ int main(int argc, char** argv) {
 
 #if !defined(AETHER_HAS_WINDOW) || (!defined(_WIN32) && !defined(AETHER_HAS_VULKAN))
     if (!options.headless || !options.screenshot.empty() || !options.record_dir.empty()) {
-        std::fprintf(stderr, "aether_player: this build only supports --headless runs without screenshots or recording\n");
+        AETHER_LOG_ERROR("Player", "this build only supports --headless runs without screenshots or recording");
         return 2;
     }
 #endif
@@ -254,25 +298,25 @@ int main(int argc, char** argv) {
     for (const std::string& hex : keys) {
         pak::PakKey key;
         if (!pak::PakKey::FromHex(hex, key)) {
-            std::fprintf(stderr, "aether_player: a key must be 64 hex digits\n");
+            AETHER_LOG_ERROR("Player", "a key must be 64 hex digits");
             return 2;
         }
         package.AddKey(key);
     }
     const std::vector<std::string> paks = PaksToMount(options, argv[0]);
     if (paks.empty()) {
-        std::fprintf(stderr, "aether_player: no .apak to mount (pass --pak, or put them in Paks/)\n");
+        AETHER_LOG_ERROR("Player", "no .apak to mount (pass --pak, or put them in Paks/)");
         return 1;
     }
     std::string error;
     for (usize i = 0; i < paks.size(); ++i) {
         if (!package.Mount(paks[i], static_cast<int>(i), &error)) {
-            std::fprintf(stderr, "aether_player: %s\n", error.c_str());
+            AETHER_LOG_ERROR("Player", "%s", error.c_str());
             return 1;
         }
     }
     if (!package.LoadManifest(&error)) {
-        std::fprintf(stderr, "aether_player: %s\n", error.c_str());
+        AETHER_LOG_ERROR("Player", "%s", error.c_str());
         return 1;
     }
     const GameManifest& manifest = package.Manifest();
@@ -350,7 +394,7 @@ int main(int argc, char** argv) {
 
     const bool loaded = options.scene.empty() ? game.LoadStartupScene(&error) : game.LoadScene(options.scene, &error);
     if (!loaded) {
-        std::fprintf(stderr, "aether_player: %s\n", error.c_str());
+        AETHER_LOG_ERROR("Player", "%s", error.c_str());
         return 1;
     }
 
@@ -362,16 +406,16 @@ int main(int argc, char** argv) {
     std::chrono::steady_clock::time_point network_start;
     if (!options.server.empty()) {
         if (!options.replay_input.empty()) {
-            std::fprintf(stderr, "aether_player: --server cannot be combined with --replay-input\n");
+            AETHER_LOG_ERROR("Player", "--server cannot be combined with --replay-input");
             return 2;
         }
         const auto address = net::Address::Parse(options.server);
         if (!address) {
-            std::fprintf(stderr, "aether_player: --server must be an IPv4 address and port\n");
+            AETHER_LOG_ERROR("Player", "--server must be an IPv4 address and port");
             return 2;
         }
         if (!game.PhysicsQueries()) {
-            std::fprintf(stderr, "aether_player: no PhysicsScene available for multiplayer\n");
+            AETHER_LOG_ERROR("Player", "no PhysicsScene available for multiplayer");
             return 1;
         }
         server::NetClientConfig cfg;
@@ -399,7 +443,7 @@ int main(int argc, char** argv) {
         });
         network_start = std::chrono::steady_clock::now();
         if (!network_client->Start(cfg, 0.0, &error)) {
-            std::fprintf(stderr, "aether_player: UDP join failed: %s\n", error.c_str());
+            AETHER_LOG_ERROR("Player", "UDP join failed: %s", error.c_str());
             return 1;
         }
         game.SetAuthoritativePhysicsClient(true); // no local Jolt/character stepping
@@ -411,7 +455,7 @@ int main(int argc, char** argv) {
     }
 #else
     if (!options.server.empty()) {
-        std::fprintf(stderr, "aether_player: UDP physics client requires ServerCore and Jolt\n");
+        AETHER_LOG_ERROR("Player", "UDP physics client requires ServerCore and Jolt");
         return 2;
     }
 #endif
@@ -523,7 +567,7 @@ int main(int argc, char** argv) {
         for (const std::string& name : options.pressed) {
             const input::Key key = input::KeyFromName(name);
             if (key == input::Key::None) {
-                std::fprintf(stderr, "aether_player: no key named '%s'\n", name.c_str());
+                AETHER_LOG_ERROR("Player", "no key named '%s'", name.c_str());
                 return 2;
             }
             held_keys.push_back(key);
@@ -540,7 +584,7 @@ int main(int argc, char** argv) {
             const std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
             std::string path_error;
             if (!file || !ParseCameraPath(text, camera_path, &path_error)) {
-                std::fprintf(stderr, "aether_player: %s: %s\n", options.camera_path.c_str(), file ? path_error.c_str() : "cannot read it");
+                AETHER_LOG_ERROR("Player", "%s: %s", options.camera_path.c_str(), file ? path_error.c_str() : "cannot read it");
                 return 2;
             }
             if (options.frames < 0) options.frames = kRecordWarmup + camera_path.FrameCount();
@@ -554,7 +598,7 @@ int main(int argc, char** argv) {
         const f32 film_fps = camera_path.keys.empty() ? options.record_fps : camera_path.fps;
         if (recording && camera_path.keys.empty()) {
             if (options.frames <= 0) {
-                std::fprintf(stderr, "aether_player: --record-dir without a camera path needs --frames <n>, the number of frames to write\n");
+                AETHER_LOG_ERROR("Player", "--record-dir without a camera path needs --frames <n>, the number of frames to write");
                 return 2;
             }
             options.frames += kRecordWarmup;
@@ -757,7 +801,7 @@ int main(int argc, char** argv) {
         for (const std::string& e : game.BlueprintErrors()) AETHER_LOG_ERROR("Player", "blueprint: %s", e.c_str());
         if (s.script_errors + s.blueprint_errors > 0) return 3; // the game ran with errors
     } catch (const std::exception& e) {
-        std::fprintf(stderr, "aether_player: %s\n", e.what());
+        AETHER_LOG_ERROR("Player", "%s", e.what());
         if (CrashHandler::Installed())
             CrashHandler::WriteReport(std::string("handled runtime exception: ") + e.what());
         return 1;

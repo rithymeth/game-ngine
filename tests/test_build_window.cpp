@@ -9,6 +9,8 @@
 
 #include <chrono>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <functional>
 #include <thread>
 
@@ -257,6 +259,44 @@ AETHER_TEST(BuildWindow_ReportsThePackagedPlayersExitOnlyOnce) {
     bool clean_exit = false;
     for (const auto& line : window.Log()) clean_exit |= !line.warning && line.text.find("exited normally") != std::string::npos;
     CHECK(clean_exit);
+}
+
+AETHER_TEST(BuildWindow_PackagedPlayerWritesRequestedDiagnosticLog) {
+    const stdfs::path project = FreshProject("PlayerLog");
+    BuildPackageWindow window(project);
+    window.player_path = AETHER_TEST_PLAYER_PATH;
+    if (!window.StartPackage()) {
+        CHECK(false);
+        return;
+    }
+    window.WaitForBuild();
+    CHECK(window.LastResult() == BuildPackageWindow::Result::Succeeded);
+    const stdfs::path log = project.parent_path() / "first launch.log";
+    const std::string prefix = "--log-file \"" + log.string() + "\" ";
+    const auto read_log = [&] {
+        std::ifstream input(log);
+        return std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+    };
+
+    window.launch_args = prefix + "--not-an-aether-option";
+    if (!window.Launch()) {
+        CHECK(false);
+        return;
+    }
+    int code = -1;
+    CHECK(window.Game().Wait(&code) && code == 2);
+    CHECK(read_log().find("Invalid launch arguments") != std::string::npos);
+
+    window.launch_args = prefix + "--headless --frames 2";
+    if (!window.Launch()) {
+        CHECK(false);
+        return;
+    }
+    CHECK(window.Game().Wait(&code) && code == 0);
+    const std::string second = read_log();
+    CHECK(second.find("Loaded Scenes/Main.ascene") != std::string::npos);
+    CHECK(second.find("Ran 2 frames") != std::string::npos);
+    CHECK(second.find("Invalid launch arguments") == std::string::npos);
 }
 
 AETHER_TEST(BuildWindow_CooksAndReportsFailures) {
