@@ -725,6 +725,57 @@ AETHER_TEST(TilemapEditor_RectangleDragCancelsAndClipsWithoutPartialHistory) {
     CHECK(doc.Map().Get(0, 5, 3) == kEmpty && doc.Redo() && doc.Map().Get(0, 5, 3) == 4);
 }
 
+AETHER_TEST(TilemapEditor_RightDragErasesWithRectangleSelected) {
+    HeadlessImGui ui;
+    TilemapData map;
+    map.Resize(6, 5);
+    map.AddLayer("Ground");
+    for (i32 x = 0; x < 6; ++x) map.Set(0, x, 1, 3);
+    TilemapEditDocument doc(std::move(map), Doc().GetTileset());
+    doc.tool = TileTool::Rectangle;
+    doc.brush = 7;
+    TilemapPanel panel(doc);
+    ImVec2 bottom_left;
+    const auto draw = [&] {
+        panel.Draw();
+        const ImVec2 corner{ImGui::GetItemRectMin().x, ImGui::GetItemRectMax().y};
+        const ImVec2 padding = ImGui::GetStyle().WindowPadding;
+        bottom_left = ImVec2(corner.x + padding.x + 8, corner.y - padding.y - 8);
+    };
+    ui.Frame(draw);
+    auto& io = ImGui::GetIO();
+    const auto move = [&](i32 x, i32 y) {
+        io.AddMousePosEvent(bottom_left.x + (static_cast<f32>(x) + 0.5f) * panel.zoom,
+                            bottom_left.y - (static_cast<f32>(y) + 0.5f) * panel.zoom);
+        ui.Frame(draw);
+    };
+    const auto button = [&](ImGuiMouseButton which, bool down) {
+        io.AddMouseButtonEvent(which, down);
+        ui.Frame(draw);
+    };
+
+    move(0, 1);
+    button(ImGuiMouseButton_Right, true);
+    move(5, 1);
+    button(ImGuiMouseButton_Right, false);
+    for (i32 x = 0; x < 6; ++x) CHECK(doc.Map().Get(0, x, 1) == kEmpty);
+    CHECK(doc.tool == TileTool::Rectangle && doc.brush == 7);
+    CHECK(doc.Undo() && !doc.CanUndo());
+    for (i32 x = 0; x < 6; ++x) CHECK(doc.Map().Get(0, x, 1) == 3);
+
+    move(1, 1);
+    button(ImGuiMouseButton_Left, true);
+    button(ImGuiMouseButton_Right, true); // No second gesture during a rectangle.
+    move(3, 1);
+    CHECK(doc.Map().Get(0, 3, 1) == 3 && !doc.CanUndo());
+    button(ImGuiMouseButton_Left, false);
+    move(5, 1); // A still-held right button does not start erasing.
+    button(ImGuiMouseButton_Right, false);
+    CHECK(doc.Map().Get(0, 1, 1) == 7 && doc.Map().Get(0, 3, 1) == 7);
+    CHECK(doc.Map().Get(0, 4, 1) == 3 && doc.Map().Get(0, 5, 1) == 3);
+    CHECK(doc.Undo() && !doc.CanUndo());
+}
+
 AETHER_TEST(TilemapEditor_WorkspaceDrawsTheAuthoredSheetInPaletteAndCanvas) {
     const auto dir = std::filesystem::temp_directory_path() / "aether_tilemap_texture_preview";
     ProjectPaths paths;
