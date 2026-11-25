@@ -60,7 +60,9 @@ checks that the 3D packages include the models their scenes use. These checks
 do not verify rendered output.
 If the editor command layer is enabled, also build `aether_package_runner_smoke`.
 The Blank check then exercises the editor's Build and Package and Launch
-commands with a relative output path; no editor window is needed.
+commands with a relative output path; no editor window is needed. In the
+editor, save or discard pending documents and save or revert Project Settings
+before starting a new build. The packager uses the saved files on disk.
 
 `PackageManifest.json` records the project name, the game's own version, the
 configuration and the engine version, so a folder somebody ships you can be

@@ -1143,6 +1143,15 @@ struct EditorWorkspace::Impl {
         std::string error;
         project_settings = std::make_unique<ProjectSettingsPanel>(project_file);
         build_window = std::make_unique<BuildPackageWindow>(project_file);
+        build_window->SetSourceCheck([this]() -> std::string {
+            if (project_settings && project_settings->Dirty()) return "Save or revert Project Settings before building.";
+            for (std::size_t i = 0; i < document_tabs.Count(); ++i) {
+                const EditorDocument& document = document_tabs.At(i);
+                if (document.IsDirty())
+                    return "Save or discard unsaved changes in " + document.DisplayName() + " before building.";
+            }
+            return {};
+        });
         plugins_panel = std::make_unique<PluginsPanel>(project_file);
         content_browser = std::make_unique<ContentBrowserPanel>(project_file);
         // Double-clicking an asset opens it in the editor that edits it (Stage 3); "Reveal in Explorer" hands the
@@ -1609,6 +1618,7 @@ void EditorWorkspace::DrawTool(usize tool) {
 }
 
 ScenePanel& EditorWorkspace::Scene() { return *impl_->scene_panel; }
+BuildPackageWindow* EditorWorkspace::PackageWindow() { return impl_->build_window.get(); }
 TilemapEditDocument& EditorWorkspace::Tilemap() { return *impl_->tilemap_doc; }
 SceneViewPanel& EditorWorkspace::SceneView() { return impl_->scene_view; }
 

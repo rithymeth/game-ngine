@@ -3,6 +3,7 @@
 #include "packaging/plugins_panel.h"
 #include "test_framework.h"
 #include "workspace/editor_workspace.h"
+#include "world/scene_panel.h"
 
 #include <imgui.h>
 
@@ -62,6 +63,34 @@ stdfs::path FreshProject(const std::string& name) {
 }
 
 } // namespace
+
+AETHER_TEST(BuildWindow_UnsavedSourceBlocksCookAndPackageUntilSaved) {
+    HeadlessImGui imgui;
+    const stdfs::path project = FreshProject("UnsavedSource");
+    EditorWorkspace workspace(project);
+    auto* package_window = workspace.PackageWindow();
+    CHECK(package_window != nullptr);
+    if (!package_window) return;
+    auto& window = *package_window;
+    window.player_path = AETHER_TEST_PLAYER_PATH;
+    if (!workspace.Scene().OpenScene("Scenes/Main.ascene", true)) {
+        CHECK(false);
+        return;
+    }
+    workspace.Scene().Document().CreateEntity("Package source was saved");
+    imgui.Frame([&] { window.Draw(); });
+    CHECK(!window.StartCook());
+    CHECK(!window.StartPackage());
+    CHECK(!window.Busy() && window.StagedGame().empty() && !stdfs::exists(window.OutputDir()));
+    CHECK(workspace.Scene().SaveScene());
+    if (!window.StartPackage()) {
+        CHECK(false);
+        return;
+    }
+    window.WaitForBuild();
+    CHECK(window.LastResult() == BuildPackageWindow::Result::Succeeded);
+    CHECK(stdfs::is_regular_file(window.StagedGame()));
+}
 
 AETHER_TEST(BuildWindow_PackagesAndLaunchesTheGame) {
     HeadlessImGui imgui;
