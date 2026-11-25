@@ -156,6 +156,8 @@ public:
         std::vector<SpriteAtlasClip> clips{};
     };
     bool CreateSpriteAtlas(const std::string& texture, const SpriteAtlasGrid& grid, std::string* error = nullptr);
+    // Create an empty map next to an existing tileset; never replace an asset.
+    bool CreateTilemap(const std::string& tileset, std::string* error = nullptr);
     const std::string& LastOpenError() const { return last_open_error_; }
     // What the context menu's Reveal in Explorer calls, with the asset's absolute path. Without one the item is
     // disabled (a headless host has no desktop to show anything on).
@@ -179,7 +181,7 @@ public:
 
 private:
     enum class Action { None, Move, NewFolder };
-    enum class Pending { None, Delete, Duplicate, Move, Create, Reimport };
+    enum class Pending { None, Delete, Duplicate, Move, Create, CreateTilemap, Reimport };
     struct TileRect {
         std::string path;
         float x0 = 0, y0 = 0, x1 = 0, y1 = 0;
@@ -240,6 +242,7 @@ private:
     std::string pending_create_extension_;
     std::string pending_create_folder_;
     std::string pending_reimport_path_;
+    std::string pending_tilemap_source_;
     std::vector<TypeChip> chips_;
     usize base_count_ = 0;
     bool search_focus_ = false;
