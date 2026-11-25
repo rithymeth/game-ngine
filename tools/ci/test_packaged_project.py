@@ -9,6 +9,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 import tempfile
 
 MOTION = {
@@ -293,6 +294,74 @@ def main():
             if (not SIXTY_FRAMES.search(moved) or not idle_position or not moved_position
                     or direction * (float(moved_position[axis + 1]) - float(idle_position[axis + 1])) <= .1):
                 raise RuntimeError(f"the packaged {args.template} did not respond to {key} input")
+
+
+        if args.template == "platformer_2d":
+            route = root / "Jump Proof route.json"
+            spec = {"frames": 400, "events": [
+                {"frame": 90, "key": "D", "value": 1}, {"frame": 225, "key": "Space", "value": 1},
+                {"frame": 285, "key": "Space", "value": 0}, {"frame": 350, "key": "D", "value": 0},
+            ], "target": {"min_x": 28.5, "max_x": 30, "min_y": 2, "max_y": 3}}
+            route.write_text(json.dumps(spec), encoding="utf-8")
+
+            def proof(player, expected_code, profile, trace=None):
+                extra = ["--jump-trace"] if trace is not None else []
+                proc = subprocess.run([player, "--jump-proof", route, "--user-dir", root / profile, *extra],
+                                      cwd=empty_cwd, capture_output=True, text=True, timeout=30)
+                if trace is not None:
+                    trace.write_text(proc.stdout, encoding="utf-8")
+                if proc.returncode != expected_code:
+                    raise RuntimeError(f"wrong Jump Proof exit code {proc.returncode}:\n{proc.stdout}{proc.stderr}")
+                return [json.loads(line.removeprefix("Jump Proof: ")) for line in proc.stdout.splitlines()
+                        if line.startswith("Jump Proof: ")]
+
+            original_trace, changed_trace = root / "Before.txt", root / "After.txt"
+            before = proof(game, 0, "Baseline Route Data", original_trace)
+            if len(before) != 1 or before[0]["status"] != "pass" or before[0]["frames"] != 400:
+                raise RuntimeError(f"baseline did not pass Jump Proof: {before}")
+            hidden = root / "Hidden Project"
+            tilemap = hidden / "Content/Tiles/Level1.atilemap"
+            tiles = json.loads(tilemap.read_text(encoding="utf-8"))
+            tile = 4 * tiles["size"][0] + 23
+            if tiles["layers"][0]["cells"][tile] != -1:
+                raise RuntimeError("Jump Proof regression tile is no longer empty")
+            tiles["layers"][0]["cells"][tile] = -2  # make one new solid ground cell
+            tilemap.write_text(json.dumps(tiles), encoding="utf-8")
+            changed = root / "Changed Distribution"
+            run(tools["aether_package"], hidden / project.name, "--out", changed, *release_config, cwd=root)
+            after = proof(changed / executable, 5, "Changed Route Data", changed_trace)
+            if (len(after) != 1 or after[0]["status"] != "missed" or after[0]["frames"] != 400
+                    or after[0]["position"][0] >= 28.5):
+                raise RuntimeError(f"single tile change did not fail Jump Proof: {after}")
+
+            compare = Path(__file__).resolve().parents[1] / "jump_proof_compare.py"
+
+            def compare_traces(left, right, code, *extra):
+                result = subprocess.run([sys.executable, compare, left, right, *extra], cwd=empty_cwd,
+                                        capture_output=True, text=True, timeout=10)
+                if result.returncode != code:
+                    raise RuntimeError(f"trace comparison exit={result.returncode}: {result.stdout}{result.stderr}")
+                return json.loads(result.stdout) if code != 2 else None
+
+            matching = compare_traces(original_trace, original_trace, 0)
+            if matching["first_difference_frame"] is not None or matching["frames"] != 400:
+                raise RuntimeError(f"equal traces were not reported equal: {matching}")
+            diff = compare_traces(original_trace, changed_trace, 5)
+            if not 280 <= diff["first_difference_frame"] <= 300 or diff["frames"] != 400:
+                raise RuntimeError(f"did not locate the first divergence after placing one tile: {diff}")
+            overlay = compare_traces(original_trace, changed_trace, 5, "--overlay-data")
+            i = overlay["first_difference_frame"] - 1
+            if (len(overlay["before_path"]) != 400 or len(overlay["after_path"]) != 400
+                    or overlay["before_path"][i] != diff["before"] or overlay["after_path"][i] != diff["after"]):
+                raise RuntimeError("editor overlay data did not match the full paths and divergence")
+            truncated = root / "Truncated.txt"
+            truncated.write_text("\n".join(original_trace.read_text(encoding="utf-8").splitlines()[:-1]), encoding="utf-8")
+            compare_traces(original_trace, truncated, 2)
+
+            spec["target"]["min_x"] = 31
+            route.write_text(json.dumps(spec), encoding="utf-8")
+            if proof(game, 2, "Invalid Route Data"):
+                raise RuntimeError("invalid target must not issue a route verdict")
 
 
 if __name__ == "__main__":
