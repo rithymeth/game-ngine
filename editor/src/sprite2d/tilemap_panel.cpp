@@ -395,31 +395,45 @@ void TilemapPanel::DrawCanvas() {
 
     ImDrawList* dl = ImGui::GetWindowDrawList();
     dl->PushClipRect(origin, ImVec2(origin.x + size.x, origin.y + size.y), true);
-    dl->AddRectFilled(ImVec2(to_screen_x(0), to_screen_y(static_cast<i32>(map.height) - 1)),
-                      ImVec2(to_screen_x(static_cast<i32>(map.width)), base_y), IM_COL32(30, 30, 36, 255));
-    for (usize layer = 0; layer < map.layers.size(); ++layer) {
-        for (u32 y = 0; y < map.height; ++y) {
-            for (u32 x = 0; x < map.width; ++x) {
-                const i32 tile = ResolveTile(map, ts, layer, static_cast<i32>(x), static_cast<i32>(y));
-                if (tile < 0) continue;
-                const ImVec2 a(to_screen_x(static_cast<i32>(x)), to_screen_y(static_cast<i32>(y)));
-                const ImVec2 b(a.x + zoom, a.y + zoom);
-                if (b.x < origin.x || a.x > origin.x + size.x || b.y < origin.y || a.y > origin.y + size.y) continue;
-                if (!DrawTileArt(dl, a, b, tile)) dl->AddRectFilled(a, b, TileColor(tile));
-                if (show_solid && map.layers[layer].collides && ts.IsSolid(tile)) {
-                    dl->AddRect(a, b, IM_COL32(220, 40, 40, 255), 0, 0, 1.5f);
+    // Intersect in screen space first so even an enormous map only visits
+    // the cells under the visible part of the canvas (including partial cells).
+    const ImVec2 clip_min = dl->GetClipRectMin(), clip_max = dl->GetClipRectMax();
+    const ImVec2 visible_min(std::max(clip_min.x, base_x),
+                             std::max(clip_min.y, to_screen_y(static_cast<i32>(map.height) - 1)));
+    const ImVec2 visible_max(std::min(clip_max.x, to_screen_x(static_cast<i32>(map.width))),
+                             std::min(clip_max.y, base_y));
+    if (visible_min.x < visible_max.x && visible_min.y < visible_max.y) {
+        const auto index = [](f64 value, u32 count) {
+            return static_cast<i32>(std::clamp(value, 0.0, static_cast<f64>(count)));
+        };
+        const i32 left = index(std::floor((static_cast<f64>(visible_min.x) - base_x) / zoom), map.width);
+        const i32 right = index(std::ceil((static_cast<f64>(visible_max.x) - base_x) / zoom), map.width);
+        const i32 bottom = index(std::floor((static_cast<f64>(base_y) - visible_max.y) / zoom), map.height);
+        const i32 top = index(std::ceil((static_cast<f64>(base_y) - visible_min.y) / zoom), map.height);
+        dl->AddRectFilled(visible_min, visible_max, IM_COL32(30, 30, 36, 255));
+        for (usize layer = 0; layer < map.layers.size(); ++layer) {
+            for (i32 y = bottom; y < top; ++y) {
+                for (i32 x = left; x < right; ++x) {
+                    const i32 tile = ResolveTile(map, ts, layer, x, y);
+                    if (tile < 0) continue;
+                    const ImVec2 a(to_screen_x(x), to_screen_y(y));
+                    const ImVec2 b(a.x + zoom, a.y + zoom);
+                    if (!DrawTileArt(dl, a, b, tile)) dl->AddRectFilled(a, b, TileColor(tile));
+                    if (show_solid && map.layers[layer].collides && ts.IsSolid(tile))
+                        dl->AddRect(a, b, IM_COL32(220, 40, 40, 255), 0, 0, 1.5f);
                 }
             }
         }
-    }
-    if (show_grid && zoom >= 10.0f) {
-        for (u32 x = 0; x <= map.width; ++x) {
-            dl->AddLine(ImVec2(to_screen_x(static_cast<i32>(x)), to_screen_y(static_cast<i32>(map.height) - 1)),
-                        ImVec2(to_screen_x(static_cast<i32>(x)), base_y), IM_COL32(255, 255, 255, 30));
-        }
-        for (u32 y = 0; y <= map.height; ++y) {
-            const f32 sy = base_y - static_cast<f32>(y) * zoom;
-            dl->AddLine(ImVec2(to_screen_x(0), sy), ImVec2(to_screen_x(static_cast<i32>(map.width)), sy), IM_COL32(255, 255, 255, 30));
+        if (show_grid && zoom >= 10.0f) {
+            constexpr ImU32 grid_color = IM_COL32(255, 255, 255, 30);
+            for (i32 x = left; x <= right; ++x) {
+                const f32 sx = to_screen_x(x);
+                dl->AddLine(ImVec2(sx, visible_min.y), ImVec2(sx, visible_max.y), grid_color);
+            }
+            for (i32 y = bottom; y <= top; ++y) {
+                const f32 sy = base_y - static_cast<f32>(y) * zoom;
+                dl->AddLine(ImVec2(visible_min.x, sy), ImVec2(visible_max.x, sy), grid_color);
+            }
         }
     }
 
