@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -40,7 +41,7 @@ def main():
         parser.error("pass either tools_dir or --headless-build-tools")
     exe = ".exe" if os.name == "nt" else ""
 
-    with tempfile.TemporaryDirectory(prefix="Aether project smoke ") as temp:
+    with tempfile.TemporaryDirectory(prefix="Aether owner's smoke ") as temp:
         root = Path(temp)
         tools_dir = args.tools_dir.resolve() if args.tools_dir else root / "Tools"
         if args.headless_build_tools:
@@ -54,14 +55,28 @@ def main():
             if not tool.is_file():
                 parser.error(f"distributed tool is missing: {tool}")
 
-        name = "StarterSmoke"
+        name = "Starter Smoke"
+        executable = "StarterSmoke" + exe
         source = root / name
         project = source / f"{name}.aproject"
         packaged = root / "Packaged Game"
         empty_cwd = root / "Clean Launch"
         empty_cwd.mkdir()
 
-        run(tools["aether_new"], name, "--template", args.template, "--dir", root, cwd=root)
+        scaffold = run(tools["aether_new"], name, "--template", args.template, "--dir", root, cwd=root, capture=True)
+        package_line, launch_line = (line.strip() for line in scaffold.strip().splitlines()[-2:])
+        expected_build = str(source / "Build")
+        expected_player = str(source / "Build" / executable)
+        if os.name == "nt":
+            quote = lambda path: "'" + path.replace("'", "''") + "'"
+            matching = (launch_line == "& " + quote(expected_player)
+                        and package_line == f"aether_package {quote(str(project))} --out {quote(expected_build)}")
+        else:
+            matching = (shlex.split(launch_line) == [expected_player]
+                        and shlex.split(package_line) == ["aether_package", str(project), "--out", expected_build])
+        if not matching:
+            raise RuntimeError("aether_new did not print shell-ready commands for the packaged player:\n"
+                               f"{package_line}\n{launch_line}")
         run(tools["aether_loc"], project, "--check", cwd=root)
         if args.editor_runner:
             editor_env = dict(os.environ, AETHER_USER_DIR=str(root / "Editor Player Data"))
@@ -157,7 +172,7 @@ def main():
                     raise RuntimeError("preflight diagnosed a component without the runtime registry")
             finally:
                 startup_file.write_bytes(original_scene)
-            runtime = run(unknown_package / (name + exe), "--headless", "--frames", "1", "--user-dir",
+            runtime = run(unknown_package / executable, "--headless", "--frames", "1", "--user-dir",
                           root / "Unknown Component Player Data", cwd=empty_cwd, capture=True)
             if not any("Skipping unknown" in line and unknown_type in line for line in runtime.splitlines()):
                 raise RuntimeError("the real player did not report its unknown component")
@@ -173,12 +188,12 @@ def main():
                 raise RuntimeError("encrypted smoke printed its key")
             if encrypted_smoke.returncode != 0 or "smoke test: the packaged game ran" not in smoke_log:
                 raise RuntimeError("encrypted package did not smoke with its own key\n" + smoke_log)
-            run(encrypted / (name + exe), "--headless", "--frames", "1", "--user-dir",
+            run(encrypted / executable, "--headless", "--frames", "1", "--user-dir",
                 root / "Encrypted Player Data", cwd=empty_cwd, env=dict(os.environ, AETHER_PAK_KEY=fixture_key))
 
         # The game must discover its own data, with no source tree or working-directory hint.
         source.rename(root / "Hidden Project")
-        game = packaged / (name + exe)
+        game = packaged / executable
         if args.headless_build_tools:
             env = os.environ.copy()
             env.pop("AETHER_PLAYER_HEADLESS", None)
