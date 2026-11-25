@@ -195,6 +195,61 @@ AETHER_TEST(TilemapEditor_PanelDrawsHeadless) {
     }
 }
 
+AETHER_TEST(TilemapEditor_FastPointerDragsPaintAndEraseEveryCellAsOneStroke) {
+    HeadlessImGui ui;
+    TilemapEditDocument doc = Doc();
+    TilemapPanel panel(doc);
+    doc.brush = 3;
+    ImVec2 bottom_left;
+    const auto draw = [&] {
+        panel.Draw();
+        const ImVec2 corner = {ImGui::GetItemRectMin().x, ImGui::GetItemRectMax().y};
+        const ImVec2 padding = ImGui::GetStyle().WindowPadding;
+        bottom_left = ImVec2(corner.x + padding.x + 8, corner.y - padding.y - 8);
+    };
+    ui.Frame(draw);
+    ImGuiIO& io = ImGui::GetIO();
+    const auto move = [&](i32 x, i32 y) {
+        io.AddMousePosEvent(bottom_left.x + (static_cast<f32>(x) + 0.5f) * panel.zoom,
+                            bottom_left.y - (static_cast<f32>(y) + 0.5f) * panel.zoom);
+        ui.Frame(draw);
+    };
+    const auto button = [&](ImGuiMouseButton which, bool down) {
+        io.AddMouseButtonEvent(which, down);
+        ui.Frame(draw);
+    };
+    const auto row = [&](i32 value) {
+        for (i32 x = 0; x < 6; ++x) CHECK(doc.Map().Get(0, x, 1) == value);
+    };
+
+    move(0, 1);
+    button(ImGuiMouseButton_Left, true);
+    move(5, 1); // only the beginning and end arrive as mouse events
+    button(ImGuiMouseButton_Left, false);
+    CHECK(doc.Map().Get(0, 0, 1) == 3 && doc.Map().Get(0, 5, 1) == 3);
+    row(3);
+    CHECK(doc.Undo() && !doc.CanUndo());
+    row(kEmpty);
+    CHECK(doc.Redo());
+    row(3);
+
+    button(ImGuiMouseButton_Right, true);
+    move(0, 1);
+    button(ImGuiMouseButton_Right, false);
+    row(kEmpty);
+    CHECK(doc.Undo());
+    row(3);
+
+    // Crossing empty space outside the map must not draw a connector on re-entry.
+    move(0, 3);
+    button(ImGuiMouseButton_Left, true);
+    move(6, 3);
+    move(5, 3);
+    button(ImGuiMouseButton_Left, false);
+    CHECK(doc.Map().Get(0, 0, 3) == 3 && doc.Map().Get(0, 5, 3) == 3);
+    for (i32 x = 1; x < 5; ++x) CHECK(doc.Map().Get(0, x, 3) == kEmpty);
+}
+
 AETHER_TEST(TilemapEditor_WorkspaceShowsTheSampleLevel) {
     HeadlessImGui ui;
     EditorWorkspace ws;
