@@ -280,6 +280,40 @@ AETHER_TEST(TilemapEditor_JumpProofOverlayIsReadOnlyAndKeepsTheLastValidTrace) {
     CHECK(doc.Revision() == rev && !doc.dirty());
 }
 
+AETHER_TEST(TilemapEditor_JumpProofMarksOnlyTheMatchingChangedCell) {
+    HeadlessImGui ui;
+    TilemapEditDocument doc = Doc();
+    TilemapPanel panel(doc);
+    doc.brush = 3;
+    doc.Apply(1, 1);
+    const auto folder = std::filesystem::temp_directory_path() / "jump-proof-marked-map";
+    const auto map = folder / "Content/Tiles/Level.atilemap";
+    const auto tileset = folder / "Content/Tiles/Level.atileset";
+    if (!doc.Save(map, tileset)) { CHECK(false); return; }
+    const auto file = folder / "overlay.json";
+    {
+        std::ofstream out(file);
+        out << R"({"frames":2,"first_difference_frame":2,"before_path":[[1,1,0],[2,2,0]],"after_path":[[1,1,0],[2,1.5,0]],"asset":"Content/Tiles/Level.atilemap","cell":{"layer":0,"x":1,"y":1,"before":-1,"after":3}})";
+    }
+    if (!panel.LoadJumpProofOverlay(file)) { CHECK(false); return; }
+    const auto marked = [&] {
+        ui.Frame([&] { panel.Draw(); });
+        const auto* draw = ImGui::GetDrawData();
+        for (const auto* list : draw->CmdLists)
+            for (const auto& vertex : list->VtxBuffer)
+                if (vertex.col == IM_COL32(138, 255, 133, 255)) return true;
+        return false;
+    };
+    const u64 revision = doc.Revision();
+    CHECK(marked());
+    CHECK(doc.Revision() == revision && !doc.dirty());
+    doc.brush = 4;
+    doc.Apply(1, 1);
+    CHECK(!marked()); // changed again since the package under comparison
+    CHECK(doc.Undo() && marked());
+    CHECK(doc.Save(folder / "Content/Tiles/Other.atilemap", tileset) && !marked());
+}
+
 AETHER_TEST(TilemapEditor_WorkspaceShowsTheSampleLevel) {
     HeadlessImGui ui;
     EditorWorkspace ws;

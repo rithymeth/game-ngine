@@ -27,6 +27,7 @@ private:
     void DrawLayers();
     void DrawCanvas();
     void DrawJumpProofTools();
+    bool JumpProofCellMatchesMap() const;
 
     TilemapEditDocument& doc_;
     u64 save_error_revision_ = 0;
@@ -45,6 +46,11 @@ private:
     std::vector<GhostPoint> ghost_before_, ghost_after_;
     usize ghost_difference_ = 0;
     std::filesystem::path ghost_map_;
+    struct GhostCell {
+        std::filesystem::path asset;
+        i32 layer, x, y, edited_value;
+    };
+    std::optional<GhostCell> ghost_cell_;
     std::string ghost_file_, ghost_error_;
     f32 ghost_pixels_per_unit_ = 16.0f;
 };
