@@ -129,10 +129,16 @@ void TilemapEditDocument::Apply(i32 x, i32 y) {
 }
 
 void TilemapEditDocument::Rectangle(i32 x0, i32 y0, i32 x1, i32 y1) {
+    if (map_.width == 0 || map_.height == 0) return;
+    const i32 left = std::max(0, std::min(x0, x1));
+    const i32 bottom = std::max(0, std::min(y0, y1));
+    const i32 right = std::min(static_cast<i32>(map_.width) - 1, std::max(x0, x1));
+    const i32 top = std::min(static_cast<i32>(map_.height) - 1, std::max(y0, y1));
+    if (left > right || bottom > top) return;
     BeginStroke();
     const i32 value = tool == TileTool::Erase ? kEmpty : brush;
-    for (i32 y = std::min(y0, y1); y <= std::max(y0, y1); ++y) {
-        for (i32 x = std::min(x0, x1); x <= std::max(x0, x1); ++x) PaintCell(x, y, value);
+    for (i32 y = bottom; y <= top; ++y) {
+        for (i32 x = left; x <= right; ++x) PaintCell(x, y, value);
     }
     EndStroke();
 }
