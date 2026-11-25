@@ -163,8 +163,16 @@ def main():
                 raise RuntimeError("the real player did not report its unknown component")
             encrypted = root / "Encrypted Package"
             fixture_key = "12" * 32
-            run(tools["aether_package"], project, "--out", encrypted, "--config", "development",
-                "--key", fixture_key, cwd=root)
+            encrypted_smoke = subprocess.run(
+                [tools["aether_package"], str(project), "--out", str(encrypted),
+                 "--config", "development", "--key", fixture_key, "--smoke"],
+                cwd=root, capture_output=True, text=True, timeout=12,
+                env=dict(os.environ, AETHER_PAK_KEY="34" * 32))
+            smoke_log = encrypted_smoke.stdout + encrypted_smoke.stderr
+            if fixture_key in smoke_log:
+                raise RuntimeError("encrypted smoke printed its key")
+            if encrypted_smoke.returncode != 0 or "smoke test: the packaged game ran" not in smoke_log:
+                raise RuntimeError("encrypted package did not smoke with its own key\n" + smoke_log)
             run(encrypted / (name + exe), "--headless", "--frames", "1", "--user-dir",
                 root / "Encrypted Player Data", cwd=empty_cwd, env=dict(os.environ, AETHER_PAK_KEY=fixture_key))
 
