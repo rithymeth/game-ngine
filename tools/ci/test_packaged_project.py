@@ -13,7 +13,16 @@ import tempfile
 
 MOTION = {
     "platformer_2d": ("Right", 0, 1),
+    "first_person": ("W", 2, -1),
     "third_person": ("W", 2, -1),
+    "top_down": ("W", 2, -1),
+    "vehicle": ("W", 2, -1),
+}
+MODELS = {
+    "first_person": ("Floor", "Pickup"),  # the player is the camera, with no body mesh
+    "third_person": ("Floor", "Player", "Pickup"),
+    "top_down": ("Floor", "Player", "Pickup"),
+    "vehicle": ("Floor", "Player", "Pickup"),
 }
 COORD = r"(-?\d+\.\d+)"
 PLAYER_POSITION = re.compile(rf"^Player at \({COORD}, {COORD}, {COORD}\)", re.MULTILINE)
@@ -103,7 +112,7 @@ def main():
         package_env = dict(os.environ, TEMP=str(package_temp), TMP=str(package_temp), TMPDIR=str(package_temp))
         package_output = run(tools["aether_package"], project.relative_to(root), "--out", packaged.relative_to(root),
                              "--config", "development", "--smoke", cwd=root, env=package_env, capture=True)
-        if args.template == "third_person" and "Skipping unknown" in package_output:
+        if args.template in MODELS and "Skipping unknown" in package_output:
             raise RuntimeError("the valid 3D template generated misleading preflight component warnings")
         if (not sentinel.is_file() or not (occupied_slot / "untouched").is_file()
                 or set(package_temp.iterdir()) != {existing_scratch, occupied_slot}):
@@ -112,9 +121,9 @@ def main():
             if not required.is_file():
                 raise RuntimeError(f"package is missing {required}")
         run(tools["aether_pak"], "verify-package", packaged, cwd=root)
-        if args.template == "third_person":
+        if args.template in MODELS:
             listing = run(tools["aether_pak"], "list", packaged / "Paks" / "Game.apak", cwd=root, capture=True)
-            for model in ("Floor", "Player", "Pickup"):
+            for model in MODELS[args.template]:
                 if f"Content/Models/{model}.gltf" not in listing:
                     raise RuntimeError(f"the packaged 3D starter is missing {model}.gltf")
         if args.headless_build_tools and args.template == "blank":
