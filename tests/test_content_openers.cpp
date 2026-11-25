@@ -387,8 +387,22 @@ AETHER_TEST(Openers_TilemapsAndTilesetsOpenTheirEditor) {
     CHECK(sprite2d::SaveTilemap(paths.content / "Maps/Broken.atilemap", broken, &error));
     EditorWorkspace ws(paths.file);
 
+    // The practice map has no backing asset. An invalid open leaves its edits
+    // intact, but experimenting here must not block opening a real project map.
+    auto& practice = ws.Tilemap();
+    CHECK(practice.TilemapFile().empty());
+    practice.brush = 3;
+    practice.Apply(0, 2);
+    CHECK(practice.dirty() && practice.Map().Get(0, 0, 2) == 3);
+    CHECK(!ws.OpenAsset("Maps/Broken.atilemap", &error));
+    CHECK(error.find("tileset that isn't in the project") != std::string::npos);
+    CHECK(practice.dirty() && practice.TilemapFile().empty() && practice.Map().Get(0, 0, 2) == 3);
+
     // The map loads with its tileset, and the tool shows it.
-    CHECK(ws.OpenAsset("Maps/Level_02.atilemap", &error));
+    if (!ws.OpenAsset("Maps/Level_02.atilemap", &error)) {
+        CHECK(false);
+        return;
+    }
     CHECK(error.empty());
     CHECK(ShowingTool(ws, "Tilemap"));
     CHECK(ws.Tilemap().Map().width == 6 && ws.Tilemap().Map().height == 4);
