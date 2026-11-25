@@ -158,9 +158,12 @@ AETHER_TEST(BuildWindow_PackagesEncryptedAndLaunchesWithTheKey) {
     CHECK(window.Launch(&error));
     int code = -1;
     CHECK(window.Game().Wait(&code) && code == 0);
+    // The settings describe the next build; changing them must not lose the
+    // successful package's key.
     window.encrypt = false;
+    window.encryption_key.clear();
     CHECK(window.Launch(&error));
-    CHECK(window.Game().Wait(&code) && code != 0);
+    CHECK(window.Game().Wait(&code) && code == 0);
 }
 
 AETHER_TEST(PluginsPanel_EnablesCreatesAndRefuses) {

@@ -123,6 +123,7 @@ private:
 
 } // namespace
 
+#if defined(AETHER_HAS_WINDOW) && (defined(_WIN32) || defined(AETHER_HAS_VULKAN))
 AETHER_TEST(ScenePreview_ARealRenderComesBackAsAPicture) {
     ScenePreview preview(MakeProject("Render"));
     AETHER_CHECK(preview.GetState() == ScenePreview::State::Idle);
@@ -144,6 +145,8 @@ AETHER_TEST(ScenePreview_ARealRenderComesBackAsAPicture) {
     preview.Wait();
     AETHER_CHECK(preview.GetState() == ScenePreview::State::Done && preview.TakeImage(image) && image.width == 64 && image.height == 64);
 }
+
+#endif
 
 AETHER_TEST(ScenePreview_FailuresSayWhy) {
     {   // No player to render with.
@@ -192,6 +195,7 @@ AETHER_TEST(ImageTexture_ShowsAPictureAndReplacesIt) {
     ImGui::End();
 }
 
+#if defined(AETHER_HAS_WINDOW) && (defined(_WIN32) || defined(AETHER_HAS_VULKAN))
 AETHER_TEST(ScenePreviewPanel_RendersTheSavedSceneIntoATexture) {
     Context imgui;
     const stdfs::path project = MakeProject("PanelRender", "blank");
@@ -221,6 +225,8 @@ AETHER_TEST(ScenePreviewPanel_RendersTheSavedSceneIntoATexture) {
     panel.Draw();                                                              // draws the button, the message and the picture
     ImGui::End();
 }
+
+#endif
 
 AETHER_TEST(EditorWorkspace_TheSceneToolWorksInTheOpenProject) {
     Context imgui;

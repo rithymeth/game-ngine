@@ -97,7 +97,11 @@ AETHER_TEST(ProceduralWalk_ACharacterStandsOnTheBakedGroundAndWalksItsHills) {
         const Vec3 start = w.world.GetComponent<Transform>(c)->position;
         std::printf("    spot (%.0f, %.0f): ground %.2f, feet %.2f, grounded %d, mode %d, slope normal y %.2f\n", spot.x, spot.z, ground, start.y, m ? (m->grounded ? 1 : 0) : -1, m ? static_cast<int>(m->mode) : -1, m ? m->ground_normal.y : 0.0f);
         AETHER_CHECK(m && m->grounded);
-        AETHER_CHECK(std::fabs(start.y - ground) < 0.35f); // standing on the surface, within a triangle's slope of the sampled height
+        // A capsule moves sideways while settling on a slope. Compare its
+        // feet to the surface at the landing point, not at the drop point.
+        const f32 landing_ground = t.heightmap.SampleLinear(start.x, start.z);
+        std::printf("    landed at (%.2f, %.2f), local ground %.2f\n", start.x, start.z, landing_ground);
+        AETHER_CHECK(std::fabs(start.y - landing_ground) < 0.35f);
         const Vec3 toward(spot.dx, 0.0f, spot.dz);
         for (int i = 0; i < 180; ++i) {
             w.world.GetComponent<CharacterMovement>(c)->AddInput(toward);
