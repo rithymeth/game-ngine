@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <string>
 #include <string_view>
+#include <vector>
 
 using namespace aether;
 namespace fs = std::filesystem;
@@ -20,18 +21,32 @@ namespace {
 int Usage(int code) {
     std::fprintf(code ? stderr : stdout,
         "usage: aether_sprite_grid <project.aproject> <sheet relative to Content> <cell width> <cell height>\n"
-        "Creates a sibling .aatlas with numbered frames and a looping grid clip. Never overwrites an atlas.\n");
+        "       [--clip NAME FIRST COUNT FPS]...\n"
+        "FIRST is a zero-based frame index. Without --clip, the whole sheet loops at 12 fps.\n"
+        "Creates a sibling .aatlas without overwriting an existing atlas.\n");
     return code;
 }
 
-int Fail(const std::string& message) {
+int Fail(const std::string& message, int code = 1) {
     std::fprintf(stderr, "aether_sprite_grid: %s\n", message.c_str());
-    return 1;
+    return code;
 }
 
-bool PositiveInt(std::string_view text, u32& value) {
+bool UnsignedInt(std::string_view text, u32& value) {
     const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
-    return error == std::errc{} && end == text.data() + text.size() && value > 0;
+    return error == std::errc{} && end == text.data() + text.size();
+}
+
+struct ClipRange {
+    std::string name;
+    u32 first = 0, count = 0, fps = 0;
+};
+
+bool ClipName(std::string_view name) {
+    return !name.empty() && name.size() <= 64 && std::all_of(name.begin(), name.end(), [](char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+               c == '_' || c == '-';
+    });
 }
 
 bool VisibleRelative(const fs::path& path) {
@@ -54,7 +69,25 @@ bool Occupied(const fs::path& path) {
 int main(int argc, char** argv) {
     if (argc == 2 && std::string_view(argv[1]) == "--help") return Usage(0);
     u32 cell_w = 0, cell_h = 0;
-    if (argc != 5 || !PositiveInt(argv[3], cell_w) || !PositiveInt(argv[4], cell_h)) return Usage(2);
+    if (argc < 5 || !UnsignedInt(argv[3], cell_w) || !UnsignedInt(argv[4], cell_h) ||
+        cell_w == 0 || cell_h == 0) return Usage(2);
+
+    std::vector<ClipRange> ranges;
+    for (int i = 5; i < argc; i += 5) {
+        if (std::string_view(argv[i]) != "--clip" || argc - i < 5) return Usage(2);
+        if (ranges.size() >= 64) return Fail("use at most 64 named clips", 2);
+        ClipRange range;
+        range.name = argv[i + 1];
+        if (!ClipName(range.name))
+            return Fail("clip names must be 1 to 64 ASCII letters, digits, underscores or hyphens", 2);
+        if (std::any_of(ranges.begin(), ranges.end(), [&](const ClipRange& old) { return old.name == range.name; }))
+            return Fail("duplicate clip name '" + range.name + "'", 2);
+        if (!UnsignedInt(argv[i + 2], range.first) || !UnsignedInt(argv[i + 3], range.count) || range.count == 0)
+            return Fail("clip '" + range.name + "' requires a zero-based FIRST and positive COUNT", 2);
+        if (!UnsignedInt(argv[i + 4], range.fps) || range.fps == 0 || range.fps > 240)
+            return Fail("clip '" + range.name + "' FPS must be an integer from 1 to 240", 2);
+        ranges.push_back(std::move(range));
+    }
 
     const fs::path project_file(argv[1]);
     ProjectSettings settings;
@@ -91,6 +124,11 @@ int main(int argc, char** argv) {
                     std::to_string(image.height) + " pixels exactly");
     const u64 count = static_cast<u64>(image.width / cell_w) * (image.height / cell_h);
     if (count == 0 || count > 4096) return Fail("the grid must contain between 1 and 4096 frames");
+    for (const auto& range : ranges) {
+        if (range.first >= count || range.count > count - range.first)
+            return Fail("clip '" + range.name + "' goes outside the " + std::to_string(count) + "-frame grid");
+    }
+    if (ranges.empty()) ranges.push_back({"grid", 0, static_cast<u32>(count), 12});
 
     assets::AssetDatabase database(content);
     database.Scan();
@@ -98,10 +136,15 @@ int main(int argc, char** argv) {
     if (!source || source->missing || source->importer != "Texture" || source->guid.IsNull())
         return Fail("the asset database could not import the texture; check its .ameta file: " + relative.generic_string());
     auto atlas = sprite2d::AtlasFromGrid(source->guid, image.width, image.height, cell_w, cell_h);
-    sprite2d::SpriteClip clip;
-    clip.name = "grid";
-    for (const auto& frame : atlas.frames) clip.frames.push_back(frame.name);
-    atlas.clips.push_back(std::move(clip));
+    for (const auto& range : ranges) {
+        sprite2d::SpriteClip clip;
+        clip.name = range.name;
+        clip.fps = static_cast<f32>(range.fps);
+        clip.frames.reserve(range.count);
+        for (u32 index = 0; index < range.count; ++index)
+            clip.frames.push_back(atlas.frames[range.first + index].name);
+        atlas.clips.push_back(std::move(clip));
+    }
 
     const std::string json = sprite2d::AtlasToJson(atlas).dump(2) + "\n";
     std::FILE* file = std::fopen(output.string().c_str(), "wbx");
@@ -113,7 +156,8 @@ int main(int argc, char** argv) {
         fs::remove(output, ec);
         return Fail("could not finish writing atlas: " + output.string());
     }
-    std::printf("Created %s with %zu frames and the looping grid clip (12 fps).\n",
-                output.lexically_relative(content).generic_string().c_str(), atlas.frames.size());
+    std::printf("Created %s with %zu frames and %zu looping clip(s).\n",
+                output.lexically_relative(content).generic_string().c_str(),
+                atlas.frames.size(), atlas.clips.size());
     return 0;
 }
