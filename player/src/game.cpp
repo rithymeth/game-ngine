@@ -31,6 +31,7 @@
 #include <algorithm>
 #include <cctype>
 #include <system_error>
+#include <set>
 
 #include "aether/blueprint/graph.h"
 #if AETHER_GAME_PHYSICS
@@ -1512,7 +1513,9 @@ void Game::BuildFrame() {
     sprite_animation.phase = SystemPhase::Update;
     sprite_animation.after = {"Player.Scripting"};
     sprite_animation.main_thread_only = true;
-    sprite_animation.run = [this](World& world, const FrameContext& frame) {
+    using ClipNames = std::set<std::string, std::less<>>;
+    using ReportedClips = std::unordered_map<assets::AssetGuid, ClipNames>;
+    sprite_animation.run = [this, reported = ReportedClips{}, count = usize{0}](World& world, const FrameContext& frame) mutable {
         const sprite2d::AtlasResolver atlases = [this](const assets::AssetGuid& guid) -> const sprite2d::SpriteAtlas* {
             if (guid.IsNull()) return nullptr;
             auto it = atlases_.find(guid);
@@ -1544,7 +1547,20 @@ void Game::BuildFrame() {
             }
             return it->second.get();
         };
-        sprite2d::UpdateSpriteAnimations(world, atlases, frame.dt);
+        sprite2d::UpdateSpriteAnimations(world, atlases, frame.dt,
+            [this, &reported, &count](const assets::AssetGuid& guid, std::string_view clip, bool has_no_frames) {
+                // A script can change names every frame. Bound the diagnostics for a scene.
+                if (count >= 64) return;
+                auto& names = reported[guid];
+                if (names.contains(clip)) return;
+                names.emplace(clip);
+                ++count;
+                const std::string id = assets::ToString(guid);
+                const auto* asset = package_.FindAssetByGuid(id);
+                warnings_.push_back("Sprite atlas " + (asset ? asset->path : id) + ": clip '" + std::string(clip) +
+                                    (has_no_frames ? "' has no frames" : "' was not found"));
+                AETHER_LOG_WARN("Player", "%s", warnings_.back().c_str());
+            });
     };
     scheduler_.Add(std::move(sprite_animation));
 

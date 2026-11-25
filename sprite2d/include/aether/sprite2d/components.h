@@ -10,6 +10,7 @@
 #include <cstring>
 #include <functional>
 #include <string>
+#include <string_view>
 
 // The 2D scene components (Phase 26 step 5
 // §26.6). Sprites and tilemaps sit on the entity's Transform: x and y are
@@ -81,6 +82,10 @@ using AtlasResolver = std::function<const SpriteAtlas*(const assets::AssetGuid&)
 // Advances each SpriteAnimator by `dt` and sets its Sprite's frame to the
 // clip's frame at that time; a clip that doesn't loop stops at its end.
 void UpdateSpriteAnimations(World& world, const AtlasResolver& atlases, f32 dt);
+
+// Optional report for a nonempty clip name on an atlas that successfully loaded.
+using SpriteClipReporter = std::function<void(const assets::AssetGuid&, std::string_view, bool has_no_frames)>;
+void UpdateSpriteAnimations(World& world, const AtlasResolver& atlases, f32 dt, const SpriteClipReporter& report);
 
 // Makes the 2D component types known to scene loading.
 void RegisterSprite2DComponents();

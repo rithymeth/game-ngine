@@ -6552,8 +6552,10 @@
   inline void PlayClip(SpriteAnimator&animator,const std::string&clip,bool restart=true)
   inline void SetSpriteFrame(Sprite&sprite,const std::string&name)
   template<usize N>inline void SetName(char(&buffer)[N],const std::string&text)
+  using SpriteClipReporter=std::function<void(const assets::AssetGuid&,std::string_view,bool has_no_frames)>
   void RegisterSprite2DComponents()
   void UpdateSpriteAnimations(World&world,const AtlasResolver&atlases,f32 dt)
+  void UpdateSpriteAnimations(World&world,const AtlasResolver&atlases,f32 dt,const SpriteClipReporter&report)
 [sprite2d/include/aether/sprite2d/lights2d.h] experimental
   type enum class Light2DType
   type struct Light2D

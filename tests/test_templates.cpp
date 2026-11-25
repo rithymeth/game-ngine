@@ -990,11 +990,12 @@ AETHER_TEST(Templates_SpriteClipsPlayInThePackagedGame) {
     for (int tick = 0; tick < 30; ++tick) game.Tick(1.0f / 60.0f);
     CHECK(frame() == "idle" && animator()->finished && !animator()->playing);
 
-    // A clip the atlas does not have leaves the sprite as it is, and the game does not complain every frame.
+    // A clip the atlas does not have leaves the sprite as it is and is reported once.
     sprite2d::PlayClip(*animator(), "no_such_clip");
     const usize warnings = game.Warnings().size();
     for (int tick = 0; tick < 5; ++tick) game.Tick(1.0f / 60.0f);
-    CHECK(frame() == "idle" && game.Warnings().size() == warnings);
+    CHECK(frame() == "idle" && game.Warnings().size() == warnings + 1 &&
+          game.Warnings().back() == "Sprite atlas Sprites/Player.aatlas: clip 'no_such_clip' was not found");
 }
 
 // The numbers in docs/design/PERFORMANCE.md ("A stress scene through the player") come from this; it does nothing unless a size is given:
