@@ -327,8 +327,10 @@ bool LoadSceneFromMemory(World& world, std::span<const u8> buffer, const std::st
                     rejected_for_unknown = true;
                     continue;
                 }
-                AETHER_LOG_WARN("Scene", "Skipping unknown component '%s' while loading %s", name.c_str(),
-                                path.c_str());
+                if (!options.quiet_unknown_components) {
+                    AETHER_LOG_WARN("Scene", "Skipping unknown component '%s' while loading %s", name.c_str(),
+                                    path.c_str());
+                }
                 continue;
             }
             if (pending_entity.mask.test(resolved_id)) {
@@ -545,8 +547,10 @@ bool LoadSceneJsonFromMemoryImpl(World& world, std::span<const u8> bytes, const 
                     rejected_for_unknown = true;
                     continue;
                 }
-                AETHER_LOG_WARN("Scene", "Skipping unknown or unreflected component '%s' while loading %s",
-                                it.key().c_str(), path.c_str());
+                if (!options.quiet_unknown_components) {
+                    AETHER_LOG_WARN("Scene", "Skipping unknown or unreflected component '%s' while loading %s",
+                                    it.key().c_str(), path.c_str());
+                }
                 continue;
             }
             pending_entity.mask.set(id);

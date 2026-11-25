@@ -479,8 +479,10 @@ PackageReport Package(const PackageOptions& options) {
                 });
                 World scratch;
                 const bool is_json = first != bytes.end() && *first == '{';
-                if (!(is_json ? LoadSceneJsonFromMemory(scratch, bytes, settings.startup_scene)
-                              : LoadSceneFromMemory(scratch, bytes, settings.startup_scene))) {
+                SceneLoadOptions preflight{};
+                preflight.quiet_unknown_components = true;
+                if (!(is_json ? LoadSceneJsonFromMemory(scratch, bytes, settings.startup_scene, preflight)
+                              : LoadSceneFromMemory(scratch, bytes, settings.startup_scene, preflight))) {
                     archive_error = "The startup scene cannot be loaded: " + settings.startup_scene;
                 }
             }

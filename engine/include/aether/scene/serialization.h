@@ -27,6 +27,9 @@ struct SceneLoadOptions {
     // unloading this way). Left alone when the load fails, which creates
     // nothing.
     std::vector<Entity>* loaded_entities = nullptr;
+    // A format-only check can run without runtime modules registered. This
+    // suppresses skip warnings only; strict mode still rejects unknown types.
+    bool quiet_unknown_components = false;
 };
 
 struct SceneSaveOptions {
