@@ -77,7 +77,7 @@ protected:
     std::vector<LogLine> log_;
     Result result_ = Result::None;
     struct StagedPackage {
-        std::filesystem::path game;
+        std::filesystem::path game, archive;
         std::optional<pak::PakKey> key;
     } staged_;
     platform::ChildProcess game_;

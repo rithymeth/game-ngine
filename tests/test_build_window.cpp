@@ -123,6 +123,34 @@ AETHER_TEST(BuildWindow_PackagesAndLaunchesTheGame) {
     imgui.Frame([&] { window.Draw(); });
 }
 
+AETHER_TEST(BuildWindow_ReportsMissingPackageArchiveBeforeLaunching) {
+    BuildPackageWindow window(FreshProject("MissingArchive"));
+    window.player_path = AETHER_TEST_PLAYER_PATH;
+    if (!window.StartPackage()) {
+        CHECK(false);
+        return;
+    }
+    window.WaitForBuild();
+    CHECK(window.LastResult() == BuildPackageWindow::Result::Succeeded);
+    const stdfs::path archive = window.StagedGame().parent_path() / "Paks" / "Game.apak";
+    if (!stdfs::is_regular_file(archive)) {
+        CHECK(false);
+        return;
+    }
+    const stdfs::path backup = archive.parent_path() / "Game.apak.bak";
+    stdfs::rename(archive, backup);
+    std::string error;
+    window.launch_args = "--headless --frames 2";
+    const bool started_without_archive = window.Launch(&error);
+    CHECK(!started_without_archive);
+    CHECK(error.find("Game.apak") != std::string::npos);
+    if (started_without_archive) window.Game().Wait();
+    stdfs::rename(backup, archive);
+    CHECK(window.Launch(&error));
+    int code = -1;
+    CHECK(window.Game().Wait(&code) && code == 0);
+}
+
 AETHER_TEST(BuildWindow_CooksAndReportsFailures) {
     HeadlessImGui imgui;
     const stdfs::path project = FreshProject("Cook");

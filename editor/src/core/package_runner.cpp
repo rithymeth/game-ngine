@@ -135,7 +135,7 @@ bool PackageRunner::Start(bool package) {
                 stage_ = package ? "Packaged into " + out.string() : "Cooked into " + report.pak_file.string();
                 log_.push_back({false, stage_ + " (" + std::to_string(report.assets.size()) + " assets, " +
                                            std::to_string(report.pak_bytes / 1024) + " KB)"});
-                if (package) staged_ = {std::move(game), package_key};
+                if (package) staged_ = {std::move(game), std::move(report.pak_file), package_key};
             } else {
                 result_ = cancel_.load() && error == "Cancelled" ? Result::Cancelled : Result::Failed;
                 stage_ = result_ == Result::Cancelled ? "Cancelled" : "Failed: " + error;
@@ -187,10 +187,14 @@ bool PackageRunner::Launch(std::string* error) {
     const stdfs::path& game = staged.game;
     std::string why;
     bool ok = false;
+    std::error_code archive_error;
     if (game.empty()) {
         why = "Package the game first";
     } else if (game_.Running()) {
         why = "The game is already running";
+    } else if (!stdfs::is_regular_file(staged.archive, archive_error)) {
+        why = "Cannot find the packaged archive " + staged.archive.filename().string() +
+              ". Restore it or package the game again.";
     } else {
         std::vector<std::string> args;
         if (!SplitArgs(launch_args, args)) {
