@@ -94,6 +94,11 @@ The editor and the command line package with the same code. In the editor it is
 Launch. A scripted or CI build uses `aether_package`; the two cannot drift apart, because they are
 one function.
 
+After a successful package, **Verify package** checks the last staged
+distribution's file sizes and checksums without rebuilding or launching it.
+Changing the Output folder field does not change which package this verifies.
+Any differences appear in the build log.
+
 For the editor's **Launch** arguments, put double quotes around values that
 contain spaces, for example `--user-dir "Player Data"`. Backslashes in Windows
 paths are literal. This field passes arguments directly to the player, not to
