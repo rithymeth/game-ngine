@@ -67,12 +67,40 @@ def main():
              reason="already exists")
         if atlas.read_bytes() != original:
             raise RuntimeError("grid overwrote existing work")
+        second_sheet = sprites / "Motion.png"
+        second_atlas = second_sheet.with_suffix(".aatlas")
+        png(second_sheet)
+        args = (project, "Sprite Sheets/Motion.png", 4, 4)
+        clips = ("--clip", "idle", 0, 2, 6, "--clip", "run", 3, 3, 18)
+        tool(grid, *args, *clips, "--clip", "idle", 1, 1, 8, cwd=root, expected=2,
+             reason="duplicate clip name")
+        for first, count in ((5, 2), (6, 1), (4294967295, 2)):
+            tool(grid, *args, "--clip", "run", first, count, 18, cwd=root, expected=1,
+                 reason="outside the 6-frame grid")
+        for frames_per_second in (0, 241, "bad"):
+            tool(grid, *args, "--clip", "run", 0, 1, frames_per_second, cwd=root, expected=2,
+                 reason="FPS must be")
+        tool(grid, *args, "--clip", "run", 0, 0, 12, cwd=root, expected=2,
+             reason="positive COUNT")
+        if second_atlas.exists() or second_sheet.with_suffix(".png.ameta").exists():
+            raise RuntimeError("an invalid clip wrote an atlas or imported its sheet")
+        tool(grid, *args, *clips, cwd=root)
+        named = json.loads(second_atlas.read_bytes())
+        expected_clips = [{"name": "idle", "frames": frames[:2], "fps": 6, "loop": True},
+                          {"name": "run", "frames": frames[3:], "fps": 18, "loop": True}]
+        if named["frames"] != data["frames"] or named["clips"] != expected_clips:
+            raise RuntimeError("named clips did not preserve sheet frames or selected ranges")
         out = root / "Packaged Atlas"
         tool(package, project, "--out", out, "--config", "shipping", "--strict", "--always",
-             "Sprite Sheets/Hero.aatlas", cwd=root)
+             "Sprite Sheets/Motion.aatlas", cwd=root)
         listing = tool(pak, "list", out / "Paks" / "Game.apak", cwd=root)
-        if any(f"Content/Sprite Sheets/Hero.{ext}" not in listing for ext in ("aatlas", "png")):
+        if any(f"Content/Sprite Sheets/Motion.{ext}" not in listing for ext in ("aatlas", "png")):
             raise RuntimeError("the atlas alone did not pull its source texture into Shipping")
+        extract = root / "Extracted Atlas"
+        tool(pak, "extract", out / "Paks" / "Game.apak", extract, cwd=root)
+        packed = json.loads((extract / "Content" / "Sprite Sheets" / "Motion.aatlas").read_bytes())
+        if packed != named:
+            raise RuntimeError("Shipping did not preserve the authored named clips")
 
 
 if __name__ == "__main__":
