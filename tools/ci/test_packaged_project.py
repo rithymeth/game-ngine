@@ -78,8 +78,10 @@ def main():
         sentinel.write_text("owned by someone else", encoding="utf-8")
         (occupied_slot / "untouched").write_text("another smoke run", encoding="utf-8")
         package_env = dict(os.environ, TEMP=str(package_temp), TMP=str(package_temp), TMPDIR=str(package_temp))
-        run(tools["aether_package"], project.relative_to(root), "--out", packaged.relative_to(root),
-            "--config", "development", "--smoke", cwd=root, env=package_env)
+        package_output = run(tools["aether_package"], project.relative_to(root), "--out", packaged.relative_to(root),
+                             "--config", "development", "--smoke", cwd=root, env=package_env, capture=True)
+        if args.template == "third_person" and "Skipping unknown" in package_output:
+            raise RuntimeError("the valid 3D template generated misleading preflight component warnings")
         if (not sentinel.is_file() or not (occupied_slot / "untouched").is_file()
                 or set(package_temp.iterdir()) != {existing_scratch, occupied_slot}):
             raise RuntimeError("package smoke deleted existing files or left temporary files behind")
@@ -143,6 +145,22 @@ def main():
                         raise RuntimeError("a malformed startup scene replaced the prior build or left staging files")
             finally:
                 startup_file.write_bytes(original_scene)
+            unknown_type = "AetherPackageUnknownTestComponent"
+            with_unknown = json.loads(original_scene)
+            with_unknown["entities"][0]["components"][unknown_type] = {}
+            unknown_package = root / "Unknown Component Package"
+            try:
+                startup_file.write_text(json.dumps(with_unknown), encoding="utf-8")
+                preflight = run(tools["aether_package"], project, "--out", unknown_package,
+                                "--config", "development", cwd=root, capture=True)
+                if "Skipping unknown" in preflight:
+                    raise RuntimeError("preflight diagnosed a component without the runtime registry")
+            finally:
+                startup_file.write_bytes(original_scene)
+            runtime = run(unknown_package / (name + exe), "--headless", "--frames", "1", "--user-dir",
+                          root / "Unknown Component Player Data", cwd=empty_cwd, capture=True)
+            if not any("Skipping unknown" in line and unknown_type in line for line in runtime.splitlines()):
+                raise RuntimeError("the real player did not report its unknown component")
             encrypted = root / "Encrypted Package"
             fixture_key = "12" * 32
             run(tools["aether_package"], project, "--out", encrypted, "--config", "development",
