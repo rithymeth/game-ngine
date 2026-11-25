@@ -132,6 +132,19 @@ def main():
                 if f"Content/Models/{model}.gltf" not in listing:
                     raise RuntimeError(f"the packaged 3D starter is missing {model}.gltf")
         if args.headless_build_tools and args.template == "blank":
+            original_package = {p: p.read_bytes() for p in
+                                (packaged / "PackageManifest.json", packaged / executable, packaged / "Paks" / "Game.apak")}
+            other = "Other Town"
+            run(tools["aether_new"], other, "--dir", root, cwd=root)
+            rejected = subprocess.run(
+                [tools["aether_package"], str(root / other / (other + ".aproject")), "--out", str(packaged)],
+                cwd=root, capture_output=True, text=True, timeout=12)
+            if rejected.returncode != 1 or "contains a package for another project" not in rejected.stderr:
+                raise RuntimeError("the packager did not reject a different project in the same output folder")
+            if (any(p.read_bytes() != before for p, before in original_package.items())
+                    or any(p.name.startswith(".aether-package-") for p in packaged.iterdir())
+                    or (packaged / ("OtherTown" + exe)).exists()):
+                raise RuntimeError("rejecting the other project changed the original package")
             # An extensionless executable cannot share a name with a package folder.
             for project_name, executable_name in (("P a k s", "Paks-game"), ("LICENSES", "LICENSES-game")):
                 created = run(tools["aether_new"], project_name, "--dir", root, cwd=root, capture=True)

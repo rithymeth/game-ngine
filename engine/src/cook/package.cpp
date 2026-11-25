@@ -423,6 +423,26 @@ PackageReport Package(const PackageOptions& options) {
     }
     if (settings.startup_scene.empty()) return fail("Set a startup scene before packaging the game");
 
+    // A different project built into this folder would replace the shared Paks
+    // directory while leaving the first game's executable behind.
+    const stdfs::path previous_manifest = options.output_dir / "PackageManifest.json";
+    bool has_manifest = false;
+    if (!CheckDestination(previous_manifest, false, has_manifest, error)) return fail(error);
+    if (has_manifest) {
+        std::vector<u8> bytes;
+        if (fs::ReadFileBytes(previous_manifest.string(), bytes, kMaxPackageManifestBytes)) {
+            const auto manifest = nlohmann::json::parse(bytes.begin(), bytes.end(), nullptr, false);
+            if (manifest.is_object() && manifest.contains("$type") && manifest["$type"] == "PackageManifest") {
+                const auto project = manifest.find("project");
+                if (project != manifest.end() && project->is_string() && !project->get_ref<const std::string&>().empty() &&
+                    *project != settings.name) {
+                    return fail("Output folder contains a package for another project; choose a different output folder");
+                }
+            }
+        }
+    }
+
+
     // Prepare every package artifact before replacing any published file.
     CookOptions cook = options.cook;
     report.paks_dir = options.output_dir / "Paks";

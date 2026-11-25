@@ -29,6 +29,9 @@ something you find out later:
 
     aether_package Game.aproject --out dist/Game --config shipping --smoke
 
+Use a separate output folder for a different project name, including after a
+rename. The packager refuses to replace a package for another project in place.
+
 The smoke run starts the game from its own empty scratch folder outside the
 package, then removes only that folder. Relative output paths work, and
 parallel builds do not share smoke state. What `verify-package` checked is
