@@ -250,6 +250,36 @@ AETHER_TEST(TilemapEditor_FastPointerDragsPaintAndEraseEveryCellAsOneStroke) {
     for (i32 x = 1; x < 5; ++x) CHECK(doc.Map().Get(0, x, 3) == kEmpty);
 }
 
+AETHER_TEST(TilemapEditor_JumpProofOverlayIsReadOnlyAndKeepsTheLastValidTrace) {
+    HeadlessImGui ui;
+    TilemapEditDocument doc = Doc();
+    TilemapPanel panel(doc);
+    const auto file = std::filesystem::temp_directory_path() / "jump-proof-overlay.json";
+    const auto draw = [&] { panel.Draw(); };
+    const u64 rev = doc.Revision();
+    ui.Frame(draw);
+    const int plain_vertices = ImGui::GetDrawData()->TotalVtxCount;
+    {
+        std::ofstream out(file);
+        out << R"({"frames":3,"first_difference_frame":2,"before_path":[[1,1,0],[2,2,0],[3,1,0]],"after_path":[[1,1,0],[2,1.5,0],[2.5,1,0]]})";
+    }
+    std::string error;
+    CHECK(panel.LoadJumpProofOverlay(file, &error));
+    CHECK(error.empty());
+    ui.Frame(draw);
+    const int overlay_vertices = ImGui::GetDrawData()->TotalVtxCount;
+    CHECK(overlay_vertices > plain_vertices);
+    CHECK(doc.Revision() == rev && !doc.dirty() && !doc.CanUndo());
+    {
+        std::ofstream out(file);
+        out << R"({"frames":1,"first_difference_frame":2,"before_path":[[1,1,0]],"after_path":[[1,1,0]]})";
+    }
+    CHECK(!panel.LoadJumpProofOverlay(file, &error) && !error.empty());
+    ui.Frame(draw);
+    CHECK(ImGui::GetDrawData()->TotalVtxCount == overlay_vertices);
+    CHECK(doc.Revision() == rev && !doc.dirty());
+}
+
 AETHER_TEST(TilemapEditor_WorkspaceShowsTheSampleLevel) {
     HeadlessImGui ui;
     EditorWorkspace ws;

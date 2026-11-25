@@ -15,6 +15,7 @@ class TilemapPanel {
 public:
     explicit TilemapPanel(TilemapEditDocument& document) : doc_(document) {}
     void Draw();
+    bool LoadJumpProofOverlay(const std::filesystem::path& path, std::string* error = nullptr);
 
     f32 zoom = 24.0f; // screen pixels per tile
     bool show_grid = true;
@@ -25,6 +26,7 @@ private:
     void DrawTools();
     void DrawLayers();
     void DrawCanvas();
+    void DrawJumpProofTools();
 
     TilemapEditDocument& doc_;
     u64 save_error_revision_ = 0;
@@ -39,6 +41,12 @@ private:
     bool rect_active_ = false;
     i32 rect_x_ = 0, rect_y_ = 0;
     i32 selected_autotile_ = 0;
+    struct GhostPoint { f32 x, y; };
+    std::vector<GhostPoint> ghost_before_, ghost_after_;
+    usize ghost_difference_ = 0;
+    std::filesystem::path ghost_map_;
+    std::string ghost_file_, ghost_error_;
+    f32 ghost_pixels_per_unit_ = 16.0f;
 };
 
 } // namespace aether::editor

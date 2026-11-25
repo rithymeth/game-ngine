@@ -336,8 +336,8 @@ def main():
 
             compare = Path(__file__).resolve().parents[1] / "jump_proof_compare.py"
 
-            def compare_traces(left, right, code):
-                result = subprocess.run([sys.executable, compare, left, right], cwd=empty_cwd,
+            def compare_traces(left, right, code, *extra):
+                result = subprocess.run([sys.executable, compare, left, right, *extra], cwd=empty_cwd,
                                         capture_output=True, text=True, timeout=10)
                 if result.returncode != code:
                     raise RuntimeError(f"trace comparison exit={result.returncode}: {result.stdout}{result.stderr}")
@@ -349,6 +349,11 @@ def main():
             diff = compare_traces(original_trace, changed_trace, 5)
             if not 280 <= diff["first_difference_frame"] <= 300 or diff["frames"] != 400:
                 raise RuntimeError(f"did not locate the first divergence after placing one tile: {diff}")
+            overlay = compare_traces(original_trace, changed_trace, 5, "--overlay-data")
+            i = overlay["first_difference_frame"] - 1
+            if (len(overlay["before_path"]) != 400 or len(overlay["after_path"]) != 400
+                    or overlay["before_path"][i] != diff["before"] or overlay["after_path"][i] != diff["after"]):
+                raise RuntimeError("editor overlay data did not match the full paths and divergence")
             truncated = root / "Truncated.txt"
             truncated.write_text("\n".join(original_trace.read_text(encoding="utf-8").splitlines()[:-1]), encoding="utf-8")
             compare_traces(original_trace, truncated, 2)

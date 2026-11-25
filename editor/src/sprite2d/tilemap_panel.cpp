@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <fstream>
 
 namespace aether::editor {
 
@@ -41,8 +42,84 @@ void ApplyBrushLine(TilemapEditDocument& doc, i32 x, i32 y, i32 end_x, i32 end_y
 
 } // namespace
 
+bool TilemapPanel::LoadJumpProofOverlay(const std::filesystem::path& path, std::string* error) {
+    const auto fail = [&](const char* why) {
+        if (error) *error = why;
+        return false;
+    };
+    std::error_code ec;
+    const auto size = std::filesystem::file_size(path, ec);
+    if (ec || size == 0 || size > 4 * 1024 * 1024) return fail("Choose an overlay JSON file up to 4 MiB.");
+    std::ifstream in(path, std::ios::binary);
+    std::string text(static_cast<usize>(size), '\0');
+    if (!in.read(text.data(), static_cast<std::streamsize>(size)) || in.peek() != std::ifstream::traits_type::eof())
+        return fail("Couldn't read the overlay file.");
+    const auto data = nlohmann::json::parse(text, nullptr, false);
+    if (!data.is_object() || !data.contains("frames") || !data["frames"].is_number_unsigned())
+        return fail("Expected Jump Proof overlay data.");
+    const u64 count = data["frames"].get<u64>();
+    if (count == 0 || count > 20000 || !data.contains("first_difference_frame"))
+        return fail("Invalid overlay frame count or marker.");
+    const auto& marker = data["first_difference_frame"];
+    if (!marker.is_null() && (!marker.is_number_unsigned() || marker.get<u64>() == 0 || marker.get<u64>() > count))
+        return fail("The divergence marker is outside the trace.");
+    const auto parse = [&](const char* key, std::vector<GhostPoint>& points) {
+        if (!data.contains(key) || !data[key].is_array() || data[key].size() != count) return false;
+        points.reserve(static_cast<usize>(count));
+        for (const auto& raw : data[key]) {
+            if (!raw.is_array() || raw.size() != 3 || !raw[0].is_number() || !raw[1].is_number()) return false;
+            const f64 x = raw[0].get<f64>(), y = raw[1].get<f64>();
+            if (!std::isfinite(x) || !std::isfinite(y) || std::abs(x) > 1000000 || std::abs(y) > 1000000) return false;
+            points.push_back({static_cast<f32>(x), static_cast<f32>(y)});
+        }
+        return true;
+    };
+    std::vector<GhostPoint> before, after;
+    if (!parse("before_path", before) || !parse("after_path", after))
+        return fail("The file must contain two complete position paths. Export with --overlay-data.");
+    ghost_before_ = std::move(before);
+    ghost_after_ = std::move(after);
+    ghost_difference_ = marker.is_null() ? 0 : static_cast<usize>(marker.get<u64>());
+    ghost_map_ = doc_.TilemapFile();
+    if (error) error->clear();
+    return true;
+}
+
+void TilemapPanel::DrawJumpProofTools() {
+    if (!ImGui::CollapsingHeader("Jump Proof overlay")) return;
+    ImGui::InputTextWithHint("##ghost_file", "Path to Jump Proof overlay JSON", &ghost_file_);
+    if (ImGui::SmallButton("Load overlay")) LoadJumpProofOverlay(ghost_file_, &ghost_error_);
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Clear overlay")) {
+        ghost_before_.clear();
+        ghost_after_.clear();
+        ghost_difference_ = 0;
+        ghost_error_.clear();
+    }
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(90.0f);
+    ImGui::SliderFloat("Pixels per unit", &ghost_pixels_per_unit_, 1.0f, 256.0f, "%.0f", ImGuiSliderFlags_AlwaysClamp);
+    if (!ghost_error_.empty()) ImGui::TextWrapped("%s", ghost_error_.c_str());
+    if (!ghost_before_.empty()) {
+        ImGui::TextColored(ImVec4(.30f, .80f, 1.0f, 1.0f), "Blue: before");
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(1.0f, .63f, .29f, 1.0f), "Orange: after");
+        if (ghost_difference_ != 0) {
+            ImGui::SameLine();
+            ImGui::Text("First difference: frame %zu", ghost_difference_);
+        }
+    }
+}
+
 void TilemapPanel::Draw() {
+    if (ghost_map_ != doc_.TilemapFile()) {
+        ghost_before_.clear();
+        ghost_after_.clear();
+        ghost_difference_ = 0;
+        ghost_map_ = doc_.TilemapFile();
+    }
     DrawTools();
+    DrawJumpProofTools();
     ImGui::Separator();
     if (ImGui::BeginChild("##left", ImVec2(260, 0), ImGuiChildFlags_Borders)) {
         DrawLayers();
@@ -227,6 +304,29 @@ void TilemapPanel::DrawCanvas() {
         for (u32 y = 0; y <= map.height; ++y) {
             const f32 sy = base_y - static_cast<f32>(y) * zoom;
             dl->AddLine(ImVec2(to_screen_x(0), sy), ImVec2(to_screen_x(static_cast<i32>(map.width)), sy), IM_COL32(255, 255, 255, 30));
+        }
+    }
+
+    if (!ghost_before_.empty()) {
+        const auto screen = [&](const GhostPoint& p) {
+            return ImVec2(base_x + p.x * (zoom * ghost_pixels_per_unit_ / static_cast<f32>(std::max(ts.tile_width, 1u))),
+                          base_y - p.y * (zoom * ghost_pixels_per_unit_ / static_cast<f32>(std::max(ts.tile_height, 1u))));
+        };
+        const auto path = [&](const std::vector<GhostPoint>& points, ImU32 color) {
+            const usize stride = std::max<usize>(1, (points.size() + 2047) / 2048);
+            for (usize i = stride; i < points.size(); i += stride)
+                dl->AddLine(screen(points[i - stride]), screen(points[i]), color, 2.0f);
+            const usize last_drawn = ((points.size() - 1) / stride) * stride;
+            if (last_drawn + 1 < points.size())
+                dl->AddLine(screen(points[last_drawn]), screen(points.back()), color, 2.0f);
+            dl->AddCircleFilled(screen(points.back()), 3.0f, color);
+        };
+        constexpr ImU32 before = IM_COL32(75, 204, 255, 255), after = IM_COL32(255, 160, 74, 255);
+        path(ghost_before_, before);
+        path(ghost_after_, after);
+        if (ghost_difference_ != 0) {
+            dl->AddCircle(screen(ghost_before_[ghost_difference_ - 1]), 5.0f, before, 16, 2.0f);
+            dl->AddCircle(screen(ghost_after_[ghost_difference_ - 1]), 8.0f, after, 16, 2.0f);
         }
     }
 

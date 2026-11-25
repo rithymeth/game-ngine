@@ -46,12 +46,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("before", type=Path)
     parser.add_argument("after", type=Path)
+    parser.add_argument("--overlay-data", action="store_true", help="include both paths for the Tilemap editor")
     parser.add_argument("--tolerance", type=float, default=0.01, help="allowed drift per axis in world units")
     args = parser.parse_args()
     if not math.isfinite(args.tolerance) or args.tolerance < 0:
         parser.error("tolerance must be finite and non-negative")
     try:
         left, right = read_trace(args.before), read_trace(args.after)
+        if args.overlay_data and len(left) > 20_000:
+            raise ValueError("editor overlay supports up to 20000 frames")
         if len(left) != len(right):
             raise ValueError("trace lengths differ")
     except (OSError, ValueError, OverflowError) as exc:
@@ -62,6 +65,8 @@ def main():
         if any(abs(a[i] - b[i]) > args.tolerance for i in (0, 1)):
             result.update(first_difference_frame=frame, before=a, after=b)
             break
+    if args.overlay_data:
+        result.update(before_path=left, after_path=right)
     print(json.dumps(result, allow_nan=False))
     return 0 if result["first_difference_frame"] is None else 5
 
