@@ -4,6 +4,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <string_view>
+#include <unordered_set>
 
 namespace aether::editor {
 
@@ -187,6 +189,24 @@ bool TilemapEditDocument::MoveLayer(usize from, usize to) {
     if (active_layer == from) active_layer = to;
     else if (from < active_layer && active_layer <= to) --active_layer;
     else if (to <= active_layer && active_layer < from) ++active_layer;
+    return true;
+}
+
+bool TilemapEditDocument::DuplicateLayer(usize layer) {
+    if (in_stroke_ || layer >= map_.layers.size()) return false;
+    TileLayer copy = map_.layers[layer];
+    {
+        std::unordered_set<std::string_view> names;
+        names.reserve(map_.layers.size());
+        for (const auto& existing : map_.layers) names.emplace(existing.name);
+        const std::string base = copy.name + " copy";
+        copy.name = base;
+        for (usize n = 2; names.count(copy.name) != 0; ++n) copy.name = base + " " + std::to_string(n);
+    }
+    Record(true);
+    const usize destination = layer + 1;
+    map_.layers.insert(map_.layers.begin() + static_cast<std::ptrdiff_t>(destination), std::move(copy));
+    active_layer = destination;
     return true;
 }
 
