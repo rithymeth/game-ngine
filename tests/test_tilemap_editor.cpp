@@ -316,6 +316,64 @@ AETHER_TEST(TilemapEditor_FastPointerDragsPaintAndEraseEveryCellAsOneStroke) {
     for (i32 x = 1; x < 5; ++x) CHECK(doc.Map().Get(0, x, 3) == kEmpty);
 }
 
+AETHER_TEST(TilemapEditor_FillAndPickUseOnlyTheClickedCell) {
+    HeadlessImGui ui;
+    TilemapData map;
+    map.Resize(6, 5);
+    map.AddLayer("Ground");
+    for (i32 y = 0; y < 5; ++y)
+        for (i32 x = 3; x < 6; ++x) map.Set(0, x, y, 2);
+    TilemapEditDocument doc(std::move(map), Doc().GetTileset());
+    TilemapPanel panel(doc);
+    doc.tool = TileTool::Fill;
+    doc.brush = 3;
+    ImVec2 bottom_left;
+    const auto draw = [&] {
+        panel.Draw();
+        const ImVec2 corner = {ImGui::GetItemRectMin().x, ImGui::GetItemRectMax().y};
+        const ImVec2 padding = ImGui::GetStyle().WindowPadding;
+        bottom_left = ImVec2(corner.x + padding.x + 8, corner.y - padding.y - 8);
+    };
+    ui.Frame(draw);
+    ImGuiIO& io = ImGui::GetIO();
+    const auto move = [&](i32 x, i32 y) {
+        io.AddMousePosEvent(bottom_left.x + (static_cast<f32>(x) + 0.5f) * panel.zoom,
+                            bottom_left.y - (static_cast<f32>(y) + 0.5f) * panel.zoom);
+        ui.Frame(draw);
+    };
+    const auto left = [&](bool down) {
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, down);
+        ui.Frame(draw);
+    };
+    move(7, 2); // Canvas but outside the map.
+    left(true);
+    move(1, 2);
+    left(false);
+    CHECK(doc.Map().Get(0, 1, 2) == kEmpty && !doc.CanUndo());
+    if (doc.CanUndo()) doc.Undo();
+
+    move(1, 2);
+    left(true);
+    move(4, 2); // A different flood region under the still-held button.
+    left(false);
+    CHECK(doc.Map().Get(0, 0, 0) == 3 && doc.Map().Get(0, 4, 2) == 2);
+    CHECK(doc.Undo() && !doc.CanUndo() && doc.Map().Get(0, 1, 2) == kEmpty);
+
+    doc.tool = TileTool::Pick;
+    doc.brush = 3;
+    move(4, 2);
+    left(true);
+    move(1, 2);
+    left(false);
+    CHECK(doc.brush == 2 && !doc.CanUndo() && doc.CanRedo());
+    doc.brush = 5;
+    move(7, 2);
+    left(true);
+    move(4, 2);
+    left(false);
+    CHECK(doc.brush == 5 && !doc.CanUndo() && doc.CanRedo());
+}
+
 AETHER_TEST(TilemapEditor_JumpProofOverlayIsReadOnlyAndKeepsTheLastValidTrace) {
     HeadlessImGui ui;
     TilemapEditDocument doc = Doc();

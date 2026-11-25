@@ -567,34 +567,38 @@ void TilemapPanel::DrawCanvas() {
     }
     dl->PopClipRect();
 
-    if (doc_.tool != TileTool::Rectangle && mouse_valid && (left || right)) {
-        const TileTool saved = doc_.tool;
+    const TileTool selected = doc_.tool;
+    const bool brush_drag = selected != TileTool::Rectangle && mouse_valid &&
+                            (right || (left && (selected == TileTool::Paint || selected == TileTool::Erase)));
+    if (brush_drag) {
         if (right) doc_.tool = TileTool::Erase;
         if (!dragging_) {
             doc_.BeginStroke();
             dragging_ = true;
         }
-        if (doc_.tool == TileTool::Paint || doc_.tool == TileTool::Erase) {
-            if (on_map) {
-                if (last_brush_sample_ && last_brush_sample_->tool == doc_.tool) {
-                    ApplyBrushLine(doc_, last_brush_sample_->x, last_brush_sample_->y, cx, cy);
-                } else {
-                    doc_.Apply(cx, cy);
-                }
-                last_brush_sample_ = BrushSample{cx, cy, doc_.tool};
+        if (on_map) {
+            if (last_brush_sample_ && last_brush_sample_->tool == doc_.tool) {
+                ApplyBrushLine(doc_, last_brush_sample_->x, last_brush_sample_->y, cx, cy);
             } else {
-                // Do not connect across another panel or a trip outside the map.
-                last_brush_sample_.reset();
+                doc_.Apply(cx, cy);
             }
+            last_brush_sample_ = BrushSample{cx, cy, doc_.tool};
         } else {
+            // Do not connect across another panel or a trip outside the map.
             last_brush_sample_.reset();
-            doc_.Apply(cx, cy);
         }
-        doc_.tool = saved;
-    } else if (dragging_) {
-        doc_.EndStroke();
-        last_brush_sample_.reset();
-        dragging_ = false;
+        doc_.tool = selected;
+    } else {
+        if (dragging_) {
+            doc_.EndStroke();
+            last_brush_sample_.reset();
+            dragging_ = false;
+        }
+        // Fill and Pick are one-shot tools. Crossing into the map or another
+        // region after a press must not choose a new tile.
+        if (on_map && left && ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
+            (selected == TileTool::Fill || selected == TileTool::Pick))
+            doc_.Apply(cx, cy);
     }
     ImGui::EndChild();
 }
