@@ -456,7 +456,13 @@ void TilemapPanel::DrawCanvas() {
         const i32 bottom = index(std::floor((static_cast<f64>(base_y) - visible_max.y) / zoom), map.height);
         const i32 top = index(std::ceil((static_cast<f64>(base_y) - visible_min.y) / zoom), map.height);
         dl->AddRectFilled(visible_min, visible_max, IM_COL32(30, 30, 36, 255));
+        const auto columns = static_cast<usize>(right - left);
+        const auto visible_cell = [&](i32 x, i32 y) {
+            return static_cast<usize>(y - bottom) * columns + static_cast<usize>(x - left);
+        };
+        std::vector<u8> blocked(show_solid ? columns * static_cast<usize>(top - bottom) : 0);
         for (usize layer = 0; layer < map.layers.size(); ++layer) {
+            const bool mark_solid = show_solid && map.layers[layer].collides;
             for (i32 y = bottom; y < top; ++y) {
                 for (i32 x = left; x < right; ++x) {
                     const i32 tile = ResolveTile(map, ts, layer, x, y);
@@ -464,8 +470,19 @@ void TilemapPanel::DrawCanvas() {
                     const ImVec2 a(to_screen_x(x), to_screen_y(y));
                     const ImVec2 b(a.x + zoom, a.y + zoom);
                     if (!DrawTileArt(dl, a, b, tile)) dl->AddRectFilled(a, b, TileColor(tile));
-                    if (show_solid && map.layers[layer].collides && ts.IsSolid(tile))
-                        dl->AddRect(a, b, IM_COL32(220, 40, 40, 255), 0, 0, 1.5f);
+                    if (mark_solid && ts.IsSolid(tile)) blocked[visible_cell(x, y)] = 1;
+                }
+            }
+        }
+        // Collision is the union of blocking layers, not the topmost art.
+        // Submit these after every tile so decoration cannot cover the outline.
+        if (!blocked.empty()) {
+            for (i32 y = bottom; y < top; ++y) {
+                for (i32 x = left; x < right; ++x) {
+                    if (!blocked[visible_cell(x, y)]) continue;
+                    const ImVec2 a(to_screen_x(x), to_screen_y(y));
+                    const ImVec2 b(a.x + zoom, a.y + zoom);
+                    dl->AddRect(a, b, IM_COL32(220, 40, 40, 255), 0, 0, 1.5f);
                 }
             }
         }
