@@ -11,6 +11,7 @@
 //   MyGame/Build/MyGame
 //
 // It prints those next two commands with the real paths when it has made the project.
+#include "aether/cook/package.h"
 #include "aether/templates/templates.h"
 
 #include <algorithm>
@@ -38,10 +39,27 @@ void ListTemplates(std::FILE* out) {
     }
 }
 
-// A path as the user would type it in a shell here: quoted only when it has a space.
+// A path as the user would type it in PowerShell (Windows) or a POSIX shell.
 std::string Shown(const stdfs::path& path) {
     const std::string text = path.string();
-    return text.find(' ') == std::string::npos ? text : "\"" + text + "\"";
+#if !defined(_WIN32)
+    constexpr const char* safe = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_./-";
+    if (!text.empty() && text.find_first_not_of(safe) == std::string::npos) return text;
+#endif
+    std::string quoted = "'";
+    for (char c : text) {
+        if (c == '\'') {
+#if defined(_WIN32)
+            quoted += "''";
+#else
+            quoted += "'\\''";
+#endif
+        } else {
+            quoted.push_back(c);
+        }
+    }
+    quoted += '\'';
+    return quoted;
 }
 
 } // namespace
@@ -85,14 +103,15 @@ int main(int argc, char** argv) {
         return 1;
     }
     const stdfs::path build = paths.root / "Build";
+    const stdfs::path game = build / cook::GameExecutableName(name);
 #if defined(_WIN32)
-    const stdfs::path game = build / (name + ".exe");
+    constexpr const char* launch_prefix = "& ";
 #else
-    const stdfs::path game = build / name;
+    constexpr const char* launch_prefix = "";
 #endif
     std::printf("Created %s from the %s template.\n", Shown(paths.file).c_str(), templates::FindProjectTemplate(template_id)->name.c_str());
     std::printf("To build it into a folder that runs on its own, and play it:\n");
     std::printf("  aether_package %s --out %s\n", Shown(paths.file).c_str(), Shown(build).c_str());
-    std::printf("  %s\n", Shown(game).c_str());
+    std::printf("  %s%s\n", launch_prefix, Shown(game).c_str());
     return 0;
 }

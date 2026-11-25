@@ -72,6 +72,10 @@ MyGame/Build/MyGame
 `aether_new --list` shows the templates. `aether_new` prints the other two commands with the real paths when it has made the
 project, so there is nothing to remember. What you get is a project folder you own: `Content/Scenes/Main.ascene`, a controller
 script in `Content/Scripts/`, input bindings, a Blueprint for the pickups, and three greybox models in `Content/Models/`.
+Quote project names with spaces, such as `aether_new "My Game"`. The folder
+keeps the name you typed, but the packaged executable is `MyGame` (or
+`MyGame.exe` on Windows). The printed launch command uses PowerShell syntax
+on Windows and POSIX shell syntax elsewhere.
 
 What each template shows when it runs:
 
