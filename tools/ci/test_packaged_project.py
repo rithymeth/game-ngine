@@ -55,6 +55,14 @@ def main():
             if not tool.is_file():
                 parser.error(f"distributed tool is missing: {tool}")
 
+        for invalid_name in ("cOn", "PrN", "AUX", "NUL", "COM0", "COM1", "lpt9", "C O M 2"):
+            rejected = subprocess.run([tools["aether_new"], invalid_name, "--dir", root],
+                                      cwd=root, capture_output=True, text=True, timeout=30)
+            if rejected.returncode == 0 or "reserved Windows name" not in rejected.stderr:
+                raise RuntimeError(f"Scaffold did not explain the reserved name {invalid_name!r}")
+            if invalid_name in {path.name for path in root.iterdir()}:
+                raise RuntimeError(f"Scaffold left a partial project for {invalid_name!r}")
+
         name = "Starter Smoke"
         executable = "StarterSmoke" + exe
         source = root / name
