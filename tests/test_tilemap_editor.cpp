@@ -179,6 +179,40 @@ AETHER_TEST(TilemapEditor_SavesBothFiles) {
     }
 }
 
+AETHER_TEST(TilemapEditor_SaveStagesEachAssetBeforeReplacingOldBytes) {
+    TilemapEditDocument doc = Doc();
+    doc.brush = 5;
+    doc.Apply(2, 2);
+    doc.SetSolid(5, true);
+    const auto dir = std::filesystem::temp_directory_path() / "aether_tilemap_atomic";
+    const auto map_path = dir / "a.atilemap", set_path = dir / "a.atileset";
+    std::string error;
+    if (!doc.Save(map_path, set_path, &error)) { CHECK(false); return; }
+    TilemapData changed = doc.Map();
+    changed.Set(0, 2, 2, 6);
+    Tileset tiles = doc.GetTileset();
+    tiles.SetSolid(6, true);
+    for (const auto& target : {map_path, set_path}) {
+        const auto temp = std::filesystem::path(target.string() + ".tmp");
+        std::filesystem::create_directory(temp);
+        std::ofstream(temp / "keep") << "an occupied staging path";
+        const bool saved = target == map_path ? SaveTilemap(target, changed, &error) : SaveTileset(target, tiles, &error);
+        CHECK(!saved && !error.empty());
+        CHECK(std::filesystem::is_regular_file(temp / "keep"));
+    }
+    TilemapData original;
+    Tileset original_set;
+    CHECK(LoadTilemap(map_path, original, &error) && original.Get(0, 2, 2) == 5);
+    CHECK(LoadTileset(set_path, original_set, &error) && original_set.IsSolid(5) && !original_set.IsSolid(6));
+    for (const auto& target : {map_path, set_path}) {
+        const auto temp = std::filesystem::path(target.string() + ".tmp");
+        std::filesystem::remove(temp / "keep");
+        std::filesystem::remove(temp);
+    }
+    CHECK(SaveTilemap(map_path, changed, &error) && LoadTilemap(map_path, original, &error) && original.Get(0, 2, 2) == 6);
+    CHECK(SaveTileset(set_path, tiles, &error) && LoadTileset(set_path, original_set, &error) && original_set.IsSolid(6));
+}
+
 AETHER_TEST(TilemapEditor_PanelDrawsHeadless) {
     HeadlessImGui ui;
     TilemapEditDocument doc = Doc();

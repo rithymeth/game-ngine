@@ -67,6 +67,7 @@ bool WriteFileBytes(const std::string& path, const void* data, usize size_bytes)
     }
     errno = 0;
     file.write(reinterpret_cast<const char*>(data), static_cast<std::streamsize>(size_bytes));
+    file.close(); // A buffered write can first fail when the stream closes.
     if (!file.good()) {
         std::fprintf(stderr, "WriteFileBytes: write to '%s' failed after %zu bytes (errno=%d: %s)\n", path.c_str(),
                      size_bytes, errno, std::strerror(errno));
