@@ -110,6 +110,10 @@ std::vector<std::pair<i32, i32>> TilemapEditDocument::FloodRegion(i32 x, i32 y) 
 }
 
 void TilemapEditDocument::Apply(i32 x, i32 y) {
+    if (tool == TileTool::Pick) {
+        if (map_.InBounds(x, y)) brush = map_.Get(active_layer, x, y);
+        return; // Selecting a brush does not need a map snapshot.
+    }
     const bool own_stroke = !in_stroke_;
     if (own_stroke) BeginStroke();
     switch (tool) {
@@ -120,9 +124,7 @@ void TilemapEditDocument::Apply(i32 x, i32 y) {
             for (const auto& [cx, cy] : FloodRegion(x, y)) PaintCell(cx, cy, brush);
         }
         break;
-    case TileTool::Pick:
-        if (map_.InBounds(x, y)) brush = map_.Get(active_layer, x, y);
-        break;
+    case TileTool::Pick: break; // handled before starting a stroke
     case TileTool::Rectangle: break; // see Rectangle()
     }
     if (own_stroke) EndStroke();
