@@ -233,12 +233,25 @@ void TilemapPanel::DrawLayers() {
         if (ImGui::Checkbox("##collides", &collides)) doc_.SetLayerCollides(i, collides);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("The layer's solid tiles block");
         ImGui::SameLine();
-        if (ImGui::Selectable(map.layers[i].name.c_str(), doc_.active_layer == i)) doc_.active_layer = i;
+        const ImVec2 name_position = ImGui::GetCursorScreenPos();
+        if (ImGui::Selectable("##layer", doc_.active_layer == i, 0, ImVec2(0, ImGui::GetTextLineHeight())))
+            doc_.active_layer = i;
+        // Draw the label literally; a name such as "Ground ## 2" is not an ImGui ID.
+        ImGui::GetWindowDrawList()->AddText(name_position, ImGui::GetColorU32(ImGuiCol_Text), map.layers[i].name.c_str());
         ImGui::PopID();
     }
     if (ImGui::SmallButton("Add layer")) doc_.AddLayer("Layer " + std::to_string(map.layers.size() + 1));
     ImGui::SameLine();
     if (ImGui::SmallButton("Remove")) doc_.RemoveLayer(doc_.active_layer);
+    if (doc_.active_layer < map.layers.size()) {
+        ImGui::PushID(static_cast<int>(doc_.active_layer));
+        std::string name = map.layers[doc_.active_layer].name;
+        ImGui::SetNextItemWidth(138.0f);
+        if (ImGui::InputText("Layer name", &name, ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll))
+            doc_.RenameLayer(doc_.active_layer, name);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Enter saves a nonblank name. Escape cancels.");
+        ImGui::PopID();
+    }
 }
 
 void TilemapPanel::DrawPalette() {

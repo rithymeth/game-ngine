@@ -3,6 +3,7 @@
 #include "aether/assets/asset_database.h"
 
 #include <algorithm>
+#include <cctype>
 
 namespace aether::editor {
 
@@ -172,7 +173,8 @@ bool TilemapEditDocument::RemoveLayer(usize layer) {
 }
 
 bool TilemapEditDocument::RenameLayer(usize layer, const std::string& name) {
-    if (layer >= map_.layers.size() || map_.layers[layer].name == name) return false;
+    if (layer >= map_.layers.size() || map_.layers[layer].name == name ||
+        std::all_of(name.begin(), name.end(), [](unsigned char c) { return std::isspace(c) != 0; })) return false;
     Record();
     map_.layers[layer].name = name;
     return true;
