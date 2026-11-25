@@ -159,6 +159,19 @@ def main():
                                     cwd=root, capture=True)
             if "Content/Scenes/Alternate.ascene" not in alternate_listing or "Content/Scenes/Main.ascene" in alternate_listing:
                 raise RuntimeError("the portable startup path did not select the renamed scene")
+            # Explicit assets can also come from Windows-created project settings or CLI arguments.
+            for relative, value in (("Notes/Manual.txt", "folder data"), ("Data/Rules.txt", "single-file data")):
+                extra = other_project.parent / "Content" / relative
+                extra.parent.mkdir(exist_ok=True)
+                extra.write_text(value, encoding="utf-8")
+            other_config["always_cook"] = ["Notes\\"]
+            other_project.write_text(json.dumps(other_config), encoding="utf-8")
+            run(tools["aether_package"], other_project, "--out", alternate_build,
+                "--always", r"Data\Rules.txt", "--strict", "--smoke", cwd=root, env=package_env)
+            portable_entries = run(tools["aether_pak"], "list", alternate_build / "Paks/Game.apak",
+                                   cwd=root, capture=True)
+            if any(path not in portable_entries for path in ("Content/Notes/Manual.txt", "Content/Data/Rules.txt")):
+                raise RuntimeError("the portable path roots did not include both files")
             # An extensionless executable cannot share a name with a package folder.
             for project_name, executable_name in (("P a k s", "Paks-game"), ("LICENSES", "LICENSES-game")):
                 created = run(tools["aether_new"], project_name, "--dir", root, cwd=root, capture=True)

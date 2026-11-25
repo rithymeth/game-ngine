@@ -151,8 +151,17 @@ std::vector<AssetGuid> CollectCookSet(const AssetDatabase& database,
         queue.push_back(guid);
     };
     const std::vector<const AssetRecord*> all = database.All();
-    for (const auto& [root, reason] : roots) {
-        if (!root.empty() && root.back() == '/') {
+    for (const auto& [requested, reason] : roots) {
+        const bool folder = !requested.empty() && (requested.back() == '/' || requested.back() == '\\');
+        // Asset roots are always relative to Content. Preserve a trailing
+        // separator's folder meaning while canonicalizing platform spelling.
+        std::string root = pak::NormalizePath(requested);
+        if (root.empty() || requested.front() == '/' || requested.front() == '\\') {
+            warnings.push_back("Expected a content-relative path for " + reason + ": " + requested);
+            continue;
+        }
+        if (folder) {
+            root += '/';
             usize matched = 0;
             for (const AssetRecord* record : all) {
                 if (!record->IsSubAsset() && !record->missing && record->path.compare(0, root.size(), root) == 0) {
