@@ -657,7 +657,7 @@ bool ContentBrowserPanel::CreateSpriteAtlas(const std::string& texture, const Sp
         if (error) *error = "No project is open.";
         return false;
     }
-    const auto [cell_w, cell_h, margin_x, margin_y, spacing_x, spacing_y] = grid;
+    const auto& [cell_w, cell_h, margin_x, margin_y, spacing_x, spacing_y, clips] = grid;
     if (cell_w <= 0 || cell_h <= 0 || margin_x < 0 || margin_y < 0 || spacing_x < 0 || spacing_y < 0) {
         if (error) *error = "Cell sizes must be positive; margins and gutters must be non-negative.";
         return false;
@@ -665,8 +665,18 @@ bool ContentBrowserPanel::CreateSpriteAtlas(const std::string& texture, const Sp
     const sprite2d::authoring::Grid geometry{
         static_cast<u32>(cell_w), static_cast<u32>(cell_h), static_cast<u32>(margin_x),
         static_cast<u32>(margin_y), static_cast<u32>(spacing_x), static_cast<u32>(spacing_y)};
+    std::vector<sprite2d::authoring::ClipRange> ranges;
+    ranges.reserve(clips.size());
+    for (const auto& clip : clips) {
+        if (clip.first < 0 || clip.count <= 0) {
+            if (error) *error = "clip '" + clip.name + "' requires a zero-based FIRST and positive COUNT";
+            return false;
+        }
+        ranges.push_back({clip.name, static_cast<u32>(clip.first), static_cast<u32>(clip.count),
+                          static_cast<u32>(std::max(clip.fps, 0)), clip.loop});
+    }
     sprite2d::authoring::CreatedAtlas result;
-    if (!sprite2d::authoring::CreateGridAtlas(database_->ContentRoot(), texture, geometry, {}, result, error))
+    if (!sprite2d::authoring::CreateGridAtlas(database_->ContentRoot(), texture, geometry, std::move(ranges), result, error))
         return false;
     Refresh();
     ShowEntry(result.relative_path);
@@ -737,6 +747,7 @@ void ContentBrowserPanel::DrawEntryMenu(const assets::ContentEntry& e) {
         sprite_atlas_cells_[0] = sprite_atlas_cells_[1] = 16;
         sprite_atlas_margins_[0] = sprite_atlas_margins_[1] = 0;
         sprite_atlas_spacing_[0] = sprite_atlas_spacing_[1] = 0;
+        sprite_atlas_clips_.clear();
         sprite_atlas_popup_pending_ = true;
     }
     if (!e.is_folder && ImportEditable(e.path) != nullptr) {
@@ -1284,13 +1295,50 @@ void ContentBrowserPanel::DrawSpriteAtlasDialog() {
     edited |= ImGui::InputInt2("Outer margin X, Y (px)", sprite_atlas_margins_);
     edited |= ImGui::InputInt2("Gutter X, Y (px)", sprite_atlas_spacing_);
     ImGui::TextWrapped("The same margin is used on opposite edges. Gutters are gaps between cells.");
+    if (ImGui::CollapsingHeader("Named animation clips")) {
+        ImGui::TextWrapped("Leave empty for a 12 fps whole-sheet loop. First frame starts at 0; turn off Loop to hold the last frame.");
+        if (!sprite_atlas_clips_.empty()) {
+            int remove = -1;
+            if (ImGui::BeginChild("##clip_ranges", ImVec2(0, 176), ImGuiChildFlags_Borders)) {
+                for (usize i = 0; i < sprite_atlas_clips_.size(); ++i) {
+                    ImGui::PushID(static_cast<int>(i));
+                    auto& clip = sprite_atlas_clips_[i];
+                    ImGui::SetNextItemWidth(170);
+                    edited |= ImGui::InputText("Clip name", &clip.name);
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Remove")) remove = static_cast<int>(i);
+                    int range[] = {clip.first, clip.count, clip.fps};
+                    ImGui::SetNextItemWidth(170);
+                    if (ImGui::InputInt3("First, count, FPS", range)) {
+                        clip.first = range[0]; clip.count = range[1]; clip.fps = range[2];
+                        edited = true;
+                    }
+                    edited |= ImGui::Checkbox("Loop", &clip.loop);
+                    ImGui::Separator();
+                    ImGui::PopID();
+                }
+            }
+            ImGui::EndChild();
+            if (remove >= 0) {
+                sprite_atlas_clips_.erase(sprite_atlas_clips_.begin() + remove);
+                edited = true;
+            }
+        }
+        ImGui::BeginDisabled(sprite_atlas_clips_.size() >= sprite2d::authoring::kMaxGridClips);
+        if (ImGui::Button("Add clip")) {
+            sprite_atlas_clips_.emplace_back();
+            edited = true;
+        }
+        ImGui::EndDisabled();
+    }
     if (edited) sprite_atlas_error_.clear();
-    const SpriteAtlasGrid grid{sprite_atlas_cells_[0], sprite_atlas_cells_[1],
-                               sprite_atlas_margins_[0], sprite_atlas_margins_[1],
-                               sprite_atlas_spacing_[0], sprite_atlas_spacing_[1]};
     if (!sprite_atlas_error_.empty()) ImGui::TextWrapped("%s", sprite_atlas_error_.c_str());
-    if (ImGui::Button("Create") && CreateSpriteAtlas(sprite_atlas_source_, grid, &sprite_atlas_error_))
-        ImGui::CloseCurrentPopup();
+    if (ImGui::Button("Create")) {
+        const SpriteAtlasGrid grid{sprite_atlas_cells_[0], sprite_atlas_cells_[1],
+                                   sprite_atlas_margins_[0], sprite_atlas_margins_[1],
+                                   sprite_atlas_spacing_[0], sprite_atlas_spacing_[1], sprite_atlas_clips_};
+        if (CreateSpriteAtlas(sprite_atlas_source_, grid, &sprite_atlas_error_)) ImGui::CloseCurrentPopup();
+    }
     ImGui::SameLine();
     if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
     ImGui::EndPopup();

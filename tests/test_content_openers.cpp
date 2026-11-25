@@ -248,6 +248,38 @@ AETHER_TEST(Openers_ContentBrowserCreatesAndSelectsAtlasWithoutReplacingOne) {
     }
 }
 
+AETHER_TEST(Openers_ContentBrowserAuthorsValidatedNamedAtlasClips) {
+    ProjectPaths paths;
+    FreshProject("clips_sprite_atlas", paths);
+    const auto sheet = paths.content / "Motion.png";
+    const auto image = assets::EncodePngRgba8(12, 8, std::vector<u8>(12*8*4, 255));
+    std::ofstream(sheet, std::ios::binary).write(reinterpret_cast<const char*>(image.data()), image.size());
+    ContentBrowserPanel browser(paths.file);
+    const auto file = paths.content / "Motion.aatlas";
+    ContentBrowserPanel::SpriteAtlasGrid grid{4, 4};
+    std::string error;
+    grid.clips = {{"walk", 0, 3, 12, true}, {"walk", 3, 2, 18, false}};
+    CHECK(!browser.CreateSpriteAtlas("Motion.png", grid, &error) && error.find("duplicate") != std::string::npos);
+    grid.clips[1].name = "land";
+    grid.clips[1].fps = 241;
+    CHECK(!browser.CreateSpriteAtlas("Motion.png", grid, &error) && error.find("FPS") != std::string::npos);
+    grid.clips[1].fps = 18;
+    grid.clips[1].first = -1;
+    CHECK(!browser.CreateSpriteAtlas("Motion.png", grid, &error) && error.find("FIRST") != std::string::npos);
+    grid.clips[1].first = 5;
+    CHECK(!browser.CreateSpriteAtlas("Motion.png", grid, &error) && error.find("outside") != std::string::npos);
+    CHECK(!stdfs::exists(file));
+    grid.clips[1].first = 3;
+    CHECK(browser.CreateSpriteAtlas("Motion.png", grid, &error));
+    CHECK(browser.Selection() == std::vector<std::string>{"Motion.aatlas"});
+    sprite2d::SpriteAtlas atlas;
+    CHECK(sprite2d::LoadAtlas(file, atlas, &error) && atlas.frames.size() == 6 && atlas.clips.size() == 2);
+    const auto* walk = atlas.FindClip("walk");
+    const auto* land = atlas.FindClip("land");
+    CHECK(walk && walk->loop && walk->fps == 12.0f && walk->frames == std::vector<std::string>({"frame_0", "frame_1", "frame_2"}));
+    CHECK(land && !land->loop && land->fps == 18.0f && land->frames == std::vector<std::string>({"frame_3", "frame_4"}));
+}
+
 AETHER_TEST(Openers_SpriteAtlasDrawsTheSourceRectangleAndKeepsThePreviousAssetOnError) {
     ProjectPaths paths;
     FreshProject("sprite_atlas", paths);

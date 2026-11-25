@@ -1,8 +1,6 @@
 #include "aether/project/project.h"
 #include "grid_authoring.h"
-#include "aether/sprite2d/components.h"
 
-#include <algorithm>
 #include <charconv>
 #include <cstdio>
 #include <filesystem>
@@ -37,15 +35,6 @@ bool UnsignedInt(std::string_view text, u32& value) {
     return error == std::errc{} && end == text.data() + text.size();
 }
 
-constexpr usize kMaxClipName = sizeof(sprite2d::SpriteAnimator::clip) - 1;
-
-bool ClipName(std::string_view name) {
-    return !name.empty() && name.size() <= kMaxClipName && std::all_of(name.begin(), name.end(), [](char c) {
-        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
-               c == '_' || c == '-';
-    });
-}
-
 } // namespace
 
 int main(int argc, char** argv) {
@@ -72,22 +61,20 @@ int main(int argc, char** argv) {
             continue;
         }
         if ((option != "--clip" && option != "--clip-once") || argc - i < 5) return Usage(2);
-        if (ranges.size() >= 64) return Fail("use at most 64 named clips", 2);
+        if (ranges.size() >= sprite2d::authoring::kMaxGridClips)
+            return Fail("use at most " + std::to_string(sprite2d::authoring::kMaxGridClips) + " named clips", 2);
         ClipRange range;
         range.name = argv[i + 1];
         range.loop = option == "--clip";
-        if (!ClipName(range.name))
-            return Fail("clip names must be 1 to " + std::to_string(kMaxClipName) +
-                        " ASCII letters, digits, underscores or hyphens", 2);
-        if (std::any_of(ranges.begin(), ranges.end(), [&](const ClipRange& old) { return old.name == range.name; }))
-            return Fail("duplicate clip name '" + range.name + "'", 2);
-        if (!UnsignedInt(argv[i + 2], range.first) || !UnsignedInt(argv[i + 3], range.count) || range.count == 0)
+        if (!UnsignedInt(argv[i + 2], range.first) || !UnsignedInt(argv[i + 3], range.count))
             return Fail("clip '" + range.name + "' requires a zero-based FIRST and positive COUNT", 2);
-        if (!UnsignedInt(argv[i + 4], range.fps) || range.fps == 0 || range.fps > 240)
+        if (!UnsignedInt(argv[i + 4], range.fps))
             return Fail("clip '" + range.name + "' FPS must be an integer from 1 to 240", 2);
         ranges.push_back(std::move(range));
         i += 5;
     }
+
+    if (const auto error = sprite2d::authoring::ClipRangesError(ranges); !error.empty()) return Fail(error, 2);
 
     const fs::path project_file(argv[1]);
     ProjectSettings settings;
