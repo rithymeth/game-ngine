@@ -11,6 +11,9 @@
 #include "aether/ecs/world.h"
 #include "aether/cook/package.h"
 #include "aether/platform/process.h"
+#include "aether/input/bindings.h"
+#include "aether/scene/gameplay.h"
+#include "aether/sprite2d/platformer.h"
 #include "aether/player/game.h"
 #include "aether/project/project.h"
 #include "aether/reflection/serialize.h"
@@ -813,4 +816,81 @@ AETHER_TEST(Openers_AuthoredTilemapWorksInAnIndependentStrictShippingPackage) {
                       options.output_dir, &error)) { CHECK(false); return; }
     int code = -1;
     CHECK(player.Wait(&code) && code == 0);
+}
+
+AETHER_TEST(Openers_JumpProofDetectsAChangeToAnAuthoredTile) {
+    ProjectPaths paths;
+    FreshProject("authored_jump_proof", paths);
+    const auto image = assets::EncodePngRgba8(16, 16, std::vector<u8>(16 * 16 * 4, 255));
+    std::ofstream(paths.content / "Floor.png", std::ios::binary)
+        .write(reinterpret_cast<const char*>(image.data()), static_cast<std::streamsize>(image.size()));
+    ContentBrowserPanel browser(paths.file);
+    std::string error;
+    if (!browser.CreateTileset("Floor.png", 16, 16, 0, 0, &error) ||
+        !browser.CreateTilemap("Floor.atileset", &error)) { CHECK(false); return; }
+    EditorWorkspace ws(paths.file);
+    if (!ws.OpenAsset("Floor.atilemap", &error)) { CHECK(false); return; }
+    auto& map = ws.Tilemap();
+    map.brush = 0;
+    map.Apply(1, 1);
+    map.SetSolid(0, true);
+    if (!map.Save(&error)) { CHECK(false); return; }
+
+    SceneDocument scene;
+    bool placed = false;
+    PlaceContentAsset(scene, paths.content, "Floor.atilemap", Vec3(0, 0, 0), &placed);
+    if (!placed) { CHECK(false); return; }
+    sprite2d::Collider2D body;
+    body.half_extents = {0.25f, 0.5f};
+    (void)scene.GetWorld().CreateEntity(EntityName{"Player"}, IdComponent{NewEntityGuid()}, Tags{{"Player"}},
+        Transform{Vec3(1.5f, 2.55f, 0), Quaternion::Identity()}, sprite2d::Rigidbody2D{}, body, sprite2d::PlatformerController2D{});
+    if (!scene.Save(paths.content / "Jump.ascene", &error)) { CHECK(false); return; }
+
+    const auto input_dir = paths.content / "Input";
+    stdfs::create_directories(input_dir);
+    input::InputMappingContext context;
+    context.name = "Gameplay";
+    input::InputBinding jump;
+    jump.action = "Jump";
+    jump.key = input::Key::Space;
+    context.bindings.push_back(jump);
+    if (!input::SaveInputAction({"Jump", input::ActionValueType::Bool}, input_dir / "Jump.aaction", &error) ||
+        !input::SaveMappingContext(context, input_dir / "Gameplay.amapping", &error)) { CHECK(false); return; }
+    ProjectSettings settings;
+    if (!LoadProject(paths.file, settings, &error)) { CHECK(false); return; }
+    settings.startup_scene = "Jump.ascene";
+    settings.always_cook = {"Input/"};
+    if (!SaveProject(paths.file, settings, &error)) { CHECK(false); return; }
+
+    const auto root = paths.root.parent_path();
+    cook::PackageOptions options;
+    options.cook.project_file = paths.file;
+    options.cook.configuration = cook::BuildConfiguration::Shipping;
+    options.cook.strict_validation = true;
+    options.player_executable = AETHER_TEST_PLAYER_PATH;
+    options.output_dir = root / "Original";
+    const auto before = cook::Package(options);
+    if (!before.ok) { std::fprintf(stderr, "%s\n", before.error.c_str()); CHECK(false); return; }
+    // Only this authored cell differs; both builds use the same scene and input.
+    map.tool = editor::TileTool::Erase;
+    map.Apply(1, 1);
+    if (!map.Save(&error)) { CHECK(false); return; }
+    options.output_dir = root / "Edited";
+    const auto after = cook::Package(options);
+    if (!after.ok) { std::fprintf(stderr, "%s\n", after.error.c_str()); CHECK(false); return; }
+
+    const auto route = root / "jump.json";
+    Write(route, R"({"frames":40,"events":[{"frame":15,"key":"Space","value":1},{"frame":25,"key":"Space","value":0}],"target":{"min_x":1.4,"max_x":1.6,"min_y":3.2,"max_y":9}})");
+    std::error_code move_error;
+    stdfs::rename(paths.root, root / "Unavailable Source", move_error);
+    if (move_error || stdfs::exists(paths.file)) { CHECK(false); return; }
+    const auto run = [&](const cook::PackageReport& build, const stdfs::path& profile) {
+        platform::ChildProcess child;
+        if (!child.Start(build.game_executable, {"--jump-proof", route.string(), "--user-dir", profile.string()},
+                         build.game_executable.parent_path(), &error)) return -1;
+        int code = -1;
+        return child.Wait(&code) ? code : -1;
+    };
+    CHECK(run(before, root / "Original Profile") == 0);
+    CHECK(run(after, root / "Edited Profile") == 5); // a completed route missed, not a setup failure
 }
