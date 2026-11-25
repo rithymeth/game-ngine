@@ -730,3 +730,23 @@ AETHER_TEST(TilemapEditor_WorkspaceDrawsTheAuthoredSheetInPaletteAndCanvas) {
     draw();
     CHECK(image_quads_for_second_tile() == 0 && !ws.Tilemap().dirty());
 }
+
+AETHER_TEST(TilemapEditor_LargeMapOnlyDrawsVisibleGridLines) {
+    HeadlessImGui ui;
+    auto doc = Doc();
+    if (!doc.Resize(512, 256)) { CHECK(false); return; }
+    doc.brush = 2;
+    doc.Apply(0, 0);
+    doc.brush = 5;
+    doc.Apply(511, 255);
+    const u64 revision = doc.Revision();
+    TilemapPanel panel(doc);
+    ui.Frame([&] { panel.Draw(); });
+    usize grid_vertices = 0;
+    for (const auto* list : ImGui::GetDrawData()->CmdLists) {
+        for (const ImDrawVert& vertex : list->VtxBuffer)
+            if (vertex.col == IM_COL32(255, 255, 255, 30)) ++grid_vertices;
+    }
+    CHECK(grid_vertices > 0 && grid_vertices < 600);
+    CHECK(doc.Revision() == revision && doc.Map().Get(0, 0, 0) == 2 && doc.Map().Get(0, 511, 255) == 5);
+}
