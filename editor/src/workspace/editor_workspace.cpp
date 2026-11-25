@@ -1285,7 +1285,10 @@ struct EditorWorkspace::Impl {
                 return OpenContentAsset(map->path, error);
             }
             if (tilemap_doc == nullptr) return fail("The tilemap editor is not available.");
-            if (tilemap_doc->dirty()) return fail("The tilemap has unsaved changes; save it before opening " + relative + ".");
+            // A practice map has no asset to save. Only replace it after the
+            // candidate map and tileset load successfully below.
+            if (tilemap_doc->dirty() && !tilemap_doc->TilemapFile().empty())
+                return fail("The tilemap has unsaved changes; save it before opening " + relative + ".");
             std::string why;
             sprite2d::TilemapData map;
             if (!sprite2d::LoadTilemap(file, map, &why)) return fail(why.empty() ? "Couldn't open " + relative + "." : why);

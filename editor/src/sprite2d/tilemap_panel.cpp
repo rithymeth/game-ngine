@@ -56,7 +56,8 @@ void TilemapPanel::Draw() {
 
 void TilemapPanel::DrawTools() {
     if (doc_.TilemapFile().empty()) {
-        ImGui::TextDisabled("Practice map. Open a tilemap from the Content Browser to edit a project.");
+        ImGui::TextDisabled("Practice map (not saved).");
+        ImGui::TextWrapped("Open a project tilemap in the Content Browser to replace it.");
     } else {
         ImGui::BeginDisabled(!doc_.dirty());
         if (ImGui::Button("Save tilemap and tileset")) {
