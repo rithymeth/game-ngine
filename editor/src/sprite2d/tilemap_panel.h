@@ -31,6 +31,7 @@ private:
     void DrawPalette();
     bool DrawTileArt(ImDrawList* draw, ImVec2 a, ImVec2 b, i32 tile) const;
     void DrawTools();
+    void DrawResizeDialog();
     void DrawLayers();
     void DrawCanvas();
     void DrawJumpProofTools();
@@ -41,6 +42,7 @@ private:
     ImageTexture sheet_;
     std::string sheet_status_;
     bool show_sheet_ = false;
+    int resize_width_ = 0, resize_height_ = 0;
     u64 save_error_revision_ = 0;
     std::string save_error_;
     f32 pan_x_ = 8.0f, pan_y_ = 8.0f;

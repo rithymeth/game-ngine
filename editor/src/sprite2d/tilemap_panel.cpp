@@ -217,10 +217,7 @@ void TilemapPanel::Draw() {
 }
 
 void TilemapPanel::DrawTools() {
-    if (doc_.TilemapFile().empty()) {
-        ImGui::TextDisabled("Practice map (not saved).");
-        ImGui::TextWrapped("Open a project tilemap in the Content Browser to replace it.");
-    } else {
+    if (!doc_.TilemapFile().empty()) {
         ImGui::BeginDisabled(!doc_.dirty());
         if (ImGui::Button("Save tilemap and tileset")) {
             save_error_.clear();
@@ -228,8 +225,15 @@ void TilemapPanel::DrawTools() {
             save_error_revision_ = doc_.Revision();
         }
         ImGui::EndDisabled();
-        if (!save_error_.empty() && save_error_revision_ == doc_.Revision())
-            ImGui::TextWrapped("%s", save_error_.c_str());
+        ImGui::SameLine();
+    }
+    DrawResizeDialog();
+    if (doc_.TilemapFile().empty()) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("Practice map (not saved).");
+        ImGui::TextWrapped("Open a project tilemap in the Content Browser to replace it.");
+    } else if (!save_error_.empty() && save_error_revision_ == doc_.Revision()) {
+        ImGui::TextWrapped("%s", save_error_.c_str());
     }
     for (int t = 0; t < 5; ++t) {
         if (t > 0) ImGui::SameLine();
@@ -256,6 +260,37 @@ void TilemapPanel::DrawTools() {
     ImGui::SameLine();
     const std::string file = doc_.TilemapFile().empty() ? std::string() : doc_.TilemapFile().filename().string() + "  ";
     ImGui::TextDisabled("%s%ux%u%s", file.c_str(), doc_.Map().width, doc_.Map().height, doc_.dirty() ? "  (unsaved)" : "");
+}
+
+void TilemapPanel::DrawResizeDialog() {
+    const auto& map = doc_.Map();
+    if (ImGui::Button("Resize map...")) {
+        resize_width_ = static_cast<int>(std::min<u32>(map.width, std::numeric_limits<int>::max()));
+        resize_height_ = static_cast<int>(std::min<u32>(map.height, std::numeric_limits<int>::max()));
+        ImGui::OpenPopup("Resize tilemap");
+    }
+    if (!ImGui::BeginPopupModal("Resize tilemap", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+    ImGui::Text("Current size: %u x %u cells", map.width, map.height);
+    ImGui::SetNextItemWidth(140);
+    ImGui::InputInt("Width", &resize_width_);
+    ImGui::SetNextItemWidth(140);
+    ImGui::InputInt("Height", &resize_height_);
+    const bool positive = resize_width_ > 0 && resize_height_ > 0;
+    const u32 width = positive ? static_cast<u32>(resize_width_) : 0;
+    const u32 height = positive ? static_cast<u32>(resize_height_) : 0;
+    const bool allowed = doc_.CanResize(width, height);
+    if (!positive || ((width != map.width || height != map.height) && !allowed))
+        ImGui::TextDisabled("Enter positive dimensions totaling at most 4,194,304 cells.");
+    else if (width < map.width || height < map.height)
+        ImGui::TextUnformatted("Cells beyond the new top and right edges will be removed. Undo restores them.");
+    else
+        ImGui::TextDisabled("New cells are empty. Existing cells keep their positions.");
+    ImGui::BeginDisabled(!allowed);
+    if (ImGui::Button("Resize") && doc_.Resize(width, height)) ImGui::CloseCurrentPopup();
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
 }
 
 void TilemapPanel::DrawLayers() {
