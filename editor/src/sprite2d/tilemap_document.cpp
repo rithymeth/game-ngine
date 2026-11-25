@@ -1,10 +1,51 @@
 #include "tilemap_document.h"
 
+#include "aether/assets/asset_database.h"
+
 #include <algorithm>
 
 namespace aether::editor {
 
 using namespace sprite2d;
+
+namespace {
+namespace stdfs = std::filesystem;
+
+// Place every payload beside its eventual destination, where final rename
+// can replace the file without a partial cross-volume copy.
+struct StagedTileAsset {
+    stdfs::path directory;
+    stdfs::path payload;
+
+    ~StagedTileAsset() {
+        if (directory.empty()) return;
+        std::error_code ignored;
+        stdfs::remove(payload, ignored);
+        stdfs::remove(directory, ignored);
+    }
+
+    bool Prepare(const stdfs::path& target, std::string* error) {
+        const auto refuse = [&] {
+            if (error) *error = "Couldn't stage " + target.string();
+            return false;
+        };
+        if (target.filename().empty()) return refuse();
+        std::error_code status_error;
+        const auto status = stdfs::symlink_status(target, status_error);
+        if (status.type() != stdfs::file_type::not_found &&
+            (status_error || !stdfs::is_regular_file(status))) return refuse();
+        const auto parent = target.parent_path().empty() ? stdfs::path(".") : target.parent_path();
+        std::error_code ec;
+        stdfs::create_directories(parent, ec);
+        if (ec) return refuse();
+        auto staging = parent / (".aether-save-" + assets::ToString(assets::NewAssetGuid()));
+        if (!stdfs::create_directory(staging, ec) || ec) return refuse();
+        directory = std::move(staging);
+        payload = directory / target.filename();
+        return true;
+    }
+};
+} // namespace
 
 TilemapEditDocument::TilemapEditDocument(TilemapData map, Tileset tileset)
     : map_(std::move(map)), tileset_(std::move(tileset)) {
@@ -172,7 +213,22 @@ bool TilemapEditDocument::SetAutotileTile(usize autotile, u8 mask, i32 tile) {
 
 bool TilemapEditDocument::Save(const std::filesystem::path& tilemap_file, const std::filesystem::path& tileset_file,
                                std::string* error) {
-    if (!SaveTilemap(tilemap_file, map_, error) || !SaveTileset(tileset_file, tileset_, error)) return false;
+    if (error) error->clear();
+    StagedTileAsset map, tiles;
+    if (!map.Prepare(tilemap_file, error) || !tiles.Prepare(tileset_file, error) ||
+        !SaveTilemap(map.payload, map_, error) || !SaveTileset(tiles.payload, tileset_, error)) return false;
+    std::error_code ec;
+    stdfs::rename(map.payload, tilemap_file, ec);
+    if (ec) {
+        if (error) *error = "Couldn't replace " + tilemap_file.string() + ": " + ec.message();
+        return false;
+    }
+    // Both files were staged, but an external change can still block the second rename.
+    stdfs::rename(tiles.payload, tileset_file, ec);
+    if (ec) {
+        if (error) *error = "The map was saved, but couldn't replace " + tileset_file.string() + ": " + ec.message();
+        return false;
+    }
     tilemap_file_ = tilemap_file;
     tileset_file_ = tileset_file;
     dirty_ = false;
