@@ -231,9 +231,13 @@ bool TilemapEditDocument::SetLayerCollides(usize layer, bool collides) {
     return true;
 }
 
+bool TilemapEditDocument::CanResize(u32 width, u32 height) const {
+    return !in_stroke_ && width > 0 && height > 0 && static_cast<u64>(width) * height <= 4u * 1024u * 1024u &&
+           (width != map_.width || height != map_.height);
+}
+
 bool TilemapEditDocument::Resize(u32 width, u32 height) {
-    if (width == 0 || height == 0 || static_cast<u64>(width) * height > 4u * 1024u * 1024u) return false;
-    if (width == map_.width && height == map_.height) return false;
+    if (!CanResize(width, height)) return false;
     Record();
     map_.Resize(width, height);
     return true;

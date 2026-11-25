@@ -54,6 +54,7 @@ public:
     bool DuplicateLayer(usize layer);
     bool RenameLayer(usize layer, const std::string& name);
     bool SetLayerCollides(usize layer, bool collides);
+    bool CanResize(u32 width, u32 height) const;
     bool Resize(u32 width, u32 height);
 
     // The tileset (undoable).

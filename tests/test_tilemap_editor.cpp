@@ -779,3 +779,51 @@ AETHER_TEST(TilemapEditor_LargePaletteSubmitsOnlyVisibleRows) {
     CHECK(swatch_vertices() > 40 && swatch_vertices() < 1300);
     CHECK(doc.GetTileset().TileCount() == 4096 && !doc.dirty() && !doc.CanUndo());
 }
+
+AETHER_TEST(TilemapEditor_ResizeDialogOpensWithoutChangingTheMap) {
+    HeadlessImGui ui;
+    auto doc = Doc();
+    TilemapPanel panel(doc);
+    ImVec2 resize_pos;
+    bool open = false;
+    const auto draw = [&] {
+        panel.Draw();
+        open = ImGui::IsPopupOpen("Resize tilemap");
+    };
+    ui.Frame([&] {
+        const auto top = ImGui::GetCursorScreenPos();
+        resize_pos = ImVec2(top.x + 18.0f, top.y + 8.0f);
+        draw();
+    });
+    auto& io = ImGui::GetIO();
+    io.AddMousePosEvent(resize_pos.x, resize_pos.y);
+    ui.Frame(draw);
+    io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+    ui.Frame(draw);
+    io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+    ui.Frame(draw);
+    CHECK(open);
+    io.AddKeyEvent(ImGuiKey_Escape, true);
+    ui.Frame(draw);
+    CHECK(!open);
+    CHECK(doc.Map().width == 6 && doc.Map().height == 5 && !doc.dirty() && !doc.CanUndo());
+}
+
+AETHER_TEST(TilemapEditor_ResizePreservesOverlapAndUndoRestoresCroppedLayers) {
+    auto doc = Doc();
+    doc.RenameLayer(0, "Ground");
+    doc.brush = 2;
+    doc.Apply(1, 1);
+    doc.Apply(5, 4);
+    doc.AddLayer("Decor");
+    doc.SetLayerCollides(1, false);
+    doc.brush = 7;
+    doc.Apply(5, 4);
+    CHECK(doc.Resize(3, 3));
+    CHECK(doc.Map().width == 3 && doc.Map().height == 3 && doc.Map().Get(0, 1, 1) == 2);
+    if (doc.Map().layers.size() != 2) { CHECK(false); return; }
+    CHECK(doc.Map().layers[1].name == "Decor" && !doc.Map().layers[1].collides && doc.Map().Get(1, 5, 4) == kEmpty);
+    CHECK(doc.Undo() && doc.Map().width == 6 && doc.Map().Get(0, 5, 4) == 2 && doc.Map().Get(1, 5, 4) == 7);
+    CHECK(doc.Redo() && doc.Map().width == 3 && doc.Resize(7, 6));
+    CHECK(doc.Map().Get(0, 1, 1) == 2 && doc.Map().Get(0, 5, 4) == kEmpty && doc.Map().Get(1, 6, 5) == kEmpty);
+}
