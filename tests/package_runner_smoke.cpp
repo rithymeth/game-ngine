@@ -60,6 +60,22 @@ int main(int argc, char** argv) {
     runner.WaitForBuild();
     if (runner.LastResult() != Runner::Result::Succeeded || runner.StagedGame() == old_game
         || !std::filesystem::is_regular_file(runner.StagedGame())) return 1;
+    // The controls describe the next build, not the already-staged executable.
+    runner.output_dir = "Encrypted Editor Output";
+    runner.encrypt = true;
+    runner.encryption_key = std::string(64, '1');
+    if (!runner.StartPackage()) return 1;
+    runner.WaitForBuild();
+    if (runner.LastResult() != Runner::Result::Succeeded) {
+        std::fprintf(stderr, "Encrypted editor packaging failed: %s\n", runner.Stage().c_str());
+        return 1;
+    }
+    runner.encrypt = false;
+    runner.encryption_key.clear();
+    if (!runner.Launch(&error) || !runner.Game().Wait(&exit_code) || exit_code != 0) {
+        std::fprintf(stderr, "Encrypted editor Launch lost the staged key (exit %d)\n", exit_code);
+        return 1;
+    }
     runner.encrypt = true;
     runner.encryption_key = "invalid";
     if (runner.StartPackage() || runner.LastResult() != Runner::Result::Failed

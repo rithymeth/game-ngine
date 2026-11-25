@@ -201,6 +201,8 @@ player picks the default preset or one named with `--quality`.
   already has; mounting it adds its assets.
 - `--key <64 hex digits>` encrypts an archive (ChaCha20); the player opens it
   with `--key`, `AETHER_PAK_KEY`, or a key built in at compile time.
+  In the editor, **Launch** uses the key from the successful package build.
+  Changing encryption settings affects the next build, not the package already staged.
 
 ## Plugins
 

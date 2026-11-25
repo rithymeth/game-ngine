@@ -7,6 +7,7 @@
 #include <atomic>
 #include <filesystem>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -56,8 +57,7 @@ public:
     std::string player_path;       // empty: FindPlayerExecutable()
     // Extra player arguments for Launch, e.g. "--quality Low".
     std::string launch_args;
-    // Encrypts the paks with `encryption_key` (64 hex digits); Launch passes
-    // the key to the game.
+    // Encrypts the next package with `encryption_key` (64 hex digits).
     bool encrypt = false;
     std::string encryption_key;
 
@@ -76,7 +76,10 @@ protected:
     std::string stage_;
     std::vector<LogLine> log_;
     Result result_ = Result::None;
-    std::filesystem::path staged_game_;
+    struct StagedPackage {
+        std::filesystem::path game;
+        std::optional<pak::PakKey> key;
+    } staged_;
     platform::ChildProcess game_;
     std::string launch_error_;
 };
