@@ -429,10 +429,64 @@ u64 Mixer::FramesRendered() const { return threaded_ ? View().frames : frames_re
 
 // --- Threading ----------------------------------------------------------------------------------
 
+static u32 AllocateSyncGroup(u32& next) {
+    const u32 group = next++;
+    if (next == 0) next = 1;
+    return group;
+}
+
 u32 Mixer::BeginSyncGroup() {
-    const u32 group = next_sync_group_++;
-    if (next_sync_group_ == 0) next_sync_group_ = 1;
+    const u32 group = AllocateSyncGroup(next_sync_group_);
     Post([group](Mixer& m) { m.sync_bases_[group] = m.frames_rendered_; });
+    return group;
+}
+
+u32 Mixer::BeginSyncGroup(std::vector<SyncVoice> initial, std::vector<VoiceId>& ids) {
+    const u32 group = AllocateSyncGroup(next_sync_group_);
+    struct Prepared {
+        Voice voice;
+        PlayParams params;
+    };
+    std::vector<Prepared> ready;
+    ready.reserve(initial.size());
+    ids.assign(initial.size(), 0);
+    for (usize i = 0; i < initial.size(); ++i) {
+        SyncVoice& source = initial[i];
+        if (source.params.bus >= buses_.size()) continue;
+        Voice voice;
+        if (source.sound != nullptr) {
+            if (source.sound->Frames() == 0 || source.sound->sample_rate == 0) continue;
+            voice.sound = source.sound;
+        } else {
+            if (!source.stream || source.stream->Frames() == 0 || source.stream->SampleRate() == 0 ||
+                source.stream->Channels() < 1 || source.stream->Channels() > 2) continue;
+            voice.stream = std::move(source.stream);
+            voice.window_start = std::numeric_limits<i64>::min() / 2;
+        }
+        voice.id = ids[i] = NewId();
+        source.params.sync_group = group;
+        ready.push_back({std::move(voice), source.params});
+    }
+    // Publish one command, after all preparation. A render must not anchor the
+    // group at an earlier frame than its first voices can actually start.
+    auto start = [group, ready = std::move(ready)](Mixer& m) mutable {
+        m.sync_bases_[group] = m.frames_rendered_;
+        for (auto& entry : ready) {
+            const VoiceId id = entry.voice.id;
+            m.Start(std::move(entry.voice), entry.params, id, m.frames_rendered_);
+        }
+    };
+    if (!threaded_) {
+        start(*this);
+    } else {
+        const u64 seq = Submit(std::move(start));
+        for (usize i = 0; i < ids.size(); ++i) {
+            if (ids[i] == 0) continue;
+            pending_plays_.emplace_back(seq, ids[i]);
+            const PlayParams& p = initial[i].params;
+            if (p.spatial && p.occlusion) game_occluded_[ids[i]] = p.position;
+        }
+    }
     return group;
 }
 

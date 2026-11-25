@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cmath>
 #include <thread>
+#include <utility>
 
 using namespace aether;
 using namespace aether::audio;
@@ -184,6 +185,56 @@ AETHER_TEST(Audio_ThreadedMixerMatchesDirect) {
     AETHER_CHECK(ran);
     output.Stop();
     AETHER_CHECK(!threaded.Threaded() && !output.Running() && !null->Pump(256));
+}
+
+// Opens a render-block boundary during stream preparation, before the voice
+// enters the queue. The threaded NullBackend is pumped deterministically.
+class SyncBoundaryStream final : public AudioStream {
+public:
+    explicit SyncBoundaryStream(NullBackend& backend)
+        : backend_(&backend), wave_(MakeWaveStream(std::make_shared<SoundWave>(Dc(0.25f, 480)))) {}
+    u32 SampleRate() const override { return wave_->SampleRate(); }
+    u32 Channels() const override { return wave_->Channels(); }
+    u64 Frames() const override {
+        if (auto* backend = std::exchange(backend_, nullptr)) backend->Pump(128);
+        return wave_->Frames();
+    }
+    u32 Read(f32* out, u32 frames) override { return wave_->Read(out, frames); }
+    bool Seek(u64 frame) override { return wave_->Seek(frame); }
+private:
+    mutable NullBackend* backend_;
+    std::unique_ptr<AudioStream> wave_;
+};
+
+AETHER_TEST(Audio_InitialCueVoicesShareOneRenderBoundary) {
+    Mixer mixer(kRate);
+    auto backend = std::make_unique<NullBackend>(false, true);
+    auto* capture = backend.get();
+    AudioOutput output(mixer, std::move(backend));
+    AETHER_CHECK(output.Start(128));
+    const SoundWave second = Dc(0.5f, 240);
+    std::vector<Mixer::SyncVoice> voices(2);
+    voices[0].stream = std::make_unique<SyncBoundaryStream>(*capture);
+    voices[1].sound = &second;
+    voices[1].params.delay = 480.0 / kRate;
+    std::vector<VoiceId> ids;
+    const u32 group = mixer.BeginSyncGroup(std::move(voices), ids);
+    AETHER_CHECK(ids.size() == 2 && ids[0] && ids[1]);
+    AETHER_CHECK(mixer.VoiceCount() == 2);
+    AETHER_CHECK(capture->Pump(800));
+    const std::vector<f32> samples = capture->Captured();
+    AETHER_CHECK(samples.size() == 2 * (128 + 800));
+    if (samples.size() != 2 * (128 + 800)) return;
+    const f32 pan = std::sqrt(0.5f);
+    for (usize i = 0; i < 128 + 800; ++i) {
+        const f32 expected = i < 128 || i >= 128 + 720 ? 0.0f : (i < 128 + 480 ? 0.25f : 0.5f) * pan;
+        if (std::fabs(samples[i * 2] - expected) > 1e-6f) {
+            AETHER_CHECK(std::fabs(samples[i * 2] - expected) <= 1e-6f);
+            break;
+        }
+    }
+    mixer.EndSyncGroup(group);
+    output.Stop();
 }
 
 AETHER_TEST(Audio_RealTimeThreadStressAndSeamlessCues) {

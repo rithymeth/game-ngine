@@ -179,6 +179,14 @@ public:
     // A time base for voices that must stay in step (a cue's sounds): it
     // starts at the frame the audio thread gets to it. End it when done.
     u32 BeginSyncGroup();
+    struct SyncVoice {
+        PlayParams params;
+        const SoundWave* sound = nullptr;
+        std::unique_ptr<AudioStream> stream;
+    };
+    // Starts the group and its initial voices in the same render block.
+    // One ID per entry, zero for invalid sources. Streams transfer ownership.
+    u32 BeginSyncGroup(std::vector<SyncVoice> initial, std::vector<VoiceId>& ids);
     void EndSyncGroup(u32 group);
     bool Threaded() const { return threaded_; }
     // Runs `edit` on the mixer: now, or on the audio thread before the next Render.

@@ -79,7 +79,7 @@ private:
     };
     Instance* Find(CueHandle handle);
     const Instance* Find(CueHandle handle) const;
-    void Schedule(Instance& instance, const CuePlan& plan);
+    void Schedule(Instance& instance, const CuePlan& plan, bool begin_group = false);
     SoundDuration Durations() const;
 
     Mixer& mixer_;
