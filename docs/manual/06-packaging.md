@@ -108,6 +108,13 @@ paths are literal. This field passes arguments directly to the player, not to
 a shell. The window logs when the game exits and shows its exit code if it
 did not exit normally. A successful launch starts the process; it does not
 guarantee the game reached a playable scene.
+
+To record startup diagnostics from either the editor or the standalone
+player, put `--log-file "<absolute path to a log file>"` first in the player
+arguments. Choose a path outside the package to keep its files unchanged.
+The log is replaced each run. Putting the option first also lets the
+player record an invalid-arguments error. Do not share logs without
+reviewing them for your local paths and project details.
 If a new packaging attempt fails or is cancelled, **Launch** stays disabled
 until a package succeeds. Earlier package files are not removed by this rule.
 If the staged data archive disappears after a successful build, **Launch**
