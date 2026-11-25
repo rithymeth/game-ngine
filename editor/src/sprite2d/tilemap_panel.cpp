@@ -40,6 +40,19 @@ void TilemapPanel::Draw() {
 }
 
 void TilemapPanel::DrawTools() {
+    if (doc_.TilemapFile().empty()) {
+        ImGui::TextDisabled("Practice map. Open a tilemap from the Content Browser to edit a project.");
+    } else {
+        ImGui::BeginDisabled(!doc_.dirty());
+        if (ImGui::Button("Save tilemap and tileset")) {
+            save_error_.clear();
+            if (!doc_.Save(&save_error_) && save_error_.empty()) save_error_ = "Could not save the tilemap and tileset.";
+            save_error_revision_ = doc_.Revision();
+        }
+        ImGui::EndDisabled();
+        if (!save_error_.empty() && save_error_revision_ == doc_.Revision())
+            ImGui::TextWrapped("%s", save_error_.c_str());
+    }
     for (int t = 0; t < 5; ++t) {
         if (t > 0) ImGui::SameLine();
         const bool on = static_cast<int>(doc_.tool) == t;

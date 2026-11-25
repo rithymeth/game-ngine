@@ -388,6 +388,7 @@ struct EditorWorkspace::Impl {
     // 2D.
     std::unique_ptr<TilemapEditDocument> tilemap_doc;
     std::unique_ptr<TilemapPanel> tilemap_panel;
+    std::filesystem::path tilemap_project; // project owning the asset opened in the Tilemap tool
     // Cinematics.
     World sequence_level;
     GuidIndex sequence_guids;
@@ -1145,6 +1146,8 @@ struct EditorWorkspace::Impl {
         build_window = std::make_unique<BuildPackageWindow>(project_file);
         build_window->SetSourceCheck([this]() -> std::string {
             if (project_settings && project_settings->Dirty()) return "Save or revert Project Settings before building.";
+            if (tilemap_doc && tilemap_project == project_file && tilemap_doc->dirty())
+                return "Save " + tilemap_doc->TilemapFile().filename().string() + " in the Tilemap tool before building.";
             for (std::size_t i = 0; i < document_tabs.Count(); ++i) {
                 const EditorDocument& document = document_tabs.At(i);
                 if (document.IsDirty())
@@ -1290,6 +1293,7 @@ struct EditorWorkspace::Impl {
             if (tileset == nullptr || tileset->missing) return fail(relative + " names a tileset that isn't in the project.");
             const std::filesystem::path tileset_file = ProjectPaths::ForFile(project_file).content / tileset->path;
             if (!tilemap_doc->Load(file, tileset_file, &why)) return fail(why.empty() ? "Couldn't open " + relative + "." : why);
+            tilemap_project = project_file;
             ShowTool("Tilemap");
             return true;
         }

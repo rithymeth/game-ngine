@@ -25,6 +25,8 @@ private:
     void DrawCanvas();
 
     TilemapEditDocument& doc_;
+    u64 save_error_revision_ = 0;
+    std::string save_error_;
     f32 pan_x_ = 8.0f, pan_y_ = 8.0f;
     bool dragging_ = false;
     bool rect_active_ = false;
