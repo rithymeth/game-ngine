@@ -57,6 +57,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <array>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -91,6 +92,7 @@ struct Options {
     std::string replay_input;          // recorded input for deterministic package verification
     std::string jump_proof;            // replay plus an expected terminal 2D region
     bool jump_trace = false;           // opt-in machine-readable position after each tick
+    std::string record_jump_route;      // fixed-tick input capture with a generated landing target
     bool report = false;              // print where the Player-tagged entity ended up
     std::string server; // empty: offline single-player (the default)
     std::string player_name = "player", password, token;
@@ -137,6 +139,7 @@ void Usage() {
                  "                     [--camera-path <file.json>] [--record-dir <dir> [--record-fps <n>]]\n"
                  "                     [--report] [--user-dir <dir>] [--log-file <file>] [--replay-input <file.json>]\n"
                  "                     [--jump-proof <route.json> --user-dir <test folder> [--jump-trace]]\n"
+                 "                     [--record-jump-route <new.json> --headless --user-dir <test folder>]\n"
                  "                     [--server <ip:port>] [--name <text>] [--password <text>]\n"
                  "                     [--token <join token>] [--build-id <n>] (opt-in UDP + Jolt)\n");
 }
@@ -165,6 +168,9 @@ bool ParseArgs(int argc, char** argv, Options& o) {
             o.record_fps = std::clamp(static_cast<f32>(std::atof(argv[++i])), 1.0f, 240.0f);
         } else if (a == "--report") {
             o.report = true;
+        } else if (a == "--record-jump-route" && has_value) {
+            o.record_jump_route = argv[++i];
+            if (o.record_jump_route.empty()) return false;
         } else if (a == "--jump-trace") {
             o.jump_trace = true;
         } else if (a == "--jump-proof" && has_value) {
@@ -309,6 +315,20 @@ int main(int argc, char** argv) {
         }
         options.headless = true;
         options.replay_input = options.jump_proof;
+    }
+    if (!options.record_jump_route.empty()) {
+        std::error_code ec;
+        const bool exists = stdfs::exists(options.record_jump_route, ec);
+        if (!options.headless || options.user_dir.empty() || !options.jump_proof.empty() ||
+            !options.server.empty() || !options.camera_path.empty() || !options.record_dir.empty() ||
+            !options.screenshot.empty() || (options.replay_input.empty() && options.frames <= 0)) {
+            AETHER_LOG_ERROR("Player", "Route recording requires --headless, --user-dir, and a bounded run; no proof, network or capture modes");
+            return 2;
+        }
+        if (ec || exists) {
+            AETHER_LOG_ERROR("Player", "Route recording requires a new output path");
+            return 2;
+        }
     }
     if (std::getenv("AETHER_PLAYER_HEADLESS")) options.headless = true;
 
@@ -495,6 +515,8 @@ int main(int argc, char** argv) {
         struct JumpTarget { f64 min_x, max_x, min_y, max_y; };
         JumpTarget target{};
         reflect::Json jump_result;
+        reflect::Json recorded_events = reflect::Json::array(), recorded_route;
+        std::array<f32, input::kKeyCount> recorded_values{};
         std::vector<ReplayEvent> replay;
         if (!options.replay_input.empty()) {
             std::ifstream stream(options.replay_input);
@@ -531,6 +553,10 @@ int main(int argc, char** argv) {
                 replay.push_back({frame, key, value});
                 previous = frame;
             }
+        }
+        if (!options.record_jump_route.empty() && (options.frames <= 0 || options.frames > 20000)) {
+            AETHER_LOG_ERROR("Player", "Route recording supports 1 to 20000 simulation frames");
+            return 2;
         }
         usize replay_cursor = 0;
         input::InputState replay_held;
@@ -734,6 +760,19 @@ int main(int argc, char** argv) {
                 });
             }
             if (recording || !camera_path.keys.empty()) tick_dt = frame < kRecordWarmup ? 0.0f : 1.0f / film_fps; // the film's clock: water, wind and sequences move 1 / fps a frame
+            if (!options.record_jump_route.empty()) {
+                for (usize i = 1; i < input::kKeyCount; ++i) {
+                    const auto key = static_cast<input::Key>(i);
+                    const f32 value = game.Input().Value(key);
+                    if (value == recorded_values[i]) continue;
+                    if (!std::isfinite(value) || recorded_events.size() >= 100000) {
+                        AETHER_LOG_ERROR("Player", "Route recording exceeded the input limit or saw a non-finite input");
+                        return 2;
+                    }
+                    recorded_events.push_back({{"frame", frame}, {"key", input::KeyName(key)}, {"value", value}});
+                    if (!input::IsDelta(key)) recorded_values[i] = value; // replay resets deltas every tick
+                }
+            }
             game.Tick(tick_dt);
             if (options.jump_trace) {
                 reflect::Json position;
@@ -856,6 +895,18 @@ int main(int argc, char** argv) {
                                {"position", {pos.x, pos.y, pos.z}}};
             }
         }
+        if (!options.record_jump_route.empty()) {
+            const auto* transform = JumpProofPlayer(game);
+            if (!transform || game.Stats().frames != static_cast<u64>(options.frames)) {
+                AETHER_LOG_ERROR("Player", "Route recording needs the full run and exactly one Player with a finite Transform");
+            } else {
+                constexpr f64 margin = 0.25;
+                const auto& p = transform->position;
+                recorded_route = {{"frames", game.Stats().frames}, {"events", std::move(recorded_events)},
+                                  {"target", {{"min_x", p.x - margin}, {"max_x", p.x + margin},
+                                              {"min_y", p.y - margin}, {"max_y", p.y + margin}}}};
+            }
+        }
         game.EndPlay();
         if (network_failed) return 1;
         if (!options.screenshot.empty() && (!screenshot_written || screenshot_failed)) return 4;
@@ -871,6 +922,21 @@ int main(int argc, char** argv) {
         for (const std::string& e : game.ScriptErrors()) AETHER_LOG_ERROR("Player", "script: %s", e.c_str());
         for (const std::string& e : game.BlueprintErrors()) AETHER_LOG_ERROR("Player", "blueprint: %s", e.c_str());
         if (s.script_errors + s.blueprint_errors > 0) return 3; // the game ran with errors
+        if (!options.record_jump_route.empty()) {
+            if (recorded_route.is_null()) return 1;
+            const std::string data = recorded_route.dump(2) + "\n";
+            std::FILE* out = std::fopen(options.record_jump_route.c_str(), "wbx");
+            if (!out) {
+                AETHER_LOG_ERROR("Player", "Couldn't create the new route file");
+                return 2;
+            }
+            const bool written = std::fwrite(data.data(), 1, data.size(), out) == data.size();
+            const bool closed = std::fclose(out) == 0;
+            if (!written || !closed) {
+                AETHER_LOG_ERROR("Player", "The route file could not be written completely");
+                return 1;
+            }
+        }
         if (!options.jump_proof.empty()) {
             if (jump_result.is_null()) return 1;
             std::printf("Jump Proof: %s\n", jump_result.dump().c_str());

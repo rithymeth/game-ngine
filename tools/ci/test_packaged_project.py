@@ -315,6 +315,25 @@ def main():
                 return [json.loads(line.removeprefix("Jump Proof: ")) for line in proc.stdout.splitlines()
                         if line.startswith("Jump Proof: ")]
 
+            recorded = root / "Recorded route.json"
+            run(game, "--headless", "--replay-input", route, "--record-jump-route", recorded,
+                "--user-dir", root / "Capture Route Data", cwd=empty_cwd)
+            captured = json.loads(recorded.read_text(encoding="utf-8"))
+            if captured["frames"] != spec["frames"] or captured["events"] != spec["events"]:
+                raise RuntimeError("route capture did not preserve the fixed-tick input sequence")
+            captured_check = run(game, "--jump-proof", recorded, "--user-dir",
+                                 root / "Recorded Check Data", cwd=empty_cwd, capture=True)
+            captured_verdict = next(json.loads(line.removeprefix("Jump Proof: "))
+                                    for line in captured_check.splitlines() if line.startswith("Jump Proof: "))
+            if captured_verdict["status"] != "pass" or abs(captured_verdict["position"][0] - 29) > .02:
+                raise RuntimeError(f"recorded route did not replay to the captured landing: {captured_verdict}")
+            original_recording = recorded.read_bytes()
+            duplicate = subprocess.run([game, "--headless", "--replay-input", route, "--record-jump-route", recorded,
+                                        "--user-dir", root / "Duplicate Route Data"], cwd=empty_cwd,
+                                       capture_output=True, text=True, timeout=30)
+            if duplicate.returncode != 2 or recorded.read_bytes() != original_recording:
+                raise RuntimeError("route capture overwrote or accepted a pre-existing recording")
+
             original_trace, changed_trace = root / "Before.txt", root / "After.txt"
             before = proof(game, 0, "Baseline Route Data", original_trace)
             if len(before) != 1 or before[0]["status"] != "pass" or before[0]["frames"] != 400:
