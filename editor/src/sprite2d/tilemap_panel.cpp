@@ -1,5 +1,7 @@
 #include "tilemap_panel.h"
 
+#include "aether/assets/asset_database.h"
+
 #include <imgui.h>
 #include <misc/cpp/imgui_stdlib.h>
 
@@ -161,7 +163,39 @@ void TilemapPanel::DrawJumpProofTools() {
     }
 }
 
+void TilemapPanel::LoadTexturePreview(const assets::AssetDatabase& database) {
+    pending_sheet_ = {};
+    show_sheet_ = false;
+    const Tileset& set = doc_.GetTileset();
+    const auto* record = database.Find(set.texture);
+    if (!record || record->missing || record->importer != "Texture") {
+        sheet_status_ = "Tileset texture unavailable. Showing numbered swatches.";
+        return;
+    }
+    constexpr u64 kMaxPreviewPixels = 16 * 1024 * 1024;
+    if (!assets::DecodeImageFile(database.SourcePath(record->guid).string(), pending_sheet_, kMaxPreviewPixels)) {
+        sheet_status_ = "Cannot preview " + record->path + ": image unreadable or too large.";
+    } else if (pending_sheet_.width != set.texture_width || pending_sheet_.height != set.texture_height) {
+        sheet_status_ = "Tileset pixel dimensions do not match " + record->path + ". Showing swatches.";
+        pending_sheet_ = {};
+    } else {
+        sheet_status_.clear();
+    }
+}
+
+bool TilemapPanel::DrawTileArt(ImDrawList* draw, ImVec2 a, ImVec2 b, i32 tile) const {
+    f32 uv[4];
+    if (!show_sheet_ || !doc_.GetTileset().Uv(tile, uv)) return false;
+    draw->AddImage(sheet_.Ref(), a, b, ImVec2(uv[0], uv[1]), ImVec2(uv[2], uv[3]));
+    return true;
+}
+
 void TilemapPanel::Draw() {
+    if (!pending_sheet_.pixels.empty()) {
+        show_sheet_ = sheet_.Set(pending_sheet_.width, pending_sheet_.height, pending_sheet_.pixels);
+        if (!show_sheet_) sheet_status_ = "Cannot upload the tileset preview. Showing numbered swatches.";
+        pending_sheet_ = {};
+    }
     if (ghost_map_ != doc_.TilemapFile()) {
         ghost_before_.clear();
         ghost_after_.clear();
@@ -268,9 +302,11 @@ void TilemapPanel::DrawLayers() {
 void TilemapPanel::DrawPalette() {
     const Tileset& ts = doc_.GetTileset();
     ImGui::SeparatorText("Tiles");
-    const u32 columns = std::max(ts.Columns(), 1u);
-    const u32 count = ts.TileCount();
+    if (!sheet_status_.empty()) ImGui::TextWrapped("%s", sheet_status_.c_str());
     const f32 cell = 28.0f;
+    const u32 available = static_cast<u32>(std::max(1.0f, (ImGui::GetContentRegionAvail().x + 2.0f) / (cell + 2.0f)));
+    const u32 columns = std::clamp(ts.Columns(), 1u, available);
+    const u32 count = ts.TileCount();
     ImDrawList* dl = ImGui::GetWindowDrawList();
     for (u32 i = 0; i < count; ++i) {
         if (i % columns != 0) ImGui::SameLine(0.0f, 2.0f);
@@ -280,10 +316,15 @@ void TilemapPanel::DrawPalette() {
             doc_.brush = static_cast<i32>(i);
             if (doc_.tool == TileTool::Erase) doc_.tool = TileTool::Paint;
         }
-        dl->AddRectFilled(p, ImVec2(p.x + cell, p.y + cell), TileColor(static_cast<i32>(i)));
-        char label[16];
-        std::snprintf(label, sizeof(label), "%u", i);
-        dl->AddText(ImVec2(p.x + 3, p.y + 2), IM_COL32(0, 0, 0, 255), label);
+        const ImVec2 end(p.x + cell, p.y + cell);
+        dl->AddRectFilled(p, end, IM_COL32(30, 30, 36, 255));
+        if (!DrawTileArt(dl, p, end, static_cast<i32>(i))) {
+            dl->AddRectFilled(p, end, TileColor(static_cast<i32>(i)));
+            char label[16];
+            std::snprintf(label, sizeof(label), "%u", i);
+            dl->AddText(ImVec2(p.x + 3, p.y + 2), IM_COL32(0, 0, 0, 255), label);
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Tile %u", i);
         if (ts.IsSolid(static_cast<i32>(i))) dl->AddRect(p, ImVec2(p.x + cell, p.y + cell), IM_COL32(220, 40, 40, 255), 0, 0, 2.0f);
         if (doc_.brush == static_cast<i32>(i)) dl->AddRect(p, ImVec2(p.x + cell, p.y + cell), IM_COL32(255, 255, 255, 255), 0, 0, 2.0f);
         ImGui::PopID();
@@ -364,7 +405,7 @@ void TilemapPanel::DrawCanvas() {
                 const ImVec2 a(to_screen_x(static_cast<i32>(x)), to_screen_y(static_cast<i32>(y)));
                 const ImVec2 b(a.x + zoom, a.y + zoom);
                 if (b.x < origin.x || a.x > origin.x + size.x || b.y < origin.y || a.y > origin.y + size.y) continue;
-                dl->AddRectFilled(a, b, TileColor(tile));
+                if (!DrawTileArt(dl, a, b, tile)) dl->AddRectFilled(a, b, TileColor(tile));
                 if (show_solid && map.layers[layer].collides && ts.IsSolid(tile)) {
                     dl->AddRect(a, b, IM_COL32(220, 40, 40, 255), 0, 0, 1.5f);
                 }

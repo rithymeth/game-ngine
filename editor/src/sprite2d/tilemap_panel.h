@@ -2,19 +2,25 @@
 
 #include "sprite2d/tilemap_document.h"
 
+#include "aether/assets/image.h"
+#include "ui/image_texture.h"
+
 #include <optional>
+
+namespace aether::assets { class AssetDatabase; }
 
 namespace aether::editor {
 
 // The Tilemap editor (Phase 26 step 5, §26.6): the tileset's tiles to pick
 // from (solid ones marked), the tools, the layers, and the map as a grid to
 // paint on (drag to paint, right-drag to erase, mouse wheel to zoom, middle
-// drag to pan). Tiles show as numbered colour swatches: the panel draws
-// without a texture, so it works headless and in every host.
+// drag to pan). Art comes from the authored tileset texture when readable,
+// with numbered swatches as the fallback.
 class TilemapPanel {
 public:
     explicit TilemapPanel(TilemapEditDocument& document) : doc_(document) {}
     void Draw();
+    void LoadTexturePreview(const assets::AssetDatabase& database);
     bool LoadJumpProofOverlay(const std::filesystem::path& path, std::string* error = nullptr);
 
     f32 zoom = 24.0f; // screen pixels per tile
@@ -23,6 +29,7 @@ public:
 
 private:
     void DrawPalette();
+    bool DrawTileArt(ImDrawList* draw, ImVec2 a, ImVec2 b, i32 tile) const;
     void DrawTools();
     void DrawLayers();
     void DrawCanvas();
@@ -30,6 +37,10 @@ private:
     bool JumpProofCellMatchesMap() const;
 
     TilemapEditDocument& doc_;
+    assets::ImageData pending_sheet_;
+    ImageTexture sheet_;
+    std::string sheet_status_;
+    bool show_sheet_ = false;
     u64 save_error_revision_ = 0;
     std::string save_error_;
     f32 pan_x_ = 8.0f, pan_y_ = 8.0f;
