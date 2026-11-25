@@ -1514,15 +1514,32 @@ void Game::BuildFrame() {
     sprite_animation.main_thread_only = true;
     sprite_animation.run = [this](World& world, const FrameContext& frame) {
         const sprite2d::AtlasResolver atlases = [this](const assets::AssetGuid& guid) -> const sprite2d::SpriteAtlas* {
+            if (guid.IsNull()) return nullptr;
             auto it = atlases_.find(guid);
             if (it == atlases_.end()) {
                 auto atlas = std::make_unique<sprite2d::SpriteAtlas>();
-                const GameManifest::Asset* asset = package_.FindAssetByGuid(assets::ToString(guid));
+                const std::string id = assets::ToString(guid);
+                const GameManifest::Asset* asset = package_.FindAssetByGuid(id);
                 std::vector<u8> bytes;
-                const nlohmann::json data = asset && package_.ReadContent(asset->path, bytes)
-                                                ? nlohmann::json::parse(bytes.begin(), bytes.end(), nullptr, false)
-                                                : nlohmann::json();
-                if (data.is_discarded() || data.is_null() || !sprite2d::AtlasFromJson(data, *atlas)) atlas.reset();
+                std::string problem;
+                if (!asset) {
+                    problem = "not in the package";
+                } else if (!package_.ReadContent(asset->path, bytes, &problem)) {
+                    if (problem.empty()) problem = "could not read the packaged asset";
+                } else {
+                    const auto data = nlohmann::json::parse(bytes.begin(), bytes.end(), nullptr, false);
+                    if (data.is_discarded()) {
+                        problem = "invalid JSON";
+                    } else if (!sprite2d::AtlasFromJson(data, *atlas, &problem) && problem.empty()) {
+                        problem = "could not load the atlas";
+                    }
+                }
+                if (!problem.empty()) {
+                    warnings_.push_back("Sprite atlas " + (asset ? asset->path : id) + ": " + problem);
+                    AETHER_LOG_WARN("Player", "%s", warnings_.back().c_str());
+                    atlas.reset();
+                }
+                // Cache failures too, so multiple animators do not repeat the warning every frame.
                 it = atlases_.emplace(guid, std::move(atlas)).first;
             }
             return it->second.get();
