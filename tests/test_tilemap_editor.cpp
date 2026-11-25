@@ -607,3 +607,57 @@ AETHER_TEST(TilemapEditor_DuplicatesLayerIndependentlyAboveSource) {
     if (!LoadTilemap(dir/"map.atilemap", saved)) { CHECK(false); return; }
     CHECK(TilemapToJson(saved) == TilemapToJson(doc.Map()));
 }
+
+AETHER_TEST(TilemapEditor_RectangleDragCancelsAndClipsWithoutPartialHistory) {
+    HeadlessImGui ui;
+    TilemapEditDocument doc = Doc();
+    TilemapPanel panel(doc);
+    doc.tool = TileTool::Rectangle;
+    doc.brush = 4;
+    ImVec2 bottom_left;
+    const auto draw = [&] {
+        panel.Draw();
+        const ImVec2 corner = {ImGui::GetItemRectMin().x, ImGui::GetItemRectMax().y};
+        const ImVec2 padding = ImGui::GetStyle().WindowPadding;
+        bottom_left = ImVec2(corner.x + padding.x + 8, corner.y - padding.y - 8);
+    };
+    ui.Frame(draw);
+    ImGuiIO& io = ImGui::GetIO();
+    const auto move = [&](i32 x, i32 y) {
+        io.AddMousePosEvent(bottom_left.x + (static_cast<f32>(x) + 0.5f) * panel.zoom,
+                            bottom_left.y - (static_cast<f32>(y) + 0.5f) * panel.zoom);
+        ui.Frame(draw);
+    };
+    const auto left = [&](bool down) {
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, down);
+        ui.Frame(draw);
+    };
+    move(7, 3); // blank canvas, outside the six-column map
+    left(true);
+    move(2, 1);
+    left(false);
+    CHECK(!doc.CanUndo() && doc.Map().Get(0, 2, 1) == kEmpty);
+
+    move(1, 1);
+    left(true);
+    move(3, 3);
+    CHECK(!doc.CanUndo() && doc.Map().Get(0, 1, 1) == kEmpty);
+    io.AddKeyEvent(ImGuiKey_Escape, true);
+    ui.Frame(draw);
+    io.AddKeyEvent(ImGuiKey_Escape, false);
+    move(4, 4); // still held: cancellation must not start another rectangle
+    left(false);
+    CHECK(!doc.CanUndo() && doc.Map().Get(0, 3, 3) == kEmpty);
+
+    move(2, 1);
+    left(true);
+    move(7, 3);
+    left(false);
+    for (i32 y = 0; y < 5; ++y) {
+        for (i32 x = 0; x < 6; ++x) {
+            CHECK(doc.Map().Get(0, x, y) == ((x >= 2 && y >= 1 && y <= 3) ? 4 : kEmpty));
+        }
+    }
+    CHECK(doc.Undo() && !doc.CanUndo());
+    CHECK(doc.Map().Get(0, 5, 3) == kEmpty && doc.Redo() && doc.Map().Get(0, 5, 3) == 4);
+}

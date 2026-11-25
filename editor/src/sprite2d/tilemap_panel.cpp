@@ -412,29 +412,45 @@ void TilemapPanel::DrawCanvas() {
         dl->AddRect(a, b, IM_COL32(138, 255, 133, 255), 0.0f, 2.0f);
     }
 
-    // The cell under the mouse, and painting.
-    const i32 cx = static_cast<i32>(std::floor((io.MousePos.x - base_x) / zoom));
-    const i32 cy = static_cast<i32>(std::floor((base_y - io.MousePos.y) / zoom));
-    if (hovered && map.InBounds(cx, cy)) {
-        const ImVec2 a(to_screen_x(cx), to_screen_y(cy));
-        dl->AddRect(a, ImVec2(a.x + zoom, a.y + zoom), IM_COL32(255, 255, 255, 200), 0, 0, 2.0f);
-        ImGui::SetTooltip("(%d, %d)  tile %d", cx, cy, map.Get(doc_.active_layer, cx, cy));
-    }
-    dl->PopClipRect();
-
+    // No mouse position is reported when the host loses focus.
+    const bool mouse_valid = !io.AppFocusLost && ImGui::IsMousePosValid();
+    i32 cx = 0, cy = 0;
+    if (mouse_valid) LocalToCell(io.MousePos.x - base_x, base_y - io.MousePos.y, zoom, cx, cy);
+    const bool on_map = mouse_valid && hovered && map.InBounds(cx, cy);
     const bool left = ImGui::IsMouseDown(ImGuiMouseButton_Left) && ImGui::IsItemActive();
     const bool right = ImGui::IsMouseDown(ImGuiMouseButton_Right) && ImGui::IsItemActive();
     if (doc_.tool == TileTool::Rectangle) {
-        if (left && hovered && !rect_active_) {
+        if (left && on_map && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
             rect_active_ = true;
             rect_x_ = cx;
             rect_y_ = cy;
         }
-        if (rect_active_ && !left) {
-            doc_.Rectangle(rect_x_, rect_y_, cx, cy);
+        const bool cancel = !mouse_valid || ImGui::IsKeyPressed(ImGuiKey_Escape) ||
+                            !map.InBounds(rect_x_, rect_y_);
+        if (rect_active_ && (cancel || !left)) {
+            if (!cancel && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) doc_.Rectangle(rect_x_, rect_y_, cx, cy);
             rect_active_ = false;
         }
-    } else if (left || right) {
+        if (rect_active_) {
+            const i32 x = std::clamp(cx, 0, static_cast<i32>(map.width) - 1);
+            const i32 y = std::clamp(cy, 0, static_cast<i32>(map.height) - 1);
+            const ImVec2 a(to_screen_x(std::min(x, rect_x_)), to_screen_y(std::max(y, rect_y_)));
+            const ImVec2 b(to_screen_x(std::max(x, rect_x_) + 1), to_screen_y(std::min(y, rect_y_)) + zoom);
+            dl->AddRectFilled(a, b, IM_COL32(130, 214, 255, 48));
+            dl->AddRect(a, b, IM_COL32(130, 214, 255, 255), 0.0f, 0, 2.0f);
+            if (hovered) ImGui::SetTooltip("Release to fill the rectangle. Escape cancels.");
+        }
+    } else {
+        rect_active_ = false;
+    }
+    if (on_map && !rect_active_) {
+        const ImVec2 a(to_screen_x(cx), to_screen_y(cy));
+        dl->AddRect(a, ImVec2(a.x + zoom, a.y + zoom), IM_COL32(255, 255, 255, 200), 0.0f, 0, 2.0f);
+        ImGui::SetTooltip("(%d, %d)  tile %d", cx, cy, map.Get(doc_.active_layer, cx, cy));
+    }
+    dl->PopClipRect();
+
+    if (doc_.tool != TileTool::Rectangle && mouse_valid && (left || right)) {
         const TileTool saved = doc_.tool;
         if (right) doc_.tool = TileTool::Erase;
         if (!dragging_) {
@@ -442,7 +458,7 @@ void TilemapPanel::DrawCanvas() {
             dragging_ = true;
         }
         if (doc_.tool == TileTool::Paint || doc_.tool == TileTool::Erase) {
-            if (hovered && map.InBounds(cx, cy)) {
+            if (on_map) {
                 if (last_brush_sample_ && last_brush_sample_->tool == doc_.tool) {
                     ApplyBrushLine(doc_, last_brush_sample_->x, last_brush_sample_->y, cx, cy);
                 } else {
