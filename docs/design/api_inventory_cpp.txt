@@ -731,7 +731,7 @@
   std::unique_ptr<AudioStream>Open(const std::string&name)const
   std::vector<VoiceId>Voices(CueHandle cue)const
   usize ActiveCount()const
-  void Schedule(Instance&instance,const CuePlan&plan)
+  void Schedule(Instance&instance,const CuePlan&plan,bool begin_group=false)
   void StopAll()
   void Update()
 [audio/include/aether/audio/dsp.h] experimental
@@ -770,6 +770,7 @@
   type struct GameBus
   type struct PlayParams
   type struct Snapshot
+  type struct SyncVoice
   type struct Voice
   type struct VoiceInfo
   type struct VoiceState
@@ -821,6 +822,7 @@
   std::function<void(Mixer&)>apply
   std::vector<VoiceSummary>Voices()const
   u32 BeginSyncGroup()
+  u32 BeginSyncGroup(std::vector<SyncVoice>initial,std::vector<VoiceId>&ids)
   u32 MaxVoices()const
   u32 SampleRate()const
   u64 FramesRendered()const

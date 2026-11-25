@@ -67,10 +67,12 @@ const CuePlayer::Instance* CuePlayer::Find(CueHandle h) const {
     return nullptr;
 }
 
-void CuePlayer::Schedule(Instance& in, const CuePlan& plan) {
+void CuePlayer::Schedule(Instance& in, const CuePlan& plan, bool begin_group) {
     const SoundCue& cue = *in.cue;
     BusId bus = mixer_.FindBus(cue.bus);
     if (bus == Mixer::kInvalidBus) bus = kMasterBus;
+    std::vector<Mixer::SyncVoice> initial;
+    if (begin_group) initial.reserve(plan.items.size());
     for (const CueItem& item : plan.items) {
         // Every sound is placed from the cue's start (its sync group), so nothing drifts however long it runs.
         PlayParams p;
@@ -90,13 +92,20 @@ void CuePlayer::Schedule(Instance& in, const CuePlan& plan) {
         p.attenuation = cue.attenuation;
         p.doppler = cue.doppler;
         p.occlusion = cue.occlusion;
-        VoiceId id = 0;
-        if (const SoundWave* wave = bank_.Find(item.sound)) {
-            id = mixer_.Play(wave, p);
+        const SoundWave* wave = bank_.Find(item.sound);
+        if (begin_group) {
+            initial.push_back({p, wave, wave ? nullptr : bank_.Open(item.sound)});
         } else {
-            id = mixer_.PlayStream(bank_.Open(item.sound), p);
+            const VoiceId id = wave ? mixer_.Play(wave, p) : mixer_.PlayStream(bank_.Open(item.sound), p);
+            if (id != 0) in.voices.emplace_back(id, item.volume_db);
         }
-        if (id != 0) in.voices.emplace_back(id, item.volume_db);
+    }
+    if (begin_group) {
+        std::vector<VoiceId> ids;
+        in.sync_group = mixer_.BeginSyncGroup(std::move(initial), ids);
+        for (usize i = 0; i < ids.size(); ++i) {
+            if (ids[i] != 0) in.voices.emplace_back(ids[i], plan.items[i].volume_db);
+        }
     }
     in.tails.insert(in.tails.end(), plan.tails.begin(), plan.tails.end());
 }
@@ -108,8 +117,7 @@ CueHandle CuePlayer::Play(const SoundCue& cue, const CuePlayParams& params) {
     in.cue = &cue;
     in.params = params;
     in.start_frame = mixer_.FramesRendered();
-    in.sync_group = mixer_.BeginSyncGroup();
-    Schedule(in, EvaluateCue(cue, StateOf(cue), Durations()));
+    Schedule(in, EvaluateCue(cue, StateOf(cue), Durations()), true);
     if (in.voices.empty() && in.tails.empty()) {
         mixer_.EndSyncGroup(in.sync_group);
         return 0; // nothing to play
