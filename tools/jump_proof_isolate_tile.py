@@ -123,8 +123,13 @@ def isolate(args):
             raise ValueError("baseline was not repeatable or trace lengths differ")
         for frame, (a, b) in enumerate(zip(before, after), 1):
             if any(abs(a[i] - b[i]) > TOLERANCE for i in (0, 1)):
-                return {"asset": asset, "cell": cell, "frames": len(before),
-                        "first_difference_frame": frame, "before_position": a, "after_position": b}
+                result = {"asset": asset, "cell": cell, "frames": len(before),
+                          "first_difference_frame": frame, "before_position": a, "after_position": b}
+                if args.overlay_data:
+                    if len(before) > 20_000:
+                        raise ValueError("editor overlay supports up to 20000 frames")
+                    result.update(before_path=before, after_path=after)
+                return result
         raise ValueError("no position difference exceeds the trace tolerance")
 
 
@@ -133,6 +138,7 @@ def main():
     parser.add_argument("--pak-tool", type=Path, required=True)
     parser.add_argument("--player", required=True, help="shared executable filename, including .exe on Windows")
     parser.add_argument("--route", type=Path, required=True)
+    parser.add_argument("--overlay-data", action="store_true", help="include both paths and the changed cell for Tilemap")
     parser.add_argument("before", type=Path)
     parser.add_argument("after", type=Path)
     args = parser.parse_args()

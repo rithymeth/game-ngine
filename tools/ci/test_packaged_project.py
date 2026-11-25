@@ -365,6 +365,13 @@ def main():
                     or receipt["asset"] != "Content/Tiles/Level1.atilemap"
                     or receipt["first_difference_frame"] != diff["first_difference_frame"]):
                 raise RuntimeError(f"wrong controlled attribution: {receipt}")
+            export = subprocess.run([*operator, "--overlay-data"], cwd=empty_cwd,
+                                    capture_output=True, text=True, timeout=40, check=True)
+            confirmed_overlay = json.loads(export.stdout)
+            if (confirmed_overlay["cell"] != receipt["cell"] or confirmed_overlay["asset"] != receipt["asset"]
+                    or confirmed_overlay["before_path"] != overlay["before_path"]
+                    or confirmed_overlay["after_path"] != overlay["after_path"]):
+                raise RuntimeError("controlled overlay lost its evidence")
             extra = changed / "uncontrolled.txt"
             extra.write_text("not a tile edit", encoding="utf-8")
             uncontrolled = subprocess.run(operator, cwd=empty_cwd, capture_output=True, text=True, timeout=40)

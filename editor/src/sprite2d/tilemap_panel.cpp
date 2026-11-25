@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdio>
 #include <fstream>
+#include <limits>
 
 namespace aether::editor {
 
@@ -77,12 +78,56 @@ bool TilemapPanel::LoadJumpProofOverlay(const std::filesystem::path& path, std::
     std::vector<GhostPoint> before, after;
     if (!parse("before_path", before) || !parse("after_path", after))
         return fail("The file must contain two complete position paths. Export with --overlay-data.");
+    std::optional<GhostCell> cell;
+    if (data.contains("asset") || data.contains("cell")) {
+        if (marker.is_null() || !data.contains("asset") || !data["asset"].is_string() ||
+            !data.contains("cell") || !data["cell"].is_object())
+            return fail("Invalid changed-cell evidence.");
+        const auto name = data["asset"].get<std::string>();
+        if (name.rfind("Content/", 0) != 0 || name.size() > 512 || name.find('\\') != std::string::npos ||
+            name.find(':') != std::string::npos || name.find('\0') != std::string::npos)
+            return fail("Invalid tilemap asset path in the evidence.");
+        const auto asset = std::filesystem::path(std::u8string(name.begin(), name.end()));
+        if (asset.lexically_normal() != asset || asset.extension() != ".atilemap")
+            return fail("Invalid tilemap asset path in the evidence.");
+        const auto& fields = data["cell"];
+        const auto integer = [&](const char* key, i32& value) {
+            const auto it = fields.find(key);
+            if (it == fields.end() || !it->is_number_integer()) return false;
+            const auto n = it->get<f64>();
+            if (n < std::numeric_limits<i32>::min() || n > std::numeric_limits<i32>::max()) return false;
+            value = static_cast<i32>(n);
+            return true;
+        };
+        GhostCell record{asset, 0, 0, 0, 0};
+        i32 original = 0;
+        if (!integer("layer", record.layer) || !integer("x", record.x) || !integer("y", record.y) ||
+            !integer("before", original) || !integer("after", record.edited_value) ||
+            record.layer < 0 || record.x < 0 || record.y < 0 || original == record.edited_value)
+            return fail("Invalid changed-cell coordinates or values.");
+        cell = std::move(record);
+    }
+    ghost_cell_ = std::move(cell);
     ghost_before_ = std::move(before);
     ghost_after_ = std::move(after);
     ghost_difference_ = marker.is_null() ? 0 : static_cast<usize>(marker.get<u64>());
     ghost_map_ = doc_.TilemapFile();
     if (error) error->clear();
     return true;
+}
+
+bool TilemapPanel::JumpProofCellMatchesMap() const {
+    if (!ghost_cell_ || doc_.TilemapFile().empty()) return false;
+    const auto& cell = *ghost_cell_;
+    const auto map_path = doc_.TilemapFile().lexically_normal();
+    auto full = map_path.end(), suffix = cell.asset.end();
+    while (suffix != cell.asset.begin()) {
+        if (full == map_path.begin() || *--full != *--suffix) return false;
+    }
+    const auto& map = doc_.Map();
+    const auto layer = static_cast<usize>(cell.layer);
+    return layer < map.layers.size() && map.InBounds(cell.x, cell.y) &&
+           map.Get(layer, cell.x, cell.y) == cell.edited_value;
 }
 
 void TilemapPanel::DrawJumpProofTools() {
@@ -94,6 +139,7 @@ void TilemapPanel::DrawJumpProofTools() {
         ghost_before_.clear();
         ghost_after_.clear();
         ghost_difference_ = 0;
+        ghost_cell_.reset();
         ghost_error_.clear();
     }
     ImGui::SameLine();
@@ -108,6 +154,10 @@ void TilemapPanel::DrawJumpProofTools() {
             ImGui::SameLine();
             ImGui::Text("First difference: frame %zu", ghost_difference_);
         }
+        if (JumpProofCellMatchesMap())
+            ImGui::Text("Green: reported changed cell (%d, %d), layer %d", ghost_cell_->x, ghost_cell_->y, ghost_cell_->layer);
+        else if (ghost_cell_)
+            ImGui::TextWrapped("The evidence cell does not match this edited map.");
     }
 }
 
@@ -116,6 +166,7 @@ void TilemapPanel::Draw() {
         ghost_before_.clear();
         ghost_after_.clear();
         ghost_difference_ = 0;
+        ghost_cell_.reset();
         ghost_map_ = doc_.TilemapFile();
     }
     DrawTools();
@@ -328,6 +379,13 @@ void TilemapPanel::DrawCanvas() {
             dl->AddCircle(screen(ghost_before_[ghost_difference_ - 1]), 5.0f, before, 16, 2.0f);
             dl->AddCircle(screen(ghost_after_[ghost_difference_ - 1]), 8.0f, after, 16, 2.0f);
         }
+    }
+
+    if (JumpProofCellMatchesMap()) {
+        const auto& cell = *ghost_cell_;
+        const ImVec2 a(to_screen_x(cell.x), to_screen_y(cell.y));
+        const ImVec2 b(a.x + zoom, a.y + zoom);
+        dl->AddRect(a, b, IM_COL32(138, 255, 133, 255), 0.0f, 2.0f);
     }
 
     // The cell under the mouse, and painting.
