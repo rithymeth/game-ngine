@@ -527,3 +527,21 @@ AETHER_TEST(TilemapEditor_ProjectSwitchProtectsAndClearsOldMap) {
     CHECK(ws.Tilemap().TilemapFile().empty() && !ws.Tilemap().dirty());
     CHECK(ws.OpenAsset("Tiles/Level1.atilemap", &error) && ws.Tilemap().TilemapFile() != old_map);
 }
+
+AETHER_TEST(TilemapEditor_RenamesLayersWithoutErasingCellsOrAcceptingBlankNames) {
+    TilemapEditDocument doc = Doc();
+    CHECK(!doc.RenameLayer(0, "") && !doc.RenameLayer(0, " \t") && !doc.CanUndo());
+    doc.brush = 5;
+    doc.Apply(2, 2);
+    const auto original = doc.Map().layers.front().name;
+    CHECK(doc.RenameLayer(0, "Forest Floor ## A"));
+    CHECK(!doc.RenameLayer(0, "Forest Floor ## A"));
+    CHECK(doc.Map().layers.front().name == "Forest Floor ## A" && doc.Map().Get(0, 2, 2) == 5);
+    CHECK(doc.Undo() && doc.Map().layers.front().name == original && doc.Map().Get(0, 2, 2) == 5);
+    CHECK(doc.Redo() && doc.Map().layers.front().name == "Forest Floor ## A");
+    const auto dir = std::filesystem::temp_directory_path() / "tilemap_layer_names";
+    CHECK(doc.Save(dir/"level.atilemap", dir/"level.atileset"));
+    TilemapData saved;
+    if (!LoadTilemap(dir/"level.atilemap",saved)) { CHECK(false); return; }
+    CHECK(saved.layers.front().name == "Forest Floor ## A" && saved.Get(0, 2, 2) == 5);
+}
