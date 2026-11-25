@@ -91,6 +91,7 @@ bool AtlasFromJsonImpl(const nlohmann::json& data, SpriteAtlas& out, std::string
         SpriteClip clip;
         clip.name = c.value("name", "");
         if (clip.name.empty()) return fail("a clip has no name");
+        if (atlas.FindClip(clip.name)) return fail("two clips named '" + clip.name + "'");
         clip.fps = c.value("fps", 12.0f);
         clip.loop = c.value("loop", true);
         for (const nlohmann::json& n : c.value("frames", nlohmann::json::array())) {

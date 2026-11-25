@@ -86,6 +86,23 @@ AETHER_TEST(Sprite2D_AtlasRefusesBadData) {
                          out, &error));
 }
 
+AETHER_TEST(Sprite2D_AtlasRefusesAmbiguousClipNamesWithoutReplacingTheLoadedAtlas) {
+    SpriteAtlas atlas = HeroAtlas(Guid());
+    nlohmann::json authored = AtlasToJson(atlas);
+    authored["clips"].push_back({{"name", "run"}, {"frames", {"hero_7"}}, {"fps", 3.0f}});
+    const nlohmann::json previous = AtlasToJson(atlas);
+    std::string error;
+    CHECK(!AtlasFromJson(authored, atlas, &error));
+    CHECK(error.find("two clips named 'run'") != std::string::npos);
+    CHECK(AtlasToJson(atlas) == previous);
+
+    // Distinct named clips can freely reuse frames.
+    authored["clips"].back()["name"] = "run_slow";
+    CHECK(AtlasFromJson(authored, atlas, &error));
+    const SpriteClip* slow = atlas.FindClip("run_slow");
+    CHECK(slow && slow->frames == std::vector<std::string>{"hero_7"} && Near(slow->fps, 3.0f));
+}
+
 AETHER_TEST(Sprite2D_ClipFramesLoopAndHold) {
     const SpriteAtlas atlas = HeroAtlas(Guid());
     const SpriteClip& run = *atlas.FindClip("run");
