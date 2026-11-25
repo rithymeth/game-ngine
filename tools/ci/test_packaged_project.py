@@ -79,6 +79,18 @@ def main():
             if not required.is_file():
                 raise RuntimeError(f"package is missing {required}")
         run(tools["aether_pak"], "verify-package", packaged, cwd=root)
+        if args.headless_build_tools and args.template == "blank":
+            # Keep the real player busy well past the deadline, without a fake
+            # executable or an actual hang. Capture output to check the cause.
+            timed_out = subprocess.run(
+                [tools["aether_package"], str(project.relative_to(root)), "--out", "Timeout Package",
+                 "--config", "development", "--smoke", "--smoke-frames", "2147483647", "--smoke-timeout", "1"],
+                cwd=root, env=package_env, capture_output=True, text=True, timeout=12)
+            if timed_out.returncode != 1 or "timed out after 1 second" not in timed_out.stderr:
+                raise RuntimeError(f"package smoke did not report a timeout: {timed_out.stderr}")
+            if set(package_temp.iterdir()) != {existing_scratch, occupied_slot}:
+                raise RuntimeError("timed-out smoke left temporary files behind")
+            run(tools["aether_pak"], "verify-package", root / "Timeout Package", cwd=root)
 
         # The game must discover its own data, with no source tree or working-directory hint.
         source.rename(root / "Hidden Project")

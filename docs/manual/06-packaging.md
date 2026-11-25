@@ -30,6 +30,9 @@ The smoke run starts the game from its own empty scratch folder outside the
 package, then removes only that folder. Relative output paths work, and
 parallel builds do not share smoke state. What `verify-package` checked is
 still what is there. `--smoke-frames <n>` runs longer than the default three.
+If the packaged player does not exit within 60 seconds, the smoke check stops
+it and fails the command without deleting the package. Use
+`--smoke-timeout <seconds>` to change that limit.
 
 On Linux or macOS build agents without graphics dependencies, configure with
 `-DAETHER_BUILD_WINDOWING=OFF -DAETHER_BUILD_VULKAN=OFF`. The resulting player

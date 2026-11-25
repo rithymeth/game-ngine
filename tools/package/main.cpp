@@ -21,11 +21,14 @@
 #include "aether/cook/package.h"
 #include "aether/platform/process.h"
 
+#include <charconv>
+#include <chrono>
 #include <cstdio>
-#include <cstdlib>
 #include <filesystem>
 #include <string>
+#include <string_view>
 #include <system_error>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -39,8 +42,14 @@ int Usage() {
                  "                    [--player <aether_player>] [--strict] [--verbose]\n"
                  "                    [--always <path-or-folder/>]... [--pak-name Game]\n"
                  "                    [--compression auto|lz4|zstd|none] [--key <64 hex digits>]\n"
-                 "                    [--smoke [--smoke-frames <n>]]\n");
+                 "                    [--smoke [--smoke-frames <n>] [--smoke-timeout <seconds>]]\n");
     return 2;
+}
+
+bool ParsePositiveInt(std::string_view text, int& value) {
+    const char* end = text.data() + text.size();
+    const auto result = std::from_chars(text.data(), end, value);
+    return result.ec == std::errc{} && result.ptr == end && value > 0;
 }
 
 // Claim a fresh directory atomically. Never delete a directory already owned
@@ -56,7 +65,7 @@ struct SmokeDirectory {
 
 // An absolute executable and empty working directory exercise the package's
 // own data discovery even when --out was relative.
-int RunSmokeTest(const std::filesystem::path& game, int frames) {
+int RunSmokeTest(const std::filesystem::path& game, int frames, int timeout_seconds) {
     namespace fs = std::filesystem;
     std::error_code ec;
     const fs::path program = fs::absolute(game, ec);
@@ -88,9 +97,17 @@ int RunSmokeTest(const std::filesystem::path& game, int frames) {
         std::fprintf(stderr, "aether_package: couldn't start the packaged game: %s\n", error.c_str());
         return -1;
     }
-    int code = -1;
-    process.Wait(&code);
-    return code;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(timeout_seconds);
+    while (process.Running()) {
+        if (std::chrono::steady_clock::now() >= deadline) {
+            process.Kill();
+            std::fprintf(stderr, "aether_package: the packaged game smoke test timed out after %d second(s)\n",
+                         timeout_seconds);
+            return -1;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    return process.ExitCode();
 }
 
 } // namespace
@@ -103,6 +120,7 @@ int main(int argc, char** argv) {
     bool verbose = false;
     bool smoke = false;
     int smoke_frames = 3;
+    int smoke_timeout = 60;
 
     for (int i = 2; i < argc; ++i) {
         const std::string arg = argv[i];
@@ -137,8 +155,9 @@ int main(int argc, char** argv) {
         } else if (arg == "--smoke") {
             smoke = true;
         } else if (arg == "--smoke-frames" && has_value) {
-            smoke_frames = std::atoi(argv[++i]);
-            if (smoke_frames <= 0) return Usage();
+            if (!ParsePositiveInt(argv[++i], smoke_frames)) return Usage();
+        } else if (arg == "--smoke-timeout" && has_value) {
+            if (!ParsePositiveInt(argv[++i], smoke_timeout)) return Usage();
         } else {
             return Usage();
         }
@@ -176,7 +195,7 @@ int main(int argc, char** argv) {
     std::printf("staged %zu file(s) beside the player; run %s to play\n", report.copied.size(),
                 report.game_executable.string().c_str());
     if (smoke) {
-        const int code = RunSmokeTest(report.game_executable, smoke_frames);
+        const int code = RunSmokeTest(report.game_executable, smoke_frames, smoke_timeout);
         if (code != 0) {
             std::fprintf(stderr, "aether_package: the packaged game did not run (%d frames, exit code %d)\n", smoke_frames, code);
             return 1;
