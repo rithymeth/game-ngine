@@ -204,6 +204,32 @@ AETHER_TEST(Openers_EveryOpenableKindLoadsItsFileAndShowsItsTool) {
     stdfs::remove_all(project, ec);
 }
 
+AETHER_TEST(Openers_ContentBrowserCreatesAndSelectsAtlasWithoutReplacingOne) {
+    ProjectPaths paths;
+    FreshProject("create_sprite_atlas", paths);
+    const auto sheet = paths.content / "Characters" / "Hero.png";
+    stdfs::create_directories(sheet.parent_path());
+    const auto image = assets::EncodePngRgba8(16, 8, std::vector<u8>(16*8*4, 255));
+    std::ofstream(sheet, std::ios::binary).write(reinterpret_cast<const char*>(image.data()), image.size());
+    ContentBrowserPanel browser(paths.file);
+    std::string opened;
+    browser.SetAssetOpener([&](const std::string& path, std::string*) { opened = path; return true; });
+    std::string error;
+    CHECK(!browser.CreateSpriteAtlas("Characters/Hero.png", 5, 4, &error) && error.find("divide") != std::string::npos);
+    CHECK(!stdfs::exists(sheet.parent_path() / "Hero.aatlas") && opened.empty());
+    CHECK(browser.CreateSpriteAtlas("Characters/Hero.png", 4, 4, &error));
+    CHECK(browser.Selection() == std::vector<std::string>{"Characters/Hero.aatlas"});
+    CHECK(opened == "Characters/Hero.aatlas");
+    const auto file = sheet.parent_path() / "Hero.aatlas";
+    sprite2d::SpriteAtlas result;
+    CHECK(sprite2d::LoadAtlas(file, result, &error));
+    const auto* tex = browser.Database()->FindByPath("Characters/Hero.png");
+    CHECK(tex && tex->guid == result.texture && result.frames.size() == 8 && result.FindClip("grid"));
+    CHECK(!browser.CreateSpriteAtlas("Characters/Hero.png", 8, 8, &error) && error.find("already exists") != std::string::npos);
+    sprite2d::SpriteAtlas unchanged;
+    CHECK(sprite2d::LoadAtlas(file, unchanged, &error) && unchanged.frames.size() == 8);
+}
+
 AETHER_TEST(Openers_SpriteAtlasDrawsTheSourceRectangleAndKeepsThePreviousAssetOnError) {
     ProjectPaths paths;
     FreshProject("sprite_atlas", paths);

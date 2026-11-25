@@ -4,6 +4,7 @@
 # Engine-only, so it builds and tests headless on every platform.
 add_library(aether_sprite2d STATIC
     src/atlas.cpp
+    src/grid_authoring.cpp
     src/components.cpp
     src/tilemap.cpp
     src/batch.cpp
