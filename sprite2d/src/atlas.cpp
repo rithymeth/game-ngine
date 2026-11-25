@@ -59,6 +59,20 @@ nlohmann::json AtlasToJson(const SpriteAtlas& atlas) {
 }
 
 namespace {
+// JSON numbers can be wider than the atlas fields. Accept whole pixels only
+// and check before converting; double exactly represents every permitted value.
+template <class Pixel>
+bool ReadPixels(const nlohmann::json& data, const char* key, Pixel& out) {
+    const auto entry = data.find(key);
+    if (entry == data.end()) { out = 0; return true; }
+    if (!entry->is_number()) return false;
+    const double n = entry->get<double>();
+    if (!std::isfinite(n) || n < 0 || n > std::numeric_limits<Pixel>::max() || std::trunc(n) != n)
+        return false;
+    out = static_cast<Pixel>(n);
+    return true;
+}
+
 bool AtlasFromJsonImpl(const nlohmann::json& data, SpriteAtlas& out, std::string* error) {
     const auto fail = [&](const std::string& why) {
         if (error) *error = why;
@@ -69,18 +83,21 @@ bool AtlasFromJsonImpl(const nlohmann::json& data, SpriteAtlas& out, std::string
     SpriteAtlas atlas;
     const std::string texture = data.value("texture", "");
     if (!texture.empty() && !assets::ParseAssetGuid(texture, atlas.texture)) return fail("bad texture GUID");
-    atlas.width = data.value("width", 0u);
-    atlas.height = data.value("height", 0u);
+    if (!ReadPixels(data, "width", atlas.width) || !ReadPixels(data, "height", atlas.height))
+        return fail("atlas width and height must be non-negative whole pixel counts");
     for (const nlohmann::json& f : data.value("frames", nlohmann::json::array())) {
         SpriteFrame frame;
         frame.name = f.value("name", "");
         if (frame.name.empty()) return fail("a frame has no name");
         if (atlas.FindFrame(frame.name)) return fail("two frames named '" + frame.name + "'");
-        frame.x = f.value("x", 0);
-        frame.y = f.value("y", 0);
-        frame.w = f.value("w", 0);
-        frame.h = f.value("h", 0);
-        if (frame.w <= 0 || frame.h <= 0) return fail("frame '" + frame.name + "' has no size");
+        if (!ReadPixels(f, "x", frame.x) || !ReadPixels(f, "y", frame.y) ||
+            !ReadPixels(f, "w", frame.w) || !ReadPixels(f, "h", frame.h))
+            return fail("frame '" + frame.name + "' needs non-negative whole pixel coordinates and size");
+        if (frame.w == 0 || frame.h == 0) return fail("frame '" + frame.name + "' has no size");
+        f32 uv[4];
+        if (!atlas.Uv(frame, uv))
+            return fail("frame '" + frame.name + "' is outside the " + std::to_string(atlas.width) +
+                        "x" + std::to_string(atlas.height) + " atlas bounds");
         if (f.contains("pivot") && f["pivot"].is_array() && f["pivot"].size() == 2) {
             frame.pivot_x = f["pivot"][0].get<f32>();
             frame.pivot_y = f["pivot"][1].get<f32>();
