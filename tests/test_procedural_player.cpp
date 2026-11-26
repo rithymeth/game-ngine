@@ -1,9 +1,6 @@
 #include "aether/assets/asset_database.h"
 #include "aether/input/bindings.h"
 #include "aether/job/job_system.h"
-#include "aether/physics/character.h"
-#include "aether/physics/components.h"
-#include "aether/physics/physics_scene.h"
 #include "aether/scene/components.h"
 #include "aether/scene/gameplay.h"
 #include "aether/scene/serialization.h"
@@ -21,7 +18,10 @@
 #ifndef AETHER_TEST_HAS_PHYSICS
 #define AETHER_TEST_HAS_PHYSICS 0
 #endif
-#if AETHER_TEST_HAS_SCRIPTING
+#if AETHER_TEST_HAS_SCRIPTING && AETHER_TEST_HAS_PHYSICS && AETHER_EDITOR_NET_PHYSICS
+#include "aether/physics/character.h"
+#include "aether/physics/components.h"
+#include "aether/physics/physics_scene.h"
 #include "aether/script/script_system.h"
 #endif
 
@@ -31,18 +31,6 @@ using namespace aether::terrain;
 namespace stdfs = std::filesystem;
 
 // A baked world you can be in: a Player with the third-person controller, its body, a camera, a sun and a sky, on dry walkable land.
-
-namespace {
-
-ProceduralWorldSettings Hills() {
-    ProceduralWorldSettings s = MakePreset(WorldPreset::Temperate);
-    s.terrain.width = s.terrain.height = 129;
-    s.terrain.hydraulic_droplets = 4000;
-    s.terrain.river_min_catchment = 80;
-    return s;
-}
-
-} // namespace
 
 AETHER_TEST(ProceduralPlayer_TheSpawnIsDryWalkableLandInsideTheMap) {
     for (const WorldPreset preset : {WorldPreset::Temperate, WorldPreset::Alpine, WorldPreset::Desert, WorldPreset::Islands}) {
@@ -104,6 +92,14 @@ AETHER_TEST(ProceduralPlayer_TheJointedPartsMakeUpTheWholeFigureAndPivotAtTheirJ
 
 #if AETHER_TEST_HAS_SCRIPTING && AETHER_TEST_HAS_PHYSICS && AETHER_EDITOR_NET_PHYSICS
 namespace {
+
+ProceduralWorldSettings Hills() {
+    ProceduralWorldSettings s = MakePreset(WorldPreset::Temperate);
+    s.terrain.width = s.terrain.height = 129;
+    s.terrain.hydraulic_droplets = 4000;
+    s.terrain.river_min_catchment = 80;
+    return s;
+}
 
 struct Play {
     stdfs::path root;

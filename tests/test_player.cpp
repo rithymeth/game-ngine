@@ -6,7 +6,6 @@
 #include "aether/cook/cooker.h"
 #include "aether/pak/pak.h"
 #include "aether/player/game.h"
-#include "aether/physics/character.h"
 #include "aether/player/camera_shake.h"
 #include "aether/player/frame_report.h"
 #if AETHER_KIT_QUESTS
@@ -42,6 +41,7 @@
 #include <cstring>
 
 #if AETHER_TEST_PLAYER_PHYSICS
+#include "aether/physics/character.h"
 #include "aether/physics/components.h"
 #include "aether/physics/net_physics_bridge.h"
 #include "aether/net/physics_state.h"
@@ -736,10 +736,12 @@ AETHER_TEST(Player_ScriptsCanLoadAnotherScene) {
     const std::string mover_guid = assets::ToString(assets::NewAssetGuid());
     const json start = {{"$type", "Scene"}, {"$version", 1},
         {"entities", json::array({{{"components", {{"ScriptComponent", reflect::ToJson(script_component(door_guid))}}}}})}};
-    const json inside = {{"$type", "Scene"}, {"$version", 1},
-        {"entities", json::array({{{"components", {{"ScriptComponent", reflect::ToJson(script_component(mover_guid))}}}},
-                                  json::parse(R"({"components": {"Transform": {"$v": 2, "position": [5, 1, -3], "rotation": [0, 0, 0, 1], "scale": [1, 1, 1]}, "EntityName": {"$v": 1, "value": "Landing"}}})"),
-                                  json::parse(R"({"components": {"Transform": {"$v": 2, "position": [0, 0, 0], "rotation": [0, 0, 0, 1], "scale": [1, 1, 1]}, "CharacterMovement": {"$v": 1}}})")})}};
+    json inside = {{"$type", "Scene"}, {"$version", 1},
+        {"entities", json::array({{{"components", {{"ScriptComponent", reflect::ToJson(script_component(mover_guid))}}}}})}};
+#if AETHER_TEST_PLAYER_PHYSICS
+    inside["entities"].push_back(json::parse(R"({"components": {"Transform": {"$v": 2, "position": [5, 1, -3], "rotation": [0, 0, 0, 1], "scale": [1, 1, 1]}, "EntityName": {"$v": 1, "value": "Landing"}}})"));
+    inside["entities"].push_back(json::parse(R"({"components": {"Transform": {"$v": 2, "position": [0, 0, 0], "rotation": [0, 0, 0, 1], "scale": [1, 1, 1]}, "CharacterMovement": {"$v": 1}}})"));
+#endif
     const char* door =
         "local Door = {}\n"
         "function Door:OnUpdate(dt)\n"
@@ -780,13 +782,20 @@ AETHER_TEST(Player_ScriptsCanLoadAnotherScene) {
     for (int i = 0; i < 12; ++i) game.Tick(1.0f / 60.0f);
     CHECK(game.SceneName() == "Scenes/inside.ascene");
     CHECK(game.IsPlaying());
+#if AETHER_TEST_PLAYER_PHYSICS
     // The character stands where the spawn entity is.
     bool placed = false;
     game.GetWorld().ForEach<CharacterMovement, Transform>([&](CharacterMovement&, Transform& t) { placed = std::fabs(t.position.x - 5.0f) < 1e-3f && std::fabs(t.position.z + 3.0f) < 1e-3f; });
     CHECK(placed);
+#endif
     for (int i = 0; i < 5; ++i) game.Tick(1.0f / 60.0f);
     CHECK(game.ScriptErrors().empty());
+#if AETHER_TEST_PLAYER_PHYSICS
     CHECK(game.Warnings().empty());
+#else
+    CHECK(game.Warnings().size() == 1 &&
+          game.Warnings().front().find("character placement requires a physics-enabled build") != std::string::npos);
+#endif
 
     // A scene that is in the package but does not parse leaves the current one running, with a warning.
     pak::PakWriter bad;

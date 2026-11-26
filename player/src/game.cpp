@@ -1677,6 +1677,7 @@ bool Game::RequestScene(const std::string& path, const std::string& spawn) {
 
 // Moves the character to the entity named `spawn` (position and rotation), before play begins so physics builds from where it now stands.
 void Game::PlaceCharacterAt(const std::string& spawn) {
+#if AETHER_GAME_PHYSICS
     Entity target = kNullEntity, character = kNullEntity;
     const ComponentId transform = GetComponentId<Transform>(), name = GetComponentId<EntityName>(), movement = GetComponentId<CharacterMovement>();
     world_->ForEachArchetype([&](Archetype& archetype) {
@@ -1700,6 +1701,10 @@ void Game::PlaceCharacterAt(const std::string& spawn) {
     Transform* t = world_->GetComponent<Transform>(character);
     t->position = at.position;
     t->rotation = at.rotation;
+#else
+    warnings_.push_back("Scene.Load spawn \"" + spawn + "\": character placement requires a physics-enabled build");
+    AETHER_LOG_WARN("Player", "%s", warnings_.back().c_str());
+#endif
 }
 
 // The scene a script asked for, at a point where nothing of the old one is running. It is read and parsed first (into a scratch world), because

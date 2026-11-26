@@ -84,17 +84,31 @@ stdfs::path Scratch() {
 
 AETHER_TEST(LegacyRoundTrip_ScenesOpenInTheEditorSaveAndReopenWithNothingLost) {
     mcp::RegisterBuiltinComponents(); // what the editor has at start-up: every module's components
-    usize scenes = 0;
+    usize scenes = 0, round_trips = 0;
     for (const stdfs::path& fixture : Files("scene")) {
         ++scenes;
         const std::string name = fixture.filename().string();
         // The editor refuses a scene it cannot read in full: that every fixture opens is the real test that no component of an old file is unknown now.
         editor::SceneDocument first;
         std::string error;
+#if !AETHER_TEST_HAS_PHYSICS
+        // These two fixtures use character and collider components. Refuse them rather than opening a lossy copy.
+        if (fixture.parent_path().parent_path().filename() == "baseline-bd9cb13" &&
+            (name == "02_Main.ascene" || name == "03_Main.ascene")) {
+            const std::string original = ReadText(fixture);
+            AETHER_CHECK(!original.empty());
+            AETHER_CHECK(!first.Load(fixture, &error));
+            AETHER_CHECK(error.find("CharacterMovement") != std::string::npos);
+            AETHER_CHECK(error.find("BoxCollider") != std::string::npos);
+            AETHER_CHECK(ReadText(fixture) == original);
+            continue;
+        }
+#endif
         const bool opened = first.Load(fixture, &error);
         if (!opened) std::printf("    %s does not open in the editor: %s\n", name.c_str(), error.c_str());
         AETHER_CHECK(opened);
         if (!opened) continue;
+        ++round_trips;
         const stdfs::path saved = Scratch() / ("a_" + name);
         AETHER_CHECK(first.Save(saved, &error));
         // Reopen what was saved; saving that must change nothing (a fixed point), or the saver and the loader disagree about something.
@@ -135,7 +149,7 @@ AETHER_TEST(LegacyRoundTrip_ScenesOpenInTheEditorSaveAndReopenWithNothingLost) {
         if (lost.size() > 6) std::printf("    %s: ... and %zu more\n", name.c_str(), lost.size() - 6);
         AETHER_CHECK(lost.empty());
     }
-    AETHER_CHECK(scenes >= 3);
+    AETHER_CHECK(scenes >= 3 && round_trips > 0);
 }
 
 AETHER_TEST(LegacyRoundTrip_BlueprintsSequencesAndProjectsSaveAndReopenWithNothingLost) {

@@ -274,16 +274,30 @@ AETHER_TEST(Plugin_TheEnginesModulesArePlugins) {
     CHECK(position("Physics") < position("Water"));
     CHECK(position("VFX") < position("Fire") && position("Renderer") < position("Fire"));
     for (const char* kit : {"Inventory", "Interaction", "Quests", "Crafting", "Loot"}) CHECK(position("Gameplay") < position(kit)); // dependencies start first
-    // This executable has the modules its build has (physics is optional).
+    // The descriptors remain visible even when physics and its dependent kits were not built.
+    const std::vector<std::string> physics_plugins = {"Physics", "ForceFields", "Destruction", "Vehicles", "Ropes", "Water"};
+    constexpr bool has_physics = AETHER_TEST_HAS_PHYSICS != 0;
     for (const std::string& name : engine_plugins) {
-        if (name != "Physics") CHECK(ModuleRegistry::Get().Has(name));
+        const bool needs_physics = std::find(physics_plugins.begin(), physics_plugins.end(), name) != physics_plugins.end();
+        CHECK(ModuleRegistry::Get().Has(name) == (has_physics || !needs_physics));
     }
     const std::vector<std::string> warnings = m.StartModules(true, false);
-    CHECK(warnings.size() == (ModuleRegistry::Get().Has("Physics") ? 0u : 1u));
-    // Starting the plugins registers their components, so a scene can name them.
+    CHECK(warnings.size() == (has_physics ? 0u : physics_plugins.size()));
+    if (!has_physics) {
+        for (const std::string& name : physics_plugins) {
+            CHECK(std::any_of(warnings.begin(), warnings.end(), [&](const std::string& warning) {
+                return warning.find("module '" + name + "'") != std::string::npos;
+            }));
+        }
+    }
+    // Starting the modules registers exactly the components this build can load.
     for (const char* component : {"Animator", "WidgetComponent", "ParticleSystem", "Sprite", "SequenceComponent", "StreamingSource",
-                                  "AttributeSet", "Inventory", "Interactable", "QuestLog", "BlueprintInstance", "PointLight", "ForceField", "Destructible", "Debris", "Vehicle", "VehicleInput", "VehicleState", "Rope", "RopeSegment", "WaterSurface", "Floater", "Boat", "Flammable"}) {
+                                  "AttributeSet", "Inventory", "Interactable", "QuestLog", "BlueprintInstance", "PointLight", "Flammable"}) {
         CHECK(FindComponentIdByName(component) != kInvalidComponentId);
+    }
+    for (const char* component : {"ForceField", "Destructible", "Debris", "Vehicle", "VehicleInput", "VehicleState",
+                                  "Rope", "RopeSegment", "WaterSurface", "Floater", "Boat"}) {
+        CHECK((FindComponentIdByName(component) != kInvalidComponentId) == has_physics);
     }
 }
 
