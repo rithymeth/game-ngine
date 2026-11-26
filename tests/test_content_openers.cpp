@@ -1008,6 +1008,15 @@ AETHER_TEST(Openers_AuthoredTilemapWorksInAnIndependentStrictShippingPackage) {
     f32 missing_uv[4];
     CHECK(bad_set.TileCount() == 4 && !bad_set.Uv(4, missing_uv));
     bad_map.Set(0, 2, 2, 4);
+    // A non-solid out-of-sheet tile would silently disappear even when the
+    // tileset has no invalid flags. A strict package must reject that too.
+    if (!sprite2d::SaveTilemap(map_path, bad_map, &error)) { CHECK(false); return; }
+    options.output_dir = paths.root.parent_path() / "Rejected Visible Tile";
+    const auto painted_tile = cook::Package(options);
+    CHECK(!painted_tile.ok && painted_tile.error.find(
+          "Ground.atilemap: layer 0 cell (2, 2) uses tile index 4 outside the 4-tile grid in Ground.atileset") != std::string::npos);
+    CHECK(!stdfs::exists(options.output_dir / "Paks/Game.apak"));
+    options.output_dir = paths.root.parent_path() / "Rejected";
     bad_set.SetSolid(4, true);
     if (!sprite2d::SaveTilemap(map_path, bad_map, &error) || !sprite2d::SaveTileset(set_path, bad_set, &error)) {
         CHECK(false); return;
