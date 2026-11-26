@@ -211,6 +211,16 @@ bool ProjectSettingsPanel::ChooseStartupScene(const std::string& path) {
     return true;
 }
 
+bool ProjectSettingsPanel::RebaseStartupScene(const std::string& from, const std::string& to) {
+    if (from.empty() || to.empty() || from == to) return false;
+    const std::string current = pak::NormalizePath(settings_.startup_scene);
+    if (current != from && !current.starts_with(from + "/")) return false;
+    settings_.startup_scene = to + current.substr(from.size());
+    dirty_ = true;
+    status_ = "Startup scene moved; save before packaging.";
+    return true;
+}
+
 void ProjectSettingsPanel::Draw() {
     ImGui::BeginDisabled(!dirty_);
     if (ImGui::Button("Save")) Save();

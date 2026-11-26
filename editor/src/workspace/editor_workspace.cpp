@@ -1187,6 +1187,10 @@ struct EditorWorkspace::Impl {
         });
         plugins_panel = std::make_unique<PluginsPanel>(project_file);
         content_browser = std::make_unique<ContentBrowserPanel>(project_file);
+        content_browser->SetContentMovedCallback([this](const std::string& from, const std::string& to) {
+            if (project_settings && project_settings->RebaseStartupScene(from, to))
+                notifications.Post(NotificationSeverity::Info, "Startup scene moved", "Save Project Settings before packaging.");
+        });
         project_settings->SetStartupSceneChoices([this] {
             std::vector<std::string> paths;
             if (const auto* database = content_browser ? content_browser->Database() : nullptr) {

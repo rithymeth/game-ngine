@@ -1153,6 +1153,7 @@ bool ContentBrowserPanel::MovePaths(const std::vector<std::string>& paths, const
         }
         moved.push_back(target);
         RebaseOpenFolder(path, target); // the open folder may have been this one, or below it
+        if (content_moved_) content_moved_(path, target);
     }
     selection_ = moved;
     selection_anchor_ = moved.empty() ? std::string() : moved.front();
@@ -1246,6 +1247,7 @@ bool ContentBrowserPanel::RenameEntry(const std::string& path, const std::string
     selection_.assign(1, created);
     selection_anchor_ = created;
     RebaseOpenFolder(path, created); // renaming the folder being shown follows it
+    if (content_moved_) content_moved_(path, created);
     Refresh();
     return true;
 }

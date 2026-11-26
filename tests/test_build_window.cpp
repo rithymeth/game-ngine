@@ -1,3 +1,4 @@
+#include "content/content_browser_panel.h"
 #include "packaging/build_window.h"
 #include "packaging/new_project_panel.h"
 #include "packaging/plugins_panel.h"
@@ -409,6 +410,40 @@ AETHER_TEST(ProjectSettingsPanel_SelectsAnExistingSceneAndPackagesIt) {
     if (!window.StartSmoke()) { CHECK(false); return; }
     window.WaitForBuild();
     CHECK(window.LastResult() == BuildPackageWindow::Result::Succeeded);
+}
+
+AETHER_TEST(ProjectSettingsPanel_FollowsRenamedStartupSceneAndMovedFolderUntilSave) {
+    const auto project = FreshProject("StartupSceneMove");
+    const auto paths = ProjectPaths::ForFile(project);
+    ProjectSettingsPanel panel(project);
+    ContentBrowserPanel browser(project);
+    browser.SetContentMovedCallback([&](const std::string& from, const std::string& to) {
+        panel.RebaseStartupScene(from, to);
+    });
+    CHECK(!panel.RebaseStartupScene("Scene", "Other") && !panel.Dirty());
+    CHECK(!browser.RenameEntry("Scenes/Main.ascene", "Main.png") && !panel.Dirty());
+    // Legacy Windows-style separators are interpreted the way the cook does.
+    panel.Settings().startup_scene = "Scenes\\Main.ascene";
+    if (!browser.RenameEntry("Scenes/Main.ascene", "First Level")) { CHECK(false); return; }
+    CHECK(panel.Settings().startup_scene == "Scenes/First Level.ascene" && panel.Dirty());
+    stdfs::create_directory(paths.content / "Levels");
+    browser.Refresh();
+    browser.Select("Scenes");
+    if (!browser.MoveSelection("Levels")) { CHECK(false); return; }
+    CHECK(panel.Settings().startup_scene == "Levels/Scenes/First Level.ascene");
+    ProjectSettings saved;
+    CHECK(LoadProject(project, saved, nullptr) && saved.startup_scene == "Scenes/Main.ascene");
+    if (!panel.Save()) { CHECK(false); return; }
+    BuildPackageWindow build(project);
+    build.configuration = cook::BuildConfiguration::Shipping;
+    build.strict_validation = true;
+    build.player_path = AETHER_TEST_PLAYER_PATH;
+    if (!build.StartPackage()) { CHECK(false); return; }
+    build.WaitForBuild();
+    CHECK(build.LastResult() == BuildPackageWindow::Result::Succeeded);
+    if (!build.StartSmoke()) { CHECK(false); return; }
+    build.WaitForBuild();
+    CHECK(build.LastResult() == BuildPackageWindow::Result::Succeeded);
 }
 
 AETHER_TEST(BuildWindow_PackagesEncryptedAndLaunchesWithTheKey) {
