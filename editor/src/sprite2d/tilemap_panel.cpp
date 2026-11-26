@@ -735,8 +735,11 @@ void TilemapPanel::DrawCanvas() {
     // never takes over a left drag or starts late after its release.
     const bool rectangle_erase_drag = right && !rect_active_ &&
         (dragging_ || (!left && ImGui::IsMouseClicked(ImGuiMouseButton_Right)));
-    const bool brush_drag = mouse_valid && (selected == TileTool::Rectangle ? rectangle_erase_drag :
-        right || (left && (selected == TileTool::Paint || selected == TileTool::Erase)));
+    // A press on blank canvas must not start painting when the pointer later enters the map.
+    const bool brush_start = on_map && ImGui::IsMouseClicked(right ? ImGuiMouseButton_Right : ImGuiMouseButton_Left);
+    const bool brush_drag = mouse_valid && (dragging_ || brush_start) &&
+        (selected == TileTool::Rectangle ? rectangle_erase_drag :
+         right || (left && (selected == TileTool::Paint || selected == TileTool::Erase)));
     if (brush_drag) {
         if (right) doc_.tool = TileTool::Erase;
         if (!dragging_) {

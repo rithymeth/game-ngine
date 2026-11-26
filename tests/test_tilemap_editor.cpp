@@ -438,6 +438,45 @@ AETHER_TEST(TilemapEditor_FastPointerDragsPaintAndEraseEveryCellAsOneStroke) {
     for (i32 x = 1; x < 5; ++x) CHECK(doc.Map().Get(0, x, 3) == kEmpty);
 }
 
+AETHER_TEST(TilemapEditor_FreehandDragsMustStartOnTheMap) {
+    HeadlessImGui ui;
+    TilemapData map;
+    map.Resize(6, 5);
+    map.AddLayer("Ground");
+    map.Set(0, 3, 2, 2);
+    TilemapEditDocument doc(std::move(map), Doc().GetTileset());
+    TilemapPanel panel(doc);
+    doc.brush = 3;
+    ImVec2 bottom_left;
+    const auto draw = [&] {
+        panel.Draw();
+        const ImVec2 corner = {ImGui::GetItemRectMin().x, ImGui::GetItemRectMax().y};
+        const ImVec2 padding = ImGui::GetStyle().WindowPadding;
+        bottom_left = ImVec2(corner.x + padding.x + 8, corner.y - padding.y - 8);
+    };
+    ui.Frame(draw);
+    ImGuiIO& io = ImGui::GetIO();
+    const auto move = [&](i32 x) {
+        io.AddMousePosEvent(bottom_left.x + (static_cast<f32>(x) + .5f) * panel.zoom,
+                            bottom_left.y - 2.5f * panel.zoom);
+        ui.Frame(draw);
+    };
+    const auto drag = [&](ImGuiMouseButton button, i32 target) {
+        move(7); // Blank canvas, beyond the edge of the map.
+        io.AddMouseButtonEvent(button, true);
+        ui.Frame(draw);
+        move(target);
+        io.AddMouseButtonEvent(button, false);
+        ui.Frame(draw);
+    };
+    const auto revision = doc.Revision();
+    drag(ImGuiMouseButton_Left, 1);
+    CHECK(doc.Map().Get(0, 1, 2) == kEmpty);
+    drag(ImGuiMouseButton_Right, 3);
+    CHECK(doc.Map().Get(0, 3, 2) == 2);
+    CHECK(doc.Revision() == revision && !doc.dirty() && !doc.CanUndo());
+}
+
 AETHER_TEST(TilemapEditor_FillAndPickUseOnlyTheClickedCell) {
     HeadlessImGui ui;
     TilemapData map;
