@@ -157,7 +157,9 @@ bool QuestSystem::Advance(Entity entity, const QuestDef& /*def*/, QuestState& st
     }
     if (os->done && amount < 0) return false; // done stays done
     const i32 before = os->progress;
-    os->progress = amount > 0 && o.kind == Objective::Kind::Flag ? o.required : std::clamp(os->progress + amount, 0, o.required);
+    const i64 total = static_cast<i64>(before) + amount;
+    os->progress = amount > 0 && o.kind == Objective::Kind::Flag
+        ? o.required : static_cast<i32>(std::clamp<i64>(total, 0, o.required));
     const bool progress_changed = os->progress != before;
     if (progress_changed) {
         Queue(entity, state.name, QuestEvent::Kind::ObjectiveProgress, o.id, os->progress, o.required);

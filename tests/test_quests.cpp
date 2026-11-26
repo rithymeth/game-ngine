@@ -23,6 +23,7 @@
 
 #include <cmath>
 #include <filesystem>
+#include <limits>
 
 // Phase 30 step 7c (§30.10): quest definitions, the log, progress and rewards, and the faces.
 
@@ -187,6 +188,24 @@ AETHER_TEST(Quests_NotifyMatchesKindAndTarget) {
     CHECK(r.sys.Notify(r.e, Objective::Kind::Count, "Wolf Pelt", 1) == 0); // nothing active to move
     const Entity other = r.world.CreateEntity(Transform{Vec3(), Quaternion::Identity()});
     CHECK(r.sys.Notify(other, Objective::Kind::Count, "Wolf Pelt", 1) == 0 && r.sys.Notify(Entity{}, Objective::Kind::Count, "x", 1) == 0);
+}
+
+AETHER_TEST(Quests_LargeProgressClampsBeforeNarrowing) {
+    Rig r;
+    const i32 large = std::numeric_limits<i32>::max();
+    CHECK(r.sys.Start(r.e, "Pelts") == Result::Ok);
+    CHECK(r.sys.Progress(r.e, "Pelts", "collect", 2) == Result::Ok);
+    r.sys.ClearEvents();
+    CHECK(r.sys.Progress(r.e, "Pelts", "collect", large) == Result::Ok);
+    CHECK(r.sys.GetProgress(r.e, "Pelts", "collect") == 3);
+    CHECK((Kinds(r.sys) == std::vector<QuestEvent::Kind>{QuestEvent::Kind::ObjectiveProgress, QuestEvent::Kind::ObjectiveCompleted}));
+    CHECK(r.sys.Notify(r.e, Objective::Kind::Flag, "elder", 1) == 1 && r.sys.IsCompleted(r.e, "Pelts"));
+
+    const Entity another = r.world.CreateEntity(Transform{Vec3(), Quaternion::Identity()});
+    CHECK(r.sys.Start(another, "Pelts") == Result::Ok);
+    CHECK(r.sys.Notify(another, Objective::Kind::Count, "Wolf Pelt", 2) == 1);
+    CHECK(r.sys.Notify(another, Objective::Kind::Count, "Wolf Pelt", large) == 1);
+    CHECK(r.sys.GetProgress(another, "Pelts", "collect") == 3);
 }
 
 AETHER_TEST(Quests_SavedActiveQuestAcceptsNewObjectives) {
