@@ -99,16 +99,21 @@ std::vector<std::pair<i32, i32>> TilemapEditDocument::FloodRegion(i32 x, i32 y) 
     if (active_layer >= map_.layers.size() || !map_.InBounds(x, y)) return region;
     const i32 target = map_.Get(active_layer, x, y);
     std::vector<bool> seen(static_cast<usize>(map_.width) * map_.height, false);
-    std::vector<std::pair<i32, i32>> stack = {{x, y}};
-    while (!stack.empty()) {
-        const auto [cx, cy] = stack.back();
-        stack.pop_back();
-        if (!map_.InBounds(cx, cy)) continue;
+    // The result doubles as the queue; each cell is examined at most once.
+    const auto enqueue = [&](i32 cx, i32 cy) {
+        if (!map_.InBounds(cx, cy)) return;
         const usize index = static_cast<usize>(cy) * map_.width + static_cast<usize>(cx);
-        if (seen[index] || map_.Get(active_layer, cx, cy) != target) continue;
+        if (seen[index]) return;
         seen[index] = true;
-        region.emplace_back(cx, cy);
-        stack.insert(stack.end(), {{cx + 1, cy}, {cx - 1, cy}, {cx, cy + 1}, {cx, cy - 1}});
+        if (map_.Get(active_layer, cx, cy) == target) region.emplace_back(cx, cy);
+    };
+    enqueue(x, y);
+    for (usize i = 0; i < region.size(); ++i) {
+        const auto [cx, cy] = region[i]; // Copy before enqueue can grow the vector.
+        enqueue(cx + 1, cy);
+        enqueue(cx - 1, cy);
+        enqueue(cx, cy + 1);
+        enqueue(cx, cy - 1);
     }
     return region;
 }

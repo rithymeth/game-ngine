@@ -151,6 +151,30 @@ AETHER_TEST(TilemapEditor_RectangleFillAndPick) {
     CHECK(doc.brush == 7);
 }
 
+AETHER_TEST(TilemapEditor_FloodRegionDoesNotCrossDiagonalOrLayerBoundaries) {
+    TilemapData map;
+    map.Resize(4, 4);
+    map.AddLayer("Open");
+    map.AddLayer("Pattern");
+    map.Fill(1, 0, 0, 3, 3, 1);
+    map.Fill(1, 0, 0, 1, 1, 2);
+    map.Set(1, 2, 2, 2); // Same tile, but only diagonally connected.
+    TilemapEditDocument doc(std::move(map), {});
+
+    doc.active_layer = 1;
+    auto region = doc.FloodRegion(0, 0);
+    std::sort(region.begin(), region.end());
+    CHECK(region == std::vector<std::pair<i32, i32>>{{0, 0}, {0, 1}, {1, 0}, {1, 1}});
+    doc.tool = TileTool::Fill;
+    doc.brush = 3;
+    doc.Apply(0, 0);
+    CHECK(doc.Map().Get(1, 1, 1) == 3 && doc.Map().Get(1, 2, 2) == 2);
+    CHECK(doc.Map().Get(1, 1, 2) == 1 && doc.Map().Get(0, 0, 0) == kEmpty);
+    CHECK(doc.Undo() && doc.Map().Get(1, 1, 1) == 2 && !doc.CanUndo());
+    doc.active_layer = doc.Map().layers.size();
+    CHECK(doc.FloodRegion(0, 0).empty());
+}
+
 AETHER_TEST(TilemapEditor_AutotileBrushPaintsByNeighbours) {
     TilemapEditDocument doc = Doc();
     const usize at = doc.AddAutotile("Ground");
