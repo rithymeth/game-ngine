@@ -324,6 +324,17 @@ bool CheckPackageFile(const stdfs::path& directory, const stdfs::path& relative,
     return true;
 }
 
+// Compare whole components, not string prefixes ("Content Preview" is
+// unrelated). Filesystem identity also handles case-insensitive volumes.
+bool PathWithin(const stdfs::path& child, const stdfs::path& ancestor) {
+    for (auto current = child; !current.empty(); current = current.parent_path()) {
+        std::error_code ignored;
+        if (current == ancestor || stdfs::equivalent(current, ancestor, ignored)) return true;
+        if (current == current.root_path()) break;
+    }
+    return false;
+}
+
 bool CheckDestination(const stdfs::path& destination, bool directory, bool& exists, std::string& error) {
     std::error_code ec;
     const stdfs::file_status status = stdfs::symlink_status(destination, ec);
@@ -422,6 +433,21 @@ PackageReport Package(const PackageOptions& options) {
         return fail("Can't load " + options.cook.project_file.string() + ": " + error);
     }
     if (settings.startup_scene.empty()) return fail("Set a startup scene before packaging the game");
+
+    // A package is an output, not an authored asset. Refuse before even
+    // creating staging folders; also check the real path when linked.
+    const auto content = stdfs::absolute(ProjectPaths::ForFile(options.cook.project_file).content, ec);
+    if (ec) return fail("Can't resolve the project's Content folder: " + ec.message());
+    const auto output = stdfs::absolute(options.output_dir, ec);
+    if (ec) return fail("Can't resolve the package output folder: " + ec.message());
+    const auto resolved_content = stdfs::weakly_canonical(content, ec);
+    if (ec) return fail("Can't resolve the project's Content folder: " + ec.message());
+    const auto resolved_output = stdfs::weakly_canonical(output, ec);
+    if (ec) return fail("Can't resolve the package output folder: " + ec.message());
+    if (PathWithin(output.lexically_normal(), content.lexically_normal()) ||
+        PathWithin(resolved_output, resolved_content)) {
+        return fail("Choose an output folder outside the project's Content folder.");
+    }
 
     // A different project built into this folder would replace the shared Paks
     // directory while leaving the first game's executable behind.

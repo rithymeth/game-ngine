@@ -31,6 +31,9 @@ something you find out later:
 
 Use a separate output folder for a different project name, including after a
 rename. The packager refuses to replace a package for another project in place.
+Choose an output folder outside the project's `Content` folder so generated
+packages stay out of the asset library. This also applies to linked paths
+that point inside `Content`.
 The startup scene is a path relative to `Content`, such as
 `Scenes/Alternate.ascene`. A saved Windows-style separator also works when
 the project is moved to another platform. The same applies to content-relative

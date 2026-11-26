@@ -411,6 +411,45 @@ AETHER_TEST(Package_CancelAfterCookKeepsThePreviousPackage) {
     CheckNoStagingFolders(options.output_dir);
 }
 
+AETHER_TEST(Package_RefusesToWriteIntoProjectContent) {
+    const stdfs::path file = MakeProject("ProtectedContent");
+    const auto paths = ProjectPaths::ForFile(file);
+    const auto source = paths.content / "Scenes/main.ascene";
+    const auto scene_before = ReadText(source);
+    cook::PackageOptions options;
+    options.cook.project_file = file;
+    options.cook.configuration = cook::BuildConfiguration::Shipping;
+    options.cook.strict_validation = true;
+    options.player_executable = AETHER_TEST_PLAYER_PATH;
+    const auto reject = [&](const stdfs::path& output) {
+        options.output_dir = output;
+        const auto report = cook::Package(options);
+        CHECK(!report.ok);
+        CHECK(report.error.find("outside the project's Content folder") != std::string::npos);
+        CHECK(!stdfs::exists(output / "PackageManifest.json"));
+        CHECK(ReadText(source) == scene_before);
+    };
+    reject(paths.content);
+    reject(paths.content / "Uncreated Export");
+    CHECK(!stdfs::exists(paths.content / "Uncreated Export"));
+    reject(paths.content / "Scenes/../Dotted Export");
+    CHECK(!stdfs::exists(paths.content / "Dotted Export"));
+    std::error_code ec;
+    const auto alias = paths.root / "Content Alias";
+    stdfs::create_directory_symlink(paths.content, alias, ec);
+    if (!ec) {
+        reject(alias / "Aliased Export");
+        CHECK(!stdfs::exists(paths.content / "Aliased Export"));
+    }
+
+    options.output_dir = paths.root / "Content Preview";
+    const auto valid = cook::Package(options);
+    CHECK(valid.ok);
+    CHECK(stdfs::is_regular_file(valid.game_executable));
+    std::vector<std::string> problems;
+    CHECK(cook::VerifyPackageManifest(options.output_dir, problems));
+}
+
 AETHER_TEST(Package_RefusesDirectoryWhereAFileIsExpected) {
     const stdfs::path file = MakeProject("DirectoryCollision");
     const stdfs::path fake_player = file.parent_path() / "fake_player.bin";
