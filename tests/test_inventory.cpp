@@ -125,6 +125,19 @@ AETHER_TEST(Inventory_AddStacksAndRespectsCapacityAndWeight) {
     CHECK(r.sys.Add(Entity{}, "Coin", 1) == 0);
 }
 
+AETHER_TEST(Inventory_LightItemsAreLimitedBySlotsInsteadOfOverflowingWeightMath) {
+    Rig r;
+    CHECK(r.items.Register(Item("Fiber", 4, 1.0e-8f)));
+    CHECK(r.sys.Configure(r.e, 2, 100.0f));
+    CHECK(r.sys.Add(r.e, "Fiber", 20) == 8); // More than INT32_MAX could fit by weight alone.
+    CHECK(r.sys.Count(r.e, "Fiber") == 8 && r.sys.Add(r.e, "Fiber", 1) == 0);
+    CHECK(r.sys.Remove(r.e, "Fiber", 8));
+
+    CHECK(r.sys.Configure(r.e, 2, 2.5e-8f)); // A real weight restriction still applies.
+    CHECK(r.sys.Add(r.e, "Fiber", 20) == 2);
+    CHECK(r.sys.Count(r.e, "Fiber") == 2 && r.sys.Add(r.e, "Fiber", 1) == 0);
+}
+
 AETHER_TEST(Inventory_RemoveMoveAndSplit) {
     Rig r;
     r.sys.Configure(r.e, 5);

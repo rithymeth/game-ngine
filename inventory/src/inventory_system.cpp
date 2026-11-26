@@ -107,8 +107,11 @@ bool InventorySystem::Place(Inventory& inv, const std::string& item, i32 count, 
             if (d != nullptr) used += d->weight * static_cast<f32>(s.count);
         }
         const f32 room = inv.max_weight - used;
-        const i32 fit = room <= 0.0f ? 0 : static_cast<i32>(std::floor(room / weight_each + 1e-4f));
-        count = std::min(count, fit);
+        if (room <= 0.0f) return true;
+        // The weight allowance can exceed the integer range for very light
+        // items. Narrow only when it is smaller than the requested count.
+        const f64 fit = std::floor(static_cast<f64>(room) / weight_each + 1e-4);
+        if (fit < count) count = static_cast<i32>(fit);
     }
     for (ItemStack& s : inv.slots) {
         if (count <= 0) break;
