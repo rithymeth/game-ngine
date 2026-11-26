@@ -124,6 +124,11 @@ void BuildPackageWindow::Draw() {
     ImGui::SetNextItemWidth(160);
     std::snprintf(buffer, sizeof(buffer), "%s", launch_args.c_str());
     if (ImGui::InputTextWithHint("##args", "player arguments", buffer, sizeof(buffer))) launch_args = buffer;
+    ImGui::BeginDisabled(!can_launch || running);
+    if (ImGui::Button("Smoke test")) StartSmoke();
+    ImGui::SetItemTooltip("Run the staged player headless for three frames with temporary user data.");
+    ImGui::EndDisabled();
+    ImGui::SameLine();
     ImGui::BeginDisabled(busy);
     if (ImGui::Button(has_staged ? "Verify package" : "Verify output folder")) StartVerify();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", has_staged ? "Check the last package from this window." :

@@ -1,5 +1,6 @@
 #include "core/package_runner.h"
 
+#include <chrono>
 #include <utility>
 
 namespace aether::editor {
@@ -34,6 +35,15 @@ bool SplitArgs(const std::string& text, std::vector<std::string>& args) {
     return true;
 }
 
+struct SmokeScratch {
+    stdfs::path path;
+    ~SmokeScratch() {
+        if (path.empty()) return;
+        std::error_code ignored;
+        stdfs::remove_all(path, ignored);
+    }
+};
+
 } // namespace
 
 PackageRunner::PackageRunner(stdfs::path project_file) : project_file_(std::move(project_file)) {}
@@ -55,6 +65,79 @@ void PackageRunner::AddLog(bool warning, std::string text) {
 
 bool PackageRunner::StartCook() { return Start(false); }
 bool PackageRunner::StartPackage() { return Start(true); }
+bool PackageRunner::StartSmoke() {
+    if (Busy() || PollLaunchedGame()) return false;
+    WaitForBuild();
+    StagedPackage staged;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (staged_.game.empty()) return false;
+        staged = staged_;
+        log_.push_back({false, "Running headless smoke test (3 frames)"});
+        stage_ = "Running headless smoke test";
+        progress_ = 0.0f;
+        result_ = Result::None;
+    }
+    cancel_ = false;
+    verifying_ = false;
+    busy_ = true;
+    worker_ = std::thread([this, staged = std::move(staged)] {
+        std::string detail;
+        Result result = Result::Failed;
+        {
+            SmokeScratch scratch;
+            std::error_code ec;
+            const auto temp = stdfs::temp_directory_path(ec);
+            const auto base = ec ? stdfs::path{} : stdfs::absolute(temp, ec);
+            for (unsigned i = 0; !ec && i < 256; ++i) {
+                auto candidate = base / ("aether-editor-smoke-" + std::to_string(i));
+                if (stdfs::create_directory(candidate, ec)) {
+                    scratch.path = std::move(candidate);
+                    break;
+                }
+                if (ec == std::errc::file_exists) ec.clear();
+            }
+            if (scratch.path.empty()) {
+                detail = "couldn't create an isolated test directory";
+                if (ec) detail += ": " + ec.message();
+            } else {
+                std::vector<std::string> args{"--headless", "--frames", "3", "--user-dir", (scratch.path / "user").string()};
+                // Match normal editor Launch: use the key from the staged
+                // package, never the UI's possibly edited field or the log.
+                if (staged.key) {
+                    args.push_back("--key");
+                    args.push_back(staged.key->ToHex());
+                }
+                platform::ChildProcess player;
+                if (player.Start(staged.game, args, scratch.path, &detail)) {
+                    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+                    while (player.Running() && !cancel_.load() && std::chrono::steady_clock::now() < deadline)
+                        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                    if (player.Running()) {
+                        player.Kill();
+                        if (cancel_.load()) result = Result::Cancelled;
+                        else detail = "timed out after 60 seconds";
+                    } else if (player.ExitCode() == 0) {
+                        result = Result::Succeeded;
+                    } else {
+                        detail = "player exited with code " + std::to_string(player.ExitCode());
+                    }
+                }
+            }
+        }
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            result_ = result;
+            progress_ = result == Result::Cancelled ? 0.0f : 1.0f;
+            stage_ = result == Result::Succeeded ? "Headless smoke test passed (3 frames)" :
+                     result == Result::Cancelled ? "Headless smoke test cancelled" : "Headless smoke test failed: " + detail;
+            log_.push_back({result == Result::Failed, stage_});
+        }
+        busy_ = false;
+    });
+    return true;
+}
+
 bool PackageRunner::StartVerify() {
     if (Busy()) return false;
     const stdfs::path game = StagedGame();
