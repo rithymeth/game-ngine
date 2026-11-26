@@ -1,6 +1,9 @@
 #include "core/package_runner.h"
 
 #include <chrono>
+#include <deque>
+#include <fstream>
+#include <limits>
 #include <utility>
 
 namespace aether::editor {
@@ -33,6 +36,28 @@ bool SplitArgs(const std::string& text, std::vector<std::string>& args) {
     if (quoted) return false;
     if (started) args.push_back(std::move(argument));
     return true;
+}
+
+// Read only a bounded tail; the player can write logs even before a scene
+// loads. Normal progress stays out of the editor's failure diagnostics.
+std::deque<std::string> SmokeFailureLog(const stdfs::path& path) {
+    std::deque<std::string> diagnostics;
+    std::ifstream in(path, std::ios::binary | std::ios::ate);
+    if (!in) return diagnostics;
+    constexpr std::streamoff tail_limit = 64 * 1024;
+    const std::streamoff size = in.tellg();
+    if (size <= 0) return diagnostics;
+    const std::streamoff start = size > tail_limit ? size - tail_limit : 0;
+    in.seekg(start);
+    if (start != 0) in.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+    std::string line;
+    while (std::getline(in, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (!line.starts_with("[ERROR] ") && !line.starts_with("[WARN] ")) continue;
+        if (diagnostics.size() == 8) diagnostics.pop_front();
+        diagnostics.push_back(std::move(line));
+    }
+    return diagnostics;
 }
 
 struct SmokeScratch {
@@ -83,6 +108,7 @@ bool PackageRunner::StartSmoke() {
     busy_ = true;
     worker_ = std::thread([this, staged = std::move(staged)] {
         std::string detail;
+        std::deque<std::string> diagnostics;
         Result result = Result::Failed;
         {
             SmokeScratch scratch;
@@ -101,7 +127,9 @@ bool PackageRunner::StartSmoke() {
                 detail = "couldn't create an isolated test directory";
                 if (ec) detail += ": " + ec.message();
             } else {
-                std::vector<std::string> args{"--headless", "--frames", "3", "--user-dir", (scratch.path / "user").string()};
+                const auto child_log = scratch.path / "player.log";
+                std::vector<std::string> args{"--headless", "--frames", "3", "--user-dir", (scratch.path / "user").string(),
+                                              "--log-file", child_log.string()};
                 // Match normal editor Launch: use the key from the staged
                 // package, never the UI's possibly edited field or the log.
                 if (staged.key) {
@@ -122,6 +150,7 @@ bool PackageRunner::StartSmoke() {
                     } else {
                         detail = "player exited with code " + std::to_string(player.ExitCode());
                     }
+                    if (result == Result::Failed) diagnostics = SmokeFailureLog(child_log);
                 }
             }
         }
@@ -132,6 +161,7 @@ bool PackageRunner::StartSmoke() {
             stage_ = result == Result::Succeeded ? "Headless smoke test passed (3 frames)" :
                      result == Result::Cancelled ? "Headless smoke test cancelled" : "Headless smoke test failed: " + detail;
             log_.push_back({result == Result::Failed, stage_});
+            for (auto& diagnostic : diagnostics) log_.push_back({true, std::move(diagnostic)});
         }
         busy_ = false;
     });

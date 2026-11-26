@@ -151,6 +151,11 @@ AETHER_TEST(BuildWindow_SmokeTestsTheStagedPlayerWithoutChangingLaunchArguments)
     imgui.Frame([&] { window.Draw(); });
     CHECK(window.LastResult() == BuildPackageWindow::Result::Failed && window.StagedGame() == game);
     CHECK(window.Stage().starts_with("Headless smoke test failed: player exited with code"));
+    usize actionable = 0;
+    for (const auto& line : window.Log()) {
+        if (line.warning && line.text.find("too small to be an archive") != std::string::npos) ++actionable;
+    }
+    CHECK(actionable == 1);
     for (const auto& entry : stdfs::directory_iterator(stdfs::temp_directory_path()))
         CHECK(!entry.path().filename().string().starts_with("aether-editor-smoke-"));
 }
