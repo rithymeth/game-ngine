@@ -28,6 +28,7 @@ public:
     f32 zoom = 24.0f; // screen pixels per tile
     bool show_grid = true;
     bool show_solid = true;
+    bool solo_layer_art = false; // edit view only; diagnostics still cover all layers
 
 private:
     void DrawPalette();

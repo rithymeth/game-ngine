@@ -377,6 +377,8 @@ void TilemapPanel::DrawResizeDialog() {
 
 void TilemapPanel::DrawLayers() {
     ImGui::SeparatorText("Layers");
+    ImGui::Checkbox("Solo layer art", &solo_layer_art);
+    ImGui::SetItemTooltip("Show only the selected layer's art. Collision and invalid tile markers still cover the whole map.");
     const TilemapData& map = doc_.Map();
     for (usize i = map.layers.size(); i-- > 0;) { // the top layer first
         ImGui::PushID(static_cast<int>(i));
@@ -565,6 +567,7 @@ void TilemapPanel::DrawCanvas() {
         const usize visible_count = columns * static_cast<usize>(top - bottom);
         std::vector<u8> marks(show_solid || grid_tiles != 0 ? visible_count : 0);
         for (usize layer = 0; layer < map.layers.size(); ++layer) {
+            const bool draw_art = !solo_layer_art || layer == doc_.active_layer;
             const bool mark_solid = show_solid && map.layers[layer].collides;
             for (i32 y = bottom; y < top; ++y) {
                 for (i32 x = left; x < right; ++x) {
@@ -573,11 +576,14 @@ void TilemapPanel::DrawCanvas() {
                         if (marks.empty()) marks.resize(visible_count);
                         marks[visible_cell(x, y)] |= kInvalidPaint;
                     }
+                    if (!draw_art && !mark_solid) continue;
                     const i32 tile = raw >= kEmpty ? raw : ResolveTile(map, ts, layer, x, y);
                     if (tile < 0) continue;
-                    const ImVec2 a(to_screen_x(x), to_screen_y(y));
-                    const ImVec2 b(a.x + zoom, a.y + zoom);
-                    if (!DrawTileArt(dl, a, b, tile)) dl->AddRectFilled(a, b, TileColor(tile));
+                    if (draw_art) {
+                        const ImVec2 a(to_screen_x(x), to_screen_y(y));
+                        const ImVec2 b(a.x + zoom, a.y + zoom);
+                        if (!DrawTileArt(dl, a, b, tile)) dl->AddRectFilled(a, b, TileColor(tile));
+                    }
                     if (mark_solid && ts.IsSolid(tile)) marks[visible_cell(x, y)] |= kBlocked;
                 }
             }
