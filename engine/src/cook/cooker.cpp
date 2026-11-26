@@ -23,7 +23,9 @@
 #include <limits>
 #include <optional>
 #include <unordered_map>
+#include <unordered_set>
 #include <set>
+#include <string_view>
 
 namespace aether::cook {
 
@@ -93,6 +95,30 @@ std::string CheckSpriteCrops(const json& document, u32 width, u32 height) {
     return {};
 }
 
+std::string CheckSpriteClipFrames(const json& document) {
+    const auto clips = document.find("clips");
+    if (clips == document.end() || !clips->is_array() || clips->empty()) return {};
+    std::unordered_set<std::string_view> frame_names;
+    if (const auto frames = document.find("frames"); frames != document.end() && frames->is_array()) {
+        for (const auto& frame : *frames) {
+            const auto name = frame.find("name");
+            if (name != frame.end() && name->is_string() && !name->get_ref<const std::string&>().empty())
+                frame_names.insert(name->get_ref<const std::string&>());
+        }
+    }
+    for (const auto& clip : *clips) {
+        const auto refs = clip.find("frames");
+        if (refs == clip.end() || !refs->is_array()) continue;
+        const auto name = clip.find("name");
+        const std::string label = name != clip.end() && name->is_string() ? "clip '" + name->get<std::string>() + "'" : "a clip";
+        for (const auto& ref : *refs) {
+            if (ref.is_string() && !frame_names.contains(ref.get_ref<const std::string&>()))
+                return label + " uses the missing frame '" + ref.get_ref<const std::string&>() + "'";
+        }
+    }
+    return {};
+}
+
 // Check 2D headers and typed references without linking Sprite2D. A tileset or
 // sprite atlas can be compared to the exact texture dimensions in this cook.
 std::string Check2DReference(const AssetRecord& record, const std::vector<u8>& bytes,
@@ -104,6 +130,10 @@ std::string Check2DReference(const AssetRecord& record, const std::vector<u8>& b
     const auto type = document.find("$type");
     if (!document.is_object() || type == document.end() || *type != record.importer)
         return "expected a " + record.importer + " JSON object";
+    if (record.importer == "SpriteAtlas") {
+        const auto clip_problem = CheckSpriteClipFrames(document);
+        if (!clip_problem.empty()) return clip_problem;
+    }
 
     const std::string field = tilemap ? "tileset" : "texture";
     const std::string expected = tilemap ? "Tileset" : "Texture";
