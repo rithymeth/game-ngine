@@ -878,6 +878,26 @@ AETHER_TEST(Openers_DroppedSpriteAtlasSurvivesStrictShipping) {
     CHECK(!stdfs::exists(options.output_dir / "Paks" / "Game.apak"));
     scene.SetSelection({restored});
     if (!panel.ApplyFrame(scene, "frame_1") || frame() != "frame_1" || !scene.Save(scene_file, &error)) { CHECK(false); return; }
+    sprite2d::SpriteAnimator missing_animator;
+    sprite2d::SetName(missing_animator.clip, "deleted-clip");
+    using ClipStorage = decltype(missing_animator.clip);
+    CHECK(scene.SetComponentField(animated, animator_id, "clip",
+                                  reflect::Any::CopyOf(reflect::Reflect<ClipStorage>(), missing_animator.clip)));
+    if (!scene.Save(scene_file, &error)) { CHECK(false); return; }
+    options.output_dir = root / "Bad Clip Shipping";
+    const auto missing_clip = cook::Package(options);
+    CHECK(!missing_clip.ok && missing_clip.error.find("Placed.ascene: Sprite Animator") != std::string::npos &&
+          missing_clip.error.find("clip 'deleted-clip' is missing from Hero.aatlas") != std::string::npos);
+    CHECK(!stdfs::exists(options.output_dir / "Paks" / "Game.apak"));
+    // Blank assignments remain valid for scenes that start clips at runtime.
+    sprite2d::SetName(missing_animator.clip, "");
+    CHECK(scene.SetComponentField(animated, animator_id, "clip",
+                                  reflect::Any::CopyOf(reflect::Reflect<ClipStorage>(), missing_animator.clip)));
+    if (!scene.Save(scene_file, &error)) { CHECK(false); return; }
+    options.output_dir = root / "Deferred Clip Shipping";
+    CHECK(cook::Package(options).ok);
+    scene.SetSelection({animated});
+    if (!panel.ApplyClip(scene, "walk") || !scene.Save(scene_file, &error)) { CHECK(false); return; }
     options.output_dir = root / "Shipping";
     const auto staged = cook::Package(options);
     if (!staged.ok) { std::fprintf(stderr, "%s\n", staged.error.c_str()); CHECK(false); return; }
