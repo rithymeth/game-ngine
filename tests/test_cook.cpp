@@ -283,11 +283,11 @@ AETHER_TEST(Cook_RejectsSpriteAtlasThatDisagreesWithCookedTextureDimensions) {
         .write(reinterpret_cast<const char*>(png.data()), static_cast<std::streamsize>(png.size()));
     const auto texture = GuidOf(paths.content, "Hero.png");
     if (texture.empty()) { CHECK(false); return; }
-    const auto write_atlas = [&](int width) {
+    const auto write_atlas = [&](int width, int frame_x = 8) {
         WriteText(paths.content / "Hero.aatlas",
                   json({{"$type", "SpriteAtlas"}, {"$version", 1}, {"texture", texture},
                         {"width", width}, {"height", 16},
-                        {"frames", json::array({{{"name", "idle"}, {"x", 8}, {"y", 0}, {"w", 8}, {"h", 16}}})}}).dump());
+                        {"frames", json::array({{{"name", "idle"}, {"x", frame_x}, {"y", 0}, {"w", 8}, {"h", 16}}})}}).dump());
     };
     write_atlas(16);
     ProjectSettings project;
@@ -307,7 +307,12 @@ AETHER_TEST(Cook_RejectsSpriteAtlasThatDisagreesWithCookedTextureDimensions) {
     CHECK(!bad.ok && bad.error.find("Hero.aatlas: expects a 16x16 texture, but Hero.png cooks to 24x16") != std::string::npos);
     CHECK(!stdfs::exists(options.output_dir / "Game.apak"));
 
-    write_atlas(24);
+    write_atlas(24, 20); // The sheet matches; only the idle crop is wrong.
+    const auto bad_crop = cook::Cook(options);
+    CHECK(!bad_crop.ok && bad_crop.error.find("Hero.aatlas: frame 'idle' is outside the 24x16 atlas bounds") != std::string::npos);
+    CHECK(!stdfs::exists(options.output_dir / "Game.apak"));
+
+    write_atlas(24, 16); // A crop whose edge exactly touches the image bounds is valid.
     const auto good = cook::Cook(options);
     if (!good.ok) { CHECK(false); return; }
     CHECK(good.texture_cache_hits == 1 && good.warnings.empty());
