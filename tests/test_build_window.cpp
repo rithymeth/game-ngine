@@ -125,6 +125,36 @@ AETHER_TEST(BuildWindow_PackagesAndLaunchesTheGame) {
     imgui.Frame([&] { window.Draw(); });
 }
 
+AETHER_TEST(BuildWindow_SmokeTestsTheStagedPlayerWithoutChangingLaunchArguments) {
+    HeadlessImGui imgui;
+    BuildPackageWindow window(FreshProject("EditorSmoke"));
+    window.player_path = AETHER_TEST_PLAYER_PATH;
+    window.configuration = cook::BuildConfiguration::Shipping;
+    window.strict_validation = true;
+    window.launch_args = "--not-a-player-flag";
+    CHECK(!window.StartSmoke());
+    if (!window.StartPackage()) { CHECK(false); return; }
+    window.WaitForBuild();
+    const auto game = window.StagedGame();
+    if (game.empty()) { CHECK(false); return; }
+    if (!window.StartSmoke()) { CHECK(false); return; }
+    window.WaitForBuild();
+    CHECK(window.LastResult() == BuildPackageWindow::Result::Succeeded);
+    CHECK(window.Stage() == "Headless smoke test passed (3 frames)");
+    CHECK(window.StagedGame() == game && window.launch_args == "--not-a-player-flag");
+
+    // Exercise a process failure, not just the missing-archive precondition.
+    const auto pak = game.parent_path() / "Paks" / "Game.apak";
+    std::ofstream(pak, std::ios::binary | std::ios::trunc) << "not a package";
+    if (!window.StartSmoke()) { CHECK(false); return; }
+    window.WaitForBuild();
+    imgui.Frame([&] { window.Draw(); });
+    CHECK(window.LastResult() == BuildPackageWindow::Result::Failed && window.StagedGame() == game);
+    CHECK(window.Stage().starts_with("Headless smoke test failed: player exited with code"));
+    for (const auto& entry : stdfs::directory_iterator(stdfs::temp_directory_path()))
+        CHECK(!entry.path().filename().string().starts_with("aether-editor-smoke-"));
+}
+
 AETHER_TEST(BuildWindow_ReportsMissingPackageArchiveBeforeLaunching) {
     BuildPackageWindow window(FreshProject("MissingArchive"));
     window.player_path = AETHER_TEST_PLAYER_PATH;
