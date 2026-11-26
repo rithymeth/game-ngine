@@ -66,17 +66,20 @@ struct SheetExtentCheck {
     u32 width, height;
 };
 
-struct StaticSpriteFrameCheck {
+enum class SpriteNameKind { Frame, Clip };
+
+struct SpriteNameCheck {
     AssetGuid atlas;
-    std::string scene, entity, frame;
+    std::string scene, entity, name;
+    SpriteNameKind kind;
 };
 
-struct StoredAtlasFrames {
+struct StoredAtlasNames {
     std::string path;
-    std::unordered_set<std::string> names;
+    std::unordered_set<std::string> frames, clips;
 };
 
-using StoredAtlasFrameIndex = std::unordered_map<AssetGuid, StoredAtlasFrames>;
+using StoredAtlasIndex = std::unordered_map<AssetGuid, StoredAtlasNames>;
 
 struct StoredTextureExtent {
     u32 width, height;
@@ -124,38 +127,42 @@ std::string CheckSpriteCrops(const json& document, u32 width, u32 height) {
     return {};
 }
 
-StoredAtlasFrames CollectAtlasFrames(const json& document, const std::string& path) {
-    StoredAtlasFrames result{path, {}};
-    const auto frames = document.find("frames");
-    if (frames == document.end() || !frames->is_array()) return result;
-    for (const auto& frame : *frames) {
-        const auto name = frame.find("name");
-        if (name != frame.end() && name->is_string() && !name->get_ref<const std::string&>().empty())
-            result.names.insert(name->get_ref<const std::string&>());
+std::unordered_set<std::string> CollectAtlasNames(const json& document, const char* field) {
+    std::unordered_set<std::string> result;
+    const auto entries = document.find(field);
+    if (entries == document.end() || !entries->is_array()) return result;
+    for (const auto& entry : *entries) {
+        const auto name = entry.find("name");
+        if (name != entry.end() && name->is_string() && !name->get_ref<const std::string&>().empty())
+            result.insert(name->get_ref<const std::string&>());
     }
     return result;
 }
 
-void CollectStaticSpriteFrameChecks(const json& document, const std::string& scene,
-                                    std::vector<StaticSpriteFrameCheck>& checks) {
+void CollectSpriteNameChecks(const json& document, const std::string& scene, std::vector<SpriteNameCheck>& checks) {
     const auto entities = document.find("entities");
     if (entities == document.end() || !entities->is_array()) return;
     usize index = 0;
     for (const auto& entity : *entities) {
         ++index;
         const auto components = entity.find("components");
-        if (components == entity.end() || !components->is_object() || components->contains("SpriteAnimator")) continue;
+        if (components == entity.end() || !components->is_object()) continue;
         const auto sprite = components->find("Sprite");
         if (sprite == components->end() || !sprite->is_object()) continue;
-        const auto frame = sprite->find("frame"), atlas = sprite->find("atlas");
-        if (frame == sprite->end() || !frame->is_string() || frame->get_ref<const std::string&>().empty() ||
+        const auto animator = components->find("SpriteAnimator");
+        const bool animated = animator != components->end();
+        // An animator may intentionally replace an unrendered start frame.
+        const auto& owner = animated ? *animator : *sprite;
+        const auto name = owner.find(animated ? "clip" : "frame"), atlas = sprite->find("atlas");
+        if (name == owner.end() || !name->is_string() || name->get_ref<const std::string&>().empty() ||
             atlas == sprite->end() || !atlas->is_string()) continue;
         AssetGuid guid;
         if (!assets::ParseAssetGuid(atlas->get_ref<const std::string&>(), guid) || guid.IsNull()) continue;
         std::string location = "on entity #" + std::to_string(index);
         if (const auto id = entity.find("guid"); id != entity.end() && id->is_string())
             location += " (" + id->get_ref<const std::string&>() + ")";
-        checks.push_back({guid, scene, std::move(location), frame->get<std::string>()});
+        checks.push_back({guid, scene, std::move(location), name->get<std::string>(),
+                          animated ? SpriteNameKind::Clip : SpriteNameKind::Frame});
     }
 }
 
@@ -224,7 +231,7 @@ std::string CheckTilesetGridRefs(const json& document, u32 width, u32 height) {
 // sprite atlas can be compared to the exact texture dimensions in this cook.
 std::string Check2DReference(const AssetRecord& record, const std::vector<u8>& bytes,
                              const AssetDatabase& database, std::vector<SheetExtentCheck>& extents,
-                             StoredAtlasFrameIndex& atlas_frames) {
+                             StoredAtlasIndex& atlas_names) {
     const bool tilemap = record.importer == "Tilemap";
     if (!tilemap && record.importer != "SpriteAtlas" && record.importer != "Tileset") return {};
     const auto document = json::parse(bytes.begin(), bytes.end(), nullptr, false);
@@ -233,8 +240,9 @@ std::string Check2DReference(const AssetRecord& record, const std::vector<u8>& b
     if (!document.is_object() || type == document.end() || *type != record.importer)
         return "expected a " + record.importer + " JSON object";
     if (record.importer == "SpriteAtlas") {
-        const auto& frames = atlas_frames.emplace(record.guid, CollectAtlasFrames(document, record.path)).first->second;
-        const auto clip_problem = CheckSpriteClipFrames(document, frames.names);
+        StoredAtlasNames names{record.path, CollectAtlasNames(document, "frames"), CollectAtlasNames(document, "clips")};
+        const auto& stored = atlas_names.emplace(record.guid, std::move(names)).first->second;
+        const auto clip_problem = CheckSpriteClipFrames(document, stored.frames);
         if (!clip_problem.empty()) return clip_problem;
     }
 
@@ -613,8 +621,8 @@ CookReport Cook(const CookOptions& options) {
     json manifest_assets = json::array();
     std::vector<SheetExtentCheck> sheet_extents;
     std::unordered_map<AssetGuid, StoredTextureExtent> texture_extents;
-    StoredAtlasFrameIndex atlas_frames;
-    std::vector<StaticSpriteFrameCheck> static_sprite_frames;
+    StoredAtlasIndex atlas_names;
+    std::vector<SpriteNameCheck> sprite_names;
 
     if (!settings.quality_presets.empty() && !FindQualityPreset(settings, settings.default_quality)) {
         report.warnings.push_back("The default quality '" + settings.default_quality + "' isn't a preset; the game starts on '" +
@@ -636,7 +644,7 @@ CookReport Cook(const CookOptions& options) {
         if (!fs::ReadFileBytes(database.SourcePath(guid).string(), bytes)) {
             return fail("Can't read " + record.path);
         }
-        if (const std::string problem = Check2DReference(record, bytes, database, sheet_extents, atlas_frames); !problem.empty())
+        if (const std::string problem = Check2DReference(record, bytes, database, sheet_extents, atlas_names); !problem.empty())
             report.warnings.push_back(record.path + ": " + problem);
         if (record.importer == "Sound") {
             const std::string problem = CheckSoundHeader(record.path, bytes);
@@ -649,7 +657,7 @@ CookReport Cook(const CookOptions& options) {
             } else {
                 report.stripped_fields += StripEditorOnly(document);
                 if (record.importer == "Scene" && document.is_object() && document.value("$type", json{}) == "Scene")
-                    CollectStaticSpriteFrameChecks(document, record.path, static_sprite_frames);
+                    CollectSpriteNameChecks(document, record.path, sprite_names);
                 const std::string text = document.dump(); // minified
                 bytes.assign(text.begin(), text.end());
             }
@@ -874,12 +882,15 @@ CookReport Cook(const CookOptions& options) {
                 std::to_string(sheet.height) + " texture, but " + image + std::to_string(width) + "x" + std::to_string(height));
         }
     }
-    for (const auto& sprite : static_sprite_frames) {
-        const auto atlas = atlas_frames.find(sprite.atlas);
+    for (const auto& sprite : sprite_names) {
+        const auto atlas = atlas_names.find(sprite.atlas);
         // An absent atlas (for example in a patch base) has no comparable names in this cook.
-        if (atlas != atlas_frames.end() && !atlas->second.names.contains(sprite.frame))
-            report.warnings.push_back(sprite.scene + ": Sprite " + sprite.entity + " frame '" + sprite.frame +
-                                      "' is missing from " + atlas->second.path);
+        if (atlas == atlas_names.end()) continue;
+        const bool animated = sprite.kind == SpriteNameKind::Clip;
+        const auto& names = animated ? atlas->second.clips : atlas->second.frames;
+        if (!names.contains(sprite.name))
+            report.warnings.push_back(sprite.scene + (animated ? ": Sprite Animator " : ": Sprite ") + sprite.entity +
+                                      (animated ? " clip '" : " frame '") + sprite.name + "' is missing from " + atlas->second.path);
     }
     if (options.strict_validation && !report.warnings.empty()) {
         return fail("Cook validation failed with " + std::to_string(report.warnings.size()) + " warning(s); first: " +
