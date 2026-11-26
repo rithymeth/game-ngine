@@ -13,8 +13,8 @@ namespace aether::editor {
 // when the mouse looks along or away from the ground. The view is the rectangle at `origin` of `size`.
 Vec3 DropPoint(const SceneViewCamera& camera, const ImVec2& origin, const ImVec2& size, const ImVec2& mouse, f32 snap_step);
 
-// Puts a model (.gltf, .glb), prefab (.aprefab), or tilemap (.atilemap) from the content folder into the scene at `at` (one undo step, selected),
-// and says what happened in a line a view can show ("Placed ...", or why not). `placed` is set to whether anything was added. Prefabs and tilemaps need `content_root`.
+// Puts a model (.gltf, .glb), prefab (.aprefab), tilemap (.atilemap), or sprite atlas (.aatlas) from the content folder into the scene at `at` (one undo step, selected),
+// and says what happened in a line a view can show ("Placed ...", or why not). `placed` is set to whether anything was added. Prefabs, tilemaps, and atlases need `content_root`.
 // With `parent` the new object goes under that entity (`at` relative to it) in the same single step: how a drop on a hierarchy row places it.
 std::string PlaceContentAsset(SceneDocument& document, const std::filesystem::path& content_root, const std::string& content_path, const Vec3& at, bool* placed = nullptr,
                               Entity parent = kNullEntity);
