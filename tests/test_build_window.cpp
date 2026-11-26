@@ -157,6 +157,14 @@ AETHER_TEST(BuildWindow_SmokeTestsTheStagedPlayerWithoutChangingLaunchArguments)
         if (line.warning && line.text.find("too small to be an archive") != std::string::npos) ++actionable;
     }
     CHECK(actionable == 1);
+    const auto all_log = window.CopyBuildLog(false);
+    const auto problems_only = window.CopyBuildLog(true);
+    CHECK(all_log.find("Cooking Scenes/Main.ascene") != std::string::npos);
+    CHECK(problems_only.find("Cooking Scenes/Main.ascene") == std::string::npos);
+    CHECK(problems_only.find("Headless smoke test failed: player exited with code") != std::string::npos);
+    CHECK(problems_only.find("too small to be an archive") != std::string::npos);
+    CHECK(problems_only == ImGui::GetClipboardText());
+    CHECK(window.LastResult() == BuildPackageWindow::Result::Failed);
     for (const auto& entry : stdfs::directory_iterator(stdfs::temp_directory_path()))
         CHECK(!entry.path().filename().string().starts_with("aether-editor-smoke-"));
 }

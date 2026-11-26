@@ -67,6 +67,17 @@ bool BuildPackageWindow::OpenWarningAsset(const LogLine& line, std::string* erro
     return warning_asset_open_(path, located ? std::optional{cell} : std::nullopt, error);
 }
 
+std::string BuildPackageWindow::CopyBuildLog(bool warnings_only) const {
+    std::string text;
+    for (const auto& line : Log()) {
+        if (warnings_only && !line.warning) continue;
+        text += line.text;
+        text += '\n';
+    }
+    if (!text.empty()) ImGui::SetClipboardText(text.c_str());
+    return text;
+}
+
 void BuildPackageWindow::Draw() {
     const bool busy = Busy();
     const bool running = PollLaunchedGame();
@@ -143,10 +154,21 @@ void BuildPackageWindow::Draw() {
     if (result == Result::Failed) ImGui::TextColored(ImVec4(1, 0.4f, 0.3f, 1), "Failed");
 
     ImGui::SeparatorText("Log");
+    ImGui::Checkbox("Warnings and errors only", &warnings_only_);
+    ImGui::SameLine();
+    const auto lines = Log();
+    const bool have_visible = warnings_only_ ? std::any_of(lines.begin(), lines.end(),
+        [](const auto& line) { return line.warning; }) : !lines.empty();
+    ImGui::BeginDisabled(!have_visible);
+    if (ImGui::SmallButton("Copy log")) CopyBuildLog(warnings_only_);
+    ImGui::EndDisabled();
     if (ImGui::BeginChild("##build_log", ImVec2(0, 0), ImGuiChildFlags_Borders)) {
+        if (warnings_only_ && !have_visible) ImGui::TextDisabled("No warnings or errors in this log.");
         int row = 0;
-        for (const LogLine& line : Log()) {
-            ImGui::PushID(row++);
+        for (const LogLine& line : lines) {
+            ++row;
+            if (warnings_only_ && !line.warning) continue;
+            ImGui::PushID(row);
             if (line.warning) {
                 const std::string asset = WarningAsset(line);
                 if (!asset.empty()) {
