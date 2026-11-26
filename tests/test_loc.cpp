@@ -200,6 +200,23 @@ AETHER_TEST(Loc_FallbackEntriesUseTheLanguageTheyWereWrittenIn) {
     CHECK(localizer.Resolve("coins", &zero) == "0 piece"); // Existing exact-language behavior stays intact.
 }
 
+AETHER_TEST(Loc_KhmerCountsUseOneFormAndEnglishFallbackKeepsItsSingular) {
+    StringTable table;
+    table.Set("km", "days", "{count} {count|one:unexpected;other:\xe1\x9e\x90\xe1\x9f\x92\xe1\x9e\x84\xe1\x9f\x83}");
+    table.Set("en", "coins", "{count} coin{count|s}");
+    Localizer localizer;
+    localizer.SetTable(&table);
+    const FormatArgs one{{"count", i64{1}}}, two{{"count", i64{2}}};
+    CHECK(PluralCategory("km", 1) == "other" && PluralCategory("km-KH", 1) == "other");
+    for (const char* language : {"km", "km-KH"}) {
+        localizer.SetLanguage(language);
+        CHECK(localizer.Resolve("days", &one) == "1 \xe1\x9e\x90\xe1\x9f\x92\xe1\x9e\x84\xe1\x9f\x83");
+        CHECK(localizer.Resolve("days", &two) == "2 \xe1\x9e\x90\xe1\x9f\x92\xe1\x9e\x84\xe1\x9f\x83");
+        CHECK(localizer.Resolve("coins", &one) == "1 coin");
+        CHECK(localizer.Resolve("coins", &two) == "2 coins");
+    }
+}
+
 AETHER_TEST(Loc_LocTextIsAReflectedField) {
     LocText a{"menu.play", "Play"};
     CHECK(!a.IsLiteral() && !a.IsEmpty() && LocText::Literal("x").IsLiteral() && LocText{}.IsEmpty());

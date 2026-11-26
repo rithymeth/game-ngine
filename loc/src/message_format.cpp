@@ -48,7 +48,7 @@ std::string PluralCategory(std::string_view language, double n) {
     const std::string lang = BaseLanguage(language);
     const bool whole = std::floor(n) == n && std::fabs(n) < 1e15;
     const i64 i = whole ? static_cast<i64>(std::fabs(n)) : 0;
-    if (lang == "ja" || lang == "zh" || lang == "ko" || lang == "vi" || lang == "th" || lang == "id" || lang == "ms") return "other";
+    if (lang == "ja" || lang == "zh" || lang == "ko" || lang == "vi" || lang == "th" || lang == "id" || lang == "ms" || lang == "km") return "other";
     if (lang == "fr") return (n >= 0 && n < 2) ? "one" : "other"; // 0, 1 and fractions below 2
     if (lang == "pt") {
         const bool pt_pt = NormalizeLanguage(language) == "pt-PT";
