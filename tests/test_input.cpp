@@ -216,6 +216,30 @@ AETHER_TEST(Input_TapDoubleTapAndChord) {
     AETHER_CHECK(!h.system.IsTriggered("Sprint"));
 }
 
+AETHER_TEST(Input_TapCountsElapsedTimeOnTheReleaseFrame) {
+    Harness h;
+    InputMappingContext context;
+    context.name = "Dodge controls";
+    context.bindings = {Bind("Dodge", Key::Space, {Trigger(TriggerType::Tap, 0.125f)})};
+    h.system.AddContext(context);
+
+    const auto tick = [&](bool down, f32 elapsed) {
+        h.events.clear();
+        h.state.SetButton(Key::Space, down);
+        h.system.Update(h.state, elapsed);
+        h.state.EndFrame();
+        return h.events;
+    };
+    AETHER_CHECK((tick(true, 0.25f) == Events{"Dodge:Started"})); // Time before the press is not counted.
+    AETHER_CHECK(tick(true, 0.0625f).empty());
+    AETHER_CHECK((tick(false, 0.125f) == Events{"Dodge:Canceled"})); // The next sample is past the tap window.
+    AETHER_CHECK(!h.system.IsTriggered("Dodge"));
+
+    AETHER_CHECK((tick(true, 0.25f) == Events{"Dodge:Started"}));
+    AETHER_CHECK((tick(false, 0.0625f) == Events{"Dodge:Triggered"}));
+    AETHER_CHECK(h.system.IsTriggered("Dodge"));
+}
+
 AETHER_TEST(Input_ContextStackConsumesAndBlocks) {
     Harness h;
     InputMappingContext on_foot;

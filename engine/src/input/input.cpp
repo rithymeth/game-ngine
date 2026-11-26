@@ -148,7 +148,8 @@ ActionPhase InputSystem::EvaluateBinding(const InputBinding& binding, BindingSta
             if (actuated_now) {
                 result = state.held < trigger.time ? ActionPhase::Ongoing : ActionPhase::None;
             } else {
-                result = was && held_before < trigger.time ? ActionPhase::Triggered : ActionPhase::None;
+                // The release is sampled this frame, so include the time since the previous sample.
+                result = was && held_before + dt < trigger.time ? ActionPhase::Triggered : ActionPhase::None;
             }
             break;
         case TriggerType::DoubleTap:
