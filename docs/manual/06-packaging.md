@@ -149,6 +149,25 @@ MSVC's `dumpbin` and `lib`, so it can work without a full SDK. If configure
 reports that Vulkan was disabled, stop rather than counting a tools-only
 build as an editor pass.
 
+To require measured pixels from the cooked 2D Platformer (rather than a
+headless skip), build the test target and run the focused test:
+
+```powershell
+cmake --build build-editor-win --config Release --target aether_tests
+$env:AETHER_TEST_FILTER = 'Templates_ThePlayerDrawsThePlatformer2D'
+$env:AETHER_REQUIRE_PLATFORMER_PIXELS = '1'
+try {
+    & ./build-editor-win/tests/Release/aether_tests.exe
+    if ($LASTEXITCODE -ne 0) { throw 'Packaged 2D Platformer pixel check failed.' }
+} finally {
+    Remove-Item Env:AETHER_TEST_FILTER,Env:AETHER_REQUIRE_PLATFORMER_PIXELS -ErrorAction SilentlyContinue
+}
+```
+
+This offscreen Vulkan test reads a cooked frame and checks for tile, hero, and
+background pixels. It fails when Vulkan is unavailable in required mode;
+a headless skip is not graphical evidence. It does not replace the window check.
+
 Before the interactive check, open the built editor on a disposable
 `.aproject` and capture a bounded screenshot:
 

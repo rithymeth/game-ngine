@@ -38,6 +38,7 @@
 #include <stdexcept>
 #include <memory>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -886,16 +887,32 @@ AETHER_TEST(Templates_FirstPersonLooksFromWindowEvents) {
 // hero's colour and the dark background in it. Before sprites and tilemaps were drawn it was one dark colour.
 AETHER_TEST(Templates_ThePlayerDrawsThePlatformer2D) {
     namespace rhi = aether::gfx::rhi;
-    if (!rhi::IsBackendAvailable(rhi::Backend::Vulkan)) return;
+    const char* setting = std::getenv("AETHER_REQUIRE_PLATFORMER_PIXELS");
+    const bool require_pixels = setting && std::string_view(setting) == "1";
+    const auto unavailable = [&](const char* reason) {
+        std::fprintf(stderr, "    2D platformer pixels %s: %s\n",
+                     require_pixels ? "required but not captured" : "not run", reason);
+        CHECK(!require_pixels);
+    };
+    if (!rhi::IsBackendAvailable(rhi::Backend::Vulkan)) {
+        unavailable("this build has no Vulkan backend");
+        return;
+    }
     std::unique_ptr<rhi::IDevice> device;
     try {
         device = rhi::CreateDevice(rhi::Backend::Vulkan, false);
-    } catch (const std::exception&) {
+    } catch (const std::exception& error) {
+        unavailable(error.what());
+        return;
     }
-    if (!device) return;
+    if (!device) {
+        unavailable("could not create a Vulkan device");
+        return;
+    }
     PlatformerRun run;
     const u32 width = 320, height = 180;
     std::unique_ptr<rhi::ISwapChain> target = device->CreateSwapChain(nullptr, width, height, 2);
+    if (!target) { CHECK(false); return; }
     std::vector<u8> pixels;
     {
         player::SceneRenderer renderer(*device, *target, run.package);
