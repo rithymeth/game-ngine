@@ -1,5 +1,6 @@
 #include "aether/timeofday/world_clock.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 
@@ -48,9 +49,13 @@ Phase WorldClock::CurrentPhase() const {
 f64 WorldClock::Sunlight() const { return 0.5 - 0.5 * std::cos(2.0 * kPi * hour_ / 24.0); }
 
 std::string WorldClock::TimeText() const {
-    const i32 minutes = static_cast<i32>(std::floor(hour_ * 60.0));
+    constexpr i32 kMinutesPerDay = 24 * 60;
+    // An exact authored minute can multiply back to one representable value below
+    // its boundary. Nudge the display value, but never roll it into the next day.
+    const f64 display_minutes = std::nextafter(hour_ * 60.0, static_cast<f64>(kMinutesPerDay));
+    const i32 minutes = std::min(kMinutesPerDay - 1, static_cast<i32>(std::floor(display_minutes)));
     char text[16];
-    std::snprintf(text, sizeof(text), "%02d:%02d", (minutes / 60) % 24, minutes % 60);
+    std::snprintf(text, sizeof(text), "%02d:%02d", minutes / 60, minutes % 60);
     return text;
 }
 

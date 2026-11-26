@@ -16,6 +16,7 @@
 #include <nlohmann/json.hpp>
 
 #include <cmath>
+#include <cstdio>
 #include <filesystem>
 #include <limits>
 
@@ -78,6 +79,21 @@ AETHER_TEST(TimeOfDay_ClockAdvancesWrapsAndCountsDays) {
     CHECK(clock.SetScale(0.0));
     clock.Advance(100.0);
     CHECK(Near(clock.Hour(), 5.0));
+}
+
+AETHER_TEST(TimeOfDay_ClockTextPreservesExactMinutes) {
+    WorldClock clock;
+    for (int m = 0; m < 24 * 60; ++m) {
+        char expected[16];
+        std::snprintf(expected, sizeof(expected), "%02d:%02d", m / 60, m % 60);
+        const f64 whole_minutes = m / 60.0;
+        const f64 hour_and_minutes = m / 60 + (m % 60) / 60.0;
+        CHECK(clock.SetHour(whole_minutes) && clock.TimeText() == expected && clock.Hour() == whole_minutes);
+        CHECK(clock.SetHour(hour_and_minutes) && clock.TimeText() == expected && clock.Hour() == hour_and_minutes);
+    }
+    CHECK(clock.SetHour(8.0 + 9.99 / 60.0) && clock.TimeText() == "08:09");
+    CHECK(clock.SetHour(std::nextafter(24.0, 0.0)) && clock.TimeText() == "23:59");
+    CHECK(clock.SetHour(24.0) && clock.TimeText() == "00:00");
 }
 
 AETHER_TEST(TimeOfDay_TheKitAddsItsStageAndAdvancesTheClock) {
@@ -165,6 +181,7 @@ AETHER_TEST(TimeOfDay_LuauTableActsOnTheClock) {
                  "self.day_set = TimeOfDay.SetDay(7); self.day = TimeOfDay.GetDay(); self.day_bad = TimeOfDay.SetDay(-2); self.day_frac = TimeOfDay.SetDay(1.5); "
                  "self.total = TimeOfDay.GetTotalHours(); TimeOfDay.SetHour(12); self.sun = TimeOfDay.Sunlight(); "
                  "self.len_set = TimeOfDay.SetDayLength(600); self.len = TimeOfDay.GetDayLength(); self.len_bad = TimeOfDay.SetDayLength(0); "
+                 "TimeOfDay.SetHour(8.2); self.exact_minute = TimeOfDay.GetTimeText(); "
                  "self.scale_set = TimeOfDay.SetScale(0); self.scale = TimeOfDay.GetScale(); self.scale_bad = TimeOfDay.SetScale(-1) end return H";
         name = "H.luau";
         return true;
@@ -185,7 +202,7 @@ AETHER_TEST(TimeOfDay_LuauTableActsOnTheClock) {
     CHECK(flag("set") && flag("night") && text("phase1") == "night" && text("text1") == "23:30");
     CHECK(flag("wrapped") && Near(num("hour1"), 2.0) && !flag("bad"));
     CHECK(flag("day_set") && Near(num("day"), 7.0) && !flag("day_bad") && !flag("day_frac") && Near(num("total"), 7.0 * 24.0 + 2.0));
-    CHECK(Near(num("sun"), 1.0));
+    CHECK(Near(num("sun"), 1.0) && text("exact_minute") == "08:12");
     CHECK(flag("len_set") && Near(num("len"), 600.0) && !flag("len_bad") && flag("scale_set") && Near(num("scale"), 0.0) && !flag("scale_bad"));
     CHECK(Near(clock.DayLength(), 600.0) && Near(clock.Scale(), 0.0) && clock.Day() == 7);
     life.EndPlay();
