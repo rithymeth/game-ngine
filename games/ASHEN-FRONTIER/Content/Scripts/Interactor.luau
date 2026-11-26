@@ -101,7 +101,8 @@ function Interactor:OnCreate()
             if self.start_components > 0 then Inventory.Add(owner, "Component", self.start_components) end
         end
     end
-    print(string.format("Pack at start: %d scrap, %d components", Get("scrap"), Get("components")))
+    local cores = owner ~= nil and Inventory.Count(owner, "GeneratorCore") or 0
+    print(string.format("Pack at start: %d scrap, %d components, %d generator cores", Get("scrap"), Get("components"), cores))
     self.seen_checkpoint = Checkpoints.Last() -- the one carried in (a loaded game, the last scene) is not news; a new one is
     print(string.format("Checkpoint at start: %s, achievements: %d unlocked", self.seen_checkpoint == "" and "none" or self.seen_checkpoint, Achievements.UnlockedCount()))
     self.hud_ready = false

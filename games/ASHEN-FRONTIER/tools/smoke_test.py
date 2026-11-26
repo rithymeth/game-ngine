@@ -186,11 +186,14 @@ def craft(work, headless=False):
     check("Achievement unlocked: Fabricator" in text, "crafting the Generator Core unlocks the Fabricator achievement")
     check(not re.search(r"\[ERROR\]", text), "no errors while crafting")
     result, text = run_player(work, "Scenes/PowerTest.ascene", "user5", headless=headless)
-    check("Generator powered" in text, "the saved Generator Core lets Kael power the generator in the next run")
+    check(result.returncode == 0, f"the player loads the crafted save and exits cleanly (exit {result.returncode})")
+    restored_cores = re.findall(r"Pack at start: \d+ scrap, \d+ components, (\d+) generator cores\s*$", text, re.M)
+    check(restored_cores == ["1"], f"the next run restores exactly one Generator Core in Kael's pack (counts: {restored_cores})")
+    check("Generator powered" in text, "Kael can power the generator after restarting")
     check("Achievement unlocked: LightsOn" in text, "powering the generator unlocks the Lights On achievement")
     check(not re.search(r"\[ERROR\]", text), "no errors while powering the generator")
     result, text = run_player(work, "Scenes/PowerTest.ascene", "user6", headless=headless)
-    check("Generator powered" not in text, "without the Generator Core the generator stays off")
+    check(result.returncode == 0 and "Generator powered" not in text, "in a fresh save the generator stays off")
 
 
 def run_player(work, scene, user, press="E", frames=80, headless=False):
