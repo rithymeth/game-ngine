@@ -16,6 +16,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <iterator>
 #include <string_view>
 
 // The tilemap editor (Phase 26 step 5, §26.6): painting, flood fill, layers,
@@ -402,6 +403,42 @@ AETHER_TEST(TilemapEditor_JumpProofOverlayIsReadOnlyAndKeepsTheLastValidTrace) {
     ui.Frame(draw);
     CHECK(ImGui::GetDrawData()->TotalVtxCount == overlay_vertices);
     CHECK(doc.Revision() == rev && !doc.dirty());
+}
+
+AETHER_TEST(TilemapEditor_JumpProofShowsTargetVerdictWithoutPathDivergence) {
+    HeadlessImGui ui;
+    TilemapEditDocument doc = Doc();
+    TilemapPanel panel(doc);
+    const auto root = std::filesystem::temp_directory_path();
+    const auto file = root / "jump-proof-outcome.json";
+    const auto capture = root / "jump-proof-outcome-ui.txt";
+    const auto draw_text = [&] {
+        std::filesystem::remove(capture);
+        ui.Frame([&] {
+            ImGui::GetStateStorage()->SetInt(ImGui::GetID("Jump Proof overlay"), 1);
+            ImGui::LogToFile(0, capture.string().c_str());
+            panel.Draw();
+            ImGui::LogFinish();
+        });
+        std::ifstream in(capture);
+        return std::string(std::istreambuf_iterator<char>(in), {});
+    };
+    std::ofstream(file) << R"({"frames":1,"first_difference_frame":null,"before_status":"pass","after_status":"missed","verdict_changed":true,"before_path":[[1,1,0]],"after_path":[[1,1,0]]})";
+    const u64 revision = doc.Revision();
+    CHECK(panel.LoadJumpProofOverlay(file));
+    auto text = draw_text();
+    CHECK(text.find("Target result: pass -> missed (changed)") != std::string::npos);
+    CHECK(text.find("First difference: frame") == std::string::npos);
+    std::ofstream(file) << R"({"frames":1,"first_difference_frame":null,"before_status":"pass","before_path":[[1,1,0]],"after_path":[[1,1,0]]})";
+    std::string error;
+    CHECK(!panel.LoadJumpProofOverlay(file, &error) && !error.empty());
+    CHECK(draw_text().find("Target result: pass -> missed (changed)") != std::string::npos);
+    std::ofstream(file) << R"({"frames":1,"first_difference_frame":null,"before_status":"pass","after_status":"missed","verdict_changed":false,"before_path":[[1,1,0]],"after_path":[[1,1,0]]})";
+    CHECK(!panel.LoadJumpProofOverlay(file, &error) && !error.empty());
+    std::ofstream(file) << R"({"frames":1,"first_difference_frame":null,"before_path":[[1,1,0]],"after_path":[[1,1,0]]})";
+    CHECK(panel.LoadJumpProofOverlay(file));
+    CHECK(draw_text().find("Target result:") == std::string::npos);
+    CHECK(doc.Revision() == revision && !doc.dirty() && !doc.CanUndo());
 }
 
 AETHER_TEST(TilemapEditor_JumpProofMarksOnlyTheMatchingChangedCell) {
