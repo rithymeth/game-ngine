@@ -246,6 +246,35 @@ AETHER_TEST(TilemapEditor_SecondAssetStageFailureDoesNotCommitMap) {
     CHECK(LoadTileset(set_path, tiles, &error) && tiles.IsSolid(6));
 }
 
+AETHER_TEST(TilemapEditor_FillsUnsetAutotileMasksAsOneEdit) {
+    TilemapData map;
+    map.Resize(2, 2);
+    map.AddLayer("Ground");
+    Tileset tiles = Doc().GetTileset();
+    std::array<i32, 16> variants;
+    variants.fill(kEmpty);
+    variants[kEast] = 7;
+    const auto rule = tiles.AddAutotile("Moss", variants);
+    map.Set(0, 0, 0, AutotileCell(rule));
+    CHECK(ResolveTile(map, tiles, 0, 0, 0) == kEmpty);
+    TilemapEditDocument doc(std::move(map), std::move(tiles));
+    CHECK(!doc.FillEmptyAutotileMasks(1, 4) && !doc.FillEmptyAutotileMasks(rule, 16));
+    CHECK(!doc.FillEmptyAutotileMasks(rule, kEmpty) && !doc.dirty() && !doc.CanUndo());
+    CHECK(doc.FillEmptyAutotileMasks(rule, 4));
+    CHECK(ResolveTile(doc.Map(), doc.GetTileset(), 0, 0, 0) == 4);
+    for (usize mask = 0; mask < 16; ++mask)
+        CHECK(doc.GetTileset().autotiles[rule].tiles[mask] == (mask == kEast ? 7 : 4));
+    const u64 revision = doc.Revision();
+    CHECK(!doc.FillEmptyAutotileMasks(rule, 3) && doc.Revision() == revision);
+    CHECK(doc.Undo() && !doc.CanUndo() && doc.GetTileset().autotiles[rule].tiles == variants);
+    CHECK(doc.Redo() && ResolveTile(doc.Map(), doc.GetTileset(), 0, 0, 0) == 4);
+    const auto root = std::filesystem::temp_directory_path() / "tilemap-fill-masks";
+    if (!doc.Save(root / "Moss.atilemap", root / "Moss.atileset")) { CHECK(false); return; }
+    Tileset saved;
+    if (!LoadTileset(root / "Moss.atileset", saved) || saved.autotiles.size() != 1) { CHECK(false); return; }
+    CHECK(saved.autotiles[0].tiles == doc.GetTileset().autotiles[rule].tiles);
+}
+
 AETHER_TEST(TilemapEditor_PanelDrawsHeadless) {
     HeadlessImGui ui;
     TilemapEditDocument doc = Doc();
