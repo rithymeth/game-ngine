@@ -275,6 +275,9 @@ The window's title, size and vsync, the startup scene, the fixed timestep,
 physics layers and the quality presets (resolution scale, shadow cascades and
 resolution, MSAA) are in **Project Settings** and are cooked into the game; the
 player picks the default preset or one named with `--quality`.
+Use **Choose startup scene** to select a scene from the project's Content
+Browser, then **Save** before packaging. **Revert** keeps the previously
+saved startup scene.
 
 ## Patches, DLC and encryption
 

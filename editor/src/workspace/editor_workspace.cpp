@@ -1187,6 +1187,15 @@ struct EditorWorkspace::Impl {
         });
         plugins_panel = std::make_unique<PluginsPanel>(project_file);
         content_browser = std::make_unique<ContentBrowserPanel>(project_file);
+        project_settings->SetStartupSceneChoices([this] {
+            std::vector<std::string> paths;
+            if (const auto* database = content_browser ? content_browser->Database() : nullptr) {
+                for (const auto* scene : database->FindByImporter("Scene"))
+                    if (!scene->missing) paths.push_back(scene->path);
+                std::sort(paths.begin(), paths.end());
+            }
+            return paths;
+        });
         // Double-clicking an asset opens it in the editor that edits it (Stage 3); "Reveal in Explorer" hands the
         // path to the OS.
         content_browser->SetAssetOpener(

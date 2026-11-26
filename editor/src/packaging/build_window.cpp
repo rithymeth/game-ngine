@@ -4,6 +4,7 @@
 
 #include <imgui.h>
 
+#include <algorithm>
 #include <charconv>
 #include <cstdio>
 #include <string_view>
@@ -200,6 +201,16 @@ bool ProjectSettingsPanel::Save(std::string* error) {
     return true;
 }
 
+bool ProjectSettingsPanel::ChooseStartupScene(const std::string& path) {
+    if (!scene_choices_ || path.empty() || settings_.startup_scene == path) return false;
+    const auto candidates = scene_choices_();
+    if (std::find(candidates.begin(), candidates.end(), path) == candidates.end()) return false;
+    settings_.startup_scene = path;
+    dirty_ = true;
+    status_ = "Startup scene changed; save to use it when packaging.";
+    return true;
+}
+
 void ProjectSettingsPanel::Draw() {
     ImGui::BeginDisabled(!dirty_);
     if (ImGui::Button("Save")) Save();
@@ -217,6 +228,22 @@ void ProjectSettingsPanel::Draw() {
                            settings_.default_quality.c_str());
     }
     ImGui::Separator();
+    if (scene_choices_ && ImGui::BeginCombo("Choose startup scene",
+            settings_.startup_scene.empty() ? "(not set)" : settings_.startup_scene.c_str())) {
+        const auto paths = scene_choices_();
+        if (paths.empty()) ImGui::TextDisabled("No scenes in the Content Browser. Refresh after adding one.");
+        for (const auto& path : paths) {
+            ImGui::PushID(path.c_str());
+            const bool selected = path == settings_.startup_scene;
+            const ImVec2 pos = ImGui::GetCursorScreenPos();
+            if (ImGui::Selectable("##startup", selected, 0, ImVec2(0, ImGui::GetTextLineHeight())))
+                ChooseStartupScene(path);
+            ImGui::GetWindowDrawList()->AddText(pos, ImGui::GetColorU32(ImGuiCol_Text), path.c_str());
+            if (selected) ImGui::SetItemDefaultFocus();
+            ImGui::PopID();
+        }
+        ImGui::EndCombo();
+    }
     if (ImGui::BeginChild("##project_settings")) {
         if (InspectObject(settings_, "project_settings").Changed()) dirty_ = true;
     }
