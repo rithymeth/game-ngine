@@ -1,5 +1,7 @@
 #include "aether/sprite2d/components.h"
 
+#include <cmath>
+
 namespace aether::sprite2d {
 
 void UpdateSpriteAnimations(World& world, const AtlasResolver& atlases, f32 dt) {
@@ -7,6 +9,7 @@ void UpdateSpriteAnimations(World& world, const AtlasResolver& atlases, f32 dt) 
 }
 
 void UpdateSpriteAnimations(World& world, const AtlasResolver& atlases, f32 dt, const SpriteClipReporter& report) {
+    if (!std::isfinite(dt)) return;
     world.ForEach<Sprite, SpriteAnimator>([&](Sprite& sprite_ref, SpriteAnimator& animator_ref) {
         Sprite* sprite = &sprite_ref;
         SpriteAnimator* animator = &animator_ref;
@@ -17,7 +20,10 @@ void UpdateSpriteAnimations(World& world, const AtlasResolver& atlases, f32 dt, 
             if (report && atlas && animator->clip[0]) report(sprite->atlas.guid, animator->clip, clip != nullptr);
             return;
         }
-        animator->time += dt * animator->speed;
+        const f32 next_time = animator->time + dt * animator->speed;
+        // Skip a bad advance rather than poisoning the playhead for all later frames.
+        if (!std::isfinite(next_time)) return;
+        animator->time = next_time;
         bool finished = false;
         const usize index = ClipFrameAt(*clip, animator->time, &finished);
         SetSpriteFrame(*sprite, clip->frames[index]);

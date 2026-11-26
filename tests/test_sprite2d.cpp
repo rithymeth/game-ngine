@@ -623,6 +623,41 @@ AETHER_TEST(Sprite2D_AnimatorPlaysClipsOnTheSprite) {
     CHECK(anim->playing);
 }
 
+AETHER_TEST(Sprite2D_AnimatorRecoversAfterInvalidTimingInput) {
+    RegisterSprite2DComponents();
+    World world;
+    const SpriteAtlas atlas = HeroAtlas(Guid());
+    const AtlasResolver resolve = [&](const assets::AssetGuid&) { return &atlas; };
+    Sprite sprite;
+    SetSpriteFrame(sprite, "hero_1");
+    SpriteAnimator animator;
+    PlayClip(animator, "run");
+    animator.time = 0.15f;
+    const Entity e = world.CreateEntity();
+    world.AddComponent<Sprite>(e, sprite);
+    world.AddComponent<SpriteAnimator>(e, animator);
+
+    auto* state = world.GetComponent<SpriteAnimator>(e);
+    const auto* live = world.GetComponent<Sprite>(e);
+    if (!state || !live) { CHECK(false); return; }
+    const auto unchanged = [&] {
+        return state->time == 0.15f && std::string_view(live->frame) == "hero_1" && state->playing && !state->finished;
+    };
+    UpdateSpriteAnimations(world, resolve, std::numeric_limits<f32>::quiet_NaN());
+    CHECK(unchanged());
+    state->time = 0.15f;
+    state->speed = std::numeric_limits<f32>::infinity();
+    UpdateSpriteAnimations(world, resolve, 0.1f);
+    CHECK(unchanged());
+    state->time = 0.15f;
+    state->speed = std::numeric_limits<f32>::max();
+    UpdateSpriteAnimations(world, resolve, 2.0f); // Finite inputs, overflowing advance.
+    CHECK(unchanged());
+    state->speed = 1.0f;
+    UpdateSpriteAnimations(world, resolve, 0.1f);
+    CHECK(Near(state->time, 0.25f) && std::string_view(live->frame) == "hero_2");
+}
+
 AETHER_TEST(Sprite2D_ComponentsSaveAndLoadWithScenes) {
     RegisterSprite2DComponents();
     World world;
