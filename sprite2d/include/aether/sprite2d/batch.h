@@ -12,6 +12,8 @@
 // a retired planning doc): quads sorted back to front, merged into
 // runs that share a texture, ready for any renderer to upload and draw.
 
+namespace aether { class GuidIndex; }
+
 namespace aether::sprite2d {
 
 struct SpriteVertex {
@@ -44,5 +46,8 @@ struct ViewRect {
 // order sprites come in. `view` (optional) culls.
 std::vector<SpriteBatch> BuildSpriteBatches(const World& world, const Resolvers2D& resolvers,
                                             const ViewRect* view = nullptr);
+// Reuse the scene's up-to-date index rather than scanning identities on every draw.
+std::vector<SpriteBatch> BuildSpriteBatches(const World& world, const Resolvers2D& resolvers,
+                                            const GuidIndex& guids, const ViewRect* view = nullptr);
 
 } // namespace aether::sprite2d

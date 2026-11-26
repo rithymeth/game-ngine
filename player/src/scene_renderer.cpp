@@ -2856,7 +2856,7 @@ void SceneRenderer::Draw(Game& game, ICommandList& commands, u32 frame_index) {
                     world, resolvers, {sprite_view->min_x, sprite_view->min_y}, {sprite_view->max_x, sprite_view->max_y}, 0.5f);
             }
             for (const sprite2d::SpriteBatch& source :
-                 sprite2d::BuildSpriteBatches(world, resolvers, sprite_view ? &*sprite_view : nullptr)) {
+                 sprite2d::BuildSpriteBatches(world, resolvers, guids, sprite_view ? &*sprite_view : nullptr)) {
                 vfx::SpriteBatch batch;
                 const GameManifest::Asset* texture = renderer.package.FindAssetByGuid(assets::ToString(source.texture));
                 batch.material = texture ? texture->path : "@aether-white";

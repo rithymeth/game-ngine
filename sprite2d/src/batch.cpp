@@ -63,7 +63,8 @@ void PushQuad(std::vector<SpriteVertex>& out, const f32 px[4], const f32 py[4], 
 
 } // namespace
 
-std::vector<SpriteBatch> BuildSpriteBatches(const World& world, const Resolvers2D& resolvers, const ViewRect* view) {
+static std::vector<SpriteBatch> BuildSpriteBatchesImpl(const World& world, const Resolvers2D& resolvers,
+                                                        const GuidIndex* guids, const ViewRect* view) {
     std::vector<Item> items;
     if (view && (!std::isfinite(view->min_x) || !std::isfinite(view->min_y) || !std::isfinite(view->max_x) ||
                  !std::isfinite(view->max_y) || view->min_x > view->max_x || view->min_y > view->max_y)) return {};
@@ -101,7 +102,7 @@ std::vector<SpriteBatch> BuildSpriteBatches(const World& world, const Resolvers2
         f32 depths[4] = {z, z, z, z};
         bool flip_x = sprite->flip_x != (w < 0.0f);
         if (parent && !parent->parent.IsNull()) {
-            if (!parent_guids) {
+            if (!guids) {
                 // Build once only if a drawable sprite actually uses a parent.
                 // Keep the lowest entity index if duplicate IDs escaped scene validation.
                 parent_guids.emplace();
@@ -120,10 +121,11 @@ std::vector<SpriteBatch> BuildSpriteBatches(const World& world, const Resolvers2
                         }
                     }
                 });
+                guids = &*parent_guids;
             }
-            const Entity resolved = parent_guids->Find(world, parent->parent);
+            const Entity resolved = guids->Find(world, parent->parent);
             if (!resolved.IsNull()) {
-                const Mat4 inherited = ComputeWorldTransform(world, *parent_guids, resolved);
+                const Mat4 inherited = ComputeWorldTransform(world, *guids, resolved);
                 z = (inherited * Vec4(t->position.x, t->position.y, t->position.z, 1)).z;
                 if (!std::isfinite(z)) return;
                 for (int i = 0; i < 4; ++i) {
@@ -245,6 +247,15 @@ std::vector<SpriteBatch> BuildSpriteBatches(const World& world, const Resolvers2
         }
     }
     return batches;
+}
+
+std::vector<SpriteBatch> BuildSpriteBatches(const World& world, const Resolvers2D& resolvers, const ViewRect* view) {
+    return BuildSpriteBatchesImpl(world, resolvers, nullptr, view);
+}
+
+std::vector<SpriteBatch> BuildSpriteBatches(const World& world, const Resolvers2D& resolvers,
+                                           const GuidIndex& guids, const ViewRect* view) {
+    return BuildSpriteBatchesImpl(world, resolvers, &guids, view);
 }
 
 } // namespace aether::sprite2d
