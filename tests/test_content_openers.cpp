@@ -847,7 +847,18 @@ AETHER_TEST(Openers_DroppedSpriteAtlasSurvivesStrictShipping) {
     CHECK(scene.Commands().UndoCount() == depth + 1 && authored_clip() == "walk");
     CHECK(scene.Undo() && authored_clip() == "idle");
     CHECK(scene.Redo() && authored_clip() == "walk");
-    if (!scene.Save(paths.content / "Placed.ascene", &error)) { CHECK(false); return; }
+    sprite2d::Sprite invalid;
+    sprite2d::SetSpriteFrame(invalid, "deleted-frame");
+    using FrameStorage = decltype(invalid.frame);
+    CHECK(scene.SetComponentField(restored, GetComponentId<sprite2d::Sprite>(), "frame",
+                                  reflect::Any::CopyOf(reflect::Reflect<FrameStorage>(), invalid.frame)));
+    // An animated Sprite can intentionally start on an unrendered placeholder
+    // before its valid clip supplies the first frame.
+    sprite2d::SetSpriteFrame(invalid, "pre-clip");
+    CHECK(scene.SetComponentField(animated, GetComponentId<sprite2d::Sprite>(), "frame",
+                                  reflect::Any::CopyOf(reflect::Reflect<FrameStorage>(), invalid.frame)));
+    const auto scene_file = paths.content / "Placed.ascene";
+    if (!scene.Save(scene_file, &error)) { CHECK(false); return; }
 
     ProjectSettings project;
     if (!LoadProject(paths.file, project, &error)) { CHECK(false); return; }
@@ -860,6 +871,14 @@ AETHER_TEST(Openers_DroppedSpriteAtlasSurvivesStrictShipping) {
     options.cook.strict_validation = true;
     options.output_dir = root / "Shipping";
     options.player_executable = AETHER_TEST_PLAYER_PATH;
+    options.output_dir = root / "Bad Shipping";
+    const auto missing = cook::Package(options);
+    CHECK(!missing.ok && missing.error.find("Placed.ascene: Sprite") != std::string::npos &&
+          missing.error.find("frame 'deleted-frame' is missing from Hero.aatlas") != std::string::npos);
+    CHECK(!stdfs::exists(options.output_dir / "Paks" / "Game.apak"));
+    scene.SetSelection({restored});
+    if (!panel.ApplyFrame(scene, "frame_1") || frame() != "frame_1" || !scene.Save(scene_file, &error)) { CHECK(false); return; }
+    options.output_dir = root / "Shipping";
     const auto staged = cook::Package(options);
     if (!staged.ok) { std::fprintf(stderr, "%s\n", staged.error.c_str()); CHECK(false); return; }
     std::error_code ec;
@@ -893,8 +912,10 @@ AETHER_TEST(Openers_DroppedSpriteAtlasSurvivesStrictShipping) {
         });
         return name;
     };
+    CHECK(runtime_frame() == "pre-clip");
+    game.Tick(1.0f / 60.0f);
     CHECK(runtime_frame() == "frame_0");
-    for (int i = 0; i < 3; ++i) game.Tick(1.0f / 60.0f);
+    for (int i = 0; i < 2; ++i) game.Tick(1.0f / 60.0f);
     CHECK(runtime_frame() == "frame_1");
 }
 
