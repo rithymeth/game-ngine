@@ -243,6 +243,43 @@ AETHER_TEST(Quests_SavedActiveQuestAcceptsNewObjectives) {
     CHECK(updated.sys.Events().empty() && Near(updated.attrs.Get(updated.e, "Health"), 70));
 }
 
+AETHER_TEST(Quests_SavedProgressAtLoweredRequirementCanComplete) {
+    Rig original;
+    QuestDef route;
+    route.name = "Route";
+    route.objectives = {Obj("collect", Objective::Kind::Count, "Map", 5)};
+    route.reward_effects = {"Blessing"};
+    CHECK(original.quests.Register(route));
+    CHECK(original.sys.Start(original.e, "Route") == Result::Ok);
+    CHECK(original.sys.Progress(original.e, "Route", "collect", 3) == Result::Ok && original.sys.IsActive(original.e, "Route"));
+
+    const auto* old_log = original.world.GetComponent<QuestLog>(original.e);
+    if (!old_log) { CHECK(false); return; }
+    const auto saved = reflect::ToJson(*old_log);
+    QuestLog restored;
+    if (!reflect::FromJson(restored, saved)) { CHECK(false); return; }
+
+    Rig updated;
+    route.objectives.front().required = 3;
+    CHECK(updated.quests.Register(route));
+    updated.world.AddComponent<QuestLog>(updated.e, restored);
+    const Entity another = updated.world.CreateEntity(restored);
+    CHECK(updated.sys.IsActive(updated.e, "Route") && updated.sys.GetProgress(updated.e, "Route", "collect") == 3);
+    CHECK(updated.sys.Events().empty());
+    CHECK(updated.sys.Progress(updated.e, "Route", "collect", 0) == Result::Ok && updated.sys.Events().empty());
+
+    CHECK(updated.sys.Progress(updated.e, "Route", "collect", 1) == Result::Ok && updated.sys.IsCompleted(updated.e, "Route"));
+    CHECK(updated.sys.GetProgress(updated.e, "Route", "collect") == 3);
+    CHECK((Kinds(updated.sys) == std::vector<QuestEvent::Kind>{QuestEvent::Kind::ObjectiveCompleted, QuestEvent::Kind::Completed}));
+    CHECK(Near(updated.attrs.Get(updated.e, "Health"), 70));
+    updated.sys.ClearEvents();
+    CHECK(updated.sys.Notify(another, Objective::Kind::Count, "Map", 1) == 1 && updated.sys.IsCompleted(another, "Route"));
+    CHECK((Kinds(updated.sys) == std::vector<QuestEvent::Kind>{QuestEvent::Kind::ObjectiveCompleted, QuestEvent::Kind::Completed}));
+    updated.sys.ClearEvents();
+    CHECK(updated.sys.Notify(updated.e, Objective::Kind::Count, "Map", 1) == 0 && updated.sys.Events().empty());
+    CHECK(Near(updated.attrs.Get(updated.e, "Health"), 70));
+}
+
 AETHER_TEST(Quests_LogSavesByNameAndTitlesAreLocalized) {
     Rig r;
     r.sys.Start(r.e, "Pelts");

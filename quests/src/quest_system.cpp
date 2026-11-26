@@ -142,7 +142,7 @@ Result QuestSystem::Fail(Entity entity, const std::string& quest) {
     return Result::Ok;
 }
 
-// Returns true if the objective's progress changed.
+// Returns true if the objective progressed or became complete.
 bool QuestSystem::Advance(Entity entity, const QuestDef& /*def*/, QuestState& state, const Objective& o, i32 amount) {
     ObjectiveState* os = nullptr;
     for (ObjectiveState& x : state.objectives) {
@@ -158,13 +158,17 @@ bool QuestSystem::Advance(Entity entity, const QuestDef& /*def*/, QuestState& st
     if (os->done && amount < 0) return false; // done stays done
     const i32 before = os->progress;
     os->progress = amount > 0 && o.kind == Objective::Kind::Flag ? o.required : std::clamp(os->progress + amount, 0, o.required);
-    if (os->progress == before) return false;
-    Queue(entity, state.name, QuestEvent::Kind::ObjectiveProgress, o.id, os->progress, o.required);
+    const bool progress_changed = os->progress != before;
+    if (progress_changed) {
+        Queue(entity, state.name, QuestEvent::Kind::ObjectiveProgress, o.id, os->progress, o.required);
+    }
+    // A lowered requirement can be met by saved progress without changing the count.
     if (os->progress >= o.required && !os->done) {
         os->done = true;
         Queue(entity, state.name, QuestEvent::Kind::ObjectiveCompleted, o.id, os->progress, o.required);
+        return true;
     }
-    return true;
+    return progress_changed;
 }
 
 void QuestSystem::CheckCompletion(Entity entity, const QuestDef& def) {
