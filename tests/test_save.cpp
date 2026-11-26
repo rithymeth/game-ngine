@@ -137,6 +137,38 @@ AETHER_TEST(Save_ListsExistsAndDeletesSlots) {
     CHECK(saves.Load("alpha", o).error == SaveError::NotFound);
 }
 
+AETHER_TEST(Save_SlotListKeepsGoodSavesWhenOtherHeadersAreDamaged) {
+    SaveSystem saves(Dir("DamagedList"));
+    const auto profile = Sample();
+    if (!saves.Save("good", profile).ok) { CHECK(false); return; }
+    const auto good = reflect::Json::parse(ReadAll(saves.Directory() / "good.asav"));
+    const auto write_bad = [&](const char* slot, const char* key, reflect::Json value) {
+        auto bad = good;
+        bad[key] = std::move(value);
+        WriteAll(saves.Directory() / (std::string(slot) + ".asav"), bad.dump());
+    };
+    write_bad("bad_type", "type", reflect::Json::object());
+    write_bad("bad_time", "timestamp_utc", "yesterday");
+    write_bad("negative_time", "timestamp_utc", -1);
+    write_bad("wide_version", "type_version", 65536u);
+    write_bad("fractional_version", "type_version", 1.5);
+
+    const auto slots = saves.ListSlots();
+    usize valid = 0;
+    for (const auto& info : slots) {
+        valid += info.valid ? 1 : 0;
+        CHECK(info.bytes > 0);
+        if (info.slot == "good") {
+            CHECK(info.valid && info.type == "Profile" && info.version == 1 && info.timestamp > 0);
+        } else {
+            CHECK(!info.valid && info.type.empty() && info.version == 0 && info.timestamp == 0);
+        }
+    }
+    CHECK(slots.size() == 6 && valid == 1);
+    save_test::Profile loaded;
+    CHECK(saves.Load("good", loaded).ok && SameProfile(loaded, profile));
+}
+
 AETHER_TEST(Save_WritesAreAtomicAndLeaveNoTempFile) {
     const stdfs::path dir = Dir("Atomic");
     SaveSystem saves(dir);

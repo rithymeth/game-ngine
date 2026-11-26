@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <atomic>
 #include <ctime>
+#include <limits>
 
 namespace aether::save {
 
@@ -22,6 +23,16 @@ constexpr const char* kKind = "aether.save";
 
 SaveResult Fail(SaveError e, std::string m) { return envelope::Fail(e, std::move(m)); }
 SaveResult Ok() { return envelope::Ok(); }
+
+// Slot metadata can be absent in older files, but a present value must fit
+// exactly. JSON's numeric conversions otherwise silently truncate or wrap.
+bool ReadSlotNumber(const Json& data, const char* key, u64 max, u64& out) {
+    const auto value = data.find(key);
+    if (value == data.end()) { out = 0; return true; }
+    if (!value->is_number_integer() || (!value->is_number_unsigned() && value->get<i64>() < 0)) return false;
+    out = value->get<u64>();
+    return out <= max;
+}
 
 } // namespace
 
@@ -92,11 +103,17 @@ std::vector<SlotInfo> SaveSystem::ListSlots() const {
         std::vector<u8> bytes;
         if (fs::ReadFileBytes(file.string(), bytes, envelope::kMaxEnvelopeBytes)) {
             const Json j = Json::parse(bytes.begin(), bytes.end(), nullptr, false);
-            if (!j.is_discarded() && j.is_object() && JsonString(j, "$type") == "aether.save") {
-                info.type = j.value("type", "");
-                info.timestamp = j.value("timestamp_utc", static_cast<u64>(0));
-                info.version = static_cast<u16>(j.value("type_version", 0u));
-                info.valid = true;
+            if (JsonString(j, "$type") == kKind) {
+                const auto type = j.find("type");
+                u64 timestamp = 0, version = 0;
+                if ((type == j.end() || type->is_string()) &&
+                    ReadSlotNumber(j, "timestamp_utc", std::numeric_limits<u64>::max(), timestamp) &&
+                    ReadSlotNumber(j, "type_version", std::numeric_limits<u16>::max(), version)) {
+                    if (type != j.end()) info.type = type->get<std::string>();
+                    info.timestamp = timestamp;
+                    info.version = static_cast<u16>(version);
+                    info.valid = true;
+                }
             }
         }
         out.push_back(std::move(info));
