@@ -66,6 +66,18 @@ struct SheetExtentCheck {
     u32 width, height;
 };
 
+struct StaticSpriteFrameCheck {
+    AssetGuid atlas;
+    std::string scene, entity, frame;
+};
+
+struct StoredAtlasFrames {
+    std::string path;
+    std::unordered_set<std::string> names;
+};
+
+using StoredAtlasFrameIndex = std::unordered_map<AssetGuid, StoredAtlasFrames>;
+
 struct StoredTextureExtent {
     u32 width, height;
     bool cooked;
@@ -112,17 +124,44 @@ std::string CheckSpriteCrops(const json& document, u32 width, u32 height) {
     return {};
 }
 
-std::string CheckSpriteClipFrames(const json& document) {
+StoredAtlasFrames CollectAtlasFrames(const json& document, const std::string& path) {
+    StoredAtlasFrames result{path, {}};
+    const auto frames = document.find("frames");
+    if (frames == document.end() || !frames->is_array()) return result;
+    for (const auto& frame : *frames) {
+        const auto name = frame.find("name");
+        if (name != frame.end() && name->is_string() && !name->get_ref<const std::string&>().empty())
+            result.names.insert(name->get_ref<const std::string&>());
+    }
+    return result;
+}
+
+void CollectStaticSpriteFrameChecks(const json& document, const std::string& scene,
+                                    std::vector<StaticSpriteFrameCheck>& checks) {
+    const auto entities = document.find("entities");
+    if (entities == document.end() || !entities->is_array()) return;
+    usize index = 0;
+    for (const auto& entity : *entities) {
+        ++index;
+        const auto components = entity.find("components");
+        if (components == entity.end() || !components->is_object() || components->contains("SpriteAnimator")) continue;
+        const auto sprite = components->find("Sprite");
+        if (sprite == components->end() || !sprite->is_object()) continue;
+        const auto frame = sprite->find("frame"), atlas = sprite->find("atlas");
+        if (frame == sprite->end() || !frame->is_string() || frame->get_ref<const std::string&>().empty() ||
+            atlas == sprite->end() || !atlas->is_string()) continue;
+        AssetGuid guid;
+        if (!assets::ParseAssetGuid(atlas->get_ref<const std::string&>(), guid) || guid.IsNull()) continue;
+        std::string location = "on entity #" + std::to_string(index);
+        if (const auto id = entity.find("guid"); id != entity.end() && id->is_string())
+            location += " (" + id->get_ref<const std::string&>() + ")";
+        checks.push_back({guid, scene, std::move(location), frame->get<std::string>()});
+    }
+}
+
+std::string CheckSpriteClipFrames(const json& document, const std::unordered_set<std::string>& frame_names) {
     const auto clips = document.find("clips");
     if (clips == document.end() || !clips->is_array() || clips->empty()) return {};
-    std::unordered_set<std::string_view> frame_names;
-    if (const auto frames = document.find("frames"); frames != document.end() && frames->is_array()) {
-        for (const auto& frame : *frames) {
-            const auto name = frame.find("name");
-            if (name != frame.end() && name->is_string() && !name->get_ref<const std::string&>().empty())
-                frame_names.insert(name->get_ref<const std::string&>());
-        }
-    }
     for (const auto& clip : *clips) {
         const auto refs = clip.find("frames");
         if (refs == clip.end() || !refs->is_array()) continue;
@@ -184,7 +223,8 @@ std::string CheckTilesetGridRefs(const json& document, u32 width, u32 height) {
 // Check 2D headers and typed references without linking Sprite2D. A tileset or
 // sprite atlas can be compared to the exact texture dimensions in this cook.
 std::string Check2DReference(const AssetRecord& record, const std::vector<u8>& bytes,
-                             const AssetDatabase& database, std::vector<SheetExtentCheck>& extents) {
+                             const AssetDatabase& database, std::vector<SheetExtentCheck>& extents,
+                             StoredAtlasFrameIndex& atlas_frames) {
     const bool tilemap = record.importer == "Tilemap";
     if (!tilemap && record.importer != "SpriteAtlas" && record.importer != "Tileset") return {};
     const auto document = json::parse(bytes.begin(), bytes.end(), nullptr, false);
@@ -193,7 +233,8 @@ std::string Check2DReference(const AssetRecord& record, const std::vector<u8>& b
     if (!document.is_object() || type == document.end() || *type != record.importer)
         return "expected a " + record.importer + " JSON object";
     if (record.importer == "SpriteAtlas") {
-        const auto clip_problem = CheckSpriteClipFrames(document);
+        const auto& frames = atlas_frames.emplace(record.guid, CollectAtlasFrames(document, record.path)).first->second;
+        const auto clip_problem = CheckSpriteClipFrames(document, frames.names);
         if (!clip_problem.empty()) return clip_problem;
     }
 
@@ -572,6 +613,8 @@ CookReport Cook(const CookOptions& options) {
     json manifest_assets = json::array();
     std::vector<SheetExtentCheck> sheet_extents;
     std::unordered_map<AssetGuid, StoredTextureExtent> texture_extents;
+    StoredAtlasFrameIndex atlas_frames;
+    std::vector<StaticSpriteFrameCheck> static_sprite_frames;
 
     if (!settings.quality_presets.empty() && !FindQualityPreset(settings, settings.default_quality)) {
         report.warnings.push_back("The default quality '" + settings.default_quality + "' isn't a preset; the game starts on '" +
@@ -593,7 +636,7 @@ CookReport Cook(const CookOptions& options) {
         if (!fs::ReadFileBytes(database.SourcePath(guid).string(), bytes)) {
             return fail("Can't read " + record.path);
         }
-        if (const std::string problem = Check2DReference(record, bytes, database, sheet_extents); !problem.empty())
+        if (const std::string problem = Check2DReference(record, bytes, database, sheet_extents, atlas_frames); !problem.empty())
             report.warnings.push_back(record.path + ": " + problem);
         if (record.importer == "Sound") {
             const std::string problem = CheckSoundHeader(record.path, bytes);
@@ -605,6 +648,8 @@ CookReport Cook(const CookOptions& options) {
                 report.warnings.push_back(record.path + " isn't valid JSON; cooked as it is");
             } else {
                 report.stripped_fields += StripEditorOnly(document);
+                if (record.importer == "Scene" && document.is_object() && document.value("$type", json{}) == "Scene")
+                    CollectStaticSpriteFrameChecks(document, record.path, static_sprite_frames);
                 const std::string text = document.dump(); // minified
                 bytes.assign(text.begin(), text.end());
             }
@@ -828,6 +873,13 @@ CookReport Cook(const CookOptions& options) {
             report.warnings.push_back(sheet.sheet_path + ": expects a " + std::to_string(sheet.width) + "x" +
                 std::to_string(sheet.height) + " texture, but " + image + std::to_string(width) + "x" + std::to_string(height));
         }
+    }
+    for (const auto& sprite : static_sprite_frames) {
+        const auto atlas = atlas_frames.find(sprite.atlas);
+        // An absent atlas (for example in a patch base) has no comparable names in this cook.
+        if (atlas != atlas_frames.end() && !atlas->second.names.contains(sprite.frame))
+            report.warnings.push_back(sprite.scene + ": Sprite " + sprite.entity + " frame '" + sprite.frame +
+                                      "' is missing from " + atlas->second.path);
     }
     if (options.strict_validation && !report.warnings.empty()) {
         return fail("Cook validation failed with " + std::to_string(report.warnings.size()) + " warning(s); first: " +
