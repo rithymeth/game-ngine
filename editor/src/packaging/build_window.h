@@ -24,6 +24,14 @@ public:
 
     // Checked on the UI thread, before reading any saved build inputs.
     void SetSourceCheck(std::function<std::string()> check) { source_check_ = std::move(check); }
+    using AssetCheck = std::function<bool(const std::string&)>;
+    using AssetOpener = std::function<bool(const std::string&, std::string*)>;
+    void SetWarningAssetActions(AssetCheck check, AssetOpener open) {
+        warning_asset_check_ = std::move(check);
+        warning_asset_open_ = std::move(open);
+    }
+    std::string WarningAsset(const LogLine& line) const;
+    bool OpenWarningAsset(const LogLine& line, std::string* error = nullptr);
     bool StartCook();
     bool StartPackage();
     void Draw();
@@ -31,6 +39,8 @@ public:
 private:
     std::string SourceBlocker() const { return source_check_ ? source_check_() : std::string(); }
     std::function<std::string()> source_check_;
+    AssetCheck warning_asset_check_;
+    AssetOpener warning_asset_open_;
 };
 
 // The project's settings in a reflected property table, with Save and Revert.

@@ -1192,6 +1192,14 @@ struct EditorWorkspace::Impl {
         content_browser->SetAssetOpener(
             [this](const std::string& path, std::string* why) { return OpenContentAsset(path, why); });
         content_browser->SetRevealer([](const std::string& path) { return RevealInOSFileManager(path); });
+        build_window->SetWarningAssetActions(
+            [this](const std::string& path) {
+                const assets::AssetDatabase* database = content_browser ? content_browser->Database() : nullptr;
+                const assets::AssetRecord* record = database ? database->FindByPath(path) : nullptr;
+                return record && !record->missing && record->path == path &&
+                       (record->importer == "Tilemap" || record->importer == "Tileset" || record->importer == "SpriteAtlas");
+            },
+            [this](const std::string& path, std::string* why) { return OpenContentAsset(path, why); });
         // An asset reference in the inspector (a model's, a sky's) offers the project's assets of that kind, read from the browser's database at the time it is drawn.
         SetAssetListProvider([this](const char* asset_type) {
             std::vector<AssetChoice> choices;
