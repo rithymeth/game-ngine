@@ -379,6 +379,38 @@ AETHER_TEST(ProjectSettingsPanel_EditsSavesAndReverts) {
     CHECK(panel.Reload() && panel.Settings().default_quality == "High");
 }
 
+AETHER_TEST(ProjectSettingsPanel_SelectsAnExistingSceneAndPackagesIt) {
+    HeadlessImGui imgui;
+    const auto project = FreshProject("StartupScenePicker");
+    const auto paths = ProjectPaths::ForFile(project);
+    const std::string alternate = "Scenes/Second Level.ascene";
+    stdfs::copy_file(paths.content / "Scenes/Main.ascene", paths.content / alternate);
+    ProjectSettingsPanel panel(project);
+    panel.SetStartupSceneChoices([&] { return std::vector<std::string>{"Scenes/Main.ascene", alternate}; });
+    CHECK(!panel.ChooseStartupScene("../Outside.ascene") && !panel.Dirty());
+    CHECK(!panel.ChooseStartupScene("Scenes/Main.ascene") && !panel.Dirty());
+    CHECK(panel.ChooseStartupScene(alternate) && panel.Dirty());
+    ProjectSettings disk;
+    CHECK(LoadProject(project, disk, nullptr) && disk.startup_scene == "Scenes/Main.ascene");
+    imgui.Frame([&] { panel.Draw(); });
+    CHECK(panel.Reload() && panel.Settings().startup_scene == "Scenes/Main.ascene");
+    if (!panel.ChooseStartupScene(alternate) || !panel.Save()) { CHECK(false); return; }
+    CHECK(LoadProject(project, disk, nullptr) && disk.startup_scene == alternate && !panel.Dirty());
+    BuildPackageWindow window(project);
+    window.configuration = cook::BuildConfiguration::Shipping;
+    window.strict_validation = true;
+    window.player_path = AETHER_TEST_PLAYER_PATH;
+    if (!window.StartPackage()) { CHECK(false); return; }
+    window.WaitForBuild();
+    CHECK(window.LastResult() == BuildPackageWindow::Result::Succeeded);
+    bool cooked_selected = false;
+    for (const auto& line : window.Log()) cooked_selected |= line.text == "Cooking " + alternate;
+    CHECK(cooked_selected);
+    if (!window.StartSmoke()) { CHECK(false); return; }
+    window.WaitForBuild();
+    CHECK(window.LastResult() == BuildPackageWindow::Result::Succeeded);
+}
+
 AETHER_TEST(BuildWindow_PackagesEncryptedAndLaunchesWithTheKey) {
     BuildPackageWindow window(FreshProject("Encrypted"));
     window.player_path = AETHER_TEST_PLAYER_PATH;

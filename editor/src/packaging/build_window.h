@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <functional>
 #include <string>
+#include <vector>
 
 // The Build and Package window and the Project Settings panel (Phase 25
 // step 5). Both draw into the current
@@ -51,6 +52,9 @@ public:
     void Draw();
     bool Reload(std::string* error = nullptr);
     bool Save(std::string* error = nullptr);
+    using SceneChoices = std::function<std::vector<std::string>()>;
+    void SetStartupSceneChoices(SceneChoices choices) { scene_choices_ = std::move(choices); }
+    bool ChooseStartupScene(const std::string& path);
     bool Dirty() const { return dirty_; }
     ProjectSettings& Settings() { return settings_; }
     const std::string& Status() const { return status_; }
@@ -58,6 +62,7 @@ public:
 private:
     std::filesystem::path project_file_;
     ProjectSettings settings_;
+    SceneChoices scene_choices_;
     bool dirty_ = false;
     std::string status_;
 };
