@@ -164,6 +164,27 @@ AETHER_TEST(Sprite2D_AtlasRefusesAmbiguousClipNamesWithoutReplacingTheLoadedAtla
     CHECK(slow && slow->frames == std::vector<std::string>{"hero_7"} && Near(slow->fps, 3.0f));
 }
 
+AETHER_TEST(Sprite2D_AtlasLoadsAFullGridAndKeepsFrameAndClipOrder) {
+    auto source = AtlasFromGrid({}, 1024, 1024, 16, 16);
+    if (source.frames.size() != 4096) { CHECK(false); return; }
+    SpriteClip all_frames;
+    all_frames.name = "all";
+    for (auto it = source.frames.rbegin(); it != source.frames.rend(); ++it)
+        all_frames.frames.push_back(it->name);
+    all_frames.frames.push_back(source.frames.front().name); // A clip may repeat a frame.
+    source.clips.push_back(std::move(all_frames));
+    source.clips.push_back(SpriteClip{"idle", {source.frames.back().name}, 2.0f, true});
+    const auto saved = AtlasToJson(source);
+    SpriteAtlas loaded;
+    std::string error;
+    CHECK(AtlasFromJson(saved, loaded, &error) && AtlasToJson(loaded) == saved);
+
+    auto invalid = saved;
+    invalid["clips"].back()["frames"].push_back("missing");
+    CHECK(!AtlasFromJson(invalid, loaded, &error) && error.find("uses the missing frame 'missing'") != std::string::npos);
+    CHECK(AtlasToJson(loaded) == saved);
+}
+
 AETHER_TEST(Sprite2D_ClipFramesLoopAndHold) {
     const SpriteAtlas atlas = HeroAtlas(Guid());
     const SpriteClip& run = *atlas.FindClip("run");

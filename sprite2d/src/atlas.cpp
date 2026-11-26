@@ -9,6 +9,7 @@
 #include <fstream>
 #include <limits>
 #include <numeric>
+#include <unordered_set>
 
 namespace aether::sprite2d {
 
@@ -85,11 +86,16 @@ bool AtlasFromJsonImpl(const nlohmann::json& data, SpriteAtlas& out, std::string
     if (!texture.empty() && !assets::ParseAssetGuid(texture, atlas.texture)) return fail("bad texture GUID");
     if (!ReadPixels(data, "width", atlas.width) || !ReadPixels(data, "height", atlas.height))
         return fail("atlas width and height must be non-negative whole pixel counts");
-    for (const nlohmann::json& f : data.value("frames", nlohmann::json::array())) {
+    const auto frames = data.value("frames", nlohmann::json::array());
+    // A grid can contain thousands of frames and a clip may reference every one.
+    // Index names during asset loading instead of scanning the growing atlas each time.
+    std::unordered_set<std::string> frame_names;
+    frame_names.reserve(frames.size());
+    for (const nlohmann::json& f : frames) {
         SpriteFrame frame;
         frame.name = f.value("name", "");
         if (frame.name.empty()) return fail("a frame has no name");
-        if (atlas.FindFrame(frame.name)) return fail("two frames named '" + frame.name + "'");
+        if (!frame_names.insert(frame.name).second) return fail("two frames named '" + frame.name + "'");
         if (!ReadPixels(f, "x", frame.x) || !ReadPixels(f, "y", frame.y) ||
             !ReadPixels(f, "w", frame.w) || !ReadPixels(f, "h", frame.h))
             return fail("frame '" + frame.name + "' needs non-negative whole pixel coordinates and size");
@@ -104,16 +110,19 @@ bool AtlasFromJsonImpl(const nlohmann::json& data, SpriteAtlas& out, std::string
         }
         atlas.frames.push_back(std::move(frame));
     }
-    for (const nlohmann::json& c : data.value("clips", nlohmann::json::array())) {
+    const auto clips = data.value("clips", nlohmann::json::array());
+    std::unordered_set<std::string> clip_names;
+    clip_names.reserve(clips.size());
+    for (const nlohmann::json& c : clips) {
         SpriteClip clip;
         clip.name = c.value("name", "");
         if (clip.name.empty()) return fail("a clip has no name");
-        if (atlas.FindClip(clip.name)) return fail("two clips named '" + clip.name + "'");
+        if (!clip_names.insert(clip.name).second) return fail("two clips named '" + clip.name + "'");
         clip.fps = c.value("fps", 12.0f);
         clip.loop = c.value("loop", true);
         for (const nlohmann::json& n : c.value("frames", nlohmann::json::array())) {
             const std::string name = n.get<std::string>();
-            if (!atlas.FindFrame(name)) return fail("clip '" + clip.name + "' uses the missing frame '" + name + "'");
+            if (!frame_names.contains(name)) return fail("clip '" + clip.name + "' uses the missing frame '" + name + "'");
             clip.frames.push_back(name);
         }
         atlas.clips.push_back(std::move(clip));
