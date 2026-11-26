@@ -26,7 +26,8 @@ The state is in the game's **save bag**, so it goes into and out of a save slot 
 | --- | --- |
 | `checkpoint.last` | the name of the last checkpoint reached |
 | `checkpoint.scene` | the scene it is in, so a script can load it |
-| `checkpoint.<name>` | 1, for each one ever reached |
+| `checkpoint.<name>` | 1, for each one ever reached, except the two names below |
+| `checkpoint_history.last`, `checkpoint_history.scene` | reached flags for markers literally named `last` or `scene` |
 
 Loading a slot does not announce anything: the checkpoint's script hears `OnCheckpoint` only when one is reached in play. A new game
 (`SaveGames.CreateSaveObject()`, which empties the bag) forgets them.

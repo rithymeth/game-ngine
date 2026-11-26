@@ -133,6 +133,33 @@ AETHER_TEST(Checkpoints_AreReachedByTheirActivatorsAndRemembered) {
     CHECK(odd.system.Last().empty());
 }
 
+AETHER_TEST(Checkpoints_MetadataNamesDoNotClobberSavedRespawnState) {
+    Rig r;
+    r.world.CreateEntity(Transform{Vec3(10, 0, 0), Quaternion::Identity()}, Marker("last"));
+    r.world.CreateEntity(Transform{Vec3(20, 0, 0), Quaternion::Identity()}, Marker("scene"));
+    CHECK(r.system.Activate("A")); // Existing non-reserved reached keys remain compatible.
+    CHECK(!r.system.IsReached("last") && !r.system.IsReached("scene"));
+
+    CHECK(r.system.Activate("last") && r.system.IsReached("last"));
+    CHECK(r.system.Last() == "last" && r.system.LastScene() == "Scenes/a");
+    CHECK(r.system.Respawn(r.player) == Result::Ok);
+    const auto* player = r.world.GetComponent<Transform>(r.player);
+    CHECK(player && Near(player->position.x, 10.0f));
+
+    CHECK(r.system.Activate("scene") && r.system.IsReached("scene"));
+    CHECK(r.system.Last() == "scene" && r.system.LastScene() == "Scenes/a");
+    save::SaveSystem saves(std::filesystem::temp_directory_path() / "aether_checkpoint_reserved_names");
+    if (!saves.Save("slot", r.bag).ok) { CHECK(false); return; }
+    r.bag.Clear();
+    if (!saves.Load("slot", r.bag).ok) { CHECK(false); return; }
+
+    CHECK(r.system.Last() == "scene" && r.system.LastScene() == "Scenes/a");
+    CHECK(r.system.IsReached("last") && r.system.IsReached("scene") && r.system.IsReached("A"));
+    CHECK(r.bag.GetInt("checkpoint.A") == 1);
+    CHECK(r.system.Respawn(r.player) == Result::Ok);
+    CHECK(player && Near(player->position.x, 20.0f));
+}
+
 AETHER_TEST(Checkpoints_ActivateFindAndRespawn) {
     Rig r;
     CHECK(r.system.Find("A") == r.a && r.system.Find("B") == r.b && r.system.Find("Nope").IsNull() && r.system.Find("").IsNull());

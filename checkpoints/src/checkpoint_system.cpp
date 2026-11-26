@@ -15,7 +15,11 @@ CheckpointSystem* g_active = nullptr;
 constexpr const char* kLast = "checkpoint.last";
 constexpr const char* kScene = "checkpoint.scene";
 
-std::string ReachedKey(const std::string& name) { return "checkpoint." + name; }
+std::string ReachedKey(const std::string& name) {
+    // Keep existing reached keys except where a marker would overwrite metadata.
+    if (name == "last" || name == "scene") return "checkpoint_history." + name;
+    return "checkpoint." + name;
+}
 
 } // namespace
 
