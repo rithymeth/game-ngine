@@ -356,6 +356,34 @@ bool CheckDestination(const stdfs::path& destination, bool directory, bool& exis
     return true;
 }
 
+// Managed folders are replaced as a unit. Only replace existing contents
+// recorded by the last package; custom DLC or notes must not be discarded.
+bool CheckManagedContents(const stdfs::path& root, const stdfs::path& name,
+                          const std::set<std::string>& previous_files, std::string& error) {
+    std::error_code ec;
+    for (stdfs::recursive_directory_iterator it(root / name, ec), end; !ec && it != end; it.increment(ec)) {
+        const auto status = it->symlink_status(ec);
+        if (ec) break;
+        const auto relative = it->path().lexically_relative(root).generic_string();
+        bool owned = stdfs::is_regular_file(status) && previous_files.contains(relative);
+        if (stdfs::is_directory(status)) {
+            const auto prefix = relative + "/";
+            const auto first = previous_files.lower_bound(prefix);
+            owned = first != previous_files.end() && first->starts_with(prefix);
+        }
+        if (!owned) {
+            error = "Refusing to replace unlisted package item: " + relative +
+                    ". Choose a different output folder or move the item somewhere safe.";
+            return false;
+        }
+    }
+    if (ec) {
+        error = "Can't inspect " + (root / name).string() + " before replacing it: " + ec.message();
+        return false;
+    }
+    return true;
+}
+
 } // namespace
 
 std::string GameExecutableName(const std::string& project_name) {
@@ -453,6 +481,7 @@ PackageReport Package(const PackageOptions& options) {
     // directory while leaving the first game's executable behind.
     const stdfs::path previous_manifest = options.output_dir / "PackageManifest.json";
     bool has_manifest = false;
+    std::set<std::string> previous_files;
     if (!CheckDestination(previous_manifest, false, has_manifest, error)) return fail(error);
     if (has_manifest) {
         std::vector<u8> bytes;
@@ -463,6 +492,14 @@ PackageReport Package(const PackageOptions& options) {
                 if (project != manifest.end() && project->is_string() && !project->get_ref<const std::string&>().empty() &&
                     *project != settings.name) {
                     return fail("Output folder contains a package for another project; choose a different output folder");
+                }
+                if (project != manifest.end() && *project == settings.name &&
+                    manifest.contains("$version") && manifest["$version"].is_number_integer() &&
+                    manifest["$version"] == 1 && manifest.contains("files") && manifest["files"].is_array()) {
+                    for (const auto& entry : manifest["files"]) {
+                        if (entry.is_object() && entry.contains("path") && entry["path"].is_string())
+                            previous_files.insert(entry["path"].get<std::string>());
+                    }
                 }
             }
         }
@@ -730,6 +767,20 @@ PackageReport Package(const PackageOptions& options) {
         }
     }
     progress(0.98f, "Installing the package");
+    if (cook.cancel && cook.cancel->load()) {
+        cleanup_staging();
+        return fail("Cancelled");
+    }
+    // Inspect all managed folders before moving any of the previous package.
+    for (const SwapEntry& entry : swaps) {
+        if (!entry.is_dir) continue;
+        bool exists = false;
+        if (!CheckDestination(options.output_dir / entry.name, true, exists, error) ||
+            (exists && !CheckManagedContents(options.output_dir, entry.name, previous_files, error))) {
+            cleanup_staging();
+            return fail(error);
+        }
+    }
     std::string install_error;
     for (SwapEntry& entry : swaps) {
         if (cook.cancel && cook.cancel->load()) {

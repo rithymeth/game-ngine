@@ -182,9 +182,13 @@ AETHER_TEST(Package_StagesThePlayerWithThePaks) {
     options.player_executable = fake_player;
     f32 last = -1.0f;
     options.cook.progress = [&](f32 f, const std::string&) { last = f; };
-    // A stale pak from an earlier package is removed.
-    stdfs::create_directories(options.output_dir / "Paks");
-    std::ofstream(options.output_dir / "Paks" / "Old.apak") << "stale";
+    // A stale pak recorded by an earlier package is removed. An unlisted
+    // archive is not assumed to belong to the previous build.
+    options.cook.pak_name = "Old";
+    const auto previous = cook::Package(options);
+    if (!previous.ok) { CHECK(false); return; }
+    CHECK(stdfs::is_regular_file(previous.paks_dir / "Old.apak"));
+    options.cook.pak_name = "Game";
     const cook::PackageReport report = cook::Package(options);
     CHECK(report.ok && last == 1.0f);
     CHECK(report.game_executable == options.output_dir / cook::GameExecutableName("Staged"));
@@ -409,6 +413,48 @@ AETHER_TEST(Package_CancelAfterCookKeepsThePreviousPackage) {
     std::vector<std::string> problems;
     CHECK(cook::VerifyPackageManifest(options.output_dir, problems));
     CheckNoStagingFolders(options.output_dir);
+}
+
+AETHER_TEST(Package_DoesNotReplaceUnlistedFilesInManagedFolders) {
+    const auto file = MakeProject("PackageKeepsExtraFiles");
+    const auto parent = file.parent_path();
+    const auto player = parent / "fake_player.bin";
+    std::ofstream(player, std::ios::binary) << "old player";
+    cook::PackageOptions options;
+    options.cook.project_file = file;
+    options.output_dir = parent / "Package";
+    options.player_executable = player;
+    options.licenses_dir = parent / "Original Licenses";
+    stdfs::create_directories(options.licenses_dir / "nested");
+    std::ofstream(options.licenses_dir / "nested/notice.txt") << "original license";
+    const auto first = cook::Package(options);
+    if (!first.ok) { CHECK(false); return; }
+    const auto old_manifest = ReadText(first.manifest_file);
+    const auto old_archive = ReadText(first.cook.pak_file);
+    std::ofstream(player, std::ios::binary) << "new player";
+    const auto extra_root = options.output_dir / "release-notes.txt";
+    std::ofstream(extra_root) << "keep root notes";
+    for (const auto& relative : {"Paks/Bonus.apak", "licenses/nested/custom.txt"}) {
+        const auto extra = options.output_dir / relative;
+        std::ofstream(extra) << "keep original file";
+        const auto refused = cook::Package(options);
+        CHECK(!refused.ok && refused.error.find(relative) != std::string::npos);
+        if (stdfs::is_regular_file(extra)) CHECK(ReadText(extra) == "keep original file");
+        else CHECK(false);
+        CHECK(ReadText(first.game_executable) == "old player");
+        CHECK(ReadText(first.manifest_file) == old_manifest);
+        CHECK(ReadText(first.cook.pak_file) == old_archive);
+        CheckNoStagingFolders(options.output_dir);
+        stdfs::remove(extra);
+    }
+    stdfs::remove(options.licenses_dir / "nested/notice.txt");
+    std::ofstream(options.licenses_dir / "updated.txt") << "updated license";
+    CHECK(cook::Package(options).ok);
+    CHECK(ReadText(first.game_executable) == "new player");
+    CHECK(!stdfs::exists(options.output_dir / "licenses/nested"));
+    CHECK(ReadText(extra_root) == "keep root notes");
+    std::vector<std::string> problems;
+    CHECK(cook::VerifyPackageManifest(options.output_dir, problems));
 }
 
 AETHER_TEST(Package_RefusesToWriteIntoProjectContent) {
