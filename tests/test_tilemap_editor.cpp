@@ -1093,6 +1093,38 @@ AETHER_TEST(TilemapEditor_FindsInvalidPaintAcrossTheMapWithoutAnEdit) {
     CHECK(!panel.FindNextInvalidPaint());
 }
 
+AETHER_TEST(TilemapEditor_FindsMissingAutotileRulesEvenWithoutTexture) {
+    HeadlessImGui ui;
+    TilemapData map;
+    map.Resize(95, 88);
+    map.AddLayer("Ground");
+    map.AddLayer("Canopy");
+    Tileset tiles;
+    std::array<i32, 16> variants;
+    variants.fill(kEmpty);
+    CHECK(tiles.AddAutotile("Intentional empty", variants) == 0);
+    map.Set(0, 2, 2, AutotileCell(0));
+    map.Set(1, 85, 78, AutotileCell(1));
+    TilemapEditDocument doc(std::move(map), std::move(tiles));
+    TilemapPanel panel(doc);
+    const auto revision = doc.Revision();
+    const auto capture = std::filesystem::temp_directory_path() / "tilemap-missing-rule-search.txt";
+    CHECK(panel.FindNextInvalidPaint() && doc.active_layer == 1);
+    ui.Frame([&] { ImGui::LogToFile(0, capture.string().c_str()); panel.Draw(); ImGui::LogFinish(); });
+    usize markers = 0;
+    for (const auto* list : ImGui::GetDrawData()->CmdLists)
+        for (const ImDrawVert& vertex : list->VtxBuffer)
+            if (vertex.col == IM_COL32(255, 96, 215, 255)) ++markers;
+    CHECK(markers == 8);
+    std::ifstream in(capture);
+    const std::string log(std::istreambuf_iterator<char>(in), {});
+    CHECK(log.find("Invalid paint: Canopy (85, 78), missing autotile rule 1") != std::string::npos);
+    CHECK(doc.Revision() == revision && !doc.dirty() && !doc.CanUndo());
+    doc.brush = kEmpty;
+    doc.Apply(85, 78);
+    CHECK(!panel.FindNextInvalidPaint());
+}
+
 AETHER_TEST(TilemapEditor_LargeMapOnlyDrawsVisibleGridLines) {
     HeadlessImGui ui;
     auto doc = Doc();

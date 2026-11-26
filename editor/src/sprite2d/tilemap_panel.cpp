@@ -26,6 +26,11 @@ ImU32 TileColor(i32 tile) {
     return ImGui::GetColorU32(ImVec4(c.x, c.y, c.z, 1.0f));
 }
 
+bool IsInvalidPaint(i32 cell, u32 grid_count, usize autotile_count) {
+    if (IsAutotileCell(cell)) return AutotileIndex(cell) >= autotile_count;
+    return cell >= 0 && grid_count != 0 && static_cast<u32>(cell) >= grid_count;
+}
+
 const char* kToolNames[] = {"Paint", "Erase", "Rectangle", "Fill", "Pick"};
 
 // Both endpoints are valid map cells. Fill the gaps between pointer samples
@@ -247,12 +252,12 @@ bool TilemapPanel::FindNextInvalidPaint() {
     if (invalid_search_revision_ != doc_.Revision()) invalid_paint_cell_.reset();
     invalid_search_revision_ = doc_.Revision();
     std::optional<InvalidPaintCell> first, next;
-    if (count != 0 && map.width != 0 && map.height != 0) {
+    if (map.width != 0 && map.height != 0) {
         for (usize layer = 0; layer < map.layers.size() && !next; ++layer) {
             const auto& cells = map.layers[layer].cells;
             for (usize index = 0; index < cells.size(); ++index) {
                 const i32 tile = cells[index];
-                if (tile < 0 || static_cast<u32>(tile) < count) continue;
+                if (!IsInvalidPaint(tile, count, tiles.autotiles.size())) continue;
                 const InvalidPaintCell found{layer, index, tile};
                 if (!first) first = found;
                 if (!invalid_paint_cell_ || layer > invalid_paint_cell_->layer ||
@@ -313,19 +318,20 @@ void TilemapPanel::DrawTools() {
     ImGui::SameLine();
     const std::string file = doc_.TilemapFile().empty() ? std::string() : doc_.TilemapFile().filename().string() + "  ";
     ImGui::TextDisabled("%s%ux%u%s", file.c_str(), doc_.Map().width, doc_.Map().height, doc_.dirty() ? "  (unsaved)" : "");
-    const auto& tiles = doc_.GetTileset();
-    if (!tiles.texture.IsNull() && tiles.TileCount() != 0) {
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Find next invalid tile")) FindNextInvalidPaint();
-        if (invalid_search_revision_ == doc_.Revision()) {
-            if (invalid_paint_cell_) {
-                const auto& hit = *invalid_paint_cell_;
-                const auto& map = doc_.Map();
-                ImGui::Text("Invalid paint: %s (%zu, %zu), tile %d", map.layers[hit.layer].name.c_str(),
-                            hit.index % map.width, hit.index / map.width, hit.tile);
-            } else {
-                ImGui::TextDisabled("No painted tiles outside this grid.");
-            }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Find next invalid tile")) FindNextInvalidPaint();
+    if (invalid_search_revision_ == doc_.Revision()) {
+        if (invalid_paint_cell_) {
+            const auto& hit = *invalid_paint_cell_;
+            const auto& map = doc_.Map();
+            const auto* name = map.layers[hit.layer].name.c_str();
+            const usize x = hit.index % map.width, y = hit.index / map.width;
+            if (IsAutotileCell(hit.tile))
+                ImGui::Text("Invalid paint: %s (%zu, %zu), missing autotile rule %zu", name, x, y, AutotileIndex(hit.tile));
+            else
+                ImGui::Text("Invalid paint: %s (%zu, %zu), tile %d", name, x, y, hit.tile);
+        } else {
+            ImGui::TextDisabled("No invalid painted tiles.");
         }
     }
 }
@@ -489,7 +495,7 @@ void TilemapPanel::DrawCanvas() {
     const TilemapData& map = doc_.Map();
     const Tileset& ts = doc_.GetTileset();
     const u32 grid_tiles = ts.texture.IsNull() ? 0 : ts.TileCount();
-    const auto invalid_paint = [&](i32 tile) { return grid_tiles > 0 && tile >= 0 && static_cast<u32>(tile) >= grid_tiles; };
+    const auto invalid_paint = [&](i32 tile) { return IsInvalidPaint(tile, grid_tiles, ts.autotiles.size()); };
     const ImVec2 origin = ImGui::GetCursorScreenPos();
     const ImVec2 size = ImGui::GetContentRegionAvail();
     ImGui::InvisibleButton("##paint", ImVec2(std::max(size.x, 1.0f), std::max(size.y, 1.0f)),
@@ -540,13 +546,17 @@ void TilemapPanel::DrawCanvas() {
             return static_cast<usize>(y - bottom) * columns + static_cast<usize>(x - left);
         };
         constexpr u8 kBlocked = 1, kInvalidPaint = 2;
-        std::vector<u8> marks(show_solid || grid_tiles != 0 ? columns * static_cast<usize>(top - bottom) : 0);
+        const usize visible_count = columns * static_cast<usize>(top - bottom);
+        std::vector<u8> marks(show_solid || grid_tiles != 0 ? visible_count : 0);
         for (usize layer = 0; layer < map.layers.size(); ++layer) {
             const bool mark_solid = show_solid && map.layers[layer].collides;
             for (i32 y = bottom; y < top; ++y) {
                 for (i32 x = left; x < right; ++x) {
                     const i32 raw = map.Get(layer, x, y);
-                    if (invalid_paint(raw)) marks[visible_cell(x, y)] |= kInvalidPaint;
+                    if (invalid_paint(raw)) {
+                        if (marks.empty()) marks.resize(visible_count);
+                        marks[visible_cell(x, y)] |= kInvalidPaint;
+                    }
                     const i32 tile = raw >= kEmpty ? raw : ResolveTile(map, ts, layer, x, y);
                     if (tile < 0) continue;
                     const ImVec2 a(to_screen_x(x), to_screen_y(y));
@@ -664,14 +674,13 @@ void TilemapPanel::DrawCanvas() {
             const TileLayer* top_blocker = nullptr;
             usize blockers = 0, invalid_layers = 0;
             for (usize layer = map.layers.size(); layer-- > 0;) {
-                if (grid_tiles != 0) {
-                    const i32 raw = map.Get(layer, cx, cy);
-                    if (invalid_paint(raw)) {
-                        if (invalid_layers == 0)
-                            ImGui::Text("Invalid paint: %s uses tile %d (grid has %u tiles)",
-                                        map.layers[layer].name.c_str(), raw, grid_tiles);
-                        ++invalid_layers;
-                    }
+                const i32 raw = map.Get(layer, cx, cy);
+                if (invalid_paint(raw) && invalid_layers++ == 0) {
+                    const auto* name = map.layers[layer].name.c_str();
+                    if (IsAutotileCell(raw))
+                        ImGui::Text("Invalid paint: %s uses missing autotile rule %zu", name, AutotileIndex(raw));
+                    else
+                        ImGui::Text("Invalid paint: %s uses tile %d (grid has %u tiles)", name, raw, grid_tiles);
                 }
                 if (map.layers[layer].collides && ts.IsSolid(ResolveTile(map, ts, layer, cx, cy))) {
                     if (!top_blocker) top_blocker = &map.layers[layer];
