@@ -84,9 +84,11 @@ AETHER_TEST(Weather_BlendsSmoothlyAndAnInterruptedBlendCarriesOn) {
     const WeatherParams mid = w.Params();
     CHECK(mid.rain > 0.0f && mid.rain < 0.6f && mid.fog > 0.3f);
     CHECK(w.Set(WeatherKind::Clear, 10.0));
+    CHECK(w.Current() == WeatherKind::Rain && w.Target() == WeatherKind::Clear && Near(w.Blend(), 0.0));
     CHECK(Near(w.Rain(), mid.rain) && Near(w.Fog(), mid.fog)); // right after the new Set: unchanged
     Run(w, 0.05);               // and a couple of steps on it is still where it was, give or take the first moments of a slow start: no jump back to fog or forward to clear
     CHECK(std::fabs(w.Rain() - mid.rain) < 0.01 && std::fabs(w.Fog() - mid.fog) < 0.01);
+    CHECK(w.Current() == WeatherKind::Rain); // never report the abandoned fog target as current
     Run(w, 20.0);
     CHECK(w.Current() == WeatherKind::Clear && Near(w.Rain(), 0.0) && Near(w.Fog(), 0.0) && Near(w.Clouds(), 0.05));
     // At once.
@@ -351,6 +353,7 @@ AETHER_TEST(Weather_LuauTableActsOnTheWeather) {
                  "self.rain = Weather.Rain(); self.clouds = Weather.Clouds(); self.snow = Weather.Snow(); self.fog = Weather.Fog(); self.light = Weather.LightScale(); "
                  "self.blend = Weather.Blend(); self.bad_name = Weather.Set('hail'); self.bad_time = Weather.Set('rain', -5); self.slow = Weather.Set('fog'); "
                  "self.blend2 = Weather.Blend(); self.tgt2 = Weather.Target(); "
+                 "Weather.Set('clear', 1); self.cur3 = Weather.Current(); self.tgt3 = Weather.Target(); "
                  "self.dir_set = Weather.SetWindDirection(90); self.dir = Weather.WindDirection(); self.dir_bad = Weather.SetWindDirection(0/0); "
                  "local v = Weather.WindVector(); self.vx = v.x; self.vz = v.z; self.speed = Weather.WindSpeed(); "
                  "self.dur_set = Weather.SetMeanDuration(120); self.dur_bad = Weather.SetMeanDuration(0); "
@@ -375,6 +378,7 @@ AETHER_TEST(Weather_LuauTableActsOnTheWeather) {
     CHECK(text("cur0") == "clear" && flag("set") && text("cur1") == "rain" && text("tgt") == "rain");
     CHECK(Near(num("rain"), 0.6, 1e-5) && Near(num("clouds"), 0.9, 1e-5) && Near(num("snow"), 0.0) && Near(num("fog"), 0.3, 1e-5) && Near(num("light"), 0.4, 1e-5) && Near(num("blend"), 1.0));
     CHECK(!flag("bad_name") && !flag("bad_time") && flag("slow") && Near(num("blend2"), 0.0) && text("tgt2") == "fog");
+    CHECK(text("cur3") == "rain" && text("tgt3") == "clear");
     CHECK(flag("dir_set") && Near(num("dir"), 90.0) && !flag("dir_bad") && Near(num("vz"), 0.0, 1e-3) && num("vx") >= 0.0 && Near(num("vx"), num("speed"), 1e-3));
     CHECK(flag("dur_set") && !flag("dur_bad") && Near(weather.MeanDuration(), 120.0) && weather.IsCold() && !weather.IsAuto() && weather.Seed() == 11);
     CHECK(Near(num("strikes"), 0.0) && num("since") > 1.0e9 && Near(num("thunder"), 0.0) && Near(num("wet"), 0.0) && Near(num("flash"), 0.0));

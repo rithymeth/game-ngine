@@ -22,7 +22,10 @@ The kit **only keeps the numbers**. What a scene does with them is the game's: a
 ## Changing it
 
 `Weather.Set("storm", 20)` blends to a kind over 20 seconds (default 30; 0 is at once; up to 3600) with a smooth step, so it eases in and out. A blend that is
-interrupted carries on from where the numbers are, never jumping. `Weather.SetAuto(true, seed)` lets it change by itself: after 0.5 to 1.5 times the mean duration
+interrupted carries on from where the numbers are, never jumping. `Weather.Current()` reports the last kind reached, and `Weather.Target()` reports the
+destination of the current blend. Interrupting a blend does not make the abandoned destination current.
+
+`Weather.SetAuto(true, seed)` lets it change by itself: after 0.5 to 1.5 times the mean duration
 (`Weather.SetMeanDuration`, 300 s by default) it picks what usually comes next (clear tends to become cloudy, rain to a storm or clearing; nothing follows itself).
 `Weather.SetCold(true)` makes rain and storms fall as snow, and snow needs the cold.
 

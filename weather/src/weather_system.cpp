@@ -129,7 +129,7 @@ void WeatherSystem::ScheduleChange() { until_change_ = mean_duration_ * (0.5 + N
 
 void WeatherSystem::BeginTransition(WeatherKind kind, f64 seconds) {
     from_ = now_;
-    current_ = target_;
+    // Keep the last reached kind until this blend completes.
     target_ = kind;
     transition_ = seconds;
     elapsed_ = 0.0;
