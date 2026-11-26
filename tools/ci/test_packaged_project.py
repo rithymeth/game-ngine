@@ -362,10 +362,20 @@ def main():
                     raise RuntimeError(f"trace comparison exit={result.returncode}: {result.stdout}{result.stderr}")
                 return json.loads(result.stdout) if code != 2 else None
 
+            # A loose positional tolerance must not hide the changed route outcome.
+            outcome = compare_traces(original_trace, changed_trace, 5, "--tolerance", "1000", "--overlay-data")
+            if (outcome["first_difference_frame"] is not None or outcome.get("before_status") != "pass"
+                    or outcome.get("after_status") != "missed" or outcome.get("verdict_changed") is not True
+                    or len(outcome["before_path"]) != 400 or len(outcome["after_path"]) != 400):
+                raise RuntimeError(f"target outcome did not survive positional tolerance: {outcome}")
             matching = compare_traces(original_trace, original_trace, 0)
             if (matching["first_difference_frame"] is not None or matching["frames"] != 400
-                    or matching.get("route_verified") is not True):
+                    or matching.get("route_verified") is not True or matching.get("before_status") != "pass"
+                    or matching.get("after_status") != "pass" or matching.get("verdict_changed") is not False):
                 raise RuntimeError(f"equal traces were not reported equal: {matching}")
+            still_missed = compare_traces(changed_trace, changed_trace, 0)
+            if still_missed.get("before_status") != "missed" or still_missed.get("verdict_changed") is not False:
+                raise RuntimeError(f"matching misses were not reported as unchanged: {still_missed}")
             diff = compare_traces(original_trace, changed_trace, 5)
             if not 280 <= diff["first_difference_frame"] <= 300 or diff["frames"] != 400:
                 raise RuntimeError(f"did not locate the first divergence after placing one tile: {diff}")

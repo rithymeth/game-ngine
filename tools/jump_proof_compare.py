@@ -44,7 +44,7 @@ def validate_route(route, frames):
         previous = event["frame"]
 
 
-def read_trace(path, *, include_route=False):
+def read_trace_details(path):
     points, verdict, route = [], None, None
     with path.open(encoding="utf-8") as stream:
         for line in stream:
@@ -72,6 +72,11 @@ def read_trace(path, *, include_route=False):
         raise ValueError("trace does not end with its completed route verdict")
     if route is not None:
         validate_route(route, len(points))
+    return points, route, verdict["status"]
+
+
+def read_trace(path, *, include_route=False):
+    points, route, _ = read_trace_details(path)
     return (points, route) if include_route else points
 
 
@@ -85,8 +90,8 @@ def main():
     if not math.isfinite(args.tolerance) or args.tolerance < 0:
         parser.error("tolerance must be finite and non-negative")
     try:
-        left, left_route = read_trace(args.before, include_route=True)
-        right, right_route = read_trace(args.after, include_route=True)
+        left, left_route, before_status = read_trace_details(args.before)
+        right, right_route, after_status = read_trace_details(args.after)
         if left_route != right_route:
             raise ValueError("route descriptors differ (input, target, scene or fixed tick rate)")
         if args.overlay_data and len(left) > 20_000:
@@ -97,7 +102,8 @@ def main():
         parser.error(str(exc))
 
     result = {"frames": len(left), "tolerance": args.tolerance, "first_difference_frame": None,
-              "route_verified": left_route is not None}
+              "route_verified": left_route is not None, "before_status": before_status, "after_status": after_status,
+              "verdict_changed": before_status != after_status}
     for frame, (a, b) in enumerate(zip(left, right), 1):
         if any(abs(a[i] - b[i]) > args.tolerance for i in (0, 1)):
             result.update(first_difference_frame=frame, before=a, after=b)
@@ -105,7 +111,7 @@ def main():
     if args.overlay_data:
         result.update(before_path=left, after_path=right)
     print(json.dumps(result, allow_nan=False))
-    return 0 if result["first_difference_frame"] is None else 5
+    return 5 if result["verdict_changed"] or result["first_difference_frame"] is not None else 0
 
 
 if __name__ == "__main__":
