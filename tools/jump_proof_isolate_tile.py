@@ -8,7 +8,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 
-from jump_proof_compare import read_trace
+from jump_proof_compare import read_trace, write_new_json
 
 IGNORED_PACKAGE_FILES = {"PackageManifest.json", "Paks/Game.apak"}
 MAP_LIMIT = 64 * 1024 * 1024
@@ -150,8 +150,7 @@ def main():
         if args.output is None:
             print(receipt)
         else:
-            with args.output.open("x", encoding="utf-8", newline="\n") as out:
-                out.write(receipt + "\n")
+            write_new_json(args.output, receipt)
     except (ValueError, OSError, OverflowError, subprocess.TimeoutExpired) as exc:
         parser.error(str(exc))
 
