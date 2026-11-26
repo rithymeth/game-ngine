@@ -1015,6 +1015,38 @@ AETHER_TEST(Physics2D_RaycastsAndOverlaps) {
     CHECK(physics.OverlapBox({-5, -5}, {1, 1}).empty());
 }
 
+AETHER_TEST(Physics2D_CastsHitClosedTileEdges) {
+    World world;
+    Tileset tiles;
+    tiles.tile_width = tiles.tile_height = 16;
+    tiles.SetSolid(0, true);
+    TilemapData map;
+    map.Resize(6, 3);
+    map.AddLayer("Floor");
+    map.Set(0, 4, 0, 0); // The cell spans [4, 5] x [0, 1], with empty cells above and to the right.
+    Resolvers2D resolvers;
+    resolvers.tilemaps = [&](const assets::AssetGuid&) { return &map; };
+    resolvers.tilesets = [&](const assets::AssetGuid&) { return &tiles; };
+    const Entity level = world.CreateEntity();
+    world.AddComponent<Transform>(level, Transform{Vec3(0, 0, 0), Quaternion::Identity()});
+    TilemapRenderer renderer;
+    renderer.pixels_per_unit = 16.0f;
+    world.AddComponent<TilemapRenderer>(level, renderer);
+    Physics2D physics(world, resolvers);
+
+    const auto floor = [](const RayHit2D& hit, f32 distance) {
+        return hit.tile && hit.tile_x == 4 && hit.tile_y == 0 && Near(hit.distance, distance);
+    };
+    RayHit2D hit;
+    CHECK(physics.Raycast({2, 1}, {1, 0}, 3, hit) && floor(hit, 2.0f));
+    const auto hits = physics.RaycastAll({2, 1}, {1, 0}, 3);
+    CHECK(hits.size() == 1 && floor(hits.front(), 2.0f));
+    CHECK(physics.Raycast({6, 0.5f}, {-1, 0}, 1, hit) && floor(hit, 1.0f));
+    CHECK(physics.CircleCast({2, 1.25f}, {1, 0}, 0.25f, 3, hit) && floor(hit, 2.0f));
+    CHECK(physics.BoxCast({2, 1.25f}, {0.25f, 0.25f}, {1, 0}, 3, hit) && floor(hit, 1.75f));
+    CHECK(!physics.Raycast({2, 1.01f}, {1, 0}, 3, hit)); // A ray just clear of the edge still misses.
+}
+
 AETHER_TEST(Physics2D_ComponentsSaveThroughReflection) {
     RegisterPhysics2DComponents();
     Collider2D c;

@@ -43,7 +43,8 @@ struct TileRange {
     i32 last = -1;
     bool Valid() const { return first <= last; }
 };
-TileRange GetTileRange(f32 world_min, f32 world_max, f32 origin, f32 cell_size, u32 extent) {
+TileRange GetTileRange(f32 world_min, f32 world_max, f32 origin, f32 cell_size, u32 extent,
+                       bool closed_lower_edge = false) {
     if (extent == 0 || !std::isfinite(world_min) || !std::isfinite(world_max) || world_min > world_max ||
         !std::isfinite(origin) || !std::isfinite(cell_size) || cell_size <= 0.0f) return {};
     const f64 grid_min = (static_cast<f64>(world_min) - origin) / cell_size;
@@ -51,10 +52,17 @@ TileRange GetTileRange(f32 world_min, f32 world_max, f32 origin, f32 cell_size, 
     if (!std::isfinite(grid_min) || !std::isfinite(grid_max) || grid_max < 0.0 || grid_min > extent) return {};
     const f64 max_index = static_cast<f64>(std::min<u64>(static_cast<u64>(extent) - 1,
                                                          static_cast<u64>(std::numeric_limits<i32>::max() - 1)));
-    const auto clamp_index = [max_index](f64 grid) {
-        return static_cast<i32>(std::clamp(std::floor(grid), 0.0, max_index));
+    const auto clamp_index = [max_index](f64 index) {
+        return static_cast<i32>(std::clamp(index, 0.0, max_index));
     };
-    return {clamp_index(grid_min), clamp_index(grid_max)};
+    // With closed bounds, a cell ending exactly at the query minimum is a
+    // candidate too. The exact cast still tests whether the shapes touch.
+    const f64 first = closed_lower_edge ? std::ceil(grid_min) - 1.0 : std::floor(grid_min);
+    return {clamp_index(first), clamp_index(std::floor(grid_max))};
+}
+
+TileRange GetTileCastRange(f32 world_min, f32 world_max, f32 origin, f32 cell_size, u32 extent) {
+    return GetTileRange(world_min, world_max, origin, cell_size, extent, /*closed_lower_edge=*/true);
 }
 
 // Every live entity (ForEach hands out components, not entities).
@@ -656,9 +664,9 @@ bool Physics2D::Raycast(Vec2 origin, Vec2 dir, f32 max_distance, RayHit2D& out, 
             if (!TilemapGeometry(*r, *t, *ts, map_origin, cell_size)) return;
             const f32 cw = cell_size.x, ch = cell_size.y;
             const Vec2 end = origin + dir * best;
-            const TileRange x_range = GetTileRange(std::min(origin.x, end.x), std::max(origin.x, end.x),
+            const TileRange x_range = GetTileCastRange(std::min(origin.x, end.x), std::max(origin.x, end.x),
                                                    map_origin.x, cw, map->width);
-            const TileRange y_range = GetTileRange(std::min(origin.y, end.y), std::max(origin.y, end.y),
+            const TileRange y_range = GetTileCastRange(std::min(origin.y, end.y), std::max(origin.y, end.y),
                                                    map_origin.y, ch, map->height);
             if (!x_range.Valid() || !y_range.Valid()) return;
             for (i32 y = y_range.first; y <= y_range.last; ++y) {
@@ -747,9 +755,9 @@ std::vector<RayHit2D> Physics2D::RaycastAll(Vec2 origin, Vec2 dir, f32 max_dista
             Vec2 map_origin{}, cell_size{};
             if (!TilemapGeometry(*renderer, *transform, *tileset, map_origin, cell_size)) return;
             const f32 cell_width = cell_size.x, cell_height = cell_size.y;
-            const TileRange x_range = GetTileRange(std::min(origin.x, end.x), std::max(origin.x, end.x),
+            const TileRange x_range = GetTileCastRange(std::min(origin.x, end.x), std::max(origin.x, end.x),
                                                    map_origin.x, cell_width, map->width);
-            const TileRange y_range = GetTileRange(std::min(origin.y, end.y), std::max(origin.y, end.y),
+            const TileRange y_range = GetTileCastRange(std::min(origin.y, end.y), std::max(origin.y, end.y),
                                                    map_origin.y, cell_height, map->height);
             if (!x_range.Valid() || !y_range.Valid()) return;
             for (i32 y = y_range.first; y <= y_range.last; ++y) {
@@ -856,10 +864,10 @@ bool Physics2D::CircleCast(Vec2 origin, Vec2 dir, f32 radius, f32 max_distance, 
             Vec2 map_origin{}, cell_size{};
             if (!TilemapGeometry(*renderer, *transform, *tileset, map_origin, cell_size)) return;
             const f32 cell_width = cell_size.x, cell_height = cell_size.y;
-            const TileRange x_range = GetTileRange(std::min(origin.x, end.x) - radius,
+            const TileRange x_range = GetTileCastRange(std::min(origin.x, end.x) - radius,
                                                    std::max(origin.x, end.x) + radius,
                                                    map_origin.x, cell_width, map->width);
-            const TileRange y_range = GetTileRange(std::min(origin.y, end.y) - radius,
+            const TileRange y_range = GetTileCastRange(std::min(origin.y, end.y) - radius,
                                                    std::max(origin.y, end.y) + radius,
                                                    map_origin.y, cell_height, map->height);
             if (!x_range.Valid() || !y_range.Valid()) return;
@@ -959,10 +967,10 @@ bool Physics2D::BoxCast(Vec2 origin, Vec2 half, Vec2 dir, f32 max_distance, RayH
             Vec2 map_origin{}, cell_size{};
             if (!TilemapGeometry(*renderer, *transform, *tileset, map_origin, cell_size)) return;
             const f32 cell_width = cell_size.x, cell_height = cell_size.y;
-            const TileRange x_range = GetTileRange(std::min(origin.x, end.x) - half.x,
+            const TileRange x_range = GetTileCastRange(std::min(origin.x, end.x) - half.x,
                                                    std::max(origin.x, end.x) + half.x,
                                                    map_origin.x, cell_width, map->width);
-            const TileRange y_range = GetTileRange(std::min(origin.y, end.y) - half.y,
+            const TileRange y_range = GetTileCastRange(std::min(origin.y, end.y) - half.y,
                                                    std::max(origin.y, end.y) + half.y,
                                                    map_origin.y, cell_height, map->height);
             if (!x_range.Valid() || !y_range.Valid()) return;
