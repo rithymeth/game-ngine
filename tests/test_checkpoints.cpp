@@ -133,6 +133,46 @@ AETHER_TEST(Checkpoints_AreReachedByTheirActivatorsAndRemembered) {
     CHECK(odd.system.Last().empty());
 }
 
+AETHER_TEST(Checkpoints_OverlappingMarkersDoNotRepeatWhileOccupied) {
+    Rig r;
+    r.world.GetComponent<Transform>(r.b)->position.x = 4.0f;
+    // The two 3 m radii overlap. A newly entered marker can still replace the current one.
+    r.MovePlayer(Vec3(0, 0, 0));
+    r.system.Update();
+    CHECK(r.system.Last() == "A" && r.system.Events().size() == 1);
+    r.system.ClearEvents();
+    r.MovePlayer(Vec3(2, 0, 0));
+    r.system.Update();
+    CHECK(r.system.Last() == "B" && r.system.Events().size() == 1);
+    r.system.ClearEvents();
+    for (int frame = 0; frame < 5; ++frame) r.system.Update();
+    CHECK(r.system.Last() == "B" && r.system.Events().empty());
+
+    r.MovePlayer(Vec3(4, 0, 0)); // outside A, still inside B
+    r.system.Update();
+    r.MovePlayer(Vec3(2, 0, 0)); // reenter A
+    r.system.Update();
+    CHECK(r.system.Last() == "A" && r.system.Events().size() == 1);
+    if (r.system.Events().size() == 1) {
+        CHECK(r.system.Events().front().checkpoint == r.a && !r.system.Events().front().first_time);
+    }
+
+    // Simultaneous entry on the first update chooses only one checkpoint, in entity order.
+    Rig both;
+    both.world.GetComponent<Transform>(both.b)->position.x = 4.0f;
+    both.MovePlayer(Vec3(2, 0, 0));
+    both.system.Update();
+    CHECK(both.system.Last() == "A" && both.system.Events().size() == 1 && !both.system.IsReached("B"));
+    both.system.ClearEvents();
+    both.system.Update();
+    CHECK(both.system.Events().empty());
+
+    // A new game clears the save bag; a marker under its starting player can be reached again.
+    both.bag.Clear();
+    both.system.Update();
+    CHECK(both.system.Last() == "A" && both.system.Events().size() == 1);
+}
+
 AETHER_TEST(Checkpoints_MetadataNamesDoNotClobberSavedRespawnState) {
     Rig r;
     r.world.CreateEntity(Transform{Vec3(10, 0, 0), Quaternion::Identity()}, Marker("last"));

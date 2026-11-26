@@ -14,9 +14,10 @@ needs no other kit. What counts as "dying", and when to respawn, is your game's 
 | `activator_tag` | which entities reach it: the ones carrying this tag (default `Player`) |
 | `respawn_offset` | where `Respawn` puts an entity, relative to the checkpoint (default 0.5 m up, so nobody lands in the floor) |
 
-A checkpoint is reached on the frame an activator is within its `radius` while it is not already the last one. Reaching a different checkpoint
-makes *that* the last; going back to an earlier one makes it the last again. Markers in different scenes may share a name. Reaching one
-in another scene updates the saved scene, but the reached flag is still shared by name.
+A checkpoint is reached when an eligible activator enters its radius, provided the marker was unoccupied and is not already the last one.
+If several markers become occupied on the same frame, the first eligible marker in entity order wins. Standing in overlapping radii does not
+repeat the event. A marker can trigger again after all its activators leave and one returns. Markers in different scenes may share a name.
+Reaching one in another scene updates the saved scene, but the reached flag is still shared by name.
 
 ## What is remembered
 

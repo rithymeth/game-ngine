@@ -22,6 +22,10 @@ std::string ReachedKey(const std::string& name) {
     return "checkpoint." + name;
 }
 
+bool CheckpointOrder(Entity x, Entity y) {
+    return x.index != y.index ? x.index < y.index : x.generation < y.generation;
+}
+
 bool IsDifferentScene(const std::string& saved, const std::function<std::string()>& current_scene) {
     if (saved.empty() || !current_scene) return false;
     const std::string current = current_scene();
@@ -65,7 +69,7 @@ std::vector<Entity> CheckpointSystem::Checkpoints() const {
             out.insert(out.end(), chunk, chunk + a.ChunkEntityCount(c));
         }
     });
-    std::sort(out.begin(), out.end(), [](Entity x, Entity y) { return x.index != y.index ? x.index < y.index : x.generation < y.generation; });
+    std::sort(out.begin(), out.end(), CheckpointOrder);
     return out;
 }
 
@@ -102,12 +106,15 @@ bool CheckpointSystem::Activate(const std::string& name) {
 void CheckpointSystem::Update() {
     std::string last_here = Last();
     if (!last_here.empty() && IsDifferentScene(LastScene(), scene_)) last_here.clear();
+    if (last_here.empty()) occupied_.clear(); // a fresh game or a checkpoint from another scene
+    next_occupied_.clear();
+    bool reached = false;
     std::unordered_map<std::string, std::vector<Entity>> by_tag; // each tag looked up once per update
     for (const Entity e : Checkpoints()) {
         if (!world_.IsAlive(e)) continue;
         const Checkpoint* c = world_.GetComponent<Checkpoint>(e);
         const Transform* at = world_.GetComponent<Transform>(e);
-        if (c == nullptr || at == nullptr || !c->enabled || c->name.empty() || c->name == last_here) continue;
+        if (c == nullptr || at == nullptr || !c->enabled || c->name.empty()) continue;
         auto found = by_tag.find(c->activator_tag);
         if (found == by_tag.end()) found = by_tag.emplace(c->activator_tag, FindEntitiesWithTag(world_, c->activator_tag)).first;
         const f32 radius = std::isfinite(c->radius) ? std::clamp(c->radius, Checkpoint::kMinRadius, Checkpoint::kMaxRadius) : Checkpoint::kMinRadius;
@@ -115,12 +122,17 @@ void CheckpointSystem::Update() {
             const Transform* t = world_.IsAlive(who) ? world_.GetComponent<Transform>(who) : nullptr;
             if (t == nullptr || who == e) continue;
             if ((t->position - at->position).Length() <= radius) {
-                Reach(e, *c, who);
-                last_here = c->name;
+                next_occupied_.push_back(e);
+                if (!reached && c->name != last_here &&
+                    !std::binary_search(occupied_.begin(), occupied_.end(), e, CheckpointOrder)) {
+                    Reach(e, *c, who);
+                    reached = true;
+                }
                 break;
             }
         }
     }
+    occupied_.swap(next_occupied_);
 }
 
 Result CheckpointSystem::Respawn(Entity who) {

@@ -28,7 +28,8 @@ struct CheckpointEvent {
 //   "checkpoint.scene" (string)  the scene it is in, when the host says (so a script can load it)
 //   "checkpoint.<name>" (int 1)  each one that has been reached
 // so it is written and read with the save slot, and a scene change does not touch it. Deterministic and event-driven: a checkpoint is reached on the
-// Update in which an activator is within its radius while it is not already the last one.
+// Update in which an activator enters its radius while it is not already the last one. Only the first eligible marker in entity order is
+// reached when several become occupied in the same update.
 class CheckpointSystem {
 public:
     CheckpointSystem(World& world, save::SaveBag& bag, std::function<std::string()> current_scene = {});
@@ -63,6 +64,9 @@ private:
     save::SaveBag& bag_;
     std::function<std::string()> scene_;
     std::vector<CheckpointEvent> events_;
+    // Sorted by entity order; keep both buffers so steady occupancy does not allocate each frame.
+    std::vector<Entity> occupied_;
+    std::vector<Entity> next_occupied_;
 };
 
 } // namespace aether::chk
