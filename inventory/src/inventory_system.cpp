@@ -173,6 +173,7 @@ bool InventorySystem::Move(Entity owner, i32 from, i32 to) {
     } else if (b.item == a.item) {
         const ItemDef* def = items_.Find(a.item);
         const i32 room = (def ? def->max_stack : 1) - b.count;
+        if (room <= 0) return false; // Old saves can contain a stack above today's cap.
         const i32 put = std::min(room, a.count);
         b.count += put;
         a.count -= put;

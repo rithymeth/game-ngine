@@ -143,6 +143,24 @@ AETHER_TEST(Inventory_RemoveMoveAndSplit) {
     CHECK(!r.sys.Move(r.e, 0, 0) && !r.sys.Move(r.e, 9, 0) && !r.sys.Move(r.e, 1, 2));
 }
 
+AETHER_TEST(Inventory_DraggingOntoAnOverfullStackDoesNotMoveItemsBackward) {
+    Rig r;
+    if (!r.sys.Configure(r.e, 2) || r.sys.Add(r.e, "Coin", 105) != 105) { CHECK(false); return; }
+    const auto count = [&](i32 slot) {
+        const auto* value = r.sys.Slot(r.e, slot);
+        return value ? value->count : -1;
+    };
+    CHECK(count(0) == 100 && count(1) == 5);
+    CHECK(!r.sys.Move(r.e, 1, 0)); // Exactly full.
+    CHECK(count(0) == 100 && count(1) == 5);
+
+    CHECK(r.items.Register(Item("Coin", 10))); // Existing stacks can outlive their original definition.
+    CHECK(!r.sys.Move(r.e, 1, 0));
+    CHECK(count(0) == 100 && count(1) == 5);
+    CHECK(r.sys.Move(r.e, 0, 1)); // The smaller destination still has room.
+    CHECK(count(0) == 95 && count(1) == 10 && r.sys.Count(r.e, "Coin") == 105);
+}
+
 AETHER_TEST(Inventory_EquipAppliesEffectsAndUnequipRemovesThem) {
     Rig r;
     r.sys.Configure(r.e, 2);
