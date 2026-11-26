@@ -8,6 +8,8 @@
 #include <string>
 #include <vector>
 
+namespace aether::craft { class CraftingSystem; }
+
 namespace aether::inv {
 
 // Registers the inventory component with the ECS (idempotent).
@@ -79,6 +81,8 @@ public:
 
 private:
     Inventory* InventoryOf(Entity owner) const;
+    // Crafting uses the usual stack rules and restores the inventory and queued events on failure.
+    friend craft::CraftingSystem;
     bool Place(Inventory& inv, const std::string& item, i32 count, i32 max_stack, i32& placed, bool respect_weight, f32 weight_each) const;
     void Queue(Entity owner, const std::string& item, i32 count, ItemEvent::Kind kind, const std::string& slot = {});
 

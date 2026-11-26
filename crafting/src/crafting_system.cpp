@@ -49,35 +49,28 @@ Result CraftingSystem::Craft(Entity owner, const std::string& recipe, i32 times)
     if (times < 1 || times > kMaxTimes) return Result::BadCount;
     if (!Missing(owner, recipe, times).empty()) return Result::MissingInputs;
 
-    // Take the inputs. The check above makes a failure here impossible, but if it ever happens, put back what was taken.
-    std::vector<Ingredient> taken;
-    const auto put_back = [&] {
-        for (const Ingredient& line : taken) inventory_.Add(owner, line.item, line.count);
+    // Ingredients can already exceed today's weight limit, and adding them
+    // back can fail or rearrange stacks. Snapshot the exact inventory instead.
+    inv::Inventory* current = inventory_.InventoryOf(owner);
+    if (!current) return Result::MissingInputs;
+    inv::Inventory before = *current;
+    const usize event_count = inventory_.events_.size();
+    const auto rollback = [&](Result reason) {
+        *current = std::move(before);
+        inventory_.events_.resize(event_count);
+        return reason;
     };
+
+    // Remove/Add only edit this existing component and queue events; they do
+    // not move the component or dispatch callbacks.
     for (const Ingredient& input : def->inputs) {
-        const i32 count = input.count * times;
-        if (!inventory_.Remove(owner, input.item, count)) {
-            put_back();
-            return Result::MissingInputs;
-        }
-        taken.push_back({input.item, count});
+        if (!inventory_.Remove(owner, input.item, input.count * times))
+            return rollback(Result::MissingInputs);
     }
-    // Give the outputs; if any does not fully fit, undo everything.
-    std::vector<Ingredient> given;
-    bool fits = true;
     for (const Ingredient& output : def->outputs) {
         const i32 count = output.count * times;
-        const i32 placed = inventory_.Add(owner, output.item, count);
-        if (placed > 0) given.push_back({output.item, placed});
-        if (placed < count) {
-            fits = false;
-            break;
-        }
-    }
-    if (!fits) {
-        for (const Ingredient& line : given) inventory_.Remove(owner, line.item, line.count);
-        put_back();
-        return Result::NoRoom;
+        if (inventory_.Add(owner, output.item, count) < count)
+            return rollback(Result::NoRoom);
     }
     return Result::Ok;
 }

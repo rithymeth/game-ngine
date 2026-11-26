@@ -131,6 +131,45 @@ AETHER_TEST(Crafting_CraftsAllOrNothing) {
     CHECK(std::string(ResultName(Result::NoRoom)) == "no_room" && std::string(ResultName(Result::MissingInputs)) == "missing_inputs");
 }
 
+AETHER_TEST(Crafting_FailedWeightCheckDoesNotConsumeIngredients) {
+    Rig r;
+    auto ore = Item("Ore", 4);
+    ore.weight = 1.0f;
+    auto ingot = Item("Ingot", 4);
+    ingot.weight = 1.0f;
+    CHECK(r.items.Register(ore) && r.items.Register(ingot));
+    CHECK(r.recipes.Register(Recipe("Smelt", {{"Ore", 1}}, {{"Ingot", 1}})));
+    CraftingSystem crafting(r.inventory, r.recipes);
+    CHECK(r.inventory.Configure(r.e, 2) && r.inventory.Add(r.e, "Ore", 2) == 2);
+    CHECK(r.inventory.Configure(r.e, 2, 1.0f)); // Existing items are retained when the cap drops.
+    r.inventory.ClearEvents();
+    CHECK(crafting.Craft(r.e, "Smelt") == Result::NoRoom);
+    CHECK(r.inventory.Count(r.e, "Ore") == 2 && r.inventory.Count(r.e, "Ingot") == 0);
+    CHECK(r.inventory.Events().empty());
+}
+
+AETHER_TEST(Crafting_PartialOutputDoesNotMoveStacksOrEmitEvents) {
+    Rig r;
+    CraftingSystem crafting(r.inventory, r.recipes);
+    CHECK(r.inventory.Configure(r.e, 2));
+    CHECK(r.inventory.Add(r.e, "Core", 1) == 1 && r.inventory.Add(r.e, "Scrap", 1) == 1);
+    r.inventory.ClearEvents();
+    CHECK(r.inventory.Add(r.e, "Scrap", 1) == 1); // An unrelated queued event must survive.
+    CHECK(r.inventory.Remove(r.e, "Scrap", 1)); // One Scrap now frees a slot during the craft.
+    const auto before = r.inventory.Events();
+    CHECK(crafting.Craft(r.e, "Cores") == Result::NoRoom);
+    const auto* first = r.inventory.Slot(r.e, 0);
+    const auto* second = r.inventory.Slot(r.e, 1);
+    CHECK(first && first->item == "Core" && first->count == 1);
+    CHECK(second && second->item == "Scrap" && second->count == 1);
+    const auto& after = r.inventory.Events();
+    CHECK(after.size() == before.size());
+    for (usize i = 0; i < before.size() && i < after.size(); ++i) {
+        CHECK(before[i].entity == after[i].entity && before[i].kind == after[i].kind &&
+              before[i].item == after[i].item && before[i].count == after[i].count);
+    }
+}
+
 AETHER_TEST(Crafting_CraftsSeveralAtOnceAndFeedsTheItemEvents) {
     Rig r;
     CraftingSystem crafting(r.inventory, r.recipes);
