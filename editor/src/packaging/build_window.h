@@ -34,6 +34,7 @@ public:
     }
     std::string WarningAsset(const LogLine& line) const;
     bool OpenWarningAsset(const LogLine& line, std::string* error = nullptr);
+    std::string CopyBuildLog(bool warnings_only) const;
     bool StartCook();
     bool StartPackage();
     void Draw();
@@ -43,6 +44,7 @@ private:
     std::function<std::string()> source_check_;
     AssetCheck warning_asset_check_;
     AssetOpener warning_asset_open_;
+    bool warnings_only_ = false;
 };
 
 // The project's settings in a reflected property table, with Save and Revert.

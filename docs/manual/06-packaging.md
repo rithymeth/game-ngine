@@ -106,7 +106,8 @@ temporary folder with isolated user data. It does not use or change the
 Launch arguments. The editor reports pass, exit failure, timeout, or
 cancellation in the build log. On failure, it also shows recent player
 warnings and errors. The temporary log is removed with the test data.
-This is not a graphics test.
+This is not a graphics test. Use **Warnings and errors only** to hide normal
+build progress, and **Copy log** to copy the visible diagnostic text.
 
 For the editor's **Launch** arguments, put double quotes around values that
 contain spaces, for example `--user-dir "Player Data"`. Backslashes in Windows
