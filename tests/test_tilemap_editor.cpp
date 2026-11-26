@@ -1055,6 +1055,51 @@ AETHER_TEST(TilemapEditor_CollisionOutlineSitsAboveDecorativeLayers) {
     CHECK(!IsSolidAt(doc.Map(), doc.GetTileset(), 1, 1));
 }
 
+AETHER_TEST(TilemapEditor_SoloLayerShowsOnlySelectedArtButKeepsDiagnostics) {
+    HeadlessImGui ui;
+    TilemapData map;
+    map.Resize(6, 5);
+    map.AddLayer("Ground");
+    map.AddLayer("Decoration");
+    map.Set(0, 1, 1, 1);
+    map.Set(0, 2, 2, AutotileCell(0)); // missing rule even with a swatch-only tileset
+    map.Set(1, 1, 1, 2);
+    map.layers[1].collides = false;
+    Tileset ts;
+    ts.texture_width = ts.texture_height = 32;
+    ts.tile_width = ts.tile_height = 16;
+    ts.SetSolid(1, true);
+    TilemapEditDocument doc(std::move(map), std::move(ts));
+    TilemapPanel panel(doc);
+    panel.show_grid = false;
+    constexpr ImU32 marker = IM_COL32(220, 40, 40, 255), invalid = IM_COL32(255, 96, 215, 255);
+    const auto draw = [&] {
+        ui.Frame([&] { panel.Draw(); });
+        for (const auto* list : ImGui::GetDrawData()->CmdLists) {
+            if (!list->_OwnerName || std::string_view(list->_OwnerName).find("##canvas") == std::string_view::npos)
+                continue;
+            std::vector<ImU32> colors;
+            for (const auto& v : list->VtxBuffer) colors.push_back(v.col);
+            return colors;
+        }
+        return std::vector<ImU32>{};
+    };
+    const auto all = draw();
+    panel.solo_layer_art = true;
+    const auto ground = draw();
+    doc.active_layer = 1;
+    const auto decor = draw();
+    CHECK(!ground.empty() && !decor.empty() && ground != decor);
+    CHECK(all.size() == ground.size() + 4 && all.size() == decor.size() + 4);
+    for (const auto color : {marker, invalid}) {
+        const auto count = [&](const auto& colors) { return std::count(colors.begin(), colors.end(), color); };
+        CHECK(count(all) > 0 && count(decor) == count(all) && count(ground) == count(all));
+    }
+    panel.solo_layer_art = false;
+    CHECK(draw() == all);
+    CHECK(!doc.dirty() && !doc.CanUndo() && doc.Map().Get(0, 1, 1) == 1 && doc.Map().Get(1, 1, 1) == 2);
+}
+
 AETHER_TEST(TilemapEditor_HoverNamesTheLayerThatBlocksMovement) {
     HeadlessImGui ui;
     TilemapData map;
