@@ -21,6 +21,7 @@
 #include <fstream>
 #include <functional>
 #include <limits>
+#include <optional>
 #include <unordered_map>
 #include <set>
 
@@ -61,12 +62,35 @@ struct SheetExtentCheck {
     u32 width, height;
 };
 
-u32 SheetPixels(const json& value) {
-    if (!value.is_number()) return 0;
+std::optional<u32> SheetPixels(const json& value) {
+    if (!value.is_number()) return std::nullopt;
     const f64 n = value.get<f64>();
-    if (!(n > 0 && n <= std::numeric_limits<u32>::max())) return 0;
+    if (!(n >= 0 && n <= std::numeric_limits<u32>::max())) return std::nullopt;
     const auto pixels = static_cast<u32>(n);
-    return n == pixels ? pixels : 0;
+    return n == pixels ? std::optional{pixels} : std::nullopt;
+}
+
+std::string CheckSpriteCrops(const json& document, u32 width, u32 height) {
+    const auto frames = document.find("frames");
+    if (frames == document.end() || !frames->is_array()) return {};
+    for (usize i = 0; i < frames->size(); ++i) {
+        const auto& frame = (*frames)[i];
+        if (!frame.is_object()) continue;
+        const auto pixels = [&](const char* key) -> std::optional<u32> {
+            const auto found = frame.find(key);
+            return found == frame.end() ? std::optional<u32>{0} : SheetPixels(*found);
+        };
+        const auto x = pixels("x"), y = pixels("y"), w = pixels("w"), h = pixels("h");
+        if (!x || !y || !w || !h || *w == 0 || *h == 0) continue;
+        if (static_cast<u64>(*x) + *w > width || static_cast<u64>(*y) + *h > height) {
+            const auto name = frame.find("name");
+            const std::string label = name != frame.end() && name->is_string() ? "'" + name->get<std::string>() + "'" :
+                                      "#" + std::to_string(i + 1);
+            return "frame " + label + " is outside the " + std::to_string(width) + "x" +
+                   std::to_string(height) + " atlas bounds";
+        }
+    }
+    return {};
 }
 
 // Check 2D headers and typed references without linking Sprite2D. A tileset or
@@ -100,18 +124,23 @@ std::string Check2DReference(const AssetRecord& record, const std::vector<u8>& b
         if (record.importer == "Tileset") {
             const auto size = document.find("texture_size");
             if (size != document.end() && size->is_array() && size->size() == 2) {
-                width = SheetPixels((*size)[0]);
-                height = SheetPixels((*size)[1]);
+                width = SheetPixels((*size)[0]).value_or(0);
+                height = SheetPixels((*size)[1]).value_or(0);
             }
         } else if (record.importer == "SpriteAtlas") {
             const auto w = document.find("width"), h = document.find("height");
             if (w != document.end() && h != document.end()) {
-                width = SheetPixels(*w);
-                height = SheetPixels(*h);
+                width = SheetPixels(*w).value_or(0);
+                height = SheetPixels(*h).value_or(0);
             }
         }
-        if (width != 0 && height != 0)
+        if (width != 0 && height != 0) {
+            if (record.importer == "SpriteAtlas") {
+                const auto crop_problem = CheckSpriteCrops(document, width, height);
+                if (!crop_problem.empty()) return crop_problem;
+            }
             extents.push_back({guid, record.path, dependency->path, width, height});
+        }
     }
     return {};
 }
