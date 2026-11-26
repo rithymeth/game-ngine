@@ -1,5 +1,6 @@
 #include "aether/assets/environment.h"
 #include "aether/assets/image.h"
+#include "aether/assets/png_writer.h"
 #include "aether/cook/cooker.h"
 #include "aether/core/log.h"
 #include "aether/cook/texture_cook.h"
@@ -224,6 +225,54 @@ AETHER_TEST(Cook_CooksWhatTheGameReaches) {
 // importer claims. A font's licence, a readme, a data file a script opens by
 // name: none of those is an asset, and every one of them used to be left out of
 // the package without a word.
+AETHER_TEST(Cook_RejectsTilesetsThatDisagreeWithCookedTextureDimensions) {
+    const auto root = stdfs::temp_directory_path() / "aether_cook_tileset_dimensions";
+    ProjectPaths paths;
+    std::string error;
+    if (!CreateProject(root, "Tiles", &paths, &error)) { CHECK(false); return; }
+    const auto png = assets::EncodePngRgba8(24, 16, std::vector<u8>(24 * 16 * 4, 255));
+    std::ofstream(paths.content / "Ground.png", std::ios::binary)
+        .write(reinterpret_cast<const char*>(png.data()), static_cast<std::streamsize>(png.size()));
+    const auto texture = GuidOf(paths.content, "Ground.png");
+    if (texture.empty()) { CHECK(false); return; }
+    const auto write_tileset = [&](int width) {
+        WriteText(paths.content / "Ground.atileset",
+                  json({{"$type", "Tileset"}, {"$version", 1}, {"texture", texture},
+                        {"texture_size", {width, 16}}, {"tile_size", {8, 8}}}).dump());
+    };
+    write_tileset(16);
+    ProjectSettings project;
+    if (!LoadProject(paths.file, project, &error)) { CHECK(false); return; }
+    project.startup_scene = "Start.ascene";
+    WriteText(paths.content / project.startup_scene, R"({"$type":"Scene","$version":1,"entities":[]})");
+    project.always_cook = {"Ground.atileset"};
+    if (!SaveProject(paths.file, project, &error)) { CHECK(false); return; }
+
+    cook::CookOptions options;
+    options.project_file = paths.file;
+    options.output_dir = root / "Strict";
+    options.configuration = cook::BuildConfiguration::Shipping;
+    options.strict_validation = true;
+    const std::string expected = "Ground.atileset: expects a 16x16 texture, but Ground.png cooks to 24x16";
+    const auto bad = cook::Cook(options);
+    CHECK(!bad.ok && bad.error.find(expected) != std::string::npos);
+    CHECK(!stdfs::exists(options.output_dir / "Game.apak"));
+
+    options.output_dir = root / "Development";
+    options.configuration = cook::BuildConfiguration::Development;
+    options.strict_validation = false;
+    const auto warning = cook::Cook(options);
+    CHECK(warning.ok && warning.texture_cache_hits == 1 &&
+          std::find(warning.warnings.begin(), warning.warnings.end(), expected) != warning.warnings.end());
+
+    write_tileset(24);
+    options.output_dir = root / "Strict";
+    options.configuration = cook::BuildConfiguration::Shipping;
+    options.strict_validation = true;
+    const auto good = cook::Cook(options);
+    CHECK(good.ok && good.texture_cache_hits == 1 && good.warnings.empty());
+}
+
 AETHER_TEST(Cook_AnAlwaysCookFolderShipsItsPlainFilesToo) {
     const stdfs::path project = MakeProject("FolderFiles");
     const stdfs::path content = project.parent_path() / "Content";

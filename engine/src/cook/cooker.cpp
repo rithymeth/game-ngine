@@ -20,6 +20,8 @@
 #include <deque>
 #include <fstream>
 #include <functional>
+#include <limits>
+#include <unordered_map>
 #include <set>
 
 namespace aether::cook {
@@ -53,10 +55,16 @@ bool ParseConfiguration(const std::string& name, BuildConfiguration& out) {
 
 namespace {
 
-// The runtime 2D loader handles frame geometry and tile data. The cooker
-// checks only the header and typed dependency, without linking Sprite2D.
+struct SheetExtentCheck {
+    AssetGuid texture;
+    std::string tileset_path, texture_path;
+    u32 width, height;
+};
+
+// Check 2D headers and typed references without linking Sprite2D. A tileset
+// can also be compared to the exact texture dimensions stored in this cook.
 std::string Check2DReference(const AssetRecord& record, const std::vector<u8>& bytes,
-                             const AssetDatabase& database) {
+                             const AssetDatabase& database, std::vector<SheetExtentCheck>& extents) {
     const bool tilemap = record.importer == "Tilemap";
     if (!tilemap && record.importer != "SpriteAtlas" && record.importer != "Tileset") return {};
     const auto document = json::parse(bytes.begin(), bytes.end(), nullptr, false);
@@ -77,8 +85,20 @@ std::string Check2DReference(const AssetRecord& record, const std::vector<u8>& b
     if (guid.IsNull()) return {};
     // Missing GUIDs are already reported by CollectCookSet.
     const AssetRecord* dependency = database.Find(guid);
-    if (dependency && !dependency->missing && dependency->importer != expected)
-        return field + " expects " + expected + ", but " + dependency->path + " is " + dependency->importer;
+    if (dependency && !dependency->missing) {
+        if (dependency->importer != expected)
+            return field + " expects " + expected + ", but " + dependency->path + " is " + dependency->importer;
+        if (record.importer == "Tileset") {
+            const auto size = document.find("texture_size");
+            if (size != document.end() && size->is_array() && size->size() == 2 &&
+                (*size)[0].is_number_unsigned() && (*size)[1].is_number_unsigned()) {
+                const auto width = (*size)[0].get<u64>(), height = (*size)[1].get<u64>();
+                if (width > 0 && width <= std::numeric_limits<u32>::max() &&
+                    height > 0 && height <= std::numeric_limits<u32>::max())
+                    extents.push_back({guid, record.path, dependency->path, static_cast<u32>(width), static_cast<u32>(height)});
+            }
+        }
+    }
     return {};
 }
 
@@ -412,6 +432,8 @@ CookReport Cook(const CookOptions& options) {
     const assets::ImporterRegistry importers = assets::ImporterRegistry::WithBuiltins();
     assets::DerivedDataCache cache(paths.intermediate / "DerivedDataCache");
     json manifest_assets = json::array();
+    std::vector<SheetExtentCheck> sheet_extents;
+    std::unordered_map<AssetGuid, std::pair<u32, u32>> texture_extents;
 
     if (!settings.quality_presets.empty() && !FindQualityPreset(settings, settings.default_quality)) {
         report.warnings.push_back("The default quality '" + settings.default_quality + "' isn't a preset; the game starts on '" +
@@ -433,7 +455,7 @@ CookReport Cook(const CookOptions& options) {
         if (!fs::ReadFileBytes(database.SourcePath(guid).string(), bytes)) {
             return fail("Can't read " + record.path);
         }
-        if (const std::string problem = Check2DReference(record, bytes, database); !problem.empty())
+        if (const std::string problem = Check2DReference(record, bytes, database, sheet_extents); !problem.empty())
             report.warnings.push_back(record.path + ": " + problem);
         if (record.importer == "Sound") {
             const std::string problem = CheckSoundHeader(record.path, bytes);
@@ -584,6 +606,7 @@ CookReport Cook(const CookOptions& options) {
             }
             if (atex.empty() && defer_source) writer.Add("Content/" + record.path, bytes);
             if (!atex.empty()) {
+                texture_extents.emplace(guid, std::pair{cooked_texture.width, cooked_texture.height});
                 cooked.cooked = "Cooked/" + assets::ToString(guid) + ".atex";
                 cooked.cooked_bytes = atex.size();
                 cooked_format = TextureFormatName(cooked_texture.format);
@@ -653,6 +676,15 @@ CookReport Cook(const CookOptions& options) {
             const usize added = writer.AddDirectory(dir.string(), "Content/" + mount.substr(0, mount.size() - 1));
             if (added == 0) report.warnings.push_back("The plugin content folder " + dir.string() + " is empty");
         }
+    }
+    for (const auto& sheet : sheet_extents) {
+        const auto it = texture_extents.find(sheet.texture);
+        if (it == texture_extents.end()) continue; // No cooked copy in this archive.
+        const auto [width, height] = it->second;
+        if (width != sheet.width || height != sheet.height)
+            report.warnings.push_back(sheet.tileset_path + ": expects a " + std::to_string(sheet.width) + "x" +
+                std::to_string(sheet.height) + " texture, but " + sheet.texture_path + " cooks to " +
+                std::to_string(width) + "x" + std::to_string(height));
     }
     if (options.strict_validation && !report.warnings.empty()) {
         return fail("Cook validation failed with " + std::to_string(report.warnings.size()) + " warning(s); first: " +
