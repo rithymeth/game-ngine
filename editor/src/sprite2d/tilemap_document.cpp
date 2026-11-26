@@ -56,8 +56,7 @@ TilemapEditDocument::TilemapEditDocument(TilemapData map, Tileset tileset)
 }
 
 void TilemapEditDocument::Changed() {
-    ++revision_;
-    dirty_ = true;
+    state_ = ++revision_;
 }
 
 void TilemapEditDocument::ClampActive() {
@@ -65,7 +64,8 @@ void TilemapEditDocument::ClampActive() {
 }
 
 void TilemapEditDocument::Record(bool track_selection) {
-    undo_.push_back({map_, tileset_, track_selection ? std::optional<usize>{active_layer} : std::nullopt});
+    EndStroke();
+    undo_.push_back({map_, tileset_, state_, track_selection ? std::optional<usize>{active_layer} : std::nullopt});
     redo_.clear();
     Changed();
 }
@@ -73,7 +73,7 @@ void TilemapEditDocument::Record(bool track_selection) {
 void TilemapEditDocument::BeginStroke() {
     if (in_stroke_) return;
     in_stroke_ = true;
-    stroke_start_ = {map_, tileset_};
+    stroke_start_ = {map_, tileset_, state_};
 }
 
 void TilemapEditDocument::EndStroke() {
@@ -146,28 +146,32 @@ void TilemapEditDocument::Rectangle(i32 x0, i32 y0, i32 x1, i32 y1) {
 }
 
 bool TilemapEditDocument::Undo() {
+    EndStroke();
     if (undo_.empty()) return false;
     const auto selection = undo_.back().selection;
-    redo_.push_back({map_, tileset_, selection ? std::optional<usize>{active_layer} : std::nullopt});
+    redo_.push_back({map_, tileset_, state_, selection ? std::optional<usize>{active_layer} : std::nullopt});
     map_ = std::move(undo_.back().map);
     tileset_ = std::move(undo_.back().tileset);
+    state_ = undo_.back().state;
     undo_.pop_back();
     if (selection) active_layer = *selection;
     ClampActive();
-    Changed();
+    ++revision_;
     return true;
 }
 
 bool TilemapEditDocument::Redo() {
+    EndStroke();
     if (redo_.empty()) return false;
     const auto selection = redo_.back().selection;
-    undo_.push_back({map_, tileset_, selection ? std::optional<usize>{active_layer} : std::nullopt});
+    undo_.push_back({map_, tileset_, state_, selection ? std::optional<usize>{active_layer} : std::nullopt});
     map_ = std::move(redo_.back().map);
     tileset_ = std::move(redo_.back().tileset);
+    state_ = redo_.back().state;
     redo_.pop_back();
     if (selection) active_layer = *selection;
     ClampActive();
-    Changed();
+    ++revision_;
     return true;
 }
 
@@ -275,6 +279,7 @@ bool TilemapEditDocument::FillEmptyAutotileMasks(usize autotile, i32 tile) {
 
 bool TilemapEditDocument::Save(const std::filesystem::path& tilemap_file, const std::filesystem::path& tileset_file,
                                std::string* error) {
+    EndStroke();
     if (error) error->clear();
     StagedTileAsset map, tiles;
     if (!map.Prepare(tilemap_file, error) || !tiles.Prepare(tileset_file, error) ||
@@ -288,12 +293,13 @@ bool TilemapEditDocument::Save(const std::filesystem::path& tilemap_file, const 
     // Both files were staged, but an external change can still block the second rename.
     stdfs::rename(tiles.payload, tileset_file, ec);
     if (ec) {
+        saved_state_.reset(); // The previous pair on disk may no longer match its checkpoint.
         if (error) *error = "The map was saved, but couldn't replace " + tileset_file.string() + ": " + ec.message();
         return false;
     }
     tilemap_file_ = tilemap_file;
     tileset_file_ = tileset_file;
-    dirty_ = false;
+    saved_state_ = state_;
     return true;
 }
 
@@ -313,8 +319,8 @@ bool TilemapEditDocument::Load(const std::filesystem::path& tilemap_file, const 
     active_layer = 0;
     tool = TileTool::Paint;
     brush = 0;
-    ++revision_;
-    dirty_ = false;
+    state_ = ++revision_;
+    saved_state_ = state_;
     return true;
 }
 
