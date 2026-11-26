@@ -355,15 +355,28 @@ AETHER_TEST(Vehicles_PlayerDrivesACarFromAScript) {
     game.BeginPlay();
     CHECK(game.Saves() != nullptr && game.PhysicsQueries() != nullptr);
     if (!game.Saves() || !game.PhysicsQueries()) return;
-    for (int i = 0; i < 360; ++i) game.Tick(kDt);
+    const save::SaveBag& bag = game.Saves()->Bag();
+    f32 spin_travel = 0.0f;
+    f32 previous_spin = 0.0f;
+    bool have_previous_spin = false;
+    constexpr f32 full_turn = 6.28318530717958647692f;
+    for (int i = 0; i < 360; ++i) {
+        game.Tick(kDt);
+        const f32 spin = bag.GetFloat("spin");
+        CHECK(std::isfinite(spin));
+        if (!std::isfinite(spin)) continue;
+        // WheelSpin is a wrapped phase, so measure travel instead of its final angle.
+        if (have_previous_spin) spin_travel += std::fabs(std::remainder(spin - previous_spin, full_turn));
+        previous_spin = spin;
+        have_previous_spin = true;
+    }
     CHECK(game.ScriptErrors().empty());
     const std::vector<Entity> cars = FindEntitiesWithTag(game.GetWorld(), "Car");
     CHECK(cars.size() == 1);
     if (cars.size() != 1) return;
-    const save::SaveBag& bag = game.Saves()->Bag();
     CHECK(bag.GetInt("drive") == 1 && bag.GetInt("wheels") == 4);
     CHECK(bag.GetFloat("speed") > 5.0f && game.GetWorld().GetComponent<Transform>(cars[0])->position.z > 8.0f);
-    CHECK(bag.GetFloat("wheel_z") > 5.0f && std::fabs(bag.GetFloat("spin")) > 5.0f); // the front-left wheel is out in front, the rear one has been turning
+    CHECK(bag.GetFloat("wheel_z") > 5.0f && spin_travel > 5.0f); // the front-left wheel is out in front, the rear one has been turning
 }
 #endif
 
