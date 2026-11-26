@@ -79,7 +79,19 @@ struct StoredAtlasNames {
     std::unordered_set<std::string> frames, clips;
 };
 
-using StoredAtlasIndex = std::unordered_map<AssetGuid, StoredAtlasNames>;
+struct TilemapCellCheck {
+    AssetGuid tileset;
+    std::string map, set;
+    usize layer, x, y;
+    u32 tile;
+};
+
+struct Cook2DChecks {
+    std::vector<SheetExtentCheck> extents;
+    std::unordered_map<AssetGuid, StoredAtlasNames> atlases;
+    std::unordered_map<AssetGuid, u64> tileset_grids;
+    std::vector<TilemapCellCheck> map_cells;
+};
 
 struct StoredTextureExtent {
     u32 width, height;
@@ -182,7 +194,7 @@ std::string CheckSpriteClipFrames(const json& document, const std::unordered_set
     return {};
 }
 
-std::string CheckTilesetGridRefs(const json& document, u32 width, u32 height) {
+u64 TilesetGridCount(const json& document, u32 width, u32 height) {
     const auto tile = document.find("tile_size");
     if (tile == document.end() || !tile->is_array() || tile->size() != 2) return {};
     const auto optional_pixels = [&](const char* name) -> std::optional<u32> {
@@ -198,8 +210,11 @@ std::string CheckTilesetGridRefs(const json& document, u32 width, u32 height) {
         return (size - border + *spacing) / (cell_size + *spacing);
     };
     // Same complete-cell and signed tile ID rules as the runtime Tileset.
-    const u64 count = std::min(grid_axis(width, *cell_w) * grid_axis(height, *cell_h),
-                              static_cast<u64>(std::numeric_limits<i32>::max()) + 1);
+    return std::min(grid_axis(width, *cell_w) * grid_axis(height, *cell_h),
+                    static_cast<u64>(std::numeric_limits<i32>::max()) + 1);
+}
+
+std::string CheckTilesetGridRefs(const json& document, u64 count) {
     if (count == 0) return {}; // Only validate references in a defined grid.
     if (const auto solid = document.find("solid"); solid != document.end() && solid->is_array()) {
         for (const auto& value : *solid) {
@@ -227,11 +242,39 @@ std::string CheckTilesetGridRefs(const json& document, u32 width, u32 height) {
     return {};
 }
 
+void CollectTilemapCells(const json& document, const AssetRecord& record,
+                         const AssetRecord& tileset, std::vector<TilemapCellCheck>& checks) {
+    const auto size = document.find("size"), layers = document.find("layers");
+    if (size == document.end() || !size->is_array() || size->size() != 2 ||
+        layers == document.end() || !layers->is_array()) return;
+    const auto w = SheetPixels((*size)[0]), h = SheetPixels((*size)[1]);
+    if (!w || !h || *w == 0 || *h == 0) return;
+    const u64 cell_count = static_cast<u64>(*w) * *h;
+    std::optional<u32> highest;
+    usize highest_layer = 0, highest_cell = 0;
+    for (usize l = 0; l < layers->size(); ++l) {
+        const auto& layer = (*layers)[l];
+        const auto cells = layer.find("cells");
+        if (cells == layer.end() || !cells->is_array() || cells->size() != cell_count) continue;
+        for (usize i = 0; i < cells->size(); ++i) {
+            // The maximum concrete tile is enough to prove grid membership
+            // once its tileset is encountered. Empty and autotile sentinels
+            // are negative and are outside this check.
+            if (const auto tile = SheetPixels((*cells)[i]); tile && (!highest || *tile > *highest)) {
+                highest = tile;
+                highest_layer = l;
+                highest_cell = i;
+            }
+        }
+    }
+    if (highest) checks.push_back({tileset.guid, record.path, tileset.path, highest_layer,
+                                   highest_cell % *w, highest_cell / *w, *highest});
+}
+
 // Check 2D headers and typed references without linking Sprite2D. A tileset or
 // sprite atlas can be compared to the exact texture dimensions in this cook.
 std::string Check2DReference(const AssetRecord& record, const std::vector<u8>& bytes,
-                             const AssetDatabase& database, std::vector<SheetExtentCheck>& extents,
-                             StoredAtlasIndex& atlas_names) {
+                             const AssetDatabase& database, Cook2DChecks& checks) {
     const bool tilemap = record.importer == "Tilemap";
     if (!tilemap && record.importer != "SpriteAtlas" && record.importer != "Tileset") return {};
     const auto document = json::parse(bytes.begin(), bytes.end(), nullptr, false);
@@ -241,7 +284,7 @@ std::string Check2DReference(const AssetRecord& record, const std::vector<u8>& b
         return "expected a " + record.importer + " JSON object";
     if (record.importer == "SpriteAtlas") {
         StoredAtlasNames names{record.path, CollectAtlasNames(document, "frames"), CollectAtlasNames(document, "clips")};
-        const auto& stored = atlas_names.emplace(record.guid, std::move(names)).first->second;
+        const auto& stored = checks.atlases.emplace(record.guid, std::move(names)).first->second;
         const auto clip_problem = CheckSpriteClipFrames(document, stored.frames);
         if (!clip_problem.empty()) return clip_problem;
     }
@@ -261,6 +304,10 @@ std::string Check2DReference(const AssetRecord& record, const std::vector<u8>& b
     if (dependency && !dependency->missing) {
         if (dependency->importer != expected)
             return field + " expects " + expected + ", but " + dependency->path + " is " + dependency->importer;
+        if (tilemap) {
+            CollectTilemapCells(document, record, *dependency, checks.map_cells);
+            return {};
+        }
         u32 width = 0, height = 0;
         if (record.importer == "Tileset") {
             const auto size = document.find("texture_size");
@@ -280,10 +327,12 @@ std::string Check2DReference(const AssetRecord& record, const std::vector<u8>& b
                 const auto crop_problem = CheckSpriteCrops(document, width, height);
                 if (!crop_problem.empty()) return crop_problem;
             } else if (record.importer == "Tileset") {
-                const auto grid_problem = CheckTilesetGridRefs(document, width, height);
+                const u64 count = TilesetGridCount(document, width, height);
+                const auto grid_problem = CheckTilesetGridRefs(document, count);
                 if (!grid_problem.empty()) return grid_problem;
+                if (count != 0) checks.tileset_grids.emplace(record.guid, count);
             }
-            extents.push_back({guid, record.path, dependency->path, width, height});
+            checks.extents.push_back({guid, record.path, dependency->path, width, height});
         }
     }
     return {};
@@ -619,9 +668,8 @@ CookReport Cook(const CookOptions& options) {
     const assets::ImporterRegistry importers = assets::ImporterRegistry::WithBuiltins();
     assets::DerivedDataCache cache(paths.intermediate / "DerivedDataCache");
     json manifest_assets = json::array();
-    std::vector<SheetExtentCheck> sheet_extents;
+    Cook2DChecks checks_2d;
     std::unordered_map<AssetGuid, StoredTextureExtent> texture_extents;
-    StoredAtlasIndex atlas_names;
     std::vector<SpriteNameCheck> sprite_names;
 
     if (!settings.quality_presets.empty() && !FindQualityPreset(settings, settings.default_quality)) {
@@ -644,7 +692,7 @@ CookReport Cook(const CookOptions& options) {
         if (!fs::ReadFileBytes(database.SourcePath(guid).string(), bytes)) {
             return fail("Can't read " + record.path);
         }
-        if (const std::string problem = Check2DReference(record, bytes, database, sheet_extents, atlas_names); !problem.empty())
+        if (const std::string problem = Check2DReference(record, bytes, database, checks_2d); !problem.empty())
             report.warnings.push_back(record.path + ": " + problem);
         if (record.importer == "Sound") {
             const std::string problem = CheckSoundHeader(record.path, bytes);
@@ -871,7 +919,7 @@ CookReport Cook(const CookOptions& options) {
             if (added == 0) report.warnings.push_back("The plugin content folder " + dir.string() + " is empty");
         }
     }
-    for (const auto& sheet : sheet_extents) {
+    for (const auto& sheet : checks_2d.extents) {
         const auto it = texture_extents.find(sheet.texture);
         if (it == texture_extents.end()) continue; // No comparable texture in this archive.
         const auto [width, height, cooked] = it->second;
@@ -882,10 +930,17 @@ CookReport Cook(const CookOptions& options) {
                 std::to_string(sheet.height) + " texture, but " + image + std::to_string(width) + "x" + std::to_string(height));
         }
     }
+    for (const auto& cell : checks_2d.map_cells) {
+        const auto grid = checks_2d.tileset_grids.find(cell.tileset);
+        if (grid == checks_2d.tileset_grids.end() || cell.tile < grid->second) continue;
+        report.warnings.push_back(cell.map + ": layer " + std::to_string(cell.layer) + " cell (" +
+            std::to_string(cell.x) + ", " + std::to_string(cell.y) + ") uses tile index " + std::to_string(cell.tile) +
+            " outside the " + std::to_string(grid->second) + "-tile grid in " + cell.set);
+    }
     for (const auto& sprite : sprite_names) {
-        const auto atlas = atlas_names.find(sprite.atlas);
+        const auto atlas = checks_2d.atlases.find(sprite.atlas);
         // An absent atlas (for example in a patch base) has no comparable names in this cook.
-        if (atlas == atlas_names.end()) continue;
+        if (atlas == checks_2d.atlases.end()) continue;
         const bool animated = sprite.kind == SpriteNameKind::Clip;
         const auto& names = animated ? atlas->second.clips : atlas->second.frames;
         if (!names.contains(sprite.name))
