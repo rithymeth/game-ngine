@@ -182,6 +182,24 @@ AETHER_TEST(Loc_LocalizerResolvesThroughTheChain) {
     CHECK(bare.Resolve(LocText{"k", "src"}) == "src" && bare.Resolve(LocText{"k", ""}) == "k");
 }
 
+AETHER_TEST(Loc_FallbackEntriesUseTheLanguageTheyWereWrittenIn) {
+    StringTable table;
+    table.Set("en", "coins", "{count} coin{count|s}");
+    table.Set("fr", "coins", "{count} piece{count|s}");
+    table.Set("pt", "coins", "{count} moeda{count|s}");
+    Localizer localizer;
+    localizer.SetTable(&table);
+
+    const FormatArgs one{{"count", i64{1}}}, zero{{"count", i64{0}}};
+    localizer.SetLanguage("ja");
+    CHECK(localizer.Resolve("coins", &one) == "1 coin"); // English default, not Japanese plural rules.
+    CHECK(localizer.Resolve("coins", &zero) == "0 coins");
+    localizer.SetLanguage("pt-PT");
+    CHECK(localizer.Resolve("coins", &zero) == "0 moeda"); // The base pt entry was selected.
+    localizer.SetLanguage("fr");
+    CHECK(localizer.Resolve("coins", &zero) == "0 piece"); // Existing exact-language behavior stays intact.
+}
+
 AETHER_TEST(Loc_LocTextIsAReflectedField) {
     LocText a{"menu.play", "Play"};
     CHECK(!a.IsLiteral() && !a.IsEmpty() && LocText::Literal("x").IsLiteral() && LocText{}.IsEmpty());

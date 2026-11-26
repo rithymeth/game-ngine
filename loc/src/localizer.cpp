@@ -16,20 +16,36 @@ void Localizer::SetDefaultLanguage(std::string language) {
 
 std::vector<std::string> Localizer::Chain() const { return FallbackChain(language_, default_language_); }
 
-const std::string* Localizer::Lookup(const std::string& key) const {
-    if (!table_ || key.empty()) return nullptr;
-    for (const std::string& lang : Chain()) {
-        if (const std::string* text = table_->Find(lang, key)) return text;
+namespace {
+
+const std::string* FindLocalizedEntry(const StringTable* table, const std::string& key,
+                                      std::string_view language, std::string_view default_language,
+                                      std::string* entry_language = nullptr) {
+    if (!table || key.empty()) return nullptr;
+    for (const std::string& tag : FallbackChain(language, default_language)) {
+        if (const std::string* text = table->Find(tag, key)) {
+            if (entry_language) *entry_language = tag;
+            return text;
+        }
     }
     return nullptr;
+}
+
+} // namespace
+
+const std::string* Localizer::Lookup(const std::string& key) const {
+    return FindLocalizedEntry(table_, key, language_, default_language_);
 }
 
 bool Localizer::IsTranslated(const LocText& text) const { return Lookup(text.key) != nullptr; }
 
 std::string Localizer::Resolve(const LocText& text, const FormatArgs* args, std::vector<std::string>* errors) const {
-    const std::string* found = Lookup(text.key);
+    std::string entry_language;
+    const std::string* found = FindLocalizedEntry(table_, text.key, language_, default_language_,
+                                                   args ? &entry_language : nullptr);
     const std::string& chosen = found ? *found : (!text.source.empty() ? text.source : text.key);
-    return args ? Format(chosen, language_, *args, errors) : chosen;
+    // A fallback translation uses its own plural rules, not the requested language's.
+    return args ? Format(chosen, found ? entry_language : language_, *args, errors) : chosen;
 }
 
 } // namespace aether::loc
