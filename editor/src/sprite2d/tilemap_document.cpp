@@ -188,8 +188,9 @@ usize TilemapEditDocument::AddLayer(const std::string& name) {
 
 bool TilemapEditDocument::RemoveLayer(usize layer) {
     if (layer >= map_.layers.size() || map_.layers.size() == 1) return false; // a map keeps one layer
-    Record();
+    Record(true);
     map_.layers.erase(map_.layers.begin() + static_cast<std::ptrdiff_t>(layer));
+    if (layer < active_layer) --active_layer;
     ClampActive();
     return true;
 }

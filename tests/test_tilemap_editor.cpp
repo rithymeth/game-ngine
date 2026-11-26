@@ -192,6 +192,31 @@ AETHER_TEST(TilemapEditor_LayersSolidsAndResize) {
     CHECK(doc.Undo() && doc.Map().width == 6);
 }
 
+AETHER_TEST(TilemapEditor_RemovingLayerKeepsTheBrushOnTheSameLayer) {
+    TilemapEditDocument doc = Doc();
+    doc.AddLayer("Walls");
+    doc.AddLayer("Canopy");
+    doc.active_layer = 1;
+
+    // Deleting a layer underneath Walls shifts its index, not the brush target.
+    CHECK(doc.RemoveLayer(0));
+    CHECK(doc.active_layer == 0 && doc.Map().layers[0].name == "Walls");
+    CHECK(doc.Undo());
+    CHECK(doc.active_layer == 1 && doc.Map().layers[1].name == "Walls");
+    CHECK(doc.Redo());
+    CHECK(doc.active_layer == 0 && doc.Map().layers[0].name == "Walls");
+    doc.brush = 4;
+    doc.Apply(0, 0);
+    CHECK(doc.Map().Get(0, 0, 0) == 4 && doc.Map().Get(1, 0, 0) == kEmpty);
+
+    // Deleting the selected top layer selects its neighbor; Undo selects the restored layer.
+    doc.active_layer = 1;
+    CHECK(doc.RemoveLayer(1) && doc.active_layer == 0);
+    CHECK(doc.Undo());
+    CHECK(doc.active_layer == 1 && doc.Map().layers[1].name == "Canopy");
+    CHECK(doc.Redo() && doc.active_layer == 0);
+}
+
 AETHER_TEST(TilemapEditor_SavesBothFiles) {
     TilemapEditDocument doc = Doc();
     doc.brush = 5;
