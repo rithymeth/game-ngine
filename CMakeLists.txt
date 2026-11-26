@@ -780,6 +780,16 @@ if(AETHER_BUILD_TESTS AND Python3_Interpreter_FOUND AND NOT WIN32 AND NOT ANDROI
             $<TARGET_FILE:aether_package> $<TARGET_FILE:aether_cook> $<TARGET_FILE:aether_pak> $<TARGET_FILE:aether_player>)
         set_tests_properties(${test_name} PROPERTIES TIMEOUT 180)
     endforeach()
+    # Exercise real checkpoint and inventory saves across cooked player restarts, without graphics.
+    if(TARGET Aether::Physics AND TARGET Aether::Scripting AND TARGET Aether::Checkpoints
+       AND TARGET Aether::Crafting AND TARGET Aether::Achievements)
+        add_test(NAME ashen_frontier_headless_progression
+            COMMAND ${CMAKE_COMMAND} -E env --unset=AETHER_PAK_KEY
+            "ASHEN_SMOKE_COOK=$<TARGET_FILE:aether_cook>" "ASHEN_SMOKE_PLAYER=$<TARGET_FILE:aether_player>"
+            PYTHONDONTWRITEBYTECODE=1 ${Python3_EXECUTABLE}
+            ${CMAKE_SOURCE_DIR}/games/ASHEN-FRONTIER/tools/smoke_test.py --headless-progression)
+        set_tests_properties(ashen_frontier_headless_progression PROPERTIES TIMEOUT 180)
+    endif()
 endif()
 if(WIN32)
     add_subdirectory(tools/symbolicate)

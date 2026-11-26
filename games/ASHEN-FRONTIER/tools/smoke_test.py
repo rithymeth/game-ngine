@@ -24,10 +24,11 @@ import tempfile
 
 HERE = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(HERE / "tools"))
-import terrain  # noqa: E402
 import world  # noqa: E402
 
 BUILD = pathlib.Path(os.environ.get("AETHER_BUILD", HERE.parent.parent / "build"))
+COOK_EXE = pathlib.Path(os.environ.get("ASHEN_SMOKE_COOK", BUILD / "tools" / "cook" / "aether_cook"))
+PLAYER_EXE = pathlib.Path(os.environ.get("ASHEN_SMOKE_PLAYER", BUILD / "player" / "aether_player"))
 failures = []
 TRANSCRIPTS = []  # the console output of every player run, to look through at the end
 
@@ -40,6 +41,8 @@ def check(ok, what):
 
 
 def layout():
+    import terrain  # NumPy is only needed for the windowed smoke.
+
     data = json.loads((HERE / "Content" / "Data" / "world.json").read_text(encoding="utf-8"))
     check(data == world.world_data(), "Content/Data/world.json is what tools/world.py says (run tools/make_scenes.py to refresh it)")
     scene = json.loads((HERE / "Content" / "Scenes" / "OpenWorld.ascene").read_text(encoding="utf-8"))
@@ -67,8 +70,7 @@ def layout():
 
 
 def cook(work):
-    exe = BUILD / "tools" / "cook" / "aether_cook"
-    result = subprocess.run([str(exe), str(HERE / "ASHEN-FRONTIER.aproject"), "--out", str(work / "cooked")], capture_output=True, text=True)
+    result = subprocess.run([str(COOK_EXE), str(HERE / "ASHEN-FRONTIER.aproject"), "--out", str(work / "cooked")], capture_output=True, text=True)
     return check(result.returncode == 0, "the project cooks") or print(result.stdout[-2000:], result.stderr[-2000:])
 
 
@@ -81,9 +83,10 @@ def read_bmp(path):
 
 
 def play(work):
-    player = BUILD / "player" / "aether_player"
+    import terrain
+
     shot = work / "shot.bmp"
-    command = [str(player), "--pak", str(work / "cooked"), "--scene", "Scenes/OpenWorld.ascene", "--frames", "300", "--size", "640x360", "--press", "W",
+    command = [str(PLAYER_EXE), "--pak", str(work / "cooked"), "--scene", "Scenes/OpenWorld.ascene", "--frames", "300", "--size", "640x360", "--press", "W",
                "--report", "--screenshot", str(shot), "--user-dir", str(work / "user")]
     if sys.platform.startswith("linux") and shutil.which("xvfb-run"):
         command = ["xvfb-run", "-a"] + command
@@ -119,7 +122,7 @@ def play(work):
 
 def interior(work):
     """Kael starts in the Assembly Hall and walks out of its exit door: the Door script's Scene.Load takes the game to the open world."""
-    command = [str(BUILD / "player" / "aether_player"), "--pak", str(work / "cooked"), "--scene", "Scenes/AssemblyHall.ascene", "--frames", "400", "--size", "320x180",
+    command = [str(PLAYER_EXE), "--pak", str(work / "cooked"), "--scene", "Scenes/AssemblyHall.ascene", "--frames", "400", "--size", "320x180",
                "--press", "S", "--report", "--user-dir", str(work / "user2")]
     if sys.platform.startswith("linux") and shutil.which("xvfb-run"):
         command = ["xvfb-run", "-a"] + command
@@ -140,7 +143,7 @@ def salvage(work):
     """Kael stands beside a salvage crate and presses Interact: the Interactor script takes it into the pack. The pack is saved (SaveGames, the
     "autosave" slot), so a second run in the same user directory starts with what the first one took."""
     def run(frames):
-        command = [str(BUILD / "player" / "aether_player"), "--pak", str(work / "cooked"), "--scene", "Scenes/SalvageTest.ascene", "--frames", str(frames), "--size", "320x180",
+        command = [str(PLAYER_EXE), "--pak", str(work / "cooked"), "--scene", "Scenes/SalvageTest.ascene", "--frames", str(frames), "--size", "320x180",
                    "--press", "E", "--report", "--user-dir", str(work / "user3")]
         if sys.platform.startswith("linux") and shutil.which("xvfb-run"):
             command = ["xvfb-run", "-a"] + command
@@ -161,7 +164,7 @@ def salvage(work):
 
 def mule(work):
     """Kael has three components beside the broken MULE-3 (2.9 m away) and presses Interact: it is repaired (the components are spent) and walks up to him."""
-    command = [str(BUILD / "player" / "aether_player"), "--pak", str(work / "cooked"), "--scene", "Scenes/MuleTest.ascene", "--frames", "200", "--size", "320x180",
+    command = [str(PLAYER_EXE), "--pak", str(work / "cooked"), "--scene", "Scenes/MuleTest.ascene", "--frames", "200", "--size", "320x180",
                "--press", "E", "--report", "--user-dir", str(work / "user4")]
     if sys.platform.startswith("linux") and shutil.which("xvfb-run"):
         command = ["xvfb-run", "-a"] + command
@@ -191,7 +194,7 @@ def craft(work, headless=False):
 
 
 def run_player(work, scene, user, press="E", frames=80, headless=False):
-    command = [str(BUILD / "player" / "aether_player"), "--pak", str(work / "cooked"), "--scene", scene, "--frames", str(frames), "--size", "320x180",
+    command = [str(PLAYER_EXE), "--pak", str(work / "cooked"), "--scene", scene, "--frames", str(frames), "--size", "320x180",
                "--press", press, "--report", "--user-dir", str(work / user)]
     if headless:
         command.append("--headless")

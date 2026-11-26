@@ -53,7 +53,8 @@ games/ASHEN-FRONTIER/tools/render.sh Scenes/OpenWorld.ascene out.png   # one fra
 
 For Linux systems without a graphics backend, the progression-only smoke cooks the project and checks
 checkpoint recovery and crafting across player restarts. It needs an engine build with physics, and does
-not test rendering or the other windowed smoke scenarios:
+not test rendering or the other windowed smoke scenarios. It uses only Python's standard library and
+is registered as `ashen_frontier_headless_progression` in headless Linux test builds with the required kits:
 
 ```sh
 AETHER_BUILD=/path/to/engine/build python games/ASHEN-FRONTIER/tools/smoke_test.py --headless-progression
