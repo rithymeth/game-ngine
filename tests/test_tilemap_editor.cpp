@@ -1019,6 +1019,48 @@ AETHER_TEST(TilemapEditor_HoverNamesTheLayerThatBlocksMovement) {
     CHECK(doc.Revision() == revision && !doc.dirty() && !doc.CanUndo());
 }
 
+AETHER_TEST(TilemapEditor_MarksInvalidConcretePaintThroughUpperLayers) {
+    HeadlessImGui ui;
+    TilemapData map;
+    map.Resize(6, 5);
+    map.AddLayer("Ground");
+    map.AddLayer("Canopy");
+    Tileset tiles;
+    tiles.texture = assets::NewAssetGuid();
+    tiles.texture_width = tiles.texture_height = 32;
+    tiles.tile_width = tiles.tile_height = 16;
+    std::array<i32, 16> variants;
+    variants.fill(3);
+    const auto rule = tiles.AddAutotile("Edge", variants);
+    map.Set(0, 1, 1, 4);
+    map.Set(1, 1, 1, 3);
+    map.Set(0, 2, 1, AutotileCell(rule));
+    TilemapEditDocument doc(std::move(map), std::move(tiles));
+    doc.active_layer = 1;
+    TilemapPanel panel(doc);
+    ImVec2 bottom_left;
+    const auto draw = [&] {
+        panel.Draw();
+        const auto pad = ImGui::GetStyle().WindowPadding;
+        bottom_left = ImVec2(ImGui::GetItemRectMin().x + pad.x + 8, ImGui::GetItemRectMax().y - pad.y - 8);
+    };
+    const auto revision = doc.Revision();
+    ui.Frame(draw);
+    usize markers = 0;
+    for (const auto* list : ImGui::GetDrawData()->CmdLists)
+        for (const ImDrawVert& vertex : list->VtxBuffer)
+            if (vertex.col == IM_COL32(255, 96, 215, 255)) ++markers;
+    CHECK(markers == 8); // One opaque X: two lines, four colored vertices each.
+    const auto capture = std::filesystem::temp_directory_path() / "tilemap-hover-invalid.txt";
+    ImGui::GetIO().AddMousePosEvent(bottom_left.x + 1.5f * panel.zoom, bottom_left.y - 1.5f * panel.zoom);
+    ui.Frame(draw);
+    ui.Frame([&] { ImGui::LogToFile(0, capture.string().c_str()); draw(); ImGui::LogFinish(); });
+    std::ifstream in(capture);
+    const std::string log(std::istreambuf_iterator<char>(in), {});
+    CHECK(log.find("Invalid paint: Ground uses tile 4 (grid has 4 tiles)") != std::string::npos);
+    CHECK(doc.Revision() == revision && !doc.dirty() && !doc.CanUndo());
+}
+
 AETHER_TEST(TilemapEditor_LargeMapOnlyDrawsVisibleGridLines) {
     HeadlessImGui ui;
     auto doc = Doc();

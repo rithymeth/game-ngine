@@ -444,6 +444,8 @@ void TilemapPanel::DrawCanvas() {
     }
     const TilemapData& map = doc_.Map();
     const Tileset& ts = doc_.GetTileset();
+    const u32 grid_tiles = ts.texture.IsNull() ? 0 : ts.TileCount();
+    const auto invalid_paint = [&](i32 tile) { return grid_tiles > 0 && tile >= 0 && static_cast<u32>(tile) >= grid_tiles; };
     const ImVec2 origin = ImGui::GetCursorScreenPos();
     const ImVec2 size = ImGui::GetContentRegionAvail();
     ImGui::InvisibleButton("##paint", ImVec2(std::max(size.x, 1.0f), std::max(size.y, 1.0f)),
@@ -484,29 +486,38 @@ void TilemapPanel::DrawCanvas() {
         const auto visible_cell = [&](i32 x, i32 y) {
             return static_cast<usize>(y - bottom) * columns + static_cast<usize>(x - left);
         };
-        std::vector<u8> blocked(show_solid ? columns * static_cast<usize>(top - bottom) : 0);
+        constexpr u8 kBlocked = 1, kInvalidPaint = 2;
+        std::vector<u8> marks(show_solid || grid_tiles != 0 ? columns * static_cast<usize>(top - bottom) : 0);
         for (usize layer = 0; layer < map.layers.size(); ++layer) {
             const bool mark_solid = show_solid && map.layers[layer].collides;
             for (i32 y = bottom; y < top; ++y) {
                 for (i32 x = left; x < right; ++x) {
-                    const i32 tile = ResolveTile(map, ts, layer, x, y);
+                    const i32 raw = map.Get(layer, x, y);
+                    if (invalid_paint(raw)) marks[visible_cell(x, y)] |= kInvalidPaint;
+                    const i32 tile = raw >= kEmpty ? raw : ResolveTile(map, ts, layer, x, y);
                     if (tile < 0) continue;
                     const ImVec2 a(to_screen_x(x), to_screen_y(y));
                     const ImVec2 b(a.x + zoom, a.y + zoom);
                     if (!DrawTileArt(dl, a, b, tile)) dl->AddRectFilled(a, b, TileColor(tile));
-                    if (mark_solid && ts.IsSolid(tile)) blocked[visible_cell(x, y)] = 1;
+                    if (mark_solid && ts.IsSolid(tile)) marks[visible_cell(x, y)] |= kBlocked;
                 }
             }
         }
-        // Collision is the union of blocking layers, not the topmost art.
-        // Submit these after every tile so decoration cannot cover the outline.
-        if (!blocked.empty()) {
+        // Draw map diagnostics once per visible cell, after all tile art.
+        if (!marks.empty()) {
             for (i32 y = bottom; y < top; ++y) {
                 for (i32 x = left; x < right; ++x) {
-                    if (!blocked[visible_cell(x, y)]) continue;
+                    const u8 flags = marks[visible_cell(x, y)];
+                    if (flags == 0) continue;
                     const ImVec2 a(to_screen_x(x), to_screen_y(y));
                     const ImVec2 b(a.x + zoom, a.y + zoom);
-                    dl->AddRect(a, b, IM_COL32(220, 40, 40, 255), 0, 0, 1.5f);
+                    if (flags & kBlocked) dl->AddRect(a, b, IM_COL32(220, 40, 40, 255), 0, 0, 1.5f);
+                    if (flags & kInvalidPaint) {
+                        constexpr ImU32 invalid_color = IM_COL32(255, 96, 215, 255);
+                        const f32 inset = zoom * 0.23f;
+                        dl->AddLine(ImVec2(a.x + inset, a.y + inset), ImVec2(b.x - inset, b.y - inset), invalid_color, 2.0f);
+                        dl->AddLine(ImVec2(a.x + inset, b.y - inset), ImVec2(b.x - inset, a.y + inset), invalid_color, 2.0f);
+                    }
                 }
             }
         }
@@ -598,13 +609,24 @@ void TilemapPanel::DrawCanvas() {
                 else ImGui::TextUnformatted("No visible tile on this layer");
             }
             const TileLayer* top_blocker = nullptr;
-            usize blockers = 0;
+            usize blockers = 0, invalid_layers = 0;
             for (usize layer = map.layers.size(); layer-- > 0;) {
+                if (grid_tiles != 0) {
+                    const i32 raw = map.Get(layer, cx, cy);
+                    if (invalid_paint(raw)) {
+                        if (invalid_layers == 0)
+                            ImGui::Text("Invalid paint: %s uses tile %d (grid has %u tiles)",
+                                        map.layers[layer].name.c_str(), raw, grid_tiles);
+                        ++invalid_layers;
+                    }
+                }
                 if (map.layers[layer].collides && ts.IsSolid(ResolveTile(map, ts, layer, cx, cy))) {
                     if (!top_blocker) top_blocker = &map.layers[layer];
                     ++blockers;
                 }
             }
+            if (invalid_layers > 1)
+                ImGui::Text("Plus %zu more invalid %s", invalid_layers - 1, invalid_layers == 2 ? "layer" : "layers");
             if (top_blocker) {
                 ImGui::Text("Blocks movement: %s", top_blocker->name.c_str());
                 if (blockers > 1)
