@@ -235,10 +235,13 @@ AETHER_TEST(Cook_RejectsTilesetsThatDisagreeWithCookedTextureDimensions) {
         .write(reinterpret_cast<const char*>(png.data()), static_cast<std::streamsize>(png.size()));
     const auto texture = GuidOf(paths.content, "Ground.png");
     if (texture.empty()) { CHECK(false); return; }
-    const auto write_tileset = [&](int width) {
+    const auto write_tileset = [&](int width, int corner = -1) {
+        std::vector<int> variants(16, -1);
+        variants[3] = corner;
         WriteText(paths.content / "Ground.atileset",
                   json({{"$type", "Tileset"}, {"$version", 1}, {"texture", texture},
-                        {"texture_size", {width, 16}}, {"tile_size", {8, 8}}}).dump());
+                        {"texture_size", {width, 16}}, {"tile_size", {8, 8}},
+                        {"autotiles", json::array({{{"name", "River"}, {"tiles", variants}}})}}).dump());
     };
     write_tileset(16);
     ProjectSettings project;
@@ -265,10 +268,17 @@ AETHER_TEST(Cook_RejectsTilesetsThatDisagreeWithCookedTextureDimensions) {
     CHECK(warning.ok && warning.texture_cache_hits == 1 &&
           std::find(warning.warnings.begin(), warning.warnings.end(), expected) != warning.warnings.end());
 
-    write_tileset(24);
+    write_tileset(24, 6);
     options.output_dir = root / "Strict";
     options.configuration = cook::BuildConfiguration::Shipping;
     options.strict_validation = true;
+    const auto bad_variant = cook::Cook(options);
+    CHECK(!bad_variant.ok && bad_variant.error.find(
+          "Ground.atileset: autotile 'River' mask 3 uses tile index 6 outside its 6-tile grid") != std::string::npos);
+    CHECK(!stdfs::exists(options.output_dir / "Game.apak"));
+
+    // The last valid tile and intentional empty variants remain supported.
+    write_tileset(24, 5);
     const auto good = cook::Cook(options);
     CHECK(good.ok && good.texture_cache_hits == 1 && good.warnings.empty());
 }

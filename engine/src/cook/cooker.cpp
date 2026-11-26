@@ -119,10 +119,9 @@ std::string CheckSpriteClipFrames(const json& document) {
     return {};
 }
 
-std::string CheckTilesetSolids(const json& document, u32 width, u32 height) {
-    const auto tile = document.find("tile_size"), solid = document.find("solid");
-    if (tile == document.end() || !tile->is_array() || tile->size() != 2 ||
-        solid == document.end() || !solid->is_array() || solid->empty()) return {};
+std::string CheckTilesetGridRefs(const json& document, u32 width, u32 height) {
+    const auto tile = document.find("tile_size");
+    if (tile == document.end() || !tile->is_array() || tile->size() != 2) return {};
     const auto optional_pixels = [&](const char* name) -> std::optional<u32> {
         const auto entry = document.find(name);
         return entry == document.end() ? std::optional<u32>{0} : SheetPixels(*entry);
@@ -139,10 +138,28 @@ std::string CheckTilesetSolids(const json& document, u32 width, u32 height) {
     const u64 count = std::min(grid_axis(width, *cell_w) * grid_axis(height, *cell_h),
                               static_cast<u64>(std::numeric_limits<i32>::max()) + 1);
     if (count == 0) return {}; // Only validate references in a defined grid.
-    for (const auto& value : *solid) {
-        if (const auto index = SheetPixels(value); index && *index >= count)
-            return "solid tile index " + std::to_string(*index) + " is outside its " +
-                   std::to_string(count) + "-tile grid";
+    if (const auto solid = document.find("solid"); solid != document.end() && solid->is_array()) {
+        for (const auto& value : *solid) {
+            if (const auto index = SheetPixels(value); index && *index >= count)
+                return "solid tile index " + std::to_string(*index) + " is outside its " +
+                       std::to_string(count) + "-tile grid";
+        }
+    }
+    if (const auto autotiles = document.find("autotiles"); autotiles != document.end() && autotiles->is_array()) {
+        for (const auto& rule : *autotiles) {
+            const auto variants = rule.find("tiles");
+            if (variants == rule.end() || !variants->is_array() || variants->size() != 16) continue;
+            for (usize mask = 0; mask < variants->size(); ++mask) {
+                // Negative values, including the intentional empty sentinel, are not concrete tiles.
+                if (const auto index = SheetPixels((*variants)[mask]); index && *index >= count) {
+                    const auto name = rule.find("name");
+                    const std::string label = name != rule.end() && name->is_string() ?
+                        "autotile '" + name->get<std::string>() + "'" : "an autotile";
+                    return label + " mask " + std::to_string(mask) + " uses tile index " + std::to_string(*index) +
+                           " outside its " + std::to_string(count) + "-tile grid";
+                }
+            }
+        }
     }
     return {};
 }
@@ -197,8 +214,8 @@ std::string Check2DReference(const AssetRecord& record, const std::vector<u8>& b
                 const auto crop_problem = CheckSpriteCrops(document, width, height);
                 if (!crop_problem.empty()) return crop_problem;
             } else if (record.importer == "Tileset") {
-                const auto solid_problem = CheckTilesetSolids(document, width, height);
-                if (!solid_problem.empty()) return solid_problem;
+                const auto grid_problem = CheckTilesetGridRefs(document, width, height);
+                if (!grid_problem.empty()) return grid_problem;
             }
             extents.push_back({guid, record.path, dependency->path, width, height});
         }
