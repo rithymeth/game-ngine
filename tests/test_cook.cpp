@@ -273,6 +273,49 @@ AETHER_TEST(Cook_RejectsTilesetsThatDisagreeWithCookedTextureDimensions) {
     CHECK(good.ok && good.texture_cache_hits == 1 && good.warnings.empty());
 }
 
+AETHER_TEST(Cook_RejectsSpriteAtlasThatDisagreesWithCookedTextureDimensions) {
+    const auto root = stdfs::temp_directory_path() / "aether_cook_atlas_dimensions";
+    ProjectPaths paths;
+    std::string error;
+    if (!CreateProject(root, "Sprites", &paths, &error)) { CHECK(false); return; }
+    const auto png = assets::EncodePngRgba8(24, 16, std::vector<u8>(24 * 16 * 4, 255));
+    std::ofstream(paths.content / "Hero.png", std::ios::binary)
+        .write(reinterpret_cast<const char*>(png.data()), static_cast<std::streamsize>(png.size()));
+    const auto texture = GuidOf(paths.content, "Hero.png");
+    if (texture.empty()) { CHECK(false); return; }
+    const auto write_atlas = [&](int width) {
+        WriteText(paths.content / "Hero.aatlas",
+                  json({{"$type", "SpriteAtlas"}, {"$version", 1}, {"texture", texture},
+                        {"width", width}, {"height", 16},
+                        {"frames", json::array({{{"name", "idle"}, {"x", 8}, {"y", 0}, {"w", 8}, {"h", 16}}})}}).dump());
+    };
+    write_atlas(16);
+    ProjectSettings project;
+    if (!LoadProject(paths.file, project, &error)) { CHECK(false); return; }
+    project.startup_scene = "Start.ascene";
+    WriteText(paths.content / project.startup_scene, R"({"$type":"Scene","$version":1,"entities":[]})");
+    project.always_cook = {"Hero.aatlas"};
+    if (!SaveProject(paths.file, project, &error)) { CHECK(false); return; }
+
+    cook::CookOptions options;
+    options.project_file = paths.file;
+    options.output_dir = root / "Strict";
+    options.configuration = cook::BuildConfiguration::Shipping;
+    options.strip_source_textures = true;
+    options.strict_validation = true;
+    const auto bad = cook::Cook(options);
+    CHECK(!bad.ok && bad.error.find("Hero.aatlas: expects a 16x16 texture, but Hero.png cooks to 24x16") != std::string::npos);
+    CHECK(!stdfs::exists(options.output_dir / "Game.apak"));
+
+    write_atlas(24);
+    const auto good = cook::Cook(options);
+    if (!good.ok) { CHECK(false); return; }
+    CHECK(good.texture_cache_hits == 1 && good.warnings.empty());
+    pak::PakReader pak;
+    CHECK(pak.Open(good.pak_file.string(), &error) && pak.Contains("Content/Hero.aatlas") &&
+          pak.Contains("Cooked/" + texture + ".atex") && !pak.Contains("Content/Hero.png"));
+}
+
 AETHER_TEST(Cook_AnAlwaysCookFolderShipsItsPlainFilesToo) {
     const stdfs::path project = MakeProject("FolderFiles");
     const stdfs::path content = project.parent_path() / "Content";
