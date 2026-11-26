@@ -830,8 +830,39 @@ AETHER_TEST(Openers_AuthoredTilemapWorksInAnIndependentStrictShippingPackage) {
     options.cook.project_file = paths.file;
     options.cook.configuration = cook::BuildConfiguration::Shipping;
     options.cook.strict_validation = true;
-    options.output_dir = paths.root.parent_path() / "Shipping";
+    options.output_dir = paths.root.parent_path() / "Rejected";
     options.player_executable = AETHER_TEST_PLAYER_PATH;
+    const auto map_path = paths.content / "Ground.atilemap";
+    const auto set_path = paths.content / "Ground.atileset";
+    auto bad_map = painted.Map();
+    auto bad_set = painted.GetTileset();
+    f32 missing_uv[4];
+    CHECK(bad_set.TileCount() == 4 && !bad_set.Uv(4, missing_uv));
+    bad_map.Set(0, 2, 2, 4);
+    bad_set.SetSolid(4, true);
+    if (!sprite2d::SaveTilemap(map_path, bad_map, &error) || !sprite2d::SaveTileset(set_path, bad_set, &error)) {
+        CHECK(false); return;
+    }
+    const auto rejected = cook::Package(options);
+    if (rejected.ok) {
+        // Diagnose a regression using only the artifact that incorrectly shipped.
+        player::GamePackage shipped;
+        if (shipped.Mount(rejected.paks_dir / "Game.apak", 0, &error) && shipped.LoadManifest(&error)) {
+            player::Game game(shipped);
+            game.SetUserPaths(player::ResolveUserPaths("InvalidTile", options.output_dir / "Invalid Profile"));
+            sprite2d::RayHit2D contact;
+            if (game.LoadStartupScene(&error) && game.Physics2D() &&
+                game.Physics2D()->Raycast({4.5f, 8.0f}, {0.0f, -1.0f}, 4.0f, contact) &&
+                contact.tile && contact.tile_x == 2 && contact.tile_y == 2)
+                std::fprintf(stderr, "Invalid Shipping artifact has collision on tile 4 with no valid texture coordinates.\n");
+        }
+    }
+    CHECK(!rejected.ok && rejected.error.find("Ground.atileset: solid tile index 4 is outside its 4-tile grid") != std::string::npos);
+    CHECK(!stdfs::exists(options.output_dir / "Paks/Game.apak"));
+    if (!sprite2d::SaveTilemap(map_path, painted.Map(), &error) ||
+        !sprite2d::SaveTileset(set_path, painted.GetTileset(), &error)) { CHECK(false); return; }
+
+    options.output_dir = paths.root.parent_path() / "Shipping";
     const auto staged = cook::Package(options);
     if (!staged.ok) { std::fprintf(stderr, "strict authored tilemap package: %s\n", staged.error.c_str()); CHECK(false); return; }
     std::vector<std::string> problems;

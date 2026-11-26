@@ -119,6 +119,34 @@ std::string CheckSpriteClipFrames(const json& document) {
     return {};
 }
 
+std::string CheckTilesetSolids(const json& document, u32 width, u32 height) {
+    const auto tile = document.find("tile_size"), solid = document.find("solid");
+    if (tile == document.end() || !tile->is_array() || tile->size() != 2 ||
+        solid == document.end() || !solid->is_array() || solid->empty()) return {};
+    const auto optional_pixels = [&](const char* name) -> std::optional<u32> {
+        const auto entry = document.find(name);
+        return entry == document.end() ? std::optional<u32>{0} : SheetPixels(*entry);
+    };
+    const auto cell_w = SheetPixels((*tile)[0]), cell_h = SheetPixels((*tile)[1]);
+    const auto margin = optional_pixels("margin"), spacing = optional_pixels("spacing");
+    if (!cell_w || !cell_h || *cell_w == 0 || *cell_h == 0 || !margin || !spacing) return {};
+    const auto grid_axis = [&](u64 size, u64 cell_size) -> u64 {
+        const u64 border = 2ull * *margin;
+        if (size < border) return 0;
+        return (size - border + *spacing) / (cell_size + *spacing);
+    };
+    // Same complete-cell and signed tile ID rules as the runtime Tileset.
+    const u64 count = std::min(grid_axis(width, *cell_w) * grid_axis(height, *cell_h),
+                              static_cast<u64>(std::numeric_limits<i32>::max()) + 1);
+    if (count == 0) return {}; // Only validate references in a defined grid.
+    for (const auto& value : *solid) {
+        if (const auto index = SheetPixels(value); index && *index >= count)
+            return "solid tile index " + std::to_string(*index) + " is outside its " +
+                   std::to_string(count) + "-tile grid";
+    }
+    return {};
+}
+
 // Check 2D headers and typed references without linking Sprite2D. A tileset or
 // sprite atlas can be compared to the exact texture dimensions in this cook.
 std::string Check2DReference(const AssetRecord& record, const std::vector<u8>& bytes,
@@ -168,6 +196,9 @@ std::string Check2DReference(const AssetRecord& record, const std::vector<u8>& b
             if (record.importer == "SpriteAtlas") {
                 const auto crop_problem = CheckSpriteCrops(document, width, height);
                 if (!crop_problem.empty()) return crop_problem;
+            } else if (record.importer == "Tileset") {
+                const auto solid_problem = CheckTilesetSolids(document, width, height);
+                if (!solid_problem.empty()) return solid_problem;
             }
             extents.push_back({guid, record.path, dependency->path, width, height});
         }
