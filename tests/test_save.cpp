@@ -216,6 +216,31 @@ AETHER_TEST(Save_KeepsABackupAndRecoversFromADamagedSave) {
     CHECK(!saves.Exists("a") && saves.ListSlots().empty());
 }
 
+AETHER_TEST(Save_RepairDoesNotReplaceAHealthyBackupWithDamagedBytes) {
+    SaveSystem saves(Dir("KeepBackup"));
+    save_test::Profile original = Sample();
+    if (!saves.Save("a", original).ok) { CHECK(false); return; }
+    auto newer = original;
+    newer.level = 9;
+    if (!saves.Save("a", newer).ok) { CHECK(false); return; }
+    const auto primary = saves.Directory() / "a.asav";
+    const auto backup = saves.Directory() / "a.asav.bak";
+    const auto healthy = ReadAll(backup);
+
+    auto damaged = reflect::Json::parse(ReadAll(primary));
+    damaged["data"]["level"] = 99; // Valid JSON, invalid save checksum.
+    WriteAll(primary, damaged.dump());
+    save_test::Profile loaded;
+    CHECK(saves.Load("a", loaded).ok && loaded.level == original.level);
+
+    auto recovered = original;
+    recovered.level = 10;
+    CHECK(saves.Save("a", recovered).ok && ReadAll(backup) == healthy);
+    CHECK(saves.Load("a", loaded).ok && loaded.level == 10);
+    stdfs::remove(primary);
+    CHECK(saves.Load("a", loaded).ok && loaded.level == original.level);
+}
+
 AETHER_TEST(Save_DetectsCorruptionAndTruncation) {
     SaveSystem saves(Dir("Corrupt"));
     save_test::Profile p = Sample();

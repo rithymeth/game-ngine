@@ -63,10 +63,19 @@ SaveResult Write(const stdfs::path& file, std::string_view contents) {
     std::error_code ec;
     if (!file.parent_path().empty()) stdfs::create_directories(file.parent_path(), ec);
     if (stdfs::exists(file, ec)) {
-        // Keep the previous file: if this write or the new file turns out bad, it is still there.
         stdfs::path backup = file;
         backup += ".bak";
-        stdfs::copy_file(file, backup, stdfs::copy_options::overwrite_existing, ec);
+        if (!stdfs::exists(backup, ec) && !ec) {
+            stdfs::copy_file(file, backup, ec);
+        } else if (!ec) {
+            // Saving after recovery must not replace the last good backup
+            // with the damaged primary. Rotate only a readable envelope.
+            const EnvelopeInfo previous = Inspect(file);
+            if (previous.ok && previous.checksum_ok && previous.format > 0 &&
+                previous.format <= kFormat && !previous.kind.empty() && !previous.type.empty()) {
+                fs::WriteFileAtomic(backup.string(), previous.raw_text.data(), previous.raw_text.size());
+            }
+        }
     }
     if (!fs::WriteFileAtomic(file.string(), contents.data(), contents.size())) {
         return Fail(SaveError::IoError, "couldn't write " + file.string());
