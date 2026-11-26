@@ -268,6 +268,9 @@ manifest has been installed does not undo a completed package. Packaging
 refuses linked destinations and unexpected file types: `Paks` must be a
 directory, and the player, DLLs and manifest must be regular files. This
 prevents an update from deleting a same-named directory containing user files.
+The packager also refuses to replace `Paks` or `licenses` if they contain
+items not listed in the previous package manifest. Put custom archives or
+licences somewhere safe, or choose a different output folder.
 If rollback itself fails, the error identifies the backup folder retained
 for recovery. Do not run concurrent updates into the same package directory.
 
