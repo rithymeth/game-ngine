@@ -216,6 +216,23 @@ AETHER_TEST(TilemapEditor_LayersSolidsAndResize) {
     CHECK(doc.Undo() && doc.Map().width == 6);
 }
 
+AETHER_TEST(TilemapEditor_AddLayerUndoAndRedoRestoreTheBrushTarget) {
+    TilemapEditDocument doc = Doc();
+    doc.AddLayer("Walls");
+    doc.AddLayer("Canopy");
+    doc.active_layer = 0;
+
+    const usize added = doc.AddLayer("Decor");
+    CHECK(added == 3 && doc.active_layer == added);
+    CHECK(doc.Undo());
+    CHECK(doc.Map().layers.size() == 3 && doc.active_layer == 0);
+    CHECK(doc.Redo());
+    CHECK(doc.Map().layers.size() == 4 && doc.active_layer == added);
+    doc.brush = 4;
+    doc.Apply(0, 0);
+    CHECK(doc.Map().Get(added, 0, 0) == 4 && doc.Map().Get(2, 0, 0) == kEmpty);
+}
+
 AETHER_TEST(TilemapEditor_RemovingLayerKeepsTheBrushOnTheSameLayer) {
     TilemapEditDocument doc = Doc();
     doc.AddLayer("Walls");

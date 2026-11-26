@@ -185,7 +185,7 @@ bool TilemapEditDocument::Redo() {
 }
 
 usize TilemapEditDocument::AddLayer(const std::string& name) {
-    Record();
+    Record(true);
     const usize index = map_.AddLayer(name);
     active_layer = index;
     return index;
