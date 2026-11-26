@@ -269,18 +269,25 @@ void InputSystem::Update(const InputState& input, f32 dt) {
         order.push_back(std::move(name));
     }
 
+    // Publish the whole frame before invoking handlers: one action's callback
+    // may query another action whose event is dispatched later.
+    for (auto& [name, now] : current) {
+        if (now.phase == ActionPhase::Triggered) {
+            const auto it = previous.find(name);
+            if (it != previous.end() && it->second.phase == ActionPhase::Triggered)
+                now.triggered_time = it->second.triggered_time + dt;
+        }
+        states_[name] = now;
+    }
+
     // Reuse the snapshot's storage across events. Handlers may change
     // subscriptions while running, so refresh it for each event.
     std::vector<Subscription> subscription_snapshot;
     subscription_snapshot.reserve(subscriptions_.size());
     for (const std::string& name : order) {
-        ActionState& now = current[name];
-        auto it = previous.find(name);
-        const ActionState before = it != previous.end() ? it->second : ActionState{};
-        if (now.phase == ActionPhase::Triggered) {
-            now.triggered_time = before.phase == ActionPhase::Triggered ? before.triggered_time + dt : 0.0f;
-        }
-        states_[name] = now;
+        const ActionState& now = current.at(name);
+        const auto it = previous.find(name);
+        const ActionPhase before = it != previous.end() ? it->second.phase : ActionPhase::None;
         auto dispatch = [&](ActionEvent event) {
             subscription_snapshot.assign(subscriptions_.begin(), subscriptions_.end());
             for (const Subscription& sub : subscription_snapshot) {
@@ -289,16 +296,16 @@ void InputSystem::Update(const InputState& input, f32 dt) {
                 }
             }
         };
-        if (before.phase == ActionPhase::None && now.phase != ActionPhase::None) {
+        if (before == ActionPhase::None && now.phase != ActionPhase::None) {
             dispatch(ActionEvent::Started);
         }
         if (now.phase == ActionPhase::Ongoing) {
             dispatch(ActionEvent::Ongoing);
         } else if (now.phase == ActionPhase::Triggered) {
             dispatch(ActionEvent::Triggered);
-        } else if (before.phase == ActionPhase::Triggered) {
+        } else if (before == ActionPhase::Triggered) {
             dispatch(ActionEvent::Completed);
-        } else if (before.phase == ActionPhase::Ongoing) {
+        } else if (before == ActionPhase::Ongoing) {
             dispatch(ActionEvent::Canceled);
         }
     }

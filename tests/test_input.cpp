@@ -305,6 +305,32 @@ AETHER_TEST(Input_ContextStackConsumesAndBlocks) {
     AETHER_CHECK(!h.system.IsTriggered("Jump"));
 }
 
+AETHER_TEST(Input_CallbacksReadOtherActionsFromTheSameFrame) {
+    InputSystem system;
+    system.AddAction({"Jump"});
+    system.AddAction({"Move", ActionValueType::Axis1D}); // Its events follow Jump's.
+    InputMappingContext context;
+    context.name = "OnFoot";
+    context.bindings = {Bind("Jump", Key::Space), Bind("Move", Key::D)};
+    system.AddContext(context);
+
+    std::vector<f32> movement_seen;
+    const auto record = [&](const std::string&, ActionEvent, const ActionState&) {
+        movement_seen.push_back(system.GetAxis1D("Move"));
+    };
+    system.Subscribe("Jump", ActionEvent::Triggered, record);
+    system.Subscribe("Jump", ActionEvent::Completed, record);
+
+    InputState state;
+    state.SetButton(Key::Space, true);
+    state.SetButton(Key::D, true);
+    system.Update(state, kDt);
+    state.SetButton(Key::Space, false);
+    state.SetButton(Key::D, false);
+    system.Update(state, kDt);
+    AETHER_CHECK((movement_seen == std::vector<f32>{1.0f, 0.0f}));
+}
+
 AETHER_TEST(Input_MappingContextsSaveAsJson) {
     InputMappingContext context;
     context.name = "OnFoot";
