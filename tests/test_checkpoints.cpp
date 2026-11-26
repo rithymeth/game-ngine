@@ -199,6 +199,39 @@ AETHER_TEST(Checkpoints_ActivateFindAndRespawn) {
     s.system.MakeActive();
 }
 
+AETHER_TEST(Checkpoints_SameNameInAnotherSceneIsNotTheSavedMarker) {
+    Rig original;
+    CHECK(original.system.Activate("A"));
+
+    World other;
+    const Entity marker = other.CreateEntity(Transform{Vec3(50, 0, 0), Quaternion::Identity()}, Marker("A"));
+    const Entity traveler = other.CreateEntity(Transform{Vec3(100, 0, 0), Quaternion::Identity()});
+    AddTag(other, traveler, "Player");
+    CheckpointSystem other_system(other, original.bag, [] { return std::string("Scenes/b"); });
+    CHECK(other_system.Find("A") == marker);
+    CHECK(other_system.Respawn(traveler) == Result::NotInScene);
+    CHECK(Near(other.GetComponent<Transform>(traveler)->position.x, 100.0f));
+
+    // A different scene's marker can become the last checkpoint when actually reached.
+    other.GetComponent<Transform>(traveler)->position.x = 51.0f;
+    other_system.Update();
+    CHECK(other_system.LastScene() == "Scenes/b" && other_system.Last() == "A");
+    CHECK(other_system.Events().size() == 1 && other_system.Events()[0].checkpoint == marker);
+    other_system.Update();
+    CHECK(other_system.Events().size() == 1);
+    CHECK(other_system.Respawn(traveler) == Result::Ok);
+    CHECK(Near(other.GetComponent<Transform>(traveler)->position.x, 50.0f));
+    CHECK(original.system.Respawn(original.player) == Result::NotInScene);
+
+    // Keep name-only lookup when the host or an older save cannot identify the scene.
+    CheckpointSystem no_scene(other, original.bag);
+    CHECK(no_scene.Respawn(traveler) == Result::Ok);
+    CheckpointSystem alias(other, original.bag, [] { return std::string("Scenes/./b"); });
+    CHECK(alias.Respawn(traveler) == Result::Ok);
+    original.bag.SetString("checkpoint.scene", "");
+    CHECK(original.system.Respawn(original.player) == Result::Ok);
+}
+
 AETHER_TEST(Checkpoints_TheKitAddsItsStageAndSystem) {
     const std::unique_ptr<kit::IKit> kit = MakeCheckpointsKit();
     CHECK(std::string(kit->Name()) == "Checkpoints" && kit->Deps().empty());
@@ -256,7 +289,7 @@ nlohmann::json AssetEntry(const char* path, const char* importer) {
 } // namespace
 
 // The real player: a checkpoint in the scene is reached by the tagged player, its script hears OnCheckpoint, the bag a slot writes holds the state, and a
-// scene change leaves it alone (and from the next scene, which has no such checkpoint, Respawn says so).
+// scene change leaves it alone (a same-named marker in the next scene cannot substitute for the saved one).
 AETHER_TEST(Checkpoints_PlayerReachesCheckpointsThroughASceneChange) {
     if (!player::Game::HasScripting()) return;
     const std::filesystem::path dir = std::filesystem::temp_directory_path() / "aether_checkpoints_player_tests";
@@ -278,7 +311,9 @@ AETHER_TEST(Checkpoints_PlayerReachesCheckpointsThroughASceneChange) {
         {{"components", {{"Transform", reflect::ToJson(Transform{Vec3(1, 0, 0), Quaternion::Identity()})}, {"Checkpoint", reflect::ToJson(Marker("Gate"))},
                          {"ScriptComponent", reflect::ToJson(script_component(watch_guid))}}}},
         {{"components", {{"ScriptComponent", reflect::ToJson(script_component(swap_guid))}}}}})}};
-    const nlohmann::json b = {{"$type", "Scene"}, {"$version", 1}, {"entities", nlohmann::json::array()}};
+    const nlohmann::json b = {{"$type", "Scene"}, {"$version", 1}, {"entities", nlohmann::json::array({
+        {{"components", {{"Transform", reflect::ToJson(Transform{Vec3(25, 0, 0), Quaternion::Identity()})},
+                         {"Checkpoint", reflect::ToJson(Marker("Gate"))}}}}})}};
     const std::string watch = "local W = {}\nfunction W:OnCheckpoint(who)\n  SaveGames.SetNumber('heard', SaveGames.GetNumber('heard', 0) + 1)\nend\nreturn W\n";
     const std::string swap = "local S = {}\nfunction S:OnUpdate(dt)\n  if not self.asked then self.asked = true; Scene.Load('Scenes/b.ascene') end\nend\nreturn S\n";
     const nlohmann::json assets_json = nlohmann::json::array({AssetEntry("Scenes/a.ascene", "Scene"), AssetEntry("Scenes/b.ascene", "Scene"),
@@ -314,6 +349,7 @@ AETHER_TEST(Checkpoints_PlayerReachesCheckpointsThroughASceneChange) {
     if (!system) return;
     CHECK(system->Last() == "Gate" && system->LastScene() == "Scenes/a.ascene"); // a script can read the scene to load
     const Entity visitor = game.GetWorld().CreateEntity(Transform{Vec3(9, 9, 9), Quaternion::Identity()});
+    CHECK(!system->Find("Gate").IsNull());
     CHECK(system->Respawn(visitor) == Result::NotInScene); // the last checkpoint is in the other scene
 }
 

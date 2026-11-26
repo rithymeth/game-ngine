@@ -1,5 +1,6 @@
 #include "aether/checkpoints/checkpoint_system.h"
 
+#include "aether/pak/pak.h"
 #include "aether/scene/components.h"
 #include "aether/scene/gameplay.h"
 
@@ -19,6 +20,15 @@ std::string ReachedKey(const std::string& name) {
     // Keep existing reached keys except where a marker would overwrite metadata.
     if (name == "last" || name == "scene") return "checkpoint_history." + name;
     return "checkpoint." + name;
+}
+
+bool IsDifferentScene(const std::string& saved, const std::function<std::string()>& current_scene) {
+    if (saved.empty() || !current_scene) return false;
+    const std::string current = current_scene();
+    if (current.empty() || current == saved) return false;
+    // A packaged scene can be loaded through equivalent paths (e.g. differing separators).
+    const std::string saved_path = pak::NormalizePath(saved);
+    return saved_path.empty() || saved_path != pak::NormalizePath(current);
 }
 
 } // namespace
@@ -90,12 +100,14 @@ bool CheckpointSystem::Activate(const std::string& name) {
 }
 
 void CheckpointSystem::Update() {
+    std::string last_here = Last();
+    if (!last_here.empty() && IsDifferentScene(LastScene(), scene_)) last_here.clear();
     std::unordered_map<std::string, std::vector<Entity>> by_tag; // each tag looked up once per update
     for (const Entity e : Checkpoints()) {
         if (!world_.IsAlive(e)) continue;
         const Checkpoint* c = world_.GetComponent<Checkpoint>(e);
         const Transform* at = world_.GetComponent<Transform>(e);
-        if (c == nullptr || at == nullptr || !c->enabled || c->name.empty() || c->name == Last()) continue;
+        if (c == nullptr || at == nullptr || !c->enabled || c->name.empty() || c->name == last_here) continue;
         auto found = by_tag.find(c->activator_tag);
         if (found == by_tag.end()) found = by_tag.emplace(c->activator_tag, FindEntitiesWithTag(world_, c->activator_tag)).first;
         const f32 radius = std::isfinite(c->radius) ? std::clamp(c->radius, Checkpoint::kMinRadius, Checkpoint::kMaxRadius) : Checkpoint::kMinRadius;
@@ -104,6 +116,7 @@ void CheckpointSystem::Update() {
             if (t == nullptr || who == e) continue;
             if ((t->position - at->position).Length() <= radius) {
                 Reach(e, *c, who);
+                last_here = c->name;
                 break;
             }
         }
@@ -114,6 +127,7 @@ Result CheckpointSystem::Respawn(Entity who) {
     if (who.IsNull() || !world_.IsAlive(who)) return Result::DeadEntity;
     const std::string last = Last();
     if (last.empty()) return Result::NoCheckpoint;
+    if (IsDifferentScene(LastScene(), scene_)) return Result::NotInScene;
     const Entity marker = Find(last);
     if (marker.IsNull()) return Result::NotInScene;
     Transform* t = world_.GetComponent<Transform>(who);
