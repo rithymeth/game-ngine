@@ -78,27 +78,26 @@ std::string ExportPo(const StringTable& table, std::string_view language, std::s
     return out;
 }
 
-bool ImportPo(StringTable& table, std::string_view language, std::string_view po, std::vector<std::string>* errors) {
+namespace {
+
+bool IsHeader(const Entry& e) { return e.has_id && e.id.empty() && !e.has_ctxt && e.has_str && !e.obsolete; }
+
+template <typename Visit>
+bool ReadEntries(std::string_view po, std::vector<std::string>* errors, Visit visit) {
     const auto problem = [&](usize line, const std::string& message) {
         if (errors) errors->push_back("line " + std::to_string(line) + ": " + message);
     };
     Entry e;
     enum class Field { None, Ctxt, Id, Str } field = Field::None;
     bool ok = true;
+    bool done = false;
     const auto commit = [&] {
-        if (e.has_id || e.has_str || e.has_ctxt) {
-            const bool header = !e.has_ctxt && e.id.empty();
-            const std::string key = e.has_ctxt ? e.ctxt : e.id;
-            if (!header && !e.obsolete && e.has_str && !e.str.empty() && !key.empty()) {
-                if (e.fuzzy) problem(e.line, "'" + key + "' is marked fuzzy, so its translation was skipped");
-                else table.Set(language, key, e.str);
-            }
-        }
+        if (e.has_id || e.has_str || e.has_ctxt) done = visit(e);
         e = Entry{};
         field = Field::None;
     };
     usize line_no = 0, pos = 0;
-    while (pos <= po.size()) {
+    while (!done && pos <= po.size()) {
         usize end = po.find('\n', pos);
         if (end == std::string_view::npos) end = po.size();
         std::string_view line = Trim(po.substr(pos, end - pos));
@@ -120,6 +119,7 @@ bool ImportPo(StringTable& table, std::string_view language, std::string_view po
             if (!StartsWith(line, word) || line.size() <= word.size() || (line[word.size()] != ' ' && line[word.size()] != '"')) return false;
             if (f == Field::Ctxt && e.has_str) commit();
             if (f == Field::Id && e.has_str) commit();
+            if (done) return true;
             if (e.line == 0) e.line = line_no;
             std::string text;
             if (!Unquote(Trim(line.substr(word.size())), text)) {
@@ -153,16 +153,42 @@ bool ImportPo(StringTable& table, std::string_view language, std::string_view po
     return ok;
 }
 
+} // namespace
+
+bool ImportPo(StringTable& table, std::string_view language, std::string_view po, std::vector<std::string>* errors) {
+    return ReadEntries(po, errors, [&](const Entry& e) {
+        const auto& key = e.has_ctxt ? e.ctxt : e.id;
+        if (!IsHeader(e) && !e.obsolete && e.has_str && !e.str.empty() && !key.empty()) {
+            if (e.fuzzy) {
+                if (errors) errors->push_back("line " + std::to_string(e.line) + ": '" + key +
+                                              "' is marked fuzzy, so its translation was skipped");
+            } else {
+                table.Set(language, key, e.str);
+            }
+        }
+        return false;
+    });
+}
+
 std::string PoLanguage(std::string_view po) {
-    std::vector<std::string> ignore;
-    // The header is the entry with an empty msgid; read its msgstr's lines.
-    const usize at = po.find("Language:");
-    if (at == std::string_view::npos) return {};
-    usize end = at + 9;
-    while (end < po.size() && po[end] == ' ') ++end;
-    const usize start = end;
-    while (end < po.size() && po[end] != '\\' && po[end] != '"' && po[end] != '\n' && po[end] != '\r') ++end;
-    return NormalizeLanguage(Trim(po.substr(start, end - start)));
+    std::string language;
+    ReadEntries(po, nullptr, [&](const Entry& e) {
+        if (!IsHeader(e)) return false;
+        // Decode continuations first and match the field at the start of a header line.
+        std::string_view header = e.str;
+        while (!header.empty()) {
+            const usize end = header.find('\n');
+            const auto line = Trim(header.substr(0, end));
+            if (StartsWith(line, "Language:")) {
+                language = NormalizeLanguage(Trim(line.substr(9)));
+                break;
+            }
+            if (end == std::string_view::npos) break;
+            header.remove_prefix(end + 1);
+        }
+        return true;
+    });
+    return language;
 }
 
 } // namespace aether::loc

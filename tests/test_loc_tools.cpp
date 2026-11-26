@@ -164,6 +164,37 @@ AETHER_TEST(LocPo_ImportRulesAndErrors) {
     CHECK(!ImportPo(bad, "de", "\"orphan\"\n", &errors));
 }
 
+AETHER_TEST(LocSync_UsesOnlyThePoHeaderToChooseTheTargetLanguage) {
+    const stdfs::path root = Dir("po_language");
+    SyncOptions options;
+    options.content_dir = root / "Content";
+    options.strings_file = options.content_dir / "Localization/strings.astrings";
+    options.po_in = root / "incoming";
+    Write(options.strings_file, "key,en\nsettings.language,Language\nmenu.play,Play\n");
+
+    // There is no header here; this is a legitimate translated label.
+    const std::string headerless = "msgctxt \"settings.language\"\nmsgid \"Language\"\n"
+                                   "msgstr \"Language: English\"\n";
+    CHECK(PoLanguage(headerless).empty());
+    Write(options.po_in / "fr.po", headerless);
+    // Only the real header field counts, even with comments and wrapped quoted strings.
+    const std::string catalog = "# Language: de\nmsgid \"\"\nmsgstr \"\"\n"
+                                "\"X-Language: it\\n\"\n\"Language: pt\"\n\"_BR\\n\"\n\n"
+                                "msgctxt \"menu.play\"\nmsgid \"Play\"\nmsgstr \"Jogar\"\n";
+    CHECK(PoLanguage(catalog) == "pt-BR");
+    Write(options.po_in / "reviewed.po", catalog);
+
+    const SyncReport report = SyncProject(options);
+    CHECK(report.ok && report.po_imported == 2);
+    StringTable table;
+    CHECK(table.ImportCsv(Slurp(options.strings_file)));
+    const auto* french = table.Find("fr", "settings.language");
+    const auto* portuguese = table.Find("pt-BR", "menu.play");
+    CHECK(french && *french == "Language: English");
+    CHECK(portuguese && *portuguese == "Jogar");
+    CHECK(table.Find("english", "settings.language") == nullptr && table.Find("de", "menu.play") == nullptr);
+}
+
 AETHER_TEST(LocSync_GathersMergesAndWritesFiles) {
     const stdfs::path root = Dir("sync");
     const stdfs::path content = root / "Content";
