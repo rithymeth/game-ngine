@@ -7,15 +7,20 @@ namespace aether::assets { class AssetDatabase; }
 
 namespace aether::editor {
 
-// Read-only view of the project's authored frame rectangles and animation clips.
+class SceneDocument;
+
+// Preview atlas metadata without editing the asset; apply a manual frame to the selected static Sprite.
 class SpriteAtlasPanel {
 public:
     bool Open(const std::filesystem::path& file, const assets::AssetDatabase* database, std::string* error);
     void Clear();
-    void Draw();
+    void Draw(SceneDocument* scene = nullptr);
+    bool ApplyFrame(SceneDocument& scene, const std::string& name) const;
 
 private:
+    const char* FrameAssignmentProblem(const SceneDocument& scene, const std::string& name) const;
     sprite2d::SpriteAtlas atlas_;
+    assets::AssetGuid atlas_guid_;
     assets::ImageData pending_image_;
     ImageTexture image_;
     std::string asset_name_;

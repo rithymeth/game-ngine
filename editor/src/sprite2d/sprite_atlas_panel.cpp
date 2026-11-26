@@ -1,7 +1,10 @@
 #include "sprite2d/sprite_atlas_panel.h"
 
+#include "core/scene_document.h"
+
 #include "aether/assets/asset_database.h"
 #include "aether/assets/image.h"
+#include "aether/sprite2d/components.h"
 
 #include <algorithm>
 #include <limits>
@@ -14,6 +17,11 @@ bool SpriteAtlasPanel::Open(const std::filesystem::path& file, const assets::Ass
     Clear();
     asset_name_ = file.filename().string();
     atlas_ = std::move(next);
+    if (database) {
+        const auto relative = file.lexically_relative(database->ContentRoot()).generic_string();
+        const auto* asset = database->FindByPath(relative);
+        if (asset && !asset->missing && asset->importer == "SpriteAtlas") atlas_guid_ = asset->guid;
+    }
     if (atlas_.texture.IsNull()) {
         texture_status_ = "No texture assigned; atlas metadata is still available.";
         return true;
@@ -38,6 +46,7 @@ bool SpriteAtlasPanel::Open(const std::filesystem::path& file, const assets::Ass
 
 void SpriteAtlasPanel::Clear() {
     atlas_ = {};
+    atlas_guid_ = {};
     pending_image_ = {};
     asset_name_.clear();
     texture_status_.clear();
@@ -47,7 +56,33 @@ void SpriteAtlasPanel::Clear() {
     elapsed_ = 0.0f;
 }
 
-void SpriteAtlasPanel::Draw() {
+const char* SpriteAtlasPanel::FrameAssignmentProblem(const SceneDocument& scene, const std::string& name) const {
+    if (scene.PlayState() != PlaySession::State::Editing) return "Stop playing or simulating to edit the scene.";
+    if (atlas_guid_.IsNull() || scene.Selection().size() != 1)
+        return "Select one scene Sprite that uses this atlas.";
+    const auto entity = scene.Selection().front();
+    const auto& world = scene.GetWorld();
+    const auto* sprite = world.IsAlive(entity) ? world.GetComponent<sprite2d::Sprite>(entity) : nullptr;
+    if (!sprite || sprite->atlas.guid != atlas_guid_) return "Select one scene Sprite that uses this atlas.";
+    if (world.GetComponent<sprite2d::SpriteAnimator>(entity)) return "A Sprite Animator controls this Sprite's frame.";
+    if (name.empty() || name.size() >= sizeof(sprite->frame) || name.find('\0') != std::string::npos ||
+        !atlas_.FindFrame(name)) return "This frame name cannot be stored on a Sprite.";
+    const auto* end = std::find(sprite->frame, sprite->frame + sizeof(sprite->frame), '\0');
+    if (name == std::string_view(sprite->frame, end - sprite->frame))
+        return "The selected Sprite already uses this frame.";
+    return nullptr;
+}
+
+bool SpriteAtlasPanel::ApplyFrame(SceneDocument& scene, const std::string& name) const {
+    if (FrameAssignmentProblem(scene, name)) return false;
+    sprite2d::Sprite next;
+    sprite2d::SetSpriteFrame(next, name);
+    using FrameStorage = decltype(next.frame);
+    return scene.SetComponentField(scene.Selection().front(), GetComponentId<sprite2d::Sprite>(), "frame",
+                                   reflect::Any::CopyOf(reflect::Reflect<FrameStorage>(), next.frame));
+}
+
+void SpriteAtlasPanel::Draw(SceneDocument* scene) {
     if (asset_name_.empty()) {
         ImGui::TextWrapped("Open a .aatlas file from the Content Browser.");
         return;
@@ -108,6 +143,13 @@ void SpriteAtlasPanel::Draw() {
         ImGui::TextUnformatted(frame->name.c_str());
         ImGui::Text("Rect: (%d, %d) %d x %d px | Pivot: (%.2f, %.2f)", frame->x, frame->y,
                     frame->w, frame->h, frame->pivot_x, frame->pivot_y);
+        if (scene && clip_ < 0) {
+            const char* problem = FrameAssignmentProblem(*scene, frame->name);
+            ImGui::BeginDisabled(problem != nullptr);
+            if (ImGui::Button("Use frame on selected Sprite")) ApplyFrame(*scene, frame->name);
+            ImGui::EndDisabled();
+            if (problem && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", problem);
+        }
         f32 uv[4];
         if (show_texture_ && atlas_.Uv(*frame, uv)) {
             const f32 max_width = std::clamp(ImGui::GetContentRegionAvail().x, 1.0f, 320.0f);
