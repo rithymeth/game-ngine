@@ -251,24 +251,31 @@ bool TilemapPanel::FindNextInvalidPaint() {
     const u32 count = tiles.texture.IsNull() ? 0 : tiles.TileCount();
     if (invalid_search_revision_ != doc_.Revision()) invalid_paint_cell_.reset();
     invalid_search_revision_ = doc_.Revision();
-    std::optional<InvalidPaintCell> first, next;
-    if (map.width != 0 && map.height != 0) {
-        for (usize layer = 0; layer < map.layers.size() && !next; ++layer) {
-            const auto& cells = map.layers[layer].cells;
-            for (usize index = 0; index < cells.size(); ++index) {
-                const i32 tile = cells[index];
-                if (!IsInvalidPaint(tile, count, tiles.autotiles.size())) continue;
-                const InvalidPaintCell found{layer, index, tile};
-                if (!first) first = found;
-                if (!invalid_paint_cell_ || layer > invalid_paint_cell_->layer ||
-                    (layer == invalid_paint_cell_->layer && index > invalid_paint_cell_->index)) {
-                    next = found;
-                    break;
-                }
-            }
+    const auto previous = invalid_paint_cell_;
+    invalid_paint_cell_.reset();
+    if (map.width == 0 || map.height == 0) return false;
+    const auto scan_layer = [&](usize layer, usize begin, usize end) {
+        const auto& cells = map.layers[layer].cells;
+        for (usize index = begin; index < end; ++index) {
+            if (!IsInvalidPaint(cells[index], count, tiles.autotiles.size())) continue;
+            invalid_paint_cell_ = InvalidPaintCell{layer, index, cells[index]};
+            return true;
+        }
+        return false;
+    };
+    // Resume after the last hit. Only visit the prefix when the search wraps.
+    const usize start_layer = previous ? previous->layer : 0;
+    for (usize layer = start_layer; layer < map.layers.size(); ++layer) {
+        const usize begin = previous && layer == start_layer ? previous->index + 1 : 0;
+        if (scan_layer(layer, begin, map.layers[layer].cells.size())) break;
+    }
+    if (!invalid_paint_cell_ && previous) {
+        for (usize layer = 0; layer <= start_layer; ++layer) {
+            // Include the previous hit so a single remaining problem can be found again.
+            const usize end = layer == start_layer ? previous->index + 1 : map.layers[layer].cells.size();
+            if (scan_layer(layer, 0, end)) break;
         }
     }
-    invalid_paint_cell_ = next ? next : first;
     if (!invalid_paint_cell_) return false;
     const auto hit = *invalid_paint_cell_;
     return FocusCell(hit.layer, static_cast<i32>(hit.index % map.width), static_cast<i32>(hit.index / map.width));

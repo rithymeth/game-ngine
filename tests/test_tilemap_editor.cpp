@@ -1374,6 +1374,43 @@ AETHER_TEST(TilemapEditor_FindsInvalidPaintAcrossTheMapWithoutAnEdit) {
     CHECK(!panel.FindNextInvalidPaint());
 }
 
+AETHER_TEST(TilemapEditor_FindInvalidPaintCyclesWithinOneLayer) {
+    HeadlessImGui ui;
+    TilemapData map;
+    map.Resize(6, 5);
+    map.AddLayer("Ground");
+    map.Set(0, 1, 1, 4);
+    map.Set(0, 4, 3, 5);
+    Tileset tiles;
+    tiles.texture = assets::NewAssetGuid();
+    tiles.texture_width = tiles.texture_height = 32;
+    TilemapEditDocument doc(std::move(map), std::move(tiles));
+    TilemapPanel panel(doc);
+    const auto find = [&](int step, std::string_view hit) {
+        CHECK(panel.FindNextInvalidPaint());
+        const auto capture = std::filesystem::temp_directory_path() /
+                             ("tilemap-find-invalid-cycle-" + std::to_string(step) + ".txt");
+        ui.Frame([&] {
+            ImGui::LogToFile(0, capture.string().c_str());
+            panel.Draw();
+            ImGui::LogFinish();
+        });
+        std::ifstream in(capture);
+        const std::string text(std::istreambuf_iterator<char>{in}, {});
+        CHECK(text.find(hit) != std::string::npos);
+    };
+    const auto revision = doc.Revision();
+    find(1, "Ground (1, 1), tile 4");
+    find(2, "Ground (4, 3), tile 5");
+    find(3, "Ground (1, 1), tile 4");
+    CHECK(doc.Revision() == revision && !doc.dirty() && !doc.CanUndo());
+
+    doc.brush = 0;
+    doc.Apply(1, 1);
+    find(4, "Ground (4, 3), tile 5");
+    find(5, "Ground (4, 3), tile 5"); // wrap with only one hit left
+}
+
 AETHER_TEST(TilemapEditor_FindsMissingAutotileRulesEvenWithoutTexture) {
     HeadlessImGui ui;
     TilemapData map;
