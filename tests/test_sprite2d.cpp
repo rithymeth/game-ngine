@@ -9,7 +9,10 @@
 #include "aether/sprite2d/pixel_camera.h"
 #include "aether/sprite2d/tilemap.h"
 
+#include <chrono>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <limits>
 #include <map>
@@ -454,6 +457,65 @@ AETHER_TEST(Sprite2D_ParentTransformMovesSpriteGeometryAndCulling) {
     world.DestroyEntity(root);
     CHECK(BuildSpriteBatches(world, resolvers, &local).size() == 1); // unresolved parent: local fallback
     CHECK(BuildSpriteBatches(world, resolvers, &moved).empty());
+}
+
+AETHER_TEST(Sprite2D_ReusesTheLiveGuidIndexForParentedBatches) {
+    World world;
+    GuidIndex guids;
+    SpriteAtlas atlas = AtlasFromGrid(Guid(), 16, 16, 16, 16, "t");
+    Resolvers2D resolvers;
+    resolvers.atlases = [&](const assets::AssetGuid&) { return &atlas; };
+    const bool measure = std::getenv("AETHER_SPRITE_PARENT_BENCH") != nullptr;
+    const usize unrelated = measure ? 16000 : 8, count = measure ? 250 : 3;
+    for (usize i = 0; i < unrelated; ++i) {
+        const Entity e = world.CreateEntity();
+        EnsureGuid(world, e, &guids);
+    }
+    const Entity parent = world.CreateEntity();
+    world.AddComponent<Transform>(parent, Transform{Vec3(20, 10, 2), Quaternion::Identity()});
+    const auto parent_guid = EnsureGuid(world, parent, &guids);
+    for (usize i = 0; i < count; ++i) {
+        const Entity child = world.CreateEntity();
+        world.AddComponent<Transform>(child, Transform{Vec3(static_cast<f32>(i), 0, 0), Quaternion::Identity()});
+        world.AddComponent<Parent>(child, Parent{parent_guid});
+        Sprite sprite;
+        sprite.atlas.guid = Guid();
+        SetSpriteFrame(sprite, "t_0");
+        world.AddComponent<Sprite>(child, sprite);
+    }
+    const auto reference = BuildSpriteBatches(world, resolvers);
+    const auto cached = BuildSpriteBatches(world, resolvers, guids);
+    CHECK(reference.size() == 1 && cached.size() == 1);
+    if (reference.size() != 1 || cached.size() != 1) return;
+    const auto& a = reference[0];
+    const auto& b = cached[0];
+    CHECK(a.texture == b.texture && a.indices == b.indices && a.vertices.size() == b.vertices.size());
+    if (a.vertices.size() != b.vertices.size()) return;
+    for (usize n = 0; n < a.vertices.size(); ++n) {
+        const auto& x = a.vertices[n]; const auto& y = b.vertices[n];
+        CHECK(x.x == y.x && x.y == y.y && x.z == y.z && x.u == y.u && x.v == y.v &&
+              x.r == y.r && x.g == y.g && x.b == y.b && x.a == y.a);
+    }
+    if (measure) {
+        const auto time_ms = [&](bool reuse) {
+            const auto start = std::chrono::steady_clock::now();
+            usize quads = 0;
+            for (int iteration = 0; iteration < 100; ++iteration) {
+                const auto batches = reuse ? BuildSpriteBatches(world, resolvers, guids) :
+                                             BuildSpriteBatches(world, resolvers);
+                if (!batches.empty()) quads += batches[0].QuadCount();
+            }
+            CHECK(quads == count * 100);
+            return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+        };
+        const double rebuilt = time_ms(false), reused = time_ms(true);
+        std::fprintf(stderr, "100 batches, %zu unrelated identities, %zu sprites: rebuild %.3f ms, reuse %.3f ms\n",
+                     unrelated, count, rebuilt, reused);
+    }
+    world.DestroyEntity(parent);
+    CHECK(BuildSpriteBatches(world, resolvers, guids).size() == 1);
+    const ViewRect parent_only{19,9,22,12};
+    CHECK(BuildSpriteBatches(world, resolvers, guids, &parent_only).empty());
 }
 
 AETHER_TEST(Sprite2D_ViewCullingAndTilemapBatches) {

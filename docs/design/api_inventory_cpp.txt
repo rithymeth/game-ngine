@@ -6523,6 +6523,7 @@
   type struct SpriteBatch
   type struct SpriteVertex
   type struct ViewRect
+  std::vector<SpriteBatch>BuildSpriteBatches(const World&world,const Resolvers2D&resolvers,const GuidIndex&guids,const ViewRect*view=nullptr)
   std::vector<SpriteBatch>BuildSpriteBatches(const World&world,const Resolvers2D&resolvers,const ViewRect*view=nullptr)
   usize QuadCount()const
 [sprite2d/include/aether/sprite2d/components.h] experimental
