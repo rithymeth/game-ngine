@@ -51,6 +51,14 @@ python games/ASHEN-FRONTIER/tools/smoke_test.py                       # layout c
 games/ASHEN-FRONTIER/tools/render.sh Scenes/OpenWorld.ascene out.png   # one frame (cooks first)
 ```
 
+For Linux systems without a graphics backend, the progression-only smoke cooks the project and checks
+checkpoint recovery and crafting across player restarts. It needs an engine build with physics, and does
+not test rendering or the other windowed smoke scenarios:
+
+```sh
+AETHER_BUILD=/path/to/engine/build python games/ASHEN-FRONTIER/tools/smoke_test.py --headless-progression
+```
+
 On Windows, cook and package with the engine's tools:
 
 ```

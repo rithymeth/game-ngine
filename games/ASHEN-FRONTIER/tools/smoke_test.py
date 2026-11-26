@@ -11,6 +11,7 @@ Checks, in order (it stops at the first that fails and says which):
               spawn, is inside the world, no script or load errors were logged, and the screenshot is not blank.
 """
 
+import argparse
 import json
 import math
 import os
@@ -173,34 +174,28 @@ def mule(work):
     check(not re.search(r"\[ERROR\]", text), "no errors with MULE-3")
 
 
-def craft(work):
+def craft(work, headless=False):
     """Kael has the cost of a Generator Core and stands beside the fab bench: Interact crafts it (the cost is spent). A second run, in the same user
     directory, beside the generator: the saved Generator Core lets him power it."""
-    def run(scene, user):
-        command = [str(BUILD / "player" / "aether_player"), "--pak", str(work / "cooked"), "--scene", scene, "--frames", "80", "--size", "320x180",
-                   "--press", "E", "--report", "--user-dir", str(work / user)]
-        if sys.platform.startswith("linux") and shutil.which("xvfb-run"):
-            command = ["xvfb-run", "-a"] + command
-        result = subprocess.run(command, capture_output=True, text=True, timeout=300)
-        TRANSCRIPTS.append(result.stdout + result.stderr)
-        return result, result.stdout + result.stderr
-    result, text = run("Scenes/CraftTest.ascene", "user5")
+    result, text = run_player(work, "Scenes/CraftTest.ascene", "user5", headless=headless)
     check(result.returncode == 0, f"the player runs the crafting test and exits cleanly (exit {result.returncode})")
     check("Crafted Generator Core" in text, "Interact beside the fab bench with the cost in the pack crafts the Generator Core")
     check("Achievement unlocked: Fabricator" in text, "crafting the Generator Core unlocks the Fabricator achievement")
     check(not re.search(r"\[ERROR\]", text), "no errors while crafting")
-    result, text = run("Scenes/PowerTest.ascene", "user5")
+    result, text = run_player(work, "Scenes/PowerTest.ascene", "user5", headless=headless)
     check("Generator powered" in text, "the saved Generator Core lets Kael power the generator in the next run")
     check("Achievement unlocked: LightsOn" in text, "powering the generator unlocks the Lights On achievement")
     check(not re.search(r"\[ERROR\]", text), "no errors while powering the generator")
-    result, text = run("Scenes/PowerTest.ascene", "user6")
+    result, text = run_player(work, "Scenes/PowerTest.ascene", "user6", headless=headless)
     check("Generator powered" not in text, "without the Generator Core the generator stays off")
 
 
-def run_player(work, scene, user, press="E", frames=80):
+def run_player(work, scene, user, press="E", frames=80, headless=False):
     command = [str(BUILD / "player" / "aether_player"), "--pak", str(work / "cooked"), "--scene", scene, "--frames", str(frames), "--size", "320x180",
                "--press", press, "--report", "--user-dir", str(work / user)]
-    if sys.platform.startswith("linux") and shutil.which("xvfb-run"):
+    if headless:
+        command.append("--headless")
+    elif sys.platform.startswith("linux") and shutil.which("xvfb-run"):
         command = ["xvfb-run", "-a"] + command
     result = subprocess.run(command, capture_output=True, text=True, timeout=300)
     TRANSCRIPTS.append(result.stdout + result.stderr)
@@ -258,11 +253,13 @@ def combat(work):
     check("Sentinel hit Kael" not in text and "Pack at start: 0 scrap, 2 components" in text, "a disabled sentinel stays gone in the next run, and its drop was saved")
 
 
-def checkpoints(work):
+def checkpoints(work, headless=False):
     """Kael starts inside a checkpoint whose respawn point is 30 m north of it, and stands still while a sentinel disables him: he is put at the respawn point
     (the same scene: no reload), which the character controller took as a teleport. The last checkpoint is saved with the game, and a death in another
     scene goes back to the scene the checkpoint is in."""
-    result, text = run_player(work, "Scenes/CheckpointTest.ascene", "user_checkpoint", press="Z", frames=200)
+    # Headless runs use fixed simulation time. Give the sentinel time for three hits.
+    frames = 320 if headless else 200
+    result, text = run_player(work, "Scenes/CheckpointTest.ascene", "user_checkpoint", press="Z", frames=frames, headless=headless)
     check(result.returncode == 0, f"the player runs the checkpoint test and exits cleanly (exit {result.returncode})")
     check("Checkpoint reached: Start" in text, "Kael starting inside a checkpoint reaches it")
     check("Kael disabled" in text, "the sentinel disables him")
@@ -274,9 +271,9 @@ def checkpoints(work):
         x, z = (float(v) for v in match.groups())
         check(abs(x) < 5 and abs(z + 30) < 5, f"the character controller took the respawn as a teleport: Kael is at ({x:.1f}, {z:.1f}), 30 m north of the checkpoint")
     check(not re.search(r"\[ERROR\]", text), "no errors in the checkpoint test")
-    result, text = run_player(work, "Scenes/CheckpointTest.ascene", "user_checkpoint", press="Z", frames=40)
+    result, text = run_player(work, "Scenes/CheckpointTest.ascene", "user_checkpoint", press="Z", frames=40, headless=headless)
     check("Checkpoint at start: Start" in text, "the last checkpoint is saved with the game: the next run starts knowing it")
-    result, text = run_player(work, "Scenes/CombatTest.ascene", "user_checkpoint", press="Z", frames=400)
+    result, text = run_player(work, "Scenes/CombatTest.ascene", "user_checkpoint", press="Z", frames=400, headless=headless)
     loads = re.findall(r"Loaded (Scenes/\S+\.ascene)", text)
     check("Kael disabled" in text and loads[-1:] == ["Scenes/CheckpointTest.ascene"], f"disabled in another scene, Kael goes back to the scene of his checkpoint (loaded: {loads})")
     check("Kael respawned at Start" in text, "and is put on the checkpoint there")
@@ -363,12 +360,21 @@ def chapter3(work):
 
 
 def main():
-    layout()
-    if failures:
-        return 1
+    parser = argparse.ArgumentParser(description="Cook and smoke-test Ashen Frontier.")
+    parser.add_argument("--headless-progression", action="store_true",
+                        help="check checkpoint recovery and crafting across restarts without graphics (physics required)")
+    options = parser.parse_args()
+    if not options.headless_progression:
+        layout()
+        if failures:
+            return 1
     work = pathlib.Path(tempfile.mkdtemp(prefix="ashen-smoke-"))
     try:
-        if cook(work):
+        cooked = cook(work)
+        if cooked and options.headless_progression:
+            checkpoints(work, headless=True)
+            craft(work, headless=True)
+        elif cooked:
             play(work)
             interior(work)
             salvage(work)
