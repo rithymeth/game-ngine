@@ -20,6 +20,7 @@ class TilemapPanel {
 public:
     explicit TilemapPanel(TilemapEditDocument& document) : doc_(document) {}
     void Draw();
+    bool FindNextInvalidPaint();
     void LoadTexturePreview(const assets::AssetDatabase& database);
     bool LoadJumpProofOverlay(const std::filesystem::path& path, std::string* error = nullptr);
 
@@ -45,6 +46,10 @@ private:
     int resize_width_ = 0, resize_height_ = 0;
     u64 save_error_revision_ = 0;
     std::string save_error_;
+    struct InvalidPaintCell { usize layer, index; i32 tile; };
+    std::optional<InvalidPaintCell> invalid_paint_cell_;
+    std::optional<u64> invalid_search_revision_;
+    bool center_invalid_paint_ = false;
     f32 pan_x_ = 8.0f, pan_y_ = 8.0f;
     bool dragging_ = false;
     struct BrushSample {

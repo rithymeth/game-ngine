@@ -240,6 +240,35 @@ void TilemapPanel::Draw() {
     DrawCanvas();
 }
 
+bool TilemapPanel::FindNextInvalidPaint() {
+    const auto& map = doc_.Map();
+    const auto& tiles = doc_.GetTileset();
+    const u32 count = tiles.texture.IsNull() ? 0 : tiles.TileCount();
+    if (invalid_search_revision_ != doc_.Revision()) invalid_paint_cell_.reset();
+    invalid_search_revision_ = doc_.Revision();
+    std::optional<InvalidPaintCell> first, next;
+    if (count != 0 && map.width != 0 && map.height != 0) {
+        for (usize layer = 0; layer < map.layers.size() && !next; ++layer) {
+            const auto& cells = map.layers[layer].cells;
+            for (usize index = 0; index < cells.size(); ++index) {
+                const i32 tile = cells[index];
+                if (tile < 0 || static_cast<u32>(tile) < count) continue;
+                const InvalidPaintCell found{layer, index, tile};
+                if (!first) first = found;
+                if (!invalid_paint_cell_ || layer > invalid_paint_cell_->layer ||
+                    (layer == invalid_paint_cell_->layer && index > invalid_paint_cell_->index)) {
+                    next = found;
+                    break;
+                }
+            }
+        }
+    }
+    invalid_paint_cell_ = next ? next : first;
+    center_invalid_paint_ = invalid_paint_cell_.has_value();
+    if (invalid_paint_cell_) doc_.active_layer = invalid_paint_cell_->layer;
+    return center_invalid_paint_;
+}
+
 void TilemapPanel::DrawTools() {
     if (!doc_.TilemapFile().empty()) {
         ImGui::BeginDisabled(!doc_.dirty());
@@ -284,6 +313,21 @@ void TilemapPanel::DrawTools() {
     ImGui::SameLine();
     const std::string file = doc_.TilemapFile().empty() ? std::string() : doc_.TilemapFile().filename().string() + "  ";
     ImGui::TextDisabled("%s%ux%u%s", file.c_str(), doc_.Map().width, doc_.Map().height, doc_.dirty() ? "  (unsaved)" : "");
+    const auto& tiles = doc_.GetTileset();
+    if (!tiles.texture.IsNull() && tiles.TileCount() != 0) {
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Find next invalid tile")) FindNextInvalidPaint();
+        if (invalid_search_revision_ == doc_.Revision()) {
+            if (invalid_paint_cell_) {
+                const auto& hit = *invalid_paint_cell_;
+                const auto& map = doc_.Map();
+                ImGui::Text("Invalid paint: %s (%zu, %zu), tile %d", map.layers[hit.layer].name.c_str(),
+                            hit.index % map.width, hit.index / map.width, hit.tile);
+            } else {
+                ImGui::TextDisabled("No painted tiles outside this grid.");
+            }
+        }
+    }
 }
 
 void TilemapPanel::DrawResizeDialog() {
@@ -456,6 +500,15 @@ void TilemapPanel::DrawCanvas() {
     if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Middle, 0.0f)) {
         pan_x_ += io.MouseDelta.x;
         pan_y_ += io.MouseDelta.y;
+    }
+
+    if (center_invalid_paint_) {
+        center_invalid_paint_ = false;
+        if (invalid_paint_cell_ && invalid_search_revision_ == doc_.Revision() && map.width != 0) {
+            const usize index = invalid_paint_cell_->index;
+            pan_x_ = size.x * .5f - (static_cast<f32>(index % map.width) + .5f) * zoom;
+            pan_y_ = size.y * .5f - (static_cast<f32>(index / map.width) + .5f) * zoom;
+        }
     }
 
     // The map's bottom-left is at the canvas's (pan_x, height - pan_y), y up.

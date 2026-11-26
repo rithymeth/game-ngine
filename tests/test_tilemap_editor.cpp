@@ -1061,6 +1061,38 @@ AETHER_TEST(TilemapEditor_MarksInvalidConcretePaintThroughUpperLayers) {
     CHECK(doc.Revision() == revision && !doc.dirty() && !doc.CanUndo());
 }
 
+AETHER_TEST(TilemapEditor_FindsInvalidPaintAcrossTheMapWithoutAnEdit) {
+    HeadlessImGui ui;
+    TilemapData map;
+    map.Resize(100, 90);
+    map.AddLayer("Ground"); map.AddLayer("Canopy");
+    Tileset tiles;
+    tiles.texture = assets::NewAssetGuid();
+    tiles.texture_width = tiles.texture_height = 32;
+    tiles.tile_width = tiles.tile_height = 16;
+    map.Set(0, 93, 85, 6);
+    map.Set(1, 3, 2, 4);
+    TilemapEditDocument doc(std::move(map), std::move(tiles));
+    TilemapPanel panel(doc);
+    const auto revision = doc.Revision();
+    const auto marker_visible = [&] {
+        ui.Frame([&] { panel.Draw(); });
+        for (const auto* list : ImGui::GetDrawData()->CmdLists)
+            for (const ImDrawVert& v : list->VtxBuffer)
+                if (v.col == IM_COL32(255, 96, 215, 255)) return true;
+        return false;
+    };
+    CHECK(panel.FindNextInvalidPaint() && doc.active_layer == 0 && marker_visible());
+    CHECK(panel.FindNextInvalidPaint() && doc.active_layer == 1 && marker_visible());
+    CHECK(panel.FindNextInvalidPaint() && doc.active_layer == 0);
+    CHECK(doc.Revision() == revision && !doc.dirty() && !doc.CanUndo());
+    doc.brush = 0;
+    doc.Apply(93, 85);
+    CHECK(panel.FindNextInvalidPaint() && doc.active_layer == 1);
+    doc.Apply(3, 2);
+    CHECK(!panel.FindNextInvalidPaint());
+}
+
 AETHER_TEST(TilemapEditor_LargeMapOnlyDrawsVisibleGridLines) {
     HeadlessImGui ui;
     auto doc = Doc();
