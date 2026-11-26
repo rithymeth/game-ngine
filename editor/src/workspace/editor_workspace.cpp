@@ -572,7 +572,7 @@ struct EditorWorkspace::Impl {
                      tilemap_panel->LoadTexturePreview(*database);
                  tilemap_panel->Draw();
              }},
-            {"Sprite Atlas", "2D", "Preview clips or apply a frame to a selected static Sprite.",
+            {"Sprite Atlas", "2D", "Preview sprite sheets or apply a frame or clip to the selected scene Sprite.",
              [this] { sprite_atlas_panel.Draw(&scene_panel->Document()); }},
             {"Sequencer - Intro", "Cinematics", "Animate the intro on a timeline of tracks and keys.",
              [this] { sequencer_panel->Draw(); }},

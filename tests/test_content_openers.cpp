@@ -40,6 +40,7 @@
 #include "aether/sprite2d/physics2d.h"
 
 #include <imgui.h>
+#include <imgui_internal.h>
 
 #include <algorithm>
 #include <cstdio>
@@ -319,7 +320,8 @@ AETHER_TEST(Openers_SpriteAtlasDrawsTheSourceRectangleAndKeepsThePreviousAssetOn
     PlaceContentAsset(scene, paths.content, "Sheet.aatlas", Vec3{}, &placed);
     if (!placed || scene.Selection().size() != 1) { CHECK(false); return; }
     const Entity entity = scene.Selection().front();
-    const auto draw = [&] { ui.Frame([&] { ws.DrawTool(ws.Selected()); }); };
+    ImVec2 panel_start;
+    const auto draw = [&] { ui.Frame([&] { panel_start = ImGui::GetCursorScreenPos(); ws.DrawTool(ws.Selected()); }); };
     struct Bounds { float x = 0, y = 0, w = 0, h = 0; };
     const auto region = [](float low, float high) -> Bounds {
         for (const auto* list : ImGui::GetDrawData()->CmdLists) {
@@ -378,6 +380,33 @@ AETHER_TEST(Openers_SpriteAtlasDrawsTheSourceRectangleAndKeepsThePreviousAssetOn
     CHECK(!ws.OpenAsset("Broken.aatlas", &error) && error.find("JSON") != std::string::npos);
     draw();
     CHECK(region(0.0f, 8.0f/18).w > 0);
+    const auto animator_id = GetComponentId<sprite2d::SpriteAnimator>();
+    if (scene.AddComponent(entity, animator_id)) {
+        const auto click = [&](float x, float y) {
+            auto& io = ImGui::GetIO();
+            io.AddMousePosEvent(x, y);
+            draw();
+            io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+            draw();
+            io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+            draw();
+            draw();
+        };
+        const float line = ImGui::GetTextLineHeightWithSpacing(), row = ImGui::GetFrameHeight();
+        const float x = panel_start.x + 15;
+        const float combo_top = panel_start.y + 3 * line;
+        click(x, combo_top + 0.5f * row);
+        const auto* popup = ImGui::FindWindowByName("##Combo_00");
+        CHECK(popup && popup->Active);
+        if (popup && popup->Active) {
+            const ImVec2 start = popup->DC.CursorStartPos;
+            click(start.x + 15, start.y + line + 0.5f * ImGui::GetTextLineHeight()); // "move", below Manual frame
+            CHECK(region(10.0f/18, 1.0f).w > 0); // first frame of "move", different from manual
+            click(x, combo_top + row + ImGui::GetStyle().ItemSpacing.y + line + 0.5f * row);
+            const auto* animator = scene.GetWorld().GetComponent<sprite2d::SpriteAnimator>(entity);
+            CHECK(animator && std::string_view(animator->clip) == "move");
+        }
+    } else CHECK(false);
     ProjectPaths other;
     FreshProject("sprite_atlas_other", other);
     CHECK(ws.OpenProject(other.file));
@@ -731,7 +760,9 @@ AETHER_TEST(Openers_DroppedSpriteAtlasSurvivesStrictShipping) {
         .write(reinterpret_cast<const char*>(png.data()), static_cast<std::streamsize>(png.size()));
     ContentBrowserPanel browser(paths.file);
     std::string error;
-    if (!browser.CreateSpriteAtlas("Hero.png", {8, 8, 0, 0, 2, 0}, &error)) { CHECK(false); return; }
+    ContentBrowserPanel::SpriteAtlasGrid grid{8, 8, 0, 0, 2, 0};
+    grid.clips = {{"idle", 0, 1, 12, true}, {"walk", 0, 2, 12, true}};
+    if (!browser.CreateSpriteAtlas("Hero.png", grid, &error)) { CHECK(false); return; }
     const auto* atlas = browser.Database()->FindByPath("Hero.aatlas");
     if (!atlas) { CHECK(false); return; }
     const auto guid = atlas->guid;
@@ -776,6 +807,25 @@ AETHER_TEST(Openers_DroppedSpriteAtlasSurvivesStrictShipping) {
     CHECK(frame() == "frame_1");
     CHECK(scene.Undo() && frame() == "frame_0");
     CHECK(scene.Redo() && frame() == "frame_1");
+    CHECK(!panel.ApplyClip(scene, "walk")); // a static Sprite is never converted implicitly
+    PlaceContentAsset(scene, paths.content, "Hero.aatlas", Vec3(4, 3, 0), &placed);
+    if (!placed || scene.Selection().size() != 1) { CHECK(false); return; }
+    const Entity animated = scene.Selection().front();
+    const auto animator_id = GetComponentId<sprite2d::SpriteAnimator>();
+    if (!scene.AddComponent(animated, animator_id)) { CHECK(false); return; }
+    CHECK(scene.SetComponentField(animated, animator_id, "speed", reflect::Any(2.0f)));
+    CHECK(panel.ApplyClip(scene, "idle"));
+    const auto depth = scene.Commands().UndoCount();
+    CHECK(!panel.ApplyClip(scene, "unknown") && !panel.ApplyClip(scene, "idle"));
+    CHECK(scene.Commands().UndoCount() == depth && !panel.ApplyFrame(scene, "frame_1"));
+    const auto authored_clip = [&] {
+        const auto* animator = scene.GetWorld().GetComponent<sprite2d::SpriteAnimator>(animated);
+        return animator ? std::string(animator->clip) : std::string{};
+    };
+    if (!panel.ApplyClip(scene, "walk")) { CHECK(false); return; }
+    CHECK(scene.Commands().UndoCount() == depth + 1 && authored_clip() == "walk");
+    CHECK(scene.Undo() && authored_clip() == "idle");
+    CHECK(scene.Redo() && authored_clip() == "walk");
     if (!scene.Save(paths.content / "Placed.ascene", &error)) { CHECK(false); return; }
 
     ProjectSettings project;
@@ -814,6 +864,17 @@ AETHER_TEST(Openers_DroppedSpriteAtlasSurvivesStrictShipping) {
             ++matches;
     });
     CHECK(matches == 1);
+    const auto runtime_frame = [&] {
+        std::string name;
+        game.GetWorld().ForEach<sprite2d::Sprite, sprite2d::SpriteAnimator, Transform>([&](auto& s, auto& anim, auto& t) {
+            if (t.position.x == 4.0f && std::string_view(anim.clip) == "walk" && anim.speed == 2.0f)
+                name = s.frame;
+        });
+        return name;
+    };
+    CHECK(runtime_frame() == "frame_0");
+    for (int i = 0; i < 3; ++i) game.Tick(1.0f / 60.0f);
+    CHECK(runtime_frame() == "frame_1");
 }
 
 AETHER_TEST(Openers_AuthoredTilemapWorksInAnIndependentStrictShippingPackage) {
