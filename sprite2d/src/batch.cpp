@@ -1,8 +1,10 @@
 #include "aether/sprite2d/batch.h"
+#include "aether/scene/hierarchy.h"
 
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <optional>
 
 namespace aether::sprite2d {
 
@@ -49,14 +51,14 @@ bool FiniteTransform2D(const Transform& transform) {
 }
 
 void PushQuad(std::vector<SpriteVertex>& out, const f32 px[4], const f32 py[4], f32 z, const f32 uv[4], const SpriteColor& c,
-              bool flip_x, bool flip_y) {
+              bool flip_x, bool flip_y, const f32* depths = nullptr) {
     f32 u0 = uv[0], v0 = uv[1], u1 = uv[2], v1 = uv[3];
     if (flip_x) std::swap(u0, u1);
     if (flip_y) std::swap(v0, v1);
     // Corners: top-left, top-right, bottom-right, bottom-left.
     const f32 us[4] = {u0, u1, u1, u0};
     const f32 vs[4] = {v0, v0, v1, v1};
-    for (int i = 0; i < 4; ++i) out.push_back({px[i], py[i], z, us[i], vs[i], c.r, c.g, c.b, c.a});
+    for (int i = 0; i < 4; ++i) out.push_back({px[i], py[i], depths ? depths[i] : z, us[i], vs[i], c.r, c.g, c.b, c.a});
 }
 
 } // namespace
@@ -67,9 +69,8 @@ std::vector<SpriteBatch> BuildSpriteBatches(const World& world, const Resolvers2
                  !std::isfinite(view->max_y) || view->min_x > view->max_x || view->min_y > view->max_y)) return {};
     usize sequence = 0;
 
-    world.ForEach<Transform, Sprite>([&](Transform& t_ref, Sprite& sprite_ref) {
-        const Transform* t = &t_ref;
-        const Sprite* sprite = &sprite_ref;
+    std::optional<GuidIndex> parent_guids;
+    const auto add_sprite = [&](const Transform* t, const Sprite* sprite, const Parent* parent) {
         ++sequence;
         const SpriteAtlas* atlas = resolvers.atlases ? resolvers.atlases(sprite->atlas.guid) : nullptr;
         const SpriteFrame* frame = atlas ? atlas->FindFrame(sprite->frame) : nullptr;
@@ -96,13 +97,71 @@ std::vector<SpriteBatch> BuildSpriteBatches(const World& world, const Resolvers2
             py[i] += t->position.y;
             if (!std::isfinite(px[i]) || !std::isfinite(py[i])) return;
         }
+        f32 z = t->position.z;
+        f32 depths[4] = {z, z, z, z};
+        bool flip_x = sprite->flip_x != (w < 0.0f);
+        if (parent && !parent->parent.IsNull()) {
+            if (!parent_guids) {
+                // Build once only if a drawable sprite actually uses a parent.
+                // Keep the lowest entity index if duplicate IDs escaped scene validation.
+                parent_guids.emplace();
+                world.ForEachArchetype([&](const Archetype& arch) {
+                    const ComponentId id = GetComponentId<IdComponent>();
+                    if (!arch.Has(id)) return;
+                    for (usize chunk = 0; chunk < arch.ChunkCount(); ++chunk) {
+                        const auto* ids = static_cast<const IdComponent*>(arch.ComponentArray(chunk, id));
+                        const auto* entities = arch.EntityArray(chunk);
+                        for (u32 row = 0; row < arch.ChunkEntityCount(chunk); ++row) {
+                            const auto guid = ids[row].guid;
+                            if (guid.IsNull()) continue;
+                            const Entity existing = parent_guids->Find(world, guid);
+                            if (existing.IsNull() || existing.index > entities[row].index)
+                                parent_guids->Add(guid, entities[row]);
+                        }
+                    }
+                });
+            }
+            const Entity resolved = parent_guids->Find(world, parent->parent);
+            if (!resolved.IsNull()) {
+                const Mat4 inherited = ComputeWorldTransform(world, *parent_guids, resolved);
+                z = (inherited * Vec4(t->position.x, t->position.y, t->position.z, 1)).z;
+                if (!std::isfinite(z)) return;
+                for (int i = 0; i < 4; ++i) {
+                    const Vec4 point = inherited * Vec4(px[i], py[i], t->position.z, 1);
+                    if (!std::isfinite(point.x) || !std::isfinite(point.y) || !std::isfinite(point.z)) return;
+                    px[i] = point.x;
+                    py[i] = point.y;
+                    depths[i] = point.z;
+                }
+                const f64 winding = (static_cast<f64>(px[1]) - px[0]) * (static_cast<f64>(py[3]) - py[0]) -
+                                    (static_cast<f64>(py[1]) - py[0]) * (static_cast<f64>(px[3]) - px[0]);
+                if (winding > 0.0) {
+                    for (auto* axis : {px, py, depths}) {
+                        std::swap(axis[0], axis[1]);
+                        std::swap(axis[2], axis[3]);
+                    }
+                    flip_x = !flip_x;
+                }
+            }
+        }
         const Rect bounds{std::min({px[0], px[1], px[2], px[3]}), std::min({py[0], py[1], py[2], py[3]}),
                           std::max({px[0], px[1], px[2], px[3]}), std::max({py[0], py[1], py[2], py[3]})};
         if (!Visible(view, bounds)) return;
-        Item item{sprite->sorting_layer, sprite->order, t->position.z, sequence, atlas->texture, {}};
-        PushQuad(item.vertices, px, py, t->position.z, uv, sprite->color,
-                 sprite->flip_x != (w < 0.0f), sprite->flip_y != (h < 0.0f));
+        Item item{sprite->sorting_layer, sprite->order, z, sequence, atlas->texture, {}};
+        PushQuad(item.vertices, px, py, z, uv, sprite->color, flip_x, sprite->flip_y != (h < 0.0f), depths);
         items.push_back(std::move(item));
+    };
+    world.ForEachArchetype([&](const Archetype& arch) {
+        const ComponentId transform = GetComponentId<Transform>(), sprite = GetComponentId<Sprite>();
+        const ComponentId parent = GetComponentId<Parent>();
+        if (!arch.Has(transform) || !arch.Has(sprite)) return;
+        for (usize chunk = 0; chunk < arch.ChunkCount(); ++chunk) {
+            const auto* transforms = static_cast<const Transform*>(arch.ComponentArray(chunk, transform));
+            const auto* sprites = static_cast<const Sprite*>(arch.ComponentArray(chunk, sprite));
+            const auto* parents = arch.Has(parent) ? static_cast<const Parent*>(arch.ComponentArray(chunk, parent)) : nullptr;
+            for (u32 row = 0; row < arch.ChunkEntityCount(chunk); ++row)
+                add_sprite(&transforms[row], &sprites[row], parents ? &parents[row] : nullptr);
+        }
     });
 
     world.ForEach<Transform, TilemapRenderer>([&](Transform& t_ref, TilemapRenderer& renderer_ref) {
