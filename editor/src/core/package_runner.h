@@ -33,6 +33,7 @@ public:
     // The buttons. Start* are false while a build is running.
     bool StartCook();    // into <project>/Saved/Cooked/<Configuration>
     bool StartPackage(); // into output_dir
+    bool StartJumpProof(const std::filesystem::path& route);
     bool StartSmoke();   // staged player, three headless frames with isolated user data
     bool StartVerify();  // staged package, or the selected output folder if none is staged
     void Cancel();
@@ -68,6 +69,7 @@ public:
 
 protected:
     bool Start(bool package);
+    bool StartStagedTest(std::filesystem::path route);
     bool PollLaunchedGame(); // UI thread; reports a completed launch once
     void AddLog(bool warning, std::string text);
 

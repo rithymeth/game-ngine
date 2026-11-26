@@ -90,7 +90,20 @@ void PackageRunner::AddLog(bool warning, std::string text) {
 
 bool PackageRunner::StartCook() { return Start(false); }
 bool PackageRunner::StartPackage() { return Start(true); }
-bool PackageRunner::StartSmoke() {
+bool PackageRunner::StartSmoke() { return StartStagedTest({}); }
+
+bool PackageRunner::StartJumpProof(const stdfs::path& route) {
+    if (route.empty()) return false;
+    std::error_code ec;
+    const auto resolved = stdfs::absolute(ProjectPaths::ForFile(project_file_).root / route, ec);
+    if (ec || !stdfs::is_regular_file(resolved, ec)) {
+        launch_error_ = "Jump Proof needs a saved route file.";
+        return false;
+    }
+    return StartStagedTest(resolved);
+}
+
+bool PackageRunner::StartStagedTest(stdfs::path route) {
     if (Busy() || PollLaunchedGame()) return false;
     WaitForBuild();
     StagedPackage staged;
@@ -98,15 +111,23 @@ bool PackageRunner::StartSmoke() {
         std::lock_guard<std::mutex> lock(mutex_);
         if (staged_.game.empty()) return false;
         staged = staged_;
-        log_.push_back({false, "Running headless smoke test (3 frames)"});
-        stage_ = "Running headless smoke test";
+        if (route.empty()) {
+            stage_ = "Running headless smoke test";
+            log_.push_back({false, stage_ + " (3 frames)"});
+        } else {
+            stage_ = "Running Jump Proof";
+            log_.push_back({false, stage_ + ": " + route.filename().string()});
+        }
         progress_ = 0.0f;
         result_ = Result::None;
     }
     cancel_ = false;
     verifying_ = false;
     busy_ = true;
-    worker_ = std::thread([this, staged = std::move(staged)] {
+    launch_error_.clear();
+    worker_ = std::thread([this, staged = std::move(staged), route = std::move(route)] {
+        const bool proof = !route.empty();
+        bool missed = false;
         std::string detail;
         std::deque<std::string> diagnostics;
         Result result = Result::Failed;
@@ -128,8 +149,15 @@ bool PackageRunner::StartSmoke() {
                 if (ec) detail += ": " + ec.message();
             } else {
                 const auto child_log = scratch.path / "player.log";
-                std::vector<std::string> args{"--headless", "--frames", "3", "--user-dir", (scratch.path / "user").string(),
+                std::vector<std::string> args{"--headless", "--user-dir", (scratch.path / "user").string(),
                                               "--log-file", child_log.string()};
+                if (proof) {
+                    args.push_back("--jump-proof");
+                    args.push_back(route.string());
+                } else {
+                    args.push_back("--frames");
+                    args.push_back("3");
+                }
                 // Match normal editor Launch: use the key from the staged
                 // package, never the UI's possibly edited field or the log.
                 if (staged.key) {
@@ -148,9 +176,10 @@ bool PackageRunner::StartSmoke() {
                     } else if (player.ExitCode() == 0) {
                         result = Result::Succeeded;
                     } else {
+                        missed = proof && player.ExitCode() == 5;
                         detail = "player exited with code " + std::to_string(player.ExitCode());
                     }
-                    if (result == Result::Failed) diagnostics = SmokeFailureLog(child_log);
+                    if (result == Result::Failed && !missed) diagnostics = SmokeFailureLog(child_log);
                 }
             }
         }
@@ -158,8 +187,14 @@ bool PackageRunner::StartSmoke() {
             std::lock_guard<std::mutex> lock(mutex_);
             result_ = result;
             progress_ = result == Result::Cancelled ? 0.0f : 1.0f;
-            stage_ = result == Result::Succeeded ? "Headless smoke test passed (3 frames)" :
-                     result == Result::Cancelled ? "Headless smoke test cancelled" : "Headless smoke test failed: " + detail;
+            if (proof) {
+                stage_ = result == Result::Succeeded ? "Jump Proof: target reached" :
+                         result == Result::Cancelled ? "Jump Proof cancelled" :
+                         missed ? "Jump Proof: target missed" : "Jump Proof could not run: " + detail;
+            } else {
+                stage_ = result == Result::Succeeded ? "Headless smoke test passed (3 frames)" :
+                         result == Result::Cancelled ? "Headless smoke test cancelled" : "Headless smoke test failed: " + detail;
+            }
             log_.push_back({result == Result::Failed, stage_});
             for (auto& diagnostic : diagnostics) log_.push_back({true, std::move(diagnostic)});
         }

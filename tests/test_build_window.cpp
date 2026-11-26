@@ -169,6 +169,49 @@ AETHER_TEST(BuildWindow_SmokeTestsTheStagedPlayerWithoutChangingLaunchArguments)
         CHECK(!entry.path().filename().string().starts_with("aether-editor-smoke-"));
 }
 
+AETHER_TEST(BuildWindow_RunsJumpProofAgainstTheStagedPlatformer) {
+    NewProjectPanel starter;
+    starter.template_id = "platformer_2d";
+    const auto root = stdfs::temp_directory_path() / "Editor Jump Proof";
+    starter.location = root.string();
+    starter.name = "ProofPlatformer";
+    if (!starter.Create()) { CHECK(false); return; }
+    const auto project = starter.Created();
+    ProjectSettings settings;
+    if (!LoadProject(project, settings, nullptr)) { CHECK(false); return; }
+    BuildPackageWindow window(project);
+    window.configuration = cook::BuildConfiguration::Shipping;
+    window.strict_validation = true;
+    window.output_dir = (root / "Shipping Distribution").string();
+    window.player_path = AETHER_TEST_PLAYER_PATH;
+    window.launch_args = "--not-a-player-flag";
+    if (!window.StartPackage()) { CHECK(false); return; }
+    window.WaitForBuild();
+    const auto game = window.StagedGame();
+    if (game.empty()) { CHECK(false); return; }
+    const std::string events = R"({"frames":400,"events":[{"frame":90,"key":"D","value":1},{"frame":225,"key":"Space","value":1},{"frame":285,"key":"Space","value":0},{"frame":350,"key":"D","value":0}],)";
+    const auto route = project.parent_path() / "Jump Proof route.json";
+    const auto run = [&](const std::string& suffix, const char* expected) {
+        std::ofstream(route) << events << suffix;
+        if (!window.StartJumpProof(route.filename())) { CHECK(false); return; }
+        window.WaitForBuild();
+        CHECK(window.Stage().starts_with(expected));
+        CHECK(window.StagedGame() == game && window.launch_args == "--not-a-player-flag");
+    };
+    run(R"("target":{"min_x":28.5,"max_x":30,"min_y":2,"max_y":3}})", "Jump Proof: target reached");
+    CHECK(window.LastResult() == BuildPackageWindow::Result::Succeeded);
+    run(R"("target":{"min_x":100,"max_x":101,"min_y":2,"max_y":3}})", "Jump Proof: target missed");
+    CHECK(window.LastResult() == BuildPackageWindow::Result::Failed);
+    run(R"("scene":"Wrong Level.ascene","fixed_hz":60,"target":{"min_x":28.5,"max_x":30,"min_y":2,"max_y":3}})",
+        "Jump Proof could not run: player exited with code 2");
+    bool mismatch = false;
+    for (const auto& line : window.Log()) mismatch |= line.warning && line.text.find("scene mismatch") != std::string::npos;
+    CHECK(mismatch);
+    CHECK(!window.StartJumpProof("absent route.json"));
+    for (const auto& entry : stdfs::directory_iterator(stdfs::temp_directory_path()))
+        CHECK(!entry.path().filename().string().starts_with("aether-editor-smoke-"));
+}
+
 AETHER_TEST(BuildWindow_ReportsMissingPackageArchiveBeforeLaunching) {
     BuildPackageWindow window(FreshProject("MissingArchive"));
     window.player_path = AETHER_TEST_PLAYER_PATH;
