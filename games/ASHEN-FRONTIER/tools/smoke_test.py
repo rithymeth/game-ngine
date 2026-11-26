@@ -177,9 +177,13 @@ def mule(work):
     check(not re.search(r"\[ERROR\]", text), "no errors with MULE-3")
 
 
+def startup_core_counts(text):
+    return re.findall(r"Pack at start: \d+ scrap, \d+ components, (\d+) generator cores[ \t\r]*$", text, re.M)
+
+
 def craft(work, headless=False):
     """Kael has the cost of a Generator Core and stands beside the fab bench: Interact crafts it (the cost is spent). A second run, in the same user
-    directory, beside the generator: the saved Generator Core lets him power it."""
+    directory restores the crafted item and powers the generator. Repeat inventory restore with only the rotated backup present."""
     result, text = run_player(work, "Scenes/CraftTest.ascene", "user5", headless=headless)
     check(result.returncode == 0, f"the player runs the crafting test and exits cleanly (exit {result.returncode})")
     check("Crafted Generator Core" in text, "Interact beside the fab bench with the cost in the pack crafts the Generator Core")
@@ -187,13 +191,27 @@ def craft(work, headless=False):
     check(not re.search(r"\[ERROR\]", text), "no errors while crafting")
     result, text = run_player(work, "Scenes/PowerTest.ascene", "user5", headless=headless)
     check(result.returncode == 0, f"the player loads the crafted save and exits cleanly (exit {result.returncode})")
-    restored_cores = re.findall(r"Pack at start: \d+ scrap, \d+ components, (\d+) generator cores\s*$", text, re.M)
+    restored_cores = startup_core_counts(text)
     check(restored_cores == ["1"], f"the next run restores exactly one Generator Core in Kael's pack (counts: {restored_cores})")
     check("Generator powered" in text, "Kael can power the generator after restarting")
     check("Achievement unlocked: LightsOn" in text, "powering the generator unlocks the Lights On achievement")
     check(not re.search(r"\[ERROR\]", text), "no errors while powering the generator")
     result, text = run_player(work, "Scenes/PowerTest.ascene", "user6", headless=headless)
     check(result.returncode == 0 and "Generator powered" not in text, "in a fresh save the generator stays off")
+
+    # The generator save rotates the real crafting save. Copy only that backup
+    # into an isolated user directory, and don't interact on the recovery run.
+    backup = work / "user5" / "Saves" / "autosave.asav.bak"
+    if not check(backup.is_file(), "saving after powering the generator rotates the crafting save"):
+        return
+    recovery_saves = work / "user_craft_backup" / "Saves"
+    recovery_saves.mkdir(parents=True)
+    shutil.copyfile(backup, recovery_saves / backup.name)
+    result, text = run_player(work, "Scenes/PowerTest.ascene", "user_craft_backup", press="Z", headless=headless)
+    check(result.returncode == 0 and not re.search(r"\[ERROR\]", text), "the player loads with only a backup and exits cleanly")
+    restored_cores = startup_core_counts(text)
+    check(restored_cores == ["1"], f"the rotated backup restores exactly one Generator Core (counts: {restored_cores})")
+    check("Generator powered" not in text, "the backup recovery run does not interact with the generator")
 
 
 def run_player(work, scene, user, press="E", frames=80, headless=False):
