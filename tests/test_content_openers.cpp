@@ -703,6 +703,73 @@ AETHER_TEST(Openers_CreatesAnEditableTilemapFromAPaddedSheet) {
     CHECK(sprite2d::LoadTilemap(paths.content / "Sheet.atilemap", map) && map.Get(0, 2, 2) == 3);
 }
 
+AETHER_TEST(Openers_DroppedSpriteAtlasSurvivesStrictShipping) {
+    ProjectPaths paths;
+    FreshProject("drop_sprite_atlas", paths);
+    const auto png = assets::EncodePngRgba8(18, 8, std::vector<u8>(18 * 8 * 4, 255));
+    std::ofstream(paths.content / "Hero.png", std::ios::binary)
+        .write(reinterpret_cast<const char*>(png.data()), static_cast<std::streamsize>(png.size()));
+    ContentBrowserPanel browser(paths.file);
+    std::string error;
+    if (!browser.CreateSpriteAtlas("Hero.png", {8, 8, 0, 0, 2, 0}, &error)) { CHECK(false); return; }
+    const auto* atlas = browser.Database()->FindByPath("Hero.aatlas");
+    if (!atlas) { CHECK(false); return; }
+    const auto guid = atlas->guid;
+
+    SceneDocument scene;
+    scene.Commands().Clear();
+    const auto before = scene.Entities().size();
+    bool placed = true;
+    PlaceContentAsset(scene, paths.content, "Missing.aatlas", Vec3{}, &placed);
+    CHECK(!placed && scene.Entities().size() == before && !scene.CanUndo());
+    const auto notice = PlaceContentAsset(scene, paths.content, "Hero.aatlas", Vec3(2, 3, 0), &placed);
+    if (!placed || scene.Selection().size() != 1) { std::fprintf(stderr, "%s\n", notice.c_str()); CHECK(false); return; }
+    const Entity entity = scene.Selection().front();
+    const auto* sprite = scene.GetWorld().GetComponent<sprite2d::Sprite>(entity);
+    CHECK(sprite && sprite->atlas.guid == guid && std::string_view(sprite->frame) == "frame_0");
+    CHECK(!scene.GetWorld().GetComponent<sprite2d::SpriteAnimator>(entity));
+    CHECK(scene.Undo() && !scene.CanUndo() && scene.Entities().size() == before);
+    CHECK(scene.Redo() && scene.Entities().size() == before + 1);
+    if (!scene.Save(paths.content / "Placed.ascene", &error)) { CHECK(false); return; }
+
+    ProjectSettings project;
+    if (!LoadProject(paths.file, project, &error)) { CHECK(false); return; }
+    project.startup_scene = "Placed.ascene";
+    if (!SaveProject(paths.file, project, &error)) { CHECK(false); return; }
+    const auto root = paths.root.parent_path();
+    cook::PackageOptions options;
+    options.cook.project_file = paths.file;
+    options.cook.configuration = cook::BuildConfiguration::Shipping;
+    options.cook.strict_validation = true;
+    options.output_dir = root / "Shipping";
+    options.player_executable = AETHER_TEST_PLAYER_PATH;
+    const auto staged = cook::Package(options);
+    if (!staged.ok) { std::fprintf(stderr, "%s\n", staged.error.c_str()); CHECK(false); return; }
+    std::error_code ec;
+    stdfs::rename(paths.root, root / "Unavailable Source", ec);
+    if (ec || stdfs::exists(paths.file)) { CHECK(false); return; }
+
+    player::GamePackage package;
+    const auto archives = player::GamePackage::FindPaks(staged.paks_dir);
+    if (archives.empty()) { CHECK(false); return; }
+    for (const auto& archive : archives)
+        if (!package.Mount(archive, 0, &error)) { CHECK(false); return; }
+    if (!package.LoadManifest(&error)) { CHECK(false); return; }
+    const auto* asset = package.FindAssetByGuid(assets::ToString(guid));
+    const auto* texture = package.FindAsset("Hero.png");
+    CHECK(asset && asset->path == "Hero.aatlas" && texture && !texture->cooked.empty());
+    player::Game game(package);
+    game.SetUserPaths(player::ResolveUserPaths("PlacedSprite", root / "Profile"));
+    if (!game.LoadStartupScene(&error)) { CHECK(false); return; }
+    usize matches = 0;
+    game.GetWorld().ForEach<sprite2d::Sprite, Transform>([&](auto& s, auto& transform) {
+        if (s.atlas.guid == guid && std::string_view(s.frame) == "frame_0" &&
+            transform.position.x == 2.0f && transform.position.y == 3.0f && transform.position.z == 0.0f)
+            ++matches;
+    });
+    CHECK(matches == 1);
+}
+
 AETHER_TEST(Openers_AuthoredTilemapWorksInAnIndependentStrictShippingPackage) {
     ProjectPaths paths;
     FreshProject("place_authored_tilemap", paths);
