@@ -102,7 +102,8 @@ bool ApplyEditorTheme(float font_size, const std::filesystem::path& font_file) {
     c[ImGuiCol_TableRowBgAlt] = Rgb(255, 255, 255, 0.03f);
 
     const std::filesystem::path font = font_file.empty() ? FindFont() : font_file;
-    if (font.empty()) return false;
+    std::error_code font_error;
+    if (font.empty() || !std::filesystem::is_regular_file(font, font_error)) return false;
     ImGuiIO& io = ImGui::GetIO();
     ImFont* loaded = io.Fonts->AddFontFromFileTTF(font.string().c_str(), font_size);
     if (!loaded) return false;
