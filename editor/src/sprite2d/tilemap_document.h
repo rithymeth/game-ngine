@@ -76,7 +76,7 @@ public:
     // Those files, empty for a sample.
     const std::filesystem::path& TilemapFile() const { return tilemap_file_; }
     const std::filesystem::path& TilesetFile() const { return tileset_file_; }
-    bool dirty() const { return saved_state_ != state_; }
+    bool dirty() const { return saved_state_ != state_ || stroke_changed_cells_ != 0; }
 
 private:
     struct Snapshot {
@@ -96,6 +96,7 @@ private:
     std::filesystem::path tileset_file_;
     bool in_stroke_ = false;
     Snapshot stroke_start_{};
+    usize stroke_changed_cells_ = 0;
     std::vector<Snapshot> undo_, redo_;
     u64 revision_ = 1;
     // The view revision always moves forward; undo can return to an old edit state.

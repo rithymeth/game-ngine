@@ -122,6 +122,26 @@ AETHER_TEST(TilemapEditor_RevertedStrokePreservesRevisionAndRedoAcrossLayers) {
     CHECK(doc.Map().Get(top, 5, 4) == 3 && doc.Map().Get(0, 5, 4) == kEmpty);
 }
 
+AETHER_TEST(TilemapEditor_LiveStrokeIsDirtyOnlyWhileCellsDiffer) {
+    TilemapEditDocument doc = Doc();
+    const auto revision = doc.Revision();
+    doc.brush = 3;
+    doc.BeginStroke();
+    doc.Apply(-1, 0);
+    CHECK(!doc.dirty());
+    doc.Apply(1, 1);
+    doc.Apply(2, 1);
+    doc.Apply(2, 1); // Repainting the same tile must not count twice.
+    CHECK(doc.dirty() && doc.Revision() == revision && !doc.CanUndo());
+    doc.tool = TileTool::Erase;
+    doc.Apply(1, 1);
+    CHECK(doc.dirty()); // One changed tile remains.
+    doc.Apply(2, 1);
+    CHECK(!doc.dirty());
+    doc.EndStroke();
+    CHECK(!doc.dirty() && doc.Revision() == revision && !doc.CanUndo());
+}
+
 AETHER_TEST(TilemapEditor_RectangleFillAndPick) {
     TilemapEditDocument doc = Doc();
     doc.brush = 7;
@@ -879,9 +899,11 @@ AETHER_TEST(TilemapEditor_EditorQuitProtectsUnsavedProjectMap) {
     ws.on_quit_confirmed = [&] { ++quits; };
     if (!ws.OpenAsset("Tiles/Level1.atilemap", &error)) { CHECK(false); return; }
     auto& doc = ws.Tilemap();
+    CHECK(!ws.HasUnsavedChanges());
     doc.brush = AutotileCell(0);
-    doc.Apply(20, 1);
-    CHECK(doc.dirty() && !ws.ActiveDocument().IsDirty());
+    doc.BeginStroke();
+    doc.Apply(20, 1); // The window can close before the brush button is released.
+    CHECK(doc.dirty() && !ws.ActiveDocument().IsDirty() && !doc.CanUndo());
     CHECK(ws.HasUnsavedChanges());
     ws.RequestQuit();
     if (!ws.QuitPromptOpen() || quits != 0) { CHECK(false); return; }

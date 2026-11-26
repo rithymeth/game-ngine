@@ -95,19 +95,23 @@ void TilemapEditDocument::BeginStroke() {
 void TilemapEditDocument::EndStroke() {
     if (!in_stroke_) return;
     in_stroke_ = false;
-    // A stroke can only change cells: structural edits end it before mutating the map.
-    // Compare the grids directly, including cells painted and then restored in the same stroke.
-    const auto& before = stroke_start_.map.layers;
-    if (std::equal(map_.layers.begin(), map_.layers.end(), before.begin(), before.end(),
-                   [](const TileLayer& a, const TileLayer& b) { return a.cells == b.cells; })) return;
+    if (stroke_changed_cells_ == 0) return;
+    stroke_changed_cells_ = 0;
     undo_.push_back(std::move(stroke_start_));
     redo_.clear();
     Changed();
 }
 
 bool TilemapEditDocument::PaintCell(i32 x, i32 y, i32 value) {
-    if (active_layer >= map_.layers.size() || map_.Get(active_layer, x, y) == value) return false;
-    return map_.Set(active_layer, x, y, value);
+    const i32 previous = map_.Get(active_layer, x, y);
+    if (previous == value || !map_.Set(active_layer, x, y, value)) return false;
+
+    // Track only cells that still differ from the start of the stroke. Structural
+    // edits end the stroke first, so the snapshot addresses the same cells.
+    const i32 original = stroke_start_.map.Get(active_layer, x, y);
+    if (previous == original) ++stroke_changed_cells_;
+    else if (value == original) --stroke_changed_cells_;
+    return true;
 }
 
 std::vector<std::pair<i32, i32>> TilemapEditDocument::FloodRegion(i32 x, i32 y) const {
@@ -346,6 +350,7 @@ bool TilemapEditDocument::Load(const std::filesystem::path& tilemap_file, const 
     undo_.clear();
     redo_.clear();
     in_stroke_ = false;
+    stroke_changed_cells_ = 0;
     active_layer = 0;
     tool = TileTool::Paint;
     brush = 0;
