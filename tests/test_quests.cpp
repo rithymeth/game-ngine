@@ -189,6 +189,60 @@ AETHER_TEST(Quests_NotifyMatchesKindAndTarget) {
     CHECK(r.sys.Notify(other, Objective::Kind::Count, "Wolf Pelt", 1) == 0 && r.sys.Notify(Entity{}, Objective::Kind::Count, "x", 1) == 0);
 }
 
+AETHER_TEST(Quests_SavedActiveQuestAcceptsNewObjectives) {
+    Rig original;
+    QuestDef route;
+    route.name = "Route";
+    route.objectives = {Obj("collect", Objective::Kind::Count, "Map", 3)};
+    route.reward_effects = {"Blessing"};
+    route.reward_items = {{"Gold", 50}};
+    CHECK(original.quests.Register(route));
+    CHECK(original.sys.Start(original.e, "Route") == Result::Ok);
+    CHECK(original.sys.Progress(original.e, "Route", "collect", 2) == Result::Ok);
+    CHECK(original.sys.Start(original.e, "Easy") == Result::Ok);
+
+    const auto* old_log = original.world.GetComponent<QuestLog>(original.e);
+    if (!old_log) { CHECK(false); return; }
+    const std::string saved = reflect::ToJson(*old_log).dump();
+
+    Rig updated;
+    route.objectives.push_back(Obj("report", Objective::Kind::Flag, "guide", 1));
+    route.objectives.push_back(Obj("find", Objective::Kind::Count, "Key", 1));
+    CHECK(updated.quests.Register(route));
+    QuestLog restored;
+    if (!reflect::FromJson(restored, reflect::Json::parse(saved))) { CHECK(false); return; }
+    updated.world.AddComponent<QuestLog>(updated.e, std::move(restored));
+    CHECK(updated.sys.IsActive(updated.e, "Route") && updated.sys.IsCompleted(updated.e, "Easy"));
+    CHECK(updated.sys.GetProgress(updated.e, "Route", "collect") == 2);
+    CHECK(updated.sys.Events().empty());
+    CHECK(updated.sys.Progress(updated.e, "Route", "report", 0) == Result::Ok);
+    CHECK(updated.sys.Notify(updated.e, Objective::Kind::Count, "Key", -1) == 0);
+    CHECK(updated.sys.Events().empty());
+
+    CHECK(updated.sys.Progress(updated.e, "Route", "report", 1) == Result::Ok);
+    CHECK(updated.sys.GetProgress(updated.e, "Route", "report") == 1);
+    CHECK(updated.sys.Notify(updated.e, Objective::Kind::Count, "Key", 1) == 1);
+    CHECK(updated.sys.GetProgress(updated.e, "Route", "find") == 1);
+    CHECK(updated.sys.IsActive(updated.e, "Route") && updated.sys.GetProgress(updated.e, "Route", "collect") == 2);
+    CHECK(updated.sys.Progress(updated.e, "Route", "collect", 1) == Result::Ok);
+    CHECK(updated.sys.IsCompleted(updated.e, "Route"));
+
+    int completions = 0;
+    for (const QuestEvent& event : updated.sys.Events()) {
+        if (event.kind != QuestEvent::Kind::Completed) continue;
+        ++completions;
+        CHECK(event.quest == "Route" && event.reward_items.size() == 1);
+        if (event.reward_items.size() == 1) {
+            CHECK(event.reward_items[0].item == "Gold" && event.reward_items[0].count == 50);
+        }
+    }
+    CHECK(completions == 1 && Near(updated.attrs.Get(updated.e, "Health"), 70));
+    updated.sys.ClearEvents();
+    CHECK(updated.sys.Progress(updated.e, "Route", "report", 1) == Result::NotActive);
+    CHECK(updated.sys.Notify(updated.e, Objective::Kind::Count, "Key", 1) == 0);
+    CHECK(updated.sys.Events().empty() && Near(updated.attrs.Get(updated.e, "Health"), 70));
+}
+
 AETHER_TEST(Quests_LogSavesByNameAndTitlesAreLocalized) {
     Rig r;
     r.sys.Start(r.e, "Pelts");

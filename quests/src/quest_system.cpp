@@ -148,7 +148,13 @@ bool QuestSystem::Advance(Entity entity, const QuestDef& /*def*/, QuestState& st
     for (ObjectiveState& x : state.objectives) {
         if (x.id == o.id) os = &x;
     }
-    if (os == nullptr || amount == 0) return false;
+    if (amount == 0) return false;
+    if (os == nullptr) {
+        // An active log saved before this objective was authored starts it at zero.
+        if (amount < 0) return false;
+        state.objectives.push_back({o.id, 0, false});
+        os = &state.objectives.back();
+    }
     if (os->done && amount < 0) return false; // done stays done
     const i32 before = os->progress;
     os->progress = amount > 0 && o.kind == Objective::Kind::Flag ? o.required : std::clamp(os->progress + amount, 0, o.required);
@@ -215,7 +221,7 @@ i32 QuestSystem::Notify(Entity entity, Objective::Kind kind, const std::string& 
         for (const Objective& o : def->objectives) {
             if (o.kind != kind || o.target != target) continue;
             const auto os = std::find_if(s->objectives.begin(), s->objectives.end(), [&](const ObjectiveState& x) { return x.id == o.id; });
-            if (os == s->objectives.end() || os->done) continue;
+            if (os != s->objectives.end() && os->done) continue;
             if (Advance(entity, *def, *s, o, amount)) {
                 ++moved;
                 any = true;

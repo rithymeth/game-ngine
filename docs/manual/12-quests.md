@@ -36,7 +36,7 @@ doesn't exist is a warning in the player (it names the file or the quest).
 ## Progress
 
 Each entity has a quest log, saved with it. A quest is *inactive*, *active*, *completed* or
-*failed*; a completed quest can't be started again, an abandoned or failed one starts over.
+*failed*; a completed quest can't be started again, an abandoned or failed one starts over. Saved progress is kept by objective ID. If an update adds an objective to an active quest, the new objective starts at zero and can receive progress normally. Completed quests stay complete.
 
 - `Quests.Start (owner, quest)` starts a quest if its prerequisites are completed.
 - `Quests.Notify (owner, kind, target, amount)` tells the log something happened: it advances every unfinished objective of the owner's active quests with that kind and target. This is what your game calls ("count", "Wolf Pelt", 1 when a wolf dies; "flag", "tanner" when you talk to the tanner).
