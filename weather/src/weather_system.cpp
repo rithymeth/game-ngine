@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <limits>
 
 namespace aether::weather {
 
@@ -13,6 +14,12 @@ WeatherSystem* g_active = nullptr;
 constexpr f64 kStep = 0.025;       // weather moves in steps of this many seconds whatever the frame rate, so the same seed gives the same weather at 30 or 144 fps
 constexpr f64 kMaxAdvance = 3600.0; // the most one Advance call covers
 constexpr f64 kTwoPi = 6.283185307179586;
+
+// Boundary comparisons in tick units tolerate floating-point representation noise,
+// not a meaningful fraction of a tick.
+f64 TickRoundoff(f64 ticks) {
+    return 32.0 * std::numeric_limits<f64>::epsilon() * std::max(1.0, ticks);
+}
 
 struct KindInfo {
     const char* name;
@@ -131,8 +138,8 @@ void WeatherSystem::BeginTransition(WeatherKind kind, f64 seconds) {
     from_ = now_;
     // Keep the last reached kind until this blend completes.
     target_ = kind;
-    transition_ = seconds;
-    elapsed_ = 0.0;
+    transition_ticks_ = seconds / kStep;
+    elapsed_ticks_ = 0.0;
     if (seconds <= 0.0) {
         current_ = kind;
         now_ = ProfileOf(kind);
@@ -167,19 +174,21 @@ void WeatherSystem::PickNextKind() {
 }
 
 f64 WeatherSystem::Blend() const {
-    if (transition_ <= 0.0) return 1.0;
-    return std::clamp(elapsed_ / transition_, 0.0, 1.0);
+    if (transition_ticks_ <= 0.0) return 1.0;
+    return std::clamp(elapsed_ticks_ / transition_ticks_, 0.0, 1.0);
 }
 
 void WeatherSystem::Step(f64 dt) {
     time_ += dt;
     // The blend.
-    if (elapsed_ < transition_) {
-        elapsed_ = std::min(elapsed_ + dt, transition_);
+    if (elapsed_ticks_ < transition_ticks_) {
+        // Integer increments avoid accumulating a seconds-rounding error on every step.
+        const f64 next = elapsed_ticks_ + 1.0;
+        elapsed_ticks_ = next + TickRoundoff(transition_ticks_) >= transition_ticks_ ? transition_ticks_ : next;
         const f32 t = static_cast<f32>(Blend());
         const f32 smooth = t * t * (3.0f - 2.0f * t);
         now_ = Mix(from_, ProfileOf(target_), smooth);
-        if (elapsed_ >= transition_) {
+        if (elapsed_ticks_ >= transition_ticks_) {
             now_ = ProfileOf(target_);
             current_ = target_;
         }
@@ -217,11 +226,10 @@ void WeatherSystem::Step(f64 dt) {
 
 void WeatherSystem::Advance(f64 dt) {
     if (!std::isfinite(dt) || dt <= 0.0) return;
-    accumulated_ += std::min(dt, kMaxAdvance);
-    while (accumulated_ >= kStep) {
-        Step(kStep);
-        accumulated_ -= kStep;
-    }
+    accumulated_ticks_ += std::min(dt, kMaxAdvance) / kStep;
+    const u32 steps = static_cast<u32>(std::floor(accumulated_ticks_ + TickRoundoff(accumulated_ticks_)));
+    accumulated_ticks_ = std::max(0.0, accumulated_ticks_ - steps);
+    for (u32 i = 0; i < steps; ++i) Step(kStep);
 }
 
 f32 WeatherSystem::WindSpeed() const {

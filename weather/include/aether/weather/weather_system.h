@@ -104,8 +104,8 @@ private:
     WeatherKind target_ = WeatherKind::Clear;
     WeatherParams from_{};   // the numbers when the blend began
     WeatherParams now_{};
-    f64 transition_ = 0.0;   // seconds the blend takes
-    f64 elapsed_ = 0.0;      // seconds into it
+    f64 transition_ticks_ = 0.0; // duration in 25 ms ticks (can be fractional)
+    f64 elapsed_ticks_ = 0.0;    // whole ticks so far, clamped to duration on arrival
     bool auto_ = false;
     bool cold_ = false;
     u64 seed_ = 1;
@@ -115,7 +115,7 @@ private:
     f64 wind_yaw_ = 0.0;
     f64 gust_phase_[3] = {0, 0, 0};
     f64 time_ = 0.0;
-    f64 accumulated_ = 0.0;  // time handed to Advance that has not made a whole step yet
+    f64 accumulated_ticks_ = 0.0; // fractional tick carried to the next Advance
     f64 hazard_ = 0.0;       // lightning: the strike rate added up since the last strike
     f64 strike_budget_ = 1.0; // and how much of it the next strike waits for
     f32 flash_ = 0.0f;

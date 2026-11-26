@@ -185,6 +185,39 @@ AETHER_TEST(Weather_TheAutoTimingKeepsToTheMeanAndTheWeatherIsTheSameAtAnyFrameR
     for (usize i = 0; i < slow.size(); ++i) CHECK(Near(slow[i], fast[i], 0.02) && Near(slow[i], odd[i], 0.02));
 }
 
+AETHER_TEST(Weather_EquivalentFrameSchedulesFinishFixedStepBlends) {
+    for (int frames : {1, 30, 40, 60, 144}) {
+        WeatherSystem w;
+        CHECK(w.Set(WeatherKind::Rain, 1.0));
+        for (int frame = 0; frame < frames; ++frame) w.Advance(1.0 / frames);
+        CHECK(Near(w.Time(), 1.0, 1e-10));
+        CHECK(w.Current() == WeatherKind::Rain && w.Blend() == 1.0 && w.Rain() == ProfileOf(WeatherKind::Rain).rain);
+    }
+
+    WeatherSystem short_blend;
+    CHECK(short_blend.Set(WeatherKind::Fog, 0.2));
+    for (int frame = 0; frame < 7; ++frame) short_blend.Advance(0.025);
+    CHECK(short_blend.Current() == WeatherKind::Clear && short_blend.Blend() < 1.0);
+    short_blend.Advance(0.025);
+    CHECK(short_blend.Current() == WeatherKind::Fog && short_blend.Blend() == 1.0);
+
+    WeatherSystem fractional;
+    CHECK(fractional.Set(WeatherKind::Rain, 0.025001));
+    fractional.Advance(0.024999);
+    CHECK(fractional.Time() == 0.0 && fractional.Blend() == 0.0);
+    fractional.Advance(0.000001);
+    CHECK(Near(fractional.Time(), 0.025, 1e-10));
+    CHECK(fractional.Current() == WeatherKind::Clear && fractional.Blend() < 1.0);
+    fractional.Advance(0.025);
+    CHECK(fractional.Current() == WeatherKind::Rain && fractional.Blend() == 1.0);
+
+    // The full catch-up cap should not lose a step to repeated subtraction.
+    WeatherSystem capped;
+    CHECK(capped.Set(WeatherKind::Fog, 3600.0));
+    capped.Advance(3601.0);
+    CHECK(Near(capped.Time(), 3600.0, 1e-7) && capped.Blend() == 1.0 && capped.Current() == WeatherKind::Fog);
+}
+
 AETHER_TEST(Weather_WindHasAGustAndAnAimedDirection) {
     WeatherSystem w;
     CHECK(w.Set(WeatherKind::Storm, 0.0));
