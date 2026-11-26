@@ -90,7 +90,8 @@ struct Cook2DChecks {
     std::vector<SheetExtentCheck> extents;
     std::unordered_map<AssetGuid, StoredAtlasNames> atlases;
     std::unordered_map<AssetGuid, u64> tileset_grids;
-    std::vector<TilemapCellCheck> map_cells;
+    std::unordered_map<AssetGuid, usize> tileset_rule_counts;
+    std::vector<TilemapCellCheck> map_cells, map_rules;
 };
 
 struct StoredTextureExtent {
@@ -243,32 +244,41 @@ std::string CheckTilesetGridRefs(const json& document, u64 count) {
 }
 
 void CollectTilemapCells(const json& document, const AssetRecord& record,
-                         const AssetRecord& tileset, std::vector<TilemapCellCheck>& checks) {
+                         const AssetRecord& tileset, Cook2DChecks& checks) {
     const auto size = document.find("size"), layers = document.find("layers");
     if (size == document.end() || !size->is_array() || size->size() != 2 ||
         layers == document.end() || !layers->is_array()) return;
     const auto w = SheetPixels((*size)[0]), h = SheetPixels((*size)[1]);
     if (!w || !h || *w == 0 || *h == 0) return;
     const u64 cell_count = static_cast<u64>(*w) * *h;
-    std::optional<u32> highest;
-    usize highest_layer = 0, highest_cell = 0;
+    struct CellWitness { usize layer, offset; u32 index; };
+    std::optional<CellWitness> highest_tile, highest_rule;
     for (usize l = 0; l < layers->size(); ++l) {
         const auto& layer = (*layers)[l];
         const auto cells = layer.find("cells");
         if (cells == layer.end() || !cells->is_array() || cells->size() != cell_count) continue;
         for (usize i = 0; i < cells->size(); ++i) {
-            // The maximum concrete tile is enough to prove grid membership
-            // once its tileset is encountered. Empty and autotile sentinels
-            // are negative and are outside this check.
-            if (const auto tile = SheetPixels((*cells)[i]); tile && (!highest || *tile > *highest)) {
-                highest = tile;
-                highest_layer = l;
-                highest_cell = i;
+            const auto remember = [&](std::optional<CellWitness>& highest, u32 index) {
+                if (!highest || index > highest->index) highest = CellWitness{l, i, index};
+            };
+            const auto& value = (*cells)[i];
+            if (const auto tile = SheetPixels(value)) {
+                remember(highest_tile, *tile);
+            } else if (value.is_number_integer() && !value.is_number_unsigned()) {
+                const i64 cell = value.get<i64>();
+                // Tilemap format: -1 is empty; -2 encodes autotile rule 0.
+                if (cell <= -2 && cell >= std::numeric_limits<i32>::min())
+                    remember(highest_rule, static_cast<u32>(-2 - cell));
             }
         }
     }
-    if (highest) checks.push_back({tileset.guid, record.path, tileset.path, highest_layer,
-                                   highest_cell % *w, highest_cell / *w, *highest});
+    // Keep one witness for the largest referenced index of each kind per map.
+    const auto record_witness = [&](const std::optional<CellWitness>& wtn, std::vector<TilemapCellCheck>& out) {
+        if (wtn) out.push_back({tileset.guid, record.path, tileset.path, wtn->layer,
+                                wtn->offset % *w, wtn->offset / *w, wtn->index});
+    };
+    record_witness(highest_tile, checks.map_cells);
+    record_witness(highest_rule, checks.map_rules);
 }
 
 // Check 2D headers and typed references without linking Sprite2D. A tileset or
@@ -287,6 +297,10 @@ std::string Check2DReference(const AssetRecord& record, const std::vector<u8>& b
         const auto& stored = checks.atlases.emplace(record.guid, std::move(names)).first->second;
         const auto clip_problem = CheckSpriteClipFrames(document, stored.frames);
         if (!clip_problem.empty()) return clip_problem;
+    } else if (!tilemap) {
+        const auto rules = document.find("autotiles");
+        if (rules == document.end() || rules->is_array())
+            checks.tileset_rule_counts.emplace(record.guid, rules == document.end() ? 0 : rules->size());
     }
 
     const std::string field = tilemap ? "tileset" : "texture";
@@ -305,7 +319,7 @@ std::string Check2DReference(const AssetRecord& record, const std::vector<u8>& b
         if (dependency->importer != expected)
             return field + " expects " + expected + ", but " + dependency->path + " is " + dependency->importer;
         if (tilemap) {
-            CollectTilemapCells(document, record, *dependency, checks.map_cells);
+            CollectTilemapCells(document, record, *dependency, checks);
             return {};
         }
         u32 width = 0, height = 0;
@@ -936,6 +950,13 @@ CookReport Cook(const CookOptions& options) {
         report.warnings.push_back(cell.map + ": layer " + std::to_string(cell.layer) + " cell (" +
             std::to_string(cell.x) + ", " + std::to_string(cell.y) + ") uses tile index " + std::to_string(cell.tile) +
             " outside the " + std::to_string(grid->second) + "-tile grid in " + cell.set);
+    }
+    for (const auto& cell : checks_2d.map_rules) {
+        const auto rules = checks_2d.tileset_rule_counts.find(cell.tileset);
+        if (rules == checks_2d.tileset_rule_counts.end() || cell.tile < rules->second) continue;
+        report.warnings.push_back(cell.map + ": layer " + std::to_string(cell.layer) + " cell (" +
+            std::to_string(cell.x) + ", " + std::to_string(cell.y) + ") uses missing autotile rule " +
+            std::to_string(cell.tile) + " in " + cell.set);
     }
     for (const auto& sprite : sprite_names) {
         const auto atlas = checks_2d.atlases.find(sprite.atlas);

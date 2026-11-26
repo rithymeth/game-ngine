@@ -1040,6 +1040,26 @@ AETHER_TEST(Openers_AuthoredTilemapWorksInAnIndependentStrictShippingPackage) {
     if (!sprite2d::SaveTilemap(map_path, painted.Map(), &error) ||
         !sprite2d::SaveTileset(set_path, painted.GetTileset(), &error)) { CHECK(false); return; }
 
+    // A missing autotile rule resolves to empty even on a solid layer.
+    auto rule_map = painted.Map();
+    auto rule_set = painted.GetTileset();
+    sprite2d::Autotile rule;
+    rule.name = "Ground";
+    rule.tiles.fill(3);
+    rule_set.autotiles.push_back(rule);
+    rule_map.Set(0, 5, 5, sprite2d::AutotileCell(1));
+    CHECK(sprite2d::ResolveTile(rule_map, rule_set, 0, 5, 5) == sprite2d::kEmpty);
+    if (!sprite2d::SaveTileset(set_path, rule_set, &error) ||
+        !sprite2d::SaveTilemap(map_path, rule_map, &error)) { CHECK(false); return; }
+    options.output_dir = paths.root.parent_path() / "Rejected Missing Autotile";
+    const auto missing_rule = cook::Package(options);
+    CHECK(!missing_rule.ok && missing_rule.error.find(
+          "Ground.atilemap: layer 0 cell (5, 5) uses missing autotile rule 1 in Ground.atileset") != std::string::npos);
+    CHECK(!stdfs::exists(options.output_dir / "Paks/Game.apak"));
+    rule_map.Set(0, 5, 5, sprite2d::AutotileCell(0));
+    CHECK(sprite2d::ResolveTile(rule_map, rule_set, 0, 5, 5) == 3);
+    if (!sprite2d::SaveTilemap(map_path, rule_map, &error)) { CHECK(false); return; }
+
     options.output_dir = paths.root.parent_path() / "Shipping";
     const auto staged = cook::Package(options);
     if (!staged.ok) { std::fprintf(stderr, "strict authored tilemap package: %s\n", staged.error.c_str()); CHECK(false); return; }
@@ -1071,6 +1091,7 @@ AETHER_TEST(Openers_AuthoredTilemapWorksInAnIndependentStrictShippingPackage) {
     if (!set_asset || set_asset->path != "Ground.atileset") { CHECK(false); return; }
     sprite2d::Tileset set_from_pak;
     if (!sprite2d::TilesetFromJson(read(set_asset->path), set_from_pak) || !set_from_pak.IsSolid(3)) { CHECK(false); return; }
+    CHECK(sprite2d::ResolveTile(map_from_pak, set_from_pak, 0, 5, 5) == 3);
     f32 uv[4];
     CHECK(set_from_pak.Uv(3, uv) && uv[0] == 19.0f/36 && uv[1] == 19.0f/36 && uv[2] == 35.0f/36 && uv[3] == 35.0f/36);
     const auto* texture = package.FindAssetByGuid(assets::ToString(set_from_pak.texture));
