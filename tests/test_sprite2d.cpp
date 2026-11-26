@@ -10,6 +10,7 @@
 
 #include <cmath>
 #include <filesystem>
+#include <limits>
 #include <map>
 #include <set>
 
@@ -380,6 +381,45 @@ AETHER_TEST(Sprite2D_QuadGeometryPivotFlipAndRotation) {
     world.GetComponent<Transform>(e)->rotation = Quaternion(0, 0, half, half);
     v = quad();
     CHECK(Near(v[1].x, 10, 1e-4f) && Near(v[1].y, 22, 1e-4f)); // the top-right corner (2, 0) -> (0, 2)
+}
+
+AETHER_TEST(Sprite2D_SpriteScaleRespectsPivotMirrorAndView) {
+    World world;
+    SpriteAtlas atlas = AtlasFromGrid(Guid(), 32, 32, 16, 16, "t");
+    atlas.frames[0].pivot_x = 0.0f;
+    atlas.frames[0].pivot_y = 0.0f;
+    Resolvers2D resolvers;
+    resolvers.atlases = [&](const assets::AssetGuid&) { return &atlas; };
+    const Entity e = world.CreateEntity();
+    world.AddComponent<Transform>(e, Transform{Vec3(10, 20, 3), Quaternion::Identity(), Vec3(2, .5f, 99)});
+    Sprite s;
+    s.atlas.guid = Guid();
+    s.pixels_per_unit = 16;
+    SetSpriteFrame(s, "t_0");
+    world.AddComponent<Sprite>(e, s);
+    const ViewRect edge{11.5f, 19.8f, 11.8f, 20.1f};
+    auto sprites = BuildSpriteBatches(world, resolvers, &edge);
+    CHECK(sprites.size() == 1);
+    if (sprites.size() == 1 && sprites[0].vertices.size() == 4) {
+        const auto& v = sprites[0].vertices;
+        CHECK(Near(v[0].x, 10) && Near(v[2].x, 12) && Near(v[2].y, 19.5f) && Near(v[0].z, 3));
+    }
+    auto* transform = world.GetComponent<Transform>(e);
+    transform->scale = Vec3(-2, -.5f, 1);
+    sprites = BuildSpriteBatches(world, resolvers);
+    if (sprites.size() != 1 || sprites[0].vertices.size() != 4) { CHECK(false); return; }
+    const auto& v = sprites[0].vertices;
+    CHECK(Near(v[0].x, 8) && Near(v[0].y, 20.5f) && Near(v[2].x, 10) && Near(v[2].y, 20));
+    CHECK(Near(v[0].u, .5f) && Near(v[0].v, .5f) && Near(v[2].u, 0) && Near(v[2].v, 0));
+    CHECK(BuildSpriteBatches(world, resolvers, &edge).empty());
+    world.GetComponent<Sprite>(e)->flip_x = true;
+    sprites = BuildSpriteBatches(world, resolvers);
+    if (sprites.size() != 1 || sprites[0].vertices.size() != 4) { CHECK(false); return; }
+    CHECK(Near(sprites[0].vertices[0].u, 0)); // explicit flip composes with the mirror
+    transform->scale.x = 0;
+    CHECK(BuildSpriteBatches(world, resolvers).empty());
+    transform->scale.x = std::numeric_limits<f32>::infinity();
+    CHECK(BuildSpriteBatches(world, resolvers).empty());
 }
 
 AETHER_TEST(Sprite2D_ViewCullingAndTilemapBatches) {
