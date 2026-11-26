@@ -143,15 +143,26 @@ bool LoadAtlas(const std::filesystem::path& file, SpriteAtlas& out, std::string*
 }
 
 bool SaveAtlas(const std::filesystem::path& file, const SpriteAtlas& atlas, std::string* error) {
-    std::error_code ec;
-    std::filesystem::create_directories(file.parent_path(), ec);
-    std::ofstream out(file, std::ios::binary);
-    if (!out) {
-        if (error) *error = "Couldn't write " + file.string();
+    if (error) error->clear();
+    // Encode first so a bad frame or clip name cannot truncate a valid atlas.
+    std::string text;
+    try {
+        text = AtlasToJson(atlas).dump(2);
+    } catch (const nlohmann::json::exception& e) {
+        if (error) *error = std::string("Couldn't encode sprite atlas: ") + e.what();
         return false;
     }
-    out << AtlasToJson(atlas).dump(2);
-    return true;
+
+    std::error_code ec;
+    if (!file.parent_path().empty()) std::filesystem::create_directories(file.parent_path(), ec);
+    std::ofstream out(file, std::ios::binary);
+    if (out) {
+        out << text;
+        out.close(); // A buffered write can first fail when the stream closes.
+        if (out) return true;
+    }
+    if (error) *error = "Couldn't write " + file.string();
+    return false;
 }
 
 usize ClipFrameAt(const SpriteClip& clip, f32 time, bool* finished) {

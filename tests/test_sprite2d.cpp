@@ -76,6 +76,30 @@ AETHER_TEST(Sprite2D_AtlasFramesUvAndJson) {
     CHECK(LoadAtlas(file, again, &error) && again.frames.size() == 8);
 }
 
+AETHER_TEST(Sprite2D_AtlasSaveKeepsExistingFileWhenNameCannotBeEncoded) {
+    const auto file = std::filesystem::temp_directory_path() / "aether_atlas_save" / "hero.aatlas";
+    const auto good = HeroAtlas(Guid());
+    std::string error;
+    if (!SaveAtlas(file, good, &error)) { CHECK(false); return; }
+
+    auto invalid = good;
+    invalid.frames[0].name.assign(1, static_cast<char>(0xff)); // Not valid UTF-8.
+    bool rejected = false;
+    try {
+        rejected = !SaveAtlas(file, invalid, &error);
+    } catch (const nlohmann::json::exception&) {
+        // Still check the existing atlas if serialization threw instead of reporting the error.
+    }
+    CHECK(rejected && error.find("encode") != std::string::npos);
+    SpriteAtlas loaded;
+    CHECK(LoadAtlas(file, loaded) && AtlasToJson(loaded) == AtlasToJson(good));
+
+    auto edited = good;
+    edited.clips[0].fps = 24.0f;
+    CHECK(SaveAtlas(file, edited, &error) && error.empty());
+    CHECK(LoadAtlas(file, loaded) && AtlasToJson(loaded) == AtlasToJson(edited));
+}
+
 AETHER_TEST(Sprite2D_AtlasRefusesBadData) {
     SpriteAtlas out;
     std::string error;
