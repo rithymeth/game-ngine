@@ -79,7 +79,11 @@ void TilemapEditDocument::BeginStroke() {
 void TilemapEditDocument::EndStroke() {
     if (!in_stroke_) return;
     in_stroke_ = false;
-    if (TilemapToJson(map_) == TilemapToJson(stroke_start_.map)) return; // nothing changed
+    // A stroke can only change cells: structural edits end it before mutating the map.
+    // Compare the grids directly, including cells painted and then restored in the same stroke.
+    const auto& before = stroke_start_.map.layers;
+    if (std::equal(map_.layers.begin(), map_.layers.end(), before.begin(), before.end(),
+                   [](const TileLayer& a, const TileLayer& b) { return a.cells == b.cells; })) return;
     undo_.push_back(std::move(stroke_start_));
     redo_.clear();
     Changed();

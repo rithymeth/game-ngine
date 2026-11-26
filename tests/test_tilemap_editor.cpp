@@ -96,6 +96,32 @@ AETHER_TEST(TilemapEditor_PaintEraseAndStrokesUndoAsOne) {
     CHECK(doc.Map().Get(0, 0, 0) == kEmpty);
 }
 
+AETHER_TEST(TilemapEditor_RevertedStrokePreservesRevisionAndRedoAcrossLayers) {
+    TilemapEditDocument doc = Doc();
+    const usize top = doc.AddLayer("Top");
+    doc.brush = 3;
+    doc.Apply(5, 4);
+    CHECK(doc.Undo() && doc.CanRedo());
+    const u64 revision = doc.Revision();
+    const bool dirty = doc.dirty();
+
+    doc.BeginStroke();
+    doc.active_layer = 0;
+    doc.Apply(5, 4);
+    doc.active_layer = top;
+    doc.Apply(5, 4);
+    doc.tool = TileTool::Erase;
+    doc.Apply(5, 4);
+    doc.active_layer = 0;
+    doc.Apply(5, 4);
+    doc.EndStroke();
+
+    CHECK(doc.Revision() == revision);
+    CHECK(doc.dirty() == dirty);
+    CHECK(doc.Redo());
+    CHECK(doc.Map().Get(top, 5, 4) == 3 && doc.Map().Get(0, 5, 4) == kEmpty);
+}
+
 AETHER_TEST(TilemapEditor_RectangleFillAndPick) {
     TilemapEditDocument doc = Doc();
     doc.brush = 7;
