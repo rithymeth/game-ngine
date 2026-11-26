@@ -143,6 +143,9 @@ public:
     // A double-click that opens nothing leaves the reason in LastOpenError() so it can be said rather than ignored.
     using AssetOpener = std::function<bool(const std::string& path, std::string* error)>;
     void SetAssetOpener(AssetOpener opener);
+    // Called only for completed moves or renames, once for each top-level path.
+    using ContentMoved = std::function<void(const std::string& from, const std::string& to)>;
+    void SetContentMovedCallback(ContentMoved callback) { content_moved_ = std::move(callback); }
     bool OpenEntry(const std::string& path, std::string* error = nullptr);
     // Slice a texture into a new sibling atlas; select and open it if supported.
     struct SpriteAtlasClip {
@@ -275,6 +278,7 @@ private:
     assets::AssetGuid reference_guid_;
     assets::ReferenceDirection reference_direction_ = assets::ReferenceDirection::Dependencies;
     AssetOpener opener_;
+    ContentMoved content_moved_;
     std::function<bool(const std::string&)> revealer_;
     std::string last_open_error_;
     std::string last_copied_path_;

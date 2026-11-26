@@ -55,6 +55,7 @@ public:
     using SceneChoices = std::function<std::vector<std::string>()>;
     void SetStartupSceneChoices(SceneChoices choices) { scene_choices_ = std::move(choices); }
     bool ChooseStartupScene(const std::string& path);
+    bool RebaseStartupScene(const std::string& from, const std::string& to);
     bool Dirty() const { return dirty_; }
     ProjectSettings& Settings() { return settings_; }
     const std::string& Status() const { return status_; }
