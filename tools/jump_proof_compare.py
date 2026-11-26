@@ -80,11 +80,21 @@ def read_trace(path, *, include_route=False):
     return (points, route) if include_route else points
 
 
+def write_new_json(path, text):
+    # Exclusive creation keeps existing evidence intact, even if two runs race.
+    try:
+        with path.open("x", encoding="utf-8", newline="\n") as output:
+            output.write(text + "\n")
+    except FileExistsError as exc:
+        raise FileExistsError(f"output file already exists: {path}") from exc
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("before", type=Path)
     parser.add_argument("after", type=Path)
     parser.add_argument("--overlay-data", action="store_true", help="include both paths for the Tilemap editor")
+    parser.add_argument("--output", type=Path, help="write UTF-8 JSON to a new file instead of stdout")
     parser.add_argument("--tolerance", type=float, default=0.01, help="allowed drift per axis in world units")
     args = parser.parse_args()
     if not math.isfinite(args.tolerance) or args.tolerance < 0:
@@ -110,7 +120,14 @@ def main():
             break
     if args.overlay_data:
         result.update(before_path=left, after_path=right)
-    print(json.dumps(result, allow_nan=False))
+    try:
+        receipt = json.dumps(result, allow_nan=False)
+        if args.output is None:
+            print(receipt)
+        else:
+            write_new_json(args.output, receipt)
+    except (OSError, ValueError) as exc:
+        parser.error(str(exc))
     return 5 if result["verdict_changed"] or result["first_difference_frame"] is not None else 0
 
 

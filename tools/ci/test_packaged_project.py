@@ -384,6 +384,18 @@ def main():
             if (len(overlay["before_path"]) != 400 or len(overlay["after_path"]) != 400
                     or overlay["before_path"][i] != diff["before"] or overlay["after_path"][i] != diff["after"]):
                 raise RuntimeError("editor overlay data did not match the full paths and divergence")
+            plain_file = root / "Replay Overlay café.json"
+            compare_file = [sys.executable, compare, original_trace, changed_trace, "--overlay-data", "--output", plain_file]
+            plain = subprocess.run(compare_file, cwd=empty_cwd, capture_output=True, text=True, timeout=10)
+            if plain.returncode != 5 or plain.stdout or not plain_file.is_file():
+                raise RuntimeError("ordinary overlay file export failed: " + plain.stdout + plain.stderr)
+            plain_bytes = plain_file.read_bytes()
+            if json.loads(plain_bytes.decode("utf-8")) != overlay:
+                raise RuntimeError("ordinary overlay differed from stdout JSON")
+            existing_plain = subprocess.run(compare_file, cwd=empty_cwd, capture_output=True, text=True, timeout=10)
+            if (existing_plain.returncode != 2 or "already exists" not in existing_plain.stderr
+                    or plain_file.read_bytes() != plain_bytes):
+                raise RuntimeError("existing ordinary overlay was not protected: " + existing_plain.stderr)
             isolate = Path(__file__).resolve().parents[1] / "jump_proof_isolate_tile.py"
             operator = [sys.executable, isolate, "--pak-tool", tools["aether_pak"],
                         "--player", executable, "--route", route, relocated, changed]
@@ -440,6 +452,10 @@ def main():
             truncated = root / "Truncated.txt"
             truncated.write_text("\n".join(original_trace.read_text(encoding="utf-8").splitlines()[:-1]), encoding="utf-8")
             compare_traces(original_trace, truncated, 2)
+            invalid_file = root / "Incomplete Overlay.json"
+            compare_traces(original_trace, truncated, 2, "--overlay-data", "--output", invalid_file)
+            if invalid_file.exists():
+                raise RuntimeError("an incomplete trace wrote an overlay file")
 
             spec["target"]["min_x"] = 31
             route.write_text(json.dumps(spec), encoding="utf-8")
