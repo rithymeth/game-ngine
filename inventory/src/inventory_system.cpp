@@ -203,10 +203,9 @@ bool InventorySystem::Equip(Entity owner, i32 slot) {
     if (def == nullptr || def->equip_slot.empty()) return false;
     const std::string where = def->equip_slot;
     const bool occupied = !Equipped(owner, where).empty();
-    // What is replaced goes back into the inventory: it needs this stack to empty, or a free slot.
-    if (occupied && stack.count > 1 && std::none_of(inv->slots.begin(), inv->slots.end(), [](const ItemStack& s) { return s.count <= 0; })) return false;
     if (occupied) {
-        // Unequip first (it needs room too: this slot frees up when the stack is one).
+        // Free space for the old item before Unequip tries compatible stacks
+        // and empty slots. If neither can take it, restore the original stack.
         if (stack.count == 1) {
             inv->slots[static_cast<usize>(slot)] = ItemStack{};
         } else {

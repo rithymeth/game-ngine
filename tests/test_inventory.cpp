@@ -181,6 +181,24 @@ AETHER_TEST(Inventory_EquipNeedsRoomForWhatItReplaces) {
     CHECK(r.sys.Count(r.e, "Caps") == 2 && r.sys.Equipped(r.e, "Head") == "Cap");
 }
 
+AETHER_TEST(Inventory_EquipSwapsIntoAnExistingStackWithoutAFreeSlot) {
+    Rig r;
+    ItemDef masks = Item("Masks", 3);
+    masks.equip_slot = "Head";
+    ItemDef caps = Item("Caps", 3);
+    caps.equip_slot = "Head";
+    CHECK(r.items.Register(masks) && r.items.Register(caps));
+    CHECK(r.sys.Configure(r.e, 2));
+    CHECK(r.sys.Add(r.e, "Masks", 2) == 2 && r.sys.Equip(r.e, 0));
+    CHECK(r.sys.Add(r.e, "Caps", 2) == 2);
+    CHECK(r.sys.Slot(r.e, 0)->count == 1 && r.sys.Slot(r.e, 1)->count == 2);
+
+    CHECK(r.sys.Equip(r.e, 1));
+    CHECK(r.sys.Equipped(r.e, "Head") == "Caps");
+    CHECK(r.sys.Slot(r.e, 0)->item == "Masks" && r.sys.Slot(r.e, 0)->count == 2);
+    CHECK(r.sys.Slot(r.e, 1)->item == "Caps" && r.sys.Slot(r.e, 1)->count == 1);
+}
+
 AETHER_TEST(Inventory_UseAppliesTheEffectAndConsumes) {
     Rig r;
     r.sys.Configure(r.e, 2);
