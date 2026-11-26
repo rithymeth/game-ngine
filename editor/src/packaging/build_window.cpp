@@ -4,7 +4,9 @@
 
 #include <imgui.h>
 
+#include <charconv>
 #include <cstdio>
+#include <string_view>
 
 namespace aether::editor {
 
@@ -40,7 +42,28 @@ bool BuildPackageWindow::OpenWarningAsset(const LogLine& line, std::string* erro
         if (error) *error = "The warning does not name an editable project asset.";
         return false;
     }
-    return warning_asset_open_(path, error);
+    // The cook's two painted-cell warnings start with one exact,
+    // zero-based location. Other warnings still open the asset normally.
+    std::string_view text(line.text);
+    text.remove_prefix(path.size());
+    const auto consume = [&](std::string_view prefix) {
+        if (!text.starts_with(prefix)) return false;
+        text.remove_prefix(prefix.size());
+        return true;
+    };
+    const auto number = [&](auto& value) {
+        const char* end = text.data() + text.size();
+        if (text.empty() || text.front() < '0' || text.front() > '9') return false;
+        const auto parsed = std::from_chars(text.data(), end, value);
+        if (parsed.ec != std::errc{}) return false;
+        text.remove_prefix(static_cast<usize>(parsed.ptr - text.data()));
+        return true;
+    };
+    TileWarningCell cell{};
+    const bool located = consume(": layer ") && number(cell.layer) && consume(" cell (") &&
+                         number(cell.x) && consume(", ") && number(cell.y) && consume(") ") &&
+                         (text.starts_with("uses tile index ") || text.starts_with("uses missing autotile rule "));
+    return warning_asset_open_(path, located ? std::optional{cell} : std::nullopt, error);
 }
 
 void BuildPackageWindow::Draw() {

@@ -25,7 +25,8 @@ public:
     // Checked on the UI thread, before reading any saved build inputs.
     void SetSourceCheck(std::function<std::string()> check) { source_check_ = std::move(check); }
     using AssetCheck = std::function<bool(const std::string&)>;
-    using AssetOpener = std::function<bool(const std::string&, std::string*)>;
+    struct TileWarningCell { usize layer; i32 x, y; };
+    using AssetOpener = std::function<bool(const std::string&, std::optional<TileWarningCell>, std::string*)>;
     void SetWarningAssetActions(AssetCheck check, AssetOpener open) {
         warning_asset_check_ = std::move(check);
         warning_asset_open_ = std::move(open);
