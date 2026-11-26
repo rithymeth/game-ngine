@@ -328,6 +328,48 @@ def main():
                                     for line in captured_check.splitlines() if line.startswith("Jump Proof: "))
             if captured_verdict["status"] != "pass" or abs(captured_verdict["position"][0] - 29) > .02:
                 raise RuntimeError(f"recorded route did not replay to the captured landing: {captured_verdict}")
+            hidden_project = root / "Hidden Project" / project.name
+            project_bytes = hidden_project.read_bytes()
+            settings = json.loads(project_bytes)
+            startup = settings["startup_scene"]
+            hz = settings.get("fixed_timestep_hz", 60)
+            # Check guards against two real relocated distributions, without relying
+            # on the recorder to have gained the fields yet (red test on older players).
+            bound = root / "Bound route.json"
+            bound.write_text(json.dumps({**captured, "scene": startup, "fixed_hz": hz}), encoding="utf-8")
+            alternate_scene = "Scenes/Alternate Proof.ascene"
+            shutil.copyfile(hidden_project.parent / "Content" / startup,
+                            hidden_project.parent / "Content" / alternate_scene)
+            observed = []
+            for edit, profile, message in (
+                    ({"startup_scene": alternate_scene}, "Wrong Scene", "scene mismatch"),
+                    ({"fixed_timestep_hz": hz * 2}, "Wrong Rate", "fixed tick rate mismatch")):
+                mismatched = root / (profile + " Distribution")
+                hidden_project.write_text(json.dumps({**settings, **edit}), encoding="utf-8")
+                try:
+                    run(tools["aether_package"], hidden_project, "--out", mismatched, *release_config, cwd=root)
+                finally:
+                    hidden_project.write_bytes(project_bytes)
+                mismatch = subprocess.run([mismatched / executable, "--jump-proof", bound, "--jump-trace",
+                                           "--user-dir", root / (profile + " Data")],
+                                          cwd=empty_cwd, capture_output=True, text=True, timeout=30)
+                combined = mismatch.stdout + mismatch.stderr
+                if mismatch.returncode != 2 or message not in combined or "Jump Proof: " in combined or "Jump Trace: " in combined:
+                    samples = [line for line in combined.splitlines() if not line.startswith("Jump Trace: ")]
+                    observed.append((profile, mismatch.returncode, "\n".join(samples)[-1200:]))
+            if observed:
+                raise RuntimeError(f"bound route ran in a different environment: {observed}")
+            if captured.get("scene") != startup or captured.get("fixed_hz") != hz:
+                raise RuntimeError(f"route capture lost scene or fixed tick rate: {captured}")
+            explicit = "./" + startup.replace("/", "\\")
+            run(game, "--scene", explicit, "--jump-proof", recorded,
+                "--user-dir", root / "Explicit Scene Data", cwd=empty_cwd)
+            partial = root / "Partial route.json"
+            partial.write_text(json.dumps({**spec, "scene": startup}), encoding="utf-8")
+            rejected = subprocess.run([game, "--jump-proof", partial, "--user-dir", root / "Partial Route Data"],
+                                      cwd=empty_cwd, capture_output=True, text=True, timeout=30)
+            if (rejected.returncode != 2 or "binding" not in rejected.stderr or "Jump Proof: " in rejected.stdout):
+                raise RuntimeError("incomplete route binding was not rejected: " + rejected.stderr)
             original_recording = recorded.read_bytes()
             duplicate = subprocess.run([game, "--headless", "--replay-input", route, "--record-jump-route", recorded,
                                         "--user-dir", root / "Duplicate Route Data"], cwd=empty_cwd,

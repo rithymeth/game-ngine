@@ -47,6 +47,7 @@
 #include "aether/gameplay/attribute_set.h"
 #include "aether/gfx/rhi/device.h"
 #include "aether/platform/window.h"
+#include "aether/pak/pak.h"
 #include "aether/reflection/serialize.h"
 #include "aether/scene/components.h"
 #include "aether/scene/gameplay.h"
@@ -448,6 +449,8 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    const std::string proof_scene = pak::NormalizePath(game.SceneName());
+
     // Keep the UDP client alive for the whole game session. It shares the
     // loaded Game World, which also owns the PhysicsScene's ECS entities.
 #if AETHER_PLAYER_NETCLIENT && AETHER_PLAYER_PHYSICS
@@ -522,6 +525,29 @@ int main(int argc, char** argv) {
             std::ifstream stream(options.replay_input);
             const auto json = reflect::Json::parse(stream, nullptr, false);
             if (!options.jump_proof.empty()) {
+                if (json.contains("scene") || json.contains("fixed_hz")) {
+                    const auto scene = json.find("scene"), hz = json.find("fixed_hz");
+                    if (scene == json.end() || !scene->is_string() || hz == json.end() || !hz->is_number()) {
+                        AETHER_LOG_ERROR("Player", "Jump Proof route binding needs both scene and fixed_hz");
+                        return 2;
+                    }
+                    const std::string expected_scene = pak::NormalizePath(scene->get_ref<const std::string&>());
+                    const f32 expected_hz = hz->get<f32>();
+                    if (expected_scene.empty() || !std::isfinite(expected_hz) || expected_hz <= 0.0f) {
+                        AETHER_LOG_ERROR("Player", "Jump Proof route binding needs a valid scene and positive finite fixed_hz");
+                        return 2;
+                    }
+                    if (expected_scene != proof_scene) {
+                        AETHER_LOG_ERROR("Player", "Jump Proof scene mismatch: recorded '%s', package loaded '%s'",
+                                         expected_scene.c_str(), proof_scene.c_str());
+                        return 2;
+                    }
+                    if (expected_hz != manifest.fixed_timestep_hz) {
+                        AETHER_LOG_ERROR("Player", "Jump Proof fixed tick rate mismatch: recorded %.9g Hz, package uses %.9g Hz",
+                                         expected_hz, manifest.fixed_timestep_hz);
+                        return 2;
+                    }
+                }
                 const auto bounds = json.is_object() ? json.find("target") : json.end();
                 const auto number = [&](const char* key, f64& value) {
                     if (bounds == json.end() || !bounds->is_object()) return false;
@@ -559,7 +585,7 @@ int main(int argc, char** argv) {
             for (const auto& event : replay)
                 events.push_back({{"frame", event.frame}, {"key", input::KeyName(event.key)}, {"value", event.value}});
             const reflect::Json route = {{"frames", options.frames}, {"fixed_hz", manifest.fixed_timestep_hz},
-                {"scene", options.scene.empty() ? manifest.startup_scene : options.scene},
+                {"scene", proof_scene},
                 {"target", {{"min_x", target.min_x}, {"max_x", target.max_x}, {"min_y", target.min_y}, {"max_y", target.max_y}}},
                 {"events", std::move(events)}};
             std::printf("Jump Route: %s\n", route.dump().c_str());
@@ -913,6 +939,7 @@ int main(int argc, char** argv) {
                 constexpr f64 margin = 0.25;
                 const auto& p = transform->position;
                 recorded_route = {{"frames", game.Stats().frames}, {"events", std::move(recorded_events)},
+                                  {"scene", proof_scene}, {"fixed_hz", manifest.fixed_timestep_hz},
                                   {"target", {{"min_x", p.x - margin}, {"max_x", p.x + margin},
                                               {"min_y", p.y - margin}, {"max_y", p.y + margin}}}};
             }
