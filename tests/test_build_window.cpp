@@ -191,19 +191,28 @@ AETHER_TEST(BuildWindow_RunsJumpProofAgainstTheStagedPlatformer) {
     if (game.empty()) { CHECK(false); return; }
     const std::string events = R"({"frames":400,"events":[{"frame":90,"key":"D","value":1},{"frame":225,"key":"Space","value":1},{"frame":285,"key":"Space","value":0},{"frame":350,"key":"D","value":0}],)";
     const auto route = project.parent_path() / "Jump Proof route.json";
-    const auto run = [&](const std::string& suffix, const char* expected) {
+    const auto run = [&](const std::string& suffix, const char* expected, bool show_landing) {
         std::ofstream(route) << events << suffix;
         if (!window.StartJumpProof(route.filename())) { CHECK(false); return; }
         window.WaitForBuild();
-        CHECK(window.Stage().starts_with(expected));
+        const auto stage = window.Stage();
+        CHECK(stage.starts_with(expected));
+        if (show_landing) {
+            CHECK(stage.find("after 400 frames; landing (29.000, 2.495, 0.000)") != std::string::npos);
+            bool retained = false;
+            for (const auto& line : window.Log()) retained |= line.text == stage;
+            CHECK(retained);
+        } else {
+            CHECK(stage.find("landing (") == std::string::npos);
+        }
         CHECK(window.StagedGame() == game && window.launch_args == "--not-a-player-flag");
     };
-    run(R"("target":{"min_x":28.5,"max_x":30,"min_y":2,"max_y":3}})", "Jump Proof: target reached");
+    run(R"("target":{"min_x":28.5,"max_x":30,"min_y":2,"max_y":3}})", "Jump Proof: target reached", true);
     CHECK(window.LastResult() == BuildPackageWindow::Result::Succeeded);
-    run(R"("target":{"min_x":100,"max_x":101,"min_y":2,"max_y":3}})", "Jump Proof: target missed");
+    run(R"("target":{"min_x":100,"max_x":101,"min_y":2,"max_y":3}})", "Jump Proof: target missed", true);
     CHECK(window.LastResult() == BuildPackageWindow::Result::Failed);
     run(R"("scene":"Wrong Level.ascene","fixed_hz":60,"target":{"min_x":28.5,"max_x":30,"min_y":2,"max_y":3}})",
-        "Jump Proof could not run: player exited with code 2");
+        "Jump Proof could not run: player exited with code 2", false);
     bool mismatch = false;
     for (const auto& line : window.Log()) mismatch |= line.warning && line.text.find("scene mismatch") != std::string::npos;
     CHECK(mismatch);

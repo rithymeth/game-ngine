@@ -1,9 +1,15 @@
 #include "core/package_runner.h"
 
+#include "aether/reflection/serialize.h"
+
 #include <chrono>
+#include <cmath>
 #include <deque>
 #include <fstream>
-#include <limits>
+#include <iomanip>
+#include <locale>
+#include <sstream>
+#include <string_view>
 #include <utility>
 
 namespace aether::editor {
@@ -39,17 +45,22 @@ bool SplitArgs(const std::string& text, std::vector<std::string>& args) {
 }
 
 // Read only a bounded tail; the player can write logs even before a scene
-// loads. Normal progress stays out of the editor's failure diagnostics.
-std::deque<std::string> SmokeFailureLog(const stdfs::path& path) {
-    std::deque<std::string> diagnostics;
+// loads. Don't read an unbounded log into the editor.
+std::ifstream TestLogTail(const stdfs::path& path) {
     std::ifstream in(path, std::ios::binary | std::ios::ate);
-    if (!in) return diagnostics;
+    if (!in) return {};
     constexpr std::streamoff tail_limit = 64 * 1024;
     const std::streamoff size = in.tellg();
-    if (size <= 0) return diagnostics;
+    if (size <= 0) return {};
     const std::streamoff start = size > tail_limit ? size - tail_limit : 0;
     in.seekg(start);
-    if (start != 0) in.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+    if (start != 0) in.ignore(size - start, '\n');
+    return in;
+}
+
+std::deque<std::string> SmokeFailureLog(const stdfs::path& path) {
+    std::deque<std::string> diagnostics;
+    auto in = TestLogTail(path);
     std::string line;
     while (std::getline(in, line)) {
         if (!line.empty() && line.back() == '\r') line.pop_back();
@@ -58,6 +69,32 @@ std::deque<std::string> SmokeFailureLog(const stdfs::path& path) {
         diagnostics.push_back(std::move(line));
     }
     return diagnostics;
+}
+
+// Keep the actual landing in the copyable build log. Old staged players
+// provide only an exit code; their verdict still works without these details.
+std::string JumpLanding(const stdfs::path& path, bool missed) {
+    auto in = TestLogTail(path);
+    constexpr std::string_view prefix = "[RESULT] Jump Proof: ";
+    std::string line, landing;
+    while (std::getline(in, line)) {
+        if (!line.starts_with(prefix) || line.size() > 256) continue;
+        const auto json = reflect::Json::parse(line.substr(prefix.size()), nullptr, false);
+        if (!json.is_object() || !json.contains("status") || json["status"] != (missed ? "missed" : "pass") ||
+            !json.contains("frames") || !json["frames"].is_number_unsigned() || json["frames"] == 0 ||
+            !json.contains("position")) continue;
+        const auto& p = json["position"];
+        if (!p.is_array() || p.size() != 3) continue;
+        if (!p[0].is_number() || !p[1].is_number() || !p[2].is_number()) continue;
+        const auto x = p[0].get<f64>(), y = p[1].get<f64>(), z = p[2].get<f64>();
+        if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z)) continue;
+        std::ostringstream out;
+        out.imbue(std::locale::classic());
+        out << " after " << json["frames"] << " frames; landing (" << std::fixed << std::setprecision(3)
+            << x << ", " << y << ", " << z << ')';
+        landing = out.str();
+    }
+    return landing;
 }
 
 struct SmokeScratch {
@@ -128,7 +165,7 @@ bool PackageRunner::StartStagedTest(stdfs::path route) {
     worker_ = std::thread([this, staged = std::move(staged), route = std::move(route)] {
         const bool proof = !route.empty();
         bool missed = false;
-        std::string detail;
+        std::string detail, landing;
         std::deque<std::string> diagnostics;
         Result result = Result::Failed;
         {
@@ -179,6 +216,7 @@ bool PackageRunner::StartStagedTest(stdfs::path route) {
                         missed = proof && player.ExitCode() == 5;
                         detail = "player exited with code " + std::to_string(player.ExitCode());
                     }
+                    if (proof && (result == Result::Succeeded || missed)) landing = JumpLanding(child_log, missed);
                     if (result == Result::Failed && !missed) diagnostics = SmokeFailureLog(child_log);
                 }
             }
@@ -191,6 +229,7 @@ bool PackageRunner::StartStagedTest(stdfs::path route) {
                 stage_ = result == Result::Succeeded ? "Jump Proof: target reached" :
                          result == Result::Cancelled ? "Jump Proof cancelled" :
                          missed ? "Jump Proof: target missed" : "Jump Proof could not run: " + detail;
+                stage_ += landing;
             } else {
                 stage_ = result == Result::Succeeded ? "Headless smoke test passed (3 frames)" :
                          result == Result::Cancelled ? "Headless smoke test cancelled" : "Headless smoke test failed: " + detail;

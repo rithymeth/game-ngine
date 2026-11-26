@@ -105,15 +105,24 @@ struct Options {
 class PlayerLogFile {
 public:
     bool Open(const std::string& path) {
-        auto output = std::make_shared<Output>();
-        output->file.open(stdfs::path(path), std::ios::out | std::ios::trunc);
-        if (!output->file) return false;
-        sink_ = Logger::Instance().AddSink([output](const LogLine& line) {
+        output_ = std::make_shared<Output>();
+        output_->file.open(stdfs::path(path), std::ios::out | std::ios::trunc);
+        if (!output_->file) return false;
+        sink_ = Logger::Instance().AddSink([output = output_](const LogLine& line) {
             std::lock_guard<std::mutex> lock(output->mutex);
             output->file << '[' << LogLevelName(line.level) << "] " << line.category << ": " << line.message << '\n';
             output->file.flush();
         });
         return true;
+    }
+
+    void WriteJumpResult(const std::string& json) {
+        if (!output_) return;
+        std::lock_guard<std::mutex> lock(output_->mutex);
+        // This is a completed test result, not a diagnostic. Keep it available
+        // in Shipping without changing the logger's severity threshold.
+        output_->file << "[RESULT] Jump Proof: " << json << '\n';
+        output_->file.flush();
     }
 
     ~PlayerLogFile() {
@@ -129,6 +138,7 @@ private:
         std::mutex mutex;
         std::ofstream file;
     };
+    std::shared_ptr<Output> output_;
     int sink_ = 0;
 };
 
@@ -976,7 +986,9 @@ int main(int argc, char** argv) {
         }
         if (!options.jump_proof.empty()) {
             if (jump_result.is_null()) return 1;
-            std::printf("Jump Proof: %s\n", jump_result.dump().c_str());
+            const auto json = jump_result.dump();
+            log.WriteJumpResult(json);
+            std::printf("Jump Proof: %s\n", json.c_str());
             if (jump_result.at("status") == "missed") return 5;
         }
     } catch (const std::exception& e) {
