@@ -80,6 +80,22 @@ bool TilemapPanel::LoadJumpProofOverlay(const std::filesystem::path& path, std::
     std::vector<GhostPoint> before, after;
     if (!parse("before_path", before) || !parse("after_path", after))
         return fail("The file must contain two complete position paths. Export with --overlay-data.");
+    std::optional<GhostVerdicts> verdicts;
+    if (data.contains("before_status") || data.contains("after_status") || data.contains("verdict_changed")) {
+        const auto status = [&](const char* key) -> std::optional<bool> {
+            const auto it = data.find(key);
+            if (it == data.end() || !it->is_string()) return std::nullopt;
+            if (*it == "pass") return true;
+            if (*it == "missed") return false;
+            return std::nullopt;
+        };
+        const auto a = status("before_status"), b = status("after_status");
+        if (!a || !b) return fail("Expected both Jump Proof target verdicts (pass or missed).");
+        if (const auto changed = data.find("verdict_changed"); changed != data.end() &&
+            (!changed->is_boolean() || changed->get<bool>() != (*a != *b)))
+            return fail("The target verdict change does not match the two verdicts.");
+        verdicts = GhostVerdicts{*a, *b};
+    }
     std::optional<GhostCell> cell;
     if (data.contains("asset") || data.contains("cell")) {
         if (marker.is_null() || !data.contains("asset") || !data["asset"].is_string() ||
@@ -110,6 +126,7 @@ bool TilemapPanel::LoadJumpProofOverlay(const std::filesystem::path& path, std::
         cell = std::move(record);
     }
     ghost_cell_ = std::move(cell);
+    ghost_verdicts_ = verdicts;
     ghost_before_ = std::move(before);
     ghost_after_ = std::move(after);
     ghost_difference_ = marker.is_null() ? 0 : static_cast<usize>(marker.get<u64>());
@@ -142,6 +159,7 @@ void TilemapPanel::DrawJumpProofTools() {
         ghost_after_.clear();
         ghost_difference_ = 0;
         ghost_cell_.reset();
+        ghost_verdicts_.reset();
         ghost_error_.clear();
     }
     ImGui::SameLine();
@@ -155,6 +173,11 @@ void TilemapPanel::DrawJumpProofTools() {
         if (ghost_difference_ != 0) {
             ImGui::SameLine();
             ImGui::Text("First difference: frame %zu", ghost_difference_);
+        }
+        if (ghost_verdicts_) {
+            const auto [before, after] = *ghost_verdicts_;
+            ImGui::Text("Target result: %s -> %s%s", before ? "pass" : "missed", after ? "pass" : "missed",
+                        before == after ? "" : " (changed)");
         }
         if (JumpProofCellMatchesMap())
             ImGui::Text("Green: reported changed cell (%d, %d), layer %d", ghost_cell_->x, ghost_cell_->y, ghost_cell_->layer);
@@ -201,6 +224,7 @@ void TilemapPanel::Draw() {
         ghost_after_.clear();
         ghost_difference_ = 0;
         ghost_cell_.reset();
+        ghost_verdicts_.reset();
         ghost_map_ = doc_.TilemapFile();
     }
     DrawTools();

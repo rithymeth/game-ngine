@@ -58,6 +58,8 @@ private:
     struct GhostPoint { f32 x, y; };
     std::vector<GhostPoint> ghost_before_, ghost_after_;
     usize ghost_difference_ = 0;
+    struct GhostVerdicts { bool before_passed, after_passed; };
+    std::optional<GhostVerdicts> ghost_verdicts_;
     std::filesystem::path ghost_map_;
     struct GhostCell {
         std::filesystem::path asset;
