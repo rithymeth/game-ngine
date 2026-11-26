@@ -263,6 +263,16 @@ bool TilemapEditDocument::SetAutotileTile(usize autotile, u8 mask, i32 tile) {
     return true;
 }
 
+bool TilemapEditDocument::FillEmptyAutotileMasks(usize autotile, i32 tile) {
+    if (in_stroke_ || autotile >= tileset_.autotiles.size() || tile < 0 ||
+        static_cast<u32>(tile) >= tileset_.TileCount()) return false;
+    auto& variants = tileset_.autotiles[autotile].tiles;
+    if (std::find(variants.begin(), variants.end(), kEmpty) == variants.end()) return false;
+    Record();
+    std::replace(variants.begin(), variants.end(), kEmpty, tile);
+    return true;
+}
+
 bool TilemapEditDocument::Save(const std::filesystem::path& tilemap_file, const std::filesystem::path& tileset_file,
                                std::string* error) {
     if (error) error->clear();

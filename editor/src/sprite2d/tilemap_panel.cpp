@@ -471,7 +471,15 @@ void TilemapPanel::DrawPalette() {
     if (selected_autotile_ >= 0 && static_cast<usize>(selected_autotile_) < ts.autotiles.size() && doc_.brush >= 0) {
         // Assigns the brush tile to a neighbour mask of the selected autotile.
         const Autotile& at = ts.autotiles[static_cast<usize>(selected_autotile_)];
-        ImGui::TextDisabled("Pick a tile, then click a mask to assign it:");
+        ImGui::TextWrapped("Editing masks: %s", at.name.c_str());
+        const bool can_fill = static_cast<u32>(doc_.brush) < count &&
+                              std::find(at.tiles.begin(), at.tiles.end(), kEmpty) != at.tiles.end();
+        ImGui::BeginDisabled(!can_fill);
+        if (ImGui::SmallButton("Fill empty masks"))
+            doc_.FillEmptyAutotileMasks(static_cast<usize>(selected_autotile_), doc_.brush);
+        ImGui::EndDisabled();
+        ImGui::SetItemTooltip("Use tile %d for every empty mask. Assigned tiles stay as they are.", doc_.brush);
+        ImGui::TextDisabled("Or click one mask to assign it:");
         for (int m = 0; m < 16; ++m) {
             ImGui::PushID(2000 + m);
             if (m % 4 != 0) ImGui::SameLine();

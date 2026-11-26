@@ -62,6 +62,7 @@ public:
     usize AddAutotile(const std::string& name);
     // Which tile an autotile shows for a neighbour mask.
     bool SetAutotileTile(usize autotile, u8 mask, i32 tile);
+    bool FillEmptyAutotileMasks(usize autotile, i32 tile);
 
     bool Save(const std::filesystem::path& tilemap_file, const std::filesystem::path& tileset_file,
               std::string* error = nullptr);
