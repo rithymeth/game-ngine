@@ -3,6 +3,7 @@
 #include "aether/ecs/world.h"
 #include "aether/reflection/serialize.h"
 #include "aether/scene/serialization.h"
+#include "aether/scene/hierarchy.h"
 #include "aether/sprite2d/atlas.h"
 #include "aether/sprite2d/batch.h"
 #include "aether/sprite2d/pixel_camera.h"
@@ -420,6 +421,39 @@ AETHER_TEST(Sprite2D_SpriteScaleRespectsPivotMirrorAndView) {
     CHECK(BuildSpriteBatches(world, resolvers).empty());
     transform->scale.x = std::numeric_limits<f32>::infinity();
     CHECK(BuildSpriteBatches(world, resolvers).empty());
+}
+
+AETHER_TEST(Sprite2D_ParentTransformMovesSpriteGeometryAndCulling) {
+    World world;
+    SpriteAtlas atlas = AtlasFromGrid(Guid(), 16, 16, 16, 16, "t");
+    atlas.frames[0].pivot_x = atlas.frames[0].pivot_y = 0;
+    Resolvers2D resolvers;
+    resolvers.atlases = [&](const assets::AssetGuid&) { return &atlas; };
+    const Entity root = world.CreateEntity();
+    const f32 half = std::sqrt(.5f);
+    world.AddComponent<Transform>(root, Transform{Vec3(10,20,3), Quaternion(0,0,half,half), Vec3(2,3,1)});
+    const auto parent = EnsureGuid(world, root);
+    const Entity child = world.CreateEntity();
+    world.AddComponent<Transform>(child, Transform{Vec3(1,0,2), Quaternion::Identity()});
+    world.AddComponent<Parent>(child, Parent{parent});
+    Sprite sprite;
+    sprite.atlas.guid = Guid();
+    sprite.pixels_per_unit = 16;
+    SetSpriteFrame(sprite, "t_0");
+    world.AddComponent<Sprite>(child, sprite);
+
+    const ViewRect local{0,-2,3,1}, moved{10.1f,22.1f,12,23};
+    CHECK(BuildSpriteBatches(world, resolvers, &local).empty());
+    auto batches = BuildSpriteBatches(world, resolvers, &moved);
+    CHECK(batches.size() == 1);
+    if (batches.size() == 1 && batches[0].vertices.size() == 4) {
+        const auto& v = batches[0].vertices;
+        CHECK(Near(v[0].x,10) && Near(v[0].y,22) && Near(v[0].z,5));
+        CHECK(Near(v[2].x,13) && Near(v[2].y,24) && Near(v[2].z,5));
+    }
+    world.DestroyEntity(root);
+    CHECK(BuildSpriteBatches(world, resolvers, &local).size() == 1); // unresolved parent: local fallback
+    CHECK(BuildSpriteBatches(world, resolvers, &moved).empty());
 }
 
 AETHER_TEST(Sprite2D_ViewCullingAndTilemapBatches) {
