@@ -77,12 +77,15 @@ std::vector<SpriteBatch> BuildSpriteBatches(const World& world, const Resolvers2
         if (!frame || !atlas->Uv(*frame, uv) || !std::isfinite(sprite->pixels_per_unit) ||
             sprite->pixels_per_unit <= 0.0f || !FiniteTransform2D(*t) || !FiniteColor(sprite->color) ||
             !std::isfinite(frame->pivot_x) || !std::isfinite(frame->pivot_y)) return;
-        const f32 w = static_cast<f32>(frame->w) / sprite->pixels_per_unit;
-        const f32 h = static_cast<f32>(frame->h) / sprite->pixels_per_unit;
-        if (!std::isfinite(w) || !std::isfinite(h)) return;
-        // Local corners from the pivot (fractions from the frame's top left).
-        const f32 left = -frame->pivot_x * w, right = (1.0f - frame->pivot_x) * w;
-        const f32 top = frame->pivot_y * h, bottom = -(1.0f - frame->pivot_y) * h;
+        const f32 w = (static_cast<f32>(frame->w) / sprite->pixels_per_unit) * t->scale.x;
+        const f32 h = (static_cast<f32>(frame->h) / sprite->pixels_per_unit) * t->scale.y;
+        if (!std::isfinite(w) || !std::isfinite(h) || w == 0.0f || h == 0.0f) return;
+        // Scale around the frame pivot before rotation. Preserve the quad's
+        // winding for a negative scale and mirror its UVs instead.
+        f32 left = -frame->pivot_x * w, right = (1.0f - frame->pivot_x) * w;
+        f32 top = frame->pivot_y * h, bottom = -(1.0f - frame->pivot_y) * h;
+        if (w < 0.0f) std::swap(left, right);
+        if (h < 0.0f) std::swap(top, bottom);
         const f32 lx[4] = {left, right, right, left};
         const f32 ly[4] = {top, top, bottom, bottom};
         const PlaneRotation rotation(t->rotation);
@@ -97,7 +100,8 @@ std::vector<SpriteBatch> BuildSpriteBatches(const World& world, const Resolvers2
                           std::max({px[0], px[1], px[2], px[3]}), std::max({py[0], py[1], py[2], py[3]})};
         if (!Visible(view, bounds)) return;
         Item item{sprite->sorting_layer, sprite->order, t->position.z, sequence, atlas->texture, {}};
-        PushQuad(item.vertices, px, py, t->position.z, uv, sprite->color, sprite->flip_x, sprite->flip_y);
+        PushQuad(item.vertices, px, py, t->position.z, uv, sprite->color,
+                 sprite->flip_x != (w < 0.0f), sprite->flip_y != (h < 0.0f));
         items.push_back(std::move(item));
     });
 
