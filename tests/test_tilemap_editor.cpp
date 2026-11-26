@@ -514,6 +514,49 @@ AETHER_TEST(TilemapEditor_WorkspaceShowsTheSampleLevel) {
     CHECK(ImGui::GetDrawData()->TotalVtxCount > 0);
 }
 
+AETHER_TEST(TilemapEditor_OpensTheAssetNamedByAStrictBuildWarning) {
+    HeadlessImGui ui;
+    NewProjectPanel starter;
+    starter.template_id = "platformer_2d";
+    starter.location = (std::filesystem::temp_directory_path() / "aether_warning_asset").string();
+    starter.name = "WarningAsset";
+    std::string error;
+    if (!starter.Create(&error)) { CHECK(false); return; }
+    const std::string relative = "Tiles/Level1.atilemap";
+    const auto source = ProjectPaths::ForFile(starter.Created()).content / relative;
+    TilemapData map;
+    if (!LoadTilemap(source, map, &error)) { CHECK(false); return; }
+    map.Set(0, 20, 1, AutotileCell(999));
+    if (!SaveTilemap(source, map, &error)) { CHECK(false); return; }
+    EditorWorkspace ws(starter.Created());
+    auto* build = ws.PackageWindow();
+    if (!build) { CHECK(false); return; }
+    build->configuration = cook::BuildConfiguration::Shipping;
+    build->strict_validation = true;
+    build->player_path = AETHER_TEST_PLAYER_PATH;
+    if (!build->StartPackage()) { CHECK(false); return; }
+    build->WaitForBuild();
+    CHECK(build->LastResult() == BuildPackageWindow::Result::Failed);
+    const auto warnings = build->Log();
+    const auto hit = std::find_if(warnings.begin(), warnings.end(), [&](const auto& line) {
+        return line.warning && line.text.starts_with(relative + ": layer 0 cell (20, 1) uses missing autotile rule 999");
+    });
+    if (hit == warnings.end()) { CHECK(false); return; }
+    CHECK(build->WarningAsset(*hit) == relative);
+    CHECK(build->WarningAsset({false, hit->text}).empty());
+    CHECK(build->WarningAsset({true, "../Tiles/Level1.atilemap: bad"}).empty());
+    CHECK(build->WarningAsset({true, "Tiles/Unknown.atilemap: missing"}).empty());
+    CHECK(build->WarningAsset({true, "Failed: " + hit->text}).empty());
+    const auto capture = std::filesystem::temp_directory_path() / "build-warning-open-asset.txt";
+    ui.Frame([&] { ImGui::LogToFile(0, capture.string().c_str()); build->Draw(); ImGui::LogFinish(); });
+    std::ifstream in(capture);
+    const std::string log(std::istreambuf_iterator<char>(in), {});
+    CHECK(log.find("Open asset") != std::string::npos);
+    if (!build->OpenWarningAsset(*hit, &error)) { CHECK(false); return; }
+    CHECK(ws.Tilemap().TilemapFile() == source && ws.Tilemap().Map().Get(0, 20, 1) == AutotileCell(999));
+    CHECK(!ws.Tilemap().dirty() && !ws.Tilemap().CanUndo() && build->StagedGame().empty());
+}
+
 AETHER_TEST(TilemapEditor_SavesPlatformerEditsBeforePackaging) {
     HeadlessImGui ui;
     NewProjectPanel starter;

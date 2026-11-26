@@ -26,6 +26,23 @@ constexpr const char* kCompressionNames[] = {"None", "LZ4", "Zstd", "Auto"};
 bool BuildPackageWindow::StartCook() { return SourceBlocker().empty() && PackageRunner::StartCook(); }
 bool BuildPackageWindow::StartPackage() { return SourceBlocker().empty() && PackageRunner::StartPackage(); }
 
+std::string BuildPackageWindow::WarningAsset(const LogLine& line) const {
+    if (!line.warning || !warning_asset_check_ || !warning_asset_open_) return {};
+    const usize separator = line.text.find(": ");
+    if (separator == std::string::npos || separator == 0) return {};
+    const std::string path = line.text.substr(0, separator);
+    return warning_asset_check_(path) ? path : std::string{};
+}
+
+bool BuildPackageWindow::OpenWarningAsset(const LogLine& line, std::string* error) {
+    const std::string path = WarningAsset(line);
+    if (path.empty()) {
+        if (error) *error = "The warning does not name an editable project asset.";
+        return false;
+    }
+    return warning_asset_open_(path, error);
+}
+
 void BuildPackageWindow::Draw() {
     const bool busy = Busy();
     const bool running = PollLaunchedGame();
@@ -98,12 +115,23 @@ void BuildPackageWindow::Draw() {
 
     ImGui::SeparatorText("Log");
     if (ImGui::BeginChild("##build_log", ImVec2(0, 0), ImGuiChildFlags_Borders)) {
+        int row = 0;
         for (const LogLine& line : Log()) {
+            ImGui::PushID(row++);
             if (line.warning) {
+                const std::string asset = WarningAsset(line);
+                if (!asset.empty()) {
+                    if (ImGui::SmallButton("Open asset")) OpenWarningAsset(line);
+                    ImGui::SetItemTooltip("Open %s in its editor", asset.c_str());
+                    ImGui::SameLine();
+                }
+                ImGui::PushTextWrapPos(0.0f);
                 ImGui::TextColored(ImVec4(1, 0.8f, 0.3f, 1), "%s", line.text.c_str());
+                ImGui::PopTextWrapPos();
             } else {
                 ImGui::TextUnformatted(line.text.c_str());
             }
+            ImGui::PopID();
         }
         if (busy) ImGui::SetScrollHereY(1.0f);
     }
