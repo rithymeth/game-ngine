@@ -283,11 +283,12 @@ AETHER_TEST(Cook_RejectsSpriteAtlasThatDisagreesWithCookedTextureDimensions) {
         .write(reinterpret_cast<const char*>(png.data()), static_cast<std::streamsize>(png.size()));
     const auto texture = GuidOf(paths.content, "Hero.png");
     if (texture.empty()) { CHECK(false); return; }
-    const auto write_atlas = [&](int width, int frame_x = 8) {
+    const auto write_atlas = [&](int width, int frame_x = 8, const char* clip_frame = "idle") {
         WriteText(paths.content / "Hero.aatlas",
                   json({{"$type", "SpriteAtlas"}, {"$version", 1}, {"texture", texture},
                         {"width", width}, {"height", 16},
-                        {"frames", json::array({{{"name", "idle"}, {"x", frame_x}, {"y", 0}, {"w", 8}, {"h", 16}}})}}).dump());
+                        {"frames", json::array({{{"name", "idle"}, {"x", frame_x}, {"y", 0}, {"w", 8}, {"h", 16}}})},
+                        {"clips", json::array({{{"name", "walk"}, {"frames", json::array({clip_frame})}}})}}).dump());
     };
     write_atlas(16);
     ProjectSettings project;
@@ -312,7 +313,13 @@ AETHER_TEST(Cook_RejectsSpriteAtlasThatDisagreesWithCookedTextureDimensions) {
     CHECK(!bad_crop.ok && bad_crop.error.find("Hero.aatlas: frame 'idle' is outside the 24x16 atlas bounds") != std::string::npos);
     CHECK(!stdfs::exists(options.output_dir / "Game.apak"));
 
-    write_atlas(24, 16); // A crop whose edge exactly touches the image bounds is valid.
+    write_atlas(24, 16, "deleted-frame");
+    const auto missing_frame = cook::Cook(options);
+    CHECK(!missing_frame.ok && missing_frame.error.find(
+          "Hero.aatlas: clip 'walk' uses the missing frame 'deleted-frame'") != std::string::npos);
+    CHECK(!stdfs::exists(options.output_dir / "Game.apak"));
+
+    write_atlas(24, 16); // Edge crop and named clip are both valid now.
     const auto good = cook::Cook(options);
     if (!good.ok) { CHECK(false); return; }
     CHECK(good.texture_cache_hits == 1 && good.warnings.empty());
