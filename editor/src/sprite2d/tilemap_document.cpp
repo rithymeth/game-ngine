@@ -14,6 +14,22 @@ using namespace sprite2d;
 namespace {
 namespace stdfs = std::filesystem;
 
+bool SameSaveDestination(const stdfs::path& a, const stdfs::path& b) {
+    if (a.empty() || b.empty()) return false;
+    std::error_code ec;
+    // Existing paths can alias through hard links or filesystem-specific spelling.
+    if (stdfs::equivalent(a, b, ec)) return true;
+    const auto normalize = [](const stdfs::path& path) {
+        std::error_code ec;
+        const auto absolute = stdfs::absolute(path, ec);
+        if (ec) return path.lexically_normal();
+        // Resolve existing parent components, even when the leaf has not been created.
+        const auto canonical = stdfs::weakly_canonical(absolute, ec);
+        return ec ? absolute.lexically_normal() : canonical;
+    };
+    return normalize(a) == normalize(b);
+}
+
 // Place every payload beside its eventual destination, where final rename
 // can replace the file without a partial cross-volume copy.
 struct StagedTileAsset {
@@ -291,6 +307,10 @@ bool TilemapEditDocument::Save(const std::filesystem::path& tilemap_file, const 
                                std::string* error) {
     EndStroke();
     if (error) error->clear();
+    if (SameSaveDestination(tilemap_file, tileset_file)) {
+        if (error) *error = "The tilemap and tileset must be saved to distinct files.";
+        return false;
+    }
     StagedTileAsset map, tiles;
     if (!map.Prepare(tilemap_file, error) || !tiles.Prepare(tileset_file, error) ||
         !SaveTilemap(map.payload, map_, error) || !SaveTileset(tiles.payload, tileset_, error)) return false;

@@ -278,6 +278,31 @@ AETHER_TEST(TilemapEditor_SavesBothFiles) {
     }
 }
 
+AETHER_TEST(TilemapEditor_RejectsSavingBothAssetsToOneDestination) {
+    TilemapEditDocument doc = Doc();
+    const auto dir = std::filesystem::temp_directory_path() / "aether_tilemap_save_alias";
+    std::filesystem::create_directories(dir / "nested");
+    const auto map_path = dir / "map.atilemap", tileset_path = dir / "set.atileset";
+    const auto unused = dir / "unused.atilemap";
+    std::string error;
+    CHECK(!doc.Save(unused, unused, &error) && error.find("distinct files") != std::string::npos);
+    CHECK(!std::filesystem::exists(unused) && doc.TilemapFile().empty() && doc.TilesetFile().empty());
+
+    if (!doc.Save(map_path, tileset_path, &error)) { CHECK(false); return; }
+    const auto read = [](const std::filesystem::path& file) {
+        std::ifstream in(file, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>{in}, {});
+    };
+    const auto map_before = read(map_path), tileset_before = read(tileset_path);
+    CHECK(!map_before.empty() && !tileset_before.empty());
+    doc.brush = 5;
+    doc.Apply(2, 2);
+    const auto alias = dir / "nested" / ".." / map_path.filename();
+    CHECK(!doc.Save(map_path, alias, &error) && error.find("distinct files") != std::string::npos);
+    CHECK(read(map_path) == map_before && read(tileset_path) == tileset_before);
+    CHECK(doc.dirty() && doc.TilemapFile() == map_path && doc.TilesetFile() == tileset_path);
+}
+
 AETHER_TEST(TilemapEditor_SaveStagesEachAssetBeforeReplacingOldBytes) {
     TilemapEditDocument doc = Doc();
     doc.brush = 5;
