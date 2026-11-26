@@ -567,6 +567,64 @@ AETHER_TEST(TilemapEditor_OpensTheAssetNamedByAStrictBuildWarning) {
     CHECK(!ws.Tilemap().dirty() && !ws.Tilemap().CanUndo() && build->StagedGame().empty());
 }
 
+AETHER_TEST(TilemapEditor_SavedCheckpointFollowsUndoAndRedo) {
+    auto doc = Doc();
+    const auto dir = std::filesystem::temp_directory_path() / "aether_tilemap_saved_checkpoint";
+    std::string error;
+    doc.brush = 5;
+    doc.BeginStroke();
+    doc.Apply(2, 2);
+    const auto revision = doc.Revision();
+    if (!doc.Save(dir / "a.atilemap", dir / "a.atileset", &error)) { CHECK(false); return; }
+    CHECK(!doc.dirty() && doc.Revision() > revision);
+    const auto saved_revision = doc.Revision();
+    CHECK(doc.Undo() && doc.dirty() && doc.Map().Get(0, 2, 2) == kEmpty);
+    CHECK(doc.Redo() && !doc.dirty() && doc.Revision() > saved_revision);
+    doc.SetSolid(5, true);
+    doc.brush = 6;
+    doc.Apply(2, 2);
+    std::ofstream(dir / "occupied") << "a file, not a directory";
+    CHECK(!doc.Save(dir / "a.atilemap", dir / "occupied" / "a.atileset", &error));
+    CHECK(doc.dirty() && doc.Undo() && doc.dirty());
+    CHECK(doc.Undo() && !doc.dirty() && !doc.GetTileset().IsSolid(5));
+    const auto before_no_op = doc.Revision();
+    doc.brush = 5;
+    doc.Apply(2, 2);
+    CHECK(!doc.dirty() && doc.Revision() == before_no_op && doc.CanRedo());
+    doc.SetSolid(7, true);
+    CHECK(doc.dirty() && !doc.CanRedo());
+    CHECK(doc.Undo() && !doc.dirty() && !doc.GetTileset().IsSolid(7));
+    CHECK(doc.Load(dir / "a.atilemap", dir / "a.atileset", &error));
+    CHECK(!doc.dirty() && !doc.CanUndo() && !doc.CanRedo());
+}
+
+AETHER_TEST(TilemapEditor_PackagesAfterUndoToSavedMap) {
+    NewProjectPanel starter;
+    starter.template_id = "platformer_2d";
+    starter.location = (std::filesystem::temp_directory_path() / "aether_platformer_tilemap_undo").string();
+    starter.name = "TilemapUndo";
+    std::string error;
+    if (!starter.Create(&error)) { CHECK(false); return; }
+    EditorWorkspace ws(starter.Created());
+    auto* build = ws.PackageWindow();
+    if (!build || !ws.OpenAsset("Tiles/Level1.atilemap", &error)) { CHECK(false); return; }
+    build->player_path = AETHER_TEST_PLAYER_PATH;
+    auto& doc = ws.Tilemap();
+    doc.brush = AutotileCell(0);
+    doc.Apply(20, 1);
+    CHECK(doc.dirty() && !build->StartPackage());
+    if (!doc.Undo() || !build->StartPackage()) { CHECK(false); return; }
+    build->WaitForBuild();
+    CHECK(!doc.dirty() && build->LastResult() == BuildPackageWindow::Result::Succeeded);
+    pak::PakReader reader;
+    if (!reader.Open((build->StagedGame().parent_path() / "Paks/Game.apak").string(), &error)) { CHECK(false); return; }
+    std::string contents;
+    TilemapData cooked_map;
+    CHECK(reader.ReadText("Content/Tiles/Level1.atilemap", contents) &&
+          TilemapFromJson(nlohmann::json::parse(contents), cooked_map) &&
+          cooked_map.Get(0, 20, 1) == kEmpty);
+}
+
 AETHER_TEST(TilemapEditor_SavesPlatformerEditsBeforePackaging) {
     HeadlessImGui ui;
     NewProjectPanel starter;

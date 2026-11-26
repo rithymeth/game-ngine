@@ -76,12 +76,13 @@ public:
     // Those files, empty for a sample.
     const std::filesystem::path& TilemapFile() const { return tilemap_file_; }
     const std::filesystem::path& TilesetFile() const { return tileset_file_; }
-    bool dirty() const { return dirty_; }
+    bool dirty() const { return saved_state_ != state_; }
 
 private:
     struct Snapshot {
         sprite2d::TilemapData map;
         sprite2d::Tileset tileset;
+        u64 state;
         std::optional<usize> selection = std::nullopt;
     };
     void Record(bool track_selection = false);
@@ -94,10 +95,12 @@ private:
     std::filesystem::path tilemap_file_;
     std::filesystem::path tileset_file_;
     bool in_stroke_ = false;
-    Snapshot stroke_start_;
+    Snapshot stroke_start_{};
     std::vector<Snapshot> undo_, redo_;
     u64 revision_ = 1;
-    bool dirty_ = false;
+    // The view revision always moves forward; undo can return to an old edit state.
+    u64 state_ = revision_;
+    std::optional<u64> saved_state_ = state_;
 };
 
 } // namespace aether::editor
