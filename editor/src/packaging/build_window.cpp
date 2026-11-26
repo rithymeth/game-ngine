@@ -3,6 +3,7 @@
 #include "ui/reflected_inspector.h"
 
 #include <imgui.h>
+#include <misc/cpp/imgui_stdlib.h>
 
 #include <algorithm>
 #include <charconv>
@@ -145,6 +146,15 @@ void BuildPackageWindow::Draw() {
     if (ImGui::Button(has_staged ? "Verify package" : "Verify output folder")) StartVerify();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", has_staged ? "Check the last package from this window." :
                                                                       "Check the saved package in the Output folder.");
+    ImGui::EndDisabled();
+    ImGui::BeginDisabled(!can_launch || running);
+    ImGui::SetNextItemWidth(240);
+    ImGui::InputTextWithHint("##jump_proof_route", "Jump Proof route (.json)", &jump_proof_route_);
+    ImGui::SetItemTooltip("Enter a route path. Relative paths start at the project folder.");
+    ImGui::SameLine();
+    ImGui::BeginDisabled(jump_proof_route_.empty());
+    if (ImGui::Button("Run Jump Proof")) StartJumpProof(jump_proof_route_);
+    ImGui::EndDisabled();
     ImGui::EndDisabled();
     if (!launch_error_.empty()) ImGui::TextColored(ImVec4(1, 0.4f, 0.3f, 1), "%s", launch_error_.c_str());
 

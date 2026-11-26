@@ -45,6 +45,7 @@ private:
     AssetCheck warning_asset_check_;
     AssetOpener warning_asset_open_;
     bool warnings_only_ = false;
+    std::string jump_proof_route_;
 };
 
 // The project's settings in a reflected property table, with Save and Revert.
