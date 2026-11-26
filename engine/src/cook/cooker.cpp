@@ -57,12 +57,20 @@ namespace {
 
 struct SheetExtentCheck {
     AssetGuid texture;
-    std::string tileset_path, texture_path;
+    std::string sheet_path, texture_path;
     u32 width, height;
 };
 
-// Check 2D headers and typed references without linking Sprite2D. A tileset
-// can also be compared to the exact texture dimensions stored in this cook.
+u32 SheetPixels(const json& value) {
+    if (!value.is_number()) return 0;
+    const f64 n = value.get<f64>();
+    if (!(n > 0 && n <= std::numeric_limits<u32>::max())) return 0;
+    const auto pixels = static_cast<u32>(n);
+    return n == pixels ? pixels : 0;
+}
+
+// Check 2D headers and typed references without linking Sprite2D. A tileset or
+// sprite atlas can be compared to the exact texture dimensions in this cook.
 std::string Check2DReference(const AssetRecord& record, const std::vector<u8>& bytes,
                              const AssetDatabase& database, std::vector<SheetExtentCheck>& extents) {
     const bool tilemap = record.importer == "Tilemap";
@@ -88,16 +96,22 @@ std::string Check2DReference(const AssetRecord& record, const std::vector<u8>& b
     if (dependency && !dependency->missing) {
         if (dependency->importer != expected)
             return field + " expects " + expected + ", but " + dependency->path + " is " + dependency->importer;
+        u32 width = 0, height = 0;
         if (record.importer == "Tileset") {
             const auto size = document.find("texture_size");
-            if (size != document.end() && size->is_array() && size->size() == 2 &&
-                (*size)[0].is_number_unsigned() && (*size)[1].is_number_unsigned()) {
-                const auto width = (*size)[0].get<u64>(), height = (*size)[1].get<u64>();
-                if (width > 0 && width <= std::numeric_limits<u32>::max() &&
-                    height > 0 && height <= std::numeric_limits<u32>::max())
-                    extents.push_back({guid, record.path, dependency->path, static_cast<u32>(width), static_cast<u32>(height)});
+            if (size != document.end() && size->is_array() && size->size() == 2) {
+                width = SheetPixels((*size)[0]);
+                height = SheetPixels((*size)[1]);
+            }
+        } else if (record.importer == "SpriteAtlas") {
+            const auto w = document.find("width"), h = document.find("height");
+            if (w != document.end() && h != document.end()) {
+                width = SheetPixels(*w);
+                height = SheetPixels(*h);
             }
         }
+        if (width != 0 && height != 0)
+            extents.push_back({guid, record.path, dependency->path, width, height});
     }
     return {};
 }
@@ -682,7 +696,7 @@ CookReport Cook(const CookOptions& options) {
         if (it == texture_extents.end()) continue; // No cooked copy in this archive.
         const auto [width, height] = it->second;
         if (width != sheet.width || height != sheet.height)
-            report.warnings.push_back(sheet.tileset_path + ": expects a " + std::to_string(sheet.width) + "x" +
+            report.warnings.push_back(sheet.sheet_path + ": expects a " + std::to_string(sheet.width) + "x" +
                 std::to_string(sheet.height) + " texture, but " + sheet.texture_path + " cooks to " +
                 std::to_string(width) + "x" + std::to_string(height));
     }
