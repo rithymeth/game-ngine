@@ -2,6 +2,7 @@
 """Smoke the distributed command-line tools, without using a source checkout."""
 
 import argparse
+import codecs
 import json
 import os
 from pathlib import Path
@@ -444,6 +445,16 @@ def main():
                                                        if line == metadata[0] else line for line in original_lines),
                                             encoding="utf-8")
                 compare_traces(original_trace, mismatched_route, 2)
+            shell_trace = root / "Shell capture.txt"
+            captured_text = "\r\n".join(original_lines) + "\r\n"
+            for bom, encoding in ((codecs.BOM_UTF8, "utf-8"), (codecs.BOM_UTF16_LE, "utf-16-le"),
+                                  (codecs.BOM_UTF16_BE, "utf-16-be")):
+                shell_trace.write_bytes(bom + captured_text.encode(encoding))
+                converted = compare_traces(original_trace, shell_trace, 0)
+                if converted != matching:
+                    raise RuntimeError(f"{encoding} shell capture lost route evidence: {converted}")
+            shell_trace.write_bytes(codecs.BOM_UTF16_LE + captured_text.encode("utf-16-le")[:-1])
+            compare_traces(original_trace, shell_trace, 2)
             legacy = root / "Legacy.txt"
             legacy.write_text("\n".join(line for line in original_lines if line != metadata[0]), encoding="utf-8")
             if compare_traces(legacy, legacy, 0).get("route_verified") is not False:

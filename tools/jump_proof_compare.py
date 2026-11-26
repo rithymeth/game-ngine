@@ -2,6 +2,8 @@
 """Compare the 2D positions from two packaged-player Jump Proof traces."""
 
 import argparse
+import codecs
+import io
 import json
 import math
 from pathlib import Path
@@ -46,7 +48,13 @@ def validate_route(route, frames):
 
 def read_trace_details(path):
     points, verdict, route = [], None, None
-    with path.open(encoding="utf-8") as stream:
+    with path.open("rb") as binary:
+        prefix = binary.peek(4)[:4]
+        if prefix.startswith((codecs.BOM_UTF32_LE, codecs.BOM_UTF32_BE)):
+            raise ValueError("trace must be UTF-8 or UTF-16 with a byte-order mark")
+        encoding = "utf-16" if prefix.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)) else "utf-8-sig"
+        # Stream the decoded text; a shell capture can include a BOM and CRLF.
+        stream = io.TextIOWrapper(binary, encoding=encoding)
         for line in stream:
             if line.startswith(ROUTE_PREFIX):
                 if route is not None or points or verdict is not None:
