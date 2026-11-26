@@ -31,6 +31,7 @@
 #include "content/content_browser_panel.h"
 #include "core/notifications.h"
 #include "sprite2d/tilemap_document.h"
+#include "sprite2d/sprite_atlas_panel.h"
 #include "ui/extensions.h"
 #include "workspace/editor_workspace.h"
 #include "world/scene_panel.h"
@@ -313,6 +314,11 @@ AETHER_TEST(Openers_SpriteAtlasDrawsTheSourceRectangleAndKeepsThePreviousAssetOn
     EditorWorkspace ws(paths.file);
     if (!ws.OpenAsset("Sheet.aatlas", &error)) { CHECK(false); return; }
     CHECK(ShowingTool(ws, "Sprite Atlas"));
+    auto& scene = ws.Scene().Document();
+    bool placed = false;
+    PlaceContentAsset(scene, paths.content, "Sheet.aatlas", Vec3{}, &placed);
+    if (!placed || scene.Selection().size() != 1) { CHECK(false); return; }
+    const Entity entity = scene.Selection().front();
     const auto draw = [&] { ui.Frame([&] { ws.DrawTool(ws.Selected()); }); };
     struct Bounds { float x = 0, y = 0, w = 0, h = 0; };
     const auto region = [](float low, float high) -> Bounds {
@@ -349,7 +355,21 @@ AETHER_TEST(Openers_SpriteAtlasDrawsTheSourceRectangleAndKeepsThePreviousAssetOn
             draw();
         };
         click_image(0.8f);
-        CHECK(region(10.0f/18, 1.0f).w > 0);
+        const auto selected_crop = region(10.0f/18, 1.0f);
+        CHECK(selected_crop.w > 0);
+        if (selected_crop.w > 0) {
+            // The assignment button is just above the cropped frame.
+            auto& io = ImGui::GetIO();
+            io.AddMousePosEvent(selected_crop.x + 12,
+                                selected_crop.y - ImGui::GetStyle().ItemSpacing.y - 0.5f * ImGui::GetFrameHeight());
+            draw();
+            io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+            draw();
+            io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+            draw();
+            const auto* sprite = scene.GetWorld().GetComponent<sprite2d::Sprite>(entity);
+            CHECK(sprite && std::string_view(sprite->frame) == "frame_1");
+        }
         click_image(0.5f);
         CHECK(region(10.0f/18, 1.0f).w > 0); // the gutter did not change selection
         click_image(0.2f);
@@ -730,6 +750,32 @@ AETHER_TEST(Openers_DroppedSpriteAtlasSurvivesStrictShipping) {
     CHECK(!scene.GetWorld().GetComponent<sprite2d::SpriteAnimator>(entity));
     CHECK(scene.Undo() && !scene.CanUndo() && scene.Entities().size() == before);
     CHECK(scene.Redo() && scene.Entities().size() == before + 1);
+    SpriteAtlasPanel panel;
+    if (!panel.Open(paths.content / "Hero.aatlas", browser.Database(), &error)) { CHECK(false); return; }
+    Entity restored = kNullEntity;
+    for (const Entity item : scene.Entities())
+        if (scene.GetWorld().GetComponent<sprite2d::Sprite>(item)) restored = item;
+    if (restored.IsNull()) { CHECK(false); return; }
+    scene.ClearSelection();
+    CHECK(!panel.ApplyFrame(scene, "frame_1"));
+    scene.SetSelection({restored});
+    CHECK(!panel.ApplyFrame(scene, "unknown"));
+    CHECK(!panel.ApplyFrame(scene, "frame_0"));
+    const auto original_depth = scene.Commands().UndoCount();
+    CHECK(scene.SetComponentField(restored, GetComponentId<sprite2d::Sprite>(), "atlas",
+                                  reflect::Any(assets::AssetRef<sprite2d::SpriteAtlasAsset>{assets::NewAssetGuid()})));
+    CHECK(!panel.ApplyFrame(scene, "frame_1") && scene.Undo());
+    CHECK(scene.Commands().UndoCount() == original_depth);
+    if (!panel.ApplyFrame(scene, "frame_1")) { CHECK(false); return; }
+    CHECK(scene.Commands().UndoCount() == original_depth + 1);
+    CHECK(!panel.ApplyFrame(scene, "frame_1") && scene.Commands().UndoCount() == original_depth + 1);
+    const auto frame = [&] {
+        const auto* current = scene.GetWorld().GetComponent<sprite2d::Sprite>(restored);
+        return current ? std::string(current->frame) : std::string{};
+    };
+    CHECK(frame() == "frame_1");
+    CHECK(scene.Undo() && frame() == "frame_0");
+    CHECK(scene.Redo() && frame() == "frame_1");
     if (!scene.Save(paths.content / "Placed.ascene", &error)) { CHECK(false); return; }
 
     ProjectSettings project;
@@ -763,7 +809,7 @@ AETHER_TEST(Openers_DroppedSpriteAtlasSurvivesStrictShipping) {
     if (!game.LoadStartupScene(&error)) { CHECK(false); return; }
     usize matches = 0;
     game.GetWorld().ForEach<sprite2d::Sprite, Transform>([&](auto& s, auto& transform) {
-        if (s.atlas.guid == guid && std::string_view(s.frame) == "frame_0" &&
+        if (s.atlas.guid == guid && std::string_view(s.frame) == "frame_1" &&
             transform.position.x == 2.0f && transform.position.y == 3.0f && transform.position.z == 0.0f)
             ++matches;
     });

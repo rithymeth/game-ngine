@@ -572,8 +572,8 @@ struct EditorWorkspace::Impl {
                      tilemap_panel->LoadTexturePreview(*database);
                  tilemap_panel->Draw();
              }},
-            {"Sprite Atlas", "2D", "Inspect atlas frames and preview a named sprite animation.",
-             [this] { sprite_atlas_panel.Draw(); }},
+            {"Sprite Atlas", "2D", "Preview clips or apply a frame to a selected static Sprite.",
+             [this] { sprite_atlas_panel.Draw(&scene_panel->Document()); }},
             {"Sequencer - Intro", "Cinematics", "Animate the intro on a timeline of tracks and keys.",
              [this] { sequencer_panel->Draw(); }},
             {"Save Inspector", "Data", "Inspect and edit the game's save data.",
