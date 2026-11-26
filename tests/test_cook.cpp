@@ -261,6 +261,14 @@ AETHER_TEST(Cook_RejectsTilesetsThatDisagreeWithCookedTextureDimensions) {
     CHECK(!bad.ok && bad.error.find(expected) != std::string::npos);
     CHECK(!stdfs::exists(options.output_dir / "Game.apak"));
 
+    options.cook_textures = false;
+    options.output_dir = root / "Raw Strict";
+    const auto bad_raw = cook::Cook(options);
+    CHECK(!bad_raw.ok && bad_raw.error.find(
+          "Ground.atileset: expects a 16x16 texture, but the packaged source Ground.png is 24x16") != std::string::npos);
+    CHECK(!stdfs::exists(options.output_dir / "Game.apak"));
+    options.cook_textures = true;
+
     options.output_dir = root / "Development";
     options.configuration = cook::BuildConfiguration::Development;
     options.strict_validation = false;
@@ -281,6 +289,14 @@ AETHER_TEST(Cook_RejectsTilesetsThatDisagreeWithCookedTextureDimensions) {
     write_tileset(24, 5);
     const auto good = cook::Cook(options);
     CHECK(good.ok && good.texture_cache_hits == 1 && good.warnings.empty());
+
+    options.cook_textures = false;
+    options.output_dir = root / "Raw Strict";
+    const auto good_raw = cook::Cook(options);
+    if (!good_raw.ok) { CHECK(false); return; }
+    pak::PakReader raw;
+    CHECK(raw.Open(good_raw.pak_file.string(), &error) && raw.Contains("Content/Ground.png") &&
+          !raw.Contains("Cooked/" + texture + ".atex"));
 }
 
 AETHER_TEST(Cook_RejectsSpriteAtlasThatDisagreesWithCookedTextureDimensions) {

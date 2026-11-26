@@ -15,6 +15,8 @@
 #include "aether/reflection/registry.h"
 #include "aether/reflection/serialize.h"
 
+#include <stb_image.h>
+
 #include <algorithm>
 #include <cstring>
 #include <deque>
@@ -63,6 +65,21 @@ struct SheetExtentCheck {
     std::string sheet_path, texture_path;
     u32 width, height;
 };
+
+struct StoredTextureExtent {
+    u32 width, height;
+    bool cooked;
+};
+
+std::optional<StoredTextureExtent> ProbeSourceExtent(const std::vector<u8>& bytes) {
+    // stbi takes a signed input length. Inspect the header only, without decoding pixels.
+    if (bytes.empty() || bytes.size() > static_cast<usize>(std::numeric_limits<int>::max())) return std::nullopt;
+    int width = 0, height = 0, channels = 0;
+    if (!stbi_info_from_memory(bytes.data(), static_cast<int>(bytes.size()), &width, &height, &channels) ||
+        width <= 0 || height == 0 || height == std::numeric_limits<int>::min()) return std::nullopt;
+    if (height < 0) height = -height; // Top-down BMPs have a negative stored height.
+    return StoredTextureExtent{static_cast<u32>(width), static_cast<u32>(height), false};
+}
 
 std::optional<u32> SheetPixels(const json& value) {
     if (!value.is_number()) return std::nullopt;
@@ -554,7 +571,7 @@ CookReport Cook(const CookOptions& options) {
     assets::DerivedDataCache cache(paths.intermediate / "DerivedDataCache");
     json manifest_assets = json::array();
     std::vector<SheetExtentCheck> sheet_extents;
-    std::unordered_map<AssetGuid, std::pair<u32, u32>> texture_extents;
+    std::unordered_map<AssetGuid, StoredTextureExtent> texture_extents;
 
     if (!settings.quality_presets.empty() && !FindQualityPreset(settings, settings.default_quality)) {
         report.warnings.push_back("The default quality '" + settings.default_quality + "' isn't a preset; the game starts on '" +
@@ -600,6 +617,9 @@ CookReport Cook(const CookOptions& options) {
         const bool hdr_texture = record.importer == "Texture" && assets::IsHdrImage(bytes);
         const bool defer_source = options.strip_source_textures && options.cook_textures && record.importer == "Texture" && !hdr_texture;
         if (!defer_source) writer.Add("Content/" + record.path, bytes);
+        if (!options.cook_textures && record.importer == "Texture" && !hdr_texture) {
+            if (const auto extent = ProbeSourceExtent(bytes)) texture_extents.emplace(guid, *extent);
+        }
 
         // A .gltf's buffers and images that aren't assets themselves.
         if (record.importer == "Model") {
@@ -727,7 +747,7 @@ CookReport Cook(const CookOptions& options) {
             }
             if (atex.empty() && defer_source) writer.Add("Content/" + record.path, bytes);
             if (!atex.empty()) {
-                texture_extents.emplace(guid, std::pair{cooked_texture.width, cooked_texture.height});
+                texture_extents.emplace(guid, StoredTextureExtent{cooked_texture.width, cooked_texture.height, true});
                 cooked.cooked = "Cooked/" + assets::ToString(guid) + ".atex";
                 cooked.cooked_bytes = atex.size();
                 cooked_format = TextureFormatName(cooked_texture.format);
@@ -800,12 +820,14 @@ CookReport Cook(const CookOptions& options) {
     }
     for (const auto& sheet : sheet_extents) {
         const auto it = texture_extents.find(sheet.texture);
-        if (it == texture_extents.end()) continue; // No cooked copy in this archive.
-        const auto [width, height] = it->second;
-        if (width != sheet.width || height != sheet.height)
+        if (it == texture_extents.end()) continue; // No comparable texture in this archive.
+        const auto [width, height, cooked] = it->second;
+        if (width != sheet.width || height != sheet.height) {
+            const std::string image = cooked ? sheet.texture_path + " cooks to " :
+                                              "the packaged source " + sheet.texture_path + " is ";
             report.warnings.push_back(sheet.sheet_path + ": expects a " + std::to_string(sheet.width) + "x" +
-                std::to_string(sheet.height) + " texture, but " + sheet.texture_path + " cooks to " +
-                std::to_string(width) + "x" + std::to_string(height));
+                std::to_string(sheet.height) + " texture, but " + image + std::to_string(width) + "x" + std::to_string(height));
+        }
     }
     if (options.strict_validation && !report.warnings.empty()) {
         return fail("Cook validation failed with " + std::to_string(report.warnings.size()) + " warning(s); first: " +
