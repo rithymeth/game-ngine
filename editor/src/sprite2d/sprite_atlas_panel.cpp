@@ -69,6 +69,15 @@ void SpriteAtlasPanel::Clear() {
     elapsed_ = 0.0f;
 }
 
+void SpriteAtlasPanel::FocusPreview(std::string_view frame, std::string_view clip) {
+    playing_ = false;
+    elapsed_ = 0.0f;
+    const auto* animation = atlas_.FindClip(clip);
+    clip_ = animation ? static_cast<int>(animation - atlas_.clips.data()) : -1;
+    const auto* still = atlas_.FindFrame(frame);
+    frame_ = still ? static_cast<int>(still - atlas_.frames.data()) : 0;
+}
+
 const char* SpriteAtlasPanel::SelectionProblem(const SceneDocument& scene) const {
     if (scene.PlayState() != PlaySession::State::Editing) return "Stop playing or simulating to edit the scene.";
     if (atlas_guid_.IsNull() || scene.Selection().size() != 1)

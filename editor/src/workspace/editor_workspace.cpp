@@ -18,6 +18,7 @@
 #include "audio/cue_editor.h"
 #include "audio/mixer_panel.h"
 #include "content/content_browser_panel.h"
+#include "content/content_drag.h"
 #include "ui/reflected_inspector.h"
 #include "devtools/console_panel.h"
 #include "ui/editor_scripts.h"
@@ -64,6 +65,7 @@
 #include "aether/scene/gameplay.h"
 #include "aether/scene/components.h"
 #include "aether/sprite2d/tilemap.h"
+#include "aether/sprite2d/components.h"
 #include "aether/streaming/partition.h"
 
 #include <imgui.h>
@@ -1263,6 +1265,34 @@ struct EditorWorkspace::Impl {
         }
     }
 
+    std::string SelectedSpriteAtlasPath() const {
+        const auto* database = content_browser ? content_browser->Database() : nullptr;
+        if (!database || !scene_panel) return {};
+        const auto& document = scene_panel->Document();
+        if (document.PlayState() != PlaySession::State::Editing || document.Selection().size() != 1) return {};
+        const auto entity = document.Selection().front();
+        const auto& world = document.GetWorld();
+        const auto* sprite = world.IsAlive(entity) ? world.GetComponent<sprite2d::Sprite>(entity) : nullptr;
+        if (!sprite || sprite->atlas.guid.IsNull()) return {};
+        const auto* record = database->Find(sprite->atlas.guid);
+        if (!record || record->missing || record->importer != "SpriteAtlas" || !HasAssetExtension(record->path, ".aatlas"))
+            return {};
+        return record->path;
+    }
+
+    void OpenSelectedSpriteAtlas() {
+        const std::string path = SelectedSpriteAtlasPath();
+        if (path.empty() || !OpenContentAsset(path, nullptr)) return;
+        const auto& document = scene_panel->Document();
+        const Entity entity = document.Selection().front();
+        const auto* sprite = document.GetWorld().GetComponent<sprite2d::Sprite>(entity);
+        const auto* animator = document.GetWorld().GetComponent<sprite2d::SpriteAnimator>(entity);
+        const auto stored = [](const auto& buffer) {
+            return std::string_view(buffer, std::find(buffer, buffer + sizeof(buffer), '\0') - buffer);
+        };
+        if (sprite) sprite_atlas_panel.FocusPreview(stored(sprite->frame), animator ? stored(animator->clip) : std::string_view{});
+    }
+
     // Stage 3: what a double-click on an asset in the Content Browser does. One document per tool, so opening
     // another file of the same kind replaces the open one -- which a dirty document must not lose silently.
     bool OpenContentAsset(const std::string& relative, std::string* error) {
@@ -1932,6 +1962,9 @@ void EditorWorkspace::RegisterCommands() {
     // The Asset menu: the Content Browser is where assets are made, moved and committed, so its actions focus it there.
     add({"asset.browser", "Content Browser", "Asset", false, {}, CommandScope::Global, {}, {},
          [this] { impl_->ShowTool("Content Browser"); }});
+    add({"asset.open_selected_sprite_atlas", "Open selected Sprite's atlas", "Asset", false, {}, CommandScope::Global,
+         [this] { return !impl_->SelectedSpriteAtlasPath().empty(); }, {},
+         [this] { impl_->OpenSelectedSpriteAtlas(); }});
     add({"asset.refresh", "Refresh Assets", "Asset", true, {}, CommandScope::Global,
          [this] { return impl_->content_browser != nullptr; }, {},
          [this] {

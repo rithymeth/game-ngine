@@ -380,6 +380,11 @@ AETHER_TEST(Openers_SpriteAtlasDrawsTheSourceRectangleAndKeepsThePreviousAssetOn
     CHECK(!ws.OpenAsset("Broken.aatlas", &error) && error.find("JSON") != std::string::npos);
     draw();
     CHECK(region(0.0f, 8.0f/18).w > 0);
+    CHECK(ws.RunCommand("asset.open_selected_sprite_atlas")); // static Sprite reopens on its stored second frame
+    draw();
+    CHECK(region(10.0f/18, 1.0f).w > 0);
+    CHECK(ws.OpenAsset("Sheet.aatlas", &error));
+    draw();
     const auto animator_id = GetComponentId<sprite2d::SpriteAnimator>();
     if (scene.AddComponent(entity, animator_id)) {
         const auto click = [&](float x, float y) {
@@ -407,6 +412,22 @@ AETHER_TEST(Openers_SpriteAtlasDrawsTheSourceRectangleAndKeepsThePreviousAssetOn
             CHECK(animator && std::string_view(animator->clip) == "move");
         }
     } else CHECK(false);
+    // The selection shortcut reopens this specific atlas on the authored clip,
+    // even after a normal asset open has reset the preview to manual frame zero.
+    CHECK(ws.OpenAsset("Sheet.aatlas", &error));
+    draw();
+    CHECK(region(0.0f, 8.0f/18).w > 0);
+    const auto history = scene.Commands().UndoCount();
+    scene.ClearSelection();
+    CHECK(!ws.RunCommand("asset.open_selected_sprite_atlas"));
+    scene.SetSelection({entity});
+    CHECK(ws.RunCommand("asset.open_selected_sprite_atlas"));
+    CHECK(ShowingTool(ws, "Sprite Atlas"));
+    draw();
+    CHECK(region(10.0f/18, 1.0f).w > 0);
+    CHECK(scene.Commands().UndoCount() == history && scene.Selection() == std::vector<Entity>{entity});
+    scene.GetWorld().DestroyEntity(entity); // a plain selection may still hold a stale handle
+    CHECK(!ws.RunCommand("asset.open_selected_sprite_atlas"));
     ProjectPaths other;
     FreshProject("sprite_atlas_other", other);
     CHECK(ws.OpenProject(other.file));

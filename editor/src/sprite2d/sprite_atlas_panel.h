@@ -14,6 +14,8 @@ class SpriteAtlasPanel {
 public:
     bool Open(const std::filesystem::path& file, const assets::AssetDatabase* database, std::string* error);
     void Clear();
+    // Re-focus a scene Sprite's saved frame or clip after opening its atlas.
+    void FocusPreview(std::string_view frame, std::string_view clip);
     void Draw(SceneDocument* scene = nullptr);
     bool ApplyFrame(SceneDocument& scene, const std::string& name) const;
     bool ApplyClip(SceneDocument& scene, const std::string& name) const;
