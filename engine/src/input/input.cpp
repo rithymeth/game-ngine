@@ -184,6 +184,8 @@ ActionPhase InputSystem::EvaluateBinding(const InputBinding& binding, BindingSta
 }
 
 void InputSystem::Update(const InputState& input, f32 dt) {
+    // Evaluate key transitions even when the clock sample is unusable.
+    if (!std::isfinite(dt) || dt < 0.0f) dt = 0.0f;
     const std::unordered_map<std::string, ActionState> previous = states_;
     usize binding_count = 0;
     for (const ContextEntry& entry : contexts_) {

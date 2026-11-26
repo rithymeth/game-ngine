@@ -3,6 +3,7 @@
 #include "test_framework.h"
 
 #include <cmath>
+#include <limits>
 #include <map>
 
 using namespace aether;
@@ -238,6 +239,40 @@ AETHER_TEST(Input_TapCountsElapsedTimeOnTheReleaseFrame) {
     AETHER_CHECK((tick(true, 0.25f) == Events{"Dodge:Started"}));
     AETHER_CHECK((tick(false, 0.0625f) == Events{"Dodge:Triggered"}));
     AETHER_CHECK(h.system.IsTriggered("Dodge"));
+}
+
+AETHER_TEST(Input_InvalidFrameTimesDoNotPoisonActionTimers) {
+    InputSystem system;
+    InputMappingContext context;
+    context.name = "OnFoot";
+    context.bindings = {Bind("Dash", Key::Q, {Trigger(TriggerType::DoubleTap, 0.3f)}),
+                        Bind("Move", Key::W), Bind("Interact", Key::E, {Trigger(TriggerType::Pressed)})};
+    system.AddContext(context);
+
+    InputState state;
+    state.SetButton(Key::W, true);
+    state.SetButton(Key::Q, true);
+    system.Update(state, 0.1f);
+    state.SetButton(Key::Q, false);
+    state.SetButton(Key::E, true);
+    system.Update(state, std::numeric_limits<f32>::quiet_NaN());
+    AETHER_CHECK(system.IsTriggered("Interact") && system.IsTriggered("Move"));
+    AETHER_CHECK(system.GetAction("Move").triggered_time == 0.0f);
+    state.SetButton(Key::E, false);
+    for (int i = 0; i < 4; ++i) system.Update(state, 0.1f);
+    AETHER_CHECK(Near(system.GetAction("Move").triggered_time, 0.4f));
+    system.Update(state, -1.0f);
+    AETHER_CHECK(Near(system.GetAction("Move").triggered_time, 0.4f));
+
+    state.SetButton(Key::Q, true);
+    system.Update(state, 0.1f);
+    AETHER_CHECK(!system.IsTriggered("Dash")); // First press expired despite the invalid clock samples.
+    state.SetButton(Key::Q, false);
+    system.Update(state, 0.1f);
+    state.SetButton(Key::Q, true);
+    system.Update(state, 0.1f);
+    AETHER_CHECK(system.IsTriggered("Dash"));
+    AETHER_CHECK(Near(system.GetAction("Move").triggered_time, 0.7f));
 }
 
 AETHER_TEST(Input_ContextStackConsumesAndBlocks) {
