@@ -640,6 +640,10 @@ AETHER_TEST(TilemapEditor_SavesPlatformerEditsBeforePackaging) {
               TilesetFromJson(nlohmann::json::parse(contents), cooked_tileset) &&
               cooked_tileset.IsSolid(1));
     }
+    if (!build->StartSmoke()) { CHECK(false); return; }
+    build->WaitForBuild();
+    CHECK(build->LastResult() == BuildPackageWindow::Result::Succeeded);
+    CHECK(build->Stage() == "Headless smoke test passed (3 frames)");
     build->launch_args = "--headless --frames 2";
     if (!build->Launch(&error)) {
         CHECK(false);
