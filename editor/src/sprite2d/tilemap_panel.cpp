@@ -269,9 +269,17 @@ bool TilemapPanel::FindNextInvalidPaint() {
         }
     }
     invalid_paint_cell_ = next ? next : first;
-    center_invalid_paint_ = invalid_paint_cell_.has_value();
-    if (invalid_paint_cell_) doc_.active_layer = invalid_paint_cell_->layer;
-    return center_invalid_paint_;
+    if (!invalid_paint_cell_) return false;
+    const auto hit = *invalid_paint_cell_;
+    return FocusCell(hit.layer, static_cast<i32>(hit.index % map.width), static_cast<i32>(hit.index / map.width));
+}
+
+bool TilemapPanel::FocusCell(usize layer, i32 x, i32 y) {
+    const auto& map = doc_.Map();
+    if (layer >= map.layers.size() || !map.InBounds(x, y)) return false;
+    doc_.active_layer = layer;
+    pending_focus_ = PendingFocus{x, y, doc_.Revision()};
+    return true;
 }
 
 void TilemapPanel::DrawTools() {
@@ -516,12 +524,12 @@ void TilemapPanel::DrawCanvas() {
         pan_y_ += io.MouseDelta.y;
     }
 
-    if (center_invalid_paint_) {
-        center_invalid_paint_ = false;
-        if (invalid_paint_cell_ && invalid_search_revision_ == doc_.Revision() && map.width != 0) {
-            const usize index = invalid_paint_cell_->index;
-            pan_x_ = size.x * .5f - (static_cast<f32>(index % map.width) + .5f) * zoom;
-            pan_y_ = size.y * .5f - (static_cast<f32>(index / map.width) + .5f) * zoom;
+    if (pending_focus_) {
+        const auto focus = *pending_focus_;
+        pending_focus_.reset();
+        if (focus.revision == doc_.Revision()) {
+            pan_x_ = size.x * .5f - (static_cast<f32>(focus.x) + .5f) * zoom;
+            pan_y_ = size.y * .5f - (static_cast<f32>(focus.y) + .5f) * zoom;
         }
     }
 

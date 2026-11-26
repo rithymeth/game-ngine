@@ -21,6 +21,7 @@ public:
     explicit TilemapPanel(TilemapEditDocument& document) : doc_(document) {}
     void Draw();
     bool FindNextInvalidPaint();
+    bool FocusCell(usize layer, i32 x, i32 y);
     void LoadTexturePreview(const assets::AssetDatabase& database);
     bool LoadJumpProofOverlay(const std::filesystem::path& path, std::string* error = nullptr);
 
@@ -49,7 +50,8 @@ private:
     struct InvalidPaintCell { usize layer, index; i32 tile; };
     std::optional<InvalidPaintCell> invalid_paint_cell_;
     std::optional<u64> invalid_search_revision_;
-    bool center_invalid_paint_ = false;
+    struct PendingFocus { i32 x, y; u64 revision; };
+    std::optional<PendingFocus> pending_focus_;
     f32 pan_x_ = 8.0f, pan_y_ = 8.0f;
     bool dragging_ = false;
     struct BrushSample {

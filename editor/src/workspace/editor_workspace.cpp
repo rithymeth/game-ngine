@@ -1199,7 +1199,13 @@ struct EditorWorkspace::Impl {
                 return record && !record->missing && record->path == path &&
                        (record->importer == "Tilemap" || record->importer == "Tileset" || record->importer == "SpriteAtlas");
             },
-            [this](const std::string& path, std::string* why) { return OpenContentAsset(path, why); });
+            [this](const std::string& path, std::optional<BuildPackageWindow::TileWarningCell> cell, std::string* why) {
+                if (!OpenContentAsset(path, why)) return false;
+                if (cell && tilemap_panel && tilemap_doc &&
+                    tilemap_doc->TilemapFile() == ProjectPaths::ForFile(project_file).content / path)
+                    tilemap_panel->FocusCell(cell->layer, cell->x, cell->y);
+                return true;
+            });
         // An asset reference in the inspector (a model's, a sky's) offers the project's assets of that kind, read from the browser's database at the time it is drawn.
         SetAssetListProvider([this](const char* asset_type) {
             std::vector<AssetChoice> choices;
