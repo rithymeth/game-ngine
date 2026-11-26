@@ -85,8 +85,10 @@ public:
     void Flush();
     usize Pending() const;
 
+    // True if a primary save file or its backup exists.
     bool Exists(std::string_view slot) const;
-    // Every readable or unreadable `.asav` in the folder, by slot name.
+    // Every slot with a readable or unreadable primary file or backup, by slot name.
+    // Metadata comes from the primary when present, otherwise from the backup.
     std::vector<SlotInfo> ListSlots() const;
     // Removes the slot and its backup; NotFound if there was neither.
     SaveResult DeleteSlot(std::string_view slot);

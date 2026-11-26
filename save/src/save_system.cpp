@@ -9,6 +9,7 @@
 #include <atomic>
 #include <ctime>
 #include <limits>
+#include <map>
 
 namespace aether::save {
 
@@ -88,16 +89,32 @@ SaveResult SaveSystem::Load(std::string_view slot, const reflect::TypeInfo& type
 bool SaveSystem::Exists(std::string_view slot) const {
     if (!ValidSlotName(slot)) return false;
     std::lock_guard<std::mutex> lock(io_mutex_);
-    return fs::Exists(PathOf(slot).string());
+    auto file = PathOf(slot);
+    std::error_code ec;
+    if (stdfs::is_regular_file(file, ec)) return true;
+    file += ".bak";
+    return stdfs::is_regular_file(file, ec);
 }
 
 std::vector<SlotInfo> SaveSystem::ListSlots() const {
     std::vector<SlotInfo> out;
     std::lock_guard<std::mutex> lock(io_mutex_);
+    // Prefer the primary when it exists, but don't hide a recoverable slot
+    // just because the backup is the only file left.
+    std::map<std::string, std::string> files;
+    constexpr std::string_view primary_suffix = ".asav";
+    constexpr std::string_view backup_suffix = ".asav.bak";
     for (const std::string& name : fs::ListDirectory(directory_.string())) {
-        if (name.size() <= 5 || name.compare(name.size() - 5, 5, ".asav") != 0) continue;
+        if (name.size() > primary_suffix.size() && name.ends_with(primary_suffix)) {
+            files.insert_or_assign(name.substr(0, name.size() - primary_suffix.size()), name);
+        } else if (name.size() > backup_suffix.size() && name.ends_with(backup_suffix)) {
+            files.try_emplace(name.substr(0, name.size() - backup_suffix.size()), name);
+        }
+    }
+    out.reserve(files.size());
+    for (const auto& [slot, name] : files) {
         SlotInfo info;
-        info.slot = name.substr(0, name.size() - 5);
+        info.slot = slot;
         const stdfs::path file = directory_ / name;
         info.bytes = fs::FileSize(file.string());
         std::vector<u8> bytes;

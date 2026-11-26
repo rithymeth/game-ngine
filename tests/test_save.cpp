@@ -195,6 +195,9 @@ AETHER_TEST(Save_KeepsABackupAndRecoversFromADamagedSave) {
     save_test::Profile second = first;
     second.level = 8;
     CHECK(saves.Save("a", second).ok && stdfs::exists(saves.Directory() / "a.asav.bak"));
+    const auto paired = saves.ListSlots();
+    CHECK(paired.size() == 1 && paired.front().slot == "a" && paired.front().valid &&
+          paired.front().bytes == fs::FileSize((saves.Directory() / "a.asav").string()));
     save_test::Profile loaded;
     CHECK(saves.Load("a", loaded).ok && loaded.level == 8);
     // The main file is damaged: the previous save loads, with a note.
@@ -204,8 +207,13 @@ AETHER_TEST(Save_KeepsABackupAndRecoversFromADamagedSave) {
     // Gone altogether: the same.
     stdfs::remove(saves.Directory() / "a.asav");
     CHECK(saves.Load("a", loaded).ok && loaded.level == 7);
+    CHECK(saves.Exists("a"));
+    const auto slots = saves.ListSlots();
+    CHECK(slots.size() == 1 && slots.front().slot == "a" && slots.front().valid &&
+          slots.front().type == "Profile" && slots.front().bytes > 0);
     // Deleting the slot removes the backup too.
     CHECK(saves.DeleteSlot("a").ok && !stdfs::exists(saves.Directory() / "a.asav.bak"));
+    CHECK(!saves.Exists("a") && saves.ListSlots().empty());
 }
 
 AETHER_TEST(Save_DetectsCorruptionAndTruncation) {
