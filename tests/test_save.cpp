@@ -137,6 +137,29 @@ AETHER_TEST(Save_ListsExistsAndDeletesSlots) {
     CHECK(saves.Load("alpha", o).error == SaveError::NotFound);
 }
 
+AETHER_TEST(Save_ListSlotsOnlyAdvertisesAddressableNames) {
+    SaveSystem saves(Dir("Addressable"));
+    const auto profile = Sample();
+    if (!saves.Save("Valid_1-A", profile).ok) { CHECK(false); return; }
+    const auto valid = saves.Directory() / "Valid_1-A.asav";
+    const std::string payload = ReadAll(valid);
+    WriteAll(saves.Directory() / "copied save.asav", payload);
+    WriteAll(saves.Directory() / "manual.copy.asav.bak", payload);
+    WriteAll(saves.Directory() / (std::string(65, 'x') + ".asav"), payload);
+    WriteAll(saves.Directory() / "damaged.asav", "unreadable");
+    stdfs::rename(valid, saves.Directory() / "Valid_1-A.asav.bak");
+
+    const auto slots = saves.ListSlots();
+    CHECK(slots.size() == 2);
+    if (slots.size() == 2) {
+        CHECK(slots[0].slot == "Valid_1-A" && slots[0].valid && saves.Exists(slots[0].slot));
+        CHECK(slots[1].slot == "damaged" && !slots[1].valid && saves.Exists(slots[1].slot));
+    }
+    for (const auto& slot : slots) CHECK(SaveSystem::ValidSlotName(slot.slot));
+    CHECK(ReadAll(saves.Directory() / "copied save.asav") == payload);
+    CHECK(ReadAll(saves.Directory() / "manual.copy.asav.bak") == payload);
+}
+
 AETHER_TEST(Save_DeleteSlotPreservesFilesWhenAPathIsADirectory) {
     SaveSystem saves(Dir("BlockedDelete"));
     const auto profile = Sample();

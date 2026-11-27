@@ -105,11 +105,12 @@ std::vector<SlotInfo> SaveSystem::ListSlots() const {
     constexpr std::string_view primary_suffix = ".asav";
     constexpr std::string_view backup_suffix = ".asav.bak";
     for (const std::string& name : fs::ListDirectory(directory_.string())) {
-        if (name.size() > primary_suffix.size() && name.ends_with(primary_suffix)) {
-            files.insert_or_assign(name.substr(0, name.size() - primary_suffix.size()), name);
-        } else if (name.size() > backup_suffix.size() && name.ends_with(backup_suffix)) {
-            files.try_emplace(name.substr(0, name.size() - backup_suffix.size()), name);
-        }
+        const bool backup = name.ends_with(backup_suffix);
+        if (!backup && !name.ends_with(primary_suffix)) continue;
+        const std::string slot = name.substr(0, name.size() - (backup ? backup_suffix.size() : primary_suffix.size()));
+        if (!ValidSlotName(slot)) continue; // don't advertise files that the slot API cannot address
+        if (backup) files.try_emplace(slot, name);
+        else files.insert_or_assign(slot, name);
     }
     out.reserve(files.size());
     for (const auto& [slot, name] : files) {
