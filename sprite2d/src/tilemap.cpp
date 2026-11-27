@@ -16,6 +16,15 @@ constexpr int kTilesetFormatVersion = 1;
 constexpr int kTilemapFormatVersion = 1;
 constexpr usize kMaxTilemapCells = 16u * 1024u * 1024u;
 
+bool ReadUnsigned(const nlohmann::json& value, u32& out, u32 maximum = std::numeric_limits<u32>::max()) {
+    if (!value.is_number_integer() ||
+        (!value.is_number_unsigned() && value.get<i64>() < 0)) return false;
+    const u64 n = value.get<u64>();
+    if (n > maximum) return false;
+    out = static_cast<u32>(n);
+    return true;
+}
+
 std::string LayerCellCountError(const TileLayer& layer, usize expected) {
     return "layer '" + layer.name + "' has " + std::to_string(layer.cells.size()) + " cells, not " +
            std::to_string(expected);
@@ -134,20 +143,20 @@ bool TilesetFromJsonImpl(const nlohmann::json& data, Tileset& out, std::string* 
     Tileset t;
     const std::string texture = data.value("texture", "");
     if (!texture.empty() && !assets::ParseAssetGuid(texture, t.texture)) return fail("bad texture GUID");
-    for (const char* key : {"texture_size", "tile_size"}) {
-        if (data.contains(key) && !(data[key].is_array() && data[key].size() == 2)) return fail(std::string("'") + key + "' is two numbers");
-    }
-    if (data.contains("texture_size")) {
-        t.texture_width = data["texture_size"][0].get<u32>();
-        t.texture_height = data["texture_size"][1].get<u32>();
-    }
-    if (data.contains("tile_size")) {
-        t.tile_width = data["tile_size"][0].get<u32>();
-        t.tile_height = data["tile_size"][1].get<u32>();
-    }
+    const auto pair = [&](const char* key, u32& width, u32& height) {
+        const auto value = data.find(key);
+        return value == data.end() || (value->is_array() && value->size() == 2 &&
+                                      ReadUnsigned((*value)[0], width) && ReadUnsigned((*value)[1], height));
+    };
+    if (!pair("texture_size", t.texture_width, t.texture_height))
+        return fail("'texture_size' needs two non-negative whole numbers in range");
+    if (!pair("tile_size", t.tile_width, t.tile_height))
+        return fail("'tile_size' needs two non-negative whole numbers in range");
     if (t.tile_width == 0 || t.tile_height == 0) return fail("the tile size is zero");
-    t.margin = data.value("margin", 0u);
-    t.spacing = data.value("spacing", 0u);
+    if (const auto margin = data.find("margin"); margin != data.end() && !ReadUnsigned(*margin, t.margin))
+        return fail("'margin' needs a non-negative whole number in range");
+    if (const auto spacing = data.find("spacing"); spacing != data.end() && !ReadUnsigned(*spacing, t.spacing))
+        return fail("'spacing' needs a non-negative whole number in range");
     for (const nlohmann::json& s : data.value("solid", nlohmann::json::array())) {
         const i32 tile = s.get<i32>();
         if (tile >= (1 << 20)) return fail("a solid tile index is too large");
@@ -264,15 +273,8 @@ bool TilemapFromJsonImpl(const nlohmann::json& data, TilemapData& out, std::stri
     const std::string tileset = data.value("tileset", "");
     if (!tileset.empty() && !assets::ParseAssetGuid(tileset, m.tileset)) return fail("bad tileset GUID");
     if (!data.contains("size") || !data["size"].is_array() || data["size"].size() != 2) return fail("no size");
-    const auto dimension = [](const nlohmann::json& value, u32& out) {
-        if (!value.is_number_integer() ||
-            (!value.is_number_unsigned() && value.get<i64>() < 0)) return false;
-        const u64 n = value.get<u64>();
-        if (n > kMaxTilemapCells) return false;
-        out = static_cast<u32>(n);
-        return true;
-    };
-    if (!dimension(data["size"][0], m.width) || !dimension(data["size"][1], m.height))
+    if (!ReadUnsigned(data["size"][0], m.width, kMaxTilemapCells) ||
+        !ReadUnsigned(data["size"][1], m.height, kMaxTilemapCells))
         return fail("tilemap size needs two non-negative whole numbers in range");
     if (static_cast<u64>(m.width) * m.height > kMaxTilemapCells) return fail("the map is too large");
     for (const nlohmann::json& l : data.value("layers", nlohmann::json::array())) {

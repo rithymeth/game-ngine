@@ -273,6 +273,43 @@ AETHER_TEST(Sprite2D_TilesetGeometryAndJson) {
     CHECK(!TilesetFromJson(nlohmann::json::parse(R"({"$type":"Tileset","autotiles":[{"name":"x","tiles":[1]}]})"), back, &error));
 }
 
+AETHER_TEST(Sprite2D_TilesetRejectsNarrowedGeometryWithoutChangingTheOutput) {
+    using Json = nlohmann::json;
+    Tileset out;
+    out.texture_width = 32;
+    out.texture_height = 48;
+    out.margin = 2;
+    out.SetSolid(1, true);
+    const auto before = TilesetToJson(out);
+    const auto file = std::filesystem::temp_directory_path() / "aether_sprite2d" / "bad-geometry.atileset";
+    std::filesystem::create_directories(file.parent_path());
+    const auto refuse = [&](const char* field, const Json& bad) {
+        const Json data{{"$type", "Tileset"}, {field, bad}};
+        std::string error;
+        CHECK(!TilesetFromJson(data, out, &error));
+        CHECK(error.find(field) != std::string::npos && TilesetToJson(out) == before);
+        {
+            std::ofstream stream(file, std::ios::binary | std::ios::trunc);
+            stream << data.dump();
+            stream.close();
+            CHECK(stream.good());
+        }
+        error.clear();
+        CHECK(!LoadTileset(file, out, &error));
+        CHECK(error.find(field) != std::string::npos && TilesetToJson(out) == before);
+    };
+    refuse("texture_size", Json::array({-1, 16}));
+    refuse("tile_size", Json::array({16, 1.5}));
+    refuse("texture_size", Json::array({4294967297ull, 16}));
+    refuse("margin", 2.25);
+    refuse("spacing", -1);
+    refuse("spacing", "3");
+    CHECK(TilesetFromJson(Json{{"$type", "Tileset"}}, out));
+    CHECK(out.texture_width == 0 && out.tile_width == 16 && out.spacing == 0);
+    CHECK(TilesetFromJson(Json{{"$type", "Tileset"}, {"margin", std::numeric_limits<u32>::max()}}, out));
+    CHECK(out.margin == std::numeric_limits<u32>::max());
+}
+
 AETHER_TEST(Sprite2D_TilemapEditingAndAutotiles) {
     TilemapData map;
     map.tileset = Guid();
