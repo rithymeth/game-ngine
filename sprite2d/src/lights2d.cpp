@@ -71,6 +71,41 @@ LightTileRange GetLightTileRange(f32 world_min, f32 world_max, f32 origin, f32 c
     return {index(grid_min), index(grid_max)};
 }
 
+struct LightSampleAxis {
+    f64 region_origin, sample_size, tile_origin, tile_size;
+
+    f64 Coordinate(u32 sample) const {
+        return (region_origin + (static_cast<f64>(sample) + 0.5) * sample_size - tile_origin) / tile_size;
+    }
+};
+
+struct LightSampleRange {
+    u32 begin, end; // half-open range of lightmap sample indices
+};
+
+LightSampleRange GetLightSampleRange(const LightSampleAxis& axis, u32 count, u32 extent) {
+    // Locate the edges with the same sample expression as the tile lookup.
+    // Finite f32 inputs and the capped sample count keep it finite in f64.
+    // Positive cell sizes make the coordinates nondecreasing, even where
+    // rounding gives adjacent samples the same coordinate.
+    const auto after = [extent](f64 coord) {
+        return coord >= extent || coord > static_cast<f64>(std::numeric_limits<i32>::max());
+    };
+    if (count == 0 || after(axis.Coordinate(0)) || axis.Coordinate(count - 1) < 0.0) return {0, 0};
+    const auto first_where = [&](u32 lo, const auto& predicate) {
+        u32 hi = count;
+        while (lo < hi) {
+            const u32 mid = lo + (hi - lo) / 2;
+            if (predicate(axis.Coordinate(mid))) hi = mid;
+            else lo = mid + 1;
+        }
+        return lo;
+    };
+    const u32 begin = axis.Coordinate(0) >= 0.0 ? 0 : first_where(0, [](f64 coord) { return coord >= 0.0; });
+    const u32 end = !after(axis.Coordinate(count - 1)) ? count : first_where(begin, after);
+    return {begin, end};
+}
+
 bool CanOccludeLight(const TilemapData& map, const Tileset& tileset) {
     // The live collision flags, not what gets drawn, determine whether a map
     // contributes to either the occluder edges or the solid sample mask.
@@ -269,16 +304,16 @@ LightMap BuildLightMap(const World& world, const Resolvers2D& tiles, Vec2 region
         if (!tm || !ts || !CanOccludeLight(*tm, *ts)) return;
         Vec2 cell;
         if (!LightTileGeometry(*ts, r->pixels_per_unit, cell)) return;
-        for (u32 y = 0; y < map.height; ++y) {
-            for (u32 x = 0; x < map.width; ++x) {
-                const f64 px = (static_cast<f64>(region_min.x) + (static_cast<f64>(x) + 0.5) * cell_size - t->position.x) / cell.x;
-                const f64 py = (static_cast<f64>(region_min.y) + (static_cast<f64>(y) + 0.5) * cell_size - t->position.y) / cell.y;
-                if (!std::isfinite(px) || !std::isfinite(py) || px < 0.0 || py < 0.0 ||
-                    px >= tm->width || py >= tm->height ||
-                    px > static_cast<f64>(std::numeric_limits<i32>::max()) ||
-                    py > static_cast<f64>(std::numeric_limits<i32>::max())) continue;
-                const i32 cx = static_cast<i32>(std::floor(px)), cy = static_cast<i32>(std::floor(py));
-                if (tm->InBounds(cx, cy) && IsSolidAt(*tm, *ts, cx, cy)) solid[static_cast<usize>(y) * map.width + x] = 1;
+        const LightSampleAxis x_axis{region_min.x, cell_size, t->position.x, cell.x};
+        const LightSampleAxis y_axis{region_min.y, cell_size, t->position.y, cell.y};
+        const auto [x_begin, x_end] = GetLightSampleRange(x_axis, map.width, tm->width);
+        if (x_begin == x_end) return;
+        const auto [y_begin, y_end] = GetLightSampleRange(y_axis, map.height, tm->height);
+        for (u32 y = y_begin; y < y_end; ++y) {
+            const i32 cy = static_cast<i32>(y_axis.Coordinate(y));
+            for (u32 x = x_begin; x < x_end; ++x) {
+                const i32 cx = static_cast<i32>(x_axis.Coordinate(x));
+                if (IsSolidAt(*tm, *ts, cx, cy)) solid[static_cast<usize>(y) * map.width + x] = 1;
             }
         }
     });

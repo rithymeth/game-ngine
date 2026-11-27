@@ -1925,6 +1925,71 @@ AETHER_TEST(Lights2D_VisualTilemapsRespondToLiveCollisionEdits) {
     CHECK(edges().size() == 26 && build().At(11, 5).r == 0.0f);
 }
 
+AETHER_TEST(Lights2D_ClippedSolidSamplesMatchFullGridAtTileEdges) {
+    RegisterSprite2DComponents();
+    RegisterLight2DComponents();
+    World world;
+    Light2D ambient;
+    ambient.type = Light2DType::Global;
+    ambient.intensity = 0.25f;
+    LightAtPos(world, Vec3(0, 0, 0), ambient);
+
+    Tileset tiles;
+    tiles.tile_width = 8;
+    tiles.tile_height = 16;
+    tiles.SetSolid(1, true);
+    TilemapData tilemap;
+    tilemap.Resize(9, 5);
+    tilemap.AddLayer("Wall");
+    tilemap.Fill(0, 0, 0, 8, 4, 1);
+    tilemap.Set(0, 3, 2, kEmpty);
+    TilemapRenderer renderer;
+    renderer.pixels_per_unit = 16.0f;
+    const Entity level = world.CreateEntity(Transform{}, renderer);
+    Resolvers2D resolvers;
+    resolvers.tilemaps = [&](const assets::AssetGuid&) { return &tilemap; };
+    resolvers.tilesets = [&](const assets::AssetGuid&) { return &tiles; };
+
+    struct Layout { Vec2 lower, upper, tile_origin; f32 sample_size; };
+    constexpr f32 large = 16777216.0f;
+    const Layout layouts[] = {
+        {{-2, -1}, {8, 8}, {-0.25f, 0.25f}, 0.5f}, // centers exactly on all four edges
+        {{-1.1f, -2.7f}, {9.2f, 8}, {-0.81f, -1.14f}, 0.37f},
+        {{-2, -1}, {2, 2}, {-3.1f, -2.2f}, 0.25f}, // map overlaps the low edges
+        {{-2, -1}, {2, 2}, {0.2f, 0.7f}, 0.25f},   // map overlaps the high edges
+        {{-2, -1}, {2, 2}, {-6.375f, -4}, 0.25f},  // final X edge at the first sample, exclusive
+        {{-2, -1}, {2, 2}, {4, -1}, 0.25f},        // map lies entirely to the right
+        {{-2, -1}, {2, 2}, {-2, -7}, 0.25f},      // map lies entirely below
+        {{large, -1}, {large + 8, 8}, {large + 2, -1}, 0.25f},
+        {{-2, -1}, {2, 2}, {-3.1f, -2.2f}, 4.0f},  // one sample
+    };
+    for (const auto& layout : layouts) {
+        world.GetComponent<Transform>(level)->position = {layout.tile_origin.x, layout.tile_origin.y, 0};
+        const auto map = BuildLightMap(world, resolvers, layout.lower, layout.upper, layout.sample_size);
+        CHECK(map.width > 0 && map.height > 0);
+        const auto solid_at = [&](i32 x, i32 y) {
+            const f64 px = (static_cast<f64>(layout.lower.x) + (x + 0.5) * layout.sample_size -
+                            layout.tile_origin.x) / 0.5;
+            const f64 py = static_cast<f64>(layout.lower.y) + (y + 0.5) * layout.sample_size -
+                           layout.tile_origin.y;
+            return IsSolidAt(tilemap, tiles, static_cast<i32>(std::floor(px)), static_cast<i32>(std::floor(py)));
+        };
+        for (i32 y = 0; y < static_cast<i32>(map.height); ++y) {
+            for (i32 x = 0; x < static_cast<i32>(map.width); ++x) {
+                // Ambient light is identical in all air samples. A wall receives
+                // that light only from an in-grid orthogonal air neighbor.
+                const f32 expected = !solid_at(x, y) ||
+                    (x > 0 && !solid_at(x - 1, y)) ||
+                    (x + 1 < static_cast<i32>(map.width) && !solid_at(x + 1, y)) ||
+                    (y > 0 && !solid_at(x, y - 1)) ||
+                    (y + 1 < static_cast<i32>(map.height) && !solid_at(x, y + 1)) ? ambient.intensity : 0.0f;
+                const auto& actual = map.At(x, y);
+                CHECK(actual.r == expected && actual.g == expected && actual.b == expected);
+            }
+        }
+    }
+}
+
 AETHER_TEST(Lights2D_VisibilityPolygon) {
     // No occluders: the square round the light (rays stop at it).
     std::vector<Vec2> poly = VisibilityPolygon({0, 0}, 5.0f, {});
