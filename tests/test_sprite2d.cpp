@@ -897,6 +897,35 @@ AETHER_TEST(Sprite2D_ViewCullingAndTilemapBatches) {
     CHECK(inside == 6);
 }
 
+AETHER_TEST(Sprite2D_AxisAlignedTilemapKeepsTranslatedOuterEdges) {
+    World world;
+    Tileset tiles;
+    tiles.texture_width = 16;
+    tiles.texture_height = 24;
+    tiles.tile_width = 8;
+    tiles.tile_height = 12;
+    TilemapData map;
+    map.Resize(6, 5);
+    map.AddLayer("Edges");
+    map.Set(0, 5, 4, 3);
+    Resolvers2D resolvers;
+    resolvers.tilemaps = [&](const assets::AssetGuid&) { return &map; };
+    resolvers.tilesets = [&](const assets::AssetGuid&) { return &tiles; };
+    TilemapRenderer renderer;
+    renderer.pixels_per_unit = 16.0f;
+    world.CreateEntity(Transform{Vec3(-4.0f, 5.0f, 2.0f), Quaternion::Identity()}, renderer);
+
+    const ViewRect boundary{-1.0f, 8.75f, 0.0f, 9.75f};
+    const auto batches = BuildSpriteBatches(world, resolvers, &boundary);
+    if (batches.size() != 1 || batches.front().vertices.size() != 4) { CHECK(false); return; }
+    const auto& a = batches.front().vertices.front();
+    const auto& c = batches.front().vertices[2];
+    CHECK(a.x == -1.5f && a.y == 8.75f && a.z == 2.0f && a.u == 0.5f && a.v == 0.5f);
+    CHECK(c.x == -1.0f && c.y == 8.0f && c.u == 1.0f && c.v == 1.0f);
+    const ViewRect outside{std::nextafter(-1.0f, 0.0f), 5.0f, 0.0f, 10.0f};
+    CHECK(BuildSpriteBatches(world, resolvers, &outside).empty());
+}
+
 AETHER_TEST(Sprite2D_RotatedTilemapCullingMatchesFullScan) {
     RegisterSprite2DComponents();
     World world;

@@ -40,6 +40,10 @@ bool Visible(const ViewRect* view, const Rect& r) {
     return !view || (r.max_x >= view->min_x && r.min_x <= view->max_x && r.max_y >= view->min_y && r.min_y <= view->max_y);
 }
 
+f32 AxisTileEdge(i32 index, f32 size, f32 origin) {
+    return static_cast<f32>(index) * size + origin;
+}
+
 struct CellRange {
     i32 x0, y0, x1, y1;
 };
@@ -56,7 +60,11 @@ CellRange TileCellsInView(const TilemapData& map, const ViewRect* view, const Ve
         return static_cast<i32>(std::clamp(std::floor(cell), 0.0, static_cast<f64>(last)));
     };
     if (rotation.s == 0.0f && rotation.c == 1.0f) {
-        // Preserve the axis-aligned path's edge convention.
+        // Reject views wholly outside the map before clamping indices.
+        // Strict comparisons preserve the renderer's closed edge tests.
+        if (view->max_x < origin.x || view->max_y < origin.y ||
+            view->min_x > AxisTileEdge(static_cast<i32>(map.width), tw, origin.x) ||
+            view->min_y > AxisTileEdge(static_cast<i32>(map.height), th, origin.y)) return {0, 0, -1, -1};
         return {index(left / tw, all.x1), index(bottom / th, all.y1),
                 index(right / tw, all.x1), index(top / th, all.y1)};
     }
