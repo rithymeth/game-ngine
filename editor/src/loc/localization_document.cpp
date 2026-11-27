@@ -4,6 +4,8 @@
 #include "aether/loc/po.h"
 #include "aether/platform/filesystem.h"
 
+#include <algorithm>
+
 namespace aether::editor {
 
 namespace stdfs = std::filesystem;
@@ -25,10 +27,9 @@ bool LocalizationDocument::Open(const stdfs::path& file) {
     dirty_ = false;
     ++revision_;
     const std::vector<std::string> languages = table_.Languages();
-    const std::string en = loc::NormalizeLanguage(source_language_);
-    bool has_source = false;
-    for (const std::string& l : languages) has_source = has_source || l == en;
-    if (!has_source && !languages.empty()) source_language_ = languages.front();
+    const bool has_preferred =
+        std::find(languages.begin(), languages.end(), preferred_source_language_) != languages.end();
+    source_language_ = languages.empty() || has_preferred ? preferred_source_language_ : languages.front();
     return true;
 }
 
@@ -56,7 +57,9 @@ bool LocalizationDocument::Save() {
 
 void LocalizationDocument::SetSourceLanguage(const std::string& language) {
     const std::string l = loc::NormalizeLanguage(language);
-    if (l.empty() || l == source_language_) return;
+    if (l.empty()) return;
+    preferred_source_language_ = l;
+    if (l == source_language_) return;
     source_language_ = l;
     ++revision_;
 }

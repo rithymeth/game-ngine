@@ -31,7 +31,8 @@ public:
     const std::vector<std::string>& Errors() const { return errors_; }
 
     const loc::StringTable& Table() const { return table_; }
-    // The language the keys' source texts are in (default "en").
+    // The source language for this table. Open prefers the configured language
+    // (default "en") and otherwise uses a language present in that file.
     const std::string& SourceLanguage() const { return source_language_; }
     void SetSourceLanguage(const std::string& language);
 
@@ -71,7 +72,8 @@ private:
 
     std::filesystem::path file_;
     loc::StringTable table_;
-    std::string source_language_ = "en";
+    std::string preferred_source_language_ = "en";
+    std::string source_language_ = preferred_source_language_;
     bool dirty_ = false;
     u64 revision_ = 1;
     std::vector<std::string> errors_;

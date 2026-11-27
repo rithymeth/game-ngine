@@ -164,6 +164,38 @@ AETHER_TEST(LocEditor_FailedOpenAndReloadPreserveTheCurrentTable) {
     CHECK(!stdfs::exists(missing));
 }
 
+AETHER_TEST(LocEditor_GatherDoesNotUseThePreviousTablesFallbackLanguage) {
+    const stdfs::path root = Dir("source_language_switch");
+    const stdfs::path content = root / "Content";
+    const stdfs::path french_only = root / "single.astrings";
+    const stdfs::path german_only = root / "german.astrings";
+    const stdfs::path bilingual = content / "Localization/strings.astrings";
+    Write(french_only, "key,fr\nmenu.play,Jouer\n");
+    Write(german_only, "key,de\nmenu.play,Spielen\n");
+    Write(bilingual, "key,en,fr\nmenu.play,Play,Jouer\n");
+    Write(content / "UI/menu.aui", R"({"root":{"type":"Text","text":"Start","text_key":"menu.play"}})");
+
+    LocalizationDocument doc;
+    CHECK(doc.Open(french_only) && doc.SourceLanguage() == "fr");
+    CHECK(doc.Open(bilingual) && doc.SourceLanguage() == "en");
+    CHECK(doc.Gather(content, false));
+
+    LocalizationDocument saved;
+    CHECK(saved.Open(bilingual));
+    const std::string* english = saved.Table().Find("en", "menu.play");
+    const std::string* french = saved.Table().Find("fr", "menu.play");
+    CHECK(english != nullptr && *english == "Start");
+    CHECK(french != nullptr && *french == "Jouer");
+
+    // Deliberately choosing an inferred source makes it the preference even
+    // though that choice does not change the currently displayed language.
+    CHECK(doc.Open(french_only) && doc.SourceLanguage() == "fr");
+    doc.SetSourceLanguage("FR");
+    CHECK(!doc.Open(root / "missing.astrings") && doc.SourceLanguage() == "fr");
+    CHECK(doc.Open(german_only) && doc.SourceLanguage() == "de");
+    CHECK(doc.Open(bilingual) && doc.SourceLanguage() == "fr");
+}
+
 AETHER_TEST(LocEditor_MalformedPoDoesNotApplyEarlierEntries) {
     LocalizationDocument doc;
     CHECK(doc.Open(MakeTable(Dir("failed_po"))));
