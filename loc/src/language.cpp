@@ -9,6 +9,13 @@ namespace {
 char Lower(char c) { return (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c; }
 char Upper(char c) { return (c >= 'a' && c <= 'z') ? static_cast<char>(c - 'a' + 'A') : c; }
 
+std::string_view TakeSubtag(std::string_view& tag) {
+    const usize cut = tag.find('-');
+    const std::string_view subtag = tag.substr(0, cut);
+    tag = cut == std::string_view::npos ? std::string_view{} : tag.substr(cut + 1);
+    return subtag;
+}
+
 } // namespace
 
 std::string NormalizeLanguage(std::string_view tag) {
@@ -57,14 +64,23 @@ std::vector<std::string> FallbackChain(std::string_view language, std::string_vi
 }
 
 bool IsRtl(std::string_view language) {
-    const std::string tag = NormalizeLanguage(language);
-    if (tag.empty()) return false;
-    // An explicit script decides: Arabic, Hebrew, Thaana, Nko, Syriac, Adlam are right to left.
-    for (const char* script : {"Arab", "Hebr", "Thaa", "Nkoo", "Syrc", "Adlm"}) {
-        if (tag.find(std::string("-") + script) != std::string::npos) return true;
+    const std::string normalized = NormalizeLanguage(language);
+    std::string_view rest = normalized;
+    const std::string_view base = TakeSubtag(rest);
+    if (base.size() < 2) return false; // No language script in a private-use-only tag.
+    std::string_view script = TakeSubtag(rest);
+    // BCP 47 puts the script after the language and up to three optional extlangs.
+    // Region, variants, extensions and private use cannot set the writing direction.
+    if (base.size() == 2 || base.size() == 3) {
+        for (int n = 0; n < 3 && script.size() == 3 &&
+                        std::all_of(script.begin(), script.end(), [](char c) { return c >= 'a' && c <= 'z'; }); ++n) {
+            script = TakeSubtag(rest);
+        }
     }
-    if (tag.find("-Latn") != std::string::npos || tag.find("-Cyrl") != std::string::npos) return false;
-    const std::string base = tag.substr(0, tag.find('-'));
+    for (const char* rtl_script : {"Arab", "Hebr", "Thaa", "Nkoo", "Syrc", "Adlm"}) {
+        if (script == rtl_script) return true;
+    }
+    if (script == "Latn" || script == "Cyrl") return false;
     for (const char* rtl : {"ar", "he", "iw", "fa", "ur", "ps", "sd", "ug", "yi", "dv", "ckb"}) {
         if (base == rtl) return true;
     }

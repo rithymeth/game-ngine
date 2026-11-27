@@ -232,3 +232,14 @@ AETHER_TEST(UIBidi_LanguagesKnowTheirDirection) {
     for (const char* l : {"ar", "he", "fa", "ur", "ar-EG", "he-IL", "ps", "yi", "pa-Arab", "ku-Arab-IQ", "AR"}) CHECK(loc::IsRtl(l));
     for (const char* l : {"en", "fr", "pt-BR", "zh-Hans", "ja", "ru", "", "sr-Latn", "arn"}) CHECK(!loc::IsRtl(l));
 }
+
+AETHER_TEST(UIBidi_LocaleExtensionsDoNotSetTheWritingDirection) {
+    CHECK(loc::IsRtl("ar-EG-u-nu-latn")); // Latin digits do not change Arabic layout.
+    CHECK(loc::IsRtl("he-x-Cyrl"));
+    CHECK(loc::IsRtl("ku-Arab-IQ-x-Latn"));
+    CHECK(!loc::IsRtl("en-x-Arab"));
+    CHECK(!loc::IsRtl("en-x-Arabic"));
+    CHECK(!loc::IsRtl("x-Arab"));
+    CHECK(!loc::IsRtl("ar-Latn-x-Arab"));
+    CHECK(!loc::IsRtl("ar-afb-Latn"));
+}
