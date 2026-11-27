@@ -8,7 +8,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 
-from jump_proof_compare import read_trace_details, validate_route, write_new_json
+from jump_proof_compare import position, read_trace_details, validate_route, write_new_json
 
 MAX_ROUTE_BYTES = 2 * 1024 * 1024
 MAX_RADIUS = 12
@@ -109,7 +109,34 @@ def sweep(player, trials, root):
             "trials": [{"offset": offset, **outcomes[offset]} for offset in trials]}
 
 
-def lost_route_evidence(root, trials, lost):
+def serialize_tilemap_overlay(overlay):
+    if not isinstance(overlay, dict) or type(overlay.get("frames")) is not int or not 1 <= overlay["frames"] <= 20_000:
+        raise ValueError("invalid Tilemap overlay frame count")
+    frames = overlay["frames"]
+    marker = overlay.get("first_difference_frame")
+    if ("first_difference_frame" not in overlay or
+            (marker is not None and (type(marker) is not int or not 1 <= marker <= frames))):
+        raise ValueError("invalid Tilemap overlay split frame")
+    if (overlay.get("before_status"), overlay.get("after_status"), overlay.get("verdict_changed")) != (
+            "pass", "missed", True) or type(overlay.get("verdict_changed")) is not bool:
+        raise ValueError("expected a lost-timing Tilemap overlay")
+    for key in ("before_path", "after_path"):
+        path = overlay.get(key)
+        if not isinstance(path, list) or len(path) != frames:
+            raise ValueError("expected two complete Tilemap paths")
+        for point in path:
+            x, y, _ = position({"position": point})
+            if abs(x) > 1_000_000 or abs(y) > 1_000_000:
+                raise ValueError("position is outside the Tilemap overlay range")
+    keys = ("frames", "first_difference_frame", "before_path", "after_path",
+            "before_status", "after_status", "verdict_changed")
+    text = json.dumps({key: overlay[key] for key in keys}, allow_nan=False, separators=(",", ":"))
+    if len(text.encode("utf-8")) + 1 > 4 * 1024 * 1024:
+        raise ValueError("Tilemap overlay exceeds 4 MiB")
+    return text
+
+
+def lost_route_evidence(root, trials, lost, include_overlay):
     offset = min(lost, key=lambda value: (abs(value), value))
     before, _, _ = read_trace_details(root / "before" / f"trace-{offset}.txt")
     after, _, _ = read_trace_details(root / "after" / f"trace-{offset}.txt")
@@ -119,7 +146,14 @@ def lost_route_evidence(root, trials, lost):
         if any(abs(old[axis] - new[axis]) > tolerance for axis in (0, 1)):
             divergence.update(first_frame=frame, baseline_position=old, candidate_position=new)
             break
-    return {"offset": offset, "route": trials[offset], "divergence": divergence}
+    replay = {"offset": offset, "route": trials[offset], "divergence": divergence}
+    if include_overlay:
+        overlay = {"frames": len(before), "first_difference_frame": divergence["first_frame"],
+                   "before_path": before, "after_path": after, "before_status": "pass",
+                   "after_status": "missed", "verdict_changed": True}
+        serialize_tilemap_overlay(overlay)
+        replay["tilemap_overlay"] = overlay
+    return replay
 
 
 def main():
@@ -134,10 +168,14 @@ def main():
                         help="exit 5 if the candidate loses any passing baseline offset")
     parser.add_argument("--capture-evidence", action="store_true",
                         help="fingerprint staged files and include a replay for the nearest lost offset")
+    parser.add_argument("--include-tilemap-overlay", action="store_true",
+                        help="embed both paths for the nearest lost timing")
     parser.add_argument("--output", type=Path, help="write to a new JSON file instead of stdout")
     args = parser.parse_args()
     if args.require_preserved_offsets and args.candidate is None:
         parser.error("--require-preserved-offsets requires --candidate")
+    if args.include_tilemap_overlay and (not args.capture_evidence or args.candidate is None):
+        parser.error("--include-tilemap-overlay requires --capture-evidence and --candidate")
     try:
         if args.output is not None and args.output.exists():
             raise FileExistsError(f"output file already exists: {args.output}")
@@ -164,7 +202,7 @@ def main():
                 lost = sorted(old - new)
                 report.update(lost_pass_offsets=lost, gained_pass_offsets=sorted(new - old))
                 if args.capture_evidence and lost:
-                    lost_replay = lost_route_evidence(root, trials, lost)
+                    lost_replay = lost_route_evidence(root, trials, lost, args.include_tilemap_overlay)
         if args.require_preserved_offsets:
             report["gate"] = {"policy": "preserve-pass-offsets", "passed": not report["lost_pass_offsets"]}
         if args.capture_evidence:
