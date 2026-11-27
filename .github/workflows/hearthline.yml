@@ -31,3 +31,30 @@ jobs:
         run: SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software build/hearthline/hearthline_visual --smoke --seed 7
       - name: Smoke test CLI
         run: printf 'x\n' | build/hearthline/hearthline_sim 7
+
+  browser:
+    name: Build Hearthline WebAssembly
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: '4.0.15'
+      - name: Configure browser build
+        run: emcmake cmake -S games/HEARTHLINE -B build/hearthline-web -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DHEARTHLINE_BUILD_VISUAL=ON
+      - name: Build HTML/WebAssembly
+        run: cmake --build build/hearthline-web --target hearthline_visual --parallel 2
+      - name: Check browser export
+        run: |
+          test -s build/hearthline-web/index.html
+          grep -q 'HEARTHLINE' build/hearthline-web/index.html
+      - name: Upload standalone browser game
+        uses: actions/upload-artifact@v4
+        with:
+          name: hearthline-web
+          path: build/hearthline-web/index.html
+          if-no-files-found: error
+          retention-days: 14
