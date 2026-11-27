@@ -1321,6 +1321,77 @@ AETHER_TEST(TilemapEditor_FastPointerDragsPaintAndEraseEveryCellAsOneStroke) {
     for (i32 x = 1; x < 5; ++x) CHECK(doc.Map().Get(0, x, 3) == kEmpty);
 }
 
+AETHER_TEST(TilemapEditor_FreehandIncludesMotionQueuedBeforeButtonRelease) {
+    HeadlessImGui ui;
+    TilemapEditDocument doc = Doc();
+    TilemapPanel panel(doc);
+    doc.brush = 3;
+    ImVec2 bottom_left;
+    const auto draw = [&] {
+        panel.Draw();
+        const ImVec2 corner = {ImGui::GetItemRectMin().x, ImGui::GetItemRectMax().y};
+        const ImVec2 padding = ImGui::GetStyle().WindowPadding;
+        bottom_left = ImVec2(corner.x + padding.x + 8, corner.y - padding.y - 8);
+    };
+    ui.Frame(draw);
+    ImGuiIO& io = ImGui::GetIO();
+    const auto queue_pos = [&](i32 x, i32 y = 1) {
+        io.AddMousePosEvent(bottom_left.x + (static_cast<f32>(x) + 0.5f) * panel.zoom,
+                            bottom_left.y - (static_cast<f32>(y) + 0.5f) * panel.zoom);
+    };
+    const auto drag = [&](i32 start, i32 end, ImGuiMouseButton button) {
+        queue_pos(start);
+        ui.Frame(draw);
+        io.AddMouseButtonEvent(button, true);
+        ui.Frame(draw);
+        queue_pos(end); // Motion and release can be picked up on the same frame.
+        io.AddMouseButtonEvent(button, false);
+        ui.Frame(draw);
+        CHECK(!ImGui::IsMouseDown(button));
+    };
+    const auto row_is = [&](i32 value) {
+        for (i32 x = 0; x < 6; ++x) CHECK(doc.Map().Get(0, x, 1) == value);
+    };
+
+    drag(0, 5, ImGuiMouseButton_Left);
+    row_is(3);
+    CHECK(doc.Undo() && !doc.CanUndo());
+    row_is(kEmpty);
+    CHECK(doc.Redo());
+    row_is(3);
+
+    doc.tool = TileTool::Rectangle;
+    drag(5, 0, ImGuiMouseButton_Right);
+    row_is(kEmpty);
+    CHECK(doc.tool == TileTool::Rectangle && doc.Undo());
+    row_is(3);
+
+    doc.tool = TileTool::Paint;
+    queue_pos(0, 2);
+    ui.Frame(draw);
+    io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+    ui.Frame(draw);
+    queue_pos(7, 2); // Remember that the stroke left the map.
+    ui.Frame(draw);
+    queue_pos(5, 2);
+    io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+    ui.Frame(draw);
+    CHECK(doc.Map().Get(0, 0, 2) == 3 && doc.Map().Get(0, 5, 2) == 3);
+    for (i32 x = 1; x < 5; ++x) CHECK(doc.Map().Get(0, x, 2) == kEmpty);
+    CHECK(doc.Undo());
+
+    queue_pos(0, 3);
+    ui.Frame(draw);
+    io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+    ui.Frame(draw);
+    queue_pos(5, 3);
+    io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+    io.AddFocusEvent(false); // Never complete a segment on a focus-loss release.
+    ui.Frame(draw);
+    CHECK(doc.Map().Get(0, 0, 3) == 3 && doc.Map().Get(0, 5, 3) == kEmpty);
+    CHECK(doc.Undo() && doc.Map().Get(0, 0, 3) == kEmpty);
+}
+
 AETHER_TEST(TilemapEditor_FreehandDragsMustStartOnTheMap) {
     HeadlessImGui ui;
     TilemapData map;

@@ -71,6 +71,7 @@ private:
     static constexpr f32 kDefaultZoom = 24.0f, kDefaultPan = 8.0f;
     f64 pan_x_ = kDefaultPan, pan_y_ = kDefaultPan;
     bool dragging_ = false;
+    bool brush_uses_right_ = false;
     struct BrushSample {
         i32 x, y;
         TileTool tool;

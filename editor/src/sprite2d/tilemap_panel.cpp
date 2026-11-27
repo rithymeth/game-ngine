@@ -654,6 +654,7 @@ void TilemapPanel::DrawCanvas() {
     ImGui::InvisibleButton("##paint", ImVec2(std::max(size.x, 1.0f), std::max(size.y, 1.0f)),
                            ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
     const bool hovered = ImGui::IsItemHovered();
+    const bool canvas_deactivated = dragging_ && ImGui::IsItemDeactivated();
     ImGuiIO& io = ImGui::GetIO();
     // Pan is measured from the canvas's bottom-left, with y pointing up.
     const auto reanchor_zoom = [&](f32 from, f32 to, f64 x, f64 y) {
@@ -925,26 +926,35 @@ void TilemapPanel::DrawCanvas() {
     const bool brush_drag = mouse_valid && (dragging_ || brush_start) &&
         (shape_tool ? shape_erase_drag :
          right || (left && (selected == TileTool::Paint || selected == TileTool::Erase)));
+    const auto sample_brush = [&](TileTool tool) {
+        doc_.tool = tool;
+        if (last_brush_sample_ && last_brush_sample_->tool == tool)
+            doc_.Line(last_brush_sample_->x, last_brush_sample_->y, cx, cy);
+        else
+            doc_.Apply(cx, cy);
+        last_brush_sample_ = BrushSample{cx, cy, tool};
+        doc_.tool = selected;
+    };
     if (brush_drag) {
-        if (right) doc_.tool = TileTool::Erase;
         if (!dragging_) {
             doc_.BeginStroke();
             dragging_ = true;
         }
+        brush_uses_right_ = right;
         if (on_map) {
-            if (last_brush_sample_ && last_brush_sample_->tool == doc_.tool) {
-                doc_.Line(last_brush_sample_->x, last_brush_sample_->y, cx, cy);
-            } else {
-                doc_.Apply(cx, cy);
-            }
-            last_brush_sample_ = BrushSample{cx, cy, doc_.tool};
+            sample_brush(right ? TileTool::Erase : selected);
         } else {
             // Do not connect across another panel or a trip outside the map.
             last_brush_sample_.reset();
         }
-        doc_.tool = selected;
     } else {
         if (dragging_) {
+            // The pointer can move and release between frames. Sample that
+            // final position before ending the stroke, but not on focus loss.
+            const ImGuiMouseButton brush_button = brush_uses_right_ ? ImGuiMouseButton_Right : ImGuiMouseButton_Left;
+            if (on_map && canvas_deactivated && !io.AppFocusLost && ImGui::IsMouseReleased(brush_button) &&
+                (brush_uses_right_ || selected == TileTool::Paint || selected == TileTool::Erase))
+                sample_brush(brush_uses_right_ ? TileTool::Erase : selected);
             doc_.EndStroke();
             last_brush_sample_.reset();
             dragging_ = false;
