@@ -9,7 +9,9 @@
   <style>
     *{box-sizing:border-box}html,body{height:100%;margin:0;background:#071014;color:#f5ebce}
     body{font:13px system-ui,-apple-system,sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden}
-    main{position:relative;width:min(100vw,calc((100vh - 48px)*1.6));aspect-ratio:8/5;box-shadow:0 20px 100px #0009;background:#0b181e}
+    /* SDL changes the canvas backing size. Give its percentage height a
+       definite containing block so that size cannot grow the page. */
+    main{position:relative;flex:none;width:min(100vw,calc((100vh - 48px)*1.6));height:min(62.5vw,calc(100vh - 48px));box-shadow:0 20px 100px #0009;background:#0b181e}
     canvas{display:block;width:100%;height:100%;outline:0;touch-action:none}
     #loading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:18px;background:#0b181e;z-index:2;transition:opacity .6s}
     #loading.hidden{opacity:0;pointer-events:none}.sigil{width:25px;height:25px;border:1px solid #e6bc70;transform:rotate(45deg);box-shadow:0 0 40px #e6bc7050;animation:breathe 2s ease-in-out infinite}

@@ -18,7 +18,7 @@ Validated on 2026-11-27 against Aether base commit
 | Missing assets / invalid arguments | Clear error; exit codes 1 / 2 respectively |
 | Native title and gameplay frame captures | Rendered and visually inspected at 1280 × 800 |
 | Browser export, Emscripten 4.0.21 | Built successfully as a single HTML file with embedded runtime, art and fonts |
-| In-browser input, rendering and audio | Not verified: this workspace's preview browser denied local-file access |
+| Browser viewport, headless Chromium 151 | Over private loopback, the 8:5 canvas and footer fit desktop, short landscape and narrow portrait viewports; no separate game assets requested |
 | Windows and macOS native builds | Not run |
 
 The normal-input gameplay route does not teleport entities, grant resources,
@@ -73,6 +73,18 @@ node /tmp/lanternwake-wasm-tests.js
 bash games/LANTERNWAKE/tools/build_web.sh
 ```
 
+With Python Playwright and Chromium installed, check the actual single-file
+export over private loopback. The smoke test checks the canvas and Fullscreen
+button at 1360 × 848, 915 × 412 and 390 × 844, and flags unexpected requests or
+browser errors:
+
+```sh
+python3 games/LANTERNWAKE/tools/test_web_viewport.py build-lanternwake-web/index.html
+```
+
+Pass `--chromium /path/to/chromium` to use a local Chromium executable instead
+of Playwright's default.
+
 ## Portability correction
 
 Building the real engine ECS on wasm32 exposed undefined behavior in
@@ -85,9 +97,8 @@ a wasm32 hash probe passed all eight cases, compiled with
 
 ## Verification limits
 
-The browser artifact is a successful build, not a claimed browser playtest.
-WebAssembly simulation tests do not verify browser input mapping, browser frame
-upload, Web Audio behavior, or performance on the user's machine. The native
+The headless Chromium viewport smoke is not a full browser playthrough.
+Web Audio, performance on the user's machine and touch controls are not verified. The native
 SDL dummy-driver check verifies initialization and callback execution; it is
 not a physical-speaker listening test. Native captured frames verify the
 actual game's rendering. No Windows, macOS, mobile, gamepad or touch testing
