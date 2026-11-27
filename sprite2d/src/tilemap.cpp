@@ -259,8 +259,16 @@ bool TilemapFromJsonImpl(const nlohmann::json& data, TilemapData& out, std::stri
     const std::string tileset = data.value("tileset", "");
     if (!tileset.empty() && !assets::ParseAssetGuid(tileset, m.tileset)) return fail("bad tileset GUID");
     if (!data.contains("size") || !data["size"].is_array() || data["size"].size() != 2) return fail("no size");
-    m.width = data["size"][0].get<u32>();
-    m.height = data["size"][1].get<u32>();
+    const auto dimension = [](const nlohmann::json& value, u32& out) {
+        if (!value.is_number_integer() ||
+            (!value.is_number_unsigned() && value.get<i64>() < 0)) return false;
+        const u64 n = value.get<u64>();
+        if (n > kMaxTilemapCells) return false;
+        out = static_cast<u32>(n);
+        return true;
+    };
+    if (!dimension(data["size"][0], m.width) || !dimension(data["size"][1], m.height))
+        return fail("tilemap size needs two non-negative whole numbers in range");
     if (static_cast<u64>(m.width) * m.height > kMaxTilemapCells) return fail("the map is too large");
     for (const nlohmann::json& l : data.value("layers", nlohmann::json::array())) {
         TileLayer layer;

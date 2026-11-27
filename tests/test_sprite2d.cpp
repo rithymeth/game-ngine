@@ -388,6 +388,37 @@ AETHER_TEST(Sprite2D_TilemapJsonRoundTripAndErrors) {
     CHECK(!LoadTilemap(file.parent_path() / "missing.atilemap", again, &error));
 }
 
+AETHER_TEST(Sprite2D_TilemapJsonRejectsNarrowedDimensions) {
+    TilemapData out;
+    out.Resize(2, 2);
+    out.AddLayer("Keep");
+    CHECK(out.Set(0, 1, 1, 17));
+    const auto unchanged = TilemapToJson(out);
+    const auto dir = std::filesystem::temp_directory_path() / "aether_sprite2d";
+    std::filesystem::create_directories(dir);
+    const auto file = dir / "bad-dimensions.atilemap";
+    for (const auto* text : {
+             R"({"$type":"Tilemap","size":[-1,0]})",
+             R"({"$type":"Tilemap","size":[4294967297,1],"layers":[{"cells":[0]}]})",
+             R"({"$type":"Tilemap","size":[1.5,1],"layers":[{"cells":[0]}]})",
+         }) {
+        std::string error;
+        CHECK(!TilemapFromJson(nlohmann::json::parse(text), out, &error));
+        CHECK(error.find("size") != std::string::npos);
+        CHECK(TilemapToJson(out) == unchanged);
+        {
+            std::ofstream stream(file, std::ios::binary | std::ios::trunc);
+            stream << text;
+            stream.close();
+            CHECK(stream.good());
+        }
+        error.clear();
+        CHECK(!LoadTilemap(file, out, &error));
+        CHECK(error.find("size") != std::string::npos);
+        CHECK(TilemapToJson(out) == unchanged);
+    }
+}
+
 AETHER_TEST(Sprite2D_CompactTilemapSaveMatchesJsonSchema) {
     TilemapData map;
     map.tileset = Guid();
