@@ -492,6 +492,11 @@ usize TilemapEditDocument::AddAutotile(const std::string& name) {
 
 bool TilemapEditDocument::SetAutotileTile(usize autotile, u8 mask, i32 tile) {
     if (autotile >= tileset_.autotiles.size() || mask >= 16 || tileset_.autotiles[autotile].tiles[mask] == tile) return false;
+    // Numbered maps without an authored texture grid still allow arbitrary tile IDs.
+    if (tile >= 0 && !tileset_.texture.IsNull()) {
+        const u32 count = tileset_.TileCount();
+        if (count != 0 && static_cast<u32>(tile) >= count) return false;
+    }
     RecordTileset();
     tileset_.autotiles[autotile].tiles[mask] = tile;
     return true;

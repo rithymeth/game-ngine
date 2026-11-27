@@ -503,6 +503,8 @@ void TilemapPanel::DrawPalette() {
         ImGui::EndDisabled();
         ImGui::SetItemTooltip("Use tile %d for every empty mask. Assigned tiles stay as they are.", doc_.brush);
         ImGui::TextDisabled("Or click one mask to assign it:");
+        const bool outside_grid = !ts.texture.IsNull() && count != 0 && static_cast<u32>(doc_.brush) >= count;
+        ImGui::BeginDisabled(outside_grid);
         for (int m = 0; m < 16; ++m) {
             ImGui::PushID(2000 + m);
             if (m % 4 != 0) ImGui::SameLine();
@@ -514,6 +516,9 @@ void TilemapPanel::DrawPalette() {
             }
             ImGui::PopID();
         }
+        ImGui::EndDisabled();
+        if (outside_grid)
+            ImGui::TextWrapped("Tile %d is outside this tileset. Pick a tile from the palette to assign a mask.", doc_.brush);
     }
 }
 

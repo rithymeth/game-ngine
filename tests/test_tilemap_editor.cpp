@@ -808,6 +808,83 @@ AETHER_TEST(TilemapEditor_AutotileNamesRenderLiterallyAndSelectTheRightRule) {
     CHECK(with_markers > prefixes);
 }
 
+AETHER_TEST(TilemapEditor_InvalidPickedTileCannotBecomeAnAutotileVariant) {
+    HeadlessImGui ui;
+    TilemapData map;
+    map.Resize(6, 5);
+    map.AddLayer("Ground");
+    map.Set(0, 0, 0, 6); // outside the authored six-tile grid
+    map.Set(0, 1, 0, 5); // last valid tile
+    Tileset tiles;
+    tiles.texture = assets::NewAssetGuid();
+    tiles.texture_width = 48;
+    tiles.texture_height = 32;
+    auto variants = Autotile().tiles;
+    constexpr u8 mask = kNorth | kEast;
+    variants[mask] = 4;
+    const usize river = tiles.AddAutotile("River", variants);
+    TilemapEditDocument doc(std::move(map), std::move(tiles));
+    TilemapPanel panel(doc);
+    doc.tool = TileTool::Pick;
+    doc.brush = 5;
+
+    ImGuiWindow* palette = nullptr;
+    ImVec2 canvas_origin;
+    const auto draw = [&] {
+        const auto palette_id = ImGui::GetID("##left");
+        const auto* parent = ImGui::GetCurrentWindowRead();
+        panel.Draw();
+        for (auto* child : parent->DC.ChildWindows)
+            if (child->ChildId == palette_id) palette = child;
+        const auto& padding = ImGui::GetStyle().WindowPadding;
+        canvas_origin = {ImGui::GetItemRectMin().x + padding.x + 8.0f,
+                         ImGui::GetItemRectMax().y - padding.y - 8.0f};
+    };
+    auto& io = ImGui::GetIO();
+    const auto move = [&](ImVec2 p) {
+        io.AddMousePosEvent(p.x, p.y);
+        ui.Frame(draw);
+    };
+    const auto click = [&] {
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+        ui.Frame(draw);
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+        ui.Frame(draw);
+    };
+    ui.Frame(draw);
+    if (!palette) { CHECK(false); return; }
+    const ImGuiID mask_id = ImHashStr("NE-- 4", 0, palette->GetID(2000 + mask));
+    const ImRect clip = palette->InnerClipRect;
+    std::optional<ImVec2> mask_button;
+    for (f32 y = clip.Min.y + 3.0f; y < clip.Max.y && !mask_button; y += 6.0f) {
+        for (f32 x = clip.Min.x + 8.0f; x < clip.Max.x; x += 16.0f) {
+            move({x, y});
+            if (ImGui::GetHoveredID() == mask_id) { mask_button = ImVec2(x, y); break; }
+        }
+    }
+    if (!mask_button) { CHECK(false); return; }
+    const auto pick = [&](i32 x) {
+        move({canvas_origin.x + (x + 0.5f) * panel.zoom, canvas_origin.y - 0.5f * panel.zoom});
+        click();
+    };
+    const u64 revision = doc.Revision();
+    pick(0);
+    CHECK(doc.brush == 6);
+    move(*mask_button);
+    click();
+    CHECK(doc.GetTileset().autotiles[river].tiles == variants && doc.Revision() == revision &&
+          !doc.CanUndo() && !doc.dirty());
+    CHECK(!doc.SetAutotileTile(river, mask, 6) && doc.Revision() == revision);
+
+    pick(1);
+    CHECK(doc.brush == 5);
+    move(*mask_button);
+    click();
+    CHECK(doc.GetTileset().autotiles[river].tiles[mask] == 5 && doc.dirty());
+    CHECK(doc.Undo() && doc.GetTileset().autotiles[river].tiles == variants && !doc.CanUndo() && !doc.dirty());
+    CHECK(doc.SetAutotileTile(river, mask, kEmpty) && doc.GetTileset().autotiles[river].tiles[mask] == kEmpty);
+}
+
 AETHER_TEST(TilemapEditor_WheelZoomKeepsTheHoveredCellUnderTheCursor) {
     HeadlessImGui ui;
     auto doc = Doc();
