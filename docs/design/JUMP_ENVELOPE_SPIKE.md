@@ -44,6 +44,21 @@ candidate, a reference route that misses at offset zero, or a sweep with no
 valid shifted offsets exits 2 without a receipt. Skipped offsets are not
 coverage. Without the gate flag, the report remains informational.
 
+### Reproduce a reported loss
+
+Add --capture-evidence to bind the result to the SHA-256 of the player,
+PackageManifest.json, and Paks/Game.apak in each package before and after
+the sweep. Missing or changed evidence files fail the command. This is not
+a full package signature: it does not inventory DLLs, operating-system state,
+or changes that occur and reverse between the two reads.
+
+The receipt includes the normalized reference route and, on an A/B loss,
+the nearest lost timing as evidence.nearest_lost_replay.route. Save that
+object as a JSON file and pass it to either package's --jump-proof command
+with a fresh --user-dir. If two losses are equally near, the earlier offset
+is chosen. Evidence capture is optional because it reads the cooked archive
+twice and includes the recorded inputs in the report.
+
 ## Prior art and what we would ship differently
 
 - [Unity InputEventTrace](https://docs.unity3d.com/Packages/com.unity.inputsystem@1.4/api/UnityEngine.InputSystem.LowLevel.InputEventTrace.html)
