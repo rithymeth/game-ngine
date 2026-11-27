@@ -29,8 +29,8 @@ std::string ExportPo(const StringTable& table, std::string_view language, std::s
 // `errors`), the header and obsolete (`#~`) entries. An entry with no msgctxt
 // uses its msgid as the key (a .po from another tool). Accepts the split
 // `""` continuation form and the escapes \\ \" \n \t \r. Returns false if a
-// line isn't valid .po (the line number is in `errors`; entries before it
-// were applied).
+// line isn't valid .po or an entry lacks msgid or msgstr. The diagnostic
+// includes the line number; only earlier complete entries were applied.
 bool ImportPo(StringTable& table, std::string_view language, std::string_view po, std::vector<std::string>* errors = nullptr);
 
 // The `Language:` of a .po file's header ("" if it has none).

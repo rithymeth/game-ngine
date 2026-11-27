@@ -181,6 +181,11 @@ AETHER_TEST(LocEditor_MalformedPoDoesNotApplyEarlierEntries) {
     const std::string* existing = doc.Table().Find("de", "quit");
     CHECK(existing != nullptr && *existing == "Eigene Fassung");
     CHECK(doc.Dirty() && doc.Revision() == edited_revision);
+    const std::string edited = doc.Table().ExportCsv();
+    CHECK(!doc.ImportPo("de", patch + "\nmsgctxt \"play\"\nmsgstr \"Starten\"\n"));
+    CHECK(doc.Table().ExportCsv() == edited && doc.Dirty() && doc.Revision() == edited_revision);
+    CHECK(!doc.Errors().empty() && doc.Errors().back().find("msgid") != std::string::npos);
+
     CHECK(doc.ImportPo("de", patch) && doc.Revision() != edited_revision);
     const std::string* imported = doc.Table().Find("de", "quit");
     CHECK(imported != nullptr && *imported == "Beenden");

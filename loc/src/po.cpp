@@ -92,7 +92,15 @@ bool ReadEntries(std::string_view po, std::vector<std::string>* errors, Visit vi
     bool ok = true;
     bool done = false;
     const auto commit = [&] {
-        if (e.has_id || e.has_str || e.has_ctxt) done = visit(e);
+        if (e.has_id || e.has_str || e.has_ctxt) {
+            if (!e.has_id || !e.has_str) {
+                problem(e.line, !e.has_id ? "entry is missing msgid" : "entry is missing msgstr");
+                ok = false;
+                done = true;
+            } else {
+                done = visit(e);
+            }
+        }
         e = Entry{};
         field = Field::None;
     };
@@ -119,8 +127,10 @@ bool ReadEntries(std::string_view po, std::vector<std::string>* errors, Visit vi
         }
         const auto field_of = [&](std::string_view word, Field f) -> bool {
             if (!StartsWith(line, word) || line.size() <= word.size() || (line[word.size()] != ' ' && line[word.size()] != '"')) return false;
-            if (f == Field::Ctxt && e.has_str) commit();
-            if (f == Field::Id && e.has_str) commit();
+            // A new source/context can start the next entry without a blank
+            // line. Finalize the previous entry before overwriting its fields.
+            if ((f == Field::Ctxt && (e.has_ctxt || e.has_id || e.has_str)) ||
+                (f == Field::Id && (e.has_id || e.has_str))) commit();
             if (done) return true;
             if (e.line == 0) e.line = line_no;
             std::string text;
@@ -148,7 +158,7 @@ bool ReadEntries(std::string_view po, std::vector<std::string>* errors, Visit vi
             continue;
         }
         problem(line_no, "not valid .po: '" + std::string(line.substr(0, 24)) + "'");
-        commit();
+        if (e.has_id && e.has_str) commit(); // keep an earlier complete entry
         return false;
     }
     commit();

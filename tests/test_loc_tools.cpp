@@ -164,6 +164,30 @@ AETHER_TEST(LocPo_ImportRulesAndErrors) {
     CHECK(!ImportPo(bad, "de", "\"orphan\"\n", &errors));
 }
 
+AETHER_TEST(LocPo_RejectsEntriesMissingSourceOrTranslationFields) {
+    StringTable table;
+    table.Set("de", "quit", "Vorhanden");
+    std::vector<std::string> errors;
+    const std::string valid = "msgctxt \"play\"\nmsgid \"\"\nmsgstr \"Spielen\"\n\n";
+    CHECK(!ImportPo(table, "de", valid + "msgctxt \"quit\"\nmsgstr \"Beenden\"", &errors));
+    const auto has = [&](const char* key, const char* value) {
+        const std::string* found = table.Find("de", key);
+        return found != nullptr && *found == value;
+    };
+    CHECK(has("quit", "Vorhanden") && has("play", "Spielen"));
+    CHECK(errors.size() == 1 && errors[0].find("line 5") == 0 && errors[0].find("msgid") != std::string::npos);
+
+    for (const char* extra : {"", "\n\n", "\nmsgid \"Following\"\nmsgstr \"Neu\"\n"}) {
+        errors.clear();
+        CHECK(!ImportPo(table, "de", std::string("msgid \"Missing translation\"") + extra, &errors));
+        CHECK(errors.size() == 1 && errors[0].find("line 1") == 0 && errors[0].find("msgstr") != std::string::npos);
+        CHECK(table.Find("de", "Following") == nullptr);
+    }
+    errors.clear();
+    CHECK(ImportPo(table, "de", "msgctxt \"quit\"\nmsgid \"Quit\"\nmsgstr \"\"\n", &errors));
+    CHECK(errors.empty() && has("quit", "Vorhanden")); // empty but present
+}
+
 AETHER_TEST(LocPo_CommentsBelongToTheNextEntryWithoutBlankLines) {
     const char* po = R"PO(msgid ""
 msgstr ""
@@ -231,6 +255,24 @@ AETHER_TEST(LocSync_UsesOnlyThePoHeaderToChooseTheTargetLanguage) {
     CHECK(french && *french == "Language: English");
     CHECK(portuguese && *portuguese == "Jogar");
     CHECK(table.Find("english", "settings.language") == nullptr && table.Find("de", "menu.play") == nullptr);
+}
+
+AETHER_TEST(LocSync_MissingPoSourceDoesNotWriteTheProjectTable) {
+    const stdfs::path root = Dir("incomplete_po");
+    SyncOptions options;
+    options.content_dir = root / "Content";
+    options.strings_file = options.content_dir / "Localization/strings.astrings";
+    options.po_in = root / "incoming";
+    options.po_out = root / "outgoing";
+    const std::string before = "key,en,de\nplay,Play,Spielen\nquit,Quit,Schliessen\n";
+    Write(options.strings_file, before);
+    Write(options.po_in / "de.po",
+          "msgctxt \"play\"\nmsgid \"Play\"\nmsgstr \"Starten\"\n\n"
+          "msgctxt \"quit\"\nmsgstr \"Beenden\"\n");
+    const SyncReport report = SyncProject(options);
+    CHECK(!report.ok && report.po_imported == 0 && report.po_written == 0);
+    CHECK(!report.messages.empty() && report.messages.back().find("msgid") != std::string::npos);
+    CHECK(Slurp(options.strings_file) == before && !stdfs::exists(options.po_out));
 }
 
 AETHER_TEST(LocSync_GathersMergesAndWritesFiles) {
