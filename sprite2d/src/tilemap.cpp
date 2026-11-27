@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <charconv>
 #include <cmath>
+#include <fstream>
 #include <limits>
 
 namespace aether::sprite2d {
@@ -13,6 +14,7 @@ namespace aether::sprite2d {
 namespace {
 constexpr int kTilesetFormatVersion = 1;
 constexpr int kTilemapFormatVersion = 1;
+constexpr usize kMaxTilemapCells = 16u * 1024u * 1024u;
 } // namespace
 
 u32 Tileset::Columns() const {
@@ -243,7 +245,10 @@ nlohmann::json TilemapToJson(const TilemapData& m) {
 }
 
 namespace {
-bool TilemapFromJsonImpl(const nlohmann::json& data, TilemapData& out, std::string* error) {
+using TileCells = std::vector<std::vector<i32>>;
+
+bool TilemapFromJsonImpl(const nlohmann::json& data, TilemapData& out, std::string* error,
+                         TileCells* file_cells = nullptr) {
     const auto fail = [&](const std::string& why) {
         if (error) *error = why;
         return false;
@@ -256,12 +261,17 @@ bool TilemapFromJsonImpl(const nlohmann::json& data, TilemapData& out, std::stri
     if (!data.contains("size") || !data["size"].is_array() || data["size"].size() != 2) return fail("no size");
     m.width = data["size"][0].get<u32>();
     m.height = data["size"][1].get<u32>();
-    if (static_cast<u64>(m.width) * m.height > 16u * 1024u * 1024u) return fail("the map is too large");
+    if (static_cast<u64>(m.width) * m.height > kMaxTilemapCells) return fail("the map is too large");
     for (const nlohmann::json& l : data.value("layers", nlohmann::json::array())) {
         TileLayer layer;
         layer.name = l.value("name", "");
         layer.collides = l.value("collides", true);
-        layer.cells = l.value("cells", std::vector<i32>{});
+        const auto cells = l.find("cells");
+        if (file_cells && cells != l.end() && cells->is_array()) {
+            layer.cells = std::move(file_cells->at(m.layers.size()));
+        } else {
+            layer.cells = l.value("cells", std::vector<i32>{});
+        }
         if (layer.cells.size() != static_cast<usize>(m.width) * m.height) {
             return fail("layer '" + layer.name + "' has " + std::to_string(layer.cells.size()) + " cells, not " +
                         std::to_string(static_cast<usize>(m.width) * m.height));
@@ -271,6 +281,56 @@ bool TilemapFromJsonImpl(const nlohmann::json& data, TilemapData& out, std::stri
     out = std::move(m);
     return true;
 }
+// Keep ordinary metadata in the JSON tree, but put each v1 cell array directly
+// in its final packed vector. The parser still validates the complete document.
+class TilemapFileCells {
+public:
+    struct Legacy {};
+    struct Limit {};
+    TileCells layers;
+    bool projected = false;
+
+    bool Parse(int depth, nlohmann::json::parse_event_t event, const nlohmann::json& value) {
+        using Event = nlohmann::json::parse_event_t;
+        if (depth == 1 && event == Event::key) {
+            layers_key_ = value == "layers";
+            if (layers_key_ && seen_layers_) throw Legacy{};
+            seen_layers_ = seen_layers_ || layers_key_;
+        } else if (depth == 1 && event == Event::array_start && layers_key_) {
+            in_layers_ = projected = true;
+        } else if (depth == 1 && event == Event::array_end) {
+            in_layers_ = false;
+        } else if (in_layers_ && depth == 2) {
+            if (event == Event::array_start || event == Event::value) throw Legacy{};
+            if (event == Event::object_start) {
+                layers.emplace_back();
+                cells_key_ = seen_cells_ = false;
+            }
+        } else if (in_layers_ && depth == 3 && event == Event::key) {
+            cells_key_ = value == "cells";
+            if (cells_key_ && seen_cells_) throw Legacy{};
+            seen_cells_ = seen_cells_ || cells_key_;
+        } else if (in_layers_ && depth == 3 && event == Event::array_start && cells_key_) {
+            in_cells_ = true;
+        } else if (in_layers_ && depth == 3 && event == Event::array_end) {
+            in_cells_ = false;
+        } else if (in_cells_ && depth == 4) {
+            if (event != Event::value || !value.is_number_integer()) throw Legacy{};
+            if (value.is_number_unsigned() && value.get<u64>() > static_cast<u64>(std::numeric_limits<i32>::max()))
+                throw Legacy{};
+            const i64 cell = value.get<i64>();
+            if (cell < std::numeric_limits<i32>::min() || cell > std::numeric_limits<i32>::max()) throw Legacy{};
+            if (layers.back().size() >= kMaxTilemapCells) throw Limit{};
+            layers.back().push_back(static_cast<i32>(cell));
+            return false; // Do not add the numeric node to the DOM.
+        }
+        return true;
+    }
+
+private:
+    bool seen_layers_ = false, layers_key_ = false, in_layers_ = false;
+    bool seen_cells_ = false, cells_key_ = false, in_cells_ = false;
+};
 } // namespace
 
 bool TilemapFromJson(const nlohmann::json& data, TilemapData& out, std::string* error) {
@@ -278,8 +338,35 @@ bool TilemapFromJson(const nlohmann::json& data, TilemapData& out, std::string* 
 }
 
 bool LoadTilemap(const std::filesystem::path& file, TilemapData& out, std::string* error) {
-    nlohmann::json data;
-    return ReadJsonFile(file, data, error) && TilemapFromJson(data, out, error);
+    std::ifstream stream(file, std::ios::binary);
+    if (!stream) {
+        if (error) *error = "Couldn't read " + file.string();
+        return false;
+    }
+    return GuardJsonLoader(error, "tilemap", [&] {
+        const auto validate_json = [&](const nlohmann::json& data) {
+            if (!data.is_discarded() && !stream.bad()) return true;
+            if (error) *error = file.string() + " isn't valid JSON";
+            return false;
+        };
+        try {
+            TilemapFileCells cells;
+            const auto callback = [&](int depth, nlohmann::json::parse_event_t event, nlohmann::json& value) {
+                return cells.Parse(depth, event, value);
+            };
+            const auto data = nlohmann::json::parse(stream, callback, false);
+            return validate_json(data) && TilemapFromJsonImpl(data, out, error, cells.projected ? &cells.layers : nullptr);
+        } catch (const TilemapFileCells::Legacy&) {
+            // Keep the existing interpretation of duplicate keys and noncanonical values.
+            stream.clear();
+            stream.seekg(0);
+            const auto data = nlohmann::json::parse(stream, nullptr, false);
+            return validate_json(data) && TilemapFromJsonImpl(data, out, error);
+        } catch (const TilemapFileCells::Limit&) {
+            if (error) *error = "the map is too large";
+            return false;
+        }
+    });
 }
 bool SaveTilemap(const std::filesystem::path& file, const TilemapData& m, std::string* error) {
     // The cells dominate large maps. Emit them directly instead of constructing

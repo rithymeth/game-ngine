@@ -420,6 +420,51 @@ AETHER_TEST(Sprite2D_CompactTilemapSaveMatchesJsonSchema) {
     check_file();
 }
 
+AETHER_TEST(Sprite2D_TilemapFileLoadPreservesLegacyJson) {
+    const auto dir = std::filesystem::temp_directory_path() / "aether_sprite2d";
+    std::filesystem::create_directories(dir);
+    const auto file = dir / "legacy-order.atilemap";
+    const auto write = [&](std::string_view text) {
+        std::ofstream stream(file, std::ios::binary | std::ios::trunc);
+        stream << text;
+        stream.close();
+        CHECK(stream.good());
+    };
+    // The layers may precede the dimensions. Unknown nested keys must not get
+    // confused with a layer's own cells, and escaped keys are valid JSON.
+    const std::string text = R"({"layers":[{"meta":{"cells":[90]},"ce\u006cls":[-2147483648,-2,2147483647],"name":"a"},
+        {"name":"b","collides":false,"cells":[1,2,3]}],"ignored":{"layers":[{"cells":[99]}]},"size":[3,1],"$type":"Tilemap"})";
+    write(text);
+    TilemapData expected, loaded;
+    std::string error;
+    CHECK(TilemapFromJson(nlohmann::json::parse(text), expected, &error));
+    CHECK(LoadTilemap(file, loaded, &error));
+    CHECK(TilemapToJson(loaded) == TilemapToJson(expected));
+
+    // Preserve the DOM reader's last-wins behavior for duplicate keys and the
+    // accepted conversion of legacy fractional cell values.
+    const std::string legacy = R"({"$type":"Tilemap","size":[1,1],"layers":[{"cells":[99]}],
+        "layers":[{"cells":[88],"cells":[2.5]}]})";
+    write(legacy);
+    CHECK(TilemapFromJson(nlohmann::json::parse(legacy), expected, &error));
+    CHECK(LoadTilemap(file, loaded, &error));
+    CHECK(TilemapToJson(loaded) == TilemapToJson(expected) && loaded.Get(0, 0, 0) == 2);
+
+    const auto previous = TilemapToJson(loaded);
+    for (const auto invalid : {
+             R"({"$type":"Tilemap","size":[3,1],"layers":[{"cells":[1,2)",
+             R"({"$type":"Tilemap","size":[3,1],"layers":[{"cells":[1,2]}]})",
+             R"({"$type":"Tilemap","size":[1,1],"layers":[{"cells":[{}]}]})",
+             R"({"$type":"Tilemap","$version":99,"size":[1,1],"layers":[{"cells":[1]}]})",
+             R"({"$type":"Tilemap","size":[4096,4097],"layers":[]})",
+         }) {
+        write(invalid);
+        error.clear();
+        CHECK(!LoadTilemap(file, loaded, &error));
+        CHECK(!error.empty() && TilemapToJson(loaded) == previous);
+    }
+}
+
 AETHER_TEST(Sprite2D_BatchesAreSortedAndMerged) {
     RegisterSprite2DComponents();
     World world;
