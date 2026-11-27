@@ -15,6 +15,10 @@ using namespace sprite2d;
 
 namespace {
 namespace stdfs = std::filesystem;
+constexpr u64 kEditorTilemapCellBudget = 4u * 1024u * 1024u;
+
+AETHER_NOINLINE TileLayer BuildWideResizeLayer(const TileLayer& old, u32 old_width, u32 width, u32 overlap_width,
+                                               u32 overlap_height, usize cell_count);
 
 bool SameSaveDestination(const stdfs::path& a, const stdfs::path& b) {
     if (a.empty() || b.empty()) return false;
@@ -486,7 +490,7 @@ bool TilemapEditDocument::CanResize(u32 width, u32 height) const {
         return false;
     // Loaded assets can exceed the editor's growth budget. Let authors crop
     // those maps without having to discard enough tiles to reach the cap at once.
-    return static_cast<u64>(width) * height <= 4u * 1024u * 1024u ||
+    return static_cast<u64>(width) * height <= kEditorTilemapCellBudget ||
            (width <= map_.width && height <= map_.height);
 }
 
@@ -535,10 +539,21 @@ bool TilemapEditDocument::Resize(u32 width, u32 height) {
         const u32 overlap_width = std::min(width, map_.width);
         const u32 overlap_height = std::min(height, map_.height);
         const usize kept_count = static_cast<usize>(width) * height;
+        // Direct row construction pays off for normal-sized, wide maps
+        // with substantial overlap; leave oversized imports on the copy path.
+        const bool build_rows = width != map_.width && overlap_width >= 256 &&
+            kept_count <= kEditorTilemapCellBudget &&
+            static_cast<u64>(overlap_width) * overlap_height >= kept_count - kept_count / 2;
         for (const auto& old : map_.layers) {
             if (deep_height_crop && kept_count <= old.cells.size()) {
                 const auto end = old.cells.begin() + static_cast<std::ptrdiff_t>(kept_count);
                 replacement.layers.push_back({old.name, std::vector<i32>(old.cells.begin(), end), old.collides});
+                continue;
+            }
+            if (build_rows && old.cells.size() == old_count) {
+                // Construct retained cells directly rather than clearing and overwriting them.
+                replacement.layers.push_back(BuildWideResizeLayer(old, map_.width, width, overlap_width,
+                                                                  overlap_height, kept_count));
                 continue;
             }
             const usize index = replacement.AddLayer(old.name);
@@ -698,5 +713,21 @@ bool TilemapEditDocument::Save(std::string* error) {
     }
     return Save(tilemap_file_, tileset_file_, error);
 }
+
+namespace {
+AETHER_NOINLINE TileLayer BuildWideResizeLayer(const TileLayer& old, u32 old_width, u32 width, u32 overlap_width,
+                                               u32 overlap_height, usize cell_count) {
+    TileLayer next{old.name, {}, old.collides};
+    next.cells.reserve(cell_count);
+    for (u32 y = 0; y < overlap_height; ++y) {
+        const auto* src = old.cells.data() + static_cast<usize>(y) * old_width;
+        next.cells.insert(next.cells.end(), src, src + overlap_width);
+        if (overlap_width < width)
+            next.cells.insert(next.cells.end(), width - overlap_width, kEmpty);
+    }
+    next.cells.resize(cell_count, kEmpty);
+    return next;
+}
+} // namespace
 
 } // namespace aether::editor

@@ -3397,6 +3397,39 @@ AETHER_TEST(TilemapEditor_GeneralResizeReusesOriginalStorageAndKeepsTilesetHisto
     CHECK(doc.Redo() && doc.GetTileset().IsSolid(7) && doc.Map().Get(1, 1, 1) == 4);
 }
 
+AETHER_TEST(TilemapEditor_WideResizeKeepsRowEdgesAndPadsNewCells) {
+    TilemapData map;
+    map.Resize(384, 5);
+    map.AddLayer("Ground");
+    map.AddLayer("Short decoration");
+    map.layers[1].collides = false;
+    map.Set(0, 383, 0, 3);
+    map.Set(0, 0, 1, 5);
+    map.Set(0, 256, 3, 8);
+    map.Set(0, 257, 3, 9);
+    map.Set(0, 0, 4, AutotileCell(0));
+    map.Set(1, 11, 1, 7);
+    map.layers[1].cells.resize(396);
+    auto wide = map;
+    wide.Resize(416, 6);
+    auto cropped = wide;
+    cropped.Resize(257, 4);
+    TilemapEditDocument doc(std::move(map), {});
+    doc.active_layer = 1;
+    const auto old = TilemapToJson(doc.Map());
+    const auto* old_storage = doc.Map().layers[0].cells.data();
+
+    CHECK(doc.Resize(416, 6));
+    CHECK(TilemapToJson(doc.Map()) == TilemapToJson(wide) && doc.active_layer == 1);
+    CHECK(!doc.Map().layers[1].collides && doc.Map().layers[1].name == "Short decoration");
+    CHECK(doc.Resize(257, 4));
+    CHECK(TilemapToJson(doc.Map()) == TilemapToJson(cropped) && doc.Map().Get(0, 256, 3) == 8);
+    CHECK(doc.Undo() && TilemapToJson(doc.Map()) == TilemapToJson(wide));
+    CHECK(doc.Undo() && !doc.dirty() && TilemapToJson(doc.Map()) == old);
+    CHECK(doc.Map().layers[0].cells.data() == old_storage && doc.active_layer == 1);
+    CHECK(doc.Redo() && doc.Redo() && TilemapToJson(doc.Map()) == TilemapToJson(cropped));
+}
+
 AETHER_TEST(TilemapEditor_HeightResizeRestoresOnlyCroppedRows) {
     TilemapData map;
     map.Resize(4, 4);
