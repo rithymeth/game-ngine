@@ -584,6 +584,40 @@ AETHER_TEST(Sprite2D_TilemapSaveRejectsInvalidShapeWithoutReplacingFile) {
     refuse(invalid, "too large");
 }
 
+AETHER_TEST(Sprite2D_TilemapSaveRefusesSharedStagingFiles) {
+    const auto dir = std::filesystem::temp_directory_path() / "aether_sprite2d" / "linked-staging";
+    const auto file = dir / "map.atilemap";
+    const auto staging = std::filesystem::path(file.string() + ".tmp");
+    const auto other = dir / "unrelated.txt";
+    TilemapData map;
+    map.Resize(2, 2);
+    map.AddLayer("Ground");
+    if (!SaveTilemap(file, map)) { CHECK(false); return; }
+    {
+        std::ofstream stream(other, std::ios::binary);
+        stream << "unrelated data";
+        stream.close();
+        CHECK(stream.good());
+    }
+    std::error_code ec;
+    std::filesystem::create_hard_link(other, staging, ec);
+    if (ec == std::errc::operation_not_supported || ec == std::errc::function_not_supported) return;
+    if (ec) { CHECK(false); return; }
+    const auto bytes = [](const std::filesystem::path& path) {
+        std::ifstream stream(path, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>());
+    };
+    const auto old = bytes(file);
+    CHECK(map.Set(0, 0, 0, 8));
+    std::string error;
+    CHECK(!SaveTilemap(file, map, &error));
+    CHECK(error.find("staging") != std::string::npos);
+    CHECK(bytes(file) == old && bytes(other) == "unrelated data");
+    CHECK(std::filesystem::equivalent(staging, other, ec) && !ec);
+    CHECK(std::filesystem::remove(staging) && SaveTilemap(file, map));
+    CHECK(bytes(other) == "unrelated data");
+}
+
 AETHER_TEST(Sprite2D_TileSavesReportInvalidNamesWithoutOverwritingFiles) {
     const auto dir = std::filesystem::temp_directory_path() / "aether_sprite2d";
     const auto map_file = dir / "encoding.atilemap";

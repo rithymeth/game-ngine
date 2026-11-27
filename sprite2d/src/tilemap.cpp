@@ -433,8 +433,14 @@ bool SaveTilemap(const std::filesystem::path& file, const TilemapData& m, std::s
     auto temp = file;
     temp += ".tmp";
     const auto status = stdfs::symlink_status(temp, ec);
-    if (status.type() != stdfs::file_type::not_found && (ec || !stdfs::is_regular_file(status)))
-        return fail_write();
+    if (status.type() != stdfs::file_type::not_found) {
+        if (ec || !stdfs::is_regular_file(status)) return fail_write();
+        // Never truncate a staging file that also names another file's data.
+        if (stdfs::hard_link_count(temp, ec) != 1 || ec) {
+            if (error) *error = "Couldn't write " + file.string() + ": the staging file may be shared";
+            return false;
+        }
+    }
     std::ofstream stream(temp, std::ios::binary | std::ios::trunc);
     if (!stream) return fail_write();
     struct RemoveStaging {
