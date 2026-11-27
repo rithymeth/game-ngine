@@ -900,6 +900,59 @@ AETHER_TEST(Sprite2D_ReusesTheLiveGuidIndexForParentedBatches) {
     CHECK(BuildSpriteBatches(world, resolvers, guids, &parent_only).empty());
 }
 
+AETHER_TEST(Sprite2D_TileBatchRowsMatchScalarTilesWithTruncatedLayers) {
+    RegisterSprite2DComponents();
+    World world;
+    Tileset tiles;
+    tiles.texture_width = tiles.texture_height = 64;
+    tiles.texture = Guid();
+    const usize rule = tiles.AddAutotile("Water", {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15});
+    TilemapData map;
+    map.Resize(6, 5);
+    map.AddLayer("Empty");
+    map.layers[0].cells.clear();
+    map.AddLayer("Mixed");
+    const i32 water = AutotileCell(rule);
+    map.layers[1].cells = {1, kEmpty, water, water, 20, kEmpty,
+                          kEmpty, 3, water, AutotileCell(rule + 1), 4, kEmpty,
+                          5, water, water};
+    map.AddLayer("Foreground");
+    map.Set(2, 1, 1, 11);
+    map.Set(2, 4, 3, 12);
+    TilemapRenderer renderer;
+    renderer.pixels_per_unit = 16.0f;
+    world.CreateEntity(Transform{Vec3(0, 0, 0), Quaternion::Identity()}, renderer);
+    Resolvers2D resolvers;
+    resolvers.tilemaps = [&](const assets::AssetGuid&) { return &map; };
+    resolvers.tilesets = [&](const assets::AssetGuid&) { return &tiles; };
+
+    const ViewRect region{1.25f, 0.25f, 3.5f, 3.75f};
+    const ViewRect past_short_row{3.25f, 2.25f, 5.75f, 4.75f};
+    const ViewRect* views[] = {nullptr, &region, &past_short_row};
+    for (const ViewRect* view : views) {
+        const auto batches = BuildSpriteBatches(world, resolvers, view);
+        const usize count = batches.empty() ? 0 : batches.front().QuadCount();
+        CHECK(batches.size() <= 1);
+        usize expected = 0;
+        for (usize layer = 0; layer < map.layers.size(); ++layer) {
+            for (i32 y = 0; y < static_cast<i32>(map.height); ++y) {
+                for (i32 x = 0; x < static_cast<i32>(map.width); ++x) {
+                    if (view && (x + 1 < view->min_x || x > view->max_x || y + 1 < view->min_y || y > view->max_y))
+                        continue;
+                    f32 uv[4];
+                    if (!tiles.Uv(ResolveTile(map, tiles, layer, x, y), uv)) continue;
+                    if (expected < count) {
+                        const auto& a = batches.front().vertices[expected * 4];
+                        CHECK(a.x == x && a.y == y + 1 && a.u == uv[0] && a.v == uv[1]);
+                    }
+                    ++expected;
+                }
+            }
+        }
+        CHECK(count == expected);
+    }
+}
+
 AETHER_TEST(Sprite2D_ViewCullingAndTilemapBatches) {
     RegisterSprite2DComponents();
     World world;

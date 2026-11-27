@@ -234,9 +234,17 @@ static std::vector<SpriteBatch> BuildSpriteBatchesImpl(const World& world, const
         // Each layer is one item, so layers sort with the entity's order and keep their own order.
         for (usize layer = 0; layer < map->layers.size(); ++layer) {
             Item item{renderer->sorting_layer, renderer->order, t->position.z, sequence, tileset->texture, {}};
+            const auto& stored = map->layers[layer].cells;
             for (i32 y = cells.y0; y <= cells.y1; ++y) {
-                for (i32 x = cells.x0; x <= cells.x1; ++x) {
-                    const i32 tile = ResolveTile(*map, *tileset, layer, x, y);
+                const u64 start = static_cast<u64>(y) * map->width + static_cast<u32>(cells.x0);
+                if (start >= stored.size()) break; // short rows act as empty cells
+                const usize span = std::min<usize>(static_cast<usize>(cells.x1 - cells.x0) + 1,
+                                                   stored.size() - static_cast<usize>(start));
+                const i32* row = stored.data() + static_cast<usize>(start);
+                for (usize i = 0; i < span; ++i) {
+                    const i32 x = cells.x0 + static_cast<i32>(i);
+                    const i32 raw = row[i];
+                    const i32 tile = IsAutotileCell(raw) ? ResolveTile(*map, *tileset, layer, x, y) : raw;
                     f32 uv[4];
                     if (tile < 0 || !tileset->Uv(tile, uv)) continue;
                     const f32 lx[4] = {static_cast<f32>(x) * tw, static_cast<f32>(x + 1) * tw, static_cast<f32>(x + 1) * tw,
