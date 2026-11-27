@@ -15,6 +15,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <limits>
 #include <map>
 #include <set>
@@ -449,6 +450,41 @@ AETHER_TEST(Sprite2D_CompactTilemapSaveMatchesJsonSchema) {
     check_file();
     map.layers.clear();
     check_file();
+}
+
+AETHER_TEST(Sprite2D_TilemapSaveRejectsInvalidShapeWithoutReplacingFile) {
+    const auto file = std::filesystem::temp_directory_path() / "aether_sprite2d" / "save-validation.atilemap";
+    TilemapData valid;
+    valid.Resize(2, 2);
+    valid.AddLayer("Ground");
+    valid.AddLayer("Details");
+    CHECK(valid.Set(0, 1, 1, 7));
+    std::string error;
+    if (!SaveTilemap(file, valid, &error)) { CHECK(false); return; }
+    const auto bytes = [&] {
+        std::ifstream stream(file, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>());
+    };
+    const std::string original = bytes();
+    CHECK(!original.empty());
+    const auto refuse = [&](const TilemapData& invalid, std::string_view expected) {
+        error.clear();
+        CHECK(!SaveTilemap(file, invalid, &error));
+        CHECK(error.find(expected) != std::string::npos);
+        CHECK(bytes() == original);
+    };
+    auto invalid = valid;
+    invalid.layers[1].cells.pop_back();
+    refuse(invalid, "layer 'Details' has 3 cells, not 4");
+    invalid.layers[1].cells.resize(5);
+    refuse(invalid, "layer 'Details' has 5 cells, not 4");
+    invalid.layers.clear();
+    invalid.width = 4097;
+    invalid.height = 4096;
+    refuse(invalid, "too large");
+    invalid.width = std::numeric_limits<u32>::max();
+    invalid.height = 0; // The individual dimensions must also fit even when the product is zero.
+    refuse(invalid, "too large");
 }
 
 AETHER_TEST(Sprite2D_TilemapFileLoadPreservesLegacyJson) {

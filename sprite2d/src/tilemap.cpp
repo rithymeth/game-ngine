@@ -15,6 +15,11 @@ namespace {
 constexpr int kTilesetFormatVersion = 1;
 constexpr int kTilemapFormatVersion = 1;
 constexpr usize kMaxTilemapCells = 16u * 1024u * 1024u;
+
+std::string LayerCellCountError(const TileLayer& layer, usize expected) {
+    return "layer '" + layer.name + "' has " + std::to_string(layer.cells.size()) + " cells, not " +
+           std::to_string(expected);
+}
 } // namespace
 
 u32 Tileset::Columns() const {
@@ -280,10 +285,8 @@ bool TilemapFromJsonImpl(const nlohmann::json& data, TilemapData& out, std::stri
         } else {
             layer.cells = l.value("cells", std::vector<i32>{});
         }
-        if (layer.cells.size() != static_cast<usize>(m.width) * m.height) {
-            return fail("layer '" + layer.name + "' has " + std::to_string(layer.cells.size()) + " cells, not " +
-                        std::to_string(static_cast<usize>(m.width) * m.height));
-        }
+        const usize expected = static_cast<usize>(m.width) * m.height;
+        if (layer.cells.size() != expected) return fail(LayerCellCountError(layer, expected));
         m.layers.push_back(std::move(layer));
     }
     out = std::move(m);
@@ -377,6 +380,20 @@ bool LoadTilemap(const std::filesystem::path& file, TilemapData& out, std::strin
     });
 }
 bool SaveTilemap(const std::filesystem::path& file, const TilemapData& m, std::string* error) {
+    // Validate the same dimensions and layer lengths as the reader before
+    // touching an existing destination or allocating the serialized text.
+    if (m.width > kMaxTilemapCells || m.height > kMaxTilemapCells ||
+        static_cast<u64>(m.width) * m.height > kMaxTilemapCells) {
+        if (error) *error = "the map is too large";
+        return false;
+    }
+    const usize expected = static_cast<usize>(m.width) * m.height;
+    for (const TileLayer& layer : m.layers) {
+        if (layer.cells.size() != expected) {
+            if (error) *error = LayerCellCountError(layer, expected);
+            return false;
+        }
+    }
     // The cells dominate large maps. Emit them directly instead of constructing
     // a boxed JSON value per tile before the atomic write. Keep the v1 schema
     // and JSON string escaping, with short lines for source-control diffs.
