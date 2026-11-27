@@ -33,10 +33,19 @@ Collect resources around the opening camp, build the bridge at x=62, cross the r
 | E | Open adjacent supply cache or activate solved beacon |
 | F / R | Build campfire / refuel |
 | H | Heal using food |
-| 1 / 2 | Toggle wall to east (after beacon; refundable) / rotate nearest adjacent relay |
+| T | Rotate construction direction clockwise |
+| 1 / 3 | Toggle wooden wall / stone floor on the outlined adjacent tile |
+| 2 | Rotate nearest adjacent relay |
+| J / L | Save / load the current expedition (one local slot) |
 | M | Toggle explored-area map (pauses combat and gameplay) |
 | Escape | Pause or close map |
 | Ctrl+N or F5 after win/loss | Restart |
+
+## Base construction and persistence
+
+Move to face a direction or press T to rotate the outlined build target without moving. Press 1 to place/remove a wooden wall (2 wood), or 3 to place/remove a stone floor (1 stone). Removing a piece refunds its recipe. Walls block movement; stone floors are walkable. Build on an unoccupied grass, floor or ruin tile adjacent to the player, including before beacon activation. The authored main road, cache approaches, guardian leash and ruin objectives are protected from construction. This is an initial adjacent-tile construction system, not yet multi-tile freeform placement or a general crafting tree.
+
+Press J to save, L to load. Desktop and terminal use `hearthline.sav` in the current working directory; the terminal uses lowercase j/l and t, 1, 3 for construction. Desktop/browser loads pause the game so the player can resume safely. Browser saves are stored locally in the current origin's localStorage under `hearthline.save.v1`; they persist through page reloads when browser storage is available. No account or server is involved. Clearing site data loses that save. Each save uses a versioned, explicit little-endian binary format of approximately 768 KiB (approximately 1 MiB when base64 encoded in the browser). Terrain changes, objects, discovery, inventory, pickups, relays, combat state and quest progression are restored. The checksum detects corruption, not malicious tampering. Invalid data is rejected without changing the active game. Native saving writes a temporary file before replacing the existing save. The format currently supports version 1 only; future generator/schema changes require migration or versioning.
 
 ## Wilderness and landmarks
 
@@ -80,6 +89,6 @@ The deployment workflow is deliberately **manual** until Pages is configured, to
 
 - Deterministic **512 x 512** tile terrain with a designated **128 x 128** expedition area. Three dense byte-sized runtime grids hold terrain, constructed objects and persistent discovery (786,432 cells total, 768 KiB of cell data). These are not yet Aether tilemap assets.
 - Shared gameplay simulation in `src/game.cpp`; the SDL2 host in `src/visual_main.cpp` draws only visible tiles around the player and sends keyboard actions to the same core.
-- 64 seeded regression expeditions and 64 exploration scenarios exercise all four cache routes, one-time loot, natural resource depletion, combat timing, idle death, timed and mistimed dodges, cooldowns, healing, retreat, discovery, bridge placement, relay rotation, and survival. The browser test script also covers keyboard/touch input and complete expedition progression; run it locally with Playwright. GitHub Actions is disabled by repository owner; this milestone does not enable or dispatch it.
+- 64 seeded regression expeditions, 64 exploration scenarios and 64 construction/persistence scenarios exercise all four cache routes, one-time loot, natural resource depletion, combat timing, idle death, timed and mistimed dodges, cooldowns, healing, retreat, discovery, bridge placement, relay rotation, and survival. Local Release CMake/CTest and strict-warning undefined-behavior sanitizer builds passed the core tests; the browser test script now also checks reload persistence, but the current graphical/WebAssembly changes have not been compiled or run locally. GitHub Actions is disabled by repository owner; this milestone does not enable or dispatch it.
 - This is a native SDL2 graphical prototype with an experimental Emscripten browser export; it is not yet an Aether sprite-batch renderer or a tested commercial-quality experience.
-- Guardian attack markers, health bars, slash, evasion and damage feedback use procedural animations. Movement is still tile-stepped; there are no imported sprite sheets, sounds, save/load, world streaming, generalized relay solver, or benchmarked 60 FPS guarantee.
+- Guardian attack markers, health bars, slash, evasion and damage feedback use procedural animations. Movement is still tile-stepped; there are no imported sprite sheets, sounds, recurring day/night cycles, nighttime enemy waves, world streaming, generalized relay solver, or benchmarked 60 FPS guarantee.

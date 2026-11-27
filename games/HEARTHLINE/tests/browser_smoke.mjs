@@ -30,6 +30,22 @@ async function check(name, viewport, hasTouch) {
     await page.keyboard.press('Escape');
     await page.keyboard.press('d');
     await contains('pos 23,64');
+    await button(106);
+    await contains('Saved expedition');
+    // Browser storage must survive a real reload.
+    await page.reload({waitUntil:'domcontentloaded'});
+    await page.locator('#loading.hidden').waitFor({state:'attached',timeout:30000});
+    await contains('pos 20,64');
+    await button(108);
+    await contains('Loaded expedition');
+    await contains('pos 23,64');
+    await contains('wood 4');
+    await contains('PAUSED');
+    await button(100);
+    assert.match(await status.textContent(),/pos 23,64/);
+    await button(27);
+    await button(100);
+    await contains('pos 24,64');
     await button(1073741886);
     await contains('pos 20,64');
     await contains('wood 0');

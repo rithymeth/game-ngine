@@ -85,6 +85,13 @@ void Draw(SDL_Renderer* r,const Game& g,int w,int h, bool paused) {
     for(int y=startY;y<endY;++y) for(int x=startX;x<endX;++x) {
         if(!g.Discovered(x,y)) continue;
         TileArt(r,g.Terrain(x,y),sx(x),sy(y),x,y);
+        if(g.ObjectAt(x,y)==Structure::StoneFloor) {
+            Rect(r,sx(x)+1,sy(y)+1,26,26,111,117,120);
+            Rect(r,sx(x)+2,sy(y)+2,11,11,150,155,150);
+            Rect(r,sx(x)+15,sy(y)+15,11,11,140,145,143);
+            Rect(r,sx(x)+2,sy(y)+15,11,11,126,132,132);
+            Rect(r,sx(x)+15,sy(y)+2,11,11,135,143,145);
+        }
         if(g.ObjectAt(x,y)==Structure::Wall) {
             Rect(r,sx(x)+2,sy(y)+5,24,20,91,62,42);
             Rect(r,sx(x)+2,sy(y)+5,24,4,194,157,97);
@@ -177,6 +184,10 @@ void Draw(SDL_Renderer* r,const Game& g,int w,int h, bool paused) {
         SDL_RenderFillRect(r,&shadow);
     }
     SDL_SetRenderDrawBlendMode(r,SDL_BLENDMODE_NONE);
+    const auto target=g.BuildTarget();
+    if(g.Visible(target.x,target.y)) {
+        Outline(r,sx(target.x)+1,sy(target.y)+1,kTile-2,kTile-2,224,208,148);
+    }
     const int px=sx(p.x),py=sy(p.y)-static_cast<int>((s.combat_tick/5)%2);
     if(s.dodge_ticks>0) Outline(r,px,py,kTile,kTile,96,223,214);
     if(s.attack_ticks>=kAttackCooldownTicks-2) {
@@ -245,6 +256,7 @@ void DrawMap(SDL_Renderer* r,const Game& g) {
         switch(g.ObjectAt(x,y)) {
             case Structure::Bridge: c={190,145,80}; break;
             case Structure::Wall: c={144,107,69}; break;
+            case Structure::StoneFloor: c={151,157,159}; break;
             case Structure::Campfire: c={247,148,65}; break;
             case Structure::Relay: c={101,202,199}; break;
             default: break;
@@ -306,6 +318,7 @@ std::string Title(const Game& g,bool paused,bool map_open) {
       " food "+std::to_string(s.inventory.food)+
       " night "+std::to_string(s.night_turns)+"/24"+
       " fuel "+std::to_string(s.fuel)+" explored "+std::to_string(g.DiscoveredCount())+
+      " build "+std::string(std::array<const char*,4>{"E","S","W","N"}[s.facing])+
       " caches "+std::to_string(g.OpenedCacheCount())+"/4 harvested "+std::to_string(g.HarvestedCount())+
       " | guard "+std::to_string(s.guardian.x)+","+std::to_string(s.guardian.y)+
       " guard HP "+std::to_string(s.guard_health)+" "+GuardName(s.guard_mode)+
@@ -320,7 +333,7 @@ struct App {
     Game game{1};
     unsigned seed=1;
     bool running=true, paused=false, map_open=false, smoke=false, ready=false;
-    std::string last_status;
+    std::string last_status, feedback;
     int frames=0;
     Uint32 last_frame_ms=0, combat_accumulator=0;
 
@@ -345,7 +358,56 @@ struct App {
         if(window){SDL_DestroyWindow(window);window=nullptr;}
         SDL_Quit();
     }
+    bool SaveProgress() {
+#if defined(__EMSCRIPTEN__)
+        const auto bytes=game.Save();
+        return EM_ASM_INT({
+            try {
+                const data=HEAPU8.subarray($0,$0+$1);
+                let binary="";
+                for(let i=0;i<data.length;i+=8192)
+                    binary+=String.fromCharCode.apply(null,data.subarray(i,i+8192));
+                localStorage.setItem("hearthline.save.v1",btoa(binary));
+                return 1;
+            } catch(error) { return 0; }
+        },bytes.data(),bytes.size())==1;
+#else
+        return game.SaveFile("hearthline.sav");
+#endif
+    }
+    bool LoadProgress() {
+#if defined(__EMSCRIPTEN__)
+        std::vector<std::uint8_t> bytes(kMaxSaveBytes);
+        const int n=EM_ASM_INT({
+            try {
+                const encoded=localStorage.getItem("hearthline.save.v1");
+                if(!encoded || encoded.length>4*Math.ceil($1/3)) return 0;
+                const binary=atob(encoded);
+                if(binary.length>$1) return 0;
+                for(let i=0;i<binary.length;++i) HEAPU8[$0+i]=binary.charCodeAt(i);
+                return binary.length;
+            } catch(error) { return 0; }
+        },bytes.data(),bytes.size());
+        return n>0 && game.Load(std::span<const std::uint8_t>(bytes.data(),static_cast<std::size_t>(n)));
+#else
+        return game.LoadFile("hearthline.sav");
+#endif
+    }
     void Key(SDL_Keycode k, SDL_Keymod mods) {
+        if(k==SDLK_j) {
+            feedback=SaveProgress()?"Saved expedition":"Save failed";
+            return;
+        }
+        if(k==SDLK_l) {
+            if(LoadProgress()) {
+                seed=game.Seed();
+                paused=true; map_open=false;
+                combat_accumulator=0; last_frame_ms=SDL_GetTicks();
+                feedback="Loaded expedition - ESC to resume";
+            } else feedback="Load failed - current game unchanged";
+            return;
+        }
+        feedback.clear();
         if(k==SDLK_ESCAPE){
             if(map_open) map_open=false;
             else paused=!paused;
@@ -373,9 +435,13 @@ struct App {
         else if(k==SDLK_f) (void)game.Act(Action::BuildCampfire);
         else if(k==SDLK_r) (void)game.Act(Action::Refuel);
         else if(k==SDLK_h) (void)game.Act(Action::Heal);
+        else if(k==SDLK_t) game.RotateBuildFacing();
         else if(k==SDLK_1) {
-            const auto p=game.State().player;
-            (void)game.Act(Action::BuildWall,{p.x+1,p.y});
+            if(!game.Act(Action::BuildWall,game.BuildTarget()))
+                feedback="Wall unavailable (2 wood; free unprotected tile)";
+        } else if(k==SDLK_3) {
+            if(!game.Act(Action::BuildFloor,game.BuildTarget()))
+                feedback="Floor unavailable (1 stone; free unprotected tile)";
         } else if(k==SDLK_2) {
             (void)game.RotateNearbyRelay();
         }
@@ -402,7 +468,7 @@ struct App {
             }
         }
         if(!running) return;
-        const std::string status=Title(game,paused,map_open);
+        const std::string status=Title(game,paused,map_open)+(feedback.empty()?"":" | "+feedback);
         if(status!=last_status) {
             last_status=status;
             SDL_SetWindowTitle(window,status.c_str());
@@ -451,7 +517,7 @@ int main(int argc,char** argv) {
             std::cout<<"HEARTHLINE graphical prototype\n"
                 <<"Arrows/WASD move | G gather | B bridge | K attack | V dodge\n"
                 <<"P/Q place relay | E interact | F campfire | R refuel | H heal\n"
-                <<"1 toggle wall east | 2 rotate nearest relay | SPACE wait | M map | ESC pause | F5 restart | --smoke\n";
+                <<"T face | 1 wall | 3 floor | 2 rotate relay | J save | L load | SPACE wait | M map | ESC pause | F5 restart | --smoke\n";
             return 0;
         }
     }
