@@ -393,6 +393,16 @@ struct App {
         return game.LoadFile("hearthline.sav");
 #endif
     }
+    void ResetCombatClock() {
+        combat_accumulator=0;
+        last_frame_ms=SDL_GetTicks();
+    }
+    void PauseForFocusLoss() {
+        if(game.State().phase==Phase::Playing) {
+            paused=true;
+            ResetCombatClock();
+        }
+    }
     void Key(SDL_Keycode k, SDL_Keymod mods) {
         if(k==SDLK_j) {
             feedback=SaveProgress()?"Saved expedition":"Save failed";
@@ -402,7 +412,7 @@ struct App {
             if(LoadProgress()) {
                 seed=game.Seed();
                 paused=true; map_open=false;
-                combat_accumulator=0; last_frame_ms=SDL_GetTicks();
+                ResetCombatClock();
                 feedback="Loaded expedition - ESC to resume";
             } else feedback="Load failed - current game unchanged";
             return;
@@ -411,13 +421,13 @@ struct App {
         if(k==SDLK_ESCAPE){
             if(map_open) map_open=false;
             else paused=!paused;
-            combat_accumulator=0; return;
+            ResetCombatClock(); return;
         }
         if(k==SDLK_m && game.State().phase==Phase::Playing) {
-            map_open=!map_open; combat_accumulator=0; return;
+            map_open=!map_open; ResetCombatClock(); return;
         }
         if((k==SDLK_n && (mods&KMOD_CTRL)) || k==SDLK_F5){
-            game=Game(seed);paused=false;map_open=false;combat_accumulator=0;return;
+            game=Game(seed);paused=false;map_open=false;ResetCombatClock();return;
         }
         if(paused || map_open || game.State().phase!=Phase::Playing) return;
         if(k==SDLK_UP || k==SDLK_w) (void)game.Move(0,-1);
@@ -447,6 +457,24 @@ struct App {
         }
     }
     void Tick() {
+        SDL_Event e;
+        while(SDL_PollEvent(&e)) {
+            if(e.type==SDL_QUIT) running=false;
+#if !defined(__EMSCRIPTEN__)
+            // Moving focus to the browser's HTML controls is not leaving the game.
+            // The shell handles top-level window and tab focus in a web build.
+            if(e.type==SDL_WINDOWEVENT &&
+                (e.window.event==SDL_WINDOWEVENT_FOCUS_LOST || e.window.event==SDL_WINDOWEVENT_MINIMIZED))
+                PauseForFocusLoss();
+#endif
+            if(e.type==SDL_KEYDOWN) {
+                const auto k=e.key.keysym.sym;
+                const bool movement=k==SDLK_UP || k==SDLK_DOWN || k==SDLK_LEFT || k==SDLK_RIGHT ||
+                    k==SDLK_w || k==SDLK_a || k==SDLK_s || k==SDLK_d || k==SDLK_SPACE;
+                if(!e.key.repeat || movement) Key(k,static_cast<SDL_Keymod>(e.key.keysym.mod));
+            }
+        }
+        if(!running) return;
         const Uint32 now=SDL_GetTicks();
         const Uint32 elapsed=std::min<Uint32>(now-last_frame_ms,250);
         last_frame_ms=now;
@@ -457,17 +485,6 @@ struct App {
                 combat_accumulator-=kCombatTickMs;
             }
         } else combat_accumulator=0;
-        SDL_Event e;
-        while(SDL_PollEvent(&e)) {
-            if(e.type==SDL_QUIT) running=false;
-            if(e.type==SDL_KEYDOWN) {
-                const auto k=e.key.keysym.sym;
-                const bool movement=k==SDLK_UP || k==SDLK_DOWN || k==SDLK_LEFT || k==SDLK_RIGHT ||
-                    k==SDLK_w || k==SDLK_a || k==SDLK_s || k==SDLK_d || k==SDLK_SPACE;
-                if(!e.key.repeat || movement) Key(k,static_cast<SDL_Keymod>(e.key.keysym.mod));
-            }
-        }
-        if(!running) return;
         const std::string status=Title(game,paused,map_open)+(feedback.empty()?"":" | "+feedback);
         if(status!=last_status) {
             last_status=status;
@@ -494,6 +511,9 @@ struct App {
 App* g_browser_app=nullptr;
 extern "C" EMSCRIPTEN_KEEPALIVE void hearthline_command(int key) {
     if(g_browser_app) g_browser_app->Key(static_cast<SDL_Keycode>(key),KMOD_NONE);
+}
+extern "C" EMSCRIPTEN_KEEPALIVE void hearthline_pause_for_focus_loss() {
+    if(g_browser_app) g_browser_app->PauseForFocusLoss();
 }
 void BrowserFrame(void* data) {
     auto* app=static_cast<App*>(data);

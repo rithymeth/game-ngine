@@ -94,6 +94,34 @@ async function check(name, viewport, hasTouch) {
         const match=txt.match(/guard (\d+),(\d+)/);
         return match && Math.abs(Number(match[1])-82)+Math.abs(Number(match[2])-64)<=2;
       },null,{timeout:10000});
+      // Headless Chromium does not reliably blur when changing tabs; send
+      // the same browser notifications directly while combat is active.
+      const focusLoss = async (notify, restore) => {
+        await page.evaluate(notify);
+        await contains('PAUSED');
+        const frozen = await status.textContent();
+        await page.waitForTimeout(400);
+        assert.equal(await status.textContent(),frozen);
+        await page.evaluate(restore);
+        await page.waitForTimeout(100);
+        assert.equal(await status.textContent(),frozen);
+        await press('Escape');
+        await page.waitForFunction(()=>!document.querySelector('#status').textContent.includes('PAUSED'));
+      };
+      await focusLoss(
+        ()=>window.dispatchEvent(new Event('blur')),
+        ()=>window.dispatchEvent(new Event('focus'))
+      );
+      await focusLoss(
+        ()=>{
+          Object.defineProperty(document,'hidden',{configurable:true,value:true});
+          document.dispatchEvent(new Event('visibilitychange'));
+        },
+        ()=>{
+          delete document.hidden;
+          document.dispatchEvent(new Event('visibilitychange'));
+        }
+      );
       for(let hp=2;hp>=0;hp--) {
         await contains('attack cd 0');
         await press('k');

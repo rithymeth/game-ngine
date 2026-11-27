@@ -78,6 +78,9 @@ const canvas=document.getElementById("canvas");
 const loading=document.getElementById("loading");
 const status=document.getElementById("status");
 let ready=false;
+function pauseForFocusLoss() {
+  if(ready) Module.ccall("hearthline_pause_for_focus_loss",null,[],[]);
+}
 function fail(message) {
   loading.classList.remove("hidden");
   loading.classList.add("error");
@@ -92,6 +95,7 @@ var Module={
     ready=true;
     loading.classList.add("hidden");
     canvas.focus({preventScroll:true});
+    if(document.hidden) pauseForFocusLoss();
   },
   onGameStatus:(message)=>{status.textContent=message;},
   onAbort:fail,
@@ -103,6 +107,11 @@ for(const control of document.querySelectorAll("[data-key]")) {
     catch(error){fail(error);}
   });
 }
+// Pausing is idempotent: both events may fire during the same tab switch.
+window.addEventListener("blur",pauseForFocusLoss);
+document.addEventListener("visibilitychange",()=>{
+  if(document.hidden) pauseForFocusLoss();
+});
 window.addEventListener("keydown",(event)=>{
   if(["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"," "].includes(event.key)
      && (document.activeElement===canvas || document.activeElement===document.body)) event.preventDefault();
