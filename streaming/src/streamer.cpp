@@ -41,9 +41,21 @@ WorldStreamer::WorldStreamer(World& world, WorldIndex index, CellLoader loader, 
 
 WorldStreamer::CellLoader WorldStreamer::FileLoader(std::filesystem::path dir) {
     return [dir = std::move(dir)](const CellCoord& cell, std::vector<u8>& bytes) {
-        std::ifstream in(CellFile(dir, cell), std::ios::binary);
+        const auto path = CellFile(dir, cell);
+        std::error_code error;
+        if (!std::filesystem::is_regular_file(path, error)) return false;
+
+        std::ifstream in(path, std::ios::binary | std::ios::ate);
         if (!in) return false;
-        bytes.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+        const std::streamoff size = in.tellg();
+        // Cells are binary scenes. Match the normal scene file reader's 256 MiB limit.
+        constexpr std::streamoff kMaxCellFileBytes = 256 * 1024 * 1024;
+        if (size < 0 || size > kMaxCellFileBytes) return false;
+        if (!in.seekg(0, std::ios::beg)) return false;
+
+        std::vector<u8> next(static_cast<usize>(size));
+        if (size != 0 && !in.read(reinterpret_cast<char*>(next.data()), static_cast<std::streamsize>(size))) return false;
+        bytes.swap(next);
         return true;
     };
 }
