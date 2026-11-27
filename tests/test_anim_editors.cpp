@@ -415,6 +415,53 @@ AETHER_TEST(AnimEditors_BlendSpacePreviewWaitsForValidAxes) {
     AETHER_CHECK(std::fabs(editor.preview_x - 0.75f) < 0.01f && std::fabs(editor.preview_y - 0.75f) < 0.01f);
 }
 
+AETHER_TEST(AnimEditors_BlendSpaceHistoryDoesNotSelectAnotherSample) {
+    HeadlessImGui imgui;
+    BlendSpaceDocument doc;
+    doc.AddSample("Idle", 0, 0);
+    doc.MarkSaved();
+    doc.AddSample("Walk", 1, 0);
+    BlendSpaceEditor editor(doc);
+    editor.Select(1);
+
+    ImVec2 undo{}, redo{};
+    const auto draw = [&] {
+        const ImVec2 origin = ImGui::GetCursorScreenPos();
+        const auto& style = ImGui::GetStyle();
+        const f32 undo_width = ImGui::CalcTextSize("Undo").x + 2 * style.FramePadding.x;
+        const f32 redo_width = ImGui::CalcTextSize("Redo").x + 2 * style.FramePadding.x;
+        const f32 y = origin.y + ImGui::GetFrameHeight() * 0.5f;
+        undo = ImVec2(origin.x + undo_width * 0.5f, y);
+        redo = ImVec2(origin.x + undo_width + style.ItemSpacing.x + redo_width * 0.5f, y);
+        editor.Draw();
+    };
+    imgui.Frame(draw);
+    imgui.Frame(draw);
+    ImGuiIO& io = ImGui::GetIO();
+    const auto click = [&](ImVec2 pos) {
+        io.AddMousePosEvent(pos.x, pos.y);
+        imgui.Frame(draw);
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+        imgui.Frame(draw);
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+        imgui.Frame(draw);
+    };
+
+    click(undo);
+    AETHER_CHECK(doc.Get().samples.size() == 1 && doc.Get().samples[0].clip == "Idle");
+    AETHER_CHECK(editor.Selected() == -1); // The selected Walk sample was removed.
+    click(redo);
+    AETHER_CHECK(doc.Get().samples.size() == 2);
+
+    AETHER_CHECK(doc.RemoveSample(0));
+    click(undo);
+    AETHER_CHECK(doc.Get().samples.size() == 2 && doc.Get().samples[0].clip == "Idle");
+    editor.Select(0);
+    click(redo);
+    AETHER_CHECK(doc.Get().samples.size() == 1 && doc.Get().samples[0].clip == "Walk");
+    AETHER_CHECK(editor.Selected() == -1); // Do not silently target Walk at the reused index.
+}
+
 AETHER_TEST(AnimEditors_BlendSpaceSeparateDragsUndoSeparately) {
     HeadlessImGui imgui;
     BlendSpace space;

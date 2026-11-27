@@ -24,9 +24,14 @@ std::vector<anim::BlendWeight> BlendSpaceEditor::PreviewWeights() const { return
 
 void BlendSpaceEditor::Draw() {
     ImGui::PushID(this);
-    if (ImGui::Button("Undo") && doc_.Undo()) selected_ = std::min(selected_, static_cast<i32>(doc_.Get().samples.size()) - 1);
+    const auto clear_sample_state = [&] {
+        // Sample indices are not identities across history snapshots.
+        selected_ = dragging_ = -1;
+        dragging_preview_ = drag_moved_ = false;
+    };
+    if (ImGui::Button("Undo") && doc_.Undo()) clear_sample_state();
     ImGui::SameLine();
-    if (ImGui::Button("Redo")) doc_.Redo();
+    if (ImGui::Button("Redo") && doc_.Redo()) clear_sample_state();
     ImGui::SameLine();
     int div = static_cast<int>(grid_divisions);
     ImGui::SetNextItemWidth(100);
