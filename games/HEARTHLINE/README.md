@@ -54,6 +54,20 @@ The page includes a responsive canvas, current objectives/inventory text, touchs
 
 GitHub Actions builds and uploads `hearthline-web` as a downloadable workflow artifact (when CI succeeds). A passing WebAssembly compile check does **not** substitute for testing gameplay interactively across actual browsers and mobile devices.
 
+
+## Publish the browser game
+
+A dedicated GitHub Actions workflow, `.github/workflows/hearthline-pages.yml`, can publish Hearthline's single-file HTML to a permanent GitHub Pages URL.
+
+The repository currently reports `has_pages: false` in GitHub metadata, so publishing requires a **one-time repository setting**:
+
+1. Open **Settings → Pages** in `rithymeth/game-ngine`.
+2. Under **Build and deployment**, select **GitHub Actions** as the source.
+3. In **Actions**, run **Publish Hearthline to GitHub Pages** using **Run workflow**.
+4. After the deployment succeeds, use the URL reported in the `github-pages` environment/deployment step.
+
+The deployment workflow is deliberately **manual** until Pages is configured, to avoid creating failing CI runs or unintentionally replacing another site. It publishes only the Hearthline game, not the engine documentation. The repository is not assumed to be publicly playable until the deployment succeeds and the URL is tested.
+
 ## Implementation and limitations
 
 - Deterministic **512 x 512** tile terrain with a designated **128 x 128** expedition area. `kLayerCount = 3` is reserved, but the current terrain grid is a single array and not yet three independently authored tile layers.

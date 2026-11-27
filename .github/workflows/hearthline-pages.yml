@@ -1,0 +1,50 @@
+name: Publish Hearthline to GitHub Pages
+
+# Run after enabling Settings > Pages > Build and deployment > GitHub Actions.
+# Deliberately manual at first: the repository has no Pages site configured.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hearthline-pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build website
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: '4.0.15'
+      - name: Build game
+        run: |
+          emcmake cmake -S games/HEARTHLINE -B build/hearthline-web -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DHEARTHLINE_BUILD_VISUAL=ON
+          cmake --build build/hearthline-web --target hearthline_visual --parallel 2
+          mkdir -p site
+          cp build/hearthline-web/index.html site/index.html
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+
+  deploy:
+    name: Publish playable site
+    needs: build
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      pages: write
+      id-token: write
+    steps:
+      - name: Deploy to Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
