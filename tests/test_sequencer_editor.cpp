@@ -337,6 +337,61 @@ AETHER_TEST(SequenceEditor_PanelDrawsAndSelectsKeysHeadless) {
     CHECK(!panel.Selected());
 }
 
+AETHER_TEST(SequenceEditor_ClickSelectsAnOffGridKeyWithoutMovingIt) {
+    HeadlessImGui ui;
+    Level level;
+    SequenceDocument doc;
+    const usize t = doc.AddTrack(TrackType::Event, "Markers");
+    constexpr f32 original_time = 1.012f;
+    CHECK(doc.AddEvent(t, original_time, "Cue") == 0);
+    const KeyRef key{t, KeyRef::Lane::Event, 0, 0};
+    const u64 revision = doc.Revision();
+    SequencerPanel panel(doc, level.world, level.guids);
+    const auto draw = [&] { panel.Draw(); };
+    ui.Frame(draw);
+    ui.Frame(draw);
+    // Find the diamond in the draw data, independent of fonts and window padding.
+    ImVec2 center{};
+    int vertices = 0;
+    for (const ImDrawList* list : ImGui::GetDrawData()->CmdLists) {
+        for (const ImDrawVert& v : list->VtxBuffer) {
+            if (v.col != IM_COL32(120, 190, 255, 255)) continue;
+            center.x += v.pos.x;
+            center.y += v.pos.y;
+            ++vertices;
+        }
+    }
+    CHECK(vertices > 0);
+    if (vertices == 0) return;
+    center.x /= static_cast<f32>(vertices);
+    center.y /= static_cast<f32>(vertices);
+    ImGuiIO& io = ImGui::GetIO();
+    io.AddMousePosEvent(center.x, center.y);
+    ui.Frame(draw);
+    io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+    ui.Frame(draw);
+    io.AddMousePosEvent(center.x + 2.0f, center.y);
+    ui.Frame(draw); // a slight pointer wobble is not a drag
+    io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+    ui.Frame(draw);
+    CHECK(panel.Selected() && *panel.Selected() == key);
+    CHECK(doc.Revision() == revision && Near(doc.KeyTime(key), original_time));
+
+    // A real drag still snaps to frames and is one undo step.
+    io.AddMousePosEvent(center.x, center.y);
+    ui.Frame(draw);
+    io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+    ui.Frame(draw);
+    for (f32 offset : {40.0f, 60.0f}) {
+        io.AddMousePosEvent(center.x + offset, center.y);
+        ui.Frame(draw);
+    }
+    io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+    ui.Frame(draw);
+    CHECK(Near(doc.KeyTime(key), 1.5f));
+    CHECK(doc.Undo() && Near(doc.KeyTime(key), original_time));
+}
+
 AETHER_TEST(SequenceEditor_WorkspaceShowsTheSampleSequence) {
     HeadlessImGui ui;
     EditorWorkspace ws;

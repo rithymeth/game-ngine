@@ -252,16 +252,17 @@ void SequencerPanel::DrawTimeline() {
         y += 4.0f;
     }
     // Dragging the selected key moves it (one undo step).
-    if (dragging_key_ && selected_) {
-        if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+    if (dragging_key_) {
+        if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            dragging_key_ = false;
+            doc_.EndEdit();
+        } else if (selected_ && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+            // Pressing a diamond selects it. Only a drag should snap its time.
             const f32 t = std::max(0.0f, std::round(((mouse.x - x0) / pixels_per_second) * s.fps) / s.fps);
             if (std::fabs(t - doc_.KeyTime(*selected_)) > 1e-4f) {
                 const i32 moved = doc_.MoveKey(*selected_, t);
                 if (moved >= 0) selected_->index = static_cast<usize>(moved);
             }
-        } else {
-            dragging_key_ = false;
-            doc_.EndEdit();
         }
     }
     // The playhead.
