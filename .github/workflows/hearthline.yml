@@ -19,11 +19,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - name: Install SDL2 development headers
+        run: sudo apt-get update && sudo apt-get install -y libsdl2-dev
       - name: Configure standalone game
-        run: cmake -S games/HEARTHLINE -B build/hearthline -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+        run: cmake -S games/HEARTHLINE -B build/hearthline -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DHEARTHLINE_BUILD_VISUAL=ON
       - name: Compile with warnings
         run: cmake --build build/hearthline --parallel 2
       - name: Run expedition regressions
         run: ctest --test-dir build/hearthline --output-on-failure
+      - name: Smoke test SDL2 headless render
+        run: SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software build/hearthline/hearthline_visual --smoke --seed 7
       - name: Smoke test CLI
         run: printf 'x\n' | build/hearthline/hearthline_sim 7
