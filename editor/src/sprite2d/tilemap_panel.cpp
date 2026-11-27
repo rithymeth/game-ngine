@@ -232,16 +232,6 @@ void TilemapPanel::Draw() {
         ghost_verdicts_.reset();
         ghost_map_ = doc_.TilemapFile();
     }
-    const auto& io = ImGui::GetIO();
-    if (!dragging_ && !rect_active_ && !io.WantTextInput && !ImGui::IsAnyItemActive() &&
-        !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) {
-        // ImGui maps Cmd to its logical Ctrl modifier on macOS.
-        const bool undo = ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Z);
-        const bool redo_shift = ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_Z);
-        const bool redo_alt = ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Y);
-        if (undo) doc_.Undo();
-        else if (redo_shift || redo_alt) doc_.Redo();
-    }
     DrawTools();
     DrawJumpProofTools();
     ImGui::Separator();
@@ -316,9 +306,23 @@ bool TilemapPanel::FocusCell(usize layer, i32 x, i32 y) {
 }
 
 void TilemapPanel::DrawTools() {
+    bool save_shortcut = false;
+    const auto& io = ImGui::GetIO();
+    if (!dragging_ && !rect_active_ && !io.WantTextInput && !ImGui::IsAnyItemActive() &&
+        !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) {
+        // ImGui maps Cmd to its logical Ctrl modifier on macOS.
+        const bool undo = ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Z);
+        const bool redo_shift = ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_Z);
+        const bool redo_alt = ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Y);
+        if (undo) doc_.Undo();
+        else if (redo_shift || redo_alt) doc_.Redo();
+        save_shortcut = ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_S);
+    }
     if (!doc_.TilemapFile().empty()) {
         ImGui::BeginDisabled(!doc_.dirty());
-        if (ImGui::Button("Save tilemap and tileset")) {
+        const bool clicked = ImGui::Button("Save tilemap and tileset");
+        ImGui::SetItemTooltip("%s", io.ConfigMacOSXBehaviors ? "Save (Cmd+S)" : "Save (Ctrl+S)");
+        if (clicked || (save_shortcut && doc_.dirty())) {
             save_error_.clear();
             if (!doc_.Save(&save_error_) && save_error_.empty()) save_error_ = "Could not save the tilemap and tileset.";
             save_error_revision_ = doc_.Revision();

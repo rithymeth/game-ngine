@@ -1848,6 +1848,63 @@ AETHER_TEST(TilemapEditor_HistoryShortcutsRespectFocusAndTextEditing) {
     CHECK(doc.Map().Get(0, 2, 1) == 5);
 }
 
+AETHER_TEST(TilemapEditor_SaveShortcutWritesBothAssetsAndKeepsFailedEdits) {
+    namespace fs = std::filesystem;
+    const auto dir = fs::temp_directory_path() / ("tilemap-save-shortcut-" + assets::ToString(assets::NewAssetGuid()));
+    const auto map_file = dir / "Map.atilemap";
+    const auto tileset_file = dir / "Ground.atileset";
+    HeadlessImGui ui;
+    auto doc = Doc();
+    TilemapPanel panel(doc);
+    bool focus_other = false;
+    const auto draw = [&] {
+        panel.Draw();
+        if (focus_other) ImGui::SetNextWindowFocus();
+        ImGui::Begin("Other tool");
+        ImGui::End();
+        focus_other = false;
+    };
+    ImGuiIO& io = ImGui::GetIO();
+    const auto save_key = [&] {
+        io.AddKeyEvent(ImGuiMod_Ctrl, true);
+        io.AddKeyEvent(ImGuiKey_S, true);
+        ui.Frame(draw);
+        io.AddKeyEvent(ImGuiKey_S, false);
+        io.AddKeyEvent(ImGuiMod_Ctrl, false);
+        ui.Frame(draw);
+    };
+
+    doc.brush = 3;
+    doc.Apply(1, 1);
+    ui.Frame(draw);
+    save_key();
+    CHECK(doc.dirty() && doc.TilemapFile().empty());
+    if (!doc.Save(map_file, tileset_file)) { CHECK(false); return; }
+    doc.brush = 4;
+    doc.Apply(1, 1);
+    doc.SetSolid(4, true);
+
+    focus_other = true;
+    ui.Frame(draw);
+    ui.Frame(draw);
+    save_key();
+    CHECK(doc.dirty());
+
+    ui.Frame([&] { ImGui::SetWindowFocus(); draw(); });
+    ui.Frame(draw);
+    CHECK(fs::remove(tileset_file) && fs::create_directory(tileset_file));
+    save_key();
+    TilemapData reloaded;
+    CHECK(doc.dirty() && LoadTilemap(map_file, reloaded) && reloaded.Get(0, 1, 1) == 3);
+    CHECK(fs::remove(tileset_file));
+    save_key();
+    Tileset tiles;
+    CHECK(!doc.dirty() && LoadTilemap(map_file, reloaded) && reloaded.Get(0, 1, 1) == 4);
+    CHECK(LoadTileset(tileset_file, tiles) && tiles.IsSolid(4));
+    CHECK(doc.CanUndo());
+    fs::remove_all(dir);
+}
+
 AETHER_TEST(TilemapEditor_RectangleDragCancelsAndClipsWithoutPartialHistory) {
     HeadlessImGui ui;
     TilemapEditDocument doc = Doc();
