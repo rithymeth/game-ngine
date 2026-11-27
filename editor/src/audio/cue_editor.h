@@ -80,6 +80,7 @@ private:
     u32 selected_ = 0;
     f32 output_x_ = 0.0f, output_y_ = 0.0f;
     bool palette_open_ = false, palette_popup_ = false;
+    u32 palette_popup_id_ = 0;
     f32 palette_x_ = 0.0f, palette_y_ = 0.0f;
     std::string palette_filter_;
     audio::CuePlayer* player_ = nullptr;
