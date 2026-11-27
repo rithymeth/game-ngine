@@ -9,6 +9,7 @@
 #include "aether/sprite2d/pixel_camera.h"
 #include "aether/sprite2d/tilemap.h"
 
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -766,6 +767,15 @@ AETHER_TEST(Sprite2D_ViewCullingAndTilemapBatches) {
 
     std::vector<SpriteBatch> all = BuildSpriteBatches(world, resolvers);
     CHECK(all.size() == 1 && all[0].QuadCount() == 101); // 100 ground + 1 on layer b, merged (same texture)
+    if (all.size() != 1 || all[0].vertices.size() != 404 || all[0].indices.size() != 606) { CHECK(false); return; }
+    // The second layer joins the batch after the first layer's vertices.
+    const std::array<u32, 6> quad_indices{0, 1, 2, 0, 2, 3};
+    for (usize q = 0; q < all[0].QuadCount(); ++q) {
+        for (usize i = 0; i < quad_indices.size(); ++i)
+            CHECK(all[0].indices[q * 6 + i] == q * 4 + quad_indices[i]);
+    }
+    const auto& top = all[0].vertices[400];
+    CHECK(top.x == 5.0f && top.y == 6.0f && top.u == 0.5f && top.v == 0.5f);
     const ViewRect view{2.0f, 2.0f, 4.5f, 3.5f}; // tiles x 2..4, y 2..3
     std::vector<SpriteBatch> some = BuildSpriteBatches(world, resolvers, &view);
     CHECK(some.size() == 1 && some[0].QuadCount() == 6);

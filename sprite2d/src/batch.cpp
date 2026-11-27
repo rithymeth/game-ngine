@@ -271,8 +271,16 @@ static std::vector<SpriteBatch> BuildSpriteBatchesImpl(const World& world, const
         }
         SpriteBatch& batch = batches.back();
         const u32 base = static_cast<u32>(batch.vertices.size());
-        batch.vertices.insert(batch.vertices.end(), item.vertices.begin(), item.vertices.end());
-        for (u32 q = 0; q < item.vertices.size() / 4; ++q) {
+        const usize quads = item.vertices.size() / 4;
+        if (batch.vertices.empty()) {
+            // A tilemap layer can already own thousands of vertices. Reuse
+            // that buffer for the first item instead of allocating a copy.
+            batch.vertices = std::move(item.vertices);
+            batch.indices.reserve(quads * 6);
+        } else {
+            batch.vertices.insert(batch.vertices.end(), item.vertices.begin(), item.vertices.end());
+        }
+        for (u32 q = 0; q < quads; ++q) {
             const u32 v = base + q * 4;
             for (u32 i : {0u, 1u, 2u, 0u, 2u, 3u}) batch.indices.push_back(v + i);
         }
