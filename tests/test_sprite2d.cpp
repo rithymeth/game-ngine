@@ -529,6 +529,26 @@ AETHER_TEST(Sprite2D_CompactTilemapSaveMatchesJsonSchema) {
     check_file();
 }
 
+AETHER_TEST(Sprite2D_LargeTilemapSavePreservesEveryCellAcrossFlushes) {
+    TilemapData map;
+    map.Resize(193, 129);
+    map.AddLayer("Ground");
+    map.AddLayer("Trees");
+    map.layers[1].collides = false;
+    for (usize i = 0; i < map.layers[0].cells.size(); ++i) {
+        map.layers[0].cells[i] = (i % 3 == 0) ? std::numeric_limits<i32>::min() : static_cast<i32>(i);
+        map.layers[1].cells[i] = (i % 2 == 0) ? kEmpty : std::numeric_limits<i32>::max();
+    }
+    const auto file = std::filesystem::temp_directory_path() / "aether_sprite2d" / "streamed-save.atilemap";
+    CHECK(SaveTilemap(file, map));
+    std::ifstream stream(file, std::ios::binary);
+    const auto saved = nlohmann::json::parse(stream, nullptr, false);
+    CHECK(saved == TilemapToJson(map));
+    CHECK(!std::filesystem::exists(file.string() + ".tmp"));
+    TilemapData loaded;
+    CHECK(LoadTilemap(file, loaded) && TilemapToJson(loaded) == saved);
+}
+
 AETHER_TEST(Sprite2D_TilemapSaveRejectsInvalidShapeWithoutReplacingFile) {
     const auto file = std::filesystem::temp_directory_path() / "aether_sprite2d" / "save-validation.atilemap";
     TilemapData valid;

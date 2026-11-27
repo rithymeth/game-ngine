@@ -419,10 +419,47 @@ bool SaveTilemap(const std::filesystem::path& file, const TilemapData& m, std::s
             return false;
         }
     }
-    // The cells dominate large maps. Emit them directly instead of constructing
-    // a boxed JSON value per tile before the atomic write. Keep the v1 schema
-    // and JSON string escaping, with short lines for source-control diffs.
-    std::string text = "{\n  \"$type\": \"Tilemap\",\n  \"$version\": ";
+    namespace stdfs = std::filesystem;
+    const auto fail_write = [&] {
+        if (error) *error = "Couldn't write " + file.string();
+        return false;
+    };
+    std::error_code ec;
+    if (!file.parent_path().empty() && !stdfs::is_directory(file.parent_path(), ec)) {
+        ec.clear();
+        stdfs::create_directories(file.parent_path(), ec);
+        if (ec) return fail_write();
+    }
+    auto temp = file;
+    temp += ".tmp";
+    const auto status = stdfs::symlink_status(temp, ec);
+    if (status.type() != stdfs::file_type::not_found && (ec || !stdfs::is_regular_file(status)))
+        return fail_write();
+    std::ofstream stream(temp, std::ios::binary | std::ios::trunc);
+    if (!stream) return fail_write();
+    struct RemoveStaging {
+        stdfs::path& path;
+        std::ofstream& stream;
+        ~RemoveStaging() {
+            if (path.empty()) return;
+            if (stream.is_open()) stream.close();
+            std::error_code ignored;
+            stdfs::remove(path, ignored);
+        }
+    } cleanup{temp, stream};
+
+    // Flush bounded chunks to a sibling file. The complete v1 payload is
+    // published only after the stream has closed successfully.
+    constexpr usize chunk_size = 64u * 1024u;
+    std::string text;
+    text.reserve(chunk_size + 512); // Room for one additional line.
+    const auto flush = [&] {
+        if (text.size() > static_cast<usize>(std::numeric_limits<std::streamsize>::max())) return false;
+        stream.write(text.data(), static_cast<std::streamsize>(text.size()));
+        text.clear();
+        return stream.good();
+    };
+    text = "{\n  \"$type\": \"Tilemap\",\n  \"$version\": ";
     text += std::to_string(kTilemapFormatVersion);
     text += ",\n  \"tileset\": ";
     text += nlohmann::json(assets::ToString(m.tileset)).dump();
@@ -437,7 +474,10 @@ bool SaveTilemap(const std::filesystem::path& file, const TilemapData& m, std::s
         text += ",\n      \"cells\": [";
         for (usize i = 0; i < layer.cells.size(); ++i) {
             if (i != 0) text += ',';
-            if (i % cells_per_line == 0) text += "\n        ";
+            if (i % cells_per_line == 0) {
+                if (text.size() >= chunk_size && !flush()) return fail_write();
+                text += "\n        ";
+            }
             // Up to 10 decimal digits plus the sign for a signed 32-bit cell.
             char digits[12];
             const auto result = std::to_chars(digits, digits + sizeof(digits), layer.cells[i]);
@@ -445,11 +485,19 @@ bool SaveTilemap(const std::filesystem::path& file, const TilemapData& m, std::s
         }
         if (!layer.cells.empty()) text += "\n      ";
         text += "]\n    }";
+        if (text.size() >= chunk_size && !flush()) return fail_write();
     }
     if (!m.layers.empty()) text += "\n  ";
     text += "]\n}";
 
-    return WriteJsonText(file, text, error);
+    if (!flush()) return fail_write();
+    stream.close(); // Some write failures first surface here.
+    if (!stream.good()) return fail_write();
+    ec.clear();
+    stdfs::rename(temp, file, ec);
+    if (ec) return fail_write();
+    temp.clear();
+    return true;
 }
 
 u8 NeighbourMask(const TilemapData& map, usize layer, i32 x, i32 y) {
