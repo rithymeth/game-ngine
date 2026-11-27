@@ -486,16 +486,22 @@ bool SaveTilemap(const std::filesystem::path& file, const TilemapData& m, std::s
         text += names[index];
         text += layer.collides ? ",\n      \"collides\": true" : ",\n      \"collides\": false";
         text += ",\n      \"cells\": [";
-        for (usize i = 0; i < layer.cells.size(); ++i) {
-            if (i != 0) text += ',';
-            if (i % cells_per_line == 0) {
-                if (text.size() >= chunk_size && !flush()) return fail_write();
-                text += "\n        ";
+        for (usize first = 0; first < layer.cells.size();) {
+            if (first != 0) text += ',';
+            if (text.size() >= chunk_size && !flush()) return fail_write();
+            text += "\n        ";
+            const usize count = std::min(cells_per_line, layer.cells.size() - first);
+            // Each signed i32 needs at most 11 characters and a comma.
+            // Append the formatted line once, leaving its final comma out.
+            char line[cells_per_line * 12];
+            char* out = line;
+            const i32* const cells = layer.cells.data() + first;
+            for (usize i = 0; i < count; ++i) {
+                out = std::to_chars(out, line + sizeof(line), cells[i]).ptr;
+                *out++ = ',';
             }
-            // Up to 10 decimal digits plus the sign for a signed 32-bit cell.
-            char digits[12];
-            const auto result = std::to_chars(digits, digits + sizeof(digits), layer.cells[i]);
-            text.append(digits, result.ptr);
+            text.append(line, out - 1);
+            first += count;
         }
         if (!layer.cells.empty()) text += "\n      ";
         text += "]\n    }";

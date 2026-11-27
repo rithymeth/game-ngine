@@ -529,6 +529,27 @@ AETHER_TEST(Sprite2D_CompactTilemapSaveMatchesJsonSchema) {
     check_file();
 }
 
+AETHER_TEST(Sprite2D_TilemapSaveKeepsV1CellLineBoundaries) {
+    TilemapData map;
+    map.Resize(33, 1);
+    const usize layer = map.AddLayer("Quay");
+    map.Fill(layer, 0, 0, 32, 0, std::numeric_limits<i32>::min());
+    CHECK(map.Set(layer, 32, 0, std::numeric_limits<i32>::max()));
+    const auto file = std::filesystem::temp_directory_path() / "aether_sprite2d" / "cell-lines.atilemap";
+    if (!SaveTilemap(file, map)) { CHECK(false); return; }
+    std::ifstream stream(file, std::ios::binary);
+    const std::string bytes((std::istreambuf_iterator<char>(stream)), std::istreambuf_iterator<char>());
+    std::string expected = "\"cells\": [\n        ";
+    for (usize i = 0; i < 32; ++i) {
+        if (i != 0) expected += ',';
+        expected += "-2147483648";
+    }
+    expected += ",\n        2147483647\n      ]";
+    CHECK(bytes.find(expected) != std::string::npos);
+    TilemapData loaded;
+    CHECK(LoadTilemap(file, loaded) && TilemapToJson(loaded) == TilemapToJson(map));
+}
+
 AETHER_TEST(Sprite2D_LargeTilemapSavePreservesEveryCellAcrossFlushes) {
     TilemapData map;
     map.Resize(193, 129);
