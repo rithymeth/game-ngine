@@ -1568,6 +1568,46 @@ AETHER_TEST(Physics2D_WideBoxCastsRespectTheBoxExtents) {
     CHECK(hit.tile_x == 70 && hit.tile_y == 70);
 }
 
+AETHER_TEST(Physics2D_LongCircleCastsDistinguishRoundedCornersFromNearMisses) {
+    World world;
+    const Entity wall = Box(world, Vec3(100000, 3, 0), {1, 1}, BodyType2D::Static, false);
+    Physics2D physics(world);
+    RayHit2D hit;
+    // The squared distance along the ray is much larger than the radius or
+    // lateral gap. A rounded corner must not become a hit just from rounding.
+    CHECK(!physics.CircleCast({0, 0}, {1, 0}, 0.5f, 110000.0f, hit));
+    CHECK(!physics.CircleCast({200000, 0}, {-1, 0}, 0.5f, 110000.0f, hit));
+
+    world.GetComponent<Transform>(wall)->position.y = 1.3f;
+    CHECK(physics.CircleCast({0, 0}, {1, 0}, 0.5f, 110000.0f, hit));
+    CHECK(hit.entity == wall && !hit.tile && Near(hit.distance, 99998.6f, 0.01f));
+    CHECK(Near(hit.point.x, 99999.0f) && Near(hit.point.y, 0.3f));
+    CHECK(Near(hit.normal.x, -0.8f) && Near(hit.normal.y, -0.6f));
+    CHECK(!physics.CircleCast({0, 0}, {1, 0}, 0.5f, 99998.5f, hit));
+    CHECK(physics.CircleCast({200000, 0}, {-1, 0}, 0.5f, 110000.0f, hit));
+    CHECK(hit.entity == wall && Near(hit.distance, 99998.6f, 0.01f));
+    CHECK(Near(hit.point.x, 100001.0f) && Near(hit.point.y, 0.3f));
+    CHECK(Near(hit.normal.x, 0.8f) && Near(hit.normal.y, -0.6f));
+
+    World tile_world;
+    TilemapData map;
+    map.Resize(1, 1);
+    map.AddLayer("Wall");
+    map.Set(0, 0, 0, 1);
+    Tileset tiles;
+    tiles.SetSolid(1, true);
+    TilemapRenderer renderer;
+    renderer.pixels_per_unit = 16.0f;
+    tile_world.CreateEntity(Transform{Vec3(99999, 0.3f, 0), Quaternion::Identity()}, renderer);
+    Resolvers2D resolvers;
+    resolvers.tilemaps = [&](const assets::AssetGuid&) { return &map; };
+    resolvers.tilesets = [&](const assets::AssetGuid&) { return &tiles; };
+    Physics2D tile_physics(tile_world, resolvers);
+    CHECK(tile_physics.CircleCast({0, 0}, {1, 0}, 0.5f, 110000.0f, hit));
+    CHECK(hit.tile && hit.tile_x == 0 && hit.tile_y == 0 && Near(hit.distance, 99998.6f, 0.01f));
+    CHECK(Near(hit.normal.x, -0.8f) && Near(hit.normal.y, -0.6f));
+}
+
 AETHER_TEST(Physics2D_CastsHitClosedTileEdges) {
     World world;
     Tileset tiles;

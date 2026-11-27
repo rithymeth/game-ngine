@@ -337,23 +337,33 @@ bool CircleCastAabb(Vec2 origin, Vec2 dir, f32 radius, Vec2 lo, Vec2 hi, f32 max
     if (dir.y < 0.0f) side(hi.y + radius, origin.y, dir.y, lo.x, hi.x, false, 1.0f);
 
     const Vec2 corners[] = {lo, {lo.x, hi.y}, {hi.x, lo.y}, hi};
+    const f64 vx = dir.x, vy = dir.y;
+    const f64 a = vx * vx + vy * vy;
+    const f64 radius_term = a * static_cast<f64>(radius) * radius;
     for (usize i = 0; i < 4; ++i) {
-        const Vec2 offset = origin - corners[i];
-        const f32 b = offset.Dot(dir);
-        const f32 c = offset.Dot(offset) - radius * radius;
-        const f32 discriminant = b * b - dir.Dot(dir) * c;
-        if (discriminant < 0.0f || dir.Dot(dir) <= 1e-18f) continue;
-        const f32 t = (-b - std::sqrt(discriminant)) / dir.Dot(dir);
-        if (t < 0.0f || t > best) continue;
-        const Vec2 center = origin + dir * t;
-        const bool in_corner_region = (i == 0 && center.x <= lo.x && center.y <= lo.y) ||
-                                      (i == 1 && center.x <= lo.x && center.y >= hi.y) ||
-                                      (i == 2 && center.x >= hi.x && center.y <= lo.y) ||
-                                      (i == 3 && center.x >= hi.x && center.y >= hi.y);
+        const f64 ox = static_cast<f64>(origin.x) - corners[i].x;
+        const f64 oy = static_cast<f64>(origin.y) - corners[i].y;
+        const f64 perpendicular = ox * vy - oy * vx;
+        // b*b - a*c subtracts two large along-ray terms on a long cast.
+        // Compute the equivalent discriminant from lateral distance instead.
+        const f64 discriminant = radius_term - perpendicular * perpendicular;
+        if (discriminant < 0.0 || a <= 1e-18) continue;
+        const f64 root = std::sqrt(discriminant);
+        const f64 distance = (-(ox * vx + oy * vy) - root) / a;
+        if (!(distance >= 0.0 && distance <= max_t)) continue;
+        const f32 t = static_cast<f32>(distance);
+        if (t > best) continue;
+
+        // Reconstruct the local contact from its parallel and perpendicular
+        // components; subtracting distant world positions would lose it again.
+        const f64 dx = (perpendicular * vy - root * vx) / a;
+        const f64 dy = (-perpendicular * vx - root * vy) / a;
+        const bool in_corner_region = (i < 2 ? dx <= 0.0 : dx >= 0.0) &&
+                                      (i % 2 == 0 ? dy <= 0.0 : dy >= 0.0);
         if (!in_corner_region) continue;
-        const Vec2 delta = center - corners[i];
-        const f32 length = delta.Length();
-        if (length > 1e-9f) consider(t, delta * (1.0f / length), corners[i]);
+        const f64 length = std::sqrt(dx * dx + dy * dy);
+        if (length > 1e-9)
+            consider(t, {static_cast<f32>(dx / length), static_cast<f32>(dy / length)}, corners[i]);
     }
     return found;
 }
