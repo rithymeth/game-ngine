@@ -2524,6 +2524,50 @@ AETHER_TEST(TilemapEditor_FindsInvalidPaintAcrossTheMapWithoutAnEdit) {
     CHECK(!panel.FindNextInvalidPaint());
 }
 
+AETHER_TEST(TilemapEditor_FocusAndPaintTargetsExactLongAxisCell) {
+    constexpr i32 axis_limit = 16'777'216;
+    for (const auto& [width, height] : {std::pair{axis_limit, 1}, std::pair{1, axis_limit}, std::pair{31, 17}}) {
+        HeadlessImGui ui;
+        TilemapData map;
+        map.Resize(width, height);
+        map.AddLayer("Ground");
+        TilemapEditDocument doc(std::move(map), {});
+        doc.brush = 3;
+        TilemapPanel panel(doc);
+        ImVec2 center;
+        bool canvas_found = false;
+        const auto draw = [&] {
+            const auto* parent = ImGui::GetCurrentWindowRead();
+            const auto id = ImGui::GetID("##canvas");
+            panel.Draw();
+            for (const auto* child : parent->DC.ChildWindows) {
+                if (child->ChildId != id) continue;
+                const auto start = child->DC.CursorStartPos;
+                center = {(start.x + child->WorkRect.Max.x) * 0.5f, (start.y + child->WorkRect.Max.y) * 0.5f};
+                canvas_found = true;
+            }
+        };
+        auto& io = ImGui::GetIO();
+        for (i32 delta : {18, 19, 20, 21}) {
+            const i32 x = width == axis_limit ? width - delta : width / 2;
+            const i32 y = height == axis_limit ? height - delta : height / 2;
+            CHECK(panel.FocusCell(0, x, y));
+            ui.Frame(draw);
+            if (!canvas_found) { CHECK(false); return; }
+            io.AddMousePosEvent(center.x, center.y);
+            ui.Frame(draw);
+            io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+            ui.Frame(draw);
+            io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+            ui.Frame(draw);
+            CHECK(doc.Map().Get(0, x, y) == 3);
+            CHECK(doc.Map().Get(0, x + 1, y) == kEmpty && doc.Map().Get(0, x - 1, y) == kEmpty);
+            CHECK(doc.Map().Get(0, x, y + 1) == kEmpty && doc.Map().Get(0, x, y - 1) == kEmpty);
+            CHECK(doc.Undo() && !doc.dirty());
+        }
+    }
+}
+
 AETHER_TEST(TilemapEditor_GoToCellCentersDistantCoordinatesWithoutEditing) {
     HeadlessImGui ui;
     TilemapData map;

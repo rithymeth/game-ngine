@@ -651,9 +651,9 @@ void TilemapPanel::DrawCanvas() {
         if (zoom > 0.0f && next != zoom) {
             // Keep the same map point under the pointer. Pan is measured
             // from the canvas's bottom-left, with y pointing up.
-            const f32 correction = 1.0f - next / zoom;
-            pan_x_ += (io.MousePos.x - origin.x - pan_x_) * correction;
-            pan_y_ += (origin.y + size.y - io.MousePos.y - pan_y_) * correction;
+            const f64 correction = 1.0 - static_cast<f64>(next) / zoom;
+            pan_x_ += (static_cast<f64>(io.MousePos.x) - origin.x - pan_x_) * correction;
+            pan_y_ += (static_cast<f64>(origin.y) + size.y - io.MousePos.y - pan_y_) * correction;
         }
         zoom = next;
     }
@@ -666,34 +666,40 @@ void TilemapPanel::DrawCanvas() {
         const auto focus = *pending_focus_;
         pending_focus_.reset();
         if (focus.revision == doc_.Revision()) {
-            pan_x_ = size.x * .5f - (static_cast<f32>(focus.x) + .5f) * zoom;
-            pan_y_ = size.y * .5f - (static_cast<f32>(focus.y) + .5f) * zoom;
+            pan_x_ = size.x * 0.5 - (static_cast<f64>(focus.x) + 0.5) * zoom;
+            pan_y_ = size.y * 0.5 - (static_cast<f64>(focus.y) + 0.5) * zoom;
         }
     }
 
-    // The map's bottom-left is at the canvas's (pan_x, height - pan_y), y up.
-    const f32 base_x = origin.x + pan_x_;
-    const f32 base_y = origin.y + size.y - pan_y_;
-    const auto to_screen_x = [&](i32 x) { return base_x + static_cast<f32>(x) * zoom; };
-    const auto to_screen_y = [&](i32 y) { return base_y - static_cast<f32>(y + 1) * zoom; }; // a cell's top edge
+    // Use double until the last screen-space conversion: on very long maps
+    // the map origin and cell offset can be hundreds of millions of pixels
+    // apart even when the resulting point is inside the canvas.
+    const f64 base_x = origin.x + pan_x_;
+    const f64 base_y = static_cast<f64>(origin.y) + size.y - pan_y_;
+    const auto edge_x = [&](i32 x) { return base_x + static_cast<f64>(x) * zoom; };
+    const auto edge_y = [&](i32 y) { return base_y - static_cast<f64>(y) * zoom; };
+    const auto to_screen_x = [&](i32 x) { return static_cast<f32>(edge_x(x)); };
+    const auto to_screen_y = [&](i32 y) { return static_cast<f32>(edge_y(y + 1)); }; // top edge
 
     ImDrawList* dl = ImGui::GetWindowDrawList();
     dl->PushClipRect(origin, ImVec2(origin.x + size.x, origin.y + size.y), true);
     // Intersect in screen space first so even an enormous map only visits
     // the cells under the visible part of the canvas (including partial cells).
     const ImVec2 clip_min = dl->GetClipRectMin(), clip_max = dl->GetClipRectMax();
-    const ImVec2 visible_min(std::max(clip_min.x, base_x),
-                             std::max(clip_min.y, to_screen_y(static_cast<i32>(map.height) - 1)));
-    const ImVec2 visible_max(std::min(clip_max.x, to_screen_x(static_cast<i32>(map.width))),
-                             std::min(clip_max.y, base_y));
-    if (visible_min.x < visible_max.x && visible_min.y < visible_max.y) {
+    const f64 x0 = std::max(static_cast<f64>(clip_min.x), base_x);
+    const f64 y0 = std::max(static_cast<f64>(clip_min.y), edge_y(static_cast<i32>(map.height)));
+    const f64 x1 = std::min(static_cast<f64>(clip_max.x), edge_x(static_cast<i32>(map.width)));
+    const f64 y1 = std::min(static_cast<f64>(clip_max.y), base_y);
+    if (x0 < x1 && y0 < y1) {
         const auto index = [](f64 value, u32 count) {
             return static_cast<i32>(std::clamp(value, 0.0, static_cast<f64>(count)));
         };
-        const i32 left = index(std::floor((static_cast<f64>(visible_min.x) - base_x) / zoom), map.width);
-        const i32 right = index(std::ceil((static_cast<f64>(visible_max.x) - base_x) / zoom), map.width);
-        const i32 bottom = index(std::floor((static_cast<f64>(base_y) - visible_max.y) / zoom), map.height);
-        const i32 top = index(std::ceil((static_cast<f64>(base_y) - visible_min.y) / zoom), map.height);
+        const i32 left = index(std::floor((x0 - base_x) / zoom), map.width);
+        const i32 right = index(std::ceil((x1 - base_x) / zoom), map.width);
+        const i32 bottom = index(std::floor((base_y - y1) / zoom), map.height);
+        const i32 top = index(std::ceil((base_y - y0) / zoom), map.height);
+        const ImVec2 visible_min(static_cast<f32>(x0), static_cast<f32>(y0));
+        const ImVec2 visible_max(static_cast<f32>(x1), static_cast<f32>(y1));
         dl->AddRectFilled(visible_min, visible_max, IM_COL32(30, 30, 36, 255));
         const auto columns = static_cast<usize>(right - left);
         const auto visible_cell = [&](i32 x, i32 y) {
@@ -714,6 +720,7 @@ void TilemapPanel::DrawCanvas() {
                 for (usize offset = 0; offset < count; ++offset) {
                     const i32 x = left + static_cast<i32>(offset);
                     const i32 raw = row[offset];
+                    if (raw == kEmpty) continue;
                     if (invalid_paint(raw)) {
                         if (marks.empty()) marks.resize(visible_count);
                         marks[visible_cell(x, y)] |= kInvalidPaint;
@@ -755,7 +762,7 @@ void TilemapPanel::DrawCanvas() {
                 dl->AddLine(ImVec2(sx, visible_min.y), ImVec2(sx, visible_max.y), grid_color);
             }
             for (i32 y = bottom; y <= top; ++y) {
-                const f32 sy = base_y - static_cast<f32>(y) * zoom;
+                const f32 sy = static_cast<f32>(edge_y(y));
                 dl->AddLine(ImVec2(visible_min.x, sy), ImVec2(visible_max.x, sy), grid_color);
             }
         }
@@ -763,8 +770,9 @@ void TilemapPanel::DrawCanvas() {
 
     if (!ghost_before_.empty()) {
         const auto screen = [&](const GhostPoint& p) {
-            return ImVec2(base_x + p.x * (zoom * ghost_pixels_per_unit_ / static_cast<f32>(std::max(ts.tile_width, 1u))),
-                          base_y - p.y * (zoom * ghost_pixels_per_unit_ / static_cast<f32>(std::max(ts.tile_height, 1u))));
+            const f64 scale = static_cast<f64>(zoom) * ghost_pixels_per_unit_;
+            return ImVec2(static_cast<f32>(base_x + p.x * scale / std::max(ts.tile_width, 1u)),
+                          static_cast<f32>(base_y - p.y * scale / std::max(ts.tile_height, 1u)));
         };
         const auto path = [&](const std::vector<GhostPoint>& points, ImU32 color) {
             const usize stride = std::max<usize>(1, (points.size() + 2047) / 2048);
@@ -792,9 +800,15 @@ void TilemapPanel::DrawCanvas() {
     }
 
     // No mouse position is reported when the host loses focus.
-    const bool mouse_valid = !io.AppFocusLost && ImGui::IsMousePosValid();
-    i32 cx = 0, cy = 0;
-    if (mouse_valid) LocalToCell(io.MousePos.x - base_x, base_y - io.MousePos.y, zoom, cx, cy);
+    const bool mouse_valid = !io.AppFocusLost && ImGui::IsMousePosValid() &&
+                             std::isfinite(base_x) && std::isfinite(base_y) && std::isfinite(zoom) && zoom > 0.0f;
+    const auto to_cell = [&](f64 local) {
+        return static_cast<i32>(std::clamp(std::floor(local / zoom),
+                                          static_cast<f64>(std::numeric_limits<i32>::min()),
+                                          static_cast<f64>(std::numeric_limits<i32>::max())));
+    };
+    const i32 cx = mouse_valid ? to_cell(io.MousePos.x - base_x) : 0;
+    const i32 cy = mouse_valid ? to_cell(base_y - io.MousePos.y) : 0;
     const bool on_map = mouse_valid && hovered && map.InBounds(cx, cy);
     const bool left = ImGui::IsMouseDown(ImGuiMouseButton_Left) && ImGui::IsItemActive();
     const bool right = ImGui::IsMouseDown(ImGuiMouseButton_Right) && ImGui::IsItemActive();

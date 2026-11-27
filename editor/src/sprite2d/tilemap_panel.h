@@ -68,7 +68,7 @@ private:
     struct PendingFocus { i32 x, y; u64 revision; };
     std::optional<PendingFocus> pending_focus_;
     static constexpr f32 kDefaultZoom = 24.0f, kDefaultPan = 8.0f;
-    f32 pan_x_ = kDefaultPan, pan_y_ = kDefaultPan;
+    f64 pan_x_ = kDefaultPan, pan_y_ = kDefaultPan;
     bool dragging_ = false;
     struct BrushSample {
         i32 x, y;
