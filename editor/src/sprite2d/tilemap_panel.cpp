@@ -527,7 +527,17 @@ void TilemapPanel::DrawCanvas() {
                            ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
     const bool hovered = ImGui::IsItemHovered();
     ImGuiIO& io = ImGui::GetIO();
-    if (hovered && io.MouseWheel != 0.0f) zoom = std::clamp(zoom * (io.MouseWheel > 0 ? 1.15f : 1.0f / 1.15f), 6.0f, 64.0f);
+    if (hovered && io.MouseWheel != 0.0f) {
+        const f32 next = std::clamp(zoom * (io.MouseWheel > 0 ? 1.15f : 1.0f / 1.15f), 6.0f, 64.0f);
+        if (zoom > 0.0f && next != zoom) {
+            // Keep the same map point under the pointer. Pan is measured
+            // from the canvas's bottom-left, with y pointing up.
+            const f32 correction = 1.0f - next / zoom;
+            pan_x_ += (io.MousePos.x - origin.x - pan_x_) * correction;
+            pan_y_ += (origin.y + size.y - io.MousePos.y - pan_y_) * correction;
+        }
+        zoom = next;
+    }
     if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Middle, 0.0f)) {
         pan_x_ += io.MouseDelta.x;
         pan_y_ += io.MouseDelta.y;

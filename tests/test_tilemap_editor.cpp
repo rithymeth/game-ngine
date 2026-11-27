@@ -452,6 +452,44 @@ AETHER_TEST(TilemapEditor_PanelDrawsHeadless) {
     }
 }
 
+AETHER_TEST(TilemapEditor_WheelZoomKeepsTheHoveredCellUnderTheCursor) {
+    HeadlessImGui ui;
+    auto doc = Doc();
+    doc.brush = 3;
+    TilemapPanel panel(doc);
+    ImVec2 bottom_left;
+    const auto draw = [&] {
+        panel.Draw();
+        const auto& padding = ImGui::GetStyle().WindowPadding;
+        bottom_left = {ImGui::GetItemRectMin().x + padding.x + 8,
+                       ImGui::GetItemRectMax().y - padding.y - 8};
+    };
+    ui.Frame(draw);
+    auto& io = ImGui::GetIO();
+    io.AddMousePosEvent(bottom_left.x + 5.5f * panel.zoom, bottom_left.y - 4.5f * panel.zoom);
+    ui.Frame(draw);
+    const f32 starting_zoom = panel.zoom;
+    io.AddMouseWheelEvent(0.0f, 1.0f);
+    ui.Frame(draw);
+    CHECK(panel.zoom > starting_zoom && !doc.dirty() && !doc.CanUndo());
+    io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+    ui.Frame(draw);
+    io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+    ui.Frame(draw);
+    CHECK(doc.Map().Get(0, 5, 4) == 3);
+    CHECK(doc.Map().Get(0, 4, 3) == kEmpty);
+    CHECK(doc.Undo() && doc.Map().Get(0, 5, 4) == kEmpty && !doc.CanUndo());
+
+    io.AddMouseWheelEvent(0.0f, -1.0f);
+    ui.Frame(draw);
+    CHECK(panel.zoom < starting_zoom + 0.01f && !doc.dirty());
+    io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+    ui.Frame(draw);
+    io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+    ui.Frame(draw);
+    CHECK(doc.Map().Get(0, 5, 4) == 3);
+}
+
 AETHER_TEST(TilemapEditor_FastPointerDragsPaintAndEraseEveryCellAsOneStroke) {
     HeadlessImGui ui;
     TilemapEditDocument doc = Doc();
