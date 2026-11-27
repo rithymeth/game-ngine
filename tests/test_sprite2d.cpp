@@ -1608,6 +1608,41 @@ AETHER_TEST(Physics2D_LongCircleCastsDistinguishRoundedCornersFromNearMisses) {
     CHECK(Near(hit.normal.x, -0.8f) && Near(hit.normal.y, -0.6f));
 }
 
+AETHER_TEST(Physics2D_LongQueriesAgainstCirclesPreserveLateralDistance) {
+    World world;
+    const Entity orb = Box(world, Vec3(100000, 0.3f, 0), {1, 1}, BodyType2D::Static, false);
+    auto* collider = world.GetComponent<Collider2D>(orb);
+    collider->shape = Shape2D::Circle;
+    collider->radius = 0.5f;
+    Physics2D physics(world);
+    RayHit2D hit;
+    for (f32 sign : {1.0f, -1.0f}) {
+        const Vec2 origin{sign > 0.0f ? 0.0f : 200000.0f, 0.0f};
+        const Vec2 dir{sign, 0.0f};
+        CHECK(physics.Raycast(origin, dir, 110000.0f, hit));
+        CHECK(hit.entity == orb && Near(hit.distance, 99999.6f, 0.01f));
+        CHECK(Near(hit.normal.x, -sign * 0.8f) && Near(hit.normal.y, -0.6f));
+        const auto hits = physics.RaycastAll(origin, dir, 110000.0f);
+        CHECK(hits.size() == 1);
+        if (hits.size() == 1) {
+            CHECK(hits[0].entity == orb && hits[0].distance == hit.distance);
+            CHECK(hits[0].normal.x == hit.normal.x && hits[0].normal.y == hit.normal.y);
+        }
+        CHECK(physics.CircleCast(origin, dir, 0.75f, 110000.0f, hit));
+        CHECK(hit.entity == orb && Near(hit.distance, 99998.785f, 0.01f));
+        CHECK(Near(hit.normal.x, -sign * std::sqrt(1.0f - 0.24f * 0.24f)) && Near(hit.normal.y, -0.24f));
+        CHECK(!physics.CircleCast(origin, dir, 0.75f, 99998.5f, hit));
+    }
+
+    auto* transform = world.GetComponent<Transform>(orb);
+    transform->position.y = 2.0f; // outside both the collider and the expanded sweep
+    CHECK(!physics.Raycast({0, 0}, {1, 0}, 110000.0f, hit));
+    CHECK(physics.RaycastAll({0, 0}, {1, 0}, 110000.0f).empty());
+    CHECK(!physics.CircleCast({0, 0}, {1, 0}, 0.75f, 110000.0f, hit));
+    CHECK(physics.CircleCast({100000, 2}, {1, 0}, 0.75f, 0.0f, hit));
+    CHECK(hit.distance == 0.0f && hit.normal.x == 0.0f && hit.normal.y == 1.0f);
+}
+
 AETHER_TEST(Physics2D_CastsHitClosedTileEdges) {
     World world;
     Tileset tiles;

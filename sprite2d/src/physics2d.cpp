@@ -287,6 +287,36 @@ bool SlabRay(Vec2 origin, Vec2 dir, Vec2 lo, Vec2 hi, f32 max_t, f32& t_out, Vec
     return true;
 }
 
+bool SweepCircle(Vec2 origin, Vec2 dir, Vec2 center, f64 radius, f32 max_t, f32& time, Vec2& normal) {
+    f64 dx = static_cast<f64>(origin.x) - center.x;
+    f64 dy = static_cast<f64>(origin.y) - center.y;
+    const f64 radius_sq = radius * radius;
+    const f64 offset_sq = dx * dx + dy * dy;
+    time = 0.0f;
+    if (offset_sq > radius_sq) {
+        const f64 vx = dir.x, vy = dir.y;
+        const f64 a = vx * vx + vy * vy;
+        const f64 toward = -(dx * vx + dy * vy);
+        if (toward <= 0.0 || a <= 1e-18) return false;
+        const f64 perpendicular = dx * vy - dy * vx;
+        // Avoid cancellation between squared along-ray distances.
+        const f64 discriminant = a * radius_sq - perpendicular * perpendicular;
+        if (discriminant < 0.0) return false;
+        const f64 root = std::sqrt(discriminant);
+        const f64 distance = (offset_sq - radius_sq) / (toward + root);
+        if (!(distance >= 0.0 && distance <= std::numeric_limits<f32>::max())) return false;
+        time = static_cast<f32>(distance);
+        if (time > max_t) return false; // Compare in the public hit-distance precision to preserve ties.
+
+        // Preserve the local normal even when the world-space hit point rounds.
+        dx = (perpendicular * vy - root * vx) / a;
+        dy = (-perpendicular * vx - root * vy) / a;
+    }
+    const f64 length = std::sqrt(dx * dx + dy * dy);
+    normal = length > 1e-9 ? Vec2{static_cast<f32>(dx / length), static_cast<f32>(dy / length)} : Vec2{0.0f, 1.0f};
+    return true;
+}
+
 bool CircleCastAabb(Vec2 origin, Vec2 dir, f32 radius, Vec2 lo, Vec2 hi, f32 max_t,
                     f32& t_out, Vec2& normal, Vec2& point_out) {
     f32 best = max_t;
@@ -674,27 +704,7 @@ bool Physics2D::Raycast(Vec2 origin, Vec2 dir, f32 max_distance, RayHit2D& out, 
             hit = SlabRay(origin, dir, {center.x - c->half_extents.x, center.y - c->half_extents.y},
                           {center.x + c->half_extents.x, center.y + c->half_extents.y}, best, hit_t, n);
         } else {
-            const Vec2 oc = origin - center;
-            const f32 b = oc.Dot(dir), cc = oc.Dot(oc) - c->radius * c->radius;
-            const f32 disc = b * b - cc;
-            if (cc <= 0.0f) {
-                hit = true;
-                hit_t = 0.0f;
-                const f32 distance = oc.Length();
-                n = distance > 1e-9f ? oc * (1.0f / distance) : Vec2{0.0f, 1.0f};
-            } else if (disc >= 0.0f) {
-                const f32 s = std::sqrt(disc);
-                f32 tt = -b - s;
-                if (tt < 0.0f) tt = -b + s;
-                if (tt >= 0.0f && tt <= best) {
-                    hit = true;
-                    hit_t = tt;
-                    const Vec2 p = origin + dir * tt;
-                    const Vec2 d = p - center;
-                    const f32 dl = d.Length();
-                    n = dl > 1e-9f ? d * (1.0f / dl) : Vec2{0, 1};
-                }
-            }
+            hit = SweepCircle(origin, dir, center, c->radius, best, hit_t, n);
         }
         if (hit && hit_t <= best) {
             RayHit2D candidate;
@@ -779,21 +789,7 @@ std::vector<RayHit2D> Physics2D::RaycastAll(Vec2 origin, Vec2 dir, f32 max_dista
                               {center.x + collider->half_extents.x, center.y + collider->half_extents.y},
                               max_distance, t, normal);
         } else {
-            const Vec2 offset = origin - center;
-            const f32 a = dir.Dot(dir), b = offset.Dot(dir), c = offset.Dot(offset) - collider->radius * collider->radius;
-            const f32 discriminant = b * b - a * c;
-            if (c <= 0.0f) {
-                did_hit = true;
-                t = 0.0f;
-            } else if (discriminant >= 0.0f) {
-                t = (-b - std::sqrt(discriminant)) / a;
-                did_hit = t >= 0.0f && t <= max_distance;
-            }
-            if (did_hit) {
-                Vec2 delta = origin + dir * t - center;
-                const f32 length = delta.Length();
-                normal = length > 1e-9f ? delta * (1.0f / length) : Vec2{0.0f, 1.0f};
-            }
+            did_hit = SweepCircle(origin, dir, center, collider->radius, max_distance, t, normal);
         }
         if (!did_hit || t < 0.0f || t > max_distance) return;
         RayHit2D hit;
@@ -896,24 +892,11 @@ bool Physics2D::CircleCast(Vec2 origin, Vec2 dir, f32 radius, f32 max_distance, 
             return;
         }
 
-        const f32 combined_radius = radius + collider->radius;
-        const Vec2 offset = origin - center;
-        const f32 a = dir.Dot(dir), b = offset.Dot(dir), c = offset.Dot(offset) - combined_radius * combined_radius;
-        const f32 discriminant = b * b - a * c;
         f32 t = 0.0f;
-        if (c <= 0.0f) {
-            t = 0.0f;
-        } else if (discriminant >= 0.0f) {
-            t = (-b - std::sqrt(discriminant)) / a;
-        } else {
-            return;
-        }
-        if (t < 0.0f || t > best) return;
-        const Vec2 cast_center = origin + dir * t;
-        Vec2 normal = cast_center - center;
-        const f32 normal_length = normal.Length();
-        normal = normal_length > 1e-9f ? normal * (1.0f / normal_length) : Vec2{0.0f, 1.0f};
-        set_hit(t, center + normal * collider->radius, normal, e, false, 0, 0);
+        Vec2 normal{};
+        const f64 combined_radius = static_cast<f64>(radius) + collider->radius;
+        if (SweepCircle(origin, dir, center, combined_radius, best, t, normal))
+            set_hit(t, center + normal * collider->radius, normal, e, false, 0, 0);
     });
 
     if (tiles_.tilemaps && tiles_.tilesets && (mask & 1u) != 0) {
