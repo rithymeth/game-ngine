@@ -438,34 +438,44 @@ void Physics2D::Step(f32 dt) {
 
     // Gather the bodies.
     std::vector<Body> bodies;
-    std::vector<Entity> entities;
-    EachEntity(world_, [&](Entity e) {
-        if (world_.GetComponent<Transform>(e) && world_.GetComponent<Collider2D>(e)) entities.push_back(e);
-    });
-    for (Entity e : entities) {
-        Body b;
-        b.e = e;
-        b.transform = world_.GetComponent<Transform>(e);
-        const Collider2D* c = world_.GetComponent<Collider2D>(e);
-        b.rb = world_.GetComponent<Rigidbody2D>(e);
-        if (!IsValidCollider(*c, *b.transform) || (b.rb && !IsValidRigidbody(*b.rb))) continue;
-        b.shape = c->shape;
-        b.half = c->half_extents;
-        b.radius = c->radius;
-        b.offset = c->offset;
-        b.friction = c->friction;
-        b.restitution = c->restitution;
-        b.trigger = c->trigger;
-        b.layer = c->layer;
-        b.mask = c->mask;
-        b.p = {b.transform->position.x + c->offset.x, b.transform->position.y + c->offset.y};
-        if (b.rb) {
-            b.v = b.rb->velocity;
-            b.dynamic = b.rb->type == BodyType2D::Dynamic;
-            b.inv_mass = b.dynamic && !c->trigger ? 1.0f / std::max(b.rb->mass, 1e-3f) : 0.0f;
+    const auto transform_id = GetComponentId<Transform>();
+    const auto collider_id = GetComponentId<Collider2D>();
+    const auto rigidbody_id = GetComponentId<Rigidbody2D>();
+    world_.ForEachArchetype([&](const Archetype& archetype) {
+        if (!archetype.Has(transform_id) || !archetype.Has(collider_id)) return;
+        for (usize chunk = 0; chunk < archetype.ChunkCount(); ++chunk) {
+            const u32 count = archetype.ChunkEntityCount(chunk);
+            if (count == 0) continue;
+            const Entity* entities = archetype.EntityArray(chunk);
+            auto* transforms = static_cast<Transform*>(archetype.ComponentArray(chunk, transform_id));
+            const auto* colliders = static_cast<const Collider2D*>(archetype.ComponentArray(chunk, collider_id));
+            auto* rigidbodies = static_cast<Rigidbody2D*>(archetype.ComponentArray(chunk, rigidbody_id));
+            for (u32 i = 0; i < count; ++i) {
+                Body b;
+                b.e = entities[i];
+                b.transform = &transforms[i];
+                const Collider2D* c = &colliders[i];
+                b.rb = rigidbodies ? &rigidbodies[i] : nullptr;
+                if (!IsValidCollider(*c, *b.transform) || (b.rb && !IsValidRigidbody(*b.rb))) continue;
+                b.shape = c->shape;
+                b.half = c->half_extents;
+                b.radius = c->radius;
+                b.offset = c->offset;
+                b.friction = c->friction;
+                b.restitution = c->restitution;
+                b.trigger = c->trigger;
+                b.layer = c->layer;
+                b.mask = c->mask;
+                b.p = {b.transform->position.x + c->offset.x, b.transform->position.y + c->offset.y};
+                if (b.rb) {
+                    b.v = b.rb->velocity;
+                    b.dynamic = b.rb->type == BodyType2D::Dynamic;
+                    b.inv_mass = b.dynamic && !c->trigger ? 1.0f / std::max(b.rb->mass, 1e-3f) : 0.0f;
+                }
+                bodies.push_back(b);
+            }
         }
-        bodies.push_back(b);
-    }
+    });
     body_count_ = bodies.size();
 
     // Integrate velocities and positions.

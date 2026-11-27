@@ -1199,6 +1199,40 @@ void Run(Physics2D& p, int steps, f32 dt = 1.0f / 60.0f) {
 
 } // namespace
 
+AETHER_TEST(Physics2D_BodyGatherKeepsChunkColumnsAndLiveMembershipAligned) {
+    World world;
+    Physics2DSettings settings;
+    settings.gravity = {0, 0};
+    Physics2D physics(world, {}, settings);
+    const auto scenery = world.CreateEntity(Transform{Vec3(0, 20, 0), Quaternion::Identity()});
+    world.CreateEntity(Collider2D{}); // collision data without a transform is not a body
+    Box(world, Vec3(-10, 0, 0), {0.5f, 0.5f}, BodyType2D::Static, false);
+
+    std::vector<Entity> moving;
+    for (int i = 0; i < 520; ++i) {
+        Rigidbody2D body;
+        body.type = BodyType2D::Dynamic;
+        body.linear_damping = 0.0f;
+        body.velocity = {i % 2 == 0 ? 6.0f : 12.0f, 0.0f};
+        moving.push_back(world.CreateEntity(Transform{Vec3(8.0f * i, 0, 0), Quaternion::Identity()},
+                                            Collider2D{}, body));
+    }
+    constexpr f32 step = 1.0f / 60.0f;
+    physics.Step(step);
+    CHECK(physics.BodyCount() == moving.size() + 1);
+    for (usize i : {0u, 257u, 519u}) {
+        const f32 delta = i % 2 == 0 ? 0.1f : 0.2f;
+        CHECK(Near(world.GetComponent<Transform>(moving[i])->position.x, 8.0f * i + delta, 0.001f));
+    }
+    world.RemoveComponent<Collider2D>(moving.front());
+    world.AddComponent<Collider2D>(scenery);
+    physics.Step(step);
+    CHECK(physics.BodyCount() == moving.size() + 1);
+    CHECK(Near(world.GetComponent<Transform>(moving.front())->position.x, 0.1f));
+    CHECK(Near(world.GetComponent<Transform>(moving.back())->position.x, 8.0f * 519 + 0.4f, 0.001f));
+    CHECK(Near(world.GetComponent<Transform>(scenery)->position.y, 20.0f));
+}
+
 AETHER_TEST(Physics2D_FallsAndRestsOnAFloor) {
     World world;
     const Entity floor = Box(world, Vec3(0, -0.5f, 0), Vec2{10, 0.5f}, BodyType2D::Static, false);
