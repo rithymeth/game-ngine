@@ -1110,18 +1110,16 @@ std::vector<Entity> Physics2D::OverlapCircle(Vec2 center, f32 radius, u32 mask) 
     std::vector<Entity> result;
     if (!IsFinite(center) || !std::isfinite(radius) || radius < 0.0f) return result;
     const f32 radius_sq = radius * radius;
-    EachEntity(world_, [&](Entity e) {
-        const Transform* t = world_.GetComponent<Transform>(e);
-        const Collider2D* c = world_.GetComponent<Collider2D>(e);
-        if (!t || !c || !IsValidCollider(*c, *t) || (c->layer & mask) == 0) return;
-        const Vec2 p{t->position.x + c->offset.x, t->position.y + c->offset.y};
-        if (c->shape == Shape2D::Circle) {
+    EachCollider(world_, [&](Entity e, const Transform& t, const Collider2D& c) {
+        if (!IsValidCollider(c, t) || (c.layer & mask) == 0) return;
+        const Vec2 p{t.position.x + c.offset.x, t.position.y + c.offset.y};
+        if (c.shape == Shape2D::Circle) {
             const Vec2 delta = p - center;
-            const f32 combined = radius + c->radius;
+            const f32 combined = radius + c.radius;
             if (delta.Dot(delta) <= combined * combined) result.push_back(e);
         } else {
-            const Vec2 closest{std::clamp(center.x, p.x - c->half_extents.x, p.x + c->half_extents.x),
-                               std::clamp(center.y, p.y - c->half_extents.y, p.y + c->half_extents.y)};
+            const Vec2 closest{std::clamp(center.x, p.x - c.half_extents.x, p.x + c.half_extents.x),
+                               std::clamp(center.y, p.y - c.half_extents.y, p.y + c.half_extents.y)};
             const Vec2 delta = closest - center;
             if (delta.Dot(delta) <= radius_sq) result.push_back(e);
         }

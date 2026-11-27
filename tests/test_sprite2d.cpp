@@ -1679,6 +1679,29 @@ AETHER_TEST(Physics2D_AllTileRaysKeepMixedHitsOrderedAndLimited) {
     CHECK(live.size() == 2 && live.front().entity == crate && live.back().entity == orb && map_lookups == 3);
 }
 
+AETHER_TEST(Physics2D_CircleOverlapKeepsTriggersMasksAndLiveColliderEdits) {
+    World world;
+    const Entity trigger = world.CreateEntity(Transform{Vec3(1.5f, 0, 0), Quaternion::Identity()});
+    const Entity box = Box(world, Vec3(0, 1.5f, 0), {0.5f, 0.5f}, BodyType2D::Static, false);
+    const Entity other_layer = Box(world, Vec3(-0.5f, 0, 0), {0.5f, 0.5f}, BodyType2D::Static, false);
+    world.GetComponent<Collider2D>(other_layer)->layer = 2;
+    world.CreateEntity(Transform{Vec3(0, 0, 0), Quaternion::Identity()});
+    world.CreateEntity(Collider2D{});
+    Collider2D circle;
+    circle.shape = Shape2D::Circle;
+    circle.radius = 0.5f;
+    circle.trigger = true;
+    world.AddComponent<Collider2D>(trigger, circle);
+
+    Physics2D physics(world);
+    CHECK(physics.OverlapCircle({0, 0}, 1.0f, 1u) == (std::vector<Entity>{trigger, box}));
+    CHECK(physics.OverlapCircle({0, 0}, 1.0f, 2u) == (std::vector<Entity>{other_layer}));
+    world.GetComponent<Transform>(trigger)->position.x = std::nextafter(1.5f, 2.0f);
+    CHECK(physics.OverlapCircle({0, 0}, 1.0f, 1u) == (std::vector<Entity>{box}));
+    world.RemoveComponent<Collider2D>(box);
+    CHECK(physics.OverlapCircle({0, 0}, 1.0f, 1u).empty());
+}
+
 AETHER_TEST(Physics2D_RaycastsAndOverlaps) {
     World world;
     Tileset ts;
