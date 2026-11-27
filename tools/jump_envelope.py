@@ -2,6 +2,7 @@
 """Experimental Jump Proof timing sweep for one captured press/release pair."""
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -51,6 +52,21 @@ def variants(path, key, press_frame, radius):
     if 0 not in trials:
         raise ValueError("unshifted pulse overlaps another event for the same key")
     return trials, skipped
+
+
+def evidence_fingerprints(player):
+    members = {"player": player, "PackageManifest.json": player.parent / "PackageManifest.json",
+               "Paks/Game.apak": player.parent / "Paks" / "Game.apak"}
+    fingerprints = {}
+    for name, path in members.items():
+        if not path.is_file():
+            raise ValueError(f"{player.name}: missing evidence file {name}")
+        digest = hashlib.sha256()
+        with path.open("rb") as source:
+            for block in iter(lambda: source.read(1024 * 1024), b""):
+                digest.update(block)
+        fingerprints[name] = digest.hexdigest()
+    return fingerprints
 
 
 def run_trial(player, route, root, label):
@@ -103,6 +119,8 @@ def main():
     parser.add_argument("--radius", type=int, default=6, choices=range(1, MAX_RADIUS + 1))
     parser.add_argument("--require-preserved-offsets", action="store_true",
                         help="exit 5 if the candidate loses any passing baseline offset")
+    parser.add_argument("--capture-evidence", action="store_true",
+                        help="fingerprint staged files and include a replay for the nearest lost offset")
     parser.add_argument("--output", type=Path, help="write to a new JSON file instead of stdout")
     args = parser.parse_args()
     if args.require_preserved_offsets and args.candidate is None:
@@ -116,17 +134,32 @@ def main():
         report = {"schema": "aether.jump-envelope.experimental.v1", "key": args.key,
                   "press_frame": args.press_frame, "radius": args.radius, "skipped_offsets": skipped,
                   "scene": trials[0]["scene"], "fixed_hz": trials[0]["fixed_hz"]}
+        players = {"baseline": args.player.resolve(strict=True)}
+        if args.candidate is not None:
+            players["candidate"] = args.candidate.resolve(strict=True)
+        snapshots = ({label: evidence_fingerprints(player) for label, player in players.items()}
+                     if args.capture_evidence else {})
         with tempfile.TemporaryDirectory(prefix="aether-jump-envelope-") as scratch:
             root = Path(scratch)
-            before = report["baseline"] = sweep(args.player.resolve(strict=True), trials, root / "before")
+            before = report["baseline"] = sweep(players["baseline"], trials, root / "before")
             if args.require_preserved_offsets and 0 not in before["pass_offsets"]:
                 raise ValueError("the original route does not pass on the baseline package")
             if args.candidate is not None:
-                after = report["candidate"] = sweep(args.candidate.resolve(strict=True), trials, root / "after")
+                after = report["candidate"] = sweep(players["candidate"], trials, root / "after")
                 old, new = set(before["pass_offsets"]), set(after["pass_offsets"])
                 report.update(lost_pass_offsets=sorted(old - new), gained_pass_offsets=sorted(new - old))
         if args.require_preserved_offsets:
             report["gate"] = {"policy": "preserve-pass-offsets", "passed": not report["lost_pass_offsets"]}
+        if args.capture_evidence:
+            for label, player in players.items():
+                if evidence_fingerprints(player) != snapshots[label]:
+                    raise ValueError(f"{player.name}: package files changed during the sweep")
+            evidence = report["evidence"] = {f"{label}_sha256": files for label, files in snapshots.items()}
+            evidence["reference_route"] = trials[0]
+            lost = report.get("lost_pass_offsets", [])
+            if lost:
+                offset = min(lost, key=lambda value: (abs(value), value))
+                evidence["nearest_lost_replay"] = {"offset": offset, "route": trials[offset]}
         receipt = json.dumps(report, allow_nan=False)
         if args.output is None:
             print(receipt)
