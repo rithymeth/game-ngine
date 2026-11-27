@@ -1975,6 +1975,49 @@ AETHER_TEST(TilemapEditor_CommandShortcutsUseTheRealWindowInputBridge) {
     }
 }
 
+AETHER_TEST(TilemapEditor_StaleConcreteBrushCannotSpreadOutsideTheSheet) {
+    const auto make_doc = [](bool textured) {
+        TilemapData map;
+        map.Resize(3, 2);
+        map.AddLayer("Ground");
+        map.Set(0, 0, 0, 6); // stale cell, just past a six-tile sheet
+        map.Set(0, 1, 0, 5); // last valid tile
+        Tileset tiles;
+        tiles.texture_width = 48;
+        tiles.texture_height = 32;
+        if (textured) tiles.texture = assets::NewAssetGuid();
+        return TilemapEditDocument(std::move(map), std::move(tiles));
+    };
+    auto doc = make_doc(true);
+    doc.tool = TileTool::Pick;
+    doc.Apply(0, 0);
+    CHECK(doc.brush == 6);
+    const auto revision = doc.Revision();
+    doc.tool = TileTool::Paint;
+    doc.Apply(2, 0);
+    doc.tool = TileTool::Fill;
+    doc.Apply(2, 1);
+    doc.tool = TileTool::Rectangle;
+    doc.Rectangle(0, 1, 2, 1);
+    CHECK(doc.Revision() == revision && !doc.CanUndo() && !doc.dirty());
+    CHECK(doc.Map().Get(0, 0, 0) == 6 && doc.Map().Get(0, 1, 0) == 5 &&
+          doc.Map().Get(0, 2, 0) == kEmpty && doc.Map().Get(0, 2, 1) == kEmpty);
+    doc.tool = TileTool::Erase;
+    doc.Apply(0, 0);
+    CHECK(doc.Map().Get(0, 0, 0) == kEmpty && doc.Undo());
+    doc.tool = TileTool::Pick;
+    doc.Apply(1, 0);
+    doc.tool = TileTool::Rectangle;
+    doc.Rectangle(0, 1, 2, 1);
+    CHECK(doc.Map().Get(0, 2, 1) == 5);
+
+    // Untextured practice maps intentionally accept unrestricted swatch IDs.
+    auto swatches = make_doc(false);
+    swatches.brush = 36;
+    swatches.Apply(2, 0);
+    CHECK(swatches.Map().Get(0, 2, 0) == 36 && swatches.CanUndo());
+}
+
 AETHER_TEST(TilemapEditor_MissingAutotileBrushCannotPaintAfterUndo) {
     auto doc = Doc();
     const auto rule = doc.AddAutotile("River");

@@ -392,6 +392,8 @@ void TilemapPanel::DrawTools() {
     if (ImGui::SmallButton("Find next invalid tile")) FindNextInvalidPaint();
     if (doc_.HasMissingAutotileBrush())
         ImGui::TextWrapped("This autotile rule no longer exists. Pick another brush to paint.");
+    else if (doc_.HasOutOfGridBrush())
+        ImGui::TextWrapped("Tile %d is outside the current tileset. Pick a tile from the palette to paint.", doc_.brush);
     if (invalid_search_revision_ == doc_.Revision()) {
         if (invalid_paint_cell_) {
             const auto& hit = *invalid_paint_cell_;
