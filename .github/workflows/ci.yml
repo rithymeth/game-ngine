@@ -881,6 +881,7 @@ jobs:
           # The build tools and the player: create, localize, package and run a project.
           Copy-Item build/tools/new/Release/aether_new.exe $out/
           Copy-Item build/tools/loc/Release/aether_loc.exe $out/
+          Copy-Item build/tools/sprite_grid/Release/aether_sprite_grid.exe $out/
           Copy-Item build/tools/package/Release/aether_package.exe $out/
           Copy-Item build/tools/cook/Release/aether_cook.exe $out/
           Copy-Item build/tools/pak/Release/aether_pak.exe $out/
@@ -894,7 +895,7 @@ jobs:
           & build/tools/docgen/Release/aether_docgen.exe --out $out/api
           if ($LASTEXITCODE -ne 0) { throw "aether_docgen failed" }
           Set-Content -Path (Join-Path $out "EDITOR_README.txt") -Value @(
-            "This package carries aether_new, aether_loc, aether_package, aether_cook, aether_pak, the player and the assets.",
+            "This package carries aether_new, aether_loc, aether_sprite_grid, aether_package, aether_cook, aether_pak, the player and the assets.",
             "The editor is aether_editor_shell (Dear ImGui over Vulkan); build it from source where Vulkan is available."
           ) -Encoding utf8
           Copy-Item -Recurse assets $out/assets
@@ -1099,10 +1100,12 @@ jobs:
     if: ${{ true }} # Windows validates pull requests, pushes, nightlies and manual runs.
     timeout-minutes: 10
     steps:
-      - name: Check out only the smoke script
+      - name: Check out only the smoke scripts
         uses: actions/checkout@v4
         with:
-          sparse-checkout: tools/ci/test_packaged_project.py
+          sparse-checkout: |
+            tools/ci/test_packaged_project.py
+            tools/ci/test_sprite_grid.py
           sparse-checkout-cone-mode: false
       - name: Download the Windows tools
         uses: actions/download-artifact@v4
@@ -1118,6 +1121,10 @@ jobs:
           if (-not (Test-Path -LiteralPath (Join-Path $packageRoot 'manual') -PathType Container)) { throw 'The package has no manual' }
           if (-not (Test-Path -LiteralPath (Join-Path $packageRoot 'assets') -PathType Container)) { throw 'The package has no assets' }
           python tools/ci/test_packaged_project.py $packageRoot
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake -E env --unset=AETHER_PAK_KEY python tools/ci/test_sprite_grid.py `
+            "$packageRoot/aether_new.exe" "$packageRoot/aether_sprite_grid.exe" `
+            "$packageRoot/aether_package.exe" "$packageRoot/aether_pak.exe"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   windows-sign-release:
