@@ -29,12 +29,14 @@ assert release - press == 2
 assert [e["frame"] for e in route["events"] if e["key"] == "D"] == [0]
 earliest, latest = (2, 6) if Path(args[0]).name in ("before", "same") else (4, 5)
 status = "pass" if earliest <= press <= latest and Path(args[0]).name != "always-miss" else "missed"
-point = [0.5 if status == "pass" else 2, 0.5, 0]
+tiny = Path(args[0]).name == "tiny"
+point = [0.5 if status == "pass" else (0.505 if tiny else 2), 0.5, 0]
 if Path(args[0]).name == "unstable" and profile.name == "profile-repeat":
     point[0] = 0.75
 print("Jump Route: " + json.dumps(route))
 for i in range(route["frames"]):
-    print("Jump Trace: " + json.dumps(dict(frame=i + 1, position=point)))
+    sample = [0.5, 0.5, 0] if i < 2 else ([0.52, 0.5, 0] if i == 2 and status == "missed" and not tiny else point)
+    print("Jump Trace: " + json.dumps(dict(frame=i + 1, position=sample)))
 print("Jump Proof: " + json.dumps(dict(status=status, frames=route["frames"], position=point)))
 sys.exit(0 if status == "pass" else 5)
 """
@@ -45,7 +47,7 @@ class JumpEnvelope(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.root = Path(tmp.name)
-        for name in ("before", "after", "unstable", "same", "always-miss", "mutating"):
+        for name in ("before", "after", "unstable", "same", "always-miss", "mutating", "tiny"):
             binary = self.root / name
             binary.write_text(FAKE, encoding="utf-8")
             binary.chmod(0o755)
@@ -96,6 +98,9 @@ class JumpEnvelope(unittest.TestCase):
         self.assertEqual(new["Paks/Game.apak"], hashlib.sha256(b"asset-after").hexdigest())
         reproducer = evidence["nearest_lost_replay"]
         self.assertEqual(reproducer["offset"], -1)
+        self.assertEqual(reproducer["divergence"], {"xy_tolerance": 0.01, "first_frame": 3,
+                                                    "baseline_position": [0.5, 0.5, 0],
+                                                    "candidate_position": [0.52, 0.5, 0]})
         self.assertEqual([e["frame"] for e in reproducer["route"]["events"]], [0, 3, 5])
         route = self.root / "repro.json"
         route.write_text(json.dumps(reproducer["route"]), encoding="utf-8")
@@ -104,6 +109,20 @@ class JumpEnvelope(unittest.TestCase):
                                   "--user-dir", self.root / ("repro-" + binary.name)],
                                  capture_output=True, timeout=5)
             self.assertEqual(run.returncode, expected, run.stderr)
+
+    def test_verdict_can_change_without_a_position_split_over_tolerance(self):
+        before = self.stage("old-edge", "before", b"asset-before")
+        after = self.stage("new-edge", "tiny", b"asset-after")
+        route = json.loads(self.route.read_text())
+        route["target"]["max_x"] = 0.502
+        self.route.write_text(json.dumps(route), encoding="utf-8")
+        result = self.invoke(before.relative_to(self.root), "--candidate", after,
+                             "--capture-evidence", "--require-preserved-offsets")
+        self.assertEqual(result.returncode, 5, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertIn(-1, report["lost_pass_offsets"])
+        self.assertEqual(report["evidence"]["nearest_lost_replay"]["divergence"],
+                         {"xy_tolerance": 0.01, "first_frame": None})
 
     def test_evidence_rejects_package_changes_without_a_receipt(self):
         player = self.stage("unstable-package", "mutating", b"initial")
