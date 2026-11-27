@@ -9,25 +9,27 @@ int main(int argc,char** argv) {
     Game game(seed);
     std::cout<<"HEARTHLINE simulation | seed "<<seed<<" | 512x512 / 3 layers\n"
              <<"Commands: w a s d, g gather, b bridge, f fire, r refuel, h heal, "
-             <<"k attack, v dodge, p relay at 105, q relay at 107, e activate, x exit\n";
+             <<"k attack, v dodge, p/q place relay, 2 rotate nearby relay, e activate, x exit\n";
     char command=' ';
     while(game.State().phase==Phase::Playing && std::cin>>command) {
-        const auto pos=game.State().player;
+        bool accepted=false;
         switch(command) {
-            case 'w': game.Move(0,-1); break; case 's': game.Move(0,1); break;
-            case 'a': game.Move(-1,0); break; case 'd': game.Move(1,0); break;
-            case 'g': game.Act(Action::Gather); break;
-            case 'b': game.Act(Action::BuildBridge); break;
-            case 'f': game.Act(Action::BuildCampfire); break;
-            case 'r': game.Act(Action::Refuel); break;
-            case 'h': game.Act(Action::Heal); break;
-            case 'k': game.Act(Action::Attack); break;
-            case 'v': game.Act(Action::Dodge); break;
-            case 'p': game.Act(Action::PlaceRelay,{105,64}); break;
-            case 'q': game.Act(Action::PlaceRelay,{107,64}); break;
-            case 'e': game.Act(Action::Interact); break;
+            case 'w': accepted=game.Move(0,-1); break; case 's': accepted=game.Move(0,1); break;
+            case 'a': accepted=game.Move(-1,0); break; case 'd': accepted=game.Move(1,0); break;
+            case 'g': accepted=game.Act(Action::Gather); break;
+            case 'b': accepted=game.Act(Action::BuildBridge); break;
+            case 'f': accepted=game.Act(Action::BuildCampfire); break;
+            case 'r': accepted=game.Act(Action::Refuel); break;
+            case 'h': accepted=game.Act(Action::Heal); break;
+            case 'k': accepted=game.Act(Action::Attack); break;
+            case 'v': accepted=game.Act(Action::Dodge); break;
+            case 'p': accepted=game.Act(Action::PlaceRelay,{105,64}); break;
+            case 'q': accepted=game.Act(Action::PlaceRelay,{107,64}); break;
+            case '2': accepted=game.RotateNearbyRelay(); break;
+            case 'e': accepted=game.Act(Action::Interact); break;
             case 'x': return 0;
         }
+        if(!accepted) std::cout<<"Action unavailable.\n";
         const auto& s=game.State();
         std::cout<<"pos=("<<s.player.x<<","<<s.player.y<<") hp="<<s.health
                  <<" wood="<<s.inventory.wood<<" stone="<<s.inventory.stone
