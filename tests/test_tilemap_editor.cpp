@@ -1019,6 +1019,64 @@ AETHER_TEST(TilemapEditor_WheelZoomKeepsTheHoveredCellUnderTheCursor) {
     CHECK(doc.Map().Get(0, 5, 4) == 3);
 }
 
+AETHER_TEST(TilemapEditor_ResetViewRestoresOriginWithoutChangingHistory) {
+    HeadlessImGui ui;
+    auto doc = Doc();
+    TilemapPanel panel(doc);
+    doc.brush = 3;
+    ImGuiID reset_id = 0;
+    ImVec2 toolbar, canvas_min, bottom_left;
+    const auto draw = [&] {
+        toolbar = ImGui::GetCursorScreenPos();
+        reset_id = ImGui::GetID("Reset view");
+        panel.Draw();
+        canvas_min = ImGui::GetItemRectMin();
+        const auto padding = ImGui::GetStyle().WindowPadding;
+        bottom_left = {canvas_min.x + padding.x + 8.0f, ImGui::GetItemRectMax().y - padding.y - 8.0f};
+    };
+    ui.Frame(draw);
+    const f32 starting_zoom = panel.zoom;
+    const ImVec2 cell{bottom_left.x + 1.5f * starting_zoom, bottom_left.y - 1.5f * starting_zoom};
+    auto& io = ImGui::GetIO();
+    const auto move = [&](ImVec2 where) {
+        io.AddMousePosEvent(where.x, where.y);
+        ui.Frame(draw);
+    };
+    const auto button = [&](ImGuiMouseButton which, bool down) {
+        io.AddMouseButtonEvent(which, down);
+        ui.Frame(draw);
+    };
+    const auto click = [&] { button(ImGuiMouseButton_Left, true); button(ImGuiMouseButton_Left, false); };
+    const u64 revision = doc.Revision();
+    move(cell);
+    io.AddMouseWheelEvent(0.0f, 2.0f);
+    ui.Frame(draw);
+    CHECK(panel.zoom > starting_zoom);
+    button(ImGuiMouseButton_Middle, true);
+    move({cell.x + 300.0f, cell.y - 120.0f});
+    button(ImGuiMouseButton_Middle, false);
+
+    move(cell);
+    click();
+    CHECK(doc.Revision() == revision && !doc.CanUndo()); // the map was panned away
+
+    bool found = false;
+    for (f32 y = toolbar.y + 2.0f; !found && y < canvas_min.y; y += 4.0f) {
+        for (f32 x = toolbar.x + 4.0f; x < toolbar.x + 850.0f; x += 14.0f) {
+            move({x, y});
+            if (ImGui::GetHoveredID() == reset_id) { found = true; break; }
+        }
+    }
+    if (!found) { CHECK(false); return; }
+    click();
+    CHECK(panel.zoom == starting_zoom && doc.Revision() == revision && !doc.dirty());
+    CHECK(!doc.CanUndo() && !doc.CanRedo() && doc.brush == 3);
+    move(cell);
+    click();
+    CHECK(doc.Map().Get(0, 1, 1) == 3);
+    CHECK(doc.Undo() && !doc.dirty() && !doc.CanUndo());
+}
+
 AETHER_TEST(TilemapEditor_FastPointerDragsPaintAndEraseEveryCellAsOneStroke) {
     HeadlessImGui ui;
     TilemapEditDocument doc = Doc();

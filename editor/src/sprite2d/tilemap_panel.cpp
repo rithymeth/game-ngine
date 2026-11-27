@@ -347,6 +347,13 @@ void TilemapPanel::DrawTools() {
     ImGui::SetNextItemWidth(100);
     ImGui::SliderFloat("Zoom", &zoom, 6.0f, 64.0f, "%.0f px");
     ImGui::SameLine();
+    if (ImGui::SmallButton("Reset view")) {
+        zoom = kDefaultZoom;
+        pan_x_ = pan_y_ = kDefaultPan;
+        pending_focus_.reset();
+    }
+    ImGui::SetItemTooltip("Return to the lower-left corner at the default zoom.");
+    ImGui::SameLine();
     const std::string file = doc_.TilemapFile().empty() ? std::string() : doc_.TilemapFile().filename().string() + "  ";
     ImGui::TextDisabled("%s%ux%u%s", file.c_str(), doc_.Map().width, doc_.Map().height, doc_.dirty() ? "  (unsaved)" : "");
     ImGui::SameLine();

@@ -25,7 +25,7 @@ public:
     void LoadTexturePreview(const assets::AssetDatabase& database);
     bool LoadJumpProofOverlay(const std::filesystem::path& path, std::string* error = nullptr);
 
-    f32 zoom = 24.0f; // screen pixels per tile
+    f32 zoom = kDefaultZoom; // screen pixels per tile
     bool show_grid = true;
     bool show_solid = true;
     bool solo_layer_art = false; // edit view only; diagnostics still cover all layers
@@ -55,7 +55,8 @@ private:
     std::optional<u64> invalid_search_revision_;
     struct PendingFocus { i32 x, y; u64 revision; };
     std::optional<PendingFocus> pending_focus_;
-    f32 pan_x_ = 8.0f, pan_y_ = 8.0f;
+    static constexpr f32 kDefaultZoom = 24.0f, kDefaultPan = 8.0f;
+    f32 pan_x_ = kDefaultPan, pan_y_ = kDefaultPan;
     bool dragging_ = false;
     struct BrushSample {
         i32 x, y;
