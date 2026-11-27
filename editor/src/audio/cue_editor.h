@@ -40,6 +40,8 @@ public:
     explicit SoundCueEditor(SoundCueDocument& document);
 
     void Draw();
+    // Clear interaction state after the document is successfully replaced.
+    void ResetForLoadedCue();
 
     GraphViewState& View() { return view_; }
     // 0: nothing; kCueOutputNode: the output's settings; otherwise a node.

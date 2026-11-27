@@ -278,6 +278,76 @@ AETHER_TEST(Openers_SequenceReplacementClearsThePreviousKeySelection) {
     CHECK(diamond(unselected) && !diamond(selected));
 }
 
+AETHER_TEST(Openers_SoundCueReplacementDoesNotSelectTheSameNodeId) {
+    HeadlessImGui ui;
+    ProjectPaths paths;
+    FreshProject("cue_selection", paths);
+    EditorWorkspace ws(paths.file);
+    audio::SoundCue cue;
+    cue.name = "First cue";
+    cue.root = 1;
+    audio::CueNode node;
+    node.id = 1;
+    node.type = audio::CueNodeType::Wave;
+    node.x = node.y = 50.0f;
+    node.sound = "blip";
+    cue.nodes.push_back(node);
+    Write(paths.content / "Audio/First.acue", audio::SaveCue(cue));
+    cue.name = "Second cue";
+    cue.nodes.front().sound = "hum";
+    Write(paths.content / "Audio/Second.acue", audio::SaveCue(cue));
+    Write(paths.content / "Audio/Broken.acue", "not a sound cue");
+
+    CHECK(ws.OpenAsset("Audio/First.acue"));
+    const i64 tool = ws.FindTool("Sound Cue");
+    CHECK(tool >= 0);
+    if (tool < 0) return;
+    const auto draw = [&] { ws.DrawTool(static_cast<usize>(tool)); };
+    ui.Frame(draw);
+    ui.Frame(draw);
+    // The only wave header gives a click target independent of window padding.
+    ImVec2 center{};
+    int vertices = 0;
+    for (const ImDrawList* list : ImGui::GetDrawData()->CmdLists) {
+        for (const ImDrawVert& v : list->VtxBuffer) {
+            if (v.col != IM_COL32(60, 120, 200, 255)) continue;
+            center.x += v.pos.x;
+            center.y += v.pos.y;
+            ++vertices;
+        }
+    }
+    CHECK(vertices > 0);
+    if (vertices == 0) return;
+    ImGuiIO& io = ImGui::GetIO();
+    io.AddMousePosEvent(center.x / vertices, center.y / vertices);
+    ui.Frame(draw);
+    io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+    ui.Frame(draw);
+    io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+    ui.Frame(draw);
+
+    std::string rendered;
+    auto& platform = ImGui::GetPlatformIO();
+    platform.Platform_ClipboardUserData = &rendered;
+    platform.Platform_SetClipboardTextFn = [](ImGuiContext*, const char* text) {
+        *static_cast<std::string*>(ImGui::GetPlatformIO().Platform_ClipboardUserData) = text;
+    };
+    const auto inspect = [&] {
+        ImGui::LogToClipboard();
+        draw();
+        ImGui::LogFinish();
+    };
+    ui.Frame(inspect);
+    CHECK(rendered.find("Wave node 1") != std::string::npos);
+
+    CHECK(!ws.OpenAsset("Audio/Broken.acue"));
+    ui.Frame(inspect);
+    CHECK(rendered.find("Wave node 1") != std::string::npos);
+    CHECK(ws.OpenAsset("Audio/Second.acue"));
+    ui.Frame(inspect);
+    CHECK(rendered.find("Second cue") != std::string::npos && rendered.find("Wave node 1") == std::string::npos);
+}
+
 AETHER_TEST(Openers_ContentBrowserCreatesAndSelectsAtlasWithoutReplacingOne) {
     ProjectPaths paths;
     FreshProject("create_sprite_atlas", paths);

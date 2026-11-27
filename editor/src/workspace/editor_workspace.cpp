@@ -1347,7 +1347,11 @@ struct EditorWorkspace::Impl {
         if (ext == ".amat") return load(material_doc, "Material", "material");
         if (ext == ".aanim") return load(anim_doc, "Animation", "animation graph");
         if (ext == ".ablend") return load(blend_doc, "Animation", "blend space");
-        if (ext == ".acue") return load(cue_doc, "Sound Cue", "sound cue");
+        if (ext == ".acue") {
+            if (!load(cue_doc, "Sound Cue", "sound cue")) return false;
+            cue_editor->ResetForLoadedCue();
+            return true;
+        }
         if (ext == ".aui") return load(ui_doc, "UI Designer", "UI layout");
         if (ext == ".abt") return load(bt_doc, "Behavior Tree", "behavior tree");
         if (ext == ".avfx") return load(particle_doc, "Particle System", "particle system");

@@ -172,6 +172,16 @@ std::vector<f32> AttenuationCurve(const audio::AttenuationSettings& s, u32 sampl
 
 SoundCueEditor::SoundCueEditor(SoundCueDocument& document) : doc_(document) { PlaceOutput(); }
 
+void SoundCueEditor::ResetForLoadedCue() {
+    StopPreview();
+    view_ = {};
+    selected_ = 0;
+    palette_open_ = palette_popup_ = false;
+    palette_filter_.clear();
+    status_.clear();
+    PlaceOutput();
+}
+
 void SoundCueEditor::PlaceOutput() {
     // To the right of the nodes, level with the one the output plays.
     f32 right = 0.0f, y = 0.0f;
