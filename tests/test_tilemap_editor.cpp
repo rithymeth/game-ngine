@@ -2524,6 +2524,75 @@ AETHER_TEST(TilemapEditor_FindsInvalidPaintAcrossTheMapWithoutAnEdit) {
     CHECK(!panel.FindNextInvalidPaint());
 }
 
+AETHER_TEST(TilemapEditor_GoToCellCentersDistantCoordinatesWithoutEditing) {
+    HeadlessImGui ui;
+    TilemapData map;
+    map.Resize(128, 96);
+    map.AddLayer("Ground");
+    map.AddLayer("Far");
+    map.Set(1, 90, 70, AutotileCell(9));
+    TilemapEditDocument doc(std::move(map), {});
+    doc.active_layer = 1;
+    TilemapPanel panel(doc);
+    ImGuiWindow* window = nullptr;
+    const auto draw = [&] { window = ImGui::GetCurrentWindowRead(); panel.Draw(); };
+    ui.Frame(draw);
+    auto& io = ImGui::GetIO();
+    const auto click_item = [&](ImGuiWindow& target, const char* label, f32 height) {
+        const ImGuiID id = target.GetID(label);
+        const auto clip = target.InnerClipRect;
+        for (f32 y = clip.Min.y + 4; y < std::min(clip.Min.y + height, clip.Max.y); y += 8) {
+            for (f32 x = clip.Min.x + 6; x < clip.Max.x; x += 14) {
+                io.AddMousePosEvent(x, y);
+                ui.Frame(draw);
+                if (ImGui::GetHoveredID() != id) continue;
+                io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+                ui.Frame(draw);
+                io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+                ui.Frame(draw);
+                return true;
+            }
+        }
+        return false;
+    };
+    const auto visible = [] {
+        for (const auto* list : ImGui::GetDrawData()->CmdLists)
+            for (const auto& vertex : list->VtxBuffer)
+                if (vertex.col == IM_COL32(255, 96, 215, 255)) return true;
+        return false;
+    };
+    const auto enter = [&](ImGuiWindow& modal, const char* label, const char* value) {
+        if (!click_item(modal, label, 200)) { CHECK(false); return; }
+        io.AddKeyEvent(ImGuiMod_Ctrl, true);
+        io.AddKeyEvent(ImGuiKey_A, true);
+        ui.Frame(draw);
+        io.AddKeyEvent(ImGuiKey_A, false);
+        io.AddKeyEvent(ImGuiMod_Ctrl, false);
+        io.AddInputCharactersUTF8(value);
+        ui.Frame(draw);
+    };
+    const auto open = [&]() -> ImGuiWindow* {
+        if (!click_item(*window, "Go to cell...", 110)) return nullptr;
+        ui.Frame(draw);
+        return ImGui::FindWindowByName("Go to tile cell");
+    };
+    CHECK(!visible());
+    const auto revision = doc.Revision();
+    auto* modal = open();
+    if (!modal) { CHECK(false); return; }
+    enter(*modal, "X", "128");
+    click_item(*modal, "Go", 200); // x == width is out of bounds
+    ui.Frame([&] { draw(); CHECK(ImGui::IsPopupOpen("Go to tile cell")); });
+    CHECK(click_item(*modal, "Cancel", 200) && !visible());
+
+    modal = open();
+    if (!modal) { CHECK(false); return; }
+    enter(*modal, "X", "90");
+    enter(*modal, "Y", "70");
+    CHECK(click_item(*modal, "Go", 200) && visible());
+    CHECK(doc.active_layer == 1 && doc.Revision() == revision && !doc.dirty() && !doc.CanUndo());
+}
+
 AETHER_TEST(TilemapEditor_FindInvalidPaintCyclesWithinOneLayer) {
     HeadlessImGui ui;
     TilemapData map;

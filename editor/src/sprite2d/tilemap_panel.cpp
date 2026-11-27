@@ -386,6 +386,8 @@ void TilemapPanel::DrawTools() {
     if (ImGui::SmallButton("Reset view")) ResetView();
     ImGui::SetItemTooltip("Return to the lower-left corner at the default zoom.");
     ImGui::SameLine();
+    DrawGoToCell();
+    ImGui::SameLine();
     const std::string file = doc_.TilemapFile().empty() ? std::string() : doc_.TilemapFile().filename().string() + "  ";
     ImGui::TextDisabled("%s%ux%u%s", file.c_str(), doc_.Map().width, doc_.Map().height, doc_.dirty() ? "  (unsaved)" : "");
     ImGui::SameLine();
@@ -414,6 +416,32 @@ void TilemapPanel::DrawTools() {
                                name.c_str(), hit.mask, hit.tile, hit.grid_count);
         }
     }
+}
+
+void TilemapPanel::DrawGoToCell() {
+    const auto& map = doc_.Map();
+    ImGui::BeginDisabled(map.width == 0 || map.height == 0 || doc_.active_layer >= map.layers.size());
+    if (ImGui::SmallButton("Go to cell...")) {
+        jump_x_ = jump_y_ = 0;
+        ImGui::OpenPopup("Go to tile cell");
+    }
+    ImGui::EndDisabled();
+    ImGui::SetItemTooltip("Center the view on exact tile coordinates without editing the map.");
+    if (!ImGui::BeginPopupModal("Go to tile cell", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+    ImGui::Text("Map size: %u x %u. Coordinates start at (0, 0) in the lower-left.", map.width, map.height);
+    if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+    ImGui::SetNextItemWidth(120);
+    ImGui::InputInt("X", &jump_x_, 0);
+    ImGui::SetNextItemWidth(120);
+    ImGui::InputInt("Y", &jump_y_, 0);
+    const bool allowed = map.InBounds(jump_x_, jump_y_) && doc_.active_layer < map.layers.size();
+    if (!allowed) ImGui::TextWrapped("Enter coordinates inside the map.");
+    ImGui::BeginDisabled(!allowed);
+    if (ImGui::Button("Go") && FocusCell(doc_.active_layer, jump_x_, jump_y_)) ImGui::CloseCurrentPopup();
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
 }
 
 void TilemapPanel::DrawResizeDialog() {

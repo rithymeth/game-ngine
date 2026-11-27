@@ -44,6 +44,7 @@ private:
     bool DrawTileArt(ImDrawList* draw, ImVec2 a, ImVec2 b, i32 tile) const;
     void DrawTools();
     void DrawResizeDialog();
+    void DrawGoToCell();
     void DrawLayers();
     void DrawCanvas();
     void DrawJumpProofTools();
@@ -56,6 +57,7 @@ private:
     std::string sheet_status_;
     bool show_sheet_ = false;
     int resize_width_ = 0, resize_height_ = 0;
+    int jump_x_ = 0, jump_y_ = 0;
     u64 save_error_revision_ = 0;
     std::string save_error_;
     struct InvalidPaintCell { usize layer, index; i32 tile; };
