@@ -9,7 +9,7 @@ int main(int argc,char** argv) {
     Game game(seed);
     std::cout<<"HEARTHLINE simulation | seed "<<seed<<" | 512x512 / 3 layers\n"
              <<"Commands: w a s d, g gather, b bridge, f fire, r refuel, h heal, "
-             <<"k attack, v dodge, p/q place relay, 2 rotate nearby relay, e activate, x exit\n";
+             <<"k attack, v dodge, . wait, p/q place relay, 2 rotate nearby relay, e activate, x exit\n";
     char command=' ';
     while(game.State().phase==Phase::Playing && std::cin>>command) {
         bool accepted=false;
@@ -23,6 +23,7 @@ int main(int argc,char** argv) {
             case 'h': accepted=game.Act(Action::Heal); break;
             case 'k': accepted=game.Act(Action::Attack); break;
             case 'v': accepted=game.Act(Action::Dodge); break;
+            case '.': accepted=game.Act(Action::Wait); break;
             case 'p': accepted=game.Act(Action::PlaceRelay,{105,64}); break;
             case 'q': accepted=game.Act(Action::PlaceRelay,{107,64}); break;
             case '2': accepted=game.RotateNearbyRelay(); break;
@@ -30,11 +31,14 @@ int main(int argc,char** argv) {
             case 'x': return 0;
         }
         if(!accepted) std::cout<<"Action unavailable.\n";
+        for(int tick=0;tick<5;++tick) game.TickCombat();
         const auto& s=game.State();
         std::cout<<"pos=("<<s.player.x<<","<<s.player.y<<") hp="<<s.health
                  <<" wood="<<s.inventory.wood<<" stone="<<s.inventory.stone
                  <<" energy="<<s.inventory.energy<<" food="<<s.inventory.food
                  <<" bridge="<<s.bridge<<" guardian="<<s.guardian_defeated
+                 <<" guard_hp="<<s.guard_health<<" guard_pos="<<s.guardian.x<<","<<s.guardian.y
+                 <<" attack_cd="<<s.attack_ticks<<" guard_mode="<<static_cast<int>(s.guard_mode)
                  <<" beacon="<<s.beacon<<" night="<<s.night_turns
                  <<" fuel="<<s.fuel<<" phase="<<static_cast<int>(s.phase)<<"\n";
     }

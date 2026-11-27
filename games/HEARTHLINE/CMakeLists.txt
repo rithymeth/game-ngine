@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.21)
 project(Hearthline LANGUAGES CXX)
 include(CTest)
 
-add_library(hearthline_core STATIC src/game.cpp)
+add_library(hearthline_core STATIC src/game.cpp src/combat.cpp)
 target_compile_features(hearthline_core PUBLIC cxx_std_20)
 target_include_directories(hearthline_core PUBLIC src)
 

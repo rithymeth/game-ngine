@@ -48,11 +48,21 @@ async function check(name, viewport, hasTouch) {
       await contains('pos 61,64');
       await press('b');
       await contains('wood 8');
-      await press('d',26);
-      await contains('pos 87,64');
-      for(let i=0;i<3;i++){await press('v');await press('k');}
+      await press('d',21);
+      await contains('pos 82,64');
+      // Let the real-time guardian approach; do not advance simulation with fake time.
+      await page.waitForFunction(()=> {
+        const txt=document.querySelector('#status')?.textContent??'';
+        const match=txt.match(/guard (\d+),(\d+)/);
+        return match && Math.abs(Number(match[1])-82)+Math.abs(Number(match[2])-64)<=2;
+      },null,{timeout:10000});
+      for(let hp=2;hp>=0;hp--) {
+        await contains('attack cd 0');
+        await press('k');
+        await contains('guard HP '+hp);
+      }
       await contains('Place P/Q');
-      await press('d',17);
+      await press('d',22);
       await contains('pos 104,64');
       await press('p'); await press('2');
       await press('d',4);
@@ -62,7 +72,7 @@ async function check(name, viewport, hasTouch) {
       await press('2'); await press('e');
       await contains('Build F campfire');
       await press('f'); await press('r');
-      await press('v',9); await press('r'); await press('v',15);
+      await press('Space',9); await press('r'); await press('Space',15);
       await contains('VICTORY');
       await page.locator('#canvas').screenshot({path:'/tmp/hearthline-victory.png'});
     }

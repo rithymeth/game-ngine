@@ -126,11 +126,32 @@ void Draw(SDL_Renderer* r,const Game& g,int w,int h, bool paused) {
         Rect(r,x+3,y+3,22,22,s.beacon?255:142,s.beacon?211:130,s.beacon?95:148);
         Rect(r,x+9,y+9,10,10,s.beacon?255:39,s.beacon?251:46,s.beacon?182:57);
     }
-    if(!s.guardian_defeated && g.Visible(Game::Guardian().x,Game::Guardian().y)) {
-        const int x=sx(Game::Guardian().x),y=sy(Game::Guardian().y);
-        Rect(r,x+3,y+3,22,22,177,62,72);
-        Rect(r,x+8,y+9,4,4,245,226,181);
-        Rect(r,x+16,y+9,4,4,245,226,181);
+    if(!s.guardian_defeated && s.guard_mode==GuardMode::Windup) {
+        SDL_SetRenderDrawBlendMode(r,SDL_BLENDMODE_BLEND);
+        constexpr Point danger[]={{0,0},{1,0},{-1,0},{0,1},{0,-1}};
+        for(auto d:danger) {
+            const Point q{s.guard_target.x+d.x,s.guard_target.y+d.y};
+            if(!g.Visible(q.x,q.y)) continue;
+            SDL_Rect area{sx(q.x)+1,sy(q.y)+1,kTile-2,kTile-2};
+            Color(r,232,87,51,95+(kGuardWindupTicks-s.guard_ticks)*8);
+            SDL_RenderFillRect(r,&area);
+            Outline(r,area.x,area.y,area.w,area.h,244,154,75);
+        }
+        SDL_SetRenderDrawBlendMode(r,SDL_BLENDMODE_NONE);
+    }
+    if(!s.guardian_defeated && g.Visible(s.guardian.x,s.guardian.y)) {
+        const int x=sx(s.guardian.x),y=sy(s.guardian.y);
+        const int bob=static_cast<int>((s.combat_tick/4)%2);
+        const bool charging=s.guard_mode==GuardMode::Windup;
+        Rect(r,x+4,y+24,20,3,30,32,34);
+        Rect(r,x+5,y+7-bob,18,19,96,55,75);
+        Rect(r,x+3,y+4-bob,22,16,charging?238:177,charging?113:62,72);
+        Rect(r,x+7,y+2-bob,5,6,220,169,116);
+        Rect(r,x+17,y+2-bob,5,6,220,169,116);
+        Rect(r,x+8,y+10-bob,4,4,245,226,181);
+        Rect(r,x+16,y+10-bob,4,4,245,226,181);
+        Rect(r,x+2,y-4,24,4,37,32,40);
+        Rect(r,x+2,y-4,s.guard_health*8,4,224,80,88);
     }
     if(s.fire && g.Discovered(Game::FireSite().x,Game::FireSite().y)) {
         const int x=sx(Game::FireSite().x),y=sy(Game::FireSite().y);
@@ -145,12 +166,21 @@ void Draw(SDL_Renderer* r,const Game& g,int w,int h, bool paused) {
         SDL_RenderFillRect(r,&shadow);
     }
     SDL_SetRenderDrawBlendMode(r,SDL_BLENDMODE_NONE);
-    const int px=sx(p.x),py=sy(p.y);
+    const int px=sx(p.x),py=sy(p.y)-static_cast<int>((s.combat_tick/5)%2);
+    if(s.dodge_ticks>0) Outline(r,px,py,kTile,kTile,96,223,214);
+    if(s.attack_ticks>=kAttackCooldownTicks-2) {
+        const int dir=s.guardian.x<p.x?-1:1;
+        const int strike=px+14+dir*18;
+        Color(r,255,222,137);
+        SDL_RenderDrawLine(r,px+14,py+2,strike,py+11);
+        SDL_RenderDrawLine(r,strike,py+11,px+14,py+22);
+        SDL_RenderDrawLine(r,px+14,py+3,strike-dir,py+11);
+    }
     Rect(r,px+4,py+24,20,3,23,39,36);
     Rect(r,px+7,py+20,6,5,69,49,46);
     Rect(r,px+16,py+20,6,5,69,49,46);
     Rect(r,px+5,py+10,18,12,36,71,72);
-    Rect(r,px+8,py+11,12,11,68,119,115);
+    Rect(r,px+8,py+11,12,11,s.hurt_ticks%2?237:68,s.hurt_ticks%2?96:119,115);
     Rect(r,px+8,py+3,12,10,219,181,129);
     Rect(r,px+6,py+1,16,4,52,62,61);
     Rect(r,px+6,py+9,16,4,182,95,61);
@@ -186,14 +216,25 @@ void Draw(SDL_Renderer* r,const Game& g,int w,int h, bool paused) {
     }
     SDL_RenderPresent(r);
 }
+const char* GuardName(GuardMode mode) {
+    switch(mode) {
+        case GuardMode::Idle: return "idle";
+        case GuardMode::Chase: return "chase";
+        case GuardMode::Windup: return "windup";
+        case GuardMode::Recovery: return "recovery";
+        case GuardMode::Return: return "return";
+        case GuardMode::Defeated: return "defeated";
+    }
+    return "unknown";
+}
 std::string Title(const Game& g,bool paused) {
     const auto& s=g.State();
     std::string phase=s.phase==Phase::Won?"VICTORY - F5 to restart":s.phase==Phase::Lost?
       "DEFEAT - F5 to restart":paused?"PAUSED - ESC to resume":
       !s.bridge?"Gather G; build B at river crossing":
-      !s.guardian_defeated?"Find guardian; V dodge, K attack":
+      !s.guardian_defeated?"Find guardian; K attack, V evade marked strike":
       !s.beacon?"Place P/Q beside sockets; 2 rotate each east; E activate":
-      !s.fire?"Build F campfire":"Stay near fire; R refuel, V wait";
+      !s.fire?"Build F campfire":"Stay near fire; R refuel, SPACE wait";
     return "HEARTHLINE | "+phase+" | pos "+std::to_string(s.player.x)+","+
       std::to_string(s.player.y)+" | HP "+std::to_string(s.health)+
       " wood "+std::to_string(s.inventory.wood)+
@@ -201,7 +242,10 @@ std::string Title(const Game& g,bool paused) {
       " energy "+std::to_string(s.inventory.energy)+
       " food "+std::to_string(s.inventory.food)+
       " night "+std::to_string(s.night_turns)+"/24"+
-      " fuel "+std::to_string(s.fuel)+" explored "+std::to_string(g.DiscoveredCount());
+      " fuel "+std::to_string(s.fuel)+" explored "+std::to_string(g.DiscoveredCount())+
+      " | guard "+std::to_string(s.guardian.x)+","+std::to_string(s.guardian.y)+
+      " guard HP "+std::to_string(s.guard_health)+" "+GuardName(s.guard_mode)+
+      " attack cd "+std::to_string(s.attack_ticks)+" evade cd "+std::to_string(s.dodge_cooldown);
 }
 }
 
@@ -214,6 +258,7 @@ struct App {
     bool running=true, paused=false, smoke=false, ready=false;
     std::string last_status;
     int frames=0;
+    Uint32 last_frame_ms=0, combat_accumulator=0;
 
     explicit App(unsigned world_seed,bool do_smoke):game(world_seed),seed(world_seed),smoke(do_smoke){}
     bool Init() {
@@ -228,6 +273,7 @@ struct App {
         if(!renderer) renderer=SDL_CreateRenderer(window,-1,SDL_RENDERER_SOFTWARE);
         if(!renderer) {std::cerr<<SDL_GetError()<<"\n";Close();return false;}
         if(SDL_RenderSetLogicalSize(renderer,kWidth,kHeight)!=0) {Close();return false;}
+        last_frame_ms=SDL_GetTicks();
         return true;
     }
     void Close() {
@@ -236,9 +282,9 @@ struct App {
         SDL_Quit();
     }
     void Key(SDL_Keycode k, SDL_Keymod mods) {
-        if(k==SDLK_ESCAPE){paused=!paused;return;}
+        if(k==SDLK_ESCAPE){paused=!paused;combat_accumulator=0;return;}
         if((k==SDLK_n && (mods&KMOD_CTRL)) || k==SDLK_F5){
-            game=Game(seed);paused=false;return;
+            game=Game(seed);paused=false;combat_accumulator=0;return;
         }
         if(paused || game.State().phase!=Phase::Playing) return;
         if(k==SDLK_UP || k==SDLK_w) (void)game.Move(0,-1);
@@ -249,6 +295,7 @@ struct App {
         else if(k==SDLK_b) (void)game.Act(Action::BuildBridge);
         else if(k==SDLK_k) (void)game.Act(Action::Attack);
         else if(k==SDLK_v) (void)game.Act(Action::Dodge);
+        else if(k==SDLK_SPACE) (void)game.Act(Action::Wait);
         else if(k==SDLK_p) (void)game.Act(Action::PlaceRelay,{105,64});
         else if(k==SDLK_q) (void)game.Act(Action::PlaceRelay,{107,64});
         else if(k==SDLK_e) (void)game.Act(Action::Interact);
@@ -263,21 +310,36 @@ struct App {
         }
     }
     void Tick() {
+        const Uint32 now=SDL_GetTicks();
+        const Uint32 elapsed=std::min<Uint32>(now-last_frame_ms,250);
+        last_frame_ms=now;
+        if(!paused && game.State().phase==Phase::Playing) {
+            combat_accumulator+=elapsed;
+            while(combat_accumulator>=kCombatTickMs) {
+                game.TickCombat();
+                combat_accumulator-=kCombatTickMs;
+            }
+        } else combat_accumulator=0;
         SDL_Event e;
         while(SDL_PollEvent(&e)) {
             if(e.type==SDL_QUIT) running=false;
-            if(e.type==SDL_KEYDOWN) Key(e.key.keysym.sym,static_cast<SDL_Keymod>(e.key.keysym.mod));
+            if(e.type==SDL_KEYDOWN) {
+                const auto k=e.key.keysym.sym;
+                const bool movement=k==SDLK_UP || k==SDLK_DOWN || k==SDLK_LEFT || k==SDLK_RIGHT ||
+                    k==SDLK_w || k==SDLK_a || k==SDLK_s || k==SDLK_d || k==SDLK_SPACE;
+                if(!e.key.repeat || movement) Key(k,static_cast<SDL_Keymod>(e.key.keysym.mod));
+            }
         }
         if(!running) return;
         const std::string status=Title(game,paused);
-        SDL_SetWindowTitle(window,status.c_str());
-#if defined(__EMSCRIPTEN__)
         if(status!=last_status) {
             last_status=status;
+            SDL_SetWindowTitle(window,status.c_str());
+#if defined(__EMSCRIPTEN__)
             EM_ASM({ if(Module.onGameStatus) Module.onGameStatus(UTF8ToString($0)); },
                    status.c_str());
-        }
 #endif
+        }
         Draw(renderer,game,kWidth,kHeight,paused);
 #if defined(__EMSCRIPTEN__)
         if(!ready) {
@@ -317,7 +379,7 @@ int main(int argc,char** argv) {
             std::cout<<"HEARTHLINE graphical prototype\n"
                 <<"Arrows/WASD move | G gather | B bridge | K attack | V dodge\n"
                 <<"P/Q place relay | E activate | F campfire | R refuel | H heal\n"
-                <<"1 toggle wall east | 2 rotate nearest relay | ESC pause | F5 restart | --smoke\n";
+                <<"1 toggle wall east | 2 rotate nearest relay | SPACE wait | ESC pause | F5 restart | --smoke\n";
             return 0;
         }
     }
