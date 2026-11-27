@@ -153,6 +153,7 @@ struct App {
     Game game{1};
     unsigned seed=1;
     bool running=true, paused=false, smoke=false, ready=false;
+    std::string last_status;
     int frames=0;
 
     explicit App(unsigned world_seed,bool do_smoke):game(world_seed),seed(world_seed),smoke(do_smoke){}
@@ -211,7 +212,15 @@ struct App {
         if(!running) return;
         int w=0,h=0;
         SDL_GetRendererOutputSize(renderer,&w,&h);
-        SDL_SetWindowTitle(window,Title(game,paused).c_str());
+        const std::string status=Title(game,paused);
+        SDL_SetWindowTitle(window,status.c_str());
+#if defined(__EMSCRIPTEN__)
+        if(status!=last_status) {
+            last_status=status;
+            EM_ASM({ if(Module.onGameStatus) Module.onGameStatus(UTF8ToString($0)); },
+                   status.c_str());
+        }
+#endif
         Draw(renderer,game,w,h,paused);
 #if defined(__EMSCRIPTEN__)
         if(!ready) {
@@ -225,6 +234,10 @@ struct App {
     }
 };
 #if defined(__EMSCRIPTEN__)
+App* g_browser_app=nullptr;
+extern "C" EMSCRIPTEN_KEEPALIVE void hearthline_command(int key) {
+    if(g_browser_app) g_browser_app->Key(static_cast<SDL_Keycode>(key),KMOD_NONE);
+}
 void BrowserFrame(void* data) {
     auto* app=static_cast<App*>(data);
     app->Tick();
@@ -254,6 +267,7 @@ int main(int argc,char** argv) {
     static App app(seed,smoke);
     if(!app.Init()) return 1;
 #if defined(__EMSCRIPTEN__)
+    g_browser_app=&app;
     emscripten_set_main_loop_arg(BrowserFrame,&app,0,1);
     // Emscripten owns the main loop until the page is closed.
 #else
