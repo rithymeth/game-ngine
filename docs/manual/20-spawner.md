@@ -18,6 +18,9 @@ What the spawns *do* is up to the prefab and your scripts.
 | `radius` | spawns land anywhere within this distance of the spawner, in the horizontal plane, spread evenly over the disc (0: on it) |
 | `timer`, `spawned` | the spawner's state, saved with the entity: seconds to the next spawn (-1 before it starts) and how many it has made |
 
+Automatic spawning carries ordinary frame overshoot into the next interval. If a hitch skips a whole additional interval, the spawner
+makes only one burst and starts a fresh interval. Failed attempts also wait a full interval before retrying.
+
 A spawn is placed at the spawner's position plus a scatter within `radius`, with the spawner's rotation. The scatter is a fixed function of the
 spawner and how many it has made, so a run is the same every time. The count of what is alive drops a spawn as soon as it is destroyed.
 

@@ -246,6 +246,52 @@ AETHER_TEST(Spawner_SpawnNowSkipsTheTimerNotTheLimits) {
     CHECK(!r.prefabs_asked.empty() && r.prefabs_asked.front() == "Prefabs/Wolf.aprefab");
 }
 
+AETHER_TEST(Spawner_TimerCarriesFractionalFrameRemainder) {
+    Spawner s = Basic();
+    s.start_delay = s.interval = 0.12f;
+    s.burst = 1;
+    s.max_alive = 0;
+    for (int fps : {30, 40, 60, 144}) {
+        Rig r;
+        const Entity e = r.MakeSpawner(s);
+        for (int frame = 0; frame < fps * 10; ++frame) r.system.Update(1.0f / fps);
+        CHECK(r.system.TotalSpawned(e) == 83 && r.calls == 83);
+    }
+
+    Rig hitch;
+    hitch.MakeSpawner(s);
+    hitch.system.Update(0.55f);
+    CHECK(hitch.calls == 1); // no catch-up burst
+    hitch.system.Update(0.10f);
+    CHECK(hitch.calls == 1);
+    hitch.system.Update(0.03f);
+    CHECK(hitch.calls == 2);
+
+    Rig missing;
+    missing.host_works = false;
+    const Entity unavailable = missing.MakeSpawner(s);
+    missing.system.Update(0.15f);
+    CHECK(missing.calls == 1 && missing.system.TotalSpawned(unavailable) == 0);
+    missing.host_works = true;
+    missing.system.Update(0.10f);
+    CHECK(missing.calls == 1); // failed attempts retry after a whole interval
+    missing.system.Update(0.03f);
+    CHECK(missing.calls == 2 && missing.system.TotalSpawned(unavailable) == 1);
+
+    Rig capped;
+    s.max_alive = 1;
+    capped.MakeSpawner(s);
+    capped.system.Update(0.15f);
+    capped.system.Update(1.0f);
+    CHECK(capped.calls == 1 && capped.system.Events().size() == 1);
+    if (capped.system.Events().empty()) return;
+    capped.world.DestroyEntity(capped.system.Events().front().spawned);
+    capped.system.Update(0.10f);
+    CHECK(capped.calls == 1); // filling the live cap still resets to a whole interval
+    capped.system.Update(0.03f);
+    CHECK(capped.calls == 2);
+}
+
 AETHER_TEST(Spawner_SavedSpawnCounterStaysWithinBounds) {
     Rig r;
     Spawner saved = Basic();

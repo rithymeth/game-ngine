@@ -127,15 +127,21 @@ void SpawnerSystem::Update(f32 dt) {
         Spawner* s = world_.GetComponent<Spawner>(e);
         if (s == nullptr || !s->enabled || s->prefab.empty()) continue;
         if (s->timer < 0.0f) s->timer = std::max(s->start_delay, 0.0f); // the first frame: start counting
-        if (Room(e, *s) <= 0) continue;                                 // full, or done: the timer waits for room
+        const i32 room = Room(e, *s);
+        if (room <= 0) continue; // full, or done: the timer waits for room
         s->timer -= dt;
         if (s->timer > 0.0f) continue;
         const i32 burst = Clamp(s->burst, 1, Spawner::kMaxBurst);
         const f32 interval = std::isfinite(s->interval) ? std::max(s->interval, Spawner::kMinInterval) : Spawner::kMinInterval;
-        const i32 wanted = std::min(burst, Room(e, *s));
-        SpawnUpTo(e, wanted);
+        const f32 next = interval + s->timer;
+        const i32 wanted = std::min(burst, room);
+        const i32 made = SpawnUpTo(e, wanted);
         s = world_.GetComponent<Spawner>(e);
-        if (s != nullptr) s->timer = interval;
+        if (s == nullptr) continue;
+        // Keep ordinary frame overshoot without catching up missed whole bursts.
+        // A full spawner or a failed attempt should still wait an entire interval.
+        const bool carry = made == wanted && next > 0.0f && (made < room || Room(e, *s) > 0);
+        s->timer = carry ? next : interval;
     }
 }
 
